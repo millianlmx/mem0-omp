@@ -207,19 +207,38 @@ chmod +x "$target/release/mem0-rs"`,
   writeDouble(bin, "lipo", "printf 'arm64\\n'");
   writeDouble(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
   // codesign : journalise son argv et dit si, AU MOMENT de l'appel, la cible porte
-  // déjà Metadata.appintents (preuve de la recopie avant la signature).
+  // déjà Metadata.appintents (preuve de la recopie avant la signature). `-dv`
+  // (lecture de la signature) n'est pas journalisé et rend le TeamIdentifier que
+  // porterait une signature par l'identité FAUX_IDENTITE (« not set » en ad hoc).
   writeDouble(
     bin,
     "codesign",
-    `cible="\${@: -1}"
+    `if [ "$1" = "-dv" ]; then
+  if [ -n "\${FAUX_IDENTITE:-}" ]; then printf 'TeamIdentifier=%s\\n' "\${FAUX_EQUIPE:-2MJF39L8VY}" >&2; else printf 'TeamIdentifier=not set\\n' >&2; fi
+  exit 0
+fi
+cible="\${@: -1}"
 meta=non
 [ -f "$cible/${META_ACTIONS_REL}" ] && meta=oui
 printf 'codesign %s meta=%s\\n' "$*" "$meta" >> '${log}'`,
   );
+  // security : le trousseau, sans identité (ad hoc) sauf si FAUX_IDENTITE nomme
+  // une identité d'équipe, listée comme `security find-identity -v` le ferait.
+  writeDouble(
+    bin,
+    "security",
+    `if [ -n "\${FAUX_IDENTITE:-}" ]; then
+  printf '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "%s"\\n     1 valid identities found\\n' "$FAUX_IDENTITE"
+else
+  printf '     0 valid identities found\\n'
+fi`,
+  );
   writeXcodeDoubles(bin);
 
   const base: NodeJS.ProcessEnv = { ...process.env };
-  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "DEVELOPER_DIR"]) delete base[cle];
+  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "FAUX_IDENTITE", "FAUX_EQUIPE", "OMP_CODESIGN_IDENTITY", "DEVELOPER_DIR"]) {
+    delete base[cle];
+  }
   const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");
 
   const lancer = (args: string[], env: Record<string, string> = {}): AssemblageAppIntents => {

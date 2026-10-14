@@ -34,6 +34,21 @@
 	<array>
 		<string>_ompconsole._tcp</string>
 	</array>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>OMP</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>o èm pé</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Console OMP</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>console o èm pé</string>
+		</dict>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

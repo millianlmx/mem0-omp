@@ -92,6 +92,8 @@ esac`,
   );
   doublure(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
   doublure(bin, "codesign", `printf 'codesign %s\\n' "$*" >> '${journal}'`);
+  // Trousseau sans identité : signature ad hoc, quel que soit le trousseau du poste.
+  doublure(bin, "security", "printf '     0 valid identities found\\n'");
   // cargo : journalise argv et cwd, pose le binaire là où le vrai l'écrit et y
   // inscrit le dossier cible, pour prouver d'où swift-app.sh l'a recopié.
   doublure(

@@ -536,6 +536,9 @@ case "$*" in
 esac`,
   );
   stub(bin, "codesign", "exit 0");
+  // Trousseau sans identité : la copie jetable est signée ad hoc, quel que soit le
+  // trousseau du poste.
+  stub(bin, "security", "printf '     0 valid identities found\\n'");
   // Le binaire factice n'est pas un Mach-O : la doublure `otool` rend la commande
   // LC_BUILD_VERSION qu'un vrai binaire porte (vérification de la version minimale
   // du bundle assemblé, omp-console-redesign S-2).
@@ -757,6 +760,57 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
       `[${voie}] processeur non lancé sur le binaire ${scratch} : ${r.lignes.join(" | ")}`,
     );
   }
+});
+
+// ── signature d'équipe (Siri sur le Mac) ─────────────────────────────────────
+//
+// MESURÉ le 2026-10-14 : linkd refuse un bundle sans identifiant d'équipe
+// (« requiresValidatedBundle »), donc un bundle signé ad hoc n'exécute aucun intent
+// depuis Siri ni Raccourcis. Le script signe mem0-rs puis le bundle par l'identité
+// d'équipe du trousseau (ou OMP_CODESIGN_IDENTITY), prouve le TeamIdentifier, et
+// n'avertit qu'en ad hoc.
+test("siri sur le Mac : le bundle est signé par l'identité d'équipe du trousseau (mem0-rs d'abord), l'avertissement ad hoc n'apparaît qu'à défaut, et une signature sans équipe fait échouer l'assemblage", () => {
+  const { bundle, lancer } = montageAppIntents();
+  const identite = "Apple Development: Jeanne Test (ABCDE12345)";
+  const mem0rs = path.join(bundle, "Contents", "Resources", "mem0-rs");
+  const avertissement = "⚠ signature ad hoc : Siri et Raccourcis n'exécuteront aucun intent de ce bundle";
+
+  // Trousseau avec une identité : elle signe mem0-rs puis le bundle, et la ligne ✓ nomme l'équipe.
+  const equipe = lancer(["--no-tests"], { FAUX_IDENTITE: identite });
+  assert.equal(equipe.status, 0, equipe.sortie);
+  const signatureBinaire = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${mem0rs} meta=non`);
+  const signatureBundle = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${bundle} meta=oui`);
+  assert.notEqual(signatureBinaire, -1, `mem0-rs non signé par l'identité : ${equipe.lignes.join(" | ")}`);
+  assert.notEqual(signatureBundle, -1, `bundle non signé par l'identité : ${equipe.lignes.join(" | ")}`);
+  assert.ok(signatureBinaire < signatureBundle, `mem0-rs doit être signé avant le bundle : ${equipe.lignes.join(" | ")}`);
+  assert.ok(
+    equipe.sortie.includes(`  ✓ signature vérifiée (codesign --verify --strict ; identité « ${identite} », équipe 2MJF39L8VY)`),
+    `ligne ✓ de la signature d'équipe absente\n${equipe.sortie}`,
+  );
+  assert.ok(!equipe.sortie.includes(avertissement), `avertissement ad hoc malgré l'identité\n${equipe.sortie}`);
+
+  // OMP_CODESIGN_IDENTITY l'emporte sur le trousseau.
+  const imposee = lancer(["--no-tests"], { FAUX_IDENTITE: identite, OMP_CODESIGN_IDENTITY: "Developer ID Application: Jeanne Test (ABCDE12345)" });
+  assert.equal(imposee.status, 0, imposee.sortie);
+  assert.ok(
+    imposee.lignes.includes(`codesign --force --sign Developer ID Application: Jeanne Test (ABCDE12345) ${bundle} meta=oui`),
+    `OMP_CODESIGN_IDENTITY ignorée : ${imposee.lignes.join(" | ")}`,
+  );
+
+  // Trousseau vide : ad hoc, avec l'avertissement.
+  const adHoc = lancer(["--no-tests"]);
+  assert.equal(adHoc.status, 0, adHoc.sortie);
+  assert.ok(adHoc.lignes.includes(`codesign --force --sign - ${bundle} meta=oui`), `bundle non signé ad hoc : ${adHoc.lignes.join(" | ")}`);
+  assert.ok(adHoc.sortie.includes("  ✓ signature ad hoc vérifiée (codesign --verify --strict)"), `ligne ✓ ad hoc absente\n${adHoc.sortie}`);
+  assert.ok(adHoc.sortie.includes(avertissement), `avertissement ad hoc absent\n${adHoc.sortie}`);
+
+  // Identité sans équipe (TeamIdentifier=not set) : échec nommé, code 1.
+  const sansEquipe = lancer(["--no-tests"], { FAUX_IDENTITE: identite, FAUX_EQUIPE: "not set" });
+  assert.equal(sansEquipe.status, 1, sansEquipe.sortie);
+  assert.ok(
+    sansEquipe.sortie.includes(`✗ signature sans identifiant d'équipe (identité « ${identite} », codesign -dv : TeamIdentifier=not set)`),
+    `échec « sans équipe » absent\n${sansEquipe.sortie}`,
+  );
 });
 
 const VOCAUX = ["MacPendingIntent", "MacAnswerIntent", "MacSessionPromptIntent"];

@@ -18,7 +18,16 @@
 #
 # La signature de lien produite par SwiftPM ne scelle PAS le bundle
 # (`codesign --verify --strict` échoue : « code has no resources but signature
-# indicates they must be present »), donc on re-signe en ad hoc puis on vérifie.
+# indicates they must be present »), donc on re-signe puis on vérifie. L'identité
+# compte pour Siri : MESURÉ le 2026-10-14 (macOS 26), linkd — le registre des App
+# Intents — refuse tout processus dont le bundle n'a pas d'identifiant d'équipe
+# (« Rejecting invalid client due to requiresValidatedBundle », « Unable to get
+# teamId ») ; signé ad hoc, le bundle est listé par Raccourcis mais aucun de ses
+# intents ne s'exécute (« Failed to load a definition for com.omp.console »). Le
+# bundle est donc signé par une identité d'équipe du trousseau quand il y en a une
+# (OMP_CODESIGN_IDENTITY, sinon la première « Apple Development » ou « Developer ID
+# Application » de `security find-identity`), et seulement à défaut en ad hoc,
+# avec un avertissement : ce bundle-là n'est bon ni pour Siri ni pour Raccourcis.
 #
 # Codes de sortie : 0 bundle assemblé et signé, 1 échec, 2 non exécuté (hors macOS).
 # Option `--no-tests` : compilation release seule (dossier `.build-run`), pour le
@@ -288,17 +297,26 @@ fi
 cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
 
 # 3 ter) le service mémoire : le binaire mem0-rs compilé en 2 bis, en
-#    `Contents/Resources/mem0-rs` (0755). Il est signé ad hoc LUI-MÊME avant le
-#    bundle : la signature du bundle scelle alors un code déjà signé, et
-#    `codesign --verify --strict` (étape 4) couvre les deux.
+#    `Contents/Resources/mem0-rs` (0755). Il est signé LUI-MÊME, par la même
+#    identité que le bundle, avant lui : la signature du bundle scelle alors un code
+#    déjà signé, et `codesign --verify --strict` (étape 4) couvre les deux.
 if ! command -v codesign >/dev/null 2>&1; then
   echo "✗ codesign introuvable"
   exit 1
 fi
+# L'identité de signature (voir l'en-tête) : OMP_CODESIGN_IDENTITY, sinon la
+# première identité d'équipe du trousseau, sinon « - » (ad hoc).
+IDENTITY="${OMP_CODESIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -nE 's/^ *[0-9]+\) [0-9A-Fa-f]+ "((Apple Development|Developer ID Application): [^"]*)"$/\1/p' \
+    | sed -n '1p')"
+  [ -n "$IDENTITY" ] || IDENTITY="-"
+fi
 cp "$MEM0_RS_BIN" "$BUNDLE/Contents/Resources/mem0-rs"
 chmod 0755 "$BUNDLE/Contents/Resources/mem0-rs"
-if ! codesign --force --sign - "$BUNDLE/Contents/Resources/mem0-rs" >/dev/null 2>&1; then
-  echo "✗ signature ad hoc de mem0-rs échouée (relance : codesign --force --sign - \"$BUNDLE/Contents/Resources/mem0-rs\")"
+if ! codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Resources/mem0-rs" >/dev/null 2>&1; then
+  echo "✗ signature de mem0-rs échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$BUNDLE/Contents/Resources/mem0-rs\")"
   exit 1
 fi
 echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
@@ -325,17 +343,29 @@ if ! python3 "$ROOT/scripts/app-intents/controle.py" mac "$ACTIONS_DATA"; then
   echec_sans_bundle "Metadata.appintents non conforme à scripts/app-intents/attendus.json (bundle Mac)"
 fi
 
-# 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
-#    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
-if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then
-  echo "✗ signature ad hoc échouée (relance : codesign --force --sign - \"$BUNDLE\")"
+# 4) signature du bundle, puis vérification : sans elle, `codesign --verify
+#    --strict` échoue (D6). La preuve est la vérification, pas la commande : signé
+#    par une identité d'équipe, le bundle doit porter un `TeamIdentifier` (c'est
+#    lui que linkd exige) ; signé ad hoc, l'avertissement dit ce qui ne marchera pas.
+if ! codesign --force --sign "$IDENTITY" "$BUNDLE" >/dev/null 2>&1; then
+  echo "✗ signature échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$BUNDLE\")"
   exit 1
 fi
 if ! codesign --verify --strict "$BUNDLE" >/dev/null 2>&1; then
   echo "✗ vérification de signature échouée (relance : codesign --verify --strict \"$BUNDLE\")"
   exit 1
 fi
-echo "  ✓ signature ad hoc vérifiée (codesign --verify --strict)"
+if [ "$IDENTITY" = "-" ]; then
+  echo "  ✓ signature ad hoc vérifiée (codesign --verify --strict)"
+  echo "  ⚠ signature ad hoc : Siri et Raccourcis n'exécuteront aucun intent de ce bundle (linkd exige un identifiant d'équipe) — ajoute une identité « Apple Development » au trousseau ou pose OMP_CODESIGN_IDENTITY"
+else
+  TEAM="$(codesign -dv "$BUNDLE" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+  if [ -z "$TEAM" ] || [ "$TEAM" = "not set" ]; then
+    echo "✗ signature sans identifiant d'équipe (identité « $IDENTITY », codesign -dv : TeamIdentifier=${TEAM:-absent}) — Siri exige une identité d'équipe"
+    exit 1
+  fi
+  echo "  ✓ signature vérifiée (codesign --verify --strict ; identité « $IDENTITY », équipe $TEAM)"
+fi
 
 # 5) version minimale du bundle ASSEMBLÉ (S-2 de omp-console-redesign) : Liquid
 #    Glass impose macOS 26, et la plist comme le binaire doivent le dire. Chaque

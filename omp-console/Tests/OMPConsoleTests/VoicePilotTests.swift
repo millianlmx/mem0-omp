@@ -144,24 +144,25 @@ struct VoicePilotTests {
             VoiceSpeechText.launchTitleAsk,
             VoiceSpeechText.launchNeedAsk,
         ])
-        #expect(conversation.asks[0] == "Sur quel dépôt\(nbsp)? alpha, beta et gamma.")
+        #expect(conversation.asks[0] == "Sur quel dépôt\(nbsp)? 1\(nbsp): alpha, 2\(nbsp): beta, 3\(nbsp): gamma. Dites son nom ou son numéro.")
         #expect(channel.deliveries == [.launch(repoRoot: "/Users/x/beta", title: "Export CSV", need: "Exporter la liste")])
     }
 
-    @Test("siri-iphone-pilotage-pipelines/AC-2 : un dépôt non reconnu rappelle les choix, une réponse vide redemande le dépôt")
+    @Test("siri-iphone-pilotage-pipelines/AC-2 : un dépôt non reconnu rappelle les dépôts par leur numéro, une réponse vide redemande le dépôt, et un numéro suffit")
     func launchRepoRetries() async throws {
         let channel = Channel()
         channel.repos = ["/Users/x/alpha", "/Users/x/beta"]
-        let conversation = Conversation(answers: ["delta", "  ", "la deuxième", "T", "B"], approvals: [true])
+        let conversation = Conversation(answers: ["même zéro omp", "  ", "la deuxième", "T", "B"], approvals: [true])
 
         _ = try await VoicePilot.launch(channel: channel, conversation: conversation)
 
         let ask = VoiceSpeechText.launchRepoAsk(labels: ["alpha", "beta"])
         #expect(Array(conversation.asks.prefix(3)) == [
             ask,
-            VoiceSpeechText.optionNotFound(labels: ["alpha", "beta"]),
+            VoiceSpeechText.launchRepoNotFound(labels: ["alpha", "beta"]),
             VoiceSpeechText.nothingHeard + " " + ask,
         ])
+        #expect(conversation.asks[1] == "Je n’ai pas reconnu ce dépôt. Dites son numéro\(nbsp): 1\(nbsp): alpha, 2\(nbsp): beta.")
         #expect(channel.deliveries == [.launch(repoRoot: "/Users/x/beta", title: "T", need: "B")])
     }
 

@@ -204,7 +204,9 @@ public enum VoicePilot {
     }
 
     /// Le dépôt du lancement : retenu sans question s'il est seul, sinon choisi
-    /// parmi TOUS les libellés ; `nil` après `maxAttempts` réponses non reconnues.
+    /// parmi TOUS les libellés, dits avec leur rang ; `nil` après `maxAttempts`
+    /// réponses non reconnues. Un dépôt non reconnu rappelle les rangs, pas les
+    /// seuls noms : Siri transcrit mal un nom de dépôt, jamais un numéro.
     @MainActor
     private static func chooseRepo(
         _ choices: [KanbanLaunchRepoChoice],
@@ -223,10 +225,10 @@ public enum VoicePilot {
             case let .notFound(prompt):
                 question = prompt == VoiceSpeechText.nothingHeard
                     ? VoiceSpeechText.joined([VoiceSpeechText.nothingHeard, ask])
-                    : prompt
+                    : VoiceSpeechText.launchRepoNotFound(labels: labels)
             case .freeText:
-                // Inatteignable sans texte libre : le rappel des choix, comme `match`.
-                question = VoiceSpeechText.optionNotFound(labels: labels)
+                // Inatteignable sans texte libre : le rappel des rangs, comme `.notFound`.
+                question = VoiceSpeechText.launchRepoNotFound(labels: labels)
             }
         }
         return nil

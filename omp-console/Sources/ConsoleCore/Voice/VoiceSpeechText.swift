@@ -184,9 +184,16 @@ public enum VoiceSpeechText {
         }
     }
 
-    /// Le choix du dépôt d'un lancement : TOUS les dépôts, sans plafond.
+    /// Le choix du dépôt d'un lancement : TOUS les dépôts, sans plafond, chacun
+    /// précédé de son rang. Siri transcrit mal un nom de dépôt (« mem0-omp » devient
+    /// « même zéro omp ») ; le rang, lui, est toujours compris par `VoiceAnswerMatcher`.
     public static func launchRepoAsk(labels: [String]) -> String {
-        "Sur quel dépôt ? \(list(labels, more: 0))."
+        "Sur quel dépôt ? \(numbered(labels)). Dites son nom ou son numéro."
+    }
+
+    /// Le rappel après un dépôt non reconnu : les mêmes rangs, et le numéro d'abord.
+    public static func launchRepoNotFound(labels: [String]) -> String {
+        "Je n’ai pas reconnu ce dépôt. Dites son numéro : \(numbered(labels))."
     }
 
     public static let launchTitleAsk = "Quel titre pour la feature ?"
@@ -278,6 +285,11 @@ public enum VoiceSpeechText {
     public static let dictationEmpty = "Aucun message n’a été envoyé."
 
     // --- énumération --------------------------------------------------------------
+    /// « 1 : a, 2 : b, 3 : c ».
+    static func numbered(_ items: [String]) -> String {
+        items.enumerated().map { "\($0.offset + 1) : \($0.element)" }.joined(separator: ", ")
+    }
+
     /// « a », « a et b », « a, b et c » ; avec `more > 0`, tous les éléments puis
     /// « et N autre(s) ».
     static func list(_ items: [String], more: Int) -> String {

@@ -1164,18 +1164,46 @@ bash scripts/swift-app.sh
 
 Le script compile en release, lance la suite en release, écrit le bundle dans
 `omp-console/build/OMP Console.app`, y copie l'icône `omp-console/Bundle/AppIcon.icns`
-(`Contents/Resources/AppIcon.icns`, nommée par `CFBundleIconFile`), le signe en ad
-hoc puis vérifie la signature (`codesign --verify --strict`). Sous une plateforme
+(`Contents/Resources/AppIcon.icns`, nommée par `CFBundleIconFile`), le signe puis
+vérifie la signature (`codesign --verify --strict`). Sous une plateforme
 autre que macOS, il annonce « non exécuté » et sort en code 2 sans rien compiler.
 Sans l'icns, il sort en code 1 avec `✗ icône absente :
 omp-console/Bundle/AppIcon.icns (bash scripts/app-icon.sh)`, sans bundle signé.
+
+**Signature : une identité d'équipe, sinon Siri ne répond pas.** Mesuré le
+2026-10-14 (macOS 26) : `linkd`, le registre des App Intents, refuse tout processus
+dont le bundle n'a pas d'identifiant d'équipe (`Rejecting invalid client due to
+requiresValidatedBundle`, `Unable to get teamId from com.omp.console`). Signé ad
+hoc, le bundle apparaît dans Raccourcis mais aucun de ses intents ne s'exécute,
+ni depuis Siri ni depuis une tuile (`BackgroundShortcutRunner : Failed to load a
+definition for com.omp.console`). Le script signe donc mem0-rs puis le bundle avec
+l'identité choisie ainsi :
+
+1. `OMP_CODESIGN_IDENTITY`, si elle est posée (nom d'une identité du trousseau, ou
+   `-` pour forcer l'ad hoc) ;
+2. sinon la première identité « Apple Development: … » ou « Developer ID
+   Application: … » listée par `security find-identity -v -p codesigning` (celle
+   qu'Xcode a installée pour l'app iOS suffit) ;
+3. sinon l'ad hoc (`-`), le cas de la CI.
+
+Ligne de preuve, après `codesign --verify --strict` : avec une identité,
+`  ✓ signature vérifiée (codesign --verify --strict ; identité « <nom> », équipe <TeamIdentifier>)`,
+le `TeamIdentifier` étant relu par `codesign -dv` (une identité qui n'en porte pas
+fait échouer l'assemblage : `✗ signature sans identifiant d'équipe (identité « <nom> »,
+codesign -dv : TeamIdentifier=not set) — Siri exige une identité d'équipe`) ; en ad
+hoc, `  ✓ signature ad hoc vérifiée (codesign --verify --strict)` suivie de
+`  ⚠ signature ad hoc : Siri et Raccourcis n'exécuteront aucun intent de ce bundle
+(linkd exige un identifiant d'équipe) — ajoute une identité « Apple Development »
+au trousseau ou pose OMP_CODESIGN_IDENTITY`. Un bundle assemblé avant ce
+correctif (ou copié dans `/Applications` depuis un tel assemblage) reste muet pour
+Siri : réassembler, puis remplacer la copie et relancer l'app.
 
 Le bundle **embarque le service mémoire** : avec ou sans `--no-tests`, le script
 compile `mem0-rs` depuis la racine (`cargo build --release --locked --manifest-path
 mem0-stack/mem0-rs/Cargo.toml`), prend le binaire dans
 `${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/release/mem0-rs`, exige `arm64`
-dans `lipo -archs`, le copie en `Contents/Resources/mem0-rs` (0755) et le signe en
-ad hoc LUI-MÊME (`codesign --force --sign -`) avant la signature du bundle :
+dans `lipo -archs`, le copie en `Contents/Resources/mem0-rs` (0755) et le signe
+LUI-MÊME, par la même identité que le bundle, avant la signature du bundle :
 `  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)`. Chaque cas d'échec
 sort en code 1 sans bundle : `✗ cargo introuvable — installe Rust
 (https://rustup.rs)`, `✗ compilation de mem0-rs échouée (cargo build --release)`,
@@ -1198,8 +1226,8 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
    Xcode 26) n'écrit aucune valeur constante en release, même avec le drapeau ;
 3. lance le processeur avec le jeu d'options qu'Xcode passe pour une cible app,
    dans un dossier temporaire ;
-4. copie `Metadata.appintents` dans `Contents/Resources/` AVANT la signature ad hoc,
-   qui le scelle ;
+4. copie `Metadata.appintents` dans `Contents/Resources/` AVANT la signature du
+   bundle, qui le scelle ;
 5. contrôle le bundle contre la liste attendue `scripts/app-intents/attendus.json`
    (égalité exacte d'ensembles des intents et des couples intent–phrase, toute
    phrase contenant `${applicationName}`, voir *Liste attendue des intents Siri*) :
@@ -2895,6 +2923,22 @@ Les gestes exécutés par Siri ou Raccourcis, sur l'iPhone comme sur le Mac, sui
 une table pure de ConsoleCore (`Sources/ConsoleCore/Voice/`). Elle ne régit que les
 App Intents : les gestes tactiles des écrans gardent leurs confirmations (sur
 l'Accueil iOS, seul « Valider les specs » confirme).
+
+**Le nom de l'app dans les phrases.** Chaque phrase d'App Shortcut contient
+`\(.applicationName)`, que Siri attend prononcé tel que l'app se nomme, « OMP
+Console » — un sigle que la reconnaissance transcrit mal (« au aime pé », « homme
+pé »), d'où des phrases dites et jamais reconnues alors que les mêmes tuiles
+marchent depuis Raccourcis. Les deux `Info.plist` (`omp-console/Bundle/Info.plist`,
+`omp-console/ios/OMPConsoleIOS-Info.plist`) déclarent donc les synonymes
+`INAlternativeAppNames` qu'Apple prévoit pour ce cas, avec leur prononciation
+(`INAlternativeAppNamePronunciationHint`) : « OMP » (« o èm pé ») et « Console
+OMP » (« console o èm pé »). Siri accepte chacun à la place du nom dans toute
+phrase : « Demandes en attente dans OMP », « Lancer une feature dans Console
+OMP ». Trois synonymes au plus par localisation ; « Console » seul est écarté,
+c'est le nom d'une app d'Apple. Pour qu'une phrase soit reconnue, il faut aussi
+que Siri parle français (les phrases ne sont écrites qu'en français, langue de
+développement des deux bundles) et, sur le Mac, que le bundle soit signé par une
+identité d'équipe (*Assembler le bundle `.app`*).
 
 | geste (`VoiceGesture`) | confirmation iPhone | déverrouillage iPhone | confirmation Mac | déverrouillage Mac |
 |---|---|---|---|---|
@@ -5056,7 +5100,7 @@ Après chaque geste, la fenêtre montre l'effet sans être passée au premier pl
 
 | # | État de départ | Phrase dite | Réponse attendue de Siri | Effet dans la fenêtre |
 |---|---|---|---|---|
-| 1 | deux dépôts connus | « Lancer une pipeline dans OMP Console » ; choisir un dépôt, dicter un titre puis un besoin, confirmer | « Sur quel dépôt ? … », « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› », puis « La pipeline ‹titre› est lancée. » | nouvelle carte du dépôt sur l'ardoise ; entrée « lancement · ‹titre› » dans « Activité récente » |
+| 1 | deux dépôts connus | « Lancer une pipeline dans OMP Console » ; choisir un dépôt (son numéro suffit), dicter un titre puis un besoin, confirmer | « Sur quel dépôt ? 1 : ‹a›, 2 : ‹b›. Dites son nom ou son numéro. », « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› », puis « La pipeline ‹titre› est lancée. » | nouvelle carte du dépôt sur l'ardoise ; entrée « lancement · ‹titre› » dans « Activité récente » |
 | 2 | une carte en pause, que la fenêtre propose de « Reprendre » | « Reprendre une pipeline dans OMP Console » ; dire son titre | « Quelle feature reprendre ? … », aucune confirmation, puis « La pipeline ‹titre› est reprise. » | la carte quitte la colonne de la pause ; entrée « reprise · ‹slug› » |
 | 3 | une carte qui propose « Arrêter » | « Arrêter une pipeline dans OMP Console » ; dire son titre ; REFUSER | « Arrêter les pipelines de ‹dépôt› ? (feature ‹titre›) », puis « Annulé, rien n’a été fait. » | rien ne change ; aucune entrée nouvelle |
 | 4 | la même carte | même phrase ; dire son titre ; confirmer | « Les pipelines de ‹dépôt› sont arrêtées. » | les pipelines en vol du dépôt s'arrêtent ; entrée « arrêt · ‹dépôt› » |
@@ -5099,8 +5143,11 @@ Déroulé du lancement :
 1. Siri lit les dépôts connus de l'instantané du Mac, la source de la feuille
    « Nouvelle feature » (`KanbanLaunchRepos.options`). Aucun : « Le Mac ne
    connaît aucun dépôt, rien n’a été lancé. ». Un seul : il est retenu sans
-   question. Plusieurs : « Sur quel dépôt ? a, b et c. », tous les libellés,
-   désignés par nom ou rang.
+   question. Plusieurs : « Sur quel dépôt ? 1 : a, 2 : b, 3 : c. Dites son nom ou
+   son numéro. », tous les libellés avec leur rang, désignés par nom ou rang. Siri
+   transcrit mal un nom de dépôt (« mem0-omp » devient « même zéro omp ») : un
+   dépôt non reconnu rappelle les rangs (« Je n’ai pas reconnu ce dépôt. Dites son
+   numéro : 1 : a, 2 : b. »), et le numéro est toujours compris.
 2. « Quel titre pour la feature ? », puis « Quel est le besoin ? ». Aucune
    question sur les modèles : ceux par défaut de la feuille.
 3. Confirmation : « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› », pour
@@ -5258,7 +5305,7 @@ cadrage.
 
 | Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |
 |---|---|---|---|
-| 1. Lancer | « Lancer une feature dans OMP Console », puis « jetable » si Siri demande le dépôt, « Ligne iPhone », le besoin, « Oui » | « Sur quel dépôt ? ‹dépôts›. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne iPhone sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne iPhone est lancée. » | |
+| 1. Lancer | « Lancer une feature dans OMP Console », puis le numéro de « jetable » si Siri demande le dépôt, « Ligne iPhone », le besoin, « Oui » | « Sur quel dépôt ? 1 : ‹a›, 2 : ‹b›. Dites son nom ou son numéro. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne iPhone sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne iPhone est lancée. » | |
 | 2. Répondre à la question | « Répondre aux questions de OMP Console », puis « Bonjour » | « 1 demande en attente. La première : ‹question›. Choix possibles : ‹choix›. Ou dites « autre réponse ». », puis « Votre choix est envoyé à Ligne iPhone. » | |
 | 3. Dicter à la session OMP | « Dis à OMP Console », puis « Résume l'état du dépôt jetable » | « Quel message ? », puis « Reçu. » | |
 | 4. Valider les specs | « Valider les specs dans OMP Console », puis « Ligne iPhone », « Oui » | « De quelle feature valider les specs ? Ligne iPhone. », « Valider les specs de la feature Ligne iPhone ? », puis « Les specs de la feature Ligne iPhone sont validées. » | |
@@ -5270,7 +5317,10 @@ cadrage.
 **Préalables (à la main, avant la première phrase)**
 
 - La console Mac est ouverte et joignable : bundle de cette branche assemblé par
-  `bash scripts/swift-app.sh`, puis ouvert.
+  `bash scripts/swift-app.sh`, dont la ligne de signature nomme une équipe
+  (`✓ signature vérifiée (… équipe <TeamIdentifier>)`, voir *Assembler le bundle
+  `.app`*), puis ouvert — c'est ce bundle-là qu'il faut ouvrir (ou recopier dans
+  `/Applications`), pas celui d'un assemblage ad hoc antérieur.
 - La session du Mac est déverrouillée et le reste toute la passe (mise en veille de
   l'écran repoussée le temps de la recette).
 - Siri s'active à la voix (« Dis Siri » ou « Siri »), parle français et répond à
@@ -5287,7 +5337,7 @@ cadrage.
 
 | Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |
 |---|---|---|---|
-| 1. Lancer | « Lancer une pipeline dans OMP Console », puis « jetable » si Siri demande le dépôt, « Ligne Mac », le besoin, « Oui » | « Sur quel dépôt ? ‹dépôts›. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne Mac sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne Mac est lancée. » | |
+| 1. Lancer | « Lancer une pipeline dans OMP Console », puis le numéro de « jetable » si Siri demande le dépôt, « Ligne Mac », le besoin, « Oui » | « Sur quel dépôt ? 1 : ‹a›, 2 : ‹b›. Dites son nom ou son numéro. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne Mac sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne Mac est lancée. » | |
 | 2. Répondre à la question | « Réponds dans OMP Console », puis « Bonsoir » | « 1 demande en attente. La première : ‹question›. Choix possibles : ‹choix›. Ou dites « autre réponse ». », puis « Votre choix est envoyé à Ligne Mac. » | |
 | 3. Dicter à la session OMP | « Dis à OMP Console », puis « Résume l'état du dépôt jetable » | « Quel message ? », puis « Reçu. » | |
 | 4. Valider les specs | « Valider les specs dans OMP Console », puis « Ligne Mac », « Oui » | « De quelle feature valider les specs ? Ligne Mac. », « Valider les specs de la feature Ligne Mac ? », puis « Les specs de la feature Ligne Mac sont validées. » | |
