@@ -111,7 +111,7 @@ Tout se fait depuis l'app, sans terminal :
    qu'une racine git), désigné par son **nom de dossier** comme sur iOS
    (`KanbanLaunchRepos.choices` : « nom (parent) » pour les seuls homonymes, jamais
    de chemin ; la valeur lancée reste la racine complète), les deux **modèles**
-   (`Modèle /req et /specs` / `Modèle /impl et /review`, chaque liste menée par
+   (`Modèle cadrage+revue` / `Modèle exécution`, chaque liste menée par
    `défaut OMP (aucun modèle)` puis les modèles de `omp models --json` par leur
    **nom lisible** — « nom (fournisseur) », sinon « nom (id) », quand deux modèles
    portent le même nom ; l'identifiant brut à défaut de nom), le titre et le besoin.
@@ -616,7 +616,7 @@ cd omp-console && MEM0_LIVREES_RECIPE=1 swift test --scratch-path .build-recipe 
 
 Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
 dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèles**
-(`Modèle /req et /specs : <A>` puis `Modèle /impl et /review : <B>`, le nom lisible
+(`Modèle cadrage+revue : <A>` puis `Modèle exécution : <B>`, le nom lisible
 du catalogue, l'identifiant brut à défaut, ou `défaut OMP`, une ligne par
 groupe, coupées au milieu), un badge quand la voie ne
 dit pas déjà son état (« Question », « Spécifications à valider », « En pause », « PR
@@ -659,8 +659,8 @@ en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avanceme
 `PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines » —
 elle porte aussi « Lire le contrat » quand la carte attend un besoin ou des specs à
 valider : depuis cette feuille, le geste ferme d'abord le détail, puis la feuille
-**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles `Modèle /req
-et /specs` / `Modèle /impl et /review` par leur nom lisible, l'identifiant brut à
+**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles
+`Modèle cadrage+revue` / `Modèle exécution` par leur nom lisible, l'identifiant brut à
 défaut, avec un bouton **Modifier…**, lien de PR) et un pli **Détails
 techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
 « Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
@@ -3459,7 +3459,7 @@ valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrête
 (avec confirmation), la reprendre, ouvrir la PR dans le navigateur et la
 fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
-deux modèles (« Modèle /req et /specs », « Modèle /impl et /review », mêmes libellés
+deux modèles (« Modèle cadrage+revue », « Modèle exécution », mêmes libellés
 que sur le Mac et sur la fiche d'une carte), un titre et un besoin, et crée la feature
 sans aucune action sur le Mac. Le sélecteur de dépôt affiche le NOM du dossier
 (jamais un chemin absolu ; pour les seuls homonymes, il y ajoute les derniers

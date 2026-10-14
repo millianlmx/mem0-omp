@@ -207,12 +207,12 @@ func modelLinesAreExact() throws {
         prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: []
     )
     #expect(KanbanCardPresentation.modelLines(card, names: nil) == KanbanModelLines(
-        reqSpecs: "Modèle /req et /specs : anthropic/claude-opus-4-7",
-        implReview: "Modèle /impl et /review : défaut OMP"
+        reqSpecs: "Modèle cadrage+revue : anthropic/claude-opus-4-7",
+        implReview: "Modèle exécution : défaut OMP"
     ))
     let slots = try #require(card.models)
     #expect(KanbanText.modelsLine(slots)
-        == "Modèle /req et /specs : anthropic/claude-opus-4-7 · Modèle /impl et /review : défaut OMP")
+        == "Modèle cadrage+revue : anthropic/claude-opus-4-7 · Modèle exécution : défaut OMP")
 
     var bare = card
     bare.models = nil

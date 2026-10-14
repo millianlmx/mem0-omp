@@ -1,5 +1,5 @@
 // Preuves de la feature model-selector (S-1..S-5) : deux groupes de modèle par
-// feature — req+specs et impl+review — choisis aux portes de création, appliqués
+// feature — cadrage+revue et exécution — choisis aux portes de création, appliqués
 // par phase à ses runs, remplaçables à tout moment ; l'ancien modèle unique reste
 // relu (il remplit les deux groupes) tant qu'il n'a pas été remplacé.
 //
@@ -899,10 +899,10 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
   {
     // Les fonctions PURES des libellés : le titre nomme le GROUPE et le slug, les
     // options gardent « défaut OMP » en tête, et la traduction reste celle d'avant.
-    assert.equal(MODEL_GROUP_LABELS.modelReqSpecs, "req+specs");
-    assert.equal(MODEL_GROUP_LABELS.modelImplReview, "impl+review");
-    assert.equal(modelQuestionTitle("alpha", "modelReqSpecs"), "Modèle req+specs — alpha");
-    assert.equal(modelQuestionTitle("alpha", "modelImplReview"), "Modèle impl+review — alpha");
+    assert.equal(MODEL_GROUP_LABELS.modelReqSpecs, "cadrage+revue");
+    assert.equal(MODEL_GROUP_LABELS.modelImplReview, "exécution");
+    assert.equal(modelQuestionTitle("alpha", "modelReqSpecs"), "Modèle cadrage+revue — alpha");
+    assert.equal(modelQuestionTitle("alpha", "modelImplReview"), "Modèle exécution — alpha");
     assert.equal(DEFAULT_MODEL_LABEL, "défaut OMP (aucun modèle)");
     assert.deepEqual(modelDialogOptions([]), [], "aucun modèle connu : aucune question");
     assert.equal(modelDialogOptions(KNOWN)[0]!.label, DEFAULT_MODEL_LABEL);
@@ -912,7 +912,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
   }
 
   {
-    // PORTE /req : DEUX dialogues, dans l'ordre req+specs puis impl+review, et les
+    // PORTE /req : DEUX dialogues, dans l'ordre cadrage+revue puis exécution, et les
     // deux clés sur la feature enrôlée — aucun ancien `model`.
     const root = emptyGitRepo("model-selector-repo-");
     const stateDir = tmpdir("model-selector-ac2-req-state-");
@@ -925,10 +925,10 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
       assert.deepEqual(
         calls.map((call) => call.title),
         [
-          "Modèle req+specs — deux-groupes",
-          "Repli req+specs — deux-groupes",
-          "Modèle impl+review — deux-groupes",
-          "Repli impl+review — deux-groupes",
+          "Modèle cadrage+revue — deux-groupes",
+          "Repli cadrage+revue — deux-groupes",
+          "Modèle exécution — deux-groupes",
+          "Repli exécution — deux-groupes",
         ],
         "quatre dialogues successifs, dans l'ordre : principal puis repli de chaque groupe",
       );
@@ -1019,10 +1019,10 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     assert.deepEqual(
       questions.map((call) => call.title),
       [
-        "Modèle req+specs — alpha",
-        "Modèle impl+review — alpha",
-        "Modèle req+specs — beta",
-        "Modèle impl+review — beta",
+        "Modèle cadrage+revue — alpha",
+        "Modèle exécution — alpha",
+        "Modèle cadrage+revue — beta",
+        "Modèle exécution — beta",
       ],
       "deux questions par feature, dans l'ordre de création",
     );
@@ -1064,7 +1064,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     assert.equal(validated.isError, undefined, textOf(validated));
     assert.deepEqual(
       fx.calls.filter((call) => call.kind === "select" && call.title.startsWith("Modèle ")).map((call) => call.title),
-      ["Modèle req+specs — a", "Modèle impl+review — a"],
+      ["Modèle cadrage+revue — a", "Modèle exécution — a"],
       "deux questions pour la seule feature du plan",
     );
     const planned = fx.project()?.segments[0]?.features.find((f) => f.slug === "a");
@@ -1096,20 +1096,20 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     press(panel, ["\r"]); // → description
     type(panel, "une intention");
     press(panel, ["\r"]); // → dépendances
-    press(panel, ["\r"]); // → étape req+specs
-    assert.match(panel.screen(80), /Modèle req\+specs/, "la première étape est celle du groupe req+specs");
+    press(panel, ["\r"]); // → étape cadrage+revue
+    assert.match(panel.screen(80), /Modèle cadrage\+revue/, "la première étape est celle du groupe cadrage+revue");
     assert.match(panel.screen(80), /> défaut OMP \(aucun modèle\)/, "défaut OMP ouvre la liste");
     press(panel, ["\u001b[B", "\u001b[B", "\r"]); // → anthropic/claude-opus-4-7
-    assert.match(panel.screen(80), /Repli req\+specs/, "le repli de req+specs suit son principal");
+    assert.match(panel.screen(80), /Repli cadrage\+revue/, "le repli de cadrage+revue suit son principal");
     assert.match(panel.screen(80), /> aucun repli/, "« aucun repli » ouvre la liste de repli");
     press(panel, ["\r"]); // aucun repli
-    assert.match(panel.screen(80), /Modèle impl\+review/, "la seconde étape suit la première");
+    assert.match(panel.screen(80), /Modèle exécution/, "la seconde étape suit la première");
     assert.match(panel.screen(80), /> défaut OMP \(aucun modèle\)/, "la seconde étape repart du défaut");
-    press(panel, ["\r"]); // défaut → repli impl+review
+    press(panel, ["\r"]); // défaut → repli exécution
     press(panel, ["\r"]); // aucun repli → aperçu
     assert.match(
       panel.screen(140),
-      /Créer gamma \? · une intention · 0 dépendance\(s\) · req\+specs anthropic\/claude-opus-4-7/,
+      /Créer gamma \? · une intention · 0 dépendance\(s\) · cadrage\+revue anthropic\/claude-opus-4-7/,
       "un groupe laissé au défaut est omis de l'aperçu",
     );
     press(panel, ["\r"]); // créer
@@ -1120,7 +1120,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     assert.equal(added.name, "gamma");
     assert.equal(added.description, "une intention");
     assert.deepEqual(added.deps, []);
-    assert.equal(added.modelReqSpecs, MODEL_A, "le choix de req+specs part dans l'ajout");
+    assert.equal(added.modelReqSpecs, MODEL_A, "le choix de cadrage+revue part dans l'ajout");
     assert.equal(added.modelImplReview ?? null, null, "le groupe laissé au défaut ne transmet rien");
     panel.component.dispose();
 
@@ -1130,18 +1130,18 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     press(second, ["a"]);
     type(second, "delta");
     press(second, ["\r", "\r", "\r"]);
-    press(second, ["\u001b[B", "\u001b[B", "\r", "\r"]); // req+specs = opus, aucun repli
-    press(second, ["\u001b[B", "\u001b[B", "\u001b[B", "\r", "\r"]); // impl+review = cerebras, aucun repli
+    press(second, ["\u001b[B", "\u001b[B", "\r", "\r"]); // cadrage+revue = opus, aucun repli
+    press(second, ["\u001b[B", "\u001b[B", "\u001b[B", "\r", "\r"]); // exécution = cerebras, aucun repli
     assert.match(
       second.screen(160),
-      /Créer delta \? · 0 dépendance\(s\) · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review cerebras\/llama3\.1-8b \(repli aucun\)/,
+      /Créer delta \? · 0 dépendance\(s\) · cadrage\+revue anthropic\/claude-opus-4-7 \(repli aucun\) · exécution cerebras\/llama3\.1-8b \(repli aucun\)/,
     );
     press(second, ["\r"]);
     await flush();
     assert.equal(both.calls.length, 1, "un seul ajout");
     const bothAdded = both.calls[0] as Record<string, unknown>;
-    assert.equal(bothAdded.modelReqSpecs, MODEL_A, "req+specs part dans l'ajout");
-    assert.equal(bothAdded.modelImplReview, MODEL_B, "impl+review part dans le même ajout");
+    assert.equal(bothAdded.modelReqSpecs, MODEL_A, "cadrage+revue part dans l'ajout");
+    assert.equal(bothAdded.modelImplReview, MODEL_B, "exécution part dans le même ajout");
     second.component.dispose();
 
     // Sans modèle connu : le flux reste à trois champs, et l'aperçu est celui d'avant.
@@ -1150,7 +1150,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     press(noStep, ["a"]);
     type(noStep, "epsilon");
     press(noStep, ["\r", "\r"]);
-    assert.doesNotMatch(noStep.screen(80), /Modèle req\+specs/, "pas d'étape de modèle sans modèle connu");
+    assert.doesNotMatch(noStep.screen(80), /Modèle cadrage\+revue/, "pas d'étape de modèle sans modèle connu");
     press(noStep, ["\r"]);
     assert.ok(
       noStep.lines(80).includes("Créer epsilon ? · 0 dépendance(s)"),
@@ -1202,20 +1202,20 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
 // AC-3 — chaque phase reçoit le modèle de SON groupe
 // ---------------------------------------------------------------------------
 
-test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/review/release reçoivent B", async () => {
+test("model-selector/AC-3 : les runs req/specs/review reçoivent A, les runs impl/release reçoivent B", async () => {
   {
-    // La RÉSOLUTION par phase, au constructeur pur : `req` et `specs` d'un côté,
-    // `impl`, `review` et `release` de l'autre — jamais de modèle par maillon.
+    // La RÉSOLUTION par phase, au constructeur pur : `req`, `specs` et `review`
+    // d'un côté, `impl` et `release` de l'autre — jamais de modèle par maillon.
     const carrier = { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B };
     assert.equal(modelGroupOf("req"), "modelReqSpecs");
     assert.equal(modelGroupOf("specs"), "modelReqSpecs");
     assert.equal(modelGroupOf("impl"), "modelImplReview");
-    assert.equal(modelGroupOf("review"), "modelImplReview");
+    assert.equal(modelGroupOf("review"), "modelReqSpecs");
     assert.equal(modelGroupOf("release"), "modelImplReview");
     const phases: PipelinePhase[] = ["req", "specs", "impl", "review", "release"];
     assert.deepEqual(
       phases.map((phase) => featureModelForPhase(carrier, phase)),
-      [MODEL_A, MODEL_A, MODEL_B, MODEL_B, MODEL_B],
+      [MODEL_A, MODEL_A, MODEL_B, MODEL_A, MODEL_B],
     );
   }
 
@@ -1227,13 +1227,13 @@ test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/revie
       // La spécification d'un run porte le modèle du GROUPE de sa phase, et rien
       // d'autre : plus d'argv où glisser un drapeau de réflexion.
       const spec = { phase, model: featureModelForPhase(carrier, phase) };
-      const expected = phase === "specs" ? MODEL_A : MODEL_B;
+      const expected = phase === "specs" || phase === "review" ? MODEL_A : MODEL_B;
       assert.equal(spec.model, expected, phase);
     }
   }
 
   {
-    // La CHAÎNE RÉELLE d'une feature portant A (req+specs) et B (impl+review) :
+    // La CHAÎNE RÉELLE d'une feature portant A (cadrage+revue) et B (exécution) :
     // chaque run part avec le modèle de SON groupe, jusqu'au release.
     const repoRoot = emptyGitRepo("model-selector-repo-");
     const { runner, runs, gate } = mkRunner();
@@ -1256,7 +1256,7 @@ test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/revie
         ["req", MODEL_A],
         ["specs", MODEL_A],
         ["impl", MODEL_B],
-        ["review", MODEL_B],
+        ["review", MODEL_A],
         ["release", MODEL_B],
       ],
       "chaque phase reçoit le modèle de son groupe",
@@ -1311,15 +1311,15 @@ test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/revie
     press(panel, ["\r", "\r"]);
     await flush();
     assert.equal(seen.length, 1, "la livraison a atteint le run de conversation");
-    assert.equal(seen[0]!.model, MODEL_B, "la phase review du rang prend le groupe impl+review");
+    assert.equal(seen[0]!.model, MODEL_A, "la phase review du rang prend le groupe cadrage+revue");
     const built = buildConversationRunArgv({ ompBin: "omp", target: seen[0]!, stateDir, prompt: "reprends" });
-    assert.deepEqual(built.slice(built.indexOf("--model"), built.indexOf("--model") + 2), ["--model", MODEL_B]);
+    assert.deepEqual(built.slice(built.indexOf("--model"), built.indexOf("--model") + 2), ["--model", MODEL_A]);
     panel.component.dispose();
 
     // La MÊME résolution, pure, pour les cinq phases et pour l'appariement du
     // worktree : un rang hors lot, un cwd vide ou un sous-dossier ne prennent rien.
     const lot = readLot(stateDir, lotRepoKey(repoRoot));
-    assert.equal(featureModelOf(lot, worktree, "review"), MODEL_B);
+    assert.equal(featureModelOf(lot, worktree, "review"), MODEL_A);
     assert.equal(featureModelOf(lot, worktree, "specs"), MODEL_A);
     assert.equal(featureModelOf(lot, tmpdir("model-selector-ac3-hors-lot-"), "review"), null);
     assert.equal(featureModelOf(lot, "", "review"), null, "la chaîne vide n'est jamais appariée");
@@ -1506,13 +1506,13 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     assert.equal(
       featureModelOf(readLot(stateDir, lotRepoKey(repoRoot)), worktree, "specs"),
       MODEL_M,
-      "le groupe req+specs relu prend la nouvelle valeur",
+      "le groupe cadrage+revue relu prend la nouvelle valeur",
     );
     inFlight.finish(OK_RUN);
     await flush(6);
 
     assert.equal(phaseOf(runs[1]!), "review");
-    assert.deepEqual(modelArgvOf(runs[1]!), ["--model", MODEL_M], "le run suivant du groupe impl+review prend la nouvelle valeur");
+    assert.deepEqual(modelArgvOf(runs[1]!), ["--model", MODEL_M], "le run `review` prend la valeur de `modelReqSpecs` en vigueur à son lancement");
     gate.shift()!(OK_RUN);
     await flush(6);
   }
@@ -1608,19 +1608,19 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     const { actions, calls } = countingActions();
     const panel = mountPanel(stateDir, { repoRoot, lot: actions, modelChoices: () => modelChoices(KNOWN) });
     press(panel, ["m"]);
-    assert.match(panel.screen(80), /Modèle req\+specs/, "le geste m ouvre l'étape req+specs");
+    assert.match(panel.screen(80), /Modèle cadrage\+revue/, "le geste m ouvre l'étape cadrage+revue");
     assert.match(panel.screen(80), /> anthropic\/claude-opus-4-7/, "le curseur est pré-positionné sur la valeur courante");
-    press(panel, ["\r"]); // garde A → repli req+specs
-    assert.match(panel.screen(80), /Repli req\+specs/, "le repli suit son principal");
-    press(panel, ["\r"]); // aucun repli → étape impl+review
-    assert.match(panel.screen(80), /Modèle impl\+review/);
+    press(panel, ["\r"]); // garde A → repli cadrage+revue
+    assert.match(panel.screen(80), /Repli cadrage\+revue/, "le repli suit son principal");
+    press(panel, ["\r"]); // aucun repli → étape exécution
+    assert.match(panel.screen(80), /Modèle exécution/);
     assert.match(panel.screen(80), /> cerebras\/llama3\.1-8b/, "la seconde étape est pré-positionnée elle aussi");
-    press(panel, ["k", "\u001b[B", "\r"]); // remonte puis redescend : même valeur → repli impl+review
-    assert.match(panel.screen(80), /Repli impl\+review/, "le repli impl+review suit son principal");
+    press(panel, ["k", "\u001b[B", "\r"]); // remonte puis redescend : même valeur → repli exécution
+    assert.match(panel.screen(80), /Repli exécution/, "le repli exécution suit son principal");
     press(panel, ["\r"]); // aucun repli → aperçu
     assert.match(
       panel.screen(140),
-      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review cerebras\/llama3\.1-8b \(repli aucun\)/,
+      /Modifier les modèles de alpha \? · cadrage\+revue anthropic\/claude-opus-4-7 \(repli aucun\) · exécution cerebras\/llama3\.1-8b \(repli aucun\)/,
     );
     press(panel, ["\r"]);
     await flush();
@@ -1651,11 +1651,11 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     // Le geste ÉCRIT le lot quand il pend au vrai pilote.
     const real = mountPanel(stateDir, { repoRoot, lot: controller, modelChoices: () => modelChoices(KNOWN) });
     press(real, ["m"]);
-    press(real, ["\r", "\r"]); // A gardé, aucun repli → étape impl+review
+    press(real, ["\r", "\r"]); // A gardé, aucun repli → étape exécution
     press(real, ["k", "k", "\r", "\r"]); // B → haiku (deux rangs plus haut), aucun repli → aperçu
     assert.match(
       real.screen(140),
-      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review anthropic\/claude-haiku-4 \(repli aucun\)/,
+      /Modifier les modèles de alpha \? · cadrage\+revue anthropic\/claude-opus-4-7 \(repli aucun\) · exécution anthropic\/claude-haiku-4 \(repli aucun\)/,
     );
     press(real, ["\r"]);
     await flush(4);
@@ -1704,7 +1704,7 @@ test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --mo
     assert.equal(featureModelForPhase(half, "req"), MODEL_A);
     assert.equal(featureModelForPhase(half, "specs"), MODEL_A);
     assert.equal(featureModelForPhase(half, "impl"), null);
-    assert.equal(featureModelForPhase(half, "review"), null);
+    assert.equal(featureModelForPhase(half, "review"), MODEL_A);
     assert.equal(featureModelForPhase(half, "release"), null);
     assert.deepEqual(featureModelSlots(half), { reqSpecs: MODEL_A, implReview: null });
     assert.equal(featureModelSlots({}), null);
@@ -1712,7 +1712,7 @@ test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --mo
 
   {
     // Les RUNS RÉELS : une feature sans clé ne porte aucun `--model` ; une feature
-    // qui n'a que impl+review en porte un à partir du maillon impl seulement.
+    // qui n'a que le groupe exécution en porte un à partir du maillon impl seulement.
     const repoRoot = emptyGitRepo("model-selector-repo-");
     const { runner, runs, gate } = mkRunner();
     const { controller, stateDir } = mkCtl(repoRoot, { runner });
@@ -1739,7 +1739,7 @@ test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --mo
         ["req", null],
         ["specs", null],
         ["impl", MODEL_B],
-        ["review", MODEL_B],
+        ["review", null],
         ["release", MODEL_B],
       ],
       "seul le groupe renseigné transmet --model",
@@ -1803,22 +1803,22 @@ test("model-selector/AC-7 : le rang du panneau et le document du projet montrent
     assert.equal(DEFAULT_MODEL_SHORT_LABEL, "défaut OMP");
     assert.equal(
       lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
-      `alpha · req+specs ${MODEL_A} · impl+review ${MODEL_B}`,
+      `alpha · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
     );
     assert.equal(
       lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A })),
-      `alpha · req+specs ${MODEL_A} · impl+review défaut OMP`,
+      `alpha · cadrage+revue ${MODEL_A} · exécution défaut OMP`,
     );
     assert.equal(
       lotFeatureLabel(feature("alpha", { model: MODEL_M })),
-      `alpha · req+specs ${MODEL_M} · impl+review ${MODEL_M}`,
+      `alpha · cadrage+revue ${MODEL_M} · exécution ${MODEL_M}`,
       "une feature ancienne affiche M dans les deux groupes",
     );
     assert.equal(lotFeatureLabel(feature("alpha")), "alpha", "sans clé, aucun segment");
     assert.equal(lotFeatureLabel(feature("alpha", { deps: ["beta"] })), "alpha ← beta");
     assert.equal(
       lotFeatureLabel(feature("alpha", { deps: ["beta"], modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
-      `alpha ← beta · req+specs ${MODEL_A} · impl+review ${MODEL_B}`,
+      `alpha ← beta · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
       "le segment suit les dépendances et précède la file",
     );
   }
@@ -1836,22 +1836,22 @@ test("model-selector/AC-7 : le rang du panneau et le document du projet montrent
     const panel = mountPanel(stateDir, { repoRoot, lot: actions });
     const screen = panel.screen(120);
     assert.ok(
-      screen.includes(`alpha · req+specs ${MODEL_A} · impl+review défaut OMP`),
+      screen.includes(`alpha · cadrage+revue ${MODEL_A} · exécution défaut OMP`),
       `le rang d'alpha montre le groupe renseigné et le défaut :\n${screen}`,
     );
     assert.ok(
-      screen.includes(`beta · req+specs ${MODEL_M} · impl+review ${MODEL_M}`),
+      screen.includes(`beta · cadrage+revue ${MODEL_M} · exécution ${MODEL_M}`),
       `le rang d'une feature ancienne montre M deux fois :\n${screen}`,
     );
     assert.ok(
-      panel.lines(120).some((line) => line.includes("gamma") && !line.includes("req+specs")),
+      panel.lines(120).some((line) => line.includes("gamma") && !line.includes("cadrage+revue")),
       `une feature sans clé garde une ligne sans segment de modèle :\n${screen}`,
     );
     panel.component.dispose();
   }
 
   {
-    // PROJECT.md : deux colonnes `Modèle req+specs` / `Modèle impl+review`, la
+    // PROJECT.md : deux colonnes `Modèle cadrage+revue` / `Modèle exécution`, la
     // cellule disant `défaut OMP` pour un groupe vide.
     const doc = renderProjectDoc(
       {
@@ -1897,7 +1897,7 @@ test("model-selector/AC-7 : le rang du panneau et le document du projet montrent
       },
       "o/r",
     );
-    assert.ok(doc.includes("| # | Feature | État | PR | Modèle req+specs | Modèle impl+review | Intention |"), doc);
+    assert.ok(doc.includes("| # | Feature | État | PR | Modèle cadrage+revue | Modèle exécution | Intention |"), doc);
     assert.ok(doc.includes("|---|---|---|---|---|---|---|"), "sept colonnes");
     assert.ok(doc.includes(`| 1 | \`a\` | à venir | — | ${MODEL_A} | ${MODEL_B} | Intention A. |`), doc);
     assert.ok(doc.includes("| 2 | `b` | à venir | — | défaut OMP | défaut OMP | Intention B. |"), doc);

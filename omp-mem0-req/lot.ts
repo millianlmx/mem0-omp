@@ -223,24 +223,27 @@ export type LotFeature = {
    */
   base?: string;
   /**
-   * Le modèle du groupe req+specs (S-1) : le sélecteur canonique `provider/id`,
-   * EXACTEMENT la valeur passée à `--model` sur les runs `req` et `specs`. Absent =
-   * groupe au défaut OMP (aucun `--model`). Écrit à la création, remplaçable à tout
-   * moment par « Modifier les modèles » (S-3) — jamais modifié par une transition.
+   * Le modèle du groupe cadrage+revue (S-1) : le sélecteur canonique `provider/id`,
+   * EXACTEMENT la valeur passée à `--model` sur les runs `req`, `specs` et `review`
+   * (et sur la session d'arbitrage). Absent = groupe au défaut OMP (aucun
+   * `--model`). Écrit à la création, remplaçable à tout moment par « Modifier les
+   * modèles » (S-3) — jamais modifié par une transition.
    */
   modelReqSpecs?: string;
   /**
-   * Le modèle du groupe impl+review (S-1) : appliqué aux runs `impl`, `review` et
-   * `release`. Mêmes règles d'écriture et de remplacement que `modelReqSpecs`.
+   * Le modèle du groupe exécution (S-1) : appliqué aux runs `impl` (y compris
+   * `--fix`) et `release`. Mêmes règles d'écriture et de remplacement que
+   * `modelReqSpecs`.
    */
   modelImplReview?: string;
   /**
-   * Le repli du groupe req+specs (S-1) : le sélecteur `provider/id` sur lequel un
-   * run `req`/`specs` continue quand le principal est épuisé. Absent = aucun repli
-   * (jamais `""` ni `null` stockés). Remplaçable à tout moment par `models`.
+   * Le repli du groupe cadrage+revue (S-1) : le sélecteur `provider/id` sur lequel
+   * un run `req`, `specs` ou `review` continue quand le principal est épuisé. Absent
+   * = aucun repli (jamais `""` ni `null` stockés). Remplaçable à tout moment par
+   * `models`.
    */
   fallbackReqSpecs?: string;
-  /** Le repli du groupe impl+review (S-1) : mêmes règles que `fallbackReqSpecs`. */
+  /** Le repli du groupe exécution (S-1) : runs `impl` (y compris `--fix`) et `release` ; mêmes règles que `fallbackReqSpecs`. */
   fallbackImplReview?: string;
   /** L'arbitrage EN VOL (S-9) : posé et sauvé avant l'ouverture de la session d'arbitre, effacé à la décision. */
   arbitration?: FeatureArbitration;

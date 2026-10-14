@@ -16,8 +16,8 @@ public enum KanbanText {
     /// Les deux groupes de modèle d'une feature, MÊMES mots sur Mac et iOS : le
     /// libellé d'une ligne d'affichage (fiche, carte, plan) et le titre d'un
     /// sélecteur (feuilles Nouvelle feature et Modèles).
-    public static let modelReqSpecs = "Modèle /req et /specs"
-    public static let modelImplReview = "Modèle /impl et /review"
+    public static let modelReqSpecs = "Modèle cadrage+revue"
+    public static let modelImplReview = "Modèle exécution"
     public static let modelDefault = "défaut OMP"
     public static let editModels = "Modifier les modèles…"
     public static let editModelsShort = "Modifier…"
@@ -139,7 +139,7 @@ public enum KanbanText {
     }
 
     /// La forme canonique d'une paire de modèles :
-    /// `Modèle /req et /specs : <A> · Modèle /impl et /review : <B>` (un groupe
+    /// `Modèle cadrage+revue : <A> · Modèle exécution : <B>` (un groupe
     /// vide s'affiche « défaut OMP »). Formule unique partagée par le plan du
     /// projet des deux coques.
     public static func modelsLine(_ models: ModelSlots) -> String {

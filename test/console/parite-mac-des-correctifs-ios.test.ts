@@ -4,7 +4,7 @@
 // Les preuves de COMPORTEMENT vivent dans les suites Swift de parité
 // (`omp-console/Tests/OMPConsoleTests/PariteMacTests.swift` et
 // `omp-console/ios/OMPConsoleIOSTests/IOSPariteMacTests.swift`), qui épinglent
-// les mêmes libellés des deux côtés. Ce fichier garde l'invariant de S-7 : plus
+// les mêmes libellés « Modèle cadrage+revue » / « Modèle exécution » des deux côtés. Ce fichier garde l'invariant de S-7 : plus
 // aucun « req+specs » ni « impl+review » visible, c'est-à-dire dans aucun
 // littéral de chaîne Swift des sources de la coque macOS, de ConsoleCore, de
 // ConsoleClient et de l'app iOS. Les commentaires et les clés JSON

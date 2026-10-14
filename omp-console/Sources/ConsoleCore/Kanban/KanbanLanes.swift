@@ -167,8 +167,8 @@ public enum KanbanLaneRows {
     }
 }
 
-/// Les deux lignes de modèle d'une carte : « Modèle /req et /specs : <nom> » et
-/// « Modèle /impl et /review : <nom> ».
+/// Les deux lignes de modèle d'une carte : « Modèle cadrage+revue : <nom> » et
+/// « Modèle exécution : <nom> ».
 public struct KanbanModelLines: Equatable, Sendable {
     public let reqSpecs: String
     public let implReview: String

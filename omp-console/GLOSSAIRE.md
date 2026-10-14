@@ -11,11 +11,11 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `pipeline` | terme métier OMP | « Aucune pipeline pour l’instant. » |
 | `feature` | terme métier OMP | « Nouvelle feature » |
 | `PR` | terme métier OMP | « Ouvrir la PR » |
-| `/req` | terme métier OMP | « Modèle /req et /specs » |
-| `/specs` | terme métier OMP | « Modèle /req et /specs » |
+| `/req` | terme métier OMP | « Modèle cadrage+revue » |
+| `/specs` | terme métier OMP | « Modèle cadrage+revue » |
 | `specs` | terme métier OMP | « Valider les specs » |
-| `/impl` | terme métier OMP | « Modèle /impl et /review » |
-| `/review` | terme métier OMP | « Modèle /impl et /review » |
+| `/impl` | terme métier OMP | « Modèle exécution » |
+| `/review` | terme métier OMP | « Modèle cadrage+revue » |
 | `audit` | terme métier OMP | « Lancer un audit… » |
 | `brief` | terme métier OMP | « Brief de l’audit » |
 | `arbitre` | terme métier OMP | « Décisions de l’arbitre » |

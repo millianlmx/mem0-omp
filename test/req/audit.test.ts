@@ -1460,18 +1460,18 @@ test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaq
       "Intention transmise à /req — relais-readme",
       "Intention transmise à /req — alpha",
       "Intention transmise à /req — gamma",
-      "Modèle req+specs — relais-readme",
-      "Repli req+specs — relais-readme",
-      "Modèle impl+review — relais-readme",
-      "Repli impl+review — relais-readme",
-      "Modèle req+specs — alpha",
-      "Repli req+specs — alpha",
-      "Modèle impl+review — alpha",
-      "Repli impl+review — alpha",
-      "Modèle req+specs — gamma",
-      "Repli req+specs — gamma",
-      "Modèle impl+review — gamma",
-      "Repli impl+review — gamma",
+      "Modèle cadrage+revue — relais-readme",
+      "Repli cadrage+revue — relais-readme",
+      "Modèle exécution — relais-readme",
+      "Repli exécution — relais-readme",
+      "Modèle cadrage+revue — alpha",
+      "Repli cadrage+revue — alpha",
+      "Modèle exécution — alpha",
+      "Repli exécution — alpha",
+      "Modèle cadrage+revue — gamma",
+      "Repli cadrage+revue — gamma",
+      "Modèle exécution — gamma",
+      "Repli exécution — gamma",
     ],
     "exactement deux questions de modèle et deux de repli par élément, nommant chacune son groupe",
   );
@@ -1480,10 +1480,10 @@ test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaq
   const featureOf = (slug: string) => fx.featureOf(slug)!;
   assert.equal(featureOf("relais-readme").modelReqSpecs, "p/x");
   assert.equal(featureOf("relais-readme").modelImplReview, "p/y");
-  assert.equal("modelReqSpecs" in featureOf("alpha"), false, "défaut OMP : aucune clé req+specs");
+  assert.equal("modelReqSpecs" in featureOf("alpha"), false, "défaut OMP : aucune clé cadrage+revue");
   assert.equal(featureOf("alpha").modelImplReview, "p/x");
   assert.equal(featureOf("gamma").modelReqSpecs, "p/y");
-  assert.equal("modelImplReview" in featureOf("gamma"), false, "défaut OMP : aucune clé impl+review");
+  assert.equal("modelImplReview" in featureOf("gamma"), false, "défaut OMP : aucune clé exécution");
   const modelArg = (slug: string) => {
     const spec = fx.runs.find((run) => path.basename(run.cwd) === path.basename(featureOf(slug).worktree))!.spec;
     return spec.model;

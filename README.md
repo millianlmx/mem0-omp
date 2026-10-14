@@ -302,18 +302,19 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
 
   **Les modèles et leurs replis se choisissent au lancement de la feature.** `/req` demande, **avant
   toute écriture** (ni branche, ni worktree, ni session), **quatre** choix dans la liste des
-  modèles connus d'OMP : le modèle des maillons `req` et `specs`, **son repli**, le modèle de
-  `impl`, `review` et `release`, **son repli**. Les modèles proposent `défaut OMP (aucun
+  modèles connus d'OMP : le modèle du groupe **cadrage+revue** (`req`, `specs`, `review`),
+  **son repli**, le modèle du groupe **exécution** (`impl`, `release`), **son repli**. Les modèles proposent `défaut OMP (aucun
   modèle)` ; la liste d'un repli commence par `aucun repli` (si le principal est épuisé, la
   feature passe en « bloquée : quota ») puis reprend les modèles connus **sans le principal
   choisi juste avant**. `Échap` annule
   sans rien créer. Les quatre sont **modifiables à tout moment**, depuis OMP Console ou par le
   geste `m` du panneau `/pipelines` (et par la commande de canal `models`) : un run déjà lancé n'est ni interrompu ni relancé, tout
   run suivant utilise la valeur courante. Chaque modèle part en `--model` sur les runs de
-  **son groupe** — la collecte et `/specs` pour le premier, `/impl`, `/review` et la
-  livraison pour le second —, son repli ne sert que si ce principal est épuisé (voir « Repli
+  **son groupe** : le groupe cadrage+revue porte `req`, `specs` et `review` (la collecte, `/specs`
+  et la revue), le groupe exécution porte `impl` (y compris `/impl --fix`) et `release` (la
+  livraison). Le repli ne sert que si ce principal est épuisé (voir « Repli
   de modèle et quota »), et le tout s'affiche sur son rang du panneau
-  (`… · req+specs anthropic/claude-opus-4-7 (repli cerebras/llama3.1-8b) · impl+review défaut OMP`). Un groupe laissé sur
+  (`… · cadrage+revue anthropic/claude-opus-4-7 (repli cerebras/llama3.1-8b) · exécution défaut OMP`). Un groupe laissé sur
   `défaut OMP` ne transmet aucun `--model`, et le niveau de réflexion n'est jamais transmis :
   il reste celui de la config OMP.
 
@@ -343,7 +344,7 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
   cocher** de tous ces éléments, faiblesses et features réunies : coches-en un ou
   plusieurs et valide (valider sans rien cocher ne lance rien). Pour chaque élément
   coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis ses
-  **modèles et replis** — quatre questions par élément : `req+specs`, son repli, `impl+review`,
+  **modèles et replis** — quatre questions par élément : `cadrage+revue`, son repli, `exécution`,
   son repli (`aucun repli` est la première option, le principal choisi n'est jamais
   proposé en repli) —, chaque pipeline tourne avec les siens. Les
   pipelines cochées démarrent **en parallèle dans la limite de `MEM0_PIPELINE_SLOTS`**
@@ -409,7 +410,7 @@ absolu percent-encodé, refus `{error, reason}`) :
 ### Repli de modèle et quota
 
 Chaque run (étape de pipeline) tourne sur le **modèle principal** et le **repli** que
-l'utilisateur a choisis pour son groupe (req+specs ou impl+review), et sur aucun autre :
+l'utilisateur a choisis pour son groupe (cadrage+revue ou exécution), et sur aucun autre :
 le pipeline ne choisit jamais un modèle de remplacement à sa place.
 
 - Les réglages de la session d'un run sont posés **en mémoire** (`Settings.isolated`) :
@@ -449,7 +450,7 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
   catalogue puis `Laisser bloquées pour l'instant` (rien ne change, l'élément n'est pas
   réinjecté avant la prochaine ouverture de la session). La commande de canal `quota`
   fait la même décision.
-- **La décision rend le modèle choisi `M` le REPLI du groupe** (req+specs ou impl+review) de
+- **La décision rend le modèle choisi `M` le REPLI du groupe** (cadrage+revue ou exécution) de
   l'étape bloquée, pour chaque feature du groupe ; **le principal ne change pas** (et un `M`
   qui est déjà le principal du groupe laisse la feature telle quelle). `quota` et la raison
   d'arrêt sont effacés et la feature est relancée par `R` : elle **reprend sa session**
@@ -517,10 +518,10 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   garde un marqueur qui **nomme la section qu'il tronque** (`… 4 de plus dans le lot`).
 - **La colonne de droite** d'un rang est `<maillon> · <état> · <temps>` — jamais les
   dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
-  seule fois. Les **modèles** s'ajoutent au libellé (`base-qdrant · req+specs
-  anthropic/claude-opus-4-7 · impl+review défaut OMP`), une fois eux aussi, suivis de ` (repli
-  <R>)` quand le groupe a un repli (`req+specs anthropic/claude-opus-4-7 (repli
-  cerebras/llama3.1-8b) · impl+review défaut OMP`) ; ils disparaissent
+  seule fois. Les **modèles** s'ajoutent au libellé (`base-qdrant · cadrage+revue
+  anthropic/claude-opus-4-7 · exécution défaut OMP`), une fois eux aussi, suivis de ` (repli
+  <R>)` quand le groupe a un repli (`cadrage+revue anthropic/claude-opus-4-7 (repli
+  cerebras/llama3.1-8b) · exécution défaut OMP`) ; ils disparaissent
   pour une feature née au défaut OMP et sans repli ; `défaut OMP` nomme un groupe laissé vide, l'ancien
   modèle unique d'une feature d'avant remplissant les deux. Quand le libellé et la colonne
   ne tiennent pas ensemble sur la largeur de contenu, l'entrée peint **deux rangs** : le
@@ -788,8 +789,8 @@ s'affiche tel quel au lieu d'être avalé.
 
 - **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
   dépendances (slugs séparés par des virgules, vide admis) — puis, quand des modèles connus
-  existent, **quatre étapes** : `Modèle req+specs`, `Repli req+specs`, `Modèle impl+review`,
-  `Repli impl+review`. La liste des
+  existent, **quatre étapes** : `Modèle cadrage+revue`, `Repli cadrage+revue`, `Modèle exécution`,
+  `Repli exécution`. La liste des
   modèles connus s'y affiche avec `défaut OMP (aucun modèle)` en tête ; la liste d'un **repli**
   commence par `aucun repli` puis reprend les modèles connus **sans le principal choisi juste
   avant** (`défaut OMP` n'est jamais un repli). `↑`/`↓` (ou `k`/`j`)
@@ -799,11 +800,11 @@ s'affiche tel quel au lieu d'être avalé.
   le champ des dépendances depuis la première —, tampon compris. Le curseur partant sur la
   première ligne, `Entrée` seul reproduit le comportement d'avant : la feature naît sans
   modèle ni repli. L'aperçu n'annonce que les groupes **renseignés**, chacun suivi de son repli
-  (`Créer gamma ? · 0 dépendance(s) · req+specs anthropic/claude-opus-4-7 (repli aucun)`). Le worktree de la
+  (`Créer gamma ? · 0 dépendance(s) · cadrage+revue anthropic/claude-opus-4-7 (repli aucun)`). Le worktree de la
   feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Modèles** (`m`) ouvre les
   quatre mêmes étapes, pré-positionnées sur les valeurs courantes (le repli actuel, ou
   `aucun repli`), puis un aperçu
-  (`Modifier les modèles de gamma ? · req+specs <A|défaut OMP> (repli <R|aucun>) · impl+review <B|défaut OMP> (repli <R|aucun>)`) : `Entrée`
+  (`Modifier les modèles de gamma ? · cadrage+revue <A|défaut OMP> (repli <R|aucun>) · exécution <B|défaut OMP> (repli <R|aucun>)`) : `Entrée`
   applique, un refus du pilote s'affiche tel quel — un repli identique au principal du même
   groupe est refusé —, et un run déjà lancé n'est ni interrompu
   ni relancé — le run suivant relit la valeur courante. Sans modèle connu, `m` le dit
@@ -975,7 +976,7 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   `- <nom> — <intention>` ajoute une feature ; l'ordre des lignes est l'ordre du plan ;
   un texte illisible ou un nom déjà pris rouvre l'éditeur avec l'erreur) ou
   **Abandonner** (rien n'est écrit). À la validation, tu choisis le modèle **et le repli** de chaque
-  feature pour `req+specs`, puis pour `impl+review` (quatre questions par feature), le document
+  feature pour `cadrage+revue`, puis pour `exécution` (quatre questions par feature), le document
   est écrit et le segment 1 part ; un amendement appliqué pose les mêmes quatre questions à ses
   features neuves.
 - **Le document et sa branche** : `PROJECT.md` est le **seul** fichier de la branche
@@ -1040,8 +1041,11 @@ feature), dans une session interactive — le contexte optionnel est transmis à
 - **L'arbitre éphémère** : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
   jalon (« specs validées », « revue propre ») d'une feature du projet n'est plus relayé à la
   session `/project` : le **service** ouvre une session d'arbitre **neuve** par élément, jamais
-  reprise, sur les modèles de la feature (principal puis repli, gardés par le registre des
-  quotas), avec pour seul corpus le brief, le journal de la feature et le contrat. Il appelle
+  reprise, sur le modèle cadrage+revue de la feature (principal puis repli, gardés par le registre des
+  quotas), avec pour seul corpus le brief, le journal de la feature et le contrat. **L'arbitre
+  tourne toujours sur le groupe cadrage+revue (principal puis repli), quelle que soit la phase de
+  l'élément arbitré** : s'il est épuisé pour quota, l'élément est escaladé, jamais basculé sur le
+  groupe exécution. Il appelle
   `arbiter_decide` une fois : réponse (source `contexte` ou `arbitrage`, avec au moins une
   citation mot pour mot du corpus), approbation d'un jalon justifié par le contrat, ou
   escalade. Le pilote **valide** la décision sans rien accorder sur parole (citation

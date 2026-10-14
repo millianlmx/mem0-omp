@@ -8,7 +8,7 @@
 import ConsoleCore
 import SwiftUI
 
-/// Les deux sélecteurs `Modèle /req et /specs` / `Modèle /impl et /review`, alimentés par le
+/// Les deux sélecteurs `Modèle cadrage+revue` / `Modèle exécution`, alimentés par le
 /// catalogue `omp models --json`. L'option de tête `défaut OMP (aucun modèle)`
 /// vaut `nil` ; chaque autre option est libellée par son nom lisible
 /// (`ModelCatalog.choiceLabels`, nom départagé pour les homonymes, sélecteur en

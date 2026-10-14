@@ -198,7 +198,7 @@ export type PanelModel = {
 
 /**
  * Les quatre étapes de liste d'un ajout ou d'une édition (S-1, S-4) : principal puis
- * repli de `req+specs`, principal puis repli de `impl+review`, dans l'ordre du flux.
+ * repli de `cadrage+revue`, principal puis repli d'`exécution`, dans l'ordre du flux.
  */
 export type AddModelStep = ModelStep;
 
@@ -437,8 +437,8 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
       const slug = toSlug(gesture.input.name) ?? gesture.input.name.trim();
       const description = gesture.input.description.trim();
       const deps = `${gesture.input.deps.length} dépendance(s)`;
-      // Les groupes RENSEIGNÉS s'annoncent EN DERNIER (S-4), dans l'ordre req+specs
-      // puis impl+review : un groupe laissé au défaut OMP est omis, et les deux omis
+      // Les groupes RENSEIGNÉS s'annoncent EN DERNIER (S-4), dans l'ordre cadrage+revue
+      // puis exécution : un groupe laissé au défaut OMP est omis, et les deux omis
       // rendent la tête d'aujourd'hui à l'octet près.
       const given = (value: string | null | undefined): string | null => (value !== undefined && value !== null && value !== "" ? value : null);
       const reqSpecs = given(gesture.input.modelReqSpecs);
@@ -481,7 +481,7 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
 
 
 /**
- * `req+specs <A> · impl+review <B>` — les DEUX groupes d'un état de modèles, un
+ * `cadrage+revue <A> · exécution <B>` — les DEUX groupes d'un état de modèles, un
  * groupe vide nommé `défaut OMP` (S-4). Même composition pour le rang d'une feature
  * et l'aperçu d'édition : la forme est décidée à un seul endroit.
  */
@@ -1231,7 +1231,7 @@ function modelListRows(
   if (query !== "" && shown.every((choice) => choice.value === "")) {
     content.push(...serviceRow(`aucun modèle ne correspond à « ${query} »`, "dim", innerW));
   }
-  // L'étape `impl+review` est la DERNIÈRE : `Entrée` y ouvre l'aperçu au lieu d'un
+  // L'étape `exécution` est la DERNIÈRE : `Entrée` y ouvre l'aperçu au lieu d'un
   // champ suivant (S-4).
   const next = mode.last ? "aperçu" : "champ suivant";
   return {

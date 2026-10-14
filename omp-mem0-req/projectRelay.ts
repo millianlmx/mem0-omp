@@ -328,8 +328,8 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
 
   /**
    * Les modèles et replis des features (S-1) : QUATRE questions par feature quand
-   * des modèles sont connus — principal et repli req+specs, puis principal et repli
-   * impl+review. Rend les choix, ou le slug de la première question abandonnée.
+   * des modèles sont connus — principal et repli cadrage+revue, puis principal et repli
+   * exécution. Rend les choix, ou le slug de la première question abandonnée.
    */
   async function chooseModels(
     ctx: ExtensionContext,

@@ -280,7 +280,7 @@ test("ios-redaction-vouvoiement/AC-5 : le chargement de l'Accueil iOS n'affiche 
   }
 });
 
-test("ios-redaction-vouvoiement/AC-7 : les groupes de modèles s'écrivent « Modèle /req et /specs » et « Modèle /impl et /review », jamais req+specs ni impl+review", () => {
+test("ios-redaction-vouvoiement/AC-7 : les groupes de modèles s'écrivent « Modèle cadrage+revue » et « Modèle exécution », jamais req+specs ni impl+review", () => {
   assertSane();
   const joined = /req\s*\+\s*\/?specs|impl\s*\+\s*\/?review/i;
   for (const [file, source] of SOURCES) {
@@ -290,8 +290,8 @@ test("ios-redaction-vouvoiement/AC-7 : les groupes de modèles s'écrivent « Mo
     }
   }
   const kanban = texts(KANBAN_TEXT);
-  assert.ok(kanban.includes("Modèle /req et /specs"), "« Modèle /req et /specs » absent de KanbanText.swift");
-  assert.ok(kanban.includes("Modèle /impl et /review"), "« Modèle /impl et /review » absent de KanbanText.swift");
+  assert.ok(kanban.includes("Modèle cadrage+revue"), "« Modèle cadrage+revue » absent de KanbanText.swift");
+  assert.ok(kanban.includes("Modèle exécution"), "« Modèle exécution » absent de KanbanText.swift");
 });
 
 test("ios-redaction-vouvoiement/AC-8 : un texte tutoyé échoue dans l'app iOS et dans ConsoleCore hors *Text.swift, jamais dans la coque macOS", () => {
