@@ -133,11 +133,16 @@ function prStateOf(stdout: string): "OPEN" | "CLOSED" | "MERGED" | null {
   }
 }
 
+/** Le nom du dépôt tel qu'il titre PROJECT.md : le dernier segment du chemin réel. */
+export function projectRepoName(repoRoot: string): string {
+  return path.basename(realpathOr(repoRoot)) || realpathOr(repoRoot);
+}
+
 
 /** Le pilote du projet d'un dépôt (S-7, S-8, S-5). */
 export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
   const repoKey = lotRepoKey(deps.repoRoot);
-  const repoName = path.basename(realpathOr(deps.repoRoot)) || realpathOr(deps.repoRoot);
+  const repoName = projectRepoName(deps.repoRoot);
   const now = () => (deps.now ?? Date.now)();
   /** La file des passes : une seule à la fois, aucune perdue. */
   let passes: Promise<void> = Promise.resolve();

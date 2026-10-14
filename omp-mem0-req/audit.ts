@@ -2,9 +2,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { checkBrief, editBrief, renderBrief, writeBrief } from "./context.ts";
+import { checkBrief, editBrief, renderBrief, writeBrief, writeReport } from "./context.ts";
 import type { BriefInput } from "./context.ts";
-import { readAudit, renderAuditBrief, transitionAudit, writeAudit } from "./auditRecord.ts";
+import { readAudit, renderAuditBrief, transitionAudit, writeAudit, writeAuditReportDraft } from "./auditRecord.ts";
 import { resolveFeatureRoot, toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, lotFeature, lotRepoKey, lotReplaceable, readLot } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
@@ -136,7 +136,7 @@ export type ProposalElementKind = "weakness" | "feature";
 export type ProposalElement = { kind: ProposalElementKind; slug: string; intention: string; deps: string[] };
 
 /** Une proposition validée : les faiblesses dans l'ordre reçu, PUIS les features. */
-export type Proposal = { elements: ProposalElement[]; brief: BriefInput };
+export type Proposal = { elements: ProposalElement[]; brief: BriefInput; report: string };
 
 /**
  * Le premier cycle de dépendances, parcouru en profondeur dans l'ordre des
@@ -222,9 +222,12 @@ export function checkProposal(input: unknown): { ok: true; proposal: Proposal } 
   }
   const cycle = dependencyCycle(elements);
   if (cycle !== null) return fail(`Error: dependency cycle « ${cycle.join(" → ")} »`);
+  // Le rapport (analyse complète) : refusé comme un brief manquant, AVANT le brief.
+  if (typeof record.rapport !== "string") return fail("Error: rapport is missing");
+  if (record.rapport.trim() === "") return fail("Error: rapport is empty");
   const briefChecked = checkBrief(record.brief);
   if (!briefChecked.ok) return fail(briefChecked.error);
-  return { ok: true, proposal: { elements, brief: briefChecked.brief } };
+  return { ok: true, proposal: { elements, brief: briefChecked.brief, report: record.rapport } };
 }
 
 /**
@@ -400,6 +403,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     repoRoot: string,
     elements: readonly ProposalElement[],
     brief: BriefInput,
+    report: string,
     signal: AbortSignal | undefined,
   ): Promise<RelayToolResult> {
     // Les éléments pris, lus À CE TOUR : deux propositions successives ne lancent
@@ -498,7 +502,10 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
       retained.push({ slug, intention, deps: elementDeps, modelReqSpecs, modelImplReview, fallbackReqSpecs, fallbackImplReview });
     }
     if (interrupted()) return toolText(INTERRUPTED);
-    if (briefText !== null && retained.length > 0) writeBrief(deps.stateDir(), sessionFile, briefText);
+    if (briefText !== null && retained.length > 0) {
+      writeBrief(deps.stateDir(), sessionFile, briefText);
+      writeReport(deps.stateDir(), sessionFile, report);
+    }
 
     // S-4 — l'enrôlement, un ajout à la fois dans l'ordre des dépendances.
     const controller = deps.controllerFor(ctx);
@@ -604,7 +611,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             const repoRoot = state.repoRoot as string;
             return inDialogTurn(
               signal,
-              () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, checked.proposal.brief, signal),
+              () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, checked.proposal.brief, checked.proposal.report, signal),
               () => toolText(INTERRUPTED),
             );
           },
@@ -629,6 +636,7 @@ function proposalParameters(pi: ExtensionAPI) {
       constraints: "string[]",
       nonGoals: "string[]",
     }),
+    rapport: "string",
   });
 }
 
@@ -655,9 +663,15 @@ export function registerAuditReportTool(pi: ExtensionAPI, binding: { auditId: st
       }
       const checked = checkProposal(params);
       if (!checked.ok) return toolText(checked.error, true);
-      const { elements, brief } = checked.proposal;
+      const { elements, brief, report } = checked.proposal;
       const moved = transitionAudit(record, "proposed", Date.now());
       if (!moved.ok) return toolText(`Error: ${moved.error}`, true);
+      // Le rapport d'abord : un échec ne laisse aucune transition derrière lui.
+      try {
+        writeAuditReportDraft(binding.stateDir, binding.auditId, report);
+      } catch (error) {
+        return toolText(`Error: rapport non enregistré : ${error instanceof Error ? error.message : String(error)}`, true);
+      }
       const weaknesses = elements.filter((element) => element.kind === "weakness");
       writeAudit(binding.stateDir, {
         ...moved.audit,

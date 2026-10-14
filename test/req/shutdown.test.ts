@@ -180,6 +180,7 @@ function seedLot(stateDir: string, repoRoot: string): Lot {
 /** Une proposition VALIDE : elle passe `checkProposal` et atteint le contrôle d'armement. */
 const PROPOSAL = {
   brief: { purpose: "But.", function: "Fonction.", decisions: [], constraints: [], nonGoals: [] },
+  rapport: "## Faiblesses\n\n1. borne-file — lot.ts : aucune borne sur la file",
   weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
   features: [{ name: "alpha", intention: "Borner la file du lot." }],
 };

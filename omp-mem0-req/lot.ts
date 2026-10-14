@@ -1320,6 +1320,12 @@ export function lotReviewCap(env: Record<string, string | undefined> = process.e
 }
 
 
+/** `MEM0_PIPELINE_ARBITER_JOURNAL` : entrées du journal du lot soumises à l'arbitre (défaut 200). */
+export function lotArbiterJournalMax(env: Record<string, string | undefined> = process.env): number {
+  return envInt(env.MEM0_PIPELINE_ARBITER_JOURNAL, 200, 1, 10_000);
+}
+
+
 /** `MEM0_PIPELINE_SLOTS` : runs de features du lot menés en parallèle (défaut 4). */
 export const PIPELINE_SLOTS_DEFAULT = 4;
 
