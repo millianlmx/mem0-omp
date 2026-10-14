@@ -83,14 +83,14 @@ struct PariteMacTests {
     func modelLinesUseGroupLabelsAndNames() {
         let names = KanbanLabelParity.modelNames
         #expect(KanbanCardPresentation.modelLines(card(models: KanbanLabelParity.models), names: names) == KanbanModelLines(
-            reqSpecs: "Modèle /req et /specs : Claude Opus 5.5",
-            implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
+            reqSpecs: "Modèle cadrage+revue : Claude Opus 5.5",
+            implReview: "Modèle exécution : lm-studio/qwen3-coder-30b"
         ))
         #expect(KanbanCardPresentation.modelLines(card(models: KanbanLabelParity.models), names: nil)?.reqSpecs
-            == "Modèle /req et /specs : anthropic/claude-opus-5-5")
+            == "Modèle cadrage+revue : anthropic/claude-opus-5-5")
         let noReview = ModelSlots(reqSpecs: "anthropic/claude-opus-5-5", implReview: nil)
         #expect(KanbanCardPresentation.modelLines(card(models: noReview), names: names)?.implReview
-            == "Modèle /impl et /review : défaut OMP")
+            == "Modèle exécution : défaut OMP")
         #expect(KanbanCardPresentation.modelLines(card(models: nil), names: names) == nil)
     }
 
@@ -114,9 +114,9 @@ struct PariteMacTests {
     @Test("parite-mac-des-correctifs-ios/AC-11 : E-9, la ligne des deux modèles du plan porte les libellés de groupe")
     func modelsLineUsesGroupLabels() {
         #expect(KanbanText.modelsLine(KanbanLabelParity.models)
-            == "Modèle /req et /specs : anthropic/claude-opus-5-5 · Modèle /impl et /review : lm-studio/qwen3-coder-30b")
-        #expect(KanbanText.modelReqSpecs == "Modèle /req et /specs")
-        #expect(KanbanText.modelImplReview == "Modèle /impl et /review")
+            == "Modèle cadrage+revue : anthropic/claude-opus-5-5 · Modèle exécution : lm-studio/qwen3-coder-30b")
+        #expect(KanbanText.modelReqSpecs == "Modèle cadrage+revue")
+        #expect(KanbanText.modelImplReview == "Modèle exécution")
     }
 
     // MARK: - Voies Mac (BR-2 : S-1, S-2)
@@ -260,7 +260,7 @@ struct PariteMacTests {
 
         // Carte du tableau : les deux lignes C-3.
         let lines = try #require(KanbanCardPresentation.modelLines(card(models: KanbanLabelParity.models), names: actions.modelNames))
-        #expect(lines.reqSpecs == "Modèle /req et /specs : Claude Opus 5.5")
+        #expect(lines.reqSpecs == "Modèle cadrage+revue : Claude Opus 5.5")
         #expect(!lines.reqSpecs.contains("anthropic/claude-opus-5-5"))
         // Fiche : la valeur de la grille Informations.
         #expect(ModelCatalog.displayName("anthropic/claude-opus-5-5", names: actions.modelNames) == "Claude Opus 5.5")
@@ -278,8 +278,8 @@ struct PariteMacTests {
 
         let lines = try #require(KanbanCardPresentation.modelLines(card(models: KanbanLabelParity.models), names: actions.modelNames))
         #expect(lines == KanbanModelLines(
-            reqSpecs: "Modèle /req et /specs : anthropic/claude-opus-5-5",
-            implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
+            reqSpecs: "Modèle cadrage+revue : anthropic/claude-opus-5-5",
+            implReview: "Modèle exécution : lm-studio/qwen3-coder-30b"
         ))
         #expect(ModelCatalog.displayName("anthropic/claude-opus-5-5", names: actions.modelNames) == "anthropic/claude-opus-5-5")
     }

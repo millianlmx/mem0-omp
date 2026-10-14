@@ -532,9 +532,9 @@ public struct LotFeature: Sendable, Equatable, Codable {
     /// ANCIEN modèle unique, conservé en LECTURE seule (il remplit les deux
     /// groupes tant qu'il existe).
     public var model: String?
-    /// Le sélecteur exact du groupe req+specs (`modelReqSpecs` du lot).
+    /// Le sélecteur exact du groupe cadrage+revue (`modelReqSpecs` du lot : runs req, specs et review).
     public var modelReqSpecs: String?
-    /// Le sélecteur exact du groupe impl+review+release (`modelImplReview`).
+    /// Le sélecteur exact du groupe exécution (`modelImplReview` : runs impl et release).
     public var modelImplReview: String?
     public var held: HeldLaunch?
     public var contractHash: String?
@@ -663,8 +663,8 @@ extension LotFeature {
     }
 }
 
-/// Les deux modèles d'une feature, RÉSOLUS : le groupe req+specs et le groupe
-/// impl+review (release comprise). Miroir console de `featureModelSlots`
+/// Les deux modèles d'une feature, RÉSOLUS : le groupe cadrage+revue (req, specs,
+/// review) et le groupe exécution (impl, release). Miroir console de `featureModelSlots`
 /// (`omp-mem0-req/models.ts`).
 ///
 /// `resolve` rend `nil` quand la feature ne porte AUCUNE des trois clés — auquel
@@ -799,9 +799,9 @@ public struct ProjectFeature: Sendable, Equatable, Codable {
     public var intention: String
     /// ANCIEN modèle unique, conservé en LECTURE seule.
     public var model: String?
-    /// Le sélecteur exact du groupe req+specs (`modelReqSpecs` du projet).
+    /// Le sélecteur exact du groupe cadrage+revue (`modelReqSpecs` du projet).
     public var modelReqSpecs: String? = nil
-    /// Le sélecteur exact du groupe impl+review+release (`modelImplReview`).
+    /// Le sélecteur exact du groupe exécution (`modelImplReview`).
     public var modelImplReview: String? = nil
     public var status: ProjectFeatureStatus
     public var prUrl: String?

@@ -179,8 +179,8 @@ function newFeatureFaults(root: string): string[] {
   if (view === "") return ["NewFeatureSheetView.swift absent"];
   if (!view.includes("KanbanLaunchRepos.options(")) faults.push("la feuille ne tire pas ses dépôts de l'ardoise");
   if (!view.includes("ModelCatalog.choices(")) faults.push("la feuille n'emploie pas les choix de modèles");
-  if (!view.includes("KanbanText.modelReqSpecs")) faults.push("la feuille n'a pas le champ « Modèle /req et /specs »");
-  if (!view.includes("KanbanText.modelImplReview")) faults.push("la feuille n'a pas le champ « Modèle /impl et /review »");
+  if (!view.includes("KanbanText.modelReqSpecs")) faults.push("la feuille n'a pas le champ « Modèle cadrage+revue »");
+  if (!view.includes("KanbanText.modelImplReview")) faults.push("la feuille n'a pas le champ « Modèle exécution »");
   if (!view.includes("NewFeatureText.titlePlaceholder")) faults.push("la feuille n'a pas le champ titre");
   if (!view.includes("NewFeatureText.needPlaceholder")) faults.push("la feuille n'a pas le champ besoin");
   if (!view.includes("NewFeatureText.noKnownRepo")) faults.push("la feuille n'annonce pas l'absence de dépôt");
@@ -195,8 +195,8 @@ function createFaults(root: string): string[] {
   const faults: string[] = [];
   if (!/client\.launch\(\s*repoRoot:/.test(view)) faults.push("la feuille n'appelle pas client.launch");
   if (!view.includes("dismiss()")) faults.push("la feuille ne se referme pas après création");
-  if (!view.includes("modelReqSpecs: req")) faults.push("la feuille ne transmet pas le modèle req+specs");
-  if (!view.includes("modelImplReview: impl")) faults.push("la feuille ne transmet pas le modèle impl+review");
+  if (!view.includes("modelReqSpecs: req")) faults.push("la feuille ne transmet pas le modèle cadrage+revue");
+  if (!view.includes("modelImplReview: impl")) faults.push("la feuille ne transmet pas le modèle exécution");
   return faults;
 }
 

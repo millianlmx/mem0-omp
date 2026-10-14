@@ -397,8 +397,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   `[capture: iphone-nouvelle-feature-rempli-light]`
 - Sous le champ titre, aucune ligne : la feuille ne cite ni branche ni « feat/ ».
   `[garde: ios-redaction-vouvoiement/AC-3]`
-- Les deux sélecteurs de modèle s'appellent « Modèle /req et /specs » et « Modèle
-  /impl et /review ». `[garde: ios-redaction-vouvoiement/AC-7]`
+- Les deux sélecteurs de modèle s'appellent « Modèle cadrage+revue » et « Modèle
+  exécution ». `[garde: ios-redaction-vouvoiement/AC-7]`
 - La feuille se capture par le crochet de recette `-pipelines.recipe`
   (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
 - La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur

@@ -15,7 +15,7 @@ public struct ProjectPlanRow: Equatable, Sendable {
     public let slug: String
     public let stateLabel: String
     public let prUrl: String?
-    /// La forme canonique des deux modèles : `req+specs <A> · impl+review <B>`,
+    /// La forme canonique des deux modèles : `cadrage+revue <A> · exécution <B>`,
     /// ou `nil` quand la feature n'en porte aucun.
     public let models: String?
     public let intention: String

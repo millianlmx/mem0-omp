@@ -47,19 +47,19 @@ struct PipelinesCardSheetTests {
         #expect(
             KanbanCardPresentation.modelLines(card(models: both), names: catalog)
                 == KanbanModelLines(
-                    reqSpecs: "Modèle /req et /specs : Claude Opus 5.5",
-                    implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
+                    reqSpecs: "Modèle cadrage+revue : Claude Opus 5.5",
+                    implReview: "Modèle exécution : lm-studio/qwen3-coder-30b"
                 )
         )
         #expect(
             KanbanCardPresentation.modelLines(card(models: both), names: nil)
                 == KanbanModelLines(
-                    reqSpecs: "Modèle /req et /specs : anthropic/claude-opus-5-5",
-                    implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
+                    reqSpecs: "Modèle cadrage+revue : anthropic/claude-opus-5-5",
+                    implReview: "Modèle exécution : lm-studio/qwen3-coder-30b"
                 )
         )
         let noReview = ModelSlots(reqSpecs: known, implReview: nil)
-        #expect(KanbanCardPresentation.modelLines(card(models: noReview), names: catalog)?.implReview == "Modèle /impl et /review : défaut OMP")
+        #expect(KanbanCardPresentation.modelLines(card(models: noReview), names: catalog)?.implReview == "Modèle exécution : défaut OMP")
         #expect(KanbanCardPresentation.modelLines(card(models: nil), names: catalog) == nil)
     }
 

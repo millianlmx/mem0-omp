@@ -14,7 +14,7 @@ import { ARBITRATION_REFUSAL } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
-import { fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForPhase, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
+import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
 import { questionOf } from "./lot.ts";
@@ -1290,8 +1290,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return { kind: "answer", answer: known.answer, source: "contexte", selected: arbiterItem.options.includes(known.answer) };
       }
     }
-    const fallback = featureFallbackForPhase(feature, item.phase);
-    const started = startModel(featureModelForPhase(feature, item.phase), fallback);
+    const fallback = featureFallbackForGroup(feature, ARBITER_MODEL_GROUP);
+    const started = startModel(featureModelForGroup(feature, ARBITER_MODEL_GROUP), fallback);
     if ("blocked" in started) {
       return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
     }

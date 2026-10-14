@@ -805,7 +805,8 @@ test("repli : helpers de modèle — groupe de la phase, clé écrite seulement 
   const feature = { fallbackReqSpecs: "a/b", fallbackImplReview: "c/d" };
   assert.equal(featureFallbackForPhase(feature, "req"), "a/b");
   assert.equal(featureFallbackForPhase(feature, "specs"), "a/b");
-  for (const phase of ["impl", "review", "release"] as const) assert.equal(featureFallbackForPhase(feature, phase), "c/d");
+  for (const phase of ["impl", "release"] as const) assert.equal(featureFallbackForPhase(feature, phase), "c/d");
+  assert.equal(featureFallbackForPhase(feature, "review"), "a/b", "review suit le groupe cadrage+revue");
   assert.equal(featureFallbackForPhase({}, "impl"), null, "clé absente = aucun repli");
   assert.deepEqual(fallbackSlotsField({ fallbackReqSpecs: "", fallbackImplReview: null }), {});
   assert.deepEqual(fallbackSlotsField({ fallbackReqSpecs: "a/b" }), { fallbackReqSpecs: "a/b" });
@@ -819,8 +820,8 @@ test("repli : helpers de modèle — groupe de la phase, clé écrite seulement 
   assert.equal(options[0]!.label, NO_FALLBACK_LABEL);
   assert.deepEqual(options.slice(1).map(option => option.label), ["a/m2", "b/m3"], "le principal choisi n'est jamais proposé");
   assert.deepEqual(fallbackDialogOptions([], "a/m1"), [], "catalogue vide : aucun dialogue");
-  assert.equal(fallbackQuestionTitle("alpha", "modelReqSpecs"), "Repli req+specs — alpha");
-  assert.equal(fallbackQuestionTitle("alpha", "modelImplReview"), "Repli impl+review — alpha");
+  assert.equal(fallbackQuestionTitle("alpha", "modelReqSpecs"), "Repli cadrage+revue — alpha");
+  assert.equal(fallbackQuestionTitle("alpha", "modelImplReview"), "Repli exécution — alpha");
   assert.equal(fallbackDialogChoice(undefined), null);
   assert.deepEqual(fallbackDialogChoice("aucun repli"), { fallback: null });
   assert.deepEqual(fallbackDialogChoice("b/m3"), { fallback: "b/m3" });
@@ -938,7 +939,7 @@ test("canal : `add` écrit les replis, `editModels` laisse inchangé une clé ab
   // Repli égal au principal du même groupe : refus, rien ne change.
   assert.equal(
     await controller.editModels("alpha", { modelReqSpecs: P, modelImplReview: "prov/impl", fallbackImplReview: "prov/impl" }),
-    "repli identique au modèle principal (impl+review)",
+    "repli identique au modèle principal (exécution)",
   );
   assert.equal(feature().fallbackImplReview, "prov/autre", "le refus ne modifie rien");
   // « Défaut OMP » comme principal avec un repli choisi est permis.
@@ -1362,8 +1363,8 @@ function br2AssertFourDialogs(calls: Br2Call[], slug: string, principals: [strin
   const dialogs = calls.filter(call => call.kind === "select" && /^(Modèle|Repli) /.test(call.title));
   assert.deepEqual(
     dialogs.map(call => call.title),
-    [`Modèle req+specs — ${slug}`, `Repli req+specs — ${slug}`, `Modèle impl+review — ${slug}`, `Repli impl+review — ${slug}`],
-    "P req+specs → R req+specs → P impl+review → R impl+review",
+    [`Modèle cadrage+revue — ${slug}`, `Repli cadrage+revue — ${slug}`, `Modèle exécution — ${slug}`, `Repli exécution — ${slug}`],
+    "P cadrage+revue → R cadrage+revue → P exécution → R exécution",
   );
   const catalogue = BR2_CATALOGUE.map(model => `${model.provider}/${model.id}`);
   assert.deepEqual(br2Labels(dialogs[0]!.items), ["défaut OMP (aucun modèle)", ...[...catalogue].sort()]);
@@ -1424,7 +1425,7 @@ test("context-optimization-architecture/AC-1 : /audit et /project posent quatre 
   assert.equal("fallbackImplReview" in projectFeature, false);
 
   // --- le rang du panneau affiche les replis ---
-  const label = "alpha · req+specs prov/a (repli autre/m) · impl+review prov/b";
+  const label = "alpha · cadrage+revue prov/a (repli autre/m) · exécution prov/b";
   assert.equal(lotFeatureLabel(created), label);
   assert.ok(br2Rows(fx.stateDir, fx.repoRoot).text.includes(label), "le rang de /pipelines porte `(repli <R>)`");
 
@@ -1436,26 +1437,26 @@ test("context-optimization-architecture/AC-1 : /audit et /project posent quatre 
   });
   panel.screen();
   panel.press(["m"]);
-  assert.match(panel.screen(), /Modèle req\+specs/);
-  panel.press(["\r"]); // P req+specs conservé
-  assert.match(panel.screen(), /Repli req\+specs/);
+  assert.match(panel.screen(), /Modèle cadrage\+revue/);
+  panel.press(["\r"]); // P cadrage+revue conservé
+  assert.match(panel.screen(), /Repli cadrage\+revue/);
   assert.match(panel.screen(), /aucun repli/);
   assert.doesNotMatch(panel.screen(), /^\s*>?\s*prov\/a\s*$/m, "le principal n'est pas dans la liste du repli");
   panel.press(["\u001b[A", "\u001b[A", "\u001b[A", "\u001b[A", "\u001b[A", "\r"]); // tout en haut : `aucun repli`
-  assert.match(panel.screen(), /Modèle impl\+review/);
-  panel.press(["\r"]); // P impl+review conservé
-  assert.match(panel.screen(), /Repli impl\+review/);
+  assert.match(panel.screen(), /Modèle exécution/);
+  panel.press(["\r"]); // P exécution conservé
+  assert.match(panel.screen(), /Repli exécution/);
   panel.press(["\u001b[A", "\u001b[A", "\u001b[A", "\u001b[A", "\u001b[A", "\u001b[B", "\r"]); // `aucun repli` puis un cran : autre/m
   assert.match(
     panel.screen(),
-    /Modifier les modèles de alpha \? · req\+specs prov\/a \(repli aucun\) · impl\+review prov\/b \(repli autre\/m\)/,
+    /Modifier les modèles de alpha \? · cadrage\+revue prov\/a \(repli aucun\) · exécution prov\/b \(repli autre\/m\)/,
     "l'aperçu dit les deux replis, « aucun » compris",
   );
   panel.press(["\r"]);
   await flush(6);
   panel.component.dispose();
   let edited = fx.featureOf("alpha");
-  assert.equal("fallbackReqSpecs" in edited, false, "le repli req+specs est retiré");
+  assert.equal("fallbackReqSpecs" in edited, false, "le repli cadrage+revue est retiré");
   assert.equal(edited.fallbackImplReview, "autre/m");
   assert.equal(edited.modelReqSpecs, "prov/a", "les principaux ne bougent pas");
   assert.equal(edited.modelImplReview, "prov/b");
@@ -1486,7 +1487,7 @@ test("context-optimization-architecture/AC-1 : /audit et /project posent quatre 
   deposit({ ...base, id: "m3", modelReqSpecs: "prov/a", modelImplReview: "prov/b", fallbackReqSpecs: "prov/a" });
   await fx.controller.pumpCommands();
   assert.ok(
-    fx.notices.includes("[pipeline] commande models : repli identique au modèle principal (req+specs)"),
+    fx.notices.includes("[pipeline] commande models : repli identique au modèle principal (cadrage+revue)"),
     `notice de refus : ${fx.notices.join(" | ")}`,
   );
   assert.equal(fx.featureOf("alpha").fallbackReqSpecs, "autre/n", "le refus ne modifie rien");
@@ -1614,7 +1615,7 @@ function br2AssertResumed(stateDir: string, quota: Br2QuotaRunner, primaries: Re
   }
   const lot = findLot(stateDir)!;
   for (const feature of lot.features) {
-    assert.equal(feature.fallbackReqSpecs, "autre/m", "le repli du groupe req+specs devient M");
+    assert.equal(feature.fallbackReqSpecs, "autre/m", "le repli du groupe cadrage+revue devient M");
     assert.equal(feature.modelReqSpecs, primaries[feature.slug]);
     assert.equal("fallbackImplReview" in feature, false, "l'autre groupe n'est pas touché");
     assert.equal(feature.quota, undefined, "le quota est effacé");

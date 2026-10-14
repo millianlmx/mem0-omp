@@ -838,7 +838,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       }
 
       // Les DEUX modèles de la feature (S-2) : demandés ICI — après la validation
-      // du nom, AVANT toute écriture, dans l'ordre req+specs puis impl+review. Une
+      // du nom, AVANT toute écriture, dans l'ordre cadrage+revue puis exécution. Une
       // annulation ne laisse donc ni branche, ni worktree, ni session derrière elle.
       // Sans interface ou sans modèle connu, aucune question n'est posée : la
       // feature naît sans clé de modèle (défaut OMP).

@@ -77,17 +77,18 @@ export function filterModelChoices(choices: readonly ModelChoice[], query: strin
 // --- les deux groupes de phase (S-1) -----------------------------------------
 
 /**
- * Les deux groupes de modèle d'une feature (S-1) : `req`+`specs` d'un côté,
- * `impl`+`review`+`release` de l'autre. Les valeurs SONT les noms des champs du
- * lot — c'est cette coïncidence qui fait de `modelGroupOf` la seule table de
- * résolution des phases.
+ * Les deux groupes de modèle d'une feature (S-1) : `req`, `specs` et `review`
+ * (cadrage+revue, le groupe fort) d'un côté, `impl` (y compris `--fix`) et
+ * `release` (exécution, le groupe économique) de l'autre. Les valeurs SONT les
+ * noms des champs du lot — c'est cette coïncidence qui fait de `modelGroupOf` la
+ * seule table de résolution des phases.
  */
 export type ModelGroupKey = "modelReqSpecs" | "modelImplReview";
 
 /** Le libellé d'un groupe, mot pour mot, partout où il s'affiche (S-1). */
 export const MODEL_GROUP_LABELS: Record<ModelGroupKey, string> = {
-  modelReqSpecs: "req+specs",
-  modelImplReview: "impl+review",
+  modelReqSpecs: "cadrage+revue",
+  modelImplReview: "exécution",
 };
 
 /**
@@ -98,13 +99,20 @@ export const MODEL_GROUP_LABELS: Record<ModelGroupKey, string> = {
 export const DEFAULT_MODEL_SHORT_LABEL = "défaut OMP";
 
 /**
- * Le groupe de phase d'un maillon : `req` et `specs` d'un côté, `impl`, `review`
- * et `release` de l'autre. C'est la SEULE granularité de modèle (S-1) : un maillon
- * ne porte jamais son propre modèle.
+ * Le groupe de phase d'un maillon : `req`, `specs` et `review` sur cadrage+revue,
+ * `impl` (avec ou sans `--fix`) et `release` sur exécution. C'est la SEULE
+ * granularité de modèle (S-1) : un maillon ne porte jamais son propre modèle.
  */
 export function modelGroupOf(phase: PipelinePhase): ModelGroupKey {
-  return phase === "req" || phase === "specs" ? "modelReqSpecs" : "modelImplReview";
+  return phase === "req" || phase === "specs" || phase === "review" ? "modelReqSpecs" : "modelImplReview";
 }
+
+/**
+ * Le groupe de l'ARBITRE (S-3) : toujours cadrage+revue, quelle que soit la phase
+ * de l'élément arbitré. L'arbitre remplace la validation humaine ; il ne bascule
+ * donc jamais sur le groupe exécution.
+ */
+export const ARBITER_MODEL_GROUP: ModelGroupKey = "modelReqSpecs";
 
 /** Le porteur minimal des trois clés de modèle : la feature du lot, ou toute forme qui les porte. */
 export type ModelSlotsCarrier = Pick<LotFeature, "model" | "modelReqSpecs" | "modelImplReview">;
@@ -113,14 +121,19 @@ export type ModelSlotsCarrier = Pick<LotFeature, "model" | "modelReqSpecs" | "mo
 export type ModelSlots = { reqSpecs: string | null; implReview: string | null };
 
 /**
- * Le modèle d'un groupe de phase (S-1) : la clé du groupe si elle est renseignée,
- * sinon l'ANCIEN modèle unique (`model`, conservé en lecture seule), sinon `null` —
+ * Le modèle d'un GROUPE (S-1) : la clé du groupe si elle est renseignée, sinon
+ * l'ANCIEN modèle unique (`model`, conservé en lecture seule), sinon `null` —
  * « défaut OMP », donc aucun `--model` sur les runs de ce groupe (AC-6).
  */
-export function featureModelForPhase(feature: ModelSlotsCarrier, phase: PipelinePhase): string | null {
-  const keyed = feature[modelGroupOf(phase)];
+export function featureModelForGroup(feature: ModelSlotsCarrier, group: ModelGroupKey): string | null {
+  const keyed = feature[group];
   if (typeof keyed === "string" && keyed.trim() !== "") return keyed;
   return typeof feature.model === "string" && feature.model.trim() !== "" ? feature.model : null;
+}
+
+/** Le modèle du groupe de la phase (S-1) : `featureModelForGroup` sur `modelGroupOf(phase)`. */
+export function featureModelForPhase(feature: ModelSlotsCarrier, phase: PipelinePhase): string | null {
+  return featureModelForGroup(feature, modelGroupOf(phase));
 }
 
 /**
@@ -163,14 +176,19 @@ export function modelSlotsField(input: {
 export type FallbackSlotsCarrier = Pick<LotFeature, "fallbackReqSpecs" | "fallbackImplReview">;
 
 /**
- * Le repli du groupe de la phase (S-1) : la clé du groupe si elle est renseignée,
- * sinon `null` — « aucun repli ». Contrairement au modèle, il n'y a AUCUN ancien
+ * Le repli d'un GROUPE (S-1) : la clé du groupe si elle est renseignée, sinon
+ * `null` — « aucun repli ». Contrairement au modèle, il n'y a AUCUN ancien
  * champ unique à relire : une feature d'avant le repli n'en a pas.
  */
-export function featureFallbackForPhase(feature: FallbackSlotsCarrier, phase: PipelinePhase): string | null {
-  const key = modelGroupOf(phase) === "modelReqSpecs" ? "fallbackReqSpecs" : "fallbackImplReview";
+export function featureFallbackForGroup(feature: FallbackSlotsCarrier, group: ModelGroupKey): string | null {
+  const key = group === "modelReqSpecs" ? "fallbackReqSpecs" : "fallbackImplReview";
   const value = feature[key];
   return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+/** Le repli du groupe de la phase (S-1) : `featureFallbackForGroup` sur `modelGroupOf(phase)`. */
+export function featureFallbackForPhase(feature: FallbackSlotsCarrier, phase: PipelinePhase): string | null {
+  return featureFallbackForGroup(feature, modelGroupOf(phase));
 }
 
 /**
@@ -324,7 +342,7 @@ export type ModelSelectFn = (
 
 /**
  * Les QUATRE dialogues de création d'une feature (S-1), dans l'ordre : principal
- * req+specs → repli req+specs → principal impl+review → repli impl+review. Rend
+ * cadrage+revue → repli cadrage+revue → principal exécution → repli exécution. Rend
  * `null` à la première annulation (Échap) — chaque porte la traite comme
  * l'annulation du dialogue de modèle principal. Catalogue vide : aucune question,
  * `{ models: {null, null}, fallbacks: {null, null} }` (le flux d'avant).
@@ -361,7 +379,7 @@ export async function askFeatureModels(
 
 /**
  * Les étapes de choix d'un ajout ou d'une édition, DANS L'ORDRE du flux : principal
- * puis repli de req+specs, principal puis repli de impl+review. Les valeurs SONT les
+ * puis repli de cadrage+revue, principal puis repli d'exécution. Les valeurs SONT les
  * noms des champs du brouillon.
  */
 export const MODEL_STEPS = ["modelReqSpecs", "fallbackReqSpecs", "modelImplReview", "fallbackImplReview"] as const;

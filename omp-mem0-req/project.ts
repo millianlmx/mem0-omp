@@ -524,7 +524,7 @@ export function renderProjectDoc(project: Project, repoName: string): string {
       "",
       `### Segment ${index + 1} — ${oneLine(segment.name)} (${state})`,
       "",
-      "| # | Feature | État | PR | Modèle req+specs | Modèle impl+review | Intention |",
+      "| # | Feature | État | PR | Modèle cadrage+revue | Modèle exécution | Intention |",
       "|---|---|---|---|---|---|---|",
     );
     let row = 0;
