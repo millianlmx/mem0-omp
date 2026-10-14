@@ -41,6 +41,7 @@ import {
   buildPanelRows,
   commandDir,
   LOT_RUNS_MAX,
+  RUN_TURN_ERROR_WITHOUT_MESSAGE,
   appendRunRecord,
   contextPeakLine,
   contextBlock,
@@ -232,7 +233,13 @@ const assistantText = (provider: string, model: string, text: string): Record<st
  * ajoute à `messages` les messages du tour suivant, comme le fait une vraie session.
  * `startModel` est le modèle que la session « résout » à l'ouverture (`session.model`).
  */
-function fakeRunHost(options: { startModel: string | null; turns: FakeTurn[]; extraSessions?: Array<"project" | "session"> }): FakeRunHost {
+function fakeRunHost(options: {
+  startModel: string | null;
+  turns: FakeTurn[];
+  extraSessions?: Array<"project" | "session">;
+  /** Expose `getLastAssistantMessage()` sur la session — absent par défaut, comme dans les doublures historiques. */
+  lastAssistant?: () => unknown;
+}): FakeRunHost {
   const opens: FakeRunHost["opens"] = [];
   const prompts: string[] = [];
   const setModels: FakeRunHost["setModels"] = [];
@@ -245,6 +252,7 @@ function fakeRunHost(options: { startModel: string | null; turns: FakeTurn[]; ex
     const messages: Array<Record<string, unknown>> = [];
     const split = (selector: string) => ({ provider: selector.slice(0, selector.indexOf("/")), id: selector.slice(selector.indexOf("/") + 1) });
     return {
+      ...(options.lastAssistant ? { getLastAssistantMessage: options.lastAssistant } : {}),
       get messages() {
         return messages;
       },
@@ -525,22 +533,95 @@ test("sans autre modèle disponible, le run rend le quota (code 1, `quota`), jam
   assert.equal(sansRepli.setModels.length, 0);
 });
 
-test("une erreur d'API qui n'est pas un quota reste traitée comme avant (code 0, aucun quota)", async () => {
+// ---------------------------------------------------------------------------
+// runner-echec — le dernier tour en erreur non quota fait échouer le run (B-1)
+// ---------------------------------------------------------------------------
+
+const turnError = (errorMessage: string | undefined): Record<string, unknown> => ({
+  role: "assistant",
+  provider: "prov",
+  model: "principal",
+  stopReason: "error",
+  ...(errorMessage === undefined ? {} : { errorMessage }),
+  content: [],
+});
+
+async function runTurns(
+  turns: FakeTurn[],
+  extra: { lastAssistant?: () => unknown; fallback?: string | null } = {},
+) {
+  const fake = fakeRunHost({ startModel: P, turns, ...(extra.lastAssistant ? { lastAssistant: extra.lastAssistant } : {}) });
   const stateDir = tmpdir("coa-state-");
   const worktree = tmpdir("coa-wt-");
-  const fake = fakeRunHost({
-    startModel: P,
-    turns: [[{ role: "assistant", provider: "prov", model: "principal", stopReason: "error", errorMessage: "500 Internal Server Error", content: [] }]],
-  });
   const result = await createMaillonRunner({ host: fake.host, log: () => {}, now: () => T0 })({
-    spec: runSpec(stateDir, worktree),
+    spec: runSpec(stateDir, worktree, extra.fallback === undefined ? {} : { fallback: extra.fallback }),
     cwd: worktree,
     timeout: 60_000,
     signal: signal(),
   });
+  return { result, fake };
+}
+
+test("runner-echec/AC-1 : un dernier tour en erreur 500 rend code 1, non coupé, avec le message d'erreur en stderr", async () => {
+  // (a) message d'erreur dans `messages`.
+  {
+    const { result, fake } = await runTurns([[turnError("500 Internal Server Error")]]);
+    assert.equal(result.code, 1);
+    assert.equal(result.killed, false);
+    assert.match(result.stderr, /500 Internal Server Error/);
+    assert.equal(result.quota, undefined);
+    assert.equal(fake.setModels.length, 0, "aucun repli de modèle sur une erreur non quota");
+    assert.equal(fake.disposed(), 1, "la session est libérée");
+  }
+  // (b) un refus élagué du contexte (absent de `messages`) n'est vu que par getLastAssistantMessage().
+  {
+    const { result } = await runTurns([[assistantText("prov", "principal", "fini")]], {
+      lastAssistant: () => turnError("classifier refusal"),
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /classifier refusal/);
+  }
+  // (c) message multi-ligne : une seule ligne, espaces normalisées.
+  {
+    const { result } = await runTurns([[turnError("  500 Internal\n   Server\tError  ")]]);
+    assert.equal(result.stderr, "500 Internal Server Error");
+  }
+});
+
+test("runner-echec/AC-2 : un dernier tour en erreur sans errorMessage rend code 1 et un stderr non vide qui nomme l'erreur", async () => {
+  for (const errorMessage of ["", "   \n ", undefined]) {
+    const { result } = await runTurns([[turnError(errorMessage)]]);
+    assert.equal(result.code, 1);
+    assert.equal(result.killed, false);
+    assert.equal(result.stderr, RUN_TURN_ERROR_WITHOUT_MESSAGE);
+    assert.match(result.stderr, /error/);
+  }
+});
+
+test("runner-echec/AC-3 : un dernier tour en échec quota garde son traitement : quota rendu, ou code 0 si le modèle est inconnu", async () => {
+  // (a) quota avec provider et modèle, aucun autre modèle : code 1 + champ `quota`, comme avant.
+  {
+    const { result } = await runTurns([[quotaError("prov", "principal", 600_000)]], { fallback: null });
+    assert.equal(result.code, 1);
+    assert.equal(result.killed, false);
+    assert.equal(result.quota?.model, P);
+    assert.equal(result.quota?.announced, true);
+    assert.match(result.stderr, /^quota épuisé : prov\/principal \(prov\)/);
+  }
+  // (b) quota sans provider : `quotaOfLastTurn` rend null, le run reste un code 0 (jamais l'échec de la règle S-1).
+  {
+    const { result } = await runTurns([[quotaError("", "", null)]]);
+    assert.equal(result.code, 0);
+    assert.equal(result.quota, undefined);
+    assert.equal(result.stderr, "");
+  }
+});
+
+test("runner-echec/AC-4 : une erreur intermédiaire suivie d'un dernier tour réussi reste un succès (code 0)", async () => {
+  const { result } = await runTurns([[turnError("500 Internal Server Error"), assistantText("prov", "principal", "fini")]]);
   assert.equal(result.code, 0);
-  assert.equal(result.quota, undefined);
-  assert.equal(fake.setModels.length, 0);
+  assert.equal(result.killed, false);
+  assert.equal(result.stderr, "");
 });
 
 // ---------------------------------------------------------------------------
@@ -847,7 +928,6 @@ test("repli : un lot sans clé de repli se relit à l'identique, et une clé vid
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -2956,12 +3036,6 @@ test("context-optimization-architecture/AC-20 : la boucle review → impl --fix 
   const expected = releaseArgs({ pushUrl: `${BR2_GH}/o/r.git`, branch: state.branch, base: "main", title: "init", bodyFile: null, body: "" });
   assert.deepEqual(rig.gitCalls.find(args => args[0] === "push"), expected.push);
   assert.deepEqual(rig.ghCalls.find(args => args[0] === "pr"), expected.pr);
-
-  // `## Lots` de ce contrat : A (BR-1, BR-2), B (BR-3..BR-5), C (BR-6, BR-7), dans l'ordre.
-  const contractFile = path.join(ROOT, ".omp", "pipeline", "contract.md");
-  if (fs.existsSync(contractFile)) {
-    assert.deepEqual(contractLots(fs.readFileSync(contractFile, "utf8")), ["BR-1", "BR-2", "BR-3", "BR-4", "BR-5", "BR-6", "BR-7"]);
-  }
 });
 
 test("lots d'impl : `contractLots` lit les en-têtes de `## Lots` (dernière occurrence, sans doublon), moins de 2 lots gardent un seul run, directives et ligne de lot exactes", async () => {

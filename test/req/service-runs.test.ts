@@ -165,7 +165,6 @@ function feature(slug: string, worktree: string) {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -263,7 +262,6 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
     stateDir,
     worktree,
     inbox: spec.inbox,
-    deadlineAt: null,
     primary: null,
     fallback: null,
   });
@@ -332,6 +330,32 @@ test("service-runs/AC-11 : le budget coupé rend `killed` + code 124, jamais un 
   const result = await running;
   assert.equal(result.killed, true);
   assert.equal(result.code, 124);
+  assert.equal(host.disposedCount(), 1, "la session du maillon est libérée");
+});
+
+test("runner-borne/AC-17 : l'échéance `spec.deadline` atteinte coupe le run (code 124, killed)", async () => {
+  const stateDir = path.join(mktmp("service-runs-"), "pipeline");
+  const worktree = mktmp("service-runs-wt-");
+  const host = fakeHost({ hold: true });
+  const runner = createMaillonRunner({ host: host.sessionHost, log: () => {} });
+  const spec: LotRunSpec = {
+    lotId: "abc",
+    slug: "iso",
+    phase: "impl",
+    stateDir,
+    worktree,
+    prompt: "travaille",
+    sessionFile: null,
+    model: null,
+    primary: null,
+    fallback: null,
+    inbox: null,
+    // Déjà échue : seul le minuteur du runner (1 s) peut couper — le signal n'est jamais avorté.
+    deadline: Date.now() - 1,
+  };
+  const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
+  assert.equal(result.code, 124);
+  assert.equal(result.killed, true);
   assert.equal(host.disposedCount(), 1, "la session du maillon est libérée");
 });
 

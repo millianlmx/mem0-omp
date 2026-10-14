@@ -845,6 +845,21 @@ s'affiche tel quel au lieu d'être avalé.
   « propre » sur le verdict laissé par la correction précédente. Le verdict est lu dans la
   **dernière** section `## Revue` du contrat, et « aucun bloquant » s'écrit de plusieurs
   façons (`- BLOQUANTS : aucun`, `Aucun bloquant.`, `aucun (tous levés)`, `néant`…).
+  Deux compteurs la bornent, chacun à `MEM0_PIPELINE_REVIEW_CAP` : `fixes` (tours
+  `/impl --fix` consommés) et `unreadableRuns` (revues illisibles d'affilée, remis à zéro par
+  tout verdict lisible) ; tous deux sont comptés au lancement du run et remis à zéro par une
+  relance. Le panneau affiche le compteur tel quel : `--fix · tour <fixes>/<plafond>` pendant
+  une correction, `tour <unreadableRuns>/<plafond>` pendant une revue illisible relancée,
+  rien quand il vaut 0.
+- **Un run en échec ne passe pas pour un succès** : un maillon dont le dernier tour finit en
+  erreur d'API (`stopReason: "error"`) autre qu'un quota passe *échoué* (`failed`), avec le
+  message d'erreur pour motif d'arrêt — un quota garde son blocage et son repli de modèle. Un
+  `/impl` (avec ou sans `--fix`, et chaque lot d'impl) qui rend la main sans avoir changé le
+  worktree — `git status --porcelain` vide et `HEAD` inchangé depuis le début du run ; le
+  contrat `.omp/pipeline/`, ignoré par git, ne compte pas — passe *bloqué* (`blocked`)
+  « /impl n'a rien produit » au lieu d'enchaîner `/review` ; une question posée en texte
+  garde la priorité, et une vérification git impossible bloque aussi (« vérification du
+  worktree impossible : … »).
 - **Une question de l'agent ne consomme pas le budget du run** : le délai du maillon est
   suspendu tant qu'une question est en vol, et une question qui arrive déclenche une alerte
   (transcript + toast) avec son texte — sans elle, un maillon pouvait expirer en « délai
@@ -1101,9 +1116,9 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
 | `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`), des lots (`lots/`), du canal de commande (`commands/` + `commands/acks/`) et du service (`service.json` — pid, port, jeton — et `service.log`, la sortie du job launchd), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
-| `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
+| `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`, compteur `fixes`) et des revues illisibles d'affilée (`unreadableRuns`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
 | `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
-| `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget d'un run de maillon en millisecondes (10 s à 24 h) ; au-delà, la feature passe `échoué` |
+| `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget de travail d'un run de maillon en millisecondes (10 s à 24 h), suspendu tant qu'une question est en vol ; au-delà, la feature passe `échoué` « délai dépassé (<budget> min) ». Seule borne dure : le minuteur du runner coupe la session à budget + 1 h (code 124) et la feature passe `échoué` « délai dépassé (<budget + 60> min) », soit 120 min par défaut |
 | `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` du job launchd du service et des runs de conversation (chemin absolu si `omp` n'est pas dans le `PATH`) |
 | `MEM0_SERVICE_PORT` | `8788` | port d'écoute de l'API du service (boucle locale uniquement) ; s'il est occupé, le service prend un port éphémère et `service.json` porte le port réel — les clients lisent toujours ce fichier |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |

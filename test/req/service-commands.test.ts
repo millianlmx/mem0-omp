@@ -83,7 +83,6 @@ function feature(slug: string, worktree: string, over: Record<string, unknown> =
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -198,7 +197,6 @@ function publishMaillon(stateDir: string, worktree: string, inbox: string | null
     stateDir,
     worktree,
     inbox,
-    deadlineAt: null,
     primary: null,
     fallback: null,
   });

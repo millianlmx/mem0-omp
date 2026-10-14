@@ -97,7 +97,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     contractHash: null,
     addedAt: at,
     sinceAt: at,
@@ -795,6 +794,8 @@ test("panneau/AC-5 : un message part en file, sans toucher au run en vol", async
       }),
     ]);
     assert.equal(await controller.relaunch("alpha"), null);
+    // La référence HEAD d'un run d'impl est relevée avant son lancement : le run part un instant après.
+    await flush();
     assert.equal(runs.length, 1, "la relance démarre un run");
     assert.match(
       promptOf(runs[0]!),

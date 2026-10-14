@@ -182,6 +182,54 @@ export async function branchTaken(run: GitRunner, primaryRoot: string, branch: s
     .some((line) => line.trim().endsWith(`/${branch}`));
 }
 
+/** Verdict de la vérification « le run a-t-il changé le worktree ? ». */
+export type WorktreeCheck = { kind: "changed" } | { kind: "unchanged" } | { kind: "unknown"; detail: string };
+
+
+/** Dernière ligne non vide de stderr (trim), à défaut `code <n>` — local : runs.ts importe déjà git.ts. */
+function gitDetail(res: GitResult): string {
+  const lines = res.stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+  return lines.length > 0 ? (lines[lines.length - 1] as string) : `code ${res.code}`;
+}
+
+
+/** SHA de HEAD du worktree, ou `null` (hors dépôt, branche à naître, git muet). Ne lève jamais. */
+export async function worktreeHead(run: GitRunner, worktree: string): Promise<string | null> {
+  try {
+    const res = await run(["rev-parse", "--verify", "HEAD"], worktree);
+    const sha = res.stdout.trim();
+    return res.code === 0 && sha !== "" ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+
+/**
+ * Le worktree a-t-il changé depuis `head` ? Un porcelain non vide OU un HEAD
+ * différent est un changement ; `.omp/pipeline/` (ignoré par git) n'en est jamais
+ * un. L'existence du dossier est testée AVANT git : un `cwd` absent empêche le
+ * process de démarrer, ce qui ressemblerait à un échec muet. Ne lève jamais.
+ */
+export async function worktreeProduced(run: GitRunner, worktree: string, head: string): Promise<WorktreeCheck> {
+  if (!fs.existsSync(worktree)) return { kind: "unknown", detail: "worktree introuvable" };
+  try {
+    // `--untracked-files=normal` explicite : `status.showUntrackedFiles=no` cacherait un fichier créé.
+    const status = await run(["status", "--porcelain", "--untracked-files=normal"], worktree);
+    if (status.code !== 0) return { kind: "unknown", detail: `git status : ${gitDetail(status)}` };
+    if (status.stdout.trim() !== "") return { kind: "changed" };
+    const now = await run(["rev-parse", "--verify", "HEAD"], worktree);
+    const sha = now.stdout.trim();
+    if (now.code !== 0 || sha === "") return { kind: "unknown", detail: `git rev-parse : ${gitDetail(now)}` };
+    return sha !== head ? { kind: "changed" } : { kind: "unchanged" };
+  } catch (err) {
+    return { kind: "unknown", detail: `git : ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 
 /**
  * Crée le worktree de la feature depuis le dépôt principal. Aucun `--force`,

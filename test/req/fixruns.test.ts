@@ -1,16 +1,15 @@
 // Preuves des correctifs de la plomberie des runs (audit du 2026-09-23, RUNS-1,
 // RUNS-2, RUNS-4, RUNS-5, RUNS-6, RUNS-10, RUNS-12 et le contrat `liveRunFor`).
-// Neuf propriétés, et nulle part ailleurs :
+// Huit propriétés, et nulle part ailleurs :
 //   1. l'enfant d'un plugin INSTALLÉ ne reçoit pas `-e` (le double chargement) ;
 //   2. un process armé n'a qu'une pompe et qu'un outil `ask` ;
-//   3. l'ask en vol est rejeté à l'échéance de `--pipeline-deadline` ;
-//   4. la session d'un SOUS-AGENT n'est jamais celle qu'une réponse reprend ;
-//   5. la bascule de collecte refuse tout ce qui n'est pas la collecte `req` close ;
-//   6. `liveRunFor` ne rend que l'entrée d'un run VIVANT ;
-//   7. une republication sans changement n'écrit pas le fichier du magasin ;
-//   8. une seconde question est refusée, une réponse orpheline est consommée sans
+//   3. la session d'un SOUS-AGENT n'est jamais celle qu'une réponse reprend ;
+//   4. la bascule de collecte refuse tout ce qui n'est pas la collecte `req` close ;
+//   5. `liveRunFor` ne rend que l'entrée d'un run VIVANT ;
+//   6. une republication sans changement n'écrit pas le fichier du magasin ;
+//   7. une seconde question est refusée, une réponse orpheline est consommée sans
 //      effet, et le chien de garde rejette la question en vol ;
-//   9. un sous-agent ne publie ni sa session ni la clôture du maillon.
+//   8. un sous-agent ne publie ni sa session ni la clôture du maillon.
 //
 // Tout est exercé sur des artefacts RÉELS (répertoires `mkdtempSync`, fichiers de
 // session JSONL, magasin sur disque) et des doublures INJECTÉES (l'API de l'hôte,
@@ -34,7 +33,6 @@ import reqExtension, {
   PANEL_INBOX_POLL_MS,
   panelInboxDirFor,
   pidAlive,
-  pipelineDeadlineOf,
   pluginsInstallRoot,
   pumpInbox,
   readDeliveries,
@@ -68,17 +66,6 @@ async function flush(times = 4): Promise<void> {
     setImmediate(resolve);
     await promise;
   }
-}
-
-/**
- * Une VRAIE attente courte, assumée : l'échéance de `--pipeline-deadline` est un
- * instant d'horloge murale comparé à `Date.now()`, et rien ne permet de piloter
- * cette horloge de l'extérieur — le test doit donc laisser passer le temps.
- */
-async function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  await promise;
 }
 
 /** Un fichier de session au VRAI format : ligne 1 le créneau de titre, ligne 2 l'en-tête. */
@@ -148,7 +135,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     contractHash: null,
     addedAt: at,
     sinceAt: at,
@@ -193,6 +179,8 @@ type FakeApp = {
   /** L'outil `ask` enregistré par l'extension, appelable comme l'hôte l'appelle. */
   ask: (toolCallId: string, params: unknown, ctx: unknown, signal?: AbortSignal) => Promise<AskResult>;
   sent: Array<{ text: string; deliverAs?: string }>;
+  /** Les noms des drapeaux enregistrés par l'extension au chargement. */
+  flags: string[];
 };
 
 function mkApp(flagValues: Record<string, string>): FakeApp {
@@ -200,13 +188,16 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   const toolNames: string[] = [];
   const sent: Array<{ text: string; deliverAs?: string }> = [];
   const live: Record<string, string> = { ...flagValues };
+  const flags: string[] = [];
   let askTool:
     | ((toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>)
     | null = null;
   const pi = {
     registerCommand() {},
     registerShortcut() {},
-    registerFlag() {},
+    registerFlag(name: string) {
+      flags.push(name);
+    },
     getFlag: (name: string) => live[name],
     on(name: string, handler: (event: never, ctx: never) => Promise<unknown>) {
       hooks.set(name, handler);
@@ -233,6 +224,7 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     pi,
     toolNames,
     sent,
+    flags,
     ask: (toolCallId, params, ctx, signal) => {
       assert.ok(askTool, "l'outil `ask` doit être enregistré par le run armé");
       return askTool(toolCallId, params, signal, undefined, ctx);
@@ -347,38 +339,47 @@ test("fixruns/AC-2 : un process armé n'a qu'une pompe et qu'un seul outil `ask`
 });
 
 // ---------------------------------------------------------------------------
-// RUNS-2 — la borne dure du run
+// RUNS-2 — plus d'échéance par drapeau
 // ---------------------------------------------------------------------------
 
-test("fixruns/AC-3 : l'ask en vol est rejeté à l'échéance de `--pipeline-deadline`", async () => {
-  // Marge LARGE, volontairement : l'échéance est un instant d'horloge murale et
-  // `ask` refuse d'emblée quand elle est déjà passée (inbox.ts:122-124). Une marge
-  // de 20 ms expirait AVANT la publication sur un runner chargé — la CI macOS l'a
-  // fait rougir le 2026-09-28 (PR #38 : « la question est publiée » rendait
-  // `undefined`). La séquence testée est inchangée : la question part avant
-  // l'échéance, l'échéance la refuse.
-  const deadline = Date.now() + 500;
-  const { app, ctx, inbox, stateDir, worktree } = armedFixture({ "pipeline-deadline": String(deadline) });
-  assert.equal(pipelineDeadlineOf(app.pi as never), deadline, "le drapeau est lu comme une échéance");
+test("sans-echeance/AC-15 : l'extension n'enregistre plus le drapeau `pipeline-deadline`", () => {
+  const { app } = armedFixture();
+  assert.deepEqual([...app.flags].sort(), [
+    "panel-inbox",
+    "pipeline-feature",
+    "pipeline-lot",
+    "pipeline-phase",
+    "pipeline-service",
+    "pipeline-state-dir",
+  ]);
+});
+
+test("sans-echeance/AC-16 : une échéance de drapeau déjà passée ne rejette plus l'ask", async () => {
+  // Un `getFlag("pipeline-deadline")` présent par erreur n'a plus aucun effet : la
+  // question est publiée et attend sa réponse au lieu d'être refusée.
+  const { app, ctx, inbox, stateDir, worktree } = armedFixture({ "pipeline-deadline": String(Date.now() - 60_000) });
   await app.hooks.get("session_start")!(undefined as never, ctx as never);
 
-  const pending = app.ask("call-1", { questions: [{ id: "q", question: "On garde ?", options: [{ label: "oui" }] }] }, ctx);
+  let settled = false;
+  const pending = app
+    .ask("call-1", { questions: [{ id: "q", question: "On garde ?", options: [{ label: "oui" }] }] }, ctx)
+    .finally(() => {
+      settled = true;
+    });
   await flush(2);
   assert.equal(publishedEntry(stateDir, worktree)?.pendingAsk?.toolCallId, "call-1", "la question est publiée");
+  assert.equal(runStateOf(ctx).pendingAsk?.toolCallId, "call-1", "la question est en vol");
 
-  await sleep(600);
   pumpInbox(app.pi as never, ctx as never, inbox, true);
-  const refused = await pending;
-  assert.equal(refused.isError, true);
-  assert.match(refused.content[0]!.text, /délai du run atteint/);
-  assert.equal(publishedEntry(stateDir, worktree)?.pendingAsk ?? null, null, "la question n'est plus en vol");
-  assert.equal(runStateOf(ctx).pumpStop, null, "la pompe du run est éteinte");
+  await flush(2);
+  assert.equal(settled, false, "la question attend toujours sa réponse");
+  assert.equal(runStateOf(ctx).pendingAsk?.toolCallId, "call-1", "la question reste en vol après la pompe");
 
-  // Une question posée APRÈS l'échéance est refusée d'emblée : plus personne ne
-  // répondra, le modèle doit rendre la main au lieu d'attendre.
-  const later = await app.ask("call-2", { questions: [{ id: "q", question: "Et là ?", options: [{ label: "oui" }] }] }, ctx);
-  assert.equal(later.isError, true);
-  assert.match(later.content[0]!.text, /délai du run atteint/);
+  // Règle la question pour ne rien laisser pendre.
+  writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 1 });
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
+  const answered = await pending;
+  assert.match(answered.content[0]!.text, /Réponse de l'utilisateur : oui/);
 });
 
 // ---------------------------------------------------------------------------

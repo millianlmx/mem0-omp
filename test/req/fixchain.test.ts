@@ -126,7 +126,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -988,4 +987,208 @@ test("fixchain/AC-19 : une seconde annulation pendant la première ne s'empile p
   const after = current(stateDir, repoRoot, "alpha");
   assert.equal(after.state, "cancelled");
   assert.equal(fs.existsSync(worktree), true, "le devenir de la PREMIÈRE (gardé) est celui qui s'applique");
+});
+
+test("chaine-fin-de-run/AC-5 : un run impl en code 1 (dernier tour en erreur 500) fait échouer la feature, sans lancer de review", async () => {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const { runner, runs } = mkRunner({
+    mode: "result",
+    result: () => ({ code: 1, killed: false, stdout: "", stderr: "500 Internal Server Error" }),
+  });
+  const { controller, stateDir } = mkCtl(repoRoot, runner);
+  seedLot(stateDir, repoRoot, [feature("alpha", { state: "blocked", phase: "impl", stopReason: "boom" })]);
+
+  assert.equal(await controller.relaunch("alpha"), null);
+  await flush();
+  const after = current(stateDir, repoRoot, "alpha");
+  assert.equal(after.state, "failed");
+  assert.match(after.stopReason ?? "", /500 Internal Server Error/);
+  assert.deepEqual(runs.map(phaseOf), ["impl"], "un seul run, et aucun run review");
+});
+
+// ---------------------------------------------------------------------------
+// Un /impl qui ne change pas le worktree passe bloqué ; la coupe du runner dit sa vraie durée
+// ---------------------------------------------------------------------------
+
+/**
+ * Un worktree = un dépôt git RÉEL (branche main), avec `.gitignore` = `.omp/pipeline/`
+ * et un fichier suivi, puis le contrat (ignoré par git, donc jamais une preuve de
+ * travail). Un tmpdir hors dépôt n'a pas de HEAD : la règle ne s'y applique pas.
+ */
+function gitWorktree(): string {
+  const wt = emptyGitRepo("fixchain-wtgit-");
+  fs.writeFileSync(path.join(wt, ".gitignore"), ".omp/pipeline/\n", "utf8");
+  fs.writeFileSync(path.join(wt, "src.txt"), "un\n", "utf8");
+  git(["add", ".gitignore", "src.txt"], wt);
+  git(["commit", "-q", "-m", "base"], wt);
+  writeContract(wt, CONTRACT_SPECS);
+  return wt;
+}
+
+/**
+ * Un run d'impl lancé PAR le pilote (sans quoi aucune référence HEAD n'est relevée) :
+ * la feature `blocked` en `impl` est relancée, `act` joue l'agent dans le worktree,
+ * puis le run rend la main avec `stdout`. Rend l'état relu et les runs lancés.
+ */
+async function implRunEndingWith(act: (worktree: string) => void, stdout = "voilà.") {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = gitWorktree();
+  const { runner, runs, gate } = mkRunner({ mode: "gate" });
+  const { controller, stateDir } = mkCtl(repoRoot, runner);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, branch: "main", state: "blocked", phase: "impl", stopReason: "boom" }),
+  ]);
+  assert.equal(await controller.relaunch("alpha"), null);
+  await waitFor(() => runs.length === 1);
+  assert.equal(phaseOf(runs[0]!), "impl");
+  act(worktree);
+  gate.shift()!({ code: 0, killed: false, stdout, stderr: "" });
+  await waitFor(() => current(stateDir, repoRoot, "alpha").state !== "running" || runs.length === 2);
+  await flush();
+  return { after: current(stateDir, repoRoot, "alpha"), phases: runs.map(phaseOf) };
+}
+
+test("chaine-fin-de-run/AC-6 : un run impl sans aucun changement du worktree passe la feature bloquée, sans review", async () => {
+  const { after, phases } = await implRunEndingWith(() => {});
+  assert.equal(after.state, "blocked");
+  assert.equal(after.stopReason, "/impl n'a rien produit");
+  assert.deepEqual(phases, ["impl"], "aucun run review");
+});
+
+test("chaine-fin-de-run/AC-7 : un run impl --fix sans aucun changement passe la feature bloquée, sans review", async () => {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = gitWorktree();
+  writeContract(worktree, withVerdict("\n1. le test manque"));
+  const { runner, runs, gate } = mkRunner({ mode: "gate" });
+  const { controller, stateDir } = mkCtl(repoRoot, runner);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, branch: "main", state: "running", phase: "review", contractHash: WORKED }),
+  ]);
+
+  await controller.tick();
+  await waitFor(() => runs.length === 1);
+  assert.ok(promptOf(runs[0]!).includes("[impl --fix]"), "la revue bloquante lance /impl --fix");
+  assert.equal(current(stateDir, repoRoot, "alpha").fixes, 1);
+  gate.shift()!(OK);
+  await waitFor(() => current(stateDir, repoRoot, "alpha").state !== "running" || runs.length === 2);
+  await flush();
+
+  const after = current(stateDir, repoRoot, "alpha");
+  assert.equal(after.state, "blocked");
+  assert.equal(after.stopReason, "/impl n'a rien produit");
+  assert.equal(runs.length, 1, "aucun run review");
+});
+
+test("chaine-fin-de-run/AC-8 : un fichier suivi modifié sans commit suffit : la review part", async () => {
+  const { after, phases } = await implRunEndingWith((wt) => fs.appendFileSync(path.join(wt, "src.txt"), "deux\n"));
+  assert.equal(after.state, "running");
+  assert.deepEqual(phases, ["impl", "review"]);
+});
+
+test("chaine-fin-de-run/AC-9 : un commit créé (porcelain vide, HEAD avancé) suffit : la review part", async () => {
+  const { after, phases } = await implRunEndingWith((wt) => {
+    fs.appendFileSync(path.join(wt, "src.txt"), "deux\n");
+    git(["commit", "-q", "-am", "travail"], wt);
+    assert.equal(git(["status", "--porcelain"], wt), "", "le worktree est propre : seul HEAD a bougé");
+  });
+  assert.equal(after.state, "running");
+  assert.deepEqual(phases, ["impl", "review"]);
+});
+
+test("chaine-fin-de-run/AC-10 : n'avoir écrit que le contrat (ignoré par git) ne prouve aucun travail", async () => {
+  const { after, phases } = await implRunEndingWith((wt) => writeContract(wt, `${CONTRACT_SPECS}\n## Corrections\n\n- fait.\n`));
+  assert.equal(after.state, "blocked");
+  assert.equal(after.stopReason, "/impl n'a rien produit");
+  assert.deepEqual(phases, ["impl"]);
+});
+
+test("chaine-fin-de-run/AC-11 : une question en texte garde la priorité sur « rien produit »", async () => {
+  const { after, phases } = await implRunEndingWith(() => {}, QUESTION);
+  assert.equal(after.state, "waiting");
+  assert.equal(after.waitKind, "answer");
+  assert.deepEqual(phases, ["impl"]);
+});
+
+test("chaine-fin-de-run/AC-12 : un worktree supprimé pendant le run bloque, la vérification est impossible", async () => {
+  const { after, phases } = await implRunEndingWith((wt) => fs.rmSync(wt, { recursive: true, force: true }));
+  assert.equal(after.state, "blocked");
+  assert.equal(after.stopReason, "vérification du worktree impossible : worktree introuvable");
+  assert.deepEqual(phases, ["impl"], "jamais de review à l'aveugle");
+});
+
+test("chaine-fin-de-run/AC-13 : un run specs sans `## Spécifications` reste bloqué « aucune spécification écrite par /specs »", async () => {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = gitWorktree();
+  writeContract(worktree, CONTRACT_CLOSED);
+  const { runner, runs, gate } = mkRunner({ mode: "gate" });
+  const { controller, stateDir } = mkCtl(repoRoot, runner);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, branch: "main", state: "blocked", phase: "specs", stopReason: "boom" }),
+  ]);
+  assert.equal(await controller.relaunch("alpha"), null);
+  await waitFor(() => runs.length === 1);
+  assert.equal(phaseOf(runs[0]!), "specs");
+  gate.shift()!(OK);
+  await waitFor(() => current(stateDir, repoRoot, "alpha").state !== "running");
+
+  const after = current(stateDir, repoRoot, "alpha");
+  assert.equal(after.state, "blocked");
+  assert.equal(after.stopReason, "aucune spécification écrite par /specs");
+});
+
+test("chaine-fin-de-run/AC-14 : un run d'impl repris sans référence HEAD, sans changement, enchaîne la review", async () => {
+  // Une feature `running` relue d'un lot écrit par une version antérieure : le run
+  // n'a pas été lancé par CE pilote, donc aucune référence — comportement d'avant.
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = gitWorktree();
+  const { runner, runs } = mkRunner({ mode: "gate" });
+  const { controller, stateDir } = mkCtl(repoRoot, runner);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, branch: "main", state: "running", phase: "impl", contractHash: WORKED }),
+  ]);
+
+  await controller.tick();
+  await waitFor(() => runs.length === 1);
+  assert.equal(phaseOf(runs[0]!), "review");
+  assert.equal(current(stateDir, repoRoot, "alpha").state, "running");
+});
+
+test("chaine-fin-de-run/AC-18 : un run coupé par le runner affiche la vraie borne dure (runTimeout + 1 h)", async () => {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = tmpdir("fixchain-wt-");
+  writeContract(worktree, CONTRACT_SPECS);
+  const { runner } = mkRunner({
+    mode: "result",
+    result: () => ({ code: 124, killed: true, stdout: "", stderr: "run interrompu (budget ou échéance)" }),
+  });
+  const { controller, stateDir } = mkCtl(repoRoot, runner, { runTimeoutMs: 60_000 });
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "blocked", phase: "impl", stopReason: "boom" })]);
+
+  assert.equal(await controller.relaunch("alpha"), null);
+  await waitFor(() => current(stateDir, repoRoot, "alpha").state === "failed");
+  const after = current(stateDir, repoRoot, "alpha");
+  assert.equal(after.state, "failed");
+  assert.equal(after.stopReason, "délai dépassé (61 min)");
+});
+
+test("chaine-fin-de-run/AC-19 : le budget de travail expiré garde son motif « délai dépassé (1 min) »", async () => {
+  const repoRoot = emptyGitRepo("fixchain-repo-");
+  const worktree = tmpdir("fixchain-wt-");
+  writeContract(worktree, CONTRACT_SPECS);
+  let clock = 1_700_000_000_000;
+  const { runner, runs, gate } = mkRunner({ mode: "gate" });
+  const { controller, stateDir } = mkCtl(repoRoot, runner, { now: () => clock, runTimeoutMs: 60_000 });
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
+
+  await controller.tick();
+  await flush();
+  assert.equal(runs.length, 1, "le maillon tourne");
+  clock += 2 * 60_000;
+  await controller.tick();
+  await flush();
+
+  const after = current(stateDir, repoRoot, "alpha");
+  assert.equal(after.state, "failed");
+  assert.equal(after.stopReason, "délai dépassé (1 min)");
+  assert.equal(gate.length, 1, "le run n'a jamais rendu la main de lui-même");
 });

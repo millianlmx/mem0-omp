@@ -70,6 +70,9 @@ export const RUN_KILLED_CODE = 124;
 /** Le nombre maximal de reprises sur l'autre modèle après un quota, par run (S-2). */
 export const MAX_QUOTA_RESUMES = 3;
 
+/** Le motif d'un run dont le dernier tour finit en `stopReason: "error"` sans message d'erreur (S-1). */
+export const RUN_TURN_ERROR_WITHOUT_MESSAGE = "dernier tour du run en stopReason error, sans message d'erreur";
+
 
 /** `true` quand l'échéance est passée : le runner coupe et rend 124. */
 function expired(deadline: number | null, now: number): boolean {
@@ -130,6 +133,30 @@ function quotaOfLastTurn(session: HostedSession["session"], since: number, at: n
 }
 
 
+/**
+ * Le dernier message assistant de la session (S-1). `getLastAssistantMessage()`
+ * est la voie d'autorité : elle rend aussi un refus de classifieur élagué du
+ * contexte actif, que `session.messages` ne montre plus. Repli par parcours des
+ * messages quand l'hôte ne l'expose pas.
+ */
+function lastAssistantMessage(session: HostedSession["session"]): unknown {
+  if (typeof session.getLastAssistantMessage === "function") return session.getLastAssistantMessage();
+  const messages: readonly unknown[] = session.messages;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && typeof message === "object" && "role" in message && message.role === "assistant") return message;
+  }
+  return undefined;
+}
+
+/** Le motif d'un tour en erreur : son `errorMessage` sur une ligne, à défaut {@link RUN_TURN_ERROR_WITHOUT_MESSAGE}. */
+function turnErrorText(message: object): string {
+  const raw = "errorMessage" in message && typeof message.errorMessage === "string" ? message.errorMessage : "";
+  const text = raw.replace(/\s+/g, " ").trim();
+  return text === "" ? RUN_TURN_ERROR_WITHOUT_MESSAGE : text;
+}
+
+
 export type MaillonRunnerDeps = {
   host: SessionHost;
   log?: (line: string) => void;
@@ -171,7 +198,6 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       stateDir: spec.stateDir,
       worktree: spec.worktree,
       inbox: spec.inbox,
-      deadlineAt: spec.deadline,
       primary: spec.primary,
       fallback: spec.fallback,
     };
@@ -268,6 +294,13 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       const stdout = hosted.transcript.join("\n\n");
       if (killed) return { code: RUN_KILLED_CODE, killed: true, stdout, stderr: "run interrompu (budget ou échéance)", peakContext: peaks.peak() };
       if (quota !== null) return { ...quotaResult(quota), peakContext: peaks.peak() };
+      // Le DERNIER tour fait foi : une erreur d'API (hors quota) qui le termine est
+      // un échec du run, pas un succès muet. Une erreur plus tôt dans le run, suivie
+      // d'un tour qui a abouti, n'en est pas un.
+      const last = lastAssistantMessage(session);
+      if (last !== null && typeof last === "object" && "stopReason" in last && last.stopReason === "error" && !isQuotaFailure(last)) {
+        return { code: 1, killed: false, stdout, stderr: turnErrorText(last), peakContext: peaks.peak() };
+      }
       return { code: 0, killed: false, stdout, stderr: "", peakContext: peaks.peak() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

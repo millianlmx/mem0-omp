@@ -154,7 +154,6 @@ function lotFeature(e: EntreeJeu, slug: Slug, champs: {
     prUrl: champs.prUrl ?? null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,

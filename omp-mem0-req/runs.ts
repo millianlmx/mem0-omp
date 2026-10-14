@@ -148,8 +148,8 @@ export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, san
 - Le contrat de cette feature vit dans .omp/pipeline/contract.md, relatif à ton répertoire de travail.`;
 
 
-/** La graine d'un maillon : les quatre existantes, plus la livraison. */
-export function phaseSeed(input: { phase: PipelinePhase; slug: string; fix: boolean; focus: string }): string {
+/** La graine d'un maillon : les quatre existantes, plus la livraison. La collecte `req` n'en a pas : elle passe par le genre `collecte` de `buildLotPrompt`. */
+export function phaseSeed(input: { phase: Exclude<PipelinePhase, "req">; slug: string; fix: boolean; focus: string }): string {
   switch (input.phase) {
     case "specs":
       return buildSpecsSeed(input.focus);
@@ -159,8 +159,6 @@ export function phaseSeed(input: { phase: PipelinePhase; slug: string; fix: bool
       return buildReviewSeed(input.focus);
     case "release":
       return buildReleaseSeed({ slug: input.slug, branch: branchFor(input.slug) });
-    case "req":
-      return `[req] Collecte des besoins de la feature « ${input.slug} ».`;
   }
 }
 
@@ -217,22 +215,23 @@ export function buildLotPrompt(input: {
   milestone?: string;
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
-  const seed = phaseSeed({ phase: input.phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+  const { phase } = input;
   let prompt: string;
-  if (input.kind === "collecte") {
-    const intent = (input.description ?? "").trim();
-    prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
-  } else if (input.kind === "answer") {
+  if (input.kind === "answer") {
     prompt =
       `${ANSWER_PREFIX[input.source ?? "utilisateur"]} ${(input.text ?? "").trim()}\n\n` +
-      `Maillon courant : /${input.phase}. Lis le contrat .omp/pipeline/contract.md pour l'état de la feature.\n\n` +
+      `Maillon courant : /${phase}. Lis le contrat .omp/pipeline/contract.md pour l'état de la feature.\n\n` +
       LOT_WORKER_DIRECTIVE;
-  } else if (input.kind === "relaunch") {
-    prompt =
-      "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
-      `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
+  } else if (input.kind === "collecte" || phase === "req") {
+    const intent = (input.description ?? "").trim();
+    prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
   } else {
-    prompt = `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
+    const seed = phaseSeed({ phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+    prompt =
+      input.kind === "relaunch"
+        ? "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
+          `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`
+        : `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
   }
   const withContext = input.context ? `${prompt}\n\n${input.context}` : prompt;
   const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
@@ -454,22 +453,6 @@ export function workerModeOf(pi: FlagReader): WorkerMode | null {
     stateDir: typeof dir === "string" && path.isAbsolute(dir) ? dir : null,
   };
 }
-
-
-/**
- * La BORNE DURE d'un run armé (`--pipeline-deadline`, epoch ms), ou `null` quand
- * le drapeau est absent ou illisible. C'est le filet de sécurité d'un run dont le
- * pilote vit mais ne répond plus : le délai de travail, lui, appartient au pilote,
- * qui le suspend tant qu'une question `ask` est en vol.
- */
-export function pipelineDeadlineOf(pi: FlagReader): number | null {
-  if (typeof pi.getFlag !== "function") return null;
-  const raw = pi.getFlag("pipeline-deadline");
-  if (typeof raw !== "string" || raw.trim() === "") return null;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
-}
-
 
 /**
  * La session du dernier run d'un cwd : celle qu'on reprend pour répondre (AC-12).

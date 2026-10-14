@@ -79,7 +79,6 @@ function feature(slug: string, worktree: string, state: "pending" | "running" = 
     prUrl: null,
     stopReason: state === "running" ? null : null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,

@@ -89,7 +89,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -561,7 +560,7 @@ test("fixpanel/AC-5 : le tour de correction, le verdict bloquant et l'URL de PR 
   const repoRoot = tmpdir("fixpanel-ac5-repo-");
   seedLot(stateDir, repoRoot, [
     feature("corrige", { state: "running", phase: "impl", fixes: 2 }),
-    feature("relu", { state: "running", phase: "review", reviewRuns: 1 }),
+    feature("relu", { state: "running", phase: "review", unreadableRuns: 1 }),
     feature("bloquants", { state: "waiting", phase: "impl", waitKind: "specs", lastVerdict: "blockers", lastBlockers: 2 }),
     feature("livre", { state: "done", phase: "release", prUrl: "https://example.test/pull/42" }),
     feature("vierge", { state: "running", phase: "impl" }),
@@ -574,8 +573,8 @@ test("fixpanel/AC-5 : le tour de correction, le verdict bloquant et l'URL de PR 
   });
   const drawn = text(rows);
 
-  assert.match(drawn, /--fix · tour 3\/3/, "un tour de correction dit son rang et le plafond du lot");
-  assert.match(drawn, /\/review · en cours · 0:00 · tour 2\/3/, "une revue en cours dit son tour");
+  assert.match(drawn, /--fix · tour 2\/3/, "un tour de correction dit son rang et le plafond du lot");
+  assert.match(drawn, /\/review · en cours · 0:00 · tour 1\/3/, "une revue illisible relancée dit son tour");
   assert.match(drawn, /dernière revue : 2 bloquants/, "le verdict bloquant est publié avec son compte");
   assert.match(drawn, /PR : https:\/\/example\.test\/pull\/42/, "l'URL de la PR d'une feature livrée est affichée");
   // Sans tour à lire, la colonne de droite ne change pas d'un octet.
