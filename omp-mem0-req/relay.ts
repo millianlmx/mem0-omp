@@ -186,6 +186,8 @@ export type RelayProfile = {
   keyOf(): string | null;
   /** Le plafond de la boucle revue ⇄ correction est-il un élément de ce relais ? */
   cap: boolean;
+  /** L'échec d'une feature du lot est-il un élément de ce relais ? */
+  failure: boolean;
   /** Les éléments supplémentaires, APRÈS ceux du lot (les échecs du projet). */
   extraItems?(lot: Lot | null): RelayItem[];
   /** Le message injecté pour un élément, mot pour mot. */
@@ -205,13 +207,13 @@ export type RelayProfile = {
 /**
  * Les éléments courants des features relayées à `key`, dans l'ordre du lot, au
  * plus un par feature (S-6). Pure hors `liveOf`, qui lit le run vivant. Le
- * plafond de revue n'est un élément que si `cap`.
+ * plafond de revue n'est un élément que si `cap`, l'échec de la feature que si `failure`.
  */
 export function relayItemsOf(
   lot: Lot,
   key: string,
   liveOf: (feature: LotFeature) => RunningEntry | null,
-  options: { cap: boolean },
+  options: { cap: boolean; failure: boolean },
 ): RelayItem[] {
   const items: RelayItem[] = [];
   for (const feature of lot.features) {
@@ -264,6 +266,10 @@ export function relayItemsOf(
       isReviewCapReason(feature.stopReason)
     ) {
       items.push({ ...base, key: `cap:${feature.slug}:${since}`, kind: "cap", stopReason: feature.stopReason });
+      continue;
+    }
+    if (options.failure && feature.state === "failed") {
+      items.push({ ...base, key: `failure:${feature.slug}:${since}`, kind: "failure", stopReason: feature.stopReason });
     }
   }
   // Une seule escalade par fournisseur (S-5) : les features bloquées par un quota
@@ -289,9 +295,37 @@ export function relayItemsOf(
 }
 
 
+/**
+ * Les éléments du LOT relayés à `key` : `relayItemsOf` filtré. Une question ou un
+ * jalon n'est relayé que ESCALADÉ (S-10) : sans escalade, l'arbitre le tranche et la
+ * session parente ne reçoit rien. Le cap et l'échec d'une feature dont l'arbitrage
+ * court (marque `arbitration`) ne sont JAMAIS relayés ; escaladés, ils le sont avec
+ * leur escalade ; sans arbitre (aucune marque), ils le sont tels quels. Le quota est
+ * toujours relayé tel quel. Pure hors `liveOf`.
+ */
+export function relayedLotItems(
+  lot: Lot,
+  key: string,
+  liveOf: (feature: LotFeature) => RunningEntry | null,
+  options: { cap: boolean; failure: boolean },
+): RelayItem[] {
+  return relayItemsOf(lot, key, liveOf, options).flatMap((item): RelayItem[] => {
+    if (item.kind === "quota") return [item];
+    const feature = lot.features.find((candidate) => candidate.slug === item.slug);
+    const escalation = feature?.escalation;
+    const escalated = escalation !== undefined && escalation.key === item.key;
+    if (item.kind === "cap" || item.kind === "failure") {
+      if (feature?.arbitration?.key === item.key) return [];
+      return escalated ? [{ ...item, escalation }] : [item];
+    }
+    return escalated ? [{ ...item, escalation }] : [];
+  });
+}
+
+
 const FREE_TEXT = "Autre réponse (texte libre)";
 const LEAVE_BLOCKED = "Laisser bloquées pour l'instant";
-const ABANDON_FEATURE = "Abandonner la feature (worktree et branche conservés)";
+export const ABANDON_FEATURE = "Abandonner la feature (worktree et branche conservés)";
 const gone = (item: string) => `Error: ${item} n'est plus en attente (déjà traité, ou retombé au panneau /pipelines)`;
 
 
@@ -337,12 +371,9 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
    */
   function lotItems(lot: Lot, key: string): RelayItem[] {
     const stateDir = deps.stateDir();
-    return relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), {
+    return relayedLotItems(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), {
       cap: profile.cap,
-    }).flatMap((item): RelayItem[] => {
-      if (item.kind === "cap" || item.kind === "failure" || item.kind === "quota") return [item];
-      const escalation = lot.features.find((feature) => feature.slug === item.slug)?.escalation;
-      return escalation !== undefined && escalation.key === item.key ? [{ ...item, escalation }] : [];
+      failure: profile.failure,
     });
   }
 

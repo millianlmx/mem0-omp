@@ -10,7 +10,7 @@ import { LOT_EDITOR_MAX, lotFeature, lotRepoKey, lotReplaceable, readLot } from 
 import type { Lot, LotFeature } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import { askFeatureModels } from "./models.ts";
-import { createRelay, escalationRelayMessage, quotaRelayMessage, relayItemsOf, relayToolText as toolText } from "./relay.ts";
+import { ABANDON_FEATURE, createRelay, escalationRelayMessage, quotaRelayMessage, relayItemsOf, relayToolText as toolText } from "./relay.ts";
 import type { RelayCore, RelayDeps, RelayItem, RelayState, RelayToolResult } from "./relay.ts";
 import type { RunningEntry } from "./store.ts";
 
@@ -34,7 +34,7 @@ import type { RunningEntry } from "./store.ts";
 // jalons. Quitter la session (ou la fermer) retire le fichier — tout retombe sur
 // le panneau ; y revenir le réécrit et ré-injecte ce qui attend encore.
 
-export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap" | "quota";
+export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap" | "failure" | "quota";
 
 /** Un élément relayé à la session /audit : une question ou un jalon d'une feature /audit (S-6). */
 export type AuditItem = RelayItem & { kind: AuditItemKind };
@@ -103,7 +103,7 @@ export function auditItemsOf(
   sessionFile: string,
   liveOf: (feature: LotFeature) => RunningEntry | null,
 ): AuditItem[] {
-  return relayItemsOf(lot, sessionFile, liveOf, { cap: true }) as AuditItem[];
+  return relayItemsOf(lot, sessionFile, liveOf, { cap: true, failure: true }) as AuditItem[];
 }
 
 
@@ -121,6 +121,13 @@ export function buildRelayMessage(item: AuditItem): string {
     case "cap":
       return [
         `[audit] Plafond de la boucle revue ⇄ correction — feature ${item.slug}`,
+        `Élément : ${item.key}`,
+        item.stopReason ?? "",
+        "Aucune PR ne sera ouverte avant la décision de l'utilisateur : appelle audit_escalate (élément), sans trancher.",
+      ].join("\n");
+    case "failure":
+      return [
+        `[audit] Échec — feature ${item.slug}`,
         `Élément : ${item.key}`,
         item.stopReason ?? "",
         "Aucune PR ne sera ouverte avant la décision de l'utilisateur : appelle audit_escalate (élément), sans trancher.",
@@ -583,12 +590,38 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
           false),
       keyOf: () => state.sessionFile,
       cap: true,
+      failure: true,
       message: (item) => buildRelayMessage(item as AuditItem),
+      // L'échec d'une feature du lot (S-7) : relancer ou abandonner, la décision de l'utilisateur.
+      async escalate(ctx, item, signal) {
+        const relaunch = "Relancer la feature";
+        const answer = await ctx.ui.select(
+          `Échec de la feature ${item.slug} (/${item.phase}) : ${item.stopReason ?? ""}\nAucune PR ne sera ouverte avant ta décision.`,
+          [relaunch, ABANDON_FEATURE],
+          { signal },
+        );
+        const controller = deps.controllerFor(ctx);
+        if (answer === relaunch) {
+          return {
+            answer,
+            act: () => controller.relaunch(item.slug),
+            done: `Feature ${item.slug} relancée à la demande de l'utilisateur.`,
+          };
+        }
+        if (answer === ABANDON_FEATURE) {
+          return {
+            answer,
+            act: () => controller.cancel(item.slug, "keep"),
+            done: `Feature ${item.slug} abandonnée à la demande de l'utilisateur (worktree et branche conservés).`,
+          };
+        }
+        return { answer: undefined };
+      },
       tools: {
         escalate: {
           label: "Audit — demander à l'utilisateur",
           description:
-            "Remonte à l'utilisateur, dans cette session, un élément que l'arbitre de /audit n'a pas pu trancher et que le message [audit] t'a relayé (identifiant = « élément » du message) : la question d'origine et ses options, ou un jalon en doute, ou le plafond de la boucle revue ⇄ correction. Appelle-le sans répondre toi-même : la réponse de l'utilisateur est transmise mot pour mot au maillon.",
+            "Remonte à l'utilisateur, dans cette session, un élément que l'arbitre de /audit n'a pas pu trancher et que le message [audit] t'a relayé (identifiant = « élément » du message) : la question d'origine et ses options, ou un jalon en doute, ou le plafond de la boucle revue ⇄ correction, ou l'échec d'un run. Appelle-le sans répondre toi-même : la réponse de l'utilisateur est transmise mot pour mot au maillon.",
         },
       },
       registerTools(relayCore) {

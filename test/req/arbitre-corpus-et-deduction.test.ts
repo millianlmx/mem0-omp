@@ -1008,7 +1008,7 @@ test("arbitre-corpus-et-deduction/AC-21 : la justification vérifiée (motif, ci
   assert.equal("justification" in (journalFor(stateDir, repoKey, "alpha")[0] as object), true, "la ligne neuve est intacte");
 });
 
-test("arbitre-corpus-et-deduction/AC-22 : une escalade de l'arbitre est honorée telle quelle, sans réponse ni journal ; cap, échec et quota ne sont jamais arbitrés", async () => {
+test("arbitre-corpus-et-deduction/AC-22 : une escalade de l'arbitre est honorée telle quelle, sans réponse ni journal ; le quota n'est jamais arbitré", async () => {
   const motif = "choix de produit : le texte visible n'a aucune convention";
   const world = mkArbiterWorld(() => ({ decision: "escalate", reason: motif }));
   await world.addAlpha();
@@ -1023,21 +1023,18 @@ test("arbitre-corpus-et-deduction/AC-22 : une escalade de l'arbitre est honorée
   assert.equal(world.runs.length, 1, "aucune réponse transmise : aucun run relancé");
   assert.equal(world.prompts.length, 1);
 
-  // Une feature en échec et un groupe de quota : aucun arbitre n'est lancé.
+  // Un groupe de quota : aucun arbitre n'est lancé, le quota n'est jamais arbitré.
   const idle = mkArbiterWorld(() => assert.fail("l'arbitre ne doit pas tourner"));
-  for (const name of ["beta", "gamma"]) {
-    assert.equal(await idle.controller.add({ name, description: `Faire ${name}.`, deps: [], auditSession: CTX }), null);
-  }
+  assert.equal(await idle.controller.add({ name: "gamma", description: "Faire gamma.", deps: [], auditSession: CTX }), null);
   await idle.controller.launch();
   const lot = idle.read();
-  lotFeature(lot, "beta")!.state = "failed";
   const gamma = lotFeature(lot, "gamma")!;
   gamma.state = "blocked";
   gamma.quota = { provider: "prov", model: "m", until: T0 + 3_600_000, announced: true, phase: "impl" };
   writeLot(idle.stateDir, lot);
   await idle.controller.tick();
   for (let i = 0; i < 100; i++) await new Promise((r) => setImmediate(r));
-  assert.deepEqual(idle.prompts, [], "aucun arbitre pour un échec ou un quota");
+  assert.deepEqual(idle.prompts, [], "aucun arbitre pour un quota");
 });
 
 // ---------------------------------------------------------------------------

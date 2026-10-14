@@ -647,6 +647,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       stillArmed: () => state.sessionFile !== null && state.repoRoot !== null && armedFor(state.sessionFile, state.repoRoot),
       keyOf: () => (state.repoRoot === null ? null : (projectOf(state.repoRoot)?.relayKey ?? null)),
       cap: false,
+      failure: false,
       extraItems: (lot) => {
         const project = state.repoRoot === null ? null : projectOf(state.repoRoot);
         return project !== null && project.status === "running" ? projectFailureItems(project, lot) : [];

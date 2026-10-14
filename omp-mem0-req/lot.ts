@@ -62,6 +62,8 @@ export type HeldLaunch = {
   text?: string;
   /** D'où vient le texte d'une réponse (S-11) : absent = l'utilisateur. */
   source?: "contexte" | "arbitrage";
+  /** Le recentrage de l'arbitre : lu par le prompt du SEUL run de ce lancement. */
+  refocus?: string;
 };
 
 
@@ -110,6 +112,19 @@ export function quotaGroupsOf(lot: Lot, keep: (feature: LotFeature) => boolean =
 /** Un arbitrage en vol (S-9) : la clé de l'élément arbitré et l'instant de départ. */
 export type FeatureArbitration = { key: string; startedAt: number };
 
+/** Le motif d'une relance appliquée par l'arbitre. */
+export type ArbiterRelaunchMotive = "cap" | "failure";
+
+/** Les relances appliquées par l'arbitre, par motif, et le motif de la dernière. */
+export type ArbiterRelaunches = { cap: number; failure: number; last: ArbiterRelaunchMotive };
+
+/** Borne des relances de l'arbitre par motif et par feature : non configurable. */
+export const ARBITER_RELAUNCH_MAX = 2;
+
+/** Bornes (par la fin) de la sortie d'un run échoué conservée pour l'arbitre. */
+export const LOT_FAILURE_STDERR_MAX = 2000;
+export const LOT_FAILURE_STDOUT_MAX = 4000;
+
 
 /** Plafond des enregistrements de run conservés par feature (S-12). */
 export const LOT_RUNS_MAX = 100;
@@ -134,7 +149,7 @@ export type LotRunRecord = {
 /** Un élément que l'arbitre n'a pas pu trancher : il attend l'utilisateur (S-9, S-10). */
 export type FeatureEscalation = {
   key: string;
-  kind: "question" | "jalon";
+  kind: "question" | "jalon" | "plafond" | "echec";
   phase: PipelinePhase;
   question: string;
   options: string[];
@@ -262,6 +277,15 @@ export type LotFeature = {
   escalation?: FeatureEscalation;
   /** La source du jalon qui vient d'être décidé (S-11) : lue par le prompt du run qui suit, puis effacée. */
   milestoneSource?: "arbitrage" | "utilisateur";
+  /**
+   * Les relances APPLIQUÉES par l'arbitre, par motif (cap, failure) et le motif de la
+   * dernière. Absent tant qu'aucune relance n'a eu lieu. Seule une relance de l'arbitre
+   * l'incrémente et seule la livraison le supprime : R, une réponse, `resolveQuota`, une
+   * annulation et la relance à l'échéance d'un quota ne le touchent pas.
+   */
+  arbiterRelaunches?: ArbiterRelaunches;
+  /** Les fins de sortie du run échoué (stderr/stdout rognés par la fin) : lues par l'arbitre. Supprimées par `arm`. */
+  failureOutput?: { stderr: string; stdout: string };
   /**
    * Les lots de l'impl (S-13), figés au lancement de l'impl qui suit la validation des specs :
    * un run d'impl par lot, chacun en session neuve. Absents : un seul run d'impl. Effacés à
@@ -788,6 +812,7 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
     resume: h.resume,
     ...(typeof h.text === "string" ? { text: h.text.slice(0, LOT_EDITOR_MAX) } : {}),
     ...(h.source === "contexte" || h.source === "arbitrage" ? { source: h.source } : {}),
+    ...(typeof h.refocus === "string" && h.refocus !== "" ? { refocus: h.refocus } : {}),
   };
 }
 
@@ -858,7 +883,7 @@ function asFeatureEscalation(raw: unknown): FeatureEscalation | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
   if (typeof e.key !== "string" || e.key === "") return null;
-  if (e.kind !== "question" && e.kind !== "jalon") return null;
+  if (e.kind !== "question" && e.kind !== "jalon" && e.kind !== "plafond" && e.kind !== "echec") return null;
   if (typeof e.phase !== "string" || (PIPELINE_PHASES as readonly string[]).indexOf(e.phase) < 0) return null;
   if (typeof e.question !== "string" || typeof e.reason !== "string") return null;
   if (!Array.isArray(e.options) || !e.options.every((o) => typeof o === "string")) return null;
@@ -873,6 +898,25 @@ function asFeatureEscalation(raw: unknown): FeatureEscalation | null {
     at: e.at,
   };
 }
+
+/** Les relances de l'arbitre relues du disque : deux entiers ≥ 0 et le dernier motif, sinon absentes. */
+function asArbiterRelaunches(raw: unknown): ArbiterRelaunches | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+  if (!isCount(r.cap) || !isCount(r.failure)) return null;
+  if (r.last !== "cap" && r.last !== "failure") return null;
+  return { cap: r.cap, failure: r.failure, last: r.last };
+}
+
+/** La fin de sortie du dernier échec, relue du disque : deux chaînes, sinon absente. */
+function asFailureOutput(raw: unknown): { stderr: string; stdout: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.stderr !== "string" || typeof o.stdout !== "string") return null;
+  return { stderr: o.stderr, stdout: o.stdout };
+}
+
 
 
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
@@ -915,6 +959,8 @@ export function asLotFeature(raw: unknown): LotFeature | null {
   const arbitration = asFeatureArbitration(f.arbitration);
   const escalation = asFeatureEscalation(f.escalation);
   const runs = asRunRecords(f.runs);
+  const arbiterRelaunches = asArbiterRelaunches(f.arbiterRelaunches);
+  const failureOutput = asFailureOutput(f.failureOutput);
   return {
     slug: f.slug,
     name: f.name,
@@ -976,6 +1022,9 @@ export function asLotFeature(raw: unknown): LotFeature | null {
       : {}),
     // Le quota bloquant (S-5) : relu seulement quand il est complet, sinon absent.
     ...(featureQuota ? { quota: featureQuota } : {}),
+    // Les relances de l'arbitre (cap, failure) et la fin de sortie du dernier échec : relues complètes ou absentes.
+    ...(arbiterRelaunches ? { arbiterRelaunches } : {}),
+    ...(failureOutput ? { failureOutput } : {}),
     // Les modèles (S-1) : chaque clé n'est écrite que si elle est non vide après
     // `trim()` — toute autre valeur (`""`, `42`, `null`) est lue comme ABSENTE,
     // jamais un rejet. Les valeurs ne sont pas revalidées contre le catalogue : un

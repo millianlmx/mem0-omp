@@ -4,13 +4,13 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { contractAcIds, contractHasSection, contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
+import { contractAcIds, contractHasSection, contractLots, contractSection, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
-import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
-import { ARBITRATION_REFUSAL } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILURE_STDOUT_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
+import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
@@ -20,7 +20,7 @@ import { reportStateWriteFailure } from "./publish.ts";
 import { questionOf, lotArbiterJournalMax } from "./lot.ts";
 import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
-import { ARBITER_DEADLINE_MS, buildArbiterCorpus, buildArbiterPrompt, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
+import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
 import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
 import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
@@ -115,9 +115,12 @@ export type LotPanelActions = {
   reply(slug: string): RowReply;
   validate(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
   accept(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
-  relaunch(slug: string): Promise<string | null>;
-  cancel(slug: string, fate: WorktreeFate): Promise<string | null>;
+  relaunch(slug: string, options?: RelaunchOptions): Promise<string | null>;
+  cancel(slug: string, fate: WorktreeFate, options?: { reason?: string }): Promise<string | null>;
 };
+
+/** Ce que la relance d'une feature peut recevoir : l'arbitre (source, motif, recentrage) — rien pour R. */
+export type RelaunchOptions = { source?: "arbitrage"; motive?: ArbiterRelaunchMotive; refocus?: string };
 
 
 export type LotControllerDeps = {
@@ -283,6 +286,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * sort, et une feature que l'utilisateur annule ne doit pas finir « échouée ».
    */
   const cancelling = new Set<string>();
+  /**
+   * Les features dont la relance à l'échéance de leur quota est EN COURS dans ce process (S-9) :
+   * plusieurs passes consécutives ne lancent jamais deux fois la même feature.
+   */
+  const quotaRelaunching = new Set<string>();
   /**
    * Les runs que le PILOTE a abandonnés pour dépassement de leur budget de
    * travail (S-8 §1). Le run est tué par notre `abort`, donc son issue dépend du
@@ -559,6 +567,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
+  /** L'élément arbitrable où la feature vient de s'arrêter : le plafond de revue (`blocked` en review) ou un échec. */
+  function settledItemKind(feature: LotFeature): "cap" | "failure" | null {
+    if (feature.state === "failed") return "failure";
+    if (feature.state === "blocked" && feature.phase === "review" && isReviewCapReason(feature.stopReason)) return "cap";
+    return null;
+  }
+
   function settle(lot: Lot, feature: LotFeature, state: "blocked" | "failed", reason: string): void {
     const before = feature.state;
     feature.state = state;
@@ -569,6 +584,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
     feature.waitKind = null;
     feature.waitPrompt = null;
     feature.endedAt = touch(feature, now());
+    // Une feature ARBITRÉE qui s'arrête sur un élément arbitrable (le plafond) reçoit sa marque
+    // d'arbitrage DANS cette sauvegarde : aucune sauvegarde intermédiaire ne la laisse sans
+    // marque ni escalade, donc le relais ne voit jamais l'élément avant la décision.
+    const arbitrable = settledItemKind(feature);
+    if (arbitrable !== null && ARBITRABLE.has(arbitrable) && deps.arbiter !== undefined && feature.auditSession !== undefined) {
+      feature.arbitration = { key: `${arbitrable}:${feature.slug}:${feature.sinceAt}`, startedAt: now() };
+      delete feature.escalation;
+    }
     emit(lot, feature, before);
   }
 
@@ -588,6 +611,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     feature.waitPrompt = null;
     feature.stopReason = null;
     delete feature.quota;
+    delete feature.failureOutput;
     feature.endedAt = null;
     // Les compteurs du plafond comptent AUSSI les runs lancés par une action (R,
     // réponse, jalon) : sinon le plafond effectif valait cap+1 corrections, et une
@@ -714,6 +738,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       fix: launch.fix,
       messages: queued,
       ...(launch.source === undefined ? {} : { source: launch.source }),
+      ...(launch.refocus === undefined ? {} : { refocus: launch.refocus }),
       ...(milestone === undefined ? {} : { milestone }),
       // Le contexte de conduite (S-8) : seulement pour une feature lancée par /project ou /audit.
       ...(feature.auditSession !== undefined
@@ -970,6 +995,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       reason: expired ? `délai dépassé (${Math.round(runTimeout / 60_000)} min)` : failureReason(result),
       worktree: check,
     });
+    // La FIN de sortie d'un run qui se conclut par `failed` : l'arbitre la lit (S-1 §3). Les
+    // autres voies vers `failed` (worktree, « pilote disparu ») n'en écrivent pas.
+    if (settledItemKind(feature) === "failure") {
+      feature.failureOutput = {
+        stderr: clipTail(result.stderr.trim(), LOT_FAILURE_STDERR_MAX),
+        stdout: clipTail(result.stdout.trim(), LOT_FAILURE_STDOUT_MAX),
+      };
+    }
     // Rien n'a été écrit : la chaîne ne part pas, et le marqueur `settled` est
     // retiré — sans lui, la passe croirait la fin de ce run déjà traitée et
     // laisserait la feature `running` sans run, alors que la réconciliation par
@@ -1114,6 +1147,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const before = target.state;
       target.state = state;
       target.prUrl = prUrl;
+      if (state === "done") delete target.arbiterRelaunches;
       target.stopReason = reason;
       target.waitKind = null;
       target.waitPrompt = null;
@@ -1269,15 +1303,68 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** Les arbitrages VIVANTS de CE process : une marque `feature.arbitration` sans entrée ici est périmée. */
   const arbiting = new Map<string, AbortController>();
-  const ARBITRABLE: ReadonlySet<string> = new Set(["ask", "question", "specs", "review"]);
+  const ARBITRABLE: ReadonlySet<string> = new Set(["ask", "question", "specs", "review", "cap", "failure"]);
+  /** La question du journal pour une décision du plafond (relance ou abandon). */
+  const CAP_JOURNAL_QUESTION = "plafond de la boucle revue ⇄ correction atteint — relancer, abandonner ou escalader ?";
 
   /** Les éléments courants de toutes les features avec contexte, dans l'ordre du lot. */
   function currentItems(lot: Lot): RelayItem[] {
     const keys = new Set<string>();
     for (const feature of lot.features) if (feature.auditSession !== undefined) keys.add(feature.auditSession);
     const items: RelayItem[] = [];
-    for (const key of keys) items.push(...relayItemsOf(lot, key, (feature) => liveEntryOf(feature.worktree), { cap: false }));
+    for (const key of keys) {
+      items.push(...relayItemsOf(lot, key, (feature) => liveEntryOf(feature.worktree), { cap: true, failure: true }));
+    }
     return items;
+  }
+
+  /**
+   * Les features arbitrées dont le quota est ÉCHU (S-9) : l'échéance de leur propre quota est
+   * passée et le registre ne tient plus ce modèle pour épuisé (un nouveau coup l'a peut-être
+   * prolongé). Le quota n'est jamais arbitré : aucune décision, seulement la relance.
+   */
+  function dueQuotaFeatures(lot: Lot): LotFeature[] {
+    if (deps.arbiter === undefined) return [];
+    const at = now();
+    return lot.features.filter((feature) => {
+      const quota = blockedQuotaOf(feature);
+      return (
+        quota !== null &&
+        feature.auditSession !== undefined &&
+        !quotaRelaunching.has(feature.slug) &&
+        quota.until <= at &&
+        exhaustedUntil(stateDir, quota.model, at) === null
+      );
+    });
+  }
+
+  /**
+   * Relance une feature dont le quota est échu : `relaunch` SANS option, donc aucun compteur de
+   * relances ni aucune écriture de modèle ou de repli. Un refus n'écrit rien : une passe suivante réessaie.
+   */
+  async function relaunchDueQuota(feature: LotFeature): Promise<void> {
+    const quota = feature.quota as NonNullable<LotFeature["quota"]>;
+    quotaRelaunching.add(feature.slug);
+    try {
+      const refusal = await controller.relaunch(feature.slug, { source: "arbitrage" });
+      if (refusal !== null) return;
+      journalDecision(
+        feature,
+        quota.phase,
+        "quota",
+        `quota ${quota.provider} épuisé (${quota.model}) — échéance passée : relancer ?`,
+        "relancé sans changement de modèle",
+        "arbitrage",
+        {
+          reason: `échéance du quota passée : ${new Date(quota.until).toISOString()}`,
+          citations: [],
+          references: [],
+          rubriques: [],
+        },
+      );
+    } finally {
+      quotaRelaunching.delete(feature.slug);
+    }
   }
 
   /**
@@ -1310,14 +1397,25 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return out;
   }
 
-  function arbiterItemOf(item: RelayItem): ArbiterItem {
-    return {
+  /** L'élément soumis à l'arbitre ; le plafond lit `## Revue`/`## Corrections`, l'échec la fin de sortie du run. */
+  function arbiterItemOf(item: RelayItem, feature?: LotFeature, contract: string | null = null): ArbiterItem {
+    const base: ArbiterItem = {
       kind: item.kind as ArbiterItem["kind"],
       slug: item.slug,
       phase: item.phase,
       question: item.kind === "ask" || item.kind === "question" ? (item.question ?? "") : null,
       options: item.options.map((option) => option.label),
     };
+    if (item.kind === "cap") {
+      return {
+        ...base,
+        stopReason: item.stopReason,
+        review: contract === null ? null : contractSection(contract, "Revue"),
+        corrections: contract === null ? null : contractSection(contract, "Corrections"),
+      };
+    }
+    if (item.kind === "failure") return { ...base, stopReason: item.stopReason, output: feature?.failureOutput ?? null };
+    return base;
   }
 
   /** Pose l'escalade de l'élément (S-9) et efface la marque, dans la MÊME sauvegarde. */
@@ -1327,7 +1425,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (!lot || !feature || feature.arbitration?.key !== item.key) return;
     feature.escalation = {
       key: item.key,
-      kind: item.kind === "specs" || item.kind === "review" ? "jalon" : "question",
+      kind:
+        item.kind === "cap"
+          ? "plafond"
+          : item.kind === "failure"
+            ? "echec"
+            : item.kind === "specs" || item.kind === "review"
+              ? "jalon"
+              : "question",
       phase: item.phase,
       question: itemQuestion(arbiterItemOf(item)),
       options: item.options.map((option) => option.label),
@@ -1356,7 +1461,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const lot = read();
     const feature = lot ? lotFeature(lot, slug) : undefined;
     if (!feature || feature.auditSession === undefined || deps.arbiter === undefined) return null;
-    const arbiterItem = arbiterItemOf(item);
+    // La BORNE des relances de l'arbitre (par motif) passe AVANT tout appel : raccourci du
+    // journal, garde de modèle, run. Atteinte, l'élément est escaladé sans session d'arbitre.
+    if (item.kind === "cap" || item.kind === "failure") {
+      const motive: ArbiterRelaunchMotive = item.kind === "cap" ? "cap" : "failure";
+      if ((feature.arbiterRelaunches?.[motive] ?? 0) >= ARBITER_RELAUNCH_MAX) {
+        return {
+          kind: "escalate",
+          reason: `borne de relances par l'arbitre atteinte (${ARBITER_RELAUNCH_MAX}/${ARBITER_RELAUNCH_MAX}) — ${motive === "cap" ? "plafond de revue" : "échec du run"}`,
+        };
+      }
+    }
+    const contract = readContractText(feature.worktree) || null;
+    const arbiterItem = arbiterItemOf(item, feature, contract);
+    const itemBlock = arbiterItemBlock(arbiterItem);
     const entries = journalFor(stateDir, repoKey, slug);
     if (arbiterItem.question !== null) {
       const wanted = normalizeQuestion(arbiterItem.question);
@@ -1371,7 +1489,6 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
     }
     const report = readReport(stateDir, feature.auditSession);
-    const contract = readContractText(feature.worktree) || null;
     const corpus = buildArbiterCorpus({
       report,
       brief: readBrief(stateDir, feature.auditSession),
@@ -1425,7 +1542,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (typeof result.contextExceeded === "number") {
       return { kind: "escalate", reason: `contexte dépassé (${result.contextExceeded} tokens)` };
     }
-    return validateArbiterDecision(arbiterItem, result.decision, { corpus, report, worktree: feature.worktree, contract, review });
+    return validateArbiterDecision(arbiterItem, result.decision, {
+      corpus: itemBlock === null ? corpus : `${itemBlock}\n\n${corpus}`,
+      report,
+      worktree: feature.worktree,
+      contract,
+      review,
+    });
   }
 
   /**
@@ -1443,12 +1566,39 @@ export function createLotController(deps: LotControllerDeps): LotController {
       escalateItem(slug, item, effect.reason);
       return;
     }
+    const withJustification = effect.kind === "answer" || effect.kind === "approve" ? effect.justification : undefined;
     let refusal: string | null;
-    if (effect.kind === "approve") {
+    if (effect.kind === "relaunch") {
+      const motive: ArbiterRelaunchMotive = item.kind === "cap" ? "cap" : "failure";
+      refusal = await controller.relaunch(slug, {
+        source: "arbitrage",
+        motive,
+        ...(motive === "cap" && effect.refocus !== null ? { refocus: effect.refocus } : {}),
+      });
+      if (refusal === null) {
+        const after = read();
+        const count = (after ? lotFeature(after, slug)?.arbiterRelaunches?.[motive] : undefined) ?? 0;
+        const label = `relancé par l'arbitre (${count}/${ARBITER_RELAUNCH_MAX})`;
+        if (motive === "cap") {
+          // Le recentrage n'entre PAS dans le journal : `journalLine` le rendrait dans le prompt de tout run suivant.
+          journalDecision(feature, "review", "plafond", CAP_JOURNAL_QUESTION, label, "arbitrage", effect.justification);
+        } else {
+          journalDecision(feature, item.phase, "echec", `échec du run /${item.phase} — relancer ou escalader ?`, label, "arbitrage", effect.justification);
+        }
+      }
+    } else if (effect.kind === "abandon") {
+      const text = `abandonnée par l'arbitre : ${effect.reason}`;
+      refusal = await controller.cancel(slug, "keep", {
+        reason: text.length > LOT_REASON_MAX ? `${text.slice(0, LOT_REASON_MAX - 1)}…` : text,
+      });
+      if (refusal === null) {
+        journalDecision(feature, "review", "plafond", CAP_JOURNAL_QUESTION, `abandonné : ${effect.reason}`, "arbitrage", effect.justification);
+      }
+    } else if (effect.kind === "approve") {
       refusal =
         item.kind === "specs"
-          ? await controller.validate(slug, { source: "arbitrage", ...(effect.justification !== undefined ? { justification: effect.justification } : {}) })
-          : await controller.accept(slug, { source: "arbitrage", ...(effect.justification !== undefined ? { justification: effect.justification } : {}) });
+          ? await controller.validate(slug, { source: "arbitrage", ...(withJustification !== undefined ? { justification: withJustification } : {}) })
+          : await controller.accept(slug, { source: "arbitrage", ...(withJustification !== undefined ? { justification: withJustification } : {}) });
     } else if (item.kind === "ask") {
       refusal = deliverAskAnswer(
         {
@@ -1815,6 +1965,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // Le lot n'a pas pu être écrit : aucun run ne part (cf. `startRun`), et la
     // passe rend la main — le véritable pilote conduira ce lot.
     if (changed && save(lot) !== null) return;
+    const dueQuota = dueQuotaFeatures(lot).map((feature) => ({ ...feature }));
     // Les lancements viennent APRÈS la sauvegarde : un run qui rend la main
     // aussitôt n'écrit jamais sur un lot plus vieux que celui qu'on vient d'écrire.
     for (const launch of launches) {
@@ -1823,6 +1974,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     for (const feature of releases) void finishRelease(feature);
     for (const planned of arbitrations.planned) void arbitrate(planned.slug, planned.item);
+    for (const feature of dueQuota) void relaunchDueQuota(feature);
     // Dernier acte de la passe, APRÈS l'écriture : c'est un `await` (`git`), il ne
     // décide plus rien — l'arbre abandonné n'appartient à aucune feature du lot.
     await discardWorktrees(orphans);
@@ -2247,6 +2399,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // Le texte d'une réponse est borné par la même borne que l'éditeur du
         // panneau : un `held` ne fait jamais grossir le lot au-delà de ses règles.
         ...(launch.text === undefined ? {} : { text: launch.text.slice(0, LOT_EDITOR_MAX) }),
+        ...(launch.source === undefined ? {} : { source: launch.source }),
+        ...(launch.refocus === undefined ? {} : { refocus: launch.refocus }),
       };
       touch(feature, now());
       // Le récap a décrit un état final qui n'en est plus un : le lancement retenu
@@ -2718,7 +2872,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return refusals.length === 0 ? null : refusals.join(" · ");
     },
 
-    async relaunch(slug) {
+    async relaunch(slug, options) {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
@@ -2767,18 +2921,29 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // Le plafond est une borne par tentative : relancer ouvre un nouveau crédit.
       target.fixes = 0;
       target.unreadableRuns = 0;
+      // Une relance de l'ARBITRE (cap, échec) s'inscrit dans la MÊME écriture que la remise à
+      // zéro du plafond : le compteur du motif monte, `last` nomme le dernier motif. R, une
+      // réponse, `resolveQuota` et la relance à l'échéance d'un quota n'en portent aucun.
+      if (options?.motive !== undefined) {
+        const known = target.arbiterRelaunches ?? { cap: 0, failure: 0, last: options.motive };
+        target.arbiterRelaunches = { ...known, [options.motive]: known[options.motive] + 1, last: options.motive };
+      }
       // Un blocage au PLAFOND laisse la feature en phase `review` avec un verdict
       // bloquant : la relancer en /review relancerait une revue sur un code
       // inchangé, soit une revue complète de plus. C'est /impl --fix qui a du sens.
+      // La relance du plafond par l'arbitre est FORCÉE à `/impl --fix`, quel que soit le
+      // verdict relu : c'est la décision qu'il a prise, avec son recentrage.
+      const arbiterCap = options?.motive === "cap";
       const verdict = reviewVerdict(readContractText(target.worktree));
-      const fix = verdict === "blockers";
-      const phase = fix && target.phase === "review" ? "impl" : target.phase;
+      const fix = arbiterCap || verdict === "blockers";
+      const phase = arbiterCap ? "impl" : fix && target.phase === "review" ? "impl" : target.phase;
       // Au maillon `req`, la relance reprend la COLLECTE (avec l'intention
       // déclarée) : un prompt `[reprise] …` n'est pas reconnu comme une notice
       // `[req]`, donc un slug contenant « fin » y clôturerait la collecte au
       // premier tour, et « reprends où tu t'es arrêté » ne veut rien dire pour une
       // feature qui n'a jamais tourné.
       const kind: LotPromptKind = phase === "req" ? "collecte" : "relaunch";
+      const refocus = arbiterCap ? (options?.refocus ?? "").trim() : "";
       // La relance REPREND la session retenue quand il y en a une (S-8 §1) : un run
       // tué ou en échec a quand même une conversation, et repartir d'une session
       // NEUVE effaçait l'échange (la collecte, les arbitrages déjà rendus).
@@ -2788,10 +2953,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
         fix,
         kind,
         resume: target.sessionFile !== null || liveEntryOf(target.worktree) !== null,
+        ...(options?.source === undefined ? {} : { source: options.source }),
+        ...(refocus === "" ? {} : { refocus }),
       });
     },
 
-    async cancel(slug, fate) {
+    async cancel(slug, fate, options) {
       // Deux annulations de la MÊME feature ne s'empilent pas (S-9) : la seconde
       // écrirait « annulation impossible : la feature est annulée » après le succès
       // de la première, ou retirerait deux fois le même worktree. La première rend
@@ -2866,7 +3033,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         delete target.held;
         target.waitKind = null;
         target.waitPrompt = null;
-        target.stopReason = null;
+        target.stopReason = options?.reason ?? null;
         // Une feature terminale n'a plus de destinataire : la file tombe avec elle
         // (S-5). Une RELANCE, elle, la conserve — la reprise emporte le message.
         target.pendingTexts = [];

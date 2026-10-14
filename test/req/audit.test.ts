@@ -46,6 +46,7 @@ import reqExtension, {
 } from "../../omp-mem0-req/extension.ts";
 import { runStateFor } from "../../omp-mem0-req/runState.ts";
 import { relayItemsOf } from "../../omp-mem0-req/relay.ts";
+import { auditItemsOf } from "../../omp-mem0-req/audit.ts";
 import { liveRunFor } from "../../omp-mem0-req/store.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
 import { tmpdir } from "../support/repo.ts";
@@ -194,7 +195,7 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
  */
 function escalateAll(stateDir: string, repoRoot: string, key: string, reason = "ni le brief ni le journal ne tranchent"): void {
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
-  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false });
+  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false, failure: false });
   for (const item of items) {
     if (item.kind === "cap" || item.kind === "quota" || item.kind === "failure") continue;
     const milestone = item.kind === "specs" || item.kind === "review";
@@ -863,6 +864,51 @@ test("audit/AC-7 : au plafond de la boucle revue ⇄ correction, /audit remonte 
   assert.equal(relaunched.length, 1);
   assert.equal(relaunched[0]!.phase, "impl");
   assert.ok(relaunched[0]!.prompt.includes("[impl --fix]"), "la relance est un tour de correction");
+});
+
+test("audit : l'échec d'une feature de lot est relayé directement (sans arbitre) et l'utilisateur la relance ou l'abandonne", async () => {
+  const fx = mkAudit({ answers: ["Relancer la feature", "Abandonner la feature (worktree et branche conservés)", undefined] });
+  const alphaWt = mkWorktree(CONTRACT_SPECS);
+  const betaWt = mkWorktree(CONTRACT_SPECS);
+  const gammaWt = mkWorktree(CONTRACT_SPECS);
+  const failed = (slug: string, worktree: string) =>
+    feature(slug, { worktree, state: "failed", phase: "impl", stopReason: `${slug} : binaire omp introuvable (code 127)`, auditSession: fx.sessionFile });
+  fx.seed([failed("alpha", alphaWt), failed("beta", betaWt), failed("gamma", gammaWt)]);
+  fx.relay.scan();
+
+  // Sans arbitre aucune marque n'est posée : chaque échec est un élément, au plus un par feature.
+  const items = auditItemsOf(fx.lot()!, fx.sessionFile, () => null).filter((item) => item.kind === "failure");
+  assert.deepEqual(items.map((item) => item.slug), ["alpha", "beta", "gamma"]);
+  const alpha = fx.featureOf("alpha")!;
+  const key = `failure:alpha:${alpha.sinceAt}`;
+  assert.equal(items[0]!.key, key);
+  assert.equal(
+    fx.messages[0]!.message.content,
+    [
+      "[audit] Échec — feature alpha",
+      `Élément : ${key}`,
+      "alpha : binaire omp introuvable (code 127)",
+      "Aucune PR ne sera ouverte avant la décision de l'utilisateur : appelle audit_escalate (élément), sans trancher.",
+    ].join("\n"),
+  );
+
+  const relaunched = await fx.call("audit_escalate", { item: key });
+  assert.equal(fx.calls[0]!.title, "Échec de la feature alpha (/impl) : alpha : binaire omp introuvable (code 127)\nAucune PR ne sera ouverte avant ta décision.");
+  assert.deepEqual(fx.calls[0]!.items, ["Relancer la feature", "Abandonner la feature (worktree et branche conservés)"]);
+  assert.equal(textOf(relaunched), "Feature alpha relancée à la demande de l'utilisateur.");
+  assert.equal(fx.featureOf("alpha")!.state, "running");
+
+  const abandoned = await fx.call("audit_escalate", { item: `failure:beta:${fx.featureOf("beta")!.sinceAt}` });
+  assert.equal(textOf(abandoned), "Feature beta abandonnée à la demande de l'utilisateur (worktree et branche conservés).");
+  assert.equal(fx.featureOf("beta")!.state, "cancelled");
+  assert.equal(fs.existsSync(betaWt), true, "le worktree est conservé");
+
+  // Une annulation du dialogue vaut « non répondu » : la feature reste en échec.
+  const key3 = `failure:gamma:${fx.featureOf("gamma")!.sinceAt}`;
+  const silent = await fx.call("audit_escalate", { item: key3 });
+  assert.equal(silent.isError, true);
+  assert.ok(textOf(silent).startsWith("Error: l'utilisateur n'a pas répondu"), textOf(silent));
+  assert.equal(fx.featureOf("gamma")!.state, "failed");
 });
 
 test("audit/AC-11 : une question escaladée montre son texte et ses options d'origine, et le maillon attend la réponse de l'utilisateur", async () => {

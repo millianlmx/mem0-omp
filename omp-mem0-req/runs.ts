@@ -236,6 +236,8 @@ export function buildLotPrompt(input: {
   source?: DecisionSource;
   /** La ligne de jalon qui termine le prompt (S-11), avant les messages en file. */
   milestone?: string;
+  /** Le recentrage de l'arbitre (relance du plafond) : les bloquants à lever et ce qui a déjà été tenté. */
+  refocus?: string;
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const { phase } = input;
@@ -250,18 +252,22 @@ export function buildLotPrompt(input: {
     prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
   } else {
     const seed = phaseSeed({ phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+    const by = input.source === "arbitrage" ? "l'arbitre" : "l'utilisateur";
     prompt =
       input.kind === "relaunch"
-        ? "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
+        ? `[reprise] Le maillon est relancé par ${by} : reprends où tu t'es arrêté, ` +
           `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`
         : `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
   }
   const withContext = input.context ? `${prompt}\n\n${input.context}` : prompt;
   const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
+  // Le recentrage de l'arbitre (relance du plafond) : après le jalon, avant les messages en file.
+  const refocus = (input.refocus ?? "").trim();
+  const withRefocus = refocus === "" ? withMilestone : `${withMilestone}\n\n[recentrage de l'arbitre]\n${refocus}`;
   const queued = (input.messages ?? []).map((message) => message.trim()).filter((message) => message !== "");
-  if (queued.length === 0) return withMilestone;
+  if (queued.length === 0) return withRefocus;
   const blocks = queued.map((message) => `[message de l'utilisateur, envoyé depuis /pipelines]\n${message}`);
-  return `${withMilestone}\n\n${blocks.join("\n\n")}`;
+  return `${withRefocus}\n\n${blocks.join("\n\n")}`;
 }
 
 
