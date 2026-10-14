@@ -1,5 +1,10 @@
 # Journal des versions
 
+## omp-mem0-req 0.28.0 — 2026-10-14
+
+- fix(runner,pilote,chaine,panneau,test,docs): un run en échec ou sans diff ne passe plus pour un succès (#193) (8824624)
+- feat(req,console,docs): revue sur le groupe de modèles fort, arbitre épinglé, libellés cadrage+revue / exécution (#190) (f413cf1)
+
 ## omp-mem0-req 0.27.0 — 2026-10-14
 
 - feat(req,console,ios,test): liste unique des attentes dans ConsoleCore — ardoise, dialogues de conduite et de session, escalades d'audit, même liste sur Mac et iPhone (#163) (0b304c9)
