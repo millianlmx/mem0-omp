@@ -1200,28 +1200,12 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
    dans un dossier temporaire ;
 4. copie `Metadata.appintents` dans `Contents/Resources/` AVANT la signature ad hoc,
    qui le scelle ;
-5. contrôle le bundle : `extract.actionsdata` doit porter l'intent sonde
-   `OpenConsoleIntent` (`Sources/OMPConsole/Intents/OpenConsoleIntent.swift`, qui
-   ramène la fenêtre principale) et son App Shortcut, phrase « Ouvre
-   ${applicationName} » (« Ouvre OMP Console ») :
-   `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)` ;
-6. contrôle ensuite les trois intents vocaux (voir *Siri sur le Mac* et *Siri :
-   écrire à la session OMP*) : `extract.actionsdata` doit déclarer `MacPendingIntent`
-   et son App Shortcut « Qu’est-ce qui m’attend dans ${applicationName} », puis
-   `MacAnswerIntent` et son App Shortcut « Réponds dans ${applicationName} », puis
-   `MacSessionPromptIntent` et chacune de ses trois phrases, « Dis à
-   ${applicationName} », « Envoyer un message à ${applicationName} » et « Écrire à
-   ${applicationName} » :
-   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)` ;
-7. contrôle enfin les cinq intents de pilotage (voir *Piloter les pipelines à la
-   voix*) : `extract.actionsdata` doit déclarer chacun avec son App Shortcut et sa
-   première phrase — `MacLaunchPipelineIntent` « Lancer une pipeline dans
-   ${applicationName} », `MacResumeFeatureIntent` « Reprendre une pipeline dans
-   ${applicationName} », `MacStopFeatureIntent` « Arrêter une pipeline dans
-   ${applicationName} », `MacValidateSpecsIntent` « Valider les specs dans
-   ${applicationName} », `MacAcceptReviewIntent` « Accepter la revue dans
-   ${applicationName} » :
-   `  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)`.
+5. contrôle le bundle contre la liste attendue `scripts/app-intents/attendus.json`
+   (égalité exacte d'ensembles des intents et des couples intent–phrase, toute
+   phrase contenant `${applicationName}`, voir *Liste attendue des intents Siri*) :
+   `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents)`
+   puis
+   `  ✓ intents Siri conformes à scripts/app-intents/attendus.json (bundle Mac : 9 intents, 22 phrases)`.
 
 Chaque échec sort en code 1, sur la sortie d'erreur, retire le bundle (y compris
 celui d'un assemblage antérieur) et ne signe rien :
@@ -1234,12 +1218,17 @@ celui d'un assemblage antérieur) et ne signe rien :
 | aucune valeur constante | `✗ valeurs constantes Swift introuvables sous <dossier de build> (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, ou …/OMPConsole.build/… avant Swift 6.4, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)` |
 | processeur en erreur (par exemple une phrase sans `\(.applicationName)`) | `✗ extraction des métadonnées App Intents échouée (appintentsmetadataprocessor, code <n>)`, suivi des sorties du processeur |
 | rien d'extrait (aucun intent compilé) | `✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)` |
-| intent sonde absent | `✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata` |
-| App Shortcut absent | `✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata` |
-| intent vocal absent (`<Type>` = `MacPendingIntent`, puis `MacAnswerIntent`, puis `MacSessionPromptIntent`) | `✗ intent vocal absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
-| App Shortcut vocale absente | `✗ App Shortcut de l'intent vocal <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est « Qu’est-ce qui m’attend dans ${applicationName} », « Réponds dans ${applicationName} », ou l'une des trois phrases de `MacSessionPromptIntent` (« Dis à ${applicationName} », « Envoyer un message à ${applicationName} », « Écrire à ${applicationName} ») |
-| intent de pilotage absent (`<Type>` dans l'ordre : `MacLaunchPipelineIntent`, `MacResumeFeatureIntent`, `MacStopFeatureIntent`, `MacValidateSpecsIntent`, `MacAcceptReviewIntent`) | `✗ intent de pilotage absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
-| App Shortcut de pilotage absente | `✗ App Shortcut de l'intent de pilotage <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est la première phrase de l'intent, citée au point 7 |
+| liste attendue invalide (`<raison>` : `JSON invalide : <msg> (ligne <lineno>, colonne <colno>)`, `clés de premier niveau attendues : ios, mac`, `<bundle>.<Type> : liste de chaînes attendue`, `phrase sans ${applicationName} : « <phrase> » (<bundle>.<Type>)` ou `phrase en double : « <phrase> » (<bundle>)`) | `✗ liste attendue invalide : scripts/app-intents/attendus.json (<raison>)` |
+| `extract.actionsdata` illisible (`<raison>` : `fichier absent`, `JSON invalide : <msg> (ligne <lineno>, colonne <colno>)` ou `forme inattendue`) | `✗ extract.actionsdata illisible : <chemin tel que reçu> (<raison>)` |
+| intent de la liste absent du bundle | `✗ intent attendu absent du bundle Mac : <Type> introuvable dans extract.actionsdata` |
+| phrase de la liste absente du bundle | `✗ phrase attendue absente du bundle Mac : « <phrase> » (intent <Type>) introuvable dans extract.actionsdata` |
+| intent du bundle absent de la liste | `✗ intent non listé dans le bundle Mac : <Type> — à ajouter à scripts/app-intents/attendus.json` |
+| phrase du bundle absente de la liste | `✗ phrase non listée dans le bundle Mac : « <phrase> » (intent <Type>) — à ajouter à scripts/app-intents/attendus.json` |
+| phrase du bundle sans `${applicationName}` | `✗ phrase sans ${applicationName} dans le bundle Mac : « <phrase> » (intent <Type>)` |
+
+Les lignes du contrôle de la liste sont toutes affichées (triées par catégorie),
+puis suivies de la ligne finale
+`✗ Metadata.appintents non conforme à scripts/app-intents/attendus.json (bundle Mac)`.
 
 Le premier assemblage après l'ajout du drapeau recompile tout `.build-run` et
 `.build-app` (mesuré : environ 45 s pour `swift build -c release`, 3 min 30 pour la
@@ -1258,6 +1247,30 @@ sombre, teintée) dans `omp-console/ios/OMPConsoleIOS/Assets.xcassets/AppIcon.ap
 Tout est écrit dans un dossier temporaire, puis déplacé ; aucun fichier n'est
 remplacé à moitié. Codes de sortie : 0 les quatre fichiers écrits, 1 échec, 2 non
 exécuté hors macOS.
+
+### Liste attendue des intents Siri
+
+`scripts/app-intents/attendus.json` est la seule liste des intents Siri attendus
+et de leurs phrases d'App Shortcut, pour le bundle Mac et pour l'app iOS. Format :
+JSON UTF-8 brut (aucun échappement `\uXXXX`), indenté de 2 espaces, terminé par un
+saut de ligne, avec exactement deux clés de premier niveau, `"mac"` puis `"ios"`.
+Chacune vaut un objet `{ "<Type d'intent>": [ "<phrase>", … ], … }`, chaque phrase
+étant écrite sous sa forme sérialisée (`${applicationName}`) ; un intent sans App
+Shortcut vaut `[]`. Invariants, vérifiés à chaque contrôle : clés de premier niveau
+= {`ios`, `mac`} exactement ; chaque valeur d'intent est une liste de chaînes ;
+chaque phrase contient `${applicationName}` ; aucune phrase n'apparaît deux fois
+dans un même bundle. La comparaison porte sur des ensembles : l'ordre des clés et
+des phrases est sans effet.
+
+Le comparateur partagé `scripts/app-intents/controle.py <mac|ios>
+<extract.actionsdata>` est appelé par `scripts/swift-app.sh` et
+`scripts/ios-build.sh` ; python3 est donc requis (celui des Command Line Tools
+suffit).
+
+Règle : toute feature qui ajoute, retire ou renomme un intent ou une phrase d'App
+Shortcut met à jour `scripts/app-intents/attendus.json` dans le même commit ;
+sinon `scripts/swift-app.sh` et `scripts/ios-build.sh` échouent, et avec eux les
+jobs CI `macos-app-swift` et `macos-app-ios`.
 
 ## Ouvrir l'app
 
@@ -3864,8 +3877,15 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-build.sh
 
 Le script compile l'app en destination générique, choisit un simulateur iOS ≥ 26
 et lance la suite Swift Testing de la cible `OMPConsoleIOSTests`. `--no-tests`
-s'arrête après la compilation. Codes de sortie : `0` compilé (et testé), `1`
-échec, `2` « non exécuté ».
+s'arrête après la compilation. Après la compilation, dans les deux modes, le
+script contrôle `OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata` contre
+la même liste que le bundle Mac (voir *Liste attendue des intents Siri*) ; s'il
+manque :
+`  ✗ Metadata.appintents absent de l'app iOS : omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)`,
+et s'il s'en écarte :
+`  ✗ Metadata.appintents de l'app iOS non conforme à scripts/app-intents/attendus.json`,
+tous deux en code 1, sans lancer les tests. Codes de sortie : `0` compilé (et
+testé), `1` échec, `2` « non exécuté ».
 
 L'icône de l'app iOS vient du catalogue `OMPConsoleIOS/Assets.xcassets`
 (`AppIcon`, variantes claire, sombre et teintée) ; elle est dessinée avec celle du
@@ -4622,7 +4642,8 @@ Réponses énoncées :
 
 Le build (`xcodebuild`, `scripts/ios-build.sh`) produit
 `OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata`, qui porte l'intent
-et ses trois phrases (`${applicationName}`). La réponse est prouvée par
+et ses trois phrases (`${applicationName}`), contrôlé à chaque build contre la liste
+attendue (voir *Liste attendue des intents Siri*). La réponse est prouvée par
 `ios/OMPConsoleIOSTests/IOSSiriStatusTests.swift` ; la reconnaissance vocale, elle,
 ne se prouve qu'à la main, sur appareil réel.
 
@@ -4856,8 +4877,8 @@ Politique vocale : littéral `authenticationPolicy = .requiresLocalDeviceAuthent
 sur l'iPhone, `.alwaysAllowed` sur le Mac, confronté à la ligne
 `promptHostedSession` par `applyVoicePolicy`. Les métadonnées de
 `MacSessionPromptIntent` et ses trois phrases sont contrôlées dans le bundle par
-`scripts/swift-app.sh` (*Assembler le bundle `.app`*, ligne `✓ intents vocaux
-embarqués`). Preuves :
+`scripts/swift-app.sh` (*Assembler le bundle `.app`*, ligne `✓ intents Siri
+conformes à scripts/app-intents/attendus.json`). Preuves :
 
 - `Tests/OMPConsoleTests/VoiceSessionPromptTests.swift` : la ligne de table et le
   déroulé partagé (`siri-dictee-session-omp/AC-9`, `AC-10`, `AC-11`) ;
@@ -4947,7 +4968,7 @@ intents, confronté à la table pour chacun des cinq gestes
 (`VoiceGesturePolicy.admits`, sinon Siri dit le dialogue `misconfigured` sans rien
 lire ni envoyer) ; aucune confirmation pour ces gestes sur le Mac. Les métadonnées
 des deux intents sont contrôlées dans le bundle par `scripts/swift-app.sh`
-(*Assembler le bundle `.app`*, ligne `✓ intents vocaux embarqués`). Preuves :
+(*Assembler le bundle `.app`*, ligne `✓ intents Siri conformes à scripts/app-intents/attendus.json`). Preuves :
 `Tests/OMPConsoleTests/MacVoiceIntentTests.swift` (`siri-mac-questions-en-attente/AC-2`
 à `AC-12`, sur une pile `RemoteStack` réelle) et `test/outillage/check.test.ts`
 (`siri-mac-questions-en-attente/AC-1`). La reconnaissance vocale ne se prouve qu'à
@@ -5017,7 +5038,7 @@ n’a pas pu lire l’état du Mac à temps, … »). Chaque `authenticationPoli
 littéral, confronté à la table par `VoiceGesturePolicy.admits` dans `perform()`
 (`MacSiriPilot`) et par `siri-mac-pilotage-pipelines/AC-13`. Les métadonnées sont
 contrôlées dans le bundle par `scripts/swift-app.sh` (*Assembler le bundle
-`.app`*, ligne `✓ intents de pilotage embarqués`). Preuves :
+`.app`*, ligne `✓ intents Siri conformes à scripts/app-intents/attendus.json`). Preuves :
 `Tests/OMPConsoleTests/MacPilotIntentTests.swift` (`siri-mac-pilotage-pipelines/AC-1`
 à `AC-13`, sur une pile `RemoteStack` réelle et une pile jumelle pour la parité),
 `VoicePilotTests.swift` (moteur commun) et `test/outillage/check.test.ts`
@@ -5173,6 +5194,118 @@ conduite par l'utilisateur) :
 5. Quand elle attend sa revue : « Accepter la revue dans OMP Console », la
    désigner, « oui ». Attendu : la revue est acceptée sur le Mac et la carte
    quitte le jalon revue.
+
+### Siri : recette vocale de bout en bout
+
+Cette recette prouve sur appareils réels qu'une feature se mène entièrement à la
+voix, du lancement jusqu'à la PR : une passe sur iPhone, puis une passe sur Mac.
+Chaque phrase de la colonne *Phrase à dire* se prononce après « Dis Siri » (ou
+« Siri »). Les ‹…› désignent ce que Siri lit de l'état réel (dépôts, question,
+choix, besoin).
+
+#### Feature jetable
+
+Chaque passe lance sa propre feature sur le dépôt de test `jetable`, un dépôt GitHub
+qui ne sert qu'à cette recette :
+
+| Passe | Titre dicté | Besoin dicté | Choix dit au pas 2 | Message dicté au pas 3 |
+|---|---|---|---|---|
+| iPhone | Ligne iPhone | Ajoute une ligne de salutation au README. Avant d'écrire, pose-moi une question à choix : bonjour ou bonsoir. | Bonjour | Résume l'état du dépôt jetable |
+| Mac | Ligne Mac | Ajoute une ligne de salutation au README. Avant d'écrire, pose-moi une question à choix : bonjour ou bonsoir. | Bonsoir | Résume l'état du dépôt jetable |
+
+La question à choix du besoin garantit le pas 2 : la pipeline la pose pendant le
+cadrage.
+
+#### Règles des deux passes
+
+- Les préalables se font à la main, avant la première phrase. Après la première
+  phrase, tout geste hors voix (toucher l'écran, cliquer, taper au clavier) compte
+  comme un écart ; regarder l'écran est permis.
+- Redire une phrase que Siri n'a pas comprise est permis : notez `OK (redite)`.
+- Si Siri répond « Aucune demande ne vous attend. » au pas 2, ou « Aucune feature
+  n'attend la validation de ses specs. » / « Aucune feature n'attend l'acceptation
+  de sa revue. » aux pas 4 et 5, la pipeline n'y est pas encore : redites la phrase
+  quelques minutes plus tard. Ce n'est pas un écart.
+- Si la pipeline pose d'autres questions, répondez-y avec la phrase du pas 2, puis
+  reprenez la grille.
+- Sans la réponse attendue 30 minutes après le pas précédent, consignez un écart à
+  ce pas et arrêtez la passe.
+- Si la PR ne s'ouvre pas après l'acceptation vocale de la revue, consignez un écart au pas 6 et arrêtez la passe : aucun geste manuel ne la remplace.
+
+#### Passe 1 — iPhone
+
+**Préalables (à la main, avant la première phrase)**
+
+- L'app OMP Console de cette branche est installée sur l'iPhone (*Installer sur un
+  appareil réel*) et appairée au Mac : Siri répond « Connecté à ‹Mac› » à « Statut
+  de OMP Console ».
+- L'iPhone est déverrouillé et le reste toute la passe : *Réglages ▸ Luminosité et
+  affichage ▸ Verrouillage automatique* sur *Jamais* le temps de la recette.
+- Siri s'active à la voix (« Dis Siri » ou « Siri »), parle français et répond à
+  voix haute (*Réglages ▸ Siri*).
+- La console Mac est ouverte et joignable : bundle de cette branche assemblé par
+  `bash scripts/swift-app.sh`, puis ouvert.
+- Le dépôt de test est prêt : `jetable` est cloné sur le Mac, sa branche `main` est
+  propre (`git status` vide), `gh auth status` réussit avec le droit de pousser, et
+  `jetable` figure parmi les dépôts de la feuille *Nouvelle feature* de l'iPhone
+  (Siri ne propose que les dépôts présents sur l'ardoise du Mac).
+- Une session OMP est lancée dans la section *Session OMP* de la console, sur
+  `jetable`, sans dialogue en attente.
+- Aucune autre demande n'attend : Siri répond « Aucune demande ne vous attend. » à
+  « Demandes en attente dans OMP Console ».
+
+**Déroulé (à la voix uniquement)**
+
+| Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |
+|---|---|---|---|
+| 1. Lancer | « Lancer une feature dans OMP Console », puis « jetable » si Siri demande le dépôt, « Ligne iPhone », le besoin, « Oui » | « Sur quel dépôt ? ‹dépôts›. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne iPhone sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne iPhone est lancée. » | |
+| 2. Répondre à la question | « Répondre aux questions de OMP Console », puis « Bonjour » | « 1 demande en attente. La première : ‹question›. Choix possibles : ‹choix›. Ou dites « autre réponse ». », puis « Votre choix est envoyé à Ligne iPhone. » | |
+| 3. Dicter à la session OMP | « Dis à OMP Console », puis « Résume l'état du dépôt jetable » | « Quel message ? », puis « Reçu. » | |
+| 4. Valider les specs | « Valider les specs dans OMP Console », puis « Ligne iPhone », « Oui » | « De quelle feature valider les specs ? Ligne iPhone. », « Valider les specs de la feature Ligne iPhone ? », puis « Les specs de la feature Ligne iPhone sont validées. » | |
+| 5. Accepter la revue | « Accepter la revue dans OMP Console », puis « Ligne iPhone », « Oui » | « De quelle feature accepter la revue ? Ligne iPhone. », « Accepter la revue de la feature Ligne iPhone ? », puis « La revue de la feature Ligne iPhone est acceptée. » | |
+| 6. PR ouverte | « Demandes en attente dans OMP Console » | « Aucune demande ne vous attend. » ; constat après la passe : `gh pr list --repo <propriétaire>/jetable` liste la PR de Ligne iPhone | |
+
+#### Passe 2 — Mac
+
+**Préalables (à la main, avant la première phrase)**
+
+- La console Mac est ouverte et joignable : bundle de cette branche assemblé par
+  `bash scripts/swift-app.sh`, puis ouvert.
+- La session du Mac est déverrouillée et le reste toute la passe (mise en veille de
+  l'écran repoussée le temps de la recette).
+- Siri s'active à la voix (« Dis Siri » ou « Siri »), parle français et répond à
+  voix haute (*Réglages Système ▸ Siri*).
+- Le dépôt de test est prêt : la branche `main` de `jetable` est propre (`git status`
+  vide), `gh auth status` réussit avec le droit de pousser, et `jetable` figure parmi
+  les dépôts de la feuille *Nouvelle feature* du Mac.
+- Une session OMP est lancée dans la section *Session OMP* de la console, sur
+  `jetable`, sans dialogue en attente.
+- Aucune autre demande n'attend : Siri répond « Aucune demande ne vous attend. » à
+  « Qu’est-ce qui m’attend dans OMP Console ».
+
+**Déroulé (à la voix uniquement)**
+
+| Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |
+|---|---|---|---|
+| 1. Lancer | « Lancer une pipeline dans OMP Console », puis « jetable » si Siri demande le dépôt, « Ligne Mac », le besoin, « Oui » | « Sur quel dépôt ? ‹dépôts›. » (seulement si le Mac en connaît plusieurs), « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer Ligne Mac sur jetable ? Besoin : ‹besoin› », puis « La pipeline Ligne Mac est lancée. » | |
+| 2. Répondre à la question | « Réponds dans OMP Console », puis « Bonsoir » | « 1 demande en attente. La première : ‹question›. Choix possibles : ‹choix›. Ou dites « autre réponse ». », puis « Votre choix est envoyé à Ligne Mac. » | |
+| 3. Dicter à la session OMP | « Dis à OMP Console », puis « Résume l'état du dépôt jetable » | « Quel message ? », puis « Reçu. » | |
+| 4. Valider les specs | « Valider les specs dans OMP Console », puis « Ligne Mac », « Oui » | « De quelle feature valider les specs ? Ligne Mac. », « Valider les specs de la feature Ligne Mac ? », puis « Les specs de la feature Ligne Mac sont validées. » | |
+| 5. Accepter la revue | « Accepter la revue dans OMP Console », puis « Ligne Mac », « Oui » | « De quelle feature accepter la revue ? Ligne Mac. », « Accepter la revue de la feature Ligne Mac ? », puis « La revue de la feature Ligne Mac est acceptée. » | |
+| 6. PR ouverte | « Qu’est-ce qui m’attend dans OMP Console » | « Aucune demande ne vous attend. » ; constat après la passe : `gh pr list --repo <propriétaire>/jetable` liste la PR de Ligne Mac | |
+
+#### Consigner le résultat
+
+Le résultat se consigne dans la description de la PR de la feature
+`recette-siri-de-bout-en-bout`, section *Recette vocale* : recopiez les deux grilles
+remplies (colonne *OK ou écart* : `OK`, `OK (redite)` ou `écart : ‹ce qui s'est
+passé›`), puis renseignez :
+
+- Date : ‹AAAA-MM-JJ›
+- iPhone : ‹modèle›, iOS ‹version›
+- Mac : ‹modèle›, macOS ‹version›
+- PR de la passe iPhone : ‹lien›, ou l'écart consigné
+- PR de la passe Mac : ‹lien›, ou l'écart consigné
 
 ### Conduire un projet depuis l'iPad
 

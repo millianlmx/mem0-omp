@@ -306,12 +306,13 @@ echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
 echo "  ✓ bundle assemblé ($BUNDLE)"
 
 # 3 quater) les métadonnées App Intents extraites en 2 ter, copiées AVANT la
-#    signature ad hoc, qui les scelle. Puis le contrôle post-assemblage : le bundle
-#    doit porter l'intent sonde `OpenConsoleIntent` et son App Shortcut
-#    (« Ouvre ${applicationName} »), contrat de Sources/OMPConsole/Intents. Le
-#    contrôle n'emploie que `test` et `grep`, pour que la suite node l'exerce aussi
-#    hors macOS. `"actionIdentifier"` ne satisfait pas le motif de l'identifiant :
-#    le guillemet y précède `action`.
+#    signature ad hoc, qui les scelle. Puis le contrôle post-assemblage : le
+#    `extract.actionsdata` du bundle doit valoir EXACTEMENT la liste attendue
+#    unique, scripts/app-intents/attendus.json (égalité d'ensembles des intents et
+#    des couples intent–phrase, toute phrase contenant `${applicationName}`). Le
+#    comparateur, scripts/app-intents/controle.py, est partagé avec
+#    scripts/ios-build.sh ; il ne demande que python3 (bibliothèque standard),
+#    pour que la suite node l'exerce aussi hors macOS.
 if [ -d "$META_DIR/Metadata.appintents" ]; then
   cp -R "$META_DIR/Metadata.appintents" "$BUNDLE/Contents/Resources/Metadata.appintents"
 fi
@@ -319,55 +320,11 @@ ACTIONS_DATA="$BUNDLE/Contents/Resources/Metadata.appintents/extract.actionsdata
 if [ ! -f "$ACTIONS_DATA" ]; then
   echec_sans_bundle "Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)"
 fi
-if ! grep -Eq '"identifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA"; then
-  echec_sans_bundle "intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata"
+echo '  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents)'
+if ! python3 "$ROOT/scripts/app-intents/controle.py" mac "$ACTIONS_DATA"; then
+  echec_sans_bundle "Metadata.appintents non conforme à scripts/app-intents/attendus.json (bundle Mac)"
 fi
-if ! grep -Eq '"actionIdentifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA" \
-  || ! grep -Fq '"Ouvre ${applicationName}"' "$ACTIONS_DATA"; then
-  echec_sans_bundle 'App Shortcut de l'"'"'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata'
-fi
-echo '  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)'
 
-# Puis les intents vocaux de la coque (features siri-mac-questions-en-attente,
-# S-7, et siri-dictee-session-omp, S-6) : chacun doit être déclaré (E-9) et porter
-# son App Shortcut, avec ses phrases françaises (E-10). Que chaque phrase contienne
-# `${applicationName}` est déjà garanti par le processeur, qui sort en erreur sinon.
-# Les ’ (U+2019) sont voulus : le processeur les écrit tels quels.
-# shellcheck disable=SC1112
-for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicationName}' 'MacAnswerIntent|Réponds dans ${applicationName}' \
-  'MacSessionPromptIntent|Dis à ${applicationName}' 'MacSessionPromptIntent|Envoyer un message à ${applicationName}' \
-  'MacSessionPromptIntent|Écrire à ${applicationName}'; do
-  intent_type="${intent_vocal%%|*}"
-  intent_phrase="${intent_vocal#*|}"
-  if ! grep -Eq "\"identifier\" *: *\"$intent_type\"" "$ACTIONS_DATA"; then
-    echec_sans_bundle "intent vocal absent de Metadata.appintents : $intent_type introuvable dans extract.actionsdata"
-  fi
-  if ! grep -Eq "\"actionIdentifier\" *: *\"$intent_type\"" "$ACTIONS_DATA" \
-    || ! grep -Fq "\"$intent_phrase\"" "$ACTIONS_DATA"; then
-    echec_sans_bundle "App Shortcut de l'intent vocal $intent_type absent de Metadata.appintents : phrase « $intent_phrase » introuvable dans extract.actionsdata"
-  fi
-done
-# shellcheck disable=SC1112
-echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)'
-
-# Puis les cinq intents de pilotage de la coque (feature
-# siri-mac-pilotage-pipelines, S-8), sur le même patron : chacun doit être
-# déclaré (E-11) et porter son App Shortcut, avec sa première phrase française
-# (E-12).
-# shellcheck disable=SC1112
-for intent_pilotage in 'MacLaunchPipelineIntent|Lancer une pipeline dans ${applicationName}' 'MacResumeFeatureIntent|Reprendre une pipeline dans ${applicationName}' 'MacStopFeatureIntent|Arrêter une pipeline dans ${applicationName}' 'MacValidateSpecsIntent|Valider les specs dans ${applicationName}' 'MacAcceptReviewIntent|Accepter la revue dans ${applicationName}'; do
-  intent_type="${intent_pilotage%%|*}"
-  intent_phrase="${intent_pilotage#*|}"
-  if ! grep -Eq "\"identifier\" *: *\"$intent_type\"" "$ACTIONS_DATA"; then
-    echec_sans_bundle "intent de pilotage absent de Metadata.appintents : $intent_type introuvable dans extract.actionsdata"
-  fi
-  if ! grep -Eq "\"actionIdentifier\" *: *\"$intent_type\"" "$ACTIONS_DATA" \
-    || ! grep -Fq "\"$intent_phrase\"" "$ACTIONS_DATA"; then
-    echec_sans_bundle "App Shortcut de l'intent de pilotage $intent_type absent de Metadata.appintents : phrase « $intent_phrase » introuvable dans extract.actionsdata"
-  fi
-done
-# shellcheck disable=SC1112
-echo '  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)'
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then
