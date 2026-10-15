@@ -871,9 +871,12 @@ que d'afficher un écran à moitié peint.
     contrat de la feature (`.omp/pipeline/contract.md` de son worktree) un paragraphe
     `### Arbitrage du <date UTC>` sous la section `## Arbitrages du pilote` (créée au
     besoin), **puis relance** la feature ; les prompts de lot suivants renvoient le run à
-    cette section, qui prime sur ses hypothèses. **Tout ou rien** : si la relance ne peut pas
-    partir, le contrat est restauré octet pour octet, rien n'est journalisé et la commande
-    est refusée. L'arbitrage **n'annule jamais** une feature : une feature vivante est
+    cette section, qui prime sur ses hypothèses. **Tout ou rien** : une feature qui ne peut
+    pas être relancée est refusée AVANT l'accusé (refus nommés ci-dessous, rien n'est
+    écrit) ; si la relance échoue APRÈS l'accusé `taken` (dépendance ou worktree disparu
+    entre-temps), le contrat est restauré octet pour octet, rien n'est journalisé et un
+    avis `[pipeline] commande arbitrage : <motif> — contrat restauré` est émis. L'arbitrage
+    **n'annule jamais** une feature : une feature vivante est
     refusée, pas arrêtée. Refus nommés, dans l'ordre : `arbitrage vide` ;
     `arbitrage refusé : la feature est figée sur une question en vol` ;
     `arbitrage refusé : la feature est en cours` ;
@@ -902,7 +905,7 @@ que d'afficher un écran à moitié peint.
   - **Journal** : `arbitrage` et `avance` sont deux **kinds** d'entrée du journal du lot
     (source `utilisateur`). OMP Console saute les entrées de kind inconnu : aucune mise à
     jour de l'app n'est nécessaire. Ni l'app ni le panneau n'émettent ces deux commandes :
-    elles viennent des outils de pilotage (« Outils de pilotage », plus bas).
+    elles viennent des outils de pilotage (« Outils de pilotage », plus haut).
   L'app **omp-console** est un de ces clients : elle dépose ses gestes par ce canal et
   par les boîtes des runs, et affiche l'accusé du pilote (voir « Agir depuis le
   Kanban » de `omp-console/README.md`).

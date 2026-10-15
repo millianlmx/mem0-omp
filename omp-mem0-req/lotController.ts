@@ -2149,6 +2149,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const lot = read();
     const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
     if (feature === undefined) return;
+    // La base du pré-vol est consommée ici, succès ou refus : l'entrée ne survit pas à l'effet.
+    const base = avanceBases.get(cmd.slug) ?? "main";
+    avanceBases.delete(cmd.slug);
     const late = commandRefusal(cmd, commandViewOf(cmd, false));
     if (late !== null) {
       notify(`[pipeline] commande avance : ${late}`);
@@ -2175,7 +2178,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       slug: feature.slug,
       phase: feature.phase,
       kind: "avance",
-      question: `avance sur ${avanceBases.get(feature.slug) ?? "main"}`,
+      question: `avance sur ${base}`,
       answer: `${from} → ${to}`,
       source: "utilisateur",
       context: null,
@@ -2227,7 +2230,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       refusal = err instanceof Error ? err.message : String(err);
     }
     if (refusal !== null) {
-      restoreContract(file, original);
+      try {
+        restoreContract(file, original);
+      } catch (err) {
+        notify(
+          `[pipeline] commande arbitrage : ${refusal} — restauration du contrat impossible : ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
       notify(`[pipeline] commande arbitrage : ${refusal} — contrat restauré`);
       return;
     }
