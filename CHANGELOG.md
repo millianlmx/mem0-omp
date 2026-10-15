@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.29.0 — 2026-10-15
+
+- feat(req,pilotTools,commands,lotController,serviceClient,runs,context,contract,readme): outils de pilotage du modèle et kinds arbitrage et avance (#204) (107d110)
+
 ## omp-mem0-req 0.28.0 — 2026-10-14
 
 - feat(arbitre,lot,relais,audit,project,runs,seeds,panneau,contexte,readme): l'arbitre juge le cap, l'échec et le quota échu, avec relances bornées à 2 (#196) (5097bca)
