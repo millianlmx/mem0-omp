@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { DecisionSource } from "./context.ts";
-import { contractHasSection } from "./contract.ts";
+import { contractHasSection, contractReadRule } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, isUnder, realpathOr, resolveFeatureRoot, worktreePathFor } from "./git.ts";
 import type { GitRunner } from "./git.ts";
@@ -13,6 +13,7 @@ import type { Lot } from "./lot.ts";
 import type { SessionProbe } from "./panelSession.ts";
 import { isSubagentSession, reportStateWriteFailure } from "./publish.ts";
 import { buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
+import type { ReviewScope } from "./seeds.ts";
 import { serviceRunning } from "./serviceState.ts";
 import { PIPELINE_PHASES, pidAlive, readStore } from "./store.ts";
 
@@ -172,18 +173,29 @@ export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, san
 
 
 /** La graine d'un maillon : les quatre existantes, plus la livraison. La collecte `req` n'en a pas : elle passe par le genre `collecte` de `buildLotPrompt`. */
-export function phaseSeed(input: { phase: Exclude<PipelinePhase, "req">; slug: string; fix: boolean; focus: string }): string {
+export function phaseSeed(input: {
+  phase: Exclude<PipelinePhase, "req">;
+  slug: string;
+  fix: boolean;
+  focus: string;
+  reviewScope?: ReviewScope;
+  impliedBlockers?: string[];
+}): string {
   switch (input.phase) {
     case "specs":
       return buildSpecsSeed(input.focus);
     case "impl":
-      return buildImplSeed(input.focus, input.fix);
+      return buildImplSeed(input.focus, input.fix, input.impliedBlockers === undefined ? {} : { impliedBlockers: input.impliedBlockers });
     case "review":
-      return buildReviewSeed(input.focus);
+      return buildReviewSeed(input.focus, input.reviewScope === undefined ? {} : { incremental: input.reviewScope });
     case "release":
       return buildReleaseSeed({ slug: input.slug, branch: branchFor(input.slug) });
   }
 }
+
+
+/** Borne du résumé du run précédent injecté dans un prompt de lot (`buildLotPrompt.previousSummary`). */
+export const PREVIOUS_SUMMARY_MAX = 2_000;
 
 
 /** La première ligne d'un prompt de réponse, selon la source (S-11). */
@@ -223,6 +235,11 @@ export const PILOT_ARBITRATION_LINE =
  * `messages` (S-5) sont les textes mis en file depuis le panneau : ils s'ajoutent
  * APRÈS le prompt, un bloc par message, dans l'ordre — et aucun préfixe existant
  * ne bouge (`isPipelineNotice` et `saysFin` gardent leurs déclenchements).
+ *
+ * `excerpt` et `previousSummary` suivent la graine (et la ligne de lot) et
+ * précèdent la directive de lot, sous `[extrait du contrat]` et `[résumé du run
+ * précédent]` : c'est ce qui dispense le maillon de relire le contrat entier et
+ * le lot k+1 de redécouvrir ce que le lot k a laissé.
  */
 export function buildLotPrompt(input: {
   kind: LotPromptKind;
@@ -244,8 +261,22 @@ export function buildLotPrompt(input: {
   refocus?: string;
   /** Le contrat de la feature porte-t-il `## Arbitrages du pilote` ? Sa ligne suit le prompt (S-5). */
   pilotArbitrage?: boolean;
+  /** L'extrait du contrat utile à ce run (`lotContractExcerpt`) ; absent = le maillon lit le fichier. */
+  excerpt?: string;
+  /** Le dernier message assistant du run précédent de la même feature (lot k-1), borné à `PREVIOUS_SUMMARY_MAX`. */
+  previousSummary?: string;
+  /** Revue INCRÉMENTALE après un --fix (`reviewScopeFor`) : les bloquants que la correction devait lever. */
+  reviewScope?: ReviewScope;
+  /** Les bloquants impliqués par la table AC PAR AC (`reviewImpliedBlockers`), cités par la graine --fix. */
+  impliedBlockers?: string[];
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
+  const excerpt = (input.excerpt ?? "").trim();
+  const summaryRaw = (input.previousSummary ?? "").trim();
+  const summary = summaryRaw.length > PREVIOUS_SUMMARY_MAX ? `${summaryRaw.slice(0, PREVIOUS_SUMMARY_MAX - 1)}…` : summaryRaw;
+  const handed =
+    (excerpt === "" ? "" : `[extrait du contrat]\n${excerpt}\n\n`) +
+    (summary === "" ? "" : `[résumé du run précédent]\n${summary}\n\n`);
   const { phase } = input;
   let prompt: string;
   if (input.kind === "answer") {
@@ -257,13 +288,20 @@ export function buildLotPrompt(input: {
     const intent = (input.description ?? "").trim();
     prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
   } else {
-    const seed = phaseSeed({ phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+    const seed = phaseSeed({
+      phase,
+      slug: input.slug,
+      fix: input.fix === true,
+      focus: input.focus ?? "",
+      ...(input.reviewScope === undefined ? {} : { reviewScope: input.reviewScope }),
+      ...(input.impliedBlockers === undefined ? {} : { impliedBlockers: input.impliedBlockers }),
+    });
     const by = input.source === "arbitrage" ? "l'arbitre" : "l'utilisateur";
     prompt =
       input.kind === "relaunch"
         ? `[reprise] Le maillon est relancé par ${by} : reprends où tu t'es arrêté, ` +
-          `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`
-        : `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
+          `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`
+        : `${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`;
   }
   const withPilot = input.pilotArbitrage === true ? `${prompt}\n\n${PILOT_ARBITRATION_LINE}` : prompt;
   const withContext = input.context ? `${withPilot}\n\n${input.context}` : withPilot;
@@ -303,7 +341,7 @@ export function lastLine(text: string): string {
 export const RELEASE_DIRECTIVE = `Tu es l'agent de livraison. La revue est propre et la fin du cycle a été acceptée (la décision et sa source sont nommées à la fin de ce message) : tu prépares le commit et le corps de la PR. Le pilotage du lot poussera la branche et ouvrira la PR juste après toi.
 
 Procédure OBLIGATOIRE, dans l'ordre :
-1. Lis le contrat .omp/pipeline/contract.md : Besoins (B-<n>), Critères d'acceptation (AC-<n>), Spécifications (S-<n>), Lots (BR-<n>) et le verdict de \`## Revue\`. Si \`## Revue\` est absente ou consigne des BLOQUANTS, ARRÊTE-toi et dis-le : il n'y a rien à livrer.
+1. ${contractReadRule("Besoins (B-<n>), Critères d'acceptation (AC-<n>) et le verdict de `## Revue`")} Si \`## Revue\` est absente ou consigne des BLOQUANTS, ARRÊTE-toi et dis-le : il n'y a rien à livrer.
 2. \`git status --porcelain\`. Si l'arbre est VIDE, la feature est déjà commitée : ne recommite pas (idempotence) et passe à l'étape 4.
 3. Sinon, fais UN SEUL commit avec tout le travail de la feature (\`git add -A\` puis \`git commit\`). Message en français, conventionnel : un titre \`type(scope): sujet\` (les scopes nomment les composants touchés), puis un corps qui porte la cause racine, les décisions et leurs raisons, les preuves réellement exécutées avec leurs chiffres et le verdict de revue. N'invente aucune preuve : reprends celles du contrat et des commandes que tu as lancées. NE TOUCHE AUCUN fichier porteur de version (les deux package.json et les deux catalogues) : la version publiée est décidée par le job de release APRÈS la fusion, et une PR qui modifie un de ces fichiers échoue en CI (scripts/no-manual-bump.sh).
 4. Écris le corps de la PR dans .omp/pipeline/pr-body.md : le résumé de la feature (ses besoins), la liste des critères d'acceptation avec la preuve de chacun (fichier de test), les décisions techniques notables et le verdict de revue. Ce fichier est ignoré par git : il ne doit pas entrer dans le commit.

@@ -14,9 +14,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { copyRepo, ROOT } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripFullLineComments } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("ios-memoire-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const CONTRACT = path.join(ROOT, ".omp", "pipeline", "contract.md");
 
@@ -115,7 +117,7 @@ function relayFaults(root: string): string[] {
 test("ios-memoire/AC-1 : le sommaire relayé est miroité, borné, et rendu par les mots du noyau", () => {
   assert.deepEqual(relayFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   fs.writeFileSync(target, code(target).replaceAll("RemoteLimits.memoryPageSize", "RemoteLimits.statsRows"));
   assert.ok(relayFaults(copy).length > 0, "une borne de sommaire retirée doit faire rougir la garde");
@@ -150,7 +152,7 @@ function detailFaults(root: string): string[] {
 test("ios-memoire/AC-2 : la feuille rend les cinq faits, sans aucun geste d'écriture", () => {
   assert.deepEqual(detailFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryDetailView.swift");
   fs.writeFileSync(target, code(target).replace("MemoryText.identifierLabel", "MemoryText.emptyRow"));
   assert.ok(detailFaults(copy).length > 0, "un fait retiré de la feuille doit faire rougir la garde");
@@ -182,7 +184,7 @@ function blankQueryFaults(root: string): string[] {
 test("ios-memoire/AC-3 : vider la requête revient au sommaire déjà lu, sans requête", () => {
   assert.deepEqual(blankQueryFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryModel.swift");
   const text = code(target).replace("guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }", "");
   fs.writeFileSync(target, text);
@@ -225,7 +227,7 @@ function searchParityFaults(root: string): string[] {
 test("ios-memoire/AC-4 : la recherche est exactement celle de l'outil mem0_search", () => {
   assert.deepEqual(searchParityFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-mem0-memory", "config.ts");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("SEARCH_THRESHOLD = 0.55", "SEARCH_THRESHOLD = 0.6"));
   assert.ok(searchParityFaults(copy).length > 0, "un seuil divergen du plugin doit faire rougir la garde");
@@ -256,7 +258,7 @@ function searchEmptyFaults(root: string): string[] {
 test("ios-memoire/AC-5 : trois « rien trouvé » distincts, jamais le sommaire à la place", () => {
   assert.deepEqual(searchEmptyFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
   fs.writeFileSync(target, code(target).replaceAll("MemoryText.belowThreshold", "MemoryText.noMatch"));
   assert.ok(searchEmptyFaults(copy).length > 0, "un état vide confondu avec un autre doit faire rougir la garde");
@@ -288,7 +290,7 @@ function unavailableFaults(root: string): string[] {
 test("ios-memoire/AC-6 : « Mémoire indisponible » porte l'adresse sondée et le dernier message", () => {
   assert.deepEqual(unavailableFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   fs.writeFileSync(target, code(target).replaceAll("MemoryText.unavailableDetail(address:", "String(describing:"));
   assert.ok(unavailableFaults(copy).length > 0, "une panne sans constante partagée doit faire rougir la garde");
@@ -323,7 +325,7 @@ function noProjectFaults(root: string): string[] {
 test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas appelé", () => {
   assert.deepEqual(noProjectFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   fs.writeFileSync(target, code(target).replace("scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil", "scope: scope, total: 0, offset: 0, rows: [], nextOffset: nil"));
   assert.ok(noProjectFaults(copy).length > 0, "un retour anticipé supprimé doit faire rougir la garde");
@@ -348,7 +350,7 @@ function clientStateFaults(root: string): string[] {
 test("ios-memoire/AC-8 : quand le Mac ne répond plus, c'est l'état du client", () => {
   assert.deepEqual(clientStateFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryModel.swift");
   fs.writeFileSync(target, code(target).replaceAll("IOSMacFailure.ofMemoryRead(", "classifyLocally("));
   assert.ok(clientStateFaults(copy).length > 0, "une panne classée hors du traducteur partagé doit faire rougir la garde");
@@ -387,7 +389,7 @@ function refreshFaults(root: string): string[] {
 test("ios-memoire/AC-9 : rafraîchir à l'ouverture et sur geste, jamais en continu", () => {
   assert.deepEqual(refreshFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
   fs.writeFileSync(target, `${code(target)}\nlet minuterie = Timer()\n`);
   assert.ok(refreshFaults(copy).length > 0, "une scrutation ajoutée doit faire rougir la garde");
@@ -424,7 +426,7 @@ function readOnlyFaults(root: string): string[] {
 test("ios-memoire/AC-10 : lecture seule — aucune écriture, ni sommaire ni graphe", () => {
   assert.deepEqual(readOnlyFaults(ROOT), []);
 
-  const copy = copyRepo("ios-memoire-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
   fs.writeFileSync(target, `${code(target)}\nlet fuite = MemoryText.delete\n`);
   assert.ok(readOnlyFaults(copy).length > 0, "un geste d'écriture ajouté doit faire rougir la garde");

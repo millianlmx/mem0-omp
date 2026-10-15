@@ -17,6 +17,7 @@ import reqExtension, {
   LOT_VERSION,
   applyWorktreeFate,
   buildLotAlert,
+  REVIEW_UNREADABLE_REFOCUS,
   buildLotPrompt,
   buildLotRecap,
   buildPanelRows,
@@ -633,7 +634,7 @@ test("les impasses de la chaîne sont bloquées, nommées, et jamais silencieuse
   const illisible = "## Spécifications\n\nS-1 : x.\n\n## Revue\n\n- STATUT : APPROUVÉ\n";
   assert.deepEqual(
     nextChainAction({ ...base, phase: "review", outcome: "ok", contract: illisible }),
-    { kind: "run", phase: "review", fix: false },
+    { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS },
     "un verdict illisible relance la revue…",
   );
   assert.deepEqual(
@@ -645,7 +646,7 @@ test("les impasses de la chaîne sont bloquées, nommées, et jamais silencieuse
   // texte lu viendrait d'un autre maillon, donc jamais `clean`.
   assert.deepEqual(
     nextChainAction({ ...base, phase: "review", outcome: "ok", contract: CONTRACT_CLEAN, reviewRewritten: false }),
-    { kind: "run", phase: "review", fix: false },
+    { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS },
     "une revue qui n'écrit rien n'est pas une revue propre",
   );
   // Une question en TEXTE de specs/impl/review arrête la chaîne sur une réponse.

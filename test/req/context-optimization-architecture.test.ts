@@ -2312,7 +2312,7 @@ test("context-optimization-architecture/AC-11 : un brief qui contient la répons
 });
 
 test("context-optimization-architecture/AC-13 : un jalon prêt est tranché par une session d'arbitre distincte des runs de la feature, consigné au journal, et la chaîne repart", async () => {
-  const s = await br4Scenario(() => ({ decision: "approve", reason: "les specs couvrent chaque AC" }), { covered: true });
+  const s = await br4Scenario(() => ({ decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT], references: ["preuve.txt:1"] }), { covered: true });
   s.park("specs", "specs", null);
   await s.controller.tick();
   await br2Until(() => s.specs.length === 2);
@@ -2357,7 +2357,7 @@ test("context-optimization-architecture/AC-10 : trois décisions — contexte, a
   const s = await br4Scenario((_prompt, call) => {
     calls.push(`appel ${call}`);
     if (call === 1) return citeFact("JSON");
-    if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC" };
+    if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT] };
     return { decision: "escalate", reason: "le corpus ne dit pas le nom de la table" };
   }, { covered: true });
   // 1. une question tranchée par l'arbitre sur le contexte.
@@ -2521,7 +2521,7 @@ test("arbitre : le premier appel d'`arbiter_decide` est retenu, un second est re
 test("arbitre : la validation déterministe n'accorde rien sur parole (citations aux espaces repliés, jalon, source, décision absente)", () => {
   const question = { kind: "question" as const, slug: "alpha", phase: "req" as const, question: "Quel format ?", options: ["JSON", "CSV"] };
   const jalon = { kind: "specs" as const, slug: "alpha", phase: "specs" as const, question: null, options: [] };
-  const corpus = buildArbiterCorpus({ report: null, brief: "## But\nLe format de\n   sortie est JSON.", contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
+  const corpus = buildArbiterCorpus({ kind: "question", report: null, brief: "## But\nLe format de\n   sortie est JSON.", contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
   const ground = { corpus, report: null, worktree: emptyGitRepo("coa-ground-"), contract: null, review: null };
   const escalade = (motif: string) => ({ kind: "escalate", reason: motif });
   const justification = (citations: string[]) => ({ reason: "r", citations, references: [], rubriques: [] });
@@ -2538,7 +2538,7 @@ test("arbitre : la validation déterministe n'accorde rien sur parole (citations
   assert.deepEqual(validateArbiterDecision(jalon, { decision: "answer", answer: "x", source: "contexte", citations: ["x"], reason: "r" }, ground), escalade("décision d'arbitre invalide : un jalon s'approuve ou s'escalade"));
   assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: " " }, ground), escalade("décision d'arbitre invalide : motif d'approbation vide"));
   const covered = { ...ground, contract: "## Critères d'acceptation\n\nAC-1 : c.\n\n## Spécifications\n\n### S-1 (AC-1) — s\n" };
-  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: "couvert" }, covered), { kind: "approve", justification: { ...justification([]), reason: "couvert" } });
+  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: "couvert", citations: ["sortie est JSON."] }, covered), { kind: "approve", justification: { ...justification(["sortie est JSON."]), reason: "couvert" } });
   assert.deepEqual(validateArbiterDecision(jalon, { decision: "escalate", reason: "doute" }, ground), escalade("doute"));
   // Le prompt porte l'élément, ses options et le corpus ; ARBITER_DEADLINE_MS vaut dix minutes.
   const prompt = buildArbiterPrompt(question, corpus);
@@ -2811,7 +2811,7 @@ test("context-optimization-architecture/AC-14 : une question escaladée par l'ar
 test("context-optimization-architecture/AC-16 : relais désarmé, deux éléments tranchés et un escaladé ; au réarmement la session ne reçoit que l'escalade, une fois par armement", async () => {
   const s = await br4Scenario((_prompt, call) => {
     if (call === 1) return citeFact("JSON");
-    if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC" };
+    if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT] };
     return { decision: "escalate", reason: "le corpus ne dit pas le nom de la table" };
   }, { covered: true });
   const rig = br5Relay(s, "audit"); // jamais armé : la session parente est fermée

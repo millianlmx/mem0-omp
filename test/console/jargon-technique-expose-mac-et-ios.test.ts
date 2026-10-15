@@ -12,7 +12,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, tmpdir } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { swiftFiles } from "../support/swift-source.ts";
 
 /** Les fichiers lus par les gardes, relatifs à la racine du dépôt. */
@@ -30,17 +30,8 @@ const FILES = {
   terminalView: "omp-console/Sources/OMPConsole/Terminal/TerminalConsoleView.swift",
 } as const;
 
-/** Les racines de sources copiées pour planter une faute (rien d'autre n'est lu). */
-const COPIED_ROOTS = ["omp-console/Sources", "omp-console/ios/OMPConsoleIOS"];
-
-/** Une copie jetable des sources lues par les gardes, mêmes chemins relatifs. */
-function copyRepo(): string {
-  const dir = tmpdir("jargon-technique-copie-");
-  for (const sub of COPIED_ROOTS) {
-    fs.cpSync(path.join(ROOT, sub), path.join(dir, sub), { recursive: true });
-  }
-  return dir;
-}
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
+const shared = sharedRepo("jargon-technique-copie-");
 
 /** Remplace une occurrence attendue dans un fichier de la copie ; échoue si elle manque. */
 function plant(root: string, file: string, from: string, to: string): void {
@@ -214,7 +205,7 @@ function kanbanFaults(root: string): string[] {
 test("jargon-technique-expose-mac-et-ios/AC-1 : la bulle « n problèmes » n'affiche ni le détail brut ni le pli technique, et garde « Copier le diagnostic »", () => {
   assert.deepEqual(kanbanFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   append(copy, FILES.kanbanView, "let leak = Text(anomaly.detail)");
   plant(copy, FILES.kanbanView, "KanbanText.diagnosticReport(", "KanbanText.marks(");
   assert.deepEqual(kanbanFaults(copy), [
@@ -222,7 +213,7 @@ test("jargon-technique-expose-mac-et-ios/AC-1 : la bulle « n problèmes » n'af
     `${FILES.kanbanView} : ne contient plus « KanbanText.diagnosticReport( »`,
   ]);
 
-  const removed = copyRepo();
+  const removed = shared.fresh();
   fs.rmSync(path.join(removed, FILES.kanbanView));
   assert.deepEqual(kanbanFaults(removed), [missing(FILES.kanbanView)]);
 });
@@ -256,7 +247,7 @@ function inspectorFaults(root: string): string[] {
 test("jargon-technique-expose-mac-et-ios/AC-3 : les inspecteurs Session OMP et Projet ne montrent le PID nulle part hors du diagnostic copié", () => {
   assert.deepEqual(inspectorFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   append(copy, FILES.sessionView, 'let leak = Text("\\(host.pid ?? 0)")');
   append(copy, FILES.projectView, "let leak = Text(SessionConsoleText.fieldPid)");
   append(copy, FILES.coreSessionText, 'extension SessionConsoleText { public static let fieldPid = "pid" }');
@@ -286,7 +277,7 @@ function marksFaults(root: string): string[] {
 test("jargon-technique-expose-mac-et-ios/AC-5 : les cartes Pipelines iOS disent leurs marques en phrase, jamais en marque brute", () => {
   assert.deepEqual(marksFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(
     copy,
     FILES.pipelinesScreen,
@@ -331,7 +322,7 @@ function labelFaults(root: string): string[] {
 test("jargon-technique-expose-mac-et-ios/AC-8 : aucun libellé de Fichiers ni du Terminal ne dit worktree, Cible, omp ou octets", () => {
   assert.deepEqual(labelFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, FILES.terminalText, '"Lancer OMP"', '"Lancer omp"');
   plant(copy, FILES.filesText, '"Dossier"', '"Cible"');
   append(
@@ -347,7 +338,7 @@ test("jargon-technique-expose-mac-et-ios/AC-8 : aucun libellé de Fichiers ni du
   ]);
 
   // Un commentaire ou une interpolation n'est pas un libellé affiché.
-  const quiet = copyRepo();
+  const quiet = shared.fresh();
   append(quiet, FILES.terminalText, '// « Lancer omp » dans un worktree, 12 octets\nlet ompCible = "\\(ompCible)"');
   assert.deepEqual(labelFaults(quiet), []);
 });
@@ -379,7 +370,7 @@ function memoryFaults(root: string): string[] {
 test("jargon-technique-expose-mac-et-ios/AC-6 : la Mémoire n'affiche pas son détail brut et la feuille du contrat ne montre pas de chemin", () => {
   assert.deepEqual(memoryFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   append(copy, FILES.memoryView, 'let leak = Text(verbatim: MemoryText.unavailableDetail(address: "a", error: "b"))');
   append(copy, FILES.memoryGraphView, "let leak = Text(MemoryText.foreignOwnershipDetail(foreign))");
   append(copy, FILES.contractSheet, "let leak = Text(ContractText.pathLabel)");
@@ -390,7 +381,7 @@ test("jargon-technique-expose-mac-et-ios/AC-6 : la Mémoire n'affiche pas son d�
   ]);
 
   // Passé à « Copier le diagnostic », le détail brut est permis.
-  const allowed = copyRepo();
+  const allowed = shared.fresh();
   append(
     allowed,
     FILES.memoryView,
@@ -466,7 +457,7 @@ test("jargon-technique-expose-mac-et-ios/AC-7 : « Copier le diagnostic » du Te
   assert.deepEqual(terminalCopyFaults(ROOT), []);
   assert.deepEqual(graphCopyFaults(ROOT), []);
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(
     copy,
     FILES.terminalView,

@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripFullLineComments } from "../support/swift-source.ts";
 
 const SHEET = "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift";
@@ -26,33 +26,8 @@ function code(root: string, rel: string): string {
   return stripFullLineComments(readIfExists(path.join(root, rel)));
 }
 
-const dirs: string[] = [];
-test.after(() => {
-  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-const SKIP: Record<string, true> = { ".git": true, node_modules: true, ".build-ios": true, target: true };
-
-/** Une copie jetable du dépôt, sans racines de build ni historique. */
-function copyRepo(): string {
-  const dir = fs.mkdtempSync(
-    path.join(fs.realpathSync(fs.mkdtempSync(path.join("/tmp", "ios-nouvelle-feature-"))), "copie-"),
-  );
-  dirs.push(dir);
-  const walk = (current: string, target: string) => {
-    fs.mkdirSync(target, { recursive: true });
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      if (SKIP[entry.name] || entry.name === "build" || entry.name.startsWith(".build")) continue;
-      const from = path.join(current, entry.name);
-      const to = path.join(target, entry.name);
-      if (entry.isDirectory()) walk(from, to);
-      else if (entry.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
-      else fs.copyFileSync(from, to);
-    }
-  };
-  walk(ROOT, dir);
-  return dir;
-}
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
+const shared = sharedRepo("ios-nouvelle-feature-copie-");
 
 /** Réécrit un fichier de la copie. */
 function plant(copy: string, rel: string, edit: (text: string) => string): void {
@@ -203,7 +178,7 @@ function shotsFaults(root: string): string[] {
 
 test("ios-nouvelle-feature-formulaire/AC-1 : le mot « Dépôt » n'est écrit qu'une fois, le sélecteur le porte en libellé d'accessibilité", () => {
   assert.deepEqual(repoWordFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) =>
     t.replace("Section {\n            if repos.isEmpty", "Section(NewFeatureText.repo) {\n            if repos.isEmpty"),
   );
@@ -214,59 +189,59 @@ test("ios-nouvelle-feature-formulaire/AC-1 : le mot « Dépôt » n'est écrit q
 
 test("ios-nouvelle-feature-formulaire/AC-2 : le sélecteur affiche en clair le nom du dépôt choisi", () => {
   assert.deepEqual(shownRepoFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ""));
   assert.ok(shownRepoFaults(copy).some((f) => f.includes("racine")), "des entrées sans tag doivent faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-3 : sans dépôt choisi, l'invite « Choisir un dépôt » s'affiche et « Lancer » est inactif", () => {
   assert.deepEqual(promptFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace("repos.contains(repo) &&", "!repo.isEmpty &&"));
   assert.ok(promptFaults(copy).some((f) => f.includes("Lancer")), "une activation sur simple non-vide doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-5 : le menu de dépôts ne montre que des noms, aucun chemin absolu", () => {
   assert.deepEqual(menuNamesFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace("Text(verbatim: choice.label)", "Text(verbatim: ConsoleFormat.path(choice.root))"));
   assert.ok(menuNamesFaults(copy).some((f) => f.includes("chemin")), "un chemin affiché doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-6 : la feature est lancée avec le chemin complet du dépôt choisi", () => {
   assert.deepEqual(launchedRootFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ".tag(choice.label)"));
   assert.ok(launchedRootFaults(copy).some((f) => f.includes("libellé")), "un libellé posé comme dépôt doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-7 : les champs titre et besoin portent les libellés « Titre » et « Besoin » et des identifiants distincts", () => {
   assert.deepEqual(fieldLabelFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".accessibilityLabel(NewFeatureText.need)", ""));
   assert.ok(fieldLabelFaults(copy).some((f) => f.includes("« Besoin »")), "un besoin sans libellé doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-8 : le champ besoin vide réserve au moins 3 lignes", () => {
   assert.deepEqual(emptyHeightFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, METRICS, (t) => t.replace("3...8", "1...8"));
   assert.ok(emptyHeightFaults(copy).some((f) => f.includes("borne basse")), "une borne basse à 1 doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-9 : le champ besoin grandit jusqu'à 8 lignes puis défile en lui-même", () => {
   assert.deepEqual(growFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".lineLimit(IOSMetrics.needLines)", ""));
   assert.ok(growFaults(copy).some((f) => f.includes("borné")), "un champ sans plage de lignes doit faire rougir la garde");
-  const copy2 = copyRepo();
+  const copy2 = shared.fresh();
   plant(copy2, SHEET, (t) => t.replace("Form {", "ScrollView {"));
   assert.ok(growFaults(copy2).some((f) => f.includes("ScrollView")), "un second défilement doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-10 : la feuille est capturée sur iPhone ET iPad dans ses trois états, sans régression", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo();
+  const copy = shared.fresh();
   plant(copy, SHOTS, (t) => t.replace("  shoot_nouvelle_feature ipad \"$ipad\" \"$appearance\"\n", ""));
   assert.ok(shotsFaults(copy).some((f) => f.includes("iPad")), "un passage sans iPad doit faire rougir la garde");
 });

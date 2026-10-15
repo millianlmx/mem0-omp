@@ -2,15 +2,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
+import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewScopeFor, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { PILOT_ARBITRATION_TITLE, appendPilotArbitrage, contractAcIds, contractHasSection, contractLots, contractSection, reviewBlockers, reviewVerdict } from "./contract.ts";
+import { PILOT_ARBITRATION_TITLE, appendPilotArbitrage, contractAcIds, contractHasSection, contractLots, contractSection, lotContractExcerpt, reviewBlockerList, reviewBlockers, reviewImpliedBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
+import { entriesOfText } from "./panelSession.ts";
+import { pilotMessagesOf } from "./pilotTools.ts";
+import type { ReviewScope } from "./seeds.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILURE_STDOUT_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
-import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf } from "./lot.ts";
+import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, runHardDeadlineMinutes } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
@@ -30,8 +33,8 @@ import type { LotPromptKind, WorktreeFate } from "./runs.ts";
 import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason, startModelFor } from "./quota.ts";
 import type { ModelStart, QuotaHit } from "./quota.ts";
 import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
-import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
-import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
+import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, pruneHistory, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
+import type { PanelDelivery, PanelPendingAsk, RunningEntry, StoreSnapshot } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
 
 
@@ -213,6 +216,9 @@ export type LotController = LotPanelActions & {
  * que le chemin immédiat aurait lancé.
  */
 export type PlannedLaunch = HeldLaunch & { slug: string };
+
+/** Borne du résumé du run précédent injecté au lot d'impl suivant (`[résumé du run précédent]`). */
+export const LOT_PREVIOUS_SUMMARY_MAX = 2_000;
 
 
 /**
@@ -501,9 +507,18 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return { inbox: panelInboxDirOf(entry), pendingAsk: entry.pendingAsk ?? null, auditRelay };
   }
 
+  /**
+   * Le magasin lu UNE fois par passe (phase B, synchrone) ; `null` hors passe, où
+   * chaque lecture relit le disque — une fin de run tombe à tout moment.
+   */
+  let passStore: StoreSnapshot | null = null;
+  function storeSnapshot(): StoreSnapshot {
+    return passStore ?? readStore(stateDir);
+  }
+
   /** L'entrée du run VIVANT de ce worktree, ou `null` (S-1, S-6) — jamais pour un worktree vide. */
   function liveEntryOf(worktree: string): RunningEntry | null {
-    return worktree === "" ? null : liveRunFor(stateDir, worktree);
+    return worktree === "" ? null : liveRunFor(stateDir, worktree, storeSnapshot());
   }
 
   /**
@@ -515,10 +530,29 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function publishedAsk(worktree: string): PanelPendingAsk | null {
     if (worktree === "") return null;
     const real = realpathOr(worktree);
-    for (const entry of readStore(stateDir).running) {
+    for (const entry of storeSnapshot().running) {
       if (realpathOr(entry.cwd) === real && entry.pendingAsk) return entry.pendingAsk;
     }
     return null;
+  }
+
+  /**
+   * Le dernier message assistant de la session `file` (≤ LOT_PREVIOUS_SUMMARY_MAX
+   * caractères, fin conservée), ou `undefined` : session absente, illisible ou muette.
+   * Lu une fois, au départ du lot d'impl suivant.
+   */
+  function previousRunSummary(file: string | null): string | undefined {
+    if (file === null || file === "") return undefined;
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      return undefined;
+    }
+    const assistants = pilotMessagesOf(entriesOfText(text, 0)).filter((m) => m.role === "assistant" && m.text.trim() !== "");
+    const last = assistants[assistants.length - 1];
+    if (last === undefined) return undefined;
+    return clipTail(last.text.trim(), LOT_PREVIOUS_SUMMARY_MAX);
   }
 
   /**
@@ -554,8 +588,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
    */
   function emit(lot: Lot, feature: LotFeature, before: LotFeatureState): void {
     if (before === feature.state) return;
-    const relayable =
-      feature.state === "waiting" || (feature.state === "blocked" && isReviewCapReason(feature.stopReason));
+    const relayable = feature.state === "waiting" || settledItemKind(feature) !== null;
     if (relayable && auditRelayOpen(stateDir, feature, lot.owner.pid, now())) return;
     const alert = buildLotAlert(repo, feature);
     if (!alert) return;
@@ -569,11 +602,18 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
-  /** L'élément arbitrable où la feature vient de s'arrêter : le plafond de revue (`blocked` en review) ou un échec. */
+  /**
+   * L'élément arbitrable où la feature vient de s'arrêter : le plafond de revue
+   * (`blocked` en review), ou un échec — `failed`, et tout `blocked` qui n'est ni
+   * le plafond, ni un quota, ni un blocage hérité d'une dépendance (verdict
+   * illisible, /impl sans diff, /specs vide, contrat endommagé) : le même élément
+   * que `relayItemsOf`.
+   */
   function settledItemKind(feature: LotFeature): "cap" | "failure" | null {
     if (feature.state === "failed") return "failure";
-    if (feature.state === "blocked" && feature.phase === "review" && isReviewCapReason(feature.stopReason)) return "cap";
-    return null;
+    if (feature.state !== "blocked" || feature.quota !== undefined) return null;
+    if (feature.phase === "review" && isReviewCapReason(feature.stopReason)) return "cap";
+    return isReviewCapReason(feature.stopReason) || dependencyStopReason(feature.stopReason) ? null : "failure";
   }
 
   function settle(lot: Lot, feature: LotFeature, state: "blocked" | "failed", reason: string): void {
@@ -730,6 +770,23 @@ export function createLotController(deps: LotControllerDeps): LotController {
         ? { id: implLots[implRank] as string, index: implRank, ids: implLots }
         : undefined;
     runKinds.set(feature.slug, { lot: lotOfRun?.id ?? null, fix: launch.fix });
+    const contractText = readContractText(feature.worktree);
+    // L'extrait du contrat utile au maillon : le contrat entier était relu
+    // plusieurs fois par session et pesait 40 % des octets lus en /impl.
+    const excerpt = lotContractExcerpt(contractText, { phase: launch.phase, fix: launch.fix, lotId: lotOfRun?.id ?? null });
+    // Le lot BR-k (k > 0) part d'une session NEUVE : le dernier message du run
+    // précédent lui dit où le lot d'avant s'est arrêté.
+    const previousSummary =
+      lotOfRun !== undefined && lotOfRun.index > 0 ? previousRunSummary(feature.lastRunSessionFile ?? feature.sessionFile) : undefined;
+    // Une revue après corrections est INCRÉMENTALE (bornée aux bloquants levés) tant
+    // qu'un crédit reste ; la dernière avant le plafond est complète.
+    const reviewScope: ReviewScope | undefined =
+      launch.phase === "review" && reviewScopeFor({ fixes: feature.fixes, cap: lot.reviewCap }) === "incremental"
+        ? { kind: "incremental", blockers: reviewBlockerList(contractText) }
+        : undefined;
+    // Un `--fix` reçoit aussi les bloquants IMPLIQUÉS par la table AC PAR AC : un
+    // « fail » sans numéro dans BLOQUANTS n'en est pas moins à lever.
+    const impliedBlockers = launch.fix ? reviewImpliedBlockers(contractText) : undefined;
     const prompt = buildLotPrompt({
       ...(lotOfRun === undefined ? {} : { lot: lotOfRun }),
       kind: launch.kind,
@@ -742,11 +799,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
       ...(launch.source === undefined ? {} : { source: launch.source }),
       ...(launch.refocus === undefined ? {} : { refocus: launch.refocus }),
       ...(milestone === undefined ? {} : { milestone }),
+      ...(excerpt === null ? {} : { excerpt }),
+      ...(previousSummary === undefined ? {} : { previousSummary }),
+      ...(reviewScope === undefined ? {} : { reviewScope }),
+      ...(impliedBlockers === undefined ? {} : { impliedBlockers }),
       // Le contexte de conduite (S-8) : seulement pour une feature lancée par /project ou /audit.
       ...(feature.auditSession !== undefined
-        ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession }) }
+        ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession, phase: launch.phase }) }
         : {}),
-      ...(contractHasSection(readContractText(feature.worktree), PILOT_ARBITRATION_TITLE) ? { pilotArbitrage: true } : {}),
+      ...(contractHasSection(contractText, PILOT_ARBITRATION_TITLE) ? { pilotArbitrage: true } : {}),
     });
     // La session reprise (S-8 §1) : celle de l'entrée VIVANTE du worktree quand il
     // y en a une — c'est le run lui-même qui l'a publiée, donc elle fait autorité
@@ -894,7 +955,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** La raison consignée quand un run ne rend pas `ok` (S-4). */
   function failureReason(result: LotRunnerResult): string {
-    if (result.killed) return `délai dépassé (${Math.round((runTimeout + LOT_RUN_DEADLINE_MARGIN_MS) / 60_000)} min)`;
+    if (result.killed) return `délai dépassé (${runHardDeadlineMinutes(runTimeout)} min)`;
     if (result.code === 127) return "binaire omp introuvable (code 127)";
     // 200 caractères : un motif de panne tient dans une ligne de panneau et dans
     // une alerte ; une trace entière n'y tient pas et noierait le reste.
@@ -998,6 +1059,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       reason: expired ? `délai dépassé (${Math.round(runTimeout / 60_000)} min)` : failureReason(result),
       worktree: check,
     });
+    // Le modèle qui a RENDU le verdict (après replis) : publié avec lui, pour que
+    // « revue propre » dise par qui — un repli faible approuve plus volontiers.
+    if (phase === "review") {
+      feature.lastVerdictModel = result.model ?? null;
+      notify(
+        `[pipeline] ${repo}/${slug} : revue terminée — verdict ${feature.lastVerdict ?? "aucun"}, modèle ${feature.lastVerdictModel ?? "inconnu"}`,
+      );
+    }
     // La FIN de sortie d'un run qui se conclut par `failed` : l'arbitre la lit (S-1 §3). Les
     // autres voies vers `failed` (worktree, « pilote disparu ») n'en écrivent pas.
     if (settledItemKind(feature) === "failure") {
@@ -1095,12 +1164,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return out;
       }
       arm(feature, action);
+      // Une revue ILLISIBLE reprend SA session avec la consigne de la chaîne : réécrire
+      // la section, pas refaire la revue.
       out.launches.push({
         slug: feature.slug,
         phase: action.phase,
         fix: action.fix,
         kind: "phase",
-        resume: false,
+        resume: action.resume === true,
+        ...(action.refocus === undefined ? {} : { refocus: action.refocus }),
       });
       return out;
     }
@@ -1493,6 +1565,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     const report = readReport(stateDir, feature.auditSession);
     const corpus = buildArbiterCorpus({
+      kind: arbiterItem.kind,
+      phase: arbiterItem.phase,
       report,
       brief: readBrief(stateDir, feature.auditSession),
       contract,
@@ -1646,7 +1720,63 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
+  /** Une passe : la phase A (git) attend, la phase B lit le magasin UNE fois puis n'attend plus. */
   async function pass(): Promise<void> {
+    try {
+      await passBody();
+    } finally {
+      passStore = null;
+    }
+  }
+
+  /**
+   * La préparation de l'arbre d'UNE feature en attente : création, puis avance
+   * jusqu'à la branche de sa première dépendance terminée. Rend ce que la phase B
+   * consigne — chemin, branche, motif d'échec — sans toucher au lot.
+   */
+  async function prepareWorktree(lot: Lot, feature: LotFeature): Promise<{ path?: string; branch?: string; error?: string }> {
+    // L'arbre est déjà là mais la branche `feat/<slug>` n'existe pas : ce n'est
+    // pas le worktree de cette feature, et git refuserait de le recréer — le
+    // diagnostic est nommé plutôt que rendu par le message brut de git (S-2).
+    const target = worktreePathFor(worktreesBase, deps.repoRoot, feature.slug);
+    if (fs.existsSync(target)) {
+      const branch = await deps.runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${feature.branch}`], deps.repoRoot);
+      if (branch.code !== 0) return { error: "worktree sans branche" };
+    }
+    const made = await createFeatureWorktree({
+      run: deps.runGit,
+      primaryRoot: deps.repoRoot,
+      slug: feature.slug,
+      baseDir: worktreesBase,
+      // La base d'une feature de projet (S-7) : la branche par défaut du
+      // distant, récupérée pour son segment — sinon `HEAD`, comme avant.
+      base: feature.base,
+    });
+    if (!made.ok) return { error: made.error };
+    // La dépendance est la BASE du travail, pas seulement son ordre (S-10) :
+    // `createFeatureWorktree` part de `HEAD` du dépôt principal, où le travail
+    // d'une dépendance n'est pas encore — « terminée » veut dire PR ouverte,
+    // donc commitée sur sa branche, jamais fusionnée. On avance donc la branche
+    // neuve jusqu'à celle de la première dépendance terminée. LIMITE ASSUMÉE :
+    // avec plusieurs dépendances, seule la première terminée sert de base ; les
+    // autres restent à fusionner par l'utilisateur. Une dépendance `done` dont
+    // la branche a disparu (archivée) laisse la base à `HEAD` : rien à avancer.
+    const base = baseBranchFor(lot, feature);
+    if (base !== null) {
+      const known = await deps.runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`], deps.repoRoot);
+      if (known.code === 0) {
+        const merged = await deps.runGit(["merge", "--ff-only", base], made.path);
+        if (merged.code !== 0) {
+          // L'arbre ET sa branche existent : le chemin est consigné pour qu'il
+          // ne reste pas orphelin, et l'échec est nommé (S-2).
+          return { path: made.path, branch: made.branch, error: `base ${base} non fusionnable : ${lastLine(merged.stderr) || `code ${merged.code}`}` };
+        }
+      }
+    }
+    return { path: made.path, branch: made.branch };
+  }
+
+  async function passBody(): Promise<void> {
     const initial = read();
     if (!initial) return;
     if (initial.owner.pid !== process.pid) {
@@ -1656,80 +1786,28 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // PHASE A — les worktrees manquants. C'est le SEUL moment où la passe attend :
     // aucune mutation en mémoire ne l'a précédée, donc rien ne sera écrit sur un
     // lot périmé (une fin de run peut tomber pendant l'attente du git).
-    const created: Array<{ slug: string; result: { path?: string; branch?: string; error?: string } }> = [];
+    let created: Array<{ slug: string; result: { path?: string; branch?: string; error?: string } }> = [];
     if (initial.status === "running") {
       // Phase A bornée par les créneaux LIBRES (S-1) : `git worktree add` est la
       // seule attente de la passe, et préparer 28 arbres pour n'en lancer 4 ferait
       // exactement la rafale que le plafond supprime — en retardant toutes les
       // décisions de la passe. Un arbre créé pour une feature qui reste `pending`
-      // est CONSERVÉ : c'est son arbre, jamais passé à `discardWorktrees`.
-      let creating = freeSlots(initial);
+      // est CONSERVÉ : c'est son arbre, jamais passé à `discardWorktrees`. Les
+      // arbres d'une même passe se préparent EN PARALLÈLE : en série, chaque `git`
+      // ajoutait son délai à l'attente de toutes les décisions.
+      const slots = freeSlots(initial);
+      const candidates: LotFeature[] = [];
       for (const feature of initial.features) {
-        if (creating <= 0) break;
+        if (candidates.length >= slots) break;
         if (feature.state !== "pending" || feature.worktree !== "" || !runnable(initial, feature)) continue;
         // Une feature que `l` n'a pas lancée n'a pas de worktree à créer : elle
         // attend le lancement du lot (S-3, CHAIN-11).
         if (feature.launched === false) continue;
-        // L'arbre est déjà là mais la branche `feat/<slug>` n'existe pas : ce n'est
-        // pas le worktree de cette feature, et git refuserait de le recréer — le
-        // diagnostic est nommé plutôt que rendu par le message brut de git (S-2).
-        const target = worktreePathFor(worktreesBase, deps.repoRoot, feature.slug);
-        if (fs.existsSync(target)) {
-          const branch = await deps.runGit(
-            ["rev-parse", "--verify", "--quiet", `refs/heads/${feature.branch}`],
-            deps.repoRoot,
-          );
-          if (branch.code !== 0) {
-            created.push({ slug: feature.slug, result: { error: "worktree sans branche" } });
-            continue;
-          }
-        }
-        const made = await createFeatureWorktree({
-          run: deps.runGit,
-          primaryRoot: deps.repoRoot,
-          slug: feature.slug,
-          baseDir: worktreesBase,
-          // La base d'une feature de projet (S-7) : la branche par défaut du
-          // distant, récupérée pour son segment — sinon `HEAD`, comme avant.
-          base: feature.base,
-        });
-        if (!made.ok) {
-          created.push({ slug: feature.slug, result: { error: made.error } });
-          continue;
-        }
-        // L'arbre EXISTE : il consomme un créneau de préparation (un échec, lui,
-        // n'en consomme aucun — la feature passe `failed` et le reste avance).
-        creating -= 1;
-        // La dépendance est la BASE du travail, pas seulement son ordre (S-10) :
-        // `createFeatureWorktree` part de `HEAD` du dépôt principal, où le travail
-        // d'une dépendance n'est pas encore — « terminée » veut dire PR ouverte,
-        // donc commitée sur sa branche, jamais fusionnée. On avance donc la branche
-        // neuve jusqu'à celle de la première dépendance terminée. LIMITE ASSUMÉE :
-        // avec plusieurs dépendances, seule la première terminée sert de base ; les
-        // autres restent à fusionner par l'utilisateur. Une dépendance `done` dont
-        // la branche a disparu (archivée) laisse la base à `HEAD` : rien à avancer.
-        const base = baseBranchFor(initial, feature);
-        if (base !== null) {
-          const known = await deps.runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`], deps.repoRoot);
-          if (known.code === 0) {
-            const merged = await deps.runGit(["merge", "--ff-only", base], made.path);
-            if (merged.code !== 0) {
-              // L'arbre ET sa branche existent : le chemin est consigné pour qu'il
-              // ne reste pas orphelin, et l'échec est nommé (S-2).
-              created.push({
-                slug: feature.slug,
-                result: {
-                  path: made.path,
-                  branch: made.branch,
-                  error: `base ${base} non fusionnable : ${lastLine(merged.stderr) || `code ${merged.code}`}`,
-                },
-              });
-              continue;
-            }
-          }
-        }
-        created.push({ slug: feature.slug, result: { path: made.path, branch: made.branch } });
+        candidates.push(feature);
       }
+      created = await Promise.all(
+        candidates.map(async (feature) => ({ slug: feature.slug, result: await prepareWorktree(initial, feature) })),
+      );
     }
 
     // PHASE B — lecture fraîche, décisions, écriture : AUCUNE attente ici, pour
@@ -1740,6 +1818,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       stop();
       return;
     }
+    // Le magasin est lu UNE fois pour toute la phase B, qui n'attend jamais : chaque
+    // `liveEntryOf` (étape 0, relais, `startRun`) relisait running/ ET history/.
+    passStore = readStore(stateDir);
     const launches: PlannedLaunch[] = [];
     const releases: LotFeature[] = [];
     /**
@@ -1978,9 +2059,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     for (const feature of releases) void finishRelease(feature);
     for (const planned of arbitrations.planned) void arbitrate(planned.slug, planned.item);
     for (const feature of dueQuota) void relaunchDueQuota(feature);
-    // Dernier acte de la passe, APRÈS l'écriture : c'est un `await` (`git`), il ne
-    // décide plus rien — l'arbre abandonné n'appartient à aucune feature du lot.
-    await discardWorktrees(orphans);
+    // Dernier acte de la passe, APRÈS l'écriture : un `await` (`git`) qui ne décide
+    // plus rien — l'arbre abandonné n'appartient à aucune feature du lot, et la
+    // passe ne l'attend pas (un retrait raté est seulement notifié).
+    void discardWorktrees(orphans);
   }
 
   // --- le canal de commande : pompage, effets, purge (S-1 à S-14) -------------
@@ -2554,6 +2636,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (stopLoop) return;
     const service = serviceRunning(stateDir);
     if (pilotRole !== "service" && service !== null && service.pid !== process.pid) return;
+    // L'historique maigrit UNE fois par démarrage : rien d'autre ne le purgeait, et
+    // le magasin se relit à chaque passe. Un disque qui refuse n'empêche pas le pilote.
+    try {
+      pruneHistory(stateDir);
+    } catch {
+      /* l'historique reste tel quel : la lecture est bornée de toute façon */
+    }
     stopLoop = (deps.schedule ?? defaultSchedule)(() => {
       void tick().catch(() => undefined);
     }, LOT_TICK_MS);
@@ -3140,22 +3229,24 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // feature a bougé entre-temps — c'est le chemin qu'un run utiliserait.
       target.worktree = prepared;
       target.branch = preparedBranch;
-      // Le plafond est une borne par tentative : relancer ouvre un nouveau crédit.
-      target.fixes = 0;
-      target.unreadableRuns = 0;
-      // Une relance de l'ARBITRE (cap, échec) s'inscrit dans la MÊME écriture que la remise à
-      // zéro du plafond : le compteur du motif monte, `last` nomme le dernier motif. R, une
-      // réponse, `resolveQuota` et la relance à l'échéance d'un quota n'en portent aucun.
-      if (options?.motive !== undefined) {
-        const known = target.arbiterRelaunches ?? { cap: 0, failure: 0, last: options.motive };
-        target.arbiterRelaunches = { ...known, [options.motive]: known[options.motive] + 1, last: options.motive };
-      }
       // Un blocage au PLAFOND laisse la feature en phase `review` avec un verdict
       // bloquant : la relancer en /review relancerait une revue sur un code
       // inchangé, soit une revue complète de plus. C'est /impl --fix qui a du sens.
       // La relance du plafond par l'arbitre est FORCÉE à `/impl --fix`, quel que soit le
       // verdict relu : c'est la décision qu'il a prise, avec son recentrage.
       const arbiterCap = options?.motive === "cap";
+      // R rouvre un crédit de correction ENTIER ; l'arbitre au plafond n'en rend qu'UN :
+      // sans cette retenue, chaque relance d'arbitre valait `cap` corrections de plus
+      // (ARBITER_RELAUNCH_MAX × cap tours sur un code que la revue bloque toujours).
+      target.fixes = arbiterCap ? Math.max(0, target.fixes - 1) : 0;
+      target.unreadableRuns = 0;
+      // Une relance de l'ARBITRE (cap, échec) s'inscrit dans la MÊME écriture que le
+      // plafond : le compteur du motif monte, `last` nomme le dernier motif. R, une
+      // réponse, `resolveQuota` et la relance à l'échéance d'un quota n'en portent aucun.
+      if (options?.motive !== undefined) {
+        const known = target.arbiterRelaunches ?? { cap: 0, failure: 0, last: options.motive };
+        target.arbiterRelaunches = { ...known, [options.motive]: known[options.motive] + 1, last: options.motive };
+      }
       const verdict = reviewVerdict(readContractText(target.worktree));
       const fix = arbiterCap || verdict === "blockers";
       const phase = arbiterCap ? "impl" : fix && target.phase === "review" ? "impl" : target.phase;

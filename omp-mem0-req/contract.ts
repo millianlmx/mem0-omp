@@ -185,15 +185,10 @@ const SPEC_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(S-\d+)(?![0-9])/;
 export function uncoveredAcIds(contract: string): string[] {
   const ids = contractAcIds(contract);
   if (ids.length === 0) return [];
-  const body = contractSection(contract, "Spécifications") ?? "";
-  const blocks: string[] = [];
-  for (const line of body.split("\n")) {
-    if (SPEC_HEAD.test(line)) blocks.push(line);
-    else if (blocks.length > 0) blocks[blocks.length - 1] += `\n${line}`;
-  }
+  const blocks = idBlocks(contractSection(contract, "Spécifications") ?? "", SPEC_HEAD);
   return ids.filter((id) => {
     const reference = new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`);
-    return !blocks.some((block) => reference.test(block));
+    return !blocks.some(([, block]) => reference.test(block));
   });
 }
 
@@ -234,46 +229,58 @@ const VACUOUS_HEAD =
   /^(aucun|aucune|néant|none|0|n\/a)\b\s*(\([^)]*\))?\s*(bloquants?|points?(\s+bloquants?)?|probl[èe]mes?|r[ée]serves?|remarques?|[ée]carts?)?\s*(identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?)?\s*[.!:;,—–-]*\s*$/i;
 
 
-// Constat d'absence qui NOMME le bloquant, suivi d'un texte après `;`, `,`, `—` ou
-// `(` (`Aucun bloquant ; voir recommandations`). Le mot « bloquant(s) » est
-// obligatoire : un jeton nu suivi d'un texte (`0 ; manque le test AC-2`) reste un
-// bloquant. Ce qui suit le séparateur n'est pas lu.
-const NAMED_ABSENCE =
-  /^(?:aucun|aucune|néant|none|0|n\/a)\s+(?:points?\s+)?bloquants?(?:\s+(?:identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?))?\s*[;,—(]/i;
+// Constat d'absence qui NOMME le bloquant, puis CONTINUE : après `;`, `,`, `—`,
+// `(` ou une conjonction (`Aucun bloquant ; voir recommandations`, `Aucun
+// bloquant mais AC-2 reste à prouver`). Ce qui suit n'est pas lu : la ligne est
+// AMBIGUË — ni propre (le texte peut cacher une réserve), ni bloquante (rien
+// d'actionnable) — et le verdict est illisible, à réécrire. Un jeton nu suivi
+// d'un texte (`0 ; manque le test AC-2`) reste un bloquant.
+const AMBIGUOUS_ABSENCE =
+  /^(?:aucun|aucune|néant|none|0|n\/a)\s+(?:points?\s+)?bloquants?(?:\s+(?:identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?))?\s*(?:[;,—–(]|\b(?:mais|sauf|hormis|except[ée]|à part)\b)/i;
 
 
 /**
- * Une ligne de champ qui ne consigne RIEN. Quatre formes : vide, jeton seul
+ * Une ligne de champ qui ne consigne RIEN. Trois formes : vide, jeton seul
  * (`aucun`, `néant`, `0`, `(aucun)`…), jeton suivi d'un constat (`Aucun
- * bloquant.`, `aucun (tous levés)`, `0 (les 2 bloquants précédents sont levés)`),
- * ou constat d'absence NOMMANT le bloquant suivi d'un texte (`Aucun bloquant ;
- * voir recommandations`). Une ligne BARRÉE (`~~…~~`) compte comme levée : c'est
- * ainsi qu'une relecture annule un bloquant sans réécrire la phrase.
+ * bloquant.`, `aucun (tous levés)`, `0 (les 2 bloquants précédents sont levés)`).
+ * Une ligne BARRÉE non numérotée (`~~…~~`) compte comme levée : c'est ainsi qu'une
+ * relecture annule un bloquant sans réécrire la phrase.
  */
 export function isVacuous(line: string): boolean {
   const n = normalizeLine(line).replace(/[.!]$/, "").trim();
   if (n === "" || VACUOUS[n.toLowerCase()] === true) return true;
-  // Une ligne BARRÉE est une ligne LEVÉE, numérotée comprise : c'est ainsi qu'une
-  // relecture annule un bloquant sans réécrire la phrase. Une annotation APRÈS le
-  // barré (`~~…~~ ✅ levé`) laisse la ligne actionnable, donc bloquante : le
-  // numéro reste la marque d'un point à traiter.
-  if (/^(?:\d+[.)]\s+)?~~.*~~$/.test(n)) return true;
-  return VACUOUS_HEAD.test(n) || NAMED_ABSENCE.test(n);
+  if (/^~~.*~~$/.test(n)) return true;
+  return VACUOUS_HEAD.test(n);
 }
 
 
 /**
- * Le corps du champ `BLOQUANTS` de la DERNIÈRE `## Revue`, ou `null` si le champ
- * est absent. Le corps s'arrête au libellé suivant (une RECOMMANDATION n'est pas
- * un bloquant) et au titre de section suivant.
+ * Une ligne de champ AMBIGUË : un constat d'absence suivi d'un texte, ou une ligne
+ * numérotée barrée (`1. ~~…~~` : le numéro dit « à traiter », le barré dit
+ * « levé »). Ni propre ni bloquante : le verdict est illisible et la revue le
+ * réécrit au format exact.
  */
-function blockersField(section: string): string[] | null {
+export function isAmbiguous(line: string): boolean {
+  const n = normalizeLine(line).replace(/[.!]$/, "").trim();
+  if (/^\d+[.)]\s+~~.*~~$/.test(n)) return true;
+  return AMBIGUOUS_ABSENCE.test(n);
+}
+
+
+/**
+ * Le corps du champ `<label>` d'une `## Revue`, ou `null` si le champ est absent.
+ * Le corps s'arrête au libellé suivant (une RECOMMANDATION n'est pas un bloquant)
+ * et au titre de section suivant. Un `(n)` entre le libellé et les deux-points est
+ * toléré et ignoré.
+ */
+function reviewField(section: string, label: string): string[] | null {
   const lines = section.split("\n");
-  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?:\(\s*\d+\s*\))?\s*(?::|：|$)/i.test(normalizeLine(line)));
+  const head = new RegExp(`^${label}\\s*(?:\\(\\s*\\d+\\s*\\))?\\s*(?::|：|$)`, "i");
+  const at = lines.findIndex((line) => head.test(normalizeLine(line)));
   if (at === -1) return null;
-  const head = normalizeLine(lines[at] as string);
-  const sep = /^BLOQUANTS\s*(?:\(\s*\d+\s*\))?\s*(?::|：)?/i.exec(head) as RegExpExecArray;
-  const body = [head.slice(sep[0].length)];
+  const first = normalizeLine(lines[at] as string);
+  const sep = new RegExp(`^${label}\\s*(?:\\(\\s*\\d+\\s*\\))?\\s*(?::|：)?`, "i").exec(first) as RegExpExecArray;
+  const body = [first.slice(sep[0].length)];
   for (const line of lines.slice(at + 1)) {
     if (line.trimStart().startsWith("## ") || isReviewLabel(line)) break;
     body.push(line);
@@ -282,34 +289,132 @@ function blockersField(section: string): string[] | null {
 }
 
 
-/**
- * Verdict du maillon /review, lu dans `## Revue`. `"unreadable"` couvre les deux
- * cas où il n'y a rien à lire (section absente, champ `BLOQUANTS` absent) : dans
- * le doute on renvoie vers /review, jamais vers /impl --fix (corriger ce qui n'a
- * pas été identifié) ni vers une fausse fin de cycle.
- */
-export function reviewVerdict(contract: string): "blockers" | "clean" | "unreadable" {
-  const section = contractSection(contract, "Revue");
-  if (section === null) return "unreadable";
-  const body = blockersField(section);
-  if (body === null) return "unreadable";
-  return body.every(isVacuous) ? "clean" : "blockers";
+export type AcStatus = "pass" | "fail" | "missing" | "unknown";
+
+export type AcTableRow = { id: string; status: AcStatus };
+
+// Séparateurs d'une ligne `AC-n → test (fichier:ligne) → pass/fail` : la flèche
+// de la directive, ses variantes ASCII, et la barre d'un tableau Markdown.
+const AC_ROW_SEP = /\s*(?:→|⇒|->|=>|\|)\s*|\s+[:：]\s+/;
+
+
+// Un statut se lit en TÊTE d'une cellule (« pass (C-3 non prouvé sur iPad) » est un
+// succès commenté, pas une absence de test) ; une cellule sans tête de statut est un
+// commentaire, on remonte à la précédente.
+const AC_LEAD_FAIL = /^(?:fail(?:ed|s|ing)?|échec|echec|échoue|ko|rouge|red)\b/;
+const AC_LEAD_MISSING = /^(?:aucun test|sans test|pas de test|non test|non prouv|manquant|absent|missing|introuvable)/;
+const AC_LEAD_PASS = /^(?:pass(?:ed|es|e)?|ok|vert|green|succ[èe]s|r[ée]ussi)\b/;
+
+
+/** Le statut d'un AC : la dernière cellule de sa ligne qui COMMENCE par un statut ; sinon inconnu. */
+function acStatusOf(cells: string[]): AcStatus {
+  for (let i = cells.length - 1; i >= 0; i -= 1) {
+    const c = (cells[i] as string).toLowerCase();
+    if (AC_LEAD_FAIL.test(c)) return "fail";
+    if (AC_LEAD_MISSING.test(c)) return "missing";
+    if (AC_LEAD_PASS.test(c)) return "pass";
+  }
+  return "unknown";
 }
 
 
 /**
- * Le nombre de bloquants du champ `BLOQUANTS` de la dernière `## Revue` : toute
- * ligne du champ (en-tête comprise) qui n'est pas vacuous en compte UN, quelle que
- * soit sa forme — numérotée, en puce ou phrase libre. Une ligne vide ou barrée ne
+ * La table `AC PAR AC` de la DERNIÈRE `## Revue` : une ligne par `AC-<n>` en tête
+ * de ligne, dans l'ordre (la dernière occurrence d'un id fait foi). Tolérant :
+ * `AC-n :`, flèches `→`/`->`, barres de tableau ; « aucun test »/« sans test »
+ * vaut `missing`. Vide si la section ou le champ manque.
+ */
+export function reviewAcTable(contract: string): AcTableRow[] {
+  const section = contractSection(contract, "Revue");
+  if (section === null) return [];
+  const body = reviewField(section, "AC PAR AC");
+  if (body === null) return [];
+  const rows = new Map<string, AcStatus>();
+  for (const raw of body) {
+    const line = normalizeLine(raw).replace(/^\|\s*/, "").trim();
+    const m = /^(AC-\d+)(?![0-9])\s*[:：]?\s*(.*)$/.exec(line);
+    if (m === null) continue;
+    const cells = (m[2] as string).split(AC_ROW_SEP).map((cell) => cell.trim()).filter((cell) => cell !== "");
+    rows.set(m[1] as string, acStatusOf(cells));
+  }
+  return [...rows].map(([id, status]) => ({ id, status }));
+}
+
+
+/**
+ * Les bloquants que la table `AC PAR AC` IMPLIQUE, même quand le champ
+ * `BLOQUANTS` dit « aucun » : un AC en `fail` ou `missing`, et un AC du contrat
+ * absent de la table (quand une table existe — sans table, rien n'est croisé).
+ * Libellés tels que /impl --fix les lira.
+ */
+export function reviewImpliedBlockers(contract: string): string[] {
+  const table = reviewAcTable(contract);
+  if (table.length === 0) return [];
+  const out: string[] = [];
+  for (const row of table) {
+    if (row.status === "fail") out.push(`${row.id} : échec en AC PAR AC`);
+    else if (row.status === "missing") out.push(`${row.id} : non prouvé en AC PAR AC (aucun test)`);
+  }
+  const listed = new Set(table.map((row) => row.id));
+  for (const id of contractAcIds(contract)) {
+    if (!listed.has(id)) out.push(`${id} : non prouvé en AC PAR AC (absent de la table)`);
+  }
+  return out;
+}
+
+
+/**
+ * Lecture unique du verdict : le champ `BLOQUANTS` (explicites, ambigus) croisé
+ * avec la table `AC PAR AC` (impliqués). Une ligne ambiguë rend le verdict
+ * illisible SAUF si un bloquant explicite existe déjà : il y a alors de quoi
+ * corriger, et la réécriture attendra la revue suivante. `blockers` = les
+ * libellés, explicites (ligne normalisée) puis impliqués, vide hors `blockers`.
+ */
+function readReview(contract: string): { verdict: "blockers" | "clean" | "unreadable"; blockers: string[] } {
+  const section = contractSection(contract, "Revue");
+  if (section === null) return { verdict: "unreadable", blockers: [] };
+  const body = reviewField(section, "BLOQUANTS");
+  if (body === null) return { verdict: "unreadable", blockers: [] };
+  const explicit = body.filter((line) => !isVacuous(line) && !isAmbiguous(line)).map((line) => normalizeLine(line).trim());
+  const implied = reviewImpliedBlockers(contract);
+  if (explicit.length > 0) return { verdict: "blockers", blockers: [...explicit, ...implied] };
+  if (body.some(isAmbiguous)) return { verdict: "unreadable", blockers: [] };
+  return implied.length > 0 ? { verdict: "blockers", blockers: implied } : { verdict: "clean", blockers: [] };
+}
+
+
+/**
+ * Les libellés des bloquants de la dernière `## Revue`, tels que la revue
+ * incrémentale les reçoit : les lignes du champ `BLOQUANTS` puis les bloquants
+ * impliqués par la table `AC PAR AC`. Vide quand le verdict n'est pas `blockers`.
+ */
+export function reviewBlockerList(contract: string): string[] {
+  return readReview(contract).blockers;
+}
+
+
+/**
+ * Verdict du maillon /review, lu dans `## Revue`. `"unreadable"` couvre les cas
+ * où il n'y a rien de sûr à lire (section absente, champ `BLOQUANTS` absent ou
+ * ambigu) : dans le doute on renvoie vers /review, jamais vers /impl --fix
+ * (corriger ce qui n'a pas été identifié) ni vers une fausse fin de cycle. Un
+ * « aucun » contredit par la table `AC PAR AC` (échec, test absent, AC omis) est
+ * un verdict à bloquants : la table est la preuve, le champ n'est que le résumé.
+ */
+export function reviewVerdict(contract: string): "blockers" | "clean" | "unreadable" {
+  return readReview(contract).verdict;
+}
+
+
+/**
+ * Le nombre de bloquants de la dernière `## Revue` : toute ligne non vacuous du
+ * champ `BLOQUANTS` (numérotée, en puce ou phrase libre) PLUS chaque bloquant
+ * impliqué par la table `AC PAR AC` (un par AC). Une ligne vide ou barrée ne
  * compte pas. Invariant : `reviewVerdict === "blockers"` ⇔ `reviewBlockers >= 1`.
  * Publié pour le panneau, il n'entre dans aucune décision du pilote.
  */
 export function reviewBlockers(contract: string): number {
-  const section = contractSection(contract, "Revue");
-  if (section === null) return 0;
-  const body = blockersField(section);
-  if (body === null) return 0;
-  return body.filter((line) => !isVacuous(line)).length;
+  return readReview(contract).blockers.length;
 }
 
 
@@ -380,28 +485,128 @@ export function isPipelineNotice(prompt: string): boolean {
 
 
 /**
- * Sections du contrat que l'écriture d'un maillon doit laisser intactes quand
- * elles existaient déjà : la règle d'édition (`contractEditRule`) demande de les
- * revérifier après écriture. Non exportée : seule la règle rendue fait foi.
+ * Consigne d'ÉDITION de section pour un maillon qui écrit le contrat : remplacer
+ * les seules sections visées, conserver le reste à l'identique. `targets` =
+ * titres SANS `## ` (ex. `["Revue"]`). Réécrire tout le fichier est ce qui a
+ * effacé des sections voisines ; les sections perdues sont relevées par le
+ * pilote (`lostSections`), pas par une relecture de l'agent — chaque relecture
+ * intégrale coûtait un contrat entier de contexte.
  */
-const CONTRACT_KEPT_SECTIONS = ["Besoins", "Critères d'acceptation", "Documentation", "Spécifications", "Lots"];
+export function contractEditRule(targets: readonly string[]): string {
+  const L = targets.map((t) => `\`## ${t}\``).join(", ");
+  return (
+    `Écris le contrat par ÉDITION de section, jamais en réécrivant tout le fichier : remplace UNIQUEMENT ${L} ` +
+    "(ajoute à la fin du fichier une section visée qui n'existe pas encore ; crée le fichier et son dossier " +
+    "s'ils n'existent pas) et conserve tout le reste du fichier à l'identique."
+  );
+}
 
 
 /**
- * Consigne d'ÉDITION de section pour un maillon qui écrit le contrat : lire,
- * remplacer les seules sections visées, conserver le reste à l'identique, puis
- * relire après écriture. `targets` = titres SANS `## ` (ex. `["Revue"]`).
- * Réécrire tout le fichier est ce qui a effacé des sections voisines.
+ * Consigne de LECTURE du contrat d'un maillon : une seule lecture, et aucune quand
+ * le prompt porte déjà l'extrait utile (`lotContractExcerpt`, bloc `[extrait du
+ * contrat]`). Une formulation unique vaut dans les deux cas : la graine reste pure.
  */
-export function contractEditRule(targets: readonly string[]): string {
-  const L = (titles: readonly string[]) => titles.map((t) => `\`## ${t}\``).join(", ");
+export function contractReadRule(what: string): string {
   return (
-    `Écris le contrat par ÉDITION de section, jamais en réécrivant tout le fichier : lis ${CONTRACT_PATH}, ` +
-    `remplace UNIQUEMENT ${L(targets)} (ajoute à la fin du fichier une section visée qui n'existe pas encore ; ` +
-    "crée le fichier et son dossier s'ils n'existent pas) et conserve tout le reste du fichier à l'identique. " +
-    `Relis ensuite le contrat APRÈS écriture et vérifie que celles des sections ${L(CONTRACT_KEPT_SECTIONS)} ` +
-    "qui étaient présentes avant le sont toujours ; s'il en manque une, restaure-la avant de rendre la main."
+    `Lis le contrat ${CONTRACT_PATH} (read) : ${what}. Si un bloc \`[extrait du contrat]\` suit cette directive, ` +
+    "il porte déjà ces sections : travaille dessus et n'ouvre le fichier que si une référence y manque."
   );
+}
+
+
+/** Borne de la section `## Documentation` dans un extrait (et consigne de /specs). */
+export const DOCUMENTATION_EXCERPT_MAX = 15_000;
+
+
+/** Les blocs d'une section, découpés sur une tête d'id (`S-<n>`, `BR-<n>`) : `[id, bloc]`. */
+function idBlocks(body: string, head: RegExp): Array<[string, string]> {
+  const blocks: Array<[string, string]> = [];
+  for (const line of body.split("\n")) {
+    const id = head.exec(line)?.[1];
+    if (id !== undefined) blocks.push([id, line]);
+    else if (blocks.length > 0) (blocks[blocks.length - 1] as [string, string])[1] += `\n${line}`;
+  }
+  return blocks;
+}
+
+
+/**
+ * L'extrait du contrat qu'un run reçoit dans son prompt, à la place d'une lecture
+ * intégrale (mesuré : le contrat pèse 40 % des octets lus en /impl). `null` =
+ * pas d'extrait, le maillon lit le fichier (la revue juge le contrat entier).
+ *
+ *   specs      ⇒ Besoins + Critères d'acceptation
+ *   impl BR-k  ⇒ Besoins + AC + Documentation (≤ 15 000) + les S-<n> que BR-k cite + le bloc BR-k
+ *   impl seul  ⇒ Besoins + AC + Documentation (≤ 15 000) + Spécifications + Lots
+ *   impl --fix ⇒ AC + Revue + Corrections
+ *   release    ⇒ Besoins + AC + Revue
+ *
+ * Un BR-k qui ne cite aucun S-<n> reçoit les S qui servent ses AC, et à défaut la
+ * section entière : un extrait vide ferait improviser l'agent.
+ */
+export function lotContractExcerpt(
+  contract: string,
+  target: { phase: PipelinePhase; fix: boolean; lotId: string | null },
+): string | null {
+  const parts: string[] = [];
+  const section = (title: string, label = title): void => {
+    const body = contractSection(contract, title);
+    if (body !== null && body.trim() !== "") parts.push(`## ${label}\n${body.trim()}`);
+  };
+  const documentation = (): void => {
+    const body = contractSection(contract, "Documentation");
+    if (body === null || body.trim() === "") return;
+    const text = body.trim();
+    parts.push(
+      text.length <= DOCUMENTATION_EXCERPT_MAX
+        ? `## Documentation\n${text}`
+        : `## Documentation (tronquée à ${DOCUMENTATION_EXCERPT_MAX} caractères — lis le fichier pour la suite)\n${text.slice(0, DOCUMENTATION_EXCERPT_MAX)}…`,
+    );
+  };
+  switch (target.phase) {
+    case "req":
+    case "review":
+      return null;
+    case "specs":
+      section("Besoins");
+      section("Critères d'acceptation");
+      break;
+    case "release":
+      section("Besoins");
+      section("Critères d'acceptation");
+      section("Revue");
+      break;
+    case "impl": {
+      if (target.fix) {
+        section("Critères d'acceptation");
+        section("Revue");
+        section("Corrections");
+        break;
+      }
+      section("Besoins");
+      section("Critères d'acceptation");
+      documentation();
+      const lot = target.lotId === null ? undefined : idBlocks(contractSection(contract, "Lots") ?? "", LOT_HEAD).find(([id]) => id === target.lotId);
+      if (lot === undefined) {
+        section("Spécifications");
+        section("Lots");
+        break;
+      }
+      const specs = idBlocks(contractSection(contract, "Spécifications") ?? "", SPEC_HEAD);
+      const cites = (block: string, id: string): boolean => new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`).test(block);
+      let kept = specs.filter(([id]) => cites(lot[1], id));
+      if (kept.length === 0) {
+        const acs = [...new Set(lot[1].match(/(?<![A-Za-z0-9])AC-\d+(?![0-9])/g) ?? [])];
+        kept = specs.filter(([, block]) => acs.some((ac) => cites(block, ac)));
+      }
+      if (kept.length === 0) section("Spécifications");
+      else parts.push(`## Spécifications (extrait : ${kept.map(([id]) => id).join(", ")})\n${kept.map(([, block]) => block.trim()).join("\n\n")}`);
+      parts.push(`## Lots (extrait : ${lot[0]})\n${lot[1].trim()}`);
+      break;
+    }
+  }
+  return parts.length === 0 ? null : parts.join("\n\n");
 }
 
 

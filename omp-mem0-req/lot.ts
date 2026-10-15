@@ -205,6 +205,8 @@ export type LotFeature = {
   lastBlockers?: number;
   /** Session du dernier run, quel que soit son sort : c'est elle qu'une réponse reprend. */
   lastRunSessionFile?: string | null;
+  /** Le modèle qui a rendu le dernier verdict de revue (après replis), publié pour le panneau et le journal. */
+  lastVerdictModel?: string | null;
   /** sha1 du contrat au DÉMARRAGE du run courant — dit si un run a travaillé. */
   contractHash: string | null;
   /**
@@ -986,6 +988,11 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     lastVerdict: asReviewVerdict(f.lastVerdict),
     lastBlockers: Math.max(0, Math.trunc(num(f.lastBlockers, 0))),
     lastRunSessionFile: asStringOrNull(f.lastRunSessionFile),
+    // Même patron que `launched` : la clé n'est relue que si elle porte un sélecteur
+    // ou `null` explicite ; un lot antérieur ne la porte pas et se relit à l'identique.
+    ...("lastVerdictModel" in f && (typeof f.lastVerdictModel === "string" || f.lastVerdictModel === null)
+      ? { lastVerdictModel: f.lastVerdictModel }
+      : {}),
     // La clé n'est écrite QUE lorsqu'elle est `false` : un lot qui ne la porte pas
     // (version antérieure, ou feature lancée) se relit à l'identique, et le garde
     // `!== false` la traite comme lancée.
@@ -1330,6 +1337,15 @@ export const LOT_RUN_TIMEOUT_MS = 3_600_000;
  */
 export const LOT_RUN_DEADLINE_MARGIN_MS = 3_600_000;
 
+/**
+ * La borne DURE d'un run en minutes (budget + marge) : le seul chiffre que les
+ * libellés « délai dépassé (N min) » du pilote doivent citer, pour qu'il ne diverge
+ * jamais du minuteur du runner.
+ */
+export function runHardDeadlineMinutes(runTimeoutMs: number): number {
+  return Math.round((runTimeoutMs + LOT_RUN_DEADLINE_MARGIN_MS) / 60_000);
+}
+
 export const PIPELINE_REVIEW_CAP_DEFAULT = 3;
 
 /** Le texte d'un run est borné : le panneau en montre la fin (les questions y sont). */
@@ -1403,10 +1419,16 @@ export function lotRunTimeoutMs(env: Record<string, string | undefined> = proces
 }
 
 
-/** Seuil SOFT par défaut (tokens) : au franchissement, le run hébergé est compacté. */
+/** Seuil SOFT par défaut (tokens) : au franchissement, le run hébergé est compacté à la fin du tour. */
 export const LOT_CONTEXT_SOFT_DEFAULT = 120_000;
 
-/** Seuil HARD par défaut (tokens) : encore atteint après une compaction, le run est coupé. */
+/**
+ * Seuil SOFT par défaut d'une REVUE : une revue lit plus qu'elle n'écrit, et son
+ * verdict se dégrade dès que le diff et les tests lus ne tiennent plus en tête.
+ */
+export const LOT_CONTEXT_SOFT_REVIEW_DEFAULT = 90_000;
+
+/** Seuil HARD par défaut (tokens) : atteint, le run n'a plus qu'un dernier tour pour livrer, puis il est coupé. */
 export const LOT_CONTEXT_HARD_DEFAULT = 250_000;
 
 /** Les deux seuils de contexte d'un run ou d'une session hébergés. */
@@ -1422,17 +1444,26 @@ function thresholdFromEnv(raw: string | undefined, fallback: number): number {
   return whole >= 1 ? whole : fallback;
 }
 
+/** Le défaut SOFT d'une phase : 90 000 pour la revue, 120 000 ailleurs (et sans phase). */
+export function lotContextSoftDefault(phase?: PipelinePhase): number {
+  return phase === "review" ? LOT_CONTEXT_SOFT_REVIEW_DEFAULT : LOT_CONTEXT_SOFT_DEFAULT;
+}
+
 /**
- * `MEM0_PIPELINE_CONTEXT_SOFT` (défaut 120000) et `MEM0_PIPELINE_CONTEXT_HARD`
- * (défaut 250000) : seuils de contexte, relus au démarrage de chaque run ou
- * session hébergés et jamais persistés dans le lot. Une valeur absente, vide, non
- * numérique, nulle ou négative retombe sur le défaut de sa variable ; si `soft`
- * atteint ou dépasse `hard`, les deux défauts s'appliquent.
+ * `MEM0_PIPELINE_CONTEXT_SOFT` et `MEM0_PIPELINE_CONTEXT_HARD` (défaut 250000) :
+ * seuils de contexte, relus au démarrage de chaque run ou session hébergés et
+ * jamais persistés dans le lot. Avec une `phase`, `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>`
+ * (ex. `…_SOFT_REVIEW`) prime sur la variable générale, et le défaut SOFT est celui
+ * de la phase (`lotContextSoftDefault`). Une valeur absente, vide, non numérique,
+ * nulle ou négative retombe sur la valeur de rang inférieur ; si `soft` atteint ou
+ * dépasse `hard`, les deux défauts s'appliquent.
  */
-export function lotContextThresholds(env: Record<string, string | undefined> = process.env): ContextThresholds {
-  const soft = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_SOFT, LOT_CONTEXT_SOFT_DEFAULT);
+export function lotContextThresholds(env: Record<string, string | undefined> = process.env, phase?: PipelinePhase): ContextThresholds {
+  const softDefault = lotContextSoftDefault(phase);
+  const general = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_SOFT, softDefault);
+  const soft = phase === undefined ? general : thresholdFromEnv(env[`MEM0_PIPELINE_CONTEXT_SOFT_${phase.toUpperCase()}`], general);
   const hard = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_HARD, LOT_CONTEXT_HARD_DEFAULT);
-  if (soft >= hard) return { soft: LOT_CONTEXT_SOFT_DEFAULT, hard: LOT_CONTEXT_HARD_DEFAULT };
+  if (soft >= hard) return { soft: softDefault, hard: LOT_CONTEXT_HARD_DEFAULT };
   return { soft, hard };
 }
 

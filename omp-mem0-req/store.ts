@@ -311,6 +311,47 @@ export function storeFiles(dir: string): string[] {
 }
 
 
+/**
+ * Les `keep` fichiers les plus récents d'un répertoire du magasin (mtime
+ * décroissant). `stat` coûte bien moins que `JSON.parse` : l'historique en garde
+ * des centaines, et le pilote lit le magasin à chaque passe.
+ */
+function newestStoreFiles(dir: string, keep: number): { kept: string[]; rest: string[] } {
+  const dated: Array<{ file: string; mtime: number }> = [];
+  for (const file of storeFiles(dir)) {
+    try {
+      dated.push({ file, mtime: fs.statSync(file).mtimeMs });
+    } catch {
+      /* disparu entre `readdir` et `stat` : ni gardé ni purgé */
+    }
+  }
+  dated.sort((a, b) => b.mtime - a.mtime || a.file.localeCompare(b.file));
+  return { kept: dated.slice(0, keep).map((d) => d.file), rest: dated.slice(keep).map((d) => d.file) };
+}
+
+
+/** Le nombre d'entrées d'historique conservées sur disque par `pruneHistory` (le défaut du pilote). */
+export const HISTORY_KEEP = 200;
+
+/**
+ * Purge l'historique au-delà des `keep` fichiers les plus récents : rien ne le
+ * faisait, et `history/` grossissait d'une entrée par run sans jamais maigrir. Un
+ * fichier déjà disparu est un succès silencieux. Rend le nombre de fichiers retirés.
+ */
+export function pruneHistory(stateDir: string, keep: number = HISTORY_KEEP): number {
+  let removed = 0;
+  for (const file of newestStoreFiles(pipelineHistoryDir(stateDir), Math.max(0, keep)).rest) {
+    try {
+      fs.unlinkSync(file);
+      removed += 1;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+  return removed;
+}
+
+
 /** Écriture ATOMIQUE : temporaire dans le même répertoire, puis `rename`. */
 export function writeJsonAtomic(file: string, payload: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -582,7 +623,8 @@ export function deleteRunningEntry(stateDir: string, id: string): void {
  * écriture — la réconciliation des propriétaires morts est une passe distincte.
  * Un fichier au JSON invalide ou au schéma incomplet est ignoré ET compté ; tout
  * autre fichier du répertoire (temporaire d'écriture, `.DS_Store`) est ignoré
- * sans être compté.
+ * sans être compté. L'historique n'est parsé que pour ses `HISTORY_READ_LIMIT`
+ * fichiers les plus récents (mtime) : le reste ne serait de toute façon pas rendu.
  */
 export function readStore(stateDir: string): StoreSnapshot {
   let unreadable = 0;
@@ -593,7 +635,7 @@ export function readStore(stateDir: string): StoreSnapshot {
     else unreadable += 1;
   }
   const history: HistoryEntry[] = [];
-  for (const file of storeFiles(pipelineHistoryDir(stateDir))) {
+  for (const file of newestStoreFiles(pipelineHistoryDir(stateDir), HISTORY_READ_LIMIT).kept) {
     const entry = asHistoryEntry(readJsonFile(file));
     if (entry) history.push(entry);
     else unreadable += 1;

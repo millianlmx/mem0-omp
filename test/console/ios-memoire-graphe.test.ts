@@ -24,9 +24,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripComments, swiftCode } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("ios-memoire-graphe-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const CORE = path.join(SHELL, "Sources", "ConsoleCore");
 const MACOS = path.join(SHELL, "Sources", "OMPConsole");
@@ -89,7 +91,7 @@ function sharedKernelFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-1 : le Mac sert le graphe complet d'une base par le noyau partagé", () => {
   assert.deepEqual(sharedKernelFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   const text = fs.readFileSync(target, "utf8").replace(
     "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = await resolvedScope(scope)",
@@ -117,7 +119,7 @@ function manualLinkFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-2 : le lien manuel est visible et distinguable", () => {
   assert.deepEqual(manualLinkFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Memory", "MemoryGraphWire.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('case .manual: return "manual"', 'case .manual: return "tag"'));
   assert.ok(manualLinkFaults(copy).length > 0, "une nature de lien confondue doit faire rougir la garde");
@@ -141,7 +143,7 @@ function readOnlyFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-3 : le mode graphe n'émet que des lectures", () => {
   assert.deepEqual(readOnlyFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
   fs.appendFileSync(target, "\nlet fuite = client.memoryDelete\n");
   assert.ok(readOnlyFaults(copy).length > 0, "un appel d'écriture doit faire rougir la garde");
@@ -168,7 +170,7 @@ function gestureFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-4 : pincer et glisser restent bornés et touchables", () => {
   assert.deepEqual(gestureFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("MagnifyGesture()", "SpatialTapGesture()"));
   assert.ok(gestureFaults(copy).length > 0, "un geste retiré doit faire rougir la garde");
@@ -178,7 +180,7 @@ test("ios-memoire-graphe/AC-5 : les mêmes gestes valent pour iPhone et iPad", (
   assert.deepEqual(gestureFaults(ROOT), [], "l'arbre réel doit être sain");
   // Le canevas ne dépend d'aucune classe de taille : le même code sert iPhone et
   // iPad. On le prouve en retirant le test de placement (le geste reste partagé).
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("func drag(by translation: CGSize)", "func dragBy(translation: CGSize)"));
   assert.ok(gestureFaults(copy).length > 0, "un geste retiré doit faire rougir la garde");
@@ -201,7 +203,7 @@ function sheetFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-6 : toucher un souvenir ouvre sa fiche en lecture seule", () => {
   assert.deepEqual(sheetFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryDetailView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("IOSMemoryText.linkLine(", "IOSMemoryText.linkRow("));
   assert.ok(sheetFaults(copy).length > 0, "un bloc de liens cassé doit faire rougir la garde");
@@ -223,7 +225,7 @@ function tagFilterFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-7 : toucher un nœud-étiquette applique son filtre", () => {
   assert.deepEqual(tagFilterFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("MemoryGraph.tagFamily(", "MemoryGraph.visibility("));
   assert.ok(tagFilterFaults(copy).length > 0, "une mise en évidence au lieu du filtre doit faire rougir la garde");
@@ -247,7 +249,7 @@ function parityFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-8 : la parité des faits est prouvée sur la fixture partagée", () => {
   assert.deepEqual(parityFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Memory", "MemoryGraphParity.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("public static let facts:", "public static let truth:"));
   assert.ok(parityFaults(copy).length > 0, "une fixture sans faits gelés doit faire rougir la garde");
@@ -271,7 +273,7 @@ function captureFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-9 : les captures du mode graphe existent, en portrait", () => {
   assert.deepEqual(captureFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("memoire-graphe$suffix", "memoire$suffix"));
   assert.ok(captureFaults(copy).length > 0, "un groupe de captures retiré doit faire rougir la garde");
@@ -296,7 +298,7 @@ function openingModeFaults(root: string): string[] {
 
 test("ios-memoire-graphe/AC-10 : la LISTE est le mode d'ouverture", () => {
   assert.deepEqual(openingModeFaults(ROOT), [], "l'arbre réel doit être sain");
-  const copy = copyRepo("ios-memoire-graphe-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("var shown = false", "var shown = true"));
   assert.ok(openingModeFaults(copy).length > 0, "un graphe affiché d'emblée doit faire rougir la garde");

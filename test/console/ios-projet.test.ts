@@ -15,9 +15,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { copyRepo, ROOT } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripFullLineComments, swiftFiles } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("ios-projet-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const IOS_APP = path.join(SHELL, "ios", "OMPConsoleIOS");
 const IOS_TESTS = path.join(SHELL, "ios", "OMPConsoleIOSTests");
@@ -71,7 +73,7 @@ test("ios-projet/AC-1 : la section Projet projette le plan par le noyau et ne re
     assert.ok(!app.includes(`"${word}"`), `l'app ne recompose pas le libellé d'état « ${word} »`);
   }
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, code(target).replace("projectPlanSections(of:)", "[] as [ProjectPlanSection]"));
   assert.ok(!appCode(copy).includes("projectPlanSections(of:"), "un plan non projeté doit faire rougir la garde");
@@ -92,7 +94,7 @@ test("ios-projet/AC-2 : le volet Document lit PROJECT.md de la coque et rend les
   assert.match(view, /Grid\b/, "les tableaux passent par Grid");
   assert.match(view, /gridColumnAlignment\(/, "l'alignement de colonne est respecté");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMarkdownView.swift");
   fs.writeFileSync(target, code(target).replaceAll("case let .table(table):", "case let .paragraph(table):"));
   assert.ok(!appFile(copy, "IOSMarkdownView.swift").includes(".table"), "un cas de tableau retiré doit faire rougir la garde");
@@ -123,7 +125,7 @@ test("ios-projet/AC-3 : le volet PR montre les trois statuts requis et ne porte 
   }
   assert.ok(!/client\.merge\(|\.merge\(repoKey:/.test(project), "l'app n'appelle jamais la fusion depuis la section Projet");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectPRView.swift");
   fs.writeFileSync(target, `${code(target)}\nlet fuite = ProjectViewText.prMerge\n`);
   assert.ok(projectCode(copy).includes("prMerge"), "un geste de fusion cité doit faire rougir la garde");
@@ -141,7 +143,7 @@ test("ios-projet/AC-4 : la feuille editor est préremplie et renvoie le texte é
   const sheet = appFile(ROOT, "IOSProjectDialogSheet.swift");
   assert.match(sheet, /IOSDialogGating\.initialText\(dialog:/, "la feuille part du texte initial du gating");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSDialogGating.swift");
   fs.writeFileSync(target, code(target).replace("dialog.prefill", '""'));
   assert.ok(!appFile(copy, "IOSDialogGating.swift").includes("dialog.prefill"), "un prefill ignoré doit faire rougir la garde");
@@ -161,7 +163,7 @@ test("ios-projet/AC-5 : les quatre formes répondent par le libellé, et la sais
   const app = appCode();
   assert.match(app, /SessionConsoleText\.noOption/, "options vide affiche noOption");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const sheet = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectDialogSheet.swift");
   fs.writeFileSync(sheet, code(sheet).replace("options[selected]", "options[0]"));
   const gatingCopy = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSDialogGating.swift");
@@ -181,7 +183,7 @@ test("ios-projet/AC-6 : la file d'escalades ne vient que de la coque, jamais d'u
     assert.ok(!app.includes(token), `aucun état local : ${token} interdit`);
   }
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, `${code(target)}\nlet cache = UserDefaults.standard\n`);
   assert.ok(appCode(copy).includes("UserDefaults"), "une file locale doit faire rougir la garde");
@@ -205,7 +207,7 @@ test("ios-projet/AC-7 : la feuille propose les dépôts servis par la coque, san
     assert.ok(!app.includes(forbidden), `le client ne calcule pas le repoKey : ${forbidden} interdit`);
   }
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectLaunchSheet.swift");
   fs.writeFileSync(target, code(target).replace("client.repos()", "[]"));
   assert.ok(!code(target).includes("client.repos()"), "une liste recalculée doit faire rougir la garde");
@@ -221,7 +223,7 @@ test("ios-projet/AC-8 : valider arme la conduite sur le dépôt choisi et l'en-t
   assert.match(app, /ConsoleFormat\.path\(/, "le dépôt est nommé par ConsoleFormat.path");
   assert.match(app, /IOSStatusChip\(/, "l'état de la conduite est une pastille");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, code(target).replace("client.startConduite", "client.closeConduite"));
   assert.ok(!appCode(copy).includes("client.startConduite(repoKey: repoKey"), "un démarrage non câblé doit faire rougir la garde");
@@ -236,7 +238,7 @@ test("ios-projet/AC-9 : un second démarrage est refusé avant tout appel, par l
   assert.match(app, /ProjectViewText\.refusal\(/, "le corps porte refusal(name:path:)");
   assert.match(app, /isConduiteLive/, "le refus se décide sur l'identité vive");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, code(target).replace(/isConduiteLive\b/g, "false"));
   assert.ok(!appFile(copy, "IOSProjectModel.swift").includes("isConduiteLive"), "un refus non décidé doit faire rougir la garde");
@@ -254,7 +256,7 @@ test("ios-projet/AC-10 : l'arrêt demande confirmation et la coque ferme la cond
   assert.match(app, /SessionConsoleText\.cancel/, "le bouton d'annulation porte cancel");
   assert.match(app, /closeConduite\(repoKey:/, "l'arrêt appelle closeConduite(repoKey:)");
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectScreen.swift");
   fs.writeFileSync(target, code(target).replace("ProjectViewText.closeConfirmMessage", '""'));
   assert.ok(!appCode(copy).includes("closeConfirmMessage"), "un message d'arrêt retiré doit faire rougir la garde");
@@ -273,7 +275,7 @@ test("ios-projet/AC-11 : l'état de session est réduit aux mots partagés, sans
     assert.ok(!app.includes(token), `l'état réduit n'expose pas ${token}`);
   }
 
-  const copy = copyRepo("ios-projet-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectScreen.swift");
   fs.writeFileSync(target, `${code(target)}\nlet pid = SessionConsoleText.fieldPid\n`);
   assert.ok(appCode(copy).includes("fieldPid"), "un jeton technique réintroduit doit faire rougir la garde");

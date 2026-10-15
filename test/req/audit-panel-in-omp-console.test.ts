@@ -660,8 +660,13 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
     else if (spec.phase === "review") put(`${contract}\n## Revue\n\n- STATUT : APPROUVÉ\n- BLOQUANTS : aucun\n`);
     return { code: 0, killed: false, stdout: "fini.", stderr: "" };
   };
+  // Le jalon specs est approuvé sur une citation du contrat ; le jalon « revue propre »
+  // sur la référence, dans un fichier du diff, de l'assertion qui porte AC-1.
   const r = rig({
-    script: () => ({ decision: "approve", reason: "le contrat couvre le besoin" }),
+    script: prompt =>
+      prompt.includes("type : jalon « revue propre »")
+        ? { decision: "approve", reason: "AC-1 est porté par preuve.txt", references: ["preuve.txt:1"] }
+        : { decision: "approve", reason: "le contrat couvre le besoin", citations: ["AC-1 (B-1) : un critère."] },
     runner,
     runGit: async (args, cwd) => {
       gitCalls.push(args);
@@ -685,7 +690,7 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   }
 
   const done = r.feature(repo, "alpha");
-  assert.equal(done.state, "done", JSON.stringify({ phases, state: done.state, stop: done.stopReason }));
+  assert.equal(done.state, "done", JSON.stringify({ phases, state: done.state, stop: done.stopReason, escalation: done.escalation }));
   assert.equal(done.prUrl, `${GH}/o/r/pull/7`);
   assert.equal(done.auditSession, audit.key);
   assert.deepEqual(phases, ["req", "specs", "impl", "review", "release"]);

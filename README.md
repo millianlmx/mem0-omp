@@ -33,7 +33,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
-├── scripts/test-files.sh              liste des fichiers de test, ou ceux qui dépendent de macOS (--scope=macos)
+├── scripts/test-files.sh              liste des fichiers de test : tous, macOS (--scope=macos), du diff (--scope=changed), outillage
+├── scripts/test-ac.sh                 preuve par critère : tests du diff portant AC-n, une passe node --test, pass|fail|absent
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
@@ -275,9 +276,11 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
   `/impl` implémente d'un trait et **prouve chaque critère par un test qui porte son
   id** (`AC-3`), pour être retrouvable mécaniquement.
   `/review` révise le `git diff` (source de vérité de ce qui a changé) contre le
-  contrat, **critère par critère** : il retrouve le test par `grep AC-n`, le lit, le
-  lance, et rapporte `AC-n → fichier:ligne → pass/fail`. Un critère sans test traçable
-  est un bloquant.
+  contrat, **critère par critère** : un seul appel `bash scripts/test-ac.sh AC-1 AC-2 …`
+  retrouve chaque test dans les fichiers **du diff**, lance la suite une fois, et la
+  revue rapporte `AC-n → fichier:ligne → pass/fail` en citant l'assertion qui matérialise
+  le *Then*. Un critère sans test traçable est un bloquant. Diff ≤ 400 lignes
+  (`git diff --stat`) : lecture directe ; au-delà, délégation par lot à des sous-agents.
   L'état traverse les sessions par un **fichier contrat déterministe**
   `.omp/pipeline/contract.md` — besoins et critères, puis specs et lots y sont écrits
   par l'agent, relus tels quels à l'étape suivante — et non par la mémoire mem0 :
@@ -545,7 +548,9 @@ Le contexte de chaque run hébergé (maillons `/req`, `/specs`, `/impl`, `/impl 
 `/review`, `/release`, et arbitre) est **borné** par deux seuils, relus au démarrage de
 chaque run ou session hébergée (jamais écrits dans le lot) :
 
-- `MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`) : seuil de compaction ;
+- `MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`, **`90000` pour `/review`**) : seuil de
+  compaction ; `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` (`REQ`, `SPECS`, `IMPL`, `REVIEW`,
+  `RELEASE`) prime pour une phase donnée ;
 - `MEM0_PIPELINE_CONTEXT_HARD` (défaut `250000`) : plafond.
 
 Une valeur absente, non numérique, nulle ou négative retombe sur le défaut de sa variable ;
@@ -556,23 +561,24 @@ si `SOFT` atteint ou dépasse `HARD`, les deux défauts s'appliquent.
   fin de run ; le pic reste archivé dans `features[].runs[]`, avec le nombre de
   compactions (`compactions`, lu 0 sur un enregistrement ancien, sans changement de
   version du lot).
-- **Compaction au seuil `SOFT`** : à la première mesure au-dessus, le service compacte la
-  session du run, une seule fois par palier. Un palier est un franchissement de `SOFT` :
-  la compaction n'est réarmée que lorsqu'une mesure retombe sous `SOFT`, jamais de
-  compaction en boucle tant que le contexte reste au-dessus. Le succès journalise
-  `contexte compacté à <n>` ; une compaction qui échoue est journalisée
-  (`compaction échouée à <n>`), ne compte pas dans `compactions` et ne fait pas échouer
-  le run.
-- **Réinjection de la consigne** : la compaction interrompt le tour en cours ; le runner
-  renvoie ensuite le prompt du maillon, suivi d'un rappel de relire le contrat
-  (`.omp/pipeline/contract.md`), puis le run va jusqu'à son résultat normal. Ces reprises
-  ne consomment pas les reprises de quota.
-- **Échec au plafond `HARD`** : une mesure au-dessus de `HARD` APRÈS qu'une compaction a
-  été tentée dans le palier coupe le run, qui passe `échoué` avec la raison
-  `contexte dépassé (<n> tokens)` — `bloqué` s'il y a une question en vol, comme pour
-  l'échéance. Une première mesure au-dessus de `HARD` déclenche d'abord la compaction. Le
-  run coupé garde son enregistrement (pic, compactions). L'arbitre emprunte son chemin
-  d'échec existant : l'élément est escaladé avec ce même motif.
+- **Compaction au seuil `SOFT`** : la première mesure au-dessus **note** le franchissement
+  sans interrompre le tour ; le service compacte la session **à la fin du tour** (session
+  au repos), une seule fois par palier (réarmée seulement quand une mesure retombe sous
+  `SOFT`). Le succès journalise `contexte compacté à <n>` ; une compaction qui échoue est
+  journalisée (`compaction échouée à <n>`), ne compte pas dans `compactions` et ne relance
+  pas le maillon. Une compaction native d'OMP aboutie est comptée comme compaction du run.
+- **Reprise minimale** : après la compaction, le runner renvoie seulement
+  `[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable
+  attendu : <section de la phase>. L'extrait du contrat de ton prompt initial reste
+  valable.` (≤ 400 caractères) — ni le prompt du maillon ni la directive ne sont
+  réinjectés. Ces reprises ne consomment pas les reprises de quota.
+- **Plafond `HARD`** : une mesure au-dessus de `HARD` après une compaction dans le palier
+  n'interrompt pas tout de suite : le service injecte dans le tour « [contexte saturé]
+  Écris MAINTENANT ta section livrable dans le contrat (<section>) avec ce que tu as, puis
+  arrête-toi. », borné à **5 minutes**. Si ce dernier tour dépasse la borne, le run est
+  coupé (code 124) et passe `échoué` « contexte dépassé (<n> tokens) » — `bloqué` s'il y a
+  une question en vol. Le run coupé garde son enregistrement (pic, compactions). L'arbitre
+  suit le même chemin (livrable = sa décision `arbiter_decide`), puis son échec existant.
 - **Sessions parentes** (conduite `/project`, analyse d'audit de l'app) : même mesure,
   même compaction au seuil `SOFT` (une fois par palier, OMP relance lui-même le tour
   interrompu), mais la session n'est **jamais coupée** : un dépassement de `HARD` y est
@@ -1002,8 +1008,17 @@ s'affiche tel quel au lieu d'être avalé.
   tout le contrat. Le prompt du run du lot *i* porte, après la graine et avant la
   directive de lot, la ligne `[lot <id> (<i+1>/<N>)] Implémente UNIQUEMENT le lot <id> du
   contrat. Lots déjà faits : … Lots suivants (autres runs) : ….` ; le panneau affiche la
-  phase `/impl <id> (<i+1>/<N>)`. Quand un lot finit, le lot **suivant** part à la place
-  de la revue ; après le dernier, la découpe est effacée et la chaîne passe à `/review`
+  phase `/impl <id> (<i+1>/<N>)`. Chaque run de maillon reçoit aussi un bloc
+  `[extrait du contrat]` — les seules sections utiles à sa phase (`/specs` : Besoins + AC ;
+  lot `BR-k` : Besoins + AC + `## Documentation` (≤ 15 000 caractères) + les `S-n` que le
+  lot cite + le bloc `BR-k` ; `/impl --fix` : AC + Revue + Corrections ; release :
+  Besoins + AC + Revue ; `/review` lit le fichier entier) — et, pour un lot `BR-k` avec
+  k > 1, un bloc `[résumé du run précédent]` (dernier message du run du lot précédent,
+  ≤ 2 000 caractères). Les directives ne demandent plus qu'une lecture du contrat, sans
+  relecture après écriture (le pilote détecte seul une section disparue), et
+  n'ouvrent le fichier que si une référence manque à l'extrait. Quand un lot finit, le lot
+  **suivant** part à la place de la revue ; après le dernier, la découpe est effacée et la
+  chaîne passe à `/review`
   comme avant. Une question, une réponse, une relance ou une reprise après quota d'un
   lot reprennent **la session de ce lot**. Un contrat réécrit pendant l'impl ne change
   pas la découpe en cours. Avec moins de deux lots : un seul run, comme avant. Les
@@ -1020,17 +1035,38 @@ s'affiche tel quel au lieu d'être avalé.
   « propre » sur le verdict laissé par la correction précédente. Le verdict est lu dans la
   **dernière** section `## Revue` du contrat. L'en-tête du champ accepte `BLOQUANTS :`,
   `BLOQUANTS:` et `BLOQUANTS (2) :` (le nombre entre parenthèses est ignoré). « Aucun
-  bloquant » s'écrit de plusieurs façons (`- BLOQUANTS : aucun`, `Aucun bloquant.`,
-  `aucun (tous levés)`, `néant`, `Aucun bloquant ; voir …` — la suite n'est tolérée
-  après `;`, `,`, `—` ou `(` que si le constat nomme le mot « bloquant » : `0 ; manque le
-  test AC-2` reste un bloquant). Le compte est celui des lignes non vides et non barrées
-  du champ, quelle que soit leur forme (numérotée, puce, phrase libre).
+  bloquant » s'écrit `- BLOQUANTS : aucun`, `Aucun bloquant.`, `aucun (tous levés)` ou
+  `néant` ; une ligne **ambiguë** (`Aucun bloquant ; voir …`, `… mais …`, `… sauf …`, un
+  bloquant numéroté barré `1. ~~…~~`) rend le verdict *illisible*, jamais « propre » — un
+  bloquant explicite prime. Le compte est celui des lignes non vides et non barrées du
+  champ, quelle que soit leur forme (numérotée, puce, phrase libre).
+  **Verdict croisé** : la table `AC PAR AC` de la revue est relue aussi — avec
+  `BLOQUANTS : aucun`, un critère en `fail`, « aucun test »/« sans test » ou un `AC-<n>` du
+  contrat absent d'une table présente rend le verdict *bloquant*, un bloquant par critère
+  (« AC-n : échec en AC PAR AC », « AC-n : non prouvé en AC PAR AC (aucun test | absent de
+  la table) »), que `/impl --fix` reçoit en tête de prompt. Limite : sans aucune table
+  `AC PAR AC`, le champ `BLOQUANTS` seul décide.
+  **Revue illisible** sous le plafond : la **même** session de revue reprend (`--resume`)
+  avec la seule consigne de réécrire `AC PAR AC` et le champ `BLOQUANTS` au format exact,
+  au lieu d'une revue neuve. **Revue incrémentale** : après une correction, tant que
+  `0 < fixes < plafond − 1`, le prompt de `/review` porte `[revue incrémentale]` et les
+  bloquants de la revue précédente — lecture bornée aux bloquants levés, à `## Corrections`
+  et aux fichiers nommés, tous les critères relancés, verdict complet ; la première revue et
+  les deux derniers tours sont intégraux.
   Deux compteurs la bornent, chacun à `MEM0_PIPELINE_REVIEW_CAP` : `fixes` (tours
   `/impl --fix` consommés) et `unreadableRuns` (revues illisibles d'affilée, remis à zéro par
   tout verdict lisible) ; tous deux sont comptés au lancement du run et remis à zéro par une
-  relance. Le panneau affiche le compteur tel quel : `--fix · tour <fixes>/<plafond>` pendant
+  relance `R`. Le panneau affiche le compteur tel quel : `--fix · tour <fixes>/<plafond>` pendant
   une correction, `tour <unreadableRuns>/<plafond>` pendant une revue illisible relancée,
-  rien quand il vaut 0.
+  rien quand il vaut 0. À la fin d'une revue, `feature.lastVerdictModel` retient le modèle
+  **effectivement** utilisé au dernier tour (après repli) et la notification de fin de revue
+  le nomme.
+- **Tout autre blocage est un échec arbitré** : un verdict de revue illisible au plafond,
+  « /impl n'a rien produit », « aucune spécification écrite par /specs », un contrat endommagé
+  ou un worktree invérifiable sont relayés à `/audit`/`/project` comme un **échec**
+  (élément `failure`) et arbitrés : l'arbitre relance au maillon courant ou escalade, sous la
+  même borne de 2 relances. Seuls le plafond de revue, un quota et un blocage hérité d'une
+  dépendance gardent leur traitement propre.
 - **Un run en échec ne passe pas pour un succès** : un maillon dont le dernier tour finit en
   erreur d'API (`stopReason: "error"`) autre qu'un quota passe *échoué* (`failed`), avec le
   message d'erreur pour motif d'arrêt — un quota garde son blocage et son repli de modèle. Un
@@ -1269,9 +1305,11 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   `<état>/journal/<sha1(realpath(dépôt))[:16]>.jsonl` (une ligne JSON par entrée, ajout seul ;
   une décision de l'arbitre y porte en plus sa justification).
   Le prompt de **chaque** run d'une feature du projet embarque, après le prompt de base, le
-  brief et les 50 entrées les plus récentes du journal **de cette feature** : l'étape les lit
-  avant de poser une question. Le **journal du lot** (les entrées de toutes les features du
-  même projet ou audit) n'est lu que par l'arbitre.
+  brief (borné à 8 000 caractères : rubriques courtes entières, les lourdes coupées au
+  prorata) et les entrées du journal **de cette feature** limitées à la phase courante et
+  aux jalons (50 au plus, « (n décisions d'autres maillons omises) » sinon) : l'étape les
+  lit avant de poser une question. Le **journal du lot** (les entrées de toutes les
+  features du même projet ou audit) n'est lu que par l'arbitre.
 - **L'arbitre éphémère** : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
   jalon (« specs validées », « revue propre ») d'une feature du projet n'est plus relayé à la
   session `/project` : le **service** ouvre une session d'arbitre **neuve** par élément, jamais
@@ -1281,15 +1319,20 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Le **plafond**
   de la boucle revue ⇄ correction et l'**échec** d'un run sont arbitrés aussi, et le **quota**
   épuisé a son propre traitement (sous-puces Plafond, Échec, Quota ci-dessous).
-  - **Corpus** : le rapport du contexte (`(aucun rapport)` quand il n'existe pas — audits et
-    projets antérieurs —, sans bloquer), le brief, le contrat, le **journal du lot** (les
-    entrées de toutes les features du même audit ou projet — feature, question, source,
-    réponse —, bornées aux N dernières par `MEM0_PIPELINE_ARBITER_JOURNAL`, 200 par défaut,
-    entier de 1 à 10000) et les 50 entrées les plus récentes du journal de la feature. Le
-    corpus est borné à 200 000 caractères : au-delà, une première ligne annonce la
-    troncature et nomme les sections coupées ; on sacrifie d'abord les plus anciennes
-    entrées du journal du lot, puis la fin du rapport, puis la fin du contrat — le brief et
-    les entrées de la feature restent intacts.
+  - **Corpus**, par genre d'élément : une **question** reçoit le rapport du contexte
+    (`(aucun rapport)` quand il n'existe pas, sans bloquer), le brief, le **journal du lot**
+    (les entrées de toutes les features du même audit ou projet, bornées aux N dernières
+    par `MEM0_PIPELINE_ARBITER_JOURNAL`, 200 par défaut, entier de 1 à 10000), les 50
+    entrées les plus récentes du journal de la feature, et les **seules sections du contrat
+    de son étape** (`/req` : Besoins + AC ; `/specs` et `/impl` : AC + Spécifications +
+    Lots ; `/review` : AC + Revue ; release : Besoins + AC + Revue) ; le jalon « specs
+    validées » reçoit rapport, brief et AC + Spécifications + Lots ; un **plafond** ou un
+    **échec** reçoit AC + Revue + Corrections et les journaux, sans rapport ni brief ; le
+    jalon « revue propre » reçoit le contrat **entier sauf `## Revue`** — l'arbitre ne relit
+    jamais le verdict du relecteur qu'il doit contrôler. Le corpus est borné à 200 000
+    caractères : au-delà, une première ligne annonce la troncature et nomme les sections
+    coupées ; on sacrifie d'abord les plus anciennes entrées du journal du lot, puis la fin
+    du rapport, puis la fin du contrat — le brief et les entrées de la feature restent intacts.
   - **Dépôt en lecture seule** : seuls `read`, `grep`, `glob`, `lsp` et `arbiter_decide` sont
     actifs ; tout autre outil (`bash`, `write`, `edit` compris) est refusé par l'extension
     (liste blanche), donc aucun fichier du worktree ne peut changer.
@@ -1298,13 +1341,14 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     l'escalade est réservée aux choix de produit (nouveau besoin non couvert par le rapport
     ou le brief, changement de périmètre, texte visible par l'utilisateur sans convention
     dans le dépôt).
-  - **Justification** : une réponse porte au moins une justification que le pilote vérifie —
-    une citation présente dans le corpus (espaces repliés), une référence `chemin:ligne` ou
-    `chemin:début-fin` relative au worktree (le fichier existe dans le worktree, les lignes
-    sont dans sa plage ; `..`, chemin absolu hors worktree ou lien sortant sont rejetés) ou
-    une rubrique (titre) présente dans le rapport. Sans aucune justification, ou avec
-    seulement des justifications rejetées, l'élément est escaladé avec un motif qui nomme
-    les rejets.
+  - **Justification** : une réponse **et une approbation de jalon** portent au moins une
+    justification que le pilote vérifie — une citation présente dans le corpus (espaces
+    repliés), une référence `chemin:ligne` ou `chemin:début-fin` relative au worktree (le
+    fichier existe dans le worktree, les lignes sont dans sa plage ; `..`, chemin absolu hors
+    worktree ou lien sortant sont rejetés) ou une rubrique (titre) présente dans le rapport.
+    Sans aucune justification, ou avec seulement des justifications rejetées, l'élément est
+    escaladé (« approbation refusée par le pilote : aucune justification » pour un jalon)
+    avec un motif qui nomme les rejets.
   - **Options** : pour une question à options, la réponse est reconnue par son numéro
     (`2`, espaces tolérés), son libellé exact ou son libellé normalisé (casse, espaces
     repliés, ponctuation finale ignorés) ; la réponse transmise est le libellé canonique,
@@ -1315,8 +1359,13 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     spécification `S-<n>` (et le prompt exige la cohérence avec le rapport) ; « revue
     propre » reçoit le `git diff --stat` et le diff du worktree par rapport à `HEAD`
     (fichiers non suivis non ignorés compris, bornés à 60 000 caractères avec troncature
-    annoncée) et, pour chaque `AC-<n>`, les fichiers du worktree (hors `.omp/`) qui le
-    portent — l'approbation est refusée (escalade) tant qu'un critère n'a aucun fichier.
+    annoncée) et, pour chaque `AC-<n>`, les fichiers **du diff** (modifiés ou non suivis,
+    hors `.omp/`) qui le portent — un critère porté seulement par un fichier commité hors
+    du diff vaut « (aucun fichier) » et l'approbation est refusée (« critères sans fichier
+    dans le diff : AC-n »). Deux critères sont en plus **tirés au sort de façon
+    déterministe** (sha256 du diff) : le prompt les nomme et l'approbation exige pour chacun
+    une `references` vérifiée `chemin:ligne` dans un fichier du diff qui porte l'id — l'assertion
+    de test qui matérialise le *Then* —, sinon escalade « assertion non citée pour AC-n ».
   - **Validation et journal** : le pilote **valide** la décision sans rien accorder sur
     parole (jalon « répondu », aucun appel, échéance de 10 minutes ⇒ escalade,
     `feature.escalation` posée) ; chaque décision acceptée est consignée au journal avec sa
@@ -1345,7 +1394,9 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     l'échéance : tu relances toi-même (`R`) ou tu choisis un repli.
   - **Bornes** : au plus **2 relances** par l'arbitre au titre du plafond et **2** au titre de
     l'échec, pour une même feature, avec deux compteurs **indépendants**
-    (`feature.arbiterRelaunches`, persisté dans le lot). Une fois la borne atteinte, le
+    (`feature.arbiterRelaunches`, persisté dans le lot). Une relance du plafond ne rend
+    pas un crédit entier : `fixes` repart à `plafond − 1`, soit **un** tour de correction
+    par relance d'arbitre (`R` remet toujours `fixes` à zéro). Une fois la borne atteinte, le
     plafond ou l'échec suivant est escaladé sans relance ni session d'arbitre, avec le motif
     `borne de relances par l'arbitre atteinte (2/2)`. Les compteurs ne sont remis à zéro que
     par la **livraison** de la feature : ni `R`, ni une réponse, ni un choix de repli ne les
@@ -1417,8 +1468,9 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`, compteur `fixes`) et des revues illisibles d'affilée (`unreadableRuns`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
 | `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
 | `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget de travail d'un run de maillon en millisecondes (10 s à 24 h), suspendu tant qu'une question est en vol ; au-delà, la feature passe `échoué` « délai dépassé (<budget> min) ». Seule borne dure : le minuteur du runner coupe la session à budget + 1 h (code 124) et la feature passe `échoué` « délai dépassé (<budget + 60> min) », soit 120 min par défaut |
-| `MEM0_PIPELINE_CONTEXT_SOFT` | `120000` | seuil de compaction du contexte d'un run ou d'une session parente hébergés (tokens, entier ≥ 1) ; s'il atteint ou dépasse `MEM0_PIPELINE_CONTEXT_HARD`, les deux défauts s'appliquent |
-| `MEM0_PIPELINE_CONTEXT_HARD` | `250000` | plafond : un run encore au-dessus après une compaction passe `échoué` (`bloqué` si une question est en vol) ; une session parente n'est jamais coupée |
+| `MEM0_PIPELINE_CONTEXT_SOFT` | `120000` (`90000` en `/review`) | seuil de compaction du contexte d'un run ou d'une session parente hébergés (tokens, entier ≥ 1) ; la compaction part à la fin du tour en cours ; s'il atteint ou dépasse `MEM0_PIPELINE_CONTEXT_HARD`, les deux défauts s'appliquent |
+| `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` | — | `REQ`, `SPECS`, `IMPL`, `REVIEW`, `RELEASE` : seuil `SOFT` propre à une phase, prioritaire sur `MEM0_PIPELINE_CONTEXT_SOFT` |
+| `MEM0_PIPELINE_CONTEXT_HARD` | `250000` | plafond : un run encore au-dessus après une compaction reçoit un dernier tour « écris ta section livrable maintenant » borné à 5 min, puis passe `échoué` (`bloqué` si une question est en vol) ; une session parente n'est jamais coupée |
 | `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` du job launchd du service et des runs de conversation (chemin absolu si `omp` n'est pas dans le `PATH`) |
 | `MEM0_SERVICE_PORT` | `8788` | port d'écoute de l'API du service (boucle locale uniquement) ; s'il est occupé, le service prend un port éphémère et `service.json` porte le port réel — les clients lisent toujours ce fichier |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
@@ -1455,7 +1507,30 @@ fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
 ```bash
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/lot.test.ts     # un fichier
+bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
+bash scripts/test-ac.sh AC-1 AC-2                                # preuve par critère
 ```
+
+`scripts/test-files.sh --scope=changed[=<base>]` (base `HEAD`) retient : les
+`test/**/*.test.ts` du diff (`git diff --name-only` + non suivis), `test/req/<slug>.test.ts`
+du slug de `.omp/pipeline/contract.md` s'il existe, tout test dont le texte nomme un fichier
+source du diff (`chain.ts` ou `/chain"`), et les tests `--scope=macos` si le diff touche
+`omp-console/`. Sans git, base inconnue ou diff vide : message sur stderr et liste complète
+hors outillage — jamais une liste vide silencieuse. `--scope=outillage` liste les fichiers
+qui relancent un `check.sh` complet (`check.test.ts`, `release.test.ts`,
+`release-simulation.test.ts`, règle par contenu) : `--scope=changed` ne les inclut jamais,
+`check.sh` sans option les lance toujours.
+
+`scripts/test-ac.sh [--base=<rev>] AC-1 AC-2 …` : pour chaque id, imprime les fichiers de
+test **du diff** qui le portent (`AC-1` ≠ `AC-10`) ou `(aucun test dans le diff)`, lance
+**une** passe `node --test --test-reporter=tap` sur ces fichiers, puis `AC-n : pass|fail|absent`
+(nom de test portant l'id ; un test sauté ne prouve rien) ; sortie 1 dès un `fail` ou un
+`absent`. C'est l'appel unique que la directive `/review` impose.
+
+Les tests de `test/console/` partagent une copie du dépôt par fichier
+(`sharedRepo(prefix).fresh()` dans `test/support/repo.ts`, remise à neuf en ≈ 10 ms) au lieu
+d'une copie par test. `check.sh` imprime `# skipped N` dans `── Tests`, en succès comme en
+échec.
 
 `scripts/` ne garde à sa racine que ce que la CI, la release et le développement
 lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,

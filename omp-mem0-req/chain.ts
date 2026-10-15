@@ -15,11 +15,42 @@ import type { LotWaitKind } from "./lot.ts";
 export type ChainOutcome = "ok" | "error";
 
 export type ChainAction =
-  | { kind: "run"; phase: PipelinePhase; fix: boolean }
+  | {
+      kind: "run";
+      phase: PipelinePhase;
+      fix: boolean;
+      /** Reprendre la session du run précédent au lieu d'en ouvrir une neuve (revue illisible : elle réécrit son verdict). */
+      resume?: boolean;
+      /** La consigne de recentrage passée au prompt (`buildLotPrompt.refocus`). */
+      refocus?: string;
+    }
   | { kind: "wait"; waitKind: LotWaitKind }
   | { kind: "blocked"; reason: string }
   | { kind: "failed"; reason: string }
   | { kind: "done" };
+
+
+/**
+ * La consigne d'une revue dont le verdict est illisible : la MÊME session reprend
+ * et réécrit son champ au format exact, au lieu d'une revue neuve qui relirait
+ * tout le diff (mesuré : une passe de revue coûte 56 Ko de contrat relu).
+ */
+export const REVIEW_UNREADABLE_REFOCUS =
+  "Ta section `## Revue` est illisible : le champ BLOQUANTS manque, ou une de ses lignes est ambiguë " +
+  "(« aucun » suivi d'un texte, ligne numérotée barrée). Réécris la section au format exact, sans refaire la revue : " +
+  "`- AC PAR AC : AC-<n> → test (fichier:ligne) → pass/fail` (tous les AC du contrat), puis EXACTEMENT " +
+  "`- BLOQUANTS : aucun` s'il n'y a aucun bloquant, sinon une liste numérotée `1. …`, un par ligne, rien d'autre sur ce champ.";
+
+
+/**
+ * Le périmètre d'une revue selon le tour de correction (C4) : après un --fix, la
+ * revue est INCRÉMENTALE (bloquants levés + `## Corrections` + diff) tant qu'il
+ * reste au moins un tour avant le dernier ; la première revue et les deux derniers
+ * tours sont intégraux — le verdict qui peut bloquer la feature juge tout.
+ */
+export function reviewScopeFor(input: { fixes: number; cap: number }): "full" | "incremental" {
+  return input.fixes > 0 && input.fixes < input.cap - 1 ? "incremental" : "full";
+}
 
 
 /**
@@ -142,7 +173,7 @@ export function nextChainAction(input: {
       if (asked !== null) return { kind: "wait", waitKind: "answer" };
       // Le budget de l'illisible est le SIEN (S-5) : les corrections ont le leur
       // (`fixes`), un seul compteur ferait bloquer une feature dès son 1er bloquant.
-      if (unreadableRuns < cap) return { kind: "run", phase: "review", fix: false };
+      if (unreadableRuns < cap) return { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS };
       return { kind: "blocked", reason: `verdict de revue illisible après ${cap} passes` };
     }
     case "release":

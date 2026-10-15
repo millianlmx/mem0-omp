@@ -8,7 +8,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { JOURNAL_CONTEXT_MAX, journalLine, lotJournalLine } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalEntry } from "./context.ts";
-import { uncoveredAcIds, contractAcIds } from "./contract.ts";
+import { contractSection, uncoveredAcIds, contractAcIds } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { renderReviewEvidence } from "./arbiterReview.ts";
 import type { ReviewEvidence } from "./arbiterReview.ts";
@@ -16,6 +16,26 @@ import { ARBITER_DIRECTIVE } from "./seeds.ts";
 
 /** La ligne que le prompt d'un jalon « specs validées » porte (S-10) : ce que l'arbitre doit vérifier. */
 const SPECS_CHECK = "vérification exigée : chaque AC-<n> du contrat est référencé par une spécification S-<n>, et les spécifications sont cohérentes avec le rapport";
+
+/** Ce qu'une approbation de jalon porte, comme une réponse : sans justification vérifiée, le pilote escalade. */
+const MILESTONE_JUSTIFICATION = "approbation justifiée : au moins une `citations` (passage du contrat ou du rapport copié tel quel), `references` (chemin:ligne du worktree) ou `rubriques` vérifiable, sinon l'élément est escaladé";
+
+/** La ligne que le prompt d'un jalon « revue propre » porte : les critères tirés dont l'arbitre cite l'assertion de test. */
+function reviewCheck(sampledAcIds: readonly string[]): string {
+  return (
+    `vérification exigée : pour ${sampledAcIds.join(" et ")}, cite en \`references\` (chemin:ligne d'un fichier du diff qui porte l'id du critère) ` +
+    "l'assertion de test qui matérialise le « Then » du critère — sans cette référence, l'approbation est refusée"
+  );
+}
+
+/** Les sections du contrat qu'une question reçoit, par étape : celles que l'étape écrit ou lit. */
+const QUESTION_SECTIONS: Record<PipelinePhase, readonly string[]> = {
+  req: ["Besoins", "Critères d'acceptation"],
+  specs: ["Critères d'acceptation", "Spécifications", "Lots"],
+  impl: ["Critères d'acceptation", "Spécifications", "Lots"],
+  review: ["Critères d'acceptation", "Revue"],
+  release: ["Besoins", "Critères d'acceptation", "Revue"],
+};
 
 
 /** L'échéance d'un run d'arbitre (S-9) : dix minutes. */
@@ -126,6 +146,8 @@ export function itemQuestion(item: ArbiterItem): string {
 export const ARBITER_CORPUS_MAX_CHARS = 200_000;
 
 const NO_REPORT = "(aucun rapport)";
+const NO_CONTRACT_SECTION = "(aucune section du contrat ne concerne cet élément)";
+const NOT_SUBMITTED = "(non soumis à un plafond ou à un échec : revue, corrections et sortie du run font foi)";
 const NO_BRIEF = "(aucun brief validé)";
 const NO_CONTRACT = "(contrat absent)";
 const NO_DECISION = "- (aucune décision consignée)";
@@ -146,14 +168,69 @@ function smallestFitting(from: number, to: number, ok: (n: number) => boolean): 
 }
 
 
+/** Les sections `## <titre>` du contrat (dernière occurrence, titre compris) qui existent parmi `titles`, dans cet ordre. */
+function keepSections(contract: string, titles: readonly string[]): string {
+  const sections: string[] = [];
+  for (const title of titles) {
+    const body = contractSection(contract, title);
+    if (body !== null) sections.push(`## ${title}\n${body.trim()}`);
+  }
+  return sections.join("\n\n");
+}
+
+
+/** Le contrat sans AUCUNE occurrence de `## <titre>` (un maillon peut l'avoir dupliquée). */
+function dropSection(contract: string, title: string): string {
+  const kept: string[] = [];
+  let skipping = false;
+  for (const line of contract.split("\n")) {
+    if (line.trim() === `## ${title}`) {
+      skipping = true;
+      continue;
+    }
+    if (skipping && line.trimStart().startsWith("## ")) skipping = false;
+    if (!skipping) kept.push(line);
+  }
+  return kept.join("\n").trim();
+}
+
+
+/**
+ * Ce que l'arbitre lit du contrat selon le genre de l'élément : une question, les
+ * sections de son étape (le contrat entier si l'étape n'est pas connue) ; « specs
+ * validées », AC + Spécifications + Lots ; plafond et échec, AC + Revue + Corrections ;
+ * « revue propre », le contrat SANS `## Revue` — l'arbitre juge le diff et les tests,
+ * pas le verdict du reviewer, qu'il ne ferait que répéter.
+ */
+export function arbiterContractExcerpt(contract: string, kind: ArbiterItemKind, phase?: PipelinePhase): string {
+  if (contract === "") return "";
+  switch (kind) {
+    case "review":
+      return dropSection(contract, "Revue");
+    case "specs":
+      return keepSections(contract, QUESTION_SECTIONS.specs);
+    case "cap":
+    case "failure":
+      return keepSections(contract, ["Critères d'acceptation", "Revue", "Corrections"]);
+    default:
+      return phase === undefined ? contract : keepSections(contract, QUESTION_SECTIONS[phase]);
+  }
+}
+
+
 /**
  * Le CORPUS de l'arbitre (S-4), dans l'ordre : rapport, brief, contrat, journal du
  * LOT (les `lotMax` plus récentes entrées), journal de la feature (les 50 plus
- * récentes). Au-delà de `maxChars`, on sacrifie d'abord les plus anciennes entrées
- * du journal du lot, puis la fin du rapport, puis la fin du contrat — jamais le
- * brief ni le journal de la feature — et une ligne de tête annonce les coupes.
+ * récentes). Le contrat est réduit par genre (`arbiterContractExcerpt`) ; un plafond
+ * ou un échec ne reçoit ni rapport ni brief (il se juge sur la revue, les corrections
+ * et la sortie du run). Au-delà de `maxChars`, on sacrifie d'abord les plus anciennes
+ * entrées du journal du lot, puis la fin du rapport, puis la fin du contrat — jamais
+ * le brief ni le journal de la feature — et une ligne de tête annonce les coupes.
  */
 export function buildArbiterCorpus(input: {
+  kind: ArbiterItemKind;
+  /** L'étape de l'élément : borne le contrat d'une question à ses sections. */
+  phase?: PipelinePhase;
   report: string | null;
   brief: string | null;
   contract: string | null;
@@ -164,9 +241,14 @@ export function buildArbiterCorpus(input: {
   maxChars?: number;
 }): string {
   const maxChars = input.maxChars ?? ARBITER_CORPUS_MAX_CHARS;
-  const report = (input.report ?? "").trim();
-  const contract = (input.contract ?? "").trim();
-  const brief = (input.brief ?? "").trim();
+  const bare = input.kind === "cap" || input.kind === "failure";
+  const report = bare ? "" : (input.report ?? "").trim();
+  const whole = (input.contract ?? "").trim();
+  const contract = arbiterContractExcerpt(whole, input.kind, input.phase);
+  const brief = bare ? "" : (input.brief ?? "").trim();
+  const noReport = bare ? NOT_SUBMITTED : NO_REPORT;
+  const noBrief = bare ? NOT_SUBMITTED : NO_BRIEF;
+  const noContract = whole === "" ? NO_CONTRACT : NO_CONTRACT_SECTION;
   const recentLot = input.lotEntries.slice(Math.max(0, input.lotEntries.length - Math.max(0, input.lotMax)));
   const lotBase = input.lotEntries.length - recentLot.length;
   const omittedFeature = Math.max(0, input.featureEntries.length - JOURNAL_CONTEXT_MAX);
@@ -188,9 +270,9 @@ export function buildArbiterCorpus(input: {
     ];
     return [
       ...(cut.length > 0 ? [`(corpus tronqué à ${maxChars} caractères — sections coupées : ${cut.join(", ")})`] : []),
-      ["### Rapport", report === "" ? NO_REPORT : reportKeep < report.length ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}` : report].join("\n"),
-      ["### Brief", brief === "" ? NO_BRIEF : brief].join("\n"),
-      ["### Contrat", contract === "" ? NO_CONTRACT : contractKeep < contract.length ? `${contract.slice(0, contractKeep)}\n${CONTRACT_CUT}` : contract].join("\n"),
+      ["### Rapport", report === "" ? noReport : reportKeep < report.length ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}` : report].join("\n"),
+      ["### Brief", brief === "" ? noBrief : brief].join("\n"),
+      ["### Contrat", contract === "" ? noContract : contractKeep < contract.length ? `${contract.slice(0, contractKeep)}\n${CONTRACT_CUT}` : contract].join("\n"),
       ["### Journal du lot", ...(lotLines.length > 0 ? lotLines : [NO_DECISION])].join("\n"),
       [`### Journal de la feature ${input.slug}`, ...(featureLines.length > 0 ? featureLines : [NO_DECISION])].join("\n"),
     ].join("\n\n");
@@ -273,6 +355,8 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
   } else {
     head.push(`type : jalon « ${item.kind === "specs" ? "specs validées" : "revue propre"} »`);
     if (item.kind === "specs") head.push(SPECS_CHECK);
+    else if (review !== null && review.sampledAcIds.length > 0) head.push(reviewCheck(review.sampledAcIds));
+    head.push(MILESTONE_JUSTIFICATION);
   }
   const evidence = item.kind === "review" && review !== null ? `\n\n${renderReviewEvidence(review)}` : "";
   return `${ARBITER_DIRECTIVE}\n\n${head.join("\n")}${evidence}\n\n## Corpus\n\n${corpus}`;
@@ -461,7 +545,7 @@ function chooseOption(options: readonly string[], answer: string): { answer: str
 /**
  * Pourquoi le pilote refuse d'approuver un jalon (S-9, S-10), ou `null` : « specs
  * validées » exige un AC référencé par une S-<n> ; « revue propre » exige que chaque
- * AC porte au moins un fichier du worktree. Vérification DÉTERMINISTE, en plus du
+ * AC porte au moins un fichier DU DIFF. Vérification DÉTERMINISTE, en plus du
  * jugement de l'arbitre.
  */
 function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | null {
@@ -475,7 +559,22 @@ function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | nul
   if (ground.review === null) return "recherche des critères impossible : évidence absente";
   if (ground.review.acFiles === null) return `recherche des critères impossible : ${ground.review.searchError ?? "erreur inconnue"}`;
   const bare = ground.review.acFiles.filter((entry) => entry.files.length === 0).map((entry) => entry.id);
-  return bare.length === 0 ? null : `critères sans fichier dans le worktree : ${bare.join(", ")}`;
+  return bare.length === 0 ? null : `critères sans fichier dans le diff : ${bare.join(", ")}`;
+}
+
+
+/**
+ * Les critères tirés qu'aucune référence VÉRIFIÉE n'atteste : une référence atteste
+ * AC-<n> quand elle pointe dans un fichier du diff qui porte cet id (`acFiles`). Le
+ * pilote ne lit pas l'assertion : il garantit seulement que l'arbitre a désigné un
+ * endroit précis du diff pour chaque critère tiré, au lieu d'approuver sur le verdict.
+ */
+function unattestedAcIds(review: ReviewEvidence, references: readonly string[]): string[] {
+  const cited = references.map((reference) => path.posix.normalize((REFERENCE.exec(reference)?.[1] ?? "").replace(/\\/g, "/")));
+  return review.sampledAcIds.filter((id) => {
+    const files = review.acFiles?.find((entry) => entry.id === id)?.files ?? [];
+    return !cited.some((file) => files.includes(file));
+  });
 }
 
 
@@ -484,8 +583,11 @@ function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | nul
  * réponse non vide, une source `contexte`/`arbitrage` et au moins UNE justification
  * VÉRIFIÉE — citation du corpus (espaces repliés), référence `chemin:ligne` qui
  * existe dans le worktree, rubrique du rapport —, puis la réponse est rapprochée des
- * options. Jalon : seul `approve` (motif non vide, puis `approvalRefusal` : couverture
- * AC → S-n ou AC → fichiers) ou `escalate`. Tout autre cas se rend en escalade, avec son motif ; une décision
+ * options. Jalon : seul `approve` (motif non vide, `approvalRefusal` : couverture
+ * AC → S-n ou AC → fichiers du diff, puis la même justification vérifiée qu'une
+ * réponse, et pour « revue propre » une référence dans le diff pour chaque critère
+ * tiré) ou `escalate` ; un refus d'approbation se rend « approbation refusée par le
+ * pilote : <motif> ». Tout autre cas se rend en escalade, avec son motif ; une décision
  * `escalate` est toujours honorée telle quelle.
  */
 export function validateArbiterDecision(
@@ -531,9 +633,16 @@ export function validateArbiterDecision(
   if (item.question === null) {
     if (decision.decision !== "approve") return invalid("un jalon s'approuve ou s'escalade");
     if (decision.reason.trim() === "") return invalid("motif d'approbation vide");
+    const refused = (motif: string): ArbiterEffect => ({ kind: "escalate", reason: `approbation refusée par le pilote : ${motif}` });
     const refusal = approvalRefusal(item, ground);
-    if (refusal !== null) return { kind: "escalate", reason: `approbation refusée par le pilote : ${refusal}` };
-    return { kind: "approve", justification: justify(verifyJustifications(decision, ground)) };
+    if (refusal !== null) return refused(refusal);
+    const verified = verifiedOrRefusal();
+    if (typeof verified === "string") return refused(verified);
+    if (item.kind === "review" && ground.review !== null) {
+      const unattested = unattestedAcIds(ground.review, verified.references);
+      if (unattested.length > 0) return refused(`assertion non citée pour ${unattested.join(", ")}`);
+    }
+    return { kind: "approve", justification: justify(verified) };
   }
   if (decision.decision !== "answer") return invalid("une question se répond ou s'escalade");
   const answer = (decision.answer ?? "").trim();
@@ -559,7 +668,7 @@ export function registerArbiterTool(pi: ExtensionAPI, capture: ArbiterCapture): 
     name: "arbiter_decide",
     label: "Arbitre — décider",
     description:
-      "Rend la décision de l'arbitre sur l'élément soumis, UNE seule fois : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon justifié par le contrat), relaunch (plafond de la boucle revue ⇄ correction : refocus = les bloquants précis à lever et ce qui a déjà été tenté ; échec d'un run : relance telle quelle), abandon (plafond seulement : reason est le motif d'arrêt) ou escalate (l'utilisateur tranchera) ; relaunch et abandon portent au moins une justification vérifiable ; reason dit pourquoi en une phrase.",
+      "Rend la décision de l'arbitre sur l'élément soumis, UNE seule fois : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon : au moins une justification vérifiable comme une réponse ; jalon « revue propre » : references vers l'assertion de test de chaque critère tiré, dans un fichier du diff), relaunch (plafond de la boucle revue ⇄ correction : refocus = les bloquants précis à lever et ce qui a déjà été tenté ; échec d'un run : relance telle quelle), abandon (plafond seulement : reason est le motif d'arrêt) ou escalate (l'utilisateur tranchera) ; relaunch et abandon portent au moins une justification vérifiable ; sans justification vérifiée, le pilote escalade ; reason dit pourquoi en une phrase.",
     approval: "read",
     loadMode: "essential",
     parameters: pi.arktype({

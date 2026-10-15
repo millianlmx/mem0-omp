@@ -15,7 +15,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripFullLineComments } from "../support/swift-source.ts";
 
 const SHELL = path.join(ROOT, "omp-console");
@@ -36,32 +36,8 @@ const core = (rel: string) => code(path.join(CORE, rel));
 const shell = (rel: string) => code(path.join(SHELL_SRC, rel));
 const client = (name: string) => code(path.join(CLIENT, name));
 
-const dirs: string[] = [];
-test.after(() => {
-  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-const SKIP: Record<string, true> = { ".git": true, node_modules: true, ".build-ios": true, target: true };
-
-/** Une copie jetable du dépôt, sans racines de build ni historique. */
-function copyRepo(): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(fs.mkdtempSync(path.join("/tmp", "ios-pipelines-"))), "copie-"));
-  dirs.push(dir);
-  const walk = (current: string, target: string) => {
-    fs.mkdirSync(target, { recursive: true });
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      // Les racines de build Swift se filtrent par PRÉFIXE (un scratch inconnu pèse des centaines de Mo).
-      if (SKIP[entry.name] || entry.name === "build" || entry.name.startsWith(".build")) continue;
-      const from = path.join(current, entry.name);
-      const to = path.join(target, entry.name);
-      if (entry.isDirectory()) walk(from, to);
-      else if (entry.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
-      else fs.copyFileSync(from, to);
-    }
-  };
-  walk(ROOT, dir);
-  return dir;
-}
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
+const shared = sharedRepo("ios-pipelines-copie-");
 
 // ---------------------------------------------------------------------------
 
@@ -231,12 +207,12 @@ test("ios-pipelines/AC-1 : l'ardoise de l'app est la dérivation PARTAGÉE, la m
     }
   }
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/IOSSectionView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelinesScreen(client:", "Placeholder("));
   assert.ok(boardFaults(copy).some((f) => f.includes("PipelinesScreen")), "un écran non branché doit faire rougir la garde");
 
-  const copy2 = copyRepo();
+  const copy2 = shared.fresh();
   const cardTarget = path.join(copy2, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
   fs.writeFileSync(cardTarget, fs.readFileSync(cardTarget, "utf8").replaceAll("HomeText.openPR", "KanbanText.openPR"));
   assert.ok(boardFaults(copy2).some((f) => f.includes("lien PR")), "une carte sans lien PR doit faire rougir la garde");
@@ -245,7 +221,7 @@ test("ios-pipelines/AC-1 : l'ardoise de l'app est la dérivation PARTAGÉE, la m
 test("ios-pipelines/AC-2 : l'écran suit le magasin sans bouton ni minuterie de rafraîchissement", () => {
   assert.deepEqual(liveFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesModel.swift");
   fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet sonde = Timer()\n`);
   assert.ok(liveFaults(copy).some((f) => f.includes("minuterie")), "une minuterie de sondage doit faire rougir la garde");
@@ -254,7 +230,7 @@ test("ios-pipelines/AC-2 : l'écran suit le magasin sans bouton ni minuterie de 
 test("ios-pipelines/AC-4 : les deux formes atteignent toutes les voies (compacte empilée, régulière en ligne)", () => {
   assert.deepEqual(formFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("ScrollView(.vertical)", "VStack("));
   assert.ok(formFaults(copy).some((f) => f.includes("défilement")), "l'absence de défilement doit faire rougir la garde");
@@ -266,7 +242,7 @@ test("ios-pipelines/AC-5 : choisir une option envoie une réponse « selected »
   assert.deepEqual(callFaults(ROOT, "client.answer("), [], "la feuille doit envoyer la réponse");
   assert.ok(app("PipelinesCardSheet.swift").includes("PipelinesAnswerKind.selected"), "l'option part en nature « selected »");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Sources/ConsoleClient/ConsoleClientModel.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("public func verdict(", "func retiredVerdict("));
   assert.ok(wiringFaults(copy).some((f) => f.includes("verdict")), "un geste retiré doit faire rougir la garde");
@@ -315,7 +291,7 @@ test("ios-pipelines/AC-12 : lancer une feature jamais en route passe par la rout
 test("ios-pipelines/AC-11 : la fusion demande confirmation AVANT tout effet et exige le headOid", () => {
   assert.deepEqual(mergeConfirmFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Sources/ConsoleClient/ClientPayloads.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("public var headOid: String? = nil", "public var removed: Int = 0"));
   assert.ok(mergeConfirmFaults(copy).some((f) => f.includes("headOid")), "un headOid retiré doit faire rougir la garde");
@@ -324,7 +300,7 @@ test("ios-pipelines/AC-11 : la fusion demande confirmation AVANT tout effet et e
 test("ios-pipelines/AC-13 : la feuille propose un dépôt, deux modèles, un titre et un besoin", () => {
   assert.deepEqual(newFeatureFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("KanbanLaunchRepos.options(", "Unused.options("));
   assert.ok(newFeatureFaults(copy).some((f) => f.includes("dépôts")), "des dépôts inventés doivent faire rougir la garde");
@@ -333,7 +309,7 @@ test("ios-pipelines/AC-13 : la feuille propose un dépôt, deux modèles, un tit
 test("ios-pipelines/AC-14 : valider crée la feature avec ses deux modèles et referme la feuille", () => {
   assert.deepEqual(createFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("client.launch(", "Unused.launch("));
   assert.ok(createFaults(copy).some((f) => f.includes("client.launch")), "une création non câblée doit faire rougir la garde");
@@ -342,7 +318,7 @@ test("ios-pipelines/AC-14 : valider crée la feature avec ses deux modèles et r
 test("ios-pipelines/AC-15 : la recette de bout en bout existe, gardée par MEM0_PIPELINES_RECIPE", () => {
   assert.deepEqual(recipeFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Tests/ConsoleClientTests/IosPipelinesRecipeTests.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("MEM0_PIPELINES_RECIPE", "ALWAYS"));
   assert.ok(recipeFaults(copy).some((f) => f.includes("MEM0_PIPELINES_RECIPE")), "une recette non gardée doit faire rougir la garde");

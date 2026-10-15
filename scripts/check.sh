@@ -535,6 +535,9 @@ if command -v node >/dev/null 2>&1; then
       if [ "$tests_ran" -eq 0 ]; then
         fail "tests unitaires — aucun test exécuté pour --tests-part=$tests_part"
       else
+        # Les sauts sont imprimés même en vert : un test d'AC qui se saute (prérequis
+        # absent, profondeur) n'a rien prouvé, et seul ce compteur le montre.
+        grep -E '^# skipped' "$tests_log"
         pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
       fi
     else

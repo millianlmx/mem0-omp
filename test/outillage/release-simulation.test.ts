@@ -417,7 +417,8 @@ function buildDirty(): Repo {
  * invisible), et la simulation le fait tomber en écrivant le bump. */
 async function buildCoupled(): Promise<Coupled> {
   const repo = makeRepo("coupled", COUPLING_STEPS);
-  // `bash scripts/check.sh` dans la fixture : le gate du dépôt, tel quel.
+  // `bash scripts/check.sh` dans la fixture : le gate du dépôt, tel quel — cette
+  // forme sans option classe le fichier dans `test-files.sh --scope=outillage`.
   const check = await spawnAsync("bash", ["scripts/check.sh"], {
     cwd: repo.dir,
     timeout: 900_000,
