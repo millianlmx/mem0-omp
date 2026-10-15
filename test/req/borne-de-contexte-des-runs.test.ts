@@ -1015,7 +1015,8 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   const end = lines.findIndex((line, i) => i > start && line.startsWith("#"));
   const section = lines.slice(start, end < 0 ? undefined : end).join("\n").replace(/\s+/g, " ");
   for (const literal of [
-    "`MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`)",
+    "`MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`, **`90000` pour `/review`**)",
+    "`MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>`",
     "`MEM0_PIPELINE_CONTEXT_HARD` (défaut `250000`)",
     "à chaque fin de tour assistant",
     "une seule fois par palier",
@@ -1034,7 +1035,8 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   assert.ok(order.every((i) => i >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, "ordre des sections");
 
   // Tableau ## Config et tableau des routes.
-  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT` \| `120000` \|/);
+  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT` \| `120000` \(`90000` en `\/review`\) \|/);
+  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` \| — \|/);
   assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_HARD` \| `250000` \|/);
   assert.match(readme, /\| `GET \/v1\/repos\/\{repo\}\/lot` \|/);
   assert.ok(readme.includes("`contextPeak` et `compactions`"), "la route de session mentionne contextPeak et compactions");
