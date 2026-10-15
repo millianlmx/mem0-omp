@@ -320,6 +320,20 @@ export function writeJsonAtomic(file: string, payload: unknown): void {
 }
 
 
+/** Écriture ATOMIQUE d'octets (le contrat d'un worktree) : temporaire voisin, puis `rename` ; le temporaire d'un échec est retiré. */
+export function writeBytesAtomic(file: string, bytes: Uint8Array): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, bytes);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+
 // --- la boîte de réception d'un run : le seul canal vers un run VIVANT (S-6) --
 // Le run reste un process `omp -p` : aucune API de l'hôte n'atteint la session
 // d'un autre process, et un run meurt à la fin de son tour. Le canal est donc un

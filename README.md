@@ -424,6 +424,46 @@ absolu percent-encodé, refus `{error, reason}`) :
 | `POST /v1/audits/{id}/escalations` | répond à une escalade `{slug, key, answer?, decision?}` |
 | `DELETE /v1/audits/{id}` | arrête un audit |
 
+### Outils de pilotage
+
+Une session OMP **interactive** pilote le lot de son dépôt par **quatre outils**, que le
+modèle appelle comme n'importe quel outil — le service reste le seul à agir. Ils parlent
+au service par son API locale (`POST /v1/repos/{repo}/commands`) : le modèle ne fournit ni
+URL, ni jeton, ni identifiant de commande (l'outil pose lui-même l'enveloppe
+`{version, id, sentAt, repo}`, l'identifiant `pilot-…`), et le dépôt visé est celui de la
+session — le dépôt principal, même depuis le worktree d'une feature.
+
+| Outil | Paramètres | Approbation | Rend |
+|---|---|---|---|
+| `pipeline_state` | aucun | lecture, sans prompt | JSON `{repoRoot, lots[]}` : chaque feature avec `state`, `phase`, `sinceAt`, `waitKind`, `prUrl`, `base`, `worktree`, `branch`, `running`, et ses **questions en vol** avec leur texte et leurs options **en entier**, sans troncature (une question `ask` d'un run vivant, ou la dernière question en texte d'une feature qui attend une réponse) ; une réponse déjà acheminée n'y figure plus. Un dépôt sans lot rend `lots: []`, sans erreur |
+| `pipeline_command` | `kind` + les champs de ce kind (`slug`, `text`, `toolCallId`, `selected`/`custom`, `fate`…) | **écriture, prompt à chaque appel** | l'accusé du service tel quel (`taken` ou `refused` + `reason`) ; un refus ou un service absent est une erreur d'outil |
+| `pipeline_session_tail` | `slug`, `n` (1 à 1000) | lecture, sans prompt | JSON des `n` derniers messages du dernier run de la feature, du plus ancien au plus récent : rôle, texte, appels d'outil avec leurs **arguments complets** (jamais tronqués) |
+| `pipeline_advance` | `slug` | **écriture, prompt à chaque appel** | l'accusé du kind `avance` (voir « Le canal de commande ») |
+
+- **`pipeline_command`** couvre tous les kinds du canal sauf `avance` (qui a son outil) :
+  `launch`, `add`, `remove`, `verdict`, `answer`, `reply`, `models`, `relaunch`, `cancel`,
+  `start`, `stop`, `quota` et **`arbitrage`**. La **réponse** à une question en vol passe par
+  `answer` — le chemin officiel (journal du lot, question marquée répondue) —, **jamais** par
+  un fichier déposé dans la boîte du run. Un `taken` n'est pas une garantie de l'effet :
+  relire `pipeline_state` ensuite.
+- **Approbation** : `pipeline_command` et `pipeline_advance` déclarent une approbation
+  `write` avec la politique `prompt` — l'utilisateur est **toujours** interrogé, dans les
+  trois modes d'approbation d'OMP (`always-ask`, `write`, `yolo`) et même si une politique
+  l'autorise pour cet outil ; seule une politique `deny` l'emporte. Un appel refusé lève
+  `Tool call denied by user` avant `execute` : aucun geste n'est posté. Sans interface pour
+  poser la question, l'appel échoue de même. `scripts/plugin-smoke.ts` rejoue ce contrôle
+  contre l'hôte installé.
+- **Armement** : les quatre outils sont enregistrés **une fois par process**, dans une
+  session interactive (`ctx.hasUI`) qui n'est ni un sous-agent, ni le process du service, ni
+  un run de pipeline — **dans un dépôt avec ou sans lot**. Ils ne sont **jamais** armés
+  dans un **enfant headless** de lot (`--pipeline-lot` / `--pipeline-feature` /
+  `--pipeline-phase`), ni dans une session hébergée par le service, ni sans interface : un
+  run de pipeline ne peut donc pas piloter son propre lot. Aucun drapeau ni variable
+  d'environnement ne les arme autrement.
+- **Hors périmètre** : la vérification d'une PR en retard sur `main` (worktree jetable,
+  gardes, builds) n'est pas un outil ; l'app Mac et le panneau n'émettent ni `arbitrage` ni
+  `avance`.
+
 ### Repli de modèle et quota
 
 Chaque run (étape de pipeline) tourne sur le **modèle principal** et le **repli** que
@@ -820,9 +860,52 @@ que d'afficher un écran à moitié peint.
   repli absente laisse le repli inchangé, `null` le retire), `quota` (choisir le repli d'un
   fournisseur épuisé : `{provider, model}`), `verdict` (`v` ou `y`, comme les touches du
   panneau), `answer` (répondre à une question en vol d'un run), `reply` (répondre à une
-  question en texte d'un maillon terminé : le maillon repart sur sa session) et `stop`
-  (interrompre le pilote). Un même identifiant rejoué ne produit ni second accusé ni
-  second effet.
+  question en texte d'un maillon terminé : le maillon repart sur sa session), `relaunch`
+  `{slug}` (rouvrir un crédit de correction et relancer une feature `bloqué`, `échoué` ou
+  `annulé` ; refus `relance possible sur une feature bloquée, échouée ou annulée` sinon),
+  `cancel` `{slug, fate}` (abandonner une feature ; `fate` = `keep`, `archive` ou `delete`
+  pour le sort du worktree), `start` (ouvrir le lot brouillon → en marche et lancer ses
+  features en attente), `arbitrage`, `avance` et `stop` (interrompre le pilote). Un même
+  identifiant rejoué ne produit ni second accusé ni second effet.
+  - **`arbitrage` `{slug, text}`** : en **un seul geste journalisé au lot**, ajoute au
+    contrat de la feature (`.omp/pipeline/contract.md` de son worktree) un paragraphe
+    `### Arbitrage du <date UTC>` sous la section `## Arbitrages du pilote` (créée au
+    besoin), **puis relance** la feature ; les prompts de lot suivants renvoient le run à
+    cette section, qui prime sur ses hypothèses. **Tout ou rien** : une feature qui ne peut
+    pas être relancée est refusée AVANT l'accusé (refus nommés ci-dessous, rien n'est
+    écrit) ; si la relance échoue APRÈS l'accusé `taken` (dépendance ou worktree disparu
+    entre-temps), le contrat est restauré octet pour octet, rien n'est journalisé et un
+    avis `[pipeline] commande arbitrage : <motif> — contrat restauré` est émis. L'arbitrage
+    **n'annule jamais** une feature : une feature vivante est
+    refusée, pas arrêtée. Refus nommés, dans l'ordre : `arbitrage vide` ;
+    `arbitrage refusé : la feature est figée sur une question en vol` ;
+    `arbitrage refusé : la feature est en cours` ;
+    `arbitrage refusé : la feature est figée sur une question` ;
+    `arbitrage refusé : la feature attend la validation d'un jalon` ;
+    `arbitrage refusé : un maillon tourne dans le worktree` ; `arbitrage en cours — la
+    décision sera consignée au journal` (l'arbitre juge la feature) ; `relance possible sur
+    une feature bloquée, échouée ou annulée` ; `arbitrage impossible : la feature n'a pas de
+    worktree` ; puis, avant l'accusé et sans rien écrire, les refus de la relance
+    (dépendance non terminée, `worktree introuvable sur le disque`, `worktree sans
+    branche`). L'entrée de journal porte `kind: "arbitrage"` et la source `utilisateur`.
+  - **`avance` `{slug}`** : fait avancer le worktree d'une feature **au repos** sur sa base
+    distante. Le service lit l'URL et la branche par défaut par `gh repo view`, récupère la
+    base en **HTTPS** (jamais SSH, aucune clé) dans une référence privée
+    `refs/omp-pipeline/avance/<slug>`, puis applique `git merge --ff-only` : jamais de
+    réécriture, jamais de merge commit. Refus nommés, sans rien modifier :
+    `avance impossible : la feature n'a pas de worktree` ; `avance refusée : un maillon
+    tourne dans le worktree` (aucun `gh`, aucun fetch, aucun merge) ; `avance impossible :
+    worktree introuvable sur le disque` ; `avance impossible : gh indisponible` /
+    `gh repo view : <erreur>` / `URL HTTPS du dépôt introuvable (gh repo view)` ;
+    `avance impossible : fetch : <erreur>` ; **`avance refusée : non fast-forward`** quand
+    la branche a divergé de la base ; `avance refusée : modifications locales en conflit
+    avec <base> : <chemins>`. Succès (ou déjà à jour) : journal `kind: "avance"`, question
+    `avance sur <base>`, réponse `<ancien HEAD> → <nouveau HEAD>`. La base mémorisée de la
+    feature (`base`) n'est pas modifiée.
+  - **Journal** : `arbitrage` et `avance` sont deux **kinds** d'entrée du journal du lot
+    (source `utilisateur`). OMP Console saute les entrées de kind inconnu : aucune mise à
+    jour de l'app n'est nécessaire. Ni l'app ni le panneau n'émettent ces deux commandes :
+    elles viennent des outils de pilotage (« Outils de pilotage », plus haut).
   L'app **omp-console** est un de ces clients : elle dépose ses gestes par ce canal et
   par les boîtes des runs, et affiche l'accusé du pilote (voir « Agir depuis le
   Kanban » de `omp-console/README.md`).

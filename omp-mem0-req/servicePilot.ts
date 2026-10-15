@@ -33,6 +33,8 @@ export type PilotDeps = {
   arbiter?: ArbiterRunner;
   runGit: GitRunner;
   runGh?: (args: string[], cwd: string) => Promise<GitResult>;
+  /** git RÉSEAU (le fetch de l'avance) ; absent ⇒ repli sur `runGit`. */
+  runGitNet?: GitRunner;
   notify?: (text: string) => void;
   toast?: (text: string, tone: "info" | "warning" | "error") => void;
   log?: (line: string) => void;
@@ -143,6 +145,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       arbiter: deps.arbiter,
       runGit: deps.runGit,
       runGh: deps.runGh,
+      runGitNet: deps.runGitNet,
       notify: deps.notify,
       toast: deps.toast,
       // Le propriétaire publié est CE process : c'est ce qui rend vrai « une

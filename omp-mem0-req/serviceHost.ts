@@ -28,6 +28,8 @@ export type ServiceHostOptions = {
   selfPath: string | null;
   runGit: GitRunner;
   runGh?: (args: string[], cwd: string) => Promise<GitResult>;
+  /** git RÉSEAU (le fetch de l'avance) ; absent ⇒ repli sur `runGit`. */
+  runGitNet?: GitRunner;
   log?: (line: string) => void;
   now?: () => number;
   schedule?: (callback: () => void, ms: number) => () => void;
@@ -72,6 +74,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     arbiter: createArbiterRunner({ host: sessions, log, now: options.now }),
     runGit: options.runGit,
     runGh: options.runGh,
+    runGitNet: options.runGitNet,
     notify: text => log(`[service] ${text}`),
     toast: text => log(`[service] ${text}`),
     log,

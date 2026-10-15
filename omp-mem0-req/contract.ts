@@ -65,6 +65,52 @@ export function contractHasSection(contract: string, title: string): boolean {
 }
 
 
+/** Le titre de la section que l'arbitrage d'un pilote ajoute au contrat (S-5). */
+export const PILOT_ARBITRATION_TITLE = "Arbitrages du pilote";
+
+
+/**
+ * Le contrat augmenté d'un arbitrage de pilote (S-5) : la section
+ * `## Arbitrages du pilote` est créée en fin de fichier si elle manque, puis
+ * `### Arbitrage du <ISO UTC à la seconde>` et le texte s'ajoutent en fin de cette
+ * section — avant le `## ` suivant, ou en fin de fichier. PURE : le contenu d'origine
+ * est conservé octet pour octet en amont du point d'insertion, et `contract === null`
+ * vaut un fichier absent.
+ */
+export function appendPilotArbitrage(contract: string | null, text: string, at: Date): string {
+  let out = contract ?? "";
+  const heading = `## ${PILOT_ARBITRATION_TITLE}`;
+  if (!contractHasSection(out, PILOT_ARBITRATION_TITLE)) {
+    out += `${out !== "" && !out.endsWith("\n") ? "\n" : ""}\n${heading}\n\n`;
+  }
+  const lines = out.split("\n");
+  let head = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if ((lines[i] as string).trim() === heading) {
+      head = i;
+      break;
+    }
+  }
+  let end = lines.length;
+  for (let i = head + 1; i < lines.length; i += 1) {
+    if ((lines[i] as string).trimStart().startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  // Le décalage du `## ` suivant (ou la fin du fichier : le dernier élément n'a pas de `\n`).
+  const offset = Math.min(
+    lines.slice(0, end).reduce((sum, line) => sum + line.length + 1, 0),
+    out.length,
+  );
+  let before = out.slice(0, offset);
+  if (!before.endsWith("\n")) before += "\n";
+  if (!before.endsWith("\n\n")) before += "\n";
+  const stamp = at.toISOString().replace(/\.\d{3}Z$/, "Z");
+  return `${before}### Arbitrage du ${stamp}\n\n${text.trim()}\n\n${out.slice(offset)}`;
+}
+
+
 /**
  * Corps d'une section `## <titre>` : de son titre à la prochaine section `## `.
  * La DERNIÈRE occurrence fait foi : un maillon qui AJOUTE une section au lieu de

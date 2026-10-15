@@ -96,8 +96,8 @@ export function createServiceClient(deps: ServiceClientDeps = {}) {
       return sent.ok ? { ok: true } : sent;
     },
 
-    /** L'identifiant neuf d'une commande du panneau. */
-    nextId: (): string => commandId("panel", now(), (seq += 1)),
+    /** L'identifiant neuf d'une commande : `panel-…` pour le panneau, `pilot-…` pour les outils de pilotage. */
+    nextId: (prefix = "panel"): string => commandId(prefix, now(), (seq += 1)),
   };
 }
 

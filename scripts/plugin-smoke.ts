@@ -40,6 +40,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PILOT_WRITE_APPROVAL } from "../omp-mem0-req/pilotTools.ts";
 
 /** Racine du dépôt, déduite du script (comme check.sh) — pas du cwd appelant. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -267,6 +268,44 @@ const INVOCATIONS: Record<string, Invocation> = {
     } catch (error) {
       bad(`/req : ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    // APPROBATION des outils de pilotage (outils-de-pilotage-du-mod-le, AC-8) : la
+    // déclaration `PILOT_WRITE_APPROVAL`, résolue par le VRAI `resolveApproval` de l'hôte,
+    // demande l'utilisateur dans les trois modes, avec ou sans politique `allow`.
+    // Import de l'hôte par chemin absolu (cf. pièges en tête) ; `pilotTools.ts` (import statique)
+    // n'importe de l'hôte que des types : il se charge sans résolution de paquet.
+    try {
+      const { resolveApproval } = (await import(path.join(HOST_PKG, "src", "tools", "approval.ts"))) as {
+        resolveApproval: (
+          tool: { name: string; approval: unknown },
+          args: unknown,
+          mode: string,
+          userConfig: Record<string, unknown>,
+        ) => { policy: string };
+      };
+      for (const name of ["pipeline_command", "pipeline_advance"]) {
+        const wrong: string[] = [];
+        for (const mode of ["always-ask", "write", "yolo"]) {
+          for (const cfg of [{}, { [name]: "allow" }]) {
+            const policy = resolveApproval({ name, approval: PILOT_WRITE_APPROVAL }, {}, mode, cfg).policy;
+            if (policy !== "prompt") wrong.push(`${mode}/${JSON.stringify(cfg)} → ${policy}`);
+          }
+        }
+        wrong.length === 0
+          ? ok(`${name} : approbation « prompt » dans les 3 modes, avec ou sans « allow »`)
+          : bad(`${name} : approbation non demandée — ${wrong.join(", ")}`);
+      }
+    } catch (error) {
+      bad(`contrôle d'approbation : ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // Les quatre outils sont ceux d'une session INTERACTIVE : ils sont inscrits auprès de
+    // l'hôte réel (schémas acceptés par son chargeur) ou la session n'a pas d'UI.
+    const pilot = ["pipeline_state", "pipeline_command", "pipeline_session_tail", "pipeline_advance"];
+    const present = pilot.filter((name) => session.getToolByName?.(name));
+    present.length === pilot.length
+      ? ok(`outils de pilotage chargés par l'hôte : ${present.join(", ")}`)
+      : bad(`outils de pilotage absents du runtime : ${pilot.filter((n) => !present.includes(n)).join(", ")}`);
   },
 };
 

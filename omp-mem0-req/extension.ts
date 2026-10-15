@@ -18,6 +18,7 @@ import { pipelinesPanelFactory } from "./panel.ts";
 import { createProjectRelay } from "./projectRelay.ts";
 import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
+import { registerPilotTools } from "./pilotTools.ts";
 import type { SessionProbe, SwitchCtx } from "./panelSession.ts";
 import type { PipelinesPanelDeps } from "./panelView.ts";
 import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publishCurrentCwd, releaseSessionState, reportStateWriteFailure, resetStateWriteWarning, runStateOf, sessionFileOf, sessionIdOf } from "./publish.ts";
@@ -451,6 +452,7 @@ export default function reqExtension(pi: ExtensionAPI) {
         stderr: "le service OMP exécute les maillons — aucun run local",
       }),
       runGit: run,
+      runGitNet,
       runGh,
       notify: notifyDurable,
       // Le pilote survit aux bascules de session (un contrôleur par dépôt) : ses
@@ -702,6 +704,7 @@ export default function reqExtension(pi: ExtensionAPI) {
         stateDir: storeDir(),
         selfPath: selfExtensionArg(SELF_MODULE_URL),
         runGit: run,
+        runGitNet,
         runGh,
         log: line => {
           process.stdout.write(`${line}\n`);
@@ -833,6 +836,12 @@ export default function reqExtension(pi: ExtensionAPI) {
     // La session hôte d'un projet en cours (`omp --resume` de la session /project)
     // réarme son relais : le projet reprend là où il en était (S-4).
     projectRelay.sync(ctx);
+    // OUTILS DE PILOTAGE (outils-de-pilotage-du-mod-le) : le modèle d'une session
+    // INTERACTIVE lit l'état du lot et poste ses gestes au service. Jamais ici dans un
+    // enfant headless (sans interface, les branches ci-dessus ont déjà rendu la main).
+    if (ctx.hasUI === true) {
+      registerPilotTools(pi, { stateDir: storeDir, client: () => createServiceClient({ stateDir: storeDir() }) });
+    }
   });
 
   // ARBITRE EN LECTURE SEULE (S-5), défense en profondeur : `setActiveTools` retire
@@ -1526,6 +1535,7 @@ export * from "./panelRows.ts";
 export * from "./panelSession.ts";
 export * from "./panelView.ts";
 export * from "./panelWidth.ts";
+export * from "./pilotTools.ts";
 export * from "./project.ts";
 export * from "./projectDriver.ts";
 export * from "./projectRelay.ts";

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { contractAcIds, contractHasSection, contractLots, contractSection, reviewBlockers, reviewVerdict } from "./contract.ts";
+import { PILOT_ARBITRATION_TITLE, appendPilotArbitrage, contractAcIds, contractHasSection, contractLots, contractSection, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
@@ -30,7 +30,7 @@ import type { LotPromptKind, WorktreeFate } from "./runs.ts";
 import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason, startModelFor } from "./quota.ts";
 import type { ModelStart, QuotaHit } from "./quota.ts";
 import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
-import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeDelivery } from "./store.ts";
+import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
 
@@ -132,6 +132,8 @@ export type LotControllerDeps = {
   runGit: GitRunner;
   /** `gh`, pour l'URL du dépôt et la PR. Absent ⇒ la livraison est bloquée, sans exception. */
   runGh?: (args: string[], cwd: string) => Promise<GitResult>;
+  /** git RÉSEAU (le fetch de l'avance) : budget de `gh`. Absent ⇒ repli sur `runGit`. */
+  runGitNet?: GitRunner;
   notify?: (text: string) => void;
   toast?: (text: string, type: "info" | "warning" | "error") => void;
   /** La session du pilote : publiée comme propriétaire (diagnostic et reprise). */
@@ -744,6 +746,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       ...(feature.auditSession !== undefined
         ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession }) }
         : {}),
+      ...(contractHasSection(readContractText(feature.worktree), PILOT_ARBITRATION_TITLE) ? { pilotArbitrage: true } : {}),
     });
     // La session reprise (S-8 §1) : celle de l'entrée VIVANTE du worktree quand il
     // y en a une — c'est le run lui-même qui l'a publiée, donc elle fait autorité
@@ -2036,7 +2039,218 @@ export function createLotController(deps: LotControllerDeps): LotController {
       relayed,
       pendingAsk: entry?.pendingAsk ?? null,
       askAnswered: cmd.kind === "answer" && slug !== null && answeredAsks.has(askKey(slug, cmd.toolCallId)),
+      liveRun: feature !== undefined && (entry !== null || inFlight.has(feature.slug)),
     };
+  }
+
+  /**
+   * Les refus d'une commande qui ne se jugent qu'avec un `git` ou le disque, rendus AVANT
+   * l'accusé et SANS rien modifier (S-5) : `null` pour tous les kinds qui n'en ont pas.
+   * Pour `arbitrage`, ce sont ceux de `relaunch` — dépendance amont non terminée (sans le
+   * passage en `blocked` que la relance ferait), worktree absent ou sur une autre branche —
+   * car un accusé `taken` ne doit pas annoncer une relance que `relaunch` refusera.
+   */
+  async function commandPreflight(cmd: PipelineCommand): Promise<string | null> {
+    if (cmd.kind === "avance") return avancePreflight(cmd);
+    if (cmd.kind !== "arbitrage") return null;
+    const lot = read();
+    const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
+    if (lot === null || feature === undefined) return null; // `commandRefusal` l'a déjà dit
+    const unmet = feature.deps.map((dep) => lotFeature(lot, dep)).find((up) => up?.state !== "done");
+    if (!runnable(lot, feature) && unmet) {
+      return `dépendance ${unmet.slug} non terminée (${lotStateLabel(unmet.state)})`;
+    }
+    // `ensureWorktree` ne modifie rien quand le worktree existe déjà : le brouillon est jetable.
+    return ensureWorktree({ ...feature });
+  }
+
+  /** La base que le pré-vol d'une avance a résolue par `gh` (clé : slug), pour le libellé du journal. */
+  const avanceBases = new Map<string, string>();
+
+  /** La ref PRIVÉE où l'avance dépose la base : les refs sont partagées entre worktrees, donc le slug y figure. */
+  const avanceRefOf = (slug: string): string => `refs/omp-pipeline/avance/${slug}`;
+
+  /** Les chemins d'une sortie `-z` de `diff --name-only` (un chemin par entrée). */
+  const nulPaths = (out: string): string[] => out.split("\0").filter((p) => p !== "");
+
+  /**
+   * Les chemins d'une sortie `status --porcelain=v1 -z` : `XY <chemin>\0`, et un renommage
+   * ou une copie (X ou Y ∈ {R, C}) est suivi d'un SECOND chemin (l'origine) — les deux comptent.
+   */
+  function statusPaths(out: string): string[] {
+    const parts = out.split("\0");
+    const paths: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const entry = parts[i]!;
+      if (entry.length < 4) continue;
+      paths.push(entry.slice(3));
+      if (/[RC]/.test(entry.slice(0, 2)) && parts[i + 1] !== undefined && parts[i + 1] !== "") {
+        paths.push(parts[i + 1]!);
+        i += 1;
+      }
+    }
+    return paths;
+  }
+
+  /**
+   * Le pré-vol d'une avance (S-7), AVANT l'accusé : tout y est lecture pour l'arbre et HEAD ;
+   * seule la ref privée `refs/omp-pipeline/avance/<slug>` est écrite (le fetch). Le refus
+   * nomme ce qui manque : worktree, `gh`, URL HTTPS, fetch, divergence, modifications locales.
+   */
+  async function avancePreflight(cmd: Extract<PipelineCommand, { kind: "avance" }>): Promise<string | null> {
+    const lot = read();
+    const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
+    if (feature === undefined) return null; // `commandRefusal` l'a déjà dit
+    const cwd = feature.worktree;
+    if (!fs.existsSync(cwd)) return "avance impossible : worktree introuvable sur le disque";
+    const gh = deps.runGh;
+    if (!gh) return "avance impossible : gh indisponible";
+    const view = await gh(["repo", "view", "--json", "url,defaultBranchRef"], cwd);
+    if (view.code !== 0) return `avance impossible : gh repo view : ${lastLine(view.stderr) || `code ${view.code}`}`;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(view.stdout);
+    } catch {
+      parsed = null;
+    }
+    const target = releaseTarget(parsed);
+    if (!target.pushUrl) return "avance impossible : URL HTTPS du dépôt introuvable (gh repo view)";
+    const base = target.base ?? "main";
+    avanceBases.set(feature.slug, base);
+    const ref = avanceRefOf(feature.slug);
+    const net = deps.runGitNet ?? deps.runGit;
+    const fetched = await net(["fetch", "--no-tags", target.pushUrl, `+refs/heads/${base}:${ref}`], cwd);
+    if (fetched.code !== 0) return `avance impossible : fetch : ${lastLine(fetched.stderr) || `code ${fetched.code}`}`;
+    const tip = await deps.runGit(["rev-parse", "--verify", `${ref}^{commit}`], cwd);
+    const head = await deps.runGit(["rev-parse", "HEAD"], cwd);
+    if (tip.code !== 0 || head.code !== 0) {
+      return `avance impossible : ${lastLine(tip.code !== 0 ? tip.stderr : head.stderr) || "rev-parse"}`;
+    }
+    const ancestor = await deps.runGit(["merge-base", "--is-ancestor", "HEAD", tip.stdout.trim()], cwd);
+    if (ancestor.code === 1) return "avance refusée : non fast-forward";
+    if (ancestor.code !== 0) return `avance impossible : ${lastLine(ancestor.stderr) || `code ${ancestor.code}`}`;
+    const changed = await deps.runGit(["diff", "--name-only", "-z", "HEAD", tip.stdout.trim()], cwd);
+    const status = await deps.runGit(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd);
+    if (changed.code !== 0 || status.code !== 0) {
+      return `avance impossible : ${lastLine(changed.code !== 0 ? changed.stderr : status.stderr) || "diff"}`;
+    }
+    const local = new Set(statusPaths(status.stdout));
+    const clash = nulPaths(changed.stdout).filter((p) => local.has(p));
+    if (clash.length > 0) return `avance refusée : modifications locales en conflit avec ${base} : ${clash.join(", ")}`;
+    return null;
+  }
+
+  /**
+   * L'effet d'une avance prise en charge (S-7) : un maillon devenu vivant entre l'accusé et
+   * l'effet l'interrompt sans rien toucher ; sinon `merge --ff-only` sur la ref du pré-vol
+   * (déjà à jour ⇒ aucun merge). Un échec n'est pas journalisé : git n'a rien écrit.
+   */
+  async function applyAvance(cmd: Extract<PipelineCommand, { kind: "avance" }>): Promise<void> {
+    const lot = read();
+    const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
+    if (feature === undefined) return;
+    // La base du pré-vol est consommée ici, succès ou refus : l'entrée ne survit pas à l'effet.
+    const base = avanceBases.get(cmd.slug) ?? "main";
+    avanceBases.delete(cmd.slug);
+    const late = commandRefusal(cmd, commandViewOf(cmd, false));
+    if (late !== null) {
+      notify(`[pipeline] commande avance : ${late}`);
+      return;
+    }
+    const cwd = feature.worktree;
+    const tip = await deps.runGit(["rev-parse", "--verify", `${avanceRefOf(feature.slug)}^{commit}`], cwd);
+    const head = await deps.runGit(["rev-parse", "HEAD"], cwd);
+    if (tip.code !== 0 || head.code !== 0) {
+      notify(`[pipeline] commande avance : avance impossible : ${lastLine(tip.code !== 0 ? tip.stderr : head.stderr) || "rev-parse"}`);
+      return;
+    }
+    const from = head.stdout.trim();
+    const to = tip.stdout.trim();
+    if (from !== to) {
+      const merged = await deps.runGit(["merge", "--ff-only", to], cwd);
+      if (merged.code !== 0) {
+        notify(`[pipeline] commande avance : avance impossible : ${lastLine(merged.stderr) || `code ${merged.code}`}`);
+        return;
+      }
+    }
+    appendJournal(stateDir, repoKey, {
+      at: now(),
+      slug: feature.slug,
+      phase: feature.phase,
+      kind: "avance",
+      question: `avance sur ${base}`,
+      answer: `${from} → ${to}`,
+      source: "utilisateur",
+      context: null,
+    });
+  }
+
+  /** Restaure le contrat d'un worktree à ses octets d'origine (`null` : le fichier n'existait pas). */
+  function restoreContract(file: string, original: Buffer | null): void {
+    if (original === null) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    writeBytesAtomic(file, original);
+  }
+
+  /**
+   * L'effet d'un arbitrage pris en charge (S-5), TOUT OU RIEN : le paragraphe s'ajoute au
+   * contrat, puis la feature est relancée ; un refus de la relance restaure les octets
+   * d'origine et ne journalise rien. L'arbitrage n'annule jamais : une feature devenue
+   * vivante entre l'accusé et l'effet est refusée avant toute écriture.
+   */
+  async function applyArbitrage(cmd: Extract<PipelineCommand, { kind: "arbitrage" }>, actions: LotController): Promise<void> {
+    const late = commandRefusal(cmd, commandViewOf(cmd, false));
+    if (late !== null) {
+      notify(`[pipeline] commande arbitrage : ${late}`);
+      return;
+    }
+    const lot = read();
+    const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
+    if (feature === undefined) return;
+    const file = contractPathFor(feature.worktree);
+    let original: Buffer | null = null;
+    try {
+      original = fs.readFileSync(file);
+    } catch {
+      original = null;
+    }
+    try {
+      const augmented = appendPilotArbitrage(original === null ? null : original.toString("utf8"), cmd.text, new Date(now()));
+      writeBytesAtomic(file, Buffer.from(augmented, "utf8"));
+    } catch (err) {
+      notify(`[pipeline] commande arbitrage : écriture du contrat impossible : ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    let refusal: string | null;
+    try {
+      refusal = await actions.relaunch(cmd.slug);
+    } catch (err) {
+      refusal = err instanceof Error ? err.message : String(err);
+    }
+    if (refusal !== null) {
+      try {
+        restoreContract(file, original);
+      } catch (err) {
+        notify(
+          `[pipeline] commande arbitrage : ${refusal} — restauration du contrat impossible : ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+      notify(`[pipeline] commande arbitrage : ${refusal} — contrat restauré`);
+      return;
+    }
+    appendJournal(stateDir, repoKey, {
+      at: now(),
+      slug: feature.slug,
+      phase: feature.phase,
+      kind: "arbitrage",
+      question: "Arbitrages du pilote",
+      answer: cmd.text.trim(),
+      source: "utilisateur",
+      context: null,
+    });
   }
 
   /**
@@ -2161,6 +2375,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
         if (done !== null) notify(`[pipeline] commande relaunch : ${done}`);
         return;
       }
+      case "arbitrage": {
+        await applyArbitrage(cmd, actions);
+        return;
+      }
+      case "avance": {
+        await applyAvance(cmd);
+        return;
+      }
       case "quota": {
         const done = await actions.resolveQuota(cmd.provider, cmd.model, { kind: "unrelayed" });
         if (done !== null) notify(`[pipeline] commande quota : ${done}`);
@@ -2213,7 +2435,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         }
       }
     }
-    const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow));
+    const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow)) ?? (await commandPreflight(cmd));
     const ack = commandAck(cmd, cmd.id, reason === null ? "taken" : "refused", reason, now());
     try {
       writeCommandAck(stateDir, ack);
@@ -2293,7 +2515,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
           }
         }
       }
-      const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow));
+      const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow)) ?? (await commandPreflight(cmd));
       if (reason !== null) {
         if (!writeAck(cmd, cmd.id, "refused", reason)) continue;
         removeCommandFile(candidate.file);
