@@ -24,6 +24,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchFor, realpathOr, toSlug } from "./git.ts";
 import {
+  ARBITRATION_REFUSAL,
   LOT_NONE_REFUSAL,
   lotBranchTakenRefusal,
   lotCancelRefusal,
@@ -38,7 +39,7 @@ import {
   milestoneGestureRefusal,
   lotFeature,
 } from "./lot.ts";
-import type { Lot, LotWaitKind } from "./lot.ts";
+import type { Lot, LotFeature, LotWaitKind } from "./lot.ts";
 import { asStringOrNull, readJsonFile, writeJsonAtomic } from "./store.ts";
 import type { PanelPendingAsk } from "./store.ts";
 import type { WorktreeFate } from "./runs.ts";
@@ -115,7 +116,9 @@ export type CommandKind =
   | "relaunch"
   | "cancel"
   | "start"
-  | "quota";
+  | "quota"
+  | "arbitrage"
+  | "avance";
 
 /**
  * Une commande du canal. Le discriminant est `kind` (convention du magasin :
@@ -150,6 +153,17 @@ export type PipelineCommand =
   /** Le geste `c` du panneau (S-9) : abandonne une feature, avec le sort du worktree. */
   | { version: 1; id: string; sentAt: number; repo: string; kind: "cancel"; slug: string; fate: WorktreeFate }
   /**
+   * L'arbitrage d'un pilote (outil `pipeline_command`) : `text` s'ajoute au contrat sous
+   * « ## Arbitrages du pilote » PUIS la feature est relancée — en un seul geste, tout ou rien.
+   */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "arbitrage"; slug: string; text: string }
+  /**
+   * L'avance d'une feature au repos (outil `pipeline_advance`) : la base du dépôt est
+   * récupérée par `gh` + git en HTTPS, puis le worktree avance par `merge --ff-only` —
+   * jamais de réécriture, jamais de SSH.
+   */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "avance"; slug: string }
+  /**
    * Le geste `l` du panneau (S-11) : OUVRE le lot (brouillon → en marche) et
    * lance ses features en attente. Le canal n'avait pas ce geste — le pilote d'une
    * session le faisait par appel direct — et l'API en a besoin pour que `l` reste
@@ -174,7 +188,7 @@ export type PipelineCommandAck = {
 };
 
 
-const COMMAND_KINDS: Record<CommandKind, true> = {
+export const COMMAND_KINDS: Record<CommandKind, true> = {
   launch: true,
   stop: true,
   verdict: true,
@@ -187,6 +201,8 @@ const COMMAND_KINDS: Record<CommandKind, true> = {
   cancel: true,
   start: true,
   quota: true,
+  arbitrage: true,
+  avance: true,
 };
 
 
@@ -321,6 +337,13 @@ export function asCommand(raw: unknown): PipelineCommand | null {
   // Les deux gestes du panneau (S-9) : `relaunch` ne porte que le slug, `cancel`
   // porte en plus le sort du worktree — le MÊME vocabulaire que `WorktreeFate`.
   if (c.kind === "relaunch") return { ...base, kind: "relaunch", slug };
+  if (c.kind === "avance") return { ...base, kind: "avance", slug };
+  if (c.kind === "arbitrage") {
+    // Le texte vide reste un schéma VALIDE : c'est la décision qui refuse « arbitrage vide ».
+    const text = asText(c.text);
+    if (text === null) return null;
+    return { ...base, kind: "arbitrage", slug, text };
+  }
   if (c.kind === "cancel") {
     if (c.fate !== "keep" && c.fate !== "archive" && c.fate !== "delete") return null;
     return { ...base, kind: "cancel", slug, fate: c.fate };
@@ -580,13 +603,16 @@ export type CommandView = {
   relayed: ReadonlySet<string>;
   pendingAsk: PanelPendingAsk | null;
   askAnswered: boolean;
+  /** Un maillon tourne-t-il pour la feature visée : entrée vivante du worktree ou run en vol du pilote ? */
+  liveRun: boolean;
 };
 
 
 /** Le slug qu'une commande vise dans le lot (`null` pour `launch`/`add`/`stop`). */
 export function commandSlugOf(cmd: PipelineCommand): string | null {
   return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply" ||
-    cmd.kind === "models" || cmd.kind === "relaunch" || cmd.kind === "cancel"
+    cmd.kind === "models" || cmd.kind === "relaunch" || cmd.kind === "cancel" || cmd.kind === "arbitrage" ||
+    cmd.kind === "avance"
     ? cmd.slug
     : null;
 }
@@ -610,6 +636,47 @@ function depsRefusal(slug: string, deps: string[], lot: Lot | null): string | nu
   }
   return null;
 }
+
+
+/**
+ * Le refus SYNCHRONE d'un arbitrage (S-5), dans l'ordre : le texte, puis ce qui
+ * rend la relance impossible (feature en cours, figée sur une question, au jalon,
+ * maillon vivant, arbitre à l'œuvre), puis l'état, enfin le worktree. L'arbitrage
+ * n'annule JAMAIS : une feature vivante est refusée, pas arrêtée.
+ */
+function arbitrageRefusal(text: string, feature: LotFeature, view: CommandView): string | null {
+  if (text.trim() === "") return "arbitrage vide";
+  if (feature.state === "running" && view.pendingAsk !== null) {
+    return "arbitrage refusé : la feature est figée sur une question en vol";
+  }
+  if (feature.state === "running") return "arbitrage refusé : la feature est en cours";
+  if (feature.state === "waiting" && feature.waitKind === "answer") {
+    return "arbitrage refusé : la feature est figée sur une question";
+  }
+  if (feature.state === "waiting") return "arbitrage refusé : la feature attend la validation d'un jalon";
+  if (view.liveRun) return "arbitrage refusé : un maillon tourne dans le worktree";
+  if (feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
+  if (feature.state !== "blocked" && feature.state !== "failed" && feature.state !== "cancelled") {
+    return "relance possible sur une feature bloquée, échouée ou annulée";
+  }
+  if (feature.worktree === "") return "arbitrage impossible : la feature n'a pas de worktree";
+  return null;
+}
+
+
+/**
+ * Le refus SYNCHRONE d'une avance (S-7), avant tout `gh` ou fetch : pas de worktree, ou un
+ * maillon qui tourne dedans — l'avance déplacerait l'arbre sous un run vivant.
+ */
+function avanceRefusal(feature: LotFeature, view: CommandView): string | null {
+  if (feature.worktree === "") return "avance impossible : la feature n'a pas de worktree";
+  if (feature.state === "running" || view.liveRun) return AVANCE_LIVE_REFUSAL;
+  return null;
+}
+
+
+/** Le refus d'une avance dont un maillon tourne dans le worktree (S-7). */
+const AVANCE_LIVE_REFUSAL = "avance refusée : un maillon tourne dans le worktree";
 
 
 /**
@@ -690,6 +757,8 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     }
     return null;
   }
+  if (cmd.kind === "arbitrage" && feature) return arbitrageRefusal(cmd.text, feature, view);
+  if (cmd.kind === "avance" && feature) return avanceRefusal(feature, view);
   if (cmd.kind === "cancel" && feature) {
     if (!lotStateCancellable(feature.state)) return lotCancelRefusal(feature.state);
     return null;

@@ -209,6 +209,10 @@ export function lotPromptLine(lot: { id: string; index: number; ids: string[] })
   );
 }
 
+/** La ligne d'un prompt de lot dont le contrat porte `## Arbitrages du pilote` (S-5). */
+export const PILOT_ARBITRATION_LINE =
+  "[arbitrage du pilote] La section « ## Arbitrages du pilote » du contrat .omp/pipeline/contract.md tranche des points ouverts : " +
+  "lis-la avant de reprendre, elle prime sur tes hypothèses.";
 
 /**
  * Le prompt d'un run (S-13). `collecte` est préfixé `[req]` : le préambule d'un
@@ -238,6 +242,8 @@ export function buildLotPrompt(input: {
   milestone?: string;
   /** Le recentrage de l'arbitre (relance du plafond) : les bloquants à lever et ce qui a déjà été tenté. */
   refocus?: string;
+  /** Le contrat de la feature porte-t-il `## Arbitrages du pilote` ? Sa ligne suit le prompt (S-5). */
+  pilotArbitrage?: boolean;
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const { phase } = input;
@@ -259,7 +265,8 @@ export function buildLotPrompt(input: {
           `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`
         : `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
   }
-  const withContext = input.context ? `${prompt}\n\n${input.context}` : prompt;
+  const withPilot = input.pilotArbitrage === true ? `${prompt}\n\n${PILOT_ARBITRATION_LINE}` : prompt;
+  const withContext = input.context ? `${withPilot}\n\n${input.context}` : withPilot;
   const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
   // Le recentrage de l'arbitre (relance du plafond) : après le jalon, avant les messages en file.
   const refocus = (input.refocus ?? "").trim();
