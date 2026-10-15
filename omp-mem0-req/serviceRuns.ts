@@ -12,9 +12,9 @@
 // rattrapage ici quand OMP ne bascule pas), et un quota épuisé des deux côtés est
 // rendu tel quel au contrôleur, jamais déguisé en échec.
 import type { ArbiterCapture, ArbiterDecision } from "./arbiter.ts";
-import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { lotContextThresholds } from "./lot.ts";
+import type { ContextThresholds } from "./lot.ts";
 import { closePipeline } from "./publish.ts";
 import { exhaustedUntil, isQuotaFailure, isQuotaMessage, markExhausted, quotaHitFor, quotaStopReason } from "./quota.ts";
 import type { QuotaHit } from "./quota.ts";
@@ -42,6 +42,8 @@ export type LotRunnerResult = {
   compactions?: number;
   /** La mesure qui a coupé le run au plafond de contexte (S-4) ; absent pour toute autre issue. */
   contextExceeded?: number;
+  /** Le modèle EFFECTIVEMENT utilisé au dernier tour (après replis), `null` quand la session n'en expose pas ; le runner réel le renseigne toujours. */
+  model?: string | null;
   /**
    * La question `ask` en vol à la coupure au plafond, relevée AVANT que la clôture
    * du run retire son entrée du magasin : c'est elle qui fait `blocked` le run
@@ -114,14 +116,41 @@ function contextExceededReason(measure: number): string {
 }
 
 
-/**
- * La consigne renvoyée à un run après une compaction (S-3). La compaction ne garde
- * ni le prompt du maillon (premier message utilisateur) ni la référence au contrat :
- * l'appelant les réinjecte, tels quels, avec la mesure qui a déclenché.
- */
-export function compactionReminder(prompt: string, measure: number): string {
-  return `${prompt}\n\n[service] Ton tour a été interrompu pour compacter le contexte (mesure : ${measure} tokens). La consigne ci-dessus est celle de ce run ; le contrat de la feature vit dans ${CONTRACT_PATH} : relis-le avant de reprendre. Reprends là où tu t'es arrêté ; si ton travail est terminé, dis-le en une phrase sans rien refaire.`;
+/** Le livrable d'un maillon, par phase : ce que la consigne de compaction et le dernier tour forcé lui rappellent. */
+export function phaseDeliverable(phase: PipelinePhase): string {
+  switch (phase) {
+    case "req":
+      return "`## Besoins` et `## Critères d'acceptation`";
+    case "specs":
+      return "`## Spécifications` et `## Lots`";
+    case "impl":
+      return "le code et les tests du lot (ou `## Corrections` en --fix)";
+    case "review":
+      return "`## Revue`";
+    case "release":
+      return "la PR de la feature";
+  }
 }
+
+
+/**
+ * La consigne renvoyée à un run après la compaction de fin de tour (S-3) : minimale,
+ * sans réinjecter la directive — l'extrait du contrat du prompt initial survit à la
+ * compaction, et la directive de phase est déjà dans la session.
+ */
+export function compactionReminder(deliverable: string): string {
+  return `[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable attendu : ${deliverable}. L'extrait du contrat de ton prompt initial reste valable.`;
+}
+
+
+/** La consigne du DERNIER tour forcé au plafond HARD : livrer maintenant avec ce qu'on a. */
+export function saturatedContextPrompt(deliverable: string): string {
+  return `[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (${deliverable}) avec ce que tu as, puis arrête-toi.`;
+}
+
+
+/** La borne du dernier tour forcé au plafond (5 min) : au-delà, le run est coupé. */
+export const CONTEXT_LAST_TURN_MS = 300_000;
 
 
 /** Un signal « le run est coupé » : une compaction en vol ne retient jamais un run coupé. */
@@ -134,52 +163,94 @@ function createCutNotice(): { fire: () => void; promise: Promise<void> } {
 }
 
 
+/** `auto_compaction_end` d'OMP qui a ABOUTI : ni annulé, ni sauté, avec un résultat. */
+function isNativeCompactionEnd(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const e = event as { type?: unknown; aborted?: unknown; skipped?: unknown; result?: unknown };
+  return e.type === "auto_compaction_end" && e.aborted !== true && e.skipped !== true && e.result !== undefined && e.result !== null;
+}
+
+
 /**
- * Les compactions d'un run (S-2) : lancées depuis l'abonnement SANS être attendues
- * par lui, SÉRIALISÉES (un verdict reçu pendant une compaction en vol en enchaîne
- * une seconde : chaque verdict = exactement un appel), sans jamais rejeter. La
- * première part au verdict même ; un échec est journalisé et laisse `compactions`
- * inchangé, et il compte comme tenté (le palier du compteur l'a déjà enregistré).
+ * La garde de contexte d'un run hébergé (S-2, S-4). Le franchissement de SOFT ne
+ * coupe plus le tour en vol : il est NOTÉ, et la compaction part quand la boucle de
+ * prompt reprend la main (`takeSoft` puis `compact`). Au plafond HARD, le run reçoit
+ * un DERNIER tour forcé — une consigne injectée dans le tour en cours (`steer`,
+ * livrée à la frontière d'outil suivante, sans abort) — borné à
+ * {@link CONTEXT_LAST_TURN_MS} ; `overrun` dit quand cette borne est dépassée et
+ * rend la mesure à citer. Une compaction échouée est journalisée, non comptée.
  */
-function createRunCompaction(options: {
+function createContextGuard(options: {
   session: HostedSession["session"];
+  thresholds: ContextThresholds;
   meter: ContextMeter;
+  lastTurnPrompt: string;
   label: string;
   log: (line: string) => void;
+  now: () => number;
 }): {
-  launch: (measure: number) => void;
-  beginCycle: () => void;
-  launchedThisCycle: () => boolean;
-  lastMeasure: () => number;
-  settled: () => Promise<void>;
+  observe: (event: unknown) => void;
+  takeSoft: () => number | null;
+  /** Compacte la session AU REPOS ; `true` si la compaction a abouti (comptée), `false` si elle a échoué (journalisée). */
+  compact: (measure: number) => Promise<boolean>;
+  /** La mesure du plafond quand le dernier tour forcé a dépassé sa borne, sinon `null`. */
+  overrun: () => number | null;
+  lastTurn: () => number | null;
 } {
-  let chain: Promise<void> = Promise.resolve();
-  let pending = 0;
-  let launched = false;
-  let last = 0;
-  const attempt = async (measure: number): Promise<void> => {
-    try {
-      await runCompact(options.session, { suppressContinuation: true });
-      options.meter.compacted();
-      options.log(`${options.label} : contexte compacté à ${measure}`);
-    } catch (err) {
-      options.log(`${options.label} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
-    }
-    pending -= 1;
-  };
+  let softPending: number | null = null;
+  let lastTurn: { measure: number; at: number } | null = null;
   return {
-    launch(measure) {
-      launched = true;
-      last = measure;
-      pending += 1;
-      chain = pending === 1 ? attempt(measure) : chain.then(() => attempt(measure));
+    observe(event) {
+      // La compaction NATIVE d'OMP (à son propre seuil, entre deux appels du
+      // fournisseur) compte comme une compaction du run : même effet, même mesure.
+      if (isNativeCompactionEnd(event)) {
+        options.meter.compacted();
+        options.meter.rearm();
+        softPending = null;
+        options.log(`${options.label} : contexte compacté par OMP`);
+        return;
+      }
+      const step = options.meter.observe(event);
+      if (step === null) return;
+      if (step.measure >= options.thresholds.hard) {
+        if (lastTurn !== null) return;
+        lastTurn = { measure: step.measure, at: options.now() };
+        softPending = null;
+        options.log(`${options.label} : contexte saturé à ${step.measure}, dernier tour forcé (${CONTEXT_LAST_TURN_MS / 60_000} min)`);
+        // Hors du tick de l'abonné : un `steer` qui jette (session en cours d'arrêt) ne doit pas casser la mesure.
+        void Promise.resolve()
+          .then(() => options.session.steer(options.lastTurnPrompt))
+          .catch(err => options.log(`${options.label} : consigne du dernier tour non livrée (${err instanceof Error ? err.message : String(err)})`));
+        return;
+      }
+      if (lastTurn !== null) return;
+      // Une mesure retombée sous SOFT (compaction native) rend la compaction différée sans objet.
+      if (step.measure > 0 && step.measure < options.thresholds.soft) softPending = null;
+      else if (step.verdict === "compact") {
+        softPending = step.measure;
+        options.log(`${options.label} : seuil SOFT franchi à ${step.measure}, compaction à la fin du tour`);
+      }
     },
-    beginCycle() {
-      launched = false;
+    takeSoft() {
+      const measure = softPending;
+      softPending = null;
+      return measure;
     },
-    launchedThisCycle: () => launched,
-    lastMeasure: () => last,
-    settled: () => chain,
+    async compact(measure) {
+      try {
+        await runCompact(options.session, { suppressContinuation: true });
+        options.meter.compacted();
+        // La session est réduite : la mesure suivante est neuve, le palier aussi.
+        options.meter.rearm();
+        options.log(`${options.label} : contexte compacté à ${measure}`);
+        return true;
+      } catch (err) {
+        options.log(`${options.label} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      }
+    },
+    overrun: () => (lastTurn !== null && options.now() - lastTurn.at >= CONTEXT_LAST_TURN_MS ? lastTurn.measure : null),
+    lastTurn: () => lastTurn?.measure ?? null,
   };
 }
 
@@ -258,7 +329,10 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
     let pendingAsk: PanelPendingAsk | null = null;
     let timer: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
-    const meter = createContextMeter(lotContextThresholds(deps.env ?? process.env));
+    const thresholds = lotContextThresholds(deps.env ?? process.env, spec.phase);
+    const meter = createContextMeter(thresholds);
+    /** Les mesures communes à tout résultat : pic, compactions, modèle EFFECTIF du dernier tour (après replis). */
+    const tally = () => ({ peakContext: meter.peak(), compactions: meter.compactions(), model: hosted ? selectorOf(hosted.session.model) : null });
     const cutNotice = createCutNotice();
     const cut = (reason: string) => {
       if (killed) return;
@@ -269,7 +343,7 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
     };
     /** Le résultat d'un run coupé : l'échéance ou le budget (124), ou le plafond de contexte (même code, motif et mesure). */
     const killedResult = (stdout: string, stderr: string): LotRunnerResult => {
-      const base = { code: RUN_KILLED_CODE, killed: true, stdout, peakContext: meter.peak(), compactions: meter.compactions() };
+      const base = { code: RUN_KILLED_CODE, killed: true, stdout, ...tally() };
       if (contextExceeded === null) return { ...base, stderr };
       const exceeded = { ...base, stderr: contextExceededReason(contextExceeded), contextExceeded };
       return pendingAsk === null ? exceeded : { ...exceeded, pendingAsk };
@@ -318,9 +392,15 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       stdout: hosted?.transcript.join("\n\n") ?? "",
       stderr: quotaStopReason(hit),
       quota: hit,
-      peakContext: meter.peak(),
-      compactions: meter.compactions(),
+      ...tally(),
     });
+    let turn = 0;
+    /** La coupure au plafond : le dernier tour forcé a dépassé sa borne (S-4). */
+    const cutSaturated = (measure: number) => {
+      contextExceeded = measure;
+      pendingAsk = pendingAskOf(spec.stateDir, spec.worktree);
+      cut(contextExceededReason(measure));
+    };
     try {
       hosted = await deps.host.open({
         cwd: spec.worktree,
@@ -334,25 +414,26 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
         autoApprove: true,
       });
       const session = hosted.session;
-      const compaction = createRunCompaction({
+      const label = `[service] run ${spec.slug}/${spec.phase}`;
+      const guard = createContextGuard({
         session,
+        thresholds,
         meter,
-        label: `[service] run ${spec.slug}/${spec.phase}`,
+        lastTurnPrompt: saturatedContextPrompt(phaseDeliverable(spec.phase)),
+        label,
         log,
+        now,
       });
       // Le repli natif d'OMP suspend le modèle quitté : le registre du service le
       // retient pour que ni ce run ni un autre ne le relance avant l'échéance.
       unsubscribe = session.subscribe(event => {
-        const step = meter.observe(event);
-        if (step !== null && !killed) {
-          if (step.verdict === "compact") compaction.launch(step.measure);
-          else if (step.verdict === "exceeded") {
-            contextExceeded = step.measure;
-            pendingAsk = pendingAskOf(spec.stateDir, spec.worktree);
-            cut(contextExceededReason(step.measure));
-          }
+        if (!killed) {
+          guard.observe(event);
+          const overrun = guard.overrun();
+          if (overrun !== null) cutSaturated(overrun);
         }
         if (event.type !== "retry_fallback_applied") return;
+        log(`${label} : repli natif ${event.from} → ${event.to} au tour ${turn}`);
         const reason = event.reason ?? "";
         if (!isQuotaMessage(reason)) return;
         markExhausted(spec.stateDir, quotaHitFor(event.from, reason, now()));
@@ -375,29 +456,34 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       // humaine n'est pas du travail, mais la borne dure reste la borne dure.
       timer = setInterval(() => {
         if (expired(spec.deadline, now())) cut("échéance du run atteinte");
+        const overrun = guard.overrun();
+        if (overrun !== null) cutSaturated(overrun);
       }, 1000);
       let text = spec.prompt;
       let quota: QuotaHit | null = null;
       for (let resumes = 0; ; ) {
-        compaction.beginCycle();
+        turn += 1;
         const before = session.messages.length;
-        try {
-          await session.prompt(text);
-          await session.waitForIdle();
-        } catch (err) {
-          // Un prompt interrompu par NOTRE compaction n'est pas un échec du run.
-          if (!compaction.launchedThisCycle() || killed) throw err;
-        }
+        await session.prompt(text);
+        await session.waitForIdle();
         if (killed) break;
-        if (compaction.launchedThisCycle()) {
-          // Les reprises de compaction ne consomment pas les reprises de quota.
-          await Promise.race([compaction.settled(), cutNotice.promise]);
+        // Le quota se lit AVANT la compaction : elle remplace les messages du tour.
+        const hit = quotaOfLastTurn(session, before, now());
+        // La compaction différée part ICI, la session au repos : aucun tour n'est
+        // interrompu. Après le dernier tour forcé, le run est fini : rien à compacter.
+        const soft = guard.takeSoft();
+        let compacted = false;
+        if (soft !== null && guard.lastTurn() === null) {
+          compacted = await Promise.race([guard.compact(soft), cutNotice.promise.then(() => false)]);
           if (killed) break;
-          text = compactionReminder(spec.prompt, compaction.lastMeasure());
+        }
+        if (hit === null) {
+          // Seule une compaction ABOUTIE relance le maillon : un tour fini sans elle
+          // n'a rien à reprendre. Ces reprises ne consomment pas celles du quota.
+          if (!compacted) break;
+          text = compactionReminder(phaseDeliverable(spec.phase));
           continue;
         }
-        const hit = quotaOfLastTurn(session, before, now());
-        if (hit === null) break;
         markExhausted(spec.stateDir, hit);
         const next = resumes < MAX_QUOTA_RESUMES ? alternativeTo(hit.model) : null;
         if (next === null || !(await switchTo(session, next))) {
@@ -405,6 +491,7 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
           break;
         }
         resumes += 1;
+        log(`${label} : repli vers ${next} au tour ${turn} (quota de ${hit.model})`);
         // Même session, mêmes messages : le modèle repart de ce qu'il a déjà fait.
         text = `[reprise] Le modèle ${hit.model} a atteint son quota : le run continue sur ${next}. Reprends exactement où tu t'es arrêté.`;
       }
@@ -416,14 +503,14 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       // d'un tour qui a abouti, n'en est pas un.
       const last = lastAssistantMessage(session);
       if (last !== null && typeof last === "object" && "stopReason" in last && last.stopReason === "error" && !isQuotaFailure(last)) {
-        return { code: 1, killed: false, stdout, stderr: turnErrorText(last), peakContext: meter.peak(), compactions: meter.compactions() };
+        return { code: 1, killed: false, stdout, stderr: turnErrorText(last), ...tally() };
       }
-      return { code: 0, killed: false, stdout, stderr: "", peakContext: meter.peak(), compactions: meter.compactions() };
+      return { code: 0, killed: false, stdout, stderr: "", ...tally() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const stdout = hosted?.transcript.join("\n\n") ?? "";
       if (killed) return killedResult(stdout, message);
-      return { code: 1, killed: false, stdout, stderr: message, peakContext: meter.peak(), compactions: meter.compactions() };
+      return { code: 1, killed: false, stdout, stderr: message, ...tally() };
     } finally {
       clearInterval(timer);
       unsubscribe?.();
@@ -477,13 +564,16 @@ export type ArbiterRunResult = {
 export type ArbiterRunner = (input: ArbiterRunInput) => Promise<ArbiterRunResult>;
 
 
+/** Le livrable de l'arbitre : sa décision, par l'outil `arbiter_decide`. */
+export const ARBITER_DELIVERABLE = "ta décision, par l'outil `arbiter_decide`";
+
 /**
  * Le lanceur d'arbitre (S-9) : une session NEUVE par élément, jamais reprise, ni
  * publiée, ni historisée, ni armée d'une boîte. Le tour est borné par l'échéance et
  * le signal ; un quota constaté est inscrit au registre (S-4) et le run rend alors
  * sans décision — le contrôleur escalade. Le contexte est mesuré à chaque
- * `message_end` : compacté au seuil SOFT (une fois par palier), coupé au plafond
- * HARD après une compaction tentée.
+ * `message_end` : SOFT franchi ⇒ compaction à la fin du tour, puis reprise ; HARD
+ * atteint ⇒ un dernier tour forcé pour décider, coupé s'il dépasse sa borne.
  */
 export function createArbiterRunner(deps: {
   host: SessionHost;
@@ -496,7 +586,8 @@ export function createArbiterRunner(deps: {
   return async ({ stateDir, cwd, prompt, model, fallback, deadline, signal }) => {
     const startedAt = now();
     const capture: ArbiterCapture = { decision: null };
-    const meter = createContextMeter(lotContextThresholds(deps.env ?? process.env));
+    const thresholds = lotContextThresholds(deps.env ?? process.env);
+    const meter = createContextMeter(thresholds);
     let hosted: HostedSession | null = null;
     let timer: NodeJS.Timeout | undefined;
     let killed = false;
@@ -515,45 +606,45 @@ export function createArbiterRunner(deps: {
       const session = hosted.session;
       if (signal.aborted) cut("arbitrage annulé");
       signal.addEventListener("abort", onSignal, { once: true });
-      timer = setInterval(() => {
-        if (expired(deadline, now())) cut("échéance de l'arbitre atteinte");
-      }, 1000);
-      const compaction = createRunCompaction({
+      const guard = createContextGuard({
         session,
+        thresholds,
         meter,
+        lastTurnPrompt: `[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`,
         label: "[service] arbitre",
         log,
+        now,
       });
+      const cutSaturated = (measure: number) => {
+        contextExceeded = measure;
+        cut(contextExceededReason(measure));
+      };
       const unsubscribe = session.subscribe(event => {
-        const step = meter.observe(event);
-        if (step === null || killed) return;
-        if (step.verdict === "compact") compaction.launch(step.measure);
-        else if (step.verdict === "exceeded") {
-          contextExceeded = step.measure;
-          cut(contextExceededReason(step.measure));
-        }
+        if (killed) return;
+        guard.observe(event);
+        const overrun = guard.overrun();
+        if (overrun !== null) cutSaturated(overrun);
       });
+      timer = setInterval(() => {
+        if (expired(deadline, now())) cut("échéance de l'arbitre atteinte");
+        const overrun = guard.overrun();
+        if (overrun !== null) cutSaturated(overrun);
+      }, 1000);
       try {
         let text = prompt;
-        let before = 0;
         for (;;) {
-          compaction.beginCycle();
-          before = session.messages.length;
-          try {
-            await session.prompt(text);
-            await session.waitForIdle();
-          } catch (err) {
-            // Un prompt interrompu par NOTRE compaction n'est pas un échec.
-            if (!compaction.launchedThisCycle() || killed) throw err;
-          }
-          if (killed || !compaction.launchedThisCycle()) break;
-          await Promise.race([compaction.settled(), cutNotice.promise]);
+          const before = session.messages.length;
+          await session.prompt(text);
+          await session.waitForIdle();
           if (killed) break;
-          text = compactionReminder(prompt, compaction.lastMeasure());
-        }
-        if (contextExceeded === null) {
+          // Lu AVANT la compaction, qui remplace les messages du tour.
           const hit = quotaOfLastTurn(session, before, now());
           if (hit !== null) markExhausted(stateDir, hit);
+          const soft = guard.takeSoft();
+          if (hit !== null || soft === null || guard.lastTurn() !== null) break;
+          const compacted = await Promise.race([guard.compact(soft), cutNotice.promise.then(() => false)]);
+          if (killed || !compacted) break;
+          text = compactionReminder(ARBITER_DELIVERABLE);
         }
       } finally {
         unsubscribe();

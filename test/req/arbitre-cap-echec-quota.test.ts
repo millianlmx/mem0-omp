@@ -260,7 +260,7 @@ function projectSide(world: { read: () => Lot; repoRoot: string }, slugs: string
 // BR-1 — le plafond arbitré
 // ---------------------------------------------------------------------------
 
-test("arbitre-cap-echec-quota/AC-1 : un plafond arbitré en « relancer » lance un run /impl --fix dont le prompt porte le recentrage, repart au 1er tour de correction et compte une relance cap", async () => {
+test("arbitre-cap-echec-quota/AC-1 : un plafond arbitré en « relancer » lance un run /impl --fix dont le prompt porte le recentrage, ne rend qu'UN crédit de correction (fixes = cap, pas 0) et compte une relance cap", async () => {
   const R = "lever le bloquant 1 : écrire le test de bord ; déjà tenté : un test nominal";
   const world = mkWorld({ arbiter: () => relaunchDecision(R) });
   world.seedCap();
@@ -286,7 +286,9 @@ test("arbitre-cap-echec-quota/AC-1 : un plafond arbitré en « relancer » lance
   // Le compteur de corrections est remis à zéro AVANT le lancement : `arm` le fait repartir à 1.
   const after = world.alpha();
   assert.equal(after.state, "running");
-  assert.equal(after.fixes, 1, "la boucle repart au 1er tour de correction");
+  // Le crédit n'est PAS remis à zéro : fixes = cap − 1 à la relance, + 1 à l'armement
+  // du `--fix` — une revue encore bloquante rebute au plafond sans `cap` tours de plus.
+  assert.equal(after.fixes, 3, "l'arbitre ne rend qu'un crédit de correction");
   assert.equal(after.unreadableRuns, 0);
   assert.deepEqual(after.arbiterRelaunches, { cap: 1, failure: 0, last: "cap" });
   assert.equal(after.arbitration, undefined, "la marque tombe avec la décision");

@@ -92,6 +92,71 @@ export function copyRepoInto(dir: string, options: CopyOptions = {}): void {
 }
 
 /**
+ * Une copie jetable PARTAGÉE par les tests d'un fichier : `fresh()` la crée au
+ * premier appel (copyRepo), puis la remet à l'état du dépôt à chaque appel
+ * suivant — fichiers modifiés ou supprimés recopiés depuis ROOT, fichiers et
+ * dossiers ajoutés retirés. Une remise à neuf compare mtime et taille (≈ 10 ms
+ * pour ~1 000 fichiers) là où une copie coûte ≈ 350 ms : un fichier à dix
+ * copies gagne trois secondes sans rien partager entre deux `fresh()`.
+ *
+ * Les tests d'un même fichier tournent en série ; deux `fresh()` dans un même
+ * test rendent le MÊME dossier, le premier état étant perdu — ne garder sous la
+ * main qu'une copie à la fois.
+ */
+export function sharedRepo(prefix: string, options: CopyOptions = {}): { fresh(): string } {
+  let root: string | null = null;
+  const files = new Map<string, { mtimeMs: number; size: number }>();
+  const dirs = new Set<string>();
+  const stamp = (full: string) => {
+    const stat = fs.lstatSync(full);
+    return { mtimeMs: stat.mtimeMs, size: stat.size };
+  };
+  const walk = (dir: string): Array<[string, fs.Dirent]> =>
+    fs
+      .readdirSync(dir, { recursive: true, withFileTypes: true })
+      .map((entry) => [path.relative(dir, path.join(entry.parentPath, entry.name)), entry]);
+  return {
+    fresh(): string {
+      if (root === null) {
+        root = copyRepo(prefix, options);
+        for (const [rel, entry] of walk(root)) {
+          if (entry.isDirectory()) dirs.add(rel);
+          else files.set(rel, stamp(path.join(root, rel)));
+        }
+        return root;
+      }
+      const seen = new Set<string>();
+      const removed: string[] = [];
+      for (const [rel, entry] of walk(root)) {
+        if (removed.some((gone) => rel.startsWith(`${gone}${path.sep}`))) continue;
+        if (entry.isDirectory()) {
+          if (!dirs.has(rel)) removed.push(rel);
+          continue;
+        }
+        const expected = files.get(rel);
+        if (expected === undefined) {
+          removed.push(rel);
+          continue;
+        }
+        seen.add(rel);
+        const actual = stamp(path.join(root, rel));
+        if (actual.mtimeMs !== expected.mtimeMs || actual.size !== expected.size) restore(root, rel);
+      }
+      for (const rel of removed) fs.rmSync(path.join(root, rel), { recursive: true, force: true });
+      for (const rel of files.keys()) if (!seen.has(rel)) restore(root, rel);
+      return root;
+    },
+  };
+  function restore(dir: string, rel: string): void {
+    const target = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.rmSync(target, { force: true });
+    fs.cpSync(path.join(ROOT, rel), target, { verbatimSymlinks: true });
+    files.set(rel, stamp(target));
+  }
+}
+
+/**
  * L'environnement d'un processus enfant qui relance `node --test` : sans
  * NODE_TEST_CONTEXT, le `node --test` imbriqué exécute vraiment ses fichiers
  * (avec, il sort 0 « skipping running files » sans rien lancer).

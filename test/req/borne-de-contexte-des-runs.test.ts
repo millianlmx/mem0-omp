@@ -7,6 +7,7 @@ import * as path from "node:path";
 import {
   LOT_CONTEXT_HARD_DEFAULT,
   LOT_CONTEXT_SOFT_DEFAULT,
+  LOT_CONTEXT_SOFT_REVIEW_DEFAULT,
   LOT_VERSION,
   appendRunRecord,
   lotContextThresholds,
@@ -18,7 +19,11 @@ import {
 } from "../../omp-mem0-req/lot.ts";
 import {
   ARBITER_DEADLINE_MS,
+  ARBITER_DELIVERABLE,
+  CONTEXT_LAST_TURN_MS,
   compactionReminder,
+  phaseDeliverable,
+  saturatedContextPrompt,
   createArbiterRunner,
   createContextMeter,
   createLotController,
@@ -42,6 +47,7 @@ import {
 } from "../../omp-mem0-req/extension.ts";
 import { journalFor, journalPathFor } from "../../omp-mem0-req/context.ts";
 import * as seeds from "../../omp-mem0-req/seeds.ts";
+import { LOT_WORKER_DIRECTIVE } from "../../omp-mem0-req/runs.ts";
 import { createSessionHost } from "../../omp-mem0-req/serviceSessions.ts";
 import { createServicePilot } from "../../omp-mem0-req/servicePilot.ts";
 import { SERVICE_TOKEN_HEADER, createServiceRequestHandler } from "../../omp-mem0-req/serviceHttp.ts";
@@ -106,6 +112,22 @@ test("borne-de-contexte-des-runs/AC-2 : valeur illisible ou ≤ 0 → défaut de
   assert.deepEqual(lotContextThresholds({ [SOFT]: "150000", [HARD]: "150000" }), DEFAULTS, "égalité : défauts");
   assert.deepEqual(lotContextThresholds({ [SOFT]: "300000" }), DEFAULTS, "SOFT ≥ HARD par défaut : défauts");
   assert.deepEqual(lotContextThresholds({ [SOFT]: "80000", [HARD]: "abc" }), { soft: 80000, hard: 250000 });
+});
+
+test("borne-de-contexte-des-runs : SOFT par phase — review 90000 par défaut, `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` prime sur la variable générale, appel sans phase inchangé", () => {
+  assert.equal(LOT_CONTEXT_SOFT_REVIEW_DEFAULT, 90_000);
+  assert.deepEqual(lotContextThresholds({}, "review"), { soft: 90_000, hard: 250_000 });
+  for (const phase of ["req", "specs", "impl", "release"] as const) {
+    assert.deepEqual(lotContextThresholds({}, phase), DEFAULTS, `${phase} : défaut général`);
+  }
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "review"), { soft: 70_000, hard: 250_000 });
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "impl"), DEFAULTS, "la variable d'une phase n'en touche pas une autre");
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_IMPL: "150000" }, "impl"), { soft: 150_000, hard: 250_000 });
+  assert.deepEqual(lotContextThresholds({ [SOFT]: "100000" }, "review"), { soft: 100_000, hard: 250_000 }, "la variable générale explicite prime sur le défaut de phase");
+  assert.deepEqual(lotContextThresholds({ [SOFT]: "100000", MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "80000" }, "review"), { soft: 80_000, hard: 250_000 }, "la variable de phase prime sur la générale");
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "abc" }, "review"), { soft: 90_000, hard: 250_000 }, "illisible : rang inférieur");
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "300000" }, "review"), { soft: 90_000, hard: 250_000 }, "SOFT ≥ HARD : les défauts de la phase");
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }), DEFAULTS, "sans phase : la variable de phase est ignorée");
 });
 
 test("borne-de-contexte-des-runs/AC-14 : un record ancien sans `compactions` est relu à 0 sans bump de version, et un run terminé après 2 compactions archive compactions et pic", async () => {
@@ -200,17 +222,21 @@ type Scripted = {
   hold?: boolean;
   /** Appelé avec le cwd à chaque prompt, avant les mesures (publier une question en vol). */
   beforeEmit?: (cwd: string) => void;
+  /** Appelé AVANT l'émission de chaque mesure (avancer l'horloge du runner). */
+  beforeMeasure?: (total: number) => void;
 };
 
 /**
  * Un hôte de sessions de doublure : chaque prompt émet les `message_end` de son rang,
  * `compact` est un espion (la compaction vide les messages, comme la vraie qui ne
- * garde pas le premier message utilisateur), `abort` fait rejeter le prompt retenu.
+ * garde pas le premier message utilisateur), `steer` capture la consigne injectée
+ * dans le tour, `abort` fait rejeter le prompt retenu.
  */
 function scriptedHost(script: Scripted) {
   const received: string[] = [];
   const compacts: Array<{ instructions: unknown; options: unknown }> = [];
   const aborts: string[] = [];
+  const steers: string[] = [];
   const gates: Array<() => void> = [];
   const sessions: Array<{ messages: Array<Record<string, unknown>> }> = [];
   let disposed = 0;
@@ -239,6 +265,7 @@ function scriptedHost(script: Scripted) {
           messages.push({ role: "user", content: [{ type: "text", text }] });
           script.beforeEmit?.(o.cwd);
           for (const total of script.prompts[rank] ?? []) {
+            script.beforeMeasure?.(total);
             listeners.forEach(listener => listener(usageEvent(total)));
             await flush(1);
           }
@@ -257,6 +284,9 @@ function scriptedHost(script: Scripted) {
           aborts.push(options?.reason ?? "");
           interrupted = true;
           rejectHeld?.(new Error("run interrompu"));
+        },
+        steer: async (text: string) => {
+          steers.push(text);
         },
         compact: async (instructions?: unknown, options?: unknown) => {
           compacts.push({ instructions, options });
@@ -284,7 +314,7 @@ function scriptedHost(script: Scripted) {
       } as unknown as HostedSession;
     },
   } as unknown as SessionHost;
-  return { host, received, compacts, aborts, gates, sessions, disposed: () => disposed };
+  return { host, received, compacts, aborts, steers, gates, sessions, disposed: () => disposed };
 }
 
 function runSpec(stateDir: string, worktree: string, over: Partial<LotRunSpec> = {}): LotRunSpec {
@@ -305,21 +335,28 @@ function runSpec(stateDir: string, worktree: string, over: Partial<LotRunSpec> =
   };
 }
 
-/** Lance un run de maillon réel sur l'hôte scripté ; rend le résultat et les journaux. */
-async function runMaillon(script: Scripted, env: Record<string, string> = ENV) {
+/** Lance un run de maillon réel sur l'hôte scripté ; rend le résultat et les journaux. L'horloge est `clock.now`. */
+async function runMaillon(script: Scripted, env: Record<string, string> = ENV, clock: { now: number } = { now: T0 }) {
   const fake = scriptedHost(script);
   const logs: string[] = [];
   const worktree = tmpdir("bcr-wt-");
   const spec = runSpec(tmpdir("bcr-state-"), worktree);
-  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => T0, env });
+  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => clock.now, env });
   const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
   return { fake, logs, result, spec };
 }
 
-test("borne-de-contexte-des-runs/AC-3 : le franchissement de SOFT compacte la session du run, une fois, avant la fin du run, et le journalise", async () => {
+const IMPL_REMINDER = compactionReminder(phaseDeliverable("impl"));
+
+test("borne-de-contexte-des-runs/AC-3 : le franchissement de SOFT ne coupe pas le tour : la compaction part à la fin du tour, une fois, et est journalisée", async () => {
   const { fake, logs, result, spec } = await runMaillon({ prompts: [[50_000, 110_000]] });
   assert.equal(fake.compacts.length, 1, "exactement une compaction");
   assert.deepEqual(fake.compacts[0], { instructions: undefined, options: { suppressContinuation: true } });
+  assert.deepEqual(fake.aborts, [], "le tour en vol n'est jamais interrompu pour compacter");
+  assert.ok(
+    logs.includes(`[service] run ${spec.slug}/${spec.phase} : seuil SOFT franchi à 110000, compaction à la fin du tour`),
+    `le franchissement est noté : ${JSON.stringify(logs)}`,
+  );
   assert.ok(
     logs.includes(`[service] run ${spec.slug}/${spec.phase} : contexte compacté à 110000`),
     `la ligne de log « contexte compacté à 110000 » est écrite : ${JSON.stringify(logs)}`,
@@ -337,15 +374,16 @@ test("borne-de-contexte-des-runs/AC-4 : des mesures successives au-dessus de SOF
   assert.equal(result.peakContext, 130_000);
 });
 
-test("borne-de-contexte-des-runs/AC-5 : une mesure qui retombe sous SOFT réarme le palier : 110000, 60000, 105000 compactent deux fois", async () => {
-  const { fake, result } = await runMaillon({ prompts: [[110_000, 60_000, 105_000]] });
-  assert.equal(fake.compacts.length, 2);
-  assert.equal(result.compactions, 2);
+test("borne-de-contexte-des-runs/AC-5 : une mesure retombée sous SOFT rend la compaction différée sans objet ; un nouveau franchissement la réarme : 110000, 60000, 105000 compactent une fois, à 105000", async () => {
+  const { fake, result, logs } = await runMaillon({ prompts: [[110_000, 60_000, 105_000]] });
+  assert.equal(fake.compacts.length, 1, "une seule compaction : celle de la fin du tour");
+  assert.equal(result.compactions, 1);
   assert.equal(result.code, 0);
-  assert.equal(fake.received[1], compactionReminder("PROMPT-DU-MAILLON travaille", 105_000), "la reprise cite la mesure de la DERNIÈRE compaction");
+  assert.ok(logs.some(line => line.endsWith("contexte compacté à 105000")), "la DERNIÈRE mesure franchissante est citée");
+  assert.equal(fake.received[1], IMPL_REMINDER, "la reprise est la consigne minimale");
 });
 
-test("borne-de-contexte-des-runs/AC-6 : une compaction qui échoue est journalisée, n'est pas comptée, et n'échoue pas le run", async () => {
+test("borne-de-contexte-des-runs/AC-6 : une compaction qui échoue est journalisée, n'est pas comptée, n'échoue pas le run et ne relance pas le maillon", async () => {
   const { fake, logs, result, spec } = await runMaillon({ prompts: [[50_000, 110_000]], compact: "fail" });
   assert.equal(fake.compacts.length, 1);
   assert.ok(
@@ -357,54 +395,65 @@ test("borne-de-contexte-des-runs/AC-6 : une compaction qui échoue est journalis
   assert.equal(result.code, 0);
   assert.equal(result.killed, false);
   assert.equal(result.contextExceeded, undefined, "pas coupé pour cette erreur");
-  assert.equal(fake.received.length, 2, "même après un échec, la consigne est renvoyée au run");
+  assert.equal(fake.received.length, 1, "le tour est fini et rien n'a été compacté : aucune consigne « contexte compacté » mensongère");
 });
 
-test("borne-de-contexte-des-runs/AC-7 : après compaction, le prompt du maillon et la référence au contrat sont renvoyés, et le run va à son terme", async () => {
+test("borne-de-contexte-des-runs/AC-7 : après compaction, la consigne minimale est renvoyée (sans la directive ni le prompt), et le run va à son terme", async () => {
   const { fake, result, spec } = await runMaillon({ prompts: [[50_000, 110_000]] });
   assert.equal(fake.received.length, 2);
   assert.equal(fake.received[0], spec.prompt);
-  assert.equal(fake.received[1], compactionReminder(spec.prompt, 110_000));
-  assert.ok(fake.received[1]!.includes(spec.prompt));
-  assert.ok(fake.received[1]!.includes(CONTRACT));
-  // La compaction doublée a vidé la session : seul le prompt de reprise remet la consigne dans son contexte.
+  assert.equal(fake.received[1], IMPL_REMINDER);
+  assert.equal(fake.received[1]!.includes(spec.prompt), false, "le prompt du maillon n'est pas réinjecté");
+  // La compaction doublée a vidé la session : seule la consigne de reprise y figure.
   const userTexts = fake.sessions[0]!.messages.filter(m => m.role === "user").map(m => JSON.stringify(m.content));
   assert.equal(userTexts.length, 1);
-  assert.ok(userTexts[0]!.includes("PROMPT-DU-MAILLON travaille") && userTexts[0]!.includes(CONTRACT));
+  assert.ok(userTexts[0]!.includes("[compaction]"));
   assert.equal(result.code, 0);
   assert.equal(result.killed, false);
   assert.equal(fake.disposed(), 1);
 });
 
-test("borne-de-contexte-des-runs : le texte de reprise est exact", () => {
+test("borne-de-contexte-des-runs : le texte de reprise est exact, minimal, et cite le livrable de la phase", () => {
   assert.equal(
-    compactionReminder("P", 123_456),
-    "P\n\n[service] Ton tour a été interrompu pour compacter le contexte (mesure : 123456 tokens). La consigne ci-dessus est celle de ce run ; le contrat de la feature vit dans .omp/pipeline/contract.md : relis-le avant de reprendre. Reprends là où tu t'es arrêté ; si ton travail est terminé, dis-le en une phrase sans rien refaire.",
+    compactionReminder(phaseDeliverable("review")),
+    "[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable attendu : `## Revue`. L'extrait du contrat de ton prompt initial reste valable.",
   );
+  for (const phase of ["req", "specs", "impl", "review", "release"] as const) {
+    const text = compactionReminder(phaseDeliverable(phase));
+    assert.ok(text.length <= 400, `${phase} : ${text.length} caractères`);
+    assert.equal(text.includes(LOT_WORKER_DIRECTIVE), false);
+    assert.equal(text.includes(seeds.IMPL_DIRECTIVE), false);
+    assert.equal(text.includes(CONTRACT), false, "aucun « relis le contrat »");
+  }
 });
 
-test("borne-de-contexte-des-runs : les compactions sont SÉRIALISÉES — un verdict reçu pendant une compaction en vol en enchaîne une seconde", async () => {
-  const fake = scriptedHost({ prompts: [[110_000, 60_000, 105_000]], compact: "gated" });
+test("borne-de-contexte-des-runs : la compaction attend la fin du tour — pendant le tour aucune compaction ne part, et la reprise attend la compaction", async () => {
+  const fake = scriptedHost({ prompts: [[110_000, 120_000]], compact: "gated" });
   const worktree = tmpdir("bcr-wt-");
   const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => T0, env: ENV });
   const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
   await until(() => fake.compacts.length === 1);
-  await until(() => fake.received.length === 1 && fake.gates.length === 1);
+  assert.equal(fake.sessions[0]!.messages.some(m => m.role === "assistant"), true, "le tour s'est terminé AVANT la compaction");
   await flush(20);
-  assert.equal(fake.compacts.length, 1, "la seconde attend la fin de la première");
+  assert.equal(fake.received.length, 1, "la reprise attend la fin de la compaction");
   fake.gates[0]!();
-  await until(() => fake.compacts.length === 2);
-  fake.gates[1]!();
   const result = await running;
-  assert.equal(result.compactions, 2);
-  assert.equal(fake.compacts.length, 2, "chaque verdict = exactement un appel");
+  assert.equal(fake.received.length, 2);
+  assert.equal(result.compactions, 1);
+  assert.equal(fake.compacts.length, 1, "un seul palier = exactement un appel");
 });
 
 test("borne-de-contexte-des-runs : un run coupé pendant une compaction qui ne rend jamais rend son résultat sans l'attendre", async () => {
-  const { result, fake } = await runMaillon({ prompts: [[110_000, 260_000]], compact: "hang", hold: true });
-  assert.equal(fake.compacts.length, 1);
+  const fake = scriptedHost({ prompts: [[110_000]], compact: "hang" });
+  const worktree = tmpdir("bcr-wt-");
+  const controller = new AbortController();
+  const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => T0, env: ENV });
+  const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: controller.signal });
+  await until(() => fake.compacts.length === 1);
+  controller.abort();
+  const result = await running;
   assert.equal(result.killed, true);
-  assert.equal(result.contextExceeded, 260_000);
+  assert.equal(result.code, 124);
   assert.equal(result.compactions, 0, "la compaction n'a pas abouti");
   assert.equal(fake.disposed(), 1);
 });
@@ -472,12 +521,23 @@ function publishAsk(stateDir: string, worktree: string): void {
   });
 }
 
+/** Une horloge mutable pour le runner : avancée de la borne du dernier tour AVANT la mesure `at`. */
+function overrunAt(at: number): { clock: { now: number }; beforeMeasure: (total: number) => void } {
+  const clock = { now: T0 };
+  return {
+    clock,
+    beforeMeasure: total => {
+      if (total === at) clock.now = T0 + CONTEXT_LAST_TURN_MS;
+    },
+  };
+}
+
 /** Lance la feature `alpha` (maillon /req réel sur l'hôte scripté) et attend qu'elle quitte `running`. */
-async function launchAlpha(script: Scripted, beforeEmit?: (stateDir: string, cwd: string) => void) {
+async function launchAlpha(script: Scripted, beforeEmit?: (stateDir: string, cwd: string) => void, clock: { now: number } = { now: T0 }) {
   let stateDirRef = "";
   const fake = scriptedHost({ ...script, beforeEmit: beforeEmit ? cwd => beforeEmit(stateDirRef, cwd) : undefined });
   const logs: string[] = [];
-  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => T0, env: ENV });
+  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => clock.now, env: ENV });
   const m = mount(runner);
   stateDirRef = m.stateDir;
   assert.equal(await m.controller.add({ name: "alpha", description: "Faire A.", deps: [] }), null);
@@ -486,52 +546,77 @@ async function launchAlpha(script: Scripted, beforeEmit?: (stateDir: string, cwd
   return { ...m, fake, logs };
 }
 
-test("borne-de-contexte-des-runs/AC-8 : au plafond après compaction, le run est coupé sans attendre sa fin naturelle — `failed`, « contexte dépassé (260000 tokens) »", async () => {
-  const s = await launchAlpha({ prompts: [[110_000, 260_000]], hold: true });
-  assert.equal(s.fake.compacts.length, 1, "la compaction a été tentée avant la coupure");
-  assert.deepEqual(s.fake.aborts, ["contexte dépassé (260000 tokens)"], "la session est interrompue, sans attendre la fin du tour");
+const REQ_LAST_TURN = saturatedContextPrompt(phaseDeliverable("req"));
+
+test("borne-de-contexte-des-runs/AC-8 : au plafond, un DERNIER tour forcé est injecté dans le tour (sans abort) ; s'il dépasse sa borne de 5 min le run est coupé — `failed`, « contexte dépassé (260000 tokens) »", async () => {
+  const o = overrunAt(261_000);
+  const s = await launchAlpha({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure }, undefined, o.clock);
+  assert.deepEqual(s.fake.steers, [REQ_LAST_TURN], "la consigne du dernier tour est injectée une seule fois, au plafond");
+  assert.equal(REQ_LAST_TURN, "[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (`## Besoins` et `## Critères d'acceptation`) avec ce que tu as, puis arrête-toi.");
+  assert.equal(s.fake.compacts.length, 0, "aucune compaction n'interrompt le tour");
+  assert.deepEqual(s.fake.aborts, ["contexte dépassé (260000 tokens)"], "la coupure vient du dépassement de la borne du dernier tour");
+  assert.ok(s.logs.includes("[service] run alpha/req : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(s.logs));
   assert.equal(s.alpha().state, "failed");
   assert.equal(s.alpha().stopReason, "contexte dépassé (260000 tokens)");
   const [record] = s.alpha().runs!;
   assert.equal(record!.step, "req");
-  assert.equal(record!.peakContext, 260_000);
-  assert.equal(record!.compactions, 1);
+  assert.equal(record!.peakContext, 261_000);
+  assert.equal(record!.compactions, 0);
 });
 
 test("borne-de-contexte-des-runs/AC-9 : la même coupure avec une question `ask` en vol passe le run en `blocked`, comme l'échéance", async () => {
-  const s = await launchAlpha({ prompts: [[110_000, 260_000]], hold: true }, (stateDir, cwd) => publishAsk(stateDir, cwd));
+  const o = overrunAt(261_000);
+  const s = await launchAlpha({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure }, (stateDir, cwd) => publishAsk(stateDir, cwd), o.clock);
   assert.equal(s.alpha().state, "blocked");
   assert.equal(s.alpha().stopReason, "contexte dépassé (260000 tokens) pendant une question en attente : Quel format garder ?");
   assert.equal(s.fake.aborts.length, 1);
-  assert.equal(s.alpha().runs![0]!.peakContext, 260_000, "le record du run coupé est archivé");
+  assert.equal(s.alpha().runs![0]!.peakContext, 261_000, "le record du run coupé est archivé");
 });
 
-test("borne-de-contexte-des-runs/AC-10 : une première mesure ≥ HARD compacte sans couper ; une mesure suivante encore ≥ HARD coupe", async () => {
-  const s = await launchAlpha({ prompts: [[260_000], [255_000]], hold: true });
-  assert.equal(s.fake.compacts.length, 1, "une seule compaction");
-  assert.equal(s.fake.received.length, 2, "la première mesure n'a pas coupé : la reprise est partie");
-  assert.equal(s.fake.received[1], compactionReminder(s.fake.received[0]!, 260_000));
-  assert.equal(s.alpha().state, "failed");
-  assert.equal(s.alpha().stopReason, "contexte dépassé (255000 tokens)");
-  assert.equal(s.alpha().runs![0]!.compactions, 1);
+test("borne-de-contexte-des-runs/AC-10 : une mesure ≥ HARD ne coupe pas : le dernier tour forcé qui finit dans sa borne termine le run normalement, sans compaction ni reprise", async () => {
+  const s = await launchAlpha({ prompts: [[260_000, 262_000]] });
+  assert.deepEqual(s.fake.steers, [REQ_LAST_TURN], "une seule consigne, même avec une seconde mesure au plafond");
+  assert.equal(s.fake.compacts.length, 0, "la compaction différée est abandonnée au profit du dernier tour");
+  assert.deepEqual(s.fake.aborts, []);
+  assert.equal(s.fake.received.length, 1, "aucune reprise après le dernier tour forcé");
+  assert.notEqual(s.alpha().state, "failed", "le run n'est pas coupé");
+  assert.equal((s.alpha().stopReason ?? "").includes("contexte dépassé"), false);
+  assert.equal(s.alpha().runs![0]!.peakContext, 262_000);
+  assert.equal(s.alpha().runs![0]!.compactions, 0);
 });
 
-/** AC-14, côté run : un run terminé après 2 compactions archive `compactions` = 2 et son pic (appelé par le test AC-14). */
+test("borne-de-contexte-des-runs : la borne du dernier tour est aussi tenue par le minuteur du runner, sans nouvelle mesure", async () => {
+  const clock = { now: T0 };
+  const fake = scriptedHost({ prompts: [[260_000]], hold: true });
+  const worktree = tmpdir("bcr-wt-");
+  const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => clock.now, env: ENV });
+  const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
+  await until(() => fake.steers.length === 1);
+  clock.now = T0 + CONTEXT_LAST_TURN_MS;
+  const result = await running;
+  assert.equal(result.killed, true);
+  assert.equal(result.contextExceeded, 260_000);
+  assert.equal(result.stderr, "contexte dépassé (260000 tokens)");
+});
+
+/** AC-14, côté run : un run terminé après 2 compactions (deux fins de tour au-dessus de SOFT) archive `compactions` = 2 et son pic. */
 async function runArchivesTwoCompactions(): Promise<void> {
-  const s = await launchAlpha({ prompts: [[110_000, 60_000, 105_000]] });
+  const s = await launchAlpha({ prompts: [[110_000], [105_000]] });
   assert.equal(s.fake.compacts.length, 2);
+  assert.equal(s.fake.received.length, 3, "prompt, reprise, reprise");
   const record = s.alpha().runs![0]!;
   assert.equal(record.compactions, 2);
   assert.equal(record.peakContext, 110_000);
   assert.equal(record.step, "req");
 }
 
-test("borne-de-contexte-des-runs/AC-11 : l'arbitre compacte, est coupé au plafond, et son élément escalade par le chemin d'échec existant", async () => {
-  // Au niveau du runner : une compaction, puis la coupure à 260000.
-  const arbHost = scriptedHost({ prompts: [[110_000, 260_000]], hold: true });
+test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier tour forcé au plafond, est coupé s'il dépasse sa borne, et son élément escalade par le chemin d'échec existant", async () => {
+  // Au niveau du runner : SOFT noté, puis le dernier tour forcé à 260000, coupé à la borne.
+  const o = overrunAt(261_000);
+  const arbHost = scriptedHost({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure });
   const logs: string[] = [];
   const cwd = tmpdir("bcr-wt-");
-  const direct = await createArbiterRunner({ host: arbHost.host, log: line => logs.push(line), now: () => T0, env: ENV })({
+  const direct = await createArbiterRunner({ host: arbHost.host, log: line => logs.push(line), now: () => o.clock.now, env: ENV })({
     stateDir: tmpdir("bcr-state-"),
     cwd,
     prompt: "ARBITRE-PROMPT",
@@ -540,16 +625,34 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre compacte, est coupé au plafo
     deadline: T0 + ARBITER_DEADLINE_MS,
     signal: new AbortController().signal,
   });
-  assert.equal(arbHost.compacts.length, 1);
-  assert.ok(logs.includes("[service] arbitre : contexte compacté à 110000"), JSON.stringify(logs));
+  assert.equal(arbHost.compacts.length, 0);
+  assert.deepEqual(arbHost.steers, [`[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`]);
+  assert.ok(logs.includes("[service] arbitre : seuil SOFT franchi à 110000, compaction à la fin du tour"), JSON.stringify(logs));
+  assert.ok(logs.includes("[service] arbitre : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(logs));
   assert.equal(direct.contextExceeded, 260_000);
-  assert.equal(direct.peakContext, 260_000);
-  assert.equal(direct.compactions, 1);
+  assert.equal(direct.peakContext, 261_000);
+  assert.equal(direct.compactions, 0);
   assert.equal(direct.decision, null);
 
-  // Au niveau du contrôleur : décision d'escalade, record `arbitre` pic 260000 / 1 compaction.
-  const arbitreHost = scriptedHost({ prompts: [[110_000, 260_000]], hold: true });
-  const arbiter = createArbiterRunner({ host: arbitreHost.host, log: () => {}, now: () => T0, env: ENV });
+  // L'arbitre dont SOFT est franchi compacte à la fin de son tour et reprend avec la consigne minimale.
+  const softHost = scriptedHost({ prompts: [[110_000]] });
+  const soft = await createArbiterRunner({ host: softHost.host, log: () => {}, now: () => T0, env: ENV })({
+    stateDir: tmpdir("bcr-state-"),
+    cwd,
+    prompt: "ARBITRE-PROMPT",
+    model: null,
+    fallback: null,
+    deadline: T0 + ARBITER_DEADLINE_MS,
+    signal: new AbortController().signal,
+  });
+  assert.equal(softHost.compacts.length, 1);
+  assert.deepEqual(softHost.received, ["ARBITRE-PROMPT", compactionReminder(ARBITER_DELIVERABLE)]);
+  assert.equal(soft.compactions, 1);
+
+  // Au niveau du contrôleur : décision d'escalade, record `arbitre` pic 261000 / 0 compaction.
+  const o2 = overrunAt(261_000);
+  const arbitreHost = scriptedHost({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o2.beforeMeasure });
+  const arbiter = createArbiterRunner({ host: arbitreHost.host, log: () => {}, now: () => o2.clock.now, env: ENV });
   const runner: LotRunner = () => new Promise<LotRunnerResult>(() => {});
   const m = mount(runner, arbiter);
   const parentFile = path.join(tmpdir("bcr-parent-"), "session.jsonl");
@@ -572,9 +675,9 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre compacte, est coupé au plafo
   assert.equal(m.alpha().escalation!.reason, "contexte dépassé (260000 tokens)");
   assert.equal(m.alpha().state, "waiting", "l'élément escalade, la feature reste en attente");
   const arbitre = m.alpha().runs!.find(run => run.step === "arbitre")!;
-  assert.equal(arbitre.peakContext, 260_000);
-  assert.equal(arbitre.compactions, 1);
-  assert.equal(arbitreHost.compacts.length, 1);
+  assert.equal(arbitre.peakContext, 261_000);
+  assert.equal(arbitre.compactions, 0);
+  assert.equal(arbitreHost.compacts.length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -891,7 +994,7 @@ test("borne-de-contexte-des-runs/AC-17 : les directives imposent la délégation
   const bound = seeds.CONTEXT_BOUND_LINE;
   assert.equal(
     bound,
-    "Au-delà de MEM0_PIPELINE_CONTEXT_SOFT tokens de contexte (120 000 par défaut), le service compacte ta session ; si elle reste au-delà de MEM0_PIPELINE_CONTEXT_HARD (250 000 par défaut) après une compaction, il coupe le run.",
+    "Au-delà de MEM0_PIPELINE_CONTEXT_SOFT_<PHASE> tokens de contexte (sinon MEM0_PIPELINE_CONTEXT_SOFT ; 90 000 par défaut en /review, 120 000 ailleurs), le service compacte ta session à la fin du tour et te rappelle le livrable attendu ; à MEM0_PIPELINE_CONTEXT_HARD (250 000 par défaut), il te demande d'écrire ta section livrable immédiatement et ne coupe le run que si ce dernier tour dépasse 5 minutes.",
   );
   for (const directive of [seeds.SPECS_DIRECTIVE, seeds.IMPL_DIRECTIVE, seeds.REVIEW_DIRECTIVE]) {
     assert.ok(directive.includes(bound), "la borne figure dans /specs, /impl et /review");
@@ -912,7 +1015,8 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   const end = lines.findIndex((line, i) => i > start && line.startsWith("#"));
   const section = lines.slice(start, end < 0 ? undefined : end).join("\n").replace(/\s+/g, " ");
   for (const literal of [
-    "`MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`)",
+    "`MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`, **`90000` pour `/review`**)",
+    "`MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>`",
     "`MEM0_PIPELINE_CONTEXT_HARD` (défaut `250000`)",
     "à chaque fin de tour assistant",
     "une seule fois par palier",
@@ -931,7 +1035,8 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   assert.ok(order.every((i) => i >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, "ordre des sections");
 
   // Tableau ## Config et tableau des routes.
-  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT` \| `120000` \|/);
+  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT` \| `120000` \(`90000` en `\/review`\) \|/);
+  assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` \| — \|/);
   assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_HARD` \| `250000` \|/);
   assert.match(readme, /\| `GET \/v1\/repos\/\{repo\}\/lot` \|/);
   assert.ok(readme.includes("`contextPeak` et `compactions`"), "la route de session mentionne contextPeak et compactions");

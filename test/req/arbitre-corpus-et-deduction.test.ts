@@ -411,7 +411,7 @@ function entry(slug: string, context: string | null, n: number, over: Partial<Jo
 }
 
 const corpusOf = (over: Partial<Parameters<typeof buildArbiterCorpus>[0]> = {}) =>
-  buildArbiterCorpus({ report: null, brief: null, contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [], ...over });
+  buildArbiterCorpus({ kind: "question", phase: "req", report: null, brief: null, contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [], ...over });
 
 const journalEntries = (count: number, slug: string, context: string, from = 1): JournalEntry[] =>
   Array.from({ length: count }, (_, i) => ({ version: 1 as const, ...entry(slug, context, from + i) }));
@@ -436,6 +436,8 @@ test("arbitre-corpus-et-deduction/AC-5 : le corpus de F porte le rapport, le con
   appendJournal(stateDir, repoKey, entry("alpha", CTX, 4));
 
   const corpus = buildArbiterCorpus({
+    kind: "question",
+    phase: "req",
     report: "## Faiblesses\nLe rapport de l'audit.",
     brief: "Le brief.",
     contract: "## Besoins\nLe contrat de la feature.",
@@ -981,7 +983,7 @@ test("arbitre-corpus-et-deduction/AC-21 : la justification vérifiée (motif, ci
   assert.deepEqual(first!.justification, { reason: "M : le code en place écrit du YAML", citations: [], references: ["src/a.ts:3"], rubriques: [] });
 
   // L'approbation d'un jalon porte son motif.
-  const approved = mkArbiterWorld(() => ({ decision: "approve", reason: "chaque AC est couvert" }));
+  const approved = mkArbiterWorld(() => ({ decision: "approve", reason: "chaque AC est couvert", citations: ["AC-1 : un critère."] }));
   await approved.addAlpha();
   const approvedContract = path.join(lotFeature(approved.read(), "alpha")!.worktree, CONTRACT_PATH);
   fs.mkdirSync(path.dirname(approvedContract), { recursive: true });
@@ -1103,18 +1105,19 @@ test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers 
   const approve: ArbiterDecision = { decision: "approve", reason: "tout est livré" };
   const ground = groundOf(repo, { contract: CONTRACT_AC12, review: evidence });
   const refused = validateArbiterDecision(REVIEW_ITEM, approve, ground);
-  assert.deepEqual(refused, { kind: "escalate", reason: "approbation refusée par le pilote : critères sans fichier dans le worktree : AC-2" });
+  assert.deepEqual(refused, { kind: "escalate", reason: "approbation refusée par le pilote : critères sans fichier dans le diff : AC-2" });
   // Une escalade de l'arbitre reste honorée telle quelle.
   assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, { decision: "escalate", reason: "doute" }, ground), { kind: "escalate", reason: "doute" });
 
-  // Chaque AC porté par un fichier : l'approbation est acceptée.
+  // Chaque AC porté par un fichier du diff et chaque critère tiré attesté par une référence dans son fichier : l'approbation est acceptée.
   fs.writeFileSync(path.join(repo, "src", "b.ts"), "// AC-2 : preuve\n");
   const full = await collectReviewEvidence({ worktree: repo, acIds: ids, runGit: gitRunner });
   assert.deepEqual(full.acFiles, [{ id: "AC-1", files: ["src/a.ts"] }, { id: "AC-2", files: ["src/b.ts"] }]);
-  assert.equal(validateArbiterDecision(REVIEW_ITEM, approve, groundOf(repo, { contract: CONTRACT_AC12, review: full })).kind, "approve");
+  const attested: ArbiterDecision = { ...approve, references: ["src/a.ts:1", "src/b.ts:1"] };
+  assert.equal(validateArbiterDecision(REVIEW_ITEM, attested, groundOf(repo, { contract: CONTRACT_AC12, review: full })).kind, "approve");
 
   // Recherche impossible ou contrat sans critère : jamais accepté.
-  const failed = { diff: "", acFiles: null, searchError: "fatal: boom" };
+  const failed = { diff: "", names: null, acFiles: null, searchError: "fatal: boom", sampledAcIds: [] };
   assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, approve, groundOf(repo, { contract: CONTRACT_AC12, review: failed })), {
     kind: "escalate",
     reason: "approbation refusée par le pilote : recherche des critères impossible : fatal: boom",
@@ -1137,7 +1140,7 @@ test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers 
   await world.until(() => lotFeature(world.read(), "alpha")!.escalation !== undefined);
   assert.ok(world.prompts[0]!.includes("- AC-1 : src/a.ts\n- AC-2 : (aucun fichier)"), world.prompts[0]);
   assert.ok(world.prompts[0]!.includes("+// AC-1 : preuve"), "le diff du worktree est au prompt");
-  assert.equal(lotFeature(world.read(), "alpha")!.escalation!.reason, "approbation refusée par le pilote : critères sans fichier dans le worktree : AC-2");
+  assert.equal(lotFeature(world.read(), "alpha")!.escalation!.reason, "approbation refusée par le pilote : critères sans fichier dans le diff : AC-2");
 });
 
 test("arbitre-corpus-et-deduction/AC-20 : « specs validées » exige que chaque AC soit référencé par une S-n ; le prompt porte le rapport et exige la cohérence avec lui", () => {
@@ -1160,11 +1163,11 @@ test("arbitre-corpus-et-deduction/AC-20 : « specs validées » exige que chaque
     kind: "escalate",
     reason: "approbation refusée par le pilote : contrat sans critère d'acceptation",
   });
-  assert.equal(validateArbiterDecision(MILESTONE, approve, groundOf(root, { contract: covered })).kind, "approve");
+  assert.equal(validateArbiterDecision(MILESTONE, { ...approve, citations: [FORMAT_FACT] }, groundOf(root, { contract: covered })).kind, "approve");
   assert.deepEqual(validateArbiterDecision(MILESTONE, { decision: "escalate", reason: "incohérent avec le rapport" }, groundOf(root, { contract: covered })), { kind: "escalate", reason: "incohérent avec le rapport" });
 
   // Le prompt du jalon porte le rapport (corpus) et exige la cohérence avec lui.
-  const corpus = buildArbiterCorpus({ report: "## Faiblesses\nLe parseur est fragile.", brief: null, contract: covered, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
+  const corpus = buildArbiterCorpus({ kind: "specs", report: "## Faiblesses\nLe parseur est fragile.", brief: null, contract: covered, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
   const prompt = buildArbiterPrompt(MILESTONE, corpus);
   assert.ok(prompt.includes("### Rapport\n## Faiblesses\nLe parseur est fragile."));
   assert.ok(prompt.includes("cohérentes avec le rapport"));

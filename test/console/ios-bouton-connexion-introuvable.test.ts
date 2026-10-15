@@ -26,9 +26,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripComments, swiftSources } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("ios-bouton-connexion-copie-");
 const ROOT_VIEW = path.join("omp-console", "ios", "OMPConsoleIOS", "RootView.swift");
 const CONNECTION_TEXT = path.join("omp-console", "ios", "OMPConsoleIOS", "ConnectionText.swift");
 const IOS_APP = path.join("omp-console", "ios", "OMPConsoleIOS");
@@ -262,11 +264,11 @@ test("ios-bouton-connexion-introuvable/AC-1 : la liste « Plus » porte le bouto
   assert.deepEqual(plusFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(actionFaults(ROOT), []);
   assert.deepEqual(recipeFaults(ROOT, "AC-1"), []);
-  const copy = copyRepo("ios-bouton-connexion-copie-");
+  const copy = shared.fresh();
   plantBetween(copy, "var plusList", "func select(", `.toolbar { ${ITEM} }`, "");
   assert.ok(plusFaults(copy).length > 0, "une liste « Plus » sans bouton doit faire rougir la garde");
   // Un build sans signature rend l'état connecté inatteignable au simulateur (-34018).
-  const unsigned = copyRepo("ios-bouton-connexion-copie-");
+  const unsigned = shared.fresh();
   plant(unsigned, RECIPE, "-destination \"generic/platform=iOS Simulator\" \\", "-destination \"generic/platform=iOS Simulator\" CODE_SIGNING_ALLOWED=NO \\");
   assert.ok(recipeFaults(unsigned, "AC-1").length > 0, "une recette compilée sans signature doit faire rougir la garde");
 });
@@ -274,10 +276,10 @@ test("ios-bouton-connexion-introuvable/AC-1 : la liste « Plus » porte le bouto
 test("ios-bouton-connexion-introuvable/AC-2 : chaque écran de section porte le bouton antenne", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-2"), []);
-  const bare = copyRepo("ios-bouton-connexion-copie-");
+  const bare = shared.fresh();
   plantBetween(bare, "func sectionScreen(", "var plusList", `.toolbar { ${ITEM} }`, "");
   assert.ok(screenFaults(bare).length > 0, "un écran de section sans bouton doit faire rougir la garde");
-  const bypass = copyRepo("ios-bouton-connexion-copie-");
+  const bypass = shared.fresh();
   plant(bypass, ROOT_VIEW, "{ sectionScreen($0) }", "{ IOSSectionView(section: $0) }");
   assert.ok(screenFaults(bypass).length > 0, "une destination de « Plus » qui contourne sectionScreen doit faire rougir la garde");
 });
@@ -285,7 +287,7 @@ test("ios-bouton-connexion-introuvable/AC-2 : chaque écran de section porte le 
 test("ios-bouton-connexion-introuvable/AC-3 : le bouton ne dépend pas de l'état de connexion", () => {
   assert.deepEqual(actionFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-3"), []);
-  const copy = copyRepo("ios-bouton-connexion-copie-");
+  const copy = shared.fresh();
   const item = segments(copy).item ?? "";
   assert.ok(item.includes("showConnection = true"), "action introuvable dans la copie");
   plant(copy, ROOT_VIEW, "showConnection = true", "if !isConnected { showConnection = true }");
@@ -295,7 +297,7 @@ test("ios-bouton-connexion-introuvable/AC-3 : le bouton ne dépend pas de l'éta
 test("ios-bouton-connexion-introuvable/AC-4 : la feuille se rouvre à chaque tap", () => {
   assert.deepEqual(actionFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-4"), []);
-  const copy = copyRepo("ios-bouton-connexion-copie-");
+  const copy = shared.fresh();
   plant(copy, ROOT_VIEW, "showConnection = true", "showConnection = !isConnected");
   assert.ok(actionFaults(copy).length > 0, "une réouverture limitée à un état doit faire rougir la garde");
 });
@@ -304,11 +306,11 @@ test("ios-bouton-connexion-introuvable/AC-5 : un seul bouton antenne par écran"
   assert.deepEqual(uniqueFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-5"), []);
 
-  const doubled = copyRepo("ios-bouton-connexion-copie-");
+  const doubled = shared.fresh();
   plant(doubled, ROOT_VIEW, ".tabViewStyle(.sidebarAdaptable)", `.tabViewStyle(.sidebarAdaptable)\n        .toolbar { ${ITEM} }`);
   assert.ok(uniqueFaults(doubled).length > 0, "un .toolbar sur le TabView doit faire rougir la garde");
 
-  const sized = copyRepo("ios-bouton-connexion-copie-");
+  const sized = shared.fresh();
   plantBetween(sized, "func sectionScreen(", "var plusList", `.toolbar { ${ITEM} }`, `.toolbar { if sizeClass == .regular { ${ITEM} } }`);
   assert.ok(uniqueFaults(sized).length > 0, "un bouton conditionné à la classe de taille doit faire rougir la garde");
 });
@@ -316,7 +318,7 @@ test("ios-bouton-connexion-introuvable/AC-5 : un seul bouton antenne par écran"
 test("ios-bouton-connexion-introuvable/AC-6 : le correctif reste confiné à la racine", () => {
   assert.deepEqual(scopeFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-6"), []);
-  const copy = copyRepo("ios-bouton-connexion-copie-");
+  const copy = shared.fresh();
   const home = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "HomeView.swift");
   fs.appendFileSync(
     home,

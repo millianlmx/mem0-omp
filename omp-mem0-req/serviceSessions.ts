@@ -81,6 +81,12 @@ export type ContextMeter = {
   compactions(): number;
   /** À appeler quand une compaction a RÉUSSI. */
   compacted(): void;
+  /**
+   * Réarme le palier sans attendre une mesure sous `soft` : après une compaction de
+   * fin de tour d'un run, la prochaine mesure ≥ `soft` rouvre un palier (la session
+   * a été réduite, la mesure suivante est neuve).
+   */
+  rearm(): void;
 };
 
 /**
@@ -125,6 +131,10 @@ export function createContextMeter(thresholds: ContextThresholds): ContextMeter 
     compactions: () => compactions,
     compacted() {
       compactions += 1;
+    },
+    rearm() {
+      attempted = false;
+      exceeded = false;
     },
   };
 }

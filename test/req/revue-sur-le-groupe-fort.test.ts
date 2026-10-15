@@ -629,7 +629,7 @@ async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters
 }
 
 const citeFact = (answer: string) => ({ decision: "answer", answer, source: "contexte", citations: [ARBITER_FACT], reason: "le brief le dit" });
-const approve = { decision: "approve", reason: "les specs couvrent chaque AC" };
+const approve = { decision: "approve", reason: "les specs couvrent chaque AC", citations: [ARBITER_FACT] };
 
 /** Exhauste un modèle dans le registre des quotas, comme le fait un run qui touche le quota. */
 function exhaust(stateDir: string, model: string): void {

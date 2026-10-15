@@ -70,10 +70,13 @@ const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? 
 
 /**
  * `bash scripts/check.sh --sections=<sections>` dans `cwd` ; `sections: null`
- * lance le script SANS option (toutes les sections).
+ * lance le script SANS option (toutes les sections) — c'est la forme
+ * `["scripts/check.sh"]` qui classe ce fichier dans `--scope=outillage` de
+ * scripts/test-files.sh.
  */
 function runCheck(cwd: string, sections: string | null, env: Record<string, string> = {}) {
-  return spawnSync("bash", ["scripts/check.sh", ...(sections === null ? [] : [`--sections=${sections}`])], {
+  const args = sections === null ? ["scripts/check.sh"] : ["scripts/check.sh", `--sections=${sections}`];
+  return spawnSync("bash", args, {
     cwd,
     encoding: "utf8",
     env: { ...NESTED_ENV, ...env },

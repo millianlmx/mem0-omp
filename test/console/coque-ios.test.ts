@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
+import { ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
 
 const SHELL = path.join(ROOT, "omp-console");
 const IOS = path.join(SHELL, "ios");
@@ -32,10 +32,8 @@ const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 /** Hors de l'arbre réel (copie jetable ou suite relancée par `check.sh`). */
 const IN_COPY = DEPTH > 0 || process.env.MEM0_OMP_SKIP_SWIFT_APP === "1" || process.env.MEM0_OMP_SKIP_IOS === "1";
 
-/** Une copie du dépôt où l'on peut planter une faute (../support/repo.ts). */
-function copyRepo(): string {
-  return copyRepoAs("coque-copie-");
-}
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
+const shared = sharedRepo("coque-copie-");
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
 
@@ -455,7 +453,7 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
 
   // Faute plantée : le format des dossiers synchronisés est ce qui fait qu'un
   // fichier neuf est compilé sans toucher au projet.
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("objectVersion = 77;", "objectVersion = 70;"));
   assert.ok(pbxprojFaults(copy).some((f) => f.includes("objectVersion")), "objectVersion 70 doit faire rougir la garde");
@@ -463,7 +461,7 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
   // Preuve réelle (S-1) : un .swift neuf dans le dossier de l'app est compilé
   // sans qu'aucune ligne du .xcodeproj n'ait changé.
   if (process.platform === "darwin" && !IN_COPY && xcodebuildUsable()) {
-    const built = copyRepo();
+    const built = shared.fresh();
     const marker = path.join(built, "omp-console", "ios", "OMPConsoleIOS", "NouvelleSection.swift");
     fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .home\n");
     const before = fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8");
@@ -480,7 +478,7 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
 test("coque-ios/AC-2 : les sources de l'app ne recopient ni liste, ni libellé, ni rawValue de section", () => {
   assert.deepEqual(sectionFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "SecondeListe.swift"),
     'let sections = ["home", "kanban"]\n',
@@ -493,11 +491,11 @@ test("coque-ios/AC-2 : les sources de l'app ne recopient ni liste, ni libellé, 
 test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView", () => {
   assert.deepEqual(navigationFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const split = copyRepo();
+  const split = shared.fresh();
   fs.writeFileSync(path.join(split, "omp-console", "ios", "OMPConsoleIOS", "Partage.swift"), "struct Partage: View { var body: some View { NavigationSplitView { } detail: { } } }\n");
   assert.ok(navigationFaults(split).some((f) => f.includes("NavigationSplitView")), "un NavigationSplitView doit faire rougir la garde");
 
-  const plain = copyRepo();
+  const plain = shared.fresh();
   const rootFile = path.join(plain, "omp-console", "ios", "OMPConsoleIOS", "RootView.swift");
   const rootCode = fs.readFileSync(rootFile, "utf8");
   assert.ok(rootCode.includes(".tabViewStyle(.sidebarAdaptable)"), "la faute doit s'appliquer à la vraie RootView");
@@ -508,7 +506,7 @@ test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView",
 test("coque-ios/AC-4 : les huit écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "SectionPlaceholderView.swift"),
     "let écranDAttente = 0\n",
@@ -518,7 +516,7 @@ test("coque-ios/AC-4 : les huit écrans réels remplacent l'écran d'attente et 
     "un écran d'attente qui revient doit faire rougir la garde",
   );
 
-  const replant = copyRepo();
+  const replant = shared.fresh();
   fs.writeFileSync(
     path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "Double.swift"),
     `let double = "${RETIRED_WAITING}"\n`,
@@ -527,7 +525,7 @@ test("coque-ios/AC-4 : les huit écrans réels remplacent l'écran d'attente et 
 });
 
 test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans rougir, et durcit en CI", (t) => {
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const check = fs.readFileSync(path.join(copy, "scripts", "check.sh"), "utf8");
   const swiftSection = check.indexOf("── App Swift");
   const iosSection = check.indexOf("── App iOS");
@@ -545,7 +543,7 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   const { bin, log } = stubBin("ios-linux-");
   stub(bin, "uname", "printf 'Linux\\n'");
   stub(bin, "xcodebuild", `printf '%s\\n' "$*" >> '${log}'`);
-  const idle = runCheck(copyRepo(), "app-ios", {
+  const idle = runCheck(shared.fresh(), "app-ios", {
     PATH: `${bin}:${process.env.PATH}`,
     MEM0_OMP_SKIP_IOS: "",
     // La CI macOS pose MEM0_OMP_REQUIRE_IOS=1 pour TOUTE la suite : sans la
@@ -561,7 +559,7 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   assert.ok(!fs.existsSync(log) || fs.readFileSync(log, "utf8") === "", "xcodebuild ne doit jamais être appelé hors macOS");
 
   // La même absence, durcie par la variable de la CI macOS : c'est un échec.
-  const strict = runCheck(copyRepo(), "app-ios", {
+  const strict = runCheck(shared.fresh(), "app-ios", {
     PATH: `${bin}:${process.env.PATH}`,
     MEM0_OMP_SKIP_IOS: "",
     MEM0_OMP_REQUIRE_IOS: "1",
@@ -574,7 +572,7 @@ test("coque-ios/AC-6 : le script de captures réalise les cinq gestes et écrit 
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.ok(fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8").includes("omp-console/build/"), "omp-console/build/ doit être ignoré par git");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("bootstatus", "attente"));
   assert.ok(shotsFaults(copy).some((f) => f.includes("bootstatus")), "un geste manquant doit faire rougir la garde");
@@ -583,7 +581,7 @@ test("coque-ios/AC-6 : le script de captures réalise les cinq gestes et écrit 
 test("coque-ios/AC-7 : la documentation donne le simulateur et la procédure d'appareil réel", () => {
   assert.deepEqual(docFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "README.md");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("## Coque iOS", "## Coque"));
   assert.ok(docFaults(copy).some((f) => f.includes("## Coque iOS")), "une section absente doit faire rougir la garde");
@@ -592,7 +590,7 @@ test("coque-ios/AC-7 : la documentation donne le simulateur et la procédure d'a
 test("coque-ios/AC-8 : aucun réseau, aucun magasin, aucun badge, ni Terminal ni Fichiers", () => {
   assert.deepEqual(tokenFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
+  const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Reseau.swift"),
     'import Foundation\nlet session = URLSession.shared\n',

@@ -399,20 +399,66 @@ export function lotJournalLine(e: JournalEntry): string {
 }
 
 
-/** Le bloc exact injecté dans le prompt de tout run d'une feature AVEC contexte. */
-export function contextBlock(input: { stateDir: string; repoKey: string; slug: string; contextKey: string }): string {
+/** Borne du brief injecté dans un prompt (`contextBlock`) : au-delà, la tête de chaque rubrique, au prorata. */
+export const BRIEF_CONTEXT_MAX = 8_000;
+
+
+/**
+ * Le brief tel qu'un prompt le reçoit : intégral sous `BRIEF_CONTEXT_MAX`, sinon
+ * la tête de chaque rubrique au prorata de sa taille (un brief de 20 000
+ * caractères par rubrique entrait tel quel dans chaque run). Un texte hors
+ * gabarit est simplement coupé.
+ */
+function boundedBrief(text: string): string {
+  const whole = text.trim();
+  if (whole.length <= BRIEF_CONTEXT_MAX) return whole;
+  const fields = parseBrief(whole, "");
+  const bodies: Array<[string, string]> = [
+    ["But", fields.purpose],
+    ["Fonction", fields.function],
+    ["Décisions", renderList(fields.decisions)],
+    ["Contraintes", renderList(fields.constraints)],
+    ["Non-objectifs", renderList(fields.nonGoals)],
+  ];
+  const total = bodies.reduce((sum, [, body]) => sum + body.length, 0);
+  if (total === 0) return `${whole.slice(0, BRIEF_CONTEXT_MAX - 1)}…`;
+  const head = `# Brief — ${fields.title}`.trim();
+  const budget = BRIEF_CONTEXT_MAX - head.length - bodies.reduce((sum, [name]) => sum + name.length + 6, 0);
+  // Une rubrique courte passe entière : le prorata ne coupe que celles qui pèsent.
+  const floor = Math.floor(budget / (bodies.length * 4));
+  const kept = bodies.filter(([, body]) => body.length <= floor).reduce((sum, [, body]) => sum + body.length, 0);
+  const left = budget - kept;
+  const heavy = total - kept;
+  const cut = bodies.map(([name, body]) => {
+    const share = body.length <= floor ? body.length : Math.max(0, Math.floor((left * body.length) / heavy));
+    return `## ${name}\n${body.length <= share ? body : `${body.slice(0, Math.max(0, share - 1))}…`}`;
+  });
+  return [head, ...cut].join("\n\n");
+}
+
+
+/**
+ * Le bloc exact injecté dans le prompt de tout run d'une feature AVEC contexte.
+ * `phase` restreint le journal aux décisions de CE maillon et aux jalons : un
+ * run /impl n'a que faire des questions de /req (mesuré : le journal entier
+ * revenait dans chaque run, jusqu'à 50 lignes).
+ */
+export function contextBlock(input: { stateDir: string; repoKey: string; slug: string; contextKey: string; phase?: JournalPhase }): string {
   const brief = readBrief(input.stateDir, input.contextKey);
-  const entries = journalFor(input.stateDir, input.repoKey, input.slug);
+  const all = journalFor(input.stateDir, input.repoKey, input.slug);
+  const entries = input.phase === undefined ? all : all.filter((e) => e.phase === input.phase || e.kind === "jalon");
+  const elsewhere = all.length - entries.length;
   const omitted = Math.max(0, entries.length - JOURNAL_CONTEXT_MAX);
   const lines = entries
     .slice(omitted)
     .map(journalLine);
   if (omitted > 0) lines.unshift(`- (${omitted} décisions plus anciennes omises)`);
+  if (elsewhere > 0) lines.unshift(`- (${elsewhere} décision${elsewhere > 1 ? "s" : ""} d'autres maillons omise${elsewhere > 1 ? "s" : ""})`);
   if (lines.length === 0) lines.push(`- ${NO_DECISION}`);
   return [
     "[contexte de conduite] Brief et décisions déjà prises pour cette feature : appuie-toi dessus avant de poser une question.",
     "",
-    brief !== null && brief.trim() !== "" ? brief.trim() : NO_BRIEF,
+    brief !== null && brief.trim() !== "" ? boundedBrief(brief) : NO_BRIEF,
     "",
     `## Journal de la feature ${input.slug}`,
     ...lines,

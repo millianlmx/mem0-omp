@@ -10,9 +10,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { copyRepo, ROOT } from "../support/repo.ts";
+import { ROOT, sharedRepo } from "../support/repo.ts";
 import { readIfExists, stripFullLineComments, swiftFiles } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("ios-stats-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const IOS_TESTS = path.join(SHELL, "ios", "OMPConsoleIOSTests");
 
@@ -339,7 +341,7 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
   assert.deepEqual(mirrorFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientPayloads.swift");
   fs.writeFileSync(target, code(target).replace("public var liveRuns: Int", "public var liveRunsRenamed: Int"));
   assert.ok(
@@ -347,7 +349,7 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
     "un miroir qui diverge doit faire rougir la garde",
   );
 
-  const replant = copyRepo("ios-stats-copie-");
+  const replant = shared.fresh();
   const view = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
   fs.writeFileSync(view, code(view).replace(/IOSStatsScreen\(client: client[^)]*\)/, "EmptyView()"));
   assert.ok(screenFaults(replant).some((f) => f.includes("route pas .stats")), "une section non routée doit faire rougir la garde");
@@ -373,7 +375,7 @@ test("ios-statistiques/AC-2 : l'API dérive par les fonctions pures de macOS et 
   const macStats = repoCode(ROOT, path.join("omp-console", "Sources", "OMPConsole", "Stats", "StatsModel.swift"));
   assert.match(macStats, /private let cache = SessionMetricsCache\(\)/, "StatsModel emploie le même cache");
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   fs.writeFileSync(target, code(target).replace("statsBoard(snapshot: snapshot, selectedKey: project, read: cache.metrics)", "nil"));
   assert.ok(
@@ -390,7 +392,7 @@ test("ios-statistiques/AC-3 : le total du projet est la somme des features list�
   const client = repoCode(ROOT, path.join("omp-console", "Sources", "ConsoleClient", "ClientPayloads.swift"));
   assert.match(client, /features\.reduce\(into: RemoteStatsTotals\.zero\)/, "le total somme les features listées");
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientPayloads.swift");
   fs.writeFileSync(target, code(target).replace("features.reduce(into: RemoteStatsTotals.zero)", "RemoteStatsTotals.zero"));
   assert.ok(
@@ -417,7 +419,7 @@ test("ios-statistiques/AC-4 : la parité macOS est portée par RemoteStatsRouteT
     assert.ok(!statsCode(ROOT).includes(forbidden), `la section ne doit pas recomposer un total (« ${forbidden} »)`);
   }
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(SHELL, "Tests", "OMPConsoleTests", "RemoteStatsRouteTests.swift");
   const replant = path.join(copy, "omp-console", "Tests", "OMPConsoleTests", "RemoteStatsRouteTests.swift");
   fs.writeFileSync(replant, fs.readFileSync(target, "utf8").replace("featureTotals(expected, nowMs: nowMs)", "StatsTotals.zero"));
@@ -445,7 +447,7 @@ test("ios-statistiques/AC-5 : le masquage des features sans run lisible est serv
     "la mention est portée par l'état vide",
   );
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   fs.writeFileSync(target, code(target).replace("hiddenPlanFeatures: board.project.hiddenPlanFeatures", "hiddenPlanFeatures: 0"));
   assert.ok(
@@ -470,7 +472,7 @@ test("ios-statistiques/AC-6 : les durées avancent à l'horloge de rendu et les 
     assert.ok(model.includes(trigger), `le déclencheur « ${trigger} » doit exister`);
   }
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsScreen.swift");
   fs.writeFileSync(target, code(target).replace(".onChange(of: client.sessionUpdates) { model.reload(trigger: .sessionsChanged) }", ""));
   assert.ok(
@@ -478,7 +480,7 @@ test("ios-statistiques/AC-6 : les durées avancent à l'horloge de rendu et les 
     "un déclencheur retiré doit faire rougir la garde",
   );
 
-  const replant = copyRepo("ios-stats-copie-");
+  const replant = shared.fresh();
   const modelPath = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsModel.swift");
   fs.writeFileSync(modelPath, code(modelPath).replace("guard case .connected = state else { return false }", ""));
   assert.ok(advanceFaults(replant).some((f) => f.includes("`.connected`")), "un relevé hors connexion doit faire rougir la garde");
@@ -490,12 +492,12 @@ test("ios-statistiques/AC-6 : les durées avancent à l'horloge de rendu et les 
 test("ios-statistiques/AC-7 : la section n'ouvre que la lecture des statistiques, sans montant ni geste de run", () => {
   assert.deepEqual(readonlyFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsScreen.swift");
   fs.writeFileSync(target, `${code(target)}\nlet fuite = "montant en dollars"\n`);
   assert.ok(readonlyFaults(copy).some((f) => f.includes("monétaire")), "un montant affiché doit faire rougir la garde");
 
-  const replant = copyRepo("ios-stats-copie-");
+  const replant = shared.fresh();
   const modelPath = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsModel.swift");
   fs.writeFileSync(modelPath, `${code(modelPath)}\nlet geste = client.stop(cardId: "")\n`);
   assert.ok(readonlyFaults(replant).some((f) => f.includes("geste")), "un geste de pilotage doit faire rougir la garde");
@@ -509,7 +511,7 @@ test("ios-statistiques : la recette pas à pas et sa recette de design sont en p
   assert.ok(fs.existsSync(path.join(SHELL, "Tests", "OMPConsoleTests", "IOSStatistiquesRecipeTests.swift")), "la recette outillée existe");
   assert.ok(fs.existsSync(path.join(IOS_TESTS, "IOSStatsModelTests.swift")), "les preuves du modèle iOS existent");
 
-  const copy = copyRepo("ios-stats-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "README.md");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("### Statistiques depuis l'iPad", "### Statistiques"));
   assert.ok(docFaults(copy).some((f) => f.includes("Statistiques depuis l'iPad")), "une recette absente doit faire rougir la garde");

@@ -6,8 +6,9 @@
 // Deux règles structurent ce fichier :
 //  1. tout ce qui doit ÉCHOUER est planté dans une COPIE temporaire du dépôt,
 //     jamais dans l'arbre réel (qui doit rester publiable) ; les copies
-//     n'emportent qu'un fichier de test (`KEPT_TEST`), parce que ce qu'on prouve
-//     ici c'est le verdict de check.sh, pas la suite entière ;
+//     n'emportent qu'un fichier de test (`KEPT_TEST`) et check.sh n'y lance que
+//     la section `smoke` (`--sections=smoke`), parce que ce qu'on prouve ici
+//     c'est le verdict de cette section, pas la suite entière ;
 //  2. les copies ne tournent qu'au premier niveau (`MEM0_CHECK_DEPTH`) : lancées
 //     depuis la copie d'un autre test, elles se rappelleraient elles-mêmes.
 import test from "node:test";
@@ -61,13 +62,10 @@ function harness(cwd: string): Promise<Run> {
 }
 
 /**
- * Le seul fichier de test que les copies emportent. `mutate` passe à `check.sh`
- * l'environnement de ce processus, NODE_TEST_CONTEXT compris : le `node --test`
- * de la section « ── Tests » y sort 0 « skipping running files » sans exécuter un
- * seul fichier (vérifié le 2026-10-12). Les fichiers de test n'y servent donc
- * qu'à scripts/test-files.sh, qui refuse un ensemble vide, et à la section
- * « ── Types », qui re-vérifierait (≈ 3 s par copie) des fichiers qu'aucune
- * mutation ne touche — l'arbre réel les vérifie déjà.
+ * Le seul fichier de test que les copies emportent : check.sh n'y lance que la
+ * section `smoke`, donc les fichiers de test n'y servent à rien — en garder un
+ * tient la copie petite sans la rendre étrangère au dépôt (scripts/test-files.sh
+ * refuse un ensemble vide si quelqu'un y lance `── Tests`).
  */
 const KEPT_TEST = "test/outillage/docs.test.ts";
 
@@ -89,7 +87,7 @@ async function mutate(prefix: string, apply: (dir: string) => void): Promise<Out
   const dir = copyRepo(prefix, { keepTest: (rel) => rel === KEPT_TEST });
   apply(dir);
   const run = await harness(dir);
-  const check = await spawnAsync("bash", ["scripts/check.sh"], {
+  const check = await spawnAsync("bash", ["scripts/check.sh", "--sections=smoke"], {
     cwd: dir,
     env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", MEM0_OMP_SKIP_RUST: "1" },
     timeout: 900_000,

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { isReviewCapReason } from "./chain.ts";
 import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
-import { LOT_TICK_MS, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, quotaGroupsOf, readLot } from "./lot.ts";
+import { LOT_TICK_MS, dependencyStopReason, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, quotaGroupsOf, readLot } from "./lot.ts";
 import type { FeatureEscalation, Lot, LotFeature, QuotaGroup } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
 import { modelSelector } from "./models.ts";
@@ -207,7 +207,10 @@ export type RelayProfile = {
 /**
  * Les éléments courants des features relayées à `key`, dans l'ordre du lot, au
  * plus un par feature (S-6). Pure hors `liveOf`, qui lit le run vivant. Le
- * plafond de revue n'est un élément que si `cap`, l'échec de la feature que si `failure`.
+ * plafond de revue n'est un élément que si `cap` ; l'échec de la feature que si
+ * `failure` — un `blocked` hors plafond et hors quota (verdict illisible, /impl
+ * sans diff, /specs vide, contrat endommagé) EST un échec : sans lui, la feature
+ * restait figée jusqu'à un geste humain.
  */
 export function relayItemsOf(
   lot: Lot,
@@ -268,7 +271,14 @@ export function relayItemsOf(
       items.push({ ...base, key: `cap:${feature.slug}:${since}`, kind: "cap", stopReason: feature.stopReason });
       continue;
     }
-    if (options.failure && feature.state === "failed") {
+    // Un blocage HÉRITÉ d'une dépendance n'est pas un échec : la passe le défait
+    // d'elle-même quand l'amont redevient sain.
+    const blockedOffCap =
+      feature.state === "blocked" &&
+      feature.quota === undefined &&
+      !isReviewCapReason(feature.stopReason) &&
+      !dependencyStopReason(feature.stopReason);
+    if (options.failure && (feature.state === "failed" || blockedOffCap)) {
       items.push({ ...base, key: `failure:${feature.slug}:${since}`, kind: "failure", stopReason: feature.stopReason });
     }
   }

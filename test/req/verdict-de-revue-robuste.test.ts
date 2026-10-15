@@ -45,7 +45,7 @@ test("verdict-de-revue-robuste/AC-1 : STATUT BLOQUANT avec BLOQUANTS : aucun ren
   assert.deepEqual(read(c), ["clean", 0]);
 });
 
-test("verdict-de-revue-robuste/AC-2 : « Aucun bloquant » suivi d'un texte après ; , — ou ( reste clean", () => {
+test("verdict-de-revue-robuste/AC-2 : « Aucun bloquant » suivi d'un texte après ; , — ou ( est ambigu : verdict illisible, jamais propre", () => {
   const values = [
     "Aucun bloquant ; voir recommandations",
     "Aucun bloquant, voir plus bas",
@@ -54,6 +54,10 @@ test("verdict-de-revue-robuste/AC-2 : « Aucun bloquant » suivi d'un texte apr�
     "**Aucun bloquant** ; cf. AC PAR AC",
   ];
   for (const value of values) {
+    assert.deepEqual(read(revue(`- BLOQUANTS : ${value}`)), ["unreadable", 0], value);
+  }
+  // Les constats qui s'arrêtent là restent propres.
+  for (const value of ["Aucun bloquant.", "aucun (tous levés)", "0 (les 2 bloquants précédents sont levés)"]) {
     assert.deepEqual(read(revue(`- BLOQUANTS : ${value}`)), ["clean", 0], value);
   }
 });
@@ -69,7 +73,7 @@ test("verdict-de-revue-robuste/AC-4 : deux puces non numérotées sous BLOQUANTS
 });
 
 test("verdict-de-revue-robuste/AC-5 : phrase libre et ligne numérotée comptent, ligne vide et barrée non", () => {
-  const c = revue("- BLOQUANTS :", "Le test AC-2 manque.", "", "1. AC-3 échoue", "2. ~~AC-4 manquant~~");
+  const c = revue("- BLOQUANTS :", "Le test AC-2 manque.", "", "1. AC-3 échoue", "~~AC-4 manquant~~");
   assert.deepEqual(read(c), ["blockers", 2]);
 });
 
@@ -129,7 +133,7 @@ test("verdict-de-revue-robuste/AC-10 : le format de /review ne porte plus DÉCIS
   );
 });
 
-test("verdict-de-revue-robuste/AC-12 : les maillons qui écrivent le contrat le font par édition de section, relu après écriture", () => {
+test("verdict-de-revue-robuste/AC-12 : les maillons qui écrivent le contrat le font par édition de section, sans relecture après écriture", () => {
   const texts: Array<[string, string]> = [
     ["SYSTEM_DIRECTIVE_REQ", SYSTEM_DIRECTIVE_REQ],
     ["buildSpecsSeed", buildSpecsSeed("")],
@@ -139,7 +143,8 @@ test("verdict-de-revue-robuste/AC-12 : les maillons qui écrivent le contrat le 
   for (const [name, text] of texts) {
     assert.equal(text.includes("outil write"), false, `${name} : « outil write »`);
     assert.equal(text.includes("(write)"), false, `${name} : « (write) »`);
-    assert.match(text, /Relis ensuite le contrat APRÈS écriture[^\n]*`## Besoins`/, name);
+    assert.match(text, /ÉDITION de section, jamais en réécrivant tout le fichier/, name);
+    assert.equal(text.includes("Relis ensuite le contrat APRÈS écriture"), false, `${name} : relecture post-écriture`);
   }
 });
 

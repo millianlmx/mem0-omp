@@ -1,10 +1,13 @@
 // L'ÉVIDENCE du jalon « revue propre » (S-9) : ce que le pilote soumet à l'arbitre en
 // plus du corpus — le diff du worktree par rapport à HEAD, fichiers non suivis
-// compris — et, pour chaque AC-<n> du contrat, les fichiers du worktree qui le
-// portent. Le pilote revérifie lui-même cette seconde partie (arbiter.ts).
+// compris — et, pour chaque AC-<n> du contrat, les fichiers DU DIFF qui le portent.
+// Seuls les fichiers modifiés ou ajoutés comptent : les ids AC-<n> repartent à 1 à
+// chaque feature, un test d'une feature antérieure qui porte « AC-3 » ne prouve rien
+// pour l'AC-3 de celle-ci. Le pilote revérifie lui-même cette seconde partie (arbiter.ts).
 //
 // Git passe EXCLUSIVEMENT par le `GitRunner` injecté (jamais `node:child_process`),
 // en lecture seule : ni `add`, ni écriture d'index.
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { GitResult, GitRunner } from "./git.ts";
@@ -18,11 +21,18 @@ export const AC_SCAN_FILE_MAX_BYTES = 1_048_576;
 
 export type AcFiles = { id: string; files: string[] }[];
 
+/** Combien de critères l'arbitre doit attester par une assertion de test citée. */
+export const SAMPLED_AC_COUNT = 2;
+
 export type ReviewEvidence = {
   diff: string;
-  /** `null` quand `git ls-files` a échoué : la recherche n'a pas eu lieu. */
+  /** Les fichiers du diff (suivis modifiés et non suivis non ignorés, hors `.omp/`), triés ; `null` quand git a échoué. */
+  names: string[] | null;
+  /** `null` quand `git diff --name-only` ou `git ls-files` a échoué : la recherche n'a pas eu lieu. */
   acFiles: AcFiles | null;
   searchError: string | null;
+  /** Les critères tirés (au plus `SAMPLED_AC_COUNT`), de façon déterministe à partir du diff : l'arbitre cite leur assertion de test. */
+  sampledAcIds: string[];
 };
 
 
@@ -87,10 +97,25 @@ function untrackedEntry(worktree: string, name: string): { stat: string; block: 
 
 
 /**
+ * Les critères que l'arbitre doit attester : au plus `SAMPLED_AC_COUNT` ids de `acIds`,
+ * tirés par le hachage de `seed` (le diff) — le même diff tire toujours les mêmes
+ * critères, un diff différent en tire d'autres : aucun AC n'est prévisiblement épargné.
+ */
+export function sampleAcIds(acIds: readonly string[], seed: string): string[] {
+  if (acIds.length <= SAMPLED_AC_COUNT) return [...acIds];
+  const digest = createHash("sha256").update(seed).digest();
+  const first = digest.readUInt32BE(0) % acIds.length;
+  const second = (first + 1 + (digest.readUInt32BE(4) % (acIds.length - 1))) % acIds.length;
+  return [Math.min(first, second), Math.max(first, second)].map((index) => acIds[index] as string);
+}
+
+
+/**
  * Le diff du worktree par rapport à HEAD (suivis et non suivis non ignorés), borné
- * à `maxChars` avec une troncature annoncée, et les fichiers qui portent chaque
- * `AC-<n>` de `acIds` (hors `.omp/`). Un git qui échoue ne lève jamais : le diff
- * vaut `(diff indisponible : …)`, la recherche des AC échoue (`acFiles: null`).
+ * à `maxChars` avec une troncature annoncée, les fichiers DU DIFF (hors `.omp/`) qui
+ * portent chaque `AC-<n>` de `acIds`, et les critères tirés. Un git qui échoue ne
+ * lève jamais : le diff vaut `(diff indisponible : …)`, la recherche des AC échoue
+ * (`acFiles: null`).
  */
 export async function collectReviewEvidence(input: {
   worktree: string;
@@ -121,17 +146,19 @@ export async function collectReviewEvidence(input: {
   }
   const whole = `### git diff --stat\n${statLines.filter((line) => line !== "").join("\n")}\n\n### Changements\n${blocks.filter((block) => block !== "").join("\n")}`;
   const diff = whole.length > maxChars ? `${whole.slice(0, maxChars)}\n(diff tronqué à ${maxChars} caractères sur ${whole.length})` : whole;
+  const sampledAcIds = sampleAcIds(acIds, whole);
 
-  const listing = await git(runGit, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], worktree);
-  if (listing.code !== 0) return { diff, acFiles: null, searchError: failure(listing) };
-  const names = [...new Set(nulList(listing.stdout))].filter((name) => !name.startsWith(".omp/")).sort();
+  const changed = await git(runGit, ["diff", "-z", "--name-only", "HEAD"], worktree);
+  const failed = changed.code !== 0 ? changed : others.code !== 0 ? others : null;
+  if (failed !== null) return { diff, names: null, acFiles: null, searchError: failure(failed), sampledAcIds };
+  const names = [...new Set([...nulList(changed.stdout), ...nulList(others.stdout)])].filter((name) => !name.startsWith(".omp/")).sort();
   const patterns = acIds.map((id) => ({ id, files: [] as string[], pattern: new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`) }));
   for (const name of names) {
     const text = readScannable(worktree, name);
     if (text === null) continue;
     for (const entry of patterns) if (entry.pattern.test(text)) entry.files.push(name);
   }
-  return { diff, acFiles: patterns.map(({ id, files }) => ({ id, files })), searchError: null };
+  return { diff, names, acFiles: patterns.map(({ id, files }) => ({ id, files })), searchError: null, sampledAcIds };
 }
 
 
@@ -141,5 +168,5 @@ export function renderReviewEvidence(evidence: ReviewEvidence): string {
     evidence.acFiles === null
       ? [`- (recherche impossible : ${evidence.searchError ?? "erreur inconnue"})`]
       : evidence.acFiles.map(({ id, files }) => `- ${id} : ${files.length > 0 ? files.join(", ") : "(aucun fichier)"}`);
-  return `## Diff du worktree (par rapport à HEAD, fichiers non suivis compris)\n\n${evidence.diff}\n\n## Critères et fichiers\n${lines.join("\n")}`;
+  return `## Diff du worktree (par rapport à HEAD, fichiers non suivis compris)\n\n${evidence.diff}\n\n## Critères et fichiers du diff\n${lines.join("\n")}`;
 }

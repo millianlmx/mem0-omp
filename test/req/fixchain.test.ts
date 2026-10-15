@@ -28,6 +28,7 @@ import {
   type LotRunnerResult,
   type LotRunSpec,
 } from "../../omp-mem0-req/extension.ts";
+import { REVIEW_UNREADABLE_REFOCUS, nextChainAction } from "../../omp-mem0-req/chain.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
 import { tmpdir } from "../support/repo.ts";
 import { seedLot, writeContract } from "../support/req-fixtures.ts";
@@ -227,6 +228,32 @@ test("fixchain/AC-1 : une revue qui n'écrit pas sa section est illisible, jamai
   assert.equal(after.waitKind, null);
   assert.equal(runs.length, 2, "la revue est relancée, elle n'est pas crue sur parole");
   assert.equal(phaseOf(runs[1]!), "review");
+  assert.ok(
+    promptOf(runs[1]!).includes(`[recentrage de l'arbitre]\n${REVIEW_UNREADABLE_REFOCUS}`),
+    "la relance porte la consigne de réécriture du champ BLOQUANTS",
+  );
+});
+
+test("fixchain/AC-20 : une revue illisible sous le plafond reprend sa session avec la consigne de réécriture ; au plafond elle bloque", () => {
+  const illisible = `${CONTRACT_SPECS}\n## Revue\n\n- STATUT : APPROUVÉ\n`;
+  assert.deepEqual(nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 1, cap: 3 }), {
+    kind: "run",
+    phase: "review",
+    fix: false,
+    resume: true,
+    refocus: REVIEW_UNREADABLE_REFOCUS,
+  });
+  assert.deepEqual(
+    nextChainAction({ phase: "review", outcome: "ok", contract: withVerdict("aucun"), fixes: 0, unreadableRuns: 0, cap: 3, reviewRewritten: false }),
+    { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS },
+    "une section non réécrite est illisible : même reprise",
+  );
+  assert.deepEqual(nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 3, cap: 3 }), {
+    kind: "blocked",
+    reason: "verdict de revue illisible après 3 passes",
+  });
+  assert.match(REVIEW_UNREADABLE_REFOCUS, /- BLOQUANTS : aucun/);
+  assert.match(REVIEW_UNREADABLE_REFOCUS, /AC PAR AC/);
 });
 
 test("fixchain/AC-2 : une revue qui écrit « Aucun bloquant. » est propre", async () => {

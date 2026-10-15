@@ -68,7 +68,7 @@ test("buildSpecsSeed : lit le contrat, y écrit specs ET lots, ambiguïtés tech
   assert.match(out, /ambiguïtés TECHNIQUES/); // ne re-questionne pas l'intention métier
   assert.match(out, /N'écris PAS les specs en mémoire mem0/);
   assert.match(out, /## Documentation/); // rassemble la doc externe pour /impl
-  assert.match(out, /DOCUMENTE-toi pour la future implémentation/);
+  assert.match(out, /DOCUMENTE-toi SEULEMENT si une spec mobilise une API, bibliothèque, framework, format ou protocole EXTERNE absent du dépôt/);
 });
 
 test("buildSpecsSeed : les lots portent le « comment » typé (ui / archi)", () => {
@@ -139,9 +139,10 @@ test("buildReviewSeed : révise le git diff contre le contrat", () => {
   assert.match(out, /## Revue/); // consigne le verdict dans le contrat pour /impl --fix
 });
 
-test("buildReviewSeed : chaque critère est retrouvé par grep et rejoué", () => {
+test("buildReviewSeed : tous les critères sont lancés en un appel, puis attribués", () => {
   const out = buildReviewSeed("");
-  assert.match(out, /grep AC-<n>/); // le test se retrouve par l'id, pas par confiance
+  assert.match(out, /bash scripts\/test-ac\.sh AC-1 AC-2 …/); // un seul lancement pour tous les AC
+  assert.doesNotMatch(out, /grep AC-<n>/); // plus de N lancements
   assert.match(out, /AC PAR AC/); // le verdict rapporte critère par critère
   assert.match(out, /pass\/fail/);
   assert.match(out, /AC non couvert/); // un critère que rien ne couvre est signalé

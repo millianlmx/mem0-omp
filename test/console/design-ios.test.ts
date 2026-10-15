@@ -12,9 +12,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo, listTestFiles } from "../support/repo.ts";
+import { ROOT, listTestFiles, sharedRepo } from "../support/repo.ts";
 import { stripComments, swiftFiles } from "../support/swift-source.ts";
 
+/** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
+const shared = sharedRepo("design-ios-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const IOS = path.join(SHELL, "ios");
 const APP = path.join(IOS, "OMPConsoleIOS");
@@ -451,7 +453,7 @@ function macOSFaults(root: string): string[] {
 test("design-ios/AC-1 : les huit écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("iosPanel()", "padding(0)"));
   assert.ok(screenFaults(copy).some((f) => f.includes("iosPanel()")), "une surface retirée doit faire rougir la garde");
@@ -460,7 +462,7 @@ test("design-ios/AC-1 : les huit écrans portent le kit (surfaces, pastille, mé
 test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSScreenState.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("tone: .danger", "tone: .info"));
   assert.ok(screenFaults(copy).some((f) => f.includes("danger")), "un bandeau non dangereux doit faire rougir la garde");
@@ -469,7 +471,7 @@ test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent l
 test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Kanban", "KanbanText.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l’instant."', '"Aucune pipeline."'));
   assert.ok(screenFaults(copy).some((f) => f.includes("KanbanText")), "un mot réécrit doit faire rougir la garde");
@@ -478,7 +480,7 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
 test("design-ios/AC-4 : le vocabulaire provisoire est clos et le crochet documenté", () => {
   assert.deepEqual(provisionalFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSText.swift");
   fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet extra = "Un mot réinventé."\n`);
   assert.ok(provisionalFaults(copy).some((f) => f.includes("IOSText")), "un message de plus doit faire rougir la garde");
@@ -487,7 +489,7 @@ test("design-ios/AC-4 : le vocabulaire provisoire est clos et le crochet documen
 test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire", () => {
   assert.deepEqual(literalFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   fs.writeFileSync(path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Libelle.swift"), 'let bonjour = "Bonjour"\n');
   const faults = literalFaults(copy);
   assert.ok(faults.some((f) => f.includes("Bonjour")), `un libellé en dur doit faire rougir la garde : ${faults.join(" | ")}`);
@@ -498,12 +500,12 @@ test("design-ios/AC-6 : le script produit les captures et n'en committe aucune",
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.equal(expectedShotNames().length, 96, "la matrice attendue fait 96 noms");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("sips", "file"));
   assert.ok(shotsFaults(copy).some((f) => f.includes("sips")), "une sonde retirée doit faire rougir la garde");
 
-  const replant = copyRepo("design-ios-copie-");
+  const replant = shared.fresh();
   const pbxproj = path.join(replant, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
   fs.writeFileSync(pbxproj, fs.readFileSync(pbxproj, "utf8").replaceAll("UIInterfaceOrientationLandscapeLeft ", ""));
   assert.ok(
@@ -515,7 +517,7 @@ test("design-ios/AC-6 : le script produit les captures et n'en committe aucune",
 test("design-ios/AC-7 : aucune taille en points ni lineLimit numérique", () => {
   assert.deepEqual(typographyFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Pointe.swift"),
     'let grosse = Font.system(size: 22)\n',
@@ -526,7 +528,7 @@ test("design-ios/AC-7 : aucune taille en points ni lineLimit numérique", () => 
 test("design-ios/AC-8 : la cible tactile minimale est 44 pt et aucun contrôle n'est maison", () => {
   assert.deepEqual(typographyFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Design", "IOSMetrics.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("minimumTarget: CGFloat = 44", "minimumTarget: CGFloat = 32"));
   assert.ok(typographyFaults(copy).some((f) => f.includes("minimumTarget")), "une cible sous 44 doit faire rougir la garde");
@@ -535,7 +537,7 @@ test("design-ios/AC-8 : la cible tactile minimale est 44 pt et aucun contrôle n
 test("design-ios/AC-9 : chaque règle de la recette est vérifiable, et le README y renvoie", () => {
   assert.deepEqual(recipeFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "DESIGN.md");
   const text = fs.readFileSync(target, "utf8").replace("`[test: minimumTargetIsFortyFour]`", "");
   fs.writeFileSync(target, text);
@@ -545,7 +547,7 @@ test("design-ios/AC-9 : chaque règle de la recette est vérifiable, et le READM
 test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore reste sans cadre", () => {
   assert.deepEqual(macOSFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo("design-ios-copie-");
+  const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Stats", "StatsModels.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("StatsPresentation.noProject", '"Les statistiques viendront."'));
   assert.ok(macOSFaults(copy).some((f) => f.includes("StatsText.noProject")), "un mot réécrit dans la coque doit faire rougir la garde");
