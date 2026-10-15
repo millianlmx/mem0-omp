@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.30.0 — 2026-10-15
+
+- feat(pipeline): pertinence et rapidité — arbitre justifié, verdict croisé, extraits de contrat, compaction en fin de tour, blocages arbitrés, tests par diff (#206) (02dadac)
+
 ## omp-mem0-req 0.29.0 — 2026-10-15
 
 - feat(req,pilotTools,commands,lotController,serviceClient,runs,context,contract,readme): outils de pilotage du modèle et kinds arbitrage et avance (#204) (107d110)
