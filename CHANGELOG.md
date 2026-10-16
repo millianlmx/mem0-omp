@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.31.0 — 2026-10-16
+
+- feat(arbitre): pilote de lot persistant — une session d'arbitre par lot, un tour par élément (#208) (4ec7cbd)
+
 ## omp-mem0-req 0.30.0 — 2026-10-15
 
 - feat(pipeline): pertinence et rapidité — arbitre justifié, verdict croisé, extraits de contrat, compaction en fin de tour, blocages arbitrés, tests par diff (#206) (02dadac)
