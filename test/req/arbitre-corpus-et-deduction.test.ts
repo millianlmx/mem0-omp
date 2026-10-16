@@ -1256,6 +1256,11 @@ test("arbitre-corpus-et-deduction/AC-20 : « specs validées » exige que chaque
   assert.deepEqual(uncoveredAcIds(covered), []);
   assert.deepEqual(uncoveredAcIds("## Critères d'acceptation\n\nAC-1 : a.\n"), ["AC-1"], "sans `## Spécifications`, rien n'est couvert");
   assert.deepEqual(uncoveredAcIds("## Besoins\n\nB-1 : x.\n"), []);
+  // `/specs` écrit aussi `SP-<n>` et `SPEC-<n>` (mesuré sur les contrats réels) : ce sont des spécifications.
+  for (const prefix of ["SP", "SPEC"]) {
+    assert.deepEqual(uncoveredAcIds(covered.replaceAll("### S-", `### ${prefix}-`)), [], `tête ${prefix}-n`);
+    assert.deepEqual(uncoveredAcIds(uncovered.replaceAll("### S-", `### ${prefix}-`)), ["AC-3"], `tête ${prefix}-n : même découpe en blocs`);
+  }
 
   const approve: ArbiterDecision = { decision: "approve", reason: "couvert" };
   assert.deepEqual(validateArbiterDecision(MILESTONE, approve, groundOf(root, { contract: uncovered })), {
