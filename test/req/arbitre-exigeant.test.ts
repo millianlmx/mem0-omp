@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { arbiterContractExcerpt, buildArbiterCorpus, buildArbiterPrompt, validateArbiterDecision } from "../../omp-mem0-req/arbiter.ts";
+import { arbiterContractExcerpt, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, validateArbiterDecision } from "../../omp-mem0-req/arbiter.ts";
 import type { ArbiterDecision, ArbiterGround, ArbiterItem } from "../../omp-mem0-req/arbiter.ts";
 import { SAMPLED_AC_COUNT, collectReviewEvidence, sampleAcIds } from "../../omp-mem0-req/arbiterReview.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
@@ -158,30 +158,38 @@ test("arbitre-exigeant/AC-5 : au jalon « revue propre », l'approbation exige p
   assert.deepEqual(effect.kind === "approve" ? effect.justification?.references : undefined, [`${fileOf(x)}:1`, `./${fileOf(y)}:1`]);
 });
 
-test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le contrat sans aucune `## Revue` ; le plafond ne reçoit que critères, revue et corrections, sans rapport ni brief", () => {
+test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le contrat sans aucune `## Revue` ; le plafond ne reçoit que critères, revue et corrections ; aucun tour ne reprend rapport ni brief, tenus par l'ouverture", () => {
   const doubled = `${CONTRACT}\n## Revue\n\n- STATUT : REFUSÉ\n- BLOQUANTS : 1. un bloquant.\n`;
-  const base = { report: "## Faiblesses\nLe rapport.", brief: "Le brief.", contract: doubled, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] };
+  const base = { contract: doubled, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [] };
   const review = buildArbiterCorpus({ ...base, kind: "review" });
   assert.equal(review.includes("## Revue"), false, review);
   assert.equal(review.includes("BLOQUANTS"), false);
-  for (const kept of ["## Besoins", "## Critères d'acceptation", "## Spécifications", "## Lots", "## Corrections\n\n- rien.", "### Rapport\n## Faiblesses", "### Brief\nLe brief."]) {
+  for (const kept of ["### Contrat\n## Besoins", "## Critères d'acceptation", "## Spécifications", "## Lots", "## Corrections\n\n- rien.", "### Journal du lot depuis le dernier tour", "### Journal de la feature alpha"]) {
     assert.ok(review.includes(kept), `corpus de revue sans « ${kept} »`);
   }
   assert.equal(arbiterContractExcerpt(doubled, "review").includes("## Revue"), false, "les deux occurrences sont retirées");
 
   const cap = buildArbiterCorpus({ ...base, kind: "cap" });
   assert.ok(cap.includes("## Critères d'acceptation") && cap.includes("## Revue\n- STATUT : REFUSÉ") && cap.includes("## Corrections"), cap);
-  for (const dropped of ["## Besoins", "## Spécifications", "## Lots", "Le rapport.", "Le brief."]) {
+  for (const dropped of ["## Besoins", "## Spécifications", "## Lots"]) {
     assert.equal(cap.includes(dropped), false, `corpus du plafond avec « ${dropped} »`);
   }
-  assert.equal(buildArbiterCorpus({ ...base, kind: "failure" }).includes("Le rapport."), false);
   const specs = buildArbiterCorpus({ ...base, kind: "specs" });
-  assert.ok(specs.includes("## Critères d'acceptation") && specs.includes("## Spécifications") && specs.includes("## Lots") && specs.includes("Le rapport."));
+  assert.ok(specs.includes("## Critères d'acceptation") && specs.includes("## Spécifications") && specs.includes("## Lots"));
   assert.equal(specs.includes("## Besoins") || specs.includes("## Revue"), false, specs);
+
+  // Le rapport et le brief ouvrent la session du pilote : aucun tour, quel qu'en soit le genre, n'a de section pour eux.
+  const opening = buildPilotOpening({ report: "## Faiblesses\nLe rapport.", brief: "Le brief.", lotEntries: [], lotMax: 200 });
+  assert.ok(opening.includes("### Rapport\n## Faiblesses\nLe rapport.") && opening.includes("### Brief\nLe brief."));
+  for (const kind of ["review", "cap", "failure", "specs", "question", "ask"] as const) {
+    const corpus = buildArbiterCorpus({ ...base, kind });
+    assert.ok(corpus.startsWith("### Contrat\n"), kind);
+    assert.equal(corpus.includes("### Rapport") || corpus.includes("### Brief"), false, `tour « ${kind} » avec rapport ou brief`);
+  }
 });
 
 test("arbitre-exigeant/AC-7 : une question reçoit les seules sections du contrat de son étape — en /impl, ni `## Besoins` ni `## Revue` ; sans étape connue, le contrat entier", () => {
-  const base = { report: null, brief: null, contract: CONTRACT, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] };
+  const base = { contract: CONTRACT, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [] };
   const impl = buildArbiterCorpus({ ...base, kind: "question", phase: "impl" });
   assert.equal(impl.includes("## Besoins"), false, impl);
   assert.equal(impl.includes("## Revue"), false);

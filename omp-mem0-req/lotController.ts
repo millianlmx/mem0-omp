@@ -23,7 +23,7 @@ import { reportStateWriteFailure } from "./publish.ts";
 import { questionOf, lotArbiterJournalMax } from "./lot.ts";
 import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
-import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
+import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, itemQuestion, normalizeQuestion, pilotRecapLine, validateArbiterDecision } from "./arbiter.ts";
 import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
 import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
@@ -1351,11 +1351,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
-  /** Le récap de fin de lot (AC-15) : posté une fois, quand plus rien ne tourne. */
+  /**
+   * Le récap de fin de lot (AC-15) : posté une fois, quand plus rien ne tourne — la
+   * session du pilote se ferme avec lui, et la mesure de l'arbitrage (décisions par
+   * source, sessions, tours) suit le récap.
+   */
   function maybeRecap(lot: Lot): boolean {
     if (lot.features.length === 0 || lotTotals(lot).live > 0 || lot.recapAt !== null) return false;
     lot.recapAt = now();
-    notify(buildLotRecap(repo, lot));
+    closePilots();
+    const measure = pilotRecapLine({
+      entries: lot.features.flatMap((feature) => journalFor(stateDir, repoKey, feature.slug)),
+      turns: lot.features.flatMap((feature) => (feature.runs ?? []).filter((run) => run.step === "arbitre")),
+    });
+    notify(measure === null ? buildLotRecap(repo, lot) : `${buildLotRecap(repo, lot)}\n${measure}`);
     return true;
   }
 
@@ -1378,6 +1387,38 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** Les arbitrages VIVANTS de CE process : une marque `feature.arbitration` sans entrée ici est périmée. */
   const arbiting = new Map<string, AbortController>();
+  /**
+   * Les sessions du pilote de CE lot, vues du contrôleur — une par contexte
+   * (`pilotKey`). Le contrôleur en est le PROPRIÉTAIRE : le runner, partagé par tous
+   * les contrôleurs du service, peut tenir une session dont aucun contrôleur n'a plus
+   * l'ouverture ; une clé sans entrée ici est donc fermée chez le runner avant le
+   * tour, qui la rouvre. `opening` : le message d'ouverture (les citations s'y
+   * vérifient) ; `cursor` : le nombre d'entrées du journal du contexte déjà portées
+   * à la session (ouverture ou tours) — le tour suivant ne porte que la suite, sans
+   * horloge ; `compactions` : le compte vu au dernier tour — s'il a crû, la session
+   * a été résumée et le tour suivant reporte le journal entier ; `queue` : les tours
+   * de cette session, sériels.
+   */
+  type PilotState = { opening: string; cursor: number; compactions: number };
+  const pilots = new Map<string, PilotState>();
+  const pilotQueues = new Map<string, Promise<void>>();
+
+  /**
+   * La clé de la session du pilote : le lot ET le contexte (audit ou projet) de la
+   * feature — deux audits du même dépôt partagent un lot mais pas un rapport ni un
+   * brief, donc pas une session.
+   */
+  function pilotKey(lot: Lot, context: string): string {
+    return `${lot.id}:${context}`;
+  }
+
+  /** Ferme toutes les sessions du pilote de ce lot (fin de lot, arrêt) et oublie leurs ouvertures. */
+  function closePilots(): void {
+    for (const key of pilots.keys()) {
+      pilots.delete(key);
+      void deps.arbiter?.close?.(key).catch(() => undefined);
+    }
+  }
   const ARBITRABLE: ReadonlySet<string> = new Set(["ask", "question", "specs", "review", "cap", "failure"]);
   /** La question du journal pour une décision du plafond (relance ou abandon). */
   const CAP_JOURNAL_QUESTION = "plafond de la boucle revue ⇄ correction atteint — relancer, abandonner ou escalader ?";
@@ -1448,8 +1489,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * effacée et l'élément ré-arbitré ; une escalade dont l'élément n'est plus
    * courant tombe. Pose `feature.arbitration` — écrit avec la passe.
    */
-  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem }> } {
-    const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem }> };
+  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem; pilot: string }> } {
+    const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem; pilot: string }> };
     if (deps.arbiter === undefined) return out;
     const items = currentItems(lot).filter((item) => ARBITRABLE.has(item.kind));
     for (const feature of lot.features) {
@@ -1466,7 +1507,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature.escalation !== undefined || feature.arbitration !== undefined) continue;
       if (item.kind === "ask" && answeredAsks.has(askKey(item.slug, item.toolCallId ?? ""))) continue;
       feature.arbitration = { key: item.key, startedAt: now() };
-      out.planned.push({ slug: feature.slug, item });
+      out.planned.push({ slug: feature.slug, item, pilot: pilotKey(lot, feature.auditSession) });
       out.changed = true;
     }
     return out;
@@ -1480,6 +1521,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       phase: item.phase,
       question: item.kind === "ask" || item.kind === "question" ? (item.question ?? "") : null,
       options: item.options.map((option) => option.label),
+      ...(feature !== undefined && feature.worktree !== "" ? { worktree: feature.worktree } : {}),
     };
     if (item.kind === "cap") {
       return {
@@ -1535,7 +1577,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   async function decideItem(slug: string, item: RelayItem, signal: AbortSignal): Promise<ArbiterEffect | null> {
     const lot = read();
     const feature = lot ? lotFeature(lot, slug) : undefined;
-    if (!feature || feature.auditSession === undefined || deps.arbiter === undefined) return null;
+    if (!lot || !feature || feature.auditSession === undefined || deps.arbiter === undefined) return null;
     // La BORNE des relances de l'arbitre (par motif) passe AVANT tout appel : raccourci du
     // journal, garde de modèle, run. Atteinte, l'élément est escaladé sans session d'arbitre.
     if (item.kind === "cap" || item.kind === "failure") {
@@ -1547,6 +1589,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         };
       }
     }
+    const auditSession = feature.auditSession;
+    const key = pilotKey(lot, auditSession);
     const contract = readContractText(feature.worktree) || null;
     const arbiterItem = arbiterItemOf(item, feature, contract);
     const itemBlock = arbiterItemBlock(arbiterItem);
@@ -1564,14 +1608,22 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
     }
     const report = readReport(stateDir, feature.auditSession);
+    const lotEntries = journalOfContext(stateDir, repoKey, feature.auditSession);
+    // Sans ouverture connue ici, la session du runner (s'il en tient une) est
+    // orpheline : fermée, pour que ce tour la rouvre avec `seed()`.
+    const known = pilots.get(key);
+    if (known === undefined) await deps.arbiter.close?.(key).catch(() => undefined);
+    // Le tour ne porte que la suite du journal du lot depuis ce que la session a déjà
+    // reçu (l'ouverture porte tout : le premier tour n'ajoute rien) ; un curseur remis
+    // à 0 après une compaction fait reporter le journal entier.
+    const cursor = known?.cursor ?? lotEntries.length;
     const corpus = buildArbiterCorpus({
       kind: arbiterItem.kind,
       phase: arbiterItem.phase,
-      report,
-      brief: readBrief(stateDir, feature.auditSession),
       contract,
       slug,
-      lotEntries: journalOfContext(stateDir, repoKey, feature.auditSession),
+      lotEntries,
+      lotCursor: cursor,
       lotMax: arbiterJournalMax,
       featureEntries: entries,
       ...(deps.arbiterCorpusMax !== undefined ? { maxChars: deps.arbiterCorpusMax } : {}),
@@ -1589,14 +1641,34 @@ export function createLotController(deps: LotControllerDeps): LotController {
         : null;
     const result = await deps.arbiter({
       stateDir,
-      cwd: feature.worktree,
+      pilot: key,
+      cwd: deps.repoRoot,
+      // Demandé par le runner à l'OUVERTURE seulement : rapport, brief et journal du lot entier.
+      seed: () => {
+        const opening = buildPilotOpening({
+          report,
+          brief: readBrief(stateDir, auditSession),
+          lotEntries,
+          lotMax: arbiterJournalMax,
+          ...(deps.arbiterCorpusMax !== undefined ? { maxChars: deps.arbiterCorpusMax } : {}),
+        });
+        pilots.set(key, { opening, cursor: lotEntries.length, compactions: 0 });
+        return opening;
+      },
       prompt: buildArbiterPrompt(arbiterItem, corpus, review),
       model: started.model,
       fallback,
-      deadline: now() + ARBITER_DEADLINE_MS,
+      budgetMs: ARBITER_DEADLINE_MS,
       signal,
     });
-    // Le run d'arbitre est enregistré à sa fin, décision ou non (S-12).
+    // Tout le journal lu à la construction est désormais connu de la session. Une
+    // compaction survenue pendant le tour l'a résumée : le tour suivant reporte tout.
+    const opened = pilots.get(key);
+    if (opened !== undefined) {
+      const compactions = result.compactions ?? opened.compactions;
+      pilots.set(key, { opening: opened.opening, cursor: compactions > opened.compactions ? 0 : lotEntries.length, compactions });
+    }
+    // Le tour du pilote est enregistré à sa fin, décision ou non (S-12).
     {
       const after = read();
       const arbitrated = after ? lotFeature(after, slug) : undefined;
@@ -1614,13 +1686,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
         save(after);
       }
     }
-    // Un arbitre coupé au plafond de contexte n'a pas de décision exploitable :
-    // l'élément escalade par le chemin d'échec existant (S-5).
+    // Un tour coupé au plafond de contexte n'a pas de décision exploitable : l'élément
+    // escalade par le chemin d'échec existant (S-5) ; la session est rouverte au tour suivant.
     if (typeof result.contextExceeded === "number") {
+      pilots.delete(key);
       return { kind: "escalate", reason: `contexte dépassé (${result.contextExceeded} tokens)` };
     }
     return validateArbiterDecision(arbiterItem, result.decision, {
-      corpus: itemBlock === null ? corpus : `${itemBlock}\n\n${corpus}`,
+      corpus: [itemBlock, corpus, opened?.opening ?? ""].filter((part) => part !== null && part !== "").join("\n\n"),
       report,
       worktree: feature.worktree,
       contract,
@@ -1701,23 +1774,36 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (refusal !== null) escalateItem(slug, item, `décision d'arbitre refusée : ${refusal}`);
   }
 
-  async function arbitrate(slug: string, item: RelayItem): Promise<void> {
+  /**
+   * Les arbitrages d'une MÊME session sont sériels : la décision d'un élément est
+   * appliquée — donc au journal — avant que le tour de l'élément suivant ne soit
+   * construit, et le pilote voit dans « journal du lot depuis le dernier tour » ce
+   * qu'il vient de décider et ce que l'utilisateur a tranché entre-temps. Deux
+   * sessions (deux contextes) avancent en parallèle : un tour lent n'en retient
+   * qu'une. La marque `arbiting` est posée à la mise en file : une marque sans entrée
+   * serait tenue pour périmée.
+   */
+  function arbitrate(slug: string, item: RelayItem, pilot: string): void {
     const abort = new AbortController();
     arbiting.set(slug, abort);
-    try {
-      let effect: ArbiterEffect | null;
+    const turn = (pilotQueues.get(pilot) ?? Promise.resolve()).then(async () => {
       try {
-        effect = await decideItem(slug, item, abort.signal);
+        let effect: ArbiterEffect | null;
+        try {
+          effect = await decideItem(slug, item, abort.signal);
+        } catch {
+          effect = { kind: "escalate", reason: "arbitre sans décision" };
+        }
+        if (effect !== null) await applyEffect(slug, item, effect);
       } catch {
-        effect = { kind: "escalate", reason: "arbitre sans décision" };
+        /* l'effet a échoué : la marque tombe, la passe suivante ré-arbitre */
+      } finally {
+        arbiting.delete(slug);
+        clearArbitration(slug, item.key);
+        if (pilotQueues.get(pilot) === turn) pilotQueues.delete(pilot);
       }
-      if (effect !== null) await applyEffect(slug, item, effect);
-    } catch {
-      /* l'effet a échoué : la marque tombe, la passe suivante ré-arbitre */
-    } finally {
-      arbiting.delete(slug);
-      clearArbitration(slug, item.key);
-    }
+    });
+    pilotQueues.set(pilot, turn);
   }
 
   /** Une passe : la phase A (git) attend, la phase B lit le magasin UNE fois puis n'attend plus. */
@@ -2057,7 +2143,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature) startRun(lot, feature, launch);
     }
     for (const feature of releases) void finishRelease(feature);
-    for (const planned of arbitrations.planned) void arbitrate(planned.slug, planned.item);
+    for (const planned of arbitrations.planned) arbitrate(planned.slug, planned.item, planned.pilot);
     for (const feature of dueQuota) void relaunchDueQuota(feature);
     // Dernier acte de la passe, APRÈS l'écriture : un `await` (`git`) qui ne décide
     // plus rien — l'arbre abandonné n'appartient à aucune feature du lot, et la
@@ -2656,6 +2742,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   }
 
   function stop(): void {
+    closePilots();
     stopLoop?.();
     stopLoop = null;
     stopPump?.();

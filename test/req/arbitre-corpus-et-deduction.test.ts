@@ -17,10 +17,12 @@ import * as path from "node:path";
 import reqExtension, {
   ARBITER_TOOLS,
   CONTRACT_PATH,
+  TURN_REMINDER,
   appendJournal,
   arbiterCaptureOf,
   buildArbiterCorpus,
   buildArbiterPrompt,
+  buildPilotOpening,
   collectReviewEvidence,
   contractAcIds,
   createArbiterRunner,
@@ -410,8 +412,13 @@ function entry(slug: string, context: string | null, n: number, over: Partial<Jo
   return { at: T0 + n, slug, phase: "req", kind: "question", question: `Q${n}`, answer: `R${n}`, source: "contexte", context, ...over };
 }
 
+/** Le corpus d'un TOUR : contrat, journal du lot à partir de l'index `lotCursor` (0 = toutes les entrées), journal de la feature. */
 const corpusOf = (over: Partial<Parameters<typeof buildArbiterCorpus>[0]> = {}) =>
-  buildArbiterCorpus({ kind: "question", phase: "req", report: null, brief: null, contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [], ...over });
+  buildArbiterCorpus({ kind: "question", phase: "req", contract: null, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [], ...over });
+
+/** L'OUVERTURE de la session du pilote : directive, rapport, brief, journal du lot entier. */
+const openingOf = (over: Partial<Parameters<typeof buildPilotOpening>[0]> = {}) =>
+  buildPilotOpening({ report: null, brief: null, lotEntries: [], lotMax: 200, ...over });
 
 const journalEntries = (count: number, slug: string, context: string, from = 1): JournalEntry[] =>
   Array.from({ length: count }, (_, i) => ({ version: 1 as const, ...entry(slug, context, from + i) }));
@@ -427,51 +434,82 @@ function sectionOf(corpus: string, title: string): string {
 
 const entryNumbers = (section: string) => [...section.matchAll(/Q(\d+) →/g)].map((m) => Number(m[1]));
 
-test("arbitre-corpus-et-deduction/AC-5 : le corpus de F porte le rapport, le contrat, le journal du lot (entrée de la sœur G avec source et réponse), le journal de F, et aucune entrée d'un autre contexte", () => {
+test("arbitre-corpus-et-deduction/AC-5 : l'ouverture du pilote porte le rapport, le brief et le journal du lot (entrée de la sœur G avec source et réponse) ; le tour de F porte le contrat, le journal du lot depuis le dernier tour et le journal de F, sans entrée d'un autre contexte", () => {
   const stateDir = tmpdir("arbitre-corpus-journal-");
   const repoKey = "repo-key";
   appendJournal(stateDir, repoKey, entry("alpha", CTX, 1));
   appendJournal(stateDir, repoKey, entry("gamma", CTX, 2, { phase: "specs", source: "arbitrage", question: "Quel format ?", answer: "JSON" }));
   appendJournal(stateDir, repoKey, entry("hotel", OTHER_CTX, 3, { question: "Question de H", answer: "Réponse de H" }));
   appendJournal(stateDir, repoKey, entry("alpha", CTX, 4));
+  const lotEntries = journalOfContext(stateDir, repoKey, CTX);
 
-  const corpus = buildArbiterCorpus({
-    kind: "question",
-    phase: "req",
-    report: "## Faiblesses\nLe rapport de l'audit.",
-    brief: "Le brief.",
-    contract: "## Besoins\nLe contrat de la feature.",
-    slug: "alpha",
-    lotEntries: journalOfContext(stateDir, repoKey, CTX),
-    lotMax: 200,
-    featureEntries: journalFor(stateDir, repoKey, "alpha"),
-  });
-  assert.ok(sectionOf(corpus, "Rapport").includes("Le rapport de l'audit."));
-  assert.ok(sectionOf(corpus, "Brief").includes("Le brief."));
-  assert.ok(sectionOf(corpus, "Contrat").includes("Le contrat de la feature."));
-  const lot = sectionOf(corpus, "Journal du lot");
+  const opening = buildPilotOpening({ report: "## Faiblesses\nLe rapport de l'audit.", brief: "Le brief.", lotEntries, lotMax: 200 });
+  assert.ok(opening.startsWith("Tu es le pilote d'un LOT de features"), "l'ouverture commence par la directive");
+  assert.ok(opening.includes("\n\n## Corpus du lot\n\n### Rapport\n"), "le corpus du lot suit la directive");
+  assert.ok(sectionOf(opening, "Rapport").includes("Le rapport de l'audit."));
+  assert.ok(sectionOf(opening, "Brief").includes("Le brief."));
+  const lot = sectionOf(opening, "Journal du lot");
   assert.ok(lot.includes("- [gamma /specs] Q : Quel format ? → R : JSON (source : arbitrage)"), lot);
   assert.deepEqual(
     lot.split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
     ["alpha", "gamma", "alpha"],
     "le journal du lot : les trois entrées du contexte, chronologiques",
   );
+  assert.equal(opening.includes("### Contrat"), false, "le contrat d'une feature n'est pas à l'ouverture");
+
+  // Le tour : contrat, journal du lot DEPUIS LE DERNIER TOUR (ici : la session a déjà reçu Q1, curseur 1), journal de la feature.
+  const corpus = buildArbiterCorpus({
+    kind: "question",
+    phase: "req",
+    contract: "## Besoins\nLe contrat de la feature.",
+    slug: "alpha",
+    lotEntries,
+    lotCursor: 1,
+    lotMax: 200,
+    featureEntries: journalFor(stateDir, repoKey, "alpha"),
+  });
+  assert.ok(sectionOf(corpus, "Contrat").includes("Le contrat de la feature."));
+  assert.ok(sectionOf(corpus, "Journal du lot depuis le dernier tour").includes("- [gamma /specs] Q : Quel format ? → R : JSON (source : arbitrage)"));
+  assert.deepEqual(
+    sectionOf(corpus, "Journal du lot depuis le dernier tour").split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
+    ["gamma", "alpha"],
+    "seules les entrées à partir du curseur (Q1 exclue)",
+  );
   assert.deepEqual(entryNumbers(sectionOf(corpus, "Journal de la feature alpha")), [1, 4]);
-  assert.equal(corpus.includes("Question de H"), false, "aucune entrée d'un autre contexte");
-  assert.equal(corpus.includes("Réponse de H"), false);
+  for (const text of [opening, corpus]) {
+    assert.equal(text.includes("Question de H"), false, "aucune entrée d'un autre contexte");
+    assert.equal(text.includes("Réponse de H"), false);
+  }
+  for (const absent of ["### Rapport", "### Brief", "Le rapport de l'audit.", "Le brief."]) {
+    assert.equal(corpus.includes(absent), false, `le tour ne répète pas « ${absent} »`);
+  }
+
+  // Premier tour : la session a tout reçu à l'ouverture (curseur = taille) ; tour suivant sans décision : idem ; un curseur au-delà n'invente rien.
+  assert.ok(corpusOf({ lotEntries, lotCursor: lotEntries.length }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
+  assert.ok(corpusOf({ lotEntries, lotCursor: lotEntries.length + 5 }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
+  assert.deepEqual(
+    sectionOf(corpusOf({ lotEntries, lotCursor: 0 }), "Journal du lot depuis le dernier tour").split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
+    ["alpha", "gamma", "alpha"],
+    "0 = toutes",
+  );
 });
 
-test("arbitre-corpus-et-deduction/AC-6 : le journal du lot garde exactement les N plus récentes entrées (200 par défaut, réglable)", () => {
+test("arbitre-corpus-et-deduction/AC-6 : le journal du lot garde exactement les N plus récentes entrées (200 par défaut, réglable), à l'ouverture comme au tour", () => {
   const entries = journalEntries(250, "gamma", CTX);
-  const lotDefault = sectionOf(corpusOf({ lotEntries: entries, lotMax: lotArbiterJournalMax({}) }), "Journal du lot");
   assert.equal(lotArbiterJournalMax({}), 200);
-  assert.deepEqual(entryNumbers(lotDefault), Array.from({ length: 200 }, (_, i) => 51 + i), "les 200 plus récentes");
-  assert.ok(lotDefault.includes("- (50 décisions plus anciennes omises)"), lotDefault.slice(0, 120));
-
   assert.equal(lotArbiterJournalMax({ MEM0_PIPELINE_ARBITER_JOURNAL: "10" }), 10);
-  const lotTen = sectionOf(corpusOf({ lotEntries: entries, lotMax: lotArbiterJournalMax({ MEM0_PIPELINE_ARBITER_JOURNAL: "10" }) }), "Journal du lot");
-  assert.deepEqual(entryNumbers(lotTen), [241, 242, 243, 244, 245, 246, 247, 248, 249, 250], "les 10 plus récentes");
-  assert.ok(lotTen.includes("- (240 décisions plus anciennes omises)"));
+  const lotOf = (text: string) => sectionOf(text, text.includes("### Journal du lot depuis le dernier tour") ? "Journal du lot depuis le dernier tour" : "Journal du lot");
+  for (const build of [
+    (lotMax: number) => openingOf({ lotEntries: entries, lotMax }),
+    (lotMax: number) => corpusOf({ lotEntries: entries, lotMax }),
+  ]) {
+    const lotDefault = lotOf(build(lotArbiterJournalMax({})));
+    assert.deepEqual(entryNumbers(lotDefault), Array.from({ length: 200 }, (_, i) => 51 + i), "les 200 plus récentes");
+    assert.ok(lotDefault.includes("- (50 décisions plus anciennes omises)"), lotDefault.slice(0, 120));
+    const lotTen = lotOf(build(lotArbiterJournalMax({ MEM0_PIPELINE_ARBITER_JOURNAL: "10" })));
+    assert.deepEqual(entryNumbers(lotTen), [241, 242, 243, 244, 245, 246, 247, 248, 249, 250], "les 10 plus récentes");
+    assert.ok(lotTen.includes("- (240 décisions plus anciennes omises)"));
+  }
   assert.equal(lotArbiterJournalMax({ MEM0_PIPELINE_ARBITER_JOURNAL: "0" }), 1, "borné à 1");
   assert.equal(lotArbiterJournalMax({ MEM0_PIPELINE_ARBITER_JOURNAL: "abc" }), 200, "illisible : défaut");
 });
@@ -482,48 +520,78 @@ test("arbitre-corpus-et-deduction/AC-7 : le journal de la feature garde exacteme
   assert.ok(section.includes("- (30 décisions plus anciennes omises)"));
 });
 
-test("arbitre-corpus-et-deduction/AC-8 : au-delà de la borne, le corpus est tronqué et l'annonce — journal du lot d'abord, puis rapport ; contrat et journal de la feature intacts", () => {
-  const contract = "## Besoins\nB-1 : le contrat de la feature.";
-  const featureEntries = journalEntries(50, "alpha", CTX, 1000);
+test("arbitre-corpus-et-deduction/AC-8 : au-delà de la borne, l'ouverture est tronquée et l'annonce — journal du lot d'abord, puis rapport, jamais le brief — et le tour aussi — journal du lot d'abord, puis contrat, jamais le journal de la feature", () => {
   const lotEntries = journalEntries(40, "gamma", CTX);
+
+  // L'OUVERTURE : journal du lot, puis fin du rapport ; le brief est intact.
+  const brief = "## But\nLe brief est court.";
   const report = `## Faiblesses\n${"Le rapport est long. ".repeat(200)}FIN-DU-RAPPORT`;
-  const whole = corpusOf({ report, contract, lotEntries, featureEntries });
+  const wholeOpening = openingOf({ report, brief, lotEntries });
+  assert.equal(wholeOpening.includes("corpus tronqué"), false);
 
   // (a) assez de place pour le rapport entier : seules les plus anciennes entrées du lot partent.
-  const limitA = whole.length - 600;
-  const a = corpusOf({ report, contract, lotEntries, featureEntries, maxChars: limitA });
+  const limitA = wholeOpening.length - 600;
+  const a = openingOf({ report, brief, lotEntries, maxChars: limitA });
   assert.ok(a.length <= limitA, `${a.length} > ${limitA}`);
-  assert.ok(a.startsWith(`(corpus tronqué à ${limitA} caractères — sections coupées : journal du lot)`), a.slice(0, 120));
+  assert.ok(a.includes(`## Corpus du lot\n\n(corpus tronqué à ${limitA} caractères — sections coupées : journal du lot)\n\n### Rapport`), a.slice(0, 120));
   assert.ok(a.includes("FIN-DU-RAPPORT"), "le rapport est intact");
   const keptLot = entryNumbers(sectionOf(a, "Journal du lot"));
   assert.ok(keptLot.length > 0 && keptLot.length < 40, "des entrées du lot sont retirées, pas toutes");
   assert.deepEqual(keptLot, Array.from({ length: keptLot.length }, (_, i) => 41 - keptLot.length + i), "ce sont les plus anciennes qui partent");
 
   // (b) borne serrée : plus aucune entrée du lot, la fin du rapport est coupée.
-  const limitB = whole.length - 40 * 120 - 400;
-  const b = corpusOf({ report, contract, lotEntries, featureEntries, maxChars: limitB });
+  const limitB = wholeOpening.length - 40 * 120 - 400;
+  const b = openingOf({ report, brief, lotEntries, maxChars: limitB });
   assert.ok(b.length <= limitB, `${b.length} > ${limitB}`);
-  assert.ok(b.startsWith(`(corpus tronqué à ${limitB} caractères — sections coupées : journal du lot, rapport)`), b.slice(0, 140));
+  assert.ok(b.includes(`(corpus tronqué à ${limitB} caractères — sections coupées : journal du lot, rapport)`), b.slice(0, 140));
   assert.deepEqual(entryNumbers(sectionOf(b, "Journal du lot")), []);
   assert.ok(sectionOf(b, "Rapport").endsWith("[… fin du rapport coupée]"));
   assert.equal(b.includes("FIN-DU-RAPPORT"), false);
   for (const text of [a, b]) {
-    assert.ok(sectionOf(text, "Contrat").endsWith(contract), "le contrat est intact");
+    assert.ok(text.startsWith("Tu es le pilote d'un LOT de features"), "la directive est intacte");
+    assert.equal(sectionOf(text, "Brief"), `### Brief\n${brief}`, "le brief est intact");
+  }
+
+  // Le TOUR : journal du lot, puis fin du contrat ; le journal de la feature est intact.
+  const featureEntries = journalEntries(50, "alpha", CTX, 1000);
+  const contract = `## Besoins\n${"B-1 : le contrat est long. ".repeat(200)}FIN-DU-CONTRAT`;
+  const wholeTurn = corpusOf({ contract, lotEntries, featureEntries });
+  assert.equal(wholeTurn.includes("corpus tronqué"), false);
+
+  const limitC = wholeTurn.length - 600;
+  const c = corpusOf({ contract, lotEntries, featureEntries, maxChars: limitC });
+  assert.ok(c.length <= limitC, `${c.length} > ${limitC}`);
+  assert.ok(c.startsWith(`(corpus tronqué à ${limitC} caractères — sections coupées : journal du lot)`), c.slice(0, 120));
+  assert.ok(c.includes("FIN-DU-CONTRAT"), "le contrat est intact");
+  const keptTurn = entryNumbers(sectionOf(c, "Journal du lot depuis le dernier tour"));
+  assert.ok(keptTurn.length > 0 && keptTurn.length < 40, "des entrées du lot sont retirées, pas toutes");
+  assert.deepEqual(keptTurn, Array.from({ length: keptTurn.length }, (_, i) => 41 - keptTurn.length + i), "ce sont les plus anciennes qui partent");
+
+  const limitD = wholeTurn.length - 40 * 120 - 400;
+  const d = corpusOf({ contract, lotEntries, featureEntries, maxChars: limitD });
+  assert.ok(d.length <= limitD, `${d.length} > ${limitD}`);
+  assert.ok(d.startsWith(`(corpus tronqué à ${limitD} caractères — sections coupées : journal du lot, contrat)`), d.slice(0, 140));
+  assert.deepEqual(entryNumbers(sectionOf(d, "Journal du lot depuis le dernier tour")), []);
+  assert.ok(sectionOf(d, "Contrat").endsWith("[… fin du contrat coupée]"), sectionOf(d, "Contrat").slice(-80));
+  assert.equal(d.includes("FIN-DU-CONTRAT"), false);
+  for (const text of [c, d]) {
     assert.deepEqual(entryNumbers(sectionOf(text, "Journal de la feature alpha")), Array.from({ length: 50 }, (_, i) => 1000 + i), "les 50 entrées de la feature sont intactes");
   }
 });
 
-test("arbitre-corpus-et-deduction/AC-9 : sans rapport persisté, le corpus affiche « (aucun rapport) » et la réponse citée du contrat est acceptée", async () => {
+test("arbitre-corpus-et-deduction/AC-9 : sans rapport persisté, l'ouverture du pilote affiche « (aucun rapport) », le tour porte le contrat, et la réponse citée du contrat est acceptée", async () => {
   const repoRoot = emptyGitRepo("arbitre-ac9-repo-");
   const stateDir = path.join(tmpdir("arbitre-ac9-state-"), "pipeline");
   const prompts: string[] = [];
+  const openings: string[] = [];
   const fact = "Le format de sortie est YAML.";
   const controller = createLotController({
     stateDir,
     repoRoot,
     run: pendingRunner,
-    arbiter: async ({ prompt }) => {
+    arbiter: async ({ prompt, seed }) => {
       prompts.push(prompt);
+      openings.push(seed());
       return {
         decision: { decision: "answer", answer: "YAML", source: "contexte", citations: [fact], reason: "le contrat le dit" },
         sessionId: null,
@@ -561,8 +629,9 @@ test("arbitre-corpus-et-deduction/AC-9 : sans rapport persisté, le corpus affic
   for (let i = 0; i < 600 && journalFor(stateDir, repoKey, "alpha").length === 0; i++) await new Promise((r) => setImmediate(r));
 
   assert.equal(prompts.length, 1);
-  assert.ok(prompts[0]!.includes("### Rapport\n(aucun rapport)"), prompts[0]);
-  assert.ok(prompts[0]!.includes(fact), "le contrat est au corpus");
+  assert.ok(openings[0]!.includes("### Rapport\n(aucun rapport)"), openings[0]);
+  assert.equal(prompts[0]!.includes("### Rapport"), false, "le tour ne porte pas le rapport");
+  assert.ok(sectionOf(prompts[0]!, "Contrat").includes(fact), "le contrat est au corpus du tour");
   assert.deepEqual(
     journalFor(stateDir, repoKey, "alpha").map((e) => [e.question, e.answer, e.source]),
     [["Quel format de sortie ?", "YAML", "contexte"]],
@@ -706,21 +775,26 @@ test("arbitre-corpus-et-deduction/AC-10 : une session d'arbitre n'a que read, gr
   await host.disposeAll();
 });
 
-test("arbitre-corpus-et-deduction/AC-11 : le cwd de la session d'arbitre est le worktree de la feature", async () => {
+test("arbitre-corpus-et-deduction/AC-11 : UNE session de pilote par lot, ouverte sur le dépôt principal ; le premier tour porte la directive et l'élément dit le worktree de sa feature, le tour suivant réutilise la session sans directive", async () => {
   const opens: Array<{ cwd: string; purpose: string }> = [];
+  const prompts: string[] = [];
   const host = {
     open: async (o: { cwd: string; purpose: string }) => {
       opens.push({ cwd: o.cwd, purpose: o.purpose });
       return {
-        id: "arb-1",
+        id: `arb-${opens.length}`,
         cwd: o.cwd,
         purpose: o.purpose,
-        sessionFile: path.join(o.cwd, "arb-1.jsonl"),
+        sessionFile: path.join(o.cwd, `arb-${opens.length}.jsonl`),
         dispose: async () => {},
+        disposed: Promise.withResolvers<void>().promise,
         session: {
           messages: [],
           subscribe: () => () => {},
-          prompt: async () => true,
+          prompt: async (text: string) => {
+            prompts.push(text);
+            return true;
+          },
           waitForIdle: async () => {},
           abort: async () => {},
         },
@@ -746,24 +820,39 @@ test("arbitre-corpus-et-deduction/AC-11 : le cwd de la session d'arbitre est le 
   });
   const repoKey = lotRepoKey(repoRoot);
   assert.equal(await controller.add({ name: "alpha", description: "Faire A.", deps: [], auditSession: CTX }), null);
+  assert.equal(await controller.add({ name: "beta", description: "Faire B.", deps: [], auditSession: CTX }), null);
   await controller.launch();
   const lot = readLot(stateDir, repoKey)!;
-  const feature = lotFeature(lot, "alpha")!;
-  feature.state = "waiting";
-  feature.waitKind = "answer";
-  feature.phase = "req";
-  feature.waitPrompt = "Quel format de sortie ?";
-  feature.sessionFile = "/x/run-session.jsonl";
-  feature.lastRunSessionFile = "/x/run-session.jsonl";
+  const worktrees: Record<string, string> = {};
+  for (const slug of ["alpha", "beta"]) {
+    const feature = lotFeature(lot, slug)!;
+    worktrees[slug] = feature.worktree;
+    feature.state = "waiting";
+    feature.waitKind = "answer";
+    feature.phase = "req";
+    feature.waitPrompt = `Quel format de sortie pour ${slug} ?`;
+    feature.sessionFile = "/x/run-session.jsonl";
+    feature.lastRunSessionFile = "/x/run-session.jsonl";
+  }
   writeLot(stateDir, lot);
 
   await controller.tick();
-  for (let i = 0; i < 600 && opens.length === 0; i++) await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 600 && prompts.length < 2; i++) await new Promise((r) => setImmediate(r));
 
-  assert.equal(opens.length, 1, "l'arbitre est lancé");
-  assert.equal(opens[0]!.purpose, "arbiter");
-  assert.equal(opens[0]!.cwd, feature.worktree);
-  assert.notEqual(opens[0]!.cwd, repoRoot, "pas le dépôt principal");
+  assert.equal(prompts.length, 2, "deux éléments arbitrés");
+  assert.deepEqual(opens, [{ cwd: repoRoot, purpose: "arbiter" }], "une seule session, sur le dépôt principal");
+  assert.notEqual(worktrees.alpha, repoRoot);
+  assert.ok(prompts[0]!.startsWith("Tu es le pilote d'un LOT de features"), "le premier tour ouvre par la directive");
+  assert.ok(prompts[0]!.includes("\n\n## Élément à arbitrer\n"), "l'élément suit l'ouverture");
+  assert.equal(prompts[1]!.includes("Tu es le pilote d'un LOT"), false, "le tour suivant ne répète pas la directive");
+  assert.ok(prompts[1]!.startsWith("## Élément à arbitrer\n"));
+  const slugsInOrder = prompts.map((text) => text.match(/\nfeature : (\w+)\n/)![1]!);
+  assert.deepEqual([...slugsInOrder].sort(), ["alpha", "beta"]);
+  for (const [index, slug] of slugsInOrder.entries()) {
+    assert.ok(prompts[index]!.includes(`worktree : ${worktrees[slug]} (les \`references\` sont relatives à ce dossier)`), prompts[index]!.slice(0, 400));
+    assert.ok(prompts[index]!.includes(`question : Quel format de sortie pour ${slug} ?`));
+  }
+  assert.equal(lotFeature(readLot(stateDir, repoKey)!, "alpha")!.escalation?.reason.includes("sans décision") ?? false, true, "sans décision, l'élément est escaladé ; la session reste ouverte");
 });
 
 // ---------------------------------------------------------------------------
@@ -870,22 +959,33 @@ test("arbitre-corpus-et-deduction/AC-15 : une citation du corpus aux espaces rep
   assert.deepEqual(invented, { kind: "escalate", reason: "décision d'arbitre invalide : aucune justification vérifiée — citation absente du corpus « phrase inventée »" });
 });
 
-test("arbitre-corpus-et-deduction/AC-16 : le prompt de l'arbitre autorise la lecture seule du dépôt, réserve l'escalade aux choix de produit et exige de trancher le technique", () => {
+test("arbitre-corpus-et-deduction/AC-16 : la directive du pilote (à l'ouverture, pas aux tours) autorise la lecture seule du dépôt principal, réserve l'escalade aux choix de produit et exige de trancher le technique ; chaque tour se clôt par le rappel", () => {
+  const opening = openingOf();
+  for (const piece of [
+    "Tu es le pilote d'un LOT de features",
+    "LECTURE SEULE",
+    "nouveau besoin non couvert",
+    "changement de périmètre",
+    "texte visible par l'utilisateur sans convention dans le dépôt",
+    "tout choix TECHNIQUE se tranche",
+    "ton répertoire courant est le dépôt principal",
+    "Cohérence :",
+    "EXACTEMENT UNE FOIS PAR ÉLÉMENT",
+  ]) {
+    assert.ok(opening.includes(piece), piece);
+  }
+  for (const gone of ["Tu ne lis pas le dépôt", "Le doute vaut escalade", "arbitre d'une feature", "ton répertoire courant est le worktree de la feature"]) {
+    assert.equal(opening.includes(gone), false, gone);
+  }
   for (const item of [QUESTION, MILESTONE]) {
     const prompt = buildArbiterPrompt(item, corpusOf());
-    for (const piece of [
-      "LECTURE SEULE",
-      "nouveau besoin non couvert",
-      "changement de périmètre",
-      "texte visible par l'utilisateur sans convention dans le dépôt",
-      "tout choix TECHNIQUE se tranche",
-      "ton répertoire courant est le worktree de la feature",
-    ]) {
-      assert.ok(prompt.includes(piece), piece);
+    assert.ok(prompt.startsWith("## Élément à arbitrer\n"), "le tour commence par l'élément");
+    for (const gone of ["Tu es le pilote", "LECTURE SEULE", "tout choix TECHNIQUE se tranche", "ton répertoire courant"]) {
+      assert.equal(prompt.includes(gone), false, `la directive n'est pas répétée au tour : ${gone}`);
     }
-    for (const gone of ["Tu ne lis pas le dépôt", "Le doute vaut escalade"]) {
-      assert.equal(prompt.includes(gone), false, gone);
-    }
+    assert.ok(prompt.includes("\n\n## Corpus de l'élément\n\n"));
+    assert.ok(prompt.endsWith(`\n\n${TURN_REMINDER}`), prompt.slice(-200));
+    assert.ok(TURN_REMINDER.startsWith("Rappel des règles :") && TURN_REMINDER.endsWith("Rends ta décision pour CET élément par un appel unique à `arbiter_decide`."));
   }
 });
 
@@ -921,6 +1021,7 @@ function mkArbiterWorld(decide: (prompt: string) => ArbiterDecision | null) {
   const repoRoot = emptyGitRepo("arbitre-w-repo-");
   const stateDir = path.join(tmpdir("arbitre-w-state-"), "pipeline");
   const prompts: string[] = [];
+  const openings: string[] = [];
   const runs: string[] = [];
   const controller = createLotController({
     stateDir,
@@ -929,8 +1030,9 @@ function mkArbiterWorld(decide: (prompt: string) => ArbiterDecision | null) {
       runs.push(input.spec.phase);
       return pendingRunner(input);
     },
-    arbiter: async ({ prompt }) => {
+    arbiter: async ({ prompt, seed }) => {
       prompts.push(prompt);
+      openings.push(seed());
       return { decision: decide(prompt), sessionId: null, sessionFile: null, startedAt: T0, endedAt: T0 };
     },
     runGit: gitRunner,
@@ -964,7 +1066,7 @@ function mkArbiterWorld(decide: (prompt: string) => ArbiterDecision | null) {
     feature.lastRunSessionFile = "/x/run-session.jsonl";
     writeLot(stateDir, lot);
   };
-  return { controller, stateDir, repoKey, prompts, runs, read, until, addAlpha, park };
+  return { controller, stateDir, repoKey, prompts, openings, runs, read, until, addAlpha, park };
 }
 
 test("arbitre-corpus-et-deduction/AC-21 : la justification vérifiée (motif, citations, références, rubriques) est inscrite au journal, y compris à l'approbation d'un jalon ; les anciennes lignes restent lues", async () => {
@@ -1019,7 +1121,8 @@ test("arbitre-corpus-et-deduction/AC-22 : une escalade de l'arbitre est honorée
   world.park("answer", "req", "Quel format de sortie ?");
   await world.controller.tick();
   await world.until(() => lotFeature(world.read(), "alpha")!.escalation !== undefined);
-  assert.ok(world.prompts[0]!.includes(FORMAT_FACT), "le corpus contenait la réponse");
+  assert.ok(world.openings[0]!.includes(`### Brief\n## But\n${FORMAT_FACT}`), "l'ouverture du pilote portait la réponse (brief)");
+  assert.equal(world.prompts[0]!.includes(FORMAT_FACT), false, "le tour ne répète pas le brief");
   assert.equal(lotFeature(world.read(), "alpha")!.escalation!.reason, motif);
   assert.deepEqual(journalFor(world.stateDir, world.repoKey, "alpha"), [], "aucune entrée de journal");
   assert.equal(world.runs.length, 1, "aucune réponse transmise : aucun run relancé");
@@ -1166,10 +1269,11 @@ test("arbitre-corpus-et-deduction/AC-20 : « specs validées » exige que chaque
   assert.equal(validateArbiterDecision(MILESTONE, { ...approve, citations: [FORMAT_FACT] }, groundOf(root, { contract: covered })).kind, "approve");
   assert.deepEqual(validateArbiterDecision(MILESTONE, { decision: "escalate", reason: "incohérent avec le rapport" }, groundOf(root, { contract: covered })), { kind: "escalate", reason: "incohérent avec le rapport" });
 
-  // Le prompt du jalon porte le rapport (corpus) et exige la cohérence avec lui.
-  const corpus = buildArbiterCorpus({ kind: "specs", report: "## Faiblesses\nLe parseur est fragile.", brief: null, contract: covered, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
-  const prompt = buildArbiterPrompt(MILESTONE, corpus);
-  assert.ok(prompt.includes("### Rapport\n## Faiblesses\nLe parseur est fragile."));
+  // L'ouverture du pilote porte le rapport ; le tour du jalon exige la cohérence avec lui.
+  const opening = buildPilotOpening({ report: "## Faiblesses\nLe parseur est fragile.", brief: null, lotEntries: [], lotMax: 200 });
+  assert.ok(opening.includes("### Rapport\n## Faiblesses\nLe parseur est fragile."));
+  const prompt = buildArbiterPrompt(MILESTONE, corpusOf({ kind: "specs", phase: "specs", contract: covered }));
+  assert.equal(prompt.includes("Le parseur est fragile."), false, "le tour ne répète pas le rapport");
   assert.ok(prompt.includes("cohérentes avec le rapport"));
   assert.ok(prompt.includes("chaque AC-<n> du contrat est référencé par une spécification S-<n>"));
 });

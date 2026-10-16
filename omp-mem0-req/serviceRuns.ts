@@ -171,6 +171,17 @@ function isNativeCompactionEnd(event: unknown): boolean {
 }
 
 
+/** La garde de contexte d'une session hébergée : ce que la boucle de prompt lui demande. */
+type ContextGuard = {
+  observe: (event: unknown) => void;
+  takeSoft: () => number | null;
+  /** Compacte la session AU REPOS ; `true` si la compaction a abouti (comptée), `false` si elle a échoué (journalisée). */
+  compact: (measure: number) => Promise<boolean>;
+  /** La mesure du plafond quand le dernier tour forcé a dépassé sa borne, sinon `null`. */
+  overrun: () => number | null;
+  lastTurn: () => number | null;
+};
+
 /**
  * La garde de contexte d'un run hébergé (S-2, S-4). Le franchissement de SOFT ne
  * coupe plus le tour en vol : il est NOTÉ, et la compaction part quand la boucle de
@@ -188,15 +199,7 @@ function createContextGuard(options: {
   label: string;
   log: (line: string) => void;
   now: () => number;
-}): {
-  observe: (event: unknown) => void;
-  takeSoft: () => number | null;
-  /** Compacte la session AU REPOS ; `true` si la compaction a abouti (comptée), `false` si elle a échoué (journalisée). */
-  compact: (measure: number) => Promise<boolean>;
-  /** La mesure du plafond quand le dernier tour forcé a dépassé sa borne, sinon `null`. */
-  overrun: () => number | null;
-  lastTurn: () => number | null;
-} {
+}): ContextGuard {
   let softPending: number | null = null;
   let lastTurn: { measure: number; at: number } | null = null;
   return {
@@ -533,47 +536,91 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
 }
 
 
-// --- le run d'ARBITRE (S-9) --------------------------------------------------
+// --- le PILOTE DE LOT (S-9) ---------------------------------------------------
 
-/** Ce que le contrôleur demande à l'arbitre : un prompt, un dossier, les modèles du groupe, une borne. */
+/**
+ * Ce que le contrôleur demande au pilote : UN tour dans la session du lot `pilot`
+ * — ouverte au premier tour avec `seed()`, puis GARDÉE entre les tours — et la borne
+ * d'un tour, comptée à son départ (pas à sa mise en file : les tours d'un même lot
+ * sont sériels).
+ */
 export type ArbiterRunInput = {
   stateDir: string;
+  /** La clé de la session : une par lot. Deux clés = deux sessions. */
+  pilot: string;
+  /** Le répertoire de la session : le dépôt principal, les worktrees se lisent par chemin absolu. */
   cwd: string;
+  /** Le message d'OUVERTURE (directive + corpus du lot) : demandé à l'ouverture seulement. */
+  seed: () => string;
+  /** Le tour : l'élément, son contrat, le journal depuis le dernier tour. */
   prompt: string;
-  /** Le modèle de départ choisi par la garde de quota (S-4) ; `null` = défaut OMP. */
+  /** Le modèle de départ choisi par la garde de quota (S-4) ; `null` = défaut OMP. Un autre modèle que celui de la session ouverte la rouvre. */
   model: string | null;
   fallback: string | null;
-  deadline: number;
+  /** La borne d'UN tour (ms), depuis son départ. */
+  budgetMs: number;
   signal: AbortSignal;
 };
 
-/** Ce qu'un run d'arbitre rend : la décision retenue (ou `null`) et la session qui l'a produite. */
+/** Ce qu'un tour du pilote rend : la décision retenue (ou `null`) et la session qui l'a produite. */
 export type ArbiterRunResult = {
   decision: ArbiterDecision | null;
   sessionId: string | null;
   sessionFile: string | null;
   startedAt: number;
   endedAt: number;
+  /** `true` quand la session a été OUVERTE pour ce tour (premier tour, ou réouverture après coupure) ; le runner réel le renseigne toujours. */
+  fresh?: boolean;
+  /** Le rang de ce tour dans la session (1 = ouverture) ; le runner réel le renseigne toujours. */
+  turn?: number;
   peakContext?: number | null;
-  /** Les compactions réussies du run (S-2) ; les deux runners réels le renseignent toujours. */
+  /** Les compactions réussies de la session depuis son ouverture (S-2) ; le runner réel le renseigne toujours. */
   compactions?: number;
-  /** La mesure qui a coupé l'arbitre au plafond (S-5) ; absent sinon. */
+  /** La mesure qui a coupé le tour au plafond (S-5) ; absent sinon. La session est alors fermée, le tour suivant la rouvre. */
   contextExceeded?: number;
 };
 
-export type ArbiterRunner = (input: ArbiterRunInput) => Promise<ArbiterRunResult>;
+/**
+ * Le pilote : un tour par appel ; `close(pilot)` ferme la session d'un lot (fin de
+ * lot, arrêt du contrôleur). Une doublure de test est une simple fonction.
+ */
+export type ArbiterRunner = ((input: ArbiterRunInput) => Promise<ArbiterRunResult>) & {
+  close?: (pilot: string) => Promise<void>;
+};
 
 
 /** Le livrable de l'arbitre : sa décision, par l'outil `arbiter_decide`. */
 export const ARBITER_DELIVERABLE = "ta décision, par l'outil `arbiter_decide`";
 
+/** Un tour en vol : ce que la garde de contexte et le minuteur peuvent couper. */
+type PilotTurn = { killed: boolean; cut: (reason: string) => void };
+
+/** La session d'un lot, gardée entre les tours. */
+type Pilot = {
+  hosted: HostedSession;
+  capture: ArbiterCapture;
+  meter: ContextMeter;
+  guard: ContextGuard;
+  model: string | null;
+  fallback: string | null;
+  turns: number;
+  current: PilotTurn | null;
+  /** La mesure du plafond quand la garde a coupé le tour courant ; lue par le tour, puis remise à `null`. */
+  exceeded: number | null;
+};
+
 /**
- * Le lanceur d'arbitre (S-9) : une session NEUVE par élément, jamais reprise, ni
- * publiée, ni historisée, ni armée d'une boîte. Le tour est borné par l'échéance et
- * le signal ; un quota constaté est inscrit au registre (S-4) et le run rend alors
- * sans décision — le contrôleur escalade. Le contexte est mesuré à chaque
- * `message_end` : SOFT franchi ⇒ compaction à la fin du tour, puis reprise ; HARD
- * atteint ⇒ un dernier tour forcé pour décider, coupé s'il dépasse sa borne.
+ * Le pilote de lot (S-9) : UNE session par lot, ouverte au premier élément avec le
+ * message d'ouverture et GARDÉE ensuite — le tour suivant ne porte que son élément,
+ * la session se souvient du rapport, du brief, des décisions déjà prises et de
+ * celles de l'utilisateur. Les tours d'un même lot sont sériels ; chaque tour est
+ * borné par son budget et le signal ; un quota constaté est inscrit au registre
+ * (S-4) et le tour rend alors sans décision — le contrôleur escalade. Le contexte
+ * est mesuré à chaque `message_end` : SOFT franchi ⇒ compaction à la fin du tour ;
+ * HARD atteint ⇒ un dernier tour forcé pour décider, coupé s'il dépasse sa borne,
+ * et la session est FERMÉE — le tour suivant la rouvre, graine comprise. Toute
+ * coupure (budget, signal, plafond, modèle changé) ferme la session : un tour ne
+ * repart jamais sur une session dont le dernier tour a été interrompu.
  */
 export function createArbiterRunner(deps: {
   host: SessionHost;
@@ -583,89 +630,170 @@ export function createArbiterRunner(deps: {
 }): ArbiterRunner {
   const log = deps.log ?? (() => {});
   const now = deps.now ?? Date.now;
-  return async ({ stateDir, cwd, prompt, model, fallback, deadline, signal }) => {
-    const startedAt = now();
-    const capture: ArbiterCapture = { decision: null };
+  const pilots = new Map<string, Pilot>();
+  const queues = new Map<string, Promise<unknown>>();
+
+  async function drop(key: string, reason: string): Promise<void> {
+    const pilot = pilots.get(key);
+    if (pilot === undefined) return;
+    pilots.delete(key);
+    log(`[service] pilote ${key} fermé : ${reason}`);
+    await pilot.hosted.dispose();
+  }
+
+  async function open(key: string, input: ArbiterRunInput): Promise<Pilot> {
     const thresholds = lotContextThresholds(deps.env ?? process.env);
     const meter = createContextMeter(thresholds);
-    let hosted: HostedSession | null = null;
-    let timer: NodeJS.Timeout | undefined;
-    let killed = false;
-    let contextExceeded: number | null = null;
-    const cutNotice = createCutNotice();
-    const cut = (reason: string) => {
-      if (killed) return;
-      killed = true;
-      cutNotice.fire();
-      log(`[service] arbitre coupé : ${reason}`);
-      void Promise.resolve(hosted?.session.abort({ reason })).catch(() => {});
+    const capture: ArbiterCapture = { decision: null };
+    const hosted = await deps.host.open({
+      cwd: input.cwd,
+      purpose: "arbiter",
+      model: input.model,
+      fallback: input.fallback,
+      autoApprove: true,
+      arbiter: capture,
+    });
+    const guard = createContextGuard({
+      session: hosted.session,
+      thresholds,
+      meter,
+      lastTurnPrompt: `[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`,
+      label: `[service] pilote ${key}`,
+      log,
+      now,
+    });
+    const pilot: Pilot = { hosted, capture, meter, guard, model: input.model, fallback: input.fallback, turns: 0, current: null, exceeded: null };
+    const saturated = (measure: number) => {
+      pilot.exceeded = measure;
+      pilot.current?.cut(contextExceededReason(measure));
     };
-    const onSignal = () => cut("arbitrage annulé");
-    try {
-      hosted = await deps.host.open({ cwd, purpose: "arbiter", model, fallback, autoApprove: true, arbiter: capture });
-      const session = hosted.session;
-      if (signal.aborted) cut("arbitrage annulé");
-      signal.addEventListener("abort", onSignal, { once: true });
-      const guard = createContextGuard({
-        session,
-        thresholds,
-        meter,
-        lastTurnPrompt: `[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`,
-        label: "[service] arbitre",
-        log,
-        now,
-      });
-      const cutSaturated = (measure: number) => {
-        contextExceeded = measure;
-        cut(contextExceededReason(measure));
-      };
-      const unsubscribe = session.subscribe(event => {
-        if (killed) return;
-        guard.observe(event);
-        const overrun = guard.overrun();
-        if (overrun !== null) cutSaturated(overrun);
-      });
-      timer = setInterval(() => {
-        if (expired(deadline, now())) cut("échéance de l'arbitre atteinte");
-        const overrun = guard.overrun();
-        if (overrun !== null) cutSaturated(overrun);
-      }, 1000);
-      try {
-        let text = prompt;
-        for (;;) {
-          const before = session.messages.length;
-          await session.prompt(text);
-          await session.waitForIdle();
-          if (killed) break;
-          // Lu AVANT la compaction, qui remplace les messages du tour.
-          const hit = quotaOfLastTurn(session, before, now());
-          if (hit !== null) markExhausted(stateDir, hit);
-          const soft = guard.takeSoft();
-          if (hit !== null || soft === null || guard.lastTurn() !== null) break;
-          const compacted = await Promise.race([guard.compact(soft), cutNotice.promise.then(() => false)]);
-          if (killed || !compacted) break;
-          text = compactionReminder(ARBITER_DELIVERABLE);
-        }
-      } finally {
-        unsubscribe();
-      }
-    } catch (err) {
-      log(`[service] arbitre en échec : ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      clearInterval(timer);
-      signal.removeEventListener("abort", onSignal);
-    }
-    const result: ArbiterRunResult = {
-      decision: capture.decision,
-      sessionId: hosted?.id ?? null,
-      sessionFile: hosted?.sessionFile ?? null,
+    hosted.session.subscribe(event => {
+      const turn = pilot.current;
+      if (turn === null || turn.killed) return;
+      guard.observe(event);
+      const overrun = guard.overrun();
+      if (overrun !== null) saturated(overrun);
+    });
+    // La session libérée par l'hôte (arrêt du service) ne doit pas rester au registre.
+    void hosted.disposed.then(() => {
+      if (pilots.get(key) === pilot) pilots.delete(key);
+    });
+    pilots.set(key, pilot);
+    log(`[service] pilote ${key} ouvert (${hosted.id})`);
+    return pilot;
+  }
+
+  async function runTurn(input: ArbiterRunInput): Promise<ArbiterRunResult> {
+    const key = input.pilot;
+    const startedAt = now();
+    const bare = (pilot: Pilot | null, fresh: boolean): ArbiterRunResult => ({
+      decision: null,
+      sessionId: pilot?.hosted.id ?? null,
+      sessionFile: pilot?.hosted.sessionFile ?? null,
       startedAt,
       endedAt: now(),
-      peakContext: meter.peak(),
-      compactions: meter.compactions(),
+      fresh,
+      turn: pilot?.turns ?? 0,
+      peakContext: pilot?.meter.peak() ?? null,
+      compactions: pilot?.meter.compactions() ?? 0,
+    });
+    if (input.signal.aborted) return bare(pilots.get(key) ?? null, false);
+    const known = pilots.get(key);
+    if (known !== undefined && (known.model !== input.model || known.fallback !== input.fallback)) {
+      await drop(key, `modèle changé (${known.model ?? "défaut"} → ${input.model ?? "défaut"})`);
+    }
+    let pilot = pilots.get(key) ?? null;
+    let fresh = false;
+    let killed = false;
+    let cutReason: string | null = null;
+    const cutNotice = createCutNotice();
+    const turn: PilotTurn = {
+      killed: false,
+      cut(reason) {
+        if (turn.killed) return;
+        turn.killed = true;
+        killed = true;
+        cutReason = reason;
+        cutNotice.fire();
+        log(`[service] pilote ${key} : tour coupé (${reason})`);
+        void Promise.resolve(pilot?.hosted.session.abort({ reason })).catch(() => {});
+      },
     };
-    if (contextExceeded !== null) result.contextExceeded = contextExceeded;
-    if (hosted !== null) await hosted.dispose();
+    const onSignal = () => turn.cut("arbitrage annulé");
+    const deadline = startedAt + input.budgetMs;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      if (pilot === null) {
+        pilot = await open(key, input);
+        fresh = true;
+      }
+      pilot.current = turn;
+      pilot.exceeded = null;
+      pilot.capture.decision = null;
+      pilot.turns += 1;
+      const { guard, capture } = pilot;
+      const session = pilot.hosted.session;
+      if (input.signal.aborted) turn.cut("arbitrage annulé");
+      input.signal.addEventListener("abort", onSignal, { once: true });
+      timer = setInterval(() => {
+        if (expired(deadline, now())) turn.cut("échéance du tour atteinte");
+        const overrun = guard.overrun();
+        if (overrun !== null) {
+          pilot!.exceeded = overrun;
+          turn.cut(contextExceededReason(overrun));
+        }
+      }, 1000);
+      let text = fresh ? `${input.seed()}\n\n${input.prompt}` : input.prompt;
+      for (;;) {
+        const before = session.messages.length;
+        await session.prompt(text);
+        await session.waitForIdle();
+        if (killed) break;
+        // Lu AVANT la compaction, qui remplace les messages du tour.
+        const hit = quotaOfLastTurn(session, before, now());
+        if (hit !== null) markExhausted(input.stateDir, hit);
+        const soft = guard.takeSoft();
+        if (hit !== null || guard.lastTurn() !== null) break;
+        if (soft === null) break;
+        const compacted = await Promise.race([guard.compact(soft), cutNotice.promise.then(() => false)]);
+        // La décision est prise : la compaction a allégé la session pour le tour suivant, rien à relancer.
+        if (killed || !compacted || capture.decision !== null) break;
+        text = compactionReminder(ARBITER_DELIVERABLE);
+      }
+    } catch (err) {
+      log(`[service] pilote ${key} en échec : ${err instanceof Error ? err.message : String(err)}`);
+      cutReason ??= "session en échec";
+      killed = true;
+    } finally {
+      clearInterval(timer);
+      input.signal.removeEventListener("abort", onSignal);
+      if (pilot !== null && pilot.current === turn) pilot.current = null;
+    }
+    const result = bare(pilot, fresh);
+    result.decision = pilot?.capture.decision ?? null;
+    result.endedAt = now();
+    const exceeded = pilot?.exceeded ?? null;
+    if (exceeded !== null) result.contextExceeded = exceeded;
+    // Une session dont le tour a été interrompu ne sert plus ; une session qui a reçu
+    // son dernier tour forcé (HARD) non plus, même si elle a décidé : le tour suivant
+    // repart d'une graine neuve.
+    if (pilot !== null && (killed || pilot.guard.lastTurn() !== null)) await drop(key, cutReason ?? "contexte saturé");
     return result;
-  };
+  }
+
+  const runner = (async (input: ArbiterRunInput): Promise<ArbiterRunResult> => {
+    const previous = queues.get(input.pilot) ?? Promise.resolve();
+    const turn = previous.then(
+      () => runTurn(input),
+      () => runTurn(input),
+    );
+    queues.set(input.pilot, turn);
+    try {
+      return await turn;
+    } finally {
+      if (queues.get(input.pilot) === turn) queues.delete(input.pilot);
+    }
+  }) as ArbiterRunner;
+  runner.close = (pilot: string) => drop(pilot, "lot terminé");
+  return runner;
 }

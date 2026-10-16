@@ -284,6 +284,7 @@ function arbiterHost(script: Script) {
         aborting: false,
         transcript: [],
         dispose: async () => {},
+        disposed: new Promise<void>(() => {}),
         session,
       } as unknown as HostedSession;
     },
@@ -694,8 +695,10 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   assert.equal(done.prUrl, `${GH}/o/r/pull/7`);
   assert.equal(done.auditSession, audit.key);
   assert.deepEqual(phases, ["req", "specs", "impl", "review", "release"]);
-  // Les DEUX jalons ont été franchis par l'arbitre du contrôleur du service, consignés à l'audit.
-  assert.equal(r.arb.opens.length, 2);
+  // Les DEUX jalons ont été franchis par le pilote du lot — UNE session persistante, un
+  // tour par jalon — et consignés à l'audit.
+  assert.equal(r.arb.opens.length, 1, "une seule session de pilote pour le lot");
+  assert.equal(r.arb.prompts.length, 2, "un tour par jalon");
   assert.deepEqual(
     journalFor(r.stateDir, audit.repoKey, "alpha").map(entry => [entry.kind, entry.answer, entry.source, entry.context]),
     [

@@ -512,15 +512,23 @@ type ArbiterScript = (prompt: string, call: number) => Record<string, unknown> |
 /**
  * Un hôte de sessions dont les sessions `arbiter` rejouent un script : au prompt, la
  * session APPELLE `arbiter_decide` (même fonction que l'extension) sur la capture que
- * le lanceur lui a donnée. Chaque ouverture est consignée, avec son modèle et son repli.
+ * le lanceur lui a donnée. Chaque ouverture est consignée, avec son modèle et son repli ;
+ * `prompts` compte les tours, toutes sessions confondues (le pilote GARDE sa session
+ * entre deux éléments d'un même lot : un tour n'est pas une ouverture).
  */
 function arbiterHost(script: ArbiterScript) {
   const opens: Array<{ purpose: string; model: string | null; fallback: string | null }> = [];
-  let prompts = 0;
+  const cwds: string[] = [];
+  const counter = { prompts: 0 };
   const host = {
     open: async (o: { cwd: string; purpose: string; model?: string | null; fallback?: string | null; arbiter?: { decision: ArbiterDecision | null } }) => {
       const id = `arb-${opens.length + 1}`;
       opens.push({ purpose: o.purpose, model: o.model ?? null, fallback: o.fallback ?? null });
+      cwds.push(o.cwd);
+      let release: () => void = () => {};
+      const disposed = new Promise<void>(resolve => {
+        release = resolve;
+      });
       const messages: Array<Record<string, unknown>> = [];
       const session = {
         get messages() {
@@ -532,9 +540,9 @@ function arbiterHost(script: ArbiterScript) {
         subscribe: () => () => {},
         subscribeRunState: () => () => {},
         prompt: async (text: string) => {
-          prompts += 1;
+          counter.prompts += 1;
           messages.push({ role: "user", content: [{ type: "text", text }] });
-          const params = script(text, prompts);
+          const params = script(text, counter.prompts);
           if (params !== null && o.arbiter) recordArbiterDecision(o.arbiter as never, params);
           messages.push({ role: "assistant", provider: "prov", model: "principal", stopReason: "stop", content: [{ type: "text", text: "décidé" }] });
           return true;
@@ -552,12 +560,13 @@ function arbiterHost(script: ArbiterScript) {
         listeners: new Set(),
         aborting: false,
         transcript: [],
-        dispose: async () => {},
+        dispose: async () => release(),
+        disposed,
         session,
       } as unknown as HostedSession;
     },
   } as unknown as SessionHost;
-  return { host, opens };
+  return { host, opens, cwds, counter };
 }
 
 /**
@@ -618,14 +627,14 @@ async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters
     f.lastRunSessionFile = "/x/run-session.jsonl";
     writeLot(stateDir, lot);
   };
-  /** Arbitre UN élément : l'élément est parqué, `tick` l'arbitre, l'arbitrage se termine. */
-  const arbitrate = async (waitKind: "answer" | "specs" | "review", phase: PipelinePhase, waitPrompt: string | null, expectedOpens: number) => {
+  /** Arbitre UN élément : l'élément est parqué, `tick` l'arbitre, le tour `expectedTurn` part, l'arbitrage se termine. */
+  const arbitrate = async (waitKind: "answer" | "specs" | "review", phase: PipelinePhase, waitPrompt: string | null, expectedTurn: number) => {
     park(waitKind, phase, waitPrompt);
     await controller.tick();
-    await until(() => arb.opens.length === expectedOpens);
+    await until(() => arb.counter.prompts === expectedTurn);
     await until(() => feature().arbitration === undefined);
   };
-  return { arb, stateDir, specs, park, feature, controller, arbitrate };
+  return { arb, stateDir, specs, park, feature, controller, arbitrate, repoRoot };
 }
 
 const citeFact = (answer: string) => ({ decision: "answer", answer, source: "contexte", citations: [ARBITER_FACT], reason: "le brief le dit" });
@@ -651,11 +660,15 @@ test("revue-sur-le-groupe-fort/AC-5 : l'arbitre s'ouvre sur le modèle et le rep
   await s.arbitrate("answer", "release", "Quel format de sortie pour release ?", 2);
   await s.arbitrate("review", "review", null, 3);
   await s.arbitrate("answer", "req", "Quel format de sortie pour req ?", 4);
+  // Le pilote du lot est UNE session persistante : les quatre éléments sont quatre tours
+  // de la même session, ouverte une seule fois sur cadrage+revue, dans le dépôt principal.
+  assert.equal(s.arb.counter.prompts, 4, "quatre tours, un par élément");
   assert.deepEqual(
     s.arb.opens,
-    Array(4).fill({ purpose: "arbiter", model: FORT, fallback: FORT_REPLI }),
-    "chaque session d'arbitre part sur cadrage+revue, jamais sur exécution",
+    [{ purpose: "arbiter", model: FORT, fallback: FORT_REPLI }],
+    "une seule session de pilote par lot, ouverte sur cadrage+revue, jamais sur exécution ; même modèle ⇒ aucune réouverture",
   );
+  assert.deepEqual(s.arb.cwds, [s.repoRoot], "le pilote travaille dans le dépôt principal, pas dans le worktree");
 
   // Données anciennes : l'ancien `model` porte l'arbitre ; sans aucune clé, c'est le défaut OMP.
   const legacy = await arbiterScenario(() => citeFact("JSON"), {}, "p/vieux");
