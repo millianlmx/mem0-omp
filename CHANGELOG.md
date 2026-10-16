@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.31.2 — 2026-10-16
+
+- fix(contract): les têtes SP-<n> et SPEC-<n> sont des spécifications pour la couverture des AC (#213) (e191064)
+
 ## omp-mem0-req 0.31.1 — 2026-10-16
 
 - fix(runner): le pilote de lot ne rouvre sa session que sur un modèle de départ différent, pas sur un repli différent (#211) (814159a)
