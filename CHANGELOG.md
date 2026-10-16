@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.31.1 — 2026-10-16
+
+- fix(runner): le pilote de lot ne rouvre sa session que sur un modèle de départ différent, pas sur un repli différent (#211) (814159a)
+
 ## omp-mem0-req 0.31.0 — 2026-10-16
 
 - feat(arbitre): pilote de lot persistant — une session d'arbitre par lot, un tour par élément (#208) (4ec7cbd)
