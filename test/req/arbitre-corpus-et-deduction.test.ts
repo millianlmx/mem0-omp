@@ -412,9 +412,9 @@ function entry(slug: string, context: string | null, n: number, over: Partial<Jo
   return { at: T0 + n, slug, phase: "req", kind: "question", question: `Q${n}`, answer: `R${n}`, source: "contexte", context, ...over };
 }
 
-/** Le corpus d'un TOUR : contrat, journal du lot depuis `lotSince` (0 = toutes les entrées), journal de la feature. */
+/** Le corpus d'un TOUR : contrat, journal du lot à partir de l'index `lotCursor` (0 = toutes les entrées), journal de la feature. */
 const corpusOf = (over: Partial<Parameters<typeof buildArbiterCorpus>[0]> = {}) =>
-  buildArbiterCorpus({ kind: "question", phase: "req", contract: null, slug: "alpha", lotEntries: [], lotSince: 0, lotMax: 200, featureEntries: [], ...over });
+  buildArbiterCorpus({ kind: "question", phase: "req", contract: null, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [], ...over });
 
 /** L'OUVERTURE de la session du pilote : directive, rapport, brief, journal du lot entier. */
 const openingOf = (over: Partial<Parameters<typeof buildPilotOpening>[0]> = {}) =>
@@ -457,14 +457,14 @@ test("arbitre-corpus-et-deduction/AC-5 : l'ouverture du pilote porte le rapport,
   );
   assert.equal(opening.includes("### Contrat"), false, "le contrat d'une feature n'est pas à l'ouverture");
 
-  // Le tour : contrat, journal du lot DEPUIS LE DERNIER TOUR (ici : après Q1), journal de la feature.
+  // Le tour : contrat, journal du lot DEPUIS LE DERNIER TOUR (ici : la session a déjà reçu Q1, curseur 1), journal de la feature.
   const corpus = buildArbiterCorpus({
     kind: "question",
     phase: "req",
     contract: "## Besoins\nLe contrat de la feature.",
     slug: "alpha",
     lotEntries,
-    lotSince: T0 + 1,
+    lotCursor: 1,
     lotMax: 200,
     featureEntries: journalFor(stateDir, repoKey, "alpha"),
   });
@@ -473,7 +473,7 @@ test("arbitre-corpus-et-deduction/AC-5 : l'ouverture du pilote porte le rapport,
   assert.deepEqual(
     sectionOf(corpus, "Journal du lot depuis le dernier tour").split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
     ["gamma", "alpha"],
-    "seules les entrées postérieures au dernier tour (Q1 exclue)",
+    "seules les entrées à partir du curseur (Q1 exclue)",
   );
   assert.deepEqual(entryNumbers(sectionOf(corpus, "Journal de la feature alpha")), [1, 4]);
   for (const text of [opening, corpus]) {
@@ -484,11 +484,11 @@ test("arbitre-corpus-et-deduction/AC-5 : l'ouverture du pilote porte le rapport,
     assert.equal(corpus.includes(absent), false, `le tour ne répète pas « ${absent} »`);
   }
 
-  // Premier tour : aucune entrée n'est « nouvelle » ; tour suivant sans décision : idem.
-  assert.ok(corpusOf({ lotEntries, lotSince: Number.MAX_SAFE_INTEGER }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
-  assert.ok(corpusOf({ lotEntries, lotSince: T0 + 4 }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
+  // Premier tour : la session a tout reçu à l'ouverture (curseur = taille) ; tour suivant sans décision : idem ; un curseur au-delà n'invente rien.
+  assert.ok(corpusOf({ lotEntries, lotCursor: lotEntries.length }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
+  assert.ok(corpusOf({ lotEntries, lotCursor: lotEntries.length + 5 }).includes("### Journal du lot depuis le dernier tour\n- (aucune décision nouvelle)"));
   assert.deepEqual(
-    sectionOf(corpusOf({ lotEntries, lotSince: 0 }), "Journal du lot depuis le dernier tour").split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
+    sectionOf(corpusOf({ lotEntries, lotCursor: 0 }), "Journal du lot depuis le dernier tour").split("\n").slice(1).map((line) => line.match(/^- \[(\w+) \//)![1]),
     ["alpha", "gamma", "alpha"],
     "0 = toutes",
   );
@@ -985,7 +985,7 @@ test("arbitre-corpus-et-deduction/AC-16 : la directive du pilote (à l'ouverture
     }
     assert.ok(prompt.includes("\n\n## Corpus de l'élément\n\n"));
     assert.ok(prompt.endsWith(`\n\n${TURN_REMINDER}`), prompt.slice(-200));
-    assert.equal(TURN_REMINDER, "Rends ta décision pour CET élément par un appel unique à `arbiter_decide`.");
+    assert.ok(TURN_REMINDER.startsWith("Rappel des règles :") && TURN_REMINDER.endsWith("Rends ta décision pour CET élément par un appel unique à `arbiter_decide`."));
   }
 });
 

@@ -160,7 +160,7 @@ test("arbitre-exigeant/AC-5 : au jalon « revue propre », l'approbation exige p
 
 test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le contrat sans aucune `## Revue` ; le plafond ne reçoit que critères, revue et corrections ; aucun tour ne reprend rapport ni brief, tenus par l'ouverture", () => {
   const doubled = `${CONTRACT}\n## Revue\n\n- STATUT : REFUSÉ\n- BLOQUANTS : 1. un bloquant.\n`;
-  const base = { contract: doubled, slug: "alpha", lotEntries: [], lotSince: 0, lotMax: 200, featureEntries: [] };
+  const base = { contract: doubled, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [] };
   const review = buildArbiterCorpus({ ...base, kind: "review" });
   assert.equal(review.includes("## Revue"), false, review);
   assert.equal(review.includes("BLOQUANTS"), false);
@@ -189,7 +189,7 @@ test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le con
 });
 
 test("arbitre-exigeant/AC-7 : une question reçoit les seules sections du contrat de son étape — en /impl, ni `## Besoins` ni `## Revue` ; sans étape connue, le contrat entier", () => {
-  const base = { contract: CONTRACT, slug: "alpha", lotEntries: [], lotSince: 0, lotMax: 200, featureEntries: [] };
+  const base = { contract: CONTRACT, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [] };
   const impl = buildArbiterCorpus({ ...base, kind: "question", phase: "impl" });
   assert.equal(impl.includes("## Besoins"), false, impl);
   assert.equal(impl.includes("## Revue"), false);

@@ -23,7 +23,7 @@ import { reportStateWriteFailure } from "./publish.ts";
 import { questionOf, lotArbiterJournalMax } from "./lot.ts";
 import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
-import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
+import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, itemQuestion, normalizeQuestion, pilotRecapLine, validateArbiterDecision } from "./arbiter.ts";
 import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
 import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
@@ -1351,12 +1351,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
-  /** Le récap de fin de lot (AC-15) : posté une fois, quand plus rien ne tourne — la session du pilote se ferme avec lui. */
+  /**
+   * Le récap de fin de lot (AC-15) : posté une fois, quand plus rien ne tourne — la
+   * session du pilote se ferme avec lui, et la mesure de l'arbitrage (décisions par
+   * source, sessions, tours) suit le récap.
+   */
   function maybeRecap(lot: Lot): boolean {
     if (lot.features.length === 0 || lotTotals(lot).live > 0 || lot.recapAt !== null) return false;
     lot.recapAt = now();
     closePilots();
-    notify(buildLotRecap(repo, lot));
+    const measure = pilotRecapLine({
+      entries: lot.features.flatMap((feature) => journalFor(stateDir, repoKey, feature.slug)),
+      turns: lot.features.flatMap((feature) => (feature.runs ?? []).filter((run) => run.step === "arbitre")),
+    });
+    notify(measure === null ? buildLotRecap(repo, lot) : `${buildLotRecap(repo, lot)}\n${measure}`);
     return true;
   }
 
@@ -1379,15 +1387,21 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** Les arbitrages VIVANTS de CE process : une marque `feature.arbitration` sans entrée ici est périmée. */
   const arbiting = new Map<string, AbortController>();
-  /** La file des arbitrages de ce contrôleur : un à la fois, dans l'ordre de la passe. */
-  let arbitrationQueue: Promise<void> = Promise.resolve();
   /**
    * Les sessions du pilote de CE lot, vues du contrôleur — une par contexte
-   * (`pilotKey`) : le message d'ouverture (les citations s'y vérifient) et l'instant
-   * du dernier tour construit — le tour suivant ne porte que le journal du lot écrit
-   * depuis. Posée par `seed()` et à chaque tour ; effacée avec la session.
+   * (`pilotKey`). Le contrôleur en est le PROPRIÉTAIRE : le runner, partagé par tous
+   * les contrôleurs du service, peut tenir une session dont aucun contrôleur n'a plus
+   * l'ouverture ; une clé sans entrée ici est donc fermée chez le runner avant le
+   * tour, qui la rouvre. `opening` : le message d'ouverture (les citations s'y
+   * vérifient) ; `cursor` : le nombre d'entrées du journal du contexte déjà portées
+   * à la session (ouverture ou tours) — le tour suivant ne porte que la suite, sans
+   * horloge ; `compactions` : le compte vu au dernier tour — s'il a crû, la session
+   * a été résumée et le tour suivant reporte le journal entier ; `queue` : les tours
+   * de cette session, sériels.
    */
-  const pilots = new Map<string, { opening: string; since: number }>();
+  type PilotState = { opening: string; cursor: number; compactions: number };
+  const pilots = new Map<string, PilotState>();
+  const pilotQueues = new Map<string, Promise<void>>();
 
   /**
    * La clé de la session du pilote : le lot ET le contexte (audit ou projet) de la
@@ -1475,8 +1489,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * effacée et l'élément ré-arbitré ; une escalade dont l'élément n'est plus
    * courant tombe. Pose `feature.arbitration` — écrit avec la passe.
    */
-  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem }> } {
-    const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem }> };
+  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem; pilot: string }> } {
+    const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem; pilot: string }> };
     if (deps.arbiter === undefined) return out;
     const items = currentItems(lot).filter((item) => ARBITRABLE.has(item.kind));
     for (const feature of lot.features) {
@@ -1493,7 +1507,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature.escalation !== undefined || feature.arbitration !== undefined) continue;
       if (item.kind === "ask" && answeredAsks.has(askKey(item.slug, item.toolCallId ?? ""))) continue;
       feature.arbitration = { key: item.key, startedAt: now() };
-      out.planned.push({ slug: feature.slug, item });
+      out.planned.push({ slug: feature.slug, item, pilot: pilotKey(lot, feature.auditSession) });
       out.changed = true;
     }
     return out;
@@ -1595,17 +1609,21 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     const report = readReport(stateDir, feature.auditSession);
     const lotEntries = journalOfContext(stateDir, repoKey, feature.auditSession);
-    const builtAt = now();
-    // Le tour ne porte que le journal du lot écrit depuis le tour précédent : le
-    // premier tour n'en porte aucun, l'ouverture apporte le journal entier.
+    // Sans ouverture connue ici, la session du runner (s'il en tient une) est
+    // orpheline : fermée, pour que ce tour la rouvre avec `seed()`.
     const known = pilots.get(key);
+    if (known === undefined) await deps.arbiter.close?.(key).catch(() => undefined);
+    // Le tour ne porte que la suite du journal du lot depuis ce que la session a déjà
+    // reçu (l'ouverture porte tout : le premier tour n'ajoute rien) ; un curseur remis
+    // à 0 après une compaction fait reporter le journal entier.
+    const cursor = known?.cursor ?? lotEntries.length;
     const corpus = buildArbiterCorpus({
       kind: arbiterItem.kind,
       phase: arbiterItem.phase,
       contract,
       slug,
       lotEntries,
-      lotSince: known?.since ?? Number.MAX_SAFE_INTEGER,
+      lotCursor: cursor,
       lotMax: arbiterJournalMax,
       featureEntries: entries,
       ...(deps.arbiterCorpusMax !== undefined ? { maxChars: deps.arbiterCorpusMax } : {}),
@@ -1634,7 +1652,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
           lotMax: arbiterJournalMax,
           ...(deps.arbiterCorpusMax !== undefined ? { maxChars: deps.arbiterCorpusMax } : {}),
         });
-        pilots.set(key, { opening, since: builtAt });
+        pilots.set(key, { opening, cursor: lotEntries.length, compactions: 0 });
         return opening;
       },
       prompt: buildArbiterPrompt(arbiterItem, corpus, review),
@@ -1643,8 +1661,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
       budgetMs: ARBITER_DEADLINE_MS,
       signal,
     });
+    // Tout le journal lu à la construction est désormais connu de la session. Une
+    // compaction survenue pendant le tour l'a résumée : le tour suivant reporte tout.
     const opened = pilots.get(key);
-    if (opened !== undefined) pilots.set(key, { opening: opened.opening, since: builtAt });
+    if (opened !== undefined) {
+      const compactions = result.compactions ?? opened.compactions;
+      pilots.set(key, { opening: opened.opening, cursor: compactions > opened.compactions ? 0 : lotEntries.length, compactions });
+    }
     // Le tour du pilote est enregistré à sa fin, décision ou non (S-12).
     {
       const after = read();
@@ -1752,16 +1775,18 @@ export function createLotController(deps: LotControllerDeps): LotController {
   }
 
   /**
-   * Les arbitrages sont SÉRIELS : la décision d'un élément est appliquée — donc au
-   * journal — avant que le tour de l'élément suivant ne soit construit. Le pilote
-   * voit ainsi dans « journal du lot depuis le dernier tour » ce qu'il vient de
-   * décider et ce que l'utilisateur a tranché entre-temps. La marque `arbiting` est
-   * posée à la mise en file : une marque sans entrée serait tenue pour périmée.
+   * Les arbitrages d'une MÊME session sont sériels : la décision d'un élément est
+   * appliquée — donc au journal — avant que le tour de l'élément suivant ne soit
+   * construit, et le pilote voit dans « journal du lot depuis le dernier tour » ce
+   * qu'il vient de décider et ce que l'utilisateur a tranché entre-temps. Deux
+   * sessions (deux contextes) avancent en parallèle : un tour lent n'en retient
+   * qu'une. La marque `arbiting` est posée à la mise en file : une marque sans entrée
+   * serait tenue pour périmée.
    */
-  function arbitrate(slug: string, item: RelayItem): void {
+  function arbitrate(slug: string, item: RelayItem, pilot: string): void {
     const abort = new AbortController();
     arbiting.set(slug, abort);
-    arbitrationQueue = arbitrationQueue.then(async () => {
+    const turn = (pilotQueues.get(pilot) ?? Promise.resolve()).then(async () => {
       try {
         let effect: ArbiterEffect | null;
         try {
@@ -1775,8 +1800,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       } finally {
         arbiting.delete(slug);
         clearArbitration(slug, item.key);
+        if (pilotQueues.get(pilot) === turn) pilotQueues.delete(pilot);
       }
     });
+    pilotQueues.set(pilot, turn);
   }
 
   /** Une passe : la phase A (git) attend, la phase B lit le magasin UNE fois puis n'attend plus. */
@@ -2116,7 +2143,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature) startRun(lot, feature, launch);
     }
     for (const feature of releases) void finishRelease(feature);
-    for (const planned of arbitrations.planned) arbitrate(planned.slug, planned.item);
+    for (const planned of arbitrations.planned) arbitrate(planned.slug, planned.item, planned.pilot);
     for (const feature of dueQuota) void relaunchDueQuota(feature);
     // Dernier acte de la passe, APRÈS l'écriture : un `await` (`git`) qui ne décide
     // plus rien — l'arbre abandonné n'appartient à aucune feature du lot, et la

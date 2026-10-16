@@ -2581,7 +2581,7 @@ test("arbitre : la validation déterministe n'accorde rien sur parole (citations
   // Le brief vit dans l'OUVERTURE de la session ; le tour ne porte que contrat et journaux.
   // Le sol des citations est, comme au contrôleur, le corpus du tour PUIS l'ouverture.
   const opening = buildPilotOpening({ report: null, brief: "## But\nLe format de\n   sortie est JSON.", lotEntries: [], lotMax: 200 });
-  const corpus = buildArbiterCorpus({ kind: "question", contract: null, slug: "alpha", lotEntries: [], lotSince: Number.MAX_SAFE_INTEGER, lotMax: 200, featureEntries: [] });
+  const corpus = buildArbiterCorpus({ kind: "question", contract: null, slug: "alpha", lotEntries: [], lotCursor: 0, lotMax: 200, featureEntries: [] });
   assert.equal(corpus.includes("sortie est JSON."), false, "le tour ne reprend pas le brief");
   assert.ok(opening.startsWith(ARBITER_DIRECTIVE) && opening.includes("### Brief\n## But\nLe format de\n   sortie est JSON."));
   const ground = { corpus: `${corpus}\n\n${opening}`, report: null, worktree: emptyGitRepo("coa-ground-"), contract: null, review: null };

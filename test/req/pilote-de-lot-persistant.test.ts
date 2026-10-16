@@ -22,6 +22,7 @@ import {
   writeBrief,
   writeLot,
   type ArbiterDecision,
+  type ArbiterRunner,
   type HostedSession,
   type LotRunnerResult,
   type LotRunSpec,
@@ -44,14 +45,25 @@ const pendingRunner = ({ signal }: { spec: LotRunSpec; cwd: string; signal?: Abo
     signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
   });
 
-type Script = (prompt: string) => ArbiterDecision | "throw" | null;
+/**
+ * Ce qu'un tour scripté fait : une décision (ou aucune), lever (session perdue),
+ * émettre une compaction native d'OMP avant de décider, attendre une porte.
+ */
+type Step = { decision?: ArbiterDecision | null; throws?: boolean; compact?: boolean; gate?: Promise<void> };
+type Script = (prompt: string) => ArbiterDecision | "throw" | null | Step;
+
+function stepOf(raw: ArbiterDecision | "throw" | null | Step): Step {
+  if (raw === "throw") return { throws: true };
+  if (raw === null) return { decision: null };
+  return "decision" in raw && typeof raw.decision === "string" ? { decision: raw as ArbiterDecision } : (raw as Step);
+}
 
 /**
  * Un hôte scripté : chaque `open` est compté, chaque prompt rend la décision du
  * script par `arbiter_decide` (ou lève, ou ne décide rien). `disposed` se résout à
  * la libération, comme la session réelle.
  */
-function scriptedHost(script: Script) {
+function scriptedHost(script: Script): Arb {
   const opens: Array<{ id: string; cwd: string; purpose: string; model: string | null; fallback: string | null }> = [];
   const prompts: string[] = [];
   let disposed = 0;
@@ -60,18 +72,24 @@ function scriptedHost(script: Script) {
       const id = `pilote-${opens.length + 1}`;
       opens.push({ id, cwd: o.cwd, purpose: o.purpose, model: o.model ?? null, fallback: o.fallback ?? null });
       const messages: Array<Record<string, unknown>> = [];
+      const listeners = new Set<(event: unknown) => void>();
       const release = Promise.withResolvers<void>();
       const session = {
         get messages() {
           return messages;
         },
-        subscribe: () => () => {},
+        subscribe: (listener: (event: unknown) => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
         prompt: async (text: string) => {
           prompts.push(text);
           messages.push({ role: "user", content: [{ type: "text", text }] });
-          const params = script(text);
-          if (params === "throw") throw new Error("session perdue");
-          if (params !== null && o.arbiter) recordArbiterDecision(o.arbiter as never, params);
+          const step = stepOf(script(text));
+          if (step.gate) await step.gate;
+          if (step.throws) throw new Error("session perdue");
+          if (step.compact) for (const listener of listeners) listener({ type: "auto_compaction_end", result: { summary: "résumé" } });
+          if (step.decision && o.arbiter) recordArbiterDecision(o.arbiter as never, step.decision);
           messages.push({ role: "assistant", provider: "prov", model: "p", stopReason: "stop", content: [{ type: "text", text: "décidé" }] });
           return true;
         },
@@ -96,20 +114,30 @@ function scriptedHost(script: Script) {
   return { host, opens, prompts, disposed: () => disposed };
 }
 
-function world(script: Script) {
-  const repoRoot = emptyGitRepo("pilote-repo-");
-  const stateDir = path.join(tmpdir("pilote-state-"), "pipeline");
-  const arb = scriptedHost(script);
+/** L'hôte scripté : ce que les tests observent (ouvertures, tours, libérations). */
+type Arb = { host: SessionHost; opens: Array<{ id: string; cwd: string; purpose: string; model: string | null; fallback: string | null }>; prompts: string[]; disposed: () => number };
+
+/**
+ * Un monde : dépôt, magasin, pilote de lot réel et runner d'arbitre réel sur un hôte
+ * scripté. `share` : réutiliser le runner (et l'hôte) d'un autre monde, comme le
+ * service partage UN runner entre ses contrôleurs.
+ */
+function world(script: Script, options: { context?: (slug: string) => string; share?: { arb: Arb; runner: ArbiterRunner; repoRoot: string; stateDir: string } } = {}) {
+  const repoRoot = options.share?.repoRoot ?? emptyGitRepo("pilote-repo-");
+  const stateDir = options.share?.stateDir ?? path.join(tmpdir("pilote-state-"), "pipeline");
+  const arb = options.share?.arb ?? scriptedHost(script);
+  const notices: string[] = [];
   // Horloge MONOTONE : une entrée de journal écrite après la construction d'un tour lui est postérieure.
   let clock = T0;
   const now = () => (clock += 1);
+  const runner = options.share?.runner ?? createArbiterRunner({ host: arb.host, log: () => {}, now });
   const controller = createLotController({
     stateDir,
     repoRoot,
     run: pendingRunner,
-    arbiter: createArbiterRunner({ host: arb.host, log: () => {}, now }),
+    arbiter: runner,
     runGit: gitRunner,
-    notify: () => {},
+    notify: (text) => notices.push(text),
     toast: () => {},
     session: () => ({ file: null, id: null }),
     now,
@@ -125,7 +153,7 @@ function world(script: Script) {
     assert.ok(done(), what);
   };
   const add = async (...slugs: string[]) => {
-    for (const slug of slugs) assert.equal(await controller.add({ name: slug, description: `Faire ${slug}.`, deps: [], auditSession: CTX }), null);
+    for (const slug of slugs) assert.equal(await controller.add({ name: slug, description: `Faire ${slug}.`, deps: [], auditSession: options.context?.(slug) ?? CTX }), null);
     await controller.launch();
   };
   /** Parque une feature à une question /req, comme le fait la fin d'un run. */
@@ -140,7 +168,7 @@ function world(script: Script) {
     feature.lastRunSessionFile = `/x/${slug}.jsonl`;
     writeLot(stateDir, lot);
   };
-  return { controller, stateDir, repoRoot, repoKey, arb, read, until, add, park };
+  return { controller, stateDir, repoRoot, repoKey, arb, runner, notices, read, until, add, park };
 }
 
 const answer = (text: string, citation: string): ArbiterDecision => ({ decision: "answer", answer: text, source: "contexte", citations: [citation], reason: "le brief le dit" });
@@ -230,4 +258,118 @@ test("pilote-de-lot-persistant/AC-3 : la session du pilote est libérée avec le
   await stopped.until(() => journalOfContext(stopped.stateDir, stopped.repoKey, CTX).length === 1, "la question est tranchée");
   stopped.controller.stop();
   await stopped.until(() => stopped.arb.disposed() === 1, "l'arrêt ferme la session");
+});
+
+test("pilote-de-lot-persistant/AC-4 : les tours sont sériels PAR SESSION — un tour lent d'un contexte ne retient pas le tour d'un autre contexte du même lot, et dans un même contexte le second tour attend le premier", async () => {
+  const OTHER = "/sessions/audit-autre.jsonl";
+  const gate = Promise.withResolvers<void>();
+  const w = world(
+    (prompt) => {
+      if (prompt.includes("question : Lente ?")) return { gate: gate.promise, decision: answer("oui", FORMAT_FACT) };
+      if (prompt.includes("question : Quel format de date ?")) return answer("ISO 8601", DATE_FACT);
+      if (prompt.includes("question : Quel format de sortie ?")) return answer("YAML", FORMAT_FACT);
+      return null;
+    },
+    { context: (slug) => (slug === "charlie" ? OTHER : CTX) },
+  );
+  await w.add("alpha", "bravo", "charlie");
+  writeBrief(w.stateDir, CTX, `## But\n${FORMAT_FACT}\n${DATE_FACT}\n`);
+  writeBrief(w.stateDir, OTHER, `## But\n${DATE_FACT}\n`);
+  w.park("alpha", "Lente ?");
+  w.park("bravo", "Quel format de sortie ?");
+  w.park("charlie", "Quel format de date ?");
+  await w.controller.tick();
+  // charlie (autre contexte) est tranchée pendant que le tour d'alpha est retenu ; bravo (même contexte qu'alpha) attend.
+  await w.until(() => journalOfContext(w.stateDir, w.repoKey, OTHER).length === 1, "l'autre contexte n'attend pas");
+  assert.equal(journalOfContext(w.stateDir, w.repoKey, CTX).length, 0, "bravo attend la fin du tour d'alpha");
+  assert.equal(w.arb.opens.length, 2, "une session par contexte");
+  assert.equal(w.arb.prompts.filter((p) => p.includes("feature : bravo")).length, 0);
+  gate.resolve();
+  await w.until(() => journalOfContext(w.stateDir, w.repoKey, CTX).length === 2, "alpha puis bravo");
+  const ctx = journalOfContext(w.stateDir, w.repoKey, CTX).map((e) => e.slug);
+  assert.deepEqual(ctx, ["alpha", "bravo"]);
+  assert.equal(w.arb.opens.length, 2);
+});
+
+test("pilote-de-lot-persistant/AC-5 : un contrôleur neuf sur le même lot (runner partagé) ne reprend pas une session dont il n'a pas l'ouverture — elle est fermée et rouverte, et les citations du brief restent vérifiables", async () => {
+  const script: Script = (prompt) => {
+    if (prompt.includes("question : Quel format de sortie ?")) return answer("YAML", FORMAT_FACT);
+    if (prompt.includes("question : Quel format de date ?")) return answer("ISO 8601", DATE_FACT);
+    return null;
+  };
+  const first = world(script);
+  await first.add("alpha", "bravo");
+  writeBrief(first.stateDir, CTX, `## But\n${FORMAT_FACT}\n${DATE_FACT}\n`);
+  first.park("alpha", "Quel format de sortie ?");
+  await first.controller.tick();
+  await first.until(() => journalOfContext(first.stateDir, first.repoKey, CTX).length === 1, "alpha tranchée par le premier contrôleur");
+  assert.equal(first.arb.opens.length, 1);
+  // Un second contrôleur (service recréé, même dépôt, même runner) prend le lot : sa table d'ouvertures est vide,
+  // et la session du runner est VIVANTE et orpheline (le premier n'a pas été arrêté).
+  const second = world(script, { share: { arb: first.arb, runner: first.runner, repoRoot: first.repoRoot, stateDir: first.stateDir } });
+  second.park("bravo", "Quel format de date ?");
+  await second.controller.tick();
+  await second.until(() => journalOfContext(second.stateDir, second.repoKey, CTX).length === 2, "bravo tranchée par le second contrôleur");
+  assert.equal(first.arb.disposed(), 1, "la session orpheline est fermée");
+  assert.equal(first.arb.opens.length, 2, "et rouverte");
+  const reopened = first.arb.prompts.at(-1)!;
+  assert.ok(reopened.startsWith(ARBITER_DIRECTIVE), "avec son ouverture");
+  assert.ok(reopened.includes("- [alpha /req] Q : Quel format de sortie ? → R : YAML (source : contexte)"), "l'ouverture porte la décision du premier contrôleur");
+  const bravo = journalOfContext(second.stateDir, second.repoKey, CTX).at(-1)!;
+  assert.equal(bravo.answer, "ISO 8601");
+  assert.equal(bravo.source, "contexte", "la citation du brief a été vérifiée dans la nouvelle ouverture");
+});
+
+test("pilote-de-lot-persistant/AC-6 : après une compaction de la session, le tour suivant reporte le journal du lot ENTIER, puis la suite seule ; le rappel de chaque tour porte le digest des règles", async () => {
+  const w = world((prompt) => {
+    if (prompt.includes("question : Q1 ?")) return answer("R1", FORMAT_FACT);
+    if (prompt.includes("question : Q2 ?")) return { compact: true, decision: answer("R2", FORMAT_FACT) };
+    if (prompt.includes("question : Q3 ?")) return answer("R3", FORMAT_FACT);
+    if (prompt.includes("question : Q4 ?")) return answer("R4", FORMAT_FACT);
+    return null;
+  });
+  await w.add("alpha", "bravo", "charlie", "delta");
+  writeBrief(w.stateDir, CTX, `## But\n${FORMAT_FACT}\n`);
+  const ask = async (slug: string, question: string, expected: number) => {
+    w.park(slug, question);
+    await w.controller.tick();
+    await w.until(() => journalOfContext(w.stateDir, w.repoKey, CTX).length === expected, `${slug} tranchée`);
+  };
+  await ask("alpha", "Q1 ?", 1);
+  await ask("bravo", "Q2 ?", 2); // ce tour est compacté
+  await ask("charlie", "Q3 ?", 3);
+  await ask("delta", "Q4 ?", 4);
+  assert.equal(w.arb.opens.length, 1, "la compaction ne rouvre pas la session");
+  const [, second, third, fourth] = w.arb.prompts as [string, string, string, string];
+  const since = (p: string) => p.split("### Journal du lot depuis le dernier tour\n")[1]!.split("\n\n")[0]!.split("\n");
+  assert.deepEqual(since(second), ["- [alpha /req] Q : Q1 ? → R : R1 (source : contexte)"], "avant la compaction : la suite seule");
+  assert.deepEqual(since(third), ["- [alpha /req] Q : Q1 ? → R : R1 (source : contexte)", "- [bravo /req] Q : Q2 ? → R : R2 (source : contexte)"], "après la compaction : le journal entier");
+  assert.deepEqual(since(fourth), ["- [charlie /req] Q : Q3 ? → R : R3 (source : contexte)"], "puis la suite seule");
+  for (const piece of ["Rappel des règles", "justification vérifiable", "libellé exact ou son numéro", "décision `utilisateur` prévaut", "appel unique à `arbiter_decide`"]) {
+    assert.ok(TURN_REMINDER.includes(piece), piece);
+  }
+  assert.ok(fourth.endsWith(TURN_REMINDER));
+});
+
+test("pilote-de-lot-persistant/AC-7 : le récap de fin de lot porte la mesure de l'arbitrage — décisions par source, sessions de pilote, tours", async () => {
+  const w = world((prompt) => {
+    if (prompt.includes("question : Quel format de sortie ?")) return answer("YAML", FORMAT_FACT);
+    if (prompt.includes("question : Quel format de date ?")) return { decision: "escalate", reason: "choix de produit" };
+    return null;
+  });
+  await w.add("alpha", "bravo");
+  writeBrief(w.stateDir, CTX, `## But\n${FORMAT_FACT}\n`);
+  w.park("alpha", "Quel format de sortie ?");
+  w.park("bravo", "Quel format de date ?");
+  await w.controller.tick();
+  await w.until(() => journalOfContext(w.stateDir, w.repoKey, CTX).length === 1 && lotFeature(w.read(), "bravo")!.escalation !== undefined, "une tranchée, une escaladée");
+  // L'utilisateur tranche l'escalade, puis le lot se termine.
+  assert.equal(await w.controller.answer("bravo", "ISO 8601"), null);
+  await w.until(() => journalOfContext(w.stateDir, w.repoKey, CTX).length === 2, "la réponse de l'utilisateur est au journal");
+  assert.equal(await w.controller.cancel("alpha", "keep"), null);
+  assert.equal(await w.controller.cancel("bravo", "keep"), null);
+  await w.controller.tick();
+  await w.until(() => w.read().recapAt !== null, "le récap est posté");
+  const recap = w.notices.find((n) => n.includes("terminé —"))!;
+  assert.ok(recap.includes("\narbitrage : 2 décisions (contexte 1, arbitrage 0, utilisateur 1) — 1 session de pilote, 2 tours"), recap);
 });

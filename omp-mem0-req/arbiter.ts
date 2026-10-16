@@ -272,10 +272,10 @@ export function buildPilotOpening(input: {
 
 /**
  * Le CORPUS d'un TOUR (S-4), dans l'ordre : contrat, journal du lot DEPUIS LE
- * DERNIER TOUR (les entrées postérieures à `lotSince`, les `lotMax` plus récentes),
- * journal de la feature (les 50 plus récentes). Le contrat est réduit par genre
- * (`arbiterContractExcerpt`). Rapport et brief ne sont pas repris : la session les
- * tient depuis son ouverture. Au-delà de `maxChars`, on sacrifie d'abord les plus
+ * DERNIER TOUR (les entrées à partir de l'index `lotCursor`, les `lotMax` plus
+ * récentes), journal de la feature (les 50 plus récentes). Le contrat est réduit par
+ * genre (`arbiterContractExcerpt`). Rapport et brief ne sont pas repris : la session
+ * les tient depuis son ouverture. Au-delà de `maxChars`, on sacrifie d'abord les plus
  * anciennes entrées du journal du lot, puis la fin du contrat — jamais le journal de
  * la feature — et une ligne de tête annonce les coupes.
  */
@@ -286,8 +286,8 @@ export function buildArbiterCorpus(input: {
   contract: string | null;
   slug: string;
   lotEntries: readonly JournalEntry[];
-  /** Les entrées du lot écrites APRÈS cet instant (epoch ms) ; `0` = toutes. */
-  lotSince: number;
+  /** L'index de la première entrée du lot que la session n'a pas encore reçue (le journal est en ordre d'écriture) ; `0` = toutes. */
+  lotCursor: number;
   lotMax: number;
   featureEntries: readonly JournalEntry[];
   maxChars?: number;
@@ -296,7 +296,7 @@ export function buildArbiterCorpus(input: {
   const whole = (input.contract ?? "").trim();
   const contract = arbiterContractExcerpt(whole, input.kind, input.phase);
   const noContract = whole === "" ? NO_CONTRACT : NO_CONTRACT_SECTION;
-  const fresh = input.lotEntries.filter((entry) => entry.at > input.lotSince);
+  const fresh = input.lotEntries.slice(Math.max(0, input.lotCursor));
   const recentLot = fresh.slice(Math.max(0, fresh.length - Math.max(0, input.lotMax)));
   const lotBase = fresh.length - recentLot.length;
   const omittedFeature = Math.max(0, input.featureEntries.length - JOURNAL_CONTEXT_MAX);
@@ -377,8 +377,29 @@ export function arbiterItemBlock(item: ArbiterItem): string | null {
 }
 
 
-/** La ligne qui clôt chaque tour : la seule règle que la session doit relire après une compaction. */
-export const TURN_REMINDER = "Rends ta décision pour CET élément par un appel unique à `arbiter_decide`.";
+/**
+ * Le rappel qui clôt chaque tour : le digest des règles de la directive — ce qu'une
+ * compaction de la session peut avoir dilué — et l'appel unique.
+ */
+export const TURN_REMINDER = [
+  "Rappel des règles : tranche tout choix technique (source `contexte` si le corpus répond, `arbitrage` si tu déduis) ; escalade seulement un choix de produit ;",
+  "toute réponse ou approbation porte une justification vérifiable (`citations` copiées telles quelles, `references` chemin:ligne du worktree, `rubriques` du rapport) ;",
+  "une option se désigne par son libellé exact ou son numéro ; une question déjà tranchée au journal reçoit la même réponse, une décision `utilisateur` prévaut.",
+  "Rends ta décision pour CET élément par un appel unique à `arbiter_decide`.",
+].join("\n");
+
+/**
+ * La ligne de MESURE du pilote au récap de fin de lot : les décisions du journal par
+ * source (ce que l'utilisateur a dû trancher), le nombre de sessions distinctes et
+ * de tours. `null` sans aucun arbitrage — la ligne n'est pas affichée.
+ */
+export function pilotRecapLine(input: { entries: readonly JournalEntry[]; turns: ReadonlyArray<{ sessionFile: string | null }> }): string | null {
+  const decided = input.entries.filter((entry) => entry.kind === "question" || entry.kind === "jalon" || entry.kind === "plafond" || entry.kind === "echec");
+  if (decided.length === 0 && input.turns.length === 0) return null;
+  const by = (source: DecisionSource) => decided.filter((entry) => entry.source === source).length;
+  const sessions = new Set(input.turns.map((turn) => turn.sessionFile).filter((file): file is string => file !== null)).size;
+  return `arbitrage : ${decided.length} décisions (contexte ${by("contexte")}, arbitrage ${by("arbitrage")}, utilisateur ${by("utilisateur")}) — ${sessions} session${sessions > 1 ? "s" : ""} de pilote, ${input.turns.length} tour${input.turns.length > 1 ? "s" : ""}`;
+}
 
 /**
  * Le prompt d'un TOUR du pilote (S-9) : l'élément, son corpus, le rappel. Sans la

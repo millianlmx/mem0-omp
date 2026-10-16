@@ -1323,12 +1323,15 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   le groupe cadrage+revue (principal puis repli), quelle que soit la phase de l'élément
   arbitré** : s'il est épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe
   exécution ; un modèle ou un repli différent de celui de la session ouverte la rouvre. Les
-  tours d'un même lot sont **sériels** ; un tour est borné à 10 minutes depuis son départ.
-  Toute coupure (échéance, plafond de contexte, arrêt) **ferme** la session : le tour suivant
-  la rouvre avec son message d'ouverture. Elle se ferme avec le récap de fin de lot ou l'arrêt
-  du pilote. Le **plafond** de la boucle revue ⇄ correction et l'**échec** d'un run sont
-  arbitrés aussi, et le **quota** épuisé a son propre traitement (sous-puces Plafond, Échec,
-  Quota ci-dessous).
+  tours d'une **même session** sont **sériels** (la décision d'un élément est au journal
+  avant que le tour du suivant ne soit construit) ; deux contextes avancent en parallèle.
+  Un tour est borné à 10 minutes depuis son départ. Toute coupure (échéance, plafond de
+  contexte, arrêt) **ferme** la session : le tour suivant la rouvre avec son message
+  d'ouverture. Le pilote de lot en est le **propriétaire** : une session du service dont
+  il n'a pas l'ouverture (contrôleur recréé) est fermée puis rouverte, jamais reprise à
+  l'aveugle. Elle se ferme avec le récap de fin de lot ou l'arrêt du pilote. Le **plafond**
+  de la boucle revue ⇄ correction et l'**échec** d'un run sont arbitrés aussi, et le
+  **quota** épuisé a son propre traitement (sous-puces Plafond, Échec, Quota ci-dessous).
   - **Ouverture**, une fois par session : la directive, puis le **corpus du lot** — le rapport
     du contexte (`(aucun rapport)` quand il n'existe pas, sans bloquer), le brief et le
     **journal du lot** (les entrées de toutes les features du même audit ou projet, bornées
@@ -1342,13 +1345,19 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     Besoins + AC + Revue ; jalon « specs validées » : AC + Spécifications + Lots ; plafond ou
     échec : AC + Revue + Corrections ; jalon « revue propre » : le contrat **entier sauf
     `## Revue`** — l'arbitre ne relit jamais le verdict du relecteur qu'il doit contrôler),
-    le **journal du lot depuis le dernier tour** (ce que les autres features et l'utilisateur
-    ont décidé entre-temps ; `- (aucune décision nouvelle)` sinon) et les 50 entrées les plus
-    récentes du journal de la feature. Même borne de 200 000 caractères : journal du lot
-    d'abord, puis fin du contrat — les entrées de la feature restent intactes. Le tour finit
-    par le rappel « Rends ta décision pour CET élément par un appel unique à
-    `arbiter_decide` », seule consigne à survivre à une compaction. Les citations se
-    vérifient dans l'ouverture ET le tour.
+    le **journal du lot depuis le dernier tour** (les entrées que la session n'a pas encore
+    reçues, suivies par position dans le journal, sans horloge : ce que les autres features
+    et l'utilisateur ont décidé entre-temps ; `- (aucune décision nouvelle)` sinon ; après
+    une **compaction** de la session, le tour suivant reporte le journal du lot **entier**)
+    et les 50 entrées les plus récentes du journal de la feature. Même borne de 200 000
+    caractères : journal du lot d'abord, puis fin du contrat — les entrées de la feature
+    restent intactes. Le tour finit par le **rappel des règles** (trancher le technique,
+    justifier, options par libellé ou numéro, cohérence avec le journal, un appel unique à
+    `arbiter_decide`) — le digest de la directive qui survit à une compaction. Les
+    citations se vérifient dans l'ouverture ET le tour.
+  - **Mesure** : le récap de fin de lot ajoute `arbitrage : N décisions (contexte x,
+    arbitrage y, utilisateur z) — S sessions de pilote, T tours` — ce que l'utilisateur a dû
+    trancher lui-même, et le coût en sessions.
   - **Dépôt en lecture seule** : seuls `read`, `grep`, `glob`, `lsp` et `arbiter_decide` sont
     actifs ; tout autre outil (`bash`, `write`, `edit` compris) est refusé par l'extension
     (liste blanche), donc aucun fichier du worktree ne peut changer.
