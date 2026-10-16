@@ -698,8 +698,11 @@ export function createArbiterRunner(deps: {
       compactions: pilot?.meter.compactions() ?? 0,
     });
     if (input.signal.aborted) return bare(pilots.get(key) ?? null, false);
+    // Seul le modèle de DÉPART rouvre : le repli n'est qu'une chaîne de secours de la
+    // session déjà ouverte, et deux features d'un même lot peuvent en déclarer un
+    // différent — rouvrir à chaque alternance referait un arbitre à froid.
     const known = pilots.get(key);
-    if (known !== undefined && (known.model !== input.model || known.fallback !== input.fallback)) {
+    if (known !== undefined && known.model !== input.model) {
       await drop(key, `modèle changé (${known.model ?? "défaut"} → ${input.model ?? "défaut"})`);
     }
     let pilot = pilots.get(key) ?? null;
