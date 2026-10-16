@@ -175,7 +175,12 @@ export function contractAcIds(contract: string): string[] {
 }
 
 
-const SPEC_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(S-\d+)(?![0-9])/;
+/**
+ * La tête d'une spécification : `S-<n>` est la forme demandée, mais `/specs` écrit
+ * aussi `SP-<n>` et `SPEC-<n>` (mesuré sur les contrats réels : 126 S, 38 SP, 25 SPEC) —
+ * les trois sont des spécifications, sinon tout AC est tenu pour non couvert.
+ */
+const SPEC_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*((?:S|SP|SPEC)-\d+)(?![0-9])/;
 
 /**
  * Les AC du contrat qu'AUCUN bloc de `## Spécifications` ne référence (S-10) : un bloc
