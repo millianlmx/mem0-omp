@@ -15,10 +15,13 @@ import * as path from "node:path";
 
 import {
   ARBITER_DEADLINE_MS,
+  ARBITER_DIRECTIVE,
+  TURN_REMINDER,
   arbiterCaptureOf,
   asDelivery,
   buildArbiterCorpus,
   buildArbiterPrompt,
+  buildPilotOpening,
   createArbiterRunner,
   readDeliveries,
   recordArbiterDecision,
@@ -2147,6 +2150,10 @@ function br4ArbiterHost(script: Br4Script) {
       const file = path.join(o.cwd, `${id}.jsonl`);
       opens.push({ id, file, cwd: o.cwd, purpose: o.purpose, resume: o.resume ?? null, model: o.model ?? null, fallback: o.fallback ?? null });
       const messages: Array<Record<string, unknown>> = [];
+      let release!: () => void;
+      const released = new Promise<void>(resolve => {
+        release = resolve;
+      });
       const session = {
         get messages() {
           return messages;
@@ -2179,7 +2186,9 @@ function br4ArbiterHost(script: Br4Script) {
         transcript: [],
         dispose: async () => {
           disposed += 1;
+          release();
         },
+        disposed: released,
         session,
       } as unknown as HostedSession;
     },
@@ -2289,18 +2298,47 @@ test("context-optimization-architecture/AC-11 : un brief qui contient la répons
   // La feature relance avec la réponse, source nommée.
   assert.ok(s.specs[1]!.prompt.startsWith("[réponse tirée du contexte] JSON\n"), s.specs[1]!.prompt);
   assert.equal(s.specs[1]!.phase, "req");
-  // Une session d'arbitre NEUVE, ouverte sur le worktree de la feature, jamais reprise.
+  // UNE session de pilote pour le lot, ouverte sur le dépôt principal (pas le worktree), jamais reprise, gardée après le tour.
   assert.equal(s.arb.opens.length, 1);
   assert.equal(s.arb.opens[0]!.purpose, "arbiter");
   assert.equal(s.arb.opens[0]!.resume, null);
-  assert.equal(s.arb.opens[0]!.cwd, s.feature().worktree);
-  assert.equal(s.arb.disposed(), 1, "la session d'arbitre est libérée");
-  // Le prompt de l'arbitre : directive, élément, puis le corpus (brief, journal, contrat).
+  assert.equal(s.arb.opens[0]!.cwd, s.repoRoot);
+  assert.notEqual(s.arb.opens[0]!.cwd, s.feature().worktree);
+  assert.equal(s.arb.disposed(), 0, "la session du pilote reste ouverte après le tour");
+  // Le premier prompt : l'ouverture (directive + corpus du lot) puis le tour (élément + son corpus), dans cet ordre.
   const prompt = s.arb.prompts[0]!;
-  assert.ok(prompt.startsWith("Tu es l'arbitre d'une feature."));
-  for (const piece of ["feature : alpha", "étape : /req", "question : Quel format de sortie ?", "### Brief", BR4_FACT, "### Journal de la feature alpha", "- (aucune décision consignée)", "### Contrat", "(contrat absent)"]) {
-    assert.ok(prompt.includes(piece), piece);
+  assert.ok(prompt.startsWith(ARBITER_DIRECTIVE), prompt.slice(0, 120));
+  const order = [
+    "## Corpus du lot",
+    "### Rapport",
+    "### Brief",
+    BR4_FACT,
+    "### Journal du lot",
+    "## Élément à arbitrer",
+    "feature : alpha",
+    `worktree : ${s.feature().worktree} (les \`references\` sont relatives à ce dossier)`,
+    "étape : /req",
+    "question : Quel format de sortie ?",
+    "## Corpus de l'élément",
+    "### Contrat",
+    "(contrat absent)",
+    "### Journal du lot depuis le dernier tour",
+    "- (aucune décision nouvelle)",
+    "### Journal de la feature alpha",
+    "- (aucune décision consignée)",
+    TURN_REMINDER,
+  ];
+  let cursor = 0;
+  for (const piece of order) {
+    const at = prompt.indexOf(piece, cursor);
+    assert.ok(at >= 0, `${piece} après la position ${cursor}`);
+    cursor = at + piece.length;
   }
+  assert.ok(prompt.endsWith(TURN_REMINDER));
+  // L'arrêt du contrôleur ferme la session du lot.
+  s.controller.stop();
+  await flush(5);
+  assert.equal(s.arb.disposed(), 1, "la session du pilote est libérée à l'arrêt");
   // Le journal consigne la décision, source `contexte`.
   const entries = journalFor(s.stateDir, s.key, "alpha");
   assert.deepEqual(
@@ -2312,7 +2350,15 @@ test("context-optimization-architecture/AC-11 : un brief qui contient la répons
 });
 
 test("context-optimization-architecture/AC-13 : un jalon prêt est tranché par une session d'arbitre distincte des runs de la feature, consigné au journal, et la chaîne repart", async () => {
-  const s = await br4Scenario(() => ({ decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT], references: ["preuve.txt:1"] }), { covered: true });
+  let bump: (() => void) | null = null;
+  const s = await br4Scenario(() => {
+    // Le tour avance l'horloge : la décision est postérieure à la construction du tour.
+    bump?.();
+    return { decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT], references: ["preuve.txt:1"] };
+  }, { covered: true });
+  bump = () => {
+    s.clock.now += 1_000;
+  };
   s.park("specs", "specs", null);
   await s.controller.tick();
   await br2Until(() => s.specs.length === 2);
@@ -2330,13 +2376,23 @@ test("context-optimization-architecture/AC-13 : un jalon prêt est tranché par 
   assert.ok(s.specs[1]!.prompt.endsWith("[jalon « specs validées » — décision de l'arbitre]"), s.specs[1]!.prompt.slice(-200));
   assert.equal(run.milestoneSource, undefined, "la source du jalon est effacée au lancement du run");
 
-  // Même chose au jalon de revue : une SECONDE session d'arbitre, la livraison part.
+  // Même chose au jalon de revue : la MÊME session de pilote, un SECOND tour sans
+  // directive, qui porte la décision du tour précédent ; la livraison part.
   s.park("review", "review", null);
   await s.controller.tick();
   await br2Until(() => s.specs.length === 3);
   await br2Until(() => s.feature().arbitration === undefined);
-  assert.equal(s.arb.opens.length, 2);
-  assert.notEqual(s.arb.opens[1]!.id, s.arb.opens[0]!.id, "une session neuve par élément");
+  assert.equal(s.arb.opens.length, 1, "une seule session de pilote pour le lot");
+  assert.equal(s.arb.disposed(), 0);
+  assert.equal(s.arb.prompts.length, 2);
+  const second = s.arb.prompts[1]!;
+  assert.ok(second.startsWith("## Élément à arbitrer\nfeature : alpha\n"), second.slice(0, 80));
+  assert.equal(second.includes(ARBITER_DIRECTIVE), false, "la directive n'est pas répétée");
+  assert.equal(second.includes("### Brief"), false, "le brief n'est pas repris : la session le tient");
+  assert.ok(second.includes("type : jalon « revue propre »"));
+  const lotSection = second.slice(second.indexOf("### Journal du lot depuis le dernier tour"), second.indexOf("### Journal de la feature alpha"));
+  assert.ok(lotSection.includes("specs validées ?") && lotSection.includes("validé"), lotSection);
+  assert.equal(lotSection.includes("(aucune décision nouvelle)"), false);
   assert.equal(s.specs[2]!.phase, "release");
   assert.ok(s.specs[2]!.prompt.endsWith("[jalon « revue propre » — décision de l'arbitre]"));
   assert.ok(s.specs[2]!.prompt.includes("la fin du cycle a été acceptée"));
@@ -2383,7 +2439,8 @@ test("context-optimization-architecture/AC-10 : trois décisions — contexte, a
   assert.equal(journalFor(s.stateDir, s.key, "alpha").length, 2);
   await s.controller.tick();
   await flush(30);
-  assert.equal(s.arb.opens.length, 3, "aucun nouvel arbitrage pour la même clé");
+  assert.equal(s.arb.opens.length, 1, "une seule session de pilote pour les trois éléments");
+  assert.equal(s.arb.prompts.length, 3, "aucun nouvel arbitrage pour la même clé");
   assert.equal(s.specs.length, 3, "aucune réponse n'est donnée avant celle de l'utilisateur");
   assert.equal(await s.controller.answer("alpha", "events"), null);
   assert.equal(s.feature().escalation, undefined, "l'escalade tombe quand la décision est appliquée");
@@ -2521,8 +2578,13 @@ test("arbitre : le premier appel d'`arbiter_decide` est retenu, un second est re
 test("arbitre : la validation déterministe n'accorde rien sur parole (citations aux espaces repliés, jalon, source, décision absente)", () => {
   const question = { kind: "question" as const, slug: "alpha", phase: "req" as const, question: "Quel format ?", options: ["JSON", "CSV"] };
   const jalon = { kind: "specs" as const, slug: "alpha", phase: "specs" as const, question: null, options: [] };
-  const corpus = buildArbiterCorpus({ kind: "question", report: null, brief: "## But\nLe format de\n   sortie est JSON.", contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
-  const ground = { corpus, report: null, worktree: emptyGitRepo("coa-ground-"), contract: null, review: null };
+  // Le brief vit dans l'OUVERTURE de la session ; le tour ne porte que contrat et journaux.
+  // Le sol des citations est, comme au contrôleur, le corpus du tour PUIS l'ouverture.
+  const opening = buildPilotOpening({ report: null, brief: "## But\nLe format de\n   sortie est JSON.", lotEntries: [], lotMax: 200 });
+  const corpus = buildArbiterCorpus({ kind: "question", contract: null, slug: "alpha", lotEntries: [], lotSince: Number.MAX_SAFE_INTEGER, lotMax: 200, featureEntries: [] });
+  assert.equal(corpus.includes("sortie est JSON."), false, "le tour ne reprend pas le brief");
+  assert.ok(opening.startsWith(ARBITER_DIRECTIVE) && opening.includes("### Brief\n## But\nLe format de\n   sortie est JSON."));
+  const ground = { corpus: `${corpus}\n\n${opening}`, report: null, worktree: emptyGitRepo("coa-ground-"), contract: null, review: null };
   const escalade = (motif: string) => ({ kind: "escalate", reason: motif });
   const justification = (citations: string[]) => ({ reason: "r", citations, references: [], rubriques: [] });
   // Une réponse citée (espaces repliés) est acceptée ; exactement une option vaut `selected`.
@@ -2781,7 +2843,8 @@ async function br5Scenario(profile: Br5Profile) {
   await s.controller.tick();
   await flush(30);
   assert.equal(s.specs.length, 2, "aucune relance avant l'utilisateur");
-  assert.equal(s.arb.opens.length, 2, "une feature escaladée n'est plus arbitrée pour la même clé");
+  assert.equal(s.arb.opens.length, 1, "une seule session de pilote");
+  assert.equal(s.arb.prompts.length, 2, "une feature escaladée n'est plus arbitrée pour la même clé");
   assert.equal(journalFor(s.stateDir, s.key, "alpha").length, 1, "rien au journal avant l'utilisateur");
 
   // L'utilisateur répond (source `utilisateur`) : l'escalade tombe, la chaîne repart.
@@ -2799,6 +2862,7 @@ async function br5Scenario(profile: Br5Profile) {
     messages: rig.messages.map(m => (m.message as { content: string }).content.replace(BR5_NAME_RE, "NOM")),
     rows: rows.replace(BR5_NAME_RE, "NOM").replace(/coa-repo-\w+/g, "REPO"),
     opens: s.arb.opens.length,
+    turns: s.arb.prompts.length,
     runs: s.specs.length,
   };
 }
@@ -2847,7 +2911,8 @@ test("context-optimization-architecture/AC-16 : relais désarmé, deux élément
   );
   assert.deepEqual(journalFor(s.stateDir, s.key, "alpha").map(e => [e.phase, e.kind, e.question, e.answer, e.source]), journal, "le journal n'a pas bougé");
   assert.equal(s.specs.length, 3, "aucune relance");
-  assert.equal(s.arb.opens.length, 3, "aucune décision redemandée");
+  assert.equal(s.arb.opens.length, 1, "une seule session de pilote");
+  assert.equal(s.arb.prompts.length, 3, "aucune décision redemandée");
   s.parentUntouched();
 });
 
@@ -2856,7 +2921,8 @@ test("context-optimization-architecture/AC-17 : le scénario « question arbitr�
   const project = await br5Scenario("project");
   assert.deepEqual(project, audit);
   assert.equal(audit.messages.length, 1);
-  assert.equal(audit.opens, 2);
+  assert.equal(audit.opens, 1, "une seule session de pilote par lot");
+  assert.equal(audit.turns, 2, "un tour par élément");
   assert.equal(audit.runs, 3);
   assert.ok(ARBITRATION_REFUSAL.startsWith("arbitrage en cours"));
 });
@@ -3173,6 +3239,7 @@ function br6UsageHost(turnsByKey: Record<string, number[] | null>) {
         aborting: false,
         transcript: ["texte du run"],
         dispose: async () => {},
+        disposed: new Promise<void>(() => {}),
         session,
       } as unknown as HostedSession;
     },
@@ -3195,11 +3262,13 @@ async function br6Measure(): Promise<void> {
   assert.equal(none.peakContext, null, "aucun usage : null");
   const arbiter = await createArbiterRunner({ host: usage.host, log: () => {}, now: () => T0, env: BR6_ENV })({
     stateDir: tmpdir("coa-state-"),
+    pilot: "lot-1",
     cwd: worktree,
+    seed: () => "SEED",
     prompt: "p",
     model: null,
     fallback: null,
-    deadline: T0 + ARBITER_DEADLINE_MS,
+    budgetMs: ARBITER_DEADLINE_MS,
     signal: signal(),
   });
   assert.equal(arbiter.peakContext, 1_234, "l'arbitre mesure aussi son pic");

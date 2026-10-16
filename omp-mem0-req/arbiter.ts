@@ -59,6 +59,8 @@ export type ArbiterItem = {
   /** La question d'une étape (`ask`, `question`) ; `null` pour un jalon, un plafond et un échec. */
   question: string | null;
   options: string[];
+  /** Le worktree de la feature (chemin absolu) : la session du lot vit sur le dépôt principal, l'élément dit où lire. */
+  worktree?: string;
   /** La raison d'arrêt de la feature (cap, failure). */
   stopReason?: string | null;
   /** La fin de sortie du run échoué (failure) : `feature.failureOutput ?? null`. */
@@ -147,10 +149,10 @@ export const ARBITER_CORPUS_MAX_CHARS = 200_000;
 
 const NO_REPORT = "(aucun rapport)";
 const NO_CONTRACT_SECTION = "(aucune section du contrat ne concerne cet élément)";
-const NOT_SUBMITTED = "(non soumis à un plafond ou à un échec : revue, corrections et sortie du run font foi)";
 const NO_BRIEF = "(aucun brief validé)";
 const NO_CONTRACT = "(contrat absent)";
 const NO_DECISION = "- (aucune décision consignée)";
+const NO_NEW_DECISION = "- (aucune décision nouvelle)";
 const REPORT_CUT = "[… fin du rapport coupée]";
 const CONTRACT_CUT = "[… fin du contrat coupée]";
 
@@ -219,49 +221,94 @@ export function arbiterContractExcerpt(contract: string, kind: ArbiterItemKind, 
 
 
 /**
- * Le CORPUS de l'arbitre (S-4), dans l'ordre : rapport, brief, contrat, journal du
- * LOT (les `lotMax` plus récentes entrées), journal de la feature (les 50 plus
- * récentes). Le contrat est réduit par genre (`arbiterContractExcerpt`) ; un plafond
- * ou un échec ne reçoit ni rapport ni brief (il se juge sur la revue, les corrections
- * et la sortie du run). Au-delà de `maxChars`, on sacrifie d'abord les plus anciennes
- * entrées du journal du lot, puis la fin du rapport, puis la fin du contrat — jamais
- * le brief ni le journal de la feature — et une ligne de tête annonce les coupes.
+ * Le message d'OUVERTURE de la session du pilote (S-4) : la directive, puis le
+ * corpus du LOT — rapport, brief, journal du lot (les `lotMax` plus récentes
+ * entrées). Envoyé une fois par session ; les tours ne le répètent pas. Au-delà de
+ * `maxChars`, on sacrifie d'abord les plus anciennes entrées du journal, puis la fin
+ * du rapport — jamais le brief — et une ligne de tête annonce les coupes.
+ */
+export function buildPilotOpening(input: {
+  report: string | null;
+  brief: string | null;
+  lotEntries: readonly JournalEntry[];
+  lotMax: number;
+  maxChars?: number;
+}): string {
+  const maxChars = input.maxChars ?? ARBITER_CORPUS_MAX_CHARS;
+  const report = (input.report ?? "").trim();
+  const brief = (input.brief ?? "").trim();
+  const recentLot = input.lotEntries.slice(Math.max(0, input.lotEntries.length - Math.max(0, input.lotMax)));
+  const lotBase = input.lotEntries.length - recentLot.length;
+  const render = (dropped: number, reportKeep: number): string => {
+    const cut: string[] = [];
+    if (dropped > 0) cut.push("journal du lot");
+    if (reportKeep < report.length) cut.push("rapport");
+    const omittedLot = lotBase + dropped;
+    const lotLines = [
+      ...(omittedLot > 0 ? [`- (${omittedLot} décisions plus anciennes omises)`] : []),
+      ...recentLot.slice(dropped).map(lotJournalLine),
+    ];
+    return [
+      ARBITER_DIRECTIVE,
+      "## Corpus du lot",
+      ...(cut.length > 0 ? [`(corpus tronqué à ${maxChars} caractères — sections coupées : ${cut.join(", ")})`] : []),
+      ["### Rapport", report === "" ? NO_REPORT : reportKeep < report.length ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}` : report].join("\n"),
+      ["### Brief", brief === "" ? NO_BRIEF : brief].join("\n"),
+      ["### Journal du lot", ...(lotLines.length > 0 ? lotLines : [NO_DECISION])].join("\n"),
+    ].join("\n\n");
+  };
+  let dropped = 0;
+  let reportKeep = report.length;
+  const fits = (): boolean => render(dropped, reportKeep).length <= maxChars;
+  if (!fits() && recentLot.length > 0) {
+    dropped = smallestFitting(1, recentLot.length, (n) => render(n, reportKeep).length <= maxChars);
+  }
+  if (!fits() && report !== "") {
+    reportKeep = report.length - smallestFitting(1, report.length, (n) => render(dropped, report.length - n).length <= maxChars);
+  }
+  return render(dropped, reportKeep);
+}
+
+
+/**
+ * Le CORPUS d'un TOUR (S-4), dans l'ordre : contrat, journal du lot DEPUIS LE
+ * DERNIER TOUR (les entrées postérieures à `lotSince`, les `lotMax` plus récentes),
+ * journal de la feature (les 50 plus récentes). Le contrat est réduit par genre
+ * (`arbiterContractExcerpt`). Rapport et brief ne sont pas repris : la session les
+ * tient depuis son ouverture. Au-delà de `maxChars`, on sacrifie d'abord les plus
+ * anciennes entrées du journal du lot, puis la fin du contrat — jamais le journal de
+ * la feature — et une ligne de tête annonce les coupes.
  */
 export function buildArbiterCorpus(input: {
   kind: ArbiterItemKind;
   /** L'étape de l'élément : borne le contrat d'une question à ses sections. */
   phase?: PipelinePhase;
-  report: string | null;
-  brief: string | null;
   contract: string | null;
   slug: string;
   lotEntries: readonly JournalEntry[];
+  /** Les entrées du lot écrites APRÈS cet instant (epoch ms) ; `0` = toutes. */
+  lotSince: number;
   lotMax: number;
   featureEntries: readonly JournalEntry[];
   maxChars?: number;
 }): string {
   const maxChars = input.maxChars ?? ARBITER_CORPUS_MAX_CHARS;
-  const bare = input.kind === "cap" || input.kind === "failure";
-  const report = bare ? "" : (input.report ?? "").trim();
   const whole = (input.contract ?? "").trim();
   const contract = arbiterContractExcerpt(whole, input.kind, input.phase);
-  const brief = bare ? "" : (input.brief ?? "").trim();
-  const noReport = bare ? NOT_SUBMITTED : NO_REPORT;
-  const noBrief = bare ? NOT_SUBMITTED : NO_BRIEF;
   const noContract = whole === "" ? NO_CONTRACT : NO_CONTRACT_SECTION;
-  const recentLot = input.lotEntries.slice(Math.max(0, input.lotEntries.length - Math.max(0, input.lotMax)));
-  const lotBase = input.lotEntries.length - recentLot.length;
+  const fresh = input.lotEntries.filter((entry) => entry.at > input.lotSince);
+  const recentLot = fresh.slice(Math.max(0, fresh.length - Math.max(0, input.lotMax)));
+  const lotBase = fresh.length - recentLot.length;
   const omittedFeature = Math.max(0, input.featureEntries.length - JOURNAL_CONTEXT_MAX);
   const featureLines = [
     ...(omittedFeature > 0 ? [`- (${omittedFeature} décisions plus anciennes omises)`] : []),
     ...input.featureEntries.slice(omittedFeature).map(journalLine),
   ];
 
-  // `dropped` : entrées du lot retirées par la troncature ; `reportKeep`/`contractKeep` : caractères gardés.
-  const render = (dropped: number, reportKeep: number, contractKeep: number): string => {
+  // `dropped` : entrées du lot retirées par la troncature ; `contractKeep` : caractères gardés.
+  const render = (dropped: number, contractKeep: number): string => {
     const cut: string[] = [];
     if (dropped > 0) cut.push("journal du lot");
-    if (reportKeep < report.length) cut.push("rapport");
     if (contractKeep < contract.length) cut.push("contrat");
     const omittedLot = lotBase + dropped;
     const lotLines = [
@@ -270,31 +317,22 @@ export function buildArbiterCorpus(input: {
     ];
     return [
       ...(cut.length > 0 ? [`(corpus tronqué à ${maxChars} caractères — sections coupées : ${cut.join(", ")})`] : []),
-      ["### Rapport", report === "" ? noReport : reportKeep < report.length ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}` : report].join("\n"),
-      ["### Brief", brief === "" ? noBrief : brief].join("\n"),
       ["### Contrat", contract === "" ? noContract : contractKeep < contract.length ? `${contract.slice(0, contractKeep)}\n${CONTRACT_CUT}` : contract].join("\n"),
-      ["### Journal du lot", ...(lotLines.length > 0 ? lotLines : [NO_DECISION])].join("\n"),
+      ["### Journal du lot depuis le dernier tour", ...(lotLines.length > 0 ? lotLines : [NO_NEW_DECISION])].join("\n"),
       [`### Journal de la feature ${input.slug}`, ...(featureLines.length > 0 ? featureLines : [NO_DECISION])].join("\n"),
     ].join("\n\n");
   };
 
   let dropped = 0;
-  let reportKeep = report.length;
   let contractKeep = contract.length;
-  const fits = (): boolean => render(dropped, reportKeep, contractKeep).length <= maxChars;
-  if (!fits()) {
-    if (recentLot.length > 0) {
-      dropped = smallestFitting(1, recentLot.length, (n) => render(n, reportKeep, contractKeep).length <= maxChars);
-    }
-    if (!fits() && report !== "") {
-      // le rapport rendu ne décroît qu'avec `keep` : plus grand `keep` qui tient, sinon 0
-      reportKeep = report.length - smallestFitting(1, report.length, (n) => render(dropped, report.length - n, contractKeep).length <= maxChars);
-    }
-    if (!fits() && contract !== "") {
-      contractKeep = contract.length - smallestFitting(1, contract.length, (n) => render(dropped, reportKeep, contract.length - n).length <= maxChars);
-    }
+  const fits = (): boolean => render(dropped, contractKeep).length <= maxChars;
+  if (!fits() && recentLot.length > 0) {
+    dropped = smallestFitting(1, recentLot.length, (n) => render(n, contractKeep).length <= maxChars);
   }
-  return render(dropped, reportKeep, contractKeep);
+  if (!fits() && contract !== "") {
+    contractKeep = contract.length - smallestFitting(1, contract.length, (n) => render(dropped, contract.length - n).length <= maxChars);
+  }
+  return render(dropped, contractKeep);
 }
 
 
@@ -339,11 +377,18 @@ export function arbiterItemBlock(item: ArbiterItem): string | null {
 }
 
 
-/** Le prompt de l'arbitre : directive, élément, corpus (S-9). */
+/** La ligne qui clôt chaque tour : la seule règle que la session doit relire après une compaction. */
+export const TURN_REMINDER = "Rends ta décision pour CET élément par un appel unique à `arbiter_decide`.";
+
+/**
+ * Le prompt d'un TOUR du pilote (S-9) : l'élément, son corpus, le rappel. Sans la
+ * directive — elle ouvre la session (`buildPilotOpening`) et n'est pas répétée.
+ */
 export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: ReviewEvidence | null = null): string {
   const head = [
     "## Élément à arbitrer",
     `feature : ${item.slug}`,
+    ...(item.worktree !== undefined && item.worktree !== "" ? [`worktree : ${item.worktree} (les \`references\` sont relatives à ce dossier)`] : []),
     `étape : /${item.phase}`,
   ];
   const block = arbiterItemBlock(item);
@@ -359,7 +404,7 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
     head.push(MILESTONE_JUSTIFICATION);
   }
   const evidence = item.kind === "review" && review !== null ? `\n\n${renderReviewEvidence(review)}` : "";
-  return `${ARBITER_DIRECTIVE}\n\n${head.join("\n")}${evidence}\n\n## Corpus\n\n${corpus}`;
+  return `${head.join("\n")}${evidence}\n\n## Corpus de l'élément\n\n${corpus}\n\n${TURN_REMINDER}`;
 }
 
 

@@ -539,8 +539,8 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
   (session `/audit` ou `/project` de la feature), est **relancée automatiquement à
   l'échéance** du quota (registre `quota.json` compris), sans aucun changement de modèle ni
   de repli et sans compter dans la borne de relances de l'arbitre ; avant l'échéance, et
-  dans un lot sans arbitre, l'escalade ci-dessus reste le seul chemin (voir « L'arbitre
-  éphémère »).
+  dans un lot sans arbitre, l'escalade ci-dessus reste le seul chemin (voir « Le pilote du
+  lot »).
 
 ### Contexte des runs
 
@@ -1176,8 +1176,8 @@ s'affiche tel quel au lieu d'être avalé.
   le panneau affiche `relayé à /audit` pour ces escalades et refuse d'y répondre. Rien
   n'est jamais fusionné. Le battement du relais vit dans
   `<état>/audit/<sha1(session)[:16]>.json`. Les règles de l'arbitre (corpus, lecture seule,
-  justification, options, vérifications des jalons) sont décrites sous « L'arbitre
-  éphémère », dans la section *Projet*.
+  justification, options, vérifications des jalons) sont décrites sous « Le pilote du
+  lot », dans la section *Projet*.
 
   **Rapport, brief et journal** : l'outil `audit_propose` exige un `rapport` non vide — le
   texte complet de l'analyse (faiblesses, features proposées, fichiers, symboles et chemins
@@ -1310,33 +1310,49 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   aux jalons (50 au plus, « (n décisions d'autres maillons omises) » sinon) : l'étape les
   lit avant de poser une question. Le **journal du lot** (les entrées de toutes les
   features du même projet ou audit) n'est lu que par l'arbitre.
-- **L'arbitre éphémère** : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
+- **Le pilote du lot** (l'arbitre) : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
   jalon (« specs validées », « revue propre ») d'une feature du projet n'est plus relayé à la
-  session `/project` : le **service** ouvre une session d'arbitre **neuve** par élément, jamais
-  reprise, sur le modèle cadrage+revue de la feature (principal puis repli, gardés par le registre des
-  quotas), avec pour cwd le worktree de la feature. **L'arbitre tourne toujours sur le groupe
-  cadrage+revue (principal puis repli), quelle que soit la phase de l'élément arbitré** : s'il est
-  épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Le **plafond**
-  de la boucle revue ⇄ correction et l'**échec** d'un run sont arbitrés aussi, et le **quota**
-  épuisé a son propre traitement (sous-puces Plafond, Échec, Quota ci-dessous).
-  - **Corpus**, par genre d'élément : une **question** reçoit le rapport du contexte
-    (`(aucun rapport)` quand il n'existe pas, sans bloquer), le brief, le **journal du lot**
-    (les entrées de toutes les features du même audit ou projet, bornées aux N dernières
-    par `MEM0_PIPELINE_ARBITER_JOURNAL`, 200 par défaut, entier de 1 à 10000), les 50
-    entrées les plus récentes du journal de la feature, et les **seules sections du contrat
-    de son étape** (`/req` : Besoins + AC ; `/specs` et `/impl` : AC + Spécifications +
-    Lots ; `/review` : AC + Revue ; release : Besoins + AC + Revue) ; le jalon « specs
-    validées » reçoit rapport, brief et AC + Spécifications + Lots ; un **plafond** ou un
-    **échec** reçoit AC + Revue + Corrections et les journaux, sans rapport ni brief ; le
-    jalon « revue propre » reçoit le contrat **entier sauf `## Revue`** — l'arbitre ne relit
-    jamais le verdict du relecteur qu'il doit contrôler. Le corpus est borné à 200 000
-    caractères : au-delà, une première ligne annonce la troncature et nomme les sections
-    coupées ; on sacrifie d'abord les plus anciennes entrées du journal du lot, puis la fin
-    du rapport, puis la fin du contrat — le brief et les entrées de la feature restent intacts.
+  session `/project` : le **service** tient **UNE session d'arbitre par lot**, ouverte au premier
+  élément et **gardée tant que le lot vit** — chaque élément suivant, de n'importe quelle
+  feature du lot, lui arrive comme un nouveau tour. La session se souvient donc du rapport,
+  du brief, de ses décisions passées et de celles de l'utilisateur (une question déjà
+  tranchée dans une feature sœur reçoit la même réponse ; une décision de source
+  `utilisateur` prévaut). Elle tourne sur le modèle cadrage+revue de la feature (principal
+  puis repli, gardés par le registre des quotas), avec pour cwd le **dépôt principal** — chaque
+  élément nomme le worktree de sa feature, lu par chemin absolu. **L'arbitre tourne toujours sur
+  le groupe cadrage+revue (principal puis repli), quelle que soit la phase de l'élément
+  arbitré** : s'il est épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe
+  exécution ; un modèle ou un repli différent de celui de la session ouverte la rouvre. Les
+  tours d'un même lot sont **sériels** ; un tour est borné à 10 minutes depuis son départ.
+  Toute coupure (échéance, plafond de contexte, arrêt) **ferme** la session : le tour suivant
+  la rouvre avec son message d'ouverture. Elle se ferme avec le récap de fin de lot ou l'arrêt
+  du pilote. Le **plafond** de la boucle revue ⇄ correction et l'**échec** d'un run sont
+  arbitrés aussi, et le **quota** épuisé a son propre traitement (sous-puces Plafond, Échec,
+  Quota ci-dessous).
+  - **Ouverture**, une fois par session : la directive, puis le **corpus du lot** — le rapport
+    du contexte (`(aucun rapport)` quand il n'existe pas, sans bloquer), le brief et le
+    **journal du lot** (les entrées de toutes les features du même audit ou projet, bornées
+    aux N dernières par `MEM0_PIPELINE_ARBITER_JOURNAL`, 200 par défaut, entier de 1 à
+    10000). Borné à 200 000 caractères : au-delà, une première ligne annonce la troncature
+    et nomme les sections coupées ; on sacrifie d'abord les plus anciennes entrées du
+    journal, puis la fin du rapport — le brief reste intact.
+  - **Tour**, par élément : le **worktree** de la feature, l'élément, puis le **corpus de
+    l'élément** — les **seules sections du contrat de son étape** (`/req` : Besoins + AC ;
+    `/specs` et `/impl` : AC + Spécifications + Lots ; `/review` : AC + Revue ; release :
+    Besoins + AC + Revue ; jalon « specs validées » : AC + Spécifications + Lots ; plafond ou
+    échec : AC + Revue + Corrections ; jalon « revue propre » : le contrat **entier sauf
+    `## Revue`** — l'arbitre ne relit jamais le verdict du relecteur qu'il doit contrôler),
+    le **journal du lot depuis le dernier tour** (ce que les autres features et l'utilisateur
+    ont décidé entre-temps ; `- (aucune décision nouvelle)` sinon) et les 50 entrées les plus
+    récentes du journal de la feature. Même borne de 200 000 caractères : journal du lot
+    d'abord, puis fin du contrat — les entrées de la feature restent intactes. Le tour finit
+    par le rappel « Rends ta décision pour CET élément par un appel unique à
+    `arbiter_decide` », seule consigne à survivre à une compaction. Les citations se
+    vérifient dans l'ouverture ET le tour.
   - **Dépôt en lecture seule** : seuls `read`, `grep`, `glob`, `lsp` et `arbiter_decide` sont
     actifs ; tout autre outil (`bash`, `write`, `edit` compris) est refusé par l'extension
     (liste blanche), donc aucun fichier du worktree ne peut changer.
-  - **Décision** : l'arbitre appelle `arbiter_decide` une fois — réponse (source `contexte`
+  - **Décision** : l'arbitre appelle `arbiter_decide` une fois par élément — réponse (source `contexte`
     ou `arbitrage`), approbation d'un jalon, ou escalade. Il tranche tout choix technique ;
     l'escalade est réservée aux choix de produit (nouveau besoin non couvert par le rapport
     ou le brief, changement de périmètre, texte visible par l'utilisateur sans convention

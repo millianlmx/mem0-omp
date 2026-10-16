@@ -310,6 +310,7 @@ function scriptedHost(script: Scripted) {
         dispose: async () => {
           disposed += 1;
         },
+        disposed: new Promise<void>(() => {}),
         session,
       } as unknown as HostedSession;
     },
@@ -618,36 +619,51 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
   const cwd = tmpdir("bcr-wt-");
   const direct = await createArbiterRunner({ host: arbHost.host, log: line => logs.push(line), now: () => o.clock.now, env: ENV })({
     stateDir: tmpdir("bcr-state-"),
+    pilot: "lot-1",
     cwd,
+    seed: () => "OUVERTURE",
     prompt: "ARBITRE-PROMPT",
     model: null,
     fallback: null,
-    deadline: T0 + ARBITER_DEADLINE_MS,
+    budgetMs: ARBITER_DEADLINE_MS,
     signal: new AbortController().signal,
   });
   assert.equal(arbHost.compacts.length, 0);
   assert.deepEqual(arbHost.steers, [`[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`]);
-  assert.ok(logs.includes("[service] arbitre : seuil SOFT franchi à 110000, compaction à la fin du tour"), JSON.stringify(logs));
-  assert.ok(logs.includes("[service] arbitre : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(logs));
+  assert.ok(logs.includes("[service] pilote lot-1 : seuil SOFT franchi à 110000, compaction à la fin du tour"), JSON.stringify(logs));
+  assert.ok(logs.includes("[service] pilote lot-1 : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(logs));
   assert.equal(direct.contextExceeded, 260_000);
   assert.equal(direct.peakContext, 261_000);
   assert.equal(direct.compactions, 0);
   assert.equal(direct.decision, null);
+  assert.equal(direct.fresh, true, "première ouverture de la session du lot");
+  assert.equal(direct.turn, 1);
+  assert.deepEqual(arbHost.received, ["OUVERTURE\n\nARBITRE-PROMPT"], "le premier tour porte l'ouverture puis l'élément");
+  // La coupure au plafond FERME la session du lot : le tour suivant la rouvrira, graine comprise.
+  assert.equal(arbHost.disposed(), 1, "la session coupée est libérée");
+  assert.equal(arbHost.aborts.length, 1);
 
-  // L'arbitre dont SOFT est franchi compacte à la fin de son tour et reprend avec la consigne minimale.
+  // L'arbitre dont SOFT est franchi compacte à la fin de son tour et reprend avec la consigne minimale ;
+  // la session, non coupée, reste ouverte pour le tour suivant.
   const softHost = scriptedHost({ prompts: [[110_000]] });
-  const soft = await createArbiterRunner({ host: softHost.host, log: () => {}, now: () => T0, env: ENV })({
+  const softRunner = createArbiterRunner({ host: softHost.host, log: () => {}, now: () => T0, env: ENV });
+  const soft = await softRunner({
     stateDir: tmpdir("bcr-state-"),
+    pilot: "lot-1",
     cwd,
+    seed: () => "OUVERTURE",
     prompt: "ARBITRE-PROMPT",
     model: null,
     fallback: null,
-    deadline: T0 + ARBITER_DEADLINE_MS,
+    budgetMs: ARBITER_DEADLINE_MS,
     signal: new AbortController().signal,
   });
   assert.equal(softHost.compacts.length, 1);
-  assert.deepEqual(softHost.received, ["ARBITRE-PROMPT", compactionReminder(ARBITER_DELIVERABLE)]);
+  assert.deepEqual(softHost.received, ["OUVERTURE\n\nARBITRE-PROMPT", compactionReminder(ARBITER_DELIVERABLE)]);
   assert.equal(soft.compactions, 1);
+  assert.equal(softHost.disposed(), 0, "une session compactée mais non coupée reste ouverte");
+  await softRunner.close!("lot-1");
+  assert.equal(softHost.disposed(), 1, "`close(pilot)` la libère");
 
   // Au niveau du contrôleur : décision d'escalade, record `arbitre` pic 261000 / 0 compaction.
   const o2 = overrunAt(261_000);
@@ -678,6 +694,7 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
   assert.equal(arbitre.peakContext, 261_000);
   assert.equal(arbitre.compactions, 0);
   assert.equal(arbitreHost.compacts.length, 0);
+  assert.equal(arbitreHost.disposed(), 1, "la session du pilote coupée au plafond est libérée : le tour suivant la rouvrira");
 });
 
 // ---------------------------------------------------------------------------
