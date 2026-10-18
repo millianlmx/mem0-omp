@@ -2,7 +2,7 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// L'écran Pipelines de la coque iOS (S-2, S-3, S-4) : les cinq voies et les
+/// L'écran Pipelines de la coque iOS (S-2, S-3, S-4) : les voies et les
 /// cartes de l'ardoise partagée, dérivée de l'instantané du client. Aucune donnée
 /// n'est inventée ni mise en cache ; la trame `store` met tout à jour.
 struct PipelinesScreen: View {
@@ -68,6 +68,14 @@ struct PipelinesScreen: View {
         }
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
+            // « Décisions de l’arbitre » : lecture seule du fil transporté par la
+            // trame `store`, ouverte même hors connexion (dernier instantané reçu).
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { sheet = .decisions } label: {
+                    Label(KanbanText.decisionsTitle, systemImage: KanbanLane.arbitre.symbol)
+                }
+                .accessibilityIdentifier(PipelinesText.decisionsButtonId)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
@@ -92,6 +100,8 @@ struct PipelinesScreen: View {
                 )
             case .newFeature:
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
+            case .decisions:
+                PipelinesDecisionsSheet(client: client)
             }
         }
         // « Arrêter… » du menu contextuel : la confirmation de la fiche, mot pour mot.
@@ -510,6 +520,12 @@ struct PipelinesScreen: View {
                 Text(preview)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            if let motive = KanbanCardPresentation.arbiterMotive(card) {
+                Text(motive)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
                     .multilineTextAlignment(.leading)
             }
             if let sentence = KanbanText.marksSentence(card.marks) {

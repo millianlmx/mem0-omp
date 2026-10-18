@@ -30,7 +30,8 @@ public enum HomeState: Equatable, Sendable {
 /// dans AU PLUS UNE liste (`HomePresentation.dashboard`).
 public struct HomeDashboard: Equatable, Sendable {
     public var attention: [HomeAttention]
-    /// « En cours » : les pipelines réellement en marche (colonne `.enCours`).
+    /// « En cours » : les pipelines réellement en marche (colonne `.enCours`) et
+    /// celles que l'arbitre tient en arrière-plan (leur état le dit).
     public var running: [KanbanCard]
     /// « À reprendre » : les pipelines en pause (`KanbanActionPresentation.resumable`).
     public var paused: [KanbanCard]
@@ -77,17 +78,20 @@ public enum HomeAttentionNature: Equatable, Sendable {
     case blocked
 }
 
-/// Une attente : la carte, sa nature et la question à montrer.
+/// Une attente : la carte, sa nature, la question à montrer et, quand l'arbitre
+/// a rendu la main, son motif (« Motif de l’arbitre : … »).
 public struct HomeAttention: Equatable, Identifiable, Sendable {
     public var id: String { card.id }
     public var card: KanbanCard
     public var nature: HomeAttentionNature
     public var prompt: String
+    public var motive: String?
 
-    public init(card: KanbanCard, nature: HomeAttentionNature, prompt: String) {
+    public init(card: KanbanCard, nature: HomeAttentionNature, prompt: String, motive: String? = nil) {
         self.card = card
         self.nature = nature
         self.prompt = prompt
+        self.motive = motive
     }
 }
 
@@ -130,25 +134,31 @@ public enum HomePresentation {
                 paused.append(card)
                 continue
             }
+            // 2. Chez l'arbitre : une activité d'arrière-plan, jamais une attente.
+            if card.action?.arbiter.isArbitrating == true {
+                running.append(card)
+                continue
+            }
+            let motive = KanbanCardPresentation.arbiterMotive(card)
             switch card.column {
             case .questionEnVol:
                 let prompt = card.action?.run?.pendingAsk?.question
                     ?? card.action?.waitPrompt
                     ?? HomeText.questionWithoutText
-                attention.append(HomeAttention(card: card, nature: .question, prompt: prompt))
+                attention.append(HomeAttention(card: card, nature: .question, prompt: prompt, motive: motive))
             case .jalonSpecs:
-                attention.append(HomeAttention(card: card, nature: .milestoneSpecs, prompt: HomeText.specsPrompt))
+                attention.append(HomeAttention(card: card, nature: .milestoneSpecs, prompt: HomeText.specsPrompt, motive: motive))
             case .jalonReview:
-                attention.append(HomeAttention(card: card, nature: .milestoneReview, prompt: HomeText.reviewPrompt))
+                attention.append(HomeAttention(card: card, nature: .milestoneReview, prompt: HomeText.reviewPrompt, motive: motive))
             case .echec:
                 // Seule une feature de lot relançable remonte ; les runs
                 // d'historique et les échecs de projet n'ont aucun geste.
                 if KanbanActionPresentation.relaunchable(card) {
-                    attention.append(HomeAttention(card: card, nature: .failed, prompt: HomeText.failedPrompt(card.phase)))
+                    attention.append(HomeAttention(card: card, nature: .failed, prompt: HomeText.failedPrompt(card.phase), motive: motive))
                 }
             case .bloquee:
                 if KanbanActionPresentation.relaunchable(card) {
-                    attention.append(HomeAttention(card: card, nature: .blocked, prompt: HomeText.blockedPrompt(card.phase)))
+                    attention.append(HomeAttention(card: card, nature: .blocked, prompt: HomeText.blockedPrompt(card.phase), motive: motive))
                 }
             case .enCours:
                 running.append(card)

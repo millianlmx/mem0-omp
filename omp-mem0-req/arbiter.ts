@@ -20,11 +20,19 @@ const SPECS_CHECK = "vérification exigée : chaque AC-<n> du contrat est réfé
 /** Ce qu'une approbation de jalon porte, comme une réponse : sans justification vérifiée, le pilote escalade. */
 const MILESTONE_JUSTIFICATION = "approbation justifiée : au moins une `citations` (passage du contrat ou du rapport copié tel quel), `references` (chemin:ligne du worktree) ou `rubriques` vérifiable, sinon l'élément est escaladé";
 
-/** La ligne que le prompt d'un jalon « revue propre » porte : les critères tirés dont l'arbitre cite l'assertion de test. */
+/**
+ * La ligne que le prompt d'un jalon « revue propre » porte : les critères tirés que
+ * l'arbitre ATTESTE, chacun par un endroit précis du diff. Un critère prouvé par un
+ * test porte son id dans un fichier du diff : l'attestation pointe ce fichier ; un
+ * critère prouvé autrement (build, plutil, smoke, contrôle manuel prévu au contrat)
+ * n'a pas de fichier qui porte son id : l'attestation pointe la ligne modifiée qui le
+ * réalise.
+ */
 function reviewCheck(sampledAcIds: readonly string[]): string {
   return (
-    `vérification exigée : pour ${sampledAcIds.join(" et ")}, cite en \`references\` (chemin:ligne d'un fichier du diff qui porte l'id du critère) ` +
-    "l'assertion de test qui matérialise le « Then » du critère — sans cette référence, l'approbation est refusée"
+    `vérification exigée : pour ${sampledAcIds.join(" et ")}, rends \`attestations\` (« AC-<n> chemin:ligne », chemin relatif au worktree, fichier du diff) — ` +
+    "l'assertion de test qui matérialise le « Then » quand un fichier du diff porte l'id du critère (liste « Critères et fichiers du diff »), " +
+    "sinon la ligne modifiée du diff qui réalise le critère ; sans attestation vérifiée, l'approbation est refusée"
   );
 }
 
@@ -83,11 +91,27 @@ export type ArbiterDecision = {
   references?: string[];
   /** Titres de rubriques du rapport. */
   rubriques?: string[];
+  /** Jalon « revue propre » : « AC-<n> chemin:ligne » — l'endroit du diff qui atteste chaque critère tiré. */
+  attestations?: string[];
   reason: string;
 };
 
-/** La décision retenue d'une session d'arbitre : le PREMIER appel de l'outil, ensuite plus rien. */
-export type ArbiterCapture = { decision: ArbiterDecision | null };
+/**
+ * La décision d'une session d'arbitre, et la vérification FAITE À L'APPEL de l'outil :
+ * `check` (posé par le runner pour le tour) rend le motif de refus du pilote ou `null`.
+ * Une décision refusée est renvoyée à l'arbitre en erreur de l'outil — il peut la
+ * corriger — jusqu'à `ARBITER_RETRY_MAX` fois ; `refused` garde la dernière refusée,
+ * pour qu'un tour fini sans nouvel appel escalade avec le vrai motif.
+ */
+export type ArbiterCapture = {
+  decision: ArbiterDecision | null;
+  check?: ((decision: ArbiterDecision) => string | null) | null;
+  refusals?: number;
+  refused?: ArbiterDecision | null;
+};
+
+/** Combien de fois une décision refusée par le pilote est renvoyée à l'arbitre dans un même tour. */
+export const ARBITER_RETRY_MAX = 2;
 
 /**
  * Ce que le pilote lit pour vérifier une décision (S-6) : le corpus (citations), le
@@ -385,7 +409,7 @@ export const TURN_REMINDER = [
   "Rappel des règles : tranche tout choix technique (source `contexte` si le corpus répond, `arbitrage` si tu déduis) ; escalade seulement un choix de produit ;",
   "toute réponse ou approbation porte une justification vérifiable (`citations` copiées telles quelles, `references` chemin:ligne du worktree, `rubriques` du rapport) ;",
   "une option se désigne par son libellé exact ou son numéro ; une question déjà tranchée au journal reçoit la même réponse, une décision `utilisateur` prévaut.",
-  "Rends ta décision pour CET élément par un appel unique à `arbiter_decide`.",
+  "Rends ta décision pour CET élément par `arbiter_decide` ; si le pilote la refuse, l'outil te rend son motif : corrige-la et rappelle l'outil, ou escalade.",
 ].join("\n");
 
 /**
@@ -430,8 +454,11 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
 
 
 /**
- * L'outil `arbiter_decide` (S-9) : le premier appel est retenu, tout appel suivant
- * est refusé. Partagé par l'extension et par les doublures de test.
+ * L'outil `arbiter_decide` (S-9) : la décision est vérifiée À L'APPEL par
+ * `capture.check` quand le runner l'a posé ; refusée, elle est renvoyée à l'arbitre
+ * avec le motif du pilote (au plus `ARBITER_RETRY_MAX` fois par tour), sinon retenue.
+ * Une escalade n'est jamais refusée. Après une décision retenue, tout appel est
+ * refusé. Partagé par l'extension et par les doublures de test.
  */
 export function recordArbiterDecision(
   capture: ArbiterCapture,
@@ -455,7 +482,8 @@ export function recordArbiterDecision(
   const citations = strings(record.citations);
   const references = strings(record.references);
   const rubriques = strings(record.rubriques);
-  capture.decision = {
+  const attestations = strings(record.attestations);
+  const parsed: ArbiterDecision = {
     decision,
     reason: typeof record.reason === "string" ? record.reason : "",
     ...(typeof record.answer === "string" ? { answer: record.answer } : {}),
@@ -464,7 +492,21 @@ export function recordArbiterDecision(
     ...(citations !== undefined ? { citations } : {}),
     ...(references !== undefined ? { references } : {}),
     ...(rubriques !== undefined ? { rubriques } : {}),
+    ...(attestations !== undefined ? { attestations } : {}),
   };
+  const refusals = capture.refusals ?? 0;
+  const refusal = parsed.decision === "escalate" || !capture.check ? null : capture.check(parsed);
+  if (refusal !== null && refusals < ARBITER_RETRY_MAX) {
+    capture.refusals = refusals + 1;
+    capture.refused = parsed;
+    return {
+      text:
+        `Error: décision refusée par le pilote — ${refusal}. Corrige-la et rappelle arbiter_decide ` +
+        `(essai ${refusals + 2}/${ARBITER_RETRY_MAX + 1}), ou escalade avec ce motif si l'élément ne peut pas être tranché.`,
+      isError: true,
+    };
+  }
+  capture.decision = parsed;
   return { text: ARBITER_RECORDED, isError: false };
 }
 
@@ -610,9 +652,11 @@ function chooseOption(options: readonly string[], answer: string): { answer: str
 
 /**
  * Pourquoi le pilote refuse d'approuver un jalon (S-9, S-10), ou `null` : « specs
- * validées » exige un AC référencé par une S-<n> ; « revue propre » exige que chaque
- * AC porte au moins un fichier DU DIFF. Vérification DÉTERMINISTE, en plus du
- * jugement de l'arbitre.
+ * validées » exige un AC référencé par une S-<n> ; « revue propre » exige un diff
+ * lisible et non vide — la preuve critère par critère passe par les attestations
+ * (`attestationRefusal`), pas par la présence de l'id dans un fichier : un critère
+ * prouvé par un build ou un contrôle manuel n'en porte jamais. Vérification
+ * DÉTERMINISTE, en plus du jugement de l'arbitre.
  */
 function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | null {
   if (item.kind !== "specs" && item.kind !== "review") return null;
@@ -624,23 +668,56 @@ function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | nul
   }
   if (ground.review === null) return "recherche des critères impossible : évidence absente";
   if (ground.review.acFiles === null) return `recherche des critères impossible : ${ground.review.searchError ?? "erreur inconnue"}`;
-  const bare = ground.review.acFiles.filter((entry) => entry.files.length === 0).map((entry) => entry.id);
-  return bare.length === 0 ? null : `critères sans fichier dans le diff : ${bare.join(", ")}`;
+  if ((ground.review.names ?? []).length === 0) return "diff vide : aucun changement à livrer";
+  return null;
 }
 
 
+/** Une attestation « AC-<n> chemin:ligne » (séparateur libre : espace, `:`, `=`, `→`, `->`). */
+const ATTESTATION = /^\s*(AC-\d+)(?![0-9])\s*[:=→⇒>-]*\s*(\S.*?)\s*$/;
+
+
 /**
- * Les critères tirés qu'aucune référence VÉRIFIÉE n'atteste : une référence atteste
- * AC-<n> quand elle pointe dans un fichier du diff qui porte cet id (`acFiles`). Le
- * pilote ne lit pas l'assertion : il garantit seulement que l'arbitre a désigné un
- * endroit précis du diff pour chaque critère tiré, au lieu d'approuver sur le verdict.
+ * Les attestations des critères tirés (jalon « revue propre ») : pour chaque id de
+ * `sampledAcIds`, au moins une attestation dont la référence est valide, pointe un
+ * fichier DU DIFF et — quand des fichiers du diff portent l'id du critère (un test) —
+ * l'un de ces fichiers. Sinon la ligne modifiée qui réalise le critère suffit (preuve
+ * par build, plutil, smoke). Le pilote ne lit pas la ligne : il garantit que l'arbitre
+ * a désigné un endroit précis du diff pour chaque critère, au lieu d'approuver sur le
+ * verdict. Rend les attestations vérifiées, ou le motif du refus.
  */
-function unattestedAcIds(review: ReviewEvidence, references: readonly string[]): string[] {
-  const cited = references.map((reference) => path.posix.normalize((REFERENCE.exec(reference)?.[1] ?? "").replace(/\\/g, "/")));
-  return review.sampledAcIds.filter((id) => {
-    const files = review.acFiles?.find((entry) => entry.id === id)?.files ?? [];
-    return !cited.some((file) => files.includes(file));
-  });
+function attestationRefusal(review: ReviewEvidence, attestations: readonly string[], worktree: string): { verified: string[] } | { refusal: string } {
+  const names = review.names ?? [];
+  const parsed = attestations.map((raw) => ATTESTATION.exec(raw)).filter((match): match is RegExpExecArray => match !== null);
+  const verified: string[] = [];
+  const missing: string[] = [];
+  for (const id of review.sampledAcIds) {
+    const carriers = review.acFiles?.find((entry) => entry.id === id)?.files ?? [];
+    const notes: string[] = [];
+    let ok = false;
+    for (const match of parsed.filter((candidate) => candidate[1] === id)) {
+      const reference = match[2] as string;
+      const rejection = referenceRejection(reference, worktree);
+      if (rejection !== null) {
+        notes.push(rejection);
+        continue;
+      }
+      const file = path.posix.normalize((REFERENCE.exec(reference)?.[1] ?? "").replace(/\\/g, "/"));
+      if (!names.includes(file)) {
+        notes.push(`« ${reference} » hors du diff`);
+        continue;
+      }
+      if (carriers.length > 0 && !carriers.includes(file)) {
+        notes.push(`« ${reference} » : le diff a un fichier qui porte ${id} (${carriers.join(", ")}), atteste dans l'un d'eux`);
+        continue;
+      }
+      verified.push(`${id} ${reference}`);
+      ok = true;
+      break;
+    }
+    if (!ok) missing.push(`${id} (${notes.length > 0 ? notes.join(" ; ") : "aucune attestation"})`);
+  }
+  return missing.length === 0 ? { verified } : { refusal: `attestation manquante pour ${missing.join(", ")}` };
 }
 
 
@@ -650,11 +727,11 @@ function unattestedAcIds(review: ReviewEvidence, references: readonly string[]):
  * VÉRIFIÉE — citation du corpus (espaces repliés), référence `chemin:ligne` qui
  * existe dans le worktree, rubrique du rapport —, puis la réponse est rapprochée des
  * options. Jalon : seul `approve` (motif non vide, `approvalRefusal` : couverture
- * AC → S-n ou AC → fichiers du diff, puis la même justification vérifiée qu'une
- * réponse, et pour « revue propre » une référence dans le diff pour chaque critère
- * tiré) ou `escalate` ; un refus d'approbation se rend « approbation refusée par le
- * pilote : <motif> ». Tout autre cas se rend en escalade, avec son motif ; une décision
- * `escalate` est toujours honorée telle quelle.
+ * AC → S-n ou diff non vide ; pour « revue propre », une attestation vérifiée par
+ * critère tiré ; puis la même justification vérifiée qu'une réponse — les
+ * attestations vérifiées en sont) ou `escalate` ; un refus d'approbation se rend
+ * « approbation refusée par le pilote : <motif> ». Tout autre cas se rend en
+ * escalade, avec son motif ; une décision `escalate` est toujours honorée telle quelle.
  */
 export function validateArbiterDecision(
   item: ArbiterItem,
@@ -672,10 +749,11 @@ export function validateArbiterDecision(
     references: verified.references,
     rubriques: verified.rubriques,
   });
-  /** Au moins une justification VÉRIFIÉE, sinon le motif du refus. */
-  const verifiedOrRefusal = (): VerifiedJustifications | string => {
+  /** Au moins une justification VÉRIFIÉE (les attestations vérifiées `attested` en sont), sinon le motif du refus. */
+  const verifiedOrRefusal = (attested: readonly string[] = []): VerifiedJustifications | string => {
     const verified = verifyJustifications(decision, ground);
-    if (verified.provided === 0) return "aucune justification";
+    verified.references.push(...attested);
+    if (verified.provided + attested.length === 0) return "aucune justification";
     if (verified.citations.length + verified.references.length + verified.rubriques.length === 0) {
       return `aucune justification vérifiée — ${verified.rejected.join(" ; ")}`;
     }
@@ -702,12 +780,14 @@ export function validateArbiterDecision(
     const refused = (motif: string): ArbiterEffect => ({ kind: "escalate", reason: `approbation refusée par le pilote : ${motif}` });
     const refusal = approvalRefusal(item, ground);
     if (refusal !== null) return refused(refusal);
-    const verified = verifiedOrRefusal();
-    if (typeof verified === "string") return refused(verified);
+    let attested: string[] = [];
     if (item.kind === "review" && ground.review !== null) {
-      const unattested = unattestedAcIds(ground.review, verified.references);
-      if (unattested.length > 0) return refused(`assertion non citée pour ${unattested.join(", ")}`);
+      const attestation = attestationRefusal(ground.review, decision.attestations ?? [], ground.worktree);
+      if ("refusal" in attestation) return refused(attestation.refusal);
+      attested = attestation.verified;
     }
+    const verified = verifiedOrRefusal(attested);
+    if (typeof verified === "string") return refused(verified);
     return { kind: "approve", justification: justify(verified) };
   }
   if (decision.decision !== "answer") return invalid("une question se répond ou s'escalade");
@@ -734,7 +814,7 @@ export function registerArbiterTool(pi: ExtensionAPI, capture: ArbiterCapture): 
     name: "arbiter_decide",
     label: "Arbitre — décider",
     description:
-      "Rend la décision de l'arbitre sur l'élément soumis, UNE seule fois : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon : au moins une justification vérifiable comme une réponse ; jalon « revue propre » : references vers l'assertion de test de chaque critère tiré, dans un fichier du diff), relaunch (plafond de la boucle revue ⇄ correction : refocus = les bloquants précis à lever et ce qui a déjà été tenté ; échec d'un run : relance telle quelle), abandon (plafond seulement : reason est le motif d'arrêt) ou escalate (l'utilisateur tranchera) ; relaunch et abandon portent au moins une justification vérifiable ; sans justification vérifiée, le pilote escalade ; reason dit pourquoi en une phrase.",
+      "Rend la décision de l'arbitre sur l'élément soumis : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon : au moins une justification vérifiable comme une réponse ; jalon « revue propre » : attestations = « AC-<n> chemin:ligne » pour chaque critère tiré, dans un fichier du diff — l'assertion de test si un fichier du diff porte l'id du critère, sinon la ligne modifiée qui le réalise), relaunch (plafond de la boucle revue ⇄ correction : refocus = les bloquants précis à lever et ce qui a déjà été tenté ; échec d'un run : relance telle quelle), abandon (plafond seulement : reason est le motif d'arrêt) ou escalate (l'utilisateur tranchera) ; relaunch et abandon portent au moins une justification vérifiable ; reason dit pourquoi en une phrase. Le pilote vérifie la décision à l'appel : refusée, l'outil rend le motif en erreur — corrige et rappelle-le, ou escalade ; acceptée, il rend « décision enregistrée » et tout appel suivant est refusé.",
     approval: "read",
     loadMode: "essential",
     parameters: pi.arktype({
@@ -745,6 +825,7 @@ export function registerArbiterTool(pi: ExtensionAPI, capture: ArbiterCapture): 
       "citations?": "string[]",
       "references?": "string[]",
       "rubriques?": "string[]",
+      "attestations?": "string[]",
       reason: "string",
     }),
     async execute(_toolCallId: string, params: unknown) {

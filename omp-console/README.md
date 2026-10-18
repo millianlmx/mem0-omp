@@ -530,7 +530,7 @@ panneau `/pipelines`, qui réconcilie). Elle **n'écrit rien** : les gestes offe
 depuis une carte passent par la couche `Actions/` (voir « Agir depuis Pipelines »),
 jamais par le tableau lui-même.
 
-### Les cinq voies
+### Les voies
 
 Les treize colonnes de l'ardoise (`KanbanColumn`, parité avec `/pipelines`) restent
 le modèle, mais l'écran les regroupe en **voies** (`KanbanLane`) qui suivent le
@@ -541,7 +541,8 @@ ne défilent horizontalement que sous 240 pt par voie) :
 |---|---|
 | Pas commencées (`pas-commencees`) | `en-attente` |
 | En cours (`en-cours`) | `en-cours`, et toute carte que « Reprendre » peut relancer (en pause) |
-| À vous (`a-vous`) | `question-en-vol`, `jalon-specs`, `jalon-review` |
+| Chez l'arbitre (`arbitre`) | toute carte dont l'arbitre tient l'élément (voir ci-dessous), quelle que soit sa colonne |
+| À vous (`a-vous`) | `question-en-vol`, `jalon-specs`, `jalon-review`, et toute carte que l'arbitre a rendue (escalade, plafond et échec compris) |
 | Livrées (`livrees`) | `pr-ouverte`, `pr-creee`, `fusionne`, `pr-fermee`, `terminee-sans-pr` |
 | Arrêtées (`arretees`) | `echec`, `bloquee`, `annulee-retiree` |
 
@@ -623,6 +624,45 @@ dit pas déjà son état (« Question », « Spécifications à valider », « E
 ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
 qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
 la minute. Les cartes sont des surfaces opaques (`consoleCard`), jamais du verre.
+
+### L'arbitre en arrière-plan
+
+Le pilote de lot du service (l'**arbitre**) répond aux questions et tranche les
+jalons d'une feature d'audit avant de les rendre à l'utilisateur. Une seule règle
+pure, `ArbiterState.of(lot:feature:pendingAsk:)` (ConsoleCore), dit où en est une
+feature : `.escalated` quand le lot porte `escalation` (l'arbitre a rendu la main,
+avec son motif `reason`), `.deciding` / `.queued` quand il porte `arbitration`
+(`status` `deciding` ou `queued`, absent = `queued`), et `.queued` aussi quand le
+lot est piloté par le service (`arbiter: true`) et qu'une feature d'audit sans
+escalade montre ce qui demanderait sinon l'utilisateur (question `ask` en vol,
+attente de réponse, de specs ou de revue, plafond de revue, échec hors quota et
+hors dépendance) — la marque est en cours d'écriture. Toutes les surfaces la lisent :
+
+- l'ardoise range une carte que l'arbitre tient dans **Chez l'arbitre** (voie
+  montrée seulement si elle a des cartes), badge « L’arbitre décide » ou « En file
+  pour l’arbitre » ; une carte rendue va dans « À vous » et porte « Motif de
+  l’arbitre : … » (carte, détail, fiche iOS) ;
+- Répondre, Valider, Accepter et Reprendre (relance) disparaissent : la zone
+  d'action, le menu contextuel, l'Accueil et la fiche iOS montrent le libellé de
+  l'arbitre à leur place ; `ActionsModel` ignore ces gestes et l'API distante les
+  refuse en 409 « arbitrage en cours — la décision sera consignée au journal » ;
+- l'Accueil la range dans « En cours » avec son état en badge, jamais dans les
+  attentes : les comptes de la barre de menus, de la barre latérale et de l'onglet
+  iOS ne la comptent pas ; une carte d'attente rendue montre le motif ;
+- aucune notification tant que l'arbitre tient l'élément : la clé n'est pas
+  enregistrée, donc l'évènement normal part une fois, à l'escalade, motif sous le
+  nom ;
+- la section Audit dit « L’arbitre décide » ou « En file pour l’arbitre » pour
+  tout élément (question, jalon, plafond, échec).
+
+La barre d'outils de Pipelines porte **Décisions de l’arbitre**
+(`kanban.decisionsButton`) : une bulle avec les 50 dernières décisions du journal
+de **tous** les dépôts (`journal/<repoKey>.jsonl`, lu sur ses 256 derniers Kio),
+la plus récente en tête — feature et dépôt, origine (« Déjà tranchée », « Tranchée
+par l’arbitre », « Tranchée par vous »), heure, question, réponse et motif de
+l'arbitre (`justification.reason`). Les notes de dépassement de contexte n'y
+figurent pas. Le fil voyage dans la trame `store` (`audits.feed`) : l'écran
+Pipelines de l'iPhone l'ouvre en feuille par son bouton de barre d'outils.
 
 ### Les messages d'état
 

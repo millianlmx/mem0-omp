@@ -19,6 +19,9 @@ public enum KanbanActionZone: Sendable, Equatable {
     /// `reply` (S-10 de omp-console-redesign).
     case textQuestion(slug: String, prompt: String?)
     case milestone(slug: String, kind: LotWaitKind)
+    /// L'arbitre tient l'élément (question, jalon, plafond, échec) : à la place
+    /// de Répondre, Valider et Accepter, la carte dit qu'il décide.
+    case arbiter(ArbiterState)
     /// Le pilote du lot est mort alors que la feature vit encore : « Reprendre »
     /// fait conduire le dépôt par l'app (S-7, S-10 de omp-console-redesign).
     case resume(repoRoot: String)
@@ -36,27 +39,38 @@ public enum KanbanActionPresentation {
     /// donc jamais en même temps qu'une question en vol), un jalon (`waiting` +
     /// `.specs`/`.review`), la reprise (marque `mort` sur une feature vivante) et
     /// l'arrêt (une feature de lot).
+    ///
+    /// Tant que l'arbitre tient l'élément (`ArbiterState.isArbitrating`), ni
+    /// question, ni question en texte, ni jalon : une seule zone `.arbiter` à leur
+    /// place — l'utilisateur n'agit pas, la décision viendra de l'arbitre.
     public static func zones(for card: KanbanCard) -> [KanbanActionZone] {
         guard let action = card.action else { return [] }
         var zones: [KanbanActionZone] = []
+        let arbitrating = action.arbiter.isArbitrating
         if let run = action.run {
             if let ask = run.pendingAsk {
-                zones.append(.pendingQuestion(
-                    toolCallId: ask.toolCallId,
-                    question: ask.question,
-                    options: ask.options
-                ))
+                if !arbitrating {
+                    zones.append(.pendingQuestion(
+                        toolCallId: ask.toolCallId,
+                        question: ask.question,
+                        options: ask.options
+                    ))
+                }
             } else if run.inbox != nil {
                 zones.append(.steer)
             }
         }
-        if let slug = action.slug, action.featureState == .waiting,
-           action.waitKind == .answer, action.run?.pendingAsk == nil {
-            zones.append(.textQuestion(slug: slug, prompt: action.waitPrompt))
-        }
-        if let slug = action.slug, action.featureState == .waiting,
-           let kind = action.waitKind, kind == .specs || kind == .review {
-            zones.append(.milestone(slug: slug, kind: kind))
+        if arbitrating {
+            zones.append(.arbiter(action.arbiter))
+        } else {
+            if let slug = action.slug, action.featureState == .waiting,
+               action.waitKind == .answer, action.run?.pendingAsk == nil {
+                zones.append(.textQuestion(slug: slug, prompt: action.waitPrompt))
+            }
+            if let slug = action.slug, action.featureState == .waiting,
+               let kind = action.waitKind, kind == .specs || kind == .review {
+                zones.append(.milestone(slug: slug, kind: kind))
+            }
         }
         if card.marks.contains(.mort), action.slug != nil, let repoRoot = action.repoRoot,
            let state = action.featureState, state == .pending || state == .running || state == .waiting {
@@ -100,6 +114,7 @@ public enum KanbanActionPresentation {
         guard card.column == .echec || card.column == .bloquee,
               let action = card.action,
               action.slug != nil, action.repoRoot != nil,
+              !action.arbiter.isArbitrating,
               let state = action.featureState
         else { return false }
         return state == .failed || state == .blocked

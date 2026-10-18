@@ -80,7 +80,7 @@ enum IOSContextMenu {
                 case .validateMilestone(kind: .review): actions.append(.acceptReview)
                 case .resume: actions.append(.resume)
                 case .launch: actions.append(.launch)
-                case .validateMilestone, .answerQuestion, .answerText, .merge, .stop, .openPR: continue
+                case .validateMilestone, .answerQuestion, .answerText, .merge, .stop, .openPR, .arbiter: continue
                 }
             }
         }

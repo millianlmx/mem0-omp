@@ -9,15 +9,20 @@
 // VIT DANS `ConsoleCore`.
 
 /// L'état d'attente d'une feature lancée par un audit, par priorité :
-/// l'escalade, puis l'arbitrage en vol, puis l'état de la feature.
+/// l'escalade, puis l'arbitrage (en file ou en décision), puis l'état de la feature.
 public enum AuditWaiting: String, Sendable, Equatable, Codable {
-    case escalated, arbitrating, notStarted, running, waiting, blocked, failed, prCreated, done, cancelled
+    case escalated, arbiterQueued, arbiterDeciding, notStarted, running, waiting, blocked, failed, prCreated, done, cancelled
 
     /// `state == nil` (aucun état connu : ni feature vivante, ni suivi recopié)
-    /// se lit « en attente de démarrage ».
-    public static func of(state: LotFeatureState?, prUrl: String?, escalated: Bool, arbitrating: Bool) -> AuditWaiting {
-        if escalated { return .escalated }
-        if arbitrating { return .arbitrating }
+    /// se lit « en attente de démarrage ». `arbiter` : l'état partagé
+    /// (`ArbiterState.of`), `.none` pour un suivi recopié.
+    public static func of(state: LotFeatureState?, prUrl: String?, arbiter: ArbiterState) -> AuditWaiting {
+        switch arbiter {
+        case .escalated: return .escalated
+        case .queued: return .arbiterQueued
+        case .deciding: return .arbiterDeciding
+        case .none: break
+        }
         switch state {
         case nil, .pending: return .notStarted
         case .running: return .running
@@ -199,10 +204,16 @@ public struct AuditBoard: Sendable, Equatable {
     public static func of(_ snapshot: StoreSnapshot) -> AuditBoard {
         let lots = snapshot.lots.lots
         var liveByKey: [String: [LotFeature]] = [:]
+        var arbiterBySession: [String: [String: ArbiterState]] = [:]
+        // Les worktrees RÉELS des runs dont une question `ask` est en vol : la
+        // même règle d'appariement que l'ardoise (`realpath(cwd) == realpath(worktree)`).
+        let askingCwds = Set(snapshot.running.entries.filter { $0.pendingAsk != nil }.map { realpathOr($0.cwd) })
         for lot in lots {
             for feature in lot.features {
                 guard let key = feature.auditSession else { continue }
                 liveByKey[key, default: []].append(feature)
+                let asking = !feature.worktree.isEmpty && askingCwds.contains(realpathOr(feature.worktree))
+                arbiterBySession[key, default: [:]][feature.slug] = ArbiterState.of(lot: lot, feature: feature, pendingAsk: asking)
             }
         }
         let slugsByRepo: [(repo: String, slugs: Set<String>)] = lots.map { lot in
@@ -231,14 +242,14 @@ public struct AuditBoard: Sendable, Equatable {
                     return AuditFeatureRow(
                         slug: launch.slug,
                         phase: feature.phase,
-                        waiting: .of(state: feature.state, prUrl: feature.prUrl, escalated: feature.escalation != nil, arbitrating: feature.arbitration != nil),
+                        waiting: .of(state: feature.state, prUrl: feature.prUrl, arbiter: arbiterBySession[record.key]?[feature.slug] ?? ArbiterState.none),
                         prUrl: feature.prUrl
                     )
                 }
                 return AuditFeatureRow(
                     slug: launch.slug,
                     phase: launch.phase,
-                    waiting: .of(state: launch.state, prUrl: launch.prUrl, escalated: false, arbitrating: false),
+                    waiting: .of(state: launch.state, prUrl: launch.prUrl, arbiter: .none),
                     prUrl: launch.prUrl
                 )
             }

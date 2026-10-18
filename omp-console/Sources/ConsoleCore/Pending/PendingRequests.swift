@@ -142,6 +142,9 @@ public enum PendingRequests {
         let auditKeys = Set(snapshot.audits.records.map(\.key))
         return board.cards.compactMap { card in
             guard let kind = waitingKind(card.column) else { return nil }
+            // L'arbitre tient l'élément (`ArbiterState`, la règle de l'ardoise) :
+            // rien n'est demandé à l'utilisateur.
+            if card.action?.arbiter.isArbitrating == true { return nil }
             let feature = associatedFeature(of: card, in: snapshot)
             if let feature, isExcluded(feature, auditKeys: auditKeys) { return nil }
             let paused = KanbanActionPresentation.resumable(card)
@@ -212,11 +215,9 @@ public enum PendingRequests {
         return nil
     }
 
-    /// La question n'est pas, ou pas encore, posée à l'utilisateur par la carte :
-    /// (a) l'arbitre décide ; (b) l'escalade figure déjà comme escalade d'audit —
-    /// une question, une attente.
+    /// La question figure déjà comme escalade d'audit — une question, une
+    /// attente. (L'arbitrage en vol est écarté plus haut, par la carte.)
     private static func isExcluded(_ feature: LotFeature, auditKeys: Set<String>) -> Bool {
-        if feature.arbitration != nil { return true }
         if let escalation = feature.escalation, AuditEscalationKind(key: escalation.key) != nil,
            let session = feature.auditSession, auditKeys.contains(session) {
             return true

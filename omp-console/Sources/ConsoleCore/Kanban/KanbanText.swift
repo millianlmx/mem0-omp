@@ -151,3 +151,58 @@ public enum KanbanText {
     /// « 1 problème », « 3 problèmes » : le libellé du bouton de la barre d'outils.
     public static func problems(_ n: Int) -> String { ConsoleFormat.count(n, "problème", "problèmes") }
 }
+
+/// Les mots de l'arbitre (le pilote de lot qui répond et valide en arrière-plan),
+/// partagés par Pipelines, l'Accueil, les notifications et la section Audit :
+/// `ArbiterState` les choisit, aucune surface ne compose les siens.
+extension KanbanText {
+    public static let arbiterLane = "Chez l’arbitre"
+    public static let arbiterLaneEmpty = "L’arbitre n’examine rien en ce moment."
+    public static let arbiterDeciding = "L’arbitre décide"
+    public static let arbiterQueued = "En file pour l’arbitre"
+    /// Ce qui remplace Valider, Accepter et Répondre tant que l'arbitre tient l'élément.
+    public static let arbiterHandles =
+        "L’arbitre traite cette demande\u{00A0}: sa décision sera consignée au journal. Rien n’est à faire de votre côté."
+
+    /// « L’arbitre décide depuis 1:05 ».
+    public static func arbiterDeciding(elapsed: String) -> String {
+        "L’arbitre décide depuis \(elapsed)"
+    }
+
+    /// Le motif d'une escalade : pourquoi l'arbitre rend la main.
+    public static func arbiterMotive(_ reason: String) -> String {
+        "Motif de l’arbitre\u{00A0}: \(reason)"
+    }
+
+    /// L'état d'une carte escaladée pour le plafond ou l'échec : ces deux sortes
+    /// n'ont pas de colonne d'attente, l'état dit ce que l'arbitre rend.
+    public static func escalationStatus(_ kind: FeatureEscalationKind) -> String? {
+        switch kind {
+        case .plafond: "Plafond de revue"
+        case .echec: "Échec de l’exécution"
+        case .question, .jalon: nil
+        }
+    }
+
+    // --- décisions de l'arbitre (tous les lots) -------------------------------
+    public static let decisionsTitle = "Décisions de l’arbitre"
+    public static let decisionsHelp = "Les dernières décisions consignées au journal des pipelines"
+    public static let decisionsEmpty = "Aucune décision consignée pour l’instant."
+    public static let sourceUser = "Tranchée par vous"
+
+    /// L'origine d'une décision : le contexte, l'arbitre ou l'utilisateur.
+    public static func decisionSource(_ source: ArbiterDecisionSource) -> String {
+        switch source {
+        case .contexte: AuditText.sourceContexte
+        case .arbitrage: AuditText.sourceArbitrage
+        case .utilisateur: sourceUser
+        }
+    }
+
+    /// La feature d'une décision, précédée de son dépôt quand il est connu :
+    /// « dépôt · slug ».
+    public static func decisionSubject(repo: String?, slug: String) -> String {
+        guard let repo else { return slug }
+        return "\(repo) · \(slug)"
+    }
+}

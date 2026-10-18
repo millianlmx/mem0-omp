@@ -135,7 +135,8 @@ struct PipelinesCardDateTests {
         let allowed: [KanbanLane: Set<String>] = [
             .pasCommencees: ["Pas commencée"],
             .enCours: ["En cours", "En pause"],
-            .aVous: ["À vous", "Spécifications à valider", "Revue à accepter"],
+            .arbitre: [KanbanText.arbiterDeciding, KanbanText.arbiterQueued],
+            .aVous: ["À vous", "Spécifications à valider", "Revue à accepter", "Plafond de revue", "Échec de l’exécution"],
             .livrees: ["PR ouverte", "PR créée", "PR fusionnée", "PR fermée", "Terminée"],
             .arretees: ["Échec", "Bloquée", "Annulée"],
         ]

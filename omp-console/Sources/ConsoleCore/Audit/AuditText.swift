@@ -74,7 +74,6 @@ public enum AuditText {
     public static let progressTitle = "Avancement"
     public static let openPR = "Ouvrir la PR"
     public static let waitingEscalated = "Attend votre réponse"
-    public static let waitingArbitrating = "L’arbitre examine une question"
     public static let waitingNotStarted = "En attente de démarrage"
     public static let waitingRunning = "En cours"
     public static let waitingWaiting = "En attente — voir Pipelines"
@@ -87,7 +86,10 @@ public enum AuditText {
     public static func waiting(_ waiting: AuditWaiting) -> String {
         switch waiting {
         case .escalated: waitingEscalated
-        case .arbitrating: waitingArbitrating
+        // Les mots de l'arbitre sont ceux de toutes les surfaces : justes pour
+        // une question comme pour un jalon, un plafond ou un échec.
+        case .arbiterQueued: KanbanText.arbiterQueued
+        case .arbiterDeciding: KanbanText.arbiterDeciding
         case .notStarted: waitingNotStarted
         case .running: waitingRunning
         case .waiting: waitingWaiting

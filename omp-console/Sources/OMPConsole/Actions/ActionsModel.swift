@@ -135,6 +135,8 @@ final class ActionsModel: ObservableObject {
     /// Le geste « Répondre » d'une question en TEXTE (S-10) : une commande `reply`
     /// adressée au dépôt de la feature.
     func submitReply(_ action: KanbanCardAction) {
+        // L'arbitre tient l'élément (`ArbiterState`) : aucun geste de réponse.
+        guard !action.arbiter.isArbitrating else { return }
         guard !Self.isBlank(replyText), let slug = action.slug, let repoRoot = action.repoRoot else { return }
         let sentAt = clock.nowMs()
         let salt = salt()
@@ -187,7 +189,7 @@ final class ActionsModel: ObservableObject {
     /// carte n'est pas une feature de lot en échec ou bloquée.
     @discardableResult
     func relaunch(_ action: KanbanCardAction) -> String? {
-        guard let slug = action.slug, let repoRoot = action.repoRoot,
+        guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating,
               action.featureState == .failed || action.featureState == .blocked
         else { return nil }
         let sentAt = clock.nowMs()
@@ -209,8 +211,10 @@ final class ActionsModel: ObservableObject {
 
     // --- émissions : livraisons (S-1, S-2) -----------------------------------
 
-    /// Dépose la réponse à une question en vol (libellé d'option).
+    /// Dépose la réponse à une question en vol (libellé d'option). Rien tant que
+    /// l'arbitre tient la question (`ArbiterState`).
     func answer(_ action: KanbanCardAction, selected: String) {
+        guard !action.arbiter.isArbitrating else { return }
         guard let run = action.run, let inbox = run.inbox,
               let toolCallId = run.pendingAsk?.toolCallId else { return }
         emitDelivery(
@@ -223,7 +227,7 @@ final class ActionsModel: ObservableObject {
 
     /// Dépose la réponse à une question en vol (texte libre).
     func answer(_ action: KanbanCardAction, custom text: String) {
-        guard !Self.isBlank(text) else { return }
+        guard !Self.isBlank(text), !action.arbiter.isArbitrating else { return }
         guard let run = action.run, let inbox = run.inbox,
               let toolCallId = run.pendingAsk?.toolCallId else { return }
         emitDelivery(
@@ -248,15 +252,17 @@ final class ActionsModel: ObservableObject {
 
     // --- émissions : commandes (S-4 … S-9) -----------------------------------
 
-    /// Émet `{kind:"verdict", verdict:"v"}` — le jalon specs.
+    /// Émet `{kind:"verdict", verdict:"v"}` — le jalon specs. Rien tant que
+    /// l'arbitre tient le jalon.
     func validate(_ action: KanbanCardAction) {
-        guard let slug = action.slug, let repoRoot = action.repoRoot else { return }
+        guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating else { return }
         emitVerdict(slug: slug, repoRoot: repoRoot, verdict: .specs, kindLabel: ActionsText.specsLabel)
     }
 
-    /// Émet `{kind:"verdict", verdict:"y"}` — le jalon de revue.
+    /// Émet `{kind:"verdict", verdict:"y"}` — le jalon de revue. Rien tant que
+    /// l'arbitre tient le jalon.
     func accept(_ action: KanbanCardAction) {
-        guard let slug = action.slug, let repoRoot = action.repoRoot else { return }
+        guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating else { return }
         emitVerdict(slug: slug, repoRoot: repoRoot, verdict: .review, kindLabel: ActionsText.reviewLabel)
     }
 

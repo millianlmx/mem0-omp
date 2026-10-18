@@ -25,6 +25,8 @@ enum PipelinesText {
 
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
+    static let decisionsSheetId = "pipelines.decisions.sheet"
+    static let decisionsButtonId = "pipelines.decisions"
 
     // MARK: - Recette `-pipelines.recipe` (crochet de capture, pas une fonctionnalité)
 

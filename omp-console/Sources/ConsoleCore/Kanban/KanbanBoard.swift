@@ -157,6 +157,7 @@ extension KanbanBoard {
                     if featureDraftByWorktree[worktree] == nil { featureDraftByWorktree[worktree] = drafts.count }
                 }
                 let prUrl = firstNonEmpty(pair?.feature.prUrl, feature.prUrl)
+                let arbiter = ArbiterState.of(lot: lot, feature: feature, pendingAsk: run?.pendingAsk != nil)
                 let fact = prUrl.flatMap { prFacts[$0] }
                 var sources: [KanbanSource] = []
                 if let pair {
@@ -181,7 +182,9 @@ extension KanbanBoard {
                         ),
                         repo: basename(repoReal),
                         title: feature.slug,
-                        state: lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state),
+                        // Chez l'arbitre, l'état dit qui tient l'élément : jamais
+                        // « attend validation » quand l'utilisateur n'a rien à faire.
+                        state: arbiter.label ?? lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state),
                         // Le maillon : celui du run apparié, sinon celui de la feature.
                         phase: run?.phase ?? feature.phase,
                         // Les modèles RÉSOLUS et la PR du projet priment (le plan
@@ -202,7 +205,8 @@ extension KanbanBoard {
                             waitKind: feature.waitKind,
                             featureState: feature.state,
                             run: run.map(cardRun),
-                            waitPrompt: feature.waitPrompt
+                            waitPrompt: feature.waitPrompt,
+                            arbiter: arbiter
                         )
                     ),
                     run: run,

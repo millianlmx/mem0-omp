@@ -560,6 +560,12 @@ export type ArbiterRunInput = {
   /** La borne d'UN tour (ms), depuis son départ. */
   budgetMs: number;
   signal: AbortSignal;
+  /**
+   * La vérification du pilote, faite À L'APPEL de `arbiter_decide` : le motif du refus
+   * ou `null`. Une décision refusée est renvoyée à l'arbitre, qui peut la corriger dans
+   * le même tour (`ARBITER_RETRY_MAX`).
+   */
+  check?: (decision: ArbiterDecision) => string | null;
 };
 
 /** Ce qu'un tour du pilote rend : la décision retenue (ou `null`) et la session qui l'a produite. */
@@ -733,6 +739,9 @@ export function createArbiterRunner(deps: {
       pilot.current = turn;
       pilot.exceeded = null;
       pilot.capture.decision = null;
+      pilot.capture.check = input.check ?? null;
+      pilot.capture.refusals = 0;
+      pilot.capture.refused = null;
       pilot.turns += 1;
       const { guard, capture } = pilot;
       const session = pilot.hosted.session;
@@ -773,7 +782,10 @@ export function createArbiterRunner(deps: {
       if (pilot !== null && pilot.current === turn) pilot.current = null;
     }
     const result = bare(pilot, fresh);
-    result.decision = pilot?.capture.decision ?? null;
+    // Un tour fini sur une décision refusée (sans nouvel appel) rend cette décision :
+    // la validation du contrôleur escalade alors avec le vrai motif du refus.
+    result.decision = pilot?.capture.decision ?? pilot?.capture.refused ?? null;
+    if (pilot !== null) pilot.capture.check = null;
     result.endedAt = now();
     const exceeded = pilot?.exceeded ?? null;
     if (exceeded !== null) result.contextExceeded = exceeded;

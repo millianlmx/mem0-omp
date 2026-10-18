@@ -13,7 +13,7 @@ import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpat
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILURE_STDOUT_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
-import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, runHardDeadlineMinutes } from "./lot.ts";
+import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, buildEscalationAlert, runHardDeadlineMinutes } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
@@ -24,8 +24,8 @@ import { questionOf, lotArbiterJournalMax } from "./lot.ts";
 import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
 import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, itemQuestion, normalizeQuestion, pilotRecapLine, validateArbiterDecision } from "./arbiter.ts";
-import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
-import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence } from "./arbiterReview.ts";
+import type { ArbiterDecision, ArbiterEffect, ArbiterGround, ArbiterItem } from "./arbiter.ts";
+import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence, renderReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
 import type { RelayItem } from "./relay.ts";
 import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, milestoneLine, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
@@ -444,6 +444,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // retombe alors sur le pid seul.
       lot.owner = { pid: process.pid, sessionFile: session.file, sessionId: session.id, heartbeatAt: now() };
     }
+    // L'arbitre est câblé chez le pilote (le service), ou chez le service à qui cette
+    // écriture laisse le lot : la Console sait qu'une feature avec contexte lui revient d'abord.
+    if (deps.arbiter !== undefined || (pilotRole !== "service" && service !== null && service.pid !== process.pid)) lot.arbiter = true;
+    else delete lot.arbiter;
     try {
       writeLot(stateDir, lot);
     } catch (err) {
@@ -585,21 +589,32 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * Une transition qui appelle l'utilisateur est annoncée UNE fois (AC-11). Une
    * attente (question, jalon) ou un plafond de revue d'une feature dont le relais
    * /audit est ouvert est confié à la session /audit : aucune alerte ici (S-3).
+   * Une feature ARBITRÉE (arbitre câblé, contexte d'audit ou de projet) n'annonce
+   * pas non plus son attente, son plafond ni son échec : l'arbitre les traite
+   * d'abord, et seule son escalade appelle l'utilisateur (`escalateItem`).
    */
   function emit(lot: Lot, feature: LotFeature, before: LotFeatureState): void {
     if (before === feature.state) return;
     const relayable = feature.state === "waiting" || settledItemKind(feature) !== null;
-    if (relayable && auditRelayOpen(stateDir, feature, lot.owner.pid, now())) return;
+    if (relayable && (arbitratedFeature(feature) || auditRelayOpen(stateDir, feature, lot.owner.pid, now()))) return;
     const alert = buildLotAlert(repo, feature);
     if (!alert) return;
-    notify(alert.text);
+    announce(alert.text, alert.tone);
+  }
+
+  /** Message durable puis toast : le MÊME texte (S-8), le toast est la visibilité immédiate. */
+  function announce(text: string, tone: "info" | "warning" | "error"): void {
+    notify(text);
     try {
-      // Le MÊME texte que le message durable (S-8) : le toast est la visibilité
-      // immédiate, et le prompt d'un run est repris en entier.
-      deps.toast?.(alert.text, alert.tone);
+      deps.toast?.(text, tone);
     } catch {
       /* un toast raté n'a aucune conséquence : le message durable est posté */
     }
+  }
+
+  /** La feature passe-t-elle par l'arbitre (arbitre câblé ET contexte d'audit ou de projet) ? */
+  function arbitratedFeature(feature: LotFeature): boolean {
+    return deps.arbiter !== undefined && feature.auditSession !== undefined;
   }
 
   /**
@@ -630,8 +645,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // d'arbitrage DANS cette sauvegarde : aucune sauvegarde intermédiaire ne la laisse sans
     // marque ni escalade, donc le relais ne voit jamais l'élément avant la décision.
     const arbitrable = settledItemKind(feature);
-    if (arbitrable !== null && ARBITRABLE.has(arbitrable) && deps.arbiter !== undefined && feature.auditSession !== undefined) {
-      feature.arbitration = { key: `${arbitrable}:${feature.slug}:${feature.sinceAt}`, startedAt: now() };
+    if (arbitrable !== null && ARBITRABLE.has(arbitrable) && arbitratedFeature(feature)) {
+      feature.arbitration = { key: `${arbitrable}:${feature.slug}:${feature.sinceAt}`, startedAt: now(), status: "queued" };
       delete feature.escalation;
     }
     emit(lot, feature, before);
@@ -1183,6 +1198,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
       feature.stopReason = null;
       feature.endedAt = null;
       touch(feature, now());
+      // Une feature ARBITRÉE reçoit sa marque DANS cette sauvegarde, comme au plafond :
+      // aucun lecteur (Console, relais) ne voit l'attente avant que l'arbitre l'ait
+      // vue. La passe qui suit la remplace par la marque de son arbitrage.
+      if (arbitratedFeature(feature)) {
+        feature.arbitration = { key: `${action.waitKind === "answer" ? "question" : action.waitKind}:${feature.slug}:${feature.sinceAt}`, startedAt: now(), status: "queued" };
+        delete feature.escalation;
+      }
       emit(lot, feature, before);
       return out;
     }
@@ -1506,7 +1528,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (item === undefined || feature.auditSession === undefined) continue;
       if (feature.escalation !== undefined || feature.arbitration !== undefined) continue;
       if (item.kind === "ask" && answeredAsks.has(askKey(item.slug, item.toolCallId ?? ""))) continue;
-      feature.arbitration = { key: item.key, startedAt: now() };
+      feature.arbitration = { key: item.key, startedAt: now(), status: "queued" };
       out.planned.push({ slug: feature.slug, item, pilot: pilotKey(lot, feature.auditSession) });
       out.changed = true;
     }
@@ -1535,12 +1557,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return base;
   }
 
-  /** Pose l'escalade de l'élément (S-9) et efface la marque, dans la MÊME sauvegarde. */
+  /**
+   * Pose l'escalade de l'élément (S-9) et efface la marque, dans la MÊME sauvegarde ;
+   * puis l'ANNONCE à l'utilisateur, motif compris — sauf quand le relais /audit est
+   * ouvert : la session /audit la reçoit.
+   */
   function escalateItem(slug: string, item: RelayItem, reason: string): void {
     const lot = read();
     const feature = lot ? lotFeature(lot, slug) : undefined;
     if (!lot || !feature || feature.arbitration?.key !== item.key) return;
-    feature.escalation = {
+    const escalation: NonNullable<LotFeature["escalation"]> = {
       key: item.key,
       kind:
         item.kind === "cap"
@@ -1556,8 +1582,34 @@ export function createLotController(deps: LotControllerDeps): LotController {
       reason,
       at: now(),
     };
+    feature.escalation = escalation;
     delete feature.arbitration;
     save(lot);
+    if (auditRelayOpen(stateDir, feature, lot.owner.pid, now())) return;
+    const alert = buildEscalationAlert(repo, feature, escalation);
+    announce(alert.text, alert.tone);
+  }
+
+  /** Le tour du pilote commence pour cet élément : la marque passe de « en file » à « décide », sauvée. */
+  function markDeciding(slug: string, key: string): void {
+    const lot = read();
+    const feature = lot ? lotFeature(lot, slug) : undefined;
+    if (!lot || !feature || feature.arbitration?.key !== key) return;
+    feature.arbitration = { ...feature.arbitration, status: "deciding", decidingAt: now() };
+    save(lot);
+  }
+
+  /**
+   * Le modèle de la session du pilote : UN par contexte, pas par feature — deux features
+   * d'un même contexte qui déclarent des modèles différents (ou l'une aucun) rouvriraient
+   * la session à froid à chaque alternance. La première feature du contexte qui déclare
+   * un modèle du groupe de l'arbitre le fixe, avec SON repli ; sinon le défaut OMP.
+   */
+  function pilotModelOf(lot: Lot, context: string): { model: string | null; fallback: string | null } {
+    const features = lot.features.filter((candidate) => candidate.auditSession === context);
+    const chosen = features.find((candidate) => featureModelForGroup(candidate, ARBITER_MODEL_GROUP) !== null);
+    if (chosen === undefined) return { model: null, fallback: null };
+    return { model: featureModelForGroup(chosen, ARBITER_MODEL_GROUP), fallback: featureFallbackForGroup(chosen, ARBITER_MODEL_GROUP) };
   }
 
   /** Efface la marque d'arbitrage de l'élément (la décision est appliquée, ou jetée). */
@@ -1602,8 +1654,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return { kind: "answer", answer: known.answer, source: "contexte", selected: arbiterItem.options.includes(known.answer) };
       }
     }
-    const fallback = featureFallbackForGroup(feature, ARBITER_MODEL_GROUP);
-    const started = startModel(featureModelForGroup(feature, ARBITER_MODEL_GROUP), fallback);
+    const { model: pilotModel, fallback } = pilotModelOf(lot, feature.auditSession);
+    const started = startModel(pilotModel, fallback);
     if ("blocked" in started) {
       return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
     }
@@ -1639,6 +1691,23 @@ export function createLotController(deps: LotControllerDeps): LotController {
             maxChars: deps.arbiterDiffMax ?? ARBITER_DIFF_MAX_CHARS,
           })
         : null;
+    // Le texte où les citations se vérifient : l'élément (plafond, échec), son corpus, la
+    // preuve du jalon « revue propre » (diff et critères — l'arbitre la lit, il peut donc
+    // la citer) et l'ouverture de la session, lue à l'appel (elle naît pendant le tour).
+    const evidence = review === null ? null : renderReviewEvidence(review);
+    const groundOf = (): ArbiterGround => ({
+      corpus: [itemBlock, corpus, evidence, pilots.get(key)?.opening ?? ""].filter((part): part is string => part !== null && part !== "").join("\n\n"),
+      report,
+      worktree: feature.worktree,
+      contract,
+      review,
+    });
+    // La vérification du pilote, À L'APPEL de l'outil : un refus revient à l'arbitre, qui
+    // corrige sa décision dans le même tour au lieu d'escalader à l'aveugle.
+    const check = (decision: ArbiterDecision): string | null => {
+      const effect = validateArbiterDecision(arbiterItem, decision, groundOf());
+      return effect.kind === "escalate" ? effect.reason : null;
+    };
     const result = await deps.arbiter({
       stateDir,
       pilot: key,
@@ -1660,6 +1729,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       fallback,
       budgetMs: ARBITER_DEADLINE_MS,
       signal,
+      check,
     });
     // Tout le journal lu à la construction est désormais connu de la session. Une
     // compaction survenue pendant le tour l'a résumée : le tour suivant reporte tout.
@@ -1692,13 +1762,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       pilots.delete(key);
       return { kind: "escalate", reason: `contexte dépassé (${result.contextExceeded} tokens)` };
     }
-    return validateArbiterDecision(arbiterItem, result.decision, {
-      corpus: [itemBlock, corpus, opened?.opening ?? ""].filter((part) => part !== null && part !== "").join("\n\n"),
-      report,
-      worktree: feature.worktree,
-      contract,
-      review,
-    });
+    return validateArbiterDecision(arbiterItem, result.decision, groundOf());
   }
 
   /**
@@ -1790,6 +1854,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       try {
         let effect: ArbiterEffect | null;
         try {
+          markDeciding(slug, item.key);
           effect = await decideItem(slug, item, abort.signal);
         } catch {
           effect = { kind: "escalate", reason: "arbitre sans décision" };

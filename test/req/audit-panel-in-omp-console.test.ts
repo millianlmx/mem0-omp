@@ -666,7 +666,7 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   const r = rig({
     script: prompt =>
       prompt.includes("type : jalon « revue propre »")
-        ? { decision: "approve", reason: "AC-1 est porté par preuve.txt", references: ["preuve.txt:1"] }
+        ? { decision: "approve", reason: "AC-1 est porté par preuve.txt", references: ["preuve.txt:1"], attestations: ["AC-1 preuve.txt:1"] }
         : { decision: "approve", reason: "le contrat couvre le besoin", citations: ["AC-1 (B-1) : un critère."] },
     runner,
     runGit: async (args, cwd) => {

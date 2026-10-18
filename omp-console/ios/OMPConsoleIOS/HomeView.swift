@@ -358,6 +358,9 @@ struct HomeView: View {
                 Text(card.repo).font(.callout).foregroundStyle(.secondary)
             }
             Text(attention.prompt).font(.body)
+            if let motive = attention.motive {
+                Text(motive).font(.callout).foregroundStyle(.secondary)
+            }
             IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false) {
                 if ContractDocument.moment(for: card) != nil {
                     Button {
@@ -449,10 +452,14 @@ struct HomeView: View {
 
     // MARK: - Lignes
 
-    /// « En cours » : une pipeline réellement en marche, avec sa durée.
+    /// « En cours » : une pipeline réellement en marche, avec sa durée — ou que
+    /// l'arbitre tient en arrière-plan, son état en pastille.
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         IOSAdaptiveRow(spacing: 12) {
             rowTitle(card, showsRepo: showsRepo)
+            if card.action?.arbiter.isArbitrating == true {
+                IOSStatusChip(status: ConsoleStatus.of(card: card))
+            }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
                     .font(.callout)

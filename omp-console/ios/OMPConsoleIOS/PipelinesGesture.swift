@@ -33,6 +33,8 @@ enum PipelinesGesture: Equatable {
     case answerQuestion(toolCallId: String, question: String, options: [PanelAskOption])
     case answerText(prompt: String?)
     case validateMilestone(kind: LotWaitKind)
+    /// L'arbitre tient l'élément : un libellé à la place de Répondre et Valider.
+    case arbiter(ArbiterState)
     case resume
     case stop
     case launch
@@ -55,6 +57,8 @@ extension PipelinesGesture {
                 gestures.append(.answerText(prompt: prompt))
             case .milestone(_, let kind):
                 gestures.append(.validateMilestone(kind: kind))
+            case .arbiter(let state):
+                gestures.append(.arbiter(state))
             case .resume:
                 gestures.append(.resume)
             case .stopLot:

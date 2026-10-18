@@ -119,6 +119,10 @@ public struct KanbanCardAction: Sendable, Equatable {
     /// feature de lot appariée, aucune autre source) : ce que « Répondre » montre
     /// quand la feature attend une réponse sans question `ask` en vol.
     public var waitPrompt: String? = nil
+    /// L'état de la feature de lot au regard de l'arbitre (`ArbiterState.of`) :
+    /// c'est lui qui retire la carte de « À vous » et ses gestes de réponse tant
+    /// que l'arbitre tient l'élément. `.none` hors feature de lot.
+    public var arbiter: ArbiterState = .none
 
     public init(
         repoRoot: String?,
@@ -128,7 +132,8 @@ public struct KanbanCardAction: Sendable, Equatable {
         waitKind: LotWaitKind?,
         featureState: LotFeatureState?,
         run: KanbanCardRun?,
-        waitPrompt: String? = nil
+        waitPrompt: String? = nil,
+        arbiter: ArbiterState = .none
     ) {
         self.repoRoot = repoRoot
         self.repoKey = repoKey
@@ -138,6 +143,7 @@ public struct KanbanCardAction: Sendable, Equatable {
         self.featureState = featureState
         self.run = run
         self.waitPrompt = waitPrompt
+        self.arbiter = arbiter
     }
 }
 

@@ -434,9 +434,10 @@ public struct LotOwner: Sendable, Equatable, Codable {
     }
 }
 
-/// La sorte d'une escalade de l'arbitre (`FeatureEscalation.kind`, lot.ts:129-137).
+/// La sorte d'une escalade de l'arbitre (`FeatureEscalation.kind`, lot.ts:152) :
+/// une question, un jalon, le plafond de revue, l'échec d'un run.
 public enum FeatureEscalationKind: String, Sendable, Codable {
-    case question, jalon
+    case question, jalon, plafond, echec
 }
 
 /// Un élément que l'arbitre n'a pas pu trancher : il attend l'utilisateur
@@ -480,23 +481,50 @@ public func asFeatureEscalation(_ raw: JSONValue?) -> FeatureEscalation? {
     return FeatureEscalation(key: key, kind: kind, phase: phase, question: question, options: options, reason: reason, at: at)
 }
 
-/// Un arbitrage EN VOL : la clé de l'élément arbitré et l'instant de départ
-/// (`FeatureArbitration`, lot.ts:110).
+/// L'étape d'un arbitrage en vol : en file (marque posée, l'arbitre n'a pas
+/// encore pris la main) ou en cours de décision (le tour de l'arbitre a commencé).
+public enum FeatureArbitrationStatus: String, Sendable, Codable {
+    case queued, deciding
+}
+
+/// Un arbitrage EN VOL : la clé de l'élément arbitré, l'instant de mise en file,
+/// l'étape et l'instant où l'arbitre a pris la main (`FeatureArbitration`, lot.ts).
 public struct FeatureArbitration: Sendable, Equatable, Codable {
     public var key: String
     public var startedAt: Double
+    /// Absente des fichiers antérieurs : vaut `queued`.
+    public var status: FeatureArbitrationStatus
+    public var decidingAt: Double?
 
-    public init(key: String, startedAt: Double) {
+    public init(key: String, startedAt: Double, status: FeatureArbitrationStatus = .queued, decidingAt: Double? = nil) {
         self.key = key
         self.startedAt = startedAt
+        self.status = status
+        self.decidingAt = decidingAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key, startedAt, status, decidingAt
+    }
+
+    /// `status` FACULTATIF au décodage : la trame `store` d'un Mac antérieur se
+    /// lit comme un arbitrage en file.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        startedAt = try container.decode(Double.self, forKey: .startedAt)
+        status = try container.decodeIfPresent(FeatureArbitrationStatus.self, forKey: .status) ?? .queued
+        decidingAt = try container.decodeIfPresent(Double.self, forKey: .decidingAt)
     }
 }
 
-/// `asFeatureArbitration` (lot.ts:833-839) : complet ou absent.
+/// `asFeatureArbitration` : clé et départ exigés (complet ou absent) ; une étape
+/// absente ou hors vocabulaire vaut `queued`, un `decidingAt` non numérique est absent.
 public func asFeatureArbitration(_ raw: JSONValue?) -> FeatureArbitration? {
     guard let a = asObject(raw) else { return nil }
     guard let key = asString(a["key"]), !key.isEmpty, let startedAt = asNumber(a["startedAt"]) else { return nil }
-    return FeatureArbitration(key: key, startedAt: startedAt)
+    let status = FeatureArbitrationStatus(rawValue: asString(a["status"]) ?? "") ?? .queued
+    return FeatureArbitration(key: key, startedAt: startedAt, status: status, decidingAt: asNumber(a["decidingAt"]))
 }
 
 /// Une feature d'un lot (`asLotFeature`, lot.ts:653-740).
@@ -548,8 +576,12 @@ public struct LotFeature: Sendable, Equatable, Codable {
     /// L'arbitrage en vol (lot.ts:246) : posé avant l'ouverture de la session
     /// d'arbitre, effacé à la décision.
     public var arbitration: FeatureArbitration?
+    /// Vrai quand la feature porte un blocage de quota (`quota` du lot) : ce
+    /// blocage se règle par le groupe du fournisseur, jamais par l'arbitre.
+    /// Écrit seulement quand il vaut `true`.
+    public var quotaBlocked: Bool?
 
-    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil) {
+    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil, quotaBlocked: Bool? = nil) {
         self.slug = slug
         self.name = name
         self.branch = branch
@@ -586,6 +618,7 @@ public struct LotFeature: Sendable, Equatable, Codable {
         self.endedAt = endedAt
         self.escalation = escalation
         self.arbitration = arbitration
+        self.quotaBlocked = quotaBlocked
     }
 }
 
@@ -658,7 +691,8 @@ extension LotFeature {
             updatedAt: asNumber(f["updatedAt"]) ?? 0,
             endedAt: asNumber(f["endedAt"]),
             escalation: asFeatureEscalation(f["escalation"]),
-            arbitration: asFeatureArbitration(f["arbitration"])
+            arbitration: asFeatureArbitration(f["arbitration"]),
+            quotaBlocked: asObject(f["quota"]) != nil ? true : nil
         )
     }
 }
@@ -708,8 +742,11 @@ public struct Lot: Sendable, Equatable, Codable {
     public var launchedAt: Double?
     public var features: [LotFeature]
     public var isStale: Bool
+    /// `true` quand le lot est piloté par le service, qui fait tourner l'arbitre
+    /// (`Lot.arbiter`) ; écrit seulement quand il vaut `true`.
+    public var arbiter: Bool?
 
-    public init(id: String, repoRoot: String, status: LotStatus, reviewCap: Int, slotCap: Int, recapAt: Double?, owner: LotOwner, createdAt: Double, launchedAt: Double?, features: [LotFeature], isStale: Bool) {
+    public init(id: String, repoRoot: String, status: LotStatus, reviewCap: Int, slotCap: Int, recapAt: Double?, owner: LotOwner, createdAt: Double, launchedAt: Double?, features: [LotFeature], isStale: Bool, arbiter: Bool? = nil) {
         self.id = id
         self.repoRoot = repoRoot
         self.status = status
@@ -721,6 +758,7 @@ public struct Lot: Sendable, Equatable, Codable {
         self.launchedAt = launchedAt
         self.features = features
         self.isStale = isStale
+        self.arbiter = arbiter
     }
 }
 
@@ -761,7 +799,8 @@ extension Lot {
             createdAt: asNumber(l["createdAt"]) ?? 0,
             launchedAt: asNumber(l["launchedAt"]),
             features: features,
-            isStale: false
+            isStale: false,
+            arbiter: asBool(l["arbiter"]) == true ? true : nil
         )
         isStale = lotIsStale(self, nowMs: nowMs)
     }

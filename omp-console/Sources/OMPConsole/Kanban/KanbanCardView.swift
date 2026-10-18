@@ -59,6 +59,13 @@ struct KanbanCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
+            if let motive = KanbanCardPresentation.arbiterMotive(card) {
+                Text(motive)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+                    .accessibilityIdentifier("kanban.card.arbiterMotive")
+            }
             if KanbanCardPresentation.showsProgress(card) {
                 PipelineProgressBar(steps: PipelineProgress.steps(for: card))
             }

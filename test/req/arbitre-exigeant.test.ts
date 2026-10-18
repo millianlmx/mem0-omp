@@ -1,6 +1,6 @@
 // Tests de arbitre-exigeant : l'approbation d'un jalon exige une justification
 // vérifiée, l'évidence de « revue propre » ne regarde que le diff, deux critères
-// tirés au sort doivent être attestés par une référence dans le diff, et le corpus
+// tirés au sort doivent être attestés à un endroit précis du diff, et le corpus
 // de l'arbitre est réduit au genre de l'élément (jamais la `## Revue` au jalon de revue).
 //
 // Ce fichier est LE SEUL porteur des ids `arbitre-exigeant/AC-<n>` (règle
@@ -97,8 +97,12 @@ test("arbitre-exigeant/AC-3 : l'évidence de « revue propre » ne cherche les c
   ]);
   const prompt = buildArbiterPrompt(REVIEW_ITEM, "c", evidence);
   assert.ok(prompt.includes("## Critères et fichiers du diff\n- AC-1 : src/a.ts, test/neuf.test.ts\n- AC-2 : (aucun fichier)\n- AC-3 : test/neuf.test.ts"), prompt);
-  const approve: ArbiterDecision = { decision: "approve", reason: "livré", references: ["src/a.ts:1"] };
-  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, approve, groundOf(repo, { review: evidence })), refused("critères sans fichier dans le diff : AC-2"));
+  // Un diff vide n'a rien à livrer : l'approbation est refusée avant toute attestation.
+  const approve: ArbiterDecision = { decision: "approve", reason: "livré", attestations: ["AC-1 src/a.ts:1"] };
+  assert.deepEqual(
+    validateArbiterDecision(REVIEW_ITEM, approve, groundOf(repo, { review: { ...evidence, names: [], acFiles: evidence.acFiles!.map(({ id }) => ({ id, files: [] })) } })),
+    refused("diff vide : aucun changement à livrer"),
+  );
 
   // Git en échec sur la liste des fichiers : la recherche n'a pas lieu, sans exception.
   const broken = await collectReviewEvidence({
@@ -132,30 +136,34 @@ test("arbitre-exigeant/AC-4 : deux critères sont tirés de façon déterministe
   assert.ok(new Set(seeds).size > 1, "le tirage dépend de la graine");
 });
 
-test("arbitre-exigeant/AC-5 : au jalon « revue propre », l'approbation exige pour chaque critère tiré une référence dans un fichier du diff qui le porte, sinon l'escalade nomme le critère", async () => {
+test("arbitre-exigeant/AC-5 : au jalon « revue propre », chaque critère tiré s'atteste dans le diff — dans un fichier qui porte son id s'il y en a un, sinon à la ligne modifiée ; sinon l'escalade nomme le critère et le motif", async () => {
   const repo = mkReviewRepo();
-  write(repo, "test/deux.test.ts", 'test("alpha/AC-2 : deuxième", () => {});\n');
-  const ids = ["AC-1", "AC-2", "AC-3"];
-  const evidence = await collectReviewEvidence({ worktree: repo, acIds: ids, runGit: gitRunner });
-  const ground = groundOf(repo, { review: evidence });
-  const [x, y] = evidence.sampledAcIds as [string, string];
-  const fileOf = (id: string) => evidence.acFiles!.find((entry) => entry.id === id)!.files[0]!;
-  assert.ok(buildArbiterPrompt(REVIEW_ITEM, "c", evidence).includes(`vérification exigée : pour ${x} et ${y}, cite en \`references\``));
+  const evidence = await collectReviewEvidence({ worktree: repo, acIds: ["AC-1", "AC-2", "AC-3"], runGit: gitRunner });
+  // AC-2 n'est porté par aucun fichier du diff (preuve hors test) ; AC-3 l'est par test/neuf.test.ts.
+  const sampled = { ...evidence, sampledAcIds: ["AC-2", "AC-3"] };
+  const ground = groundOf(repo, { review: sampled });
+  assert.ok(buildArbiterPrompt(REVIEW_ITEM, "c", sampled).includes("vérification exigée : pour AC-2 et AC-3, rends `attestations`"));
 
-  // Une citation seule : vérifiée, mais aucune assertion citée.
+  // Une citation seule : vérifiée, mais aucun critère attesté.
   const cited: ArbiterDecision = { decision: "approve", reason: "livré", citations: ["- BLOQUANTS : aucun"] };
-  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, cited, ground), refused(`assertion non citée pour ${x}, ${y}`));
-  // Une référence dans le diff pour un seul des deux critères tirés.
-  const half: ArbiterDecision = { ...cited, references: [`${fileOf(x)}:1`] };
-  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, half, ground), refused(`assertion non citée pour ${y}`));
-  // Une référence vers un fichier commité hors diff ne compte pas, même s'il porte l'id.
-  const stale: ArbiterDecision = { ...half, references: [`${fileOf(x)}:1`, "test/ancien.test.ts:1"] };
-  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, stale, ground), refused(`assertion non citée pour ${y}`));
-  // Les deux critères attestés : approuvé, les références vérifiées au journal.
-  const full: ArbiterDecision = { ...cited, references: [`${fileOf(x)}:1`, `./${fileOf(y)}:1`] };
+  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, cited, ground), refused("attestation manquante pour AC-2 (aucune attestation), AC-3 (aucune attestation)"));
+  // Hors du diff, ou hors du fichier qui porte l'id quand il y en a un : refusé, avec le motif par critère.
+  const wrong: ArbiterDecision = { ...cited, attestations: ["AC-2 test/ancien.test.ts:1", "AC-3 src/a.ts:1"] };
+  assert.deepEqual(
+    validateArbiterDecision(REVIEW_ITEM, wrong, ground),
+    refused(
+      "attestation manquante pour AC-2 (« test/ancien.test.ts:1 » hors du diff), " +
+        "AC-3 (« src/a.ts:1 » : le diff a un fichier qui porte AC-3 (test/neuf.test.ts), atteste dans l'un d'eux)",
+    ),
+  );
+  // AC-2 attesté par la ligne modifiée qui le réalise, AC-3 par son test : approuvé, les attestations vérifiées au journal.
+  const full: ArbiterDecision = { ...cited, attestations: ["AC-2 → src/a.ts:1", "AC-3: test/neuf.test.ts:2"] };
   const effect = validateArbiterDecision(REVIEW_ITEM, full, ground);
   assert.equal(effect.kind, "approve", JSON.stringify(effect));
-  assert.deepEqual(effect.kind === "approve" ? effect.justification?.references : undefined, [`${fileOf(x)}:1`, `./${fileOf(y)}:1`]);
+  assert.deepEqual(effect.kind === "approve" ? effect.justification?.references : undefined, ["AC-2 src/a.ts:1", "AC-3 test/neuf.test.ts:2"]);
+  // Les attestations vérifiées suffisent à justifier l'approbation.
+  const bare: ArbiterDecision = { decision: "approve", reason: "livré", attestations: full.attestations! };
+  assert.equal(validateArbiterDecision(REVIEW_ITEM, bare, ground).kind, "approve");
 });
 
 test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le contrat sans aucune `## Revue` ; le plafond ne reçoit que critères, revue et corrections ; aucun tour ne reprend rapport ni brief, tenus par l'ouverture", () => {

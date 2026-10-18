@@ -203,6 +203,12 @@ struct PipelinesCardSheet: View {
                         .accessibilityIdentifier(PipelinesAccessibility.sheetPhase)
                 }
             }
+            if let motive = KanbanCardPresentation.arbiterMotive(card) {
+                Text(motive)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 Text(ConsoleFormat.duration(ms:
                     card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)
@@ -288,6 +294,21 @@ struct PipelinesCardSheet: View {
                 let verdict = kind.verdict ?? PipelinesVerdict.specs.rawValue
                 _ = try await client.verdict(cardId: card.id, verdict: verdict)
             }
+            .recipeAnchor(anchored)
+        case .arbiter(let state):
+            // Un libellé, pas un bouton : l'arbitre décide, rien n'est à faire.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(state.label(nowMs: context.date.timeIntervalSince1970 * 1000) ?? "", systemImage: KanbanLane.arbitre.symbol)
+                        .font(.headline)
+                    Text(KanbanText.arbiterHandles)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(PipelinesAccessibility.gesture(KanbanText.arbiterLane, card.id))
             .recipeAnchor(anchored)
         case .resume:
             actionButton(label: KanbanText.resume, id: KanbanText.resume, card: card) {

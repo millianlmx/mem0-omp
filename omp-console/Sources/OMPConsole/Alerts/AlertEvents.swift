@@ -69,22 +69,28 @@ enum AlertDerivation {
         let cards = board?.cards ?? []
         var byKey: [String: AlertEvent] = [:]
         // Une clé déjà vue garde sa PREMIÈRE valeur : un doublon d'instantané
-        // (deux lots du même dépôt, même slug) n'émet qu'un évènement.
+        // (deux lots du même dépôt, même slug) n'émet qu'un évènement. Le motif
+        // d'une escalade (l'arbitre a rendu la main) suit le nom dans le corps.
         func keep(key: String, kind: AlertKind, cardID: String, fallbackBody: String) {
             guard byKey[key] == nil, let title = title(of: kind) else { return }
             let card = cards.first { $0.id == cardID }
+            let name = card?.title ?? fallbackBody
+            let motive = card.flatMap(KanbanCardPresentation.arbiterMotive)
             byKey[key] = AlertEvent(
                 key: key, kind: kind, cardID: cardID,
-                title: title, body: card?.title ?? fallbackBody
+                title: title, body: motive.map { "\(name)\n\($0)" } ?? name
             )
         }
 
         // (1) « Question » : une question `ask` EN VOL d'un run vivant. `waiting`
         // sans `pendingAsk` n'est pas une question ; une entrée périmée (propriétaire
-        // mort) non plus. La carte est celle du run, ou la feature qui l'absorbe.
+        // mort) non plus ; une question que l'arbitre tient (`ArbiterState`) non
+        // plus — la clé ne s'enregistre pas, elle notifiera à l'escalade. La carte
+        // est celle du run, ou la feature qui l'absorbe.
         for entry in snapshot.running.entries {
             guard let ask = entry.pendingAsk, !entry.isStale else { continue }
             let card = cards.first { $0.id == "run:\(entry.id)" || $0.action?.run?.id == entry.id }
+            if card?.action?.arbiter.isArbitrating == true { continue }
             keep(
                 key: "answer:\(entry.id):\(ask.toolCallId)", kind: .pendingAnswer,
                 cardID: card?.id ?? "run:\(entry.id)", fallbackBody: entry.label
@@ -92,11 +98,15 @@ enum AlertDerivation {
         }
 
         // (2) jalons specs et revue et (3) échec d'une feature : les features de
-        // tous les lots.
+        // tous les lots, sauf celles que l'arbitre tient — même règle que la
+        // carte (`ArbiterState`), recalculée quand l'ardoise ne porte pas la carte.
         for lot in snapshot.lots.lots {
             let repoKey = KanbanRepoKey.key(forRoot: lot.repoRoot)
             for feature in lot.features {
                 let cardID = "feature:\(repoKey):\(feature.slug)"
+                let arbiter = cards.first { $0.id == cardID }?.action?.arbiter
+                    ?? ArbiterState.of(lot: lot, feature: feature, pendingAsk: false)
+                if arbiter.isArbitrating { continue }
                 if feature.state == .waiting {
                     switch feature.waitKind {
                     case .specs:

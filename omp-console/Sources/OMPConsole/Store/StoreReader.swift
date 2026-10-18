@@ -136,6 +136,8 @@ struct StoreReader: Sendable {
     /// par nom, puis, pour chaque `repoKey` distinct, les lignes de
     /// `journal/<repoKey>.jsonl` dont `context` est la clé d'un audit et dont la
     /// source est l'arbitre (contexte ou arbitrage), dans l'ordre d'écriture.
+    /// Enfin le fil des décisions de TOUS les journaux (`feed`), lu sur la queue
+    /// de chaque fichier.
     ///
     /// Un `repoKey` hors `^[0-9a-f]{16}$` (la seule forme que `lotRepoKey` écrit)
     /// n'ouvre aucun journal : le nom d'un fichier lu ne vient jamais d'un champ
@@ -156,7 +158,41 @@ struct StoreReader: Sendable {
                 decisions.append(decision)
             }
         }
-        return AuditsEnvelope(availability: availability, records: records, decisions: decisions, discardedEntries: discardedEntries)
+        return AuditsEnvelope(
+            availability: availability, records: records, decisions: decisions,
+            discardedEntries: discardedEntries, feed: readDecisionFeed(journalDir)
+        )
+    }
+
+    /// La queue lue de chaque journal : au plus `journalTailBytes` octets depuis
+    /// la fin, assez pour les dernières décisions sans relire un journal entier
+    /// à chaque écriture d'un lot.
+    static let journalTailBytes: UInt64 = 256 * 1024
+
+    /// Le fil des décisions de tous les `journal/<repoKey>.jsonl` : les plus
+    /// récentes d'abord, bornées par `ArbiterDecisionFeed.limit`. L'identité d'une
+    /// décision est l'offset de sa ligne dans le fichier, stable en ajout.
+    private func readDecisionFeed(_ journalDir: String) -> [ArbiterDecision] {
+        var journals: [[ArbiterDecision]] = []
+        for name in fileNames(journalDir).sorted() where name.hasSuffix(".jsonl") {
+            let repoKey = String(name.dropLast(".jsonl".count))
+            guard isAuditId(repoKey), let handle = FileHandle(forReadingAtPath: joinPath(journalDir, name)) else { continue }
+            defer { try? handle.close() }
+            guard let size = try? handle.seekToEnd() else { continue }
+            let offset = size > Self.journalTailBytes ? size - Self.journalTailBytes : 0
+            guard (try? handle.seek(toOffset: offset)) != nil, var data = try? handle.readToEnd() else { continue }
+            var firstByte = Int(offset)
+            // Une queue commence au milieu d'une ligne : la ligne coupée tombe.
+            if offset > 0, let newline = data.firstIndex(of: UInt8(ascii: "\n")) {
+                let start = data.index(after: newline)
+                firstByte += start - data.startIndex
+                data = data.subdata(in: start..<data.endIndex)
+            }
+            journals.append(ArbiterDecisionFeed.decisions(
+                journal: data, repoKey: repoKey, firstByte: firstByte, parse: JSONValue.parse
+            ))
+        }
+        return ArbiterDecisionFeed.merge(journals)
     }
 
     /// Les boîtes d'un run : deux niveaux, donc pas le balayage générique. Un nom

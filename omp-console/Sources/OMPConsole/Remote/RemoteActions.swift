@@ -118,6 +118,7 @@ final class RemoteActions {
     func answer(cardId: String, toolCallId: String, answer: CardAnswer) async throws(GestureRefusal) {
         let card = try card(cardId)
         let action = try action(card)
+        guard !action.arbiter.isArbitrating else { throw .arbiterHandles }
         guard let ask = action.run?.pendingAsk else { throw .noQuestionInFlight }
         guard try Self.requireQuestionId(toolCallId) == ask.toolCallId else { throw .staleQuestion }
         let before = actions.journal.first?.id
@@ -135,6 +136,7 @@ final class RemoteActions {
     func reply(cardId: String, text: String) async throws(GestureRefusal) {
         let card = try card(cardId)
         let action = try action(card)
+        guard !action.arbiter.isArbitrating else { throw .arbiterHandles }
         guard action.waitPrompt != nil else { throw .notAwaitingReply }
         guard !Self.isBlank(text) else { throw .emptyText }
         let before = actions.journal.first?.id
@@ -157,6 +159,7 @@ final class RemoteActions {
     func verdict(cardId: String, verdict: MilestoneVerdict) async throws(GestureRefusal) -> String? {
         let card = try card(cardId)
         let action = try action(card)
+        guard !action.arbiter.isArbitrating else { throw .arbiterHandles }
         let before = actions.journal.first?.id
         switch verdict {
         case .specs:
@@ -177,6 +180,7 @@ final class RemoteActions {
         // service `relaunch` (S-3 de accueil-en-cours-melange-pause-et-compte) :
         // même route, même charge utile, donc un client iOS déjà installé obtient
         // la relance sans mise à jour. Toute autre carte garde la reprise du pilote.
+        if action.arbiter.isArbitrating && !KanbanActionPresentation.resumable(card) { throw .arbiterHandles }
         if KanbanActionPresentation.relaunchable(card) {
             try await relaunch(action)
             return

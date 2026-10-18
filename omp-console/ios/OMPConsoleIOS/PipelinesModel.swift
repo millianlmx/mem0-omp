@@ -21,11 +21,14 @@ enum PipelinesScreenState: Equatable {
 enum PipelinesSheet: Identifiable {
     case card(String)
     case newFeature
+    /// « Décisions de l’arbitre » : le fil des décisions de tous les lots.
+    case decisions
 
     var id: String {
         switch self {
         case .card(let cardId): return PipelinesText.cardSheetId(cardId)
         case .newFeature: return PipelinesText.newFeatureSheetId
+        case .decisions: return PipelinesText.decisionsSheetId
         }
     }
 }
