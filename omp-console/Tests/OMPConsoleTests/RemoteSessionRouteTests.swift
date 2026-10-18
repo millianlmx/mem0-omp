@@ -374,6 +374,16 @@ private final class HostedSSECollector {
         }
         return events.first(where: { $0.name == name })?.data
     }
+
+    /// La première trame de ce nom dont les données satisfont `predicate`.
+    func waitFor(_ name: String, seconds: Double = 10, where predicate: (String) -> Bool) async -> String? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let event = events.first(where: { $0.name == name && predicate($0.data) }) { return event.data }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return events.first(where: { $0.name == name && predicate($0.data) })?.data
+    }
 }
 
 @MainActor
@@ -636,4 +646,183 @@ func hostedDialogRefusalIsTheSameCauseByRouteAndTypedCall() async throws {
     }
     #expect(hosted.session.host.dialogQueue.first?.id == "s1", "le dialogue n'est pas consommé")
     #expect(servicePosts(hosted.transport, suffix: "/dialogs/s1") == 0)
+}
+
+// MARK: - model-selector-in-embedded-omp-session (S-7)
+
+/// Une session SERVIE ouverte sur `model`/`level`, un projet choisi dans des
+/// préférences jetables, deux flux gardés ouverts.
+@MainActor
+private func makeHostedModelSession(
+    model: String? = "p/a",
+    level: String? = "low"
+) async throws -> (transport: ScriptedServiceTransport, session: SessionConsoleModel, root: URL) {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("omp-console-model-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let transport = ScriptedServiceTransport()
+    let description: [String: Any] = [
+        "id": "sess-1234", "cwd": root.path, "purpose": "session", "state": "idle", "sessionFile": NSNull(),
+        "model": model ?? NSNull(), "thinkingLevel": level ?? NSNull(),
+    ]
+    transport.stubJSON("POST", "/v1/sessions", description)
+    transport.stubJSON("GET", "/v1/sessions/sess-1234", description)
+    transport.stubJSON("DELETE", "/v1/sessions/sess-1234", ["closed": true])
+    openServiceStream(transport, count: 2)
+    let host = ServiceSessionModel(
+        purpose: "session",
+        makeClient: { scriptedClient(transport) },
+        maxAttempts: 5,
+        retryDelay: { _ in projectRetryDelay }
+    )
+    let suite = UserDefaults(suiteName: "route-model-\(UUID().uuidString)") ?? .standard
+    suite.set(root.path, forKey: SessionConsoleModel.projectRootKey)
+    let session = SessionConsoleModel(host: host, defaults: suite)
+    try await host.start(projectRoot: root, resumeFile: nil)
+    return (transport, session, root)
+}
+
+private func modelDescription(root: URL, model: String, level: String?) -> [String: Any] {
+    [
+        "id": "sess-1234", "cwd": root.path, "purpose": "session", "state": "idle", "sessionFile": NSNull(),
+        "model": model, "thinkingLevel": level ?? NSNull(),
+    ]
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-4 : POST /v1/session/model change le modèle de la session par le service et rend la nouvelle valeur")
+func hostedModelRouteChangesTheSessionModel() async throws {
+    let hosted = try await makeHostedModelSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+
+    // La valeur affichée de départ est celle de la description.
+    let before = try await stack.call("GET", "/v1/session", token: token).json(RemoteHostedSessionPayload.self)
+    #expect(before.model == "p/a" && before.thinkingLevel == "low" && before.turnRunning == false)
+
+    hosted.transport.stubJSON("POST", "/v1/sessions/sess-1234/model", modelDescription(root: hosted.root, model: "p/b", level: "high"))
+    let reply = try await stack.call("POST", "/v1/session/model", token: token, json: ["model": "p/b", "thinkingLevel": "high"])
+    #expect(reply.status == 200)
+    let payload = try reply.json(RemoteHostedSessionPayload.self)
+    #expect(payload.model == "p/b")
+    #expect(payload.thinkingLevel == "high")
+    #expect(payload.turnRunning == false)
+    #expect(payload.state == "running", "la session reste la même")
+    #expect(payload.sessionId == "sess-1234")
+
+    let post = try #require(hosted.transport.requests.last { $0.method == "POST" && $0.path.hasSuffix("/model") })
+    #expect(post.path == "/v1/sessions/sess-1234/model")
+    #expect(post.body?["model"] as? String == "p/b")
+    #expect(post.body?["thinkingLevel"] as? String == "high")
+    #expect(hosted.transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/v1/sessions") }.count == 1)
+    #expect(!hosted.transport.requests.contains { $0.method == "DELETE" })
+
+    // Un corps sans modèle n'atteint jamais le service.
+    let bad = try await stack.call("POST", "/v1/session/model", token: token, json: ["thinkingLevel": "high"])
+    #expect(bad.status == 400)
+    #expect(hosted.transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/model") }.count == 1)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-2 : une trame `model` du service est diffusée à l'iPhone par une trame `hosted`, sans relance")
+func aServiceModelFrameReachesTheHostedStream() async throws {
+    let hosted = try await makeHostedModelSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+    #expect(await awaitMainTrue { hosted.transport.streamOpenCount >= 1 })
+
+    let collector = HostedSSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+    #expect(await collector.waitFor("store") != nil, "le flux doit s'ouvrir")
+
+    // Le Mac change le modèle (ou OMP le fait, depuis le terminal) : le service le dit.
+    hosted.transport.emit(serviceFrame("model", ["model": "p/c", "thinkingLevel": "max"]))
+    let frame = try #require(
+        await collector.waitFor("hosted", where: { decodeHostedModelEvent($0)?.model == "p/c" }),
+        "la trame hosted doit porter le nouveau modèle"
+    )
+    let event = try #require(decodeHostedModelEvent(frame))
+    #expect(event.model == "p/c")
+    #expect(event.thinkingLevel == "max")
+    #expect(event.turnRunning == false)
+
+    // Le tour en cours est diffusé de même.
+    hosted.transport.emit(serviceFrame("state", ["state": "running"]))
+    let running = try #require(
+        await collector.waitFor("hosted", where: { decodeHostedModelEvent($0)?.turnRunning == true })
+    )
+    #expect(decodeHostedModelEvent(running)?.model == "p/c")
+    // Une seule session : ni relance ni fermeture.
+    #expect(hosted.transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/v1/sessions") }.count == 1)
+}
+
+/// La lecture minimale, côté test, d'une trame `hosted` du Mac.
+private struct ConsoleHostedModelEvent: Decodable {
+    var model: String?
+    var thinkingLevel: String?
+    var turnRunning: Bool
+}
+
+private func decodeHostedModelEvent(_ json: String) -> ConsoleHostedModelEvent? {
+    try? JSONDecoder().decode(ConsoleHostedModelEvent.self, from: Data(json.utf8))
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-12 : le refus du service est relayé en 409 avec sa raison mot pour mot")
+func hostedModelRefusalIsRelayedVerbatim() async throws {
+    let hosted = try await makeHostedModelSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+    let reason = "Modèle inutilisable : OMP n'a pas d'authentification pour p/x."
+    hosted.transport.stubJSON("POST", "/v1/sessions/sess-1234/model", ["error": "conflict", "reason": reason], status: 409)
+
+    let reply = try await stack.call("POST", "/v1/session/model", token: token, json: ["model": "p/x", "thinkingLevel": "high"])
+    #expect(reply.status == 409)
+    #expect(reply.errorCode == "conflict")
+    #expect(reply.errorMessage == reason)
+    // L'affichage reste sur la valeur réelle.
+    let after = try await stack.call("GET", "/v1/session", token: token).json(RemoteHostedSessionPayload.self)
+    #expect(after.model == "p/a" && after.thinkingLevel == "low")
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-7 : pendant un tour la route répond 409 R_BUSY, sans projet R_NO_PROJECT, sans rien envoyer au service")
+func hostedModelRouteRefusesDuringATurnAndWithoutAProject() async throws {
+    let hosted = try await makeHostedModelSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+    #expect(await awaitMainTrue { hosted.transport.streamOpenCount >= 1 })
+    hosted.transport.emit(serviceFrame("state", ["state": "running"]))
+    #expect(await awaitMainTrue { hosted.session.host.turnRunning })
+
+    let busy = try await stack.call("POST", "/v1/session/model", token: token, json: ["model": "p/b"])
+    #expect(busy.status == 409)
+    #expect(busy.errorMessage == "Changement impossible pendant que OMP répond : attendez la fin du tour.")
+    #expect(try await stack.call("GET", "/v1/session", token: token).json(RemoteHostedSessionPayload.self).turnRunning == true)
+
+    // Le tour fini, le même geste passe ; sans projet il est refusé.
+    hosted.transport.emit(serviceFrame("state", ["state": "idle"]))
+    #expect(await awaitMainTrue { !hosted.session.host.turnRunning })
+    hosted.session.projectRoot = nil
+    let none = try await stack.call("POST", "/v1/session/model", token: token, json: ["model": "p/b"])
+    #expect(none.status == 409)
+    #expect(none.errorMessage == SessionConsoleText.Model.noProject)
+    #expect(!hosted.transport.requests.contains { $0.method == "POST" && $0.path.hasSuffix("/model") })
 }

@@ -46,22 +46,50 @@ final class SessionConsoleModel: ObservableObject {
     /// qu'aucun fichier n'est connu.
     @Published private(set) var conversation: SessionViewerModel?
 
+    // --- modèle et niveau de réflexion (model-selector-in-embedded-omp-session S-6) ---
+
+    /// Le défaut OMP du projet choisi : lu par `GET /v1/projects/{root}/model` à
+    /// chaque changement de projet et à chaque sortie de `.running` de l'hôte ;
+    /// affiché tant qu'aucune session ne tourne.
+    @Published private(set) var projectDefault = ServiceModelChoice(model: nil, thinkingLevel: nil)
+    /// Le catalogue des modèles utilisables (`omp models --json`), ses noms
+    /// lisibles et les efforts de chaque modèle.
+    @Published private(set) var modelCatalog: ModelCatalogState = .loading
+    @Published private(set) var modelNames: [String: String] = [:]
+    @Published private(set) var modelThinking: [String: [String]] = [:]
+    /// Le popover du sélecteur est ouvert ; le filtre, le brouillon et l'erreur
+    /// vivent ici (aucun `@State` dans la vue).
+    @Published var modelPickerShown = false
+    @Published var modelFilter = ""
+    @Published private(set) var draftModel: String?
+    @Published var draftLevel: String?
+    @Published private(set) var modelError: String?
+    @Published private(set) var isApplyingModel = false
+
     private let defaults: UserDefaults
     private let fileManager: FileManager
     private let makeConversation: @MainActor (ViewerTarget) -> SessionViewerModel
+    private let loadModelListing: @Sendable () async -> Result<ModelCatalogListing, ModelCatalogError>
     private var cancellables: Set<AnyCancellable> = []
+    private var modelSelectorStarted = false
+    private var hostWasRunning = false
+    private var projectDefaultRoot: URL?
 
     init(
         host: ServiceSessionModel? = nil,
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
-        makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) }
+        makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) },
+        modelListingLoader: @escaping @Sendable () async -> Result<ModelCatalogListing, ModelCatalogError> = {
+            await ModelCatalogLoader.loadListing()
+        }
     ) {
         let host = host ?? ServiceSessionModel(purpose: "session")
         self.host = host
         self.defaults = defaults
         self.fileManager = fileManager
         self.makeConversation = makeConversation
+        self.loadModelListing = modelListingLoader
         self.projectRoot = Self.restoredProjectRoot(defaults: defaults, fileManager: fileManager)
         self.statusMessage = Self.statusText(for: host.state)
 
@@ -81,6 +109,33 @@ final class SessionConsoleModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] file in
                 Task { @MainActor in self?.follow(sessionFile: file) }
+            }
+            .store(in: &cancellables)
+
+        // Le défaut du projet est relu quand le projet change et quand la session
+        // sort de `.running` (S-6) ; rien ne part tant que le sélecteur n'est pas
+        // démarré (`startModelSelector`).
+        $projectRoot
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.modelSelectorStarted else { return }
+                    await self.refreshProjectDefault()
+                }
+            }
+            .store(in: &cancellables)
+        host.$state
+            .removeDuplicates()
+            .sink { [weak self] state in
+                guard let self else { return }
+                let running = state == .running
+                let left = self.hostWasRunning && !running
+                self.hostWasRunning = running
+                guard left else { return }
+                Task { @MainActor in
+                    guard self.modelSelectorStarted else { return }
+                    await self.refreshProjectDefault()
+                }
             }
             .store(in: &cancellables)
 
@@ -338,6 +393,218 @@ final class SessionConsoleModel: ObservableObject {
 
     func applicationWillTerminate() async {
         await host.terminateForQuit()
+    }
+
+    // MARK: - Modèle et niveau de réflexion (model-selector-in-embedded-omp-session S-6)
+
+    /// Démarre le sélecteur : charge le catalogue UNE fois et lit le défaut du projet.
+    /// Idempotent ; appelé à la création du modèle de l'app (les tests l'appellent
+    /// avec leurs doublures).
+    func startModelSelector() {
+        guard !modelSelectorStarted else { return }
+        modelSelectorStarted = true
+        Task { @MainActor in await loadModelCatalog() }
+        // Au lancement le service peut ne pas encore répondre : quelques essais
+        // espacés, jusqu'à ce que le défaut du projet soit lu.
+        Task { @MainActor in
+            for _ in 0..<5 {
+                await refreshProjectDefault()
+                if projectRoot == nil || projectDefaultRoot == projectRoot { return }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    /// Charge `omp models --json` : sélecteurs authentifiés, noms et efforts.
+    func loadModelCatalog() async {
+        modelCatalog = .loading
+        switch await loadModelListing() {
+        case .success(let listing):
+            modelNames = listing.names
+            modelThinking = listing.thinking
+            modelCatalog = .loaded(listing.selectors)
+        case .failure(let error):
+            modelCatalog = .failed(error.reason)
+        }
+    }
+
+    func retryModelCatalog() {
+        Task { @MainActor in await loadModelCatalog() }
+    }
+
+    /// Relit le défaut du projet choisi. Un échec garde la valeur déjà lue POUR LE
+    /// MÊME projet ; pour un autre projet, le défaut retombe sur « aucun ».
+    func refreshProjectDefault() async {
+        guard let root = projectRoot else {
+            projectDefault = ServiceModelChoice(model: nil, thinkingLevel: nil)
+            projectDefaultRoot = nil
+            return
+        }
+        do {
+            let choice = try await host.projectModel(root: root)
+            guard projectRoot == root else { return }
+            projectDefault = choice
+            projectDefaultRoot = root
+        } catch {
+            guard projectRoot == root, projectDefaultRoot != root else { return }
+            projectDefault = ServiceModelChoice(model: nil, thinkingLevel: nil)
+        }
+    }
+
+    /// La valeur affichée : le modèle et le niveau de la session vivante, sinon le
+    /// défaut du projet.
+    var displayedModel: ServiceModelChoice {
+        host.state == .running
+            ? ServiceModelChoice(model: host.model, thinkingLevel: host.thinkingLevel)
+            : projectDefault
+    }
+
+    /// Le libellé de la valeur affichée : nom lisible (repli : le sélecteur) et
+    /// niveau ; « défaut OMP » sans modèle.
+    var modelLabel: String {
+        let shown = displayedModel
+        let name = shown.model.map { ModelCatalog.displayName($0, names: modelNames) }
+            ?? SessionConsoleText.Model.defaultModel
+        return SessionConsoleText.Model.label(name: name, level: shown.thinkingLevel)
+    }
+
+    /// Pourquoi le sélecteur est indisponible ; `nil` quand il est utilisable. La
+    /// route distante et le bouton du Mac partagent CETTE règle.
+    var modelRefusal: GestureRefusal? {
+        guard projectRoot != nil else { return .noProject }
+        switch host.state {
+        case .launching, .stopping: return .sessionNotRunning
+        case .running where host.turnRunning: return .turnRunning
+        default: break
+        }
+        if isApplyingModel { return .modelRefused(SessionConsoleText.Model.applyingHelp) }
+        return nil
+    }
+
+    var canChangeModel: Bool { modelRefusal == nil }
+
+    /// L'aide du bouton : la raison quand il est désactivé, sinon le libellé complet.
+    var modelHelp: String {
+        switch modelRefusal {
+        case .noProject: return SessionConsoleText.Model.noProject
+        case .turnRunning: return SessionConsoleText.Model.busyHelp
+        case .modelRefused: return SessionConsoleText.Model.applyingHelp
+        default: return modelLabel
+        }
+    }
+
+    /// Les sélecteurs du catalogue qui passent le filtre (insensible à la casse,
+    /// sur le nom lisible ET le sélecteur) ; aucun hors catalogue chargé.
+    var visibleModels: [String] {
+        guard case .loaded(let selectors) = modelCatalog else { return [] }
+        let needle = modelFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return selectors }
+        return selectors.filter { selector in
+            selector.range(of: needle, options: .caseInsensitive) != nil
+                || ModelCatalog.displayName(selector, names: modelNames).range(of: needle, options: .caseInsensitive) != nil
+        }
+    }
+
+    /// Le libellé de chaque modèle de la liste (nom lisible, complété si deux
+    /// modèles se lisent pareil).
+    var modelChoiceLabels: [String: String] {
+        guard case .loaded(let selectors) = modelCatalog else { return [:] }
+        return ModelCatalog.choiceLabels(selectors, names: modelNames)
+    }
+
+    /// Les niveaux proposés pour le modèle du brouillon : aucun sans modèle ou sans
+    /// efforts (le réglage de réflexion est alors masqué).
+    var draftLevels: [String] {
+        guard let draftModel else { return [] }
+        return ModelCatalog.thinkingChoices(for: draftModel, thinking: modelThinking)
+    }
+
+    var canApplyModel: Bool {
+        guard draftModel != nil, case .loaded = modelCatalog else { return false }
+        return canChangeModel
+    }
+
+    /// Ouvre le sélecteur : le brouillon part de la valeur affichée.
+    func openModelPicker() {
+        guard canChangeModel else { return }
+        let shown = displayedModel
+        modelFilter = ""
+        modelError = nil
+        draftModel = shown.model
+        draftLevel = nil
+        if let selector = shown.model {
+            draftLevel = ModelCatalog.retainedLevel(
+                shown.thinkingLevel,
+                offered: ModelCatalog.thinkingChoices(for: selector, thinking: modelThinking)
+            )
+        }
+        modelPickerShown = true
+    }
+
+    /// Ferme le sélecteur sans rien appliquer.
+    func cancelModelPicker() {
+        modelPickerShown = false
+        modelError = nil
+    }
+
+    /// Choisit un modèle dans le brouillon : le niveau est conservé s'il est
+    /// proposé, sinon le plus haut proposé qui ne le dépasse pas, sinon le premier.
+    func selectDraftModel(_ selector: String?) {
+        draftModel = selector
+        guard let selector else {
+            draftLevel = nil
+            return
+        }
+        draftLevel = ModelCatalog.retainedLevel(
+            draftLevel,
+            offered: ModelCatalog.thinkingChoices(for: selector, thinking: modelThinking)
+        )
+    }
+
+    /// « Appliquer » : le geste du bouton, sans attendre sa fin.
+    func commitModelDraft() {
+        Task { @MainActor in await applyModelDraft() }
+    }
+
+    /// Applique le brouillon. Succès ⇒ sélecteur fermé ; refus ⇒ sélecteur ouvert,
+    /// raison du service mot pour mot, valeur affichée RELUE (jamais le brouillon).
+    func applyModelDraft() async {
+        guard canApplyModel, let selector = draftModel else { return }
+        let level = draftLevels.isEmpty ? nil : draftLevel
+        modelError = nil
+        do {
+            try await applyModel(selector, thinkingLevel: level)
+            modelPickerShown = false
+        } catch {
+            modelError = ServiceSessionModel.userMessage(of: error)
+            await refreshDisplayedModel()
+        }
+    }
+
+    /// L'application d'un choix, partagée par le bouton et la route distante :
+    /// session vivante ⇒ `POST /v1/sessions/{id}/model` (sans relancer) ; sinon
+    /// `POST /v1/projects/{racine}/model` (B-5). Les refus du service remontent.
+    func applyModel(_ model: String, thinkingLevel: String?) async throws {
+        guard !isApplyingModel else { return }
+        isApplyingModel = true
+        defer { isApplyingModel = false }
+        if host.state == .running {
+            try await host.setModel(model, thinkingLevel: thinkingLevel)
+            return
+        }
+        guard let root = projectRoot else { throw ServiceSessionError.notRunning }
+        let choice = try await host.setProjectModel(root: root, model: model, thinkingLevel: thinkingLevel)
+        projectDefault = choice
+        projectDefaultRoot = root
+    }
+
+    /// Relit la valeur RÉELLE après un refus : la session vivante, sinon le défaut.
+    func refreshDisplayedModel() async {
+        if host.state == .running {
+            await host.refreshModel()
+        } else {
+            await refreshProjectDefault()
+        }
     }
 
     // MARK: - Conversation (S-15)

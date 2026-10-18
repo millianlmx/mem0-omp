@@ -418,10 +418,12 @@ absolu percent-encodé, refus `{error, reason}`) :
 | `POST /v1/repos/{repo}/commands` | commande de pipeline, rend son accusé |
 | `GET /v1/repos/{repo}/lot` | état du lot du dépôt (`runs[]` avec pic et compactions) |
 | `GET` / `POST /v1/sessions` | liste ou crée une session de l'app |
-| `GET` / `DELETE /v1/sessions/{id}` | lit (avec `contextPeak` et `compactions`) ou ferme une session |
-| `GET /v1/sessions/{id}/events` | flux SSE de la session |
+| `GET` / `DELETE /v1/sessions/{id}` | lit (avec `contextPeak` et `compactions`, plus `model` et `thinkingLevel`) ou ferme une session |
+| `GET /v1/sessions/{id}/events` | flux SSE de la session (trames `state`, `dialog`, `notice`, `prompt_end` et `model` : `{model, thinkingLevel}`, rejouée dans le snapshot d'une session de la section) |
 | `POST /v1/sessions/{id}/prompt`, `…/abort`, `…/dialogs/{dialogId}` | prompt, abort, réponse de dialogue |
+| `POST /v1/sessions/{id}/model` | change le modèle et le niveau de réflexion de la session de la section `{model, thinkingLevel?}` (refus : 409 pendant un tour, 409 modèle non authentifié, 400 niveau non supporté) puis enregistre le défaut du projet |
 | `POST` / `DELETE /v1/projects/{repo}/conduite` | démarre ou arrête la conduite d'un projet |
+| `GET` / `POST /v1/projects/{repo}/model` | lit ou écrit le défaut OMP du projet `{model, thinkingLevel?}` : clé `modelRoles.default` de `<repo>/.omp/config.yml` (`sélecteur[:niveau]`) ; les sessions de la section l'appliquent à l'ouverture, les maillons, l'arbitre et la conduite ne le lisent jamais |
 | `POST /v1/audits` | démarre un audit de l'app `{repo, orientation}` |
 | `POST /v1/audits/{id}/launch` | lance les propositions cochées `{selected, brief}` |
 | `POST /v1/audits/{id}/escalations` | répond à une escalade `{slug, key, answer?, decision?}` |

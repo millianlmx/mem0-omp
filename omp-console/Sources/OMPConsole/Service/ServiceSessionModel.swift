@@ -62,7 +62,11 @@ final class ServiceSessionModel: ObservableObject {
     /// scripté ; l'app localise le service à chaque tentative.
     typealias ClientFactory = @Sendable () throws -> ServiceClient
 
-    @Published private(set) var state: State = .idle
+    @Published private(set) var state: State = .idle {
+        // Un tour n'a de sens que dans une session en marche (S-6) : idle, arrêtée,
+        // morte ou en échec ⇒ aucun tour en cours.
+        didSet { if state != .running { turnRunning = false } }
+    }
     @Published private(set) var journal: [JournalEntry] = []
     @Published private(set) var dialogQueue: [RpcDialogRequest] = []
     @Published private(set) var sessionFile: String?
@@ -70,6 +74,14 @@ final class ServiceSessionModel: ObservableObject {
     /// La dernière notice publiée par le service (`{level,message}`), affichée par
     /// la conduite de projet.
     @Published private(set) var lastNotice: String?
+    /// Le sélecteur du modèle actif de la session et son niveau de réflexion
+    /// configuré (model-selector-in-embedded-omp-session S-6) : la description à
+    /// l'adoption, puis chaque trame `model` — un REMPLACEMENT, jamais un delta.
+    @Published private(set) var model: String?
+    @Published private(set) var thinkingLevel: String?
+    /// OMP traite un tour : la description (`state`) à l'adoption, puis les trames
+    /// `state`. Faux dès que la session n'est plus vivante.
+    @Published private(set) var turnRunning = false
 
     static let journalCeiling = 500
 
@@ -218,6 +230,9 @@ final class ServiceSessionModel: ObservableObject {
         sessionFile = info.sessionFile
         journal(.session, journalMessage)
         state = .running
+        model = info.model
+        thinkingLevel = info.thinkingLevel
+        turnRunning = info.state == .running
         subscribe(client: client, sessionID: info.id)
     }
 
@@ -275,6 +290,50 @@ final class ServiceSessionModel: ObservableObject {
         guard let client, let sessionId else { return }
         guard let info = try? await client.session(id: sessionId) else { return }
         if info.sessionFile != sessionFile { sessionFile = info.sessionFile }
+    }
+
+    // MARK: - Modèle et niveau de réflexion
+
+    /// Change le modèle et le niveau de la session VIVANTE sans la relancer
+    /// (S-2) : la valeur publiée devient celle de la réponse du service. Un refus
+    /// (409, 400, 500) remonte avec sa raison, sans rien publier.
+    func setModel(_ model: String, thinkingLevel: String?) async throws {
+        guard let client, let sessionId, isLive else { throw ServiceSessionError.notRunning }
+        do {
+            let info = try await client.setSessionModel(id: sessionId, model: model, thinkingLevel: thinkingLevel)
+            self.model = info.model
+            self.thinkingLevel = info.thinkingLevel
+            turnRunning = info.state == .running
+        } catch {
+            handleCommandFailure(error)
+            throw error
+        }
+    }
+
+    /// Relit le modèle et le niveau RÉELS de la session (après un refus) ; sans
+    /// effet quand la relecture échoue.
+    func refreshModel() async {
+        guard let client, let sessionId, isLive else { return }
+        guard let info = try? await client.session(id: sessionId) else { return }
+        model = info.model
+        thinkingLevel = info.thinkingLevel
+        turnRunning = info.state == .running
+    }
+
+    /// Le défaut OMP d'un projet (S-3), lu sans session : le client du service est
+    /// localisé à la demande quand aucune session n'en tient un.
+    func projectModel(root: URL) async throws -> ServiceModelChoice {
+        try await serviceClient().projectModel(root: root.path)
+    }
+
+    /// Pose le défaut OMP d'un projet (S-3) ; rend la valeur relue après écriture.
+    func setProjectModel(root: URL, model: String, thinkingLevel: String?) async throws -> ServiceModelChoice {
+        try await serviceClient().setProjectModel(root: root.path, model: model, thinkingLevel: thinkingLevel)
+    }
+
+    private func serviceClient() throws -> ServiceClient {
+        if let client { return client }
+        return try makeClient()
     }
 
     // MARK: - Arrêt
@@ -361,10 +420,14 @@ final class ServiceSessionModel: ObservableObject {
 
     private func apply(_ frame: ServiceFrame) {
         switch frame {
-        case .state:
-            // L'état suivi par la fenêtre est la VIE de la session : un tour qui
-            // se termine ne ferme pas la session (S-6).
-            break
+        case .state(let runState):
+            // `state` (de ce modèle) est la VIE de la session : un tour qui se
+            // termine ne ferme pas la session (S-6). Le tour en cours, lui, suit la
+            // trame (model-selector-in-embedded-omp-session S-6).
+            turnRunning = runState == .running && state == .running
+        case .model(let model, let thinkingLevel):
+            self.model = model
+            self.thinkingLevel = thinkingLevel
         case .dialog(let dialog):
             if !dialogQueue.contains(where: { $0.id == dialog.id }) {
                 dialogQueue.append(dialog)

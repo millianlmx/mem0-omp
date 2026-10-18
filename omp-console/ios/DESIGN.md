@@ -780,6 +780,38 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   disparaît. `[test: hostedThreadStartsWhenSynced]`
 - L'arrêt appelle la route une fois et l'état servi passe à `stopped`.
   `[test: stopCallsRouteOnce]`
+- Le modèle et le niveau de réflexion actifs sont montrés en permanence dans une
+  carte posée en tête du panneau, sans rien ouvrir : le nom lisible du modèle
+  (repli sur le sélecteur) suivi de « · réflexion <niveau> » — « défaut OMP »
+  sans modèle, le nom seul sans niveau — avec le bouton « Changer »
+  (`.bordered`). Même texte que sur le Mac (`SessionConsoleText.Model`) ; aux
+  tailles d'accessibilité le bouton passe sous le libellé. Un Mac antérieur, qui
+  ne sert ni `model` ni `turnRunning`, n'affiche pas la carte.
+  `[test: modelLabelShowsActiveValue]`
+- La carte suit chaque trame `hosted` : un changement fait depuis le Mac remplace
+  la valeur affichée, sans relancer l'app ni la session.
+  `[test: modelLabelFollowsHostedFrames]`
+- « Changer » ouvre une feuille `NavigationStack` + `Form` en grand format : les
+  modèles du Mac (`GET /v1/models`) en rangées-boutons filtrables avec coche et
+  trait « sélectionné », puis le réglage de niveau. « Appliquer » appelle
+  `POST /v1/session/model` une seule fois ; la feuille se ferme sur succès, et
+  la carte prend la valeur rendue par le Mac. `[test: applyModelCallsRouteOnce]`
+- La liste ne montre que le catalogue authentifié du Mac, filtré sans égard à la
+  casse sur le nom lisible et le sélecteur ; chargement, échec avec « Réessayer »
+  et « aucun résultat » ont chacun leur état. `[test: modelListShowsCatalogOnly]`
+  `[test: modelCatalogFailureIsExposed]`
+- Le niveau de réflexion n'offre que les niveaux du modèle choisi (`off` puis
+  ses efforts) et disparaît sans effort ; changer de modèle garde le niveau s'il
+  est proposé, sinon le plus haut proposé en dessous. `[test: offeredLevelsFollowThinking]`
+- Le sélecteur est indisponible (bouton grisé, aide « Indisponible pendant que
+  OMP répond. ») pendant un tour, au lancement, à l'arrêt, sans projet, hors
+  connexion ou pendant une requête ; il redevient utilisable dès la trame de fin
+  de tour. `[test: modelPickerUnavailableDuringTurn]` `[test: applyModelRefusedDuringTurn]`
+- Sans session, le choix vaut pour le projet du Mac et passe par la même route.
+  `[test: modelAppliesWithoutSession]`
+- Un refus du Mac laisse la feuille ouverte, son message en bandeau danger mot
+  pour mot ; la carte garde le modèle et le niveau réellement actifs.
+  `[test: applyModelRefusalIsExposed]`
 - L'écran de section est capturé tel quel, en clair et en Dynamic Type maximum.
   `[capture: iphone-session-light]` `[capture: iphone-session-dark-ax]`
 - Aucune taille de police en points, aucun `lineLimit` numérique, aucun

@@ -22,8 +22,8 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
       ack: { version: 1, id: "c1", repo: "/repo", kind: "start", state: "taken", reason: null, at: 1 },
     }),
     listSessions: () => [],
-    createSession: async () => ({ id: "s1", cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0 }),
-    getSession: id => (id === "s1" ? { id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, dialogs: [] } : null),
+    createSession: async () => ({ id: "s1", cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null }),
+    getSession: id => (id === "s1" ? { id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null, dialogs: [] } : null),
     promptSession: async id => {
       if (id !== "s1") {
         const { notFound } = await import("../../omp-mem0-req/serviceApi.ts");
@@ -41,6 +41,9 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
     launchAudit: async () => ({ launches: [] }),
     answerAudit: async () => ({ accepted: true }),
     stopAudit: async () => ({ cancelled: [], kept: [], refused: [] }),
+    setSessionModel: async id => ({ id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null }),
+    projectModel: async () => ({ model: null, thinkingLevel: null }),
+    setProjectModel: async () => ({ model: null, thinkingLevel: null }),
     ...over,
   };
 }

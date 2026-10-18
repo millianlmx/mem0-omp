@@ -901,6 +901,20 @@ public final class ConsoleClientModel: ObservableObject {
         return payload
     }
 
+    /// Change le modèle et le niveau de la session hébergée (model-selector-in-
+    /// embedded-omp-session S-7) : le Mac applique par le chemin de son propre
+    /// bouton et rend l'état APRÈS le changement. Un refus (tour en cours, modèle
+    /// inutilisable, aucun projet) lève avec la raison du Mac, `hosted` reste sur la
+    /// valeur réelle.
+    public func setHostedModel(model: String, thinkingLevel: String?) async throws {
+        let body = try encode(RemoteSessionModelRequest(model: model, thinkingLevel: thinkingLevel))
+        let payload = try await performCommand(
+            ClientHTTPRequest(method: "POST", path: "/v1/session/model", body: body),
+            as: RemoteHostedSessionPayload.self
+        )
+        applyHosted(payload)
+    }
+
     /// Tranche un dialogue de la session hébergée (S-5) : mêmes `kind` que la
     /// conduite, appliqués à la file de `SessionConsoleModel`.
     public func answerHostedDialog(
@@ -1339,7 +1353,10 @@ public final class ConsoleClientModel: ObservableObject {
             sessionFile: payload.sessionFile,
             projectName: payload.projectName,
             dialogs: payload.dialogs,
-            added: []
+            added: [],
+            model: payload.model,
+            thinkingLevel: payload.thinkingLevel,
+            turnRunning: payload.turnRunning
         )
     }
 

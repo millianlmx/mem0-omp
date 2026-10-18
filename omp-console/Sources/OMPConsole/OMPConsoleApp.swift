@@ -84,6 +84,9 @@ struct OMPConsoleApp: App {
         let kanban = KanbanModel(recipeBoard: HomeRecipe.current()?.board)
         _kanbanModel = StateObject(wrappedValue: kanban)
         let session = SessionConsoleModel()
+        // Catalogue des modèles et défaut du projet : lus dès le lancement, pour que
+        // la valeur publiée à l'iPhone (`hosted`) soit juste sans ouvrir la fenêtre.
+        session.startModelSelector()
         _sessionModel = StateObject(wrappedValue: session)
         // UN magasin pour la liste des projets connus : celui que le service
         // d'API sert par `GET /v1/repos`, donc le sélecteur des états vides

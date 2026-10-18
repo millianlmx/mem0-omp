@@ -35,8 +35,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 43)
-        #expect(ClientRoute.all.count == 43)
+        #expect(served.count == 44)
+        #expect(ClientRoute.all.count == 44)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -228,6 +228,54 @@ struct ClientContractTests {
             client: ConsoleClient.RemoteModelsPayload.self,
             host: OMPConsole.RemoteModelsPayload.self
         ))
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-6 : le catalogue porte thinking des deux côtés, et un Mac antérieur reste lisible (aucun niveau)")
+    func modelsPayloadCarriesThinking() throws {
+        let json = #"{"selectors":["a/b","a/c"],"failure":null,"names":{"a/b":"B"},"thinking":{"a/b":["low","high"]}}"#
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteModelsPayload.self,
+            host: OMPConsole.RemoteModelsPayload.self
+        ))
+        let client = try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: Data(json.utf8))
+        #expect(client.thinking == ["a/b": ["low", "high"]])
+        // Un Mac antérieur n'envoie pas `thinking` : nil des deux côtés, donc zéro niveau proposé.
+        let older = Data(#"{"selectors":["a/b"],"failure":null}"#.utf8)
+        #expect(try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: older).thinking == nil)
+        #expect(try JSONDecoder().decode(OMPConsole.RemoteModelsPayload.self, from: older).thinking == nil)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-2 : la charge hosted, la trame hosted et le corps du geste portent modèle, niveau et tour en cours des deux côtés")
+    func hostedPayloadCarriesModel() throws {
+        let json = #"{"state":"running","stateLabel":"En marche","sessionId":"s","sessionFile":null,"protocolVersion":null,"projectName":"depot","dialogs":[],"transcript":[],"truncated":false,"model":"a/b","thinkingLevel":"high","turnRunning":true}"#
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteHostedSessionPayload.self,
+            host: OMPConsole.RemoteHostedSessionPayload.self
+        ))
+        let client = try JSONDecoder().decode(ConsoleClient.RemoteHostedSessionPayload.self, from: Data(json.utf8))
+        #expect(client.model == "a/b")
+        #expect(client.thinkingLevel == "high")
+        #expect(client.turnRunning == true)
+        // Un Mac antérieur : les trois champs manquent, la charge reste lisible.
+        let older = Data(#"{"state":"idle","stateLabel":"Prête","dialogs":[],"transcript":[],"truncated":false}"#.utf8)
+        let legacy = try JSONDecoder().decode(ConsoleClient.RemoteHostedSessionPayload.self, from: older)
+        #expect(legacy.model == nil && legacy.thinkingLevel == nil && legacy.turnRunning == nil)
+        // La trame `hosted` du Mac (Encodable) est lue par le miroir client.
+        let event = OMPConsole.RemoteHostedEvent(
+            state: "running", stateLabel: nil, sessionFile: nil, projectName: nil, dialogs: [], added: [],
+            model: "a/b", thinkingLevel: nil, turnRunning: false
+        )
+        let wire = try JSONEncoder().encode(event)
+        let decoded = try JSONDecoder().decode(ConsoleClient.RemoteHostedEvent.self, from: wire)
+        #expect(decoded.model == "a/b")
+        #expect(decoded.thinkingLevel == nil)
+        #expect(decoded.turnRunning == false)
+        // Le corps du geste : le client l'encode, la coque le décode.
+        let body = try JSONEncoder().encode(ConsoleClient.RemoteSessionModelRequest(model: "a/b", thinkingLevel: "low"))
+        let host = try JSONDecoder().decode(OMPConsole.RemoteSessionModelRequest.self, from: body)
+        #expect(host == OMPConsole.RemoteSessionModelRequest(model: "a/b", thinkingLevel: "low"))
     }
 
     @Test("feuilles-ios-presentation-et-depots/AC-7 : homeDirectory des composants a la même forme des deux côtés, et un Mac antérieur donne nil")

@@ -11,6 +11,9 @@ struct ScriptedRequest {
     let path: String
     let token: String?
     let body: [String: Any]?
+    /// Le chemin tel qu'il part sur le fil, percent-encodé : `path` est décodé, donc
+    /// il ne distingue pas un chemin de dépôt en UN segment (`%2F`) de plusieurs.
+    var rawPath: String = ""
 }
 
 /// Le transport scripté, sûr à traverser depuis `nonisolated`.
@@ -103,7 +106,8 @@ final class ScriptedServiceTransport: ServiceTransport, @unchecked Sendable {
                 method: method,
                 path: path,
                 token: request.value(forHTTPHeaderField: "X-OMP-Service-Token"),
-                body: body
+                body: body,
+                rawPath: request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath } ?? path
             ))
             return routes.first { $0.method == method && path.hasSuffix($0.suffix) }
         }

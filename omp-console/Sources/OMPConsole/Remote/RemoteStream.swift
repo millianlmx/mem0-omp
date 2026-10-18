@@ -49,6 +49,11 @@ struct RemoteHostedEvent: Encodable, Equatable {
     var projectName: String?
     var dialogs: [RpcDialogRequest]
     var added: [TranscriptLine]
+    /// La valeur affichée par la section Session OMP du Mac (S-7) et le tour en
+    /// cours : toujours poussés, optionnels au décodage client.
+    var model: String?
+    var thinkingLevel: String?
+    var turnRunning: Bool
 }
 
 struct RemoteDevicesEvent: Encodable, Equatable {
@@ -281,6 +286,34 @@ final class RemoteStreamHub {
                 self.broadcastHosted()
             }
         })
+        // Modèle, niveau et tour en cours de la session, et défaut du projet affiché
+        // au repos (model-selector-in-embedded-omp-session S-7) : l'iPhone reçoit la
+        // trame `hosted` sans relance.
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in host.$model.values {
+                guard let self else { return }
+                self.broadcastHosted()
+            }
+        })
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in host.$thinkingLevel.values {
+                guard let self else { return }
+                self.broadcastHosted()
+            }
+        })
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in host.$turnRunning.values {
+                guard let self else { return }
+                self.broadcastHosted()
+            }
+        })
+        let hostedSession = session
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in hostedSession.$projectDefault.values {
+                guard let self else { return }
+                self.broadcastHosted()
+            }
+        })
         // Le fichier de la session hébergée entre (ou sort) de la veille à sa
         // publication (`get_state`) ou à un lancement neuf (S-4).
         tasks.append(Task { @MainActor [weak self] in
@@ -385,7 +418,10 @@ final class RemoteStreamHub {
             sessionFile: host.sessionFile,
             projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
-            added: []
+            added: [],
+            model: session.displayedModel.model,
+            thinkingLevel: session.displayedModel.thinkingLevel,
+            turnRunning: host.state == .running && host.turnRunning
         )))
     }
 

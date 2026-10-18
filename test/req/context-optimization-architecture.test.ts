@@ -876,7 +876,14 @@ test("context-optimization-architecture/AC-8 : repli et blocage quota laissent c
     assert.equal(/writeFile\w*\([^)]*config\.yml/.test(text), false, `${name} : config.yml n'est jamais écrit`);
   }
   const setModelSites = sources.filter(({ text }) => /\.setModel\(/.test(text)).map(({ name }) => name).sort();
-  assert.deepEqual(setModelSites, ["extension.ts", "serviceRuns.ts", "serviceRuntime.ts"], "setModel n'est appelé que par le runner, le crochet de service et l'action d'extension");
+  assert.deepEqual(
+    setModelSites,
+    ["extension.ts", "serviceModels.ts", "serviceRuns.ts", "serviceRuntime.ts"],
+    "setModel n'est appelé que par le runner, le crochet de service, l'action d'extension et le module du modèle de la session de la section",
+  );
+  // Le défaut de modèle d'un projet ne s'écrit que par la couche PROJET de `Settings`, depuis un seul module.
+  const projectRoleSites = sources.filter(({ text }) => /setProjectModelRole\(/.test(text)).map(({ name }) => name);
+  assert.deepEqual(projectRoleSites, ["serviceModels.ts"], "setProjectModelRole n'apparaît que dans serviceModels.ts");
 });
 
 // ---------------------------------------------------------------------------

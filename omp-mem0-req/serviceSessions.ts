@@ -9,7 +9,19 @@ import type { AgentSession, ExtensionAPI, SessionManager } from "@oh-my-pi/pi-co
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DialogAnswer, DialogRequest, ServiceFrame, SessionDescription, SessionPurpose, SessionRunState, SessionSubscription, SessionView } from "./serviceApi.ts";
-import { badRequest, conflict, notFound } from "./serviceApi.ts";
+import { badRequest, conflict, notFound, ServiceError } from "./serviceApi.ts";
+import {
+  applySessionModel,
+  createProjectModelStore,
+  formatModelDefault,
+  modelStateOf,
+  parseModelRequest,
+  R_DEFAULT_NOT_APPLIED,
+  R_PURPOSE,
+  R_SAVE,
+  R_WRITE,
+} from "./serviceModels.ts";
+import type { ProjectModelDefault, ProjectModelStore } from "./serviceModels.ts";
 import { createServiceUIContext, initializeHostedRunner, runCompact } from "./serviceRuntime.ts";
 import type { DialogOpen } from "./serviceRuntime.ts";
 import { lotContextThresholds, lotRepoKey } from "./lot.ts";
@@ -285,6 +297,8 @@ export type SessionHostDeps = {
   env?: Record<string, string | undefined>;
   /** Extensions SUPPLÉMENTAIRES chargées dans chaque session (banc de test) — ajoutées à `selfPath`. */
   extraExtensionPaths?: readonly string[];
+  /** Le magasin du défaut de modèle des projets (S-3) ; `createProjectModelStore(pi)` par défaut. */
+  projectModels?: ProjectModelStore;
 };
 
 export type OpenSessionOptions = {
@@ -319,6 +333,14 @@ export interface SessionHost {
   answer: (id: string, dialogId: string, body: unknown) => Promise<void>;
   close: (id: string) => Promise<void>;
   subscribe: (id: string) => SessionSubscription | null;
+  /** La fiche d'une session déjà ouverte (S-1). */
+  describe: (session: HostedSession) => SessionDescription;
+  /** Change le modèle et le niveau d'une session de la section (S-2). */
+  setSessionModel: (id: string, body: unknown) => Promise<SessionDescription>;
+  /** Le défaut OMP d'un projet (S-3). */
+  projectModel: (repo: string) => Promise<ProjectModelDefault>;
+  /** Écrit le défaut OMP d'un projet (S-3). */
+  setProjectModel: (repo: string, body: unknown) => Promise<ProjectModelDefault>;
   conduiteFor: (repoRoot: string) => HostedSession | null;
   disposeAll: () => Promise<void>;
   now: () => number;
@@ -357,6 +379,9 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
   const log = deps.log ?? (() => {});
   const now = deps.now ?? Date.now;
   const sessions = new Map<string, HostedSession>();
+  const projectModels = deps.projectModels ?? createProjectModelStore(deps.pi);
+  /** La raison du défaut de projet non appliqué à l'ouverture (S-4), par session, jusqu'au premier S-2 réussi. */
+  const unappliedDefaults = new Map<string, string>();
   let dialogSeq = 0;
 
   function frame(session: HostedSession, event: ServiceFrame): void {
@@ -442,7 +467,55 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       sessionFile: session.sessionFile,
       contextPeak: session.meter?.peak() ?? null,
       compactions: session.meter?.compactions() ?? 0,
+      ...modelStateOf(session.session),
     };
+  }
+
+  /** La trame `model` : l'état de la session lu AU MOMENT de l'émission (S-1). */
+  function modelFrame(session: HostedSession): ServiceFrame {
+    return { event: "model", data: modelStateOf(session.session) };
+  }
+
+  /** Un dossier de projet : chemin absolu EXISTANT (400 sinon, S-3). */
+  function requireProjectDir(repo: string): string {
+    if (!path.isAbsolute(repo) || !fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) {
+      throw badRequest(`dossier de projet inexistant ou non absolu : ${repo}`);
+    }
+    return repo;
+  }
+
+  /** Les changements de modèle d'une même session, l'un après l'autre : chacun se juge à son tour (S-2). */
+  const modelQueues = new WeakMap<HostedSession, Promise<void>>();
+
+  function serialised<T>(session: HostedSession, task: () => Promise<T>): Promise<T> {
+    const run = (modelQueues.get(session) ?? Promise.resolve()).then(task);
+    modelQueues.set(session, run.then(() => {}, () => {}));
+    return run;
+  }
+
+  /**
+   * S-4 : applique à une session de la section le défaut de son projet, sans rien
+   * écrire. Un défaut inapplicable n'empêche JAMAIS l'ouverture : la raison est gardée
+   * et rejouée en `notice` à chaque abonnement, jusqu'au premier S-2 réussi.
+   */
+  async function applyProjectDefault(session: HostedSession): Promise<void> {
+    let wanted: ProjectModelDefault;
+    try {
+      wanted = await projectModels.read(session.cwd);
+    } catch (err) {
+      const cause = err instanceof ServiceError ? err.reason : err instanceof Error ? err.message : String(err);
+      unappliedDefaults.set(session.id, `${cause} La session tourne sur le modèle choisi par OMP.`);
+      log(`[service] session ${session.id} : ${cause}`);
+      return;
+    }
+    if (wanted.model === null) return;
+    try {
+      await applySessionModel(session.session, { model: wanted.model, thinkingLevel: wanted.thinkingLevel }, { running: false });
+    } catch (err) {
+      const cause = err instanceof ServiceError ? err.reason : err instanceof Error ? err.message : String(err);
+      unappliedDefaults.set(session.id, R_DEFAULT_NOT_APPLIED(wanted.model, cause));
+      log(`[service] session ${session.id} : défaut du projet ${wanted.model} non appliqué : ${cause}`);
+    }
   }
 
   /** Le libellé des lignes de log d'une session parente. */
@@ -585,6 +658,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
         forgetMaillonIdentity(id);
         forgetArbiterCapture(id);
         forgetAuditSession(id);
+        unappliedDefaults.delete(id);
         sessions.delete(id);
         markDisposed();
       },
@@ -607,6 +681,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       frame(hosted, { event: "state", data: { state: next } });
     });
     session.subscribe(event => {
+      // Le modèle ou le niveau a changé, quel qu'en soit l'auteur (S-1).
+      if (event.type === "model_changed" || event.type === "thinking_level_changed") {
+        frame(hosted, modelFrame(hosted));
+        return;
+      }
       if (event.type === "message_end") {
         const message = (event as { message?: unknown }).message;
         if (isAssistantMessage(message)) {
@@ -632,6 +711,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       hosted.aborting = false;
       frame(hosted, { event: "prompt_end", data: { status } });
     });
+    // S-4 : une session de la section démarre sur le défaut OMP de son projet.
+    if (purpose === "session") await applyProjectDefault(hosted);
     sessions.set(id, hosted);
     log(`[service] session ${id} ouverte (${purpose}, ${cwd})`);
     return hosted;
@@ -711,12 +792,57 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       await session.dispose();
     },
 
+    describe: (session: HostedSession): SessionDescription => descriptionOf(session as DescribedSession),
+
+    /** Change le modèle et le niveau de la session de la section, puis le défaut de son projet (S-2). */
+    async setSessionModel(id: string, body: unknown): Promise<SessionDescription> {
+      const session = require(id);
+      if (session.purpose !== "session") throw conflict(R_PURPOSE);
+      const request = parseModelRequest(body);
+      return serialised(session, async () => {
+        await applySessionModel(session.session, request, { running: session.state === "running" });
+        unappliedDefaults.delete(session.id);
+        frame(session, modelFrame(session));
+        try {
+          await projectModels.write(session.cwd, formatModelDefault(request.model, request.thinkingLevel));
+        } catch (err) {
+          // Le changement de session est CONSERVÉ : seul le défaut n'a pas été écrit.
+          const reason = R_SAVE(err instanceof Error ? err.message : String(err));
+          notice(session, "warning", reason);
+          throw new ServiceError(500, "internal", reason);
+        }
+        return descriptionOf(session as AppSession);
+      });
+    },
+
+    /** Le défaut OMP d'un projet (S-3). */
+    async projectModel(repo: string): Promise<ProjectModelDefault> {
+      return projectModels.read(requireProjectDir(repo));
+    },
+
+    /** Écrit le défaut OMP d'un projet (S-3) et rend la valeur relue. */
+    async setProjectModel(repo: string, body: unknown): Promise<ProjectModelDefault> {
+      const dir = requireProjectDir(repo);
+      const request = parseModelRequest(body);
+      try {
+        return await projectModels.write(dir, formatModelDefault(request.model, request.thinkingLevel));
+      } catch (err) {
+        throw new ServiceError(500, "internal", R_WRITE(err instanceof Error ? err.message : String(err)));
+      }
+    },
+
     subscribe(id: string): SessionSubscription | null {
       const session = sessions.get(id);
       if (!session) return null;
       return {
         snapshot: [
           ...(session.state === "running" ? ([{ event: "state", data: { state: "running" } }] as ServiceFrame[]) : []),
+          // Le modèle actif d'une session de la section, rejoué à chaque abonné (S-1).
+          ...(session.purpose === "session" ? [modelFrame(session)] : []),
+          // Le défaut de projet non appliqué à l'ouverture, jusqu'au premier S-2 réussi (S-4).
+          ...(unappliedDefaults.has(session.id)
+            ? ([{ event: "notice", data: { level: "warning", message: unappliedDefaults.get(session.id) ?? "" } }] as ServiceFrame[])
+            : []),
           ...[...session.dialogs.values()].map(pending => ({ event: "dialog", data: pending.request }) as ServiceFrame),
         ],
         subscribe: listener => {

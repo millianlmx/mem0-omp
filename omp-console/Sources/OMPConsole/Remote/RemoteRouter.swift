@@ -94,6 +94,7 @@ final class RemoteRouter {
         .of("POST", "v1/session/launch", "hosted.launch"),
         .of("POST", "v1/session/relaunch", "hosted.relaunch"),
         .of("POST", "v1/session/stop", "hosted.stop"),
+        .of("POST", "v1/session/model", "hosted.model"),
         .of("POST", "v1/session/dialogs/:id", "hosted.dialog"),
         .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
         .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
@@ -299,6 +300,9 @@ final class RemoteRouter {
             let body = try RemoteBody.decode(RemoteDialogAnswerRequest.self, from: request)
             try await actions.answerHostedDialog(id: parameters["id"] ?? "", answer: try Self.dialogAnswer(body))
             return try json(RemoteAcceptedPayload(accepted: true))
+        case "hosted.model":
+            let body = try RemoteBody.decode(RemoteSessionModelRequest.self, from: request)
+            return try json(try await actions.setHostedModel(model: body.model, thinkingLevel: body.thinkingLevel))
         case "prs":
             return try json(try await actions.pullRequests(repoKey: parameters["repoKey"] ?? ""))
         case "prs.merge":

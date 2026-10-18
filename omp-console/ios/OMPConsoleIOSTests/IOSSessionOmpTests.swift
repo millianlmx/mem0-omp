@@ -30,6 +30,12 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     private(set) var reads = 0
 
     var promptFailure: Error?
+    /// Le catalogue servi par `models()` (AC-5, AC-6).
+    var modelsPayload = RemoteModelsPayload(selectors: [], failure: nil)
+    private(set) var modelsCalls = 0
+    /// Les gestes `setHostedModel` reçus, et le refus à lever quand il est posé (AC-4, AC-12).
+    private(set) var setModelCalls: [(model: String, level: String?)] = []
+    var setModelFailure: Error?
     /// La charge que `read(file:)` rend : le fil monté par `syncThread()` (AC-8).
     var payload: RemoteSessionPayload?
     /// La charge que `hostedSession()` pose sur `hosted` (S-6).
@@ -55,6 +61,21 @@ private final class SessionOmpStub: IOSSessionOmpClient {
         launchCount += 1
         hosted = try makeHostedEvent(state: "running", sessionFile: "/tmp/session.jsonl", projectName: "depot")
         return try makeHostedPayload(state: "running", sessionFile: "/tmp/session.jsonl")
+    }
+
+    func models() async throws -> RemoteModelsPayload {
+        modelsCalls += 1
+        return modelsPayload
+    }
+
+    func setHostedModel(model: String, thinkingLevel: String?) async throws {
+        setModelCalls.append((model, thinkingLevel))
+        if let setModelFailure { throw setModelFailure }
+        if var current = hosted {
+            current.model = model
+            current.thinkingLevel = thinkingLevel
+            hosted = current
+        }
     }
 
     func relaunchHostedSession() async throws -> RemoteHostedSessionPayload {
@@ -127,11 +148,17 @@ private func makeHostedEvent(
     state: String,
     sessionFile: String? = nil,
     projectName: String? = nil,
-    dialogs: [[String: Any]] = []
+    dialogs: [[String: Any]] = [],
+    model: String? = nil,
+    thinkingLevel: String? = nil,
+    turnRunning: Bool? = nil
 ) throws -> RemoteHostedEvent {
     var object: [String: Any] = ["state": state, "dialogs": dialogs, "added": []]
     if let sessionFile { object["sessionFile"] = sessionFile }
     if let projectName { object["projectName"] = projectName }
+    if let model { object["model"] = model }
+    if let thinkingLevel { object["thinkingLevel"] = thinkingLevel }
+    if let turnRunning { object["turnRunning"] = turnRunning }
     return try JSONSerialization.data(withJSONObject: object).pipe(RemoteHostedEvent.self)
 }
 
@@ -461,5 +488,172 @@ private func eventually(timeout: Double = 5, _ condition: @MainActor () -> Bool)
         await model.stop()
         #expect(client.stopCount == 1)
         #expect(client.hosted?.state == "stopped")
+    }
+
+    // MARK: - Modèle et réflexion (model-selector-in-embedded-omp-session, S-8)
+
+    @Test("model-selector-in-embedded-omp-session/AC-1 : l'en-tête dit le nom du modèle et le niveau actifs, « défaut OMP » sans modèle, rien d'inventé sans niveau")
+    func modelLabelShowsActiveValue() async throws {
+        let names = ["p/id": "Nom lisible"]
+        #expect(IOSSessionOmpModel.modelLabel(model: "p/id", level: "high", names: names) == "Nom lisible · réflexion élevée")
+        #expect(IOSSessionOmpModel.modelLabel(model: "p/id", level: nil, names: names) == "Nom lisible")
+        // Nom inconnu : le sélecteur tel quel ; niveau `auto` affiché bien qu'il ne soit jamais proposé.
+        #expect(IOSSessionOmpModel.modelLabel(model: "q/x", level: "auto", names: names) == "q/x · réflexion automatique")
+        #expect(IOSSessionOmpModel.modelLabel(model: nil, level: nil, names: names) == SessionConsoleText.Model.defaultModel)
+
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", projectName: "depot", model: "p/id", thinkingLevel: "low", turnRunning: false))
+        let model = IOSSessionOmpModel(client: client)
+        client.modelsPayload = RemoteModelsPayload(selectors: ["p/id"], failure: nil, names: names, thinking: ["p/id": ["low", "high"]])
+        await model.loadCatalog()
+        #expect(model.modelLabel == "Nom lisible · réflexion faible")
+        #expect(IOSSessionOmpModel.offersModel(client.hosted))
+        // Un Mac antérieur ne sert ni `model` ni `turnRunning` : aucune ligne.
+        #expect(!IOSSessionOmpModel.offersModel(try makeHostedEvent(state: "running")))
+        #expect(!IOSSessionOmpModel.offersModel(nil))
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-2 : une trame hosted du Mac remplace la valeur affichée sans relancer la session")
+    func modelLabelFollowsHostedFrames() throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", thinkingLevel: "low", turnRunning: false))
+        let model = IOSSessionOmpModel(client: client)
+        #expect(model.modelLabel == "p/a · réflexion faible")
+        client.hosted = try makeHostedEvent(state: "running", projectName: "depot", model: "p/b", thinkingLevel: "high", turnRunning: false)
+        #expect(model.modelLabel == "p/b · réflexion élevée")
+        #expect(client.launchCount == 0 && client.relaunchCount == 0)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-4 : « Appliquer » appelle la route du modèle une fois avec le choix, et l'en-tête prend la valeur rendue par le Mac")
+    func applyModelCallsRouteOnce() async throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", thinkingLevel: "low", turnRunning: false))
+        let model = IOSSessionOmpModel(client: client)
+
+        #expect(await model.applyModel(model: "p/b", thinkingLevel: "high") == nil)
+        #expect(client.setModelCalls.count == 1)
+        #expect(client.setModelCalls.first?.model == "p/b")
+        #expect(client.setModelCalls.first?.level == "high")
+        #expect(client.stopCount == 0 && client.launchCount == 0)
+        #expect(model.modelLabel == "p/b · réflexion élevée")
+        #expect(!model.isApplyingModel)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-5 : la liste ne montre que les modèles du catalogue authentifié, filtrés sans égard à la casse sur le nom et le sélecteur")
+    func modelListShowsCatalogOnly() async throws {
+        let client = SessionOmpStub(state: connected, hosted: try makeHostedEvent(state: "idle", projectName: "depot"))
+        let model = IOSSessionOmpModel(client: client)
+        client.modelsPayload = RemoteModelsPayload(
+            selectors: ["anthropic/claude", "openai/gpt"], failure: nil, names: ["openai/gpt": "GPT Rapide"], thinking: nil)
+        #expect(IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "", names: nil).isEmpty)
+        await model.loadCatalog()
+        #expect(client.modelsCalls == 1)
+        let all = IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "  ", names: model.modelNames)
+        #expect(all == ["anthropic/claude", "openai/gpt"])
+        // Un modèle connu d'OMP mais non authentifié n'est pas dans le catalogue : jamais listé.
+        #expect(!all.contains("openai/non-authentifie"))
+        #expect(IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "CLAUDE", names: model.modelNames) == ["anthropic/claude"])
+        #expect(IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "rapide", names: model.modelNames) == ["openai/gpt"])
+        #expect(IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "zzz", names: model.modelNames).isEmpty)
+        // Un catalogue déjà chargé n'est pas relu, « Réessayer » le force.
+        await model.loadCatalog()
+        #expect(client.modelsCalls == 1)
+        await model.loadCatalog(force: true)
+        #expect(client.modelsCalls == 2)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-5 : un catalogue en échec garde le motif et ne liste aucun modèle")
+    func modelCatalogFailureIsExposed() async throws {
+        let client = SessionOmpStub(state: connected, hosted: try makeHostedEvent(state: "idle", projectName: "depot"))
+        let model = IOSSessionOmpModel(client: client)
+        client.modelsPayload = RemoteModelsPayload(selectors: [], failure: "omp absent", names: nil, thinking: nil)
+        await model.loadCatalog()
+        #expect(model.modelCatalog == .failed(KanbanText.modelCatalogUnavailable("omp absent")))
+        #expect(IOSSessionOmpModel.visibleModels(catalog: model.modelCatalog, filter: "", names: nil).isEmpty)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-6 : les niveaux proposés viennent de `thinking` — aucun sans effort ni catalogue, off puis les efforts sinon")
+    func offeredLevelsFollowThinking() throws {
+        let thinking = ["p/raisonne": ["low", "high"], "p/muet": []]
+        #expect(IOSSessionOmpModel.offeredLevels(model: "p/raisonne", thinking: thinking) == ["off", "low", "high"])
+        #expect(IOSSessionOmpModel.offeredLevels(model: "p/muet", thinking: thinking).isEmpty)
+        #expect(IOSSessionOmpModel.offeredLevels(model: "p/inconnu", thinking: thinking).isEmpty)
+        // Mac antérieur : le catalogue ne porte pas `thinking`.
+        #expect(IOSSessionOmpModel.offeredLevels(model: "p/raisonne", thinking: nil).isEmpty)
+        #expect(IOSSessionOmpModel.offeredLevels(model: nil, thinking: thinking).isEmpty)
+        // Le niveau du brouillon suit le modèle choisi : gardé s'il est proposé, sinon le plus haut proposé en dessous.
+        let offered = IOSSessionOmpModel.offeredLevels(model: "p/raisonne", thinking: thinking)
+        #expect(ModelCatalog.retainedLevel("low", offered: offered) == "low")
+        #expect(ModelCatalog.retainedLevel("medium", offered: offered) == "low")
+        #expect(ModelCatalog.retainedLevel("high", offered: []) == nil)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-7 : la décision est fausse pendant un tour, vraie dès la fin du tour")
+    func modelPickerUnavailableDuringTurn() throws {
+        let running = try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", turnRunning: true)
+        #expect(!IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: running, busy: false))
+        #expect(IOSSessionOmpModel.modelHelp(hosted: running, busy: false) == SessionConsoleText.Model.busyHelp)
+        let idle = try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", turnRunning: false)
+        #expect(IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: idle, busy: false))
+        #expect(IOSSessionOmpModel.modelHelp(hosted: idle, busy: false) == nil)
+        // Les autres indisponibilités de S-8.
+        #expect(!IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: idle, busy: true))
+        #expect(!IOSSessionOmpModel.canChangeModel(connection: .connecting, hosted: idle, busy: false))
+        #expect(!IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: nil, busy: false))
+        let noProject = try makeHostedEvent(state: "idle", turnRunning: false)
+        #expect(!IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: noProject, busy: false))
+        #expect(IOSSessionOmpModel.modelHelp(hosted: noProject, busy: false) == SessionConsoleText.Model.noProject)
+        for state in ["launching", "stopping"] {
+            let event = try makeHostedEvent(state: state, projectName: "depot", turnRunning: false)
+            #expect(!IOSSessionOmpModel.canChangeModel(connection: .connected, hosted: event, busy: false))
+        }
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-7 : un changement tenté pendant un tour n'appelle aucune route")
+    func applyModelRefusedDuringTurn() async throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", turnRunning: true))
+        let model = IOSSessionOmpModel(client: client)
+        #expect(await model.applyModel(model: "p/b", thinkingLevel: nil) == SessionConsoleText.Model.busyHelp)
+        #expect(client.setModelCalls.isEmpty)
+        client.hosted = try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", turnRunning: false)
+        #expect(await model.applyModel(model: "p/b", thinkingLevel: nil) == nil)
+        #expect(client.setModelCalls.count == 1)
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-8 : sans session, le choix s'applique au projet du Mac par la même route")
+    func modelAppliesWithoutSession() async throws {
+        let client = SessionOmpStub(state: connected, hosted: try makeHostedEvent(state: "idle", projectName: "depot", turnRunning: false))
+        let model = IOSSessionOmpModel(client: client)
+        #expect(model.canChangeModel)
+        #expect(await model.applyModel(model: "p/b", thinkingLevel: "low") == nil)
+        #expect(client.setModelCalls.count == 1)
+        #expect(client.launchCount == 0)
+        #expect(model.modelLabel == "p/b · réflexion faible")
+        // Le projet est mémorisé hors session : l'écran « prête à démarrer » garde la ligne.
+        #expect(IOSSessionOmpModel.offersModel(client.hosted))
+    }
+
+    @Test("model-selector-in-embedded-omp-session/AC-12 : un refus du Mac est exposé mot pour mot et l'en-tête garde la valeur réellement active")
+    func applyModelRefusalIsExposed() async throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", projectName: "depot", model: "p/a", thinkingLevel: "low", turnRunning: false))
+        let model = IOSSessionOmpModel(client: client)
+        let before = client.hosted
+        let reason = "Modèle inutilisable : OMP n'a pas d'authentification pour p/b."
+        client.setModelFailure = ClientError.api(.conflict(reason))
+
+        #expect(await model.applyModel(model: "p/b", thinkingLevel: nil) == reason)
+        #expect(client.setModelCalls.count == 1)
+        #expect(client.hosted == before)
+        #expect(model.modelLabel == "p/a · réflexion faible")
+        #expect(!model.isApplyingModel)
+        // Le geste redevient possible après le refus.
+        #expect(model.canChangeModel)
     }
 }

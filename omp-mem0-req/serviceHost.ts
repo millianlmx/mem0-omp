@@ -7,7 +7,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { GitResult, GitRunner } from "./git.ts";
 import { badRequest } from "./serviceApi.ts";
-import type { ServiceApi, SessionDescription } from "./serviceApi.ts";
+import type { ServiceApi } from "./serviceApi.ts";
 import { createServicePilot } from "./servicePilot.ts";
 import type { ServicePilot } from "./servicePilot.ts";
 import { createSessionHost } from "./serviceSessions.ts";
@@ -106,16 +106,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         purpose,
         resume: typeof record.resume === "string" ? record.resume : null,
       });
-      const description: SessionDescription = {
-        id: hosted.id,
-        cwd: hosted.cwd,
-        purpose,
-        state: hosted.state,
-        sessionFile: hosted.sessionFile,
-        contextPeak: hosted.meter?.peak() ?? null,
-        compactions: hosted.meter?.compactions() ?? 0,
-      };
-      return description;
+      return sessions.describe(hosted);
     },
     getSession: id => sessions.view(id),
     promptSession: (id, body) => sessions.prompt(id, body),
@@ -129,6 +120,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     launchAudit: (id, body) => audits.launch(id, body),
     answerAudit: (id, body) => audits.answer(id, body),
     stopAudit: id => audits.stop(id),
+    setSessionModel: (id, body) => sessions.setSessionModel(id, body),
+    projectModel: repo => sessions.projectModel(repo),
+    setProjectModel: (repo, body) => sessions.setProjectModel(repo, body),
   };
 
   let handle: ServiceHandle | null = null;

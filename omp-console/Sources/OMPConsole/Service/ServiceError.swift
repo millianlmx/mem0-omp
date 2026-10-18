@@ -22,6 +22,10 @@ enum ServiceClientError: UserFacingError, Equatable, Sendable {
     case notFound(reason: String)
     /// 409 `{error:"conflict",reason}`.
     case conflict(reason: String)
+    /// 500 `{error:"internal",reason}` : une erreur du service qui porte sa raison
+    /// (model-selector-in-embedded-omp-session S-2 : « le défaut du projet n'a pas
+    /// pu être enregistré »).
+    case serverError(reason: String)
     /// 503 `{error:"stopping"}` : le service s'arrête.
     case stopping
     /// Réponse illisible ou hors schéma.
@@ -37,6 +41,7 @@ enum ServiceClientError: UserFacingError, Equatable, Sendable {
         case .badRequest(let reason): return reason
         case .notFound(let reason): return reason
         case .conflict(let reason): return reason
+        case .serverError(let reason): return reason
         case .stopping: return "le service s'arrête."
         case .malformed(let reason): return "réponse illisible du service : \(reason)"
         case .transport(let reason): return "service injoignable : \(reason)"

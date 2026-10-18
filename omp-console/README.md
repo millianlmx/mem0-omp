@@ -1788,6 +1788,52 @@ service injoignable échoue proprement, la fenêtre affiche « service arrêté 
 l'état de la session reste celui du flux SSE ; une coupure du flux est retentée
 avec un repli borné avant de marquer la session morte et d'offrir **Relancer**.
 
+#### Modèle et niveau de réflexion
+
+Le composeur de la section **Session OMP** porte, en tête, un bouton bordé qui montre
+**en permanence** le modèle et le niveau de réflexion actifs (`session.model`, icône
+`cpu`, par exemple « Claude Opus 5.5 · réflexion élevée » ; « défaut OMP » quand
+aucun modèle n'est connu ; son infobulle donne le libellé complet). Il est visible
+dans tous les états de la section — la barre d'outils, elle, ne change pas (la
+pilule `session.status` reste la seule pilule). La valeur affichée est celle de la
+session vivante (description du service, puis trame SSE `model` à chaque changement,
+qu'il vienne du Mac, de l'iPhone ou d'un `/model` tapé dans OMP) ; sans session, c'est
+le **défaut OMP du projet** (`modelRoles.default` de `<projet>/.omp/config.yml`, lu par
+`GET /v1/projects/{racine}/model` — la racine en UN segment percent-encodé — à chaque
+changement de projet et à chaque fin de session).
+
+Un clic (ou Espace) ouvre un popover de 420 pt : un champ « Filtrer les modèles »
+(`session.model.filter`, focus initial, insensible à la casse, sur le nom lisible et le
+sélecteur), la liste des modèles **utilisables** (`session.model.list` : uniquement ceux
+d'`omp models --json`, c'est-à-dire authentifiés auprès d'OMP ; nom lisible et
+sélecteur en gris), puis, si le modèle choisi raisonne, un menu « Niveau de
+réflexion » (`session.model.thinking`) qui ne propose que `désactivée` et les efforts
+qu'il supporte — aucun menu pour un modèle sans réflexion. Changer de modèle garde le
+niveau choisi s'il est proposé, sinon prend le plus haut niveau proposé qui ne le
+dépasse pas, sinon le premier. « Appliquer » (`session.model.apply`, ↩) :
+
+- session vivante ⇒ `POST /v1/sessions/{id}/model {model, thinkingLevel?}` : la
+  conversation et la session ne bougent pas (même identifiant, même fichier, aucune
+  relance) ; le message suivant part avec le nouveau modèle ;
+- sans session ⇒ `POST /v1/projects/{racine}/model` : le choix devient le défaut OMP du
+  projet, et la session ouverte ensuite démarre dessus. Le service écrit AUSSI ce défaut
+  quand une session vivante change de modèle : toute nouvelle session du projet — ou
+  `omp` lancé dans le dépôt — le reprend. Les groupes de modèles des pipelines ne sont
+  jamais touchés.
+
+Pendant que `omp` répond (trame `state running` jusqu'à `state idle`), le bouton est
+désactivé (« Indisponible pendant que OMP répond. ») ; sans projet choisi il l'est aussi
+(« Choisissez d’abord un dossier de projet sur le Mac. »). Un refus du service (modèle
+sans authentification, niveau non supporté, défaut non enregistré…) laisse le popover
+ouvert, affiche sa **raison mot pour mot** en rouge (`session.model.error`) et relit la
+valeur réelle (`GET /v1/sessions/{id}` ou `GET …/model`) : l'affichage ne montre jamais le
+brouillon. Catalogue en chargement : « Chargement des modèles… » (`session.model.loading`) ;
+en échec : « modèles indisponibles — <motif> » et « Réessayer » (`session.model.retry`) ;
+filtre sans résultat : « Aucun modèle ne correspond. ». Échap annule (`session.model.cancel`).
+Aucun attribut `@State` : le filtre, le brouillon, l'erreur et l'état « application en
+cours » vivent dans `SessionConsoleModel`. Les mots viennent de
+`SessionConsoleText.Model` (ConsoleCore), partagés avec l'iPhone.
+
 ### Le binaire `omp` de l'app
 
 L'app n'utilise qu'UN SEUL binaire `omp` pour ses propres besoins, le composant
@@ -2822,14 +2868,37 @@ un flux temps réel.
   au service ; les refus du service se recopient (`400`, `404`, `409`, dont « question
   déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
   route de lecture : audits, escalades et décisions arrivent par la trame `store`.
-  L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
+  L'API sert ainsi **44 routes**, image exacte de `ClientRoute.all`.
+- **Modèle et réflexion de la session hébergée** (model-selector-in-embedded-omp-session) :
+  `POST /v1/session/model` `{model, thinkingLevel?}` (`model` = sélecteur
+  `provider/id`, `thinkingLevel` = `off`, `minimal`, `low`, `medium`, `high`, `xhigh` ou
+  `max`, absent ou `null` = aucun niveau) change le modèle de la session OMP **sans la
+  relancer** — même chemin que le bouton « modèle » du Mac (`SessionConsoleModel.applyModel`) :
+  session vivante ⇒ `POST /v1/sessions/{id}/model` au service ; sinon ⇒ `POST
+  /v1/projects/{racine}/model` (défaut OMP du projet, la racine du dépôt voyage en UN
+  segment percent-encodé). Il rend `200` avec la charge de `GET /v1/session`. Refus :
+  `409` « Choisissez d’abord un dossier de projet sur le Mac. » sans projet choisi,
+  `409` « Changement impossible pendant que OMP répond : attendez la fin du tour. »
+  pendant un tour, `409` avec la raison du service **mot pour mot** pour tout refus
+  du service (modèle sans authentification, niveau non supporté, défaut non
+  enregistré…), `503` service arrêté ou injoignable ; un corps sans `model` est un
+  `400` avant tout contrôle. `GET /v1/session` et la trame `hosted` portent, en plus de
+  l'état, `model` et `thinkingLevel` — la valeur AFFICHÉE par la section du Mac :
+  celle de la session vivante, sinon le défaut du projet, `null` = « défaut OMP » — et
+  `turnRunning` (OMP traite un tour : le sélecteur est indisponible). Le Mac pousse une
+  trame `hosted` à chaque changement de modèle, de niveau, de tour ou de défaut du
+  projet : un changement fait sur le Mac ou dans le terminal apparaît sur l'iPhone sans
+  relance. `GET /v1/models` ajoute `thinking` (sélecteur → efforts supportés, tels que
+  `omp models --json` les donne) : l'iPhone ne propose que `off` puis ces efforts ; un
+  Mac antérieur n'envoie ni `thinking`, ni `model`, ni `turnRunning` (zéro niveau
+  proposé, `turnRunning` absent traité comme faux).
 - **Gestes typés** : chaque geste de `RemoteActions` est une méthode Swift typée
   (`throws(GestureRefusal)`, sauf `stopHostedSession` et `refreshPullRequestStates`
   qui ne refusent jamais), appelable par du code Swift du Mac sans corps
   HTTP : gestes de carte (`answer`, `reply`, `text`, `verdict`, `resume`, `stop`),
   lancement de feature (`launch`), conduite (`startConduite`, `closeConduite`,
   `answerDialog`), session hébergée (`prompt`, `launchHostedSession`,
-  `relaunchHostedSession`, `stopHostedSession`, `answerHostedDialog`), audits
+  `relaunchHostedSession`, `stopHostedSession`, `setHostedModel`, `answerHostedDialog`), audits
   (`startAudit`, `launchAudit`, `answerAudit`, `stopAudit`) et PR (`pullRequests`,
   `merge`, `refreshPullRequestStates`). Chacune applique seule les règles du geste
   et lève une cause typée `GestureRefusal` (un cas par règle : carte inconnue,
@@ -3175,7 +3244,8 @@ omp-console/
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
 │   │   ├── SessionRendering.swift le rendu texte du modèle (fonctions pures)
-│   │   └── SessionConsoleText.swift les textes de la fenêtre Session OMP
+│   │   ├── SessionConsoleText.swift les textes de la fenêtre Session OMP
+│   │   └── SessionModelPopover.swift le popover du sélecteur de modèle et de réflexion de Session OMP
 │   ├── Project/                   la conduite d'un projet depuis l'app
 │   │   ├── ProjectConduite.swift  identité, état et refus d'une conduite
 │   │   ├── ProjectConsoleModel.swift le modèle : armement, refus, clôture, dialogues, veille
@@ -3894,6 +3964,24 @@ la séquence d'arrêt du Mac). Le fil réutilise le composant de la section Sess
 Mac, une seule lecture puis le flux de CE fichier. Les dialogues de la session
 (quatre formes de la feuille d'escalade, plus « Annuler ») sont tranchables depuis
 l'iPad. Rien n'est persisté sur l'appareil.
+
+Le **modèle et le niveau de réflexion** actifs de la session sont affichés en
+permanence, sans rien ouvrir, dans une carte en tête de l'écran (iPhone et iPad,
+même mise en page) : le nom lisible du modèle suivi de « · réflexion <niveau> »,
+ou « défaut OMP » quand aucun modèle n'est choisi. La valeur vient de la trame
+`hosted` du Mac (champs `model`, `thinkingLevel`, `turnRunning`) : un changement
+fait depuis le Mac apparaît sur l'appareil sans relancer l'app ni la session. Le
+bouton « Changer » ouvre une feuille : les modèles utilisables du Mac
+(`GET /v1/models`, filtrables, aucun modèle non authentifié), puis le niveau de
+réflexion, limité à ceux que le modèle supporte et absent s'il n'en supporte
+aucun. « Appliquer » appelle `POST /v1/session/model` : sur une session ouverte
+le changement s'applique sans relance et sans perdre la conversation ; sans
+session il vaut pour le projet du Mac, repris par la session lancée ensuite. Le
+bouton est indisponible pendant que OMP répond (l'aide le dit) et redevient
+utilisable dès la fin du tour ; il l'est aussi au lancement, à l'arrêt, sans
+projet et hors connexion. Un refus du Mac laisse la feuille ouverte avec son
+message tel quel, et la carte garde le modèle réellement actif. Un Mac antérieur,
+qui ne sert ni `model` ni `turnRunning`, n'affiche pas la carte.
 
 ### Recette : piloter la session OMP depuis l'iPad
 

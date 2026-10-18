@@ -60,6 +60,10 @@ enum GestureRefusal: Error, Equatable, Sendable {
     // session hébergée
     case sessionNotRunning, sessionBusy, sessionNotRelaunchable
     case noHostedSession, hostedSessionStopped, hostedDialogPending
+    // modèle et réflexion de la session hébergée (model-selector-in-embedded-omp-session S-7)
+    case noProject, turnRunning
+    /// Refus du service, raison relayée mot pour mot.
+    case modelRefused(String)
     // audits
     case unknownAudit
     case serviceBadRequest(String), serviceNotFound(String), serviceConflict(String)
@@ -111,6 +115,9 @@ enum GestureRefusal: Error, Equatable, Sendable {
         case .sessionNotRelaunchable: return .conflict(SessionConsoleText.relaunchNotDead)
         case .noHostedSession: return .conflict("aucune session OMP n'est lancée")
         case .hostedSessionStopped: return .conflict("la session OMP est arrêtée")
+        case .noProject: return .conflict(SessionConsoleText.Model.noProject)
+        case .turnRunning: return .conflict("Changement impossible pendant que OMP répond : attendez la fin du tour.")
+        case .modelRefused(let reason): return .conflict(reason)
         case .hostedDialogPending: return .conflict("un dialogue de la session attend une réponse")
         case .unknownAudit: return .notFound("audit inconnu")
         case .serviceBadRequest(let message): return .badRequest(message)

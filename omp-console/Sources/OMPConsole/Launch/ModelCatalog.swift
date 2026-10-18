@@ -18,11 +18,21 @@ struct ModelCatalogError: Error, Equatable, Sendable {
     let reason: String
 }
 
-/// Le catalogue lu d'UNE sortie de `omp models --json` : les sélecteurs triés et
-/// leurs noms lisibles (clés ⊂ `selectors`).
+/// Le catalogue lu d'UNE sortie de `omp models --json` : les sélecteurs triés,
+/// leurs noms lisibles (clés ⊂ `selectors`) et, pour les modèles qui raisonnent,
+/// leurs efforts supportés (model-selector-in-embedded-omp-session S-5).
 struct ModelCatalogListing: Equatable, Sendable {
     let selectors: [String]
     let names: [String: String]
+    /// Sélecteur → efforts dans l'ordre du catalogue ; entrée ABSENTE quand
+    /// `thinking` vaut `null`, manque ou est vide.
+    let thinking: [String: [String]]
+
+    init(selectors: [String], names: [String: String], thinking: [String: [String]] = [:]) {
+        self.selectors = selectors
+        self.names = names
+        self.thinking = thinking
+    }
 }
 
 // `ModelCatalogState` et `ModelCatalog.defaultChoice`/`choices(_:)` vivent dans
@@ -69,6 +79,29 @@ extension ModelCatalog {
         }
         return names
     }
+
+    /// Les efforts supportés de chaque sélecteur de `{"models":[{"selector": …,
+    /// "thinking": ["low", …]}]}` : un tableau de chaînes non vide ; une entrée
+    /// dont `thinking` est `null`, absent ou vide n'a pas de clé. Pour un sélecteur
+    /// en double la PREMIÈRE entrée gagne. `nil` quand le JSON est illisible ou
+    /// sans tableau `models`.
+    static func thinking(fromJSON data: Data) -> [String: [String]]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        guard let object = root as? [String: Any], let models = object["models"] as? [[String: Any]] else {
+            return nil
+        }
+        var thinking: [String: [String]] = [:]
+        var seen = Set<String>()
+        for model in models {
+            guard let selector = model["selector"] as? String,
+                  !selector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  seen.insert(selector).inserted else { continue }
+            guard let efforts = model["thinking"] as? [Any] else { continue }
+            let levels = efforts.compactMap { $0 as? String }
+            if !levels.isEmpty { thinking[selector] = levels }
+        }
+        return thinking
+    }
 }
 
 /// Le chargement de `omp models --json` (S-5). Le binaire est résolu par
@@ -106,9 +139,10 @@ enum ModelCatalogLoader {
         }
         let data = Data(run.stdout.utf8)
         guard let selectors = ModelCatalog.selectors(fromJSON: data),
-              let names = ModelCatalog.names(fromJSON: data) else {
+              let names = ModelCatalog.names(fromJSON: data),
+              let thinking = ModelCatalog.thinking(fromJSON: data) else {
             return .failure(ModelCatalogError(reason: "réponse illisible"))
         }
-        return .success(ModelCatalogListing(selectors: selectors, names: names))
+        return .success(ModelCatalogListing(selectors: selectors, names: names, thinking: thinking))
     }
 }

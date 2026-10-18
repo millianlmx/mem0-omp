@@ -340,12 +340,15 @@ test("service-sessions/AC-4 : l'abonnement donne l'instantané (dialogue en vol)
   const late: ServiceFrame[] = [];
   const subscription = host.subscribe(session.id);
   assert.ok(subscription);
-  assert.equal(subscription.snapshot.length, 1);
-  assert.equal(subscription.snapshot[0]!.event, "dialog");
+  // Une session de la section rejoue aussi son modèle (S-1) : le snapshot porte la trame `model` PUIS le dialogue.
+  assert.equal(subscription.snapshot.length, 2);
+  assert.equal(subscription.snapshot[0]!.event, "model");
+  const dialogFrame = subscription.snapshot[1]!;
+  assert.equal(dialogFrame.event, "dialog");
   subscription.subscribe(frame => late.push(frame));
 
   const answer: DialogAnswer = { value: "texte" };
-  const dialogId = subscription.snapshot[0]!.event === "dialog" ? subscription.snapshot[0]!.data.id : "";
+  const dialogId = dialogFrame.event === "dialog" ? dialogFrame.data.id : "";
   await host.answer(session.id, dialogId, answer);
   assert.equal(await pending, "texte");
 

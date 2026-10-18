@@ -33,6 +33,11 @@ protocol IOSSessionOmpClient: IOSSessionSource {
     func stopHostedSession() async throws -> RemoteHostedSessionPayload
     func answerHostedDialog(id: String, kind: String, value: String?, confirmed: Bool?) async throws -> RemoteAcceptedPayload
     func prompt(message: String) async throws -> RemoteSentPayload
+    /// Le catalogue des modèles utilisables du Mac, avec noms et efforts (S-5, S-8).
+    func models() async throws -> RemoteModelsPayload
+    /// Change le modèle et le niveau de la session ouverte, ou le choix du projet
+    /// sans session ; un refus du Mac lève avec sa raison (S-7, S-8).
+    func setHostedModel(model: String, thinkingLevel: String?) async throws
 }
 
 extension ConsoleClientModel: IOSSessionOmpClient {}
@@ -89,6 +94,14 @@ final class IOSSessionOmpModel: ObservableObject {
         self.client = client
     }
 
+    /// Le catalogue du Mac, lu une fois puis relu par « Réessayer » : noms lisibles
+    /// et efforts par sélecteur (S-5). `nil` tant qu'il n'est pas lu.
+    @Published private(set) var modelCatalog: ModelCatalogState = .loading
+    @Published private(set) var modelNames: [String: String]?
+    @Published private(set) var modelThinking: [String: [String]]?
+    /// Un changement est parti : le suivant attend sa réponse.
+    @Published private(set) var isApplyingModel = false
+
     // MARK: - Décisions PURES (testables sans render)
 
     /// Seul `.connected` ouvre les gestes (S-6).
@@ -143,6 +156,62 @@ final class IOSSessionOmpModel: ObservableObject {
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    // MARK: Modèle et réflexion (model-selector-in-embedded-omp-session, S-8)
+
+    /// La ligne du modèle n'est montrée que si le Mac sert la valeur : un Mac
+    /// antérieur, sans `model` ni `turnRunning`, la masque (S-7).
+    static func offersModel(_ hosted: RemoteHostedEvent?) -> Bool {
+        guard let hosted else { return false }
+        return hosted.model != nil || hosted.turnRunning != nil
+    }
+
+    /// La disponibilité du sélecteur (S-8) : connecté, un projet, ni lancement ni
+    /// arrêt en cours, aucun tour en cours, aucune requête en vol.
+    static func canChangeModel(connection: IOSConnectionStatus, hosted: RemoteHostedEvent?, busy: Bool) -> Bool {
+        guard connection == .connected, let hosted, hosted.projectName != nil, !busy else { return false }
+        if hosted.turnRunning == true { return false }
+        switch HostedSessionWire(rawValue: hosted.state) ?? .idle {
+        case .launching, .stopping: return false
+        default: return true
+        }
+    }
+
+    /// Le mot de la cause d'un sélecteur indisponible, quand elle se dit : un tour en
+    /// cours, une requête en vol, ou aucun projet.
+    static func modelHelp(hosted: RemoteHostedEvent?, busy: Bool) -> String? {
+        guard let hosted else { return nil }
+        if hosted.projectName == nil { return SessionConsoleText.Model.noProject }
+        if hosted.turnRunning == true { return SessionConsoleText.Model.busyHelp }
+        if busy { return SessionConsoleText.Model.applyingHelp }
+        return nil
+    }
+
+    /// Le libellé de la valeur affichée (même texte que le Mac) : le nom lisible du
+    /// modèle, suivi de « · réflexion <niveau> » ; « défaut OMP » sans modèle.
+    static func modelLabel(model: String?, level: String?, names: [String: String]?) -> String {
+        guard let model else { return SessionConsoleText.Model.defaultModel }
+        return SessionConsoleText.Model.label(name: ModelCatalog.displayName(model, names: names), level: level)
+    }
+
+    /// Les niveaux proposés pour un modèle d'après `thinking` du catalogue : aucun
+    /// sans modèle, sans efforts ni catalogue (Mac antérieur).
+    static func offeredLevels(model: String?, thinking: [String: [String]]?) -> [String] {
+        guard let model, let thinking else { return [] }
+        return ModelCatalog.thinkingChoices(for: model, thinking: thinking)
+    }
+
+    /// Les modèles de la liste : uniquement ceux du catalogue chargé, filtrés sans
+    /// égard à la casse sur le nom lisible ET le sélecteur.
+    static func visibleModels(catalog: ModelCatalogState, filter: String, names: [String: String]?) -> [String] {
+        guard case .loaded(let selectors) = catalog else { return [] }
+        let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return selectors }
+        return selectors.filter { selector in
+            selector.range(of: needle, options: .caseInsensitive) != nil
+                || ModelCatalog.displayName(selector, names: names).range(of: needle, options: .caseInsensitive) != nil
+        }
+    }
+
     /// Le mot de la cause, affiché sous le composeur (S-3).
     static func composerHint(state: String?, dialogs: [RpcDialogRequest]) -> String {
         guard (HostedSessionWire(rawValue: state ?? "") ?? .idle) == .running else {
@@ -161,6 +230,13 @@ final class IOSSessionOmpModel: ObservableObject {
     var canLaunch: Bool { Self.canLaunch(client.hosted) }
     var canRelaunch: Bool { Self.canRelaunch(client.hosted) }
     var canStop: Bool { Self.canStop(client.hosted) }
+    var modelLabel: String {
+        Self.modelLabel(model: client.hosted?.model, level: client.hosted?.thinkingLevel, names: modelNames)
+    }
+    var canChangeModel: Bool {
+        Self.canChangeModel(connection: connection, hosted: client.hosted, busy: isApplyingModel)
+    }
+    var modelHelp: String? { Self.modelHelp(hosted: client.hosted, busy: isApplyingModel) }
 
     // MARK: - Cycle de vie (S-6)
 
@@ -192,6 +268,20 @@ final class IOSSessionOmpModel: ObservableObject {
                 self.error = ProjectText.failure(error, state: self.client.state)
             }
             self.syncThread()
+        }
+    }
+
+    /// Lit `GET /v1/models`. Sans `force`, un catalogue déjà chargé n'est pas relu ;
+    /// « Réessayer » force. Un échec laisse l'état `.failed` avec le motif.
+    func loadCatalog(force: Bool = false) async {
+        guard Self.gesturesEnabled(client.state) else { return }
+        if !force, case .loaded = modelCatalog { return }
+        modelCatalog = .loading
+        modelCatalog = await PipelinesModel.catalog { [client] in
+            let payload = try await client.models()
+            self.modelNames = payload.names
+            self.modelThinking = payload.thinking
+            return payload
         }
     }
 
@@ -263,6 +353,21 @@ final class IOSSessionOmpModel: ObservableObject {
         } catch {
             self.error = ProjectText.failure(error, state: client.state)
             return false
+        }
+    }
+
+    /// Applique le choix (S-8) par `POST /v1/session/model`. Rend `nil` sur succès,
+    /// sinon le message du Mac mot pour mot : la feuille reste ouverte et `hosted`,
+    /// que seul le Mac met à jour, garde la valeur réellement active.
+    func applyModel(model selector: String, thinkingLevel: String?) async -> String? {
+        guard canChangeModel else { return modelHelp }
+        isApplyingModel = true
+        defer { isApplyingModel = false }
+        do {
+            try await client.setHostedModel(model: selector, thinkingLevel: thinkingLevel)
+            return nil
+        } catch {
+            return ProjectText.failure(error, state: client.state)
         }
     }
 

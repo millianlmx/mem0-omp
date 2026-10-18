@@ -611,11 +611,20 @@ public struct RemoteModelsPayload: Codable, Equatable, Sendable {
     public var selectors: [String]
     public var failure: String?
     public var names: [String: String]?
+    /// Sélecteur → efforts supportés (model-selector-in-embedded-omp-session S-5) :
+    /// absent d'un Mac antérieur ⇒ aucun niveau de réflexion proposé.
+    public var thinking: [String: [String]]?
 
-    public init(selectors: [String], failure: String?, names: [String: String]? = nil) {
+    public init(
+        selectors: [String],
+        failure: String?,
+        names: [String: String]? = nil,
+        thinking: [String: [String]]? = nil
+    ) {
         self.selectors = selectors
         self.failure = failure
         self.names = names
+        self.thinking = thinking
     }
 }
 
@@ -655,6 +664,14 @@ public struct RemoteHostedSessionPayload: Codable, Equatable, Sendable {
     public var dialogs: [RpcDialogRequest]
     public var transcript: [TranscriptLine]
     public var truncated: Bool
+    /// La valeur affichée par la section Session OMP du Mac (S-7) : le modèle et le
+    /// niveau de la session vivante, sinon le défaut du projet ; `nil` = « défaut
+    /// OMP ». Absents d'un Mac antérieur.
+    public var model: String?
+    public var thinkingLevel: String?
+    /// OMP traite un tour (le sélecteur est alors indisponible) ; absent d'un Mac
+    /// antérieur, traité comme `false`.
+    public var turnRunning: Bool?
 }
 
 // MARK: - Corps de requête
@@ -707,6 +724,17 @@ public struct RemoteHostedLaunchRequest: Codable, Equatable, Sendable {
 
     public init(repoKey: String) {
         self.repoKey = repoKey
+    }
+}
+
+/// Le corps de `POST /v1/session/model` (S-7, miroir client).
+public struct RemoteSessionModelRequest: Codable, Equatable, Sendable {
+    public var model: String
+    public var thinkingLevel: String?
+
+    public init(model: String, thinkingLevel: String?) {
+        self.model = model
+        self.thinkingLevel = thinkingLevel
     }
 }
 
@@ -788,6 +816,11 @@ public struct RemoteHostedEvent: Codable, Equatable, Sendable {
     public var projectName: String?
     public var dialogs: [RpcDialogRequest]
     public var added: [TranscriptLine]
+    /// Même valeur affichée que `RemoteHostedSessionPayload` (S-7), poussée à
+    /// chaque changement de modèle, de niveau ou de tour.
+    public var model: String?
+    public var thinkingLevel: String?
+    public var turnRunning: Bool?
 }
 
 public struct RemoteDevicesEvent: Codable, Equatable, Sendable {

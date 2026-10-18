@@ -114,6 +114,7 @@ struct SessionConsoleView: View {
 
     private var composer: some View {
         HStack(spacing: 8) {
+            SessionModelButton(model: model)
             TextField(
                 host.state == .running ? SessionConsoleText.composerRunning : SessionConsoleText.composerIdle,
                 text: $model.prompt
@@ -307,5 +308,45 @@ struct SessionConsoleView: View {
         }
         .formStyle(.grouped)
         .inspectorColumnWidth(min: 320, ideal: 420, max: 640)
+    }
+}
+
+// MARK: - Modèle et réflexion (model-selector-in-embedded-omp-session S-6)
+
+/// Le bouton qui montre en permanence le modèle et le niveau de la session, et ouvre
+/// le sélecteur. Rendu dans le composeur, donc dans tous les états de la section.
+/// Il observe aussi la session : ses publications (modèle, niveau, tour) ne passent
+/// pas par `SessionConsoleModel`.
+private struct SessionModelButton: View {
+    @ObservedObject var model: SessionConsoleModel
+    @ObservedObject var host: ServiceSessionModel
+
+    init(model: SessionConsoleModel) {
+        self.model = model
+        self.host = model.host
+    }
+
+    var body: some View {
+        Button { model.openModelPicker() } label: {
+            Label {
+                Text(verbatim: model.modelLabel)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } icon: {
+                Image(systemName: "cpu")
+            }
+            .frame(maxWidth: 260)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(!model.canChangeModel)
+        .help(model.modelHelp)
+        .accessibilityIdentifier("session.model")
+        .popover(isPresented: Binding(
+            get: { model.modelPickerShown },
+            set: { model.modelPickerShown = $0 }
+        )) {
+            SessionModelPopover(model: model)
+        }
     }
 }

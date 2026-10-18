@@ -272,3 +272,45 @@ func boardPropagatesModelSlots() throws {
     )
     #expect(merged.models == ModelSlots(reqSpecs: "P1", implReview: "P2"))
 }
+
+// MARK: - model-selector-in-embedded-omp-session : niveaux de réflexion du catalogue (S-5)
+
+@Test("model-selector-in-embedded-omp-session/AC-6 : un modèle à efforts propose off puis ses efforts, sans effort aucun niveau")
+func catalogOffersOnlySupportedThinkingLevels() throws {
+    let json = """
+    {"models":[
+      {"selector":"a/raisonne","name":"Raisonne","reasoning":true,"thinking":["low","high"]},
+      {"selector":"a/muet","name":"Muet","reasoning":false,"thinking":null},
+      {"selector":"a/vide","name":"Vide","reasoning":true,"thinking":[]},
+      {"selector":"a/sans-cle","name":"Sans clé"},
+      {"selector":"a/auto","name":"Auto","reasoning":true,"thinking":["auto","off","minimal","max"]}
+    ]}
+    """
+    let data = Data(json.utf8)
+    let thinking = try #require(ModelCatalog.thinking(fromJSON: data))
+    // Entrée ABSENTE quand `thinking` vaut null, manque ou est vide.
+    #expect(Set(thinking.keys) == ["a/raisonne", "a/auto"])
+    #expect(thinking["a/raisonne"] == ["low", "high"])
+
+    #expect(ModelCatalog.thinkingChoices(for: "a/raisonne", thinking: thinking) == ["off", "low", "high"])
+    #expect(ModelCatalog.thinkingChoices(for: "a/muet", thinking: thinking).isEmpty)
+    #expect(ModelCatalog.thinkingChoices(for: "a/vide", thinking: thinking).isEmpty)
+    #expect(ModelCatalog.thinkingChoices(for: "a/sans-cle", thinking: thinking).isEmpty)
+    #expect(ModelCatalog.thinkingChoices(for: "inconnu/x", thinking: thinking).isEmpty)
+    // `auto` n'est jamais proposé, `off` n'est pas doublé.
+    #expect(ModelCatalog.thinkingChoices(for: "a/auto", thinking: thinking) == ["off", "minimal", "max"])
+    // Un JSON illisible reste un échec, jamais une table vide.
+    #expect(ModelCatalog.thinking(fromJSON: Data("pas du json".utf8)) == nil)
+}
+
+@Test("model-selector-in-embedded-omp-session/AC-6 : changer de modèle garde le niveau proposé, sinon le plus haut proposé qui ne le dépasse pas, sinon le premier")
+func draftLevelFollowsTheModelChange() {
+    let offered = ["off", "low", "high"]
+    #expect(ModelCatalog.retainedLevel("low", offered: offered) == "low")
+    #expect(ModelCatalog.retainedLevel("xhigh", offered: offered) == "high")
+    #expect(ModelCatalog.retainedLevel("medium", offered: offered) == "low")
+    #expect(ModelCatalog.retainedLevel("auto", offered: offered) == "high", "auto compte comme high")
+    #expect(ModelCatalog.retainedLevel("minimal", offered: ["low", "high"]) == "low", "rien en dessous : le premier proposé")
+    #expect(ModelCatalog.retainedLevel(nil, offered: offered) == "off")
+    #expect(ModelCatalog.retainedLevel("high", offered: []) == nil)
+}

@@ -1,4 +1,4 @@
-// Le catalogue des routes (S-1) : 43 entrées, chacune unique, normalisée comme la
+// Le catalogue des routes (S-1) : 44 entrées, chacune unique, normalisée comme la
 // table de la coque.
 
 @testable import ConsoleClient
@@ -8,11 +8,11 @@ import Testing
 @Suite("Catalogue des routes")
 @MainActor
 struct RouteCatalogTests {
-    @Test("le catalogue porte 43 routes uniques")
+    @Test("le catalogue porte 44 routes uniques")
     func catalogSize() {
-        #expect(ClientRoute.all.count == 43)
+        #expect(ClientRoute.all.count == 44)
         let keys = ClientRoute.all.map { "\($0.method) \($0.normalized.path)" }
-        #expect(Set(keys).count == 43, "deux routes identiques dans le catalogue")
+        #expect(Set(keys).count == 44, "deux routes identiques dans le catalogue")
     }
 
     @Test("chaque méthode typée a sa route dans le catalogue")
@@ -29,7 +29,7 @@ struct RouteCatalogTests {
             "POST /v1/cards/{id}/stop", "POST /v1/features", "POST /v1/projects/{repoKey}/conduite",
             "DELETE /v1/projects/{repoKey}/conduite", "GET /v1/conduite", "POST /v1/conduite/dialogs/{id}",
             "GET /v1/session", "POST /v1/session/prompt", "POST /v1/session/launch",
-            "POST /v1/session/relaunch", "POST /v1/session/stop", "POST /v1/session/dialogs/{id}",
+            "POST /v1/session/relaunch", "POST /v1/session/stop", "POST /v1/session/model", "POST /v1/session/dialogs/{id}",
             "GET /v1/projects/{repoKey}/pull-requests", "POST /v1/projects/{repoKey}/pull-requests/{slug}/merge",
             "POST /v1/pull-request-states/refresh",
             "POST /v1/audits", "POST /v1/audits/{id}/launch", "POST /v1/audits/{id}/escalations",
