@@ -35,6 +35,38 @@ public enum ModelCatalog {
         knownName(selector, names: names) ?? selector
     }
 
+    // MARK: Niveaux de réflexion (model-selector-in-embedded-omp-session, S-5, S-6)
+
+    /// L'ordre des niveaux de réflexion, du plus bas au plus haut. `auto` n'a pas
+    /// de rang propre : il compte comme `high` (S-6).
+    private static let levelRanks: [String: Int] = [
+        "off": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "max": 6, "auto": 4,
+    ]
+
+    /// Les niveaux proposés pour un sélecteur : aucun quand le modèle n'a pas
+    /// d'efforts (absent, vide) ; sinon `off` puis les efforts dans l'ordre du
+    /// catalogue. `auto` n'est jamais proposé.
+    public static func thinkingChoices(for selector: String, thinking: [String: [String]]) -> [String] {
+        guard let efforts = thinking[selector], !efforts.isEmpty else { return [] }
+        var choices = ["off"]
+        for effort in efforts where effort != "off" && effort != "auto" && !choices.contains(effort) {
+            choices.append(effort)
+        }
+        return choices
+    }
+
+    /// Le niveau du brouillon après un changement de modèle : le niveau courant
+    /// s'il est proposé, sinon le plus haut niveau proposé qui ne le dépasse pas,
+    /// sinon le premier proposé. `nil` quand aucun niveau n'est proposé.
+    public static func retainedLevel(_ level: String?, offered: [String]) -> String? {
+        guard let first = offered.first else { return nil }
+        guard let level else { return first }
+        if offered.contains(level) { return level }
+        guard let rank = levelRanks[level] else { return first }
+        let lower = offered.filter { (levelRanks[$0] ?? Int.max) <= rank }
+        return lower.max { (levelRanks[$0] ?? 0) < (levelRanks[$1] ?? 0) } ?? first
+    }
+
     /// Les libellés des options d'un sélecteur de modèle, par sélecteur
     /// (dédoublonné). Un sélecteur sans nom garde son sélecteur. Un nom porté
     /// par un seul sélecteur s'affiche seul ; un nom partagé est complété, pour

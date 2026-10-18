@@ -187,6 +187,43 @@ struct ServiceClient: Sendable {
         _ = try await request("DELETE", path: ["sessions", id])
     }
 
+    /// `POST /v1/sessions/{id}/model` : change le modèle et le niveau de la session
+    /// ouverte sans la relancer (model-selector-in-embedded-omp-session S-2). Rend la
+    /// description APRÈS le changement ; un refus (409, 400, 500) porte sa raison.
+    func setSessionModel(id: String, model: String, thinkingLevel: String?) async throws -> ServiceSessionInfo {
+        let json = try await request("POST", path: ["sessions", id, "model"], body: Self.modelBody(model, thinkingLevel))
+        guard let info = ServiceSessionInfo.decode(json) else {
+            throw ServiceClientError.malformed(reason: "session illisible")
+        }
+        return info
+    }
+
+    /// `GET /v1/projects/{repo}/model` : le défaut OMP du projet (S-3). Le chemin
+    /// absolu du dépôt voyage en UN segment, percent-encodé.
+    func projectModel(root: String) async throws -> ServiceModelChoice {
+        let json = try await request("GET", path: ["projects", root, "model"])
+        guard let choice = ServiceModelChoice.decode(json) else {
+            throw ServiceClientError.malformed(reason: "défaut du projet illisible")
+        }
+        return choice
+    }
+
+    /// `POST /v1/projects/{repo}/model` : pose le défaut OMP du projet (S-3) et rend
+    /// la valeur relue après écriture.
+    func setProjectModel(root: String, model: String, thinkingLevel: String?) async throws -> ServiceModelChoice {
+        let json = try await request("POST", path: ["projects", root, "model"], body: Self.modelBody(model, thinkingLevel))
+        guard let choice = ServiceModelChoice.decode(json) else {
+            throw ServiceClientError.malformed(reason: "défaut du projet illisible")
+        }
+        return choice
+    }
+
+    private static func modelBody(_ model: String, _ thinkingLevel: String?) -> [String: Any] {
+        var body: [String: Any] = ["model": model]
+        if let thinkingLevel { body["thinkingLevel"] = thinkingLevel }
+        return body
+    }
+
     func startConduite(repo: String, name: String) async throws -> ServiceSessionInfo {
         let json = try await request("POST", path: ["projects", repo, "conduite"], body: ["name": name])
         guard let object = json.objectValue,
@@ -270,16 +307,30 @@ struct ServiceClient: Sendable {
         return response.json ?? .null
     }
 
+    /// L'URL d'une requête : CHAQUE segment est percent-encodé (caractères non
+    /// réservés seulement), donc un chemin de dépôt absolu reste UN segment
+    /// (`%2FUsers%2F…`) que le routeur du service découpe puis décode.
     private func makeRequest(_ method: String, path: [String]) -> URLRequest {
         var url = endpoint.baseURL
-        for segment in path {
-            url.appendPathComponent(segment, isDirectory: false)
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            var base = components.percentEncodedPath
+            while base.hasSuffix("/") { base.removeLast() }
+            components.percentEncodedPath = base + path.map { "/" + Self.encodeSegment($0) }.joined()
+            url = components.url ?? url
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(endpoint.token, forHTTPHeaderField: "X-OMP-Service-Token")
         request.timeoutInterval = 30
         return request
+    }
+
+    private static let unreserved = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    )
+
+    private static func encodeSegment(_ segment: String) -> String {
+        segment.addingPercentEncoding(withAllowedCharacters: unreserved) ?? segment
     }
 
     /// La table d'erreurs de S-2 : chaque code a son cas typé.
@@ -290,6 +341,7 @@ struct ServiceClient: Sendable {
         case 400: return .badRequest(reason: reason ?? "requête refusée")
         case 404: return .notFound(reason: reason ?? "inconnu")
         case 409: return .conflict(reason: reason ?? "conflit d'état")
+        case 500 where reason != nil: return .serverError(reason: reason ?? "")
         case 503: return .stopping
         default: return .transport(reason: "statut HTTP \(status)")
         }

@@ -26,6 +26,7 @@ struct IOSSessionOmpScreen: View {
 
     @State private var showingLaunch = false
     @State private var showingStop = false
+    @State private var showingModel = false
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
@@ -108,7 +109,10 @@ struct IOSSessionOmpScreen: View {
         .onAppear { model.appeared() }
         .onDisappear { model.disappeared() }
         .onChange(of: client.state) {
-            if case .connected = client.state { model.refresh() }
+            if case .connected = client.state {
+                model.refresh()
+                Task { await model.loadCatalog() }
+            }
         }
         .onChange(of: client.hosted) { model.syncThread() }
         .sheet(isPresented: $showingLaunch) {
@@ -116,9 +120,13 @@ struct IOSSessionOmpScreen: View {
                 await model.launch(repoKey: repoKey)
             }
         }
+        .sheet(isPresented: $showingModel) {
+            IOSSessionModelSheet(model: model)
+        }
         .task {
             // Le crochet de recette ouvre la feuille d'elle-même, sur la fixture.
             if recipe == .lancement { showingLaunch = true }
+            await model.loadCatalog()
         }
         .sheet(item: pendingDialogBinding) { dialog in
             IOSProjectDialogSheet(dialog: dialog) { request in
@@ -159,6 +167,9 @@ struct IOSSessionOmpScreen: View {
                     .iosBanner(tone: .danger)
                     .accessibilityIdentifier(SessionOmpAccessibility.banner)
             }
+            if IOSSessionOmpModel.offersModel(client.hosted) {
+                modelRow
+            }
             content()
         }
         .iosPanel()
@@ -171,6 +182,45 @@ struct IOSSessionOmpScreen: View {
     }
 
     // MARK: - États
+
+    /// La valeur active, toujours visible (B-1), et « Changer » (S-8). Mise à jour à
+    /// chaque trame `hosted`. Aux tailles d'accessibilité, le bouton passe sous le
+    /// libellé.
+    private var modelRow: some View {
+        let label = model.modelLabel
+        return VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text(verbatim: label)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    changeModelButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(verbatim: label)
+                        .font(.callout)
+                    changeModelButton
+                }
+            }
+            if let help = model.modelHelp {
+                Text(verbatim: help)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(SessionOmpAccessibility.modelHelp)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .iosCard()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(SessionOmpAccessibility.model)
+    }
+
+    private var changeModelButton: some View {
+        Button(SessionConsoleText.Model.change) { showingModel = true }
+            .buttonStyle(.bordered)
+            .disabled(!model.canChangeModel)
+            .accessibilityIdentifier(SessionOmpAccessibility.modelChange)
+    }
 
     private var header: some View {
         HStack(spacing: 8) {

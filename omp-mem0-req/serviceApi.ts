@@ -11,6 +11,7 @@
 import type { AuditLaunchOutcome } from "./auditRecord.ts";
 import type { PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import type { Lot } from "./lot.ts";
+import type { ProjectModelDefault } from "./serviceModels.ts";
 
 
 export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "stopping" | "internal";
@@ -67,6 +68,10 @@ export type SessionDescription = {
   sessionFile: string | null;
   contextPeak: number | null;
   compactions: number;
+  /** Le sélecteur `provider/id` du modèle actif, `null` sans modèle (S-1). */
+  model: string | null;
+  /** Le niveau de réflexion configuré (`session.configuredThinkingLevel()`), `null` si indéfini (S-1). */
+  thinkingLevel: string | null;
 };
 
 /** Un dialogue en vol : la forme EXACTE de `RpcDialogRequest` (Doc-4 §3). */
@@ -102,7 +107,9 @@ export type ServiceFrame =
   | { event: "dialog"; data: DialogRequest }
   | { event: "dialog_cancelled"; data: { id: string } }
   | { event: "notice"; data: { level: "info" | "warning" | "error"; message: string } }
-  | { event: "prompt_end"; data: { status: "completed" | "aborted" | "failed" } };
+  | { event: "prompt_end"; data: { status: "completed" | "aborted" | "failed" } }
+  /** Le modèle et le niveau actifs : un REMPLACEMENT d'état, jamais un delta (S-1). */
+  | { event: "model"; data: { model: string | null; thinkingLevel: string | null } };
 
 
 /** Un abonnement à une session : l'instantané, puis le flux. */
@@ -170,4 +177,10 @@ export type ServiceApi = {
   answerAudit: (id: string, body: unknown) => Promise<AuditAnswerResult>;
   /** Arrête un audit : ses features non livrées sont annulées (S-4). */
   stopAudit: (id: string) => Promise<AuditStopResult>;
+  /** Change le modèle et le niveau d'une session « session » ouverte (S-2). */
+  setSessionModel: (id: string, body: unknown) => Promise<SessionDescription>;
+  /** Le défaut OMP d'un projet (S-3). */
+  projectModel: (repo: string) => Promise<ProjectModelDefault>;
+  /** Écrit le défaut OMP d'un projet (S-3). */
+  setProjectModel: (repo: string, body: unknown) => Promise<ProjectModelDefault>;
 };

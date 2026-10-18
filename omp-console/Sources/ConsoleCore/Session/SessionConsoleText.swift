@@ -151,4 +151,43 @@ public enum SessionConsoleText {
         public static func event(_ type: String) -> String { "Événement · \(type)" }
     }
 
+    /// Le sélecteur de modèle et de réflexion de la session (model-selector-in-
+    /// embedded-omp-session, S-6) : les mots partagés par le Mac et l’iPhone.
+    public enum Model {
+        public static let change = "Changer"
+        public static let apply = "Appliquer"
+        public static let cancel = "Annuler"
+        public static let filter = "Filtrer les modèles"
+        public static let noMatch = "Aucun modèle ne correspond."
+        public static let loading = "Chargement des modèles…"
+        /// Un changement est déjà parti : le suivant attend sa réponse.
+        public static let applyingHelp = "Un changement de modèle est déjà en cours."
+        public static let busyHelp = "Indisponible pendant que OMP répond."
+        /// Aucun dossier de projet : le choix n’a pas de cible (R_NO_PROJECT).
+        public static let noProject = "Choisissez d’abord un dossier de projet sur le Mac."
+        public static let defaultModel = "défaut OMP"
+
+        /// Le nom d’un niveau de réflexion ; un niveau inconnu reste tel quel.
+        public static func levelName(_ level: String) -> String {
+            switch level {
+            case "off": return "désactivée"
+            case "auto": return "automatique"
+            case "minimal": return "minimale"
+            case "low": return "faible"
+            case "medium": return "moyenne"
+            case "high": return "élevée"
+            case "xhigh": return "très élevée"
+            case "max": return "maximale"
+            default: return level
+            }
+        }
+
+        /// Le libellé de la valeur affichée : le nom du modèle seul quand le niveau
+        /// est inconnu, sinon suivi de « · réflexion <niveau> ».
+        public static func label(name: String, level: String?) -> String {
+            guard let level else { return name }
+            return "\(name) · réflexion \(levelName(level))"
+        }
+    }
+
 }

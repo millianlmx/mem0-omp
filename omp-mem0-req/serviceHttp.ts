@@ -104,7 +104,9 @@ type Matched =
   | { kind: "audits" }
   | { kind: "auditLaunch"; id: string }
   | { kind: "auditEscalation"; id: string }
-  | { kind: "audit"; id: string };
+  | { kind: "audit"; id: string }
+  | { kind: "sessionModel"; id: string }
+  | { kind: "projectModel"; repo: string };
 
 
 /**
@@ -122,6 +124,7 @@ function match(method: string, segments: string[]): Matched | null {
     return null;
   }
   if (head === "projects" && segments.length === 3 && one !== undefined && two !== undefined) {
+    if (two === "model") return method === "GET" || method === "POST" ? { kind: "projectModel", repo: one } : null;
     if (two !== "conduite") return null;
     return method === "POST" || method === "DELETE" ? { kind: "conduite", repo: one } : null;
   }
@@ -150,6 +153,7 @@ function match(method: string, segments: string[]): Matched | null {
     if (two === "events" && method === "GET") return { kind: "events", id: one };
     if (two === "prompt" && method === "POST") return { kind: "prompt", id: one };
     if (two === "abort" && method === "POST") return { kind: "abort", id: one };
+    if (two === "model" && method === "POST") return { kind: "sessionModel", id: one };
     return null;
   }
   if (segments.length === 4 && two === "dialogs" && three !== undefined && method === "POST") {
@@ -279,6 +283,11 @@ export function createServiceRequestHandler(deps: RouterDeps) {
           return json(await deps.api.answerAudit(route.id, await readJsonBody(req, "réponse")));
         case "audit":
           return json(await deps.api.stopAudit(route.id));
+        case "sessionModel":
+          return json(await deps.api.setSessionModel(route.id, await readJsonBody(req, "modèle")));
+        case "projectModel":
+          if (req.method.toUpperCase() === "GET") return json(await deps.api.projectModel(route.repo));
+          return json(await deps.api.setProjectModel(route.repo, await readJsonBody(req, "modèle")));
       }
     } catch (err) {
       if (err instanceof ServiceError) return errorResponse(err);

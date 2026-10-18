@@ -386,6 +386,10 @@ struct RemoteModelsPayload: Codable, Equatable {
     var selectors: [String]
     var failure: String?
     var names: [String: String]? = nil
+    /// Sélecteur → efforts supportés (model-selector-in-embedded-omp-session S-5),
+    /// ADDITIF : absent d'un Mac antérieur et en cas d'échec ; un modèle sans clé ne
+    /// propose aucun niveau de réflexion.
+    var thinking: [String: [String]]? = nil
 }
 
 struct RemoteMergedPayload: Codable, Equatable {
@@ -432,6 +436,13 @@ struct RemoteHostedSessionPayload: Codable, Equatable {
     var dialogs: [RpcDialogRequest]
     var transcript: [TranscriptLine]
     var truncated: Bool
+    /// La valeur affichée par la section Session OMP du Mac (S-6) : le modèle et le
+    /// niveau de la session vivante, sinon le défaut du projet ; `nil` = aucun
+    /// (« défaut OMP »). Toujours encodés par le Mac, optionnels au décodage client.
+    var model: String? = nil
+    var thinkingLevel: String? = nil
+    /// OMP traite un tour : le sélecteur est alors indisponible.
+    var turnRunning: Bool? = nil
 }
 
 /// Une ligne du fil de la session hébergée. L'hôte RPC n'existe plus (la session
@@ -497,6 +508,13 @@ struct RemoteConduiteRequest: Decodable, Equatable {
 /// `GET /v1/repos` — jamais un chemin.
 struct RemoteHostedLaunchRequest: Decodable, Equatable {
     var repoKey: String
+}
+
+/// Le corps de `POST /v1/session/model` (S-7) : le sélecteur `provider/id` et le
+/// niveau de réflexion voulu (`nil` = aucun).
+struct RemoteSessionModelRequest: Decodable, Equatable {
+    var model: String
+    var thinkingLevel: String?
 }
 
 /// Le corps de `POST /v1/audits` (S-7) : la clé d'un dépôt servi par

@@ -145,6 +145,29 @@ struct ServiceSessionInfo: Equatable, Sendable {
     let purpose: String
     let state: SessionRunState
     let sessionFile: String?
+    /// Le sélecteur `provider/id` du modèle actif et le niveau de réflexion
+    /// configuré (model-selector-in-embedded-omp-session S-1) ; `nil` quand le
+    /// service ne les donne pas (service antérieur, session sans modèle).
+    let model: String?
+    let thinkingLevel: String?
+
+    init(
+        id: String,
+        cwd: String,
+        purpose: String,
+        state: SessionRunState,
+        sessionFile: String?,
+        model: String? = nil,
+        thinkingLevel: String? = nil
+    ) {
+        self.id = id
+        self.cwd = cwd
+        self.purpose = purpose
+        self.state = state
+        self.sessionFile = sessionFile
+        self.model = model
+        self.thinkingLevel = thinkingLevel
+    }
 
     static func decode(_ value: JSONValue) -> ServiceSessionInfo? {
         guard let object = value.objectValue else { return nil }
@@ -153,7 +176,30 @@ struct ServiceSessionInfo: Equatable, Sendable {
         guard let purpose = object["purpose"]?.stringValue else { return nil }
         guard let state = object["state"]?.stringValue.flatMap(SessionRunState.init(rawValue:)) else { return nil }
         let file = object["sessionFile"]?.stringValue
-        return ServiceSessionInfo(id: id, cwd: cwd, purpose: purpose, state: state, sessionFile: file)
+        return ServiceSessionInfo(
+            id: id,
+            cwd: cwd,
+            purpose: purpose,
+            state: state,
+            sessionFile: file,
+            model: object["model"]?.stringValue,
+            thinkingLevel: object["thinkingLevel"]?.stringValue
+        )
+    }
+}
+
+/// Le défaut OMP d'un projet (`GET|POST /v1/projects/{repo}/model`) : le sélecteur
+/// et le niveau, chacun `nil` quand le projet n'en pose pas.
+struct ServiceModelChoice: Equatable, Sendable {
+    let model: String?
+    let thinkingLevel: String?
+
+    static func decode(_ value: JSONValue) -> ServiceModelChoice? {
+        guard let object = value.objectValue else { return nil }
+        return ServiceModelChoice(
+            model: object["model"]?.stringValue,
+            thinkingLevel: object["thinkingLevel"]?.stringValue
+        )
     }
 }
 
@@ -166,6 +212,9 @@ enum ServiceFrame: Equatable, Sendable {
     case dialogCancelled(id: String)
     case notice(level: String, message: String)
     case promptEnd(status: String)
+    /// Le modèle et le niveau actifs de la session, REMPLAÇANT l'état précédent
+    /// (model-selector-in-embedded-omp-session S-1) ; un champ absent ou nul vaut `nil`.
+    case model(model: String?, thinkingLevel: String?)
 
     /// Décode `event: <nom>`, `data: <json>` en trame (S-2, S-6). `nil` pour un
     /// événement inconnu ou un corps illisible : la trame est ignorée.
@@ -191,6 +240,9 @@ enum ServiceFrame: Equatable, Sendable {
         case "prompt_end":
             guard let status = json.objectValue?["status"]?.stringValue else { return nil }
             return .promptEnd(status: status)
+        case "model":
+            guard let object = json.objectValue else { return nil }
+            return .model(model: object["model"]?.stringValue, thinkingLevel: object["thinkingLevel"]?.stringValue)
         default:
             return nil
         }

@@ -345,3 +345,298 @@ func inspectorDiagnosticCarriesThePid() {
     )
     #expect(failed.contains("omp introuvable"))
 }
+
+// MARK: - model-selector-in-embedded-omp-session (S-6)
+
+private let opus = "anthropic/claude-opus-5-5"
+private let sonnet = "anthropic/claude-sonnet-5-5"
+private let gpt = "openai/gpt-5"
+
+/// Le catalogue authentifié d'`omp models --json` : un modèle aux cinq efforts, un
+/// aux deux efforts `low`/`high`, un qui ne raisonne pas.
+private let selectorListing = ModelCatalogListing(
+    selectors: [opus, sonnet, gpt],
+    names: [opus: "Claude Opus 5.5", sonnet: "Claude Sonnet 5.5", gpt: "GPT-5"],
+    thinking: [opus: ["low", "medium", "high", "xhigh", "max"], sonnet: ["low", "high"]]
+)
+
+/// La description d'une session servie, modèle et niveau compris (`nil` ⇒ `null`).
+private func modelSessionJSON(
+    id: String = "sess-m",
+    cwd: String,
+    state: String = "idle",
+    model: String?,
+    level: String?
+) -> [String: Any] {
+    [
+        "id": id, "cwd": cwd, "purpose": "session", "state": state, "sessionFile": NSNull(),
+        "model": model ?? NSNull(), "thinkingLevel": level ?? NSNull(),
+    ]
+}
+
+@MainActor
+private func makeSelectorModel(host: ServiceSessionModel, projectRoot: URL) -> SessionConsoleModel {
+    let suite = UserDefaults(suiteName: "session-console-model-\(UUID().uuidString)") ?? .standard
+    suite.set(projectRoot.path, forKey: SessionConsoleModel.projectRootKey)
+    return SessionConsoleModel(host: host, defaults: suite, modelListingLoader: { .success(selectorListing) })
+}
+
+/// Une session servie ouverte sur `model`/`level`, flux gardé OUVERT, catalogue chargé.
+@MainActor
+private func openModelSession(
+    _ transport: ScriptedServiceTransport,
+    project: URL,
+    model: String?,
+    level: String?
+) async -> (host: ServiceSessionModel, session: SessionConsoleModel) {
+    transport.stubJSON("POST", "/v1/sessions", modelSessionJSON(cwd: project.path, model: model, level: level))
+    transport.scriptStream([], keepOpen: true)
+    let host = makeHost(transport)
+    let session = makeSelectorModel(host: host, projectRoot: project)
+    await session.loadModelCatalog()
+    session.launch()
+    _ = await waitUntil { host.state == .running }
+    _ = await waitUntil { transport.streamOpenCount >= 1 }
+    return (host, session)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-1 : la section montre le modèle et le niveau de la description, puis ceux d'une trame `model`")
+func selectorShowsModelFromDescriptionThenFrame() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/v1/sessions", modelSessionJSON(cwd: project.path, model: opus, level: "high"))
+    transport.scriptStream([], keepOpen: true)
+    let host = makeHost(transport)
+    let model = makeSelectorModel(host: host, projectRoot: project)
+    await model.loadModelCatalog()
+
+    // Aucune session ni défaut de projet : « défaut OMP ».
+    #expect(model.modelLabel == SessionConsoleText.Model.defaultModel)
+
+    // La description porte le modèle et le niveau : affichés sans rien ouvrir.
+    model.launch()
+    #expect(await waitUntil { host.state == .running })
+    #expect(model.modelLabel == "Claude Opus 5.5 · réflexion élevée")
+    #expect(host.model == opus && host.thinkingLevel == "high")
+
+    // Une trame `model` (autre appareil, `/model` du terminal) REMPLACE la valeur.
+    #expect(await waitUntil { transport.streamOpenCount >= 1 })
+    transport.emit(serviceFrame("model", ["model": sonnet, "thinkingLevel": "low"]))
+    #expect(await waitUntil { model.modelLabel == "Claude Sonnet 5.5 · réflexion faible" })
+    // Niveau nul : le nom seul. Modèle hors catalogue : le sélecteur brut.
+    transport.emit(serviceFrame("model", ["model": gpt, "thinkingLevel": NSNull()]))
+    #expect(await waitUntil { model.modelLabel == "GPT-5" })
+    transport.emit(serviceFrame("model", ["model": "x/inconnu", "thinkingLevel": "auto"]))
+    #expect(await waitUntil { model.modelLabel == "x/inconnu · réflexion automatique" })
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-7 : le sélecteur est indisponible pendant un tour et redevient utilisable à la trame `state idle`")
+func selectorIsUnavailableDuringATurn() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    let (host, model) = await openModelSession(transport, project: project, model: sonnet, level: "low")
+
+    #expect(model.canChangeModel)
+    transport.emit(serviceFrame("state", ["state": "running"]))
+    #expect(await waitUntil { host.turnRunning })
+    #expect(!model.canChangeModel)
+    #expect(model.modelRefusal == .turnRunning)
+    #expect(model.modelHelp == SessionConsoleText.Model.busyHelp)
+    model.openModelPicker()
+    #expect(!model.modelPickerShown, "un sélecteur indisponible ne s'ouvre pas")
+
+    transport.emit(serviceFrame("state", ["state": "idle"]))
+    #expect(await waitUntil { !host.turnRunning })
+    #expect(model.canChangeModel)
+    model.openModelPicker()
+    #expect(model.modelPickerShown)
+
+    // Sans projet, le sélecteur n'a pas de cible : indisponible, avec sa raison.
+    model.cancelModelPicker()
+    model.projectRoot = nil
+    #expect(!model.canChangeModel)
+    #expect(model.modelRefusal == .noProject)
+    #expect(model.modelHelp == SessionConsoleText.Model.noProject)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-5 : la liste ne montre que les modèles du catalogue authentifié, filtrés sans tenir compte de la casse")
+func selectorListsOnlyCatalogModels() async throws {
+    let project = try makeProjectDirectory()
+    let model = makeSelectorModel(host: makeHost(ScriptedServiceTransport()), projectRoot: project)
+
+    // Catalogue en chargement : rien n'est offert.
+    #expect(model.modelCatalog == .loading)
+    #expect(model.visibleModels.isEmpty)
+
+    await model.loadModelCatalog()
+    // Un modèle connu d'OMP mais sans authentification n'est pas dans `omp models --json`.
+    #expect(model.visibleModels == [opus, sonnet, gpt])
+    #expect(!model.visibleModels.contains("anthropic/claude-haiku-5"))
+
+    model.modelFilter = "OPUS"
+    #expect(model.visibleModels == [opus], "le nom lisible compte")
+    model.modelFilter = "OPENAI/"
+    #expect(model.visibleModels == [gpt], "le sélecteur compte")
+    model.modelFilter = "introuvable"
+    #expect(model.visibleModels.isEmpty)
+
+    // Un catalogue en échec ne propose rien et garde son motif.
+    let failing = SessionConsoleModel(
+        host: makeHost(ScriptedServiceTransport()),
+        defaults: UserDefaults(suiteName: "session-console-model-\(UUID().uuidString)") ?? .standard,
+        modelListingLoader: { .failure(ModelCatalogError(reason: "omp introuvable")) }
+    )
+    await failing.loadModelCatalog()
+    #expect(failing.modelCatalog == .failed("omp introuvable"))
+    #expect(failing.visibleModels.isEmpty)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-6 : le réglage de réflexion suit le modèle du brouillon (masqué sans effort, sinon seuls ses niveaux)")
+func selectorOffersOnlyTheModelsThinkingLevels() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    let (host, model) = await openModelSession(transport, project: project, model: sonnet, level: "high")
+
+    model.openModelPicker()
+    #expect(model.draftModel == sonnet)
+    #expect(model.draftLevels == ["off", "low", "high"], "seuls les niveaux que le modèle supporte")
+    #expect(model.draftLevel == "high")
+
+    // Opus supporte plus de niveaux : `high` est proposé, il est conservé.
+    model.selectDraftModel(opus)
+    #expect(model.draftLevels == ["off", "low", "medium", "high", "xhigh", "max"])
+    #expect(model.draftLevel == "high")
+    // Retour sur Sonnet depuis `max` : le plus haut niveau proposé ≤ max, soit `high`.
+    model.draftLevel = "max"
+    model.selectDraftModel(sonnet)
+    #expect(model.draftLevel == "high")
+    // Un modèle sans effort : aucun niveau, réglage masqué.
+    model.selectDraftModel(gpt)
+    #expect(model.draftLevels.isEmpty)
+    #expect(model.draftLevel == nil)
+    // Depuis aucun niveau : le premier proposé.
+    model.selectDraftModel(opus)
+    #expect(model.draftLevel == "off")
+
+    // Appliquer un modèle sans effort n'envoie AUCUN niveau.
+    model.selectDraftModel(gpt)
+    transport.stubJSON("POST", "/v1/sessions/sess-m/model", modelSessionJSON(cwd: project.path, model: gpt, level: nil))
+    await model.applyModelDraft()
+    let post = try #require(transport.requests.last { $0.method == "POST" && $0.path.hasSuffix("/model") })
+    #expect(post.body?["model"] as? String == gpt)
+    #expect(post.body?["thinkingLevel"] == nil)
+    #expect(host.model == gpt && host.thinkingLevel == nil)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-3 : appliquer sur une session vivante poste sessions/{id}/model, sans création ni fermeture")
+func applyingOnALiveSessionDoesNotRelaunch() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    let (host, model) = await openModelSession(transport, project: project, model: sonnet, level: "low")
+
+    model.openModelPicker()
+    #expect(model.modelPickerShown)
+    #expect(model.draftModel == sonnet && model.draftLevel == "low")
+    model.selectDraftModel(opus)
+    model.draftLevel = "max"
+    transport.stubJSON("POST", "/v1/sessions/sess-m/model", modelSessionJSON(cwd: project.path, model: opus, level: "max"))
+    await model.applyModelDraft()
+
+    let posts = transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/model") }
+    #expect(posts.count == 1)
+    #expect(posts.first?.path == "/v1/sessions/sess-m/model")
+    #expect(posts.first?.body?["model"] as? String == opus)
+    #expect(posts.first?.body?["thinkingLevel"] as? String == "max")
+    // La même session : une seule création, aucune fermeture.
+    #expect(transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/v1/sessions") }.count == 1)
+    #expect(!transport.requests.contains { $0.method == "DELETE" })
+    #expect(host.state == .running && host.sessionId == "sess-m")
+    // Succès : la valeur affichée est la réponse, le sélecteur se ferme.
+    #expect(host.model == opus && host.thinkingLevel == "max")
+    #expect(model.modelLabel == "Claude Opus 5.5 · réflexion maximale")
+    #expect(!model.modelPickerShown)
+    #expect(model.modelError == nil)
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-8 : sans session, appliquer poste le défaut du projet, puis la session ouverte affiche ce modèle")
+func applyingWithoutASessionSetsTheProjectDefault() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("GET", "/model", ["model": NSNull(), "thinkingLevel": NSNull()])
+    transport.stubJSON("POST", "/model", ["model": opus, "thinkingLevel": "high"])
+    transport.stubJSON("POST", "/v1/sessions", modelSessionJSON(cwd: project.path, model: opus, level: "high"))
+    transport.scriptStream([], keepOpen: true)
+    let host = makeHost(transport)
+    let model = makeSelectorModel(host: host, projectRoot: project)
+    await model.loadModelCatalog()
+    await model.refreshProjectDefault()
+    #expect(model.modelLabel == SessionConsoleText.Model.defaultModel)
+    #expect(model.canChangeModel, "B-5 : le sélecteur reste utilisable sans session")
+
+    model.openModelPicker()
+    model.selectDraftModel(opus)
+    model.draftLevel = "high"
+    await model.applyModelDraft()
+
+    // Le chemin du dépôt voyage en UN segment percent-encodé.
+    let post = try #require(transport.requests.first { $0.method == "POST" && $0.path.hasSuffix("/model") })
+    #expect(post.rawPath == "/v1/projects/" + project.path.replacingOccurrences(of: "/", with: "%2F") + "/model")
+    #expect(post.body?["model"] as? String == opus)
+    #expect(post.body?["thinkingLevel"] as? String == "high")
+    #expect(model.projectDefault == ServiceModelChoice(model: opus, thinkingLevel: "high"))
+    #expect(model.modelLabel == "Claude Opus 5.5 · réflexion élevée")
+    #expect(!model.modelPickerShown)
+    #expect(!transport.requests.contains { $0.method == "POST" && $0.path.hasSuffix("/v1/sessions") })
+
+    // La session ouverte ensuite tourne sur ce modèle dès le premier message.
+    model.launch()
+    #expect(await waitUntil { host.state == .running })
+    #expect(host.model == opus && host.thinkingLevel == "high")
+    #expect(model.modelLabel == "Claude Opus 5.5 · réflexion élevée")
+}
+
+@MainActor
+@Test("model-selector-in-embedded-omp-session/AC-12 : un refus du service garde le sélecteur ouvert avec sa raison et relit la valeur réelle")
+func aRefusalShowsTheReasonAndKeepsTheRealValue() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedServiceTransport()
+    let reason = "Modèle inutilisable : OMP n'a pas d'authentification pour \(opus)."
+    transport.stubJSON("POST", "/v1/sessions/sess-m/model", ["error": "conflict", "reason": reason], status: 409)
+    // La valeur RÉELLE de la session, relue après le refus (≠ création, ≠ brouillon).
+    transport.stubJSON("GET", "/v1/sessions/sess-m", modelSessionJSON(cwd: project.path, model: sonnet, level: "medium"))
+    let (host, model) = await openModelSession(transport, project: project, model: sonnet, level: "low")
+
+    model.openModelPicker()
+    model.selectDraftModel(opus)
+    model.draftLevel = "high"
+    await model.applyModelDraft()
+
+    #expect(model.modelError == reason, "la raison du service, mot pour mot")
+    #expect(model.modelPickerShown, "le sélecteur reste ouvert")
+    #expect(host.model == sonnet && host.thinkingLevel == "medium", "valeur relue, jamais le brouillon")
+    #expect(model.displayedModel == ServiceModelChoice(model: sonnet, thinkingLevel: "medium"))
+    #expect(model.modelLabel == "Claude Sonnet 5.5 · réflexion moyenne")
+    #expect(host.state == .running, "un refus ne tue pas la session")
+
+    // Sans session : un 500 (défaut non écrit) garde aussi la raison, et le défaut est relu.
+    let alone = ScriptedServiceTransport()
+    let writeReason = "Défaut du projet illisible : config.yml."
+    alone.stubJSON("POST", "/model", ["error": "internal", "reason": writeReason], status: 500)
+    alone.stubJSON("GET", "/model", ["model": sonnet, "thinkingLevel": "low"])
+    let idle = makeSelectorModel(host: makeHost(alone), projectRoot: project)
+    await idle.loadModelCatalog()
+    idle.openModelPicker()
+    idle.selectDraftModel(opus)
+    idle.draftLevel = "high"
+    await idle.applyModelDraft()
+    #expect(idle.modelError == writeReason)
+    #expect(idle.modelPickerShown)
+    #expect(idle.projectDefault == ServiceModelChoice(model: sonnet, thinkingLevel: "low"))
+    #expect(idle.modelLabel == "Claude Sonnet 5.5 · réflexion faible")
+}

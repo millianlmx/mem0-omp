@@ -1,4 +1,4 @@
-// Le catalogue des routes du client (S-1) : l'image EXACTE des 43 routes servies
+// Le catalogue des routes du client (S-1) : l'image EXACTE des 44 routes servies
 // par la coque (`RemoteRouter.routes`), méthode et chemin mis à part. Un test
 // confronte les deux — c'est le seul garde-fou contre une route oubliée.
 
@@ -30,7 +30,7 @@ public struct ClientRoute: Equatable, Sendable {
 }
 
 public extension ClientRoute {
-    /// La liste UNIQUE des routes du client : 43 entrées, ni plus ni moins.
+    /// La liste UNIQUE des routes du client : 44 entrées, ni plus ni moins.
     static let all: [ClientRoute] = [
         ClientRoute(name: "version", method: "GET", path: "/v1/version"),
         ClientRoute(name: "store", method: "GET", path: "/v1/store"),
@@ -66,6 +66,7 @@ public extension ClientRoute {
         ClientRoute(name: "hosted.prompt", method: "POST", path: "/v1/session/prompt"),
         ClientRoute(name: "hosted.launch", method: "POST", path: "/v1/session/launch"),
         ClientRoute(name: "hosted.relaunch", method: "POST", path: "/v1/session/relaunch"),
+        ClientRoute(name: "hosted.model", method: "POST", path: "/v1/session/model"),
         ClientRoute(name: "hosted.stop", method: "POST", path: "/v1/session/stop"),
         ClientRoute(name: "hosted.dialog", method: "POST", path: "/v1/session/dialogs/{id}"),
         ClientRoute(name: "prs", method: "GET", path: "/v1/projects/{repoKey}/pull-requests"),

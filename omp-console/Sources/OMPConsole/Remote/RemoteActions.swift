@@ -511,8 +511,33 @@ final class RemoteActions {
             projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
             transcript: [],
-            truncated: false
+            truncated: false,
+            model: session.displayedModel.model,
+            thinkingLevel: session.displayedModel.thinkingLevel,
+            turnRunning: host.state == .running && host.turnRunning
         )
+    }
+
+    /// Change le modèle et le niveau de la session hébergée (S-7), par le MÊME
+    /// chemin que le bouton du Mac (`SessionConsoleModel.applyModel`). Sans projet ⇒
+    /// R_NO_PROJECT ; tour en cours ⇒ R_BUSY ; refus du service ⇒ 409 avec sa raison
+    /// mot pour mot ; service absent ⇒ 503 (table existante).
+    func setHostedModel(model: String, thinkingLevel: String?) async throws(GestureRefusal) -> RemoteHostedSessionPayload {
+        if let refusal = session.modelRefusal { throw refusal }
+        do {
+            try await session.applyModel(model, thinkingLevel: thinkingLevel)
+        } catch let error as ServiceClientError {
+            switch error {
+            case .badRequest(let reason), .notFound(let reason), .conflict(let reason), .serverError(let reason):
+                await session.refreshDisplayedModel()
+                throw .modelRefused(reason)
+            default:
+                throw .serviceFailure(ServiceSessionModel.userMessage(of: error))
+            }
+        } catch {
+            throw .serviceFailure(ServiceSessionModel.userMessage(of: error))
+        }
+        return hostedSession()
     }
 
     /// Envoie une invite à la session hébergée, selon la règle du champ de saisie

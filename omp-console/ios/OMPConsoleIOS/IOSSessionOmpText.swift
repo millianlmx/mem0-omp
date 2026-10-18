@@ -21,6 +21,11 @@ enum IOSSessionOmpText {
     static let stopConfirmTitle = "Arrêter la session ?"
     static let stopConfirmMessage = "La session hébergée sur le Mac s’arrêtera."
 
+    /// Le titre de la feuille du modèle et de la réflexion (model-selector-in-
+    /// embedded-omp-session, S-8). Les autres mots (Changer, Appliquer, filtre…) sont
+    /// `SessionConsoleText.Model`, partagés avec le Mac.
+    static let modelSheetTitle = "Modèle et réflexion"
+
     /// Le libellé d'accessibilité de l'en-tête : le dépôt, puis l'état (S-2).
     static func headerLabel(_ project: String, _ state: String) -> String { "\(project) — \(state)" }
 }
@@ -63,4 +68,20 @@ enum SessionOmpAccessibility {
     static let launchRepositories = "ios.sessionomp.launch.repositories"
 
     static func launchRepo(_ repoKey: String) -> String { "ios.sessionomp.launch.repo.\(repoKey)" }
+
+    // --- Le modèle et la réflexion (model-selector-in-embedded-omp-session) --
+    static let model = "ios.sessionomp.model"
+    static let modelChange = "ios.sessionomp.model.change"
+    static let modelHelp = "ios.sessionomp.model.help"
+    static let modelSheet = "ios.sessionomp.model.sheet"
+    static let modelCancel = "ios.sessionomp.model.cancel"
+    static let modelApply = "ios.sessionomp.model.apply"
+    static let modelThinking = "ios.sessionomp.model.thinking"
+    static let modelError = "ios.sessionomp.model.error"
+    static let modelFailure = "ios.sessionomp.model.failure"
+    static let modelLoading = "ios.sessionomp.model.loading"
+    static let modelEmpty = "ios.sessionomp.model.empty"
+    static let modelList = "ios.sessionomp.model.list"
+
+    static func modelRow(_ selector: String) -> String { "ios.sessionomp.model.row.\(selector)" }
 }

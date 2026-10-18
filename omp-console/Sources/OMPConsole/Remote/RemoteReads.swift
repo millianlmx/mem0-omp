@@ -211,7 +211,12 @@ final class RemoteReads {
     func models() async -> RemoteModelsPayload {
         switch await ModelCatalogLoader.loadListing() {
         case .success(let listing):
-            return RemoteModelsPayload(selectors: listing.selectors, failure: nil, names: listing.names)
+            return RemoteModelsPayload(
+                selectors: listing.selectors,
+                failure: nil,
+                names: listing.names,
+                thinking: listing.thinking
+            )
         case .failure(let error):
             return RemoteModelsPayload(selectors: [], failure: error.reason)
         }
