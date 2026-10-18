@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.33.0 — 2026-10-18
+
+- feat(req,console): sélecteur de modèle et de réflexion dans la Session OMP — affichage permanent, changement sans relance, défaut OMP du projet (Mac, iPhone, iPad) (#217) (1eb498a)
+
 ## omp-mem0-req 0.32.0 — 2026-10-18
 
 - feat(arbitre,lot,console): l'arbitre tranche les jalons et se voit travailler — revue attestée par critère, refus corrigé dans le tour, modèle par contexte, alerte à l'escalade seule (#215) (4287e13)
