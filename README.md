@@ -1317,12 +1317,13 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   feature du lot, lui arrive comme un nouveau tour. La session se souvient donc du rapport,
   du brief, de ses décisions passées et de celles de l'utilisateur (une question déjà
   tranchée dans une feature sœur reçoit la même réponse ; une décision de source
-  `utilisateur` prévaut). Elle tourne sur le modèle cadrage+revue de la feature (principal
-  puis repli, gardés par le registre des quotas), avec pour cwd le **dépôt principal** — chaque
-  élément nomme le worktree de sa feature, lu par chemin absolu. **L'arbitre tourne toujours sur
-  le groupe cadrage+revue (principal puis repli), quelle que soit la phase de l'élément
-  arbitré** : s'il est épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe
-  exécution ; un modèle ou un repli différent de celui de la session ouverte la rouvre. Les
+  `utilisateur` prévaut). Elle a pour cwd le **dépôt principal** — chaque élément nomme le
+  worktree de sa feature, lu par chemin absolu. **L'arbitre tourne toujours sur le groupe
+  cadrage+revue (principal puis repli), quelle que soit la phase de l'élément arbitré**, et
+  son modèle est fixé **par contexte**, pas par feature : la première feature du contexte qui
+  déclare un modèle cadrage+revue le donne, avec son repli (le défaut OMP sinon) — deux
+  features aux modèles différents ne rouvrent donc pas la session à chaque alternance. Épuisé
+  pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Les
   tours d'une **même session** sont **sériels** (la décision d'un élément est au journal
   avant que le tour du suivant ne soit construit) ; deux contextes avancent en parallèle.
   Un tour est borné à 10 minutes depuis son départ. Toute coupure (échéance, plafond de
@@ -1352,20 +1353,25 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     et les 50 entrées les plus récentes du journal de la feature. Même borne de 200 000
     caractères : journal du lot d'abord, puis fin du contrat — les entrées de la feature
     restent intactes. Le tour finit par le **rappel des règles** (trancher le technique,
-    justifier, options par libellé ou numéro, cohérence avec le journal, un appel unique à
-    `arbiter_decide`) — le digest de la directive qui survit à une compaction. Les
-    citations se vérifient dans l'ouverture ET le tour.
+    justifier, options par libellé ou numéro, cohérence avec le journal, corriger une
+    décision refusée) — le digest de la directive qui survit à une compaction. Les
+    citations se vérifient dans l'ouverture, le tour et, au jalon « revue propre », le diff
+    et la liste des critères soumis.
   - **Mesure** : le récap de fin de lot ajoute `arbitrage : N décisions (contexte x,
     arbitrage y, utilisateur z) — S sessions de pilote, T tours` — ce que l'utilisateur a dû
     trancher lui-même, et le coût en sessions.
   - **Dépôt en lecture seule** : seuls `read`, `grep`, `glob`, `lsp` et `arbiter_decide` sont
     actifs ; tout autre outil (`bash`, `write`, `edit` compris) est refusé par l'extension
     (liste blanche), donc aucun fichier du worktree ne peut changer.
-  - **Décision** : l'arbitre appelle `arbiter_decide` une fois par élément — réponse (source `contexte`
+  - **Décision** : l'arbitre appelle `arbiter_decide` pour chaque élément — réponse (source `contexte`
     ou `arbitrage`), approbation d'un jalon, ou escalade. Il tranche tout choix technique ;
     l'escalade est réservée aux choix de produit (nouveau besoin non couvert par le rapport
     ou le brief, changement de périmètre, texte visible par l'utilisateur sans convention
-    dans le dépôt).
+    dans le dépôt). Le pilote **vérifie la décision à l'appel** : refusée, l'outil rend à
+    l'arbitre le motif exact du refus et il la corrige dans le même tour (au plus 2 refus
+    renvoyés, puis la décision est retenue telle quelle) ; une escalade n'est jamais
+    refusée. Un tour fini sur une décision refusée escalade avec ce motif, jamais « arbitre
+    sans décision ».
   - **Justification** : une réponse **et une approbation de jalon** portent au moins une
     justification que le pilote vérifie — une citation présente dans le corpus (espaces
     repliés), une référence `chemin:ligne` ou `chemin:début-fin` relative au worktree (le
@@ -1381,21 +1387,40 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     option reste une réponse libre.
   - **Vérifications des jalons**, en plus du jugement de l'arbitre : « specs validées »
     n'est approuvé que si chaque critère `AC-<n>` du contrat est référencé par une
-    spécification `S-<n>` (et le prompt exige la cohérence avec le rapport) ; « revue
-    propre » reçoit le `git diff --stat` et le diff du worktree par rapport à `HEAD`
-    (fichiers non suivis non ignorés compris, bornés à 60 000 caractères avec troncature
-    annoncée) et, pour chaque `AC-<n>`, les fichiers **du diff** (modifiés ou non suivis,
-    hors `.omp/`) qui le portent — un critère porté seulement par un fichier commité hors
-    du diff vaut « (aucun fichier) » et l'approbation est refusée (« critères sans fichier
-    dans le diff : AC-n »). Deux critères sont en plus **tirés au sort de façon
+    spécification `S-<n>` (`SP-<n>` et `SPEC-<n>` comptent ; le prompt exige la cohérence
+    avec le rapport ; un critère prouvé par un build, un contrôle manuel ou un smoke prévu
+    au contrat est recevable) ; « revue propre » reçoit le `git diff --stat` et le diff du
+    worktree par rapport à `HEAD` (fichiers non suivis non ignorés compris, bornés à 60 000
+    caractères avec troncature annoncée) et, pour chaque `AC-<n>`, les fichiers **du diff**
+    (modifiés ou non suivis, hors `.omp/`) qui le portent — un critère porté seulement par un
+    fichier commité hors du diff vaut « (aucun fichier) ». Un diff vide est refusé (« diff
+    vide : aucun changement à livrer »). Deux critères sont **tirés au sort de façon
     déterministe** (sha256 du diff) : le prompt les nomme et l'approbation exige pour chacun
-    une `references` vérifiée `chemin:ligne` dans un fichier du diff qui porte l'id — l'assertion
-    de test qui matérialise le *Then* —, sinon escalade « assertion non citée pour AC-n ».
+    une **attestation** `attestations: ["AC-<n> chemin:ligne"]` vérifiée dans un fichier du
+    diff — dans un fichier qui porte l'id du critère quand il y en a un (l'assertion de test
+    qui matérialise le *Then*), sinon à la ligne modifiée qui réalise le critère (preuve par
+    build, `plutil`, smoke). Sinon : « attestation manquante pour AC-n (<motif>) ». Une
+    attestation vérifiée est une justification.
   - **Validation et journal** : le pilote **valide** la décision sans rien accorder sur
     parole (jalon « répondu », aucun appel, échéance de 10 minutes ⇒ escalade,
     `feature.escalation` posée) ; chaque décision acceptée est consignée au journal avec sa
     justification (motif, citations, références, rubriques ; les anciennes lignes sans ce
     champ restent lues). Une question déjà au journal est livrée telle quelle, sans arbitre.
+  - **Ce qui se voit pendant l'arbitrage** : une feature arbitrée (contexte d'audit ou de
+    projet, lot piloté par le service) reçoit sa marque `feature.arbitration` **dans la
+    sauvegarde même** qui la met en attente (question, jalon, plafond, échec) : aucun lecteur
+    ne la voit attendre l'utilisateur avant l'arbitre. La marque dit `status: "queued"` (en
+    file derrière d'autres éléments de la même session de pilote) puis `"deciding"` avec
+    `decidingAt` au départ de son tour ; le lot porte `arbiter: true` quand son pilote arbitre.
+    Aucune alerte (« attend ta réponse », « attend ta validation », « attend ton accord »,
+    « bloqué », « échoué ») ne part pour une feature arbitrée : la **seule** alerte est celle de
+    l'**escalade**, `[pipeline] <dépôt>/<feature> : l'arbitre te confie <la question | la
+    validation des spécifications | l'accord pour livrer | le plafond de revue | l'échec du
+    run> (maillon /<étape>)`, suivie de `motif de l'arbitre : …` et de la question (sauf
+    relais `/audit` ouvert : la session la reçoit). OMP Console range les features
+    arbitrées dans la voie « Chez l’arbitre » (« L’arbitre décide depuis m:ss » / « En file pour
+    l’arbitre »), sans bouton ni notification, ne met dans « À vous » que les escalades, motif
+    affiché (« Motif de l’arbitre : … »), et liste les « Décisions de l’arbitre » de tous les lots.
   - **Plafond de la boucle revue ⇄ correction** (arbitré dès qu'une feature a un contexte
     d'audit ou de projet) : l'arbitre lit `## Revue` (les bloquants) et `## Corrections`, puis
     rend l'une de trois décisions — **relancer** avec un recentrage (les bloquants précis à

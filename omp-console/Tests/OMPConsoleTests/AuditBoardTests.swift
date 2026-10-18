@@ -117,17 +117,18 @@ func auditBoardMarksTakenProposals() throws {
     #expect(analyse.proposals.isEmpty && analyse.briefDraft == nil)
 }
 
-@Test("audit-panel-in-omp-console : l’attente suit la priorité escalade, arbitrage, puis état de la feature")
+@Test("audit-panel-in-omp-console : l’attente suit la priorité escalade, arbitrage (en file ou en décision), puis état de la feature")
 func auditWaitingPriority() {
-    #expect(AuditWaiting.of(state: .running, prUrl: nil, escalated: true, arbitrating: true) == .escalated)
-    #expect(AuditWaiting.of(state: .waiting, prUrl: nil, escalated: false, arbitrating: true) == .arbitrating)
-    #expect(AuditWaiting.of(state: .pending, prUrl: nil, escalated: false, arbitrating: false) == .notStarted)
-    #expect(AuditWaiting.of(state: nil, prUrl: nil, escalated: false, arbitrating: false) == .notStarted)
-    #expect(AuditWaiting.of(state: .blocked, prUrl: nil, escalated: false, arbitrating: false) == .blocked)
-    #expect(AuditWaiting.of(state: .failed, prUrl: nil, escalated: false, arbitrating: false) == .failed)
-    #expect(AuditWaiting.of(state: .done, prUrl: nil, escalated: false, arbitrating: false) == .done)
-    #expect(AuditWaiting.of(state: .done, prUrl: "https://example.com/pr/1", escalated: false, arbitrating: false) == .prCreated)
-    #expect(AuditText.waiting(.arbitrating) == "L’arbitre examine une question")
+    let escalated = ArbiterState.escalated(kind: .jalon, reason: "motif")
+    #expect(AuditWaiting.of(state: .running, prUrl: nil, arbiter: escalated) == .escalated)
+    #expect(AuditWaiting.of(state: .waiting, prUrl: nil, arbiter: .queued(since: 1)) == .arbiterQueued)
+    #expect(AuditWaiting.of(state: .blocked, prUrl: nil, arbiter: .deciding(since: 2)) == .arbiterDeciding)
+    #expect(AuditWaiting.of(state: .pending, prUrl: nil, arbiter: .none) == .notStarted)
+    #expect(AuditWaiting.of(state: nil, prUrl: nil, arbiter: .none) == .notStarted)
+    #expect(AuditWaiting.of(state: .blocked, prUrl: nil, arbiter: .none) == .blocked)
+    #expect(AuditWaiting.of(state: .failed, prUrl: nil, arbiter: .none) == .failed)
+    #expect(AuditWaiting.of(state: .done, prUrl: nil, arbiter: .none) == .done)
+    #expect(AuditWaiting.of(state: .done, prUrl: "https://example.com/pr/1", arbiter: .none) == .prCreated)
     #expect(AuditText.waiting(.notStarted) == "En attente de démarrage")
 }
 
@@ -160,7 +161,7 @@ func lotFeatureDecodesEscalationAndArbitration() throws {
     "arbitration":{"key":"question:reprise:12","startedAt":40}
     """))
     #expect(complete.escalation == FeatureEscalation(key: "question:reprise:12", kind: .question, phase: .req, question: "Reprendre ?", options: ["Oui", "Non"], reason: "Absent du brief.", at: 42))
-    #expect(complete.arbitration == FeatureArbitration(key: "question:reprise:12", startedAt: 40))
+    #expect(complete.arbitration == FeatureArbitration(key: "question:reprise:12", startedAt: 40, status: .queued, decidingAt: nil))
 
     let partial = try #require(try feature("""
     ,"escalation":{"key":"question:reprise:12","kind":"question","phase":"req","question":"Reprendre ?","options":["Oui",3],"reason":"","at":42},\

@@ -109,8 +109,13 @@ export function quotaGroupsOf(lot: Lot, keep: (feature: LotFeature) => boolean =
 }
 
 
-/** Un arbitrage en vol (S-9) : la clé de l'élément arbitré et l'instant de départ. */
-export type FeatureArbitration = { key: string; startedAt: number };
+/**
+ * Un arbitrage en vol (S-9) : la clé de l'élément arbitré, l'instant de mise en file
+ * (`startedAt`) et son ÉTAT, lu par la Console — `queued` : en file derrière d'autres
+ * éléments de la même session de pilote ; `deciding` : le tour du pilote a commencé à
+ * `decidingAt`. Absent (fichier ancien) = `queued`.
+ */
+export type FeatureArbitration = { key: string; startedAt: number; status?: "queued" | "deciding"; decidingAt?: number };
 
 /** Le motif d'une relance appliquée par l'arbitre. */
 export type ArbiterRelaunchMotive = "cap" | "failure";
@@ -346,6 +351,13 @@ export type Lot = {
   owner: { pid: number; sessionFile: string | null; sessionId: string | null; heartbeatAt?: number };
   createdAt: number;
   launchedAt: number | null;
+  /**
+   * Le pilote du lot ARBITRE (S-9) : `true` quand le lot est piloté par le service, qui
+   * câble l'arbitre. Une feature avec contexte (`auditSession`) d'un tel lot passe donc
+   * par l'arbitre avant l'utilisateur, même avant que sa marque `arbitration` soit
+   * posée (question en vol tout juste parue) : la Console le lit. Absent = `false`.
+   */
+  arbiter?: boolean;
   features: LotFeature[];
 };
 
@@ -876,7 +888,12 @@ function asFeatureArbitration(raw: unknown): FeatureArbitration | null {
   if (!raw || typeof raw !== "object") return null;
   const a = raw as Record<string, unknown>;
   if (typeof a.key !== "string" || a.key === "" || typeof a.startedAt !== "number" || !Number.isFinite(a.startedAt)) return null;
-  return { key: a.key, startedAt: a.startedAt };
+  return {
+    key: a.key,
+    startedAt: a.startedAt,
+    ...(a.status === "queued" || a.status === "deciding" ? { status: a.status } : {}),
+    ...(typeof a.decidingAt === "number" && Number.isFinite(a.decidingAt) ? { decidingAt: a.decidingAt } : {}),
+  };
 }
 
 
@@ -1103,6 +1120,7 @@ export function asLot(raw: unknown): Lot | null {
     },
     createdAt: num(l.createdAt),
     launchedAt: typeof l.launchedAt === "number" && Number.isFinite(l.launchedAt) ? l.launchedAt : null,
+    ...(l.arbiter === true ? { arbiter: true } : {}),
     features,
   };
 }
@@ -1293,6 +1311,31 @@ export function buildLotAlert(repo: string, feature: LotFeature): LotAlert | nul
     return { text: `[pipeline] ${head} terminé — ${feature.prUrl ? `PR ${feature.prUrl}` : "PR non confirmée"}`, tone: "info" };
   }
   return null;
+}
+
+
+/**
+ * L'alerte d'une ESCALADE de l'arbitre (S-9) : le seul moment où une feature arbitrée
+ * appelle l'utilisateur — ce que l'arbitre lui confie, son motif, puis la question.
+ * Les transitions d'une feature arbitrée (attente, plafond, échec) ne sont pas
+ * annoncées : l'arbitre les traite d'abord.
+ */
+export function buildEscalationAlert(repo: string, feature: LotFeature, escalation: FeatureEscalation): LotAlert {
+  const what =
+    escalation.kind === "plafond"
+      ? "le plafond de revue"
+      : escalation.kind === "echec"
+        ? "l'échec du run"
+        : escalation.kind === "jalon"
+          ? escalation.phase === "specs"
+            ? "la validation des spécifications"
+            : "l'accord pour livrer"
+          : "une question";
+  const question = escalation.question.trim() === "" ? "" : `\n${clipTail(escalation.question, LOT_ALERT_PROMPT_MAX)}`;
+  return {
+    text: `[pipeline] ${repo}/${feature.slug} : l'arbitre te confie ${what} (maillon /${escalation.phase}) — /pipelines\nmotif de l'arbitre : ${escalation.reason}${question}`,
+    tone: escalation.kind === "echec" || escalation.kind === "plafond" ? "error" : "warning",
+  };
 }
 
 

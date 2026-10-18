@@ -34,6 +34,12 @@ final class KanbanModel: ObservableObject {
     @Published var modelsSheetCard: KanbanCard?
     @Published var diagnosticShown = false
     @Published var technicalExpanded = false
+    /// La bulle « Décisions de l’arbitre » de la barre d'outils.
+    @Published var decisionsShown = false
+    /// Le fil des décisions de TOUS les lots (`AuditsEnvelope.feed`), la plus
+    /// récente d'abord, et le nom de dépôt de chaque clé de journal.
+    @Published private(set) var decisions: [ArbiterDecision] = []
+    @Published private(set) var decisionRepos: [String: String] = [:]
     /// Les voies repliables que l'utilisateur a dépliées (S-2 de
     /// parite-mac-des-correctifs-ios) : vide à chaque visite de Pipelines
     /// (`resetLaneFolding`, appelé quand la section quitte l'écran), donc
@@ -245,6 +251,9 @@ final class KanbanModel: ObservableObject {
     private func apply(_ snapshot: StoreSnapshot) {
         lastSnapshot = snapshot
         prStates.observe(urls: PullRequestFacts.urls(in: snapshot))
+        if decisions != snapshot.audits.feed { decisions = snapshot.audits.feed }
+        let repos = ArbiterDecisionFeed.repoNames(lots: snapshot.lots.lots)
+        if decisionRepos != repos { decisionRepos = repos }
         derive(snapshot, facts: prStates.facts)
     }
 

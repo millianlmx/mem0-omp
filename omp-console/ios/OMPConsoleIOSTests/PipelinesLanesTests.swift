@@ -91,13 +91,25 @@ struct PipelinesLanesTests {
 
     @Test("ios-pipelines-lanes-interminables/AC-7 : sur iPhone, aucune voie vide n'apparaît, ni repliée ni dépliée")
     func compactHidesEveryEmptyLane() {
-        let columnOf: [KanbanLane: KanbanColumn] = [
-            .pasCommencees: .enAttente, .enCours: .enCours, .aVous: .questionEnVol,
-            .livrees: .fusionne, .arretees: .echec,
-        ]
+        func laneCard(_ id: String, _ lane: KanbanLane) -> KanbanCard {
+            switch lane {
+            case .pasCommencees: return card(id, .enAttente)
+            case .enCours: return card(id, .enCours)
+            case .arbitre:
+                var held = card(id, .jalonSpecs)
+                held.action = KanbanCardAction(
+                    repoRoot: "/depot", slug: id, waitKind: .specs, featureState: .waiting, run: nil,
+                    arbiter: .queued(since: 0)
+                )
+                return held
+            case .aVous: return card(id, .questionEnVol)
+            case .livrees: return card(id, .fusionne)
+            case .arretees: return card(id, .echec)
+            }
+        }
         for empty in KanbanLane.allCases {
-            let others = KanbanLane.allCases.filter { $0 != empty }.compactMap { columnOf[$0] }
-            let board = KanbanBoard(cards: others.enumerated().map { card("c\($0.offset)", $0.element) }, anomalies: [])
+            let others = KanbanLane.allCases.filter { $0 != empty }
+            let board = KanbanBoard(cards: others.enumerated().map { laneCard("c\($0.offset)", $0.element) }, anomalies: [])
             for unfolded: Set<KanbanLane> in [[], Set(KanbanLane.allCases)] {
                 let rows = KanbanLaneRows.rows(board.lanes, layout: .condensed, unfolded: unfolded)
                 #expect(rows.allSatisfy { $0.lane != empty })

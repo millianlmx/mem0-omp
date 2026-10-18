@@ -323,8 +323,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 ## Pipelines (feature `ios-pipelines`)
 
 - L'écran Pipelines rend l'ardoise PARTAGÉE de `ConsoleCore` (`KanbanBoard`), la
-  même dérivation que macOS : les cinq voies de `KanbanLane`, leurs cartes et
-  leurs états viennent du magasin, jamais d'un calcul propre à l'app.
+  même dérivation que macOS : les voies de `KanbanLane` (dont « Chez l’arbitre »,
+  montrée seulement quand l'arbitre tient une feature), leurs cartes et leurs
+  états viennent du magasin, jamais d'un calcul propre à l'app. La barre porte
+  « Décisions de l’arbitre », une feuille du fil `audits.feed` de la trame `store`.
   `[garde: design-ios/AC-3]`
 - En largeur COMPACTE (iPhone portrait), chaque voie est une section de la liste
   groupée de l'écran — son en-tête, puis une rangée par carte ; en largeur

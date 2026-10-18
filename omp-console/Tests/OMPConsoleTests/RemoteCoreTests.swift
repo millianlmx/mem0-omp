@@ -115,7 +115,7 @@ func fullyPopulatedSnapshotRoundTripsThroughJSON() throws {
         "projects": ["availability", "projects", "discardedEntries"],
         "inbox": ["availability", "boxes", "discardedEntries"],
         "audit": ["availability", "relays", "discardedEntries"],
-        "audits": ["availability", "records", "decisions", "discardedEntries"],
+        "audits": ["availability", "records", "decisions", "feed", "discardedEntries"],
     ]
     for (store, keys) in envelopes {
         let envelope = try #require(object[store] as? [String: Any], "l'enveloppe \(store) doit être un objet")

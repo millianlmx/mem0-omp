@@ -132,7 +132,7 @@ public enum AuditPresentation {
     public static func isFinished(_ waiting: AuditWaiting) -> Bool {
         switch waiting {
         case .prCreated, .done, .cancelled: true
-        case .escalated, .arbitrating, .notStarted, .running, .waiting, .blocked, .failed: false
+        case .escalated, .arbiterQueued, .arbiterDeciding, .notStarted, .running, .waiting, .blocked, .failed: false
         }
     }
 

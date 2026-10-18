@@ -33,6 +33,9 @@ enum GestureRefusal: Error, Equatable, Sendable {
     // cartes
     case unknownCard, cardWithoutGesture, noQuestionInFlight, missingQuestionId, staleQuestion, labelNotInOptions,
          emptyText, notAwaitingReply, noLiveRun, milestoneNotAwaited, cardWithoutRepository, cardWithoutLot
+    /// L'arbitre tient l'élément (`ArbiterState.isArbitrating`) : ni réponse,
+    /// ni jalon, ni relance de l'utilisateur tant qu'il décide.
+    case arbiterHandles
     /// Motif relu en tête du journal par `checkJournal`.
     case journalFailure(String)
     /// Anomalie interne de reprise ou de relance (le geste n'a rien consigné) :
@@ -80,6 +83,7 @@ enum GestureRefusal: Error, Equatable, Sendable {
         case .milestoneNotAwaited: return .conflict("ce jalon n'est pas attendu")
         case .cardWithoutRepository: return .conflict("carte sans dépôt")
         case .cardWithoutLot: return .conflict("carte sans lot")
+        case .arbiterHandles: return .conflict("arbitrage en cours — la décision sera consignée au journal")
         case .journalFailure(let reason): return .conflict(reason)
         case .nothingRecorded: return .server("le geste de reprise n'a rien consigné")
         case .relaunchRefused(let reason): return .conflict(reason ?? "relance refusée")

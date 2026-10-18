@@ -313,7 +313,7 @@ func auditFeatureSteps() {
     #expect(steps(.blocked, .review) == [.done, .done, .done, .failed, .upcoming])
     #expect(steps(.running, .impl) == [.done, .done, .current, .upcoming, .upcoming])
     #expect(steps(.escalated, .req) == [.current, .upcoming, .upcoming, .upcoming, .upcoming])
-    #expect(steps(.arbitrating, .specs) == [.done, .current, .upcoming, .upcoming, .upcoming])
+    #expect(steps(.arbiterDeciding, .specs) == [.done, .current, .upcoming, .upcoming, .upcoming])
     #expect(steps(.waiting, .review) == [.done, .done, .done, .current, .upcoming])
 }
 

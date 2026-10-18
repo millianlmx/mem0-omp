@@ -1,9 +1,10 @@
 // La section Pipelines : les VOIES du tableau (`KanbanLane` — pas commencées, en
-// cours, à vous, livrées, arrêtées) sur toute la largeur, la feuille de détail
-// de la carte sélectionnée, et trois boutons de barre d'outils : « Rafraîchir »
-// (relit l'état des PR sur GitHub, ⌘R), « Activité » (journal des gestes) et
-// « n problèmes » (anomalies du magasin), ces deux derniers chacun dans
-// une bulle. Le lancement d'une feature passe par la feuille « Nouvelle
+// cours, chez l'arbitre, à vous, livrées, arrêtées) sur toute la largeur, la
+// feuille de détail de la carte sélectionnée, et quatre boutons de barre
+// d'outils : « Rafraîchir » (relit l'état des PR sur GitHub, ⌘R), « Activité »
+// (journal des gestes), « Décisions de l’arbitre » (journal des décisions de
+// tous les lots) et « n problèmes » (anomalies du magasin), ces trois derniers
+// chacun dans une bulle. Le lancement d'une feature passe par la feuille « Nouvelle
 // feature » (barre d'outils, ⌘N) ; l'abonnement au magasin est tenu par la
 // racine de la fenêtre, que l'Accueil lit aussi.
 //
@@ -114,6 +115,23 @@ struct KanbanView: ConsoleSectionView {
                 }
                 .padding(16)
                 .frame(width: 380, alignment: .leading)
+            }
+        }
+        // « Décisions de l’arbitre » : ce que l'arbitre (et le contexte) a
+        // tranché en arrière-plan, tous dépôts confondus, avec son motif.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.decisionsShown.toggle()
+            } label: {
+                Label(KanbanText.decisionsTitle, systemImage: KanbanLane.arbitre.symbol)
+            }
+            .help(KanbanText.decisionsHelp)
+            .accessibilityIdentifier("kanban.decisionsButton")
+            .popover(isPresented: Binding(
+                get: { model.decisionsShown },
+                set: { model.decisionsShown = $0 }
+            )) {
+                KanbanDecisionsView(decisions: model.decisions, repos: model.decisionRepos)
             }
         }
         if let anomalies = model.state.kanbanBoard?.anomalies, !anomalies.isEmpty {
@@ -368,6 +386,9 @@ private struct KanbanCardMenu: View {
                     Button(kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview) {
                         if kind == .specs { actions.validate(action) } else { actions.accept(action) }
                     }
+                case .arbiter(let state):
+                    // Un libellé, pas un geste : l'arbitre décide.
+                    Text(state.label ?? KanbanText.arbiterQueued)
                 case .resume:
                     Button(KanbanText.resume) { actions.resume(action) }
                 case .stopLot:
@@ -447,5 +468,76 @@ struct KanbanDiagnosticView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("kanban.anomaly.\(index).instruction")
         }
+    }
+}
+
+/// La bulle « Décisions de l’arbitre » : les dernières décisions consignées au
+/// journal de TOUS les dépôts, la plus récente en tête — feature (et dépôt),
+/// origine, heure, question, réponse et, quand l'arbitre en a donné un, son
+/// motif. Hauteur bornée avec défilement, comme la bulle « Activité ».
+struct KanbanDecisionsView: View {
+    let decisions: [ArbiterDecision]
+    /// Clé de journal → nom du dépôt (`ArbiterDecisionFeed.repoNames`).
+    let repos: [String: String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(KanbanText.decisionsTitle)
+                .font(.headline)
+            if decisions.isEmpty {
+                Text(KanbanText.decisionsEmpty)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("kanban.decisions.empty")
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(decisions) { decision in
+                            row(decision)
+                            if decision.id != decisions.last?.id { Divider() }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 420)
+            }
+        }
+        .padding(16)
+        .frame(width: 460, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("kanban.decisions")
+    }
+
+    private func row(_ decision: ArbiterDecision) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(KanbanText.decisionSubject(repo: repos[decision.repoKey], slug: decision.slug))
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Text(ConsoleFormat.time(ms: decision.at))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Text(KanbanText.decisionSource(decision.source))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(decision.source == .utilisateur ? Color.secondary : Color.accentColor)
+            Text(decision.question)
+                .font(.callout)
+                .lineLimit(3)
+            Text(decision.answer)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+            if let reason = decision.reason {
+                Text(KanbanText.arbiterMotive(reason))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .textSelection(.enabled)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("kanban.decision.\(decision.id)")
     }
 }

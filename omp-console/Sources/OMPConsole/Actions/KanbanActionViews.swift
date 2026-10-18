@@ -47,6 +47,14 @@ struct KanbanActionPane: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("kanban.actions.motif")
             }
+            // L'arbitre a rendu la main : son motif précède les gestes.
+            if let motive = KanbanCardPresentation.arbiterMotive(card) {
+                Text(motive)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("kanban.actions.arbiterMotive")
+            }
             if let action = card.action {
                 ForEach(Array(zones.enumerated()), id: \.offset) { index, zone in
                     zoneView(zone, action: action, prominent: index == primary)
@@ -82,6 +90,8 @@ struct KanbanActionPane: View {
             .consoleButtonProminence(prominent)
             .accessibilityIdentifier(kind == .specs ? "kanban.actions.validate" : "kanban.actions.accept")
             .accessibilityLabel("\(kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview) \(slug)")
+        case .arbiter(let state):
+            KanbanArbiterNote(state: state)
         case .resume:
             VStack(alignment: .leading, spacing: 6) {
                 Text(ActionsText.resumeNote)
@@ -236,8 +246,29 @@ private extension KanbanActionZone {
     var isPrimary: Bool {
         switch self {
         case .pendingQuestion, .textQuestion, .milestone, .resume: true
-        case .steer, .stopLot: false
+        case .steer, .stopLot, .arbiter: false
         }
+    }
+}
+
+/// Ce que la zone d'action montre à la place de Répondre, Valider et Accepter
+/// tant que l'arbitre tient l'élément : son état (« L’arbitre décide depuis
+/// 1:05 », « En file pour l’arbitre ») et la phrase qui dit que rien n'est à faire.
+struct KanbanArbiterNote: View {
+    let state: ArbiterState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            VStack(alignment: .leading, spacing: 4) {
+                Label(state.label(nowMs: context.date.timeIntervalSince1970 * 1000) ?? "", systemImage: KanbanLane.arbitre.symbol)
+                    .font(.headline)
+                Text(KanbanText.arbiterHandles)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("kanban.actions.arbiter")
     }
 }
 

@@ -15,6 +15,9 @@ import Foundation
 public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
     case pasCommencees = "pas-commencees"
     case enCours = "en-cours"
+    /// Ce que l'arbitre tient en arrière-plan (question, jalon, plafond, échec) :
+    /// rien n'y attend l'utilisateur.
+    case arbitre = "arbitre"
     case aVous = "a-vous"
     case livrees = "livrees"
     case arretees = "arretees"
@@ -25,6 +28,7 @@ public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pasCommencees: "Pas commencées"
         case .enCours: "En cours"
+        case .arbitre: KanbanText.arbiterLane
         case .aVous: "À vous"
         case .livrees: "Livrées"
         case .arretees: "Arrêtées"
@@ -35,6 +39,7 @@ public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pasCommencees: "circle.dashed"
         case .enCours: "play.circle"
+        case .arbitre: "scale.3d"
         case .aVous: "hand.raised"
         case .livrees: "checkmark.circle"
         case .arretees: "stop.circle"
@@ -44,7 +49,7 @@ public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
     public var tone: ConsoleTone {
         switch self {
         case .pasCommencees: .neutral
-        case .enCours: .info
+        case .enCours, .arbitre: .info
         case .aVous: .attention
         case .livrees: .success
         case .arretees: .danger
@@ -56,20 +61,28 @@ public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pasCommencees: "Aucune feature en attente de lancement."
         case .enCours: "Rien ne tourne en ce moment."
+        case .arbitre: KanbanText.arbiterLaneEmpty
         case .aVous: "Rien ne vous attend."
         case .livrees: "Aucune livraison récente."
         case .arretees: "Aucune feature arrêtée."
         }
     }
 
-    /// Une voie toujours montrée, même vide. « Arrêtées » n'apparaît que si elle
-    /// a des cartes : une voie d'échecs vide n'apprend rien.
-    public var isPermanent: Bool { self != .arretees }
+    /// Une voie toujours montrée, même vide. « Arrêtées » et « Chez l’arbitre »
+    /// n'apparaissent que si elles ont des cartes : vides, elles n'apprennent rien.
+    public var isPermanent: Bool { self != .arretees && self != .arbitre }
 
     /// La voie d'une carte. Une carte que « Reprendre » peut relancer est EN
     /// COURS (en pause) quelle que soit sa colonne : la feature vit encore.
+    /// Ensuite l'arbitre : un élément qu'il tient est « Chez l’arbitre », jamais
+    /// « À vous » ; un élément qu'il a rendu (escalade, plafond et échec compris)
+    /// est « À vous ».
     public static func of(_ card: KanbanCard) -> KanbanLane {
         if KanbanActionPresentation.resumable(card) { return .enCours }
+        if let arbiter = card.action?.arbiter {
+            if arbiter.isArbitrating { return .arbitre }
+            if arbiter.escalationKind != nil { return .aVous }
+        }
         switch card.column {
         case .enAttente: return .pasCommencees
         case .enCours: return .enCours
@@ -198,12 +211,21 @@ public enum KanbanCardPresentation {
             return nil
         case .enCours:
             return status.tone == .paused ? status : nil
+        case .arbitre:
+            // « En file » ou « décide » : la voie ne dit pas lequel.
+            return status
         case .aVous:
             // « À vous » répéterait la voie : la nature de l'attente le remplace.
             return card.column == .questionEnVol ? ConsoleStatus(text: "Question", tone: .attention) : status
         case .livrees, .arretees:
             return status
         }
+    }
+
+    /// « Motif de l’arbitre : … » d'une carte que l'arbitre a rendue à
+    /// l'utilisateur, `nil` sinon.
+    public static func arbiterMotive(_ card: KanbanCard) -> String? {
+        card.action?.arbiter.escalationReason.map(KanbanText.arbiterMotive)
     }
 
     /// Le texte de l'attente : la question de l'agent, ou `nil`.
@@ -241,12 +263,12 @@ public enum KanbanCardPresentation {
     /// L'étape et l'avancement n'ont de sens que pour une feature vivante.
     public static func showsProgress(_ card: KanbanCard) -> Bool {
         let lane = KanbanLane.of(card)
-        return (lane == .enCours || lane == .aVous) && card.phase != nil
+        return (lane == .enCours || lane == .arbitre || lane == .aVous) && card.phase != nil
     }
 
     /// La durée n'a de sens que pour ce qui tourne ou attend.
     public static func showsDuration(_ card: KanbanCard) -> Bool {
         let lane = KanbanLane.of(card)
-        return lane == .enCours || lane == .aVous
+        return lane == .enCours || lane == .arbitre || lane == .aVous
     }
 }

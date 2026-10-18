@@ -345,7 +345,7 @@ test("pilote-de-lot-persistant/AC-6 : après une compaction de la session, le to
   assert.deepEqual(since(second), ["- [alpha /req] Q : Q1 ? → R : R1 (source : contexte)"], "avant la compaction : la suite seule");
   assert.deepEqual(since(third), ["- [alpha /req] Q : Q1 ? → R : R1 (source : contexte)", "- [bravo /req] Q : Q2 ? → R : R2 (source : contexte)"], "après la compaction : le journal entier");
   assert.deepEqual(since(fourth), ["- [charlie /req] Q : Q3 ? → R : R3 (source : contexte)"], "puis la suite seule");
-  for (const piece of ["Rappel des règles", "justification vérifiable", "libellé exact ou son numéro", "décision `utilisateur` prévaut", "appel unique à `arbiter_decide`"]) {
+  for (const piece of ["Rappel des règles", "justification vérifiable", "libellé exact ou son numéro", "décision `utilisateur` prévaut", "si le pilote la refuse, l'outil te rend son motif"]) {
     assert.ok(TURN_REMINDER.includes(piece), piece);
   }
   assert.ok(fourth.endsWith(TURN_REMINDER));
@@ -374,20 +374,21 @@ test("pilote-de-lot-persistant/AC-7 : le récap de fin de lot porte la mesure de
   assert.ok(recap.includes("\narbitrage : 2 décisions (contexte 1, arbitrage 0, utilisateur 1) — 1 session de pilote, 2 tours"), recap);
 });
 
-test("pilote-de-lot-persistant/AC-8 : deux features du même contexte aux REPLIS différents partagent la session — seul un modèle de départ différent la rouvre", async () => {
+test("pilote-de-lot-persistant/AC-8 : les features d'un même contexte aux modèles ou replis différents (ou sans modèle) partagent la session — le modèle du pilote est fixé par contexte, par la première feature qui en déclare un", async () => {
   const w = world((prompt) => {
     if (prompt.includes("question : Quel format de sortie ?")) return answer("YAML", FORMAT_FACT);
     if (prompt.includes("question : Quel format de date ?")) return answer("ISO 8601", DATE_FACT);
     if (prompt.includes("question : Quelle langue ?")) return answer("fr", FORMAT_FACT);
+    if (prompt.includes("question : Quel encodage ?")) return answer("UTF-8", FORMAT_FACT);
     return null;
   });
-  await w.add("alpha", "bravo", "charlie");
+  await w.add("alpha", "bravo", "charlie", "delta");
   writeBrief(w.stateDir, CTX, `## But\n${FORMAT_FACT}\n${DATE_FACT}\n`);
   const lot = w.read();
-  // alpha : opus + repli sonnet ; bravo : opus sans repli ; charlie : un AUTRE modèle de départ.
-  Object.assign(lotFeature(lot, "alpha")!, { modelReqSpecs: "prov/opus", fallbackReqSpecs: "prov/sonnet" });
-  Object.assign(lotFeature(lot, "bravo")!, { modelReqSpecs: "prov/opus", fallbackReqSpecs: null });
-  Object.assign(lotFeature(lot, "charlie")!, { modelReqSpecs: "prov/haiku", fallbackReqSpecs: null });
+  // alpha : aucun modèle ; bravo : opus + repli sonnet ; charlie : opus sans repli ; delta : un AUTRE modèle de départ.
+  Object.assign(lotFeature(lot, "bravo")!, { modelReqSpecs: "prov/opus", fallbackReqSpecs: "prov/sonnet" });
+  Object.assign(lotFeature(lot, "charlie")!, { modelReqSpecs: "prov/opus", fallbackReqSpecs: null });
+  Object.assign(lotFeature(lot, "delta")!, { modelReqSpecs: "prov/haiku", fallbackReqSpecs: null });
   writeLot(w.stateDir, lot);
   const ask = async (slug: string, question: string, expected: number) => {
     w.park(slug, question);
@@ -396,10 +397,9 @@ test("pilote-de-lot-persistant/AC-8 : deux features du même contexte aux REPLIS
   };
   await ask("alpha", "Quel format de sortie ?", 1);
   await ask("bravo", "Quel format de date ?", 2);
-  assert.equal(w.arb.opens.length, 1, "un repli différent ne rouvre pas la session");
+  await ask("delta", "Quel encodage ?", 3);
+  await ask("charlie", "Quelle langue ?", 4);
+  assert.equal(w.arb.opens.length, 1, "aucune alternance de modèle ne rouvre la session");
+  assert.deepEqual(w.arb.opens.map((o) => [o.model, o.fallback]), [["prov/opus", "prov/sonnet"]], "le modèle et le repli de la première feature qui en déclare un");
   assert.equal(w.arb.disposed(), 0);
-  await ask("charlie", "Quelle langue ?", 3);
-  assert.equal(w.arb.opens.length, 2, "un modèle de départ différent la rouvre");
-  assert.deepEqual(w.arb.opens.map((o) => o.model), ["prov/opus", "prov/haiku"]);
-  assert.equal(w.arb.disposed(), 1);
 });

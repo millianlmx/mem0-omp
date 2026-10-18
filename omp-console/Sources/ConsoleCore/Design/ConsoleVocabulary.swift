@@ -60,10 +60,20 @@ extension ConsoleStatus {
 
     /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
     /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
-    /// vit encore).
+    /// vit encore). Ensuite l'arbitre (`ArbiterState`) : un élément qu'il tient
+    /// dit « L’arbitre décide » ou « En file pour l’arbitre » ; un plafond ou un
+    /// échec qu'il a rendu dit ce qu'il rend, à traiter.
     public static func of(card: KanbanCard) -> ConsoleStatus {
         if KanbanActionPresentation.resumable(card) {
             return ConsoleStatus(text: "En pause", tone: .paused)
+        }
+        if let arbiter = card.action?.arbiter {
+            if let label = arbiter.label {
+                return ConsoleStatus(text: label, tone: .info)
+            }
+            if let kind = arbiter.escalationKind, let text = KanbanText.escalationStatus(kind) {
+                return ConsoleStatus(text: text, tone: .attention)
+            }
         }
         return of(column: card.column)
     }

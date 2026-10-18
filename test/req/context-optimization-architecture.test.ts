@@ -2277,13 +2277,21 @@ async function br4Scenario(script: Br4Script, options: { arbiterModel?: boolean;
     writeLot(stateDir, lot);
   };
   const feature = () => lotFeature(findLot(stateDir)!, "alpha")!;
-  const parentUntouched = () => {
+  /**
+   * Aucun tour de la session parente ; les seuls messages du pilote sont les alertes
+   * d'ESCALADE `escalated` (relais fermé : l'escalade est annoncée à l'utilisateur, jamais une décision tranchée).
+   */
+  const parentUntouched = (escalated: string[] = []) => {
     assert.equal(fs.readFileSync(parentFile, "utf8"), BR4_PARENT_BYTES, "la session parente n'a fait aucun tour");
-    assert.deepEqual(notices, [], "aucun message vers la session parente");
-    assert.deepEqual(toasts, []);
+    assert.deepEqual(notices, escalated, "aucun message vers la session parente hors escalade");
+    assert.deepEqual(toasts, escalated);
   };
+  /** L'alerte de l'escalade de la question « Quel nom de table ? » en /impl. */
+  const tableAlert = () =>
+    `[pipeline] ${path.basename(repoRoot)}/alpha : l'arbitre te confie une question (maillon /impl) — /pipelines\n` +
+    "motif de l'arbitre : le corpus ne dit pas le nom de la table\nQuel nom de table ?";
   const key = lotRepoKey(repoRoot);
-  return { controller, stateDir, notices, toasts, specs, arb, park, feature, parentFile, parentUntouched, key, clock, auditKey, repoRoot };
+  return { controller, stateDir, notices, toasts, specs, arb, park, feature, parentFile, parentUntouched, tableAlert, key, clock, auditKey, repoRoot };
 }
 
 const citeFact = (answer: string) => ({ decision: "answer", answer, source: "contexte", citations: [BR4_FACT], reason: "le brief le dit" });
@@ -2354,7 +2362,7 @@ test("context-optimization-architecture/AC-13 : un jalon prêt est tranché par 
   const s = await br4Scenario(() => {
     // Le tour avance l'horloge : la décision est postérieure à la construction du tour.
     bump?.();
-    return { decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT], references: ["preuve.txt:1"] };
+    return { decision: "approve", reason: "les specs couvrent chaque AC", citations: [BR4_FACT], references: ["preuve.txt:1"], attestations: ["AC-1 preuve.txt:1"] };
   }, { covered: true });
   bump = () => {
     s.clock.now += 1_000;
@@ -2453,7 +2461,7 @@ test("context-optimization-architecture/AC-10 : trois décisions — contexte, a
       ["alpha", "impl", "question", "Quel nom de table ?", "events", "utilisateur"],
     ],
   );
-  s.parentUntouched();
+  s.parentUntouched([s.tableAlert()]);
 });
 
 /** Le résultat de l'outil `ask` pour une réponse reçue, par la VRAIE inscription de l'outil. */
@@ -2913,7 +2921,7 @@ test("context-optimization-architecture/AC-16 : relais désarmé, deux élément
   assert.equal(s.specs.length, 3, "aucune relance");
   assert.equal(s.arb.opens.length, 1, "une seule session de pilote");
   assert.equal(s.arb.prompts.length, 3, "aucune décision redemandée");
-  s.parentUntouched();
+  s.parentUntouched([s.tableAlert()]);
 });
 
 test("context-optimization-architecture/AC-17 : le scénario « question arbitrée sur le contexte » puis « question escaladée » joué avec /audit puis /project donnent les mêmes effets — journal, escalade, zéro tour parent, relais armé puis désarmé", async () => {

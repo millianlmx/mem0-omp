@@ -970,7 +970,7 @@ test("arbitre-corpus-et-deduction/AC-16 : la directive du pilote (à l'ouverture
     "tout choix TECHNIQUE se tranche",
     "ton répertoire courant est le dépôt principal",
     "Cohérence :",
-    "EXACTEMENT UNE FOIS PAR ÉLÉMENT",
+    "Le pilote vérifie à l'appel : s'il refuse, l'outil te rend son motif",
   ]) {
     assert.ok(opening.includes(piece), piece);
   }
@@ -985,7 +985,7 @@ test("arbitre-corpus-et-deduction/AC-16 : la directive du pilote (à l'ouverture
     }
     assert.ok(prompt.includes("\n\n## Corpus de l'élément\n\n"));
     assert.ok(prompt.endsWith(`\n\n${TURN_REMINDER}`), prompt.slice(-200));
-    assert.ok(TURN_REMINDER.startsWith("Rappel des règles :") && TURN_REMINDER.endsWith("Rends ta décision pour CET élément par un appel unique à `arbiter_decide`."));
+    assert.ok(TURN_REMINDER.startsWith("Rappel des règles :") && TURN_REMINDER.endsWith("corrige-la et rappelle l'outil, ou escalade."));
   }
 });
 
@@ -1190,7 +1190,7 @@ test("arbitre-corpus-et-deduction/AC-18 : le prompt de « revue propre » porte 
   assert.equal(broken.searchError, "fatal: boom");
 });
 
-test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers porteurs de chaque AC-n ; une approbation avec un AC sans fichier devient une escalade qui le nomme", async () => {
+test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers porteurs de chaque AC-n ; chaque critère tiré s'atteste dans le diff — dans un fichier qui porte son id s'il y en a un, sinon à la ligne modifiée qui le réalise", async () => {
   const repo = emptyGitRepo("arbitre-ac-");
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.mkdirSync(path.join(repo, ".omp", "pipeline"), { recursive: true });
@@ -1207,17 +1207,26 @@ test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers 
 
   const approve: ArbiterDecision = { decision: "approve", reason: "tout est livré" };
   const ground = groundOf(repo, { contract: CONTRACT_AC12, review: evidence });
-  const refused = validateArbiterDecision(REVIEW_ITEM, approve, ground);
-  assert.deepEqual(refused, { kind: "escalate", reason: "approbation refusée par le pilote : critères sans fichier dans le diff : AC-2" });
+  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, approve, ground), {
+    kind: "escalate",
+    reason: "approbation refusée par le pilote : attestation manquante pour AC-1 (aucune attestation), AC-2 (aucune attestation)",
+  });
   // Une escalade de l'arbitre reste honorée telle quelle.
   assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, { decision: "escalate", reason: "doute" }, ground), { kind: "escalate", reason: "doute" });
+  // AC-2 n'a aucun fichier qui porte son id (preuve par build, contrôle manuel) : la ligne modifiée qui le réalise l'atteste.
+  const attested: ArbiterDecision = { ...approve, attestations: ["AC-1 src/a.ts:1", "AC-2 src/dix.ts:1"] };
+  assert.equal(validateArbiterDecision(REVIEW_ITEM, attested, ground).kind, "approve");
 
-  // Chaque AC porté par un fichier du diff et chaque critère tiré attesté par une référence dans son fichier : l'approbation est acceptée.
+  // Dès qu'un fichier du diff porte l'id du critère (son test), l'attestation doit y pointer.
   fs.writeFileSync(path.join(repo, "src", "b.ts"), "// AC-2 : preuve\n");
   const full = await collectReviewEvidence({ worktree: repo, acIds: ids, runGit: gitRunner });
   assert.deepEqual(full.acFiles, [{ id: "AC-1", files: ["src/a.ts"] }, { id: "AC-2", files: ["src/b.ts"] }]);
-  const attested: ArbiterDecision = { ...approve, references: ["src/a.ts:1", "src/b.ts:1"] };
-  assert.equal(validateArbiterDecision(REVIEW_ITEM, attested, groundOf(repo, { contract: CONTRACT_AC12, review: full })).kind, "approve");
+  const fullGround = groundOf(repo, { contract: CONTRACT_AC12, review: full });
+  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, attested, fullGround), {
+    kind: "escalate",
+    reason: "approbation refusée par le pilote : attestation manquante pour AC-2 (« src/dix.ts:1 » : le diff a un fichier qui porte AC-2 (src/b.ts), atteste dans l'un d'eux)",
+  });
+  assert.equal(validateArbiterDecision(REVIEW_ITEM, { ...approve, attestations: ["AC-1 src/a.ts:1", "AC-2: src/b.ts:1"] }, fullGround).kind, "approve");
 
   // Recherche impossible ou contrat sans critère : jamais accepté.
   const failed = { diff: "", names: null, acFiles: null, searchError: "fatal: boom", sampledAcIds: [] };
@@ -1243,7 +1252,10 @@ test("arbitre-corpus-et-deduction/AC-19 : « revue propre » liste les fichiers 
   await world.until(() => lotFeature(world.read(), "alpha")!.escalation !== undefined);
   assert.ok(world.prompts[0]!.includes("- AC-1 : src/a.ts\n- AC-2 : (aucun fichier)"), world.prompts[0]);
   assert.ok(world.prompts[0]!.includes("+// AC-1 : preuve"), "le diff du worktree est au prompt");
-  assert.equal(lotFeature(world.read(), "alpha")!.escalation!.reason, "approbation refusée par le pilote : critères sans fichier dans le diff : AC-2");
+  assert.equal(
+    lotFeature(world.read(), "alpha")!.escalation!.reason,
+    "approbation refusée par le pilote : attestation manquante pour AC-1 (aucune attestation), AC-2 (aucune attestation)",
+  );
 });
 
 test("arbitre-corpus-et-deduction/AC-20 : « specs validées » exige que chaque AC soit référencé par une S-n ; le prompt porte le rapport et exige la cohérence avec lui", () => {

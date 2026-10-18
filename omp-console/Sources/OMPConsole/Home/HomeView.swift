@@ -233,6 +233,13 @@ struct HomeView: ConsoleSectionView {
             Text(attention.prompt)
                 .font(.body)
                 .lineLimit(3)
+            if let motive = attention.motive {
+                Text(motive)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .accessibilityIdentifier("home.attention.\(card.id).motive")
+            }
             Spacer(minLength: 0)
             HStack {
                 Spacer()
@@ -333,10 +340,15 @@ struct HomeView: ConsoleSectionView {
         .accessibilityIdentifier(identifier)
     }
 
-    /// « En cours » : une pipeline réellement en marche, avec sa durée.
+    /// « En cours » : une pipeline réellement en marche, avec sa durée — ou que
+    /// l'arbitre tient en arrière-plan, son état en badge.
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         HStack(spacing: 12) {
             cardRowButton(card, showsRepo: showsRepo, identifier: "home.running.\(card.id)")
+            if card.action?.arbiter.isArbitrating == true {
+                StatusBadge(status: ConsoleStatus.of(card: card))
+                    .fixedSize()
+            }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let nowMs = context.date.timeIntervalSince1970 * 1000
                 Text(ConsoleFormat.duration(ms: (card.endMs ?? nowMs) - card.startMs))

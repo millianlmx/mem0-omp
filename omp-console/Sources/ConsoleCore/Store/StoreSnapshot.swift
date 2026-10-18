@@ -143,19 +143,39 @@ public struct AuditEnvelope: Sendable, Equatable, Codable {
 /// `availability` est celle de `audits/` : sans audit, il n'y a aucune décision
 /// d'audit à lire. Une ligne de journal illisible est ignorée sans être comptée
 /// (parité `journalFor`, context.ts:300-318) ; seul un audit illisible est écarté.
+///
+/// `feed` : le fil des décisions de TOUS les journaux (`ArbiterDecisionFeed`),
+/// le plus récent d'abord, borné — audits ou non.
 public struct AuditsEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var records: [AuditRecord]
     public var decisions: [AuditDecision]
     public var discardedEntries: [DiscardedEntry]
+    public var feed: [ArbiterDecision]
 
     public var discarded: Int { discardedEntries.count }
 
-    public init(availability: StoreAvailability, records: [AuditRecord], decisions: [AuditDecision], discardedEntries: [DiscardedEntry]) {
+    public init(availability: StoreAvailability, records: [AuditRecord], decisions: [AuditDecision], discardedEntries: [DiscardedEntry], feed: [ArbiterDecision] = []) {
         self.availability = availability
         self.records = records
         self.decisions = decisions
         self.discardedEntries = discardedEntries
+        self.feed = feed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case availability, records, decisions, discardedEntries, feed
+    }
+
+    /// `feed` est FACULTATIF au décodage : la trame `store` d'un Mac antérieur au
+    /// fil se lit avec un fil vide.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        availability = try container.decode(StoreAvailability.self, forKey: .availability)
+        records = try container.decode([AuditRecord].self, forKey: .records)
+        decisions = try container.decode([AuditDecision].self, forKey: .decisions)
+        discardedEntries = try container.decode([DiscardedEntry].self, forKey: .discardedEntries)
+        feed = try container.decodeIfPresent([ArbiterDecision].self, forKey: .feed) ?? []
     }
 
     /// L'enveloppe d'un magasin sans `audits/` — aussi celle d'un instantané
