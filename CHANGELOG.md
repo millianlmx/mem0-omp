@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.32.0 — 2026-10-18
+
+- feat(arbitre,lot,console): l'arbitre tranche les jalons et se voit travailler — revue attestée par critère, refus corrigé dans le tour, modèle par contexte, alerte à l'escalade seule (#215) (4287e13)
+
 ## omp-mem0-req 0.31.2 — 2026-10-16
 
 - fix(contract): les têtes SP-<n> et SPEC-<n> sont des spécifications pour la couverture des AC (#213) (e191064)
