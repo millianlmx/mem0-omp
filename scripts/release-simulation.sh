@@ -70,6 +70,10 @@ echo "· copie jetable : $copie"
 if [ -e "$root/.typecheck/typescript" ]; then
   mkdir -p "$copie/.typecheck" && ln -s "$root/.typecheck/typescript" "$copie/.typecheck/typescript"
 fi
+# Le worktree ne porte que les fichiers suivis : le linter épinglé (gitignoré)
+# reste à la racine de l'appelant, et le check.sh de la copie l'y trouve. Une
+# valeur héritée (installation externe) est conservée.
+export MEM0_OMP_LINT_DIR="${MEM0_OMP_LINT_DIR:-$root/.lint}"
 
 # Le moteur est celui de la COPIE, et son répertoire courant est la copie : ses
 # écritures (`--simulate`) et son `check.sh` portent donc sur l'arbre simulé, et

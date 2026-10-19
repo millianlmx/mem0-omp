@@ -364,3 +364,64 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
     .map((file) => path.relative(ROOT, file));
   assert.deepEqual(suppressed, []);
 });
+
+const PREPARE_STEP = "        run: bash scripts/lint.sh --prepare";
+
+function workflow(name: string): string {
+  return fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+}
+
+/** Les lignes d'un job : de `  <id>:` jusqu'au job suivant (ou la fin du fichier). */
+function jobLines(yaml: string, id: string): string[] {
+  const lines = yaml.split("\n");
+  const start = lines.indexOf(`  ${id}:`);
+  assert.notEqual(start, -1, `job « ${id} » absent`);
+  const end = lines.findIndex((line, index) => index > start && /^ {2}[A-Za-z0-9_-]+:$/.test(line));
+  return lines.slice(start, end === -1 ? lines.length : end);
+}
+
+/** L'étape de préparation précède, dans ces lignes, la première qui satisfait `launches`. */
+function assertPreparedBefore(lines: string[], launches: (line: string) => boolean, where: string): void {
+  const launch = lines.findIndex(launches);
+  assert.notEqual(launch, -1, `${where} : aucun lancement trouvé`);
+  const prepare = lines.indexOf(PREPARE_STEP);
+  assert.notEqual(prepare, -1, `${where} : l'outil épinglé n'est jamais préparé`);
+  assert.ok(prepare < launch, `${where} : l'outil est préparé APRÈS le lancement de check.sh`);
+}
+
+test("no-ts-lint-formatter/AC-9 : chaque job qui lance check.sh avec lint prépare l'outil épinglé avant, et check.yml compte les sections de check.sh", () => {
+  const check = workflow("check.yml");
+  for (const job of ["check", "macos-tests"]) {
+    assertPreparedBefore(
+      jobLines(check, job),
+      (line) => line.startsWith("        run: ./scripts/check.sh"),
+      `check.yml, job ${job}`,
+    );
+  }
+  // release.ts lance lui-même `bash scripts/check.sh` dans le clone.
+  assertPreparedBefore(
+    workflow("release.yml").split("\n"),
+    (line) => line.includes("scripts/release.ts"),
+    "release.yml",
+  );
+  // release-simulation.sh lance release.ts --simulate, donc check.sh, dans sa copie.
+  assertPreparedBefore(
+    workflow("release-simulation.yml").split("\n"),
+    (line) => line === "        run: bash scripts/release-simulation.sh",
+    "release-simulation.yml",
+  );
+
+  // Le commentaire de comptage suit SECTION_IDS, sans autre décompte resté en arrière.
+  const ids = /^SECTION_IDS="([^"]+)"$/m.exec(fs.readFileSync(path.join(ROOT, "scripts", "check.sh"), "utf8"));
+  assert.ok(ids, "SECTION_IDS introuvable dans check.sh");
+  const count = ids[1]!.trim().split(/\s+/).length;
+  assert.ok(ids[1]!.split(/\s+/).includes("lint"), "lint absent de SECTION_IDS");
+  assert.ok(
+    check.includes(`les ${count} sections de check.sh`),
+    `check.yml ne dit pas « les ${count} sections de check.sh »`,
+  );
+  assert.deepEqual(
+    [...check.matchAll(/les (\d+) sections/g)].map((match) => match[1]),
+    [String(count)],
+  );
+});

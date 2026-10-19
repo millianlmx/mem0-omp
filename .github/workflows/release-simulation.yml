@@ -73,6 +73,10 @@ jobs:
             ~/.cargo/git/db
             ${{ runner.temp }}/cargo-target
           key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
+      # Le linter épinglé est préparé à la racine du clone : la section `lint` du
+      # check.sh de la copie le trouve par MEM0_OMP_LINT_DIR, que le script exporte.
+      - name: Préparer le linter épinglé (Biome)
+        run: bash scripts/lint.sh --prepare
       - name: Installer le TypeScript épinglé du type-check
         run: bash scripts/typecheck.sh --prepare
       # Aucun secret : le script crée lui-même la copie jetable, y rejoue
