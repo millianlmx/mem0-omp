@@ -36,6 +36,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/test-files.sh              liste des fichiers de test : tous, macOS (--scope=macos), du diff (--scope=changed), outillage
 ├── scripts/test-ac.sh                 preuve par critère : tests du diff portant AC-n, une passe node --test, pass|fail|absent
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
+├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois par swift-app.sh
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
@@ -1609,7 +1610,13 @@ Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses 12
 sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
 jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
 (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
-`macos-tests (2/2)`, qui se partagent la suite node. Le statut `check (macos-latest)`
+`macos-tests (2/2)`, qui se partagent la suite node. Dans `macos-app-swift`, quand
+`swift test` échoue, `scripts/swift-app.sh` lit les tests tombés. S'ils figurent TOUS
+au registre `scripts/tests-instables-connus.json` (consulté par
+`scripts/ci-verdict.sh --instables`), il les relance une seule fois
+(`swift test --filter`) en les nommant. Tout autre échec reste rouge sans relance :
+test non listé, rouge pendant la relance, erreur de compilation, plantage, sortie
+illisible ou interruption. Le statut `check (macos-latest)`
 est celui d'un job **agrégateur** qui les attend, tourne même quand l'un d'eux
 échoue ou est annulé (`if: always()`), et ne réussit que si les trois résultats
 valent `success` (`scripts/ci-verdict.sh`) — jamais « skipped », qui compterait
