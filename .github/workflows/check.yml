@@ -162,30 +162,15 @@ jobs:
       - name: App Swift
         run: ./scripts/check.sh --sections=app-swift
 
-  # Compilation et tests de l'app iOS : Xcode seul, aucune préparation hormis la
-  # restauration du cache.
+  # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
   macos-app-ios:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
-      # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
-      # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
-      # outil absent donne « absent », haché : la clé reste valide.
-      - name: Empreinte des toolchains (clés de cache)
-        id: toolchain
-        run: |
-          {
-            echo "node=$(node --version 2>/dev/null || echo absent)"
-            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
-            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
-          } >> "$GITHUB_OUTPUT"
-      # DerivedData de xcodebuild (`-derivedDataPath` de scripts/ios-build.sh).
-      - name: Cache DerivedData iOS (.build-ios)
-        uses: actions/cache@v6
-        with:
-          path: omp-console/.build-ios
-          key: xcode-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/ios/OMPConsoleIOS.xcodeproj/project.pbxproj', 'omp-console/Package.swift') }}
+      # Aucun cache ici, c'est un choix mesuré (ci-without-cache) : un DerivedData
+      # `omp-console/.build-ios` restauré ne fait rien gagner. xcodebuild recompile
+      # tout, car les mtimes du checkout l'invalident, et ~235 s vont au démarrage
+      # des tests sur simulateur.
       - name: App iOS
         env:
           # Xcode est utilisable sur macos-latest : un « non exécuté » de la

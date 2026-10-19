@@ -1,7 +1,7 @@
 // Critères de la feature ci-without-cache : les caches `actions/cache` des jobs de
 // `.github/workflows/check.yml` et de `.github/workflows/release-simulation.yml`
-// (hôte OMP par `~/.npm`, registre et cible cargo, scratchs SwiftPM, DerivedData
-// iOS), leurs clés calées sur les lockfiles et les toolchains, et ce que le cache
+// (hôte OMP par `~/.npm`, registre et cible cargo, scratchs SwiftPM ; jamais le
+// DerivedData iOS), leurs clés calées sur les lockfiles et les toolchains, et ce que le cache
 // ne doit jamais changer : les contextes de statut requis, l'absence de toute
 // relance et le verdict de `scripts/check.sh`.
 //
@@ -84,10 +84,6 @@ const FAMILIES = {
     toolchain: "swift-${{ steps.toolchain.outputs.swift }}",
     content: "${{ hashFiles('omp-console/Package.swift') }}",
   },
-  xcode: {
-    toolchain: "swift-${{ steps.toolchain.outputs.swift }}",
-    content: "${{ hashFiles('omp-console/ios/OMPConsoleIOS.xcodeproj/project.pbxproj', 'omp-console/Package.swift') }}",
-  },
 } as const;
 type Family = keyof typeof FAMILIES;
 const keyOf = (family: Family) => `${family}-${KEY_HEAD}-${FAMILIES[family].toolchain}-${FAMILIES[family].content}`;
@@ -117,7 +113,7 @@ interface Expected {
   job: string;
   /** Première ligne de l'étape après laquelle l'empreinte s'insère. */
   anchor: string;
-  /** Les étapes de cache, dans l'ordre npm → cargo → swiftpm/xcode, juste après l'empreinte. */
+  /** Les étapes de cache, dans l'ordre npm → cargo → swiftpm, juste après l'empreinte. */
   caches: { family: Family; step: string[] }[];
   /** Ligne de l'étape qui consomme les chemins cachés (hors npm). */
   consumer: string;
@@ -144,13 +140,6 @@ const EXPECTED: Expected[] = [
       { family: "swiftpm", step: cacheStep("Cache SwiftPM (.build-app)", "swiftpm", ["omp-console/.build-app"]) },
     ],
     consumer: "        run: ./scripts/check.sh --sections=app-swift",
-  },
-  {
-    file: CHECK_FILE,
-    job: "macos-app-ios",
-    anchor: "      - uses: actions/checkout@v4",
-    caches: [{ family: "xcode", step: cacheStep("Cache DerivedData iOS (.build-ios)", "xcode", ["omp-console/.build-ios"]) }],
-    consumer: "        run: ./scripts/check.sh --sections=app-ios",
   },
   {
     file: CHECK_FILE,
@@ -228,10 +217,13 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
     }
   }
 
-  // check-macos ne cache rien : il ne lance que ci-verdict.sh.
-  const aggregator = workflowJobs(files[CHECK_FILE] ?? "").get("check-macos") ?? "";
-  assert.ok(aggregator.includes("scripts/ci-verdict.sh"), aggregator);
-  assert.ok(!aggregator.includes("actions/cache") && !aggregator.includes("id: toolchain"), aggregator);
+  // check-macos ne cache rien : il ne lance que ci-verdict.sh. macos-app-ios non
+  // plus : un DerivedData restauré n'y fait rien gagner (mesuré, S-2).
+  for (const [id, run] of [["check-macos", "scripts/ci-verdict.sh"], ["macos-app-ios", "./scripts/check.sh --sections=app-ios"]] as const) {
+    const job = workflowJobs(files[CHECK_FILE] ?? "").get(id) ?? "";
+    assert.ok(job.includes(run), `${id} : « ${run} » attendu\n${job}`);
+    assert.ok(!job.includes("actions/cache") && !job.includes("id: toolchain"), `${id} : cache inattendu\n${job}`);
+  }
 
   // (5) Chaque fichier passé à hashFiles existe : un hashFiles vide figerait la clé.
   const hashed = [...Object.values(files).join("\n").matchAll(/hashFiles\(([^)]*)\)/g)].flatMap((call) =>

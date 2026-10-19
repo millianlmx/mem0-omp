@@ -1628,17 +1628,19 @@ un run déclenché par un push vers `main` n'est jamais annulé.
 dans `macos-tests`, cargo pour la partie 1/2 et au push vers `main`, plus le
 scratch SwiftPM `omp-console/.build-node` pour la partie 1/2 ; `macos-app-swift`
 le cache cargo (cible release de `swift-app.sh`) et `omp-console/.build-app` ;
-`macos-app-ios` le DerivedData `omp-console/.build-ios` ; `release-simulation` le
-cache cargo. L'agrégateur `check (macos-latest)` ne cache rien. Chaque clé porte
+`release-simulation` le cache cargo. L'agrégateur `check (macos-latest)` ne cache
+rien, `macos-app-ios` non plus : mesuré, un DerivedData `omp-console/.build-ios`
+restauré ne fait rien gagner (xcodebuild recompile tout, car les mtimes du checkout
+l'invalident, et le démarrage des tests sur simulateur pèse ~235 s). Chaque clé porte
 la famille, le job, l'entrée de matrice, l'OS, l'architecture, une empreinte de
 la toolchain (version de Node, `rustc -vV`, Swift et Xcode, calculée par l'étape
 « Empreinte des toolchains ») et le contenu : hash de `Cargo.lock` et
-`Cargo.toml`, de `Package.swift`, de `project.pbxproj` avec `Package.swift`, ou
+`Cargo.toml`, de `Package.swift`, ou
 la version de l'hôte (`OMP_HOST_VERSION` et `OMP_HOST_TYPES_NODE`, déclarées une
 seule fois dans l'`env:` de `check.yml`). Il n'y a pas de `restore-keys` : une
 clé changée repart de zéro. Seul un job vert sauvegarde, une PR n'écrit que dans
 sa propre portée (elle lit celle de `main`), et aucune commande n'est sautée sur
-un cache chaud — `npm install`, cargo, `swift` et `xcodebuild` sont toujours
+un cache chaud — `npm install`, cargo et `swift` sont toujours
 rejoués et ne réutilisent que ce qui est encore à jour, donc le verdict est celui
 d'un run à froid. Côté npm, seul le cache de contenu `~/.npm` est gardé, jamais
 `node_modules` : l'hôte s'installe sans lockfile, et un arbre restauré qui
