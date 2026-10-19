@@ -31,6 +31,7 @@ mem0-omp/                              racine = marketplace OMP
 │   ├── mem0-rs/                       le serveur Rust mem0-rs (crate)
 │   └── README.md                      démarrer, migrer une pile mem0-http existante, retour arrière
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
+├── package.json                       privé, sans dépendance : npm run check, npm run typecheck, npm test
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
 ├── scripts/test-files.sh              liste des fichiers de test : tous, macOS (--scope=macos), du diff (--scope=changed), outillage
@@ -1557,6 +1558,7 @@ Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
 fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
 
 ```bash
+npm test                                                        # = bash scripts/check.sh --sections=tests (section ── Tests)
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/lot.test.ts     # un fichier
 bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
@@ -1629,6 +1631,14 @@ local — sans option, toutes les sections et toute la suite tournent :
 | `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
+
+À la racine du dépôt, `package.json` (privé, sans dépendance) donne trois alias :
+`npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
+`bash scripts/typecheck.sh` et `npm test` lance `bash scripts/check.sh --sections=tests`.
+Les arguments placés après `--` sont transmis tels quels (`npm run check -- --sections=types`,
+`npm test -- --tests-part=1/2`) ; `npm test -- --sections=…` est refusé par `check.sh`
+(option répétée). Depuis `omp-mem0-req/` ou `omp-mem0-memory/`, npm lit le
+`package.json` du plugin, qui n'a pas ces alias.
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,

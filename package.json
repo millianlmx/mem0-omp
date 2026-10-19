@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bash scripts/check.sh",
+    "typecheck": "bash scripts/typecheck.sh",
+    "test": "bash scripts/check.sh --sections=tests"
+  }
+}
