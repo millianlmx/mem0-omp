@@ -16,8 +16,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── omp-mem0-req/                      le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json
 │   ├── extension.ts                   entrée : commandes, événements, câblage
-│   ├── lotController.ts, lot.ts, chain.ts, contract.ts, seeds.ts
-│   │                                  le lot : pilote, modèle, chaîne, contrat, amorces
+│   ├── lotController.ts, lot.ts, lotLimits.ts, chain.ts, contract.ts, seeds.ts
+│   │                                  le lot : pilote, modèle, bornes, chaîne, contrat, amorces
 │   ├── runs.ts, inbox.ts, publish.ts, store.ts, runState.ts, git.ts, state.ts,
 │   │   models.ts, audit.ts, commands.ts, quota.ts, context.ts, arbiter.ts
 │   │                                  runs, boîtes, magasin d'état, worktrees, audit, modèles, quotas
