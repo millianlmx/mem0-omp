@@ -330,14 +330,11 @@ export function fakeKit() {
   }
   class FakeCustom {
     #message: Record<string, unknown>;
-    #expanded = false;
     constructor(message: unknown) {
       built.push("CustomMessageComponent");
       this.#message = (message ?? {}) as Record<string, unknown>;
     }
-    setExpanded(expanded: boolean): void {
-      this.#expanded = expanded;
-    }
+    setExpanded(): void {}
     render(width: number): readonly string[] {
       const content = typeof this.#message.content === "string" ? this.#message.content : "";
       return frame([`· ${String(this.#message.customType ?? "?")} : ${content}`], width);

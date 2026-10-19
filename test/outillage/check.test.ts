@@ -434,6 +434,101 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
   assert.ok(output(bad).includes("error TS2550"), output(bad));
 });
 
+// tsconfig-missing-unused-checks : UNE copie, UNE exécution de `── Types` pour
+// les cinq critères — chaque sonde vise une option (noUnusedLocals côté plugin
+// puis côté test, noUnusedParameters, noFallthroughCasesInSwitch) à une ligne et
+// une colonne fixes, que les tests exigent mot pour mot.
+let unusedChecksRun: { status: number | null; out: string } | undefined;
+
+function unusedChecksProbe(): { status: number | null; out: string } {
+  if (unusedChecksRun) return unusedChecksRun;
+  const dir = copyRepo();
+  const prefix = (rel: string, lines: string[]): void => {
+    const target = path.join(dir, rel);
+    fs.writeFileSync(target, `${lines.join("\n")}\n${fs.readFileSync(target, "utf8")}`);
+  };
+  prefix("omp-mem0-req/panelWidth.ts", [
+    "export function probeUnusedLocal(): void {",
+    "  const unusedLocalProbe = 1;",
+    "}",
+    "export function probeFallthrough(n: number): number {",
+    "  let r = 0;",
+    "  switch (n) {",
+    "    case 1:",
+    "      r = 1;",
+    "    case 2:",
+    "      r += 2;",
+    "      break;",
+    "  }",
+    "  return r;",
+    "}",
+  ]);
+  prefix("omp-mem0-memory/brief.ts", ["export function probeUnusedParam(unusedParamProbe: number): void {}"]);
+  prefix("test/memoire/dedupe.test.ts", [
+    "export function probeTestLocal(): void {",
+    "  const unusedTestLocalProbe = 1;",
+    "}",
+  ]);
+  const r = runCheck(dir, "types");
+  unusedChecksRun = { status: r.status, out: output(r) };
+  return unusedChecksRun;
+}
+
+test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans un plugin fait échouer le type-check en la nommant", (t) => {
+  const { out } = unusedChecksProbe();
+  if (hostTypesAbsent(out)) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.ok(
+    out.includes("omp-mem0-req/panelWidth.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read."),
+    out,
+  );
+});
+
+test("tsconfig-missing-unused-checks/AC-2 : un paramètre jamais lu dans un plugin fait échouer le type-check en le nommant", (t) => {
+  const { out } = unusedChecksProbe();
+  if (hostTypesAbsent(out)) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.ok(
+    out.includes("omp-mem0-memory/brief.ts(1,34): error TS6133: 'unusedParamProbe' is declared but its value is never read."),
+    out,
+  );
+});
+
+test("tsconfig-missing-unused-checks/AC-3 : un case non vide qui retombe dans le suivant fait échouer le type-check en désignant ce case", (t) => {
+  const { out } = unusedChecksProbe();
+  if (hostTypesAbsent(out)) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.ok(out.includes("omp-mem0-req/panelWidth.ts(7,5): error TS7029: Fallthrough case in switch."), out);
+});
+
+test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous test/ fait échouer le type-check en la nommant", (t) => {
+  const { out } = unusedChecksProbe();
+  if (hostTypesAbsent(out)) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.ok(
+    out.includes("test/memoire/dedupe.test.ts(2,9): error TS6133: 'unusedTestLocalProbe' is declared but its value is never read."),
+    out,
+  );
+});
+
+test("tsconfig-missing-unused-checks/AC-6 : une variable jamais lue rend la section type-check rouge et check.sh en échec", (t) => {
+  const { status, out } = unusedChecksProbe();
+  if (hostTypesAbsent(out)) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(status, 0, out);
+  assert.ok(out.includes("✗ type-check : "), out);
+});
+
 /** Dossier de doublures : chaque binaire y est un script bash, jamais le vrai. */
 function stubBin(prefix: string): { bin: string; log: string } {
   const bin = path.join(tmpdir(prefix), "bin");

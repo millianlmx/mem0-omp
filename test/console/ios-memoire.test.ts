@@ -19,7 +19,6 @@ import { readIfExists, stripFullLineComments } from "../support/swift-source.ts"
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("ios-memoire-copie-");
-const SHELL = path.join(ROOT, "omp-console");
 const CONTRACT = path.join(ROOT, ".omp", "pipeline", "contract.md");
 
 /** Le source débarrassé de ses commentaires `/* … *\/` et de ses lignes `//`. */

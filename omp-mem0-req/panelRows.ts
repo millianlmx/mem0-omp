@@ -6,7 +6,7 @@ import { realpathOr, toSlug } from "./git.ts";
 import { ARBITER_RELAUNCH_MAX, auditRelayOpen, blockedQuotaOf, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, quotaGroupsOf, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState, LotRunRecord, QuotaGroup } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, DEFAULT_MODEL_SHORT_LABEL, MODEL_GROUP_LABELS, featureFallbackForPhase, featureModelSlots, filterModelChoices, groupOfStep, isFallbackStep, stepChoices } from "./models.ts";
+import { DEFAULT_MODEL_SHORT_LABEL, MODEL_GROUP_LABELS, featureFallbackForPhase, featureModelSlots, filterModelChoices, groupOfStep, isFallbackStep, stepChoices } from "./models.ts";
 import type { ModelChoice, ModelStep, ModelStepDraft } from "./models.ts";
 import { quotaDeadlineLabel } from "./quota.ts";
 import type { PanelTui } from "./panelHost.ts";

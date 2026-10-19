@@ -29,12 +29,6 @@ import { readIfExists, stripComments, swiftCode } from "../support/swift-source.
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("ios-memoire-graphe-copie-");
-const SHELL = path.join(ROOT, "omp-console");
-const CORE = path.join(SHELL, "Sources", "ConsoleCore");
-const MACOS = path.join(SHELL, "Sources", "OMPConsole");
-const IOS_APP = path.join(SHELL, "ios", "OMPConsoleIOS");
-const IOS_TESTS = path.join(SHELL, "ios", "OMPConsoleIOSTests");
-const MAC_TESTS = path.join(SHELL, "Tests", "OMPConsoleTests");
 
 /** Le source d'un fichier, commentaires retirés, ou la chaîne vide. */
 function source(file: string): string {

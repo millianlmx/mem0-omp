@@ -405,7 +405,7 @@ test("handlers/AC-2 : /specs, /impl et /review envoient leur seed depuis le work
       ["impl", "[impl]", ""],
       ["review", "[review]", ""],
     ];
-    for (const [command, tag, args] of expected) {
+    for (const [command, , args] of expected) {
       const { ctx } = mkCtx(worktree);
       await app.handlers.get(command)!(args, ctx as never);
     }

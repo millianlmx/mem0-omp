@@ -22,10 +22,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
 
-const SHELL = path.join(ROOT, "omp-console");
-const IOS = path.join(SHELL, "ios");
-const IOS_APP = path.join(IOS, "OMPConsoleIOS");
-
 /** Profondeur d'imbrication : 0 = `node --test test/console/coque-ios.test.ts`. */
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 

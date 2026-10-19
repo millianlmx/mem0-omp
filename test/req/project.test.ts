@@ -947,7 +947,7 @@ test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteig
   }
 
   const states = () => ["a", "b"].map((slug) => `${fx.featureOf(slug)?.state}:${fx.featureOf(slug)?.waitKind ?? ""}`);
-  for (const [milestone, label] of [
+  for (const [milestone] of [
     ["specs", "Jalon « specs validées »"],
     ["review", "Jalon « revue propre »"],
   ] as const) {

@@ -33,11 +33,6 @@ import * as path from "node:path";
 import { ROOT, copyRepo } from "../support/repo.ts";
 import { readIfExists, stripComments, swiftCode } from "../support/swift-source.ts";
 
-const SHELL = path.join(ROOT, "omp-console");
-const CORE = path.join(SHELL, "Sources", "ConsoleCore");
-const MACOS = path.join(SHELL, "Sources", "OMPConsole");
-const IOS_APP = path.join(SHELL, "ios", "OMPConsoleIOS");
-
 /** Les sources de l'APP iOS au premier niveau (sous-dossiers exclus), nom de fichier → source (commentaires retirés). */
 function appSources(root: string): { name: string; code: string }[] {
   const dir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");

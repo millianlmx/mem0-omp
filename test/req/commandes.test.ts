@@ -21,7 +21,6 @@ import {
   writeAuditRelay,
   LOT_VERSION,
   commandAckDir,
-  commandAckPath,
   commandDir,
   commandFilePath,
   createLotController,
@@ -337,11 +336,6 @@ function stateOf(stateDir: string, repo: string, slug: string): string {
   const lot = readLot(stateDir, lotRepoKey(repo));
   const found = lot ? lotFeature(lot, slug) : undefined;
   return found === undefined ? "(absente)" : `${found.state}:${found.waitKind ?? ""}`;
-}
-
-/** Laisse retomber les microtâches : les fins de run sont traitées hors passe. */
-async function flush(times = 6): Promise<void> {
-  for (let i = 0; i < times; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
 /** Attend qu'un prédicat tienne : on observe l'état au lieu de deviner sa durée. */

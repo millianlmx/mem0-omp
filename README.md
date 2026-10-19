@@ -1596,8 +1596,12 @@ Chaque PR passe `./scripts/check.sh` sur Ubuntu **et** sur macOS. Le type-check 
 couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` :
 `tsconfig.json` pour les plugins (lib ES2023, donc une API ES2024 comme
 `Promise.withResolvers` y fait échouer le job) et `tsconfig.test.json` pour la
-suite (lib ES2024). La validation ne se contente pas de transpiler les
-extensions : `scripts/plugin-smoke.ts` charge
+suite (lib ES2024). Les deux programmes appliquent `strict`, `noUnusedLocals`,
+`noUnusedParameters` et `noFallthroughCasesInSwitch` : une variable, un import ou
+un paramètre jamais lu (préfixe `_` pour un paramètre imposé par une signature)
+et un `case` non vide qui retombe dans le suivant font échouer le job. La
+validation ne se contente pas de transpiler les extensions :
+`scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
 vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 `mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le

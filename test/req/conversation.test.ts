@@ -58,7 +58,6 @@ import reqExtension, {
   type LotRunSpec,
   type PanelDelivery,
   type PanelGesture,
-  type PanelGlyphs,
   type PipelinesPanelDeps,
   type RowReply,
   type RunningEntry,
@@ -149,8 +148,6 @@ function oneLineSession(file: string, cwd: string, text: string): string {
 // ---------------------------------------------------------------------------
 // Le panneau monté : la VRAIE fabrique, avec ses dépendances injectées
 // ---------------------------------------------------------------------------
-
-const GLYPHS: PanelGlyphs = { cursor: ">" };
 
 /** Le stub de touches : il résout AUSSI `app.tools.expand` (`ctrl+o`, S-3). */
 const KEYS = {
@@ -951,7 +948,7 @@ test("S-9 : répondre à un ask ne touche ni le magasin, ni les sessions, ni la 
 });
 
 test("S-10 : deux réponses de suite puis un message reprennent la MÊME session du maillon", async () => {
-  const { runs, repoRoot, stateDir, worktree, session, inbox, panel } = await armedMaillon("conversation-suite");
+  const { runs, stateDir, worktree, session, inbox, panel } = await armedMaillon("conversation-suite");
   liveEntry(stateDir, {
     cwd: worktree,
     sessionFile: session,

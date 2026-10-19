@@ -2,7 +2,6 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { auditRepoRootOf, createAuditRelay, registerAuditReportTool } from "./audit.ts";
-import { hasPendingCommands } from "./commands.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep, PipelinePhase } from "./contract.ts";
 import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";

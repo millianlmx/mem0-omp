@@ -17,11 +17,6 @@ import { stripComments, swiftFiles } from "../support/swift-source.ts";
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
-const SHELL = path.join(ROOT, "omp-console");
-const IOS = path.join(SHELL, "ios");
-const APP = path.join(IOS, "OMPConsoleIOS");
-const CORE = path.join(SHELL, "Sources", "ConsoleCore");
-const SHELL_SOURCES = path.join(SHELL, "Sources", "OMPConsole");
 
 /** Les huit sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
 const SECTIONS = ["home", "kanban", "project", "audit", "session", "sessions", "memory", "stats"];

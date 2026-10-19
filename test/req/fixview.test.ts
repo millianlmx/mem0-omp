@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import reqExtension, {
+import {
   LOT_VERSION,
   SESSION_VIEW_MAX_ENTRIES,
   displayWidth,
@@ -31,7 +31,6 @@ import reqExtension, {
   type Lot,
   type LotFeature,
   type LotPanelActions,
-  type PanelGlyphs,
   type PipelinesPanelDeps,
   type RunningEntry,
 } from "../../omp-mem0-req/extension.ts";
@@ -154,8 +153,6 @@ function toolResultEntry(toolCallId: string, text: string): unknown {
 // ---------------------------------------------------------------------------
 // Panneau monté : la fabrique réelle, avec ses dépendances injectées
 // ---------------------------------------------------------------------------
-
-const GLYPHS: PanelGlyphs = { cursor: ">" };
 
 const THEME = {
   fg: (_tone: string, text: string) => text,
