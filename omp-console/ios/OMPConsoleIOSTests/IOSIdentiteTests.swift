@@ -61,8 +61,12 @@ struct IOSIdentiteTests {
         #expect(message.contains("votre") && message.contains("vos"))
         #expect(!message.contains("'"))
         #expect(info["NSBonjourServices"] as? [String] == ["_ompconsole._tcp"])
+        // Le Mac se joint en HTTP, au LAN comme par Tailscale (100.64/10, hors du
+        // « réseau local » d'ATS). `NSAllowsLocalNetworking` présent ferait ignorer
+        // `NSAllowsArbitraryLoads` par iOS : l'adresse Tailscale échouerait en -1022.
         let transport = info["NSAppTransportSecurity"] as? [String: Any]
-        #expect(transport?["NSAllowsLocalNetworking"] as? Bool == true)
+        #expect(transport?["NSAllowsArbitraryLoads"] as? Bool == true)
+        #expect(transport?["NSAllowsLocalNetworking"] == nil)
     }
 
     @Test("ios-identite-app/AC-8 — l'écran de lancement est le UILaunchScreen vide généré par Xcode : fond système, sans couleur, image, barre ni storyboard")
