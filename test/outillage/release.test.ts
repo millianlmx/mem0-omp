@@ -50,7 +50,7 @@ import {
   type VersionEntry,
 } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
-import { ROOT, copyRepo, tmpdir } from "../support/repo.ts";
+import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
@@ -702,6 +702,8 @@ function runEngine(
     MEM0_OMP_SKIP_IOS: "1",
     // La section Rust (cargo, contrat contre mem0-rs) n'a rien à faire ici.
     MEM0_OMP_SKIP_RUST: "1",
+    // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
+    ...LINT_TOOL_ENV,
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;

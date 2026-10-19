@@ -23,7 +23,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
+import { LINT_TOOL_ENV, ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { readAttendus } from "../support/app-intents-doubles.ts";
 import {
@@ -55,6 +55,8 @@ const NESTED_ENV = {
   // La section Rust (cargo, contrat boîte noire contre mem0-rs) démarre de vrais
   // serveurs : aucune copie jetable ne la relance, la racine l'exécute.
   MEM0_OMP_SKIP_RUST: "1",
+  // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
+  ...LINT_TOOL_ENV,
 };
 
 /**
