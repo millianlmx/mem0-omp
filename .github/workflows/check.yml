@@ -110,10 +110,11 @@ jobs:
         env:
           # En CI, un prérequis manquant (bun, hôte, cargo ou clippy) est un échec,
           # jamais un skip : ni le harnais « plugins réels », ni la section Rust ne
-          # doivent pouvoir disparaître en silence.
+          # doivent pouvoir disparaître en silence. `--strict` étend la règle aux
+          # tests de test/ sautés faute de prérequis installable (prerequisAbsent).
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_RUST: "1"
-        run: ./scripts/check.sh
+        run: ./scripts/check.sh --strict
 
   # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
   # un seul job, il durait ≈ 36 min, au-delà des 2100 s d'attente de fusion que

@@ -511,6 +511,8 @@ function withoutBlock(steps: string[], block: string[]): string[] {
 }
 /** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), ajoutée au job check après f3fbfe6. */
 const TYPESCRIPT_STEP = ["      - name: Installer le TypeScript épinglé du type-check", "        run: bash scripts/typecheck.sh --prepare"];
+/** Le lancement de check.sh du job check, en mode strict (silent-prerequisite-skips S-6) ; f3fbfe6 le lançait sans option. */
+const STRICT_RUN = "        run: ./scripts/check.sh --strict";
 
 /** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
 function withoutStep(steps: string[], first: string, count: number): string[] {
@@ -519,14 +521,14 @@ function withoutStep(steps: string[], first: string, count: number): string[] {
   return [...steps.slice(0, at), ...steps.slice(at + count)];
 }
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, et l'empreinte, les caches et la version de l'hôte de ci-without-cache", (t) => {
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, l'empreinte, les caches et la version de l'hôte de ci-without-cache, et le mode strict", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
   const check = jobs.get("check") ?? "";
   assert.equal(jobKey(check, "runs-on"), "${{ matrix.os }}");
   assert.equal(jobKey(check, "name"), null);
-  assert.ok(stepsOf(check).includes("        run: ./scripts/check.sh"), "check.sh sans option sur ubuntu");
+  assert.equal(stepsOf(check).filter((line) => line === STRICT_RUN).length, 1, "check.sh --strict, une seule fois, sur ubuntu");
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
   // (a) Plus aucune trace du banc Python de mem0-http.
   const steps = stepsOf(check);
@@ -571,14 +573,17 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   old = withoutStep(old, "      - uses: actions/setup-python@v7", 3);
   old = withoutStep(old, "      - name: Préparer l'environnement du test d'API mem0-http", 2);
   old = old.filter((line) => !line.includes("MEM0_OMP_REQUIRE_HTTP_API"));
+  // (d) Le mode strict : la ligne de lancement est ramenée à celle de f3fbfe6.
   assert.deepEqual(
-    current.filter(
-      (line) =>
-        !QDRANT_STEP.includes(line) &&
-        !RUST_STEP.includes(line) &&
-        !TYPESCRIPT_STEP.includes(line) &&
-        !line.includes("MEM0_OMP_REQUIRE_RUST"),
-    ),
+    current
+      .filter(
+        (line) =>
+          !QDRANT_STEP.includes(line) &&
+          !RUST_STEP.includes(line) &&
+          !TYPESCRIPT_STEP.includes(line) &&
+          !line.includes("MEM0_OMP_REQUIRE_RUST"),
+      )
+      .map((line) => (line === STRICT_RUN ? "        run: ./scripts/check.sh" : line)),
     old,
   );
 });

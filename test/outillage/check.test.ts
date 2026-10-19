@@ -248,13 +248,13 @@ test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise
 test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
 
-  // Job `check` : Ubuntu seul, toutes les sections (check.sh sans option).
+  // Job `check` : Ubuntu seul, toutes les sections, en mode strict.
   const matrix = /matrix:\s*\n\s*os:\s*\[([^\]]*)\]/.exec(workflow);
   assert.ok(matrix, `matrice \`os\` absente du workflow :\n${workflow}`);
   const systems = matrix[1].split(",").map((s) => s.trim());
   assert.deepEqual(systems, ["ubuntu-latest"]);
   assert.match(workflow, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
-  assert.match(workflow, /run: \.\/scripts\/check\.sh\s*$/m);
+  assert.match(workflow, /run: \.\/scripts\/check\.sh --strict\s*$/m);
 
   // macOS : jobs parallèles qui lancent check.sh par sections, et leur agrégateur.
   assert.match(workflow, /^ {4}name: check \(macos-latest\)$/m);
