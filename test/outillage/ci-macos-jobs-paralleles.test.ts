@@ -230,7 +230,7 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
     [["--sections=noms,,catalogue"], `✗ section inconnue : «  » (attendu : ${ids})`],
-    [["--bogus"], "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2)"],
+    [["--bogus"], "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)"],
     [["--tests-scope=linux"], "✗ --tests-scope : valeur inconnue « linux » (attendu : macos)"],
     [["--tests-part=3/3"], "✗ --tests-part : valeur inconnue « 3/3 » (attendu : 1/2, 2/2)"],
     [["--sections=noms", "--sections=catalogue"], "✗ option répétée : --sections"],

@@ -24,6 +24,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { readAttendus } from "../support/app-intents-doubles.ts";
 import {
   META_ACTIONS_REL,
@@ -224,7 +225,7 @@ test("check/AC-15 : une version d'entrée ou de metadata divergente fait échoue
 test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise", (t) => {
   const npx = spawnSync("bash", ["-c", "command -v npx"], { encoding: "utf8" });
   if (npx.status !== 0) {
-    t.skip("npx absent — transpilation non vérifiée");
+    prerequisAbsent(t, "npx", "transpilation non vérifiée");
     return;
   }
 
@@ -269,7 +270,7 @@ test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
 test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte est sans erreur", (t) => {
   const script = path.join(ROOT, "scripts/typecheck.sh");
   if (!fs.existsSync(script)) {
-    t.skip("scripts/typecheck.sh absent — type-check non vérifié");
+    prerequisAbsent(t, "scripts/typecheck.sh", "type-check non vérifié");
     return;
   }
 
@@ -282,7 +283,7 @@ test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte es
   // Le type-check n'a de sens que si les types de l'hôte sont là : le script le
   // dit et sort 0, on ne prétend donc pas avoir vérifié quoi que ce soit.
   if (out.includes("types de l'hôte absents")) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.equal(run.status, 0, out);
@@ -311,7 +312,7 @@ test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait éc
 
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -327,7 +328,7 @@ test("check/AC-2 : une erreur de type dans un fichier de test fait échouer chec
 
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -344,7 +345,7 @@ test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de
   // tourne MALGRÉ l'échec du premier (aucun court-circuit entre les deux).
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -364,7 +365,7 @@ test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle ref
   // moitié d'AC-4 (« arbre non modifié, 0 erreur ») est portée par check/AC-18.
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -405,7 +406,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
   // bien en lib ES2024, donc `withResolvers` n'y est PAS signalé (S-4).
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -425,7 +426,7 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
   // lib du programme des sources, pas par un scan de motif (S-4).
   const bad = runCheck(dir, "types");
   if (hostTypesAbsent(output(bad))) {
-    t.skip("types de l'hôte absents — type-check non vérifié");
+    prerequisAbsent(t, "types de l'hôte", "type-check non vérifié");
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
@@ -566,7 +567,7 @@ test("socle-app-swift/AC-1 : le paquet omp-console compile en debug (la release 
     return;
   }
   if (spawnSync("swift", ["--version"], { encoding: "utf8" }).status !== 0) {
-    t.skip("swift absent — SwiftPM non vérifié");
+    prerequisAbsent(t, "swift", "SwiftPM non vérifié");
     return;
   }
   const pkg = path.join(ROOT, "omp-console");

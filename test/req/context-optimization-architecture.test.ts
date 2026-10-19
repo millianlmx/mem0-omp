@@ -112,6 +112,7 @@ import {
   releaseArgs,
 } from "../../omp-mem0-req/extension.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const T0 = 1_700_000_000_000;
@@ -147,7 +148,8 @@ type BenchResult = {
   configHashAfter: string;
 };
 
-type BenchRun = { kind: "ok"; result: BenchResult } | { kind: "missing"; reason: string };
+/** `missing` : le banc n'a pas tourné faute de `prerequis` (bun, ou ce que le banc a dit en sortant 2). */
+type BenchRun = { kind: "ok"; result: BenchResult } | { kind: "missing"; prerequis: string };
 
 const benches = new Map<BenchScenario, Promise<BenchRun>>();
 
@@ -168,11 +170,11 @@ function runBench(scenario: BenchScenario): Promise<BenchRun> {
         (error, stdout, stderr) => {
           const code = error === null ? 0 : typeof error.code === "number" ? error.code : -1;
           if (error !== null && (error as NodeJS.ErrnoException).code === "ENOENT") {
-            resolve({ kind: "missing", reason: "bun introuvable" });
+            resolve({ kind: "missing", prerequis: "bun" });
             return;
           }
           if (code === 2) {
-            resolve({ kind: "missing", reason: `prérequis du banc absent : ${stdout.trim() || stderr.trim()}` });
+            resolve({ kind: "missing", prerequis: stdout.trim() || stderr.trim() });
             return;
           }
           const last = stdout.trim().split("\n").filter(line => line.trim() !== "").at(-1) ?? "";
@@ -193,8 +195,8 @@ function runBench(scenario: BenchScenario): Promise<BenchRun> {
 async function benchOf(t: test.TestContext, scenario: BenchScenario): Promise<BenchResult | null> {
   const run = await runBench(scenario);
   if (run.kind === "ok") return run.result;
-  if (process.env.MEM0_OMP_REQUIRE_SMOKE) assert.fail(`banc ${scenario} : ${run.reason}`);
-  t.skip(`banc ${scenario} non exécuté : ${run.reason}`);
+  const exige = process.env.MEM0_OMP_REQUIRE_SMOKE;
+  prerequisAbsent(t, run.prerequis, `banc ${scenario} non exécuté`, exige ? `MEM0_OMP_REQUIRE_SMOKE=${exige}` : null);
   return null;
 }
 

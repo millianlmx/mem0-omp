@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 
 const SHELL = path.join(ROOT, "omp-console");
@@ -296,7 +297,7 @@ const MOVED: string[] = [
 /** Les cinq symboles qui RESTENT dans la coque (S-1). */
 const SHELL_ONLY: string[] = ["StoreReader", "StoreWatcher", "StoreHub", "FilesText", "TerminalViewText"];
 
-test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans dépendance vers une autre cible du paquet", () => {
+test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans dépendance vers une autre cible du paquet", (t) => {
   const pkg = path.join(SHELL, "Package.swift");
   const manifest = declaredTargets(pkg);
   const core = manifest.find((t) => t.name === "ConsoleCore");
@@ -339,7 +340,10 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   // `socle-app-swift/AC-1`).
   if (IN_COPY || process.platform !== "darwin") return;
   const probe = spawnSync("swift", ["--version"], { encoding: "utf8" });
-  if (probe.status !== 0) return;
+  if (probe.status !== 0) {
+    prerequisAbsent(t, "swift", "compilation du paquet non vérifiée");
+    return;
+  }
   const described = spawnSync("swift", ["package", "describe", "--type", "json"], {
     cwd: SHELL,
     encoding: "utf8",
@@ -355,7 +359,7 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   assert.deepEqual(entry.target_dependencies ?? [], [], "ConsoleCore déclare une dépendance de cible");
 });
 
-test("noyau-partage-console/AC-2 : les sources de ConsoleCore n'importent ni AppKit ni UIKit, et la cible se compile seule", () => {
+test("noyau-partage-console/AC-2 : les sources de ConsoleCore n'importent ni AppKit ni UIKit, et la cible se compile seule", (t) => {
   const files = swiftFiles(CORE_SOURCES);
   assert.ok(files.length > 0, "Sources/ConsoleCore est vide");
   const forbidden = /^\s*import\s+(AppKit|UIKit|Cocoa)\b/m;
@@ -376,7 +380,7 @@ test("noyau-partage-console/AC-2 : les sources de ConsoleCore n'importent ni App
     return;
   }
   if (spawnSync("swift", ["--version"], { encoding: "utf8" }).status !== 0) {
-    console.log("  · swift absent — compilation de ConsoleCore non vérifiée");
+    prerequisAbsent(t, "swift", "compilation de ConsoleCore non vérifiée");
     return;
   }
   const scratch = tmpdir("noyau-build-");
