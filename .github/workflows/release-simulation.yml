@@ -49,7 +49,36 @@ jobs:
           # hôte OMP, ni `MEM0_OMP_REQUIRE_SMOKE`. Le verdict doit être celui de la
           # release, jamais celui d'un gate plus strict.
           node-version: "22"
-      # Aucune variable d'environnement, aucun secret : le script crée lui-même la
-      # copie jetable, y rejoue `scripts/release.ts --simulate` et rend son verdict.
+      # Empreinte des toolchains de l'image : elle entre dans la clé du cache cargo,
+      # pour qu'une mise à jour de rustc change la clé (même étape que check.yml).
+      - name: Empreinte des toolchains (clés de cache)
+        id: toolchain
+        run: |
+          {
+            echo "node=$(node --version 2>/dev/null || echo absent)"
+            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+      # Registre cargo et cible STABLE de mem0-rs : la copie jetable du script vit
+      # sous un chemin mktemp qui change à chaque run, donc sa cible par défaut ne
+      # serait jamais restaurée. Ni ~/.cargo/bin (proxies rustup de l'image) ni
+      # registry/src (régénéré) ; pas de restore-keys. Le cache n'est sauvegardé
+      # que par un job vert.
+      - name: Cache cargo (mem0-rs)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ runner.temp }}/cargo-target
+          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
+      # Aucun secret : le script crée lui-même la copie jetable, y rejoue
+      # `scripts/release.ts --simulate` et rend son verdict. Seule variable :
+      # CARGO_TARGET_DIR, la cible cachée ci-dessus, que check.sh, swift-app.sh et
+      # les tests test/stack/* honorent déjà. Posée sur l'étape : le contexte
+      # `runner` n'est pas disponible dans `jobs.<id>.env`.
       - name: Simuler la release sur une copie jetable
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
         run: bash scripts/release-simulation.sh

@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# Version de l'hôte OMP installé par les jobs `check` et `macos-tests`, source
+# unique : elle entre aussi dans la clé du cache npm. Ce bloc précède
+# `concurrency` : les gardes de ce dernier lisent tout ce qui le suit jusqu'à
+# `jobs:`. 18.8.4 : les options du service (`bindProcessState` de
+# CreateAgentSessionOptions, `runEphemeralTurn` de ExtensionContextActions)
+# n'existent pas dans 18.2.11, et 18.4.8 livre des sources que Bun ne charge pas
+# (`createRatchetPrelude` absent de `src/ratchet/prelude.js`), ce qui ferait
+# échouer la section « Plugins réels ». Mesuré : 18.8.4 passe le type-check ET le
+# smoke.
+env:
+  OMP_HOST_VERSION: "18.8.4"
+  OMP_HOST_TYPES_NODE: "22"
+
 # Un nouveau commit sur une PR annule le run en cours de cette PR : seul le sha le
 # plus récent décide, et le run annulé libère ses runners macOS (4 par run, sur
 # une limite de 5 par compte). Au push vers `main`, le groupe porte l'identifiant
@@ -36,6 +49,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
+      # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
+      # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
+      # outil absent donne « absent », haché : la clé reste valide.
+      - name: Empreinte des toolchains (clés de cache)
+        id: toolchain
+        run: |
+          {
+            echo "node=$(node --version 2>/dev/null || echo absent)"
+            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+      # Le cache de contenu de npm (~/.npm), jamais node_modules : `npm install`
+      # est toujours rejoué et revérifie l'arbre, seul le téléchargement est évité.
+      - name: Cache npm (hôte OMP)
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}
+      # Registre cargo et cible de mem0-rs. Ni ~/.cargo/bin (proxies rustup de
+      # l'image : les restaurer épinglerait une toolchain périmée) ni
+      # registry/src (régénéré). Pas de restore-keys : une clé changée repart de
+      # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
+      - name: Cache cargo (mem0-rs)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            mem0-stack/mem0-rs/target
+          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
       # Une ÉTAPE des jobs `check` et `macos-tests`, jamais un job séparé : les
       # statuts requis de `main` sont `check (ubuntu-latest)` et l'agrégateur
       # `check (macos-latest)`, donc un job nouveau ne bloquerait rien. Le bump
@@ -46,13 +91,8 @@ jobs:
         run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
       - name: Installer l'hôte OMP (types et SDK)
         run: |
-          # 18.8.4 : les options du service (`bindProcessState` de
-          # CreateAgentSessionOptions, `runEphemeralTurn` de ExtensionContextActions)
-          # n'existent pas dans 18.2.11, et 18.4.8 livre des sources que Bun ne
-          # charge pas (`createRatchetPrelude` absent de `src/ratchet/prelude.js`),
-          # ce qui ferait échouer la section « Plugins réels ». Mesuré : 18.8.4
-          # passe le type-check ET le smoke.
-          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22
+          # Version épinglée par l'`env:` du workflow (justification là-haut).
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
@@ -80,19 +120,72 @@ jobs:
   # leurs `--sections` couvre les 12 sections de check.sh : rien de ce que le job
   # macOS vérifiait ne disparaît.
 
-  # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation.
+  # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation
+  # hormis la restauration des caches.
   macos-app-swift:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
+      # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
+      # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
+      # outil absent donne « absent », haché : la clé reste valide.
+      - name: Empreinte des toolchains (clés de cache)
+        id: toolchain
+        run: |
+          {
+            echo "node=$(node --version 2>/dev/null || echo absent)"
+            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+      # Registre cargo et cible de mem0-rs. Ni ~/.cargo/bin (proxies rustup de
+      # l'image : les restaurer épinglerait une toolchain périmée) ni
+      # registry/src (régénéré). Pas de restore-keys : une clé changée repart de
+      # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
+      # Ici, la cible release de `cargo build --release` (scripts/swift-app.sh).
+      - name: Cache cargo (mem0-rs)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            mem0-stack/mem0-rs/target
+          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
+      # Scratch SwiftPM persistant du job. `swift test` seul y écrit : un scratch ne sert
+      # qu'à un type de commande SwiftPM.
+      - name: Cache SwiftPM (.build-app)
+        uses: actions/cache@v6
+        with:
+          path: omp-console/.build-app
+          key: swiftpm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/Package.swift') }}
       - name: App Swift
         run: ./scripts/check.sh --sections=app-swift
 
-  # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
+  # Compilation et tests de l'app iOS : Xcode seul, aucune préparation hormis la
+  # restauration du cache.
   macos-app-ios:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
+      # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
+      # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
+      # outil absent donne « absent », haché : la clé reste valide.
+      - name: Empreinte des toolchains (clés de cache)
+        id: toolchain
+        run: |
+          {
+            echo "node=$(node --version 2>/dev/null || echo absent)"
+            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+      # DerivedData de xcodebuild (`-derivedDataPath` de scripts/ios-build.sh).
+      - name: Cache DerivedData iOS (.build-ios)
+        uses: actions/cache@v6
+        with:
+          path: omp-console/.build-ios
+          key: xcode-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/ios/OMPConsoleIOS.xcodeproj/project.pbxproj', 'omp-console/Package.swift') }}
       - name: App iOS
         env:
           # Xcode est utilisable sur macos-latest : un « non exécuté » de la
@@ -129,13 +222,56 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
+      # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
+      # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
+      # outil absent donne « absent », haché : la clé reste valide.
+      - name: Empreinte des toolchains (clés de cache)
+        id: toolchain
+        run: |
+          {
+            echo "node=$(node --version 2>/dev/null || echo absent)"
+            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
+          } >> "$GITHUB_OUTPUT"
+      # Le cache de contenu de npm (~/.npm), jamais node_modules : `npm install`
+      # est toujours rejoué et revérifie l'arbre, seul le téléchargement est évité.
+      - name: Cache npm (hôte OMP)
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}
+      # Registre cargo et cible de mem0-rs. Ni ~/.cargo/bin (proxies rustup de
+      # l'image : les restaurer épinglerait une toolchain périmée) ni
+      # registry/src (régénéré). Pas de restore-keys : une clé changée repart de
+      # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
+      # Seule la partie 1/2 compile mem0-rs en PR (section rust) ; au push, la 2/2
+      # lance aussi les tests test/stack/* qui le compilent.
+      - name: Cache cargo (mem0-rs)
+        if: matrix.part == '1/2' || github.event_name == 'push'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            mem0-stack/mem0-rs/target
+          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
+      # Scratch SwiftPM persistant du job. Seul socle-app-swift/AC-1, de la partie 1/2,
+      # y compile (`swift build --scratch-path omp-console/.build-node`).
+      - name: Cache SwiftPM (.build-node)
+        if: matrix.part == '1/2'
+        uses: actions/cache@v6
+        with:
+          path: omp-console/.build-node
+          key: swiftpm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/Package.swift') }}
       - name: Refuser un bump de version manuel dans la PR
         if: github.event_name == 'pull_request'
         run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
       - name: Installer l'hôte OMP (types et SDK)
         run: |
-          # Même hôte que le job `check` (18.8.4) : voir la justification là-haut.
-          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22
+          # Même hôte que le job `check` (`env:` du workflow).
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2

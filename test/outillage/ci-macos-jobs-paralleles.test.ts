@@ -461,6 +461,51 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
 const QDRANT_STEP = ["      - name: Préparer la Qdrant source des tests d'import mem0-rs", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
 /** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle de la Qdrant source. */
 const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
+/** L'étape d'empreinte des toolchains (ci-without-cache S-1), juste après setup-node : elle nourrit les clés de cache. */
+const FINGERPRINT_STEP = [
+  "      - name: Empreinte des toolchains (clés de cache)",
+  "        id: toolchain",
+  "        run: |",
+  "          {",
+  '            echo "node=$(node --version 2>/dev/null || echo absent)"',
+  '            echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"',
+  '            echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"',
+  '          } >> "$GITHUB_OUTPUT"',
+];
+/** Le cache npm de l'hôte OMP (ci-without-cache S-2), juste après l'empreinte. */
+const NPM_CACHE_STEP = [
+  "      - name: Cache npm (hôte OMP)",
+  "        uses: actions/cache@v6",
+  "        with:",
+  "          path: ~/.npm",
+  "          key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}",
+];
+/** Le cache cargo de mem0-rs (ci-without-cache S-2), juste après le cache npm. */
+const CARGO_CACHE_STEP = [
+  "      - name: Cache cargo (mem0-rs)",
+  "        uses: actions/cache@v6",
+  "        with:",
+  "          path: |",
+  "            ~/.cargo/registry/index",
+  "            ~/.cargo/registry/cache",
+  "            ~/.cargo/git/db",
+  "            mem0-stack/mem0-rs/target",
+  "          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}",
+];
+/** L'installation de l'hôte : la version, littérale dans f3fbfe6, vient de l'`env:` du workflow (ci-without-cache S-1). */
+const HOST_INSTALL = {
+  f3fbfe6: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
+  now: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"',
+};
+
+/** Retire `block`, présent une seule fois et d'un seul tenant, d'une liste d'étapes (absent : erreur). */
+function withoutBlock(steps: string[], block: string[]): string[] {
+  const at = steps.indexOf(block[0] ?? "");
+  assert.ok(at !== -1, `étape « ${block[0]?.trim()} » introuvable dans le job check`);
+  assert.equal(steps.filter((line) => line === block[0]).length, 1, `étape « ${block[0]?.trim()} » dupliquée`);
+  assert.deepEqual(steps.slice(at, at + block.length), block);
+  return [...steps.slice(0, at), ...steps.slice(at + block.length)];
+}
 
 /** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
 function withoutStep(steps: string[], first: string, count: number): string[] {
@@ -469,7 +514,7 @@ function withoutStep(steps: string[], first: string, count: number): string[] {
   return [...steps.slice(0, at), ...steps.slice(at + count)];
 }
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source et celle de la toolchain Rust", (t) => {
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, et l'empreinte, les caches et la version de l'hôte de ci-without-cache", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
@@ -494,6 +539,17 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.equal(steps[at + 2], RUST_STEP[0], check);
   assert.equal(steps[at + 3], RUST_STEP[1], check);
   assert.equal(steps.filter((line) => line === '          MEM0_OMP_REQUIRE_RUST: "1"').length, 1, check);
+  // (b') ci-without-cache : l'empreinte puis les caches npm et cargo, d'un seul
+  // tenant et juste après setup-node ; l'installation lit la version de l'hôte
+  // dans l'`env:` du workflow, une seule fois.
+  const fingerprint = steps.indexOf(FINGERPRINT_STEP[0] ?? "");
+  assert.equal(steps[fingerprint - 1], '          node-version: "22"', check);
+  const caches = [...FINGERPRINT_STEP, ...NPM_CACHE_STEP, ...CARGO_CACHE_STEP];
+  assert.deepEqual(steps.slice(fingerprint, fingerprint + caches.length), caches, check);
+  assert.equal(steps.filter((line) => line === HOST_INSTALL.now).length, 1, check);
+  const current = withoutBlock(withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP), CARGO_CACHE_STEP).map(
+    (line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line),
+  );
 
   if (DEPTH > 0) {
     t.skip(NESTED);
@@ -511,7 +567,7 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   old = withoutStep(old, "      - name: Préparer l'environnement du test d'API mem0-http", 2);
   old = old.filter((line) => !line.includes("MEM0_OMP_REQUIRE_HTTP_API"));
   assert.deepEqual(
-    steps.filter(
+    current.filter(
       (line) => !QDRANT_STEP.includes(line) && !RUST_STEP.includes(line) && !line.includes("MEM0_OMP_REQUIRE_RUST"),
     ),
     old,
