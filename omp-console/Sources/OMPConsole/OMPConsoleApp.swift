@@ -56,6 +56,9 @@ struct OMPConsoleApp: App {
     /// latérale le montre, et ses deux veilles vivent tant que l'app vit — le
     /// badge se recalcule sans redémarrage. Le service d'API le sert aussi (S-4).
     @StateObject private var componentsModel: ComponentPresenceModel
+    /// L'écart de version du service OMP (S-4 de service-version-drift-detection) :
+    /// sa veille de `service.json` vit tant que l'app vit.
+    @StateObject private var serviceVersionModel: ServiceVersionModel
     /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
     /// il possède le registre des appareils et l'interrupteur persistant, que
     /// montre l'onglet « Appareils » des Réglages.
@@ -117,6 +120,7 @@ struct OMPConsoleApp: App {
             ?? SetupModel.standard(autoPrepare: home.canLaunch)
         let presence = ComponentPresenceModel()
         _componentsModel = StateObject(wrappedValue: presence)
+        _serviceVersionModel = StateObject(wrappedValue: ServiceVersionModel())
         // Le service d'API distante partage les modèles de l'app : ce que l'API
         // sert à distance est l'état que la fenêtre montre. Il démarre à
         // l'apparition de la racine ET sur `onReady` (S-14).
@@ -209,6 +213,7 @@ struct OMPConsoleApp: App {
                 home: homeModel,
                 setup: setupModel,
                 components: componentsModel,
+                serviceVersion: serviceVersionModel,
                 remote: remoteModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,

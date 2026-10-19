@@ -91,6 +91,8 @@ struct SectionDetail: View {
     @ObservedObject var alerts: AlertsModel
     /// La préparation de l'app (S-5) : l'Accueil montre son fond et son bandeau.
     @ObservedObject var setup: SetupModel
+    /// L'écart de version du service OMP (S-4) : le bandeau de l'Accueil.
+    @ObservedObject var serviceVersion: ServiceVersionModel
     /// Les modèles des sections Session OMP, Terminal et Statistiques, à
     /// l'échelle de l'app : la session et le shell hébergés survivent au
     /// changement de section.
@@ -112,7 +114,7 @@ struct SectionDetail: View {
     @ViewBuilder
     private var content: some View {
         switch section {
-        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup)
+        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup, serviceVersion: serviceVersion)
         case .kanban: KanbanView(model: kanban, actions: actions, contract: contract)
         case .sessions: SessionsView(console: console)
         case .session: SessionConsoleSectionView(model: sessionModel)

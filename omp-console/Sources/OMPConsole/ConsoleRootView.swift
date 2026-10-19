@@ -66,6 +66,9 @@ struct ConsoleRootView: View {
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre et se recalcule sans redémarrage.
     @ObservedObject var components: ComponentPresenceModel
+    /// L'écart de version du service OMP (S-4 de service-version-drift-detection) :
+    /// la racine le démarre à l'apparition, l'Accueil en montre le bandeau.
+    @ObservedObject var serviceVersion: ServiceVersionModel
     /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition.
     /// Son interrupteur, le code et les appareils vivent dans Réglages › Appareils.
     let remote: RemoteServiceModel
@@ -180,6 +183,7 @@ struct ConsoleRootView: View {
                 contract: contract,
                 alerts: alerts,
                 setup: setup,
+                serviceVersion: serviceVersion,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel,
@@ -243,6 +247,9 @@ struct ConsoleRootView: View {
             // Le badge d'Audit lit l'ardoise sans ouvrir la section (idempotent :
             // l'apparition d'`AuditView` ne rouvre pas l'abonnement).
             auditModel.start()
+            // Premier contrôle, puis un par republication de `service.json`
+            // (idempotent).
+            serviceVersion.start()
             actions.loadModelCatalog()
             // Le service d'API distante démarre à l'apparition si la préférence
             // l'autorise (BR-9) ; `SetupModel.onReady` le relancera si la

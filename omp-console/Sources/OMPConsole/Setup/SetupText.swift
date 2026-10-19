@@ -228,4 +228,15 @@ extension SetupText {
             return nil
         }
     }
+
+    /// Le bandeau d’écart de version de l’Accueil (S-4 de
+    /// service-version-drift-detection) : le service en marche exécute une autre
+    /// version d’omp-mem0-req que le module installé (`running`), ou n’en
+    /// annonce aucune (`nil`). Aucun bouton : la relance se fait dans OMP.
+    static func serviceVersionDrift(running: String?, installed: String) -> String {
+        if let running {
+            return "Le service OMP exécute omp-mem0-req \(running) alors que le module installé est en \(installed)\u{00A0}: lancez /service install dans OMP."
+        }
+        return "Le service OMP n’annonce pas sa version alors que le module installé est en \(installed)\u{00A0}: lancez /service install dans OMP."
+    }
 }

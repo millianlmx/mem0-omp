@@ -124,6 +124,16 @@ struct ServiceClient: Sendable {
         return Int(json.objectValue?["pid"]?.numberValue ?? 0)
     }
 
+    /// La version d'omp-mem0-req que le service a chargée à son démarrage
+    /// (`pluginVersion` de `GET /v1/health`, S-4) : `nil` quand le service ne
+    /// l'annonce pas (champ absent, `null` ou vide). Les erreurs de la requête
+    /// (401, injoignable…) sont levées telles quelles.
+    func pluginVersion() async throws -> String? {
+        let json = try await request("GET", path: ["health"])
+        guard let version = json.objectValue?["pluginVersion"]?.stringValue, !version.isEmpty else { return nil }
+        return version
+    }
+
     /// Réveille un dépôt : contrôleur créé au besoin, adoption, tick (S-9).
     func pilot(repo: String) async throws {
         _ = try await request("POST", path: ["repos", repo, "pilot"])
