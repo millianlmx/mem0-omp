@@ -2805,8 +2805,10 @@ un flux temps réel.
   Le code affiche « Expire dans mm:ss », puis « Code expiré » à l'échéance ;
   l'adresse du service n'apparaît qu'une fois, et c'est d'abord une adresse privée
   du réseau local (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale
-  (100.64/10) puis lien-local : l'app iOS/iPadOS n'atteint en HTTP que le réseau
-  local (ATS), et une adresse Tailscale tapée à la main y échoue ; chaque ligne
+  (100.64/10) puis lien-local. Une adresse Tailscale tapée à la main dans l'app
+  iOS/iPadOS fonctionne aussi : son ATS porte `NSAllowsArbitraryLoads` seul
+  (`NSAllowsLocalNetworking`, qui ne couvre pas 100.64/10, le ferait ignorer) ;
+  chaque ligne
   porte la date complète (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton
   « Révoquer » que VoiceOver annonce « Révoquer <nom> », confirmé par « Révoquer
   <nom> ? » (« Révoquer » / « Annuler »).

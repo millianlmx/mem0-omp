@@ -291,7 +291,9 @@ function networkMessageFaults(files: Files = new Map()): string[] {
   const services = plist.match(/<key>NSBonjourServices<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1];
   const names = [...(services ?? "").matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1]);
   if (names.join(",") !== "_ompconsole._tcp") faults.push(`${IOS_PLIST} : NSBonjourServices ≠ [_ompconsole._tcp]`);
-  if (!/<key>NSAllowsLocalNetworking<\/key>\s*<true\/>/.test(plist)) faults.push(`${IOS_PLIST} : NSAllowsLocalNetworking ≠ true`);
+  if (!/<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/.test(plist)) faults.push(`${IOS_PLIST} : NSAllowsArbitraryLoads ≠ true`);
+  // Présent, il fait ignorer NSAllowsArbitraryLoads : l'adresse Tailscale (100.64/10) échouerait en -1022.
+  if (plist.includes("<key>NSAllowsLocalNetworking</key>")) faults.push(`${IOS_PLIST} : NSAllowsLocalNetworking présent`);
   return faults;
 }
 

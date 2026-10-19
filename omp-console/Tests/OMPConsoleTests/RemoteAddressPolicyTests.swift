@@ -81,8 +81,8 @@ func displayedAddressSkipsUnreachableIPv4() {
 
 @Test("mac-feuille-appairage-debordante/AC-11 : l'adresse de LAN est montrée avant Tailscale, quel que soit l'ordre des interfaces")
 func displayedAddressPrefersPrivateLAN() {
-    // Mesuré sur le poste : Tailscale (utun) précède en0 dans `getifaddrs`, et
-    // l'app iOS refuse le HTTP vers 100.64/10 (ATS) — l'appairage échouait.
+    // Mesuré sur le poste : Tailscale (utun) précède en0 dans `getifaddrs` ; un
+    // iPhone du même LAN doit recevoir le chemin direct, pas le tunnel.
     #expect(RemoteServer.primaryLocalAddress(among: ["100.100.172.84", "192.168.1.175"]) == "192.168.1.175")
     #expect(RemoteServer.primaryLocalAddress(among: ["100.100.172.84", "10.0.0.4"]) == "10.0.0.4")
     #expect(RemoteServer.primaryLocalAddress(among: ["169.254.3.1", "100.100.172.84", "172.20.1.2"]) == "172.20.1.2")

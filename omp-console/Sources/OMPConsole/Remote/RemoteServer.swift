@@ -220,10 +220,9 @@ final class RemoteServer: RemoteListening {
     /// L'adresse que la garde d'acceptation accepterait pour un pair du même
     /// réseau, la plus joignable d'abord : une adresse privée de LAN (10/8,
     /// 172.16/12, 192.168/16), puis le partage d'adresses 100.64/10 (Tailscale),
-    /// puis le lien-local ; à rang égal, l'ordre des interfaces. L'app iOS
-    /// n'atteint en HTTP que le réseau local (ATS, `NSAllowsLocalNetworking`) :
-    /// une adresse Tailscale montrée en premier lui fait échouer l'appairage
-    /// (NSURLError -1022), alors que l'adresse de LAN du même Mac passe. L'adresse
+    /// puis le lien-local ; à rang égal, l'ordre des interfaces. Tailscale (utun)
+    /// précède souvent en0 dans `getifaddrs` : sans ce classement, un iPhone du
+    /// même LAN passerait par le tunnel au lieu du chemin direct. L'adresse
     /// CLAT d'un réseau IPv6 seul (`192.0.0.2`, partage de connexion iPhone) ou une
     /// adresse publique n'est joignable par personne : jamais montrée.
     nonisolated static func primaryLocalAddress(among addresses: [String]) -> String? {
