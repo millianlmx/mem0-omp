@@ -74,7 +74,8 @@ function runLint(cwd: string, args: string[], env: Record<string, string>) {
   });
 }
 
-test("no-ts-lint-formatter/AC-5 : le Biome préparé rend son verdict sans npm, npx, curl ni réseau", () => {
+/** AC-5 au niveau de lint.sh : le Biome préparé rend son verdict sans npm, npx, curl ni réseau. */
+function assertLintShOffline(): void {
   // Doublures qui journalisent toute tentative de téléchargement, et un proxy mort.
   const { bin, log } = stubBin("lint-reseau-");
   for (const name of ["npm", "npx", "curl"]) stub(bin, name, `echo "${name} $*" >> "${log}"\nexit 1`);
@@ -104,9 +105,10 @@ test("no-ts-lint-formatter/AC-5 : le Biome préparé rend son verdict sans npm, 
   assert.match(output(red), /^test\/b\.ts:2:3 lint\/suspicious\/noDebugger/m, output(red));
 
   assert.equal(fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "", "", "aucun téléchargement tenté");
-});
+}
 
-test("no-ts-lint-formatter/AC-6 : Biome absent ou d'une autre version ⇒ exit 3 et commande de (ré)installation", () => {
+/** AC-6 au niveau de lint.sh : Biome absent ou d'une autre version ⇒ exit 3 et commande de (ré)installation. */
+function assertLintShUnavailable(): void {
   const tree = miniTree({ "omp-mem0-req/a.ts": "export const a = 1;\n" });
   // Un `biome` du PATH, même à la bonne version, n'est jamais utilisé.
   const { bin } = stubBin("lint-path-");
@@ -137,7 +139,7 @@ test("no-ts-lint-formatter/AC-6 : Biome absent ou d'une autre version ⇒ exit 3
     `  ✗ Biome 0.0.0-faux trouvé dans ${wrong}, ${BIOME_VERSION} attendu : réinstalle-le avec ${PREPARE}\n`,
   );
   assert.doesNotMatch(output(r), /^ {2}· |✓/m);
-});
+}
 
 /** La copie où check.sh tourne : le dépôt sans aucun fichier de test, remise à neuf par cas. */
 const repo = sharedRepo("lint-", { keepTest: () => false });
@@ -226,7 +228,9 @@ test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/ et tes
   assert.ok(!r.stdout.includes("zz-faute"), output(r));
 });
 
-test("no-ts-lint-formatter/AC-5 : la section lint de check.sh rend son verdict sans npm, npx, curl ni réseau", () => {
+test("no-ts-lint-formatter/AC-5 : lint.sh et la section lint de check.sh rendent leur verdict sans npm, npx, curl ni réseau", () => {
+  assertLintShOffline();
+
   const { bin, log } = stubBin("lint-section-reseau-");
   for (const name of ["npm", "npx", "curl"]) stub(bin, name, `echo "${name} $*" >> "${log}"\nexit 1`);
   const env = {
@@ -254,7 +258,9 @@ test("no-ts-lint-formatter/AC-5 : la section lint de check.sh rend son verdict s
   assert.equal(fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "", "", "aucun téléchargement tenté");
 });
 
-test("no-ts-lint-formatter/AC-6 : outil absent ou d'une autre version ⇒ section lint rouge, jamais sautée, avec la commande de (ré)installation", () => {
+test("no-ts-lint-formatter/AC-6 : outil absent ou d'une autre version ⇒ lint.sh sort 3 et la section lint est rouge, jamais sautée, avec la commande de (ré)installation", () => {
+  assertLintShUnavailable();
+
   const dir = repo.fresh();
   const empty = tmpdir("lint-section-vide-");
   const wrong = fakeLintDir('echo "Version: 0.0.0-faux"\nexit 0');
