@@ -53,3 +53,5 @@ public func sessionTag(forSessionFile path: String) -> String {
     let tag = String(tail.prefix(8))
     return tag.isEmpty ? "session" : tag
 }
+
+let _preuveAC6: Int = "casse"
