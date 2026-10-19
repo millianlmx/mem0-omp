@@ -261,7 +261,10 @@ exact plutôt que sur une branche :
    au pas 3. Ce process a démarré après l'upgrade : il a donc chargé le plugin du
    lien vérifié au pas 4. Pid inchangé ou `arrêté` : le service sert encore
    l'ancien code (ou ne tourne pas) ; relance `/service install` et lis son
-   message.
+   message. Constate aussi que `/service status` ne signale aucun écart de
+   version : une ligne `[service] écart de version …` veut dire que le service
+   n'exécute pas la version du plugin installée au pas 2 ; relance
+   `/service install` et lis son message.
 
 ### Tester une branche avant sa release
 

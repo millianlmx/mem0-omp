@@ -14,7 +14,7 @@ const TOKEN = "a".repeat(32);
 /** Une API de doublure : chaque test ne remplace que ce qu'il exerce. */
 function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
   return {
-    health: () => ({ version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0 }),
+    health: () => ({ version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0, pluginVersion: null }),
     pilot: async repo => ({ repoKey: `key:${repo}`, lotId: null, state: "piloting" }),
     lot: repo => ({ repoKey: `key:${repo}`, lot: null }),
     command: async (_repo, body) => ({
@@ -117,7 +117,7 @@ test("service-http/AC-1 : une requête sans jeton ou avec un jeton faux rend 401
     // Le jeton EXACT passe, et l'API rend sa charge utile.
     const ok = await call(server.origin, "/v1/health");
     assert.equal(ok.status, 200);
-    assert.deepEqual(await ok.json(), { version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0 });
+    assert.deepEqual(await ok.json(), { version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0, pluginVersion: null });
   } finally {
     await server.close();
   }
