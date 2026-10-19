@@ -113,5 +113,3 @@ async fn signal_d_arret() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
-
-fn _preuve_ac6() -> u32 { "casse" }
