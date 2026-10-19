@@ -20,7 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 import { COMMAND_KINDS, asCommand, commandShapeRefusal } from "./commands.ts";
 import type { CommandKind, PipelineCommand } from "./commands.ts";
-import { realpathOr } from "./git.ts";
+import { realpathOr, repoRootOf } from "./git.ts";
 import {
   LOT_NONE_REFUSAL,
   lotFeature,
@@ -32,7 +32,6 @@ import {
 } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import { entriesOfText, type SessionEntryLike } from "./panelSession.ts";
-import { repoRootOf } from "./runs.ts";
 import type { ServiceClient } from "./serviceClient.ts";
 import { liveRunFor, readDeliveries, readStore, panelInboxDirOf } from "./store.ts";
 import type { PanelAskOption, RunningEntry } from "./store.ts";

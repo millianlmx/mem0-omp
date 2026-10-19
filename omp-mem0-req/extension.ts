@@ -5,7 +5,7 @@ import { auditRepoRootOf, createAuditRelay, registerAuditReportTool } from "./au
 import { hasPendingCommands } from "./commands.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep, PipelinePhase } from "./contract.ts";
-import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
+import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, repoRootOf, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
 import { armInbox, conversationPhaseOf, panelInboxFlagOf, registerAskTool } from "./inbox.ts";
 import { createLaunchd, resolveLaunchdOmpBinary } from "./launchd.ts";
@@ -29,7 +29,7 @@ import { arbiterCaptureOf, auditSessionOf, hostedSettingsOverrides, maillonIdent
 import { ARBITER_TOOLS, registerArbiterTool } from "./arbiter.ts";
 import { exhaustedUntil, quotaStopReason, startModelFor } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
-import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
+import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefusal, handOverCollecte, lotDriverFor, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { ConversationRunTarget, WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
@@ -434,8 +434,7 @@ export default function reqExtension(pi: ExtensionAPI) {
    */
   const controllerFor = (ctx: ExtensionContext): LotController => {
     liveCtxRef = ctx;
-    const root = resolveFeatureRoot(ctx.cwd);
-    const repoRoot = root.primary ?? root.dir;
+    const repoRoot = repoRootOf(ctx.cwd);
     const known = lotControllers.get(repoRoot);
     if (known) return known;
     const controller = createLotController({
@@ -523,10 +522,7 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
     panelOpen = true;
     const stateDir = storeDir();
-    const repoRoot = (() => {
-      const root = resolveFeatureRoot(ctx.cwd);
-      return root.primary ?? root.dir;
-    })();
+    const repoRoot = repoRootOf(ctx.cwd);
     // Le SERVICE est le pilote (S-4, S-11) : les gestes du panneau passent par son
     // API, et l'en-tête le nomme. Sans service, le panneau reste en LECTURE et le
     // dit — aucune session terminale ne reprend un lot.
