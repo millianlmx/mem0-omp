@@ -1,6 +1,6 @@
 // Tests de service-json-token-window-0644 : `service.json` (qui porte le jeton du
 // service) n'existe jamais, même transitoirement, en mode plus ouvert que 0600 ;
-// les autres fichiers d'état gardent leurs permissions ; le propriétaire relit
+// le contrat d'un worktree garde ses permissions ; le propriétaire relit
 // toujours le jeton et s'authentifie comme avant.
 //
 // Ce fichier est LE SEUL porteur des ids `service-json-token-window-0644/AC-<n>`.
@@ -19,7 +19,6 @@ import {
   readService,
   serviceFilePath,
   writeBytesAtomic,
-  writeJsonAtomic,
   writeService,
 } from "../../omp-mem0-req/extension.ts";
 import type { ServiceRecord } from "../../omp-mem0-req/extension.ts";
@@ -134,13 +133,9 @@ test("service-json-token-window-0644/AC-2 : un service.json préexistant en 0644
   });
 });
 
-test("service-json-token-window-0644/AC-3 : sous umask 022, les autres fichiers d'état gardent 0644 (writeJsonAtomic à deux arguments, writeBytesAtomic)", () => {
+test("service-json-token-window-0644/AC-3 : sous umask 022, writeBytesAtomic (contrat d'un worktree) garde 0644", () => {
   withUmask022(() => {
     const stateDir = mktmp("sjtw-ac3-");
-    const other = path.join(stateDir, "autre.json");
-    writeJsonAtomic(other, { version: 1 });
-    assert.equal(fs.statSync(other).mode & 0o777, 0o644);
-    assert.equal(fs.readFileSync(other, "utf8"), `${JSON.stringify({ version: 1 }, null, 2)}\n`, "format inchangé");
     const contract = path.join(stateDir, "contrat.md");
     writeBytesAtomic(contract, new TextEncoder().encode("x\n"));
     assert.equal(fs.statSync(contract).mode & 0o777, 0o644);

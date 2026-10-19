@@ -172,7 +172,7 @@ export function readService(
 
 /** Écrit l'enregistrement (0600) : temporaire dans le même dossier, puis `rename`. */
 export function writeService(record: ServiceRecord, stateDir: string = record.stateDir): void {
-  writeJsonAtomic(serviceFilePath(stateDir), record, 0o600);
+  writeJsonAtomic(serviceFilePath(stateDir), record);
 }
 
 

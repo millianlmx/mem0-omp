@@ -33,7 +33,7 @@ import type { LotPromptKind, WorktreeFate } from "./runs.ts";
 import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason, startModelFor } from "./quota.ts";
 import type { ModelStart, QuotaHit } from "./quota.ts";
 import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
-import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, pruneHistory, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
+import { dropInbox, ensureStateDir, liveRunFor, panelInboxDirFor, panelInboxDirOf, pruneHistory, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry, StoreSnapshot } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
 
@@ -856,7 +856,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     let inbox: string | null = null;
     try {
       inbox = panelInboxDirFor(stateDir, feature.worktree);
-      fs.mkdirSync(inbox, { recursive: true });
+      ensureStateDir(inbox);
     } catch {
       inbox = null;
     }

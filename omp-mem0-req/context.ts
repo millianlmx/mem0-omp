@@ -6,6 +6,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
+import { ensureStateDir, STATE_FILE_MODE, writeStateFileAtomic } from "./store.ts";
 
 
 /** D'où vient une décision : le contexte (brief, journal), l'arbitre, l'utilisateur. */
@@ -244,11 +245,7 @@ export async function editBrief(
 
 /** Écrit le texte EXACT validé par l'utilisateur, atomiquement (temporaire puis `rename`). */
 export function writeBrief(stateDir: string, contextKey: string, text: string): void {
-  const file = briefPathFor(stateDir, contextKey);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, text, "utf8");
-  fs.renameSync(tmp, file);
+  writeStateFileAtomic(briefPathFor(stateDir, contextKey), text);
 }
 
 
@@ -269,11 +266,7 @@ export function reportPathFor(stateDir: string, contextKey: string): string {
 
 /** Écrit le rapport TEL QUEL et en entier, atomiquement (temporaire puis `rename`). */
 export function writeReport(stateDir: string, contextKey: string, text: string): void {
-  const file = reportPathFor(stateDir, contextKey);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, text, "utf8");
-  fs.renameSync(tmp, file);
+  writeStateFileAtomic(reportPathFor(stateDir, contextKey), text);
 }
 
 /** Le rapport d'un contexte, relu depuis le fichier à chaque usage ; `null` s'il est absent ou illisible. */
@@ -293,7 +286,10 @@ export function journalPathFor(stateDir: string, repoKey: string): string {
 }
 
 
-/** Ajoute UNE ligne complète au journal du dépôt. Ne jette jamais : une écriture ratée est silencieuse. */
+/**
+ * Ajoute UNE ligne complète au journal du dépôt, fichier en 0600 (ramené à 0600
+ * s'il existait plus large). Ne jette jamais : une écriture ratée est silencieuse.
+ */
 export function appendJournal(
   stateDir: string,
   repoKey: string,
@@ -301,9 +297,15 @@ export function appendJournal(
 ): void {
   try {
     const file = journalPathFor(stateDir, repoKey);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    ensureStateDir(path.dirname(file));
     const line: JournalEntry = { version: 1, ...entry };
-    fs.appendFileSync(file, `${JSON.stringify(line)}\n`, "utf8");
+    const fd = fs.openSync(file, "a", STATE_FILE_MODE);
+    try {
+      fs.fchmodSync(fd, STATE_FILE_MODE);
+      fs.writeFileSync(fd, `${JSON.stringify(line)}\n`, "utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     // le journal est une aide à la décision : jamais une raison de refuser la décision
   }

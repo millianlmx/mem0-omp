@@ -352,17 +352,192 @@ export function pruneHistory(stateDir: string, keep: number = HISTORY_KEEP): num
 }
 
 
+/** Les droits d'un dossier que le pipeline crée dans le magasin d'état : le propriétaire seul. */
+export const STATE_DIR_MODE = 0o700;
+
+/** Les droits d'un fichier d'état que le pipeline crée dans le magasin : lecture et écriture du propriétaire seul. */
+export const STATE_FILE_MODE = 0o600;
+
+
 /**
- * Écriture ATOMIQUE : temporaire dans le même répertoire, puis `rename`. Le
- * temporaire (un éventuel périmé du même pid retiré d'abord) est CRÉÉ
- * exclusivement avec `mode` (soumis à l'umask) ; le fichier final en hérite.
+ * Crée `dir` et ses ancêtres absents ; CHAQUE dossier créé par cet appel finit
+ * exactement en `STATE_DIR_MODE`, quel que soit l'umask. Un dossier qui existait
+ * déjà — ou qu'un autre process crée entre-temps — n'est jamais touché : la racine
+ * personnalisée fournie garde ses droits. Une erreur de création ou de chmod est
+ * levée telle quelle.
  */
-export function writeJsonAtomic(file: string, payload: unknown, mode: number = 0o666): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+export function ensureStateDir(dir: string): void {
+  const missing: string[] = [];
+  for (let current = path.resolve(dir); !fs.existsSync(current); current = path.dirname(current)) {
+    missing.push(current);
+    if (path.dirname(current) === current) break;
+  }
+  // Un niveau à la fois, ramené à 0700 AVANT de créer le suivant : sous une umask
+  // qui masque le bit x du propriétaire, un `mkdir` récursif échouerait au 2e niveau.
+  for (const created of missing.reverse()) {
+    try {
+      fs.mkdirSync(created, { mode: STATE_DIR_MODE });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw err;
+    }
+    fs.chmodSync(created, STATE_DIR_MODE);
+  }
+}
+
+
+/**
+ * Écriture ATOMIQUE d'un fichier d'état : temporaire voisin `${file}.tmp-${pid}`
+ * (un périmé du même pid retiré d'abord), CRÉÉ exclusivement en `STATE_FILE_MODE`
+ * et ramené à exactement ce mode sur son descripteur AVANT la moindre donnée,
+ * puis `rename`. Le temporaire d'un échec est retiré, l'erreur relevée.
+ */
+export function writeStateFileAtomic(file: string, data: string | Uint8Array): void {
+  ensureStateDir(path.dirname(file));
   const tmp = `${file}.tmp-${process.pid}`;
   fs.rmSync(tmp, { force: true });
-  fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode, flag: "wx" });
-  fs.renameSync(tmp, file);
+  const fd = fs.openSync(tmp, "wx", STATE_FILE_MODE);
+  try {
+    try {
+      fs.fchmodSync(fd, STATE_FILE_MODE);
+      fs.writeFileSync(fd, data, typeof data === "string" ? "utf8" : undefined);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+
+/** Écriture ATOMIQUE d'un JSON d'état (cf. `writeStateFileAtomic`) : fichier final en 0600. */
+export function writeJsonAtomic(file: string, payload: unknown): void {
+  writeStateFileAtomic(file, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+
+/** Un chemin du magasin que le balayage n'a pas pu resserrer, avec le code de l'erreur. */
+export type StateTightenFailure = { path: string; code: string };
+
+/** Le bilan d'un balayage du magasin : chemins resserrés, chemins en échec. */
+export type StateTightenReport = { tightened: string[]; failures: StateTightenFailure[] };
+
+
+/** `stateDir` est le magasin par défaut (`~/.omp/agent/pipeline`), quelle que soit la façon de l'avoir nommé. */
+export function isDefaultStateDir(stateDir: string): boolean {
+  return path.resolve(stateDir) === path.resolve(pipelineStateDir({}));
+}
+
+
+const errnoCode = (err: unknown): string => (err as NodeJS.ErrnoException | null)?.code ?? "ERREUR";
+
+
+/**
+ * Retire les droits de groupe et d'autres de tout dossier et fichier régulier
+ * sous `stateDir` (0755 ⇒ 0700, 0644 ⇒ 0600) ; jamais un droit rouvert, jamais
+ * un droit du propriétaire ôté. La racine n'est touchée que si `includeRoot` (une
+ * racine personnalisée garde les droits que l'utilisateur lui a donnés). Chaque
+ * dossier est resserré AVANT d'être listé ; un lien symbolique n'est ni modifié
+ * ni suivi (`chmodSync` suivrait sa cible). Un retrait concurrent (`ENOENT`) est
+ * ignoré ; toute autre erreur est relevée dans `failures` et le parcours continue,
+ * sans descendre dans un dossier illisible. Ne lève jamais.
+ */
+export function tightenStateStore(stateDir: string, options: { includeRoot: boolean }): StateTightenReport {
+  const report: StateTightenReport = { tightened: [], failures: [] };
+  const fail = (target: string, err: unknown): void => {
+    if (errnoCode(err) !== "ENOENT") report.failures.push({ path: target, code: errnoCode(err) });
+  };
+  const tighten = (target: string, mode: number): void => {
+    if ((mode & 0o077) === 0) return;
+    try {
+      fs.chmodSync(target, mode & 0o700);
+      report.tightened.push(target);
+    } catch (err) {
+      fail(target, err);
+    }
+  };
+  let root: fs.Stats;
+  try {
+    root = fs.statSync(stateDir);
+  } catch (err) {
+    fail(stateDir, err);
+    return report;
+  }
+  if (!root.isDirectory()) return report;
+  if (options.includeRoot) tighten(stateDir, root.mode);
+  const pending = [stateDir];
+  for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (err) {
+      fail(dir, err);
+      continue;
+    }
+    for (const name of names) {
+      const entry = path.join(dir, name);
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(entry);
+      } catch (err) {
+        fail(entry, err);
+        continue;
+      }
+      if (stat.isDirectory()) {
+        tighten(entry, stat.mode);
+        pending.push(entry);
+      } else if (stat.isFile()) {
+        tighten(entry, stat.mode);
+      }
+    }
+  }
+  return report;
+}
+
+
+/** Au plus dix chemins nommés, le reste compté. */
+const TIGHTEN_WARNING_PATHS = 10;
+
+function stateTightenWarning(failures: StateTightenFailure[]): string {
+  const lines = ["[pipeline] droits du magasin d'état non resserrés :"];
+  for (const failure of failures.slice(0, TIGHTEN_WARNING_PATHS)) lines.push(`- ${failure.path} (${failure.code})`);
+  const rest = failures.length - TIGHTEN_WARNING_PATHS;
+  if (rest > 0) lines.push(`- … et ${rest} autre(s)`);
+  return lines.join("\n");
+}
+
+
+/** Les magasins déjà balayés par ce process (chemins résolus). */
+const securedStateStores = new Set<string>();
+
+
+/**
+ * Migration des magasins existants vers 0700/0600 : au PREMIER accès de ce process
+ * à `stateDir`, un `tightenStateStore` (racine comprise pour le seul magasin par
+ * défaut) ; tout chemin non resserré est signalé par UN appel à `warn`. Un second
+ * appel pour le même magasin rend `null` sans toucher le disque. Ne lève jamais :
+ * le pipeline continue quoi qu'il arrive.
+ */
+export function secureStateStore(stateDir: string, warn: (text: string) => void): StateTightenReport | null {
+  const key = path.resolve(stateDir);
+  if (securedStateStores.has(key)) return null;
+  securedStateStores.add(key);
+  let report: StateTightenReport;
+  try {
+    report = tightenStateStore(stateDir, { includeRoot: isDefaultStateDir(stateDir) });
+  } catch (err) {
+    report = { tightened: [], failures: [{ path: stateDir, code: errnoCode(err) }] };
+  }
+  if (report.failures.length > 0) {
+    try {
+      warn(stateTightenWarning(report.failures));
+    } catch {
+      // Le canal d'avertissement de l'hôte est en panne : le balayage reste fait.
+    }
+  }
+  return report;
 }
 
 
@@ -434,7 +609,7 @@ export function panelInboxDirFor(stateDir: string, cwd: string): string {
  * c'est l'appelant qui décide du refus affiché, jamais une livraison partielle.
  */
 export function writeDelivery(dir: string, delivery: PanelDelivery): void {
-  fs.mkdirSync(dir, { recursive: true });
+  ensureStateDir(dir);
   const stamp = String(Math.max(0, Math.trunc(delivery.sentAt))).padStart(16, "0");
   const salt = crypto.randomBytes(2).toString("hex");
   let file = path.join(dir, `${stamp}-${salt}.json`);

@@ -19,6 +19,7 @@ import {
 import type { Project, ProjectFeature, ProjectSegment } from "./project.ts";
 import { lastLine, releaseTarget } from "./runs.ts";
 import type { ReleaseTarget } from "./runs.ts";
+import { ensureStateDir, STATE_DIR_MODE } from "./store.ts";
 
 
 
@@ -253,7 +254,7 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
     // Une inscription orpheline (dossier supprimé à la main) bloquerait l'ajout :
     // le retrait la nettoie, et son échec (rien à nettoyer) est sans conséquence.
     await deps.runGit(["worktree", "remove", "--force", worktree], deps.repoRoot);
-    fs.mkdirSync(path.dirname(worktree), { recursive: true });
+    ensureStateDir(path.dirname(worktree));
     const hasBranch = async () =>
       (await deps.runGit(["rev-parse", "--verify", "--quiet", DOC_REF], deps.repoRoot)).code === 0;
     if (!(await hasBranch())) {
@@ -265,7 +266,10 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
     const added = (await hasBranch())
       ? await deps.runGit(["worktree", "add", worktree, PROJECT_DOC_BRANCH], deps.repoRoot)
       : await deps.runGit(["worktree", "add", "--orphan", "-b", PROJECT_DOC_BRANCH, worktree], deps.repoRoot);
-    return added.code === 0 ? null : `[project] document non commité : ${lastLine(added.stderr) || `code ${added.code}`}`;
+    if (added.code !== 0) return `[project] document non commité : ${lastLine(added.stderr) || `code ${added.code}`}`;
+    // Le worktree vit dans le magasin d'état : sa racine reste privée (son contenu suit l'umask de git).
+    fs.chmodSync(worktree, STATE_DIR_MODE);
+    return null;
   }
 
   /** Une synchronisation : rendu, commit s'il diffère, push (ou push seul d'un commit resté local). */
