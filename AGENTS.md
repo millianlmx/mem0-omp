@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Conventions de contribution : [CONTRIBUTING.md](CONTRIBUTING.md).
+
 <!-- mem0:brief v5 -->
 ## Mémoire du projet
 
