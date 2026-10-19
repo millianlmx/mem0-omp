@@ -73,7 +73,8 @@ export function copyRepo(prefix: string, options: CopyOptions = {}): string {
   return dir;
 }
 
-/** Copie le dépôt dans `dir` (qui existe déjà), avec les mêmes exclusions. */
+/** Copie le dépôt dans `dir` (qui existe déjà), avec les mêmes exclusions, puis
+ * y relie le TypeScript épinglé (linkPinnedTypescript). */
 export function copyRepoInto(dir: string, options: CopyOptions = {}): void {
   const keep = options.keepTest ?? (() => true);
   fs.cpSync(ROOT, dir, {
@@ -89,6 +90,25 @@ export function copyRepoInto(dir: string, options: CopyOptions = {}): void {
       return true;
     },
   });
+  linkPinnedTypescript(dir);
+}
+
+/**
+ * Relie `<dir>/.typecheck/typescript` au TypeScript épinglé du dépôt
+ * (`<ROOT>/.typecheck/typescript`, installé par `bash scripts/typecheck.sh
+ * --prepare`) : une copie jetable n'emporte pas `.typecheck/`, et son
+ * type-check ne télécharge jamais rien. No-op si ROOT n'a pas de TypeScript
+ * préparé (la copie est alors rouge, comme le dépôt) ou si la copie porte déjà
+ * un `.typecheck/typescript`, lien cassé compris. Le TypeScript de ROOT n'est
+ * jamais modifié : un `--prepare` lancé dans la copie retire le lien, pas sa cible.
+ */
+export function linkPinnedTypescript(dir: string): void {
+  const source = path.join(ROOT, ".typecheck", "typescript");
+  if (!fs.existsSync(source)) return;
+  const target = path.join(dir, ".typecheck", "typescript");
+  if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.symlinkSync(source, target, "dir");
 }
 
 /**
@@ -111,10 +131,24 @@ export function sharedRepo(prefix: string, options: CopyOptions = {}): { fresh()
     const stat = fs.lstatSync(full);
     return { mtimeMs: stat.mtimeMs, size: stat.size };
   };
-  const walk = (dir: string): Array<[string, fs.Dirent]> =>
-    fs
-      .readdirSync(dir, { recursive: true, withFileTypes: true })
-      .map((entry) => [path.relative(dir, path.join(entry.parentPath, entry.name)), entry]);
+  // Parcours qui ne suit AUCUN lien et ne descend pas dans les segments exclus
+  // de la copie : `.typecheck/typescript` et `.typecheck/node_modules` sont des
+  // liens vers ROOT et vers l'hôte, que `readdirSync({recursive})` suivrait
+  // (Node 26) — une entrée « ajoutée » sous eux serait supprimée DANS la cible.
+  // Le dossier exclu lui-même reste une entrée : ajouté par un test, il est retiré.
+  const walk = (dir: string): Array<[string, fs.Dirent]> => {
+    const out: Array<[string, fs.Dirent]> = [];
+    const visit = (rel: string) => {
+      for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+        const child = rel === "" ? entry.name : path.join(rel, entry.name);
+        out.push([child, entry]);
+        const excluded = EXCLUDED_SEGMENTS[entry.name] === true || entry.name.startsWith(".build");
+        if (entry.isDirectory() && !excluded) visit(child);
+      }
+    };
+    visit("");
+    return out;
+  };
   return {
     fresh(): string {
       if (root === null) {
@@ -144,6 +178,7 @@ export function sharedRepo(prefix: string, options: CopyOptions = {}): { fresh()
       }
       for (const rel of removed) fs.rmSync(path.join(root, rel), { recursive: true, force: true });
       for (const rel of files.keys()) if (!seen.has(rel)) restore(root, rel);
+      linkPinnedTypescript(root);
       return root;
     },
   };

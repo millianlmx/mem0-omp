@@ -95,6 +95,8 @@ jobs:
           npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+      - name: Installer le TypeScript épinglé du type-check
+        run: bash scripts/typecheck.sh --prepare
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0"
@@ -260,6 +262,8 @@ jobs:
           npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+      - name: Installer le TypeScript épinglé du type-check
+        run: bash scripts/typecheck.sh --prepare
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0"
