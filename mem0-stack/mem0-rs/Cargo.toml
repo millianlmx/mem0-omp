@@ -26,4 +26,3 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 sha2 = "0.10"
-# preuve ci-without-cache AC-5
