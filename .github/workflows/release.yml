@@ -29,9 +29,10 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # L'attente des statuts requis (budget par défaut 1200 s) plus une publication
-    # par version, rattrapage compris.
-    timeout-minutes: 30
+    # Phase d'ouverture de la PR (≈ 18 min observées : écriture, check.sh, push),
+    # puis attente des statuts requis (--merge-timeout 2100 ci-dessous, 35 min),
+    # puis fusion et publication : release.ts échoue sur son budget avant ce plafond.
+    timeout-minutes: 60
     steps:
       # Première étape, avant tout checkout : sans le jeton dédié, rien ne peut
       # être publié — les événements créés par le jeton du dépôt ne déclenchent
@@ -72,4 +73,5 @@ jobs:
         run: |
           node --experimental-strip-types scripts/release.ts \
             --before "${{ github.event.before }}" \
-            --after "${{ github.event.after }}"
+            --after "${{ github.event.after }}" \
+            --merge-timeout 2100
