@@ -42,6 +42,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
+├── scripts/ios-build.sh               compile et teste l'app iOS, seul chemin du dépôt qui exige Xcode
+├── scripts/app-icon.sh                dessine l'icône d'OMP Console et réécrit ses fichiers versionnés iOS et Mac
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
 ├── scripts/recette/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
 ├── scripts/recette/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
