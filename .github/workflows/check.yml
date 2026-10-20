@@ -2,19 +2,22 @@ name: check
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
 
 # Un nouveau commit sur une PR annule le run en cours de cette PR : seul le sha le
 # plus récent décide, et le run annulé libère ses runners macOS (4 par run, sur
 # une limite de 5 par compte). Au push vers `main`, le groupe porte l'identifiant
 # du run, unique : il ne contient jamais qu'un run, donc rien n'y est annulé ni
-# remplacé en attente — un run de `main` va toujours au bout. Le préfixe `check-`
+# remplacé en attente — un run de `main` va toujours au bout. Les branches de
+# travail `feat/**` poussées par le VPS (porte de l'intégration continue GitHub,
+# S-9) forment un groupe par branche, `check-branch-<ref>` : un nouveau push annule
+# le run en cours de la même branche, seul le dernier sha rend un verdict. Le préfixe `check-`
 # évite tout partage de groupe avec `release-simulation-<n>` : un groupe partagé
 # entre workflows annulerait aussi les runs de l'autre.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('check-pr-{0}', github.event.pull_request.number) || format('check-run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'pull_request' && format('check-pr-{0}', github.event.pull_request.number) || startsWith(github.ref, 'refs/heads/feat/') && format('check-branch-{0}', github.ref) || format('check-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/feat/') }}
 
 jobs:
   # Job ubuntu complet : toutes les sections et toute la suite node, à chaque run.

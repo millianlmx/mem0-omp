@@ -29,7 +29,8 @@ struct ClientHarness {
         searchPacer: any ClientPacer = RecordingPacer(),
         readinessPacer: any ClientPacer = RecordingPacer(),
         retryPacer: (any ClientPacer)? = nil,
-        tokenStore: (any TokenStore)? = nil
+        tokenStore: (any TokenStore)? = nil,
+        slot: ClientMachineSlot = .mac
     ) {
         preferences = InMemoryClientPreferences(initialPreferences)
         tokens = InMemoryTokenStore(initialTokens)
@@ -47,7 +48,8 @@ struct ClientHarness {
             localProtocolVersion: localProtocolVersion,
             nowMs: nowMs,
             searchPacer: searchPacer,
-            readinessPacer: readinessPacer
+            readinessPacer: readinessPacer,
+            slot: slot
         )
     }
 

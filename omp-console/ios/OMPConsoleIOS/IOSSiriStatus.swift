@@ -26,7 +26,7 @@ enum IOSSiriStatus: Equatable, Sendable {
             switch state {
             case .connected(let endpoint):
                 return .connected(macName: macName(endpoint))
-            case .unpaired, .searching, .connecting, .noNetwork, .macAbsent, .revoked, .incompatibleProtocol:
+            case .unpaired, .searching, .connecting, .noNetwork, .macAbsent, .revoked, .incompatibleProtocol, .wrongMachine:
                 return .pairedNotJoined
             }
         }

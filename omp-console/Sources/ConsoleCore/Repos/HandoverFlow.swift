@@ -93,7 +93,7 @@ public protocol HandoverEndpoint: Sendable {
 }
 
 /// Une bascule dont le retrait final a échoué : de quoi le refaire.
-public struct PendingHandover: Equatable, Sendable {
+public struct PendingHandover: Codable, Equatable, Sendable {
     public var from: RepoMachine
     public var to: RepoMachine
     public var name: String

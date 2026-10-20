@@ -42,7 +42,8 @@ export function normalizeRepoIdentity(url: string): string | null {
   const owner = match[1] ?? "";
   const name = (match[2] ?? "").replace(/\.git$/iu, "");
   const part = /^[A-Za-z0-9_.-]+$/u;
-  if (!part.test(owner) || !part.test(name) || name === "." || name === "..") return null;
+  const dots = (segment: string) => segment === "." || segment === "..";
+  if (!part.test(owner) || !part.test(name) || dots(owner) || dots(name)) return null;
   return `github.com/${owner}/${name}`.toLowerCase();
 }
 
@@ -52,7 +53,7 @@ export async function repoIdentity(root: string, runGit: GitRunner): Promise<str
   return res.code === 0 ? normalizeRepoIdentity(res.stdout) : null;
 }
 
-const IDENTITY_FORM = /^github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+$/u;
+const IDENTITY_FORM = /^github\.com\/(?!\.{1,2}\/)[a-z0-9_.-]+\/(?!\.{1,2}$)[a-z0-9_.-]+$/u;
 
 
 // --- les machines -------------------------------------------------------------
@@ -297,7 +298,9 @@ export function createHandoverService(deps: HandoverServiceDeps): HandoverServic
   async function clone(identity: string): Promise<{ root: string; cloned: boolean }> {
     const [, owner = "", name = ""] = identity.split("/");
     const reposDir = (env.MEM0_PIPELINE_REPOS_DIR ?? "").trim() || path.join(stateDir, "repos");
-    const dest = path.join(reposDir, owner, name);
+    const dest = path.resolve(reposDir, owner, name);
+    // Défense en profondeur : une identité qui sort de `reposDir` n'est jamais clonée.
+    if (!dest.startsWith(`${path.resolve(reposDir)}${path.sep}`)) throw badRequest("identité de dépôt invalide");
     if (isGitRoot(dest)) return { root: realpathOr(dest), cloned: false };
     if (fs.existsSync(dest) && fs.readdirSync(dest).length > 0) {
       throw unavailable(`clonage impossible : ${dest} existe et n'est pas un dépôt git`);

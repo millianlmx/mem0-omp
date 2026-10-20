@@ -20,6 +20,14 @@ final class KanbanModel: ObservableObject {
     /// L'état publié de la section : `loading` jusqu'au premier instantané.
     @Published private(set) var state: KanbanBoardState = .loading
 
+    /// L'ardoise UNIFIÉE du Mac et du VPS (`MachineHub`) : `nil` sans VPS configuré.
+    @Published private(set) var unified: UnifiedBoard?
+
+    /// L'ardoise que montrent l'Accueil et Pipelines : l'unifiée quand un VPS est
+    /// configuré, sinon celle du Mac, inchangée. `state` reste celle du Mac seul —
+    /// les gestes locaux, les alertes et l'API distante n'en connaissent pas d'autre.
+    var board: KanbanBoardState { unified?.state ?? state }
+
     /// L'identifiant de la carte sélectionnée — jamais un ensemble (S-5).
     @Published var selectedCardID: String?
 
@@ -162,7 +170,7 @@ final class KanbanModel: ObservableObject {
     /// sans carte écartées, Livrées et Arrêtées repliées sauf dépliées. Vide
     /// hors de l'état `.board`.
     var laneRows: [KanbanLaneRow] {
-        guard let board = state.kanbanBoard else { return [] }
+        guard let board = board.kanbanBoard else { return [] }
         return KanbanLaneRows.rows(board.lanes, layout: .condensed, unfolded: unfoldedLanes)
     }
 
@@ -182,7 +190,7 @@ final class KanbanModel: ObservableObject {
     /// n'est jamais cachée, même ouverte depuis une notification (S-2).
     func select(_ id: String) {
         selectedCardID = id
-        guard let lane = state.kanbanBoard?.lanes.first(where: { $0.cards.contains { $0.id == id } })?.lane,
+        guard let lane = board.kanbanBoard?.lanes.first(where: { $0.cards.contains { $0.id == id } })?.lane,
               KanbanLaneRows.foldable.contains(lane), !unfoldedLanes.contains(lane) else { return }
         unfoldedLanes.insert(lane)
     }
@@ -212,7 +220,7 @@ final class KanbanModel: ObservableObject {
     /// La carte sélectionnée, quand elle existe encore.
     var selectedCard: KanbanCard? {
         guard let id = selectedCardID else { return nil }
-        return state.card(id)
+        return board.card(id)
     }
 
     /// Un pas de clavier, dans l'ordre de l'ÉCRAN, sur les seules cartes
@@ -274,15 +282,29 @@ final class KanbanModel: ObservableObject {
             prFacts: facts
         )
         state = next
-        if let selected = selectedCardID, next.card(selected) == nil {
+        purgeVanishedCards()
+    }
+
+    /// Une sélection, un détail, une demande d'arrêt ou une feuille de modèles dont la
+    /// carte a disparu des DEUX ardoises (Mac et unifiée) se ferment.
+    private func purgeVanishedCards() {
+        func exists(_ id: String) -> Bool { board.card(id) != nil || state.card(id) != nil }
+        if let selected = selectedCardID, !exists(selected) {
             selectedCardID = nil
             detailShown = false
         }
-        if let request = stopRequest, next.card(request.id) == nil {
+        if let request = stopRequest, !exists(request.id) {
             stopRequest = nil
         }
-        if let sheet = modelsSheetCard, next.card(sheet.id) == nil {
+        if let sheet = modelsSheetCard, !exists(sheet.id) {
             modelsSheetCard = nil
         }
+    }
+
+    /// Pose (ou retire, `nil`) l'ardoise unifiée des deux machines (`MachineHub`).
+    func setUnified(_ board: UnifiedBoard?) {
+        guard board != unified else { return }
+        unified = board
+        purgeVanishedCards()
     }
 }

@@ -226,7 +226,7 @@ test("mem0-vers-vps/AC-6 : après la migration, le nombre de souvenirs par proje
   assert.equal(fs.readFileSync(path.join(dossier, "avant.json"), "utf8"), fs.readFileSync(path.join(dossier, "apres.json"), "utf8"));
 });
 
-test("mem0-vers-vps/AC-6 : un écart de comptes après l'import est détecté par projet, sort 1 et n'écrit pas mem0-remote.json", async t => {
+test("un écart de comptes après l'import est détecté par projet, sort 1 et n'écrit pas mem0-remote.json", async t => {
   const banc = await monterBanc(t);
   if (banc === null) return;
   const { code, sortie } = await banc.executer({ sabotage: true });
@@ -237,7 +237,7 @@ test("mem0-vers-vps/AC-6 : un écart de comptes après l'import est détecté pa
   assert.equal((await souvenirs(banc.mac)).length, 11, "la base du Mac est intacte");
 });
 
-test("mem0-vers-vps/AC-6 : un VPS dont la mémoire n'est pas vide refuse l'import (pas de fusion) : sortie 1, rien d'écrit, souvenir du VPS intact", async t => {
+test("un VPS dont la mémoire n'est pas vide refuse l'import (pas de fusion) : sortie 1, rien d'écrit, souvenir du VPS intact", async t => {
   const banc = await monterBanc(t, { vpsDejaPeuple: true });
   if (banc === null) return;
   const { code, sortie } = await banc.executer();
@@ -248,7 +248,7 @@ test("mem0-vers-vps/AC-6 : un VPS dont la mémoire n'est pas vide refuse l'impor
   assert.deepEqual(restant.map(l => l.memory), ["Un souvenir déjà présent sur le VPS"]);
 });
 
-test("mem0-vers-vps/AC-6 : OMP Console ouvert → sortie 2 « quittez OMP Console avant la migration », sans toucher ni au Mac ni au VPS", async t => {
+test("OMP Console ouvert → sortie 2 « quittez OMP Console avant la migration », sans toucher ni au Mac ni au VPS", async t => {
   const banc = await monterBanc(t);
   if (banc === null) return;
   const { code, sortie } = await banc.executer({ pgrep: true });

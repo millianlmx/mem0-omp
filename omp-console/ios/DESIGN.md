@@ -35,20 +35,20 @@ marqueur `[test: <fonction>]` (une fonction de
   `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Audit,
   « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
   `[test: compactTabsAreFourSectionsThenPlus]`
-- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Mémoire,
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Dépôts, Projet, Mémoire,
   Session OMP et Statistiques ; leur bouton retour ramène à la liste.
   `[test: plusListsTheFourOtherSections]`
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
-  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Session OMP) puis
+  avec les groupes Pilotage (Accueil, Pipelines, Dépôts, Projet, Audit, Session OMP) puis
   Consultation (Sessions, Mémoire, Statistiques) ; la barre d'onglets du haut
   n'apparaît que lorsqu'on masque la barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
-  Projet, Mémoire, Session OMP et Statistiques sous « Plus » (Audit passe dans la
+  Dépôts, Projet, Mémoire, Session OMP et Statistiques sous « Plus » (Audit passe dans la
   barre d'onglets, juste après Sessions, et sa pile repart de la liste), et
   inversement.
   `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Mémoire,
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Dépôts, Projet, Mémoire,
   Session OMP et Statistiques s'ouvrent déjà poussés dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
 - Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
@@ -138,11 +138,11 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
-- Clavier de l'iPad : ⌘1…⌘8 ouvrent les sections dans l'ordre affiché par la
-  barre latérale (Accueil, Pipelines, Projet, Audit, Session OMP, Sessions,
+- Clavier de l'iPad : ⌘1…⌘9 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Dépôts, Projet, Audit, Session OMP, Sessions,
   Mémoire, Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
   ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
-  Les onze commandes vivent dans la barre des menus de l'iPad (menus
+  Les douze commandes vivent dans la barre des menus de l'iPad (menus
   Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
   ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
   `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
@@ -999,3 +999,29 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Les deux écrans d'erreur de la Mémoire s'obtiennent sans Mac :
   `-memoire.recipe injoignable` (liste) et `-memoire.recipe service-ancien` (graphe).
   `[test: macErrorsSayWhatHappenedThenWhatToDo]`
+
+## Deux machines : Mac et VPS (feature `orchestrator-living-in-a-vps`)
+
+- L'app tient DEUX clients, Mac et VPS (`MachineClients`), appairés chacun de leur côté :
+  clés de préférences, compte de trousseau et adresse propres au slot ; le VPS n'a pas de
+  découverte Bonjour, son adresse Tailscale se saisit à la main (port par défaut 8787).
+  La feuille Connexion a deux sections, « Mac » (inchangée) et « VPS » (adresse
+  Tailscale, code d'appairage, « Oublier ce VPS »). `[test: vpsSectionPairsOnTheVpsEndpoint]`
+- Un état propre au slot : « VPS injoignable », « VPS injoignable — <adresse> », « Version de
+  protocole incompatible (app N, VPS M|inconnu) ». `[test: vpsStateLabels]`
+- Une adresse qui est celle de l'autre machine verrouille le slot (« Cette adresse est le Mac,
+  pas le VPS ») : aucun geste n'est émis. `[test: wrongMachineLocksTheVpsSlot]`
+- La section Dépôts (sous « Plus » sur iPhone, dans la barre latérale de l'iPad) réunit les
+  dépôts des deux machines, chacun marqué de sa machine, avec l'état de la ligne et le geste
+  « Confier au … » (confirmation, motif de désactivation affiché). Aucun balayage.
+  `[test: rowStatusTexts]` `[test: reposSectionPlacement]`
+- Mac éteint, VPS appairé : le modèle de l'écran Dépôts garde les dépôts du VPS pilotables et
+  le geste d'une carte du VPS part vers le VPS avec le jeton du VPS.
+  `[test: reposModelWithMacAbsent]` `[test: vpsCardGestureGoesToTheVps]`
+- Avec un VPS configuré, l'Accueil et Pipelines affichent les cartes des deux machines (badge
+  « Mac » ou « VPS » sur chaque carte, bandeau « <Machine> injoignable » pour une machine qui ne
+  répond pas) ; sans VPS, rien ne change. Les écrans mono-machine portent un sélecteur
+  « Mac | VPS » (défaut : le Mac s'il est joignable, sinon le VPS).
+  `[test: unifiedConnectionStatus]` `[test: macCardKeepsItsIdAndMachine]`
+- Un seul retour haptique pour les deux clients (`IOSCommandOutcomes`).
+  `[test: feedbackFollowsTheMachineWhoseOutcomeChanged]`

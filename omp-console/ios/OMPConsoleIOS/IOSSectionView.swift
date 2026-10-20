@@ -19,7 +19,10 @@ import SwiftUI
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
-    @ObservedObject var client: ConsoleClientModel
+    /// Les DEUX clients de l'app (S-10 de orchestrator-living-in-a-vps) : Accueil,
+    /// Pipelines et Dépôts les lisent ensemble ; les écrans mono-machine reçoivent
+    /// celui de la machine choisie (`clients.activeClient`).
+    @ObservedObject var clients: MachineClients
     /// Le crochet de recette `-sessions.recipe` de la section Sessions.
     let recipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
@@ -55,12 +58,33 @@ struct IOSSectionView: View {
         IOSSectionContent.of(section, state: state)
     }
 
+    /// Le client de la machine qui répond aux écrans mono-machine.
+    private var client: ConsoleClientModel { clients.activeClient }
+
     var body: some View {
         if section == .kanban {
-            PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
+            PipelinesScreen(clients: clients, recipe: state, newFeatureRecipe: pipelinesRecipe,
                             cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe, showConnection: $showConnection,
                             newFeatureRequested: $newFeatureRequested)
-        } else if section == .memory {
+        } else if section == .repos {
+            IOSReposScreen(clients: clients, showConnection: $showConnection)
+        } else if IOSMachinePicker.isSingleMachine(section) {
+            singleMachineScreen
+                // Changer de machine reconstruit l'écran : ses modèles se rattachent au client choisi.
+                .id(clients.activeMachine)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    IOSMachinePicker(clients: clients)
+                }
+        } else {
+            genericBody
+        }
+    }
+
+    /// L'écran d'une section mono-machine (Projet, Session OMP, Sessions, Mémoire,
+    /// Statistiques, Audit), nourri par le client de la machine choisie.
+    @ViewBuilder
+    private var singleMachineScreen: some View {
+        if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe, showConnection: $showConnection)
         } else if section == .sessions {
             IOSSessionsScreen(client: client, recipe: recipe, showConnection: $showConnection)
@@ -72,8 +96,6 @@ struct IOSSectionView: View {
             IOSAuditScreen(client: client, recipe: auditRecipe, openProject: openProject, showConnection: $showConnection)
         } else if section == .stats {
             IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
-        } else {
-            genericBody
         }
     }
 

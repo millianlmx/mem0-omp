@@ -78,7 +78,7 @@ async function poste(options: { stateDir?: string; mem0Port?: number; systemctl?
   return { stateDir, tokenFile, registry, run };
 }
 
-test("omp-orchestrator-cli/AC-5 : `pair` rend un code que le protocole distant accepte, `devices` et `revoke` pilotent le registre", async () => {
+test("`pair` rend un code que le protocole distant accepte, `devices` et `revoke` pilotent le registre", async () => {
   const vps = await poste();
 
   const text = await vps.run(["pair"]);
@@ -114,7 +114,7 @@ test("omp-orchestrator-cli/AC-5 : `pair` rend un code que le protocole distant a
   assert.equal(groupPairingCode("ABCDEFGH"), "ABCD-EFGH", "même groupement que le protocole distant");
 });
 
-test("omp-orchestrator-cli/AC-5 : service arrêté → sortie 1 « service de pipelines arrêté » ; sans root → sortie 2", async () => {
+test("service arrêté → sortie 1 « service de pipelines arrêté » ; sans root → sortie 2", async () => {
   const vps = await poste();
   const service = path.join(vps.stateDir, ".omp", "agent", "pipeline", "service.json");
 
@@ -180,7 +180,7 @@ async function seed(rs: { url: string; token: string }, corpus: Record<string, s
   }
 }
 
-test("omp-orchestrator-cli/AC-6 : `mem0-counts` et `mem0-search` lisent mem0 en boucle locale avec le jeton du fichier (fin de ligne ignorée)", async t => {
+test("`mem0-counts` et `mem0-search` lisent mem0 en boucle locale avec le jeton du fichier (fin de ligne ignorée)", async t => {
   const vps = await posteMem0(t);
   if (vps === null) return;
   const empty = await vps.run(["mem0-counts"]);
@@ -209,7 +209,7 @@ test("omp-orchestrator-cli/AC-6 : `mem0-counts` et `mem0-search` lisent mem0 en 
   assert.match(wrong.err, /mem0 injoignable/u);
 });
 
-test("omp-orchestrator-cli/AC-6 : `mem0-import` refuse une base non vide, puis remplace la base, relance mem0 et imprime les comptes", async t => {
+test("`mem0-import` refuse une base non vide, puis remplace la base, relance mem0 et imprime les comptes", async t => {
   const vps = await posteMem0(t);
   if (vps === null) return;
   const sourceDir = dossierJetable("omp-orchestrator-source-");

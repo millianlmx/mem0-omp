@@ -43,7 +43,7 @@ struct KanbanView: ConsoleSectionView {
 
     var body: some View {
         Group {
-            switch model.state {
+            switch model.board {
             case .loading:
                 ProgressView(KanbanBoardState.loadingText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -134,7 +134,7 @@ struct KanbanView: ConsoleSectionView {
                 KanbanDecisionsView(decisions: model.decisions, repos: model.decisionRepos)
             }
         }
-        if let anomalies = model.state.kanbanBoard?.anomalies, !anomalies.isEmpty {
+        if let anomalies = model.board.kanbanBoard?.anomalies, !anomalies.isEmpty {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.diagnosticShown.toggle()
@@ -247,7 +247,7 @@ struct KanbanView: ConsoleSectionView {
             )
         ) {
             // Les valeurs du geste sont relues sur la carte COURANTE de l'ardoise.
-            if let id = model.stopRequest?.id, let action = model.state.card(id)?.action {
+            if let id = model.stopRequest?.id, let action = model.board.card(id)?.action {
                 actions.stopLot(action)
             }
             model.stopRequest = nil
@@ -455,7 +455,7 @@ struct KanbanDiagnosticView: View {
             Button(KanbanText.resume) {
                 // La carte est relue dans le tableau COURANT : disparue entre-temps,
                 // le bouton ne fait rien et le tableau suivant recalcule le geste.
-                guard let action = model.state.kanbanBoard?.cards.first(where: { $0.id == cardId })?.action
+                guard let action = model.board.kanbanBoard?.cards.first(where: { $0.id == cardId })?.action
                 else { return }
                 actions.resume(action)
             }

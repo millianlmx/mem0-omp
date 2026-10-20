@@ -19,19 +19,31 @@ struct NewFeatureSheet: View {
     @ObservedObject var kanban: KanbanModel
     @ObservedObject var home: HomeModel
     @ObservedObject var console: ConsoleModel
+    /// Les deux machines : un VPS configuré ajoute ses dépôts à la liste.
+    @ObservedObject var hub: MachineHub
 
     var body: some View {
         let projectRoot = ProjectRoot.resolve(defaults: .standard, fileManager: .default)?.path
-        let options = LaunchRepo.options(
-            cards: kanban.state.kanbanBoard?.cards ?? [],
-            projectRoot: projectRoot,
-            chosen: actions.launchRepoRoot
-        )
-        let fallback = KanbanLaunchRepos.defaultSelection(
-            options: options,
-            selectedRepoRoot: kanban.selectedCard?.action?.repoRoot,
-            projectRoot: projectRoot
-        )
+        // Un VPS configuré : les dépôts UNIFIÉS dont la machine conductrice répond, chacun
+        // avec sa machine ; sinon les dépôts du Mac, comme avant.
+        let unified = hub.vpsConfigured
+        let entries: [(tag: String, label: String)] = unified
+            ? hub.launchChoices.map { choice in
+                (MachineCardID.namespaced(choice.root, on: choice.machine), ReposText.accessibility(choice.name, machine: choice.machine))
+            }
+            : KanbanLaunchRepos.choices(LaunchRepo.options(
+                cards: kanban.state.kanbanBoard?.cards ?? [],
+                projectRoot: projectRoot,
+                chosen: actions.launchRepoRoot
+            )).map { ($0.root, $0.label) }
+        let options = entries.map(\.tag)
+        let fallback: String? = unified
+            ? options.first
+            : KanbanLaunchRepos.defaultSelection(
+                options: options,
+                selectedRepoRoot: kanban.selectedCard?.action?.repoRoot,
+                projectRoot: projectRoot
+            )
         let selected: String = {
             if let chosen = actions.launchRepoRoot, options.contains(chosen) { return chosen }
             return fallback ?? ""
@@ -41,7 +53,7 @@ struct NewFeatureSheet: View {
             set: { actions.launchRepoRoot = $0.isEmpty ? nil : $0 }
         )
         let ready = !selected.isEmpty
-            && LaunchRepo.isGitRoot(path: selected)
+            && (MachineCardID.machine(of: selected) == .vps || LaunchRepo.isGitRoot(path: selected))
             && !Self.isBlank(actions.launchTitle)
             && !Self.isBlank(actions.launchDescription)
             && home.canLaunch
@@ -60,16 +72,18 @@ struct NewFeatureSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Picker(NewFeatureText.repo, selection: selection) {
-                            ForEach(KanbanLaunchRepos.choices(options)) { choice in
-                                Text(verbatim: choice.label).tag(choice.root)
+                            ForEach(entries, id: \.tag) { entry in
+                                Text(verbatim: entry.label).tag(entry.tag)
                             }
                         }
                         .labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("launch.repo")
                     }
-                    Button(NewFeatureText.chooseFolder) { chooseFolder() }
-                        .accessibilityIdentifier("launch.chooseFolder")
+                    if !unified {
+                        Button(NewFeatureText.chooseFolder) { chooseFolder() }
+                            .accessibilityIdentifier("launch.chooseFolder")
+                    }
                 }
                 if let error = actions.launchRepoError {
                     Text(error)
@@ -140,13 +154,25 @@ struct NewFeatureSheet: View {
     /// `launchFormShown` à faux) et Pipelines s'affiche, comme sur iOS.
     @MainActor
     static func submit(actions: ActionsModel, console: ConsoleModel, repoRoot: String) {
-        actions.launch(
-            title: actions.launchTitle,
-            description: actions.launchDescription,
-            repoRoot: repoRoot,
-            modelReqSpecs: actions.launchModelReqSpecs,
-            modelImplReview: actions.launchModelImplReview
-        )
+        // Un dépôt conduit par le VPS (`vps:<racine>`, `MachineHub.launchChoices`) : la
+        // commande part au VPS avec la racine du dépôt SUR le VPS.
+        if MachineCardID.machine(of: repoRoot) == .vps {
+            actions.launchRemote(
+                title: actions.launchTitle,
+                description: actions.launchDescription,
+                repoRoot: MachineCardID.raw(repoRoot),
+                modelReqSpecs: actions.launchModelReqSpecs,
+                modelImplReview: actions.launchModelImplReview
+            )
+        } else {
+            actions.launch(
+                title: actions.launchTitle,
+                description: actions.launchDescription,
+                repoRoot: repoRoot,
+                modelReqSpecs: actions.launchModelReqSpecs,
+                modelImplReview: actions.launchModelImplReview
+            )
+        }
         actions.launchRepoError = nil
         console.showLaunchedFeature()
     }

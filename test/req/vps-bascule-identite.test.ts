@@ -8,7 +8,7 @@ import { normalizeRepoIdentity } from "../../omp-mem0-req/handover.ts";
 
 type Vector = { input: string; identity: string | null };
 
-test("orchestrator-living-in-a-vps/AC-9 : normalizeRepoIdentity rend, sur chaque vecteur partagé avec Swift, l'identité attendue (ou null)", () => {
+test("normalizeRepoIdentity rend, sur chaque vecteur partagé avec Swift, l'identité attendue (ou null)", () => {
   const vectors = JSON.parse(
     fs.readFileSync(new URL("../fixtures/repo-identity.json", import.meta.url), "utf8"),
   ) as Vector[];

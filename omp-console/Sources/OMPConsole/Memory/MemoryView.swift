@@ -43,6 +43,19 @@ struct MemoryView: ConsoleSectionView {
             if let banner = model.omlxBanner {
                 omlxBannerView(banner)
             }
+            // La base vit sur le VPS (S-7 de orchestrator-living-in-a-vps) : l'écran le dit.
+            if model.hostedOnVps {
+                HStack(spacing: 6) {
+                    Image(systemName: "server.rack")
+                    Text(verbatim: MemoryText.hostedOnVps)
+                    Spacer()
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("memory.hostedOnVps")
+            }
             if graph.shown {
                 MemoryGraphView(model: graph)
             } else {

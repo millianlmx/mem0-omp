@@ -47,9 +47,10 @@ private let notConnectedStates: [ClientState] = [
     .macAbsent(endpoint: lanEndpoint),
     .revoked,
     .incompatibleProtocol(local: 1, remote: 2),
+    .wrongMachine(expected: .vps, actual: .mac),
 ]
 
-/// Les huit états du client.
+/// Les neuf états du client.
 private let allStates: [ClientState] = notConnectedStates + [.connected(endpoint: lanEndpoint)]
 
 @Suite("client-ios-possede-par-la-vue — l'intent témoin")

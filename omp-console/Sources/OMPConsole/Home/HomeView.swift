@@ -42,7 +42,7 @@ struct HomeView: ConsoleSectionView {
 
     var body: some View {
         Group {
-            switch HomePresentation.state(omp: home.omp, board: kanban.state) {
+            switch HomePresentation.state(omp: home.omp, board: kanban.board) {
             case .ompMissing:
                 VStack(spacing: 16) {
                     setupBanner
@@ -320,8 +320,11 @@ struct HomeView: ConsoleSectionView {
                     .frame(width: 22)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(card.title)
-                        .font(.body.weight(.medium))
+                    HStack(spacing: 6) {
+                        Text(card.title)
+                            .font(.body.weight(.medium))
+                        CardMachineBadge(cardId: card.id)
+                    }
                     if let subtitle = HomeText.cardSubtitle(
                         card,
                         noPhase: ConsoleStatus.of(card: card).text,

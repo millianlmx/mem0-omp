@@ -151,7 +151,7 @@ struct MacPendingChannel: VoicePendingChannel {
             switch milestone {
             case .specs: try await actions.verdict(cardId: cardId, verdict: .specs)
             case .review: try await actions.verdict(cardId: cardId, verdict: .review)
-            case .answer: throw GestureRefusal.milestoneNotAwaited
+            case .answer, .ci: throw GestureRefusal.milestoneNotAwaited
             }
         case let .conduiteValue(dialogId, value):
             try await actions.answerDialog(id: dialogId, answer: .value(value))

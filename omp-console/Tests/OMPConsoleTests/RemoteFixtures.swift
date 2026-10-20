@@ -112,7 +112,8 @@ struct RemoteStack {
         prStates: PullRequestStateBook? = nil,
         machine: ConsoleMachine = RemoteStack.testMachine,
         environment: [String: String] = [:],
-        memoryLinks: URL? = nil
+        memoryLinks: URL? = nil,
+        makeServiceClient: ServiceSessionModel.ClientFactory? = nil
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
@@ -182,7 +183,8 @@ struct RemoteStack {
             ),
             hub: hub,
             environment: environment,
-            clock: clock.clock
+            clock: clock.clock,
+            makeServiceClient: makeServiceClient ?? { throw ServiceClientError.unavailable }
         )
         let router = RemoteRouter(reads: reads, registry: registry, actions: remoteActions, streams: streams)
         let server = RemoteServer(handler: { request, connection in

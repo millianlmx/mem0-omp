@@ -70,6 +70,8 @@ struct IOSSectionContent: Equatable {
             return content(message: MemoryText.noProjectTitle, detail: nil)
         case .stats:
             return content(message: StatsPresentation.noProjectTitle, detail: StatsPresentation.noProject)
+        case .repos:
+            return content(message: ReposText.empty, detail: nil)
         default:
             return nil
         }

@@ -17,7 +17,7 @@ public enum RepoIdentity {
         guard let (owner, rawName) = split(text) else { return nil }
         var name = rawName
         if name.lowercased().hasSuffix(".git") { name.removeLast(4) }
-        guard isPart(owner), isPart(name), name != ".", name != ".." else { return nil }
+        guard isPart(owner), isPart(name), !isDots(owner), !isDots(name) else { return nil }
         return "github.com/\(owner)/\(name)".lowercased()
     }
 
@@ -53,4 +53,10 @@ public enum RepoIdentity {
                 || ($0.value >= 97 && $0.value <= 122) || $0 == "_" || $0 == "." || $0 == "-"
         }
     }
+
+    /// `.` et `..` : des segments de chemin, jamais un propriétaire ni un nom (traversée).
+    private static func isDots(_ part: String) -> Bool {
+        part == "." || part == ".."
+    }
 }
+

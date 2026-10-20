@@ -70,6 +70,9 @@ final class MemoryModel: ObservableObject {
 
     /// L'adresse affichée en en-tête, celle de `MEM0_HTTP_URL` EFFECTIF (S-7).
     let address: String
+    /// La mémoire vit sur le VPS (`mem0-remote.json`, S-7 de orchestrator-living-in-a-vps) :
+    /// l'écran le dit, ne contrôle aucune appartenance et ne sonde pas oMLX.
+    let hostedOnVps: Bool
 
     private let service: any MemoryServing
     private let scopeProvider: () async -> String?
@@ -104,6 +107,7 @@ final class MemoryModel: ObservableObject {
         let config = MemoryServiceConfig.resolved(environment: environment, paths: paths)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
+        self.hostedOnVps = config.hosted
         self.portOwner = portOwner ?? { address in
             await StackOwnership.foreignOwnership(
                 address: address,
@@ -187,7 +191,7 @@ final class MemoryModel: ObservableObject {
     /// sondée, le code et la variable restent dans le diagnostic copiable (S-6 de
     /// jargon-technique-expose-mac-et-ios).
     var omlxBanner: ReadableFailure? {
-        guard serviceAvailable else { return nil }
+        guard serviceAvailable, !hostedOnVps else { return nil }
         let url = omlxProbeURL.absoluteString
         switch omlx {
         case .unreachable:
@@ -295,7 +299,7 @@ final class MemoryModel: ObservableObject {
         // sonde n'aurait aucun sens. Elle est placée après la lecture de la liste
         // pour que le prérequis ne bloque jamais la section ; son état est publié
         // comme les autres, jamais levé.
-        if serviceAvailable {
+        if serviceAvailable, !hostedOnVps {
             omlx = await OMLXProbe.status(config: stackConfig, session: omlxSession)
         }
         prepared = true

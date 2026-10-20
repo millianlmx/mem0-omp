@@ -78,7 +78,7 @@ test("orchestrator-living-in-a-vps/AC-4 : de l'adresse publique, ni le protocole
   await proves(t, 4);
 });
 
-test("orchestrator-living-in-a-vps/AC-3 : un plugin lié depuis le store (omp plugin link) n'est pas chargé une seconde fois par `-e`", () => {
+test("un plugin lié depuis le store (omp plugin link) n'est pas chargé une seconde fois par `-e`", () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "vps-plugin-link-")));
   const plugins = path.join(root, "home", ".omp", "plugins");
   const store = path.join(root, "nix", "store", "abc-omp-mem0-plugins", "omp-mem0-req");

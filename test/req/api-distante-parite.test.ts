@@ -719,7 +719,7 @@ test.after(async () => {
   await replayed?.close();
 });
 
-test("orchestrator-living-in-a-vps/AC-12 : les requêtes de requests.json rejouées sur le serveur TypeScript rendent exactement les golden du Mac", async t => {
+test("api-distante-parite/AC-12 : les requêtes de requests.json rejouées sur le serveur TypeScript rendent exactement les golden du Mac", async t => {
   const world = await buildWorld();
   replayed = world;
   await primePullRequestFacts(world);

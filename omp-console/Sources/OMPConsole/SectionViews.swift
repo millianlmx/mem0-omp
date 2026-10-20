@@ -101,6 +101,8 @@ struct SectionDetail: View {
     /// (S-2 de mac-etats-vides-sans-issue) : il écrit le projet choisi de l'app
     /// sans jamais toucher à `section`.
     let projectChooser: ProjectChooserModel
+    /// Les deux machines (S-6 de orchestrator-living-in-a-vps) : la section « Dépôts ».
+    @ObservedObject var hub: MachineHub
 
     var body: some View {
         // Ancrée en HAUT : une section dont le contenu ne remplit pas la hauteur
@@ -109,11 +111,23 @@ struct SectionDetail: View {
         content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// L'Accueil et Pipelines montrent l'ardoise des deux machines quand un VPS est
+    /// configuré : badges sur les cartes, bandeau d'une machine injoignable. Sans VPS
+    /// configuré (`kanban.unified` nul) : ni badge ni bandeau, rendu inchangé.
+    private func pilotage<Content: View>(@ViewBuilder _ view: () -> Content) -> some View {
+        view()
+            .safeAreaInset(edge: .top, spacing: 0) {
+                MachineBanners(unreachable: kanban.unified?.unreachable ?? [])
+            }
+            .environment(\.showsMachineBadges, kanban.unified?.showsBadges ?? false)
+    }
+
     @ViewBuilder
     private var content: some View {
         switch section {
-        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup)
-        case .kanban: KanbanView(model: kanban, actions: actions, contract: contract)
+        case .home: pilotage { HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup) }
+        case .kanban: pilotage { KanbanView(model: kanban, actions: actions, contract: contract) }
+        case .repos: ReposView(hub: hub)
         case .sessions: SessionsView(console: console)
         case .session: SessionConsoleSectionView(model: sessionModel)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)

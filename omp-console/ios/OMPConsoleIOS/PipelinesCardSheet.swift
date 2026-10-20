@@ -13,7 +13,9 @@ import SwiftUI
 /// affichée (en-tête natif « Question »), puis une section de gestes — une rangée
 /// par geste, aucun panneau ni carte imbriqués.
 struct PipelinesCardSheet: View {
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients : chaque geste de la fiche part vers la machine de la carte, avec
+    /// l'identifiant de carte de CETTE machine (`MachineClients.target(forCardId:)`).
+    @ObservedObject var clients: MachineClients
     let cardId: String
     /// Le crochet de recette `-pipelines.recipe` : la carte de fixture et son
     /// catalogue remplacent l'instantané du Mac, et l'état forcé est appliqué puis annoncé.
@@ -40,6 +42,11 @@ struct PipelinesCardSheet: View {
     @State private var mergeShown = false
     @State private var mergeRow: ProjectPRRow?
 
+    /// La machine de la carte, et l'identifiant de carte qu'elle connaît.
+    private var target: (client: ConsoleClientModel, cardId: String, machine: RepoMachine) {
+        clients.target(forCardId: cardId)
+    }
+
     private func loadModelNames() async {
         if let recipe, recipe.card?.id == cardId {
             modelNames = recipe.modelNames
@@ -50,7 +57,7 @@ struct PipelinesCardSheet: View {
             return
         }
         do {
-            let payload = try await client.models()
+            let payload = try await target.client.models()
             modelNames = payload.failure == nil ? payload.names : nil
         } catch {
             if !Task.isCancelled { modelNames = nil }
@@ -73,7 +80,7 @@ struct PipelinesCardSheet: View {
 
     private var card: KanbanCard? {
         if let recipeCard = recipe?.card, recipeCard.id == cardId { return recipeCard }
-        return PipelinesModel.boardState(of: client, nowMs: Self.nowMs)?.card(cardId)
+        return PipelinesModel.card(cardId, of: clients, nowMs: Self.nowMs)
     }
 
     /// Le statut présenté (etats-non-connecte-heterogenes-ios, S-5) : sous la recette,
@@ -81,7 +88,7 @@ struct PipelinesCardSheet: View {
     /// client. Les gestes vers le Mac ne sont actifs qu'à `.connected`.
     private var connection: IOSConnectionStatus {
         if recipe != nil { return .connected }
-        return IOSConnectionStatus.of(client)
+        return IOSConnectionStatus.of(target.client)
     }
 
     var body: some View {
@@ -157,7 +164,7 @@ struct PipelinesCardSheet: View {
             Button(KanbanText.stopConfirm, role: .destructive) {
                 // Confirmation ouverte avant la coupure : rien ne part hors connexion (S-5).
                 guard connection.gesturesEnabled else { return }
-                perform { _ = try await client.stop(cardId: card.id) }
+                perform { _ = try await target.client.stop(cardId: target.cardId) }
             }
             Button(KanbanText.cancel, role: .cancel) {}
         } message: { _ in
@@ -292,7 +299,7 @@ struct PipelinesCardSheet: View {
                 card: card
             ) {
                 let verdict = kind.verdict ?? PipelinesVerdict.specs.rawValue
-                _ = try await client.verdict(cardId: card.id, verdict: verdict)
+                _ = try await target.client.verdict(cardId: target.cardId, verdict: verdict)
             }
             .recipeAnchor(anchored)
         case .arbiter(let state):
@@ -312,7 +319,7 @@ struct PipelinesCardSheet: View {
             .recipeAnchor(anchored)
         case .resume:
             actionButton(label: KanbanText.resume, id: KanbanText.resume, card: card) {
-                _ = try await client.resume(cardId: card.id)
+                _ = try await target.client.resume(cardId: target.cardId)
             }
             .recipeAnchor(anchored)
         case .stop:
@@ -327,7 +334,7 @@ struct PipelinesCardSheet: View {
             .recipeAnchor(anchored)
         case .launch:
             actionButton(label: KanbanText.launch, id: KanbanText.launch, card: card) {
-                _ = try await client.resume(cardId: card.id)
+                _ = try await target.client.resume(cardId: target.cardId)
             }
             .recipeAnchor(anchored)
         case .openPR:
@@ -426,7 +433,7 @@ struct PipelinesCardSheet: View {
             let text = freeText
             freeText = ""
             perform {
-                _ = try await client.reply(cardId: card.id, text: text)
+                _ = try await target.client.reply(cardId: target.cardId, text: text)
             }
         }
         .frame(minHeight: IOSMetrics.minimumTarget)
@@ -487,16 +494,16 @@ struct PipelinesCardSheet: View {
                 send: { toolCallId, choice in
                     switch choice {
                     case .option(let label):
-                        _ = try await client.answer(
-                            cardId: cardId,
+                        _ = try await target.client.answer(
+                            cardId: target.cardId,
                             kind: PipelinesAnswerKind.selected.rawValue,
                             label: label,
                             text: nil,
                             toolCallId: toolCallId
                         )
                     case .custom(let text):
-                        _ = try await client.answer(
-                            cardId: cardId,
+                        _ = try await target.client.answer(
+                            cardId: target.cardId,
                             kind: PipelinesAnswerKind.custom.rawValue,
                             label: nil,
                             text: text,
@@ -505,8 +512,8 @@ struct PipelinesCardSheet: View {
                     }
                 },
                 reread: {
-                    _ = try await client.store()
-                    return PipelinesModel.boardState(of: client, nowMs: Self.nowMs)?.card(cardId)
+                    _ = try await target.client.store()
+                    return PipelinesModel.card(cardId, of: clients, nowMs: Self.nowMs)
                 }
             )
             switch outcome {
@@ -550,7 +557,7 @@ struct PipelinesCardSheet: View {
             error = nil
             mergeFailed = false
             do {
-                let payload = try await client.pullRequests(repoKey: repoKey)
+                let payload = try await target.client.pullRequests(repoKey: repoKey)
                 guard let row = payload.rows.first(where: { $0.slug == slug }) else {
                     error = PipelinesText.noPullRequestRow
                     busy = false
@@ -573,7 +580,7 @@ struct PipelinesCardSheet: View {
             return
         }
         perform {
-            _ = try await client.merge(repoKey: repoKey, slug: slug, headOid: headOid)
+            _ = try await target.client.merge(repoKey: repoKey, slug: slug, headOid: headOid)
         }
     }
 }

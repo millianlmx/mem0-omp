@@ -60,7 +60,7 @@ struct VersionTests {
     func previousVersionAppLocksAgainstTheMac() async throws {
         let previous = ConsoleAPI.protocolVersion - 1
         let mac = ConsoleAPI.protocolVersion
-        #expect(previous == 1 && mac == 2, "le critère vise l'app 1 face au Mac 2")
+        #expect(previous == 2 && mac == 3, "le critère vise l'app de la version précédente face au Mac courant (protocole 3 : machine, bascule)")
         let harness = ClientHarness(
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"],

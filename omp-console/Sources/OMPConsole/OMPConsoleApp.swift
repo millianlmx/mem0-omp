@@ -12,7 +12,7 @@
 // Barre des menus (HIG Keyboards : ⌘N crée l'objet principal de l'app, aucun
 // raccourci standard n'est détourné) : Fichier ▸ « Nouvelle feature… » ⌘N,
 // « Nouvelle session OMP » ⌥⌘N, « Piloter un projet… » ⇧⌘N ; Présentation ▸ les
-// dix sections (⌘1…⌘9, ⌘0).
+// onze sections (⌘1…⌘9, ⌘0 ; la onzième n'a pas de raccourci).
 //
 // Les modèles de terminal, de session et de pilotage vivent sur la structure `App`
 // (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
@@ -64,6 +64,9 @@ struct OMPConsoleApp: App {
     /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
     /// la session et lit les projets connus dans le magasin du service d'API.
     @StateObject private var projectChooser: ProjectChooserModel
+    /// Le Mac et le VPS (S-6 de orchestrator-living-in-a-vps) : la section « Dépôts », les
+    /// cartes des deux machines et le relais des gestes vers le VPS.
+    @StateObject private var machineHub: MachineHub
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     /// Le crochet de recette `-surface.recipe` (racine jetable seulement), lu une
     /// fois au lancement : la racine l'applique à son premier affichage.
@@ -140,6 +143,13 @@ struct OMPConsoleApp: App {
             setupChanges: setup.$state.voidChanges()
         )
         _remoteModel = StateObject(wrappedValue: remote)
+        // Les deux machines : le Mac (ses modèles, par les gestes typés du service local) et
+        // le VPS (client appairé, slot `.vps`). Aucun VPS configuré : rien ne change.
+        _machineHub = StateObject(wrappedValue: MachineHub.live(
+            local: LocalMacSource(actions: remote.remoteActions, hub: storeHub, kanban: kanban),
+            kanban: kanban,
+            actions: actions
+        ))
         // Les intents Siri (siri-mac-questions-en-attente, S-5) résolvent les
         // modèles mêmes que les vues et l'API distante. `init()` tourne aussi au
         // lancement à froid par Siri, sans fenêtre : la lecture démarre l'ardoise.
@@ -214,6 +224,7 @@ struct OMPConsoleApp: App {
                 terminalModel: terminalModel,
                 statsModel: statsModel,
                 projectChooser: projectChooser,
+                hub: machineHub,
                 surfaceRecipe: surfaceRecipe
             )
         }
@@ -276,7 +287,7 @@ struct NewItemCommands: Commands {
     }
 }
 
-/// Menu Présentation ▸ les dix sections (⌘1…⌘9, ⌘0), dans l'ordre de la barre
+/// Menu Présentation ▸ les onze sections (⌘1…⌘9, ⌘0), dans l'ordre de la barre
 /// latérale : ramène la fenêtre principale, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
@@ -284,20 +295,28 @@ struct SectionCommands: Commands {
     var body: some Commands {
         CommandGroup(before: .sidebar) {
             ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
-                Button(section.title) {
+                let item = Button(section.title) {
                     MainWindow.reveal()
                     console.select(section)
                 }
-                .keyboardShortcut(KeyEquivalent(Self.key(at: index)), modifiers: .command)
+                if let key = Self.key(at: index) {
+                    item.keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+                } else {
+                    item
+                }
             }
             Divider()
         }
     }
 
     /// La touche du raccourci de la section à `index` : 1…9, puis 0 pour la
-    /// dixième (comme la rangée des chiffres du clavier).
-    static func key(at index: Int) -> Character {
-        index == 9 ? "0" : Character(String(index + 1))
+    /// dixième (comme la rangée des chiffres du clavier), et aucune au-delà.
+    static func key(at index: Int) -> Character? {
+        switch index {
+        case 0..<9: Character(String(index + 1))
+        case 9: "0"
+        default: nil
+        }
     }
 }
 

@@ -52,6 +52,9 @@ public final class UnifiedReposModel: ObservableObject {
         self.vps = vps
         self.preferences = preferences
         self.sleep = sleep
+        // Une bascule à terminer survit au redémarrage : sans elle, « Annuler la
+        // bascule » rouvrirait la source alors que la cible a déjà démarré.
+        unfinished = UnifiedRepos.decodeUnfinished(preferences.string(forKey: UnifiedRepos.unfinishedKey))
         for source in [mac, vps] {
             fetched[source.machine] = UnifiedRepos.decodeLastKnown(
                 preferences.string(forKey: UnifiedRepos.lastReposKey(source.machine))
@@ -210,13 +213,19 @@ public final class UnifiedReposModel: ObservableObject {
         switch outcome {
         case .completed(let launched, _):
             unfinished[line.id] = nil
+            persistUnfinished()
             message = .success(ReposText.success(name: line.name, to: machine, launched: launched))
         case .failed(let reason):
             message = .failure(reason)
         case .toFinish(let pending):
             unfinished[line.id] = pending
+            persistUnfinished()
             message = .failure(pending.message)
         }
+    }
+
+    private func persistUnfinished() {
+        preferences.set(UnifiedRepos.encodeUnfinished(unfinished), forKey: UnifiedRepos.unfinishedKey)
     }
 
     public func dismissMessage() {

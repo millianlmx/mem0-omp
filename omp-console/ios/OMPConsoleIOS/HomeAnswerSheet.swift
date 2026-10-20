@@ -19,7 +19,9 @@ import SwiftUI
 
 struct HomeAnswerSheet: View {
     let card: KanbanCard
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients : la réponse part vers la machine de la carte, avec l'identifiant
+    /// de carte de CETTE machine (`MachineClients.target(forCardId:)`).
+    @ObservedObject var clients: MachineClients
     /// Le statut présenté par l'Accueil (`HomeView.connection`, recette comprise) :
     /// hors `.connected`, options, champ et « Répondre » sont grisés
     /// (etats-non-connecte-heterogenes-ios, S-5).
@@ -38,15 +40,20 @@ struct HomeAnswerSheet: View {
 
     init(
         card: KanbanCard,
-        client: ConsoleClientModel,
+        clients: MachineClients,
         connection: IOSConnectionStatus,
         onQuestionGone: @escaping () -> Void
     ) {
         self.card = card
-        self.client = client
+        self.clients = clients
         self.connection = connection
         self.onQuestionGone = onQuestionGone
         _draft = State(initialValue: IOSAnswerDraft(question: IOSAnswerQuestion(card: card)))
+    }
+
+    /// La machine de la carte et l'identifiant de carte qu'elle connaît.
+    private var target: (client: ConsoleClientModel, cardId: String, machine: RepoMachine) {
+        clients.target(forCardId: card.id)
     }
 
     private var selectedOption: String? { draft.selectedOption }
@@ -182,7 +189,7 @@ struct HomeAnswerSheet: View {
                     send: { toolCallId, choice in
                         switch choice {
                         case .option(let label):
-                            _ = try await client.answer(
+                            _ = try await target.client.answer(
                                 cardId: card.id,
                                 kind: IOSHomeText.kindSelected,
                                 label: label,
@@ -190,7 +197,7 @@ struct HomeAnswerSheet: View {
                                 toolCallId: toolCallId
                             )
                         case .custom(let text):
-                            _ = try await client.answer(
+                            _ = try await target.client.answer(
                                 cardId: card.id,
                                 kind: IOSHomeText.kindCustom,
                                 label: nil,
@@ -200,8 +207,8 @@ struct HomeAnswerSheet: View {
                         }
                     },
                     reread: {
-                        _ = try await client.store()
-                        return client.board.card(card.id)
+                        _ = try await target.client.store()
+                        return clients.board.state.card(card.id)
                     }
                 )
                 switch outcome {
@@ -219,7 +226,7 @@ struct HomeAnswerSheet: View {
             } else {
                 do {
                     if case .textQuestion = zone {
-                        _ = try await client.reply(cardId: card.id, text: draft.text)
+                        _ = try await target.client.reply(cardId: target.cardId, text: draft.text)
                     }
                     dismiss()
                 } catch {

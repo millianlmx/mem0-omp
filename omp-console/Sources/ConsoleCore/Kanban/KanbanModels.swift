@@ -123,6 +123,10 @@ public struct KanbanCardAction: Sendable, Equatable {
     /// c'est lui qui retire la carte de « À vous » et ses gestes de réponse tant
     /// que l'arbitre tient l'élément. `.none` hors feature de lot.
     public var arbiter: ArbiterState = .none
+    /// L'identifiant de carte d'une carte de l'ardoise UNIFIÉE du VPS (`vps:<id>`,
+    /// `MachineCardID`) : c'est lui qui envoie le geste à la machine de la carte.
+    /// `nil` pour une carte du Mac, dont les gestes passent par le service local.
+    public var cardId: String? = nil
 
     public init(
         repoRoot: String?,

@@ -10,10 +10,11 @@
 // ou à une autre cause (décision utilisateur du 2026-10-10).
 
 import ConsoleClient
+import ConsoleCore
 
 /// La cause d'un « non connecté », chacune avec sa phrase
 /// (`IOSConnectionStateText.cause(_:)`).
-enum IOSDisconnectCause: Equatable, Sendable {
+indirect enum IOSDisconnectCause: Equatable, Sendable {
     /// Aucun appairage sur cet appareil.
     case unpaired
     /// Le Mac a refusé ou révoqué l'appairage.
@@ -24,6 +25,11 @@ enum IOSDisconnectCause: Equatable, Sendable {
     case updateApp
     /// Le Mac parle une version d'API plus ancienne : mettre à jour le Mac.
     case updateMac
+    /// L'adresse saisie est celle de l'autre machine (S-10 de
+    /// orchestrator-living-in-a-vps) : aucun geste n'est émis.
+    case wrongMachine(expected: RepoMachine, actual: RepoMachine)
+    /// La même cause, mais pour le slot VPS : la phrase parle du VPS, pas du Mac.
+    case onVps(IOSDisconnectCause)
 }
 
 enum IOSConnectionStatus: Equatable, Sendable {
@@ -31,29 +37,50 @@ enum IOSConnectionStatus: Equatable, Sendable {
     case connecting
     case disconnected(IOSDisconnectCause)
 
-    /// La table exhaustive de S-1.
-    static func resolve(_ state: ClientState, attemptFollowsFailure: Bool) -> IOSConnectionStatus {
+    /// La table exhaustive de S-1. `machine` est la machine du slot du client : la
+    /// cause d'un slot VPS est enveloppée (`.onVps`) pour parler du VPS.
+    static func resolve(
+        _ state: ClientState,
+        attemptFollowsFailure: Bool,
+        machine: RepoMachine = .mac
+    ) -> IOSConnectionStatus {
+        func disconnected(_ cause: IOSDisconnectCause) -> IOSConnectionStatus {
+            .disconnected(machine == .vps ? .onVps(cause) : cause)
+        }
         switch state {
         case .connected:
             return .connected
         case .connecting, .searching:
-            return attemptFollowsFailure ? .disconnected(.unreachable) : .connecting
+            return attemptFollowsFailure ? disconnected(.unreachable) : .connecting
         case .macAbsent, .noNetwork:
-            return .disconnected(.unreachable)
+            return disconnected(.unreachable)
         case .unpaired:
-            return .disconnected(.unpaired)
+            return disconnected(.unpaired)
         case .revoked:
-            return .disconnected(.refused)
+            return disconnected(.refused)
         case .incompatibleProtocol(let local, let remote):
-            if let remote, remote > local { return .disconnected(.updateApp) }
-            return .disconnected(.updateMac)
+            if let remote, remote > local { return disconnected(.updateApp) }
+            return disconnected(.updateMac)
+        case .wrongMachine(let expected, let actual):
+            return .disconnected(.wrongMachine(expected: expected, actual: actual))
         }
     }
 
     /// Le statut présenté du client partagé.
     @MainActor
     static func of(_ client: ConsoleClientModel) -> IOSConnectionStatus {
-        resolve(client.state, attemptFollowsFailure: client.attemptFollowsFailure)
+        resolve(client.state, attemptFollowsFailure: client.attemptFollowsFailure, machine: client.slot.machine)
+    }
+
+    /// Le statut présenté quand l'app tient deux clients (Accueil, Pipelines) : connecté
+    /// dès qu'UNE machine l'est — l'ardoise unifiée a de quoi s'afficher —, sinon le
+    /// statut de la machine qui répond aux écrans (`activeClient`). Sans VPS configuré,
+    /// celui du Mac, tel quel.
+    @MainActor
+    static func of(_ clients: MachineClients) -> IOSConnectionStatus {
+        guard clients.vpsConfigured else { return of(clients.mac) }
+        if of(clients.mac) == .connected || of(clients.vps) == .connected { return .connected }
+        return of(clients.activeClient)
     }
 
     /// Les gestes qui exigent le Mac ne sont tapables qu'une fois connecté.

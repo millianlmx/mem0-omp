@@ -31,6 +31,7 @@ mem0-omp/                              racine = marketplace OMP
 │   ├── mem0-rs/                       le serveur Rust mem0-rs (crate)
 │   └── README.md                      démarrer, migrer une pile mem0-http existante, retour arrière
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
+├── flake.nix, flake.lock, nix/        le flake : module NixOS `services.omp-orchestrator`, paquets, test NixOS en VM (cf. « Héberger l'orchestrateur sur un VPS NixOS »)
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
 ├── scripts/test-files.sh              liste des fichiers de test : tous, macOS (--scope=macos), du diff (--scope=changed), outillage
@@ -41,6 +42,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
+├── scripts/mem0-vers-vps.sh           migre la mémoire mem0 du Mac vers le VPS NixOS (comptes par projet comparés, mem0-remote.json écrit si identiques)
+├── scripts/recette/vps-recette.sh     recette réelle du VPS NixOS : install, secrets, reseau, mise-a-jour, reprise, mem0 (garde MEM0_VPS_REEL=1, verdict 0/1/2)
 ├── scripts/recette/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
 ├── scripts/recette/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
@@ -1550,6 +1553,113 @@ Quand c'est la pile de l'app qui sert cette adresse, `GET /health` porte en plus
 champ **additif** `installation` (le jeton d'installation) : le protocole et les
 autres champs sont inchangés, le contrat du plugin mémoire (`health.ok` seul) ne
 change pas, et la voie manuelle `mem0-stack/` garde son `/health` identique.
+
+## Héberger l'orchestrateur sur un VPS NixOS
+
+Le service de pipelines et la mémoire mem0 peuvent vivre sur un VPS NixOS qui reste
+allumé quand le Mac dort. Le dépôt est un **flake** : `nix/module.nix` (le module
+NixOS), `nix/mem0-rs.nix`, `nix/plugins.nix`, `nix/orchestrator-cli.nix` (les
+paquets) et `nix/test-vps.nix` (la preuve en machines virtuelles).
+
+**Brancher le module.** Le VPS est déjà joint au tailnet (`tailscale up`) :
+
+```nix
+{
+  inputs.mem0-omp.url = "github:millianlmx/mem0-omp";
+  # dans la configuration NixOS du VPS :
+  imports = [ inputs.mem0-omp.nixosModules.default ];
+  services.omp-orchestrator = {
+    enable = true;
+    tailscaleAddress = "100.100.1.2";                       # `tailscale ip -4`
+    modelEnvironmentFile = "/run/secrets/omp-model.env";    # ANTHROPIC_API_KEY=…, etc.
+    githubTokenFile = "/run/secrets/omp-github-token";
+    mem0TokenFile = "/run/secrets/omp-mem0-token";
+    git = { userName = "OMP VPS"; userEmail = "omp@example.org"; };
+  };
+}
+```
+
+| Option | Rôle (défaut) |
+|---|---|
+| `enable` | active les unités `omp-mem0` (mem0-rs) et `omp-pipeline` (le service de pipelines, `omp --pipeline-service`), relancées seules en cas de crash ou de redémarrage |
+| `tailscaleAddress` | adresse IPv4 Tailscale (100.64.0.0/10) : le protocole distant n'écoute que sur elle |
+| `modelEnvironmentFile`, `githubTokenFile`, `mem0TokenFile`, `embedder.apiKeyFile` | **chemins** de fichiers de secret, absolus et hors de `/nix/store` (une assertion refuse le reste) |
+| `git.userName`, `git.userEmail` | identité des commits faits par les maillons |
+| `stateDir` (`/var/lib/omp-orchestrator`) | lots, dépôts clonés (`repos/`), base mem0 : jamais touchés par une mise à jour |
+| `apiPort` (8787), `servicePort` (8788), `mem0Port` (8321) | le protocole distant ; la boucle locale du service et celle de mem0 (127.0.0.1) |
+| `embedder.useOllama`, `embedder.baseUrl`, `embedder.model`, `embedder.dims`, `llmModel` | l'embedder (Ollama local `bge-m3` par défaut) et le modèle d'extraction des souvenirs |
+| `ompPackage`, `mem0Package`, `pluginsPackage` | les paquets, pour épingler ou surcharger une version |
+| `machineName`, `user`, `group` | nom affiché de la machine, utilisateur système du service |
+
+**Secrets par fichiers, jamais dans le store.** Les options de secret sont des
+chaînes de chemins, pas des `path` Nix : un `path` serait copié dans `/nix/store`,
+lisible de tous. Les fichiers sont fournis par l'hôte (sops-nix, agenix ou à la main
+sous `/run/secrets`) et passés aux unités par `LoadCredential`. La preuve : aucune
+ligne de ces fichiers n'apparaît dans `/nix/store`.
+
+**Tailscale seul.** Le pare-feu n'ouvre que `apiPort`, et sur l'interface `tailscale0`.
+Le service de pipelines (8788) et mem0 (8321) n'écoutent que sur 127.0.0.1 ; rien
+ne répond sur l'adresse publique du VPS. Le protocole distant exige le Bearer d'un
+appareil appairé : une route autre que l'appairage rend 401 sans lui.
+
+**Appairer un appareil.** Sur le VPS, en root :
+
+```bash
+omp-orchestrator pair            # code à 8 caractères, valable 120 s
+omp-orchestrator pair --json
+omp-orchestrator devices         # appareils appairés
+omp-orchestrator revoke <id>
+```
+
+Le code se saisit dans la feuille Connexion de l'app iOS (section « VPS ») ou dans
+OMP Console ; l'appareil reçoit son jeton (seule son empreinte sha256 est gardée
+dans `devices.json`).
+
+**Migrer la mémoire du Mac vers le VPS.** Depuis le Mac :
+
+```bash
+bash scripts/mem0-vers-vps.sh --vps root@vps --adresse 100.100.1.2
+```
+
+La base SQLite du `mem0-rs` de l'app est copiée telle quelle (vecteurs compris), le
+Mac est appairé, puis le script compare, projet par projet, les comptes et les ids
+lus avant par le Mac et après par le proxy `/v1/mem0` du VPS. Si tout est identique,
+`~/.omp/agent/mem0-remote.json` est écrit : les sessions du Mac et celles du VPS
+partagent alors la même mémoire. Sinon rien n'est écrit et la mémoire locale reste
+en service. Retour arrière : supprimer `mem0-remote.json`.
+
+**Confier un dépôt au VPS (bascule).** Un dépôt est conduit par UNE machine à la fois.
+La bascule gèle le dépôt côté source (`POST /v1/repos/<repoKey>/handover`), le VPS clone
+le dépôt par son identité `github.com/<propriétaire>/<nom>` sous
+`<stateDir>/repos/` s'il lui manque (`POST /v1/repos/adopt`), puis la source valide
+(`POST …/handover/<id>/commit`) ou annule (`DELETE …/handover/<id>`). Le maillon en cours finit sur le Mac ; les features
+pas encore démarrées partent sur le VPS ; aucune feature n'est conduite par les deux.
+Les segments `.` et `..` sont refusés dans l'identité.
+
+**Porte de l'intégration continue GitHub.** Le VPS ne compile pas de Swift. Pour une
+feature d'un dépôt qu'il conduit et qui touche un fichier `.swift`, `.xcodeproj/`,
+`.xcworkspace/`, `Package.swift` ou `Package.resolved`, la fin de chaque `/impl`
+fige l'arbre dans un commit de travail et le pousse sur `feat/<slug>`
+(`.github/workflows/check.yml` se déclenche sur `feat/**`). Une revue propre n'atteint
+son jalon qu'au vert des contrôles GitHub (état « Attente de l'intégration continue
+GitHub ») ; un contrôle rouge renvoie la feature en `/impl --fix` avec la ligne
+`Bloquant de l'intégration continue GitHub sur <sha7> : <contrôle> (<lien>)` ;
+l'accord de revue est refusé tant que l'intégration continue n'est pas verte sur
+l'arbre courant. La livraison remplace la branche de travail par
+`--force-with-lease`. Sans aucun contrôle après 15 min, ou sans verdict après
+120 min, la feature se bloque.
+
+**Mettre à jour.** `nix flake update && nixos-rebuild switch --flake .#<hôte>` (voir
+`PUBLISHING.md` § Héberger sur un VPS NixOS) : la nouvelle version d'omp et des
+extensions démarre, les lots et la mémoire restent en place.
+
+**Preuves.** Le test NixOS (`checks.x86_64-linux.vps`, KVM requis) prouve AC-1 à AC-4 :
+`MEM0_OMP_REQUIRE_NIX=1 node --test --experimental-strip-types test/vps/orchestrator-living-in-a-vps.test.ts`.
+Sans Nix ni KVM, ce test saute avec « non exécuté : nix/KVM absent ». La recette sur un
+VPS réel est `MEM0_VPS_REEL=1 bash scripts/recette/vps-recette.sh <étape>` (`install`,
+`secrets`, `reseau`, `mise-a-jour avant|apres`, `reprise [reboot|apres-reboot]`,
+`mem0`) : chaque étape imprime ce qu'elle vérifie et sort non nulle au premier écart,
+ou 2 (« non exécuté ») sans la garde `MEM0_VPS_REEL=1`.
 
 ## Tests et scripts
 

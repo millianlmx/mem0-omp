@@ -43,14 +43,24 @@ enum ConnectionPairingOutcome: Equatable {
     case failed(message: String)
 }
 
-/// La feuille unique de connexion : elle reçoit le modèle observable partagé et
-/// n'en fabrique aucun état. Elle ne se ferme pas d'elle-même après un appairage.
+/// La feuille unique de connexion : elle reçoit les DEUX clients de l'app (S-10 de
+/// orchestrator-living-in-a-vps) et n'en fabrique aucun état. Deux sections : « Mac »
+/// (inchangée : découverte Bonjour, adresse manuelle, code) et « VPS » (adresse
+/// manuelle seule, code, « Oublier ce VPS »). Elle ne se ferme pas d'elle-même
+/// après un appairage.
 struct ConnectionSheet: View {
-    @ObservedObject var model: ConsoleClientModel
+    @ObservedObject var clients: MachineClients
 
     var body: some View {
         NavigationStack {
-            ConnectionForm(model: model, exit: .close, onPaired: nil)
+            Form {
+                ConnectionMachineContent(model: clients.mac, onPaired: nil)
+                ConnectionMachineContent(model: clients.vps, onPaired: nil)
+            }
+            .accessibilityIdentifier(ConnectionAccessibility.sheet)
+            .navigationTitle(ConnectionText.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ConnectionCloseItem() }
         }
     }
 
@@ -67,28 +77,79 @@ struct ConnectionSheet: View {
     /// verrou de version) ou un échec publié par le modèle donne son message ;
     /// sinon l'appareil est appairé.
     @MainActor
-    static func attemptPairing(_ model: ConsoleClientModel, code: String) async -> ConnectionPairingOutcome {
+    static func attemptPairing(
+        _ model: ConsoleClientModel,
+        code: String,
+        machine: RepoMachine = .mac
+    ) async -> ConnectionPairingOutcome {
         do {
             try await model.pair(code: code)
         } catch {
-            return .failed(message: ConnectionText.pairError(error))
+            return .failed(message: ConnectionText.pairError(error, machine: machine))
         }
         if let failure = model.pairingFailure {
-            return .failed(message: ConnectionText.pairingFailure(failure))
+            return .failed(message: ConnectionText.pairingFailure(failure, machine: machine))
         }
         return .paired
     }
 }
 
-/// Le contenu de la Connexion, commun à la feuille autonome et à l'écran poussé
-/// du flux de bienvenue ; seule la sortie de la barre change.
+/// Le bouton « Fermer » de la feuille autonome.
+struct ConnectionCloseItem: ToolbarContent {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) {
+            Button(ConnectionText.close) { dismiss() }
+                .accessibilityIdentifier(ConnectionAccessibility.close)
+        }
+    }
+}
+
+/// La Connexion du Mac poussée dans le flux de bienvenue : un seul client, la
+/// sortie « Plus tard » fournie par l'hôte ; seule la sortie de la barre change.
 struct ConnectionForm: View {
     @ObservedObject var model: ConsoleClientModel
     let exit: ConnectionFormExit
     /// Appelé quand un appairage réussit (flux de bienvenue : fermer la feuille).
     let onPaired: (() -> Void)?
 
-    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        Form {
+            ConnectionMachineContent(model: model, onPaired: onPaired)
+        }
+        .accessibilityIdentifier(ConnectionAccessibility.sheet)
+        .navigationTitle(ConnectionText.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            exitItem
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var exitItem: some ToolbarContent {
+        switch exit {
+        case .close:
+            ConnectionCloseItem()
+        case .later(let action):
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(ConnectionText.later, action: action)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier(ConnectionAccessibility.later)
+            }
+        }
+    }
+}
+
+/// Les sections de connexion d'UNE machine (S-11 de client-distant-ios, S-10 de
+/// orchestrator-living-in-a-vps) : état, découverte (Mac seulement), adresse
+/// manuelle, code d'appairage, oubli. L'en-tête de la zone d'état nomme la
+/// machine (« Mac », « VPS ») quand la feuille en montre deux.
+struct ConnectionMachineContent: View {
+    @ObservedObject var model: ConsoleClientModel
+    /// Appelé quand un appairage réussit (flux de bienvenue : fermer la feuille).
+    let onPaired: (() -> Void)?
+
     @Environment(\.openURL) private var openURL
 
     @State private var addressText = ""
@@ -109,41 +170,20 @@ struct ConnectionForm: View {
         case code
     }
 
+    private var machine: RepoMachine { model.slot.machine }
+
     var body: some View {
-        Form {
+        Group {
             content
-        }
-        .accessibilityIdentifier(ConnectionAccessibility.sheet)
-        .navigationTitle(ConnectionText.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            exitItem
         }
         .onAppear {
             prefill(for: mode)
-            // Seul le mode non appairé focalise le code ; les autres modes ne
+            // Seul le mode non appairé du Mac focalise le code ; les autres modes ne
             // touchent JAMAIS au focus, donc aucun clavier (D-3).
-            if mode.initialFocusOnCode { focus = .code }
+            if mode.initialFocusOnCode, machine == .mac { focus = .code }
         }
         .onChange(of: mode) { _, newMode in
             prefill(for: newMode)
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var exitItem: some ToolbarContent {
-        switch exit {
-        case .close:
-            ToolbarItem(placement: .confirmationAction) {
-                Button(ConnectionText.close) { dismiss() }
-                    .accessibilityIdentifier(ConnectionAccessibility.close)
-            }
-        case .later(let action):
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(ConnectionText.later, action: action)
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier(ConnectionAccessibility.later)
-            }
         }
     }
 
@@ -154,7 +194,7 @@ struct ConnectionForm: View {
             restoringSection
         case .unpaired(let refused, _):
             stateSection(address: nil, refused: refused, retry: false)
-            discoverySection
+            if model.slot.usesDiscovery { discoverySection }
             Section(ConnectionText.addressTitle) { addressFields }
             pairingSection
         case .connected(let address):
@@ -170,7 +210,7 @@ struct ConnectionForm: View {
     // MARK: - État
 
     private var restoringSection: some View {
-        Section(ConnectionText.stateTitle) {
+        Section(ConnectionText.sectionHeader(machine)) {
             HStack(spacing: 8) {
                 Text(ConnectionText.restoring)
                     .accessibilityIdentifier(ConnectionAccessibility.state)
@@ -181,9 +221,9 @@ struct ConnectionForm: View {
 
     /// La zone d'état : le libellé SANS adresse, puis l'adresse une seule fois.
     private func stateSection(address: String?, refused: Bool, retry: Bool) -> some View {
-        Section(ConnectionText.stateTitle) {
+        Section(ConnectionText.sectionHeader(machine)) {
             HStack(spacing: 8) {
-                Text(ConnectionText.sheetState(model.state))
+                Text(ConnectionText.sheetState(model.state, machine: machine))
                     .accessibilityIdentifier(ConnectionAccessibility.state)
                 if case .connecting = model.state {
                     ProgressView()
@@ -195,7 +235,7 @@ struct ConnectionForm: View {
                     .accessibilityIdentifier(ConnectionAccessibility.endpoint)
             }
             if refused {
-                Text(ConnectionText.refusedMessage)
+                Text(ConnectionText.refusedText(machine))
                     .foregroundStyle(.red)
                     .accessibilityIdentifier(ConnectionAccessibility.refused)
             }
@@ -245,14 +285,14 @@ struct ConnectionForm: View {
     /// une section en mode non appairé, le contenu du groupe replié sinon.
     @ViewBuilder
     private var addressFields: some View {
-        TextField(ConnectionText.addressField, text: $addressText)
+        TextField(ConnectionText.addressPlaceholder(machine), text: $addressText)
             .keyboardType(.URL)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .focused($focus, equals: .address)
             .onSubmit(saveAddress)
             .accessibilityIdentifier(ConnectionAccessibility.address)
-            .accessibilityLabel(ConnectionText.addressTitle)
+            .accessibilityLabel(ConnectionText.addressLabel(machine))
         if addressRejected {
             Text(ConnectionText.addressInvalid)
                 .foregroundStyle(.red)
@@ -341,7 +381,7 @@ struct ConnectionForm: View {
         } header: {
             Text(ConnectionText.codeTitle)
         } footer: {
-            Text(ConnectionText.codeHelp)
+            Text(ConnectionText.codeHelpText(machine))
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(ConnectionAccessibility.help)
         }
@@ -352,17 +392,17 @@ struct ConnectionForm: View {
     private var forgetSection: some View {
         Section {
             HStack(spacing: 8) {
-                Button(ConnectionText.forget, role: .destructive) { forgetAsked = true }
+                Button(ConnectionText.forgetLabel(machine), role: .destructive) { forgetAsked = true }
                     .disabled(forgetting)
                     .accessibilityIdentifier(ConnectionAccessibility.forget)
                     // Posée SUR le bouton : en largeur régulière (iPad), la
                     // confirmation est une bulle ancrée à lui (D-1).
                     .confirmationDialog(
-                        ConnectionText.forgetTitle,
+                        ConnectionText.forgetDialogTitle(machine),
                         isPresented: $forgetAsked,
                         titleVisibility: .visible
                     ) {
-                        Button(ConnectionText.forget, role: .destructive) {
+                        Button(ConnectionText.forgetLabel(machine), role: .destructive) {
                             Task { await forget() }
                         }
                         .accessibilityIdentifier(ConnectionAccessibility.forgetConfirm)
@@ -403,7 +443,7 @@ struct ConnectionForm: View {
     }
 
     private func pair() async {
-        let outcome = await ConnectionSheet.attemptPairing(model, code: code)
+        let outcome = await ConnectionSheet.attemptPairing(model, code: code, machine: machine)
         pairingInFlight = false
         switch outcome {
         case .paired:
@@ -465,6 +505,7 @@ struct ConnectionForm: View {
     private var canRetry: Bool {
         if case .macAbsent = model.state { return true }
         if case .incompatibleProtocol = model.state { return true }
+        if case .wrongMachine = model.state { return true }
         switch model.pairingFailure {
         case .unavailable?, .transport?, .incompatibleProtocol?:
             return true

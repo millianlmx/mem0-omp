@@ -34,9 +34,15 @@ struct IOSConnectionStatusTests {
         (.incompatibleProtocol(local: 2, remote: 1), false, .disconnected(.updateMac)),
         (.incompatibleProtocol(local: 1, remote: nil), true, .disconnected(.updateMac)),
         (.incompatibleProtocol(local: 1, remote: 1), false, .disconnected(.updateMac)),
+        (.wrongMachine(expected: .vps, actual: .mac), false, .disconnected(.wrongMachine(expected: .vps, actual: .mac))),
+        (.wrongMachine(expected: .mac, actual: .vps), true, .disconnected(.wrongMachine(expected: .mac, actual: .vps))),
     ]
 
-    private static let causes: [IOSDisconnectCause] = [.unpaired, .refused, .unreachable, .updateApp, .updateMac]
+    private static let causes: [IOSDisconnectCause] = [
+        .unpaired, .refused, .unreachable, .updateApp, .updateMac,
+        .wrongMachine(expected: .vps, actual: .mac),
+        .onVps(.unpaired), .onVps(.refused), .onVps(.unreachable), .onVps(.updateApp), .onVps(.updateMac),
+    ]
 
     @Test("etats-non-connecte-heterogenes-ios/AC-3 : chaque état du client donne son statut et sa cause (table de S-1)")
     func resolvesEveryClientState() {
@@ -120,7 +126,7 @@ struct IOSConnectionStatusTests {
         let local = ConsoleAPI.protocolVersion - 1
         let remote = ConsoleAPI.protocolVersion
         #expect(ConnectionText.incompatibleProtocol(local: local, remote: remote)
-            == "Version de protocole incompatible (app 1, Mac 2)")
+            == "Version de protocole incompatible (app \(local), Mac \(remote))")
         for failed in [false, true] {
             #expect(
                 IOSConnectionStatus.resolve(.incompatibleProtocol(local: local, remote: remote), attemptFollowsFailure: failed)

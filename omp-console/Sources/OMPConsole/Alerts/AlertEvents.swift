@@ -121,7 +121,8 @@ enum AlertDerivation {
                         )
                     // `answer` est hors périmètre : c'est la même attente que la
                     // famille (1), qui la porte déjà.
-                    case .answer, .none:
+                    // `ci` : attente de l'intégration continue, jamais une question.
+                    case .answer, .ci, .none:
                         break
                     }
                 }

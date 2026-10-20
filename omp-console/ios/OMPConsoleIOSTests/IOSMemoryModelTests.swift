@@ -72,6 +72,7 @@ struct IOSMemoryModelTests {
             .macAbsent(endpoint: endpoint),
             .revoked,
             .incompatibleProtocol(local: 3, remote: 2),
+            .wrongMachine(expected: .vps, actual: .mac),
         ]
     }
 

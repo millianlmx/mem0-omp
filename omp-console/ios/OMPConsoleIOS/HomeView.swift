@@ -40,7 +40,9 @@ private struct SelectedCard: Identifiable {
 }
 
 struct HomeView: View {
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients (S-10 de orchestrator-living-in-a-vps) : l'ardoise est celle
+    /// des deux machines, chaque geste part vers la machine de sa carte.
+    @ObservedObject var clients: MachineClients
     /// Les gestes de carte : état en vol, échecs, confirmation des specs.
     @ObservedObject var gestures: IOSHomeGestureModel
     /// Le crochet de recette `-home.recipe`, quand il est donné.
@@ -68,14 +70,14 @@ struct HomeView: View {
     @State private var answerGone: IOSMenuFailure?
 
     init(
-        client: ConsoleClientModel,
+        clients: MachineClients,
         gestures: IOSHomeGestureModel,
         recipe: IOSHomeRecipe? = nil,
         recipeRow: Int? = nil,
         showConnection: Binding<Bool>,
         onSelectSection: @escaping (ConsoleSection) -> Void
     ) {
-        self.client = client
+        self.clients = clients
         self.gestures = gestures
         self.recipe = recipe
         self.recipeRow = recipeRow
@@ -83,17 +85,24 @@ struct HomeView: View {
         self.onSelectSection = onSelectSection
     }
 
+    /// Le client de la machine qui répond aux lectures hors ardoise (composants,
+    /// journal) : le Mac s'il est joignable, sinon le VPS.
+    private var client: ConsoleClientModel { clients.activeClient }
+
+    /// L'ardoise unifiée des deux machines (celle du Mac, telle quelle, sans VPS).
+    private var unified: UnifiedBoard { clients.board }
+
     /// Le statut de connexion présenté : celui du crochet de recette, sinon celui
     /// du client.
     private var connection: IOSConnectionStatus {
-        recipe?.connection ?? IOSConnectionStatus.of(client)
+        recipe?.connection ?? IOSConnectionStatus.of(clients)
     }
 
     /// L'état de l'Accueil : le crochet de recette prime, sinon la machine à
     /// états partagée.
     private var state: IOSHomeState {
         if let recipe { return recipe.homeState }
-        return IOSHomeState.resolve(connection: connection, board: client.board, omp: client.omp)
+        return IOSHomeState.resolve(connection: connection, board: unified.state, omp: client.omp)
     }
 
     var body: some View {
@@ -120,13 +129,13 @@ struct HomeView: View {
         }) { selected in
             HomeAnswerSheet(
                 card: selected.card,
-                client: client,
+                clients: clients,
                 connection: connection,
                 onQuestionGone: { answerGonePending = true }
             )
         }
         .sheet(item: $contractCard) { selected in
-            HomeContractSheet(card: selected.card, client: client, recipePayload: recipe?.contractPayload)
+            HomeContractSheet(card: selected.card, clients: clients, recipePayload: recipe?.contractPayload)
         }
         .alert(
             answerGone?.title ?? "",
@@ -208,6 +217,7 @@ struct HomeView: View {
         return ScrollViewReader { proxy in
             List {
                 connectionBanner
+                machineBanners
                 setupBanner
                 launchBanner
                 attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
@@ -354,6 +364,7 @@ struct HomeView: View {
                 }
             }
             Text(IOSHomeText.featureName(card.title)).font(.headline).accessibilityLabel(card.title)
+            IOSCardMachineBadge(cardId: card.id, shows: clients.vpsConfigured)
             if showsRepo {
                 Text(card.repo).font(.callout).foregroundStyle(.secondary)
             }
@@ -514,6 +525,7 @@ struct HomeView: View {
                 .font(.body.weight(.medium))
                 .accessibilityLabel(card.title)
                 .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
+            IOSCardMachineBadge(cardId: card.id, shows: clients.vpsConfigured)
             if let subtitle = HomeText.cardSubtitle(
                 card,
                 noPhase: ConsoleStatus.of(card: card).text,
@@ -533,6 +545,7 @@ struct HomeView: View {
                 Text(IOSHomeText.featureName(card.title))
                     .accessibilityLabel(card.title)
                     .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
+                IOSCardMachineBadge(cardId: card.id, shows: clients.vpsConfigured)
                 if showsRepo {
                     Text(card.repo).foregroundStyle(.secondary)
                 }
@@ -562,6 +575,15 @@ struct HomeView: View {
     private var connectionBanner: some View {
         if connection != .connected {
             IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                .iosBareListRow()
+        }
+    }
+
+    /// « Mac injoignable » / « VPS injoignable » : les cartes de cette machine ne sont pas affichées.
+    @ViewBuilder
+    private var machineBanners: some View {
+        if !IOSReposContent.boardBanners(clients).isEmpty {
+            IOSMachineBanners(machines: IOSReposContent.boardBanners(clients))
                 .iosBareListRow()
         }
     }
@@ -598,7 +620,7 @@ struct HomeView: View {
     /// L'envoi des gestes : celui de la recette quand elle en donne un (`slowMac`),
     /// sinon les routes du client.
     private var send: IOSHomeGestureModel.Send {
-        recipe?.gestureSend ?? IOSHomeGestureModel.live(client)
+        recipe?.gestureSend ?? IOSHomeGestureModel.live(clients)
     }
 
     /// Un bouton de geste : en vol, il est désactivé et montre un indicateur devant

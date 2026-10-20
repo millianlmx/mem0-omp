@@ -93,17 +93,19 @@ final class IOSHomeGestureModel: ObservableObject {
         }
     }
 
-    /// L'envoi de production : les routes de verdict et de reprise du client
-    /// partagé. L'accusé `202` est ignoré : la carte change par l'ardoise.
-    static func live(_ client: ConsoleClientModel) -> Send {
+    /// L'envoi de production : les routes de verdict et de reprise du client de la
+    /// MACHINE DE LA CARTE (`MachineClients.target(forCardId:)`), avec l'identifiant
+    /// de carte de cette machine. L'accusé `202` est ignoré : la carte change par l'ardoise.
+    static func live(_ clients: MachineClients) -> Send {
         { key in
+            let target = clients.target(forCardId: key.cardId)
             switch key.gesture {
             case .validateSpecs:
-                _ = try await client.verdict(cardId: key.cardId, verdict: IOSHomeText.verdictSpecs)
+                _ = try await target.client.verdict(cardId: target.cardId, verdict: IOSHomeText.verdictSpecs)
             case .acceptReview:
-                _ = try await client.verdict(cardId: key.cardId, verdict: IOSHomeText.verdictReview)
+                _ = try await target.client.verdict(cardId: target.cardId, verdict: IOSHomeText.verdictReview)
             case .resume:
-                _ = try await client.resume(cardId: key.cardId)
+                _ = try await target.client.resume(cardId: target.cardId)
             }
         }
     }

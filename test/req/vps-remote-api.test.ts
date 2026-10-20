@@ -118,7 +118,7 @@ test("vps-remote-api/AC-5 : un appareil non appairé est refusé sur toute route
   }
 });
 
-test("vps-remote-api/AC-5 : la garde suit l'ordre du Mac — source, version, exemption de l'appairage, Bearer", async () => {
+test("la garde suit l'ordre du Mac — source, version, exemption de l'appairage, Bearer", async () => {
   const stack = vpsStack();
   const { token } = await stack.pair();
   const bearer = { Authorization: `Bearer ${token}` };
@@ -165,7 +165,7 @@ test("vps-remote-api/AC-5 : la garde suit l'ordre du Mac — source, version, ex
   assert.equal(lower.status, 200);
 });
 
-test("vps-remote-api/AC-5 : la source acceptée est la boucle locale et le tailnet, en IPv4 comme en IPv6", () => {
+test("la source acceptée est la boucle locale et le tailnet, en IPv4 comme en IPv6", () => {
   for (const ok of ["127.0.0.1", "127.255.255.254", "100.64.0.1", "100.127.255.255", "::1", "fd7a:115c:a1e0::1", "fd7a:115c:a1e0:ab12:4843:cd96:6200:1", "::ffff:100.100.1.1", "::ffff:127.0.0.1"]) {
     assert.equal(isTrustedSource(ok), true, ok);
   }
@@ -174,7 +174,7 @@ test("vps-remote-api/AC-5 : la source acceptée est la boucle locale et le tailn
   }
 });
 
-test("vps-remote-api/AC-5 : le code d'appairage — alphabet, un seul actif, expiration, verrou au 6e échec, usage unique", async () => {
+test("le code d'appairage — alphabet, un seul actif, expiration, verrou au 6e échec, usage unique", async () => {
   const stack = vpsStack();
   const first = await stack.newCode();
   const second = await stack.newCode();
@@ -210,7 +210,7 @@ test("vps-remote-api/AC-5 : le code d'appairage — alphabet, un seul actif, exp
   assert.equal(groupPairingCode("ABCD1234"), "ABCD-1234");
 });
 
-test("vps-remote-api/AC-5 : un 5e échec laisse le code utilisable, le 6e le verrouille (état pur)", () => {
+test("un 5e échec laisse le code utilisable, le 6e le verrouille (état pur)", () => {
   const state = new PairingState();
   const { code } = state.generate(0);
   const wrong = code === "00000000" ? "11111111" : "00000000";
@@ -223,7 +223,7 @@ test("vps-remote-api/AC-5 : un 5e échec laisse le code utilisable, le 6e le ver
   assert.equal(state.attempt(last.code, 120_000), "expired", "expiré à l'échéance exacte");
 });
 
-test("vps-remote-api/AC-5 : POST /v1/pair valide ses entrées — code, nom, clé d'appareil, corps", async () => {
+test("POST /v1/pair valide ses entrées — code, nom, clé d'appareil, corps", async () => {
   const stack = vpsStack();
   const code = await stack.newCode();
   const attempt = async (body: unknown) => stack.ask("POST", "/v1/pair", { body });
@@ -247,7 +247,7 @@ test("vps-remote-api/AC-5 : POST /v1/pair valide ses entrées — code, nom, cl�
   assert.equal((await attempt({ code, name: "x".repeat(64) })).status, 200, "64 caractères tiennent");
 });
 
-test("vps-remote-api/AC-5 : le registre ne garde que l'empreinte du jeton (0600) et survit au redémarrage", async () => {
+test("le registre ne garde que l'empreinte du jeton (0600) et survit au redémarrage", async () => {
   const stack = vpsStack();
   const { token, deviceId } = await stack.pair("iPhone", "install-1");
   const file = devicesFilePath(stack.stateDir);
@@ -270,7 +270,7 @@ test("vps-remote-api/AC-5 : le registre ne garde que l'empreinte du jeton (0600)
   assert.equal(reborn.authenticate(""), null);
 });
 
-test("vps-remote-api/AC-5 : le même deviceKey remplace la ligne, l'ancien jeton est refusé et ses flux coupés", async () => {
+test("le même deviceKey remplace la ligne, l'ancien jeton est refusé et ses flux coupés", async () => {
   const stack = vpsStack();
   const revoked: string[] = [];
   stack.devices.revokeHandler = id => revoked.push(id);
@@ -287,7 +287,7 @@ test("vps-remote-api/AC-5 : le même deviceKey remplace la ligne, l'ancien jeton
   assert.deepEqual(rows.map(row => row.id).sort(), [other.deviceId, second.deviceId].sort());
 });
 
-test("vps-remote-api/AC-5 : un appareil se révoque par DELETE /v1/devices/self ; l'administration par la boucle locale", async () => {
+test("un appareil se révoque par DELETE /v1/devices/self ; l'administration par la boucle locale", async () => {
   const stack = vpsStack();
   const revoked: string[] = [];
   stack.devices.revokeHandler = id => revoked.push(id);
@@ -324,7 +324,7 @@ test("vps-remote-api/AC-5 : un appareil se révoque par DELETE /v1/devices/self 
   assert.deepEqual(reborn.list(), []);
 });
 
-test("vps-remote-api/AC-5 : les routes de boucle locale exigent le jeton de service, et n'existent pas sans registre", async () => {
+test("les routes de boucle locale exigent le jeton de service, et n'existent pas sans registre", async () => {
   const stack = vpsStack();
   for (const [method, route] of [["POST", "/v1/pairing/code"], ["GET", "/v1/devices"], ["DELETE", "/v1/devices/x"]] as const) {
     const refused = await stack.loopback(new Request(`http://127.0.0.1:8788${route}`, { method }));
@@ -336,7 +336,7 @@ test("vps-remote-api/AC-5 : les routes de boucle locale exigent le jeton de serv
   assert.equal(unknown.status, 404);
 });
 
-test("vps-remote-api/AC-5 : un devices.json illisible donne 503 partout et n'est jamais écrasé", async () => {
+test("un devices.json illisible donne 503 partout et n'est jamais écrasé", async () => {
   const stateDir = mktmp("vps-remote-");
   const file = devicesFilePath(stateDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -367,7 +367,7 @@ test("vps-remote-api/AC-5 : un devices.json illisible donne 503 partout et n'est
   assert.notEqual(wrongVersion.unavailableReason, null);
 });
 
-test("vps-remote-api/AC-5 : la dernière activité n'est écrite qu'une fois par minute", async () => {
+test("la dernière activité n'est écrite qu'une fois par minute", async () => {
   const stack = vpsStack();
   const { token, deviceId } = await stack.pair();
   const file = devicesFilePath(stack.stateDir);
@@ -384,12 +384,12 @@ test("vps-remote-api/AC-5 : la dernière activité n'est écrite qu'une fois par
   assert.equal(seen(), stack.time.now(), "minute suivante : écrit");
 });
 
-test("vps-remote-api/AC-5 : le JSON des réponses a ses clés triées à tous les niveaux et omet les optionnels absents", () => {
+test("le JSON des réponses a ses clés triées à tous les niveaux et omet les optionnels absents", () => {
   assert.equal(sortedJson({ b: 1, a: { d: [{ z: 1, y: undefined, x: null }], c: "é/\"" } }), '{"a":{"c":"é/\\"","d":[{"x":null,"z":1}]},"b":1}');
   assert.equal(sortedJson({ 10: "a", 2: "b", a: 1 }), '{"10":"a","2":"b","a":1}', "ordre lexicographique, pas l'ordre des entiers de JS");
 });
 
-test("vps-remote-api/AC-5 : la configuration machine et protocole distant se lit dans l'environnement", () => {
+test("la configuration machine et protocole distant se lit dans l'environnement", () => {
   assert.equal(pipelineMachine({}), "mac");
   assert.equal(pipelineMachine({ MEM0_PIPELINE_MACHINE: "vps" }), "vps");
   assert.equal(pipelineMachine({ MEM0_PIPELINE_MACHINE: " VPS " }), "vps");
@@ -446,7 +446,7 @@ async function withFakeBun<T>(fake: ReturnType<typeof fakeBun>, body: () => Prom
   }
 }
 
-test("vps-remote-api/AC-5 : machine=vps ouvre un second écouteur sur MEM0_REMOTE_API_HOST:MEM0_REMOTE_API_PORT, garde active", async () => {
+test("machine=vps ouvre un second écouteur sur MEM0_REMOTE_API_HOST:MEM0_REMOTE_API_PORT, garde active", async () => {
   const stateDir = mktmp("vps-service-");
   const fake = fakeBun();
   await withFakeBun(fake, async () => {
@@ -505,7 +505,7 @@ test("vps-remote-api/AC-5 : machine=vps ouvre un second écouteur sur MEM0_REMOT
   });
 });
 
-test("vps-remote-api/AC-5 : sans MEM0_REMOTE_API_HOST le VPS ne sert pas le protocole distant et le dit ; le Mac n'en sert jamais", async () => {
+test("sans MEM0_REMOTE_API_HOST le VPS ne sert pas le protocole distant et le dit ; le Mac n'en sert jamais", async () => {
   await withFakeBun(fakeBun(), async () => {
     const vpsLines: string[] = [];
     const vpsFake = fakeBun();
@@ -549,7 +549,7 @@ test("vps-remote-api/AC-5 : sans MEM0_REMOTE_API_HOST le VPS ne sert pas le prot
   });
 });
 
-test("vps-remote-api/AC-5 : une adresse distante non liable fait échouer le démarrage sans rien laisser derrière", async () => {
+test("une adresse distante non liable fait échouer le démarrage sans rien laisser derrière", async () => {
   const stateDir = mktmp("vps-service-");
   const fake = fakeBun({ unbindable: ["100.64.0.1"] });
   await withFakeBun(fake, async () => {

@@ -54,7 +54,7 @@ struct MacPilotChannel: VoicePilotChannel {
                 try await Self.settled(try await actions.verdict(cardId: cardId, verdict: .specs), in: actions)
             case .review:
                 try await Self.settled(try await actions.verdict(cardId: cardId, verdict: .review), in: actions)
-            case .answer:
+            case .answer, .ci:
                 throw GestureRefusal.milestoneNotAwaited
             }
         }

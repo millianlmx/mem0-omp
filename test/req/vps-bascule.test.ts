@@ -178,7 +178,7 @@ const launchCommand = (repo: string, title: string) => ({
   description: `${title} — intention`,
 });
 
-test("orchestrator-living-in-a-vps/AC-9 : après handover → adopt → commit, le maillon en cours finit sur la source, la feature en attente démarre sur la cible, la source ne la démarre jamais et refuse un launch", async () => {
+test("vps-bascule/AC-9 : après handover → adopt → commit, le maillon en cours finit sur la source, la feature en attente démarre sur la cible, la source ne la démarre jamais et refuse un launch", async () => {
   const hub = githubOf("bascule-ac9");
   const mac = machineOf("bascule-ac9-mac", "mac", hub.env);
   const vps = machineOf("bascule-ac9-vps", "vps", hub.env);
@@ -254,7 +254,7 @@ test("orchestrator-living-in-a-vps/AC-9 : après handover → adopt → commit, 
   assert.equal(vps.runs.length, 1, "beta tourne une seule fois, sur la cible");
 });
 
-test("orchestrator-living-in-a-vps/AC-10 : un dépôt absent de la cible est cloné par son identité (git clone), puis la feature démarre dans un worktree", async () => {
+test("vps-bascule/AC-10 : un dépôt absent de la cible est cloné par son identité (git clone), puis la feature démarre dans un worktree", async () => {
   const hub = githubOf("bascule-ac10");
   const vps = machineOf("bascule-ac10-vps", "vps", hub.env);
   const result = await vps.handovers.adopt({
@@ -289,6 +289,21 @@ test("orchestrator-living-in-a-vps/AC-10 : un dépôt absent de la cible est clo
     () => lost.handovers.adopt({ identity: IDENTITY, features: [] }),
     (error: unknown) => error instanceof Error && /^unavailable: clonage impossible : /u.test(error.message),
   );
+});
+
+test("une identité qui sort du dossier des clones (segment « . » ou « .. ») est refusée en 400, sans rien cloner ni créer", async () => {
+  const hub = githubOf("bascule-traversee");
+  const vps = machineOf("bascule-traversee-vps", "vps", hub.env);
+  const parent = path.dirname(hub.reposDir);
+  for (const identity of ["github.com/../x", "github.com/o/..", "github.com/./x", "github.com/o/.", "github.com/../..", "github.com//x"]) {
+    await assert.rejects(
+      () => vps.handovers.adopt({ identity, features: [] }),
+      (error: unknown) => error instanceof Error && (error as { status?: number }).status === 400 && /identité de dépôt invalide/u.test(error.message),
+      identity,
+    );
+  }
+  assert.equal(fs.existsSync(path.join(parent, "x")), false, "rien n'est créé hors du dossier des clones");
+  assert.deepEqual(fs.readdirSync(hub.reposDir), [], "ni dans le dossier des clones");
 });
 
 // ── les quatre routes distantes ──────────────────────────────────────────────
@@ -370,7 +385,7 @@ async function call(stack: Stack, method: string, pathname: string, options: { b
   return { status: response.status, json: (await response.json()) as any };
 }
 
-test("orchestrator-living-in-a-vps/AC-9 : les quatre routes distantes de bascule enchaînent handover → adopt → commit → cancel, avec leurs refus", async () => {
+test("les quatre routes distantes de bascule enchaînent handover → adopt → commit → cancel, avec leurs refus", async () => {
   const worktreesBase = tmpdir("bascule-http-worktrees-");
   const previous = process.env.MEM0_PIPELINE_WORKTREES_DIR;
   process.env.MEM0_PIPELINE_WORKTREES_DIR = worktreesBase;

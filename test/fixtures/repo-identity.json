@@ -29,6 +29,11 @@
   {"input": "https://github.com/o/.git", "identity": null},
   {"input": "git@github.com:o/..", "identity": null},
   {"input": "git@github.com:o/.", "identity": null},
+  {"input": "https://github.com/../n", "identity": null},
+  {"input": "https://github.com/./n", "identity": null},
+  {"input": "git@github.com:../n", "identity": null},
+  {"input": "git@github.com:./n", "identity": null},
+  {"input": "ssh://git@github.com/../n", "identity": null},
   {"input": "https://user@github.com/o/n.git", "identity": null},
   {"input": "https://user:secret@github.com/o/n.git", "identity": null},
   {"input": "ssh://github.com/o/n.git", "identity": null}

@@ -15,7 +15,8 @@ import SwiftUI
 
 struct HomeContractSheet: View {
     let card: KanbanCard
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients : le contrat se lit sur la machine de la carte.
+    @ObservedObject var clients: MachineClients
     /// La charge utile de recette (`-home.recipe contract`), ou aucune : une
     /// capture montre alors de vraies sections sans réseau.
     var recipePayload: RemoteContractPayload? = nil
@@ -129,7 +130,8 @@ struct HomeContractSheet: View {
             return
         }
         do {
-            let payload = try await client.contract(cardId: card.id)
+            let target = clients.target(forCardId: card.id)
+            let payload = try await target.client.contract(cardId: target.cardId)
             show(IOSHomeContent.contract(with: payload, moment: moment))
         } catch {
             failure = IOSHomeContent.failure(error)

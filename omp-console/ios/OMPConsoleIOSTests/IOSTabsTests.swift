@@ -23,9 +23,9 @@ struct IOSTabsTests {
         #expect(IOSTabs.compactTabs == declared)
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Projet, Mémoire, Session OMP et Statistiques, et elles seules")
+    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Dépôts, Projet, Mémoire, Session OMP et Statistiques, et elles seules")
     func plusListsTheFourOtherSections() {
-        #expect(IOSTabs.plusSections == [.project, .memory, .session, .stats])
+        #expect(IOSTabs.plusSections == [.repos, .project, .memory, .session, .stats])
         let tabSections: [ConsoleSection] = IOSTabs.compactTabs.compactMap {
             if case let .section(section) = $0 { section } else { nil }
         }
@@ -40,13 +40,13 @@ struct IOSTabsTests {
         #expect(IOSTabs.compactTabs == [.section(.home), .section(.kanban), .section(.sessions), .section(.audit), .plus])
         #expect(IOSTabs.compactTabs.firstIndex(of: .section(.audit)) == 3)
         #expect(!IOSTabs.compactTabs.contains(.section(.memory)))
-        // « Plus » : Mémoire à l'index 1 (ancienne place d'Audit), Audit n'y figure plus.
-        #expect(IOSTabs.plusSections == [.project, .memory, .session, .stats])
-        #expect(IOSTabs.plusSections.firstIndex(of: .memory) == 1)
+        // « Plus » : Mémoire derrière Dépôts et Projet (ancienne place d'Audit), Audit n'y figure plus.
+        #expect(IOSTabs.plusSections == [.repos, .project, .memory, .session, .stats])
+        #expect(IOSTabs.plusSections.firstIndex(of: .memory) == 2)
         #expect(!IOSTabs.plusSections.contains(.audit))
         // Déclaration : en compact, Audit quitte Pilotage pour suivre Sessions ; en
         // régulier (barre latérale iPad), l'ordre de la barre latérale est intact.
-        #expect(IOSTabs.declaredSections(of: .pilotage, compact: true) == [.home, .kanban, .project, .session])
+        #expect(IOSTabs.declaredSections(of: .pilotage, compact: true) == [.home, .kanban, .repos, .project, .session])
         #expect(IOSTabs.declaredSections(of: .consultation, compact: true) == [.sessions, .audit, .memory, .stats])
         for group in ConsoleSectionGroup.allCases {
             #expect(IOSTabs.declaredSections(of: group, compact: false) == IOSSection.sections(of: group))
@@ -78,6 +78,7 @@ struct IOSTabsTests {
         let expected: [ConsoleSection: IOSTabRoute] = [
             .home: IOSTabRoute(tab: .section(.home), plusPath: []),
             .kanban: IOSTabRoute(tab: .section(.kanban), plusPath: []),
+            .repos: IOSTabRoute(tab: .plus, plusPath: [.repos]),
             .project: IOSTabRoute(tab: .plus, plusPath: [.project]),
             .audit: IOSTabRoute(tab: .section(.audit), plusPath: []),
             .session: IOSTabRoute(tab: .plus, plusPath: [.session]),
@@ -99,6 +100,7 @@ struct IOSTabsTests {
         let expected: [ConsoleSection: ConsoleSectionGroup] = [
             .home: .pilotage,
             .kanban: .pilotage,
+            .repos: .pilotage,
             .project: .pilotage,
             .audit: .pilotage,
             .session: .pilotage,
@@ -144,7 +146,7 @@ struct IOSTabsTests {
         #expect(IOSTabs.adapt(IOSTabRoute(tab: .plus, plusPath: [.session]), compact: false)
             == IOSTabRoute(tab: .section(.session), plusPath: [.session]))
         #expect(IOSTabs.adapt(IOSTabRoute(tab: .plus, plusPath: []), compact: false)
-            == IOSTabRoute(tab: .section(.project), plusPath: []))
+            == IOSTabRoute(tab: .section(.repos), plusPath: []))
         // Une section visible dans les deux tailles ne bouge pas.
         #expect(IOSTabs.adapt(IOSTabRoute(tab: .section(.sessions), plusPath: [.project]), compact: true)
             == IOSTabRoute(tab: .section(.sessions), plusPath: [.project]))
@@ -160,7 +162,7 @@ struct IOSTabsTests {
         }
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘8 sélectionnent l'entrée de la barre latérale de l'iPad")
+    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘9 sélectionnent l'entrée de la barre latérale de l'iPad")
     func keyboardSelectsTheSidebarEntry() {
         let start = IOSTabRoute(tab: .section(.home), plusPath: [])
         for (index, entry) in IOSKeyboard.sections.enumerated() {

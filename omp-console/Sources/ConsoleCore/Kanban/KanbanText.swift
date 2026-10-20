@@ -5,6 +5,8 @@
 // ceux des voies de `KanbanLane`.
 
 public enum KanbanText {
+    /// Le libellé de l'attente du verdict de l'intégration continue GitHub (VPS, S-9).
+    public static let ciWait = "Attente de l’intégration continue GitHub"
     public static let showDetails = "Afficher les détails"
     public static let close = "Fermer"
     public static let progress = "Avancement"

@@ -256,7 +256,7 @@ pkgs.testers.runNixOSTest {
     assert len(patterns) >= 7, patterns
     vps.succeed("printf '%s\\n' " + " ".join(shlex.quote(p) for p in patterns) + " > /run/secret-patterns")
     # Code 1 = aucune occurrence ; 0 = trouvé ; 2 = erreur de lecture (échec aussi : pas de faux vert).
-    vps.succeed("grep -rlaFs -f /run/secret-patterns /nix/store; test $? -eq 1")
+    vps.succeed("rc=0; grep -rlaFs -f /run/secret-patterns /nix/store || rc=$?; test \"$rc\" -eq 1")
     print("AC-2 ok")
 
     # --- AC-3 : mise à jour des plugins sans toucher à l'état ---

@@ -313,4 +313,26 @@ public enum UnifiedRepos {
     public static func lastReposKey(_ machine: RepoMachine) -> String {
         "machines.\(machine.rawValue).lastRepos"
     }
+
+    // MARK: - Bascules à terminer mémorisées
+
+    /// La clé de la préférence des bascules dont le retrait final a échoué.
+    public static let unfinishedKey = "handover.unfinished"
+
+    /// Les bascules à terminer, par identifiant de ligne, en JSON (clés triées) ;
+    /// `nil` quand il n'y en a aucune (la préférence est alors effacée).
+    public static func encodeUnfinished(_ pending: [String: PendingHandover]) -> String? {
+        guard !pending.isEmpty else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(pending) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Relit les bascules à terminer ; une valeur absente ou illisible donne `[:]`.
+    public static func decodeUnfinished(_ text: String?) -> [String: PendingHandover] {
+        guard let text, let data = text.data(using: .utf8),
+              let pending = try? JSONDecoder().decode([String: PendingHandover].self, from: data) else { return [:] }
+        return pending
+    }
 }

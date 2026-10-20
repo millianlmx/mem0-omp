@@ -122,7 +122,7 @@ async function settleTurns(times = 12): Promise<void> {
   }
 }
 
-test("orchestrator-living-in-a-vps/AC-8 : un maillon interrompu par l'arrêt du service est repris seul, dans sa phase et sa session, puis la chaîne continue", async () => {
+test("vps-reprise/AC-8 : un maillon interrompu par l'arrêt du service est repris seul, dans sa phase et sa session, puis la chaîne continue", async () => {
   const { repoRoot, worktree, stateDir } = scenario();
   seedLot(stateDir, repoRoot, [
     feature("alpha", { worktree, sessionFile: "/tmp/session-impl.jsonl", fixes: 0 }),

@@ -21,12 +21,12 @@ function agentDir(contenu: unknown): string {
 const VALIDE = { version: 1, url: "http://100.64.0.1:8787/v1/mem0/", token: "bearer-d-un-appareil" };
 const LOCAL = "http://localhost:8321";
 
-test("mem0-remote-config/AC-7 : mem0-remote.json fournit l'URL du proxy (sans barre finale) et le Bearer, à la place de x-mem0-token", () => {
+test("mem0-remote.json fournit l'URL du proxy (sans barre finale) et le Bearer, à la place de x-mem0-token", () => {
   const endpoint = resolveMem0Endpoint({ PI_CODING_AGENT_DIR: agentDir(VALIDE), MEM0_HTTP_TOKEN: "jeton-local-ignore" });
   assert.deepEqual(endpoint, { url: "http://100.64.0.1:8787/v1/mem0", authHeaders: { Authorization: "Bearer bearer-d-un-appareil" }, warning: null });
 });
 
-test("mem0-remote-config/AC-7 : l'environnement prime sur le fichier ; le fichier est cherché dans ~/.omp/agent sans PI_CODING_AGENT_DIR", () => {
+test("l'environnement prime sur le fichier ; le fichier est cherché dans ~/.omp/agent sans PI_CODING_AGENT_DIR", () => {
   const dir = agentDir(VALIDE);
   assert.deepEqual(resolveMem0Endpoint({ PI_CODING_AGENT_DIR: dir, MEM0_HTTP_URL: "http://127.0.0.1:9999", MEM0_HTTP_TOKEN: "t" }), {
     url: "http://127.0.0.1:9999",
@@ -39,12 +39,12 @@ test("mem0-remote-config/AC-7 : l'environnement prime sur le fichier ; le fichie
   assert.equal(resolveMem0Endpoint({}, home).url, "http://100.64.0.1:8787/v1/mem0");
 });
 
-test("mem0-remote-config/AC-7 : sans fichier ni environnement, mem0 local ; sans avertissement", () => {
+test("sans fichier ni environnement, mem0 local ; sans avertissement", () => {
   assert.deepEqual(resolveMem0Endpoint({ PI_CODING_AGENT_DIR: agentDir(undefined) }), { url: LOCAL, authHeaders: {}, warning: null });
   assert.deepEqual(resolveMem0Endpoint({ PI_CODING_AGENT_DIR: agentDir(undefined), MEM0_HTTP_TOKEN: "t" }).authHeaders, { "X-Mem0-Token": "t" });
 });
 
-test("mem0-remote-config/AC-7 : un fichier inutilisable est ignoré avec sa raison, le poste retombe sur mem0 local", () => {
+test("un fichier inutilisable est ignoré avec sa raison, le poste retombe sur mem0 local", () => {
   const cas: [unknown, string][] = [
     ["{pas du json", "JSON invalide"],
     [[], "objet JSON attendu"],
@@ -75,7 +75,7 @@ async function stderrDuChargement(env: Record<string, string>): Promise<string> 
   return stderr;
 }
 
-test("mem0-remote-config/AC-7 : l'avertissement du fichier illisible est émis une seule fois par processus, et muet sous MEM0_QUIET", async () => {
+test("l'avertissement du fichier illisible est émis une seule fois par processus, et muet sous MEM0_QUIET", async () => {
   const bruyant = await stderrDuChargement({});
   assert.equal(bruyant.match(/mem0-remote\.json illisible : JSON invalide/gu)?.length, 1, bruyant);
   const muet = await stderrDuChargement({ MEM0_QUIET: "1" });

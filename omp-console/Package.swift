@@ -45,7 +45,7 @@ let package = Package(
         // sinon `@main` est refusé.
         .executableTarget(
             name: "OMPConsole",
-            dependencies: ["ConsoleCore"],
+            dependencies: ["ConsoleCore", "ConsoleClient"],
             path: "Sources/OMPConsole"
         ),
         // Tests en Swift Testing, jamais XCTest : sous les Command Line Tools

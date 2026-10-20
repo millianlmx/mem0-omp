@@ -317,7 +317,8 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   const EXPECTED_DEPENDENCIES: Record<string, string[]> = {
     ConsoleCore: [],
     ConsoleClient: ["ConsoleCore"],
-    OMPConsole: ["ConsoleCore"],
+    // La coque Mac joint le VPS par le client partagé (`MachineHub`, S-6 de orchestrator-living-in-a-vps).
+    OMPConsole: ["ConsoleCore", "ConsoleClient"],
     OMPConsoleTests: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
     ConsoleClientTests: ["ConsoleClient", "ConsoleCore"],
   };

@@ -46,7 +46,7 @@ public func lotWaitLabel(_ waitKind: LotWaitKind?) -> String? {
     case .answer: "attend réponse"
     case .specs: "attend validation"
     case .review: "attend accord"
-    case .ci: "Attente de l’intégration continue GitHub"
+    case .ci: KanbanText.ciWait
     case nil: nil
     }
 }

@@ -37,7 +37,10 @@ import SwiftUI
 struct RootView: View {
     @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
-    @ObservedObject var client: ConsoleClientModel
+    /// Les DEUX clients de l'app, Mac et VPS (S-10 de orchestrator-living-in-a-vps) :
+    /// la racine les démarre tous deux, la feuille Connexion les appaire chacun, et
+    /// chaque écran lit la machine qui lui répond.
+    @ObservedObject var clients: MachineClients
     /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
     /// retour sur l'Accueil.
     @StateObject private var homeGestures = IOSHomeGestureModel()
@@ -82,7 +85,7 @@ struct RootView: View {
     private let autoPresentConnection: Bool
 
     init(
-        client: ConsoleClientModel,
+        clients: MachineClients,
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
         recipe: IOSHomeRecipe? = nil,
@@ -98,7 +101,7 @@ struct RootView: View {
         auditRecipe: IOSAuditRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
-        self.client = client
+        self.clients = clients
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
         self.recipe = recipe
@@ -174,20 +177,21 @@ struct RootView: View {
         // Le retour haptique de chaque commande envoyée au Mac, joué à sa réponse
         // (ios-gestes-et-retours-natifs, S-5) : la racine vit sous toutes les
         // feuilles, un seul point de pose suffit.
-        .sensoryFeedback(trigger: client.commandOutcome) { _, outcome in
-            IOSCommandFeedback.feedback(for: outcome)
+        .sensoryFeedback(trigger: IOSCommandOutcomes(clients)) { old, new in
+            IOSCommandFeedback.feedback(from: old, to: new)
         }
         .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
             HomeWelcomeSheet(client: client) { showWelcome = false }
         }
         .sheet(isPresented: $showConnection) {
-            ConnectionSheet(model: client)
+            ConnectionSheet(clients: clients)
         }
         .onAppear {
-            client.start()
+            clients.mac.start()
+            clients.vps.start()
             presentInitialSheets()
         }
-        .onChange(of: client.pairing) { _, _ in
+        .onChange(of: clients.mac.pairing) { _, _ in
             // Un statut qui VIENT d'être atteint ; pendant la bienvenue, rien : la
             // Connexion y est déjà accessible par « Continuer », et sa fermeture
             // reporte l'ouverture automatique sans jeton (`welcomeDismissed`).
@@ -221,7 +225,7 @@ struct RootView: View {
         Group {
             if section == .home {
                 HomeView(
-                    client: client,
+                    clients: clients,
                     gestures: homeGestures,
                     recipe: recipe,
                     recipeRow: recipeRow,
@@ -232,7 +236,7 @@ struct RootView: View {
                 IOSSectionView(
                     section: section,
                     state: state,
-                    client: client,
+                    clients: clients,
                     recipe: sessionRecipe,
                     memoryRecipe: memoryRecipe,
                     pipelinesRecipe: pipelinesRecipe,
@@ -295,7 +299,7 @@ struct RootView: View {
     /// Le compte d'attentes de l'onglet Accueil : celui de la recette quand
     /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
-        recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
+        recipe?.badge ?? IOSHomeContent.badge(omp: clients.activeClient.omp, board: clients.board.state)
     }
 
     /// Le nombre d'audits qui attendent l'utilisateur (audit-ui-redesign, S-4) :
@@ -303,8 +307,12 @@ struct RootView: View {
     /// sans `realpath`.
     private var auditCount: Int {
         auditRecipe?.board(nowMs: Date.now.timeIntervalSince1970 * 1000).awaitingUserCount
-            ?? client.snapshot.map(AuditBoard.awaitingUserCount(in:)) ?? 0
+            ?? clients.activeClient.snapshot.map(AuditBoard.awaitingUserCount(in:)) ?? 0
     }
+
+    /// Le client du Mac : la bienvenue et l'ouverture automatique de la Connexion
+    /// se règlent sur lui (le VPS se configure à la main, jamais d'office).
+    private var client: ConsoleClientModel { clients.mac }
 
     /// L'ordre de S-15 : la bienvenue d'abord, la connexion ensuite.
     private func presentInitialSheets() {
@@ -333,6 +341,7 @@ struct RootView: View {
     /// appairé (S-2).
     private func presentConnectionIfNeeded() {
         if autoPresentConnection,
+           !clients.vpsConfigured,
            ConnectionSheetMode.autoPresents(client.pairing, deferred: connectionDeferred) {
             showConnection = true
         }

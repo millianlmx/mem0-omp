@@ -25,8 +25,6 @@ export const CI_NO_VERDICT_MS = 120 * 60_000;
 /** Le motif du refus de livrer (commande `verdict` `y`) tant que la porte n'est pas verte sur l'arbre courant. */
 export const CI_DELIVERY_REFUSAL = "livraison impossible : l’intégration continue GitHub n’est pas verte sur l’arbre courant";
 
-/** Le texte de l'attente de la porte, tel que Mac et iOS l'affichent. */
-export const CI_WAIT_TEXT = "Attente de l’intégration continue GitHub";
 
 /** Le motif d'un blocage quand aucun contrôle GitHub n'a démarré dans les 15 minutes. */
 export function ciNoCheckReason(branch: string, sha: string): string {

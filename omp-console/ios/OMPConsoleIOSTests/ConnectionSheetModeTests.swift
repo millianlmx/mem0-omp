@@ -28,6 +28,7 @@ struct ConnectionSheetModeTests {
             .macAbsent(endpoint: manual),
             .revoked,
             .incompatibleProtocol(local: 1, remote: 2),
+            .wrongMachine(expected: .vps, actual: .mac),
         ]
     }
 

@@ -202,14 +202,19 @@ struct ServiceClient: Sendable {
 
     /// `POST /v1/repos/{repo}/handover` : gèle le dépôt et rend ses features pas
     /// encore démarrées. `repo` est la RACINE absolue du dépôt (un segment encodé).
-    func handover(repo: String, to: RepoMachine) async throws -> HandoverCharge {
-        let json = try await request("POST", path: ["repos", repo, "handover"], body: ["to": to.rawValue])
+    func handover(repo: String, to: String) async throws -> HandoverCharge {
+        let json = try await request("POST", path: ["repos", repo, "handover"], body: ["to": to])
         return try Self.decode(HandoverCharge.self, from: json, what: "bascule")
     }
 
-    /// `POST /v1/repos/{repo}/handover/{id}/commit` : retire les features lancées ailleurs.
-    func commitHandover(repo: String, id: String, slugs: [String]) async throws {
-        _ = try await request("POST", path: ["repos", repo, "handover", id, "commit"], body: ["slugs": slugs])
+    /// `POST /v1/repos/{repo}/handover/{id}/commit` : retire les features lancées
+    /// ailleurs et rend les slugs retirés.
+    func commitHandover(repo: String, id: String, slugs: [String]) async throws -> [String] {
+        let json = try await request("POST", path: ["repos", repo, "handover", id, "commit"], body: ["slugs": slugs])
+        guard let removed = json.objectValue?["removed"]?.arrayValue?.compactMap(\.stringValue) else {
+            throw ServiceClientError.malformed(reason: "retrait illisible")
+        }
+        return removed
     }
 
     /// `DELETE /v1/repos/{repo}/handover/{id}` : rouvre le dépôt.
@@ -217,16 +222,22 @@ struct ServiceClient: Sendable {
         _ = try await request("DELETE", path: ["repos", repo, "handover", id])
     }
 
-    /// `POST /v1/repos/adopt` : trouve le dépôt de cette identité et y lance les features.
-    func adopt(identity: String, features: [HandoverFeatureCharge]) async throws -> HandoverAdoption {
-        let encoded = try JSONEncoder().encode(features)
-        let list = (try? JSONSerialization.jsonObject(with: encoded)) ?? []
-        let json = try await request("POST", path: ["repos", "adopt"], body: ["identity": identity, "features": list])
+    /// `POST /v1/repos/adopt` : trouve le dépôt de cette identité et y lance les
+    /// features. Les features voyagent telles que le client les a envoyées : le
+    /// service les valide, avec ses propres motifs.
+    func adopt(identity: String, features: [JSONValue]) async throws -> HandoverAdoption {
+        let json = try await request("POST", path: ["repos", "adopt"], body: ["identity": identity, "features": features.map(\.anyValue)])
         return try Self.decode(HandoverAdoption.self, from: json, what: "adoption")
     }
 
+    func adopt(identity: String, features: [HandoverFeatureCharge]) async throws -> HandoverAdoption {
+        let encoded = try JSONEncoder().encode(features)
+        let list = (JSONValue.parse(encoded)?.arrayValue) ?? []
+        return try await adopt(identity: identity, features: list)
+    }
+
     private static func decode<T: Decodable>(_ type: T.Type, from json: JSONValue, what: String) throws -> T {
-        guard let data = json.data, let value = try? JSONDecoder().decode(T.self, from: data) else {
+        guard let data = try? JSONEncoder().encode(json), let value = try? JSONDecoder().decode(T.self, from: data) else {
             throw ServiceClientError.malformed(reason: "\(what) illisible")
         }
         return value

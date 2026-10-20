@@ -93,7 +93,7 @@ test("vps-mem0-proxy/AC-7 : le souvenir qu'une session du VPS ajoute en boucle l
   assert.doesNotMatch(found.stderr, /mem0-remote\.json/u, "aucun avertissement avec un fichier valide");
 });
 
-test("vps-mem0-proxy/AC-7 : le client du Mac écrit par le proxy, et une recherche directe sur mem0 du VPS le retrouve (même mémoire dans les deux sens)", async t => {
+test("le client du Mac écrit par le proxy, et une recherche directe sur mem0 du VPS le retrouve (même mémoire dans les deux sens)", async t => {
   const vps = await demarrerVps(t);
   if (vps === null) return;
   const agentDir = dossierAgent({ version: 1, url: `${vps.remoteUrl}/v1/mem0`, token: vps.bearer });
@@ -118,7 +118,7 @@ console.log(JSON.stringify(await mem0.add(process.argv[1], process.argv[2], { in
   );
 });
 
-test("vps-mem0-proxy/AC-7 : le proxy exige le Bearer d'un appareil appairé (sans lui, 401 et mem0 n'est pas touché) et dispense l'en-tête de version", async t => {
+test("le proxy exige le Bearer d'un appareil appairé (sans lui, 401 et mem0 n'est pas touché) et dispense l'en-tête de version", async t => {
   const vps = await demarrerVps(t);
   if (vps === null) return;
   const sans = await fetch(`${vps.remoteUrl}/v1/mem0/memory/all?agent_id=${SCOPE}`);
@@ -132,7 +132,7 @@ test("vps-mem0-proxy/AC-7 : le proxy exige le Bearer d'un appareil appairé (san
   assert.deepEqual(await bon.json(), { results: [], total: 0 });
 });
 
-test("vps-mem0-proxy/AC-7 : le proxy relaie méthode, requête, statut et content-type tels quels, et ne sert que les 8 chemins de mem0", async t => {
+test("le proxy relaie méthode, requête, statut et content-type tels quels, et ne sert que les 8 chemins de mem0", async t => {
   const vps = await demarrerVps(t);
   if (vps === null) return;
   const proxy = (chemin: string, init: RequestInit = {}, headers: Record<string, string> = {}): Promise<Response> =>
@@ -170,7 +170,7 @@ test("vps-mem0-proxy/AC-7 : le proxy relaie méthode, requête, statut et conten
   assert.equal((await proxy("/memory/all", { method: "PATCH" })).status, 404);
 });
 
-test("vps-mem0-proxy/AC-7 : mem0 injoignable → 503 {\"detail\":\"mem0 injoignable\"} ; corps de plus de 1 Mio → 400", async t => {
+test("mem0 injoignable → 503 {\"detail\":\"mem0 injoignable\"} ; corps de plus de 1 Mio → 400", async t => {
   const vps = await demarrerVps(t, `http://127.0.0.1:${await portLibre()}`);
   if (vps === null) return;
   const entetes = { authorization: `Bearer ${vps.bearer}`, "content-type": "application/json" };

@@ -164,6 +164,15 @@ final class MemoryAgent {
 
     // MARK: - La préparation
 
+    /// Mémoire hébergée sur le VPS (S-7 de orchestrator-living-in-a-vps) : l'agent
+    /// local ne doit plus tourner, et rien ne le recharge. `bootout` s'il est chargé,
+    /// attendu comme à `ensureRunning` ; un job absent est toléré (rien à décharger).
+    /// Ni plist écrit, ni `bootstrap`, ni contrôle du port.
+    func unloadIfLoaded() async throws {
+        guard await printService().loaded else { return }
+        try await bootoutAndWait()
+    }
+
     /// Rend l'agent chargé, à jour et sain (algorithme figé de S-2).
     func ensureRunning(progress: @escaping @MainActor (AgentStep) -> Void) async throws {
         // 1. Le binaire embarqué.

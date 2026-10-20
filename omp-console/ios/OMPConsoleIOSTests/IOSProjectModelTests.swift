@@ -1,4 +1,4 @@
-// Les preuves Swift du modèle de l'écran Projet (BR-4) : les huit `ClientState`
+// Les preuves Swift du modèle de l'écran Projet (BR-4) : les neuf `ClientState`
 // (seul `.connected` ouvre les gestes), la surface choisie pour chaque état, et
 // l'état du volet Document depuis la forme servie.
 
@@ -22,10 +22,11 @@ struct IOSProjectModelTests {
             .macAbsent(endpoint: endpoint),
             .revoked,
             .incompatibleProtocol(local: 3, remote: 2),
+            .wrongMachine(expected: .vps, actual: .mac),
         ]
     }
 
-    @Test("ios-projet/AC-7 : seul .connected ouvre les gestes (les huit états)")
+    @Test("ios-projet/AC-7 : seul .connected ouvre les gestes (les neuf états)")
     func gesturesOpenOnlyWhenConnected() {
         #expect(IOSProjectModel.gesturesEnabled(.connected(endpoint: endpoint)))
         for state in allStates where state != .connected(endpoint: endpoint) {
