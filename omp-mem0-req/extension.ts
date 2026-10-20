@@ -245,13 +245,13 @@ export default function reqExtension(pi: ExtensionAPI) {
   // git RÉSEAU (fetch, push du projet, `## Documentation` §2) : le même corps que
   // `run`, avec le budget de `gh` — c'est du réseau, pas une commande locale.
   const GIT_NET_TIMEOUT_MS = 60_000;
-  const runGitNet: GitRunner = async (args, cwd) => {
+  const runGitNet: GitRunner = async (args, cwd, timeoutMs = GIT_NET_TIMEOUT_MS) => {
     try {
-      const res = await pi.exec("git", args, { cwd, timeout: GIT_NET_TIMEOUT_MS });
+      const res = await pi.exec("git", args, { cwd, timeout: timeoutMs });
       return {
         code: res.killed ? 124 : res.code,
         stdout: res.stdout ?? "",
-        stderr: res.killed ? `git ${args[0]} : délai dépassé (${GIT_NET_TIMEOUT_MS} ms)` : (res.stderr ?? ""),
+        stderr: res.killed ? `git ${args[0]} : délai dépassé (${timeoutMs} ms)` : (res.stderr ?? ""),
       };
     } catch (err) {
       return { code: 127, stdout: "", stderr: (err as Error).message };

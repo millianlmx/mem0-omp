@@ -98,6 +98,10 @@ function decodeSegment(segment: string): string {
 
 type Matched =
   | { kind: "health" }
+  | { kind: "adopt" }
+  | { kind: "handover"; repo: string }
+  | { kind: "handoverCommit"; repo: string; id: string }
+  | { kind: "handoverCancel"; repo: string; id: string }
   | { kind: "pilot"; repo: string }
   | { kind: "lot"; repo: string }
   | { kind: "command"; repo: string }
@@ -133,6 +137,17 @@ function match(method: string, segments: string[]): Matched | null {
     return null;
   }
   if (head === "health" && segments.length === 1 && method === "GET") return { kind: "health" };
+  if (head === "repos" && segments.length === 2 && one === "adopt") return method === "POST" ? { kind: "adopt" } : null;
+  if (head === "repos" && one !== undefined && two === "handover") {
+    if (segments.length === 3) return method === "POST" ? { kind: "handover", repo: one } : null;
+    if (segments.length === 4 && three !== undefined) {
+      return method === "DELETE" ? { kind: "handoverCancel", repo: one, id: three } : null;
+    }
+    if (segments.length === 5 && three !== undefined && four === "commit") {
+      return method === "POST" ? { kind: "handoverCommit", repo: one, id: three } : null;
+    }
+    return null;
+  }
   if (head === "repos" && segments.length === 3 && one !== undefined && two !== undefined) {
     if (two === "pilot" && method === "POST") return { kind: "pilot", repo: one };
     if (two === "lot" && method === "GET") return { kind: "lot", repo: one };
@@ -306,6 +321,14 @@ export function createServiceRequestHandler(deps: RouterDeps) {
           return json(await deps.api.answerAudit(route.id, await readJsonBody(req, "réponse")));
         case "audit":
           return json(await deps.api.stopAudit(route.id));
+        case "adopt":
+          return json(await deps.api.adoptRepo(await readJsonBody(req, "bascule")));
+        case "handover":
+          return json(await deps.api.handover(route.repo, await readJsonBody(req, "bascule")));
+        case "handoverCommit":
+          return json(await deps.api.commitHandover(route.repo, route.id, await readJsonBody(req, "bascule")));
+        case "handoverCancel":
+          return json(await deps.api.cancelHandover(route.repo, route.id));
         case "sessionModel":
           return json(await deps.api.setSessionModel(route.id, await readJsonBody(req, "modèle")));
         case "projectModel":

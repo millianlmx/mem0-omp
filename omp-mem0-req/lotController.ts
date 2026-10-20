@@ -15,6 +15,7 @@ import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILU
 import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, buildEscalationAlert, runHardDeadlineMinutes } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import { handoverRefusalFor } from "./handover.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
@@ -2013,10 +2014,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // arbres d'une même passe se préparent EN PARALLÈLE : en série, chaque `git`
       // ajoutait son délai à l'attente de toutes les décisions.
       const slots = freeSlots(initial);
+      const away = handoverRefusalFor(stateDir, deps.repoRoot) !== null;
       const candidates: LotFeature[] = [];
       for (const feature of initial.features) {
         if (candidates.length >= slots) break;
         if (feature.state !== "pending" || feature.worktree !== "" || !runnable(initial, feature)) continue;
+        // Un dépôt confié à l'autre machine ne démarre plus aucune feature jamais démarrée (S-5).
+        if (away) continue;
         // Une feature que `l` n'a pas lancée n'a pas de worktree à créer : elle
         // attend le lancement du lot (S-3, CHAIN-11).
         if (feature.launched === false) continue;
@@ -2061,7 +2065,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       changed = true;
     }
 
+    // Un dépôt CONFIÉ pendant la création d'un worktree (phase A) : la feature part
+    // sur l'autre machine, aucun arbre ne lui est attribué ici (S-5, invariant de la bascule).
+    const awayNow = handoverRefusalFor(stateDir, deps.repoRoot) !== null;
     for (const item of created) {
+      if (awayNow) {
+        if (item.result.path !== undefined) orphans.push(item.result.path);
+        continue;
+      }
       const feature = lotFeature(lot, item.slug);
       // L'ACTION DE L'UTILISATEUR PRIME (S-1, AC-14) : pendant la création du
       // worktree (phase A, la seule qui attend), la feature a pu être annulée —
@@ -2347,6 +2358,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       pendingAsk: entry?.pendingAsk ?? null,
       askAnswered: cmd.kind === "answer" && slug !== null && answeredAsks.has(askKey(slug, cmd.toolCallId)),
       liveRun: feature !== undefined && (entry !== null || inFlight.has(feature.slug)),
+      handover: cmd.kind === "launch" || cmd.kind === "add" ? handoverRefusalFor(stateDir, deps.repoRoot) : null,
     };
   }
 
@@ -3077,6 +3089,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     },
 
     async add(input) {
+      // Un dépôt confié à l'autre machine (S-5) n'accueille plus de feature ici : la
+      // refuser tout de suite, pour tous les chemins (commande, panneau, audit, projet).
+      const away = handoverRefusalFor(stateDir, deps.repoRoot);
+      if (away !== null) return away;
       const slug = toSlug(input.name);
       if (!slug) {
         return `nom invalide : « ${input.name} » — lettres minuscules, chiffres et tirets (ex. isolation-worktree)`;

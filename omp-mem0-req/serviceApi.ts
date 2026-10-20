@@ -12,6 +12,7 @@ import type { AuditLaunchOutcome } from "./auditRecord.ts";
 import type { PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import type { Lot } from "./lot.ts";
 import type { ProjectModelDefault } from "./serviceModels.ts";
+import type { AdoptResult, HandoverResult } from "./handover.ts";
 
 
 export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "unavailable" | "stopping" | "internal";
@@ -184,4 +185,12 @@ export type ServiceApi = {
   projectModel: (repo: string) => Promise<ProjectModelDefault>;
   /** Écrit le défaut OMP d'un projet (S-3). */
   setProjectModel: (repo: string, body: unknown) => Promise<ProjectModelDefault>;
+  /** Gèle le dépôt et rend les features `pending` à envoyer à l'autre machine (S-5). */
+  handover: (repo: string, body: unknown) => Promise<HandoverResult>;
+  /** Retire du lot les features parties et clôt la bascule (S-5). */
+  commitHandover: (repo: string, id: string, body: unknown) => Promise<{ removed: string[] }>;
+  /** Dégèle le dépôt d'une bascule non terminée (S-5). */
+  cancelHandover: (repo: string, id: string) => Promise<{ cancelled: true }>;
+  /** Reconnaît (ou clone) le dépôt et lance les features reçues (S-5). */
+  adoptRepo: (body: unknown) => Promise<AdoptResult>;
 };

@@ -21,7 +21,12 @@ import { CONTRACT_PATH } from "./contract.ts";
 
 export type GitResult = { code: number; stdout: string; stderr: string };
 
-export type GitRunner = (args: string[], cwd: string) => Promise<GitResult>;
+/**
+ * `timeoutMs` : budget de CETTE commande, quand le défaut du runner ne convient pas
+ * (le `git clone` d'une bascule, S-5, dépasse largement une minute). Un runner qui
+ * ne le lit pas garde son budget : le paramètre est facultatif des deux côtés.
+ */
+export type GitRunner = (args: string[], cwd: string, timeoutMs?: number) => Promise<GitResult>;
 
 
 // Même budget par opération que la convention du dépôt (omp-mem0-memory) : une

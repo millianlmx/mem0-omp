@@ -75,6 +75,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     runGit: options.runGit,
     runGh: options.runGh,
     runGitNet: options.runGitNet,
+    env: options.env,
     notify: text => log(`[service] ${text}`),
     toast: text => log(`[service] ${text}`),
     log,
@@ -123,6 +124,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     setSessionModel: (id, body) => sessions.setSessionModel(id, body),
     projectModel: repo => sessions.projectModel(repo),
     setProjectModel: (repo, body) => sessions.setProjectModel(repo, body),
+    handover: (repo, body) => pilot.handover(repo, body),
+    commitHandover: (repo, id, body) => pilot.commitHandover(repo, id, body),
+    cancelHandover: (repo, id) => pilot.cancelHandover(repo, id),
+    adoptRepo: body => pilot.adoptRepo(body),
   };
 
   let handle: ServiceHandle | null = null;

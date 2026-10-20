@@ -14,12 +14,13 @@ import { readProject, writeProject } from "./project.ts";
 import type { Project } from "./project.ts";
 import { conduiteBusyRefusal } from "./projectRelay.ts";
 import { asCommand, commandShapeRefusal } from "./commands.ts";
-import type { CommandOutcome, LotSnapshot, ServiceHealth } from "./serviceApi.ts";
+import type { CommandOutcome, LotSnapshot, ServiceApi, ServiceHealth } from "./serviceApi.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
 import type { SessionHost } from "./serviceSessions.ts";
 import type { ArbiterRunner, LotRunner } from "./serviceRuns.ts";
 import type { AuditService } from "./serviceAudits.ts";
-import { SERVICE_VERSION } from "./serviceState.ts";
+import { SERVICE_VERSION, pipelineMachine } from "./serviceState.ts";
+import { createHandoverService } from "./handover.ts";
 import { pipelineStateDir } from "./store.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -37,7 +38,9 @@ export type PilotDeps = {
   runGitNet?: GitRunner;
   notify?: (text: string) => void;
   toast?: (text: string, tone: "info" | "warning" | "error") => void;
-  log?: (line: string) => void;
+  audits?: Pick<AuditService, "sweep">;
+  /** L'environnement du service (`MEM0_PIPELINE_MACHINE`, `MEM0_PIPELINE_REPOS_DIR`…) ; défaut : celui du process. */
+  env?: Record<string, string | undefined>;
   now?: () => number;
   startedAt?: number;
   /** La minuterie du balayage : injectable pour que les tests n'attendent pas. */
@@ -61,6 +64,10 @@ export interface ServicePilot {
   health: () => ServiceHealth;
   startConduite: (repo: string, body: unknown) => Promise<{ sessionId: string; state: "idle" | "running" }>;
   stopConduite: (repo: string) => Promise<void>;
+  handover: ServiceApi["handover"];
+  commitHandover: ServiceApi["commitHandover"];
+  cancelHandover: ServiceApi["cancelHandover"];
+  adoptRepo: ServiceApi["adoptRepo"];
 }
 
 
@@ -160,6 +167,17 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
     controllers.set(root, controller);
     return controller;
   }
+
+  /** La bascule de dépôts (S-5) : la machine du service est la source d'un `handover`, la cible d'un `adopt`. */
+  const handovers = createHandoverService({
+    stateDir,
+    machine: pipelineMachine(deps.env),
+    controllerFor,
+    runGit: deps.runGit,
+    runGitNet: deps.runGitNet,
+    env: deps.env,
+    now: deps.now,
+  });
 
   /**
    * Une passe de balayage : chaque lot et chaque projet du magasin est adopté puis
@@ -276,6 +294,11 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       controller.start();
       return { command, ack: await controller.acceptCommand(command) };
     },
+
+    handover: (repo, body) => handovers.handover(requireRepo(repo), body),
+    commitHandover: (repo, id, body) => handovers.commit(requireRepo(repo), id, body),
+    cancelHandover: async (repo, id) => handovers.cancel(requireRepo(repo), id),
+    adoptRepo: body => handovers.adopt(body),
 
     health(): ServiceHealth {
       return {

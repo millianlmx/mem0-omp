@@ -605,6 +605,8 @@ export type CommandView = {
   askAnswered: boolean;
   /** Un maillon tourne-t-il pour la feature visée : entrée vivante du worktree ou run en vol du pilote ? */
   liveRun: boolean;
+  /** Le motif d'un `launch`/`add` refusé parce que le dépôt est confié à l'autre machine (S-5) ; absent/`null` sinon. */
+  handover?: string | null;
 };
 
 
@@ -697,6 +699,8 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     return null;
   }
   if (cmd.kind === "launch" || cmd.kind === "add") {
+    // Un dépôt confié à l'autre machine (S-5) : le motif d'abord, quel que soit le contenu.
+    if (view.handover) return view.handover;
     const empty = featureContentRefusal(cmd);
     if (empty !== null) return empty;
     // Le contenu a été jugé : le slug existe (le type ne le sait pas, `toSlug` si).
