@@ -66,7 +66,7 @@ struct KanbanView: ConsoleSectionView {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar { toolbarContent }
         .sheet(isPresented: Binding(get: { model.serverShown }, set: { model.serverShown = $0 })) {
-            ServerSheet()
+            StandaloneServerSheet()
         }
         // Quitter la section replie de nouveau Livrées et Arrêtées (S-2) ; une
         // feuille ouverte par-dessus n'est pas un départ.

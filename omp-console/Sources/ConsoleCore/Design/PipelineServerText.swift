@@ -130,6 +130,137 @@ public enum PipelineServerText {
     public static let risks = "Risques"
     public static let unverified = "Non vérifié"
 
+    // MARK: - Accueil
+
+    public static let homeTitle = "Accueil"
+    public static let notConfigured = "Aucun serveur relié. Les pipelines tournent sur le serveur du VPS : reliez-le pour les voir et les lancer."
+    public static let configure = "Relier le serveur…"
+    public static let specsToValidate = "Specs à valider"
+    public static let specsToValidateHint = "Les specs sont écrites : la feature attend votre accord avant /impl."
+    public static let verdictsToValidate = "Verdicts à valider"
+    public static let auditsToSort = "Audits à trier"
+
+    /// Les compteurs du résumé de l'accueil.
+    public static func countLine(_ count: Int, one: String, many: String) -> String {
+        count == 1 ? "1 \(one)" : "\(count) \(many)"
+    }
+
+    public static func escalationCount(_ count: Int) -> String { countLine(count, one: "question à trancher", many: "questions à trancher") }
+    public static func specsCount(_ count: Int) -> String { countLine(count, one: "specs à valider", many: "specs à valider") }
+    public static func verdictCount(_ count: Int) -> String { countLine(count, one: "verdict à valider", many: "verdicts à valider") }
+    public static func decisionCount(_ count: Int) -> String { countLine(count, one: "décision à relire", many: "décisions à relire") }
+    public static func activeCount(_ count: Int) -> String { countLine(count, one: "feature en cours", many: "features en cours") }
+    public static func auditCount(_ count: Int) -> String { countLine(count, one: "audit à trier", many: "audits à trier") }
+
+    // MARK: - Specs
+
+    public static let readSpecs = "Lire les specs"
+    public static let approveSpecs = "Valider les specs"
+    public static let refuseSpecsTitle = "Refuser les specs"
+    public static let specsHint = "Le refus et sa raison font réécrire les specs ; la raison rejoint la mémoire du projet."
+
+    // MARK: - Lancements
+
+    public static let repoLabel = "Dépôt"
+    public static let noRepo = "Le serveur ne déclare aucun dépôt. Ajoutez-en un à sa configuration."
+    public static let launchRunTitle = "Nouvelle feature"
+    public static let launchRunHint = "Le serveur la conduit seul : besoins, specs (à valider), implémentation, revue, fusion."
+    public static let titleLabel = "Titre"
+    public static let requestLabel = "Demande"
+    public static let launch = "Lancer"
+    public static let allRuns = "Toutes les features"
+    public static let noRun = "Aucune feature sur ce serveur."
+
+    // MARK: - Projets
+
+    public static let projectsTitle = "Projets"
+    public static let launchProjectTitle = "Nouveau projet"
+    public static let launchProjectHint = "Chaque feature part en pipeline ; celles dont les modules sont disjoints tournent en parallèle."
+    public static let projectTitleLabel = "Nom du projet"
+    public static let addFeature = "Ajouter une feature"
+    public static let removeFeature = "Retirer"
+    public static let noProject = "Aucun projet sur ce serveur."
+    public static let projectDone = "Terminé"
+    public static let projectActive = "En cours"
+
+    /// « 3 features · 1 fusionnée »
+    public static func projectLine(total: Int, merged: Int) -> String {
+        "\(countLine(total, one: "feature", many: "features")) · \(countLine(merged, one: "fusionnée", many: "fusionnées"))"
+    }
+
+    // MARK: - Audits
+
+    public static let auditsTitle = "Audits"
+    public static let launchAuditTitle = "Nouvel audit"
+    public static let launchAuditHint = "Un agent lit la branche principale sans rien modifier, puis propose des faiblesses à corriger et des features."
+    public static let focusLabel = "Périmètre"
+    public static let focusPrompt = "Vide : le dépôt entier"
+    public static let noAudit = "Aucun audit sur ce serveur."
+    public static let launchProposals = "Lancer la sélection en projet"
+    public static let cancelAudit = "Annuler l’audit"
+    public static let weakness = "Faiblesse"
+    public static let feature = "Feature"
+    public static let wholeRepo = "Dépôt entier"
+
+    public static func auditState(_ raw: String) -> String {
+        switch raw {
+        case "queued": "En file"
+        case "analysing": "Analyse en cours"
+        case "proposed": "Propositions à trier"
+        case "launched": "Lancé en projet"
+        case "failed": "En échec"
+        case "cancelled": "Annulé"
+        default: "État inconnu"
+        }
+    }
+
+    /// Le titre par défaut du projet issu d'un audit.
+    public static func auditProjectTitle(_ focus: String) -> String {
+        focus.isEmpty ? "Audit du dépôt" : "Audit : \(focus)"
+    }
+
+    // MARK: - Statistiques
+
+    public static let statsTitle = "Statistiques"
+    public static let noStats = "Les statistiques arrivent avec le premier échange du serveur."
+    public static let statsRuns = "Features"
+    public static let statsSteps = "Étapes"
+    public static let statsTests = "Tests"
+    public static let statsCapacity = "Capacité du serveur"
+    public static let total = "Total"
+    public static let mergedWeek = "Fusionnées sur 7 jours"
+    public static let mergeRate = "Taux de fusion"
+    public static let leadTime = "Délai médian jusqu’à la fusion"
+    public static let fixesPerMerge = "Corrections par fusion"
+    public static let testsCached = "Résultats repris du cache"
+    public static let testsRetried = "Relancés après un manque de mémoire"
+    public static let runners = "Agents"
+    public static let heavySlots = "Jobs de tests"
+    public static let memoryFree = "Mémoire disponible"
+    public static let notAvailable = "—"
+
+    public static func percent(_ ratio: Double) -> String { "\(Int((ratio * 100).rounded())) %" }
+
+    /// Une durée en secondes, arrondie à l'unité utile.
+    public static func duration(_ seconds: Double) -> String {
+        let value = Int(seconds.rounded())
+        if value < 60 { return "\(value) s" }
+        if value < 3600 { return "\(value / 60) min" }
+        return "\(value / 3600) h \(value % 3600 / 60) min"
+    }
+
+    public static func slots(used: Int, capacity: Int) -> String { "\(used) sur \(capacity)" }
+
+    public static func mebibytes(_ value: Double) -> String { "\(Int(value.rounded())) Mio" }
+
+    /// « /impl · 12 · 1 en échec · médiane 4 min »
+    public static func stepLine(label: String, count: Int, failed: Int, median: Double?) -> String {
+        var parts = [label, "\(count)"]
+        if failed > 0 { parts.append("\(failed) en échec") }
+        if let median { parts.append("médiane \(duration(median))") }
+        return parts.joined(separator: " · ")
+    }
+
     // MARK: - Échecs (cause, puis remède)
 
     public static let invalidAddress = "Cette adresse n’est pas valide. Saisissez le nom du serveur publié par Tailscale."

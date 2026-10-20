@@ -6,6 +6,24 @@
 import Combine
 import Foundation
 
+/// Une feature d'un projet en cours de saisie.
+public struct HarnessFeatureDraft: Equatable, Sendable, Identifiable {
+    public var id: UUID
+    public var title: String
+    public var request: String
+
+    public init(id: UUID = UUID(), title: String = "", request: String = "") {
+        self.id = id
+        self.title = title
+        self.request = request
+    }
+
+    /// Titre et demande saisis : la feature peut partir.
+    public var isComplete: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 @MainActor
 public final class HarnessDrafts: ObservableObject {
     @Published public var address = ""
@@ -22,8 +40,65 @@ public final class HarnessDrafts: ObservableObject {
     /// La feature dont l'arrêt attend confirmation.
     @Published public var stopRequest: HarnessRun?
     @Published public var forgetAsked = false
+    /// La feuille de configuration du serveur est ouverte.
+    @Published public var serverSheetShown = false
+    /// Le dépôt visé par les lancements (feature, projet, audit).
+    @Published public var repo = ""
+    /// Une feature à lancer.
+    @Published public var runTitle = ""
+    @Published public var runRequest = ""
+    /// Un projet à lancer, feature par feature.
+    @Published public var projectTitle = ""
+    @Published public var features: [HarnessFeatureDraft] = [HarnessFeatureDraft()]
+    /// Un audit à lancer : son périmètre (vide : le dépôt entier).
+    @Published public var auditFocus = ""
+    /// Les propositions cochées, par audit.
+    @Published public var picks: [String: Set<Int>] = [:]
+    /// Les specs relues (run → contenu de `specs.md`) et le refus en cours.
+    @Published public var specs: [String: String] = [:]
 
     public init() {}
+
+    /// Le dépôt des lancements : celui choisi, sinon le premier déclaré.
+    public func launchRepo(in repos: [HarnessRepo]) -> String? {
+        if repos.contains(where: { $0.name == repo }) { return repo }
+        return repos.first?.name
+    }
+
+    public var canLaunchRun: Bool {
+        !runTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !runRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var canLaunchProject: Bool {
+        !projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !features.isEmpty && features.allSatisfy(\.isComplete)
+    }
+
+    /// Après un lancement réussi, la saisie est remise à zéro.
+    public func clearRun() {
+        runTitle = ""
+        runRequest = ""
+    }
+
+    public func clearProject() {
+        projectTitle = ""
+        features = [HarnessFeatureDraft()]
+    }
+
+    public func addFeature() { features.append(HarnessFeatureDraft()) }
+
+    public func removeFeature(_ id: UUID) {
+        features.removeAll { $0.id == id }
+        if features.isEmpty { features = [HarnessFeatureDraft()] }
+    }
+
+    /// Coche ou décoche une proposition d'audit.
+    public func togglePick(_ audit: HarnessAudit, _ index: Int) {
+        var set = picks[audit.id] ?? []
+        if set.contains(index) { set.remove(index) } else { set.insert(index) }
+        picks[audit.id] = set
+    }
+
+    public func isPicked(_ audit: HarnessAudit, _ index: Int) -> Bool { picks[audit.id]?.contains(index) ?? false }
 
     /// Chaque escalade du lot a une réponse : le lot peut partir.
     public func canAnswer(_ batch: HarnessEscalationBatch) -> Bool {

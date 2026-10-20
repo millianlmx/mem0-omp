@@ -30,6 +30,16 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var busy: Set<String> = []
     /// Le chargement initial (préférences + trousseau) a eu lieu.
     @Published public private(set) var isLoaded = false
+    /// Le catalogue du serveur, lu à la demande des écrans qui en ont besoin :
+    /// dépôts déclarés, projets, audits, statistiques.
+    @Published public private(set) var repos: [HarnessRepo] = []
+    @Published public private(set) var projects: [HarnessProject] = []
+    @Published public private(set) var audits: [HarnessAudit] = []
+    @Published public private(set) var stats: HarnessStats?
+    /// Les audits dont un geste attend la réponse du serveur.
+    @Published public private(set) var busyAudits: Set<String> = []
+    /// Un lancement (feature, projet, audit) attend la réponse du serveur.
+    @Published public private(set) var isLaunching = false
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -39,6 +49,8 @@ public final class HarnessModel: ObservableObject {
     private var server: HarnessServer?
     private var liveTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    /// Un écran a demandé le catalogue : le flux le relit avec la boîte.
+    private var wantsCatalog = false
 
     public init(
         transport: any HarnessTransport,
@@ -129,6 +141,10 @@ public final class HarnessModel: ObservableObject {
         server = nil
         address = nil
         inbox = nil
+        repos = []
+        projects = []
+        audits = []
+        stats = nil
         failure = nil
         preferences.set(nil, forKey: Self.addressKey)
         try? await tokens.remove(deviceId: Self.tokenAccount)
@@ -146,6 +162,39 @@ public final class HarnessModel: ObservableObject {
             failure = nil
         } catch {
             failure = Self.failure(of: error)
+        }
+    }
+
+    /// Relit le catalogue : dépôts, projets, audits, statistiques. Dès le premier appel,
+    /// le flux le relit aussi à chaque événement.
+    public func refreshCatalog() async {
+        wantsCatalog = true
+        guard let server else { return }
+        do {
+            let readStatus: HarnessStatus = try await perform(HarnessCall(method: "GET", path: "/v1/status"), on: server)
+            let readProjects: HarnessProjects = try await perform(HarnessCall(method: "GET", path: "/v1/projects"), on: server)
+            let readAudits: HarnessAudits = try await perform(HarnessCall(method: "GET", path: "/v1/audits"), on: server)
+            let readStats: HarnessStats = try await perform(HarnessCall(method: "GET", path: "/v1/stats"), on: server)
+            repos = readStatus.repos
+            projects = readProjects.projects
+            audits = readAudits.audits
+            stats = readStats
+            failure = nil
+        } catch {
+            failure = Self.failure(of: error)
+        }
+    }
+
+    /// La vue d'un run : ses artefacts (les specs à valider), ou `nil` en cas d'échec.
+    public func runView(_ runId: String) async -> HarnessRunView? {
+        guard let server, let id = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        do {
+            let view: HarnessRunView = try await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)"), on: server)
+            failure = nil
+            return view
+        } catch {
+            failure = Self.failure(of: error)
+            return nil
         }
     }
 
@@ -200,6 +249,7 @@ public final class HarnessModel: ObservableObject {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             await self?.refresh()
+            if self?.wantsCatalog == true { await self?.refreshCatalog() }
             self?.refreshTask = nil
         }
     }
@@ -236,6 +286,70 @@ public final class HarnessModel: ObservableObject {
     @discardableResult
     public func cancel(runId: String) async -> Bool {
         await gesture(runId, method: "POST", path: "/cancel", body: EmptyBody())
+    }
+
+    // MARK: - Lancements
+
+    /// Lance une feature : le serveur la conduit de /req au merge.
+    @discardableResult
+    public func launchRun(repo: String, title: String, request: String) async -> HarnessRun? {
+        let reply: HarnessRunReply? = await launch("/v1/runs", body: RunBody(repo: repo, title: title, request: request))
+        return reply?.run
+    }
+
+    /// Lance un projet : ses features tournent en parallèle quand leurs modules sont disjoints.
+    @discardableResult
+    public func launchProject(repo: String, title: String, features: [HarnessFeatureDraft]) async -> String? {
+        let body = ProjectBody(repo: repo, title: title, features: features.map { ProjectBody.Feature(title: $0.title, request: $0.request) })
+        let reply: HarnessProjectReply? = await launch("/v1/projects", body: body)
+        return reply?.projectId
+    }
+
+    /// Lance l'audit d'un dépôt (`focus` vide : le dépôt entier).
+    @discardableResult
+    public func launchAudit(repo: String, focus: String) async -> HarnessAudit? {
+        let reply: HarnessAuditReply? = await launch("/v1/audits", body: AuditBody(repo: repo, focus: focus))
+        return reply?.audit
+    }
+
+    /// Les propositions retenues d'un audit (index) partent en projet.
+    @discardableResult
+    public func launchProposals(auditId: String, items: [Int], title: String) async -> String? {
+        guard let id = auditId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        busyAudits.insert(auditId)
+        defer { busyAudits.remove(auditId) }
+        let reply: HarnessProjectReply? = await launch("/v1/audits/\(id)/launch", body: ProposalsBody(items: items.sorted(), title: title))
+        return reply?.projectId
+    }
+
+    /// Annule un audit (en file, en analyse, ou dont les propositions attendent).
+    @discardableResult
+    public func cancelAudit(_ auditId: String) async -> Bool {
+        guard let id = auditId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return false }
+        busyAudits.insert(auditId)
+        defer { busyAudits.remove(auditId) }
+        let reply: HarnessAuditReply? = await launch("/v1/audits/\(id)/cancel", body: EmptyBody())
+        return reply != nil
+    }
+
+    private func launch<Body: Encodable, Reply: Decodable>(_ path: String, body: Body) async -> Reply? {
+        guard let server else { return nil }
+        guard let encoded = try? JSONEncoder().encode(body) else {
+            failure = .unreadable
+            return nil
+        }
+        isLaunching = true
+        defer { isLaunching = false }
+        do {
+            let reply: Reply = try await perform(HarnessCall(method: "POST", path: path, body: encoded), on: server)
+            failure = nil
+            await refresh()
+            await refreshCatalog()
+            return reply
+        } catch {
+            failure = Self.failure(of: error)
+            return nil
+        }
     }
 
     private func gesture<Body: Encodable>(_ runId: String, method: String, path: String, body: Body) async -> Bool {
@@ -299,4 +413,31 @@ private struct ReverseBody: Encodable {
 private struct ValidateBody: Encodable {
     var approve: Bool
     var reason: String
+}
+
+private struct RunBody: Encodable {
+    var repo: String
+    var title: String
+    var request: String
+}
+
+private struct ProjectBody: Encodable {
+    struct Feature: Encodable {
+        var title: String
+        var request: String
+    }
+
+    var repo: String
+    var title: String
+    var features: [Feature]
+}
+
+private struct AuditBody: Encodable {
+    var repo: String
+    var focus: String
+}
+
+private struct ProposalsBody: Encodable {
+    var items: [Int]
+    var title: String
 }

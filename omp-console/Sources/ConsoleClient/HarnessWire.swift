@@ -155,22 +155,218 @@ public struct HarnessEscalationBatch: Codable, Equatable, Sendable, Identifiable
     public var id: String { run?.id ?? items.first?.runId ?? "" }
 }
 
+/// Une proposition d'audit : une faiblesse à corriger ou une feature à construire.
+public struct HarnessAuditProposal: Codable, Equatable, Sendable {
+    public var title: String
+    public var request: String
+    public var modules: [String]
+    public var kind: String
+    public var rationale: String
+
+    public init(title: String, request: String, modules: [String] = [], kind: String, rationale: String) {
+        self.title = title
+        self.request = request
+        self.modules = modules
+        self.kind = kind
+        self.rationale = rationale
+    }
+
+    /// Une faiblesse du code existant (sinon une feature qui manque).
+    public var isWeakness: Bool { kind == "faiblesse" }
+}
+
+/// Un audit d'un dépôt : `queued` → `analysing` → `proposed`, puis `launched` en projet.
+public struct HarnessAudit: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var repo: String
+    public var focus: String
+    public var state: String
+    public var proposals: [HarnessAuditProposal]
+    public var projectId: String?
+    public var reason: String?
+    public var createdAt: Double
+
+    public init(id: String, repo: String, focus: String = "", state: String, proposals: [HarnessAuditProposal] = [], projectId: String? = nil, reason: String? = nil, createdAt: Double = 0) {
+        self.id = id
+        self.repo = repo
+        self.focus = focus
+        self.state = state
+        self.proposals = proposals
+        self.projectId = projectId
+        self.reason = reason
+        self.createdAt = createdAt
+    }
+
+    /// Les propositions attendent le choix de l'humain.
+    public var isProposed: Bool { state == "proposed" }
+    /// L'analyse n'est pas finie : l'audit peut encore être annulé.
+    public var isOpen: Bool { state == "queued" || state == "analysing" || state == "proposed" }
+}
+
+/// Le décompte des runs d'un projet par état.
+public struct HarnessRunCount: Codable, Equatable, Sendable {
+    public var total: Int
+    public var byState: [String: Int]
+
+    public init(total: Int = 0, byState: [String: Int] = [:]) {
+        self.total = total
+        self.byState = byState
+    }
+
+    public func count(_ state: HarnessRunState) -> Int { byState[state.rawValue] ?? 0 }
+}
+
+/// Un projet : des features planifiées par modules.
+public struct HarnessProject: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var repo: String
+    public var title: String
+    public var status: String
+    public var createdAt: Double
+    public var runs: HarnessRunCount
+
+    public init(id: String, repo: String, title: String, status: String = "active", createdAt: Double = 0, runs: HarnessRunCount = HarnessRunCount()) {
+        self.id = id
+        self.repo = repo
+        self.title = title
+        self.status = status
+        self.createdAt = createdAt
+        self.runs = runs
+    }
+
+    public var isDone: Bool { status == "done" }
+}
+
+/// Une étape, dans les statistiques : combien, combien en échec, durée médiane.
+public struct HarnessStepStats: Codable, Equatable, Sendable {
+    public var count: Int
+    public var failed: Int
+    public var medianSec: Double?
+
+    public init(count: Int, failed: Int, medianSec: Double? = nil) {
+        self.count = count
+        self.failed = failed
+        self.medianSec = medianSec
+    }
+}
+
+/// Les statistiques du serveur (`GET /v1/stats`).
+public struct HarnessStats: Codable, Equatable, Sendable {
+    public struct Runs: Codable, Equatable, Sendable {
+        public var total: Int
+        public var byState: [String: Int]
+        public var mergedLast7Days: Int
+        public var mergeRate: Double?
+        public var medianLeadSec: Double?
+        public var fixesPerMerged: Double?
+
+        public init(total: Int = 0, byState: [String: Int] = [:], mergedLast7Days: Int = 0, mergeRate: Double? = nil, medianLeadSec: Double? = nil, fixesPerMerged: Double? = nil) {
+            self.total = total
+            self.byState = byState
+            self.mergedLast7Days = mergedLast7Days
+            self.mergeRate = mergeRate
+            self.medianLeadSec = medianLeadSec
+            self.fixesPerMerged = fixesPerMerged
+        }
+    }
+
+    public struct Tests: Codable, Equatable, Sendable {
+        public var total: Int
+        public var cached: Int
+        public var byOutcome: [String: Int]
+        public var retried: Int
+
+        public init(total: Int = 0, cached: Int = 0, byOutcome: [String: Int] = [:], retried: Int = 0) {
+            self.total = total
+            self.cached = cached
+            self.byOutcome = byOutcome
+            self.retried = retried
+        }
+    }
+
+    public struct Slots: Codable, Equatable, Sendable {
+        public var used: Int
+        public var capacity: Int
+
+        public init(used: Int = 0, capacity: Int = 0) {
+            self.used = used
+            self.capacity = capacity
+        }
+    }
+
+    public struct Scheduler: Codable, Equatable, Sendable {
+        public var runner: Slots
+        public var heavy: Slots
+        public var memAvailableMiB: Double?
+
+        public init(runner: Slots = Slots(), heavy: Slots = Slots(), memAvailableMiB: Double? = nil) {
+            self.runner = runner
+            self.heavy = heavy
+            self.memAvailableMiB = memAvailableMiB
+        }
+    }
+
+    public var runs: Runs
+    /// Par étape (`req`, `specs`, `impl`, `review`, `fix`).
+    public var steps: [String: HarnessStepStats]
+    public var tests: Tests
+    public var decisions: [String: Int]
+    public var escalations: [String: Int]
+    public var audits: [String: Int]
+    public var scheduler: Scheduler
+
+    public init(runs: Runs = Runs(), steps: [String: HarnessStepStats] = [:], tests: Tests = Tests(), decisions: [String: Int] = [:], escalations: [String: Int] = [:], audits: [String: Int] = [:], scheduler: Scheduler = Scheduler()) {
+        self.runs = runs
+        self.steps = steps
+        self.tests = tests
+        self.decisions = decisions
+        self.escalations = escalations
+        self.audits = audits
+        self.scheduler = scheduler
+    }
+}
+
 /// La boîte de l'humain, d'un seul appel (`GET /v1/inbox`).
 public struct HarnessInbox: Codable, Equatable, Sendable {
     public var batches: [HarnessEscalationBatch]
     public var awaiting: [HarnessRun]
     public var decisions: [HarnessDecision]
     public var runs: [HarnessRun]
+    /// Les audits ouverts (en analyse, ou dont les propositions attendent un choix).
+    public var audits: [HarnessAudit]
     /// Le dernier événement du journal : le flux s'abonne à partir de là.
     public var cursor: Int
 
-    public init(batches: [HarnessEscalationBatch] = [], awaiting: [HarnessRun] = [], decisions: [HarnessDecision] = [], runs: [HarnessRun] = [], cursor: Int = 0) {
+    public init(batches: [HarnessEscalationBatch] = [], awaiting: [HarnessRun] = [], decisions: [HarnessDecision] = [], runs: [HarnessRun] = [], audits: [HarnessAudit] = [], cursor: Int = 0) {
         self.batches = batches
         self.awaiting = awaiting
         self.decisions = decisions
         self.runs = runs
+        self.audits = audits
         self.cursor = cursor
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case batches, awaiting, decisions, runs, audits, cursor
+    }
+
+    /// Un serveur plus ancien n'écrit pas `audits` : la liste est alors vide.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        batches = try container.decode([HarnessEscalationBatch].self, forKey: .batches)
+        awaiting = try container.decode([HarnessRun].self, forKey: .awaiting)
+        decisions = try container.decode([HarnessDecision].self, forKey: .decisions)
+        runs = try container.decode([HarnessRun].self, forKey: .runs)
+        audits = try container.decodeIfPresent([HarnessAudit].self, forKey: .audits) ?? []
+        cursor = try container.decode(Int.self, forKey: .cursor)
+    }
+
+    /// Les runs dont les SPECS attendent la validation (avant /impl).
+    public var specsAwaiting: [HarnessRun] { awaiting.filter { $0.step == "specs" } }
+    /// Les runs dont le VERDICT de revue attend la validation.
+    public var verdictsAwaiting: [HarnessRun] { awaiting.filter { $0.step != "specs" } }
+    /// Les audits dont les propositions attendent un choix.
+    public var auditsProposed: [HarnessAudit] { audits.filter(\.isProposed) }
 
     /// Le run d'un identifiant (titre d'une décision, d'une escalade).
     public func run(_ id: String) -> HarnessRun? { runs.first { $0.id == id } }
@@ -183,8 +379,69 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
         }
     }
 
-    /// Ce qui attend l'humain : escalades, verdicts, décisions à relire.
-    public var pendingCount: Int { batches.reduce(0) { $0 + $1.items.count } + awaiting.count + decisions.count }
+    /// Ce qui attend l'humain : escalades, specs et verdicts, décisions à relire, audits à trier.
+    public var pendingCount: Int { batches.reduce(0) { $0 + $1.items.count } + awaiting.count + decisions.count + auditsProposed.count }
+}
+
+/// Un artefact d'étape (`req.md`, `specs.md`, `impl.md`).
+public struct HarnessArtifact: Codable, Equatable, Sendable {
+    public var name: String
+    public var content: String
+
+    public init(name: String, content: String) {
+        self.name = name
+        self.content = content
+    }
+}
+
+/// La vue d'un run (`GET /v1/runs/{id}`) : ce que l'app lit pour valider les specs.
+public struct HarnessRunView: Codable, Equatable, Sendable {
+    public var run: HarnessRun
+    public var artifacts: [HarnessArtifact]
+
+    public init(run: HarnessRun, artifacts: [HarnessArtifact] = []) {
+        self.run = run
+        self.artifacts = artifacts
+    }
+
+    public func artifact(_ name: String) -> String? { artifacts.first { $0.name == name }?.content }
+}
+
+/// Un dépôt déclaré sur le serveur (`GET /v1/status`).
+public struct HarnessRepo: Codable, Equatable, Sendable, Identifiable {
+    public var name: String
+    public var scope: String
+
+    public init(name: String, scope: String = "") {
+        self.name = name
+        self.scope = scope
+    }
+
+    public var id: String { name }
+}
+
+struct HarnessStatus: Decodable {
+    var repos: [HarnessRepo]
+}
+
+struct HarnessProjects: Decodable {
+    var projects: [HarnessProject]
+}
+
+struct HarnessAudits: Decodable {
+    var audits: [HarnessAudit]
+}
+
+struct HarnessRunReply: Decodable {
+    var run: HarnessRun
+}
+
+struct HarnessAuditReply: Decodable {
+    var audit: HarnessAudit
+}
+
+struct HarnessProjectReply: Decodable {
+    var projectId: String
 }
 
 /// L'accusé d'un geste : un objet JSON, quel que soit son contenu (`{ run }` ou

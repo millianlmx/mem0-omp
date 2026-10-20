@@ -25,14 +25,20 @@ extension HarnessRun {
     }
 
     /// L'étape en cours, sous son nom de commande, ou `nil` hors étape.
-    public var stepLabel: String? {
-        switch step {
+    public var stepLabel: String? { step.map(Self.label(forStep:)) }
+
+    /// Les étapes du serveur, dans l'ordre du chemin nominal (statistiques).
+    public static let stepKinds = ["req", "specs", "impl", "review", "fix"]
+
+    /// Une étape du serveur sous son nom de commande ; la valeur brute si elle est inconnue.
+    public static func label(forStep kind: String) -> String {
+        switch kind {
         case "req": PipelineServerText.stepReq
         case "specs": PipelineServerText.stepSpecs
         case "impl": PipelineServerText.stepImpl
         case "review": PipelineServerText.stepReview
         case "fix": PipelineServerText.stepFix
-        default: nil
+        default: kind
         }
     }
 }
