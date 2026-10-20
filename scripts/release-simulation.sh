@@ -63,6 +63,14 @@ fi
 
 echo "· copie jetable : $copie"
 
+# Le worktree ne porte que les fichiers suivis : le TypeScript épinglé
+# (.typecheck/typescript, gitignoré, installé par `bash scripts/typecheck.sh
+# --prepare`) y est relié depuis l'arbre source, jamais téléchargé. Absent de la
+# source, aucun lien : la section Types de la copie est rouge, comme la source.
+if [ -e "$root/.typecheck/typescript" ]; then
+  mkdir -p "$copie/.typecheck" && ln -s "$root/.typecheck/typescript" "$copie/.typecheck/typescript"
+fi
+
 # Le moteur est celui de la COPIE, et son répertoire courant est la copie : ses
 # écritures (`--simulate`) et son `check.sh` portent donc sur l'arbre simulé, et
 # sur lui seul. Chemin RELATIF indispensable (piège `invokedDirectly`, en tête).

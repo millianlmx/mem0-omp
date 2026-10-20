@@ -32,7 +32,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/test-ac.sh                 preuve par critère : tests du diff portant AC-n, une passe node --test, pass|fail|absent
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois par swift-app.sh
-├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
+├── scripts/typecheck.sh               type-check des deux plugins et de test/ par le tsc épinglé de .typecheck/ (--prepare l'installe)
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
 ├── scripts/ios-build.sh               compile et teste l'app iOS, seul chemin du dépôt qui exige Xcode
@@ -414,7 +414,9 @@ test **du diff** qui le portent (`AC-1` ≠ `AC-10`) ou `(aucun test dans le dif
 Les tests de `test/console/` partagent une copie du dépôt par fichier
 (`sharedRepo(prefix).fresh()` dans `test/support/repo.ts`, remise à neuf en ≈ 10 ms) au lieu
 d'une copie par test. `check.sh` imprime `# skipped N` dans `── Tests`, en succès comme en
-échec.
+échec. Un test qui se saute faute de prérequis installable (outil, toolchain, script
+absent) passe par `prerequisAbsent(t, prérequis, conséquence)` de `test/support/prerequis.ts`,
+jamais par un `t.skip` nu : c'est ce saut que `--strict` change en échec nommé.
 
 `scripts/` ne garde à sa racine que ce que la CI, la release et le développement
 lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,
@@ -431,9 +433,14 @@ couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` 
 suite (lib ES2024). Les deux programmes appliquent `strict`, `noUnusedLocals`,
 `noUnusedParameters` et `noFallthroughCasesInSwitch` : une variable, un import ou
 un paramètre jamais lu (préfixe `_` pour un paramètre imposé par une signature)
-et un `case` non vide qui retombe dans le suivant font échouer le job. La
-validation ne se contente pas de transpiler les extensions :
-`scripts/plugin-smoke.ts` charge
+et un `case` non vide qui retombe dans le suivant font échouer le job. Ce `tsc`
+est TypeScript 5.9.3, installé une fois dans `.typecheck/typescript` (gitignoré)
+par `bash scripts/typecheck.sh --prepare` (réseau requis) ; ensuite le type-check
+ne touche ni au réseau ni au cache npm. Absent ou d'une autre version, la section
+Types rougit en donnant cette commande. La CI la lance avant `check.sh` (étape
+« Installer le TypeScript épinglé du type-check ») dans `check`, `macos-tests`,
+`release` et `release-simulation`. La validation ne se contente pas de
+transpiler les extensions : `scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
 vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 `mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
@@ -441,7 +448,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses 12
+Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 12
 sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
 jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
 (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
@@ -492,7 +499,7 @@ chaque run : l'étape de simulation pose `CARGO_TARGET_DIR` sur
 `${{ runner.temp }}/cargo-target`, cible stable que le cache restaure et que
 `check.sh`, `swift-app.sh` et les tests `test/stack/*` honorent.
 
-Ces jobs pilotent `check.sh` par trois options, que l'on peut aussi passer en
+Ces jobs pilotent `check.sh` par quatre options, que l'on peut aussi passer en
 local — sans option, toutes les sections et toute la suite tournent :
 
 | Option | Effet |
@@ -500,6 +507,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 | `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
+| `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
 
 À la racine du dépôt, `package.json` (privé, sans dépendance) donne trois alias :
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance

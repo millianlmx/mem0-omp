@@ -237,7 +237,12 @@ sessions et les conducteurs ; la commande part à l'API par
 Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
 (bouton `home.firstRun.start`), `home.ompMissing.background` (fond « OMP Console
 prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
-`home.dashboard`,
+`home.serviceVersionBanner` (bandeau sans bouton, juste sous le précédent :
+le service OMP exécute une autre version d'omp-mem0-req que le module installé
+dans `~/.omp/plugins`, ou n'en annonce aucune — « lancez /service install dans
+OMP » ; contrôlé à l'ouverture de la fenêtre puis à chaque republication de
+`service.json`, il disparaît de lui-même quand le service relancé est à la
+bonne version), `home.dashboard`,
 `home.notificationsBanner` (`home.notifications.openSettings`,
 `home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
 (boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
