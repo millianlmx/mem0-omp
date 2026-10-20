@@ -1,5 +1,15 @@
 # Journal des versions
 
+## omp-mem0-req 0.33.1 — 2026-10-20
+
+- fix(req): magasin d'état du pipeline privé — dossiers en 0700, fichiers en 0600, existant resserré (#227) (a5c2c0a)
+- fix(pilote,console): fins de run ignorées après stop, accusé cancel `already`, rang de lot /impl avancé sur échec commité (#240) (9f94326)
+- refactor(req): repoRootOf vit dans git.ts, les recopies du mappage worktree → dépôt l'appellent (#232) (5ed05d5)
+- refactor(req): sortir les bornes du lot de lot.ts vers lotLimits.ts (#231) (fbcbe89)
+- chore(tsconfig,req,test): type-check strict sur le code mort — noUnusedLocals, noUnusedParameters et noFallthroughCasesInSwitch actifs, 51 diagnostics nettoyés (#224) (e7546ba)
+- fix(req): service.json créé directement en 0600 — plus de fenêtre 0644 sur le jeton du service (#222) (0c62522)
+- fix(req): jeton X-OMP-Service-Token comparé en temps constant (#220) (d20a0f7)
+
 ## omp-mem0-req 0.33.0 — 2026-10-18
 
 - feat(req,console): sélecteur de modèle et de réflexion dans la Session OMP — affichage permanent, changement sans relance, défaut OMP du projet (Mac, iPhone, iPad) (#217) (1eb498a)
