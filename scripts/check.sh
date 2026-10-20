@@ -301,7 +301,7 @@ fi
 # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
 #
 # Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
-# (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
+# (`omp-mem0-memory/*.ts`, `omp-mem0-req/*.ts`) : ne contrôler que
 # `extension.ts` laisserait passer un import de valeur écrit dans un module.
 if command -v python3 >/dev/null 2>&1; then
 python3 - <<'PY'
@@ -538,7 +538,7 @@ if command -v node >/dev/null 2>&1; then
         # Les sauts sont imprimés même en vert : un test d'AC qui se saute (prérequis
         # absent, profondeur) n'a rien prouvé, et seul ce compteur le montre.
         grep -E '^# skipped' "$tests_log"
-        pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+        pass "tests unitaires (mémoire, harness, client du harness, console, outillage)"
       fi
     else
       printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"

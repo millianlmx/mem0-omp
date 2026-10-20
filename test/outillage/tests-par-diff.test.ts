@@ -142,21 +142,14 @@ test(`${SLUG}/AC-3 : --scope=outillage liste les tests qui relancent check.sh en
   ]);
 });
 
-test(`${SLUG}/AC-4 : le contrat et omp-console/ élargissent la sélection`, () => {
+test(`${SLUG}/AC-4 : omp-console/ élargit la sélection`, () => {
   const dir = makeRepo();
   fs.appendFileSync(path.join(dir, "src", "chain.ts"), "export const plus = 2;\n");
 
-  // (b) le slug d'un test de feature figure dans le contrat courant.
-  fs.mkdirSync(path.join(dir, ".omp", "pipeline"), { recursive: true });
-  fs.writeFileSync(path.join(dir, ".gitignore"), ".omp/\n");
-  fs.writeFileSync(path.join(dir, ".omp", "pipeline", "contract.md"), "## Besoins\n\n- B-1 : la feature ma-feature.\n");
-  const withContract = run(dir, "test-files.sh", ["--scope=changed"]);
-  assert.deepEqual(lines(withContract.stdout), ["test/a/chain.test.ts", "test/req/ma-feature.test.ts"]);
-
-  // (d) un fichier de omp-console/ dans le diff retient les tests macOS.
+  // (c) un fichier de omp-console/ dans le diff retient les tests macOS.
   fs.appendFileSync(path.join(dir, "omp-console", "App.swift"), "let plus = 2\n");
   const withConsole = run(dir, "test-files.sh", ["--scope=changed"]);
-  assert.deepEqual(lines(withConsole.stdout), ["test/a/chain.test.ts", "test/a/ios-ecran.test.ts", "test/req/ma-feature.test.ts"]);
+  assert.deepEqual(lines(withConsole.stdout), ["test/a/chain.test.ts", "test/a/ios-ecran.test.ts"]);
 });
 
 test(`${SLUG}/AC-5 : test-ac.sh prouve chaque AC par les tests du diff en une passe : pass, absent, fail, sortie 1`, () => {

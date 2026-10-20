@@ -208,23 +208,11 @@ test("docs/AC-21 : PUBLISHING.md cite exactement les fichiers porteurs d'URL et 
   }
 });
 
-test("docs/AC-22 : le README conditionne l'exhaustivité du sommaire et décrit la bascule réelle", () => {
-  const readme = read("README.md");
-
-  // (1) La règle de vocabulaire du sommaire (voir summaryWording) : au moins
-  // deux affirmations d'exhaustivité, aucune inconditionnelle, chacune portant
-  // le seuil de troncature et ce qui se passe au-delà.
-  assert.deepEqual(summaryWording(readme, 2), [], "le README sur-promet le sommaire");
-
-  // (3) La bascule : cwd aménagé avant de basculer, en-tête de session exigé.
-  const panel = readme.slice(readme.indexOf("## Pipelines en cours"));
-  assert.match(panel, /répertoire de travail/, "le cwd enregistré par la cible n'est pas nommé");
-  assert.match(panel, /en-tête|marqueur/, "l'en-tête de session exigé n'est pas nommé");
-  assert.match(
-    panel,
-    /(d'abord|avant)[^.]{0,120}répertoire de travail/,
-    "l'aménagement du cwd avant la bascule n'est pas décrit",
-  );
+test("docs/AC-22 : le README conditionne l'exhaustivité du sommaire", () => {
+  // La règle de vocabulaire du sommaire (voir summaryWording) : au moins deux
+  // affirmations d'exhaustivité, aucune inconditionnelle, chacune portant le seuil
+  // de troncature et ce qui se passe au-delà.
+  assert.deepEqual(summaryWording(read("README.md"), 2), [], "le README sur-promet le sommaire");
 });
 
 test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le prérequis du jeton", () => {
@@ -281,27 +269,6 @@ test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le préreq
   for (const text of [release, token]) {
     assert.doesNotMatch(text, /GITHUB_TOKEN[^.]*publie/, "le jeton du dépôt n'est pas un repli de publication");
   }
-});
-
-test("docs/AC-23 : le README documente le plafond de runs parallèles du lot", () => {
-  const config = section(read("README.md"), "Config");
-
-  // La variable, son défaut et son rôle, au format exact des autres lignes.
-  assert.match(
-    config,
-    /^\| `MEM0_PIPELINE_SLOTS` \| `4` \| .+menés en parallèle.+$/m,
-    "la ligne du tableau « Config » porte la variable, son défaut et son rôle",
-  );
-  assert.match(
-    config,
-    /^\| `MEM0_PIPELINE_SLOTS` \| `4` \| .+attend un créneau/m,
-    "le rôle nomme le motif que /pipelines affiche",
-  );
-  assert.equal(
-    config.match(/MEM0_PIPELINE_SLOTS/g)?.length,
-    1,
-    "la variable n'est citée qu'une fois dans la section",
-  );
 });
 
 // AC-4 : ce que l'utilisateur lit à l'installation (la description des

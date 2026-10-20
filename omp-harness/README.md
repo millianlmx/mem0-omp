@@ -105,7 +105,7 @@ sur ton Mac.
 | Route | Effet |
 |---|---|
 | `GET /v1/status` | Compteurs par état, runs vivants, slots, `MemAvailable`, jetons par fournisseur. |
-| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?}` | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. |
+| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?}` | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
 | `GET /v1/runs/{id}` | Run, étapes, décisions, escalades, tests, artefacts. |
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
 | `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |

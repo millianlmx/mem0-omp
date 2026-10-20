@@ -416,7 +416,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
 
 test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.sh", (t) => {
   const dir = copyRepo();
-  for (const rel of ["omp-mem0-req/store.ts", "omp-mem0-memory/dedupe.ts"]) {
+  for (const rel of ["omp-mem0-req/harness.ts", "omp-mem0-memory/dedupe.ts"]) {
     const target = path.join(dir, rel);
     fs.writeFileSync(target, `export const pr = Promise.withResolvers<void>();\n${fs.readFileSync(target, "utf8")}`);
   }
@@ -429,7 +429,7 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
-  assert.ok(output(bad).includes("omp-mem0-req/store.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-mem0-req/harness.ts("), output(bad));
   assert.ok(output(bad).includes("omp-mem0-memory/dedupe.ts("), output(bad));
   assert.ok(output(bad).includes("error TS2550"), output(bad));
 });
@@ -447,7 +447,7 @@ function unusedChecksProbe(): { status: number | null; out: string } {
     const target = path.join(dir, rel);
     fs.writeFileSync(target, `${lines.join("\n")}\n${fs.readFileSync(target, "utf8")}`);
   };
-  prefix("omp-mem0-req/panelWidth.ts", [
+  prefix("omp-mem0-req/harness.ts", [
     "export function probeUnusedLocal(): void {",
     "  const unusedLocalProbe = 1;",
     "}",
@@ -481,7 +481,7 @@ test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans 
     return;
   }
   assert.ok(
-    out.includes("omp-mem0-req/panelWidth.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read."),
+    out.includes("omp-mem0-req/harness.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read."),
     out,
   );
 });
@@ -504,7 +504,7 @@ test("tsconfig-missing-unused-checks/AC-3 : un case non vide qui retombe dans le
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
   }
-  assert.ok(out.includes("omp-mem0-req/panelWidth.ts(7,5): error TS7029: Fallthrough case in switch."), out);
+  assert.ok(out.includes("omp-mem0-req/harness.ts(7,5): error TS7029: Fallthrough case in switch."), out);
 });
 
 test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous test/ fait échouer le type-check en la nommant", (t) => {

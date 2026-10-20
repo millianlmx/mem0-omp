@@ -41,36 +41,26 @@ const MARKETPLACE_UPDATE: Gesture = {
   marker: "omp plugin marketplace update mem0-omp",
 };
 const UPGRADE: Gesture = { label: "omp plugin upgrade", marker: "omp plugin upgrade omp-mem0-req@mem0-omp" };
-const SERVICE_INSTALL: Gesture = { label: "/service install", marker: "/service install" };
+const RELAUNCH: Gesture = { label: "relance de omp", marker: "Relance `omp`" };
 const PLUGIN_LIST: Gesture = { label: "vérification plugin (omp plugin list)", marker: "omp plugin list" };
 const PLUGIN_LINK_TARGET: Gesture = {
   label: "vérification plugin (lien node_modules)",
   marker: "ls -la ~/.omp/plugins/node_modules/omp-mem0-req",
 };
-const SERVICE_STATUS: Gesture = { label: "vérification service (/service status)", marker: "/service status" };
 const LINK: Gesture = { label: "omp plugin link", marker: "omp plugin link <worktree>" };
 
-const INSTALL_SEQUENCE: Gesture[] = [
-  MARKETPLACE_UPDATE,
-  UPGRADE,
-  SERVICE_INSTALL,
-  PLUGIN_LIST,
-  PLUGIN_LINK_TARGET,
-  SERVICE_STATUS,
-];
+const INSTALL_SEQUENCE: Gesture[] = [MARKETPLACE_UPDATE, UPGRADE, RELAUNCH, PLUGIN_LIST, PLUGIN_LINK_TARGET];
 
 const BRANCH_SEQUENCE: Gesture[] = [
   LINK,
-  SERVICE_INSTALL,
+  RELAUNCH,
   PLUGIN_LIST,
   PLUGIN_LINK_TARGET,
-  SERVICE_STATUS,
   MARKETPLACE_UPDATE,
   UPGRADE,
-  SERVICE_INSTALL,
+  RELAUNCH,
   PLUGIN_LIST,
   PLUGIN_LINK_TARGET,
-  SERVICE_STATUS,
 ];
 
 /**
@@ -114,18 +104,14 @@ const procedure = (title: string) => subsection(section(read("PUBLISHING.md"), "
 const INSTALL = "Installer une nouvelle version";
 const BRANCH = "Tester une branche avant sa release";
 
-test("upgrade-procedure-gaps-in-publishing/AC-1 : l'installation enchaîne marketplace update, upgrade, /service install puis les vérifications plugin et service", () => {
+test("upgrade-procedure-gaps-in-publishing/AC-1 : l'installation enchaîne marketplace update, upgrade, relance de omp puis les vérifications du plugin", () => {
   assert.deepEqual(procedureViolations(procedure(INSTALL), INSTALL_SEQUENCE), []);
 });
 
-test("upgrade-procedure-gaps-in-publishing/AC-2 : le pas /service install exige une session ouverte après l'upgrade et aucun run en cours", () => {
-  const step = windowBetween(procedure(INSTALL), UPGRADE.marker, SERVICE_INSTALL.marker);
-  for (const phrase of [
-    "session OMP ouverte après l'upgrade",
-    "aucun run de pipeline ne tourne",
-    "interrompt le maillon en cours",
-  ]) {
-    assert.ok(step.includes(phrase), `pas /service install sans « ${phrase} » : ${step}`);
+test("upgrade-procedure-gaps-in-publishing/AC-2 : le pas de relance dit pourquoi /reload-plugins ne suffit pas, et qu'aucun run n'est coupé", () => {
+  const step = windowBetween(procedure(INSTALL), UPGRADE.marker, PLUGIN_LIST.marker);
+  for (const phrase of ["pas les modules d'extension", "relancer ne coupe aucun run"]) {
+    assert.ok(step.includes(phrase), `pas de relance sans « ${phrase} » : ${step}`);
   }
 });
 
@@ -136,7 +122,7 @@ test("upgrade-procedure-gaps-in-publishing/AC-3 : le pas marketplace update dit 
   }
 });
 
-test("upgrade-procedure-gaps-in-publishing/AC-5 : tester une branche par link puis revenir à la version publiée, chaque fois suivi de /service install et des vérifications", () => {
+test("upgrade-procedure-gaps-in-publishing/AC-5 : tester une branche par link puis revenir à la version publiée, chaque fois suivi de la relance de omp et des vérifications", () => {
   assert.deepEqual(procedureViolations(procedure(BRANCH), BRANCH_SEQUENCE), []);
 });
 

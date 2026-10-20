@@ -84,7 +84,8 @@ type Live = {
 };
 
 
-export type NewRunInput = { repo: string; title: string; request: string; slug?: string; modules?: string[] };
+/** `req` : le compte rendu de besoins déjà établi en session interactive (/req local) — le run part de /specs. */
+export type NewRunInput = { repo: string; title: string; request: string; slug?: string; modules?: string[]; req?: string };
 
 export type NewProjectInput = { repo: string; title: string; features: { title: string; request: string; slug?: string; modules?: string[] }[] };
 
@@ -912,6 +913,8 @@ export class Orchestrator {
   createRun(input: NewRunInput & { projectId?: string; projectOrder?: number }): RunRow {
     this.#repo(input.repo);
     if (input.title.trim() === "" || input.request.trim() === "") throw new HarnessError(400, "title et request sont requis");
+    const req = input.req?.trim() ?? "";
+    if (req !== "" && !/^##\s+Besoins/m.test(req)) throw new HarnessError(400, "req : la section `## Besoins` manque");
     const slug = this.#freeSlug(input.repo, slugify(input.slug ?? input.title));
     const run = this.#deps.store.createRun({
       id: newId("r"),
@@ -921,8 +924,13 @@ export class Orchestrator {
       request: input.request.trim(),
       branch: `harness/${slug}`,
       modules: input.modules ?? [],
+      ...(req !== "" ? { step: "specs" as const } : {}),
       ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
     });
+    if (req !== "") {
+      this.#deps.store.putArtifact(run.id, "req.md", `${req}\n`, null);
+      void this.#deps.oracle.retain(this.#repo(input.repo).scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, ["harness", "besoins"]);
+    }
     this.#event("run_created", run.id, { repo: run.repo, slug: run.slug, title: run.title, modules: run.modules, projectId: run.projectId });
     void this.tick();
     return run;

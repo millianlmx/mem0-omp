@@ -123,11 +123,13 @@ export function createHandler(options: HttpOptions): http.RequestListener {
         const body = await readBody(req);
         const modules = stringList(body.modules, "modules");
         const slug = text(body, "slug", false);
+        const needs = text(body, "req", false);
         const run = orchestrator.createRun({
           repo: text(body, "repo"),
           title: text(body, "title"),
           request: text(body, "request"),
           ...(slug ? { slug } : {}),
+          ...(needs ? { req: needs } : {}),
           ...(modules ? { modules } : {}),
         });
         send(res, 201, { run });

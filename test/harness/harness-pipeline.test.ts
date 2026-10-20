@@ -419,3 +419,21 @@ test("harness-pipeline/AC-13 : un audit sans propositions est relancé une fois 
     await slow.orchestrator.stop();
   }
 });
+
+
+test("harness-pipeline/AC-14 : un run créé avec son compte rendu de besoins (/req interactif) part de /specs, qui le lit", async () => {
+  const world = fakeWorld({ specs: [OK.specs], impl: [OK.impl], review: [OK.review] });
+  await world.orchestrator.start();
+  try {
+    assert.throws(() => world.orchestrator.createRun({ repo: "demo", title: "Sans section", request: "x", req: "des besoins" }), /## Besoins/);
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Export clarifié", request: "Exporter", req: "## Besoins\nB-1 : exporter en CSV\n" });
+    await until(world, run.id, ["merged", "failed", "awaiting_human"]);
+    assert.equal(world.store.getRun(run.id)?.state, "merged", stateOf(world, run.id));
+    assert.deepEqual(world.store.listSteps(run.id).map(step => step.kind), ["specs", "impl", "review"]);
+    assert.ok(world.oracle.retained.some(m => /Compte rendu de besoins — « Export clarifié »/.test(m.text)));
+    // Le runner de /specs a trouvé req.md dans son worktree.
+    assert.equal(world.store.getArtifact(run.id, "req.md"), "## Besoins\nB-1 : exporter en CSV\n");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});

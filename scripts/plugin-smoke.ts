@@ -40,7 +40,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PILOT_WRITE_APPROVAL } from "../omp-mem0-req/pilotTools.ts";
+import { LAUNCH_APPROVAL } from "../omp-mem0-req/extension.ts";
 
 /** Racine du dépôt, déduite du script (comme check.sh) — pas du cwd appelant. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -258,22 +258,26 @@ const INVOCATIONS: Record<string, Invocation> = {
   },
 
   "omp-mem0-req": async ({ session, notes, ok, bad }) => {
+    // Sans harness configuré, la commande refuse en nommant ce qui manque, sans rien envoyer.
+    // Vides, pas absentes : elles masquent aussi un ~/.omp/harness.json de la machine.
+    process.env.HARNESS_URL = "";
+    process.env.HARNESS_TOKEN = "";
     notes.length = 0;
     try {
-      const handled = await within("/req", () => session.prompt("/req"));
+      const handled = await within("/pipelines", () => session.prompt("/pipelines"));
       const text = notes.join(" | ");
-      !handled && text.includes("nom de feature requis")
-        ? ok(`/req invoqué — « ${text} »`)
-        : bad(`/req : handled=${handled}, notes=${text || "(aucune)"}`);
+      !handled && text.includes("harness non configuré")
+        ? ok(`/pipelines invoqué — « ${text} »`)
+        : bad(`/pipelines : handled=${handled}, notes=${text || "(aucune)"}`);
     } catch (error) {
-      bad(`/req : ${error instanceof Error ? error.message : String(error)}`);
+      bad(`/pipelines : ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // APPROBATION des outils de pilotage (outils-de-pilotage-du-mod-le, AC-8) : la
-    // déclaration `PILOT_WRITE_APPROVAL`, résolue par le VRAI `resolveApproval` de l'hôte,
-    // demande l'utilisateur dans les trois modes, avec ou sans politique `allow`.
-    // Import de l'hôte par chemin absolu (cf. pièges en tête) ; `pilotTools.ts` (import statique)
-    // n'importe de l'hôte que des types : il se charge sans résolution de paquet.
+    // APPROBATION des outils qui créent du travail sur le harness : la déclaration
+    // `LAUNCH_APPROVAL`, résolue par le VRAI `resolveApproval` de l'hôte, demande
+    // l'utilisateur dans les trois modes, avec ou sans politique `allow`. Import de
+    // l'hôte par chemin absolu (cf. pièges en tête) ; `extension.ts` (import statique)
+    // n'importe de l'hôte que des types.
     try {
       const { resolveApproval } = (await import(path.join(HOST_PKG, "src", "tools", "approval.ts"))) as {
         resolveApproval: (
@@ -283,11 +287,11 @@ const INVOCATIONS: Record<string, Invocation> = {
           userConfig: Record<string, unknown>,
         ) => { policy: string };
       };
-      for (const name of ["pipeline_command", "pipeline_advance"]) {
+      for (const name of ["harness_launch", "harness_project"]) {
         const wrong: string[] = [];
         for (const mode of ["always-ask", "write", "yolo"]) {
           for (const cfg of [{}, { [name]: "allow" }]) {
-            const policy = resolveApproval({ name, approval: PILOT_WRITE_APPROVAL }, {}, mode, cfg).policy;
+            const policy = resolveApproval({ name, approval: LAUNCH_APPROVAL }, {}, mode, cfg).policy;
             if (policy !== "prompt") wrong.push(`${mode}/${JSON.stringify(cfg)} → ${policy}`);
           }
         }
@@ -299,13 +303,11 @@ const INVOCATIONS: Record<string, Invocation> = {
       bad(`contrôle d'approbation : ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // Les quatre outils sont ceux d'une session INTERACTIVE : ils sont inscrits auprès de
-    // l'hôte réel (schémas acceptés par son chargeur) ou la session n'a pas d'UI.
-    const pilot = ["pipeline_state", "pipeline_command", "pipeline_session_tail", "pipeline_advance"];
-    const present = pilot.filter((name) => session.getToolByName?.(name));
-    present.length === pilot.length
-      ? ok(`outils de pilotage chargés par l'hôte : ${present.join(", ")}`)
-      : bad(`outils de pilotage absents du runtime : ${pilot.filter((n) => !present.includes(n)).join(", ")}`);
+    const tools = ["harness_launch", "harness_project"];
+    const present = tools.filter((name) => session.getToolByName?.(name));
+    present.length === tools.length
+      ? ok(`outils du harness chargés par l'hôte : ${present.join(", ")}`)
+      : bad(`outils du harness absents du runtime : ${tools.filter((n) => !present.includes(n)).join(", ")}`);
   },
 };
 
