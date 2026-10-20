@@ -1,24 +1,100 @@
 #!/usr/bin/env bash
 # Type-check des DEUX plugins et de test/ contre les types de l'hôte OMP
-# (specs S-1..S-5 / lot BR-1).
+# (specs S-1..S-5 / lot BR-1 ; tsc épinglé local : typecheck-fetches-tsc-from-network).
 #
-# Deux programmes, dans cet ordre :
-#   1. tsconfig.json       — les sources des deux plugins, en lib ES2023 ;
-#   2. tsconfig.test.json  — test/**, en lib ES2024 (hérite du socle).
-# Les deux tournent SANS court-circuit : la sortie de chacun est transmise telle
-# quelle (chemins `fichier.ts(l,c): error TSxxxx`), et le script sort non nul dès
-# qu'un seul a échoué.
+#   bash scripts/typecheck.sh             type-check, SANS réseau
+#   bash scripts/typecheck.sh --prepare   installe le TypeScript épinglé (réseau
+#                                         requis, une fois) ; idempotent
 #
-# La racine des types de l'hôte est résolue dans cet ordre :
-#   1. MEM0_OMP_HOST_TYPES (posée par la CI) — déclarée, elle fait AUTORITÉ : si
-#      elle n'apporte pas @oh-my-pi, on échoue en la nommant plutôt que de
-#      retomber en silence sur une autre racine (le succès silencieux d'AC-5) ;
-#   2. l'installation globale de bun ($BUN_INSTALL/install/global/node_modules) ;
-#   3. `npm root -g`, s'il contient @oh-my-pi ;
-#   4. sinon la ligne « types de l'hôte absents » et sortie 0 — jamais un ✓.
+# tsc n'est jamais téléchargé implicitement : c'est le TypeScript de TS_VERSION
+# (ci-dessous), installé par `--prepare` dans .typecheck/typescript (gitignoré), lancé par
+# `node .typecheck/typescript/node_modules/typescript/bin/tsc`. Aucun npm exec,
+# npm install ni npx hors `--prepare`.
+#
+# Ordre de vérification :
+#   1. le TypeScript épinglé — absent ou d'une autre version, le script sort 1 en
+#      citant `bash scripts/typecheck.sh --prepare`, AVANT de chercher les types
+#      de l'hôte et sans lancer tsc (un clone neuf est rouge, jamais vert) ;
+#   2. la racine des types de l'hôte, dans cet ordre :
+#      a. MEM0_OMP_HOST_TYPES (posée par la CI) — déclarée, elle fait AUTORITÉ :
+#         si elle n'apporte pas @oh-my-pi, on échoue en la nommant plutôt que de
+#         retomber en silence sur une autre racine (le succès silencieux d'AC-5) ;
+#      b. l'installation globale de bun ($BUN_INSTALL/install/global/node_modules) ;
+#      c. `npm root -g`, s'il contient @oh-my-pi ;
+#      d. sinon la ligne « types de l'hôte absents » et sortie 0 — jamais un ✓.
+#   3. deux programmes, dans cet ordre :
+#      - tsconfig.json       — les sources des deux plugins, en lib ES2023 ;
+#      - tsconfig.test.json  — test/**, en lib ES2024 (hérite du socle).
+#      Les deux tournent SANS court-circuit : la sortie de chacun est transmise
+#      telle quelle (chemins `fichier.ts(l,c): error TSxxxx`), et le script sort
+#      non nul dès qu'un seul a échoué.
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
+
+# La version épinglée : seule source (D-2).
+TS_VERSION=5.9.3
+TS_DIR=.typecheck/typescript
+TS_PKG="$TS_DIR/node_modules/typescript/package.json"
+TSC="$TS_DIR/node_modules/typescript/bin/tsc"
+
+USAGE="usage: bash scripts/typecheck.sh [--prepare]"
+MODE="check"
+case "$#:${1:-}" in
+  0:) MODE="check" ;;
+  1:--prepare) MODE="prepare" ;;
+  *) echo "$USAGE" >&2; exit 2 ;;
+esac
+
+# Ce que porte .typecheck/typescript, sans lancer tsc : `absent` (package.json
+# ou bin/tsc manquant, lien cassé compris), la version du package.json, ou
+# `version illisible` (JSON illisible, champ absent).
+ts_found() {
+  if [ ! -f "$TS_PKG" ] || [ ! -f "$TSC" ]; then
+    echo "absent"
+    return
+  fi
+  local version
+  version="$(node -e '
+    try {
+      const v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version;
+      process.stdout.write(typeof v === "string" && v !== "" ? v : "");
+    } catch {}
+  ' "$TS_PKG" 2>/dev/null)"
+  echo "${version:-version illisible}"
+}
+
+if [ "$MODE" = "prepare" ]; then
+  FOUND="$(ts_found)"
+  if [ "$FOUND" = "$TS_VERSION" ]; then
+    echo "  déjà préparé : $TS_DIR (TypeScript $TS_VERSION)"
+    exit 0
+  fi
+  # Un lien (copie jetable) est retiré sans toucher sa cible : npm écrirait
+  # sinon dans le TypeScript de l'arbre source.
+  rm -rf "$TS_DIR"
+  if ! npm install --no-save --no-audit --no-fund --prefix "$TS_DIR" "typescript@$TS_VERSION"; then
+    echo "  ✗ installation de TypeScript $TS_VERSION impossible : npm install a échoué (réseau requis)"
+    exit 1
+  fi
+  FOUND="$(ts_found)"
+  if [ "$FOUND" != "$TS_VERSION" ]; then
+    echo "  ✗ installation de TypeScript $TS_VERSION incomplète : $FOUND trouvé dans $TS_DIR"
+    exit 1
+  fi
+  echo "  ✓ TypeScript $TS_VERSION installé dans $TS_DIR"
+  exit 0
+fi
+
+FOUND="$(ts_found)"
+if [ "$FOUND" = "absent" ]; then
+  echo "  ✗ TypeScript $TS_VERSION absent de $TS_DIR — installe-le (une fois, réseau requis) : bash scripts/typecheck.sh --prepare"
+  exit 1
+fi
+if [ "$FOUND" != "$TS_VERSION" ]; then
+  echo "  ✗ TypeScript $TS_VERSION attendu, $FOUND trouvé dans $TS_DIR — réinstalle-le : bash scripts/typecheck.sh --prepare"
+  exit 1
+fi
 
 ROOT=""
 if [ -n "${MEM0_OMP_HOST_TYPES:-}" ]; then
@@ -45,14 +121,14 @@ fi
 
 # Le lien est recréé à chaque exécution et n'est jamais commité (.gitignore).
 # Il n'est créé qu'après une résolution réussie : une racine fautive ne laisse
-# aucun artefact.
-rm -rf .typecheck
+# aucun artefact. Seul le lien est rejoué : .typecheck/typescript n'est touché
+# que par --prepare.
+rm -rf .typecheck/node_modules
 mkdir -p .typecheck
 ln -sfn "$ROOT" .typecheck/node_modules
 
-# tsc est rapatrié par npm exec (aucun typescript installé localement). Sans réseau
-# ni cache npm, cette invocation échoue : l'échec remonte tel quel, bruyamment.
+echo "  · tsc : $TSC (TypeScript $TS_VERSION)"
 STATUS=0
-npm exec --yes --package=typescript@5.9.3 -- tsc -p tsconfig.json || STATUS=1
-npm exec --yes --package=typescript@5.9.3 -- tsc -p tsconfig.test.json || STATUS=1
+node "$TSC" -p tsconfig.json || STATUS=1
+node "$TSC" -p tsconfig.test.json || STATUS=1
 exit "$STATUS"

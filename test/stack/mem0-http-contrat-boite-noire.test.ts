@@ -21,6 +21,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { CODES_SORTIE } from "../../scripts/mem0-http-contrat/contrat.ts";
 import { DIMENSIONS, demarrerFauxOpenAI, plonger } from "../../scripts/mem0-http-contrat/faux-openai.ts";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = suite lancée à la main ou par check.sh racine. */
@@ -236,18 +237,15 @@ async function runLourd(muter?: Mutation): Promise<RunLourd> {
   }
 }
 
-const exigeRust = (): boolean => process.env.MEM0_OMP_REQUIRE_RUST === "1";
-
-/** Pièce manquante : échec sous MEM0_OMP_REQUIRE_RUST (CI), saut annoncé sinon. */
-function manque(t: TestContext, raison: string): void {
-  if (exigeRust()) assert.fail(raison);
-  t.skip(raison);
+/** Pièce manquante : échec sous MEM0_OMP_REQUIRE_RUST=1 (CI), saut annoncé sinon. */
+function manque(t: TestContext, prerequis: string, consequence: string): void {
+  prerequisAbsent(t, prerequis, consequence, process.env.MEM0_OMP_REQUIRE_RUST === "1" ? "MEM0_OMP_REQUIRE_RUST=1" : null);
 }
 
 /** Pièce manquante au run : `false` = sauté. */
 function piecesPresentes(t: TestContext, run: RunLourd): boolean {
   if (run.code !== CODES_SORTIE.nonExecute) return true;
-  manque(t, run.sortie.split("\n")[0] ?? "");
+  manque(t, run.sortie.split("\n")[0] ?? "", "contrat boîte noire non exécuté");
   return false;
 }
 
@@ -263,7 +261,7 @@ async function binairePret(t: TestContext): Promise<boolean> {
     : Promise.resolve("cargo absent");
   const build = await construction;
   if (build === "cargo absent") {
-    manque(t, "cargo absent : contrat contre mem0-rs non exécuté");
+    manque(t, "cargo", "contrat contre mem0-rs non exécuté");
     return false;
   }
   assert.equal(build.code, 0, build.sortie);

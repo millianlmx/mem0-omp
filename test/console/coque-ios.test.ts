@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = `node --test test/console/coque-ios.test.ts`. */
@@ -452,7 +453,7 @@ function xcodebuildUsable(): boolean {
 // AC-1 : le projet Xcode, son format de dossiers synchronisés et son câblage sur
 // ConsoleCore. La garde textuelle tourne partout ; la compilation réelle d'un
 // fichier neuf n'est tentée que sur macOS, hors copie, avec Xcode utilisable.
-test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câblé sur ConsoleCore", () => {
+test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câblé sur ConsoleCore", (t) => {
   assert.deepEqual(pbxprojFaults(ROOT), [], "l'arbre réel doit être sain");
 
   // Faute plantée : le format des dossiers synchronisés est ce qui fait qu'un
@@ -464,19 +465,24 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
 
   // Preuve réelle (S-1) : un .swift neuf dans le dossier de l'app est compilé
   // sans qu'aucune ligne du .xcodeproj n'ait changé.
-  if (process.platform === "darwin" && !IN_COPY && xcodebuildUsable()) {
-    const built = shared.fresh();
-    const marker = path.join(built, "omp-console", "ios", "OMPConsoleIOS", "NouvelleSection.swift");
-    fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .home\n");
-    const before = fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8");
-    const run = spawnSync("bash", ["scripts/ios-build.sh", "--no-tests"], { cwd: built, encoding: "utf8", timeout: 900_000 });
-    assert.equal(run.status, 0, output(run));
-    assert.equal(
-      fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8"),
-      before,
-      "le .pbxproj ne doit pas avoir changé",
-    );
+  // Hors macOS ou dans une copie, rien à prouver ici : ce n'est pas un prérequis
+  // manquant. Sur macOS, un Xcode inutilisable en est un.
+  if (process.platform !== "darwin" || IN_COPY) return;
+  if (!xcodebuildUsable()) {
+    prerequisAbsent(t, "Xcode utilisable (xcodebuild -showsdks)", "compilation réelle d'un fichier neuf non vérifiée");
+    return;
   }
+  const built = shared.fresh();
+  const marker = path.join(built, "omp-console", "ios", "OMPConsoleIOS", "NouvelleSection.swift");
+  fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .home\n");
+  const before = fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8");
+  const run = spawnSync("bash", ["scripts/ios-build.sh", "--no-tests"], { cwd: built, encoding: "utf8", timeout: 900_000 });
+  assert.equal(run.status, 0, output(run));
+  assert.equal(
+    fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8"),
+    before,
+    "le .pbxproj ne doit pas avoir changé",
+  );
 });
 
 test("coque-ios/AC-2 : les sources de l'app ne recopient ni liste, ni libellé, ni rawValue de section", () => {

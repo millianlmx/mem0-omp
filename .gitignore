@@ -6,7 +6,7 @@ mem0-stack/mem0-rs-data/
 mem0-stack/migration/
 
 node_modules/
-# Racine de types temporaire de scripts/typecheck.sh (lien vers l'installation de l'hôte)
+# scripts/typecheck.sh : TypeScript épinglé (typescript/, par --prepare) et lien vers les types de l'hôte (node_modules)
 .typecheck/
 *.log
 .DS_Store

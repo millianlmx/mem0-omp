@@ -24,7 +24,7 @@ import * as path from "node:path";
 
 import { bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
-import { ROOT, childEnv, tmpdir } from "../support/repo.ts";
+import { ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
@@ -128,6 +128,9 @@ function copyRepo(dir: string): void {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(source, target);
   }
+  // `.typecheck/` est ignoré, donc hors de la liste : le TypeScript épinglé de
+  // ROOT est relié (la garde `git status --porcelain` de la simulation l'ignore).
+  linkPinnedTypescript(dir);
 }
 
 /** Le hook du remote nu : refuser tout push sur `refs/heads/main`, comme la

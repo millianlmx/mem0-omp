@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { JETON_OPENAI, MODELE_CHAT, MODELE_EMBEDDINGS, demarrerFauxOpenAI, plonger, type FauxOpenAI } from "../../scripts/mem0-http-contrat/faux-openai.ts";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = suite lancée à la main ou par check.sh racine. */
@@ -93,9 +94,8 @@ function envEnfant(poses: Record<string, string>): Record<string, string> {
 }
 
 /** Pièce manquante : échec sous le REQUIRE donné (CI), saut annoncé sinon. */
-function manque(t: TestContext, raison: string, exige: boolean): void {
-  if (exige) assert.fail(raison);
-  t.skip(raison);
+function manque(t: TestContext, prerequis: string, consequence: string, exige: boolean): void {
+  prerequisAbsent(t, prerequis, consequence, exige ? "MEM0_OMP_REQUIRE_RUST=1" : null);
 }
 
 const cargoPresent = (): boolean => spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
@@ -128,7 +128,7 @@ async function preparer(t: TestContext): Promise<boolean> {
     return false;
   }
   if (!cargoPresent()) {
-    manque(t, "cargo absent du PATH", REQUIRE_RUST);
+    manque(t, "cargo", "serveurs réels non démarrés", REQUIRE_RUST);
     return false;
   }
   construction ??= executer("cargo", ["build", "--manifest-path", MANIFESTE, "--locked"], envEnfant({}));
@@ -286,7 +286,7 @@ async function qdrantOuSaut(t: TestContext): Promise<QdrantJetable | null> {
     return await demarrerQdrant();
   } catch (e) {
     if (!(e instanceof NonExecute)) throw e;
-    manque(t, e.message, REQUIRE_RUST);
+    manque(t, e.message, "import depuis Qdrant non exécuté", REQUIRE_RUST);
     return null;
   }
 }

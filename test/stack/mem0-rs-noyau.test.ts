@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = suite lancée à la main ou par check.sh racine. */
@@ -66,9 +67,8 @@ function lancer(args: string[], env: Record<string, string>, cwd = ROOT): Promis
 }
 
 /** Pièce manquante : échec sous le REQUIRE donné (CI), saut annoncé sinon. */
-function manque(t: TestContext, raison: string, exige: boolean): void {
-  if (exige) assert.fail(raison);
-  t.skip(raison);
+function manque(t: TestContext, prerequis: string, consequence: string, exige: boolean): void {
+  prerequisAbsent(t, prerequis, consequence, exige ? "MEM0_OMP_REQUIRE_RUST=1" : null);
 }
 
 const cargoPresent = (): boolean => spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
@@ -174,7 +174,7 @@ test("mem0-rs-noyau/AC-13 : une fixture de rang divergente fait échouer le cont
   }
   const exige = process.env.MEM0_OMP_REQUIRE_RUST === "1";
   if (!cargoPresent()) {
-    manque(t, "cargo absent : contrat contre mem0-rs non exécuté", exige);
+    manque(t, "cargo", "contrat contre mem0-rs non exécuté", exige);
     return;
   }
   // Le binaire que vise --start-rs (même CARGO_TARGET_DIR) : à jour, y compris
@@ -192,7 +192,7 @@ test("mem0-rs-noyau/AC-13 : une fixture de rang divergente fait échouer le cont
     }),
   );
   if (r.code === 2) {
-    manque(t, r.sortie.split("\n")[0] ?? "contrat non exécuté", exige);
+    manque(t, r.sortie.split("\n")[0] ?? "", "contrat contre mem0-rs non exécuté", exige);
     return;
   }
   attendreEcartDeRang(r, requete);
@@ -226,7 +226,7 @@ test("mem0-rs-noyau/AC-16 : un avertissement clippy ou un cargo test en échec f
     return;
   }
   if (!cargoPresent()) {
-    manque(t, "cargo absent : section rust non exécutée", process.env.MEM0_OMP_REQUIRE_RUST === "1");
+    manque(t, "cargo", "section rust non exécutée", process.env.MEM0_OMP_REQUIRE_RUST === "1");
     return;
   }
   // Le contrat que la section joue ensuite dans la copie n'est pas l'objet
