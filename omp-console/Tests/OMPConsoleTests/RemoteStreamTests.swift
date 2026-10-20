@@ -1,6 +1,6 @@
 // Preuves du flux temps réel (S-13) : un vrai client `URLSession` en flux sur un
 // vrai serveur, qui reçoit ce qui change SANS émettre de nouvelle requête de
-// lecture — ni pour le magasin, ni pour une session vivante.
+// lecture — appareils et composants du Mac.
 
 import Combine
 import ConsoleCore
@@ -73,89 +73,6 @@ private final class SSECollector {
     }
 }
 
-/// Un fichier de session réel : l'en-tête puis une entrée utilisateur.
-private func writeSessionFile(_ path: String, userLines: [String]) {
-    var lines = [
-        #"{"type":"session","version":3,"id":"session-flux","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/flux"}"#
-    ]
-    lines.append(contentsOf: userLines)
-    try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
-}
-
-/// Ajoute une ligne à un fichier de session DÉJÀ écrit : c'est le geste d'une
-/// session vivante (append), pas un remplacement atomique.
-private func appendSessionLine(_ path: String, _ line: String) {
-    guard let handle = FileHandle(forWritingAtPath: path) else { return }
-    defer { try? handle.close() }
-    _ = try? handle.seekToEnd()
-    try? handle.write(contentsOf: Data((line + "\n").utf8))
-}
-
-private func userLine(_ index: Int, _ text: String) -> String {
-    """
-    {"type":"message","id":"e\(index)","parentId":null,"timestamp":"2026-01-01T00:00:0\(index % 10).000Z",\
-    "message":{"role":"user","content":[{"type":"text","text":"\(text)"}]}}
-    """
-}
-
-@MainActor
-@Test("api-distante-du-console/AC-15 : le magasin qui change et une session vivante produisent une mise à jour poussée sans nouvelle requête")
-func storeChangeAndLiveSessionPushUpdates() async throws {
-    let store = StoreFixture()
-    let sessionFile = store.root + "/session.jsonl"
-    writeSessionFile(sessionFile, userLines: [userLine(1, "premier")])
-
-    let runId = fixtureId(0x51)
-    store.publish(.running, "\(runId).json", object: runningObject(
-        id: runId,
-        cwd: store.root + "/worktree",
-        phaseStartedAt: fixtureT0 - 5_000,
-        updatedAt: fixtureT0 - 1_000,
-        ownerPid: Double(getpid()),
-        sessionFile: sessionFile
-    ))
-
-    let stack = try await RemoteStack.make(stateDir: store.root)
-    defer { stack.stop() }
-    let token = try await stack.pair()
-
-    let collector = SSECollector()
-    collector.start(stack.request("GET", "/v1/stream", token: token))
-    defer { collector.stop() }
-
-    // À l'ouverture : `hello` puis l'instantané courant, sans `GET` initial.
-    let hello = try #require(
-        await collector.waitFor("hello"),
-        "l'évènement `hello` doit ouvrir le flux (échec=\(collector.failure ?? "aucun"))"
-    )
-    #expect(hello.contains("\"protocolVersion\":\(ConsoleAPI.protocolVersion)"))
-    let initial = try #require(await collector.waitFor("store"), "l'instantané courant doit suivre")
-    #expect(initial.contains("\"running\""))
-
-    // 1. Le magasin change : l'évènement `store` arrive SANS nouvelle requête du client.
-    let historyId = fixtureId(0x52)
-    store.publish(.history, "\(historyId).json", object: historyObject(
-        id: historyId,
-        cwd: store.root + "/worktree",
-        phaseStartedAt: fixtureT0 - 9_000,
-        endedAt: fixtureT0 - 2_000
-    ))
-    let pushed = try #require(
-        await collector.waitFor("store", occurrence: 2),
-        "un changement du magasin doit être poussé"
-    )
-    #expect(pushed.contains(historyId), "l'instantané poussé porte le changement : \(pushed.prefix(400))")
-
-    // 2. Une session VIVANTE produit : l'évènement `sessions` porte ce qui s'ajoute.
-    appendSessionLine(sessionFile, userLine(2, "deuxième"))
-    let sessions = try #require(
-        await collector.waitFor("sessions"),
-        "un ajout dans une session vivante doit être poussé (échec=\(collector.failure ?? "aucun"))"
-    )
-    #expect(sessions.contains("session.jsonl"), "l'évènement nomme le fichier de session")
-    #expect(sessions.contains("deuxième"), "et porte l'entrée ajoutée")
-}
-
 @MainActor
 @Test("un flux refusé est la réponse JSON 401 habituelle, jamais un flux")
 func refusedStreamIsJSONUnauthorized() async throws {
@@ -217,9 +134,11 @@ func heartbeatIsSent() async throws {
 }
 
 @MainActor
-@Test("à l'ouverture, l'ordre réel des trames est `hello`, `store`, `conduite`, puis `devices`")
-func openingFramesAreHelloStoreConduiteThenDevices() async throws {
-    let stack = try await RemoteStack.make()
+@Test("à l'ouverture, l'ordre réel des trames est `hello`, `devices`, puis `components`")
+func openingFramesAreHelloDevicesThenComponents() async throws {
+    let stack = try await RemoteStack.make(
+        components: { RemoteComponentsPayload(ompInstalled: true, ompPath: "/tmp/omp/bin/omp", setupBanner: nil) }
+    )
     defer { stack.stop() }
     let token = try await stack.pair()
 
@@ -227,21 +146,23 @@ func openingFramesAreHelloStoreConduiteThenDevices() async throws {
     collector.start(stack.request("GET", "/v1/stream", token: token))
     defer { collector.stop() }
 
-    _ = await collector.waitFor("hello")
-    _ = await collector.waitFor("store")
-    _ = await collector.waitFor("conduite")
-    _ = await collector.waitFor("devices")
-    // La connexion est déclarée au registre APRÈS les trois trames initiales : le
-    // `devices` que `markConnected` publie arrive donc en dernier, et une seule
-    // fois (S-13, S-6). Le harnais câble `changeHandler` comme la production.
-    #expect(Array(collector.events.map(\.name).prefix(4)) == ["hello", "store", "conduite", "devices"])
+    for name in ["hello", "devices", "components"] {
+        _ = await collector.waitFor(name)
+    }
+    // La connexion est déclarée au registre juste après `hello` : le `devices` que
+    // `markConnected` publie précède donc `components` (S-13, S-6). Le harnais
+    // câble `changeHandler` comme la production.
+    #expect(Array(collector.events.map(\.name).prefix(3)) == ["hello", "devices", "components"])
+    let components = try #require(collector.events.first { $0.name == "components" }?.data)
+    let payload = try JSONDecoder().decode(RemoteComponentsPayload.self, from: Data(components.utf8))
+    #expect(payload.ompInstalled)
+    #expect(payload.ompPath == "/tmp/omp/bin/omp")
 }
 
 @MainActor
 @Test("deux flux du même appareil sont autorisés et reçoivent tous les deux les évènements")
 func twoStreamsOfTheSameDeviceBothReceive() async throws {
-    let store = StoreFixture()
-    let stack = try await RemoteStack.make(stateDir: store.root)
+    let stack = try await RemoteStack.make()
     defer { stack.stop() }
     let token = try await stack.pair()
 
@@ -261,44 +182,6 @@ func twoStreamsOfTheSameDeviceBothReceive() async throws {
     #expect(RemoteStreamHub.backlogLimit == 64, "la borne du client lent est celle du contrat")
 }
 
-@MainActor
-@Test("une escalade de conduite est poussée entière sur l'évènement `conduite`")
-func conduiteDialogIsPushed() async throws {
-    let store = StoreFixture()
-    let repoRoot = store.root + "/depot"
-    try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
-    store.publish(.lots, "\(fixtureId(0xE1)).json", object: lotObject(id: fixtureId(0xE1), repoRoot: repoRoot))
-
-    let transport = ScriptedServiceTransport()
-    stubProjectConduite(transport, repo: repoRoot)
-    openServiceStream(transport)
-    let project = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: store.root)
-    let stack = try await RemoteStack.make(stateDir: store.root, projectModel: project)
-    defer { stack.stop() }
-    let token = try await stack.pair()
-
-    // Une conduite VIVE avant l'ouverture du flux : la trame d'ouverture la dit.
-    await stack.project.startConduite(repoRoot: URL(fileURLWithPath: repoRoot), name: "Projet")
-    let collector = SSECollector()
-    collector.start(stack.request("GET", "/v1/stream", token: token))
-    defer { collector.stop() }
-
-    let opening = try #require(
-        await collector.waitFor("conduite"),
-        "l'ouverture doit porter l'état de la conduite (échec=\(collector.failure ?? "aucun"))"
-    )
-    #expect(opening.contains("\"state\":\"live\""), "trame reçue : \(opening.prefix(300))")
-    #expect(opening.contains("\"repoKey\""))
-
-    // Une escalade qui apparaît pousse la file ENTIÈRE, sans nouvelle requête.
-    emitServiceDialog(transport, id: "d-1", method: "select", title: "Le plan", options: ["A", "B"])
-    let pushed = try #require(
-        await collector.waitFor("conduite", occurrence: 2),
-        "l'escalade doit être poussée sur le flux"
-    )
-    #expect(pushed.contains("d-1"), "trame reçue : \(pushed.prefix(300))")
-}
-
 /// Une valeur que le fournisseur d'un évènement relit à chaque émission.
 @MainActor
 private final class StreamBox<T> {
@@ -307,55 +190,16 @@ private final class StreamBox<T> {
 }
 
 @MainActor
-@Test("ios-accueil/AC-16 : à l'ouverture, `components` et `journal` suivent `hello`, `store` et `devices`")
-func openingFramesIncludeComponentsAndJournal() async throws {
-    let stack = try await RemoteStack.make(
-        components: { RemoteComponentsPayload(ompInstalled: true, ompPath: "/tmp/omp/bin/omp", setupBanner: nil) },
-        journal: { [] }
-    )
-    defer { stack.stop() }
-    let token = try await stack.pair()
-
-    let collector = SSECollector()
-    collector.start(stack.request("GET", "/v1/stream", token: token))
-    defer { collector.stop() }
-
-    for name in ["hello", "store", "conduite", "devices", "components", "journal"] {
-        _ = await collector.waitFor(name)
-    }
-    // L'ordre d'ouverture fusionné : la trame `conduite` (ios-projet) précède
-    // `devices`, et `components`/`journal` (ios-accueil) suivent `devices`.
-    #expect(
-        Array(collector.events.map(\.name).prefix(6)) == ["hello", "store", "conduite", "devices", "components", "journal"],
-        "l'ordre d'ouverture réel doit être hello, store, conduite, devices, components, journal"
-    )
-    let components = try #require(collector.events.first { $0.name == "components" }?.data)
-    let componentsPayload = try JSONDecoder().decode(RemoteComponentsPayload.self, from: Data(components.utf8))
-    #expect(componentsPayload.ompInstalled)
-    #expect(componentsPayload.ompPath == "/tmp/omp/bin/omp")
-    let journal = try #require(collector.events.first { $0.name == "journal" }?.data)
-    let journalPayload = try JSONDecoder().decode(RemoteJournalPayload.self, from: Data(journal.utf8))
-    #expect(journalPayload.entries.isEmpty)
-}
-
-@MainActor
-@Test("ios-accueil/AC-13 : un changement des composants ou du journal est poussé sans nouvelle requête")
-func componentsAndJournalChangesArePushed() async throws {
+@Test("ios-accueil/AC-13 : un changement des composants est poussé sans nouvelle requête")
+func componentsChangesArePushed() async throws {
     let componentsBox = StreamBox(
         RemoteComponentsPayload(ompInstalled: true, ompPath: nil, setupBanner: nil)
     )
-    let entry = ActionJournalEntry(
-        id: "cmd-1", kindLabel: ActionsText.launchLabel, targetLabel: "Titre", state: .awaitingAck, at: 1
-    )
-    let journalBox = StreamBox<[ActionJournalEntry]>([])
     let componentsSubject = PassthroughSubject<Void, Never>()
-    let journalSubject = PassthroughSubject<Void, Never>()
 
     let stack = try await RemoteStack.make(
         components: { componentsBox.value },
-        journal: { journalBox.value },
-        componentsChanges: componentsSubject.eraseToAnyPublisher(),
-        journalChanges: journalSubject.eraseToAnyPublisher()
+        componentsChanges: componentsSubject.eraseToAnyPublisher()
     )
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -364,29 +208,18 @@ func componentsAndJournalChangesArePushed() async throws {
     collector.start(stack.request("GET", "/v1/stream", token: token))
     defer { collector.stop() }
     _ = await collector.waitFor("components")
-    _ = await collector.waitFor("journal")
 
-    // 1. La présence change : la trame `components` repart avec la charge complète.
+    // La présence change : la trame `components` repart avec la charge complète.
     componentsBox.value = RemoteComponentsPayload(
         ompInstalled: false, ompPath: nil, setupBanner: "Préparation incomplète."
     )
     componentsSubject.send()
-    let pushedComponents = try #require(
+    let pushed = try #require(
         await collector.waitFor("components", occurrence: 2),
         "un changement de composants doit être poussé (échec=\(collector.failure ?? "aucun"))"
     )
-    #expect(pushedComponents.contains("\"ompInstalled\":false"))
-    #expect(pushedComponents.contains("Préparation incomplète."))
-
-    // 2. Le journal change : la trame `journal` repart.
-    journalBox.value = [entry]
-    journalSubject.send()
-    let pushedJournal = try #require(
-        await collector.waitFor("journal", occurrence: 2),
-        "un changement de journal doit être poussé (échec=\(collector.failure ?? "aucun"))"
-    )
-    #expect(pushedJournal.contains("\"kindLabel\":\"lancement\""))
-    #expect(pushedJournal.contains("cmd-1"))
+    #expect(pushed.contains("\"ompInstalled\":false"))
+    #expect(pushed.contains("Préparation incomplète."))
 }
 
 /// Une source `@Published` réelle, comme `presence.$presence` de la racine de l'app.
@@ -403,11 +236,7 @@ func publishedSourcesSubscribeOffTheMainActor() async throws {
     // éditeurs par `.values` depuis le pool coopératif — la vérification
     // d'isolation tuait l'app (EXC_BREAKPOINT) dès qu'un appareil ouvrait le flux.
     let presence = PublishedChangeSource()
-    let actions = ActionsModel()
-    let stack = try await RemoteStack.make(
-        componentsChanges: presence.$tick.voidChanges(),
-        journalChanges: actions.$journal.voidChanges()
-    )
+    let stack = try await RemoteStack.make(componentsChanges: presence.$tick.voidChanges())
     defer { stack.stop() }
     let token = try await stack.pair()
 
@@ -415,7 +244,6 @@ func publishedSourcesSubscribeOffTheMainActor() async throws {
     collector.start(stack.request("GET", "/v1/stream", token: token))
     defer { collector.stop() }
     _ = await collector.waitFor("components")
-    _ = await collector.waitFor("journal")
 
     // L'abonnement a bien eu lieu : un `@Published` rend sa valeur COURANTE à
     // l'abonnement (deuxième trame), et un vrai changement en pousse une de plus.
@@ -424,118 +252,4 @@ func publishedSourcesSubscribeOffTheMainActor() async throws {
         await collector.waitFor("components", occurrence: 2),
         "la veille des composants doit être abonnée (échec=\(collector.failure ?? "aucun"))"
     )
-    _ = try #require(
-        await collector.waitFor("journal", occurrence: 2),
-        "la veille du journal doit être abonnée (échec=\(collector.failure ?? "aucun"))"
-    )
-}
-
-// MARK: - Faits de PR (pipelines-livrees-statut-pr-faux-et-doub, S-6 côté Mac)
-
-private let servedPR = "https://github.com/proprietaire/depot/pull/9"
-private let servedRepo = "/tmp/pr-states/servi"
-
-/// Publie dans le magasin de la pile une feature de lot terminée livrée par
-/// `servedPR`, close il y a deux jours (temps de la pile).
-@MainActor
-private func publishDeliveredFeature(_ stack: RemoteStack) {
-    let repoKey = KanbanRepoKey.key(forRoot: servedRepo)
-    let lot = lotObject(id: repoKey, repoRoot: servedRepo, features: [
-        lotFeatureObject(slug: "servie", state: "done", phase: "release", prUrl: servedPR, endedAt: stack.clock.nowMs - 2 * 86_400_000),
-    ])
-    let data = (try? JSONSerialization.data(withJSONObject: lot, options: [.sortedKeys])) ?? Data()
-    let directory = PipelineStore.directory(.lots, stateDir: stack.stateDir)
-    try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-    try? data.write(to: URL(fileURLWithPath: (directory as NSString).appendingPathComponent("\(repoKey).json")))
-}
-
-@MainActor
-@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-1 : la trame `pull-request-states` suit `journal` à l'ouverture et porte les faits du Mac")
-func openingFramesEndWithPullRequestStates() async throws {
-    let reader = ScriptedPullRequestStateReader()
-    reader.script(servedPR, .merged, closedAtMs: 1_000)
-    let stack = try await RemoteStack.make(prStates: PullRequestStateBook(reader: reader))
-    defer { stack.stop() }
-    publishDeliveredFeature(stack)
-    stack.kanban.start()
-    defer { stack.kanban.stop() }
-    #expect(await awaitMainTrue(timeout: 5) { stack.kanban.prStates.facts[servedPR] != nil && !stack.kanban.prRefreshing })
-    let token = try await stack.pair()
-
-    let collector = SSECollector()
-    collector.start(stack.request("GET", "/v1/stream", token: token))
-    defer { collector.stop() }
-    let frame = try #require(await collector.waitFor("pull-request-states"))
-
-    #expect(
-        Array(collector.events.map(\.name).prefix(7))
-            == ["hello", "store", "conduite", "devices", "components", "journal", "pull-request-states"],
-        "ordre reçu : \(collector.events.map(\.name))"
-    )
-    let payload = try JSONDecoder().decode(RemotePullRequestStatesPayload.self, from: Data(frame.utf8))
-    #expect(payload == RemotePullRequestStatesPayload(
-        facts: [PullRequestFact(url: servedPR, state: .merged, closedAtMs: 1_000)],
-        refreshing: false
-    ))
-}
-
-@MainActor
-@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-5 : `POST /v1/pull-request-states/refresh` répond 202 sans attendre, et la relecture est rediffusée sur le flux")
-func refreshRouteRebroadcastsFacts() async throws {
-    let reader = ScriptedPullRequestStateReader()
-    reader.script(servedPR, .open)
-    let stack = try await RemoteStack.make(prStates: PullRequestStateBook(reader: reader))
-    defer { stack.stop() }
-    publishDeliveredFeature(stack)
-    stack.kanban.start()
-    defer { stack.kanban.stop() }
-    #expect(await awaitMainTrue(timeout: 5) { stack.kanban.prStates.facts[servedPR]?.state == .open && !stack.kanban.prRefreshing })
-    let token = try await stack.pair()
-
-    let collector = SSECollector()
-    collector.start(stack.request("GET", "/v1/stream", token: token))
-    defer { collector.stop() }
-    let opening = try #require(await collector.waitFor("pull-request-states"))
-    #expect(opening.contains("\"state\":\"OPEN\""))
-
-    // La PR est fusionnée sur GitHub (hier) ; l'appareil demande la relecture.
-    let mergedAt = stack.clock.nowMs - 86_400_000
-    reader.script(servedPR, .merged, closedAtMs: mergedAt)
-    reader.delay = .milliseconds(300)
-    let reply = try await stack.call("POST", "/v1/pull-request-states/refresh", token: token)
-    #expect(reply.status == 202)
-    #expect(try reply.json(RemoteAcceptedPayload.self) == RemoteAcceptedPayload(accepted: true))
-    #expect(await awaitMainTrue(timeout: 5) { reader.readCount(servedPR) == 2 }, "la route déclenche la relecture")
-
-    // Bascule de relecture, puis le fait neuf : chaque changement est poussé.
-    let started = try #require(await collector.waitFor("pull-request-states", occurrence: 2))
-    #expect(started.contains("\"refreshing\":true"))
-    var merged: RemotePullRequestStatesPayload?
-    for occurrence in 3...4 {
-        guard let data = await collector.waitFor("pull-request-states", occurrence: occurrence) else { break }
-        let payload = try JSONDecoder().decode(RemotePullRequestStatesPayload.self, from: Data(data.utf8))
-        if payload.facts.first?.state == .merged, !payload.refreshing { merged = payload; break }
-    }
-    #expect(merged == RemotePullRequestStatesPayload(
-        facts: [PullRequestFact(url: servedPR, state: .merged, closedAtMs: mergedAt)],
-        refreshing: false
-    ))
-    #expect(stack.kanban.state.card("feature:\(KanbanRepoKey.key(forRoot: servedRepo)):servie")?.column == .fusionne)
-}
-
-@MainActor
-@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-4 : sans gh, la route de rafraîchissement répond 202 et ne lit rien ; sans jeton, 401")
-func refreshRouteWithoutGh() async throws {
-    let stack = try await RemoteStack.make()
-    defer { stack.stop() }
-    let token = try await stack.pair()
-
-    let reply = try await stack.call("POST", "/v1/pull-request-states/refresh", token: token)
-    #expect(reply.status == 202)
-    #expect(try reply.json(RemoteAcceptedPayload.self) == RemoteAcceptedPayload(accepted: true))
-    #expect(!stack.kanban.prRefreshing)
-    #expect(stack.kanban.prStates.facts.isEmpty)
-
-    let anonymous = try await stack.call("POST", "/v1/pull-request-states/refresh")
-    #expect(anonymous.status == 401)
 }

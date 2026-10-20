@@ -36,20 +36,6 @@ struct RevocationTests {
                     body: Data(#"{"ompInstalled":true}"#.utf8)
                 ))
             }
-            if request.path == "/v1/journal" {
-                return .success(ClientHTTPResponse(
-                    status: 200,
-                    protocolVersion: ConsoleAPI.protocolVersion,
-                    body: Data(#"{"entries":[]}"#.utf8)
-                ))
-            }
-            if request.path == "/v1/pull-request-states/refresh" {
-                return .success(ClientHTTPResponse(
-                    status: 202,
-                    protocolVersion: ConsoleAPI.protocolVersion,
-                    body: Data(#"{"accepted":true}"#.utf8)
-                ))
-            }
             return .success(ClientHTTPResponse(
                 status: 401,
                 protocolVersion: ConsoleAPI.protocolVersion,
@@ -91,20 +77,6 @@ struct RevocationTests {
                     status: 200,
                     protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"ompInstalled":true}"#.utf8)
-                ))
-            }
-            if request.path == "/v1/journal" {
-                return .success(ClientHTTPResponse(
-                    status: 200,
-                    protocolVersion: ConsoleAPI.protocolVersion,
-                    body: Data(#"{"entries":[]}"#.utf8)
-                ))
-            }
-            if request.path == "/v1/pull-request-states/refresh" {
-                return .success(ClientHTTPResponse(
-                    status: 202,
-                    protocolVersion: ConsoleAPI.protocolVersion,
-                    body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(

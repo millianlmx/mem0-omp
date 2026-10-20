@@ -26,7 +26,6 @@ private func makePwdShell() throws -> URL {
 @MainActor
 private func makeTerminalModel(
     root: String,
-    store: StoreReader,
     shell: URL,
     host: TerminalHost = TerminalHost()
 ) -> TerminalConsoleModel {
@@ -39,7 +38,6 @@ private func makeTerminalModel(
             "SHELL": shell.path,
             "PATH": "/usr/bin:/bin",
         ],
-        store: store,
         git: filesGit()
     )
 }
@@ -59,14 +57,8 @@ func choosingATargetLaunchesTheProgramInThatDirectory() async throws {
     let fixture = try FilesFixture()
     let initial = try fixture.head()
     let worktree = try fixture.makeWorktree(slug: "socle")
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("socle", "feat/socle", worktree, initial)]
-    )
     let host = TerminalHost()
-    let model = makeTerminalModel(root: fixture.root, store: reader, shell: try makePwdShell(), host: host)
+    let model = makeTerminalModel(root: fixture.root, shell: try makePwdShell(), host: host)
 
     await model.loadTargets()
 
@@ -95,10 +87,8 @@ func choosingATargetLaunchesTheProgramInThatDirectory() async throws {
 @Test("terminal-integre/AC-4 : un dépôt sans worktree garde le principal sélectionnable")
 func repositoryWithoutWorktreesKeepsThePrimarySelectable() async throws {
     let fixture = try FilesFixture()
-    let store = StoreFixture()
-    let reader = filesStore(store, principal: fixture.root, features: [])
     let host = TerminalHost()
-    let model = makeTerminalModel(root: fixture.root, store: reader, shell: try makePwdShell(), host: host)
+    let model = makeTerminalModel(root: fixture.root, shell: try makePwdShell(), host: host)
 
     await model.loadTargets()
 
@@ -116,14 +106,8 @@ func vanishedTargetIsRefusedAndTheSheetStaysOpen() async throws {
     let fixture = try FilesFixture()
     let initial = try fixture.head()
     let worktree = try fixture.makeWorktree(slug: "ephemere")
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("ephemere", "feat/ephemere", worktree, initial)]
-    )
     let host = TerminalHost()
-    let model = makeTerminalModel(root: fixture.root, store: reader, shell: try makePwdShell(), host: host)
+    let model = makeTerminalModel(root: fixture.root, shell: try makePwdShell(), host: host)
 
     model.openPicker()
     #expect(await awaitMainTrue { !model.targets.isEmpty })
@@ -143,8 +127,6 @@ func vanishedTargetIsRefusedAndTheSheetStaysOpen() async throws {
 @Test("terminal-integre/AC-4 : git introuvable met la feuille en échec avec le message existant")
 func withoutGitTheSheetFails() async throws {
     let fixture = try FilesFixture()
-    let store = StoreFixture()
-    let reader = filesStore(store, principal: fixture.root, features: [])
     let suite = UserDefaults(suiteName: "terminal-targets-\(UUID().uuidString)") ?? .standard
     suite.set(fixture.root, forKey: ProjectRoot.defaultsKey)
     let missingGit = (fixture.root as NSString).appendingPathComponent("git-absent")
@@ -152,8 +134,7 @@ func withoutGitTheSheetFails() async throws {
     let model = TerminalConsoleModel(
         host: TerminalHost(),
         defaults: suite,
-        environment: [GitBinary.overrideKey: missingGit],
-        store: reader
+        environment: [GitBinary.overrideKey: missingGit]
     )
 
     await model.loadTargets()

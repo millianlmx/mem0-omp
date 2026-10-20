@@ -2,9 +2,9 @@
 // réponse. Le routeur applique d'abord les gardes (version puis jeton), puis
 // résout (méthode, chemin) — une route inconnue est un `404`, jamais un `501`.
 //
-// Les gestes ne passent JAMAIS par une seconde voie d'écriture : ils appellent les
-// méthodes publiques de `ActionsModel`, `ProjectConsoleModel` et
-// `SessionConsoleModel` (BR-7), et rien d'autre.
+// L'API du Mac ne sert plus que l'appairage, les appareils, les composants et la
+// mémoire du projet : les pipelines sont servies par le serveur du VPS, que
+// l'iPhone joint directement.
 
 import ConsoleCore
 import Foundation
@@ -13,13 +13,11 @@ import Foundation
 final class RemoteRouter {
     private let reads: RemoteReads
     private let registry: DeviceRegistry
-    private let actions: RemoteActions
     private let streams: RemoteStreamHub?
 
-    init(reads: RemoteReads, registry: DeviceRegistry, actions: RemoteActions, streams: RemoteStreamHub?) {
+    init(reads: RemoteReads, registry: DeviceRegistry, streams: RemoteStreamHub?) {
         self.reads = reads
         self.registry = registry
-        self.actions = actions
         self.streams = streams
     }
 
@@ -60,49 +58,14 @@ final class RemoteRouter {
     /// liste des routes servies.
     static let routes: [Route] = [
         .of("GET", "v1/version", "version"),
-        .of("GET", "v1/store", "store"),
-        .of("GET", "v1/sessions", "sessions"),
-        .of("GET", "v1/sessions/:id", "session.file"),
-        .of("GET", "v1/projects", "projects"),
-        .of("GET", "v1/projects/:repoKey/documents", "documents"),
-        .of("GET", "v1/stats", "stats"),
         .of("GET", "v1/devices", "devices"),
-        .of("GET", "v1/models", "models"),
         .of("GET", "v1/components", "components"),
-        .of("GET", "v1/journal", "journal"),
-        .of("GET", "v1/cards/:id/contract", "card.contract"),
         .of("GET", "v1/memory/page", "memory.page"),
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
         .of("GET", "v1/stream", "stream"),
-        .of("GET", "v1/repos", "repos"),
-        .of("GET", "v1/conduite", "conduite.get"),
         .of("POST", "v1/pair", "pair"),
         .of("DELETE", "v1/devices/self", "devices.forget"),
-        .of("POST", "v1/cards/:id/answer", "card.answer"),
-        .of("POST", "v1/cards/:id/reply", "card.reply"),
-        .of("POST", "v1/cards/:id/text", "card.text"),
-        .of("POST", "v1/cards/:id/verdict", "card.verdict"),
-        .of("POST", "v1/cards/:id/resume", "card.resume"),
-        .of("POST", "v1/cards/:id/stop", "card.stop"),
-        .of("POST", "v1/features", "feature.launch"),
-        .of("POST", "v1/conduite/dialogs/:id", "conduite.dialog"),
-        .of("POST", "v1/projects/:repoKey/conduite", "conduite.start"),
-        .of("DELETE", "v1/projects/:repoKey/conduite", "conduite.close"),
-        .of("GET", "v1/session", "hosted.get"),
-        .of("POST", "v1/session/prompt", "hosted.prompt"),
-        .of("POST", "v1/session/launch", "hosted.launch"),
-        .of("POST", "v1/session/relaunch", "hosted.relaunch"),
-        .of("POST", "v1/session/stop", "hosted.stop"),
-        .of("POST", "v1/session/model", "hosted.model"),
-        .of("POST", "v1/session/dialogs/:id", "hosted.dialog"),
-        .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
-        .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
-        .of("POST", "v1/pull-request-states/refresh", "prStates.refresh"),
-        .of("POST", "v1/audits", "audit.start"),
-        .of("POST", "v1/audits/:id/launch", "audit.launch"),
-        .of("POST", "v1/audits/:id/escalations", "audit.answer"),
-        .of("DELETE", "v1/audits/:id", "audit.stop"),
     ]
 
     // MARK: - Entrée
@@ -127,9 +90,6 @@ final class RemoteRouter {
         }
         do {
             return try await run(route.name, parameters: parameters, request: request, device: device, connection: connection)
-        } catch let refusal as GestureRefusal {
-            // Le SEUL endroit où un refus de geste devient une réponse HTTP.
-            return respond(refusal.apiError)
         } catch let error as ConsoleAPIError {
             return respond(error)
         } catch let error as RemoteServiceFailure {
@@ -171,32 +131,10 @@ final class RemoteRouter {
         // --- socle et lectures ------------------------------------------------
         case "version":
             return try json(reads.version())
-        case "store":
-            return try json(reads.store())
-        case "sessions":
-            return try json(reads.sessions())
-        case "session.file":
-            return try json(reads.session(parameters["id"] ?? ""))
-        case "projects":
-            return try json(reads.projects())
-        case "documents":
-            return try json(reads.documents(repoKey: parameters["repoKey"] ?? ""))
-        case "stats":
-            return try json(reads.statistics(project: request.query["project"]))
         case "devices":
             return try json(reads.devices())
-        case "models":
-            return try json(await reads.models())
-        case "repos":
-            return try json(RemoteReposPayload(rows: actions.knownRepos()))
-        case "conduite.get":
-            return try json(actions.conduite())
         case "components":
             return try json(reads.components())
-        case "journal":
-            return try json(reads.journal())
-        case "card.contract":
-            return try json(try reads.cardContract(cardId: parameters["id"] ?? ""))
         case "memory.page":
             return try json(await reads.memoryPage(
                 scope: request.query["scope"],
@@ -233,156 +171,8 @@ final class RemoteRouter {
             await registry.revoke(id: device.id)
             return try json(RemoteAcceptedPayload(accepted: true))
 
-        // --- gestes de carte --------------------------------------------------
-        // Simple adaptateur : décoder le corps (un corps mal formé n'atteint
-        // jamais le geste), convertir la forme, appeler le geste typé.
-        case "card.answer":
-            let body = try RemoteBody.decode(RemoteAnswerRequest.self, from: request)
-            try await actions.answer(
-                cardId: parameters["id"] ?? "",
-                toolCallId: body.toolCallId ?? "",
-                answer: try Self.cardAnswer(body)
-            )
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "card.reply":
-            let body = try RemoteBody.decode(RemoteTextRequest.self, from: request)
-            try await actions.reply(cardId: parameters["id"] ?? "", text: body.text)
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "card.text":
-            let body = try RemoteBody.decode(RemoteTextRequest.self, from: request)
-            try await actions.text(cardId: parameters["id"] ?? "", text: body.text)
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "card.verdict":
-            let body = try RemoteBody.decode(RemoteVerdictRequest.self, from: request)
-            try await actions.verdict(cardId: parameters["id"] ?? "", verdict: try Self.verdict(body))
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "card.resume":
-            try await actions.resume(cardId: parameters["id"] ?? "")
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "card.stop":
-            try await actions.stop(cardId: parameters["id"] ?? "")
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-
-        // --- feature, projet, session hébergée, PR ----------------------------
-        case "feature.launch":
-            let body = try RemoteBody.decode(RemoteFeatureRequest.self, from: request)
-            try await actions.launch(
-                repoRoot: body.repoRoot,
-                title: body.title,
-                description: body.description,
-                modelReqSpecs: body.modelReqSpecs,
-                modelImplReview: body.modelImplReview
-            )
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "conduite.start":
-            let body = try RemoteBody.decode(RemoteConduiteRequest.self, from: request)
-            return try json(try await actions.startConduite(repoKey: parameters["repoKey"] ?? "", name: body.name))
-        case "conduite.close":
-            return try json(try await actions.closeConduite(repoKey: parameters["repoKey"] ?? ""))
-        case "conduite.dialog":
-            let body = try RemoteBody.decode(RemoteDialogAnswerRequest.self, from: request)
-            try await actions.answerDialog(id: parameters["id"] ?? "", answer: try Self.dialogAnswer(body))
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "hosted.get":
-            return try json(actions.hostedSession())
-        case "hosted.prompt":
-            let body = try RemoteBody.decode(RemotePromptRequest.self, from: request)
-            try await actions.prompt(message: body.message)
-            return try json(RemoteSentPayload(sent: true))
-        case "hosted.launch":
-            let body = try RemoteBody.decode(RemoteHostedLaunchRequest.self, from: request)
-            return try json(try await actions.launchHostedSession(repoKey: body.repoKey))
-        case "hosted.relaunch":
-            return try json(try await actions.relaunchHostedSession())
-        case "hosted.stop":
-            return try json(await actions.stopHostedSession())
-        case "hosted.dialog":
-            let body = try RemoteBody.decode(RemoteDialogAnswerRequest.self, from: request)
-            try await actions.answerHostedDialog(id: parameters["id"] ?? "", answer: try Self.dialogAnswer(body))
-            return try json(RemoteAcceptedPayload(accepted: true))
-        case "hosted.model":
-            let body = try RemoteBody.decode(RemoteSessionModelRequest.self, from: request)
-            return try json(try await actions.setHostedModel(model: body.model, thinkingLevel: body.thinkingLevel))
-        case "prs":
-            return try json(try await actions.pullRequests(repoKey: parameters["repoKey"] ?? ""))
-        case "prs.merge":
-            let body = try RemoteBody.decode(RemoteMergeRequest.self, from: request)
-            return try json(try await actions.merge(
-                repoKey: parameters["repoKey"] ?? "",
-                slug: parameters["slug"] ?? "",
-                headOid: body.headOid
-            ))
-        case "prStates.refresh":
-            actions.refreshPullRequestStates()
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "audit.start":
-            let body = try RemoteBody.decode(RemoteAuditStartRequest.self, from: request)
-            return try json(try await actions.startAudit(repoKey: body.repoKey, orientation: body.orientation))
-        case "audit.launch":
-            let body = try RemoteBody.decode(RemoteAuditLaunchRequest.self, from: request)
-            return try json(try await actions.launchAudit(
-                id: parameters["id"] ?? "",
-                selected: body.selected,
-                brief: body.brief
-            ))
-        case "audit.answer":
-            let body = try RemoteBody.decode(RemoteAuditAnswerRequest.self, from: request)
-            try await actions.answerAudit(
-                id: parameters["id"] ?? "",
-                slug: body.slug,
-                key: body.key,
-                answer: body.answer,
-                decision: body.decision
-            )
-            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
-        case "audit.stop":
-            return try json(try await actions.stopAudit(id: parameters["id"] ?? ""))
         default:
             return respond(.notFound("route inconnue"))
-        }
-    }
-
-    // MARK: - Conversion des corps vers les gestes typés
-
-    /// Un identifiant de question manquant prime sur un `kind` inconnu ou une
-    /// réponse sans libellé ni texte (protocole 2, quel que soit `kind`) : la
-    /// règle reste celle du geste, `RemoteActions.requireQuestionId`.
-    private static func cardAnswer(_ body: RemoteAnswerRequest) throws -> CardAnswer {
-        let shapeError: String
-        switch body.kind {
-        case "selected":
-            if let label = body.label { return .selected(label: label) }
-            shapeError = "libellé absent"
-        case "custom":
-            if let text = body.text { return .custom(text: text) }
-            shapeError = "texte absent"
-        default:
-            shapeError = "kind inconnu"
-        }
-        _ = try RemoteActions.requireQuestionId(body.toolCallId)
-        throw ConsoleAPIError.badRequest(shapeError)
-    }
-
-    private static func verdict(_ body: RemoteVerdictRequest) throws -> MilestoneVerdict {
-        switch body.verdict {
-        case "specs": return .specs
-        case "review": return .review
-        default: throw ConsoleAPIError.badRequest("verdict inconnu")
-        }
-    }
-
-    private static func dialogAnswer(_ body: RemoteDialogAnswerRequest) throws -> DialogAnswer {
-        switch body.kind {
-        case "value":
-            guard let value = body.value else { throw ConsoleAPIError.badRequest("valeur absente") }
-            return .value(value)
-        case "confirmed":
-            guard let confirmed = body.confirmed else { throw ConsoleAPIError.badRequest("confirmation absente") }
-            return .confirmed(confirmed)
-        case "cancelled":
-            return .cancelled
-        default:
-            throw ConsoleAPIError.badRequest("kind inconnu")
         }
     }
 

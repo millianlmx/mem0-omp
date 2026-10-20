@@ -1,16 +1,8 @@
-// Le vocabulaire commun des écrans (S-11 de omp-console-redesign) : l'état d'une
-// carte ou d'un run se dit en UN MOT doublé d'un ton, une étape se nomme en
-// français, durées, tokens et dates passent par les formateurs de Foundation.
+// Le vocabulaire commun des écrans (S-11 de omp-console-redesign) : un état se dit
+// en UN MOT doublé d'un ton ; durées, tokens et dates passent par les formateurs
+// de Foundation.
 //
-// Fonctions PURES : les écrans (Accueil, Pipelines, Sessions, Statistiques,
-// conversation) les appellent, aucun ne compose son propre libellé d'état.
-//
-// VIT DANS `ConsoleCore` : ce fichier ne nomme aucun type de la coque, donc la
-// coque iOS le réutilise tel quel. `ConsoleStatus.of(card:)` et
-// `ConsoleStatus.of(run:)` ne nomment que des types du noyau et vivent ici ;
-// `of(session:)`, qui nomme `ServiceSessionModel.State`, reste déclarée par la
-// coque — en extension, dans `Sources/OMPConsole/Design/ConsoleVocabulary.swift`
-// — pour qu'il n'existe jamais deux définitions du même type.
+// Fonctions PURES, dans `ConsoleCore` : les deux coques les partagent.
 
 import Foundation
 
@@ -27,99 +19,6 @@ public struct ConsoleStatus: Equatable, Sendable, Codable {
     public init(text: String, tone: ConsoleTone) {
         self.text = text
         self.tone = tone
-    }
-}
-
-/// L'état d'une carte de l'ardoise (S-3) : il ne nomme que des types du noyau
-/// (`KanbanCard`, `KanbanCardAction`), donc il est partagé par les deux coques.
-/// `of(run:)` ne nomme que `RunChoice` ; `of(session:)` nomme un type de la coque
-/// macOS et reste déclarée par elle, en extension.
-extension ConsoleStatus {
-    /// L'état d'un run qui a QUITTÉ `running/` : une pipeline terminée. Déclaré ici
-    /// pour que l'app iOS traite « run introuvable dans l'instantané » exactement
-    /// comme un run `ended(.done)` (S-9 de `ios-sessions`) — le mot n'est écrit
-    /// qu'une fois dans le noyau.
-    public static let finishedRun = ConsoleStatus(text: "Terminé", tone: .success)
-
-    /// L'état d'un run de la liste des sessions : un run vivant au propriétaire
-    /// périmé est « Interrompu ».
-    public static func of(run: RunChoice) -> ConsoleStatus {
-        switch run.state {
-        case .live where run.isStale:
-            return ConsoleStatus(text: "Interrompu", tone: .neutral)
-        case .live(.running):
-            return ConsoleStatus(text: "En cours", tone: .info)
-        case .live(.waiting):
-            return ConsoleStatus(text: "À vous", tone: .attention)
-        case .ended(.done):
-            return finishedRun
-        case .ended(.failed):
-            return ConsoleStatus(text: "Échec", tone: .danger)
-        }
-    }
-
-    /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
-    /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
-    /// vit encore). Ensuite l'arbitre (`ArbiterState`) : un élément qu'il tient
-    /// dit « L’arbitre décide » ou « En file pour l’arbitre » ; un plafond ou un
-    /// échec qu'il a rendu dit ce qu'il rend, à traiter.
-    public static func of(card: KanbanCard) -> ConsoleStatus {
-        if KanbanActionPresentation.resumable(card) {
-            return ConsoleStatus(text: "En pause", tone: .paused)
-        }
-        if let arbiter = card.action?.arbiter {
-            if let label = arbiter.label {
-                return ConsoleStatus(text: label, tone: .info)
-            }
-            if let kind = arbiter.escalationKind, let text = KanbanText.escalationStatus(kind) {
-                return ConsoleStatus(text: text, tone: .attention)
-            }
-        }
-        return of(column: card.column)
-    }
-
-    /// L'état d'une colonne de l'ardoise, sans la règle « En pause » : le libellé que
-    /// les notifications macOS reprennent tel quel (un échec y reste « Échec »).
-    public static func of(column: KanbanColumn) -> ConsoleStatus {
-        switch column {
-        case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
-        case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
-        case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
-        case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
-        case .prCreee: return ConsoleStatus(text: "PR créée", tone: .neutral)
-        case .fusionne: return ConsoleStatus(text: "PR fusionnée", tone: .success)
-        case .prFermee: return ConsoleStatus(text: "PR fermée", tone: .neutral)
-        case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
-        case .jalonSpecs: return ConsoleStatus(text: "Spécifications à valider", tone: .attention)
-        case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
-        case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
-        case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)
-        case .annuleeRetiree: return ConsoleStatus(text: "Annulée", tone: .neutral)
-        }
-    }
-}
-
-/// Le nom et le symbole d'une étape de pipeline.
-public enum PhaseText {
-    public static func title(_ phase: PipelinePhase) -> String {
-        switch phase {
-        case .req: return "Clarification"
-        case .specs: return "Spécification"
-        case .impl: return "Implémentation"
-        case .review: return "Revue"
-        case .release: return "Publication"
-        }
-    }
-
-    public static func symbol(_ phase: PipelinePhase?) -> String {
-        switch phase {
-        case .req: return "text.bubble"
-        case .specs: return "doc.text"
-        case .impl: return "hammer"
-        case .review: return "checkmark.seal"
-        case .release: return "shippingbox"
-        case nil: return "circle.dashed"
-        }
     }
 }
 

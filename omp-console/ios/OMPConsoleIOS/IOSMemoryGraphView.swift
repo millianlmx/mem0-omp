@@ -157,7 +157,7 @@ struct IOSMemoryGraphView: View {
             Label {
                 Text(verbatim: title)
             } icon: {
-                Image(systemName: IOSHomeText.selectedSymbol)
+                Image(systemName: IOSShellText.selectedSymbol)
             }
         } else {
             Text(verbatim: title)

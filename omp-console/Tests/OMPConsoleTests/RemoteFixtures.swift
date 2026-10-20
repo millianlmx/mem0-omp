@@ -2,8 +2,7 @@
 // sur un port éphémère, vrai routeur, vrai registre sur un fichier jetable,
 // doublure de trousseau et doublure mémoire — plus un client HTTP minimal.
 //
-// Aucun test ne touche le vrai trousseau, ni `~/.omp/agent/pipeline` : tout vit
-// sous `NSTemporaryDirectory()`.
+// Aucun test ne touche le vrai trousseau : tout vit sous `NSTemporaryDirectory()`.
 
 import Combine
 import ConsoleCore
@@ -66,21 +65,11 @@ struct RemoteReply {
 @MainActor
 struct RemoteStack {
     let supportRoot: URL
-    let stateDir: String
     let clock: MutableRemoteClock
-    let storeHub: StoreHub
     let registry: DeviceRegistry
     let tokens: InMemoryDeviceTokenStore
-    let stats: StatsModel
     let memory: ScriptedMemoryService
-    let kanban: KanbanModel
-    let actions: ActionsModel
-    let session: SessionConsoleModel
-    let project: ProjectConsoleModel
     let streams: RemoteStreamHub
-    /// L'instance de gestes que sert le routeur : un test appelle un geste typé
-    /// sans corps HTTP, sur les MÊMES modèles que la route.
-    let remoteActions: RemoteActions
     let router: RemoteRouter
     let server: RemoteServer
     let port: UInt16
@@ -89,32 +78,21 @@ struct RemoteStack {
 
     /// `liveMemory` remplace le service scripté AUPRÈS DES ROUTES (banc de recette
     /// sur la vraie mémoire, `memoryDelayServe`) ; `memoryConfig` remplace l'adresse
-    /// fictive. Nuls ⇒ comportement historique : routes servies par `memory`.
+    /// fictive. Nuls ⇒ routes servies par `memory`.
     static func make(
         memory: ScriptedMemoryService = ScriptedMemoryService(),
         liveMemory: (any MemoryServing)? = nil,
         memoryConfig: MemoryServiceConfig? = nil,
-        stateDir: String? = nil,
         clock: MutableRemoteClock = MutableRemoteClock(),
-        projectModel: ProjectConsoleModel? = nil,
-        actionsModel: ActionsModel? = nil,
-        sessionModel: SessionConsoleModel? = nil,
-        auditModel: AuditConsoleModel? = nil,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: true, ompPath: nil, setupBanner: nil)
         },
-        journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
-        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        prStates: PullRequestStateBook? = nil
+        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let dir = stateDir ?? root.appendingPathComponent("pipeline", isDirectory: true).path
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
 
-        let hub = StoreHub(stateDir: dir, nowMs: { clock.nowMs })
         let tokens = InMemoryDeviceTokenStore()
         let registry = DeviceRegistry(
             file: root.appendingPathComponent("remote/devices.json"),
@@ -122,26 +100,11 @@ struct RemoteStack {
             clock: clock.clock
         )
         await registry.load()
-        let stats = StatsModel(stateDir: dir)
-        // Hermétique par défaut : un registre SANS lecteur ne lance jamais le `gh`
-        // du poste (une URL github.com d'une fixture ne lit pas le réseau).
-        let kanban = KanbanModel(hub: hub, prStates: prStates ?? PullRequestStateBook(reader: nil))
-        let actions = actionsModel ?? ActionsModel()
-        let session = sessionModel ?? SessionConsoleModel()
-        let project = projectModel ?? ProjectConsoleModel()
         let streams = RemoteStreamHub(
-            storeHub: hub,
             registry: registry,
-            session: session,
-            project: project,
             clock: clock.clock,
             components: components,
-            journal: journal,
-            componentsChanges: componentsChanges,
-            journalChanges: journalChanges,
-            // Le câblage de PRODUCTION (`RemoteServiceModel`) des faits de PR.
-            pullRequestStates: { kanban.pullRequestStatesPayload() },
-            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
+            componentsChanges: componentsChanges
         )
         // Le câblage de PRODUCTION (`RemoteServiceModel`) : le registre publie
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames
@@ -149,34 +112,15 @@ struct RemoteStack {
         registry.changeHandler = { [weak streams] in streams?.broadcastDevices() }
         let config = memoryConfig ?? MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
         let reads = RemoteReads(
-            hub: hub,
             registry: registry,
             service: liveMemory ?? memory,
             memoryConfig: config,
             memoryLinks: root.appendingPathComponent("memory-links.json"),
             environment: [:],
             clock: clock.clock,
-            kanban: kanban,
-            actions: actions,
             components: components
         )
-        let remoteActions = RemoteActions(
-            kanban: kanban,
-            actions: actions,
-            session: session,
-            project: project,
-            // Hermétique par défaut : sans modèle fourni, aucun geste d'audit ne
-            // joint le service du poste (il est « arrêté »).
-            audit: auditModel ?? AuditConsoleModel(
-                stateDir: dir,
-                snapshots: { AsyncStream { $0.finish() } },
-                makeClient: { throw ServiceClientError.unavailable }
-            ),
-            hub: hub,
-            environment: [:],
-            clock: clock.clock
-        )
-        let router = RemoteRouter(reads: reads, registry: registry, actions: remoteActions, streams: streams)
+        let router = RemoteRouter(reads: reads, registry: registry, streams: streams)
         let server = RemoteServer(handler: { request, connection in
             await router.handle(request, connection: connection)
         })
@@ -185,19 +129,11 @@ struct RemoteStack {
 
         return RemoteStack(
             supportRoot: root,
-            stateDir: dir,
             clock: clock,
-            storeHub: hub,
             registry: registry,
             tokens: tokens,
-            stats: stats,
             memory: memory,
-            kanban: kanban,
-            actions: actions,
-            session: session,
-            project: project,
             streams: streams,
-            remoteActions: remoteActions,
             router: router,
             server: server,
             port: port
@@ -207,8 +143,6 @@ struct RemoteStack {
     func stop() {
         server.stop()
         streams.closeAll()
-        storeHub.stop()
-        stats.stop()
         try? FileManager.default.removeItem(at: supportRoot)
     }
 

@@ -1,7 +1,6 @@
 // Le flux temps réel (S-13) : `GET /v1/stream` pousse ce qui change, sans que le
-// client sonde. Un seul jeu de sources pour tous les abonnés — l'agrégat du
-// magasin, les fichiers de session des runs VIVANTS, l'état de la session hébergée,
-// le registre des appareils — et un battement de cœur par flux.
+// client sonde. Un seul jeu de sources pour tous les abonnés — l'état des
+// composants et le registre des appareils — et un battement de cœur par flux.
 //
 // Révocation (AC-5) : `close(deviceId:)` coupe les connexions AVANT de rendre la
 // main, donc le client voit la fin du flux immédiatement.
@@ -32,28 +31,6 @@ enum SSE {
 
 struct RemoteHelloEvent: Encodable, Equatable {
     var protocolVersion: Int
-}
-
-struct RemoteSessionsEvent: Encodable, Equatable {
-    var file: String
-    var added: [RemoteConversationEntry]?
-    var issue: String?
-}
-
-struct RemoteHostedEvent: Encodable, Equatable {
-    var state: String
-    /// Les trois champs ADDITIFS de S-2 : le mot du Mac, le fichier de session
-    /// publié, et le nom du dépôt — nuls tant que rien n'est connu.
-    var stateLabel: String?
-    var sessionFile: String?
-    var projectName: String?
-    var dialogs: [RpcDialogRequest]
-    var added: [TranscriptLine]
-    /// La valeur affichée par la section Session OMP du Mac (S-7) et le tour en
-    /// cours : toujours poussés, optionnels au décodage client.
-    var model: String?
-    var thinkingLevel: String?
-    var turnRunning: Bool
 }
 
 struct RemoteDevicesEvent: Encodable, Equatable {
@@ -95,59 +72,30 @@ final class RemoteStreamHub {
         }
     }
 
-    private let storeHub: StoreHub
     private let registry: DeviceRegistry
-    private let session: SessionConsoleModel
-    private let project: ProjectConsoleModel
     private let clock: RemoteClock
     /// L'état des composants et de la préparation (S-4), fourni par la racine.
     private let components: @MainActor () -> RemoteComponentsPayload
-    /// Le journal des gestes (S-5), fourni par le modèle d'actions.
-    private let journal: @MainActor () -> [ActionJournalEntry]
-    /// Les faits de PR de l'ardoise (S-6 de pipelines-livrees), fournis par
-    /// `KanbanModel`.
-    private let pullRequestStates: @MainActor () -> RemotePullRequestStatesPayload
-    /// Les changements réels — un seul abonnement par évènement, comme les autres
-    /// sources : l'instantané initial part à l'activation, ces flux ne poussent
-    /// que sur mutation.
+    /// Les changements réels : l'instantané initial part à l'activation, ce flux
+    /// ne pousse que sur mutation.
     private let componentsChanges: AnyPublisher<Void, Never>
-    private let journalChanges: AnyPublisher<Void, Never>
-    private let pullRequestStatesChanges: AnyPublisher<Void, Never>
 
     private var subscribers: [UUID: Subscriber] = [:]
     private var tasks: [Task<Void, Never>] = []
-    private var watchers: [String: FileWatcher] = [:]
-    private var readers: [String: SessionReader] = [:]
     private var started = false
 
     init(
-        storeHub: StoreHub,
         registry: DeviceRegistry,
-        session: SessionConsoleModel,
-        project: ProjectConsoleModel,
         clock: RemoteClock = .live,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
         },
-        journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
-        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        pullRequestStates: @escaping @MainActor () -> RemotePullRequestStatesPayload = {
-            RemotePullRequestStatesPayload(facts: [], refreshing: false)
-        },
-        pullRequestStatesChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
+        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) {
-        self.storeHub = storeHub
         self.registry = registry
-        self.session = session
-        self.project = project
         self.clock = clock
         self.components = components
-        self.journal = journal
         self.componentsChanges = componentsChanges
-        self.journalChanges = journalChanges
-        self.pullRequestStates = pullRequestStates
-        self.pullRequestStatesChanges = pullRequestStatesChanges
     }
 
     // MARK: - Abonnements
@@ -162,22 +110,12 @@ final class RemoteStreamHub {
         guard let subscriber = subscribers[id], !subscriber.active else { return }
         subscriber.active = true
         startSources()
-        // À l'ouverture : `hello`, l'instantané courant et l'état de la conduite —
-        // le client n'a jamais à faire un `GET` initial. La connexion n'est
-        // déclarée au registre qu'APRÈS ces trois trames : `markConnected` publie
-        // `devices` par `registry.changeHandler`, donc la trame `devices` vient en
-        // dernier (S-13, S-6).
+        // À l'ouverture : `hello`, puis `devices` (publié par `markConnected` via
+        // `registry.changeHandler`), puis `components` — le client n'a jamais à faire
+        // un `GET` initial (S-13, S-4).
         deliver(subscriber, SSE.frame("hello", RemoteHelloEvent(protocolVersion: ConsoleAPI.protocolVersion)))
-        deliver(subscriber, SSE.frame("store", storeHub.current()))
-        deliver(subscriber, SSE.frame("conduite", RemoteActions.conduitePayload(project)))
         registry.markConnected(subscriber.deviceId, true)
-        // APRÈS `devices` (publié par `markConnected` via `changeHandler`) : l'ordre
-        // d'ouverture est `hello`, `store`, `conduite`, `devices`, `components`,
-        // `journal`, `pull-request-states` (S-4, S-6).
         deliver(subscriber, SSE.frame("components", components()))
-        deliver(subscriber, SSE.frame("journal", RemoteJournalPayload(entries: journal())))
-        deliver(subscriber, SSE.frame("pull-request-states", pullRequestStates()))
-        refreshWatchedRuns()
     }
 
     fileprivate func unsubscribe(_ id: UUID) {
@@ -202,9 +140,6 @@ final class RemoteStreamHub {
     func closeAll() {
         for subscriber in subscribers.values { subscriber.connection.close() }
         subscribers.removeAll()
-        for watcher in watchers.values { watcher.stop() }
-        watchers.removeAll()
-        readers.removeAll()
         for task in tasks { task.cancel() }
         tasks.removeAll()
         started = false
@@ -219,21 +154,6 @@ final class RemoteStreamHub {
     private func startSources() {
         guard !started else { return }
         started = true
-
-        // Le PREMIER élément d'un abonnement est l'instantané courant, déjà envoyé
-        // à l'activation : on n'émet que sur changement RÉEL, comme la couche qui
-        // publie.
-        let snapshots = storeHub.snapshots()
-        tasks.append(Task { @MainActor [weak self] in
-            var last = self?.storeHub.current()
-            for await snapshot in snapshots {
-                guard let self else { return }
-                defer { self.refreshWatchedRuns() }
-                guard snapshot != last else { continue }
-                last = snapshot
-                self.broadcast(SSE.frame("store", snapshot))
-            }
-        })
 
         tasks.append(Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -252,177 +172,6 @@ final class RemoteStreamHub {
                 self.broadcast(SSE.frame("components", self.components()))
             }
         })
-        // Journal des gestes (S-5) : idem.
-        let journal = journalChanges
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in journal.values {
-                guard let self else { return }
-                self.broadcast(SSE.frame("journal", RemoteJournalPayload(entries: self.journal())))
-            }
-        })
-        // Faits de PR (S-6 de pipelines-livrees) : la charge complète à chaque
-        // fait publié et à chaque bascule de relecture.
-        let pullRequestStates = pullRequestStatesChanges
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in pullRequestStates.values {
-                guard let self else { return }
-                self.broadcast(SSE.frame("pull-request-states", self.pullRequestStates()))
-            }
-        })
-
-        // Session hébergée : état et dialogues. La conversation, elle, suit le
-        // FICHIER de session servi par l'API (`sessions`/`session`, S-2) — l'hôte
-        // RPC n'existe plus, donc plus de fil en mémoire à pousser ici.
-        let host = session.host
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$state.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$dialogQueue.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        // Modèle, niveau et tour en cours de la session, et défaut du projet affiché
-        // au repos (model-selector-in-embedded-omp-session S-7) : l'iPhone reçoit la
-        // trame `hosted` sans relance.
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$model.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$thinkingLevel.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$turnRunning.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        let hostedSession = session
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in hostedSession.$projectDefault.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
-        // Le fichier de la session hébergée entre (ou sort) de la veille à sa
-        // publication (`get_state`) ou à un lancement neuf (S-4).
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$sessionFile.values {
-                guard let self else { return }
-                self.refreshWatchedRuns()
-            }
-        })
-
-        // Conduite de projet : l'état de la conduite et sa file d'escalades. Le hub
-        // publie la charge utile COMPLÈTE à chaque changement — jamais un delta
-        // (S-6, S-11). Le PREMIER élément de chaque abonnement est l'état courant,
-        // déjà porté par la trame `conduite` d'ouverture : on n'émet que sur
-        // changement RÉEL, comme le flux du magasin ci-dessus.
-        let projectHost = project.host
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in projectHost.$state.dropFirst().values {
-                guard let self else { return }
-                self.broadcastConduite()
-            }
-        })
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in projectHost.$dialogQueue.dropFirst().values {
-                guard let self else { return }
-                self.broadcastConduite()
-            }
-        })
-    }
-
-    private func broadcastConduite() {
-        guard !subscribers.isEmpty else { return }
-        broadcast(SSE.frame("conduite", RemoteActions.conduitePayload(project)))
-    }
-
-    /// La veille des fichiers de session : ceux des runs VIVANTS du magasin, PLUS
-    /// le fichier de la session hébergée (S-4) — c'est ce qui permet au fil de
-    /// l'iPad de recevoir les ajouts de la session servie par le Mac. Un fichier
-    /// qui apparaît entre sous surveillance, un fichier qui quitte l'ensemble en
-    /// sort.
-    private func refreshWatchedRuns() {
-        var live = Set(
-            storeRuns(of: storeHub.current())
-                .filter(storeRunIsLive)
-                .map(\.sessionFile)
-                .filter { !$0.isEmpty }
-        )
-        if let hosted = session.host.sessionFile, !hosted.isEmpty { live.insert(hosted) }
-        for file in live where watchers[file] == nil { watch(file) }
-        for file in watchers.keys where !live.contains(file) {
-            watchers[file]?.stop()
-            watchers[file] = nil
-            readers[file] = nil
-        }
-    }
-
-    private func watch(_ file: String) {
-        let watcher = FileWatcher(path: file)
-        watchers[file] = watcher
-        let reader = SessionReader(path: file)
-        readers[file] = reader
-        let changes = watcher.changes
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in changes {
-                guard let self, self.watchers[file] != nil else { return }
-                self.publish(file)
-            }
-        })
-    }
-
-    /// Lit ce qu'un fichier de session a produit depuis la dernière lecture.
-    private func publish(_ file: String) {
-        guard let reader = readers[file] else { return }
-        let read = reader.read()
-        if let issue = read.issue {
-            switch issue {
-            case .truncated, .replaced:
-                broadcast(SSE.frame("sessions", RemoteSessionsEvent(
-                    file: file,
-                    added: nil,
-                    issue: issue == .replaced ? "replaced" : "truncated"
-                )))
-                return
-            default:
-                break
-            }
-        }
-        guard !read.added.isEmpty else { return }
-        broadcast(SSE.frame("sessions", RemoteSessionsEvent(
-            file: file,
-            added: read.added.map(RemoteConversationEntry.init),
-            issue: nil
-        )))
-    }
-
-    private func broadcastHosted() {
-        let host = session.host
-        // `added` reste VIDE : la conversation vivante se lit dans le fichier de
-        // session (routes `sessions`/`session`), jamais dans un fil d'hôte.
-        broadcast(SSE.frame("hosted", RemoteHostedEvent(
-            state: RemoteActions.stateName(host.state),
-            stateLabel: SessionConsoleModel.statusText(for: host.state),
-            sessionFile: host.sessionFile,
-            projectName: session.projectRoot?.lastPathComponent,
-            dialogs: host.dialogQueue,
-            added: [],
-            model: session.displayedModel.model,
-            thinkingLevel: session.displayedModel.thinkingLevel,
-            turnRunning: host.state == .running && host.turnRunning
-        )))
     }
 
     func broadcastDevices() {

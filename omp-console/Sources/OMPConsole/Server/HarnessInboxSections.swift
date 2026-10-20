@@ -148,7 +148,7 @@ struct HarnessInboxSections: View {
             } else {
                 Button(PipelineServerText.readSpecs) {
                     Task {
-                        if let view = await server.runView(run.id) { drafts.specs[run.id] = view.artifact("specs.md") ?? "" }
+                        if let view = await server.runView(run.id) { drafts.specs[run.id] = view.specs ?? "" }
                     }
                 }
                 .buttonStyle(.bordered)
@@ -329,7 +329,7 @@ private struct HarnessGestures: ViewModifier {
     }
 
     private func refusalSheet(_ run: HarnessRun) -> some View {
-        let specs = run.step == "specs"
+        let specs = run.awaitsSpecs
         return NavigationStack {
             Form {
                 Section {

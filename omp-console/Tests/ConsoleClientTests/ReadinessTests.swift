@@ -266,10 +266,10 @@ struct ReadinessTests {
         harness.transport.script(.hold)
         await harness.startWithToken()
         #expect(await eventually { harness.model.state == .connected(endpoint: manual) })
-        // `hello` puis `store` dans la même trame : l'instantané reçu prouve que le
-        // `hello` qui le précède a été appliqué.
-        harness.transport.push(ClientFixtures.helloFrame() + ClientFixtures.storeFrame(ClientFixtures.snapshot()))
-        #expect(await eventually { harness.model.snapshot != nil })
+        // `hello` puis `components` dans la même trame : les composants reçus
+        // prouvent que le `hello` qui les précède a été appliqué.
+        harness.transport.push(ClientFixtures.helloFrame() + ClientFixtures.componentsFrame())
+        #expect(await eventually { harness.model.components != nil })
 
         #expect(await harness.model.waitUntilReady() == .ready(endpoint: manual))
         #expect(await gate.requested == [])

@@ -28,7 +28,7 @@ struct VersionTests {
             _ = try await announced.model.version()
         }
         await #expect(throws: ClientError.incompatibleProtocol(local: local, remote: other)) {
-            _ = try await announced.model.reply(cardId: "c1", text: "x")
+            _ = try await announced.model.components()
         }
         #expect(announced.transport.requestCount == 0)
         announced.stop()
@@ -60,7 +60,7 @@ struct VersionTests {
     func previousVersionAppLocksAgainstTheMac() async throws {
         let previous = ConsoleAPI.protocolVersion - 1
         let mac = ConsoleAPI.protocolVersion
-        #expect(previous == 1 && mac == 2, "le critère vise l'app 1 face au Mac 2")
+        #expect(previous == 2 && mac == 3, "le critère vise l'app 2 face au Mac 3")
         let harness = ClientHarness(
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"],
@@ -78,14 +78,12 @@ struct VersionTests {
             _ = try await harness.model.version()
         }
         #expect(harness.model.state == .incompatibleProtocol(local: previous, remote: mac))
-        // Verrouillée, l'app ne peut plus répondre : la réponse est refusée localement.
+        // Verrouillée, l'app ne lit plus rien : la lecture est refusée localement.
         let sent = harness.transport.requestCount
         await #expect(throws: ClientError.incompatibleProtocol(local: previous, remote: mac)) {
-            _ = try await harness.model.answer(
-                cardId: "c1", kind: "custom", label: nil, text: "x", toolCallId: "call-1"
-            )
+            _ = try await harness.model.components()
         }
-        #expect(harness.transport.requestCount == sent, "aucune réponse ne part")
+        #expect(harness.transport.requestCount == sent, "aucune requête ne part")
         harness.stop()
     }
 

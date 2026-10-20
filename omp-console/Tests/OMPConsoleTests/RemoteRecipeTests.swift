@@ -2,7 +2,7 @@
 // client CLI — contre la coque réelle quand les prérequis sont là.
 //
 // Un prérequis absent fait SAUTER le test, jamais un ✓ trompeur : la recette qui
-// demande `omp` porte le trait `.enabled(if:)` sur `MEM0_REMOTE_RECIPE`.
+// demande le client CLI porte le trait `.enabled(if:)` sur `MEM0_REMOTE_RECIPE`.
 
 import ConsoleCore
 import Foundation
@@ -162,48 +162,13 @@ func theCLIWithoutPairingIsRefused() async throws {
 
 @MainActor
 @Test(
-    "api-distante-du-console/AC-20 : le client CLI s'appaire, lit un run vivant, le fait avancer et consomme le flux",
+    "api-distante-du-console/AC-20 : le client CLI s'appaire, lit l'état du Mac et consomme le flux",
     .enabled(if: recipeEnabled)
 )
-func theCLIDrivesALiveRunEndToEnd() async throws {
+func theCLIPairsReadsAndWatches() async throws {
     let bun = try #require(resolveBun(), "bun est requis pour la recette")
-    // Le conducteur est le SERVICE : l'app ne lance plus `omp` (elle POSTE
-    // `POST /v1/repos/{repo}/pilot`). La recette exige donc un service LOCAL EN
-    // MARCHE, à la place du binaire `omp` d'avant le cutover — un service absent se
-    // voit dans le refus de l'étape 3, jamais dans un succès trompeur.
-
-    // Un magasin jetable avec un lot publié, comme la coque en lit un.
-    let store = StoreFixture()
-    let repoRoot = store.root + "/depot"
-    let worktree = repoRoot + "/alpha"
-    try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(atPath: worktree, withIntermediateDirectories: true)
-    let runId = fixtureId(0xB1)
-    store.publish(.lots, "\(fixtureId(0xB2)).json", object: lotObject(
-        repoRoot: repoRoot,
-        features: [lotFeatureObject(slug: "alpha", state: "running", worktree: worktree)]
-    ))
-    store.publish(.running, "\(runId).json", object: runningObject(
-        id: runId,
-        cwd: worktree,
-        phaseStartedAt: fixtureT0 - 5_000,
-        updatedAt: fixtureT0 - 1_000,
-        ownerPid: Double(getpid()),
-        sessionFile: store.root + "/session.jsonl"
-    ))
-
-    let pilot = RecipePilot()
-    let actions = ActionsModel(
-        writer: PipelineWriter(
-            stateDir: store.root,
-            pilot: { repo in try await pilot.ensurePilot(repoRoot: repo) }
-        ),
-        clock: .live
-    )
-    let stack = try await RemoteStack.make(stateDir: store.root, actionsModel: actions)
+    let stack = try await RemoteStack.make()
     defer { stack.stop() }
-    stack.kanban.start()
-    _ = await awaitMainTrue { stack.kanban.state.kanbanBoard != nil }
 
     let cli = repositoryRoot.appendingPathComponent("scripts/omp-console-api.ts").path
     let url = stack.base
@@ -213,39 +178,16 @@ func theCLIDrivesALiveRunEndToEnd() async throws {
     let pair = try await run(bun, [cli, "pair", "--code", code, "--name", "recette", "--url", url], cwd: repositoryRoot)
     #expect(pair.0 == 0, "l'appairage doit réussir : \(pair.1)")
 
-    // 2. `snapshot` : le run vivant est lu.
-    let snapshot = try await run(bun, [cli, "snapshot", "--url", url], cwd: repositoryRoot)
-    #expect(snapshot.0 == 0, "la lecture du magasin doit réussir : \(snapshot.1)")
+    // 2. `status` : la version et les composants du Mac sont lus.
+    let status = try await run(bun, [cli, "status", "--url", url], cwd: repositoryRoot)
+    #expect(status.0 == 0, "la lecture de l'état doit réussir : \(status.1)")
 
-    // 3. Un geste qui fait avancer le run.
-    let cardId = "feature:\(ProjectPaths.key(forRoot: repoRoot)):alpha"
-    let resume = try await run(bun, [cli, "resume", cardId, "--url", url], cwd: repositoryRoot)
-    #expect(resume.0 == 0, "reprendre doit être accepté : \(resume.1)")
-    #expect(await awaitMainTrue { !pilot.roots.isEmpty }, "le conducteur réel doit être armé")
-
-    // 4. Le flux temps réel est consommé.
+    // 3. Le flux temps réel est consommé.
     let watch = try await run(bun, [cli, "watch", "--seconds", "3", "--url", url], cwd: repositoryRoot, timeout: 30)
     #expect(watch.0 == 0, "le flux doit se consommer : \(watch.1)")
 
     // Le jeton n'est jamais réaffiché.
-    #expect(!snapshot.1.contains("token"))
-}
-
-/// Le dépôt piloté par le SERVICE RÉEL : l'app POSTE `POST /v1/repos/{repo}/pilot`
-/// au service local (`ServiceLocator`), qui possède le conducteur — l'app ne lance
-/// plus `omp`. Le double NOTE le dépôt confié, ce qui garde l'assertion « le
-/// conducteur a réellement été armé » observable depuis la recette.
-private final class RecipePilot: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: [String] = []
-
-    var roots: [String] { lock.withLock { stored } }
-
-    func ensurePilot(repoRoot: String) async throws {
-        lock.withLock { stored.append(repoRoot) }
-        let client = try ServiceClient(endpoint: try ServiceLocator.locate())
-        try await client.pilot(repo: repoRoot)
-    }
+    #expect(!status.1.contains("token"))
 }
 
 private let bunIsOnPath = resolveBun() != nil

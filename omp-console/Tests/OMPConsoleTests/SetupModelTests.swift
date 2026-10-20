@@ -15,7 +15,7 @@ import Testing
 import ConsoleCore
 
 /// Ce que la préparation a émis, dans l'ordre — et l'état du modèle au moment de
-/// chaque émission. (Nom préfixé : `Recorder` existe déjà dans `StoreFixtures`.)
+/// chaque émission. (Nom préfixé : `Recorder` existe déjà dans `TestWaiting`.)
 @MainActor
 private final class SetupRecorder {
     weak var model: SetupModel?
@@ -149,7 +149,7 @@ private func waitUntil(_ timeout: Double = 5, _ condition: () -> Bool) async {
     }
 }
 
-/// La présence d'OMP vue par un `HomeModel` de test : le résolveur réussit tant
+/// La présence d'OMP vue par un `OmpPresenceModel` de test : le résolveur réussit tant
 /// que `present` est vrai. (Pas `@MainActor` : le résolveur n'est pas isolé.)
 private final class OmpSwitch {
     var present: Bool
@@ -165,16 +165,15 @@ private final class OmpSwitch {
     }
 }
 
-/// Un `HomeModel` sur le résolveur fictif et des préférences jetables.
+/// Un `OmpPresenceModel` sur le résolveur fictif.
 @MainActor
-private func makeHome(_ omp: OmpSwitch) -> HomeModel {
-    let defaults = UserDefaults(suiteName: "setup-tests-\(UUID().uuidString)")!
-    return HomeModel(resolve: { omp.resolve($0) }, environment: { [:] }, defaults: defaults)
+private func makeHome(_ omp: OmpSwitch) -> OmpPresenceModel {
+    OmpPresenceModel(resolve: { omp.resolve($0) }, environment: { [:] })
 }
 
 /// Le câblage de `OMPConsoleApp` : `refreshOmp` et `onReady` relisent OMP.
 @MainActor
-private func wire(_ model: SetupModel, to home: HomeModel, recorder: SetupRecorder? = nil) {
+private func wire(_ model: SetupModel, to home: OmpPresenceModel, recorder: SetupRecorder? = nil) {
     model.refreshOmp = {
         home.recheck()
         return home.canLaunch
@@ -185,14 +184,10 @@ private func wire(_ model: SetupModel, to home: HomeModel, recorder: SetupRecord
     }
 }
 
-/// La feuille due, tout le reste étant neutre (bienvenue vue, aucune demande).
+/// Vrai quand la feuille de préparation est due.
 @MainActor
-private func sheet(_ home: HomeModel, _ model: SetupModel) -> MainSheet? {
-    MainSheetPolicy.sheet(
-        omp: home.omp, setup: model.state, setupDismissed: model.dismissed, board: .storeEmpty(dir: "/s"),
-        welcomeSeen: true, welcomeRequested: false, launchFormShown: false, answerCardID: nil,
-        contract: nil
-    )
+private func sheet(_ home: OmpPresenceModel, _ model: SetupModel) -> Bool {
+    SetupSheetPolicy.isShown(omp: home.omp, setup: model.state, dismissed: model.dismissed)
 }
 
 /// Laisse tourner les tâches en attente : ce qui devait démarrer a démarré.
@@ -397,10 +392,10 @@ func missingOmpAtLaunchDownloadsNothing() async {
     #expect(home.canLaunch == false)
     #expect(model.state == .idle)
     #expect(recorder.installCalls == 0, "aucun téléchargement avant « Installer »")
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
     // « Fermer » n'existe pas, mais même un `dismissed` forcé ne la ferme pas.
     model.dismiss()
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 }
 
 @MainActor
@@ -414,7 +409,7 @@ func relaunchAfterOmpRemovalShowsBlockingSheet() async {
     wire(firstLaunch, to: firstHome)
     await waitUntil { firstLaunch.state == .ready }
     #expect(before.installCalls == 1)
-    #expect(sheet(firstHome, firstLaunch) == nil)
+    #expect(!sheet(firstHome, firstLaunch))
 
     // Le binaire est supprimé, puis l'app relancée : modèles neufs.
     omp.present = false
@@ -426,7 +421,7 @@ func relaunchAfterOmpRemovalShowsBlockingSheet() async {
     #expect(home.omp == .missing)
     #expect(model.state == .idle)
     #expect(after.installCalls == 0)
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 }
 
 @MainActor
@@ -444,7 +439,7 @@ func retryWithoutOmpKeepsTheBlockingSheet() async {
     #expect(model.retryMissed)
     #expect(model.state == .idle)
     #expect(recorder.installCalls == 0, "« Réessayer » relit la présence, sans télécharger")
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 
     // `.ready` alors qu'OMP manque (chaîne finie, OMP retiré) : relu absent, la
     // feuille repasse à `.idle`.
@@ -456,7 +451,7 @@ func retryWithoutOmpKeepsTheBlockingSheet() async {
     #expect(model.state == .idle)
     #expect(model.retryMissed)
     #expect(recorder.installCalls == 1)
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 }
 
 @MainActor
@@ -470,10 +465,10 @@ func ompPresentAtLaunchGivesDismissableSheet() async {
     let model = makeModel(recorder, autoPrepare: home.canLaunch)
     wire(model, to: home)
     await waitUntil { recorder.installCalls == 1 }
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 
     model.dismiss()
-    #expect(sheet(home, model) == nil, "OMP présent : la feuille fermée cède la place à l'app")
+    #expect(!sheet(home, model), "OMP présent : la feuille fermée cède la place à l'app")
     gate.release()
     await waitUntil { model.state == .ready }
     #expect(model.state == .ready, "fermer n'interrompt pas la préparation")
@@ -515,7 +510,7 @@ func placingOmpMakesTheSheetDismissable() async {
         log.reads.append((present, model.state))
         return present
     }
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 
     model.startInstall()
     await waitUntil { model.state == .preparing(.migrationStart) }
@@ -528,7 +523,7 @@ func placingOmpMakesTheSheetDismissable() async {
     #expect(home.canLaunch)
     #expect(model.state == .preparing(.migrationStart))
     model.dismiss()
-    #expect(sheet(home, model) == nil, "OMP placé : la feuille se ferme, la préparation continue")
+    #expect(!sheet(home, model), "OMP placé : la feuille se ferme, la préparation continue")
 
     gate.release()
     await waitUntil { model.state == .ready }
@@ -575,14 +570,14 @@ func reopenWithoutOmpGivesTheBlockingSheet() async {
     wire(model, to: home, recorder: recorder)
     await model.prepare()
     #expect(model.state == .ready)
-    #expect(sheet(home, model) == nil)
+    #expect(!sheet(home, model))
 
-    // Le binaire disparaît : seule la veille du badge le voit, `HomeModel.omp`
+    // Le binaire disparaît : seule la veille du badge le voit, `OmpPresenceModel.omp`
     // n'est pas relu, aucune feuille ne s'impose.
     omp.present = false
     await settle()
     #expect(home.canLaunch)
-    #expect(sheet(home, model) == nil)
+    #expect(!sheet(home, model))
 
     model.reopen()
     #expect(home.omp == .missing)
@@ -590,9 +585,9 @@ func reopenWithoutOmpGivesTheBlockingSheet() async {
     #expect(model.dismissed == false)
     await settle()
     #expect(recorder.installCalls == 1, "le badge ne télécharge rien quand OMP manque")
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
     model.dismiss()
-    #expect(sheet(home, model) == .setup, "bloquante : rien ne la ferme")
+    #expect(sheet(home, model), "bloquante : rien ne la ferme")
 }
 
 @MainActor
@@ -606,7 +601,7 @@ func installClosesTheSheetAtReady() async {
     wire(model, to: home, recorder: recorder)
     model.retry()
     #expect(model.retryMissed)
-    #expect(sheet(home, model) == .setup)
+    #expect(sheet(home, model))
 
     model.startInstall()
     model.startInstall()
@@ -616,7 +611,7 @@ func installClosesTheSheetAtReady() async {
     #expect(recorder.installCalls == 1, "deux clics, une seule préparation")
     #expect(recorder.onReadyCalls == 1)
     #expect(home.canLaunch)
-    #expect(sheet(home, model) == nil, "la feuille se ferme sans autre clic")
+    #expect(!sheet(home, model), "la feuille se ferme sans autre clic")
 }
 
 @MainActor
@@ -636,7 +631,7 @@ func retryFindingOmpClosesTheSheetAtReady() async {
     #expect(home.canLaunch)
     await waitUntil { model.state == .ready }
     #expect(recorder.installCalls == 1)
-    #expect(sheet(home, model) == nil)
+    #expect(!sheet(home, model))
 }
 
 // MARK: - omp-console-sans-podman AC-9 : rejets de l'import, le choix de l'utilisateur

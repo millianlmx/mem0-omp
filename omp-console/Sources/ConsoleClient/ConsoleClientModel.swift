@@ -1,9 +1,7 @@
-// Le modèle observable UNIQUE du client distant (S-2) : il porte l'état, l'instantané
-// du magasin, les appareils, les mises à jour de session, la session hébergée, la
-// découverte, l'adresse manuelle et l'erreur d'appairage.
-//
-// Il ne fabrique aucun état optimiste : les gestes rendent le résultat typé de la
-// route, et c'est la trame `store` du flux qui met `snapshot` à jour (AC-11, AC-12).
+// Le modèle observable UNIQUE du client du Mac (S-2) : il porte l'état, les
+// appareils, les composants, la découverte, l'adresse manuelle et l'erreur
+// d'appairage, et lit la mémoire du projet. Les pipelines ne passent plus par le
+// Mac : l'app joint le serveur du VPS (`HarnessModel`).
 //
 // La reconnexion est BORNÉE (S-7) : repli progressif `ClientRetry.delays`, une seule
 // tentative en vol, le compteur repartant à zéro dès `connected`. `suspend()`
@@ -14,29 +12,12 @@ import Combine
 import ConsoleCore
 import Foundation
 
-/// Ce qu'un abonné reçoit du flux d'UNE session vivante (S-8) : les entrées
-/// AJOUTÉES depuis la dernière trame, ou l'ordre de tout relire parce que le
-/// fichier a été tronqué ou remplacé. Le fichier n'est jamais porté par l'item :
-/// un abonné de `sessionFeed(forFile:)` ne reçoit QUE les trames de SON fichier.
-public enum RemoteSessionFeedItem: Equatable, Sendable {
-    case added([RemoteConversationEntry])
-    case rewrote
-}
-
 @MainActor
 public final class ConsoleClientModel: ObservableObject {
     // MARK: - État publié
 
     @Published public private(set) var state: ClientState = .unpaired
-    @Published public private(set) var snapshot: StoreSnapshot?
     @Published public private(set) var devices: [RemoteDeviceRow] = []
-    @Published public private(set) var sessionUpdates: [RemoteSessionsEvent] = []
-    @Published public private(set) var hosted: RemoteHostedEvent?
-    /// L'état RÉDUIT de la conduite (S-6/S-11) : posé par l'évènement `conduite`.
-    /// Hors `.connected`, la dernière charge reçue est CONSERVÉE ; la trame
-    /// `conduite` que le Mac pousse à l'ouverture du flux la remplace à la
-    /// reconnexion.
-    @Published public private(set) var conduite: RemoteConduiteStatePayload?
     @Published public private(set) var discovered: DiscoveredMac?
     @Published public private(set) var manualAddress: ClientAddress?
     @Published public private(set) var pairingFailure: ClientPairingFailure?
@@ -50,39 +31,9 @@ public final class ConsoleClientModel: ObservableObject {
     /// trousseau n'est pas lu, puis `.paired`, `.unpaired` ou `.refused`.
     @Published public private(set) var pairing: ClientPairingStatus = .restoring
 
-    /// L'ardoise dérivée du dernier instantané reçu (S-8) : `.loading` tant
-    /// qu'aucune trame `store` n'est arrivée, puis recalculée à chaque trame et
-    /// après chaque lecture REST du magasin. La dérivation se fait ICI, jamais
-    /// dans une vue.
-    @Published public private(set) var board: KanbanBoardState = .loading
     /// L'état des composants du Mac (S-8), posé par la trame `components` et par
     /// la lecture `components()`.
     @Published public private(set) var components: RemoteComponentsPayload?
-    /// Le journal des gestes (S-8), posé par la trame `journal` et par la lecture
-    /// `journal()`.
-    @Published public private(set) var journal: [ActionJournalEntry] = []
-    /// Les faits de PR servis par le Mac et son état de relecture (S-6), posés
-    /// par la trame `pull-request-states`. `nil` tant qu'aucune trame n'est
-    /// arrivée (cartes à PR « PR créée ») ; le dernier reçu est CONSERVÉ à la
-    /// déconnexion, comme l'instantané.
-    @Published public private(set) var pullRequestStates: RemotePullRequestStatesPayload?
-
-    /// Les faits de PR indexés par URL : l'entrée `prFacts` de toute dérivation
-    /// de l'ardoise côté client (S-6).
-    public var pullRequestFacts: [String: PullRequestFact] {
-        PullRequestFacts.index(pullRequestStates?.facts ?? [])
-    }
-    /// La préférence de bienvenue (S-8), lue au `start()`.
-    @Published public private(set) var welcomeSeen = false
-    /// L'issue de la dernière commande envoyée au Mac (S-5 de
-    /// ios-gestes-et-retours-natifs) : `nil` avant toute commande, puis publiée
-    /// à la réponse du Mac (succès ou échec), jamais à l'envoi. Les lectures, la
-    /// relecture des PR, l'appairage et l'oubli n'en publient aucune.
-    @Published public private(set) var commandOutcome: ClientCommandOutcome?
-
-    /// La borne des mises à jour de session conservées.
-    public static let sessionUpdateLimit = 100
-
     // MARK: - Dépendances injectées
 
     private let transport: any ClientTransport
@@ -97,9 +48,6 @@ public final class ConsoleClientModel: ObservableObject {
     private let pathSource: any ClientPathSource
     private let deviceName: String
     private let localProtocolVersion: Int
-    /// L'horloge injectée : la dérivation de l'ardoise lit `nowMs()` (S-8), pour
-    /// que les tests soient déterministes. Défaut : l'horloge murale (ms epoch).
-    private let nowMs: @Sendable () -> Double
 
     // MARK: - Faits internes
 
@@ -128,12 +76,6 @@ public final class ConsoleClientModel: ObservableObject {
     /// à chaque `beginConnection` et à `stop()`.
     private var searchExpired = false
     private var searchTask: Task<Void, Never>?
-    /// Les abonnés du flux d'une session vivante (S-8), par fichier. Un dictionnaire
-    /// de continuateurs, pas un `@Published` : chacun ne voit QUE son fichier.
-    private var sessionFeeds: [String: [UUID: AsyncStream<RemoteSessionFeedItem>.Continuation]] = [:]
-    /// Le rang de la dernière issue de commande publiée (S-5) : 0 avant toute
-    /// commande, +1 avant chaque publication de `commandOutcome`.
-    private var commandSequence = 0
     /// Une trame `hello` de la version locale a été reçue sur le flux ouvert : vrai
     /// seulement entre ce `hello` et la prochaine ouverture de flux.
     private var macConfirmed = false
@@ -152,7 +94,6 @@ public final class ConsoleClientModel: ObservableObject {
         pathSource: any ClientPathSource,
         deviceName: String = ClientDeviceModel.current,
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
-        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
         searchPacer: any ClientPacer = LiveClientPacer(),
         readinessPacer: any ClientPacer = LiveClientPacer()
     ) {
@@ -164,7 +105,6 @@ public final class ConsoleClientModel: ObservableObject {
         self.pathSource = pathSource
         self.deviceName = deviceName
         self.localProtocolVersion = localProtocolVersion
-        self.nowMs = nowMs
         self.searchPacer = searchPacer
         self.readinessPacer = readinessPacer
     }
@@ -182,33 +122,16 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
-    /// OMP trouvé ou introuvable (S-8, S-10) : `.missing` est conclu SEULEMENT
-    /// quand le Mac a répondu que le composant n'est pas installé ; tant que
-    /// `components` est `nil`, on ne conclut JAMAIS à l'absence (l'Accueil reste
-    /// en chargement/déconnecté, jamais « OMP absent »).
-    public var omp: OmpStatus {
-        if let components, components.ompInstalled == false { return .missing }
-        return .available(URL(fileURLWithPath: components?.ompPath ?? ""))
-    }
-
     /// Le dossier personnel du Mac, publié par `components` : l'app iOS abrège les
     /// chemins du Mac en « ~/… » contre LUI, jamais contre son bac à sable. `nil`
     /// avant la première trame `components`, ou face à un Mac antérieur.
     public var macHomeDirectory: String? { components?.homeDirectory }
-
-    /// La feuille de bienvenue a été vue : la préférence passe à `true` (S-8).
-    public func closeWelcome() {
-        guard !welcomeSeen else { return }
-        welcomeSeen = true
-        preferences.set(true, forKey: ClientPreferenceKey.welcomeSeen)
-    }
 
     public func start() {
         guard !running else { return }
         running = true
         manualAddress = loadManualAddress()
         deviceId = preferences.string(forKey: ClientPreferenceKey.deviceId)
-        welcomeSeen = preferences.bool(forKey: ClientPreferenceKey.welcomeSeen) ?? false
         discovery.onChange = { [weak self] list in self?.applyDiscovered(list) }
         discovery.onProtocolVersion = { [weak self] version in self?.applyRemoteProtocol(version) }
         discovery.onDenied = { [weak self] denied in self?.localNetworkDenied = denied }
@@ -512,113 +435,12 @@ public final class ConsoleClientModel: ObservableObject {
         ).protocolVersion
     }
 
-    public func store() async throws -> RemoteStorePayload {
-        let payload = try await perform(ClientHTTPRequest(method: "GET", path: "/v1/store"), as: RemoteStorePayload.self)
-        applyStore(payload.snapshot)
-        return payload
-    }
-
-    public func sessions() async throws -> RemoteSessionsPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/sessions"), as: RemoteSessionsPayload.self)
-    }
-
-    public func session(file: String) async throws -> RemoteSessionPayload {
-        try await perform(
-            ClientHTTPRequest(method: "GET", path: "/v1/sessions/" + encode(file)),
-            as: RemoteSessionPayload.self
-        )
-    }
-
-    // MARK: - Flux d'une session vivante
-
-    /// Le flux MULTICAST des nouveautés d'UN fichier de session (S-8). Chaque abonné
-    /// est indépendant : `AsyncStream` ne se consomme qu'une fois, donc la visionneuse
-    /// en prend un, et l'abandon retiré sur `onTermination`. Une trame d'un AUTRE
-    /// fichier n'est délivrée à personne.
-    ///
-    /// Le tampon est BORNÉ (`.bufferingNewest`) : un consommateur qui ne consomme plus
-    /// — app en arrière-plan — garde les derniers lots au lieu d'accumuler, et une
-    /// trame perdue de la sorte est rattrapée par la relecture qu'exige `.rewrote` ou
-    /// par une réouverture (S-8 : le rattrapage du trou hors ligne n'est pas un
-    /// objectif).
-    public func sessionFeed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem> {
-        let (stream, continuation) = AsyncStream<RemoteSessionFeedItem>.makeStream(
-            bufferingPolicy: .bufferingNewest(Self.sessionFeedBuffer)
-        )
-        let id = UUID()
-        // Une itération annulée termine le flux : on retire alors le continuateur.
-        // `onTermination` peut être appelé hors du fil principal — d'où le saut
-        // explicite vers l'acteur du modèle.
-        continuation.onTermination = { [weak self] _ in
-            Task { @MainActor in self?.removeSessionFeed(file: file, id: id) }
-        }
-        sessionFeeds[file, default: [:]][id] = continuation
-        return stream
-    }
-
-    // MARK: - Fait observé par les tests : les abonnés du flux de session
-
-    /// Le nombre d'abonnés vivants, tous fichiers confondus. L'abandon d'un abonné
-    /// doit retirer son continuateur : c'est le seul fait observable de ce nettoyage.
-    var sessionFeedSubscriberCount: Int {
-        sessionFeeds.values.reduce(0) { $0 + $1.count }
-    }
-
-    /// Le nombre de lots conservés pour un abonné en retard (borne du tampon).
-    private static let sessionFeedBuffer = 64
-
-    public func projects() async throws -> RemoteProjectsPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/projects"), as: RemoteProjectsPayload.self)
-    }
-
-    public func documents(repoKey: String) async throws -> RemoteDocumentsPayload {
-        try await perform(
-            ClientHTTPRequest(method: "GET", path: "/v1/projects/" + encode(repoKey) + "/documents"),
-            as: RemoteDocumentsPayload.self
-        )
-    }
-
-    /// Le tableau du projet demandé (S-1) : sans `project`, le Mac choisit le
-    /// premier de son ordre ; avec, il sert ce projet-là (une clé inconnue
-    /// retombe sur le premier, et la charge utile le dit).
-    public func statistics(project: String? = nil) async throws -> RemoteStatsPayload {
-        let path = project.map { "/v1/stats?project=" + encode($0) } ?? "/v1/stats"
-        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteStatsPayload.self)
-    }
-
     public func devices() async throws -> RemoteDevicesPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/devices"), as: RemoteDevicesPayload.self)
     }
 
-    /// Le catalogue des modèles du Mac (S-14). Une réponse 200 porte soit des
-    /// sélecteurs, soit un motif d'échec — jamais une erreur de transport.
-    public func models() async throws -> RemoteModelsPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/models"), as: RemoteModelsPayload.self)
-    }
-
     public func components() async throws -> RemoteComponentsPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/components"), as: RemoteComponentsPayload.self)
-    }
-
-    public func journal() async throws -> RemoteJournalPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/journal"), as: RemoteJournalPayload.self)
-    }
-
-    /// Demande au Mac de relire l'état des PR sur GitHub (S-6, S-7). Le Mac
-    /// répond 202 sans attendre la relecture : les faits arrivent par la trame
-    /// `pull-request-states`.
-    public func refreshPullRequestStates() async throws -> RemoteAcceptedPayload {
-        try await perform(
-            ClientHTTPRequest(method: "POST", path: "/v1/pull-request-states/refresh"),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func contract(cardId: String) async throws -> RemoteContractPayload {
-        try await perform(
-            ClientHTTPRequest(method: "GET", path: "/v1/cards/" + encode(cardId) + "/contract"),
-            as: RemoteContractPayload.self
-        )
     }
 
     /// Une page du sommaire d'une portée (`GET /v1/memory/page`) : `offset`
@@ -651,312 +473,6 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
-    // MARK: - Gestes
-
-    public func answer(
-        cardId: String,
-        kind: String,
-        label: String?,
-        text: String?,
-        toolCallId: String
-    ) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteAnswerRequest(toolCallId: toolCallId, kind: kind, label: label, text: text))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/answer", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func reply(cardId: String, text: String) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteTextRequest(text: text))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/reply", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func text(cardId: String, text: String) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteTextRequest(text: text))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/text", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func verdict(cardId: String, verdict: String) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteVerdictRequest(verdict: verdict))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/verdict", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func resume(cardId: String) async throws -> RemoteAcceptedPayload {
-        try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/resume"),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func stop(cardId: String) async throws -> RemoteAcceptedPayload {
-        try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/stop"),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func launch(
-        repoRoot: String,
-        title: String,
-        description: String,
-        modelReqSpecs: String?,
-        modelImplReview: String?
-    ) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteFeatureRequest(
-            repoRoot: repoRoot,
-            title: title,
-            description: description,
-            modelReqSpecs: modelReqSpecs,
-            modelImplReview: modelImplReview
-        ))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/features", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func startConduite(repoKey: String, name: String) async throws -> RemoteConduitePayload {
-        let body = try encode(RemoteConduiteRequest(name: name))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/projects/" + encode(repoKey) + "/conduite", body: body),
-            as: RemoteConduitePayload.self
-        )
-    }
-
-    public func closeConduite(repoKey: String) async throws -> RemoteConduitePayload {
-        try await performGesture(
-            ClientHTTPRequest(method: "DELETE", path: "/v1/projects/" + encode(repoKey) + "/conduite"),
-            as: RemoteConduitePayload.self
-        )
-    }
-
-    /// Démarre un audit sur un dépôt CONNU du Mac (S-7) : le client ne calcule
-    /// jamais la clé, il la reçoit de `GET /v1/repos`. L'audit créé arrive ensuite
-    /// par la trame `store`.
-    public func startAudit(repoKey: String, orientation: String) async throws -> RemoteAuditStartedPayload {
-        let body = try encode(RemoteAuditStartRequest(repoKey: repoKey, orientation: orientation))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/audits", body: body),
-            as: RemoteAuditStartedPayload.self
-        )
-    }
-
-    /// Lance les propositions cochées avec le brief validé (S-7).
-    public func launchAudit(id: String, selected: [String], brief: String) async throws -> RemoteAuditLaunchPayload {
-        let body = try encode(RemoteAuditLaunchRequest(selected: selected, brief: brief))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/audits/" + encode(id) + "/launch", body: body),
-            as: RemoteAuditLaunchPayload.self
-        )
-    }
-
-    /// Répond à une escalade de l'audit (S-7) : `answer` pour les sortes `ask` et
-    /// `question`, `decision` pour les jalons `specs` et `review`.
-    public func answerAuditEscalation(
-        id: String,
-        slug: String,
-        key: String,
-        answer: String?,
-        decision: AuditMilestoneDecision?
-    ) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteAuditAnswerRequest(slug: slug, key: key, answer: answer, decision: decision))
-        return try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/audits/" + encode(id) + "/escalations", body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    /// Arrête l'audit (S-7) : ses pipelines non livrées sont annulées.
-    public func stopAudit(id: String) async throws -> RemoteAuditStopPayload {
-        try await performGesture(
-            ClientHTTPRequest(method: "DELETE", path: "/v1/audits/" + encode(id)),
-            as: RemoteAuditStopPayload.self
-        )
-    }
-
-    /// Les dépôts connus de la coque (S-8) : le client ne calcule jamais un `repoKey`.
-    public func repos() async throws -> RemoteReposPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/repos"), as: RemoteReposPayload.self)
-    }
-
-    /// L'état réduit de la conduite (S-11), lu à la demande.
-    public func conduiteState() async throws -> RemoteConduiteStatePayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/conduite"), as: RemoteConduiteStatePayload.self)
-    }
-
-    /// La liste des attentes du Mac appairé (attentes-dispersees-entre-sources,
-    /// S-8), calculée ici sur les mêmes données que le Mac : `GET /v1/store`
-    /// (ardoise et escalades d'audit), `GET /v1/conduite` puis `GET /v1/session`,
-    /// lus dans cet ordre, l'un après l'autre. La première source qui échoue
-    /// arrête tout : le modèle lève `PendingRequestsUnavailable` et ne rend
-    /// aucune liste, même partielle. Les lectures gardent leurs effets de bord
-    /// (`applyStore`, `applyHosted`) ; une annulation est relancée telle quelle.
-    public func pendingRequests() async throws -> [PendingRequest] {
-        let storePayload = try await pendingSource(.store) { try await self.store() }
-        let conduitePayload = try await pendingSource(.conduite) { try await self.conduiteState() }
-        let hostedPayload = try await pendingSource(.session) { try await self.hostedSession() }
-        let snapshot = storePayload.snapshot
-        return PendingRequests.list(PendingSources(
-            snapshot: snapshot,
-            board: KanbanBoardState.derive(
-                snapshot: snapshot,
-                nowMs: nowMs(),
-                stateDir: "",
-                isAlive: .transported(snapshot),
-                prFacts: [:]
-            ),
-            conduiteDialogs: conduitePayload.dialogs,
-            sessionDialogs: hostedPayload.dialogs
-        ))
-    }
-
-    /// Lit une source de la liste des attentes et range son échec sous son nom.
-    private func pendingSource<T>(
-        _ source: PendingRequestsSource,
-        _ read: () async throws -> T
-    ) async throws -> T {
-        do {
-            return try await read()
-        } catch let cancellation as CancellationError {
-            throw cancellation
-        } catch let error as ClientError {
-            throw PendingRequestsUnavailable(source: source, cause: error)
-        } catch {
-            throw PendingRequestsUnavailable(
-                source: source,
-                cause: .transport(.unreachable(String(describing: error)))
-            )
-        }
-    }
-
-    /// La réponse à une escalade de la conduite (S-4/S-5) : `value` pour
-    /// `editor`/`select`/`input`, `confirmed` pour `confirm`, `cancelled` pour annuler.
-    public func answerProjectDialog(
-        id: String,
-        kind: String,
-        value: String?,
-        confirmed: Bool?
-    ) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
-        return try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/conduite/dialogs/" + encode(id), body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    /// Le projet du magasin pour ce `repoKey`, lu de l'instantané courant — l'app
-    /// n'a jamais le type `StoreSnapshot` entre les mains.
-    public func project(repoKey: String) -> Project? {
-        snapshot?.projects.projects.first { $0.repoKey == repoKey }
-    }
-
-    public func hostedSession() async throws -> RemoteHostedSessionPayload {
-        let payload = try await perform(
-            ClientHTTPRequest(method: "GET", path: "/v1/session"),
-            as: RemoteHostedSessionPayload.self
-        )
-        applyHosted(payload)
-        return payload
-    }
-
-    /// Lance la session hébergée sur un dépôt CONNU du Mac (S-1) : le client ne
-    /// calcule jamais la clé, il la reçoit de `GET /v1/repos`.
-    public func launchHostedSession(repoKey: String) async throws -> RemoteHostedSessionPayload {
-        let body = try encode(RemoteHostedLaunchRequest(repoKey: repoKey))
-        let payload = try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/launch", body: body),
-            as: RemoteHostedSessionPayload.self
-        )
-        applyHosted(payload)
-        return payload
-    }
-
-    /// Relance une session `dead` (S-1) : la règle `canRelaunch` est celle du Mac.
-    public func relaunchHostedSession() async throws -> RemoteHostedSessionPayload {
-        let payload = try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/relaunch"),
-            as: RemoteHostedSessionPayload.self
-        )
-        applyHosted(payload)
-        return payload
-    }
-
-    /// Arrête la session hébergée (S-7) : idempotent côté coque.
-    public func stopHostedSession() async throws -> RemoteHostedSessionPayload {
-        let payload = try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/stop"),
-            as: RemoteHostedSessionPayload.self
-        )
-        applyHosted(payload)
-        return payload
-    }
-
-    /// Change le modèle et le niveau de la session hébergée (model-selector-in-
-    /// embedded-omp-session S-7) : le Mac applique par le chemin de son propre
-    /// bouton et rend l'état APRÈS le changement. Un refus (tour en cours, modèle
-    /// inutilisable, aucun projet) lève avec la raison du Mac, `hosted` reste sur la
-    /// valeur réelle.
-    public func setHostedModel(model: String, thinkingLevel: String?) async throws {
-        let body = try encode(RemoteSessionModelRequest(model: model, thinkingLevel: thinkingLevel))
-        let payload = try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/model", body: body),
-            as: RemoteHostedSessionPayload.self
-        )
-        applyHosted(payload)
-    }
-
-    /// Tranche un dialogue de la session hébergée (S-5) : mêmes `kind` que la
-    /// conduite, appliqués à la file de `SessionConsoleModel`.
-    public func answerHostedDialog(
-        id: String,
-        kind: String,
-        value: String?,
-        confirmed: Bool?
-    ) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
-        return try await performCommand(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/dialogs/" + encode(id), body: body),
-            as: RemoteAcceptedPayload.self
-        )
-    }
-
-    public func prompt(message: String) async throws -> RemoteSentPayload {
-        let body = try encode(RemotePromptRequest(message: message))
-        return try await performGesture(
-            ClientHTTPRequest(method: "POST", path: "/v1/session/prompt", body: body),
-            as: RemoteSentPayload.self
-        )
-    }
-
-    public func pullRequests(repoKey: String) async throws -> RemotePullRequestsPayload {
-        try await perform(
-            ClientHTTPRequest(method: "GET", path: "/v1/projects/" + encode(repoKey) + "/pull-requests"),
-            as: RemotePullRequestsPayload.self
-        )
-    }
-
-    public func merge(repoKey: String, slug: String, headOid: String) async throws -> RemoteMergedPayload {
-        let body = try encode(RemoteMergeRequest(headOid: headOid))
-        return try await performGesture(
-            ClientHTTPRequest(
-                method: "POST",
-                path: "/v1/projects/" + encode(repoKey) + "/pull-requests/" + encode(slug) + "/merge",
-                body: body
-            ),
-            as: RemoteMergedPayload.self
-        )
-    }
-
     // MARK: - Fait observé par les tests : l'endpoint utilisé
 
     /// L'endpoint réellement utilisé : l'adresse manuelle PRIME sur la découverte.
@@ -983,39 +499,6 @@ public final class ConsoleClientModel: ObservableObject {
         guard let value = try? JSONDecoder().decode(T.self, from: response.body) else {
             throw ClientError.decoding("charge utile illisible (\(T.self))")
         }
-        return value
-    }
-
-    /// Une commande envoyée au Mac : exécute la route puis publie son issue dans
-    /// `commandOutcome` — succès après la réponse décodée, échec quand la route
-    /// lève (l'erreur est relancée telle quelle). Une tâche annulée ne publie
-    /// rien : ce n'est pas une réponse du Mac.
-    private func performCommand<T: Decodable>(_ request: ClientHTTPRequest, as type: T.Type) async throws -> T {
-        let value: T
-        do {
-            value = try await perform(request, as: type)
-        } catch let cancellation as CancellationError {
-            throw cancellation
-        } catch {
-            publishCommandOutcome(succeeded: false)
-            throw error
-        }
-        publishCommandOutcome(succeeded: true)
-        return value
-    }
-
-    private func publishCommandOutcome(succeeded: Bool) {
-        commandSequence += 1
-        commandOutcome = ClientCommandOutcome(sequence: commandSequence, succeeded: succeeded)
-    }
-
-    /// Un geste : une commande (`performCommand`) puis le rafraîchissement des
-    /// faits de l'Accueil (S-8). Le rafraîchissement n'est PAS attendu : le geste
-    /// rend son résultat typé dès que la route réussit, et l'accusé arrive par le
-    /// flux ou par ces lectures.
-    private func performGesture<T: Decodable>(_ request: ClientHTTPRequest, as type: T.Type) async throws -> T {
-        let value = try await performCommand(request, as: type)
-        refreshHomeFacts()
         return value
     }
 
@@ -1266,7 +749,6 @@ public final class ConsoleClientModel: ObservableObject {
         macConfirmed = false
         publishState()
         refreshHomeFacts()
-        requestPullRequestStates()
         for try await chunk in stream {
             if Task.isCancelled { throw CancellationError() }
             for event in parser.consume(chunk) {
@@ -1289,102 +771,19 @@ public final class ConsoleClientModel: ObservableObject {
                 macConfirmed = true
                 settleReadiness()
             }
-        case .store(let snapshot):
-            applyStore(snapshot)
         case .devices(let event):
             devices = event.devices
-        case .sessions(let event):
-            sessionUpdates.insert(event, at: 0)
-            if sessionUpdates.count > Self.sessionUpdateLimit {
-                sessionUpdates.removeLast(sessionUpdates.count - Self.sessionUpdateLimit)
-            }
-            deliverSessionFeed(event)
-        case .hosted(let event):
-            hosted = event
-        case .conduite(let payload):
-            conduite = payload
         case .components(let payload):
             components = payload
-        case .journal(let payload):
-            journal = payload.entries
-        case .pullRequestStates(let payload):
-            guard payload != pullRequestStates else { return }
-            pullRequestStates = payload
-            if let snapshot { deriveBoard(snapshot) }
         case .unknown:
             break
         }
     }
 
-    /// Livre une trame `sessions` aux abonnés de SON fichier (S-8) : un incident
-    /// `truncated`/`replaced` commande une relecture complète, un `added` non vide
-    /// porte les nouvelles entrées, tout le reste ne délivre rien. Un `added` vide et
-    /// une trame d'un fichier sans abonné ne réveillent personne.
-    private func deliverSessionFeed(_ event: RemoteSessionsEvent) {
-        guard let subscribers = sessionFeeds[event.file], !subscribers.isEmpty else { return }
-        if event.issue == "truncated" || event.issue == "replaced" {
-            for continuation in subscribers.values { continuation.yield(.rewrote) }
-            return
-        }
-        guard let added = event.added, !added.isEmpty else { return }
-        for continuation in subscribers.values { continuation.yield(.added(added)) }
-    }
+    // MARK: - Composants
 
-    /// Retire le continuateur d'un abonné terminé. La clé du fichier disparaît avec
-    /// son dernier abonné : le registre ne garde aucune trace d'un fichier fermé.
-    private func removeSessionFeed(file: String, id: UUID) {
-        guard var subscribers = sessionFeeds[file] else { return }
-        subscribers[id] = nil
-        if subscribers.isEmpty {
-            sessionFeeds[file] = nil
-        } else {
-            sessionFeeds[file] = subscribers
-        }
-    }
-
-    /// Pose l'état de la session hébergée servie par une lecture ou un geste (S-2) :
-    /// le client publie UN SEUL `hosted`, alimenté par le GET, la trame SSE et la
-    /// réponse des routes de geste. Le transcript de la charge utile n'est pas
-    /// repris — le fil vient du fichier de session (S-4).
-    private func applyHosted(_ payload: RemoteHostedSessionPayload) {
-        hosted = RemoteHostedEvent(
-            state: payload.state,
-            stateLabel: payload.stateLabel,
-            sessionFile: payload.sessionFile,
-            projectName: payload.projectName,
-            dialogs: payload.dialogs,
-            added: [],
-            model: payload.model,
-            thinkingLevel: payload.thinkingLevel,
-            turnRunning: payload.turnRunning
-        )
-    }
-
-    /// Pose l'instantané et recalcule l'ardoise (S-8). Une trame identique ne
-    /// republie rien : l'égalité des `StoreSnapshot` est déjà `Equatable`.
-    private func applyStore(_ snapshot: StoreSnapshot) {
-        guard snapshot != self.snapshot else { return }
-        self.snapshot = snapshot
-        deriveBoard(snapshot)
-    }
-
-    /// Recalcule l'ardoise depuis l'instantané et les faits de PR connus (S-6) :
-    /// sans fait, une carte à PR reste « PR créée ».
-    private func deriveBoard(_ snapshot: StoreSnapshot) {
-        board = KanbanBoardState.derive(
-            snapshot: snapshot,
-            nowMs: nowMs(),
-            stateDir: "",
-            isAlive: .transported(snapshot),
-            prFacts: pullRequestFacts
-        )
-    }
-
-    // MARK: - Faits de l'Accueil (S-8)
-
-    /// Rafraîchit l'état des composants et le journal — à la connexion et après
-    /// chaque geste émis. Les appels sont TOLÉRANTS : un Mac plus ancien rend 404,
-    /// et une erreur n'est jamais propagée (les faits restent inconnus).
+    /// Rafraîchit l'état des composants à la connexion. L'appel est TOLÉRANT : une
+    /// erreur n'est jamais propagée (l'état reste inconnu).
     private func refreshHomeFacts() {
         Task { [weak self] in
             guard let self else { return }
@@ -1392,19 +791,8 @@ public final class ConsoleClientModel: ObservableObject {
         }
     }
 
-    /// Demande une relecture des PR à chaque ouverture du flux (lancement et
-    /// reconnexion, S-6). TOLÉRANTE : un Mac plus ancien rend 404 et les cartes
-    /// restent « PR créée » ; aucune erreur n'est propagée.
-    private func requestPullRequestStates() {
-        Task { [weak self] in
-            guard let self else { return }
-            _ = try? await self.refreshPullRequestStates()
-        }
-    }
-
     private func loadHomeFacts() async {
         if let payload = try? await components() { components = payload }
-        if let payload = try? await journal() { journal = payload.entries }
     }
 
     // MARK: - Découverte, réseau, version distante

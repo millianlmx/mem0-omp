@@ -273,28 +273,17 @@ final class ScriptedPathSource: ClientPathSource {
 // MARK: - Fixtures
 
 enum ClientFixtures {
-    /// Un instantané du magasin minimal, décodé depuis sa forme JSON (la forme que
-    /// la coque sérialise).
-    static func snapshot(root: String = "present") -> StoreSnapshot {
-        let json = """
-        {"root":"\(root)","running":{"availability":"present","entries":[],"discardedEntries":[]},\
-        "history":{"availability":"present","entries":[],"discardedEntries":[]},\
-        "lots":{"availability":"present","lots":[],"discardedEntries":[]},\
-        "projects":{"availability":"present","projects":[],"discardedEntries":[]},\
-        "inbox":{"availability":"present","boxes":[],"discardedEntries":[]},\
-        "audit":{"availability":"present","relays":[],"discardedEntries":[]}}
-        """
-        return try! JSONDecoder().decode(StoreSnapshot.self, from: Data(json.utf8))
-    }
-
     /// Une trame SSE, exactement comme le serveur l'écrit.
     static func frame(_ event: String, _ json: String) -> Data {
         Data("event: \(event)\ndata: \(json)\n\n".utf8)
     }
 
-    static func storeFrame(_ snapshot: StoreSnapshot) -> Data {
-        let data = try! JSONEncoder().encode(snapshot)
-        return Data("event: store\ndata: ".utf8) + data + Data("\n\n".utf8)
+    /// Une trame `components` : OMP installé, aucune préparation en cours.
+    static let components = RemoteComponentsPayload(ompInstalled: true, ompPath: "/omp", setupBanner: nil)
+
+    static func componentsFrame(_ payload: RemoteComponentsPayload = components) -> Data {
+        let data = try! JSONEncoder().encode(payload)
+        return Data("event: components\ndata: ".utf8) + data + Data("\n\n".utf8)
     }
 
     /// La trame `hello` d'ouverture du flux, à la version d'API donnée (par défaut

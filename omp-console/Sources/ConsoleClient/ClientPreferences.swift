@@ -25,8 +25,6 @@ public enum ClientPreferenceKey {
     /// appairage puis envoyée à chacun (`deviceKey`) : le Mac remplace la ligne
     /// de l'appareil qui se réappaire. Jamais effacée, pas même à la révocation.
     public static let installationId = "client.installationId"
-    /// La feuille de bienvenue a été vue (le MÊME nom que la préférence macOS).
-    public static let welcomeSeen = "home.welcomeSeen"
 }
 
 /// La production : `UserDefaults.standard`. `UserDefaults` est documenté

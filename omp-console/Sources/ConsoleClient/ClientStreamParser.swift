@@ -11,17 +11,8 @@ import Foundation
 /// Un évènement du flux, décodé.
 public enum ClientStreamEvent: Equatable, Sendable {
     case hello(RemoteHelloEvent)
-    case store(StoreSnapshot)
-    case sessions(RemoteSessionsEvent)
-    case hosted(RemoteHostedEvent)
-    /// La file d'escalades de la conduite, ENTIÈRE à chaque fois (S-6).
-    case conduite(RemoteConduiteStatePayload)
     case devices(RemoteDevicesEvent)
     case components(RemoteComponentsPayload)
-    case journal(RemoteJournalPayload)
-    /// Les faits de PR lus par le Mac et son état de relecture, ENTIERS à chaque
-    /// fois (S-6) : envoyée à l'ouverture du flux puis à chaque changement.
-    case pullRequestStates(RemotePullRequestStatesPayload)
     /// Nom inconnu, ou charge utile illisible : ignoré par le modèle.
     case unknown(String)
 
@@ -29,14 +20,8 @@ public enum ClientStreamEvent: Equatable, Sendable {
     public var name: String {
         switch self {
         case .hello: return "hello"
-        case .store: return "store"
-        case .sessions: return "sessions"
-        case .hosted: return "hosted"
-        case .conduite: return "conduite"
         case .devices: return "devices"
         case .components: return "components"
-        case .journal: return "journal"
-        case .pullRequestStates: return "pull-request-states"
         case .unknown(let name): return name
         }
     }
@@ -79,30 +64,12 @@ public struct ClientStreamParser {
         case "hello":
             return (try? decoder.decode(RemoteHelloEvent.self, from: data)).map(ClientStreamEvent.hello)
                 ?? .unknown(name)
-        case "store":
-            return (try? decoder.decode(StoreSnapshot.self, from: data)).map(ClientStreamEvent.store)
-                ?? .unknown(name)
-        case "sessions":
-            return (try? decoder.decode(RemoteSessionsEvent.self, from: data)).map(ClientStreamEvent.sessions)
-                ?? .unknown(name)
-        case "hosted":
-            return (try? decoder.decode(RemoteHostedEvent.self, from: data)).map(ClientStreamEvent.hosted)
-                ?? .unknown(name)
-        case "conduite":
-            return (try? decoder.decode(RemoteConduiteStatePayload.self, from: data))
-                .map(ClientStreamEvent.conduite) ?? .unknown(name)
         case "devices":
             return (try? decoder.decode(RemoteDevicesEvent.self, from: data)).map(ClientStreamEvent.devices)
                 ?? .unknown(name)
         case "components":
             return (try? decoder.decode(RemoteComponentsPayload.self, from: data)).map(ClientStreamEvent.components)
                 ?? .unknown(name)
-        case "journal":
-            return (try? decoder.decode(RemoteJournalPayload.self, from: data)).map(ClientStreamEvent.journal)
-                ?? .unknown(name)
-        case "pull-request-states":
-            return (try? decoder.decode(RemotePullRequestStatesPayload.self, from: data))
-                .map(ClientStreamEvent.pullRequestStates) ?? .unknown(name)
         default:
             return .unknown(name)
         }

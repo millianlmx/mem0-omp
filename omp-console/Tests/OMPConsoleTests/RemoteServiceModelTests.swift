@@ -47,7 +47,7 @@ struct RecordingListenerFailure: Error {}
 
 // MARK: - Fixture
 
-/// Une racine jetable pour le magasin, le registre et la pile.
+/// Une racine jetable pour le registre et la pile.
 @MainActor
 func remoteTempDir(_ prefix: String = "omp-console-remote") -> String {
     let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("\(prefix)-\(UUID().uuidString)")
@@ -55,8 +55,8 @@ func remoteTempDir(_ prefix: String = "omp-console-remote") -> String {
     return dir
 }
 
-/// Un `RemoteServiceModel` complet, sur une doublure de listener et un magasin
-/// jetable — les modèles de l'app sont ceux de la coque, jamais des mocks.
+/// Un `RemoteServiceModel` complet, sur une doublure de listener et un registre
+/// jetable.
 @MainActor
 func makeRemoteServiceModel(
     defaults: UserDefaults,
@@ -65,13 +65,6 @@ func makeRemoteServiceModel(
     port: Int = 0,
     dir: String = remoteTempDir()
 ) -> RemoteServiceModel {
-    // Deux sessions servies DISTINCTES, comme dans l'app : celle de la section
-    // « Session OMP » (purpose « session ») et celle de la conduite de projet
-    // (purpose « project »). Aucun test d'ici ne les démarre, donc aucun service
-    // n'est requis : la fabrique par défaut ne résout le service qu'au lancement.
-    let sessionHost = ServiceSessionModel(purpose: "session")
-    let projectHost = ServiceSessionModel(purpose: "project")
-    let hub = StoreHub(stateDir: dir)
     // Jamais le vrai trousseau : sans registre fourni, la doublure en mémoire.
     let store = registry ?? DeviceRegistry(
         file: URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent("devices.json"),
@@ -84,22 +77,6 @@ func makeRemoteServiceModel(
         clock: .live,
         port: port,
         environment: [:],
-        storeHub: hub,
-        kanban: KanbanModel(hub: hub, prStates: PullRequestStateBook(reader: nil)),
-        actions: ActionsModel(),
-        session: SessionConsoleModel(host: sessionHost, defaults: defaults),
-        project: makeProjectModel(
-            host: projectHost,
-            stateDir: dir,
-            presence: StubPresence(),
-            attention: RecordingAttention(),
-            prService: StubPRService()
-        ),
-        audit: AuditConsoleModel(
-            stateDir: dir,
-            snapshots: { AsyncStream { $0.finish() } },
-            makeClient: { throw ServiceClientError.unavailable }
-        ),
         registry: store,
         makeListener: { _ in listener }
     )

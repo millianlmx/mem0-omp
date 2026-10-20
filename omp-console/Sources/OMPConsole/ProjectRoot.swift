@@ -13,7 +13,7 @@
 import Foundation
 
 enum ProjectRoot {
-    /// Clé PARTAGÉE avec la fenêtre « Session OMP » (même préférence).
+    /// La préférence du projet choisi (écrite par `ProjectChooserModel`).
     static let defaultsKey = "session.projectRoot"
 
     /// `nil` quand aucun projet n'est résolu : ni par la préférence, ni par le cwd.

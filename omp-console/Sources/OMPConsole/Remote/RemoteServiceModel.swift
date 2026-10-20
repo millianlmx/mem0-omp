@@ -27,9 +27,6 @@ final class RemoteServiceModel: ObservableObject {
 
     let registry: DeviceRegistry
     let pairing: PairingModel
-    /// L'instance UNIQUE des gestes typés : celle que sert le routeur HTTP, et
-    /// celle qu'emploient les intents vocaux du Mac (siri-mac-questions-en-attente).
-    let remoteActions: RemoteActions
 
     private let defaults: UserDefaults
     private let clock: RemoteClock
@@ -45,12 +42,6 @@ final class RemoteServiceModel: ObservableObject {
         clock: RemoteClock = .live,
         port: Int = ConsoleAPI.Service.defaultPort,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        storeHub: StoreHub,
-        kanban: KanbanModel,
-        actions: ActionsModel,
-        session: SessionConsoleModel,
-        project: ProjectConsoleModel,
-        audit: AuditConsoleModel,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
         },
@@ -71,44 +62,23 @@ final class RemoteServiceModel: ObservableObject {
         self.listener = factory { _, _ in .respond(HTTPResponse.error(.notFound("route inconnue"))) }
 
         let hub = RemoteStreamHub(
-            storeHub: storeHub,
             registry: self.registry,
-            session: session,
-            project: project,
             clock: clock,
             components: components,
-            journal: { actions.journal },
             // Un changement de la présence des composants OU de l'état de
             // préparation pousse le même évènement `components` (S-4).
-            componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher(),
-            journalChanges: actions.$journal.voidChanges(),
-            pullRequestStates: { kanban.pullRequestStatesPayload() },
-            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
+            componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher()
         )
         let reads = RemoteReads(
-            hub: storeHub,
             registry: self.registry,
             service: HTTPMemoryService(config: Self.memoryConfig(environment: environment, stackEnv: paths.stackEnv)),
             memoryConfig: Self.memoryConfig(environment: environment, stackEnv: paths.stackEnv),
             memoryLinks: paths.memoryLinks,
             environment: environment,
             clock: clock,
-            kanban: kanban,
-            actions: actions,
             components: components
         )
-        let remoteActions = RemoteActions(
-            kanban: kanban,
-            actions: actions,
-            session: session,
-            project: project,
-            audit: audit,
-            hub: storeHub,
-            environment: environment,
-            clock: clock
-        )
-        self.remoteActions = remoteActions
-        let router = RemoteRouter(reads: reads, registry: self.registry, actions: remoteActions, streams: hub)
+        let router = RemoteRouter(reads: reads, registry: self.registry, streams: hub)
         self.streams = hub
         self.router = router
 

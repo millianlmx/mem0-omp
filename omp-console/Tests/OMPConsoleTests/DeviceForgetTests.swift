@@ -70,7 +70,7 @@ struct DeviceForgetTests {
         #expect(rows.map(\.name) == ["Témoin"])
         #expect(!rows.contains { $0.id == idA.uuidString.lowercased() })
         // Le jeton de A rend 401 sur toute route, et un second DELETE aussi.
-        let read = try await stack.call("GET", "/v1/store", token: tokenA)
+        let read = try await stack.call("GET", "/v1/components", token: tokenA)
         #expect(read.status == 401)
         let again = try await stack.call("DELETE", "/v1/devices/self", token: tokenA)
         #expect(again.status == 401)

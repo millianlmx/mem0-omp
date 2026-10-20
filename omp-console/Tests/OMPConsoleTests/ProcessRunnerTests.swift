@@ -112,20 +112,6 @@ func gitCLITimesOut() async throws {
     }
 }
 
-@Test("runner-de-process-swift-duplique/AC-3 : GhCLI rend GhError.commandTimedOut sur un enfant qui ignore SIGTERM")
-func ghCLITimesOut() async throws {
-    let directory = try makeRunnerDirectory()
-    let binary = try makeIgnoringTermBinary()
-    let cli = GhCLI(binary: binary, timeout: 0.5)
-
-    do {
-        _ = try await cli.run(GhCommand.prView(url: "https://exemple.test/pull/45"), in: directory.path)
-        Issue.record("une commande expirée doit échouer")
-    } catch let error as GhError {
-        #expect(error == .commandTimedOut(command: "pr view", seconds: 0.5))
-    }
-}
-
 @Test("runner-de-process-swift-duplique/AC-2 : un binaire inexistant échoue au lancement, sans sortie ni échéance")
 func launchFailureIsNamed() async throws {
     let directory = try makeRunnerDirectory()

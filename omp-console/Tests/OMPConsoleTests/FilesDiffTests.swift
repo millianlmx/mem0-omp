@@ -200,14 +200,8 @@ private func makeDiffScene() async throws -> DiffScene {
     try fixture.write("folder/new.txt", "x\ny\n", in: worktree)    // non suivi
     try fixture.write("tracked.txt", "a\nz\n")                     // principal, non commité
 
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("visionneuse", "feat/visionneuse", worktree, initial)]
-    )
     let git = filesGit()
-    let targets = try await TargetCatalog.list(git: git, store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: git, projectRoot: fixture.root)
     guard let primary = targets.first(where: \.isPrimary), let target = targets.first(where: { !$0.isPrimary }) else {
         throw FilesFixtureFailure.git(command: "catalogue", code: 1, stderr: "cible attendue absente : \(targets.map(\.label))")
     }

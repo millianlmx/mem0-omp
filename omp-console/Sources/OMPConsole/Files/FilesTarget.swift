@@ -18,8 +18,7 @@ import Foundation
 enum FilesBase: Sendable, Equatable {
     /// Dépôt principal : le diff se calcule contre `HEAD` (AC-6).
     case head
-    /// Sha de la base enregistrée de la feature, ou base de fusion avec la branche
-    /// par défaut du principal.
+    /// Base de fusion avec la branche par défaut du principal.
     case commit(String)
     /// Aucune base calculable, avec la raison affichable.
     case unavailable(String)
@@ -81,7 +80,7 @@ enum TargetCatalog {
         return canonicalPath((gitDir as NSString).deletingLastPathComponent)
     }
 
-    static func list(git: GitCLI, store: StoreReader, projectRoot: String) async throws -> [FilesTarget] {
+    static func list(git: GitCLI, projectRoot: String) async throws -> [FilesTarget] {
         let primary = try await primaryRoot(git: git, projectRoot: projectRoot)
 
         var targets = [
@@ -104,8 +103,6 @@ enum TargetCatalog {
         }
 
         let defaultBranch = await defaultBranchName(git: git, primary: primary)
-        let lots = store.readLots().lots
-        let lot = lots.first { canonicalPath($0.repoRoot) == primary }
 
         for record in parseWorktreeList(listed.stdout) {
             // Seuls les worktrees de feature sont des cibles : un worktree hors
@@ -123,7 +120,6 @@ enum TargetCatalog {
             let base = await resolveBase(
                 branch: branch,
                 worktree: path,
-                lot: lot,
                 git: git,
                 primary: primary,
                 defaultBranch: defaultBranch
@@ -143,21 +139,14 @@ enum TargetCatalog {
         return targets
     }
 
-    /// La base d'un worktree : le sha enregistré de la feature s'il existe, sinon la
-    /// base de fusion avec la branche par défaut du principal.
+    /// La base d'un worktree : la base de fusion avec la branche par défaut du principal.
     private static func resolveBase(
         branch: String,
         worktree: String,
-        lot: Lot?,
         git: GitCLI,
         primary: String,
         defaultBranch: String?
     ) async -> FilesBase {
-        if let feature = lot?.features.first(where: { $0.branch == branch }),
-           let recorded = feature.base,
-           isHexSha(recorded) {
-            return .commit(recorded)
-        }
         guard let defaultBranch else {
             return .unavailable("branche par défaut introuvable dans \(primary)")
         }

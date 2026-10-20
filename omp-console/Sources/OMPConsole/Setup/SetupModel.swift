@@ -3,7 +3,7 @@
 // l'ancienne mémoire podman (`PodmanLegacy`), agent launchd mem0-rs
 // (`MemoryAgent`), sonde oMLX — et publie UN état à la fois.
 //
-// La chaîne est INJECTÉE (clôtures, comme `HomeModel.Resolver`) : les tests
+// La chaîne est INJECTÉE (clôtures, comme `OmpPresenceModel.Resolver`) : les tests
 // remplacent chaque étape sans réseau ni binaire, et la production câble les
 // objets réels dans `standard`. Le modèle vit à l'échelle de l'app : il survit à
 // la fermeture de la feuille, et `onReady` s'exécute même sans fenêtre ouverte.
@@ -14,7 +14,7 @@
 // `.awaitingSwitch` : l'agent ne démarre que sur « Basculer quand même ».
 //
 // L'absence d'OMP n'est PAS un état du modèle : la seule source est
-// `HomeModel.omp`, que le modèle relit par `refreshOmp` (posé par `OMPConsoleApp`)
+// `OmpPresenceModel.omp`, que le modèle relit par `refreshOmp` (posé par `OMPConsoleApp`)
 // au clic de « Réessayer », au clic du badge, et pendant la chaîne quand
 // l'installateur change d'étape. OMP absent au lancement : aucune préparation
 // d'office (`autoPrepare: false`), la feuille bloquante attend « Installer ».
@@ -50,6 +50,17 @@ enum SetupState: Equatable, Sendable {
     /// service tant que l'utilisateur n'a pas choisi (« Basculer quand même » ou
     /// « Réessayer »).
     case awaitingSwitch(ImportReport)
+}
+
+/// Quand la feuille de préparation est due : en cours ou en échec et pas
+/// ignorée, ou OMP absent (feuille bloquante, ignorée ou non). Pure, donc figée
+/// par les tests sans rendre de vue.
+enum SetupSheetPolicy {
+    static func isShown(omp: OmpStatus, setup: SetupState, dismissed: Bool) -> Bool {
+        if setup != .ready, !dismissed { return true }
+        if case .missing = omp { return true }
+        return false
+    }
 }
 
 extension SetupStep {
@@ -96,7 +107,7 @@ final class SetupModel: ObservableObject {
     /// Appelé quand la préparation atteint `.ready` : l'app revérifie la
     /// disponibilité d'OMP (qui vient d'être installé). Posé par `OMPConsoleApp`.
     var onReady: (@MainActor () -> Void)?
-    /// Relit `HomeModel.omp` et rend vrai si OMP est présent. Posé par
+    /// Relit `OmpPresenceModel.omp` et rend vrai si OMP est présent. Posé par
     /// `OMPConsoleApp` ; sans clôture, OMP est réputé présent.
     var refreshOmp: (@MainActor () -> Bool)?
 

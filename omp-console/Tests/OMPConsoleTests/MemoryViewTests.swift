@@ -207,18 +207,12 @@ func ac6PrerequisiteTextsAreFrozen() {
             == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models"
     )
 
-    // git et gh : la spec ne fait que FIGER que leurs messages existants nomment le
+    // git : la spec ne fait que FIGER que son message existant nomme le
     // prérequis au moment de l'usage — aucun comportement nouveau ici.
     let git = FilesError.gitNotFound(searched: ["/nowhere/git"], override: nil, path: "/tmp/projet").diagnostic
     #expect(git.contains("git est introuvable"))
     #expect(git.contains("/tmp/projet"))
 
-    let gh = GhError.ghNotFound(searched: ["/nowhere/gh"], override: nil).userMessage
-    #expect(gh.contains("gh est introuvable"))
-    // Un chemin imposé est nommé lui aussi, jamais avalé.
-    let ghOverride = GhError.ghNotFound(searched: ["/nowhere/gh"], override: "/custom/gh").userMessage
-    #expect(ghOverride.contains("OMP_CONSOLE_GH_BINARY"))
-    #expect(ghOverride.contains("/custom/gh"))
 }
 
 // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)

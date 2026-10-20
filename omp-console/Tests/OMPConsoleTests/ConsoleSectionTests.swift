@@ -1,6 +1,5 @@
 // Assertion de S-4 : le modèle des sections — sélectionner une section change la
-// vue courante. L'ouverture sur l'Accueil est prouvée par HomeTests
-// (omp-console-redesign/AC-4).
+// vue courante. L'ouverture sur l'Accueil est prouvée par ConsoleViewTests.
 
 import Testing
 @testable import OMPConsole
@@ -16,13 +15,13 @@ func selectingASectionChangesTheCurrentOne() {
     }
 }
 
-@Test("audit-panel-in-omp-console-mac/S-9 : Audit est la quatrième section, dans Pilotage, après Projet")
-func auditSectionFollowsProject() {
+@Test("audit-panel-in-omp-console-mac/S-9 : Pilotage regroupe les sections du serveur de pipelines, Consultation les sections locales")
+func pilotageGroupsTheServerSections() {
     #expect(ConsoleSection.allCases == [
-        .home, .kanban, .project, .audit, .session, .terminal, .sessions, .files, .memory, .stats,
+        .home, .kanban, .project, .audit, .stats, .terminal, .files, .memory,
     ])
     #expect(ConsoleSection.audit.title == "Audit")
     #expect(ConsoleSection.audit.systemImage == "checklist")
-    #expect(ConsoleSection.audit.group == .pilotage)
-    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .session, .terminal])
+    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .stats])
+    #expect(ConsoleSectionGroup.consultation.sections == [.terminal, .files, .memory])
 }

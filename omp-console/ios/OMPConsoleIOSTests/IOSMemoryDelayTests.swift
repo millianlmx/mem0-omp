@@ -5,7 +5,7 @@
 // et les AUTRES sections qui gardent leur libellé d'avant sur un délai dépassé.
 //
 // Aucune socket : les pannes sont des `ClientError` déjà traduits, injectés par
-// les coutures de chaque section (`IOSMemoryReading`, `IOSSessionSource`).
+// la couture de la Mémoire (`IOSMemoryReading`).
 
 import ConsoleClient
 import ConsoleCore
@@ -41,29 +41,6 @@ private final class FailingMemoryReader: IOSMemoryReading {
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
         try graph.get()
     }
-}
-
-/// La doublure du fil de session (patron `SessionStubSource`) : chaque lecture
-/// échoue sur la panne posée.
-@MainActor
-private final class FailingSessionSource: IOSSessionSource {
-    let failure: Error
-
-    init(failure: Error) {
-        self.failure = failure
-    }
-
-    func read(file: String) async throws -> RemoteSessionPayload {
-        throw failure
-    }
-
-    func feed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem> {
-        AsyncStream { $0.finish() }
-    }
-
-    func run(forFile file: String) -> RunChoice? { nil }
-
-    var macHomeDirectory: String? { nil }
 }
 
 @MainActor
@@ -176,38 +153,16 @@ struct IOSMemoryDelayTests {
     }
 
     @Test("memoire-ios-expire-a-10-secondes/AC-7 : otherSectionsKeepTheirTransportWording — hors Mémoire, un délai dépassé se lit exactement comme avant")
-    func otherSectionsKeepTheirTransportWording() async {
+    func otherSectionsKeepTheirTransportWording() {
         let timedOut = ClientError.transport(.timedOut("r"))
         let unreachable = ClientError.transport(.unreachable("r"))
 
-        #expect(IOSHomeContent.failure(timedOut) == IOSHomeContent.failure(unreachable))
-        // Le traducteur partagé (Pipelines, Sessions, Statistiques, Nouvelle feature) :
-        // hors de son entrée Mémoire, un délai dépassé est un Mac injoignable.
+        // Le traducteur partagé : hors de son entrée Mémoire, un délai dépassé est
+        // un Mac injoignable.
         #expect(IOSMacFailure.of(timedOut) == .macUnreachable)
         #expect(IOSMacErrorText.message(for: timedOut) == IOSMacErrorText.message(for: unreachable))
-        #expect(ProjectText.failure(timedOut, state: connected) == ProjectText.failure(unreachable, state: connected))
-        #expect(IOSStatsText.failure(timedOut) == IOSStatsText.failure(unreachable))
         #expect(ConnectionText.pairError(timedOut) == ConnectionText.pairError(unreachable))
         #expect(ConnectionText.pairingFailure(.transport(.timedOut("r")))
             == ConnectionText.pairingFailure(.transport(.unreachable("r"))))
-
-        // L'échec d'un geste de l'Accueil passe par le même traducteur.
-        #expect(IOSHomeContent.failure(timedOut) == IOSMacErrorText.message(for: .macUnreachable))
-
-        // Le bandeau du fil de session : le même dans les deux cas.
-        var banners: [String?] = []
-        for failure in [timedOut, unreachable] {
-            let thread = IOSSessionThreadModel(
-                source: FailingSessionSource(failure: failure),
-                file: "s.jsonl",
-                title: "t",
-                subtitle: nil,
-                tracksRun: false
-            )
-            await thread.read()
-            banners.append(thread.errorBanner)
-        }
-        let unreachableBanner = IOSMacErrorText.message(for: .macUnreachable)
-        #expect(banners == [unreachableBanner, unreachableBanner])
     }
 }

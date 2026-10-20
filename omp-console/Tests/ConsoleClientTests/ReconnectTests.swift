@@ -43,10 +43,9 @@ struct ReconnectTests {
         let delays = await harness.pacer.recorded()
         #expect(delays == [0.5])
 
-        // Les données reprennent : l'instantané de la nouvelle session est publié.
-        let snapshot = ClientFixtures.snapshot()
-        harness.transport.push(ClientFixtures.storeFrame(snapshot))
-        #expect(await eventually { harness.model.snapshot == snapshot })
+        // Les données reprennent : les composants de la nouvelle session sont publiés.
+        harness.transport.push(ClientFixtures.componentsFrame())
+        #expect(await eventually { harness.model.components == ClientFixtures.components })
         harness.stop()
     }
 

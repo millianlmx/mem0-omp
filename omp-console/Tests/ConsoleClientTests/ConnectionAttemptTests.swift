@@ -1,7 +1,7 @@
 // Les faits de connexion que l'iOS présente (S-1 de etats-non-connecte-heterogenes-ios) :
 // `attemptFollowsFailure` distingue une tentative FRAÎCHE (« connexion en cours »)
-// d'une relance après échec (« non connecté » reste affiché), et la conduite
-// reçue est conservée hors `.connected`.
+// d'une relance après échec (« non connecté » reste affiché), et les composants
+// reçus sont conservés hors `.connected`.
 
 import Combine
 @testable import ConsoleClient
@@ -142,8 +142,8 @@ struct ConnectionAttemptTests {
         harness.stop()
     }
 
-    @Test("etats-non-connecte-heterogenes-ios/AC-4 : quitter `.connected` conserve la dernière conduite reçue")
-    func conduiteKeptOffline() async {
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : quitter `.connected` conserve les derniers composants reçus")
+    func componentsKeptOffline() async {
         let harness = ClientHarness(
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"]
@@ -153,16 +153,13 @@ struct ConnectionAttemptTests {
         harness.discovery.emit([mac])
         #expect(await eventually { harness.model.state == .connected(endpoint: macEndpoint) })
 
-        harness.transport.push(ClientFixtures.frame(
-            "conduite",
-            #"{"state":"live","repoKey":"r1","name":"mem0-omp"}"#
-        ))
-        #expect(await eventually { harness.model.conduite?.repoKey == "r1" })
-        let received = harness.model.conduite
+        let payload = RemoteComponentsPayload(ompInstalled: true, ompPath: "/omp", setupBanner: nil)
+        harness.transport.push(ClientFixtures.componentsFrame(payload))
+        #expect(await eventually { harness.model.components == payload })
 
         harness.discovery.emit([])
         #expect(await eventually { harness.model.state == .searching })
-        #expect(harness.model.conduite == received)
+        #expect(harness.model.components == payload)
         harness.stop()
     }
 }

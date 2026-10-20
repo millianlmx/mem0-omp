@@ -4,8 +4,9 @@
 // Audit (audits : lancer, trier les propositions) et Statistiques.
 //
 // Un seul `HarnessModel` et un seul `HarnessDrafts` pour toute la fenêtre (posés par
-// `ConsoleRootView`) : le flux d'événements tient chaque section à jour. Sans
-// serveur relié, chaque section montre le même appel à le relier.
+// `OMPConsoleApp`) : le flux d'événements tient chaque section à jour. Sans
+// serveur relié, chaque section montre le même appel à le relier. Le titre de la
+// fenêtre est posé par la racine (la section courante), jamais ici.
 
 import ConsoleClient
 import ConsoleCore
@@ -16,7 +17,6 @@ import SwiftUI
 struct HarnessSection<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    let title: String
     let catalog: Bool
     @ViewBuilder let content: () -> Content
 
@@ -39,7 +39,6 @@ struct HarnessSection<Content: View>: View {
                 .formStyle(.grouped)
             }
         }
-        .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -116,7 +115,7 @@ struct HarnessHomeView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, title: PipelineServerText.homeTitle, catalog: false) {
+        HarnessSection(server: server, drafts: drafts, catalog: false) {
             let inbox = server.inbox ?? HarnessInbox()
             Section {
                 Label(
@@ -152,7 +151,7 @@ struct HarnessPipelinesView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, title: ConsoleSection.kanban.title, catalog: true) {
+        HarnessSection(server: server, drafts: drafts, catalog: true) {
             Section {
                 HarnessRepoPicker(server: server, drafts: drafts)
                 TextField(PipelineServerText.titleLabel, text: $drafts.runTitle)
@@ -201,7 +200,7 @@ struct HarnessProjectsView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, title: ConsoleSection.project.title, catalog: true) {
+        HarnessSection(server: server, drafts: drafts, catalog: true) {
             Section {
                 HarnessRepoPicker(server: server, drafts: drafts)
                 TextField(PipelineServerText.projectTitleLabel, text: $drafts.projectTitle)
@@ -274,7 +273,7 @@ struct HarnessAuditsView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, title: ConsoleSection.audit.title, catalog: true) {
+        HarnessSection(server: server, drafts: drafts, catalog: true) {
             Section {
                 HarnessRepoPicker(server: server, drafts: drafts)
                 TextField(PipelineServerText.focusLabel, text: $drafts.auditFocus, prompt: Text(PipelineServerText.focusPrompt))
@@ -382,7 +381,7 @@ struct HarnessStatsView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, title: ConsoleSection.stats.title, catalog: true) {
+        HarnessSection(server: server, drafts: drafts, catalog: true) {
             if let stats = server.stats {
                 Section {
                     row(PipelineServerText.total, "\(stats.runs.total)")

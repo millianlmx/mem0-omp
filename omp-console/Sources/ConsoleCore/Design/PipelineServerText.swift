@@ -132,7 +132,6 @@ public enum PipelineServerText {
 
     // MARK: - Accueil
 
-    public static let homeTitle = "Accueil"
     public static let notConfigured = "Aucun serveur relié. Les pipelines tournent sur le serveur du VPS : reliez-le pour les voir et les lancer."
     public static let configure = "Relier le serveur…"
     public static let specsToValidate = "Specs à valider"

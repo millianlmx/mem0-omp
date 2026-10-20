@@ -85,23 +85,19 @@ func diffIsASingleOrderedColumn() {
     #expect(diff.lines.count == diff.header.count + diff.hunks.reduce(0) { $0 + $1.count })
 }
 
-@Test("visionneuse-de-fichiers-et-diffs/AC-9 : un document dédié absent dit SON absence, un fichier de l'arbre dit la sienne")
-func dedicatedAbsenceHasItsOwnText() {
-    #expect(FilesContent.missing.message(dedicated: FilesModel.contractRelativePath) == FilesText.noContract)
-    #expect(FilesContent.missing.message(dedicated: FilesModel.projectDocumentRelativePath) == FilesText.noProjectDocument)
-    #expect(FilesContent.missing.message(dedicated: nil) == FilesText.missingFile)
-    #expect(FilesText.noContract == "Aucun contrat dans ce dossier.")
-    #expect(FilesText.noProjectDocument == "Aucun PROJECT.md dans ce dossier.")
+@Test("visionneuse-de-fichiers-et-diffs/AC-9 : un fichier absent dit son absence, un fichier vide le dit aussi")
+func absenceHasItsOwnText() {
+    #expect(FilesContent.missing.message == FilesText.missingFile)
     // Jamais un contenu vide muet : le contenu rendu est bien du texte, pas un message.
-    #expect(FilesContent.text("").message(dedicated: nil) == FilesText.emptyFile)
-    #expect(FilesContent.text("# contrat\n").message(dedicated: FilesModel.contractRelativePath) == nil)
+    #expect(FilesContent.text("").message == FilesText.emptyFile)
+    #expect(FilesContent.text("# contrat\n").message == nil)
 }
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-7 : un binaire et une lecture refusée ont chacun leur texte")
 func binaryAndUnreadableTexts() {
-    #expect(FilesContent.binary(bytes: 2048).message(dedicated: nil) == "Ce fichier n’est pas du texte : il ne peut pas être affiché.")
+    #expect(FilesContent.binary(bytes: 2048).message == "Ce fichier n’est pas du texte : il ne peut pas être affiché.")
     // La raison brute ne s'affiche plus : elle part dans le diagnostic de la vue.
-    #expect(FilesContent.unreadable("Permission denied").message(dedicated: nil) == FilesText.unreadable)
+    #expect(FilesContent.unreadable("Permission denied").message == FilesText.unreadable)
 }
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-3 : les textes de la section qui dépendent d'une valeur la montrent")
@@ -172,10 +168,8 @@ func filesDiagnosticKeepsTheRawDetail() {
 func filesLabelsAreReadable() {
     #expect(FilesText.targetPicker == "Dossier")
     #expect(FilesText.noFiles == "Aucun fichier dans ce dossier.")
-    #expect(FilesText.noContract == "Aucun contrat dans ce dossier.")
-    #expect(FilesText.noProjectDocument == "Aucun PROJECT.md dans ce dossier.")
     #expect(FilesText.binary == "Ce fichier n’est pas du texte : il ne peut pas être affiché.")
-    for text in [FilesText.targetPicker, FilesText.noFiles, FilesText.noContract, FilesText.noProjectDocument, FilesText.binary, FilesText.baseUnavailable] {
+    for text in [FilesText.targetPicker, FilesText.noFiles, FilesText.binary, FilesText.baseUnavailable] {
         #expect(!text.lowercased().contains("worktree"), "\(text)")
         #expect(!text.lowercased().contains("cible"), "\(text)")
         #expect(!text.contains("octets"), "\(text)")

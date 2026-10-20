@@ -26,7 +26,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 /** Protocole et en-tête figés par le contrat (ConsoleAPI.protocolVersion). */
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const PROTOCOL_HEADER = "X-Console-Protocol-Version";
 const DEFAULT_URL = "http://127.0.0.1:8787";
 /** `security(1)` vit ici sur macOS ; ailleurs, prérequis absent (sortie 2). */
@@ -68,28 +68,8 @@ function usage(): void {
 commandes :
   pair --code <code> [--name <nom>]                s'appairer et ranger le jeton au trousseau
   status                                           protocole et état d'appairage
-  snapshot                                         compteurs du magasin et runs vivants
-  sessions [<id>]                                  liste des runs ou détail d'une session
-  docs <repoKey>                                   documents d'un projet
-  stats [--project <repoKey>]                       statistiques du projet
   memory [--query <q>] [--scope <s>] [--graph]     mémoire du projet
-  watch [--seconds <n>]                            suit le flux (store, sessions, hosted, devices)
-  answer <cardId> --question <toolCallId> (--option <libellé>|--text <texte>)
-  reply <cardId> --text <t>
-  steer <cardId> --text <t>
-  verdict <cardId> (--specs|--review)
-  resume <cardId>
-  stop <cardId>
-  launch --repo <chemin> --title <t> --description <d> [--model-req-specs <m>] [--model-impl-review <m>]
-  conduite <repoKey> --name <n>
-  close-conduite <repoKey>
-  prompt <message>
-  session
-  prs <repoKey>
-  merge <repoKey> <slug> --confirm <headOid>
-  repos                                            dépôts connus de la coque
-  conduite-state                                   état réduit de la conduite
-  answer-dialog <id> (--value <v>|--confirm|--decline|--cancel)
+  watch [--seconds <n>]                            suit le flux (devices, components)
   forget                                           supprime l'appairage du trousseau
 
 options :
@@ -225,24 +205,6 @@ async function callJson(method: string, routePath: string, options: CallOptions 
 // ---------------------------------------------------------------------------
 // 5. Rendu : une ligne par information, en français
 // ---------------------------------------------------------------------------
-const STORE_LABELS: Record<string, string> = {
-  running: "exécutions",
-  history: "historique",
-  lots: "lots",
-  projects: "projets",
-  inbox: "boîte de réception",
-  audit: "relais",
-};
-const ENTRY_KEYS: Record<string, string> = {
-  running: "entries",
-  history: "entries",
-  lots: "lots",
-  projects: "projects",
-  inbox: "boxes",
-  audit: "relays",
-};
-const STORES = ["running", "history", "lots", "projects", "inbox", "audit"] as const;
-
 type Dict = Record<string, unknown>;
 
 function asRecord(value: unknown): Dict {
@@ -266,21 +228,6 @@ function describe(value: unknown): string {
   }
   const json = JSON.stringify(value);
   return json.length > 160 ? `${json.slice(0, 160)}…` : json;
-}
-
-function printSnapshot(data: unknown): void {
-  const snapshot = asRecord(asRecord(data)["snapshot"]);
-  console.log(`racine : ${typeof snapshot["root"] === "string" ? snapshot["root"] : "inconnu"}`);
-  for (const key of STORES) {
-    const store = asRecord(snapshot[key]);
-    if (Object.keys(store).length === 0) continue;
-    const items = countOf(store[ENTRY_KEYS[key]]);
-    const discarded = countOf(store["discardedEntries"]);
-    console.log(`${STORE_LABELS[key]} : ${String(store["availability"] ?? "inconnu")} — ${items} élément(s), ${discarded} écarté(s)`);
-  }
-  for (const run of asArray(asRecord(snapshot["running"])["entries"])) {
-    console.log(`run vivant : ${describe(run)}`);
-  }
 }
 
 function printMemoryRows(rows: unknown[]): void {
@@ -312,58 +259,6 @@ async function cmdStatus(pairing: Pairing | null): Promise<void> {
   const data = asRecord(await callJson("GET", "/v1/version", { pairing }));
   console.log(`protocole : ${data["protocolVersion"] ?? "?"}`);
   console.log(`appairé : ${pairing ? "oui" : "non"}`);
-}
-
-async function cmdSnapshot(pairing: Pairing | null): Promise<void> {
-  printSnapshot(await callJson("GET", "/v1/store", { pairing }));
-}
-
-async function cmdSessions(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const id = rest[0];
-  if (id) {
-    const data = asRecord(await callJson("GET", `/v1/sessions/${encodeURIComponent(id)}`, { pairing }));
-    const entries = asArray(data["entries"]).length;
-    const skipped = asArray(data["skipped"]).length;
-    console.log(`session : ${data["kind"] ?? "?"} — ${entries} entrée(s), ${skipped} ignorée(s)${data["truncated"] ? " (tronquée)" : ""}`);
-    return;
-  }
-  const data = asRecord(await callJson("GET", "/v1/sessions", { pairing }));
-  for (const run of asArray(data["runs"])) {
-    const record = asRecord(run);
-    const etat = record["live"] ? "vivant" : String(record["finalState"] ?? "arrêté");
-    console.log(`run : ${record["label"] ?? record["sessionFile"] ?? "?"} — ${record["phase"] ?? "?"} — ${etat}`);
-  }
-}
-
-async function cmdDocs(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const repoKey = rest[0];
-  if (!repoKey) {
-    console.log("repoKey manquant");
-    process.exit(2);
-  }
-  const data = asRecord(await callJson("GET", `/v1/projects/${encodeURIComponent(repoKey)}/documents`, { pairing }));
-  for (const doc of asArray(data["documents"])) {
-    const record = asRecord(doc);
-    console.log(`${record["name"] ?? "?"} : ${record["state"] ?? "?"}${record["reason"] ? ` — ${record["reason"]}` : ""}`);
-    if (record["state"] === "text" && typeof record["content"] === "string") console.log(record["content"]);
-  }
-}
-
-async function cmdStats(pairing: Pairing | null): Promise<void> {
-  const project = flag("project");
-  const query = project ? `?project=${encodeURIComponent(project)}` : "";
-  const data = asRecord(await callJson("GET", `/v1/stats${query}`, { pairing }));
-  console.log(`projet : ${data["project"] || "(aucun)"} — clé : ${data["projectKey"] ?? "(aucune)"}`);
-  console.log(`projets : ${countOf(data["projects"])}`);
-  console.log(`features listées : ${countOf(data["features"])} — masquées : ${data["hiddenPlanFeatures"] ?? "?"}`);
-  for (const feature of asArray(data["features"])) {
-    const row = asRecord(feature);
-    console.log(
-      `feature : ${row["slug"] ?? "?"} — entrée : ${row["input"] ?? "?"} — sortie : ${row["output"] ?? "?"}` +
-        ` — tours : ${row["turns"] ?? "?"} — durée : ${row["durationMs"] ?? "?"} ms` +
-        ` — runs vivants : ${row["liveRuns"] ?? "?"} — modèle : ${row["model"] ?? "—"}`,
-    );
-  }
 }
 
 async function cmdMemory(pairing: Pairing | null): Promise<void> {
@@ -410,25 +305,9 @@ function printStreamEvent(name: string, data: unknown): void {
     console.log(`protocole : ${asRecord(data)["protocolVersion"] ?? "?"}`);
     return;
   }
-  if (name === "store") {
-    printSnapshot({ snapshot: data });
-    return;
-  }
-  if (name === "sessions") {
+  if (name === "components") {
     const record = asRecord(data);
-    const file = String(record["file"] ?? "?");
-    if (record["issue"]) {
-      console.log(`session : ${file} — ${record["issue"]}`);
-      return;
-    }
-    console.log(`session : ${file} — ${countOf(record["added"])} nouvelle(s) entrée(s)`);
-    return;
-  }
-  if (name === "hosted") {
-    const record = asRecord(data);
-    console.log(
-      `coque : ${record["state"] ?? "?"} — ${countOf(record["dialogs"])} dialogue(s) — ${countOf(record["added"])} ajout(s)`,
-    );
+    console.log(`composants : omp ${record["ompInstalled"] === true ? "installé" : "absent"}`);
     return;
   }
   if (name === "devices") {
@@ -518,137 +397,6 @@ async function cmdWatch(pairing: Pairing | null): Promise<void> {
   process.removeListener("SIGINT", onInterrupt);
 }
 
-async function cmdCard(pairing: Pairing | null, cardId: string, action: string, body: unknown, method = "POST"): Promise<void> {
-  await callJson(method, `/v1/cards/${encodeURIComponent(cardId)}/${action}`, { pairing, body });
-  console.log("accepté");
-}
-
-async function cmdLaunch(pairing: Pairing | null): Promise<void> {
-  const repoRoot = flag("repo");
-  const title = flag("title");
-  const description = flag("description");
-  if (!repoRoot || !title || !description) {
-    console.log("--repo, --title et --description sont requis");
-    process.exit(2);
-  }
-  await callJson("POST", "/v1/features", {
-    pairing,
-    body: {
-      repoRoot,
-      title,
-      description,
-      modelReqSpecs: flag("model-req-specs") ?? null,
-      modelImplReview: flag("model-impl-review") ?? null,
-    },
-  });
-  console.log("demande acceptée");
-}
-
-async function cmdConduite(pairing: Pairing | null, rest: string[], close: boolean): Promise<void> {
-  const repoKey = rest[0];
-  if (!repoKey) {
-    console.log("repoKey manquant");
-    process.exit(2);
-  }
-  const routePath = `/v1/projects/${encodeURIComponent(repoKey)}/conduite`;
-  const data = asRecord(
-    close
-      ? await callJson("DELETE", routePath, { pairing })
-      : await callJson("POST", routePath, { pairing, body: { name: flag("name") ?? "" } }),
-  );
-  console.log(`conduite : ${data["state"] ?? "?"}`);
-}
-
-async function cmdPrompt(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const message = rest.join(" ");
-  if (!message) {
-    console.log("message manquant");
-    process.exit(2);
-  }
-  await callJson("POST", "/v1/session/prompt", { pairing, body: { message } });
-  console.log("prompt envoyé");
-}
-
-async function cmdSession(pairing: Pairing | null): Promise<void> {
-  const data = asRecord(await callJson("GET", "/v1/session", { pairing }));
-  console.log(`état : ${data["state"] ?? "?"} (${data["stateLabel"] ?? "?"})`);
-  if (typeof data["sessionId"] === "string") console.log(`session : ${data["sessionId"]}`);
-  if (typeof data["sessionFile"] === "string") console.log(`fichier : ${data["sessionFile"]}`);
-  if (data["protocolVersion"] !== null && data["protocolVersion"] !== undefined) {
-    console.log(`protocole : ${data["protocolVersion"]}`);
-  }
-  console.log(`dialogues : ${countOf(data["dialogs"])} — transcription : ${countOf(data["transcript"])}${data["truncated"] ? " (tronquée)" : ""}`);
-}
-
-async function cmdPrs(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const repoKey = rest[0];
-  if (!repoKey) {
-    console.log("repoKey manquant");
-    process.exit(2);
-  }
-  const data = asRecord(await callJson("GET", `/v1/projects/${encodeURIComponent(repoKey)}/pull-requests`, { pairing }));
-  if (typeof data["failure"] === "string" && data["failure"]) console.log(`échec : ${data["failure"]}`);
-  console.log(`PR : ${countOf(data["rows"])}${data["stale"] ? " (périmées)" : ""}`);
-  for (const row of asArray(data["rows"])) console.log(`  ${describe(row)}`);
-}
-
-async function cmdMerge(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const repoKey = rest[0];
-  const slug = rest[1];
-  const headOid = flag("confirm");
-  if (!repoKey || !slug || !headOid) {
-    console.log("repoKey, slug et --confirm <headOid> sont requis");
-    process.exit(2);
-  }
-  const data = asRecord(
-    await callJson("POST", `/v1/projects/${encodeURIComponent(repoKey)}/pull-requests/${encodeURIComponent(slug)}/merge`, {
-      pairing,
-      body: { headOid },
-    }),
-  );
-  console.log(`fusionnée : #${data["number"] ?? "?"} ${data["url"] ?? ""}`.trim());
-}
-
-async function cmdRepos(pairing: Pairing | null): Promise<void> {
-  const data = asRecord(await callJson("GET", "/v1/repos", { pairing }));
-  const rows = asArray(data["rows"]);
-  console.log(`dépôts : ${rows.length}`);
-  for (const row of rows) {
-    const repo = asRecord(row);
-    console.log(`  ${repo["name"] ?? "?"} — ${repo["repoRoot"] ?? "?"} (${repo["repoKey"] ?? "?"})`);
-  }
-}
-
-async function cmdConduiteState(pairing: Pairing | null): Promise<void> {
-  const data = asRecord(await callJson("GET", "/v1/conduite", { pairing }));
-  const status = asRecord(data["status"]);
-  const pill = typeof status["text"] === "string" ? ` (${status["text"]})` : "";
-  console.log(`conduite : ${data["state"] ?? "?"}${pill}`);
-  if (typeof data["name"] === "string") console.log(`projet : ${data["name"]}`);
-  if (typeof data["repoRoot"] === "string") console.log(`dépôt : ${data["repoRoot"]}`);
-  console.log(`escalades : ${countOf(data["dialogs"])}`);
-}
-
-async function cmdAnswerDialog(pairing: Pairing | null, rest: string[]): Promise<void> {
-  const id = rest[0];
-  if (!id) {
-    console.log("id de l'escalade manquant");
-    process.exit(2);
-  }
-  const value = flag("value");
-  let body: Record<string, unknown>;
-  if (value !== undefined) body = { kind: "value", value };
-  else if (flags["confirm"] === true) body = { kind: "confirmed", confirmed: true };
-  else if (flags["decline"] === true) body = { kind: "confirmed", confirmed: false };
-  else if (flags["cancel"] === true) body = { kind: "cancelled" };
-  else {
-    console.log("--value, --confirm, --decline ou --cancel est requis");
-    process.exit(2);
-  }
-  await callJson("POST", `/v1/conduite/dialogs/${encodeURIComponent(id)}`, { pairing, body });
-  console.log("accepté");
-}
-
 // ---------------------------------------------------------------------------
 // 7. Aiguillage
 // ---------------------------------------------------------------------------
@@ -678,109 +426,11 @@ switch (command) {
   case "status":
     await cmdStatus(pairing);
     break;
-  case "snapshot":
-    await cmdSnapshot(pairing);
-    break;
-  case "sessions":
-    await cmdSessions(pairing, rest);
-    break;
-  case "docs":
-    await cmdDocs(pairing, rest);
-    break;
-  case "stats":
-    await cmdStats(pairing);
-    break;
   case "memory":
     await cmdMemory(pairing);
     break;
   case "watch":
     await cmdWatch(pairing);
-    break;
-  case "answer": {
-    const cardId = rest[0];
-    if (!cardId) {
-      console.log("cardId manquant");
-      process.exit(2);
-    }
-    // Protocole 2 : la route exige l'identifiant de la question visée
-    // (`pendingAsk.toolCallId` de `snapshot`), refusé AVANT tout appel.
-    const toolCallId = flag("question");
-    if (!toolCallId) {
-      console.log("--question est requis");
-      process.exit(2);
-    }
-    const option = flag("option");
-    const text = flag("text");
-    if (option !== undefined) await cmdCard(pairing, cardId, "answer", { toolCallId, kind: "selected", label: option });
-    else if (text !== undefined) await cmdCard(pairing, cardId, "answer", { toolCallId, kind: "custom", text });
-    else {
-      console.log("--option ou --text est requis");
-      process.exit(2);
-    }
-    break;
-  }
-  case "reply":
-  case "steer": {
-    const cardId = rest[0];
-    const text = flag("text");
-    if (!cardId || text === undefined) {
-      console.log("cardId et --text sont requis");
-      process.exit(2);
-    }
-    await cmdCard(pairing, cardId, command === "reply" ? "reply" : "text", { text });
-    break;
-  }
-  case "verdict": {
-    const cardId = rest[0];
-    if (!cardId) {
-      console.log("cardId manquant");
-      process.exit(2);
-    }
-    const verdict = flags["specs"] === true ? "specs" : flags["review"] === true ? "review" : null;
-    if (!verdict) {
-      console.log("--specs ou --review est requis");
-      process.exit(2);
-    }
-    await cmdCard(pairing, cardId, "verdict", { verdict });
-    break;
-  }
-  case "resume":
-  case "stop": {
-    const cardId = rest[0];
-    if (!cardId) {
-      console.log("cardId manquant");
-      process.exit(2);
-    }
-    await cmdCard(pairing, cardId, command, undefined);
-    break;
-  }
-  case "launch":
-    await cmdLaunch(pairing);
-    break;
-  case "conduite":
-  case "close-conduite":
-    await cmdConduite(pairing, rest, command === "close-conduite");
-    break;
-  case "prompt":
-    await cmdPrompt(pairing, rest);
-    break;
-  case "session":
-    await cmdSession(pairing);
-    break;
-  case "prs":
-    await cmdPrs(pairing, rest);
-    break;
-  case "merge":
-    await cmdMerge(pairing, rest);
-    break;
-  case "repos":
-    await cmdRepos(pairing);
-    break;
-  case "conduite-state":
-    await cmdConduiteState(pairing);
-    break;
-  case "answer-dialog":
-    await cmdAnswerDialog(pairing, rest);
     break;
   case "forget":
     if (deleteToken(base.account)) console.log("appairage supprimé");

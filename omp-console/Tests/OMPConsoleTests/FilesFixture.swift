@@ -226,39 +226,17 @@ func filesGit() -> GitCLI {
     GitCLI(binary: URL(fileURLWithPath: "/usr/bin/git"))
 }
 
-/// Un magasin d'état réduit à UN lot : la racine du dépôt principal et les features
-/// connues, avec leur branche, leur worktree et leur sha de base. C'est de là que
-/// S-1 tire la base d'un worktree.
-func filesStore(
-    _ fixture: StoreFixture,
-    principal: String,
-    features: [(slug: String, branch: String, worktree: String, base: String?)]
-) -> StoreReader {
-    var objects: [[String: Any]] = []
-    for feature in features {
-        var object = lotFeatureObject(slug: feature.slug)
-        object["branch"] = feature.branch
-        object["worktree"] = feature.worktree
-        object["base"] = feature.base ?? NSNull()
-        objects.append(object)
-    }
-    var lot = lotObject(id: "0f0f0f0f0f0f0f0f", features: objects)
-    lot["repoRoot"] = principal
-    fixture.publish(.lots, "0f0f0f0f0f0f0f0f.json", object: lot)
-    return StoreReader(stateDir: fixture.root, clock: fixtureClock)
-}
 
 /// Un modèle de la visionneuse branché sur une fixture et sur des `UserDefaults`
 /// JETABLES : le projet est CHOISI dans la préférence de test, jamais deviné depuis
 /// le cwd de la suite (qui est celui du dépôt).
 @MainActor
-func filesModel(for projectRoot: String, store: StoreReader, git: GitCLI? = nil) -> FilesModel {
+func filesModel(for projectRoot: String, git: GitCLI? = nil) -> FilesModel {
     let suite = UserDefaults(suiteName: "omp-console-files-\(UUID().uuidString)") ?? .standard
     suite.set(projectRoot, forKey: ProjectRoot.defaultsKey)
     return FilesModel(
         projectRoot: URL(fileURLWithPath: projectRoot),
         git: git ?? filesGit(),
-        store: store,
         defaults: suite,
         fileManager: .default,
         environment: ["PATH": "/usr/bin:/bin"]
@@ -297,7 +275,6 @@ func openEntry(_ entry: FilesEntry, in model: FilesModel, timeout: Duration = .s
 @MainActor
 final class FilesScene {
     let fixture: FilesFixture
-    let storeFixture: StoreFixture
     let worktree: String
     /// Le commit initial, enregistré comme base de la feature.
     let base: String
@@ -307,11 +284,7 @@ final class FilesScene {
     /// `projectRootIsPrimary` monte le projet sur le DÉPÔT PRINCIPAL : c'est le seul
     /// moyen de prouver qu'une cible qui disparaît sort du catalogue sans emporter le
     /// projet avec elle.
-    init(
-        contract: String? = "# contrat de la fixture\n",
-        projectDocument: String? = "# projet de la fixture\n",
-        projectRootIsPrimary: Bool = false
-    ) throws {
+    init(projectRootIsPrimary: Bool = false) throws {
         let fixture = try FilesFixture()
         let base = try fixture.head()
         let worktree = try fixture.makeWorktree(slug: "scene")
@@ -323,25 +296,12 @@ final class FilesScene {
         try fixture.write("tracked.txt", "b\n", in: worktree)
         try fixture.write("folder/new.txt", "x\ny\n", in: worktree)
         try fixture.write("tracked.txt", "a\nz\n")
-        if let contract {
-            try fixture.write(FilesModel.contractRelativePath, contract, in: worktree)
-        }
-        if let projectDocument {
-            try fixture.write(FilesModel.projectDocumentRelativePath, projectDocument)
-        }
 
-        let storeFixture = StoreFixture()
-        let reader = filesStore(
-            storeFixture,
-            principal: fixture.root,
-            features: [("scene", "feat/scene", worktree, base)]
-        )
         self.fixture = fixture
         self.base = base
         self.worktree = worktree
-        self.storeFixture = storeFixture
         self.git = filesGit()
-        self.model = filesModel(for: projectRootIsPrimary ? fixture.root : worktree, store: reader)
+        self.model = filesModel(for: projectRootIsPrimary ? fixture.root : worktree)
     }
 
     /// Charge l'arbre et la cible active : le geste de l'ouverture de la section.

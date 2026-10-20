@@ -23,7 +23,6 @@ private func homeFacts(
     { request in
         switch request.path {
         case "/v1/components": return reply(200, #"{"ompInstalled":true}"#)
-        case "/v1/journal": return reply(200, #"{"entries":[]}"#)
         default: return other(request)
         }
     }

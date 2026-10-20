@@ -11,6 +11,7 @@
 // jamais être contourné par une découverte fortuite. C'est aussi elle qui sert
 // aux recettes pour pointer un omp de secours.
 
+import Combine
 import Foundation
 
 enum OmpBinaryResolver {
@@ -39,5 +40,70 @@ enum OmpBinaryResolver {
         }
         let override = environment[overrideKey].flatMap { $0.isEmpty ? nil : $0 }
         return .failure(.binaryNotFound(searched: searched, override: override))
+    }
+}
+
+/// Ce qu'un modèle peut afficher d'une erreur, sans connaître son type exact.
+protocol UserFacingError: Error {
+    var userMessage: String { get }
+}
+
+/// L'échec de résolution du binaire `omp` (préparation des composants, terminal).
+enum OmpBinaryError: UserFacingError, Equatable, Sendable {
+    case binaryNotFound(searched: [String], override: String?)
+
+    var userMessage: String {
+        switch self {
+        case .binaryNotFound(let searched, let override):
+            var message = "Binaire `omp` introuvable (cherché : \(searched.joined(separator: ", ")))."
+            if let override { message += " Chemin demandé : \(override)" }
+            return message
+        }
+    }
+}
+
+/// OMP trouvé (le binaire du composant de l'app), ou introuvable : l'app affiche
+/// alors sa préparation et propose « Réessayer » (S-5).
+enum OmpStatus: Equatable, Sendable {
+    case available(URL)
+    case missing
+}
+
+/// La présence d'OMP, revérifiée quand la préparation des composants s'achève.
+@MainActor
+final class OmpPresenceModel: ObservableObject {
+    typealias Resolver = ([String: String]) -> Result<URL, OmpBinaryError>
+
+    @Published private(set) var omp: OmpStatus
+
+    private let resolve: Resolver
+    private let environment: () -> [String: String]
+
+    init(
+        resolve: Resolver? = nil,
+        environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment }
+    ) {
+        let resolve = resolve ?? { env in
+            OmpBinaryResolver.resolve(environment: env, paths: .standard(environment: env))
+        }
+        self.resolve = resolve
+        self.environment = environment
+        self.omp = Self.status(resolve(environment()))
+    }
+
+    var canLaunch: Bool {
+        if case .available = omp { return true }
+        return false
+    }
+
+    func recheck() {
+        omp = Self.status(resolve(environment()))
+    }
+
+    private static func status(_ result: Result<URL, OmpBinaryError>) -> OmpStatus {
+        switch result {
+        case .success(let url): .available(url)
+        case .failure: .missing
+        }
     }
 }

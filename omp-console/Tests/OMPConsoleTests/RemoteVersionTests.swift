@@ -20,11 +20,8 @@ struct RemoteVersionTests {
         // réponse soit un succès ou une erreur.
         let readRoutes = [
             "/v1/version",
-            "/v1/store",
-            "/v1/sessions",
-            "/v1/projects",
-            "/v1/stats",
             "/v1/devices",
+            "/v1/components",
             "/v1/memory/page",
         ]
         for path in readRoutes {
@@ -88,16 +85,11 @@ struct RemoteVersionTests {
         let token = try await stack.pair(name: "Téléphone")
         let previous = ConsoleAPI.protocolVersion - 1
 
-        // Une lecture et la réponse à une carte : l'app de la version précédente,
-        // qui n'envoie pas l'identifiant de question, n'atteint aucune route.
-        let read = try await stack.call("GET", "/v1/store", token: token, protocolVersion: previous)
-        let answer = try await stack.call(
-            "POST", "/v1/cards/feature:0000000000000000:alpha/answer",
-            token: token,
-            json: ["kind": "custom", "text": "bonjour"],
-            protocolVersion: previous
-        )
-        for reply in [read, answer] {
+        // Une lecture et l'oubli de l'appareil : l'app de la version précédente,
+        // qui attend encore les routes du moteur local, n'atteint aucune route.
+        let read = try await stack.call("GET", "/v1/components", token: token, protocolVersion: previous)
+        let forget = try await stack.call("DELETE", "/v1/devices/self", token: token, protocolVersion: previous)
+        for reply in [read, forget] {
             #expect(reply.status == 400)
             #expect(reply.errorCode == "incompatible_protocol")
             #expect(

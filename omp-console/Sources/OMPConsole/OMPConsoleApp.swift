@@ -1,161 +1,81 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// UNE scène : la fenêtre principale à barre latérale. Session OMP, Terminal,
-// Projet, Statistiques et la visionneuse en sont des sections (ou une vue
-// poussée dans Sessions) — l'app reste utilisable en plein écran, où chaque
-// fenêtre annexe partait dans son propre espace (2026-10-02). « Un seul
-// terminal » et « jamais deux pilotages » (AC-2) tiennent par les modèles, à
-// instance unique sur la structure `App`, et par leurs refus de second
-// lancement.
+// UNE scène : la fenêtre principale à barre latérale. Les sections de pilotage
+// (Accueil, Pipelines, Projet, Audit, Statistiques) sont servies par le serveur
+// de pipelines du VPS (omp-harness) ; Terminal, Fichiers et Mémoire sont locaux.
+// L'app reste utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus (HIG Keyboards : ⌘N crée l'objet principal de l'app, aucun
-// raccourci standard n'est détourné) : Fichier ▸ « Nouvelle feature… » ⌘N,
-// « Nouvelle session OMP » ⌥⌘N, « Piloter un projet… » ⇧⌘N ; Présentation ▸ les
-// dix sections (⌘1…⌘9, ⌘0).
+// Barre des menus : Présentation ▸ les huit sections (⌘1…⌘8).
 //
-// Les modèles de terminal, de session et de pilotage vivent sur la structure `App`
-// (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
-// `omp` orphelin, et les accroches de terminaison existent avant la première
-// ouverture.
+// Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
+// l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
+// terminaison existent avant la première ouverture.
 //
 // La terminaison passe par `applicationShouldTerminate` en DEUX temps (D3) : la
 // première demande est annulée le temps d'ATTENDRE la sortie des process hébergés,
 // puis la terminaison est redemandée et passe.
 
 import AppKit
+import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
 @main
 struct OMPConsoleApp: App {
-    @StateObject private var model: ConsoleModel
+    @StateObject private var model = ConsoleModel()
+    /// Le serveur de pipelines du VPS : UN modèle et UN jeu de brouillons pour la
+    /// fenêtre, partagés par les cinq sections de pilotage.
+    @StateObject private var server = HarnessModel.live()
+    @StateObject private var drafts = HarnessDrafts()
     @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()
-    @StateObject private var sessionModel: SessionConsoleModel
-    @StateObject private var kanbanModel: KanbanModel
-    @StateObject private var actionsModel: ActionsModel
-    @StateObject private var projectModel: ProjectConsoleModel
-    @StateObject private var auditModel: AuditConsoleModel
-    @StateObject private var statsModel: StatsModel
-    @StateObject private var memoryModel: MemoryModel
-    /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
-    /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
-    /// sélection, ni les filtres.
+    @StateObject private var memoryModel = MemoryModel()
+    /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, pour que
+    /// la bascule liste ⇄ graphe ne perde ni la position, ni la sélection.
     @StateObject private var memoryGraphModel = MemoryGraphModel()
-    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman) :
-    /// à l'échelle de l'app, rafraîchi par `onReady` et à l'apparition de la
-    /// section Mémoire.
+    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman).
     @StateObject private var podmanCleanup: PodmanCleanupModel
-    @StateObject private var contractModel: ContractModel
-    @StateObject private var homeModel: HomeModel
+    @StateObject private var presence: OmpPresenceModel
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
     /// de sa feuille, et son `onReady` revérifie OMP.
     @StateObject private var setupModel: SetupModel
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
-    /// latérale le montre, et ses deux veilles vivent tant que l'app vit — le
-    /// badge se recalcule sans redémarrage. Le service d'API le sert aussi (S-4).
+    /// latérale le montre. Le service d'API le sert aussi (S-4).
     @StateObject private var componentsModel: ComponentPresenceModel
-    /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
-    /// il possède le registre des appareils et l'interrupteur persistant, que
-    /// montre l'onglet « Appareils » des Réglages.
+    /// Le service d'API distante (BR-9) : l'appairage de l'iPhone et la mémoire.
     @StateObject private var remoteModel: RemoteServiceModel
-    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
-    /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
-    /// la session et lit les projets connus dans le magasin du service d'API.
-    @StateObject private var projectChooser: ProjectChooserModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal.
+    @StateObject private var projectChooser = ProjectChooserModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    /// Le crochet de recette `-surface.recipe` (racine jetable seulement), lu une
-    /// fois au lancement : la racine l'applique à son premier affichage.
-    private let surfaceRecipe = SurfaceRecipe.current()
 
-    /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
-    /// (S-9), sans lancer aucun process. Les accroches de terminaison des modèles
-    /// sont posées dès leur construction.
     init() {
-        let console = ConsoleModel()
-        _model = StateObject(wrappedValue: console)
-        let contract = ContractModel()
-        _contractModel = StateObject(wrappedValue: contract)
-        let actions = ActionsModel()
-        _actionsModel = StateObject(wrappedValue: actions)
-        // Le crochet de recette `-home.recipe` (`HomeRecipe`) : nil hors recette,
-        // donc le comportement de production.
-        let kanban = KanbanModel(recipeBoard: HomeRecipe.current()?.board)
-        _kanbanModel = StateObject(wrappedValue: kanban)
-        let session = SessionConsoleModel()
-        // Catalogue des modèles et défaut du projet : lus dès le lancement, pour que
-        // la valeur publiée à l'iPhone (`hosted`) soit juste sans ouvrir la fenêtre.
-        session.startModelSelector()
-        _sessionModel = StateObject(wrappedValue: session)
-        // UN magasin pour la liste des projets connus : celui que le service
-        // d'API sert par `GET /v1/repos`, donc le sélecteur des états vides
-        // montre exactement la même liste, sans seconde veille.
-        let storeHub = StoreHub()
-        _projectChooser = StateObject(wrappedValue: ProjectChooserModel(
-            session: session,
-            knownRoots: { KnownProjects.roots(in: storeHub.current()) }
-        ))
-        let project = ProjectConsoleModel()
-        _projectModel = StateObject(wrappedValue: project)
-        // Le MÊME modèle sert la section et l'API distante (S-7) : un geste de
-        // l'iPhone part au service par le geste du Mac.
-        let audit = AuditConsoleModel()
-        _auditModel = StateObject(wrappedValue: audit)
-        let stats = StatsModel()
-        _statsModel = StateObject(wrappedValue: stats)
-        // `onReady` revérifie OMP : le composant vient d'être installé par l'app
-        // elle-même (S-4), et c'est ce binaire-là qu'elle hébergera désormais.
-        let home = HomeModel()
-        _homeModel = StateObject(wrappedValue: home)
+        let presence = OmpPresenceModel()
+        _presence = StateObject(wrappedValue: presence)
         // La préparation et la présence des composants sont construites AVANT le
         // service d'API : il les sert (`GET /v1/components`, évènement `components`).
         // OMP absent au lancement : rien ne se télécharge d'office, la feuille
         // bloquante attend « Installer ». Le crochet de recette `-setup.recipe`
         // (racine jetable seulement) remplace l'installateur par un script.
-        let setup = SetupRecipe.current()?.model(autoPrepare: home.canLaunch)
-            ?? SetupModel.standard(autoPrepare: home.canLaunch)
-        let presence = ComponentPresenceModel()
-        _componentsModel = StateObject(wrappedValue: presence)
-        // Le service d'API distante partage les modèles de l'app : ce que l'API
-        // sert à distance est l'état que la fenêtre montre. Il démarre à
-        // l'apparition de la racine ET sur `onReady` (S-14).
+        let setup = SetupRecipe.current()?.model(autoPrepare: presence.canLaunch)
+            ?? SetupModel.standard(autoPrepare: presence.canLaunch)
+        let components = ComponentPresenceModel()
+        _componentsModel = StateObject(wrappedValue: components)
         let remote = RemoteServiceModel(
             port: RemoteServiceModel.resolvedPort(environment: ProcessInfo.processInfo.environment),
-            storeHub: storeHub,
-            kanban: kanban,
-            actions: actions,
-            session: session,
-            project: project,
-            audit: audit,
-            components: { [weak presence, weak setup] in
-                let installed = presence.map { !$0.presence.missing.contains(.omp) } ?? false
+            components: { [weak components, weak setup] in
+                let installed = components.map { !$0.presence.missing.contains(.omp) } ?? false
                 return RemoteComponentsPayload(
                     ompInstalled: installed,
-                    ompPath: installed ? presence?.binaryPath(.omp) : nil,
+                    ompPath: installed ? components?.binaryPath(.omp) : nil,
                     setupBanner: setup.flatMap { SetupText.banner(state: $0.state, dismissed: true) }
                 )
             },
-            presenceChanges: presence.$presence.voidChanges(),
+            presenceChanges: components.$presence.voidChanges(),
             setupChanges: setup.$state.voidChanges()
         )
         _remoteModel = StateObject(wrappedValue: remote)
-        // Les intents Siri (siri-mac-questions-en-attente, S-5) résolvent les
-        // modèles mêmes que les vues et l'API distante. `init()` tourne aussi au
-        // lancement à froid par Siri, sans fenêtre : la lecture démarre l'ardoise.
-        MacVoiceContext.install(MacVoiceContext(
-            storeHub: storeHub,
-            kanban: kanban,
-            project: project,
-            session: session,
-            remoteActions: remote.remoteActions,
-            startModels: { kanban.start() },
-            // Le projet choisi de l'app, résolu comme la feuille « Nouvelle feature ».
-            projectRoot: { ProjectRoot.resolve(defaults: .standard, fileManager: .default)?.path }
-        ), in: .shared)
-        // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de
-        // terminaison est posée dès la construction, comme celles des autres
-        // modèles.
+        // L'annonce Bonjour ne survit pas au process (S-14).
         AppDelegate.terminateRemoteService = { [weak remote] in
             remote?.stop()
         }
@@ -163,120 +83,57 @@ struct OMPConsoleApp: App {
         // n'est pas terminée — `onReady` en fait le démarrage différé.
         remote.isSetupReady = { [weak setup] in setup?.state == .ready }
         setup.refreshOmp = {
-            home.recheck()
-            return home.canLaunch
+            presence.recheck()
+            return presence.canLaunch
         }
-        // La bascule vient peut-être d'avoir lieu : le bandeau de nettoyage de
-        // l'ancien moteur se réévalue (S-6).
         let cleanup = PodmanCleanupModel()
         _podmanCleanup = StateObject(wrappedValue: cleanup)
         setup.onReady = {
-            home.recheck()
+            presence.recheck()
             cleanup.refresh()
             Task { await remote.startIfEnabled() }
         }
         _setupModel = StateObject(wrappedValue: setup)
-        // Le clic d'une notification (notifications-mac-lien-profond S-3/S-4) : le
-        // routeur agit sur les modèles de la fenêtre et vit tant que cette accroche
-        // le retient.
-        let router = AlertRouter(console: console, home: home, kanban: kanban, contract: contract, actions: actions)
-        AppDelegate.openAlert = { router.open($0) }
-        let memory = MemoryModel()
-        _memoryModel = StateObject(wrappedValue: memory)
     }
 
     var body: some Scene {
-        // La fenêtre principale : Session OMP, Terminal, Projet, Statistiques et
-        // la visionneuse sont des sections (ou une vue poussée) de cette fenêtre
-        // — en plein écran, une fenêtre annexe partait dans son propre espace
-        // (demande du 2026-10-02). Sans titre de scène : la fenêtre porte celui
-        // de la section courante (`ConsoleRootView`), jamais le nom de l'app.
-        // L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
+        // Sans titre de scène : la fenêtre porte celui de la section courante
+        // (`ConsoleRootView`), jamais le nom de l'app. L'identifiant sert à
+        // `MainWindow.reveal()` pour la retrouver.
         WindowGroup(id: MainWindow.sceneID) {
             ConsoleRootView(
                 model: model,
+                server: server,
+                drafts: drafts,
                 filesModel: filesModel,
-                kanban: kanbanModel,
-                alerts: appDelegate.alerts,
                 quit: appDelegate.quit,
-                actions: actionsModel,
-                projectModel: projectModel,
-                auditModel: auditModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraphModel,
                 podmanCleanup: podmanCleanup,
-                contract: contractModel,
-                home: homeModel,
+                presence: presence,
                 setup: setupModel,
                 components: componentsModel,
                 remote: remoteModel,
-                sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel,
-                projectChooser: projectChooser,
-                surfaceRecipe: surfaceRecipe
+                projectChooser: projectChooser
             )
         }
         .commands {
-            NewItemCommands(console: model, actions: actionsModel, home: homeModel, project: projectModel)
             SectionCommands(console: model)
             // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
-            // barre d'outils… » : la barre de la fenêtre principale est
-            // personnalisable.
+            // barre d'outils… ».
             ToolbarCommands()
-            WelcomeCommands(home: homeModel)
             RemoteCommands()
             QuitCommands(quit: appDelegate.quit)
         }
-        // Le panneau Réglages (⌘, ou « Réglages… » du menu de l'app, créés par
-        // SwiftUI) : un seul onglet, « Appareils ». SwiftUI garantit une seule
-        // fenêtre : une nouvelle demande la ramène au premier plan.
+        // Le panneau Réglages (⌘,) : un seul onglet, « Appareils ».
         Settings {
             ConsoleSettingsView(remote: remoteModel)
         }
     }
 }
 
-/// Menu Fichier, à la place de « Nouvelle fenêtre » (la fenêtre principale est
-/// unique : une seconde n'aurait rien à montrer de plus). Chaque commande ramène
-/// la fenêtre principale.
-///
-/// - « Nouvelle feature… » (⌘N, l'objet principal de l'app) : présente la feuille
-///   de lancement. Inactive tant qu'OMP est introuvable.
-/// - « Nouvelle session OMP » (⌥⌘N) : la section « Session OMP ».
-/// - « Piloter un projet… » (⇧⌘N) : la section « Projet », puis la feuille de
-///   choix (S-1). Si un pilotage est en cours, le modèle pose son refus (S-2) au
-///   lieu d'ouvrir la feuille.
-struct NewItemCommands: Commands {
-    let console: ConsoleModel
-    @ObservedObject var actions: ActionsModel
-    @ObservedObject var home: HomeModel
-    @ObservedObject var project: ProjectConsoleModel
-
-    var body: some Commands {
-        CommandGroup(replacing: .newItem) {
-            Button(HomeText.newFeature) {
-                MainWindow.reveal()
-                actions.launchFormShown = true
-            }
-            .keyboardShortcut("n", modifiers: .command)
-            .disabled(!home.canLaunch)
-            Button("Nouvelle session OMP") {
-                MainWindow.reveal()
-                console.select(.session)
-            }
-            .keyboardShortcut("n", modifiers: [.command, .option])
-            Button(ProjectViewText.startConduite) {
-                MainWindow.reveal()
-                console.select(.project)
-                project.presentLaunchSheet()
-            }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-        }
-    }
-}
-
-/// Menu Présentation ▸ les dix sections (⌘1…⌘9, ⌘0), dans l'ordre de la barre
+/// Menu Présentation ▸ les huit sections (⌘1…⌘8), dans l'ordre de la barre
 /// latérale : ramène la fenêtre principale, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
@@ -298,22 +155,6 @@ struct SectionCommands: Commands {
     /// dixième (comme la rangée des chiffres du clavier).
     static func key(at index: Int) -> Character {
         index == 9 ? "0" : Character(String(index + 1))
-    }
-}
-
-/// Menu Aide ▸ « Bienvenue dans OMP Console » (S-4 de omp-console-redesign) : la
-/// bienvenue vue une fois reste facile à retrouver (HIG Onboarding). Ramène la
-/// fenêtre principale, puis redemande la feuille.
-struct WelcomeCommands: Commands {
-    @ObservedObject var home: HomeModel
-
-    var body: some Commands {
-        CommandGroup(replacing: .help) {
-            Button(HomeText.welcomeMenuItem) {
-                MainWindow.reveal()
-                home.requestWelcome()
-            }
-        }
     }
 }
 
@@ -345,70 +186,38 @@ struct QuitCommands: Commands {
     }
 }
 
-/// Délégué de terminaison : il ne connaît pas les sessions, il appelle les
+/// Délégué de terminaison : il ne connaît pas les process, il appelle les
 /// accroches que les modèles ont posées, par le déroulé unique `quit`
 /// (mac-quitter-sans-confirmation, S-4/S-5) — tous les chemins de sortie y passent.
-///
-/// Il POSSÈDE aussi le modèle d'alertes et l'item de barre de menus (S-2, S-9) :
-/// le modèle vit à l'échelle de l'app, et l'item est créé une seule fois au
-/// lancement.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Posée par `SessionConsoleModel.init`.
-    static var terminateSession: (() async -> Void)?
-    /// Posée par `ProjectConsoleModel.init`.
-    static var terminateProject: (() async -> Void)?
     /// Posée par `TerminalConsoleModel.init` (S-8).
     static var terminateTerminal: (() async -> Void)?
     /// Posée par `OMPConsoleApp.init` : arrête le service d'API distante et son
     /// annonce Bonjour (S-14).
     static var terminateRemoteService: (() async -> Void)?
-    /// Posée par `OMPConsoleApp.init` : remet le clic d'une notification au
-    /// routeur de la fenêtre (`nil` : payload absent ou illisible → Accueil).
-    static var openAlert: (@MainActor (AlertOpening?) -> Void)?
-
-    /// L'inventaire du Quitter (mac-quitter-sans-confirmation, S-1) : chaque modèle
-    /// pose, dans son init, la lecture de SON activité, prise d'un trait à la
-    /// demande de sortie. Posée par `SessionConsoleModel.init`.
-    static var sessionQuitActivity: (@MainActor () -> QuitActivity?)?
-    /// Posée par `TerminalConsoleModel.init`.
+    /// L'activité du Terminal au moment du Quitter (S-1). Posée par
+    /// `TerminalConsoleModel.init`.
     static var terminalQuitActivity: (@MainActor () -> QuitActivity?)?
-    /// Posée par `ProjectConsoleModel.init`.
-    static var projectQuitActivity: (@MainActor () -> QuitActivity?)?
 
-    /// Le superviseur de l'ownership des ports (S-5) : unique à l'app, démarré
-    /// par `alerts.start()` — aucune autre surface ne le démarre.
-    lazy var ownership = StackOwnershipModel()
-
-    /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
-    /// construisent donc pas). Sous `-home.recipe`, il suit l'ardoise de la
-    /// recette, comme l'Accueil.
-    lazy var alerts = AlertsModel(ownership: ownership, recipeBoard: HomeRecipe.current()?.board)
-
-    private var statusItemController: StatusItemController?
     /// Les jetons des observateurs de `MainMenuSeparators.observe()` (S-1).
     private var menuObservers: [NSObjectProtocol] = []
 
-    /// S-1 : aucune fenêtre ne se regroupe en onglets, donc ni Présentation ni
-    /// Fenêtre n'ont d'entrée d'onglet. Posé AVANT la première fenêtre (D-1).
+    /// S-1 : aucune fenêtre ne se regroupe en onglets. Posé AVANT la première
+    /// fenêtre (D-1).
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     /// Le déroulé de la sortie (S-4) : instantané des activités, AU PLUS une
     /// alerte, puis accroches, fermeture des feuilles et terminaison redemandée.
-    /// Les closures sont remplaçables par les tests.
     lazy var quit: QuitFlow = makeQuitFlow()
 
     private func makeQuitFlow() -> QuitFlow {
         QuitFlow(
-            activities: { [weak self] in self?.quitActivities() ?? [] },
+            activities: { [Self.terminalQuitActivity?()].compactMap { $0 } },
             confirm: QuitAlert.run,
             runHooks: { @MainActor in
-                // Accroches INCHANGÉES (S-8 de terminal-integre) : indépendantes,
-                // chacune bornée par sa propre escalade.
-                await Self.terminateSession?()
-                await Self.terminateProject?()
                 await Self.terminateTerminal?()
                 await Self.terminateRemoteService?()
             },
@@ -418,16 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
-        // son titre suivra l'état publié, et l'autorisation sera demandée. Le clic
-        // est branché AVANT `start()`, qui pose le délégué du centre. Sous le
-        // crochet `-surface.recipe`, le modèle ne démarre pas : ni demande
-        // d'autorisation, ni sonde des ports de la pile de l'utilisateur.
-        statusItemController = StatusItemController(model: alerts)
-        alerts.onOpen = { AppDelegate.openAlert?($0) }
-        if SurfaceRecipe.current() == nil {
-            alerts.start()
-        }
         // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
         // menus, au lancement puis à chaque mise à jour d'un menu.
         menuObservers = MainMenuSeparators.observe()
@@ -445,40 +244,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// L'Apple Event de quit (S-5.2). Annuler répond `userCanceledErr` (-128) :
-    /// le Dock ne quitte pas, loginwindow interrompt la fermeture de session
-    /// (Doc-2). Sinon la réponse reste un succès et la sortie suit son cours. La
-    /// raison du quit n'est pas lue : même alerte, comme Terminal.app (Doc-3).
+    /// le Dock ne quitte pas, loginwindow interrompt la fermeture de session.
     @objc func handleQuitAppleEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
         if quit.request() == .cancelled {
             reply.setParam(NSAppleEventDescriptor(int32: Int32(userCanceledErr)), forKeyword: AEKeyword(keyErrorNumber))
         }
     }
 
-    /// L'instantané de S-1, dans l'ordre session, Terminal, pilotage, pipelines.
-    /// Les pipelines en cours sont la liste « En cours » de l'Accueil (comptes de
-    /// `AlertsStatus`, source unique depuis accueil-en-cours-melange-pause-et-compte).
-    private func quitActivities() -> [QuitActivity] {
-        let busy = alerts.status.counts?.running ?? 0
-        return [
-            Self.sessionQuitActivity?(),
-            Self.terminalQuitActivity?(),
-            Self.projectQuitActivity?(),
-            busy >= 1 ? .pipelines(count: busy) : nil,
-        ].compactMap { $0 }
-    }
-
-    /// S-6 : fermer la fenêtre qui porte une feuille ferme les deux, verrouillée
-    /// comprise, et laisse `NSApp.terminate` aboutir (mesuré, Doc-9). Aucune
-    /// liaison ni `onDismiss` n'est appelé : la Bienvenue reparaîtra au prochain
-    /// lancement.
+    /// S-6 : fermer la fenêtre qui porte une feuille ferme les deux, et laisse
+    /// `NSApp.terminate` aboutir (mesuré, Doc-9).
     private static func closeAttachedSheets() {
         for window in NSApp.windows where window.attachedSheet != nil {
             window.close()
         }
     }
 
-    /// B-7/AC-9 : fermer la fenêtre ne quitte PAS l'app (le comportement par défaut
-    /// mesuré, Doc-6, est écrit explicitement ici pour être testé).
+    /// B-7/AC-9 : fermer la fenêtre ne quitte PAS l'app.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }

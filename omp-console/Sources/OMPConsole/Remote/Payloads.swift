@@ -1,10 +1,8 @@
 // Les charges utiles des routes (S-7 … S-13) : ce que l'API ÉCRIT, exactement.
 //
-// Les modèles du magasin vivent dans `ConsoleCore` et sont `Codable` depuis BR-1 :
-// on les sert TELS QUELS (leurs clés sont les noms de champs du dépôt). Les types
-// internes de la coque — conversation de session, mémoire, dialogues RPC — sont
-// PROJETÉS ici : une charge utile dédiée dit ce qui sort, et le modèle de la coque
-// reste libre de changer.
+// Les types internes de la coque (mémoire, appareils, composants) sont PROJETÉS
+// ici : une charge utile dédiée dit ce qui sort, et le modèle de la coque reste
+// libre de changer.
 
 import ConsoleCore
 import Foundation
@@ -30,176 +28,6 @@ struct RemoteVersionPayload: Codable, Equatable {
     var protocolVersion: Int
 }
 
-struct RemoteStorePayload: Codable {
-    var snapshot: StoreSnapshot
-}
-
-struct RemoteSessionsPayload: Codable {
-    var runs: [StoreRun]
-}
-
-struct RemoteProjectsPayload: Codable {
-    var projects: [Project]
-}
-
-/// Un document de projet (S-7) : `content` n'existe que pour `text`, `reason`
-/// seulement pour `binary`/`unreadable`.
-struct RemoteDocument: Codable, Equatable {
-    var name: String
-    var state: String
-    var content: String?
-    var reason: String?
-}
-
-struct RemoteDocumentsPayload: Codable, Equatable {
-    var documents: [RemoteDocument]
-}
-
-struct RemoteSessionHeader: Codable, Equatable {
-    var id: String
-    var cwd: String
-    var version: Int?
-    var timestamp: String?
-    var parentSession: String?
-}
-
-struct RemoteSkippedEntry: Codable, Equatable {
-    var offset: Int
-    var reason: String
-}
-
-struct RemoteUsage: Codable, Equatable {
-    var input: Int
-    var output: Int
-    var cacheRead: Int
-    var cacheWrite: Int
-    var totalTokens: Int
-    var cost: Double?
-}
-
-struct RemoteToolCall: Codable, Equatable {
-    var id: String
-    var name: String
-    /// Les arguments bruts de l'appel (S-3) : le client iOS en dérive la cible et le
-    /// texte des arguments. `nil` quand l'appel n'en porte pas — le champ est alors
-    /// ABSENT de la charge utile (champ additif optionnel).
-    var arguments: JSONValue?
-    /// Le texte des arguments dans l'ORDRE du fichier (`ToolCall.argumentsText`) :
-    /// `arguments` passe par un dictionnaire et l'encodeur trie ses clés, ce texte
-    /// non. Champ additif optionnel, ABSENT quand il est `nil`.
-    var argumentsText: String?
-}
-
-struct RemoteConversationEntry: Codable, Equatable {
-    var index: Int
-    /// Premier octet de la ligne dans le fichier (S-3) : c'est de lui que le client
-    /// dérive les identités de lignes, stables entre deux lectures. Optionnel pour
-    /// qu'un Mac d'avant la feature reste décodable — l'app retombe alors sur `index`.
-    var offset: Int?
-    var timestampMs: Double?
-    var kind: String
-    var text: String?
-    var thinking: String?
-    var model: String?
-    var usage: RemoteUsage?
-    var toolCalls: [RemoteToolCall]?
-    var callId: String?
-    var name: String?
-    var diff: String?
-    var isError: Bool?
-    var tokensBefore: Int?
-    var fromId: String?
-
-    init(_ entry: ConversationEntry) {
-        index = entry.index
-        offset = entry.offset
-        timestampMs = entry.timestampMs
-        switch entry.kind {
-        case .user(let turn):
-            kind = "user"
-            text = turn.text
-        case .assistant(let turn):
-            kind = "assistant"
-            text = turn.text
-            thinking = turn.thinking
-            model = turn.model
-            if let usage = turn.usage {
-                self.usage = RemoteUsage(
-                    input: usage.input,
-                    output: usage.output,
-                    cacheRead: usage.cacheRead,
-                    cacheWrite: usage.cacheWrite,
-                    totalTokens: usage.totalTokens,
-                    cost: usage.cost
-                )
-            }
-            if !turn.toolCalls.isEmpty {
-                toolCalls = turn.toolCalls.map {
-                    RemoteToolCall(id: $0.id, name: $0.name, arguments: $0.arguments, argumentsText: $0.argumentsText)
-                }
-            }
-        case .toolResult(let turn):
-            kind = "toolResult"
-            text = turn.text
-            callId = turn.callId
-            name = turn.name
-            diff = turn.diff
-            isError = turn.isError
-        case .compaction(let marker):
-            kind = "compaction"
-            text = marker.summary
-            tokensBefore = marker.tokensBefore
-        case .branchSummary(let marker):
-            kind = "branchSummary"
-            text = marker.summary
-            fromId = marker.fromId
-        }
-    }
-}
-
-struct RemoteSessionPayload: Codable, Equatable {
-    var header: RemoteSessionHeader?
-    var kind: String?
-    var entries: [RemoteConversationEntry]
-    var skipped: [RemoteSkippedEntry]
-    var truncated: Bool
-    /// Le motif OS d'un fichier illisible (S-4). `nil` quand la lecture est saine : le
-    /// client affiche alors le fil. Un fichier illisible reste un 200 — c'est
-    /// l'absence de ce champ ET de toute entrée qui distingue « vide » d'« illisible ».
-    var unreadableReason: String?
-}
-
-/// Une entrée du sélecteur de projet servi (S-1) : la clé du magasin (que le
-/// client ne calcule jamais) et son libellé affichable.
-struct RemoteStatsProject: Codable, Equatable, Sendable {
-    var key: String
-    var label: String
-}
-
-/// Les totaux d'une feature LISTÉE, par relevé (S-1) : des scalaires seulement.
-/// `liveRuns` fait avancer la durée côté client, sans trafic (S-5).
-struct RemoteStatsFeature: Codable, Equatable, Sendable {
-    var slug: String
-    var input: Int
-    var output: Int
-    var cacheRead: Int
-    var cacheWrite: Int
-    var turns: Int
-    var durationMs: Double
-    var liveRuns: Int
-    var model: String?
-}
-
-/// Le tableau du projet AFFICHÉ (S-1) : le projet, tous les projets du magasin
-/// pour le sélecteur, les features LISTÉES et le compte des features masquées.
-struct RemoteStatsPayload: Codable, Equatable, Sendable {
-    var projectKey: String?
-    var project: String
-    var projects: [RemoteStatsProject]
-    var features: [RemoteStatsFeature]
-    var hiddenPlanFeatures: Int
-}
-
 struct RemoteDeviceRow: Codable, Equatable {
     var id: String
     var name: String
@@ -210,18 +38,6 @@ struct RemoteDeviceRow: Codable, Equatable {
 
 struct RemoteDevicesPayload: Codable, Equatable {
     var devices: [RemoteDeviceRow]
-}
-
-/// Un dépôt connu de la coque (S-8) : sa clé (que le client ne calcule jamais),
-/// son chemin réel et son nom.
-struct RemoteRepoRow: Codable, Equatable, Sendable {
-    let repoKey: String
-    let repoRoot: String
-    let name: String
-}
-
-struct RemoteReposPayload: Codable, Equatable, Sendable {
-    let rows: [RemoteRepoRow]
 }
 
 /// L'état RÉEL des composants de la coque (S-4) : `ompPath` porte le chemin du
@@ -235,17 +51,6 @@ struct RemoteComponentsPayload: Codable, Equatable {
     var ompPath: String?
     var setupBanner: String?
     var homeDirectory: String? = NSHomeDirectory()
-}
-
-/// Le journal des gestes, servi tel quel (S-5) : borné par le modèle.
-struct RemoteJournalPayload: Codable, Equatable {
-    var entries: [ActionJournalEntry]
-}
-
-/// Le contrat d'une feature (S-6) : le même `RemoteDocument` que les documents
-/// de projet, avec ses états `text | missing | binary | unreadable`.
-struct RemoteContractPayload: Codable, Equatable {
-    var document: RemoteDocument
 }
 
 // MARK: - Mémoire
@@ -337,128 +142,10 @@ struct RemoteAcceptedPayload: Codable, Equatable {
     var accepted: Bool
 }
 
-struct RemoteSentPayload: Codable, Equatable {
-    var sent: Bool
-}
-
 struct RemotePairPayload: Codable, Equatable {
     var deviceId: String
     var token: String
     var protocolVersion: Int
-}
-
-struct RemoteConduitePayload: Codable, Equatable {
-    var state: String
-}
-
-/// L'état réduit de la conduite (S-11, S-9) : le vocabulaire de `ConduiteState`,
-/// la pastille de session, l'identité quand elle existe, et la file d'escalades
-/// ENTIÈRE (jamais un delta). Le miroir de dialogue est celui de `GET /v1/session`.
-struct RemoteConduiteStatePayload: Codable, Equatable, Sendable {
-    let state: String          // "none"|"starting"|"live"|"closing"|"closed"
-    let repoKey: String?       // identité vive ; nil quand state ∈ {"none","closed"}
-    let name: String?
-    let repoRoot: String?
-    let status: ConsoleStatus? // ConsoleCore, présent des deux côtés
-    let dialogs: [RpcDialogRequest] // file ENTIÈRE à chaque fois, jamais un delta
-}
-
-struct RemotePullRequestsPayload: Codable, Equatable {
-    var rows: [ProjectPRRow]
-    var failure: String?
-    var stale: Bool
-}
-
-/// Les faits de PR de l'ardoise (S-6 de pipelines-livrees-statut-pr-faux-et-doub),
-/// trame SSE `pull-request-states` : la liste ENTIÈRE à chaque fois, triée par URL,
-/// et l'état de relecture du Mac.
-struct RemotePullRequestStatesPayload: Codable, Equatable {
-    var facts: [PullRequestFact]
-    var refreshing: Bool
-}
-
-/// Le catalogue des modèles servis par `omp models --json` (S-14) : les sélecteurs
-/// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué (la
-/// liste est alors vide). Le client affiche le motif — ce n'est pas une erreur de
-/// transport. `names` (sélecteur → nom lisible) est ADDITIF et optionnel : absent
-/// d'un Mac antérieur et en cas d'échec.
-struct RemoteModelsPayload: Codable, Equatable {
-    var selectors: [String]
-    var failure: String?
-    var names: [String: String]? = nil
-    /// Sélecteur → efforts supportés (model-selector-in-embedded-omp-session S-5),
-    /// ADDITIF : absent d'un Mac antérieur et en cas d'échec ; un modèle sans clé ne
-    /// propose aucun niveau de réflexion.
-    var thinking: [String: [String]]? = nil
-}
-
-struct RemoteMergedPayload: Codable, Equatable {
-    var merged: Bool
-    var number: Int?
-    var url: String
-}
-
-/// La réponse de `POST /v1/audits` (S-7) : l'identifiant de l'audit créé.
-struct RemoteAuditStartedPayload: Codable, Equatable {
-    var id: String
-}
-
-/// La réponse de `POST /v1/audits/{id}/launch` (S-7) : l'issue de chaque
-/// proposition, dans l'ordre de lancement du service.
-struct RemoteAuditLaunchPayload: Codable, Equatable {
-    var launches: [AuditLaunchOutcome]
-}
-
-/// Une feature que l'arrêt d'un audit n'a pas pu annuler, avec le refus du pilote.
-struct RemoteAuditStopRefusal: Codable, Equatable {
-    var slug: String
-    var reason: String
-}
-
-/// La réponse de `DELETE /v1/audits/{id}` (S-7) : `{cancelled, kept, refused}`
-/// recopiés du service.
-struct RemoteAuditStopPayload: Codable, Equatable {
-    var cancelled: [String]
-    var kept: [String]
-    var refused: [RemoteAuditStopRefusal]
-}
-
-struct RemoteHostedSessionPayload: Codable, Equatable {
-    var state: String
-    var stateLabel: String
-    var sessionId: String?
-    var sessionFile: String?
-    var protocolVersion: Int?
-    /// Le dernier segment de la racine de projet mémorisée (S-2) : c'est le
-    /// « dépôt » que l'iPad affiche. `nil` distingue « Aucune session » de
-    /// « Prête à démarrer ».
-    var projectName: String?
-    var dialogs: [RpcDialogRequest]
-    var transcript: [TranscriptLine]
-    var truncated: Bool
-    /// La valeur affichée par la section Session OMP du Mac (S-6) : le modèle et le
-    /// niveau de la session vivante, sinon le défaut du projet ; `nil` = aucun
-    /// (« défaut OMP »). Toujours encodés par le Mac, optionnels au décodage client.
-    var model: String? = nil
-    var thinkingLevel: String? = nil
-    /// OMP traite un tour : le sélecteur est alors indisponible.
-    var turnRunning: Bool? = nil
-}
-
-/// Une ligne du fil de la session hébergée. L'hôte RPC n'existe plus (la session
-/// est servie par l'API du service, dont le fil vivant est le fichier `.jsonl`) :
-/// le type ne survit que pour la FORME de la charge utile — `added` est toujours
-/// vide, et le client lit la conversation par les routes `sessions`/`session`.
-struct TranscriptLine: Identifiable, Equatable, Sendable, Codable {
-    enum Kind: String, Equatable, Sendable, Codable {
-        case inbound
-        case outbound
-        case clientError
-    }
-
-    let id: Int
-    let kind: Kind
-    let text: String
 }
 
 // MARK: - Corps de requête
@@ -469,88 +156,6 @@ struct RemotePairRequest: Decodable, Equatable {
     /// L'identité de l'installation cliente ; absente pour un client d'avant.
     var deviceKey: String?
     var protocolVersion: Int?
-}
-
-struct RemoteAnswerRequest: Decodable, Equatable {
-    /// Obligatoire (protocole 2) mais décodé optionnel : son absence rend un 400
-    /// lisible « identifiant de question manquant », pas une erreur de décodage.
-    var toolCallId: String?
-    var kind: String
-    var label: String?
-    var text: String?
-}
-
-struct RemoteTextRequest: Decodable, Equatable {
-    var text: String
-}
-
-struct RemoteVerdictRequest: Decodable, Equatable {
-    var verdict: String
-}
-
-struct RemotePromptRequest: Decodable, Equatable {
-    var message: String
-}
-
-struct RemoteFeatureRequest: Decodable, Equatable {
-    var repoRoot: String
-    var title: String
-    var description: String
-    var modelReqSpecs: String?
-    var modelImplReview: String?
-}
-
-struct RemoteConduiteRequest: Decodable, Equatable {
-    var name: String
-}
-
-/// Le corps de `POST /v1/session/launch` (S-1) : la clé d'un dépôt servi par
-/// `GET /v1/repos` — jamais un chemin.
-struct RemoteHostedLaunchRequest: Decodable, Equatable {
-    var repoKey: String
-}
-
-/// Le corps de `POST /v1/session/model` (S-7) : le sélecteur `provider/id` et le
-/// niveau de réflexion voulu (`nil` = aucun).
-struct RemoteSessionModelRequest: Decodable, Equatable {
-    var model: String
-    var thinkingLevel: String?
-}
-
-/// Le corps de `POST /v1/audits` (S-7) : la clé d'un dépôt servi par
-/// `GET /v1/repos` — jamais un chemin — et l'orientation saisie.
-struct RemoteAuditStartRequest: Codable, Equatable {
-    var repoKey: String
-    var orientation: String
-}
-
-/// Le corps de `POST /v1/audits/{id}/launch` (S-7) : les slugs cochés et le
-/// brief validé, tels quels.
-struct RemoteAuditLaunchRequest: Codable, Equatable {
-    var selected: [String]
-    var brief: String
-}
-
-/// Le corps de `POST /v1/audits/{id}/escalations` (S-7) : la clé de l'escalade
-/// renvoyée telle quelle, puis une réponse (`ask`, `question`) OU une décision
-/// de jalon (`specs`, `review`).
-struct RemoteAuditAnswerRequest: Codable, Equatable {
-    var slug: String
-    var key: String
-    var answer: String?
-    var decision: AuditMilestoneDecision?
-}
-
-/// Le corps de `POST /v1/conduite/dialogs/{id}` (S-4, S-5) : `kind` vaut `value`,
-/// `confirmed` ou `cancelled` ; `value`/`confirmed` ne vivent que pour leur kind.
-struct RemoteDialogAnswerRequest: Codable, Equatable, Sendable {
-    let kind: String
-    let value: String?
-    let confirmed: Bool?
-}
-
-struct RemoteMergeRequest: Decodable, Equatable {
-    var headOid: String
 }
 
 /// Le décodage d'un corps de requête : tout échec est un `400 bad_request`.

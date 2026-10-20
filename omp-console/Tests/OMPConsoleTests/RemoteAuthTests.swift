@@ -20,14 +20,14 @@ struct RemoteAuthTests {
         let envelope = #"{"error":{"code":"unauthorized"}}"#
 
         // (1) Jeton absent.
-        let absent = try await stack.call("GET", "/v1/store")
+        let absent = try await stack.call("GET", "/v1/devices")
         #expect(absent.status == 401)
         #expect(absent.text == envelope)
         #expect(absent.errorMessage == nil)
-        #expect(!absent.text.contains("snapshot"))
+        #expect(!absent.text.contains("devices"))
 
         // (2) Jeton inconnu.
-        let unknown = try await stack.call("GET", "/v1/store", token: "jeton-inconnu-du-registre")
+        let unknown = try await stack.call("GET", "/v1/devices", token: "jeton-inconnu-du-registre")
         #expect(unknown.status == 401)
         #expect(unknown.text == envelope)
 
@@ -35,7 +35,7 @@ struct RemoteAuthTests {
         let token = try await stack.pair(name: "Téléphone")
         let deviceId = try #require(stack.registry.devices.first?.id)
         await stack.registry.revoke(id: deviceId)
-        let revoked = try await stack.call("GET", "/v1/store", token: token)
+        let revoked = try await stack.call("GET", "/v1/devices", token: token)
         #expect(revoked.status == 401)
         #expect(revoked.text == envelope)
     }

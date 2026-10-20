@@ -88,7 +88,6 @@ final class TerminalConsoleModel: ObservableObject {
     private let defaults: UserDefaults
     private let fileManager: FileManager
     private let environment: [String: String]
-    private let store: StoreReader
     private let git: GitCLI?
     private let gitFailure: ReadableFailure?
 
@@ -108,7 +107,6 @@ final class TerminalConsoleModel: ObservableObject {
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        store: StoreReader = StoreReader(),
         git: GitCLI? = nil,
         palette: TerminalPalette? = nil
     ) {
@@ -116,7 +114,6 @@ final class TerminalConsoleModel: ObservableObject {
         self.defaults = defaults
         self.fileManager = fileManager
         self.environment = environment
-        self.store = store
         self.palette = palette ?? TerminalPalette.live(for: NSAppearance.currentDrawing())
         if let git {
             self.git = git
@@ -430,7 +427,7 @@ final class TerminalConsoleModel: ObservableObject {
             return
         }
         do {
-            let listed = try await TargetCatalog.list(git: git, store: store, projectRoot: root.path)
+            let listed = try await TargetCatalog.list(git: git, projectRoot: root.path)
             targets = listed
             targetsState = listed.contains { !$0.isPrimary } ? .ready(listed.count) : .empty
             let canonicalRoot = canonicalPath(root.path)

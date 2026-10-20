@@ -48,8 +48,6 @@ struct ClientContractTests {
         for route in ClientRoute.all {
             let path = route.path
                 .replacingOccurrences(of: "{id}", with: "inconnu")
-                .replacingOccurrences(of: "{repoKey}", with: "inconnu")
-                .replacingOccurrences(of: "{slug}", with: "inconnu")
             let response = try await transport.send(
                 ClientHTTPRequest(method: route.method, path: path, isStream: false),
                 to: target,
@@ -62,24 +60,17 @@ struct ClientContractTests {
         }
 
         // 3. Les routes servies sur une pile neuve se décodent TYPÉES.
-        stack.stats.start()
         let code = try stack.registry.generateCode()
         let model = makeContractClient(discovery: ContractDiscovery())
         _ = model.setManualAddress("127.0.0.1:\(stack.port)")
         try await model.pair(code: code.value, deviceName: "Tests")
 
         #expect(try await model.version() == ConsoleAPI.protocolVersion)
-        _ = try await model.store()
-        _ = try await model.sessions()
-        _ = try await model.projects()
-        _ = try await model.statistics()
         _ = try await model.devices()
+        _ = try await model.components()
         _ = try await model.memoryPage(scope: "inconnu", offset: 0, limit: nil)
         _ = try await model.memorySearch(query: "memoire", scope: "inconnu", limit: nil)
         _ = try await model.memoryGraph(scope: nil)
-        _ = try await model.hostedSession()
-        _ = try await model.repos()
-        _ = try await model.conduiteState()
 
         // Le flux temps réel est ouvert par sa méthode typée.
         let events = try await model.openStream()
@@ -115,167 +106,6 @@ struct ClientContractTests {
             client: ConsoleClient.RemotePairRequest.self,
             host: OMPConsole.RemotePairRequest.self
         ))
-    }
-
-    @Test("BR-3 : les charges utiles miroir conduite/dépôts sont l'image exacte de celles de la coque")
-    func mirrorPayloadShapes() throws {
-        #expect(try contractSameShape(
-            #"{"facts":[{"url":"https://github.com/o/r/pull/1","state":"MERGED","closedAtMs":1.5},{"url":"https://github.com/o/r/pull/2","state":"OPEN"}],"refreshing":true}"#,
-            client: ConsoleClient.RemotePullRequestStatesPayload.self,
-            host: OMPConsole.RemotePullRequestStatesPayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}"#,
-            client: ConsoleClient.RemoteRepoRow.self,
-            host: OMPConsole.RemoteRepoRow.self
-        ))
-        #expect(try contractSameShape(
-            #"{"rows":[{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}]}"#,
-            client: ConsoleClient.RemoteReposPayload.self,
-            host: OMPConsole.RemoteReposPayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"state":"live","repoKey":"k","name":"P","repoRoot":"/tmp/r","status":{"text":"Active","tone":"success"},"dialogs":[]}"#,
-            client: ConsoleClient.RemoteConduiteStatePayload.self,
-            host: OMPConsole.RemoteConduiteStatePayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"kind":"value","value":"x"}"#,
-            client: ConsoleClient.RemoteDialogAnswerRequest.self,
-            host: OMPConsole.RemoteDialogAnswerRequest.self
-        ))
-        #expect(try contractSameShape(
-            #"{"repoKey":"k","orientation":"accessibilité VoiceOver"}"#,
-            client: ConsoleClient.RemoteAuditStartRequest.self,
-            host: OMPConsole.RemoteAuditStartRequest.self
-        ))
-        #expect(try contractSameShape(
-            #"{"id":"a0d1700000000001"}"#,
-            client: ConsoleClient.RemoteAuditStartedPayload.self,
-            host: OMPConsole.RemoteAuditStartedPayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"selected":["a","b"],"brief":"Orientation\nx"}"#,
-            client: ConsoleClient.RemoteAuditLaunchRequest.self,
-            host: OMPConsole.RemoteAuditLaunchRequest.self
-        ))
-        #expect(try contractSameShape(
-            #"{"launches":[{"slug":"a","launched":true,"reason":null,"state":"running","phase":"req","prUrl":null},{"slug":"b","launched":false,"reason":"déjà dans le lot","state":null,"phase":null,"prUrl":null}]}"#,
-            client: ConsoleClient.RemoteAuditLaunchPayload.self,
-            host: OMPConsole.RemoteAuditLaunchPayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"slug":"a","key":"question:a:1","answer":"Oui"}"#,
-            client: ConsoleClient.RemoteAuditAnswerRequest.self,
-            host: OMPConsole.RemoteAuditAnswerRequest.self
-        ))
-        #expect(try contractSameShape(
-            #"{"slug":"a","key":"specs:a","decision":"approve"}"#,
-            client: ConsoleClient.RemoteAuditAnswerRequest.self,
-            host: OMPConsole.RemoteAuditAnswerRequest.self
-        ))
-        #expect(try contractSameShape(
-            #"{"cancelled":["a"],"kept":["b"],"refused":[{"slug":"c","reason":"déjà livrée"}]}"#,
-            client: ConsoleClient.RemoteAuditStopPayload.self,
-            host: OMPConsole.RemoteAuditStopPayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}"#,
-            client: ConsoleClient.RemoteMemoryGraphNode.self,
-            host: OMPConsole.RemoteMemoryGraphNode.self
-        ))
-        #expect(try contractSameShape(
-            ##"{"id":"tag:a","label":"#a","scope":""}"##,
-            client: ConsoleClient.RemoteMemoryGraphNode.self,
-            host: OMPConsole.RemoteMemoryGraphNode.self
-        ))
-        #expect(try contractSameShape(
-            #"{"a":"memory:m1","b":"memory:m2","kind":"semantic","score":0.81}"#,
-            client: ConsoleClient.RemoteMemoryGraphLink.self,
-            host: OMPConsole.RemoteMemoryGraphLink.self
-        ))
-        #expect(try contractSameShape(
-            #"{"a":"memory:m1","b":"tag:a","kind":"manual"}"#,
-            client: ConsoleClient.RemoteMemoryGraphLink.self,
-            host: OMPConsole.RemoteMemoryGraphLink.self
-        ))
-        #expect(try contractSameShape(
-            #"{"scope":"p","nodes":[{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":1,"truncated":true}"#,
-            client: ConsoleClient.RemoteMemoryGraphPayload.self,
-            host: OMPConsole.RemoteMemoryGraphPayload.self
-        ))
-        // La page de la liste : `offset` toujours présent, `nextOffset` tant qu'il reste des lignes.
-        #expect(try contractSameShape(
-            #"{"scope":"p","total":3,"offset":0,"rows":[{"id":"m1","text":"un","updatedAt":"2026-01-01T00:00:00Z","score":0.5,"tags":["a"],"agentId":"x"}],"nextOffset":1}"#,
-            client: ConsoleClient.RemoteMemoryPagePayload.self,
-            host: OMPConsole.RemoteMemoryPagePayload.self
-        ))
-        #expect(try contractSameShape(
-            #"{"selectors":["a/b"],"failure":null,"names":{"a/b":"B"}}"#,
-            client: ConsoleClient.RemoteModelsPayload.self,
-            host: OMPConsole.RemoteModelsPayload.self
-        ))
-    }
-
-    @Test("ios-fiche-carte-pipelines/AC-6 : un Mac d'avant la feature (catalogue sans names) reste lisible, names vaut nil")
-    func olderMacModelsPayloadStaysReadable() throws {
-        let json = #"{"selectors":["a/b"],"failure":null}"#
-        let data = Data(json.utf8)
-        #expect(try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: data).names == nil)
-        #expect(try JSONDecoder().decode(OMPConsole.RemoteModelsPayload.self, from: data).names == nil)
-        #expect(try contractSameShape(
-            json,
-            client: ConsoleClient.RemoteModelsPayload.self,
-            host: OMPConsole.RemoteModelsPayload.self
-        ))
-    }
-
-    @Test("model-selector-in-embedded-omp-session/AC-6 : le catalogue porte thinking des deux côtés, et un Mac antérieur reste lisible (aucun niveau)")
-    func modelsPayloadCarriesThinking() throws {
-        let json = #"{"selectors":["a/b","a/c"],"failure":null,"names":{"a/b":"B"},"thinking":{"a/b":["low","high"]}}"#
-        #expect(try contractSameShape(
-            json,
-            client: ConsoleClient.RemoteModelsPayload.self,
-            host: OMPConsole.RemoteModelsPayload.self
-        ))
-        let client = try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: Data(json.utf8))
-        #expect(client.thinking == ["a/b": ["low", "high"]])
-        // Un Mac antérieur n'envoie pas `thinking` : nil des deux côtés, donc zéro niveau proposé.
-        let older = Data(#"{"selectors":["a/b"],"failure":null}"#.utf8)
-        #expect(try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: older).thinking == nil)
-        #expect(try JSONDecoder().decode(OMPConsole.RemoteModelsPayload.self, from: older).thinking == nil)
-    }
-
-    @Test("model-selector-in-embedded-omp-session/AC-2 : la charge hosted, la trame hosted et le corps du geste portent modèle, niveau et tour en cours des deux côtés")
-    func hostedPayloadCarriesModel() throws {
-        let json = #"{"state":"running","stateLabel":"En marche","sessionId":"s","sessionFile":null,"protocolVersion":null,"projectName":"depot","dialogs":[],"transcript":[],"truncated":false,"model":"a/b","thinkingLevel":"high","turnRunning":true}"#
-        #expect(try contractSameShape(
-            json,
-            client: ConsoleClient.RemoteHostedSessionPayload.self,
-            host: OMPConsole.RemoteHostedSessionPayload.self
-        ))
-        let client = try JSONDecoder().decode(ConsoleClient.RemoteHostedSessionPayload.self, from: Data(json.utf8))
-        #expect(client.model == "a/b")
-        #expect(client.thinkingLevel == "high")
-        #expect(client.turnRunning == true)
-        // Un Mac antérieur : les trois champs manquent, la charge reste lisible.
-        let older = Data(#"{"state":"idle","stateLabel":"Prête","dialogs":[],"transcript":[],"truncated":false}"#.utf8)
-        let legacy = try JSONDecoder().decode(ConsoleClient.RemoteHostedSessionPayload.self, from: older)
-        #expect(legacy.model == nil && legacy.thinkingLevel == nil && legacy.turnRunning == nil)
-        // La trame `hosted` du Mac (Encodable) est lue par le miroir client.
-        let event = OMPConsole.RemoteHostedEvent(
-            state: "running", stateLabel: nil, sessionFile: nil, projectName: nil, dialogs: [], added: [],
-            model: "a/b", thinkingLevel: nil, turnRunning: false
-        )
-        let wire = try JSONEncoder().encode(event)
-        let decoded = try JSONDecoder().decode(ConsoleClient.RemoteHostedEvent.self, from: wire)
-        #expect(decoded.model == "a/b")
-        #expect(decoded.thinkingLevel == nil)
-        #expect(decoded.turnRunning == false)
-        // Le corps du geste : le client l'encode, la coque le décode.
-        let body = try JSONEncoder().encode(ConsoleClient.RemoteSessionModelRequest(model: "a/b", thinkingLevel: "low"))
-        let host = try JSONDecoder().decode(OMPConsole.RemoteSessionModelRequest.self, from: body)
-        #expect(host == OMPConsole.RemoteSessionModelRequest(model: "a/b", thinkingLevel: "low"))
     }
 
     @Test("feuilles-ios-presentation-et-depots/AC-7 : homeDirectory des composants a la même forme des deux côtés, et un Mac antérieur donne nil")
@@ -315,26 +145,6 @@ struct ClientContractTests {
             json,
             client: ConsoleClient.RemoteMemoryGraphPayload.self,
             host: OMPConsole.RemoteMemoryGraphPayload.self
-        ))
-    }
-
-    @Test("les charges utiles miroir de session portent les mêmes champs des deux côtés (BR-2)")
-    func sessionPayloadShapes() throws {
-        let entry = #"{"index":2,"offset":120,"timestampMs":1.5,"kind":"assistant","text":"x","thinking":"réflexion","model":"m","usage":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4,"totalTokens":10,"cost":0.25},"toolCalls":[{"id":"c1","name":"read","arguments":{"path":"/a.txt","i":"lire"}}],"callId":"c1","name":"read","diff":"-a","isError":false,"tokensBefore":7,"fromId":"root"}"#
-        #expect(try contractSameShape(
-            entry,
-            client: ConsoleClient.RemoteConversationEntry.self,
-            host: OMPConsole.RemoteConversationEntry.self
-        ))
-        #expect(try contractSameShape(
-            #"{"id":"c1","name":"read","arguments":{"path":"/a.txt"}}"#,
-            client: ConsoleClient.RemoteToolCall.self,
-            host: OMPConsole.RemoteToolCall.self
-        ))
-        #expect(try contractSameShape(
-            #"{"header":{"id":"s1","cwd":"/tmp/p","version":1,"timestamp":"2026-01-01T00:00:00.000Z","parentSession":"s0"},"kind":"topLevel","entries":[\#(entry)],"skipped":[{"offset":5,"reason":"invalidJSON"}],"truncated":false,"unreadableReason":"ouverture en lecture refusée"}"#,
-            client: ConsoleClient.RemoteSessionPayload.self,
-            host: OMPConsole.RemoteSessionPayload.self
         ))
     }
 
@@ -429,8 +239,6 @@ struct ClientContractTests {
         try await model.pair(code: code.value, deviceName: "Recette")
         #expect(model.pairingFailure == nil)
         #expect(try await model.version() == ConsoleAPI.protocolVersion)
-        let store = try await model.store()
-        #expect(store.snapshot.root == .present || store.snapshot.root == .absent)
         let devices = try await model.devices()
         #expect(devices.devices.contains { $0.name == "Recette" })
         model.stop()

@@ -51,12 +51,9 @@ struct IOSRedactionTests {
         }
         #expect(Self.faults(IOSMemoryText.graphMacOutdated).isEmpty, "\(Self.faults(IOSMemoryText.graphMacOutdated))")
 
-        // Les feuilles Répondre et Contrat passent par le même traducteur, jamais par
-        // le détail brut du Mac.
-        #expect(IOSHomeContent.failure(ClientError.notConnected) == IOSMacErrorText.message(for: .macUnreachable))
+        // Le traducteur partagé ne montre jamais le détail brut du Mac.
         let raw = ClientError.api(.badRequest("mem0-http a répondu 500 sur /memory"))
-        #expect(IOSHomeContent.failure(raw) == IOSMacErrorText.message(for: raw))
-        #expect(!IOSHomeContent.failure(raw).contains("mem0-http"))
+        #expect(IOSMacErrorText.message(for: raw)?.contains("mem0-http") != true)
     }
 
     @Test("ios-redaction-vouvoiement/AC-4 : proximityReadsAsPlainWords — une proximité se lit en clair, sans chiffre ni « Proximité »")
@@ -89,14 +86,5 @@ struct IOSRedactionTests {
             #expect(!hasDigit, "« \(line) »")
             #expect(!line.contains("Proximité"), "« \(line) »")
         }
-    }
-
-    @Test("ios-redaction-vouvoiement/AC-6 : specsAwaitingValidationReadTheSameEverywhere — statut et attente disent « Spécifications à valider », le bouton « Valider les specs »")
-    func specsAwaitingValidationReadTheSameEverywhere() {
-        let status = ConsoleStatus.of(column: .jalonSpecs)
-        #expect(status.text == "Spécifications à valider")
-        #expect(status.tone == .attention)
-        #expect(status.text == HomeText.natureText(.milestoneSpecs))
-        #expect(KanbanText.validateSpecs == "Valider les specs")
     }
 }

@@ -79,6 +79,35 @@ private func makeModel(_ transport: ScriptedHarnessTransport, preferences: InMem
 
 private func ok(_ json: String) -> HarnessReply { HarnessReply(status: 200, body: Data(json.utf8)) }
 
+/// Le catalogue tel que le serveur l'écrit (`/v1/status`, `/v1/projects`,
+/// `/v1/audits`, `/v1/stats`) : clés en plus, valeurs `null`.
+private let statusJSON = #"{"runs":{"merged":2},"live":[],"scheduler":{},"repos":[{"name":"demo","scope":"src"}],"oracle":{"configured":false,"ok":false}}"#
+private let projectsJSON = #"{"projects":[{"id":"p1","repo":"demo","title":"Refonte","status":"active","createdAt":1,"updatedAt":2,"runs":{"total":2,"byState":{"running":1,"merged":1}}}]}"#
+private let auditsJSON = #"""
+{"audits":[{"id":"a1","repo":"demo","focus":"","state":"proposed","createdAt":1,"updatedAt":2,"projectId":null,"reason":null,
+  "proposals":[{"title":"Cache","request":"Ajouter un cache","modules":["src/api"],"kind":"faiblesse","rationale":"lent"}]}]}
+"""#
+private let statsJSON = #"""
+{"runs":{"total":3,"byState":{"merged":2,"failed":1},"mergedLast7Days":2,"mergeRate":0.67,"medianLeadSec":3600,"fixesPerMerged":0.5},
+ "steps":{"impl":{"count":3,"failed":1,"medianSec":900}},
+ "tests":{"total":4,"cached":1,"byOutcome":{"pass":3,"fail":1},"retried":0},
+ "decisions":{"auto":1},"escalations":{"open":0},"audits":{"proposed":1},"projects":{"active":1},
+ "scheduler":{"runner":{"used":1,"capacity":5,"labels":["r1"]},"heavy":{"used":0,"capacity":2,"labels":[]},"memAvailableMiB":null,"providers":{}}}
+"""#
+
+/// Un serveur qui répond au catalogue, à la boîte et aux lancements.
+private func catalogServer(_ call: HarnessCall) -> HarnessReply {
+    switch (call.method, call.path) {
+    case ("GET", "/v1/status"): ok(statusJSON)
+    case ("GET", "/v1/projects"): ok(projectsJSON)
+    case ("GET", "/v1/audits"): ok(auditsJSON)
+    case ("GET", "/v1/stats"): ok(statsJSON)
+    case ("POST", "/v1/projects"), ("POST", "/v1/audits/a1/launch"): HarnessReply(status: 201, body: Data(#"{"projectId":"p2","runs":[]}"#.utf8))
+    case ("POST", _): HarnessReply(status: 400, body: Data(#"{"error":"dépôt inconnu : x"}"#.utf8))
+    default: ok(inboxJSON)
+    }
+}
+
 @Suite("Serveur de pipelines — client")
 @MainActor
 struct HarnessModelTests {
@@ -240,5 +269,50 @@ struct HarnessModelTests {
         #expect(HarnessFailure.unauthorized.message == PipelineServerText.unauthorized)
         #expect(HarnessFailure.unreachable.message == PipelineServerText.unreachable)
         #expect(HarnessFailure.rejected("").message == PipelineServerText.rejected(""))
+    }
+
+    @Test("le catalogue se lit tel que le serveur l'écrit : dépôts, projets, audits, statistiques")
+    func readsCatalog() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond(catalogServer)
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        await model.refreshCatalog()
+        #expect(model.failure == nil)
+        #expect(model.repos == [HarnessRepo(name: "demo", scope: "src")])
+        #expect(model.projects.first?.runs.total == 2)
+        #expect(model.audits.first?.isProposed == true)
+        #expect(model.audits.first?.proposals.first?.isWeakness == true)
+        #expect(model.stats?.runs.mergeRate == 0.67)
+        #expect(model.stats?.steps["impl"]?.failed == 1)
+        #expect(model.stats?.scheduler.runner.capacity == 5)
+    }
+
+    @Test("un lancement poste son corps, relit boîte et catalogue ; un refus garde le motif du serveur")
+    func launchesWork() async throws {
+        let transport = ScriptedHarnessTransport()
+        transport.respond(catalogServer)
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+
+        let features = [HarnessFeatureDraft(title: "A", request: "a"), HarnessFeatureDraft(title: "B", request: "b")]
+        #expect(await model.launchProject(repo: "demo", title: "Refonte", features: features) == "p2")
+        let post = try #require(transport.calls.first { $0.method == "POST" })
+        #expect(post.path == "/v1/projects")
+        let body = try JSONSerialization.jsonObject(with: try #require(post.body)) as? [String: Any]
+        #expect(body?["repo"] as? String == "demo")
+        #expect((body?["features"] as? [[String: Any]])?.compactMap { $0["title"] as? String } == ["A", "B"])
+        #expect(transport.calls.contains { $0.path == "/v1/inbox" }, "la boîte est relue après le lancement")
+        #expect(transport.calls.last?.path == "/v1/stats", "le catalogue est relu après le lancement")
+        #expect(model.isLaunching == false)
+
+        #expect(await model.launchProposals(auditId: "a1", items: [2, 0], title: "Audit") == "p2")
+        let launch = try #require(transport.calls.last { $0.path == "/v1/audits/a1/launch" })
+        let picked = try JSONSerialization.jsonObject(with: try #require(launch.body)) as? [String: Any]
+        #expect(picked?["items"] as? [Int] == [0, 2])
+        #expect(model.busyAudits.isEmpty)
+
+        #expect(await model.launchRun(repo: "x", title: "T", request: "r") == nil)
+        #expect(model.failure == .rejected("dépôt inconnu : x"))
     }
 }

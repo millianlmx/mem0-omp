@@ -24,10 +24,6 @@ private func homeFactsOr401(_ request: ClientHTTPRequest) -> Result<ClientHTTPRe
     switch request.path {
     case "/v1/components":
         return .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"ompInstalled":true}"#.utf8)))
-    case "/v1/journal":
-        return .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"entries":[]}"#.utf8)))
-    case "/v1/pull-request-states/refresh":
-        return .success(ClientHTTPResponse(status: 202, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"accepted":true}"#.utf8)))
     case "/v1/pair":
         return .success(ClientHTTPResponse(
             status: 200,
@@ -64,7 +60,7 @@ struct PairingStatusTests {
             preferences: [ClientPreferenceKey.deviceId: "d", ClientPreferenceKey.manualAddress: "192.168.1.20:8787"]
         )
         harness.transport.respond { request in
-            request.path == "/v1/components" || request.path == "/v1/journal"
+            request.path == "/v1/components"
                 ? homeFactsOr401(request)
                 : .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data("{}".utf8)))
         }

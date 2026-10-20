@@ -89,6 +89,9 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
     public var phase: HarnessRunState? { HarnessRunState(rawValue: state) }
+
+    /// Le run attend la validation de ses SPECS (avant /impl), pas d'un verdict.
+    public var awaitsSpecs: Bool { phase == .awaitingHuman && step == "specs" }
 }
 
 /// Une décision prise seule par un runner : un point de reprise.
@@ -362,9 +365,9 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
     }
 
     /// Les runs dont les SPECS attendent la validation (avant /impl).
-    public var specsAwaiting: [HarnessRun] { awaiting.filter { $0.step == "specs" } }
+    public var specsAwaiting: [HarnessRun] { awaiting.filter(\.awaitsSpecs) }
     /// Les runs dont le VERDICT de revue attend la validation.
-    public var verdictsAwaiting: [HarnessRun] { awaiting.filter { $0.step != "specs" } }
+    public var verdictsAwaiting: [HarnessRun] { awaiting.filter { !$0.awaitsSpecs } }
     /// Les audits dont les propositions attendent un choix.
     public var auditsProposed: [HarnessAudit] { audits.filter(\.isProposed) }
 
@@ -405,6 +408,9 @@ public struct HarnessRunView: Codable, Equatable, Sendable {
     }
 
     public func artifact(_ name: String) -> String? { artifacts.first { $0.name == name }?.content }
+
+    /// Les specs du run (`specs.md`), à valider avant /impl.
+    public var specs: String? { artifact("specs.md") }
 }
 
 /// Un dépôt déclaré sur le serveur (`GET /v1/status`).
