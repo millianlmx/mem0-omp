@@ -115,6 +115,23 @@ export type TestRunRow = {
 
 export type ProjectRow = { id: string; repo: string; title: string; status: "active" | "done"; createdAt: number };
 
+export type AuditState = "queued" | "analysing" | "proposed" | "launched" | "failed" | "cancelled";
+
+/** Une proposition d'audit : une faiblesse à corriger ou une feature à construire. */
+export type AuditProposal = { title: string; request: string; modules: string[]; kind: "faiblesse" | "feature"; rationale: string };
+
+export type AuditRow = {
+  id: string;
+  repo: string;
+  focus: string;
+  state: AuditState;
+  proposals: AuditProposal[];
+  projectId: string | null;
+  reason: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 
 const MIGRATIONS: string[] = [
   `CREATE TABLE runs (
@@ -234,6 +251,17 @@ const MIGRATIONS: string[] = [
      title TEXT NOT NULL,
      status TEXT NOT NULL,
      created_at INTEGER NOT NULL
+   );`,
+  `CREATE TABLE audits (
+     id TEXT PRIMARY KEY,
+     repo TEXT NOT NULL,
+     focus TEXT NOT NULL,
+     state TEXT NOT NULL,
+     proposals TEXT NOT NULL DEFAULT '[]',
+     project_id TEXT,
+     reason TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
    );`,
 ];
 
@@ -380,6 +408,20 @@ function testRunOf(row: Row): TestRunRow {
     cached: num(row, "cached") === 1,
     attempts: num(row, "attempts"),
     at: num(row, "at"),
+  };
+}
+
+function auditOf(row: Row): AuditRow {
+  return {
+    id: str(row, "id"),
+    repo: str(row, "repo"),
+    focus: str(row, "focus"),
+    state: str(row, "state") as AuditState,
+    proposals: json<AuditProposal[]>(row, "proposals", []),
+    projectId: strOrNull(row, "project_id"),
+    reason: strOrNull(row, "reason"),
+    createdAt: num(row, "created_at"),
+    updatedAt: num(row, "updated_at"),
   };
 }
 
@@ -829,6 +871,49 @@ export class Store {
 
   listProjects(): ProjectRow[] {
     return this.#all("SELECT * FROM projects ORDER BY created_at, id").map(projectOf);
+  }
+
+  // -- audits ---------------------------------------------------------------
+
+  createAudit(input: Pick<AuditRow, "id" | "repo" | "focus">): AuditRow {
+    const at = this.#now();
+    this.#run("INSERT INTO audits (id, repo, focus, state, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)", input.id, input.repo, input.focus, at, at);
+    return this.getAudit(input.id) as AuditRow;
+  }
+
+  getAudit(id: string): AuditRow | null {
+    const row = this.#get("SELECT * FROM audits WHERE id = ?", id);
+    return row ? auditOf(row) : null;
+  }
+
+  listAudits(state: AuditState[] = []): AuditRow[] {
+    const clause = state.length > 0 ? `WHERE state IN (${state.map(() => "?").join(", ")})` : "";
+    return this.#all(`SELECT * FROM audits ${clause} ORDER BY created_at DESC, id`, ...state).map(auditOf);
+  }
+
+  /** Compare-and-swap, comme `updateRunIf` : `null` si l'audit a changé d'état entre-temps. */
+  updateAuditIf(id: string, expected: readonly AuditState[], patch: Partial<Pick<AuditRow, "state" | "proposals" | "projectId" | "reason">>): AuditRow | null {
+    const columns: Record<string, string> = { state: "state", proposals: "proposals", projectId: "project_id", reason: "reason" };
+    const sets = Object.keys(patch).map(key => `${columns[key]} = ?`);
+    const values = Object.values(patch).map(encode);
+    const result = this.#run(
+      `UPDATE audits SET ${[...sets, "updated_at = ?"].join(", ")} WHERE id = ? AND state IN (${expected.map(() => "?").join(", ")})`,
+      ...values,
+      this.#now(),
+      id,
+      ...expected,
+    );
+    return Number(result.changes) === 0 ? null : this.getAudit(id);
+  }
+
+  // -- lectures des statistiques --------------------------------------------
+
+  allSteps(): StepRow[] {
+    return this.#all("SELECT * FROM steps ORDER BY id").map(stepOf);
+  }
+
+  allTestRuns(): TestRunRow[] {
+    return this.#all("SELECT * FROM test_runs ORDER BY id").map(testRunOf);
   }
 
   setProjectStatus(id: string, status: "active" | "done"): void {

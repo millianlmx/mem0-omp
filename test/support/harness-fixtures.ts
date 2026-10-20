@@ -67,6 +67,8 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   config.heavy.isolation = "none";
   config.listen.port = 0;
   config.git = { authorName: "Harness", authorEmail: "harness@example.com" };
+  // Les scénarios vont de /req au merge d'une traite ; la porte des specs a ses propres tests.
+  config.review.specsGate = false;
   config.repos = [
     repoDefaults({
       name: "demo",

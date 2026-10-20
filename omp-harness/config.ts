@@ -94,7 +94,8 @@ export type HarnessConfig = {
   admission: { reserveMiB: number; runnerMiB: number; heavyMiB: number };
   models: { fast: ModelChoice[]; heavy: ModelChoice[] };
   providers: Record<string, ProviderLimit>;
-  review: { fixCap: number; maxDiffLines: number };
+  /** `specsGate` : la feature attend l'accord humain entre /specs et /impl. */
+  review: { fixCap: number; maxDiffLines: number; specsGate: boolean };
   oracle: { url: string; token: string | null } | null;
   repos: RepoConfig[];
 };
@@ -167,7 +168,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     admission: { reserveMiB: 2048, runnerMiB: 1024, heavyMiB: 4096 },
     models: { fast: [], heavy: [] },
     providers: {},
-    review: { fixCap: 3, maxDiffLines: 300 },
+    review: { fixCap: 3, maxDiffLines: 300, specsGate: true },
     oracle: null,
     repos: [],
   };

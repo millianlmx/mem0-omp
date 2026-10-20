@@ -10,6 +10,7 @@ import type { RunState } from "./machine.ts";
 import type { EventRow } from "./db.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { HarnessError } from "./orchestrator.ts";
+import { computeStats } from "./stats.ts";
 
 
 export const API_VERSION = 1;
@@ -85,6 +86,7 @@ export function inboxOf(store: Orchestrator["store"]): Record<string, unknown> {
     awaiting: runs.filter(run => run.state === "awaiting_human"),
     decisions,
     runs: runs.filter(run => !terminal.has(run.state) || referenced.has(run.id)),
+    audits: store.listAudits(["queued", "analysing", "proposed"]),
     cursor: store.lastEventId(),
   };
 }
@@ -208,7 +210,16 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     {
       method: "GET",
       pattern: /^\/v1\/projects$/,
-      handle: (_m, _req, res) => send(res, 200, { projects: store.listProjects() }),
+      // Chaque projet avec le décompte de ses runs par état (la liste des apps).
+      handle: (_m, _req, res) => {
+        const projects = store.listProjects().map(project => {
+          const runs = store.listRuns({ projectId: project.id });
+          const byState: Record<string, number> = {};
+          for (const run of runs) byState[run.state] = (byState[run.state] ?? 0) + 1;
+          return { ...project, runs: { total: runs.length, byState } };
+        });
+        send(res, 200, { projects });
+      },
     },
     {
       method: "POST",
@@ -233,6 +244,50 @@ export function createHandler(options: HttpOptions): http.RequestListener {
         if (!project) throw new HarnessError(404, `projet inconnu : ${m[1]}`);
         send(res, 200, { project, runs: store.listRuns({ projectId: project.id }) });
       },
+    },
+    {
+      method: "GET",
+      pattern: /^\/v1\/audits$/,
+      handle: (_m, _req, res) => send(res, 200, { audits: store.listAudits() }),
+    },
+    {
+      method: "POST",
+      pattern: /^\/v1\/audits$/,
+      handle: async (_m, req, res) => {
+        const body = await readBody(req);
+        const audit = orchestrator.audits.create(text(body, "repo"), text(body, "focus", false));
+        void orchestrator.tick();
+        send(res, 201, { audit });
+      },
+    },
+    {
+      method: "GET",
+      pattern: /^\/v1\/audits\/([\w-]+)$/,
+      handle: (m, _req, res) => {
+        const audit = store.getAudit(m[1] as string);
+        if (!audit) throw new HarnessError(404, `audit inconnu : ${m[1]}`);
+        send(res, 200, { audit });
+      },
+    },
+    {
+      // Les propositions retenues (index dans `proposals`) partent en projet.
+      method: "POST",
+      pattern: /^\/v1\/audits\/([\w-]+)\/launch$/,
+      handle: async (m, req, res) => {
+        const body = await readBody(req);
+        if (!Array.isArray(body.items) || body.items.some(item => !Number.isInteger(item))) throw new HarnessError(400, "items : liste d'index attendue");
+        send(res, 201, await orchestrator.audits.launch(m[1] as string, body.items as number[], text(body, "title", false)));
+      },
+    },
+    {
+      method: "POST",
+      pattern: /^\/v1\/audits\/([\w-]+)\/cancel$/,
+      handle: async (m, _req, res) => send(res, 200, { audit: await orchestrator.audits.cancel(m[1] as string) }),
+    },
+    {
+      method: "GET",
+      pattern: /^\/v1\/stats$/,
+      handle: (_m, _req, res) => send(res, 200, { ...computeStats(store), scheduler: orchestrator.status().scheduler }),
     },
   ];
 

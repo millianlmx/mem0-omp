@@ -8,6 +8,7 @@
 // (modules disjoints seulement).
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Auditor } from "./audits.ts";
 import type { HarnessConfig, ModelChoice, RepoConfig } from "./config.ts";
 import { launch, repoByName } from "./config.ts";
 import type { DecisionRow, RunRow, Store, StepRow } from "./db.ts";
@@ -18,7 +19,7 @@ import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./
 import type { HeavyRunner } from "./heavy.ts";
 import { heavyReport } from "./heavy.ts";
 import type { RunState, StepKind, StepOutcome, Transition } from "./machine.ts";
-import { ACTIVE_STATES, STEP_TIER, afterHumanValidation, isTerminal, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "./machine.ts";
+import { ACTIVE_STATES, STEP_TIER, afterHumanValidation, afterSpecsValidation, isTerminal, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "./machine.ts";
 import type { Oracle } from "./oracle.ts";
 import { humanDecisionMemory, renderMemories } from "./oracle.ts";
 import { knownModules, modulesViaOracle, parseModulesSection, schedulable } from "./planner.ts";
@@ -26,7 +27,7 @@ import type { Exec } from "./proc.ts";
 import { FAILOVER_PROMPT, STEP_ARTIFACT, nudgePrompt, stepPrompt } from "./prompts.ts";
 import type { HostToolResult, PromptResult, RunnerProcess } from "./rpc.ts";
 import { RpcRunner, isRateLimit } from "./rpc.ts";
-import { hostToolsFor, runnerArgv, runnerEnv, runnerUnit, writePipelineOverlay } from "./runner.ts";
+import { hostToolsFor, runnerArgv, runnerEnv, runnerUnit, stopRunner, writePipelineOverlay } from "./runner.ts";
 import { projectScope } from "./scope.ts";
 import type { Scheduler, Slot } from "./scheduler.ts";
 import type { Verdict } from "./verdict.ts";
@@ -118,9 +119,19 @@ export class Orchestrator {
   #ticking: Promise<void> | null = null;
   #stopping = false;
 
+  /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
+  readonly audits: Auditor;
+
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
     this.#log = deps.log ?? (() => {});
+    this.audits = new Auditor({
+      ...deps,
+      log: this.#log,
+      repo: name => this.#repo(name),
+      overlay: () => this.#overlay ?? writePipelineOverlay(deps.config.dataDir),
+      createProject: input => this.createProject(input),
+    });
   }
 
   get store(): Store {
@@ -175,6 +186,7 @@ export class Orchestrator {
       await this.#stopRunner(live);
     }
     await Promise.allSettled(lives.map(live => live.done));
+    await this.audits.stop();
   }
 
   /**
@@ -212,6 +224,7 @@ export class Orchestrator {
         this.#event("recovered", run.id, { step: run.step });
       }
     }
+    await this.audits.recover();
   }
 
   /** Un tour de scheduling : merges dus, puis les runs en file que le planificateur libère. */
@@ -228,6 +241,7 @@ export class Orchestrator {
     for (const run of store.listRuns({ state: ["merging"] })) {
       if (!this.#merging.has(run.id)) void this.#merge(run.id);
     }
+    this.audits.tick();
     const queued = store.listRuns({ state: ["queued"] }).filter(run => !this.#live.has(run.id));
     if (queued.length === 0) return;
     // Un run lancé reste `queued` en base jusqu'à son worktree : il occupe déjà ses modules.
@@ -309,6 +323,7 @@ export class Orchestrator {
         const transition = nextAfter({ step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts }, outcome, {
           fixCap: this.#deps.config.review.fixCap,
           stepRetries: this.#deps.config.runner.stepRetries,
+          specsGate: this.#deps.config.review.specsGate,
         });
         if (!this.#apply(run, transition, ["running"])) break;
         if (!transition.keepRunner) await this.#stopRunner(live);
@@ -346,7 +361,10 @@ export class Orchestrator {
       const items = store.listEscalations({ runId: run.id, status: "open" });
       this.#event("escalations", run.id, { step: run.step, items: items.map(item => ({ id: item.id, category: item.category, question: item.question, options: item.options })) });
     }
-    if (transition.state === "awaiting_human") this.#event("verdict", run.id, { verdict: updated.verdict, reason: transition.reason });
+    if (transition.state === "awaiting_human") {
+      if (transition.step === "specs") this.#event("specs_ready", run.id, { reason: transition.reason });
+      else this.#event("verdict", run.id, { verdict: updated.verdict, reason: transition.reason });
+    }
     return updated;
   }
 
@@ -580,10 +598,6 @@ export class Orchestrator {
     return runner;
   }
 
-  /**
-   * Arrête le runner : stdin fermé, puis signaux, puis `--stop <unité>.scope` par le
-   * lanceur — un runner lancé par sudo n'est pas signalable par le service.
-   */
   async #stopRunner(live: Live): Promise<void> {
     const runner = live.runner;
     const unit = live.unit;
@@ -591,15 +605,7 @@ export class Orchestrator {
     live.unit = null;
     live.prepaid = false;
     if (runner) {
-      const { config, exec } = this.#deps;
-      const force =
-        unit && config.runner.isolation === "systemd"
-          ? async () => {
-              const stop = launch(config, ["--stop", `${unit}.scope`]);
-              await exec(stop.command, stop.args, { timeoutMs: 15_000 });
-            }
-          : undefined;
-      await runner.stop(5000, force);
+      await stopRunner(this.#deps.config, this.#deps.exec, runner, unit);
       this.#event("runner_stopped", live.runId, {});
     }
   }
@@ -1064,7 +1070,7 @@ export class Orchestrator {
     return this.#run(runId);
   }
 
-  /** La validation humaine d'un verdict en attente. */
+  /** La validation humaine en attente : les specs (avant /impl) ou le verdict de revue. */
   validate(runId: string, approve: boolean, reason: string): Promise<RunRow> {
     return this.#serial(runId, () => this.#validate(runId, approve, reason));
   }
@@ -1073,17 +1079,23 @@ export class Orchestrator {
     const { store, oracle } = this.#deps;
     const run = this.#run(runId);
     if (run.state !== "awaiting_human") throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
+    const why = reason.trim();
+    const specs = run.step === "specs";
     if (!approve) {
-      if (reason.trim() === "") throw new HarnessError(400, "un refus porte sa raison");
-      await oracle.retain(this.#repo(run.repo).scope, `Correction humaine — feature « ${run.title} » : ${reason.trim()}`, ["harness", "correction"]);
+      if (why === "") throw new HarnessError(400, "un refus porte sa raison");
+      await oracle.retain(this.#repo(run.repo).scope, `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`, ["harness", "correction"]);
     }
     const current = this.#run(runId);
-    if (!this.#apply(current, afterHumanValidation({ step: "review", fixes: current.fixes, attempts: 0 }, approve, reason.trim()), ["awaiting_human"])) {
+    const cursor = { step: current.step ?? "review", fixes: current.fixes, attempts: 0 };
+    const transition = current.step === "specs" ? afterSpecsValidation(cursor, approve, why) : afterHumanValidation(cursor, approve, why);
+    if (!this.#apply(current, transition, ["awaiting_human"])) {
       throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
     }
-    if (!approve) {
-      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé le verdict : ${reason.trim()}`, null);
-      store.updateRun(runId, { verdict: current.verdict ? { ...current.verdict, blockers: [reason.trim()] } : null });
+    if (!approve && current.step === "specs") {
+      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`, null);
+    } else if (!approve) {
+      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé le verdict : ${why}`, null);
+      store.updateRun(runId, { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null });
     }
     void this.tick();
     return this.#run(runId);

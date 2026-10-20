@@ -136,3 +136,24 @@ export function nudgePrompt(step: StepKind, missing: string): string {
 
 /** Le prompt de reprise après une bascule de fournisseur sur rate limit. */
 export const FAILOVER_PROMPT = "Reprends exactement où tu t'es arrêté : le fournisseur précédent a atteint sa limite de débit, tu tournes maintenant sur un autre modèle.";
+
+
+/** Le prompt de l'audit d'un dépôt : lecture seule, propositions par `audit_propose`. */
+export function auditPrompt(ctx: { repo: string; focus: string; memories: string | null }): string {
+  const focus = ctx.focus.trim() === "" ? "le dépôt entier" : ctx.focus.trim();
+  return [
+    `# /audit — audit de « ${ctx.repo} »
+
+Audite ${focus}, sur \`main\`, en LECTURE SEULE : ne modifie AUCUN fichier. Commence par \`oracle_recall\` sur le sujet (besoins, décisions tranchées).
+
+Repère :
+- les FAIBLESSES : bugs probables, failles de sécurité, dette qui freine, tests manquants sur du code critique ;
+- les FEATURES qui manquent au regard des besoins connus.
+
+Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus utiles d'abord, chacune livrable seule en moins de ~300 lignes de diff. Une faiblesse sans preuve dans le code n'est pas une proposition.`,
+    section("Oracle (rappel du service)", ctx.memories),
+    `\n- \`progress\` à chaque partie du dépôt parcourue, une phrase. N'utilise JAMAIS \`ask\`.\n`,
+  ]
+    .filter(part => part !== "")
+    .join("\n");
+}

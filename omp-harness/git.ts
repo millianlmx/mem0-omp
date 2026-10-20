@@ -143,8 +143,8 @@ export class Git {
     if (!current.split("\n").includes(line)) fs.appendFileSync(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`);
   }
 
-  /** Crée le worktree du run sur une branche neuve, partant de `base`. Idempotent. */
-  async addWorktree(repo: string, worktree: string, branch: string, base: string): Promise<void> {
+  /** Crée le worktree du run sur une branche neuve partant de `base` (`null` : HEAD détachée, l'audit). Idempotent. */
+  async addWorktree(repo: string, worktree: string, branch: string | null, base: string): Promise<void> {
     if (fs.existsSync(path.join(worktree, ".git"))) {
       await this.trustWorktree(repo, worktree);
       return;
@@ -152,8 +152,8 @@ export class Git {
     // Le parent n'est pas inscriptible par le groupe : un runner ne peut ni renommer ni remplacer son worktree.
     fs.mkdirSync(path.dirname(worktree), { recursive: true, mode: 0o2750 });
     fs.chmodSync(path.dirname(worktree), 0o2750);
-    const exists = (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
-    const args = exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base];
+    const exists = branch !== null && (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
+    const args = branch === null ? ["worktree", "add", "--detach", worktree, base] : exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base];
     await this.run(repo, args);
     await this.excludeArtifacts(repo);
     await this.trustWorktree(repo, worktree);

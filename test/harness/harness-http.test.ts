@@ -177,3 +177,39 @@ test("harness-http/AC-6 : la boîte de l'humain arrive d'un seul appel — escal
     await world.orchestrator.stop();
   }
 });
+
+
+test("harness-http/AC-7 : audits, statistiques et projets résumés — ce que lisent les apps", async () => {
+  const proposals = [{ title: "Tester le schéma", request: "Ajouter les tests du schéma", modules: ["src/db"], kind: "faiblesse", rationale: "aucun test" }];
+  const world = fakeWorld({ audit: [[{ tool: "audit_propose", args: { proposals } }]], req: [[{ sleep: 60_000 }]] });
+  await world.orchestrator.start();
+  const server = await serve(world);
+  try {
+    assert.equal((await call(server.url, "POST", "/v1/audits", { repo: "ailleurs" })).status, 404);
+    const created = await call(server.url, "POST", "/v1/audits", { repo: "demo", focus: "src/db" });
+    assert.equal(created.status, 201);
+    const { audit } = (await created.json()) as { audit: { id: string } };
+    let state = "";
+    for (let i = 0; i < 500 && state !== "proposed"; i++) {
+      state = ((await (await call(server.url, "GET", `/v1/audits/${audit.id}`)).json()) as { audit: { state: string } }).audit.state;
+      if (state !== "proposed") await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(state, "proposed");
+    const inbox = (await (await call(server.url, "GET", "/v1/inbox")).json()) as { audits: { id: string }[] };
+    assert.deepEqual(inbox.audits.map(a => a.id), [audit.id]);
+    assert.equal((await call(server.url, "POST", `/v1/audits/${audit.id}/launch`, { items: ["0"] })).status, 400);
+    const launched = await call(server.url, "POST", `/v1/audits/${audit.id}/launch`, { items: [0], title: "Durcir la base" });
+    assert.equal(launched.status, 201);
+    const { projectId } = (await launched.json()) as { projectId: string };
+    const projects = (await (await call(server.url, "GET", "/v1/projects")).json()) as { projects: { id: string; title: string; runs: { total: number } }[] };
+    assert.deepEqual(projects.projects.map(p => [p.id, p.title, p.runs.total]), [[projectId, "Durcir la base", 1]]);
+    const stats = (await (await call(server.url, "GET", "/v1/stats")).json()) as { runs: { total: number }; audits: Record<string, number>; scheduler: { runner: { capacity: number } } };
+    assert.equal(stats.runs.total, 1);
+    assert.deepEqual(stats.audits, { launched: 1 });
+    assert.equal(stats.scheduler.runner.capacity, 5);
+    assert.equal((await call(server.url, "POST", `/v1/audits/${audit.id}/cancel`)).status, 409);
+  } finally {
+    await server.close();
+    await world.orchestrator.stop();
+  }
+});

@@ -53,7 +53,8 @@ export type Transition = {
   reason: string;
 };
 
-export type Limits = { fixCap: number; stepRetries: number };
+/** `specsGate` : après /specs, la feature attend l'accord humain avant /impl. */
+export type Limits = { fixCap: number; stepRetries: number; specsGate: boolean };
 
 export type RunCursor = { step: StepKind; fixes: number; attempts: number };
 
@@ -84,8 +85,10 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
 
   switch (step) {
     case "req":
+      return to("running", NEXT[step], cursor, { reason: "/req terminé" });
     case "specs":
-      return to("running", NEXT[step], cursor, { reason: `/${step} terminé` });
+      if (limits.specsGate) return to("awaiting_human", "specs", cursor, { reason: "specs à valider avant /impl" });
+      return to("running", NEXT[step], cursor, { reason: "/specs terminé" });
     case "impl":
       return to("running", "review", cursor, { rebase: true, reason: "/impl terminé — rebase sur main avant /review" });
     case "fix":
@@ -128,6 +131,13 @@ export function resumeAtCheckpoint(cursor: RunCursor, step: StepKind, seq: numbe
 export function afterHumanValidation(cursor: RunCursor, approve: boolean, reason: string): Transition {
   if (approve) return to("merging", null, cursor, { reason: reason || "validé par l'humain" });
   return to("queued", "fix", cursor, { fixes: cursor.fixes + 1, reason: `refusé par l'humain : ${reason}` });
+}
+
+
+/** La validation humaine des specs : accepter → /impl, refuser → /specs refait avec la raison. */
+export function afterSpecsValidation(cursor: RunCursor, approve: boolean, reason: string): Transition {
+  if (approve) return to("queued", "impl", cursor, { reason: reason || "specs validées par l'humain" });
+  return to("queued", "specs", cursor, { reason: `specs refusées par l'humain : ${reason}` });
 }
 
 

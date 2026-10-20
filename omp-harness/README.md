@@ -25,6 +25,9 @@ dépendent, et le service du Mac (launchd) reste tel quel.
 | **Backends LLM** : rapide et lourd, multi-provider | `config.ts` (`models`), `orchestrator.ts` | `models.fast` pour /req et /specs, `models.heavy` pour /impl, /review et fix. Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
 | **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`. Bas risque + suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner) + diff ≤ 300 lignes : auto-merge. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 14 Go | `deploy/` | `omp-harness.slice` 16G ⊃ runners 5G + heavy 8G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
+| **Validation des specs** (ajout) | `machine.ts`, `orchestrator.ts` | `review.specsGate` (vrai par défaut) : après /specs, le run attend l'humain, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
+| **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules) par l'outil hôte `audit_propose`. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project. |
+| **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
 | **Boucle humaine** | `orchestrator.ts`, `http.ts` | Relire, accepter, renverser une décision. Le renversement fait un retour dur au checkpoint N, applique l'option choisie, écrit la raison dans l'oracle et reprend à l'étape du checkpoint. Un run déjà mergé ouvre un run de suite. |
 
 ## Écarts assumés au schéma
@@ -107,12 +110,16 @@ sur ton Mac.
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
 | `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |
 | `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : reprise au checkpoint N, raison dans l'oracle. |
-| `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider un verdict, ou le refuser (correction, raison dans l'oracle). |
+| `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
 | `POST /v1/runs/{id}/cancel` | Annuler (la branche reste). |
 | `GET /v1/escalations` | Escalades ouvertes, **batchées par run** (écran iOS). |
 | `GET /v1/decisions?status=auto` | La relecture du matin. |
-| `POST /v1/projects` `{repo, title, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | /project. |
-| `GET /v1/events?run=…` | SSE. `id:` = curseur du journal. Événements : `run_created`, `run_state`, `step_started`, `step_done`, `decision`, `escalation`, `escalations` (le lot), `review`, `verdict`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merged`, `progress`… |
+| `GET /v1/inbox` | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
+| `GET /v1/projects` · `POST /v1/projects` `{repo, title, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | /project. La liste porte le décompte des runs de chaque projet par état. |
+| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | /audit : `queued` → `analysing` → `proposed`. |
+| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | Lancer les propositions retenues en projet, ou annuler. |
+| `GET /v1/stats` | Les statistiques du harness, avec l'état du scheduler. |
+| `GET /v1/events?run=…` | SSE. `id:` = curseur du journal. Événements : `run_created`, `run_state`, `step_started`, `step_done`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merged`, `progress`… |
 
 ## Installation (VPS Debian ou Ubuntu, systemd ≥ 250)
 

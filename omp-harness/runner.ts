@@ -12,7 +12,8 @@ import { launch } from "./config.ts";
 import type { HarnessConfig, ModelChoice } from "./config.ts";
 import type { StepKind } from "./machine.ts";
 import { DECISION_CATEGORIES } from "./decisions.ts";
-import type { HostToolDefinition } from "./rpc.ts";
+import type { Exec } from "./proc.ts";
+import type { HostToolDefinition, RpcRunner } from "./rpc.ts";
 
 
 /** Les réglages du profil pipeline, en overlay `--config` (YAML ⊃ JSON). */
@@ -36,6 +37,22 @@ export function writePipelineOverlay(dataDir: string): string {
 /** Le nom d'unité d'un runner : retrouvable (et arrêtable) après un redémarrage du service. */
 export function runnerUnit(runId: string, stepId: number): string {
   return `omp-runner-${runId}-${stepId}`;
+}
+
+
+/**
+ * Arrête un runner : stdin fermé, puis signaux, puis `--stop <unité>.scope` par le
+ * lanceur — un runner lancé par sudo n'est pas signalable par le service.
+ */
+export async function stopRunner(config: HarnessConfig, exec: Exec, runner: RpcRunner, unit: string | null): Promise<void> {
+  const force =
+    unit && config.runner.isolation === "systemd"
+      ? async () => {
+          const stop = launch(config, ["--stop", `${unit}.scope`]);
+          await exec(stop.command, stop.args, { timeoutMs: 15_000 });
+        }
+      : undefined;
+  await runner.stop(5000, force);
 }
 
 
@@ -183,8 +200,42 @@ const RECALL_TOOL: HostToolDefinition = {
 };
 
 
-/** Les outils hôtes d'une étape. */
-export function hostToolsFor(step: StepKind): HostToolDefinition[] {
+const AUDIT_TOOL: HostToolDefinition = {
+  name: "audit_propose",
+  label: "Harness — propositions d'audit",
+  description:
+    "Rend les propositions de l'audit, une fois, à la fin (la liste peut être vide). Chaque proposition est une feature AUTONOME : " +
+    "`request` est rédigée comme une demande /req, `modules` liste les chemins du dépôt qu'elle touchera, `kind` dit si elle corrige une faiblesse ou ajoute une feature.",
+  parameters: {
+    type: "object",
+    properties: {
+      proposals: {
+        type: "array",
+        maxItems: 10,
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            request: { type: "string" },
+            modules: STRINGS,
+            kind: { type: "string", enum: ["faiblesse", "feature"] },
+            rationale: { type: "string" },
+          },
+          required: ["title", "request", "modules", "kind", "rationale"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["proposals"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+
+/** Les outils hôtes d'une étape (ou de l'audit, qui ne décide ni ne teste rien). */
+export function hostToolsFor(step: StepKind | "audit"): HostToolDefinition[] {
+  if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL];
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
   if (step === "review") tools.push(VERDICT_TOOL);

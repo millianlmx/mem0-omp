@@ -337,3 +337,85 @@ test("harness-pipeline/AC-10 : les gestes humains ne s'écrasent pas — annuler
     await world.orchestrator.stop();
   }
 });
+
+
+test("harness-pipeline/AC-11 : avec la porte des specs, le run attend l'humain après /specs ; un refus refait /specs avec sa raison, l'accord lance /impl", async () => {
+  const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] }, { patch: config => (config.review.specsGate = true) });
+  await world.orchestrator.start();
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Export validé", request: "Exporter" });
+    await until(world, run.id, ["awaiting_human", "failed"]);
+    assert.deepEqual([world.store.getRun(run.id)?.state, world.store.getRun(run.id)?.step], ["awaiting_human", "specs"], stateOf(world, run.id));
+    assert.ok(world.store.eventsSince(0, run.id).some(e => e.type === "specs_ready"));
+    await assert.rejects(world.orchestrator.validate(run.id, false, " "), /raison/);
+    await world.orchestrator.validate(run.id, false, "AC-1 doit nommer son test");
+    await until(world, run.id, ["awaiting_human", "failed"]);
+    const specsPrompts = world.log().filter(e => e.kind === "prompt" && e.step === "specs" && e.nudge === false);
+    assert.equal(specsPrompts.length, 2, "/specs refait une fois");
+    assert.match(String(specsPrompts[1]?.message), /refusé les specs : AC-1 doit nommer son test/);
+    assert.ok(world.oracle.retained.some(m => /Correction humaine — specs/.test(m.text)));
+    await world.orchestrator.validate(run.id, true, "");
+    await until(world, run.id, ["merged", "failed"]);
+    assert.equal(world.store.getRun(run.id)?.state, "merged", stateOf(world, run.id));
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+
+test("harness-pipeline/AC-12 : un audit lit main en lecture seule, rend ses propositions, et celles retenues partent en projet planifié", async () => {
+  const proposals = [
+    { title: "Valider les entrées de l'API", request: "Valider les paramètres des routes", modules: ["src/api"], kind: "faiblesse", rationale: "aucune validation" },
+    { title: "Index du schéma", request: "Indexer les colonnes lues", modules: ["src/db"], kind: "feature", rationale: "requêtes lentes" },
+  ];
+  const world = fakeWorld({ audit: [[{ tool: "progress", args: { message: "src/ lu" } }, { tool: "audit_propose", args: { proposals } }]], req: [[{ sleep: 60_000 }]] });
+  await world.orchestrator.start();
+  try {
+    const audit = world.orchestrator.audits.create("demo", "src/");
+    await waitFor(() => ["proposed", "failed"].includes(world.store.getAudit(audit.id)?.state ?? ""), () => JSON.stringify(world.store.getAudit(audit.id)));
+    const done = world.store.getAudit(audit.id);
+    assert.equal(done?.state, "proposed", done?.reason ?? "");
+    assert.deepEqual(done?.proposals.map(p => p.kind), ["faiblesse", "feature"]);
+    // Le runner d'audit a tourné dans un worktree détaché, rendu ensuite ; aucun commit, aucune branche.
+    const argv = world.log().find(e => e.kind === "argv");
+    assert.match(String(argv?.cwd), /_audit-/);
+    assert.ok(!fs.existsSync(String(argv?.cwd)));
+    assert.equal(git(world.repo, "branch", "--list", "harness/*"), "");
+    const prompt = world.log().find(e => e.kind === "prompt" && e.step === "audit");
+    assert.match(String(prompt?.message), /LECTURE SEULE/);
+    await assert.rejects(world.orchestrator.audits.launch(audit.id, [5]), /index de propositions/);
+    const { projectId } = await world.orchestrator.audits.launch(audit.id, [1]);
+    await assert.rejects(world.orchestrator.audits.launch(audit.id, [0]), /pas de propositions à lancer/);
+    const runs = world.store.listRuns({ projectId });
+    assert.deepEqual(runs.map(run => [run.title, run.modules]), [["Index du schéma", ["src/db"]]]);
+    assert.equal(world.store.getAudit(audit.id)?.state, "launched");
+    assert.equal(world.store.getAudit(audit.id)?.projectId, projectId);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+
+test("harness-pipeline/AC-13 : un audit sans propositions est relancé une fois puis échoue ; un audit en cours s'annule et rend son runner", async () => {
+  const world = fakeWorld({ audit: [[]] });
+  await world.orchestrator.start();
+  try {
+    const silent = world.orchestrator.audits.create("demo", "");
+    await waitFor(() => world.store.getAudit(silent.id)?.state === "failed", () => JSON.stringify(world.store.getAudit(silent.id)));
+    assert.match(world.store.getAudit(silent.id)?.reason ?? "", /audit_propose/);
+    assert.equal(world.log().filter(e => e.kind === "prompt" && e.step === "audit").length, 2);
+  } finally {
+    await world.orchestrator.stop();
+  }
+  const slow = fakeWorld({ audit: [[{ sleep: 60_000 }]] });
+  await slow.orchestrator.start();
+  try {
+    const audit = slow.orchestrator.audits.create("demo", "");
+    await waitFor(() => slow.store.getAudit(audit.id)?.state === "analysing" && slow.log().some(e => e.kind === "prompt"), () => JSON.stringify(slow.store.getAudit(audit.id)));
+    await slow.orchestrator.audits.cancel(audit.id);
+    assert.equal(slow.store.getAudit(audit.id)?.state, "cancelled");
+    assert.equal(slow.scheduler.snapshot().runner.used, 0);
+  } finally {
+    await slow.orchestrator.stop();
+  }
+});

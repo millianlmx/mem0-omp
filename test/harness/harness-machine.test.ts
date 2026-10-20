@@ -1,9 +1,9 @@
 // Feature harness-machine : la machine à états pure req → specs → impl → review ⇄ fix.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { STEP_TIER, afterHumanValidation, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "../../omp-harness/machine.ts";
+import { STEP_TIER, afterHumanValidation, afterSpecsValidation, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "../../omp-harness/machine.ts";
 
-const limits = { fixCap: 2, stepRetries: 1 };
+const limits = { fixCap: 2, stepRetries: 1, specsGate: false };
 const done = { kind: "done" as const, escalations: 0 };
 
 
@@ -56,4 +56,17 @@ test("harness-machine/AC-6 : modèle rapide pour /req et /specs, lourd pour /imp
   assert.equal(afterHumanValidation({ step: "review", fixes: 3, attempts: 0 }, true, "").state, "merging");
   const refused = afterHumanValidation({ step: "review", fixes: 3, attempts: 0 }, false, "trop lent");
   assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "fix", 4]);
+});
+
+
+test("harness-machine/AC-7 : avec la porte des specs, /specs terminé attend l'humain ; accord → /impl, refus → /specs refait", () => {
+  const gated = nextAfter({ step: "specs", fixes: 0, attempts: 0 }, done, { ...limits, specsGate: true });
+  assert.deepEqual([gated.state, gated.step, gated.keepRunner], ["awaiting_human", "specs", false]);
+  // Une escalade passe avant la porte : l'humain tranche d'abord, l'étape reprend.
+  assert.equal(nextAfter({ step: "specs", fixes: 0, attempts: 0 }, { ...done, escalations: 1 }, { ...limits, specsGate: true }).state, "escalated");
+  const cursor = { step: "specs" as const, fixes: 0, attempts: 0 };
+  assert.deepEqual([afterSpecsValidation(cursor, true, "").state, afterSpecsValidation(cursor, true, "").step], ["queued", "impl"]);
+  const refused = afterSpecsValidation(cursor, false, "AC-2 invérifiable");
+  assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "specs", 0]);
+  assert.match(refused.reason, /AC-2 invérifiable/);
 });
