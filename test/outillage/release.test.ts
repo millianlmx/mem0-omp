@@ -326,8 +326,7 @@ test("corps de release : gabarit exact, rupture AVANT l'installation, première 
       "/marketplace install omp-mem0-memory@mem0-omp",
       "",
       "### Mise à jour",
-      "/marketplace update mem0-omp",
-      "/marketplace upgrade omp-mem0-memory@mem0-omp",
+      `Suivre la procédure de \`PUBLISHING.md\` § « Mettre à jour » (dépôt ${REPO}).`,
       "",
     ].join("\n"),
   );
@@ -1171,8 +1170,8 @@ test("notes de release : commandes d'installation, mise à jour, et rupture d'un
     assert.ok(call, `release absente pour ${plugin} ${version}`);
     assert.ok(call.notes.includes(`/marketplace add ${REPO}`), call.notes);
     assert.ok(call.notes.includes(`/marketplace install ${plugin}@mem0-omp`), call.notes);
-    assert.ok(call.notes.includes("/marketplace update mem0-omp"), call.notes);
-    assert.ok(call.notes.includes(`/marketplace upgrade ${plugin}@mem0-omp`), call.notes);
+    assert.ok(call.notes.includes("`PUBLISHING.md` § « Mettre à jour »"), call.notes);
+    assert.ok(!call.notes.includes("/marketplace upgrade"), call.notes);
   }
 
   const major = calls.find((entry) => entry.tag === `${MEMORY.name}-v${VERSIONS[MEMORY.name]?.major}`);

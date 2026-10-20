@@ -199,14 +199,6 @@ versions d'entrée. Ce dernier champ n'est pas un compteur libre : s'il ne
 correspond à aucune version de plugin, `/plugins list` affiche un numéro qui
 n'existe nulle part.
 
-Côté utilisateur :
-
-```
-/marketplace update mem0-omp
-/marketplace upgrade omp-mem0-memory@mem0-omp
-/marketplace upgrade omp-mem0-req@mem0-omp
-```
-
 La version d'installation vient du champ `version` de l'entrée de catalogue ; à
 défaut de `<source>/.claude-plugin/plugin.json`, puis de `<source>/package.json`,
 puis du SHA de la source, puis `0.0.0`.
@@ -217,6 +209,99 @@ exact plutôt que sur une branche :
 ```json
 "source": { "source": "github", "repo": "<ton-handle>/mem0-omp", "sha": "a1b2c3d4" }
 ```
+
+### Installer une nouvelle version
+
+1. Rafraîchis le clone local du marketplace :
+
+   ```bash
+   omp plugin marketplace update mem0-omp
+   ```
+
+   `omp plugin upgrade` résout les versions dans ce clone local
+   (`~/.omp/plugins/cache/marketplaces/mem0-omp`), pas sur GitHub. Sans ce pas,
+   `omp plugin upgrade` réinstalle l'ancienne version en affichant « Upgraded »
+   sans erreur : rien ne te signale que tu n'as rien mis à jour.
+
+2. Mets à jour les deux plugins :
+
+   ```bash
+   omp plugin upgrade omp-mem0-memory@mem0-omp
+   omp plugin upgrade omp-mem0-req@mem0-omp
+   ```
+
+3. Relance le service de pipelines. Vérifie d'abord qu'aucun run de pipeline ne
+   tourne : `/pipelines` affiche « aucune pipeline en cours » et
+   `ls ~/.omp/agent/pipeline/running/` ne liste rien. La relance
+   (`launchctl kickstart -k`) tue le process du service et interrompt le maillon
+   en cours. Ensuite, dans une session OMP ouverte après l'upgrade (relance
+   `omp`), note le pid affiché par `/service status`, puis lance :
+
+   ```
+   /service install
+   ```
+
+   C'est le code mis à jour qui réécrit le plist et relance le service ; message
+   attendu : `[service] service installé et relancé (launchd)`. Sans ce pas, le
+   service garde l'ancien code en mémoire (par exemple
+   `route inconnue : POST /v1/audits` depuis OMP Console).
+
+4. Vérifie le plugin installé :
+
+   ```bash
+   omp plugin list
+   ls -la ~/.omp/plugins/node_modules/omp-mem0-req
+   ```
+
+   `omp plugin list` affiche la nouvelle version, et le lien pointe vers
+   `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<nouvelle version>`.
+
+5. Vérifie le service relancé : `/service status` affiche
+   `[service] en marche (pid <N>, port <P>)` avec un pid différent de celui noté
+   au pas 3. Ce process a démarré après l'upgrade : il a donc chargé le plugin du
+   lien vérifié au pas 4. Pid inchangé ou `arrêté` : le service sert encore
+   l'ancien code (ou ne tourne pas) ; relance `/service install` et lis son
+   message.
+
+### Tester une branche avant sa release
+
+1. Charge la copie de travail à la place de la version publiée (`<worktree>` est
+   le chemin du worktree de la branche) :
+
+   ```bash
+   omp plugin link <worktree>/omp-mem0-req
+   ```
+
+2. Relance le service comme au pas 3 ci-dessus : aucun run de pipeline en cours,
+   puis, dans une session OMP ouverte après le link, note le pid affiché par
+   `/service status` et lance :
+
+   ```
+   /service install
+   ```
+
+3. Vérifie le plugin : `omp plugin list`, et
+   `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe vers
+   `<worktree>/omp-mem0-req`. Vérifie le service : `/service status` affiche un
+   pid différent de celui noté au pas 2.
+
+4. Reviens à la version publiée :
+
+   ```bash
+   omp plugin marketplace update mem0-omp
+   omp plugin upgrade omp-mem0-req@mem0-omp
+   ```
+
+   Puis, dans une session OMP ouverte après l'upgrade, relance le service :
+
+   ```
+   /service install
+   ```
+
+   Et refais la même vérification : `omp plugin list` affiche la version
+   publiée, `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe de nouveau
+   vers `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<version>`, et
+   `/service status` affiche un pid différent de celui vérifié au pas 3.
 
 ## Release automatique
 

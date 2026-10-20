@@ -159,10 +159,10 @@ et affiche l'accusé rendu par la **réponse** : `state:"taken"` (le service l'a
 ou `state:"refused"` avec le motif exact du service, verbatim dans « Activité
 récente » (Pipelines). Aucun fichier d'accusé, aucune relecture périodique : sans
 service joignable, l'app affiche « service arrêté ». Prérequis : le service local
-doit tourner et porter le canal de commande **et** la commande `reply`
-(`ls -la ~/.omp/plugins/node_modules/omp-mem0-req` dit quelle copie est chargée ;
-`omp plugin link <chemin>/omp-mem0-req` charge une copie de travail, `omp plugin
-upgrade omp-mem0-req@mem0-omp` revient à la version publiée).
+doit tourner et porter le canal de commande **et** la commande `reply`. Quelle
+copie d'omp-mem0-req le service charge, comment en changer (version publiée ou
+copie de travail) et comment le relancer ensuite :
+`PUBLISHING.md` § « Mettre à jour », à la racine du dépôt.
 
 ### Recette : une commande prise par le service
 

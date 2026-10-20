@@ -422,8 +422,7 @@ export function renderReleaseBody(
       `/marketplace install ${release.name}@${options.marketplace}`,
       "",
       "### Mise à jour",
-      `/marketplace update ${options.marketplace}`,
-      `/marketplace upgrade ${release.name}@${options.marketplace}`,
+      `Suivre la procédure de \`PUBLISHING.md\` § « Mettre à jour » (dépôt ${options.ownerRepo}).`,
     );
     return lines.join("\n");
   });
