@@ -100,6 +100,13 @@ export function resolveFeatureRoot(cwd: string): { dir: string; primary?: string
 }
 
 
+/** La racine du dépôt vue depuis `cwd` : le dépôt principal si `cwd` est un worktree. */
+export function repoRootOf(cwd: string): string {
+  const root = resolveFeatureRoot(cwd);
+  return root.primary ?? root.dir;
+}
+
+
 /** Normalisation d'un nom de feature en slug : [a-z0-9-], 40 caractères max. */
 export function toSlug(raw: string): string | null {
   const slug = raw

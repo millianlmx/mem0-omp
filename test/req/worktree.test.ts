@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  auditRepoRootOf,
   branchFor,
   buildSweepMessage,
   contractPathFor,
@@ -22,9 +23,12 @@ import {
   linkGate,
   parseWorktreeList,
   PIPELINE_GIT_SUBCOMMANDS,
+  pipelineLabel,
   primaryRootOf,
   reapDecision,
   remoteShas,
+  repoRootOf,
+  requireRepo,
   resolveFeatureRoot,
   sweepFeatureWorktrees,
   toSlug,
@@ -106,6 +110,37 @@ test("worktree/AC-1 : /req crée un worktree dédié et laisse le dépôt princi
   // Et la session ouverte là est reconnue comme vivant dans un worktree de feature
   assert.equal(resolveFeatureRoot(created.path).primary, root);
   assert.equal(resolveFeatureRoot(root).primary, undefined, "le dépôt principal n'est pas un worktree");
+});
+
+/** Un dépôt principal et un worktree de feature lié, créés par le vrai `createFeatureWorktree`. */
+async function mkLinkedWorktree(slug: string): Promise<{ root: string; worktree: string }> {
+  const root = mkRepo();
+  const created = await createFeatureWorktree({ run, primaryRoot: root, slug, baseDir: tmpdir("wt-map-base-") });
+  assert.ok(created.ok, "la création aboutit");
+  return { root, worktree: created.path };
+}
+
+test("worktree-root-mapping-duplicated/AC-1 : depuis un worktree lié, repoRootOf rend la racine du dépôt principal", async () => {
+  const { root, worktree } = await mkLinkedWorktree("map-root-wt");
+  assert.notEqual(worktree, root);
+  assert.equal(repoRootOf(worktree), root);
+});
+
+test("worktree-root-mapping-duplicated/AC-2 : depuis la racine du dépôt principal, repoRootOf rend cette racine", () => {
+  const root = mkRepo();
+  assert.equal(repoRootOf(root), root);
+});
+
+test("worktree-root-mapping-duplicated/AC-3 : hors de tout dépôt git, repoRootOf rend le cwd résolu", () => {
+  const outside = tmpdir("wt-map-hors-git-");
+  assert.equal(repoRootOf(outside), path.resolve(outside));
+});
+
+test("worktree-root-mapping-duplicated/AC-7 : le service, /audit et le libellé de pipeline ne mappent pas un worktree lié", async () => {
+  const { root, worktree } = await mkLinkedWorktree("map-root-svc");
+  assert.equal(requireRepo(worktree), fs.realpathSync(worktree), "le service prend le worktree tel quel");
+  assert.equal(auditRepoRootOf(worktree).ok, false, "/audit refuse toujours un worktree lié");
+  assert.equal(pipelineLabel(worktree), `${path.basename(root)}/${path.basename(worktree)}`);
 });
 
 test("worktree/AC-2 : deux features en parallèle ne partagent ni chemin, ni branche, ni contrat", async () => {

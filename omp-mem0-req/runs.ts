@@ -6,7 +6,7 @@ import * as path from "node:path";
 import type { DecisionSource } from "./context.ts";
 import { contractHasSection, contractReadRule } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
-import { branchFor, isUnder, realpathOr, resolveFeatureRoot, worktreePathFor } from "./git.ts";
+import { branchFor, isUnder, realpathOr, worktreePathFor } from "./git.ts";
 import type { GitRunner } from "./git.ts";
 import { lotRepoKey, lotStateTerminal, readLot, writeLot } from "./lot.ts";
 import type { Lot } from "./lot.ts";
@@ -563,13 +563,6 @@ export function latestSessionFile(
   }
   candidates.sort((a, b) => b.at - a.at);
   return candidates[0]?.file ?? null;
-}
-
-
-/** La racine du dépôt vue depuis `cwd` : le dépôt principal si `cwd` est un worktree. */
-export function repoRootOf(cwd: string): string {
-  const root = resolveFeatureRoot(cwd);
-  return root.primary ?? root.dir;
 }
 
 

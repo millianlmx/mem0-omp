@@ -12,7 +12,7 @@ import { modelSelector } from "./models.ts";
 import { sessionFileOf } from "./publish.ts";
 import { exhaustedUntil, quotaDeadlineLabel } from "./quota.ts";
 import { appendJournal } from "./context.ts";
-import { repoRootOf } from "./runs.ts";
+import { repoRootOf } from "./git.ts";
 import { liveRunFor, panelInboxDirOf, removeAuditRelay, writeAuditRelay, writeDelivery } from "./store.ts";
 import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
 
