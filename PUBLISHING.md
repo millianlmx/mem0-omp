@@ -69,7 +69,7 @@ Pour un fork, le texte à substituer est le handle : `<ton-handle>`.
 
 Le script vérifie : JSON valide, catalogues synchronisés octet pour octet, règles
 de nommage (minuscules, chiffres, tirets et points, début et fin alphanumériques,
-64 caractères max), présence du `package.json` de chaque plugin, résolution réelle
+64 caractères max), présence de `<plugin>/package.json` pour chaque plugin, résolution réelle
 de chaque entrée d'extension sur disque, **transpilation des deux `extension.ts`**,
 **absence d'import de valeur depuis `@oh-my-pi/*` dans les deux**, cohérence du
 tableau `commands` de chaque entrée de catalogue avec les `registerCommand()`
@@ -193,7 +193,7 @@ release. Une PR qui modifie un de ces fichiers échoue en CI
 celui du job.
 
 L'invariant, lui, ne change pas, et c'est le seul qui compte : le champ `version`
-de chaque entrée de `plugins[]` **égale** la `version` du `package.json` du plugin
+de chaque entrée de `plugins[]` **égale** la `version` du `<plugin>/package.json`
 visé, et `metadata.version` du catalogue **nomme une version publiée** — l'une des
 versions d'entrée. Ce dernier champ n'est pas un compteur libre : s'il ne
 correspond à aucune version de plugin, `/plugins list` affiche un numéro qui
@@ -208,8 +208,8 @@ Côté utilisateur :
 ```
 
 La version d'installation vient du champ `version` de l'entrée de catalogue ; à
-défaut de `.claude-plugin/plugin.json`, puis de `package.json`, puis du SHA de
-la source, puis `0.0.0`.
+défaut de `<source>/.claude-plugin/plugin.json`, puis de `<source>/package.json`,
+puis du SHA de la source, puis `0.0.0`.
 
 Si tu veux figer ce que les gens installent, épingle la source sur un commit
 exact plutôt que sur une branche :
