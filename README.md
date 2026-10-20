@@ -1538,6 +1538,8 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` du job launchd du service et des runs de conversation (chemin absolu si `omp` n'est pas dans le `PATH`) |
 | `MEM0_SERVICE_PORT` | `8788` | port d'écoute de l'API du service (boucle locale uniquement) ; s'il est occupé, le service prend un port éphémère et `service.json` porte le port réel — les clients lisent toujours ce fichier |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_REPOS_DIR` | `<MEM0_PIPELINE_STATE_DIR>/repos` | dossier où le service clone un dépôt reçu d'une bascule (`POST /v1/repos/adopt`, S-5) : `<dossier>/<owner>/<name>` ; un clone déjà présent est réutilisé |
+| `MEM0_PIPELINE_CLONE_URL_PREFIX` | `https://github.com/` | préfixe de l'URL de clonage d'une bascule (`<préfixe><owner>/<name>.git`) ; variable de TEST (un dépôt local servi en `file://`) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |

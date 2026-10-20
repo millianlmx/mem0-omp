@@ -476,18 +476,9 @@ public struct RemoteAuditStopPayload: Codable, Equatable, Sendable {
 }
 
 /// Un dépôt connu de la coque (miroir de `remote.RemoteRepoRow`, S-8) : `repoKey`
-/// est CALCULÉ par la coque, jamais par le client.
-public struct RemoteRepoRow: Codable, Equatable, Sendable {
-    public var repoKey: String
-    public var repoRoot: String
-    public var name: String
-
-    public init(repoKey: String, repoRoot: String, name: String) {
-        self.repoKey = repoKey
-        self.repoRoot = repoRoot
-        self.name = name
-    }
-}
+/// est CALCULÉ par la coque, jamais par le client. Le type vit dans `ConsoleCore`
+/// (`RepoRow`) : la fusion des deux machines le partage.
+public typealias RemoteRepoRow = RepoRow
 
 /// La liste des dépôts connus de la coque (S-8).
 public struct RemoteReposPayload: Codable, Equatable, Sendable {
@@ -847,4 +838,53 @@ public struct TranscriptLine: Identifiable, Codable, Equatable, Sendable {
     public let id: Int
     public let kind: Kind
     public let text: String
+}
+
+// MARK: - Bascule d'un dépôt (S-5)
+
+/// `POST /v1/repos/:repoKey/handover` : la machine cible.
+public struct RemoteHandoverRequest: Codable, Equatable, Sendable {
+    public var to: RepoMachine
+
+    public init(to: RepoMachine) {
+        self.to = to
+    }
+}
+
+/// `POST /v1/repos/:repoKey/handover/:id/commit` : les features réellement lancées ailleurs.
+public struct RemoteHandoverCommitRequest: Codable, Equatable, Sendable {
+    public var slugs: [String]
+
+    public init(slugs: [String]) {
+        self.slugs = slugs
+    }
+}
+
+/// Les features retirées du lot de la source.
+public struct RemoteHandoverCommittedPayload: Codable, Equatable, Sendable {
+    public var removed: [String]
+
+    public init(removed: [String]) {
+        self.removed = removed
+    }
+}
+
+/// `DELETE /v1/repos/:repoKey/handover/:id`.
+public struct RemoteHandoverCancelledPayload: Codable, Equatable, Sendable {
+    public var cancelled: Bool
+
+    public init(cancelled: Bool) {
+        self.cancelled = cancelled
+    }
+}
+
+/// `POST /v1/repos/adopt` : l'identité du dépôt et les features à y lancer.
+public struct RemoteAdoptRequest: Codable, Equatable, Sendable {
+    public var identity: String
+    public var features: [HandoverFeatureCharge]
+
+    public init(identity: String, features: [HandoverFeatureCharge]) {
+        self.identity = identity
+        self.features = features
+    }
 }

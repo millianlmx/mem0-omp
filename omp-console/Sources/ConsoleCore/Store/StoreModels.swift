@@ -40,6 +40,60 @@ public enum LotFeatureState: String, Sendable, Codable {
 
 public enum LotWaitKind: String, Sendable, Codable {
     case answer, specs, review
+    /// L'attente du verdict de l'intégration continue GitHub (VPS, S-9) : un
+    /// travail en cours, jamais une question ni un jalon pour l'utilisateur.
+    case ci
+}
+
+/// Un contrôle rouge de la porte d'intégration continue : son nom et son lien.
+public struct CiFailure: Sendable, Equatable, Codable {
+    public var name: String
+    public var url: String
+
+    public init(name: String, url: String) {
+        self.name = name
+        self.url = url
+    }
+}
+
+public enum FeatureCiState: String, Sendable, Codable {
+    case pending, green, red
+}
+
+/// La porte d'intégration continue GitHub d'une feature du VPS (`FeatureCi`,
+/// lot.ts) : le commit poussé, l'arbre qu'il fige, et le dernier verdict lu.
+public struct FeatureCi: Sendable, Equatable, Codable {
+    public var sha: String
+    public var tree: String
+    public var pushedAt: Double
+    public var state: FeatureCiState
+    public var checkedAt: Double?
+    public var failures: [CiFailure]
+
+    public init(sha: String, tree: String, pushedAt: Double, state: FeatureCiState, checkedAt: Double?, failures: [CiFailure]) {
+        self.sha = sha
+        self.tree = tree
+        self.pushedAt = pushedAt
+        self.state = state
+        self.checkedAt = checkedAt
+        self.failures = failures
+    }
+}
+
+/// `asFeatureCi` (lot.ts) : relu COMPLET ou absent, jamais à moitié.
+public func asFeatureCi(_ raw: JSONValue?) -> FeatureCi? {
+    guard let c = asObject(raw),
+          let sha = asString(c["sha"]), let tree = asString(c["tree"]),
+          let pushedAt = asNumber(c["pushedAt"]),
+          let state = FeatureCiState(rawValue: asString(c["state"]) ?? "") else { return nil }
+    var failures: [CiFailure] = []
+    if case .array(let items)? = c["failures"] {
+        for item in items {
+            guard let f = asObject(item), let name = asString(f["name"]), let url = asString(f["url"]) else { return nil }
+            failures.append(CiFailure(name: name, url: url))
+        }
+    }
+    return FeatureCi(sha: sha, tree: tree, pushedAt: pushedAt, state: state, checkedAt: asNumber(c["checkedAt"]), failures: failures)
 }
 
 public enum LotOrigin: String, Sendable, Codable {
@@ -583,8 +637,11 @@ public struct LotFeature: Sendable, Equatable, Codable {
     /// Reprises automatiques consécutives du maillon par le service du VPS
     /// (`autoResumes` du lot). Écrit seulement quand il est supérieur à zéro.
     public var autoResumes: Int?
+    /// La porte d'intégration continue GitHub (VPS seulement, `ci` du lot) ;
+    /// absente partout ailleurs.
+    public var ci: FeatureCi?
 
-    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil, quotaBlocked: Bool? = nil, autoResumes: Int? = nil) {
+    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil, quotaBlocked: Bool? = nil, autoResumes: Int? = nil, ci: FeatureCi? = nil) {
         self.slug = slug
         self.name = name
         self.branch = branch
@@ -623,6 +680,7 @@ public struct LotFeature: Sendable, Equatable, Codable {
         self.arbitration = arbitration
         self.quotaBlocked = quotaBlocked
         self.autoResumes = autoResumes
+        self.ci = ci
     }
 }
 
@@ -697,7 +755,8 @@ extension LotFeature {
             escalation: asFeatureEscalation(f["escalation"]),
             arbitration: asFeatureArbitration(f["arbitration"]),
             quotaBlocked: asObject(f["quota"]) != nil ? true : nil,
-            autoResumes: asCount(f["autoResumes"]) > 0 ? asCount(f["autoResumes"]) : nil
+            autoResumes: asCount(f["autoResumes"]) > 0 ? asCount(f["autoResumes"]) : nil,
+            ci: asFeatureCi(f["ci"])
         )
     }
 }

@@ -476,7 +476,7 @@ export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
   if (waitKind === "answer") return "attend réponse";
   if (waitKind === "specs") return "attend validation";
   if (waitKind === "review") return "attend accord";
-  if (waitKind === "ci") return "attend intégration continue";
+  if (waitKind === "ci") return "Attente de l’intégration continue GitHub";
   return null;
 }
 

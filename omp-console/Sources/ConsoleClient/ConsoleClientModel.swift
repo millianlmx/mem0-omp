@@ -100,6 +100,9 @@ public final class ConsoleClientModel: ObservableObject {
     /// L'horloge injectée : la dérivation de l'ardoise lit `nowMs()` (S-8), pour
     /// que les tests soient déterministes. Défaut : l'horloge murale (ms epoch).
     private let nowMs: @Sendable () -> Double
+    /// La machine que ce client joint (S-10) : ses clés de préférences, son compte
+    /// de trousseau et son contrôle d'identité (`machine.kind`) en dépendent.
+    public let slot: ClientMachineSlot
 
     // MARK: - Faits internes
 
@@ -119,6 +122,8 @@ public final class ConsoleClientModel: ObservableObject {
     /// appairage réussi et par `forget()`.
     private var refusedEndpoint: ClientEndpoint?
     private var incompatible: ClientIncompatibility?
+    /// Le serveur joint annonce l'AUTRE machine : aucun geste, aucun flux.
+    private var wrongMachine: ClientWrongMachine?
     private var connectedEndpoint: ClientEndpoint?
     private var connectingEndpoint: ClientEndpoint?
     private var lastFailure: ClientEndpoint?
@@ -154,8 +159,10 @@ public final class ConsoleClientModel: ObservableObject {
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
         nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
         searchPacer: any ClientPacer = LiveClientPacer(),
-        readinessPacer: any ClientPacer = LiveClientPacer()
+        readinessPacer: any ClientPacer = LiveClientPacer(),
+        slot: ClientMachineSlot = .mac
     ) {
+        self.slot = slot
         self.transport = transport
         self.discovery = discovery
         self.preferences = preferences
@@ -170,15 +177,25 @@ public final class ConsoleClientModel: ObservableObject {
     }
 
     /// La production : le vrai transport, la vraie découverte, le vrai trousseau.
-    public static func live(deviceName: String = ClientDeviceModel.current) -> ConsoleClientModel {
+    ///
+    /// `slot` choisit la machine : `.mac` (Bonjour, clés d'origine, compte
+    /// `com.omp.console.ios.remote-api`) ou `.vps` (adresse saisie, clés
+    /// `client.vps.*`, compte `…remote-api.vps`). `keychainService` remplace le
+    /// compte de trousseau (omp-console le fixe à `com.omp.console.vps-client`).
+    public static func live(
+        deviceName: String = ClientDeviceModel.current,
+        slot: ClientMachineSlot = .mac,
+        keychainService: String? = nil
+    ) -> ConsoleClientModel {
         ConsoleClientModel(
             transport: URLSessionTransport(),
-            discovery: BonjourDiscoverySource(),
+            discovery: slot.usesDiscovery ? BonjourDiscoverySource() : NoDiscoverySource(),
             preferences: UserDefaultsClientPreferences(),
-            tokens: KeychainTokenStore(),
+            tokens: KeychainTokenStore(service: keychainService ?? slot.keychainService),
             pacer: LiveClientPacer(),
             pathSource: NWPathSource(),
-            deviceName: deviceName
+            deviceName: deviceName,
+            slot: slot
         )
     }
 
@@ -207,13 +224,13 @@ public final class ConsoleClientModel: ObservableObject {
         guard !running else { return }
         running = true
         manualAddress = loadManualAddress()
-        deviceId = preferences.string(forKey: ClientPreferenceKey.deviceId)
+        deviceId = preferences.string(forKey: slot.deviceIdKey)
         welcomeSeen = preferences.bool(forKey: ClientPreferenceKey.welcomeSeen) ?? false
         discovery.onChange = { [weak self] list in self?.applyDiscovered(list) }
         discovery.onProtocolVersion = { [weak self] version in self?.applyRemoteProtocol(version) }
         discovery.onDenied = { [weak self] denied in self?.localNetworkDenied = denied }
         pathSource.onChange = { [weak self] satisfied in self?.applyNetwork(satisfied) }
-        discovery.start(serviceType: ConsoleAPI.Service.bonjourType)
+        if slot.usesDiscovery { discovery.start(serviceType: ConsoleAPI.Service.bonjourType) }
         pathSource.start()
         publishState()
         Task { [weak self] in await self?.restoreToken() }
@@ -264,6 +281,7 @@ public final class ConsoleClientModel: ObservableObject {
     /// La seule sortie du verrou de version : le Mac a pu être mis à jour.
     public func retry() {
         incompatible = nil
+        wrongMachine = nil
         lastFailure = nil
         beginConnection(resetCounter: true)
     }
@@ -350,8 +368,9 @@ public final class ConsoleClientModel: ObservableObject {
             return .failure(failure)
         case .success(let address):
             manualAddress = address
-            preferences.set(address.text, forKey: ClientPreferenceKey.manualAddress)
+            preferences.set(address.text, forKey: slot.manualAddressKey)
             lastFailure = nil
+            wrongMachine = nil
             beginConnection(resetCounter: true)
             return .success(address)
         }
@@ -360,8 +379,9 @@ public final class ConsoleClientModel: ObservableObject {
     /// La SEULE action qui retire l'adresse posée.
     public func clearManualAddress() {
         manualAddress = nil
-        preferences.set(nil, forKey: ClientPreferenceKey.manualAddress)
+        preferences.set(nil, forKey: slot.manualAddressKey)
         lastFailure = nil
+        wrongMachine = nil
         beginConnection(resetCounter: true)
     }
 
@@ -418,7 +438,7 @@ public final class ConsoleClientModel: ObservableObject {
         }
         deviceId = id
         token = payload.token
-        preferences.set(id, forKey: ClientPreferenceKey.deviceId)
+        preferences.set(id, forKey: slot.deviceIdKey)
         pairingFailure = nil
         revoked = false
         refusedEndpoint = nil
@@ -428,11 +448,11 @@ public final class ConsoleClientModel: ObservableObject {
     /// L'identité de l'installation : relue, ou créée (UUID minuscule) au premier
     /// appairage. Rien ne l'efface — la révocation n'oublie que `deviceId`.
     private func installationId() -> String {
-        if let known = preferences.string(forKey: ClientPreferenceKey.installationId), !known.isEmpty {
+        if let known = preferences.string(forKey: slot.installationIdKey), !known.isEmpty {
             return known
         }
         let created = UUID().uuidString.lowercased()
-        preferences.set(created, forKey: ClientPreferenceKey.installationId)
+        preferences.set(created, forKey: slot.installationIdKey)
         return created
     }
 
@@ -470,7 +490,7 @@ public final class ConsoleClientModel: ObservableObject {
             try? await tokens.remove(deviceId: oldDeviceId)
         }
         deviceId = nil
-        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        preferences.set(nil, forKey: slot.deviceIdKey)
         revoked = false
         refusedEndpoint = nil
         pairingFailure = nil
@@ -506,10 +526,12 @@ public final class ConsoleClientModel: ObservableObject {
     // MARK: - Lectures
 
     public func version() async throws -> Int {
-        try await perform(
+        let payload = try await perform(
             ClientHTTPRequest(method: "GET", path: "/v1/version"),
             as: RemoteVersionPayload.self
-        ).protocolVersion
+        )
+        if let mismatch = mismatch(of: payload.machine) { lockWrongMachine(mismatch) }
+        return payload.protocolVersion
     }
 
     public func store() async throws -> RemoteStorePayload {
@@ -789,6 +811,47 @@ public final class ConsoleClientModel: ObservableObject {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/repos"), as: RemoteReposPayload.self)
     }
 
+    // MARK: - Bascule d'un dépôt (S-5)
+
+    /// La source gèle le dépôt et rend ses features pas encore démarrées.
+    public func handover(repoKey: String, to: RepoMachine) async throws -> HandoverCharge {
+        let body = try encode(RemoteHandoverRequest(to: to))
+        return try await performCommand(
+            ClientHTTPRequest(method: "POST", path: "/v1/repos/" + encode(repoKey) + "/handover", body: body),
+            as: HandoverCharge.self
+        )
+    }
+
+    /// La cible trouve (ou clone) le dépôt et lance les features reçues.
+    public func adopt(identity: String, features: [HandoverFeatureCharge]) async throws -> HandoverAdoption {
+        let body = try encode(RemoteAdoptRequest(identity: identity, features: features))
+        return try await performCommand(
+            ClientHTTPRequest(method: "POST", path: "/v1/repos/adopt", body: body),
+            as: HandoverAdoption.self
+        )
+    }
+
+    /// La source retire les features lancées ailleurs.
+    public func commitHandover(repoKey: String, id: String, slugs: [String]) async throws -> RemoteHandoverCommittedPayload {
+        let body = try encode(RemoteHandoverCommitRequest(slugs: slugs))
+        return try await performCommand(
+            ClientHTTPRequest(
+                method: "POST",
+                path: "/v1/repos/" + encode(repoKey) + "/handover/" + encode(id) + "/commit",
+                body: body
+            ),
+            as: RemoteHandoverCommittedPayload.self
+        )
+    }
+
+    /// La source rouvre le dépôt (avant le démarrage de la cible seulement).
+    public func cancelHandover(repoKey: String, id: String) async throws -> RemoteHandoverCancelledPayload {
+        try await performCommand(
+            ClientHTTPRequest(method: "DELETE", path: "/v1/repos/" + encode(repoKey) + "/handover/" + encode(id)),
+            as: RemoteHandoverCancelledPayload.self
+        )
+    }
+
     /// L'état réduit de la conduite (S-11), lu à la demande.
     public func conduiteState() async throws -> RemoteConduiteStatePayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/conduite"), as: RemoteConduiteStatePayload.self)
@@ -1025,7 +1088,7 @@ public final class ConsoleClientModel: ObservableObject {
         if let incompatible {
             throw ClientError.incompatibleProtocol(local: incompatible.local, remote: incompatible.remote)
         }
-        if revoked { throw ClientError.notConnected }
+        if revoked || wrongMachine != nil { throw ClientError.notConnected }
         guard let endpoint = effectiveEndpoint else { throw ClientError.notConnected }
         return endpoint
     }
@@ -1091,6 +1154,25 @@ public final class ConsoleClientModel: ObservableObject {
         }
     }
 
+    /// La machine annoncée n'est pas celle du slot : `nil` quand elle coïncide ou
+    /// quand le serveur n'en annonce aucune (un serveur d'avant le protocole 3).
+    private func mismatch(of announced: ConsoleMachine?) -> ClientWrongMachine? {
+        guard let announced, let actual = RepoMachine(rawValue: announced.kind), actual != slot.machine else { return nil }
+        return ClientWrongMachine(expected: slot.machine, actual: actual)
+    }
+
+    /// Coupe le flux et refuse tout geste jusqu'à un changement d'adresse ou `retry()`.
+    private func lockWrongMachine(_ wrong: ClientWrongMachine) {
+        wrongMachine = wrong
+        macConfirmed = false
+        connection?.cancel()
+        connection = nil
+        connectedEndpoint = nil
+        connectingEndpoint = nil
+        lastFailure = nil
+        publishState()
+    }
+
     private func lock(local: Int, remote: Int?) {
         incompatible = ClientIncompatibility(local: local, remote: remote)
         connection?.cancel()
@@ -1119,7 +1201,7 @@ public final class ConsoleClientModel: ObservableObject {
         if let id {
             try? await tokens.remove(deviceId: id)
         }
-        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        preferences.set(nil, forKey: slot.deviceIdKey)
         publishState()
     }
 
@@ -1164,7 +1246,7 @@ public final class ConsoleClientModel: ObservableObject {
         searchTask = nil
         searchExpired = false
         connectedEndpoint = nil
-        guard running, !revoked, incompatible == nil else {
+        guard running, !revoked, incompatible == nil, wrongMachine == nil else {
             connectingEndpoint = nil
             publishState()
             return
@@ -1285,6 +1367,8 @@ public final class ConsoleClientModel: ObservableObject {
         case .hello(let hello):
             if hello.protocolVersion != localProtocolVersion {
                 incompatible = ClientIncompatibility(local: localProtocolVersion, remote: hello.protocolVersion)
+            } else if let mismatch = mismatch(of: hello.machine) {
+                lockWrongMachine(mismatch)
             } else {
                 macConfirmed = true
                 settleReadiness()
@@ -1446,7 +1530,7 @@ public final class ConsoleClientModel: ObservableObject {
     }
 
     private func loadManualAddress() -> ClientAddress? {
-        guard let raw = preferences.string(forKey: ClientPreferenceKey.manualAddress) else { return nil }
+        guard let raw = preferences.string(forKey: slot.manualAddressKey) else { return nil }
         guard case .success(let address) = ClientAddress.parse(raw) else { return nil }
         return address
     }
@@ -1455,6 +1539,7 @@ public final class ConsoleClientModel: ObservableObject {
         state = ClientStateMachine.resolve(ClientFacts(
             revoked: revoked,
             incompatible: incompatible,
+            wrongMachine: wrongMachine,
             hasNetwork: hasNetwork,
             hasToken: token != nil,
             connectedEndpoint: connectedEndpoint,

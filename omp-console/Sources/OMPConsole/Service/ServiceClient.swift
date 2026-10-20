@@ -198,6 +198,40 @@ struct ServiceClient: Sendable {
         return info
     }
 
+    // MARK: - Bascule d'un dépôt (S-5 de orchestrator-living-in-a-vps)
+
+    /// `POST /v1/repos/{repo}/handover` : gèle le dépôt et rend ses features pas
+    /// encore démarrées. `repo` est la RACINE absolue du dépôt (un segment encodé).
+    func handover(repo: String, to: RepoMachine) async throws -> HandoverCharge {
+        let json = try await request("POST", path: ["repos", repo, "handover"], body: ["to": to.rawValue])
+        return try Self.decode(HandoverCharge.self, from: json, what: "bascule")
+    }
+
+    /// `POST /v1/repos/{repo}/handover/{id}/commit` : retire les features lancées ailleurs.
+    func commitHandover(repo: String, id: String, slugs: [String]) async throws {
+        _ = try await request("POST", path: ["repos", repo, "handover", id, "commit"], body: ["slugs": slugs])
+    }
+
+    /// `DELETE /v1/repos/{repo}/handover/{id}` : rouvre le dépôt.
+    func cancelHandover(repo: String, id: String) async throws {
+        _ = try await request("DELETE", path: ["repos", repo, "handover", id])
+    }
+
+    /// `POST /v1/repos/adopt` : trouve le dépôt de cette identité et y lance les features.
+    func adopt(identity: String, features: [HandoverFeatureCharge]) async throws -> HandoverAdoption {
+        let encoded = try JSONEncoder().encode(features)
+        let list = (try? JSONSerialization.jsonObject(with: encoded)) ?? []
+        let json = try await request("POST", path: ["repos", "adopt"], body: ["identity": identity, "features": list])
+        return try Self.decode(HandoverAdoption.self, from: json, what: "adoption")
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, from json: JSONValue, what: String) throws -> T {
+        guard let data = json.data, let value = try? JSONDecoder().decode(T.self, from: data) else {
+            throw ServiceClientError.malformed(reason: "\(what) illisible")
+        }
+        return value
+    }
+
     /// `GET /v1/projects/{repo}/model` : le défaut OMP du projet (S-3). Le chemin
     /// absolu du dépôt voyage en UN segment, percent-encodé.
     func projectModel(root: String) async throws -> ServiceModelChoice {
@@ -342,6 +376,7 @@ struct ServiceClient: Sendable {
         case 404: return .notFound(reason: reason ?? "inconnu")
         case 409: return .conflict(reason: reason ?? "conflit d'état")
         case 500 where reason != nil: return .serverError(reason: reason ?? "")
+        case 503 where reason != nil: return .serverError(reason: reason ?? "")
         case 503: return .stopping
         default: return .transport(reason: "statut HTTP \(status)")
         }

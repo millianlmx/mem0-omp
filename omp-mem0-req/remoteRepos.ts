@@ -5,8 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { realpathOr } from "./git.ts";
+import type { GitRunner } from "./git.ts";
+import { readAdoptedRepos, readHandovers, repoIdentity } from "./handover.ts";
 import { lotRepoKey } from "./lot.ts";
 import type { RemoteContext } from "./remoteContext.ts";
+import type { MachineKind } from "./serviceState.ts";
 
 /** `<path>/.git` existe, dossier OU fichier (un worktree lié porte un FICHIER) — `LaunchRepo.isGitRoot`. */
 function isGitRoot(root: string): boolean {
@@ -15,7 +18,8 @@ function isGitRoot(root: string): boolean {
 }
 
 /**
- * Les racines des lots ∪ les racines des projets du magasin, `realpath`ées, filtrées
+ * Les racines des lots ∪ les racines des projets du magasin ∪ les dépôts ADOPTÉS par
+ * une bascule (`repos.json`, S-5), `realpath`ées, filtrées
  * par la règle « racine git », dédupliquées puis triées par ordre croissant.
  */
 export function knownRepoRoots(ctx: Pick<RemoteContext, "stateDir" | "store">): string[] {
@@ -23,6 +27,7 @@ export function knownRepoRoots(ctx: Pick<RemoteContext, "stateDir" | "store">): 
   const roots = new Set<string>();
   for (const lot of snapshot.lots.lots) if (lot.repoRoot !== "") roots.add(realpathOr(lot.repoRoot));
   for (const project of snapshot.projects.projects) if (project.repoRoot !== "") roots.add(realpathOr(project.repoRoot));
+  for (const repo of readAdoptedRepos(ctx.stateDir)) if (repo.repoRoot !== "") roots.add(realpathOr(repo.repoRoot));
   return [...roots].filter(isGitRoot).sort();
 }
 
@@ -31,10 +36,41 @@ export function resolveRepoRoot(ctx: Pick<RemoteContext, "stateDir" | "store">, 
   return knownRepoRoots(ctx).find(root => lotRepoKey(root) === repoKey) ?? null;
 }
 
-/** Un dépôt connu de la coque (`RemoteRepoRow`) : sa clé, son chemin réel et son nom. */
-export type RemoteRepoRow = { repoKey: string; repoRoot: string; name: string };
+/** La bascule d'un dépôt (S-5) : son identifiant, la machine cible et son état. */
+export type RemoteRepoHandover = { id: string; to: MachineKind; state: "frozen" | "done" };
 
-/** `RemoteActions.knownRepos` : une ligne par dépôt connu. Point d'extension : S-5/BR-4 y ajoutera `identity` et `handover`. */
-export function repoRows(ctx: Pick<RemoteContext, "stateDir" | "store">): RemoteRepoRow[] {
-  return knownRepoRoots(ctx).map(root => ({ repoKey: lotRepoKey(root), repoRoot: root, name: path.basename(root) }));
+/** Un dépôt connu de la coque (`RemoteRepoRow`) : sa clé, son chemin réel, son nom, son identité GitHub et sa bascule (absents quand inconnus). */
+export type RemoteRepoRow = {
+  repoKey: string;
+  repoRoot: string;
+  name: string;
+  identity?: string;
+  handover?: RemoteRepoHandover;
+};
+
+/** `git` par l'exécuteur du contexte : jamais une exception, `code: null` quand git manque ou dépasse le délai. */
+function gitRunner(ctx: Pick<RemoteContext, "exec">): GitRunner {
+  return async (args, cwd, timeoutMs) => {
+    const res = await ctx.exec("git", args, { cwd, timeoutMs: timeoutMs ?? 10_000 });
+    return { code: res.code ?? -1, stdout: res.stdout, stderr: res.stderr };
+  };
+}
+
+/** `RemoteActions.knownRepos` : une ligne par dépôt connu, avec son identité (`origin`, sinon celle de `repos.json`) et sa bascule. */
+export async function repoRows(ctx: Pick<RemoteContext, "stateDir" | "store" | "exec">): Promise<RemoteRepoRow[]> {
+  const runGit = gitRunner(ctx);
+  const adopted = readAdoptedRepos(ctx.stateDir);
+  const handovers = readHandovers(ctx.stateDir);
+  return Promise.all(
+    knownRepoRoots(ctx).map(async root => {
+      const repoKey = lotRepoKey(root);
+      const identity =
+        (await repoIdentity(root, runGit)) ?? adopted.find(repo => realpathOr(repo.repoRoot) === root)?.identity ?? null;
+      const handover = handovers[repoKey];
+      const row: RemoteRepoRow = { repoKey, repoRoot: root, name: path.basename(root) };
+      if (identity !== null) row.identity = identity;
+      if (handover !== undefined) row.handover = { id: handover.id, to: handover.to, state: handover.state };
+      return row;
+    }),
+  );
 }

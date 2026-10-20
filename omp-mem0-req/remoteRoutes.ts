@@ -7,6 +7,7 @@ import type { ExecFn, RemoteContext } from "./remoteContext.ts";
 import type { DeviceRegistry } from "./remoteDevices.ts";
 import { auditRoutes } from "./remoteAudits.ts";
 import { cardRoutes } from "./remoteActions.ts";
+import { handoverRoutes } from "./remoteHandover.ts";
 import { hostedRoutes, conduiteFeed, hostedFeed } from "./remoteHosted.ts";
 import { GestureJournal } from "./remoteJournal.ts";
 import { mem0ProxyRoutes } from "./remoteMem0Proxy.ts";
@@ -76,6 +77,7 @@ export function createRemoteRoutes(options: RemoteRoutesOptions): RemoteRoutes {
     ...auditRoutes(ctx),
     ...mem0ProxyRoutes(ctx),
     ...pullRequestRoutes(ctx),
+    ...handoverRoutes(ctx),
   ];
   return {
     routes,

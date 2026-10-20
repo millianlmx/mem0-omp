@@ -174,7 +174,7 @@ export function readRoutes(ctx: RemoteContext): RemoteRoute[] {
     {
       method: "GET",
       path: "v1/repos",
-      handle: () => remoteJson({ rows: repoRows(ctx) }),
+      handle: async () => remoteJson({ rows: await repoRows(ctx) }),
     },
   ];
 }

@@ -160,6 +160,8 @@ export function lotWaitLabel(waitKind: WireWaitKind | undefined): string | undef
       return "attend validation";
     case "review":
       return "attend accord";
+    case "ci":
+      return "Attente de l’intégration continue GitHub";
     default:
       return undefined;
   }
@@ -216,7 +218,8 @@ function wouldAskUser(feature: WireLotFeature, pendingAsk: boolean): boolean {
   const stopReason = feature.stopReason ?? null;
   switch (feature.state) {
     case "waiting":
-      return feature.waitKind !== undefined;
+      // `ci` (S-9) : le travail court, personne n'est sollicité.
+      return feature.waitKind !== undefined && feature.waitKind !== "ci";
     case "failed":
       return true;
     case "blocked":
@@ -812,6 +815,9 @@ function rankColumn(input: {
         return "jalon-specs";
       case "review":
         return "jalon-review";
+      case "ci":
+        // Pas un jalon : un travail en cours (porte d'intégration continue, S-9) ; retombe sur l'état.
+        break;
     }
   }
   // 9 à 12 : les états terminaux et bloqués de la feature de lot.

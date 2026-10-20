@@ -46,6 +46,7 @@ public func lotWaitLabel(_ waitKind: LotWaitKind?) -> String? {
     case .answer: "attend réponse"
     case .specs: "attend validation"
     case .review: "attend accord"
+    case .ci: "Attente de l’intégration continue GitHub"
     case nil: nil
     }
 }
@@ -476,6 +477,7 @@ private func rankColumn(
         case .answer: return .questionEnVol
         case .specs: return .jalonSpecs
         case .review: return .jalonReview
+        case .ci: break
         }
     }
     // 9 à 12 : les états terminaux et bloqués de la feature de lot.
