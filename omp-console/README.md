@@ -26,6 +26,39 @@ surfaces opaques et les boutons standard `.bordered`/`.borderedProminent` (HIG
 Materials : « Don't use Liquid Glass in the content layer »).
 Cible minimale : macOS 26.
 
+- [Prérequis](#prérequis)
+- [Premiers pas](#premiers-pas)
+- [Cibles](#cibles)
+- [Builder](#builder)
+- [Tester](#tester)
+- [Lire le magasin d'état](#lire-le-magasin-détat)
+- [Section Kanban](#section-kanban)
+- [Agir depuis Pipelines](#agir-depuis-pipelines)
+- [Lire les fichiers et les diffs d'une cible](#lire-les-fichiers-et-les-diffs-dune-cible)
+- [Visionneuse de session](#visionneuse-de-session)
+- [Recette : lire une vraie session](#recette--lire-une-vraie-session)
+- [Recette : lire une vraie cible](#recette--lire-une-vraie-cible)
+- [Assembler le bundle `.app`](#assembler-le-bundle-app)
+- [Ouvrir l'app](#ouvrir-lapp)
+- [Recompiler et relancer d'un coup](#recompiler-et-relancer-dun-coup)
+- [Les hooks git : recompiler après un pull](#les-hooks-git--recompiler-après-un-pull)
+- [Composants de l'app](#composants-de-lapp)
+- [Piloter le service](#piloter-le-service)
+- [Section Terminal (terminal intégré)](#section-terminal-terminal-intégré)
+- [Confirmation au Quitter](#confirmation-au-quitter)
+- [Section Projet (pilotage)](#section-projet-pilotage)
+- [Section Audit (pilotage)](#section-audit-pilotage)
+- [Section Statistiques](#section-statistiques)
+- [Harnais réel](#harnais-réel)
+- [Notifications et barre de menus](#notifications-et-barre-de-menus)
+- [Consulter et corriger la mémoire du projet](#consulter-et-corriger-la-mémoire-du-projet)
+- [API distante](#api-distante)
+- [Politique vocale (App Intents)](#politique-vocale-app-intents)
+- [Vocabulaire et typographie](#vocabulaire-et-typographie)
+- [Structure du paquet](#structure-du-paquet)
+- [Plateforme](#plateforme)
+- [Coque iOS](#coque-ios)
+
 ## Prérequis
 
 - macOS 26 ou plus récent, sur **Apple Silicon (arm64)** : l'app installe son
