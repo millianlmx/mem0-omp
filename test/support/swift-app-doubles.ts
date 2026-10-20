@@ -161,7 +161,9 @@ export function montageAppIntents(): {
 } {
   const copie = tmpdir("app-intents-copie-");
   fs.mkdirSync(path.join(copie, "scripts"));
-  fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
+  for (const script of ["swift-app.sh", "ci-verdict.sh", "tests-instables-connus.json"]) {
+    fs.copyFileSync(path.join(ROOT, "scripts", script), path.join(copie, "scripts", script));
+  }
   fs.cpSync(path.join(ROOT, "scripts", "app-intents"), path.join(copie, "scripts", "app-intents"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), {
@@ -174,6 +176,9 @@ export function montageAppIntents(): {
   writeDouble(bin, "uname", "printf 'Darwin\\n'");
   // swift : journalise son argv, écrit les valeurs constantes quand l'argv porte
   // `-emit-const-values`, et pose un binaire OMPConsole là où le vrai l'écrit.
+  // FAUX_SWIFT_TEST=<dossier> scripte `swift test` (known-flaky-tests-registry) :
+  // avec `--filter`, il imprime <dossier>/relance.txt et sort avec le code de
+  // <dossier>/relance.code ; sans, <dossier>/essai.txt et essai.code.
   writeDouble(
     bin,
     "swift",
@@ -194,7 +199,13 @@ case "$*" in
     printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
     chmod +x "$scratch/out/Products/Release/OMPConsole"
     ;;
-esac`,
+esac
+if [ "$1" = "test" ] && [ -n "\${FAUX_SWIFT_TEST:-}" ]; then
+  essai=essai
+  case " $* " in *" --filter "*) essai=relance ;; esac
+  cat "$FAUX_SWIFT_TEST/$essai.txt"
+  exit "$(cat "$FAUX_SWIFT_TEST/$essai.code")"
+fi`,
   );
   writeDouble(
     bin,
@@ -236,7 +247,7 @@ fi`,
   writeXcodeDoubles(bin);
 
   const base: NodeJS.ProcessEnv = { ...process.env };
-  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "FAUX_IDENTITE", "FAUX_EQUIPE", "OMP_CODESIGN_IDENTITY", "DEVELOPER_DIR"]) {
+  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "FAUX_IDENTITE", "FAUX_EQUIPE", "FAUX_SWIFT_TEST", "OMP_CODESIGN_IDENTITY", "DEVELOPER_DIR"]) {
     delete base[cle];
   }
   const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");

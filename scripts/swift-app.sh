@@ -180,10 +180,157 @@ else
 #    exécutée en parallèle, elle rend 10 à 15 échecs de DÉLAI (212 tests), alors
 #    qu'en série elle passe 212/212 en ~42 s. Le coût est assumé : la suite reste
 #    déterministe, et c'est elle qui garde la CI verte.
-test_out="$(cd "$PKG" && swift test -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" --no-parallel -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
+SWIFT_TEST_ARGS=(test -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" --no-parallel -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"})
+
+# Analyse d'une sortie de `swift test` (Swift Testing 6.2) — feature
+# known-flaky-tests-registry, S-2. Lignes normalisées (codes ANSI et `\r` final
+# retirés) ; le premier jeton d'une ligne est le symbole, quel qu'il soit (✘, ✔,
+# SF Symbol). Deux usages :
+#   analyse_swift_test essai <sortie> <statut> <fichier des identifiants>
+#     code 0 si l'échec est ATTRIBUABLE à des tests nommés : leurs noms imprimés
+#     sur stdout (un par ligne, dédoublonnés) et leurs identifiants distincts
+#     dans le fichier ; code ≠ 0 sinon (compilation, plantage, sortie
+#     illisible, interruption) ;
+#   analyse_swift_test relance <sortie> <statut> <nom imprimé>…
+#     code 0 si la relance est VERTE ; sinon code ≠ 0 et, sur stdout, les noms
+#     qu'elle n'a pas revalidés.
+# python3 absent ou analyse en erreur : code ≠ 0, donc jamais de vert par défaut.
+analyse_swift_test() {
+  python3 - "$@" <<'PY'
+import re, sys
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+FIN = re.compile(
+    r'^\S*\s+(?:●+\s+)?Test (?P<nom>".*"|[A-Za-z_][A-Za-z0-9_]*\(.*?\))'
+    r"(?: with [0-9]+ test cases?)? (?P<etat>failed|passed) after [0-9]+(?:\.[0-9]+)? seconds?(?: with .*)?\.$"
+)
+RESUME = re.compile(r"^\S*\s+Test run with [0-9]+ tests? in [0-9]+ suites? (failed|passed) after ")
+HORS_TEST = re.compile(r"^\S*\s+(?:Suite .+|Test «unknown») recorded an? ")
+SLUG = re.compile(r"[a-z0-9][a-z0-9-]*/AC-[0-9]+")
+
+mode, chemin, statut = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(chemin, encoding="utf-8", errors="replace", newline="") as f:
+    lignes = []
+    for brute in f.read().split("\n"):
+        ligne = ANSI.sub("", brute)
+        lignes.append(ligne[:-1] if ligne.endswith("\r") else ligne)
+
+echecs, reussis, resumes = [], set(), set()
+for ligne in lignes:
+    m = FIN.match(ligne)
+    if m:
+        if m["etat"] == "failed":
+            if m["nom"] not in echecs:
+                echecs.append(m["nom"])
+        else:
+            reussis.add(m["nom"])
+        continue
+    r = RESUME.match(ligne)
+    if r:
+        resumes.add(r[1])
+erreur = any(l.startswith("error: ") for l in lignes)
+
+def identifiant(nom):
+    # Même règle que `ci-verdict.sh --instables` : `<slug>/AC-<n>` d'un nom
+    # affiché, sinon le nom affiché entier ou la fonction.
+    if len(nom) >= 2 and nom.startswith('"') and nom.endswith('"'):
+        affiche = nom[1:-1]
+        jeton = affiche.split(" ", 1)[0]
+        return jeton if SLUG.fullmatch(jeton) else affiche
+    return nom
+
+if mode == "essai":
+    attribuable = (
+        1 <= statut <= 127
+        and "failed" in resumes
+        and echecs
+        and not erreur
+        and not any(HORS_TEST.match(l) for l in lignes)
+    )
+    if not attribuable:
+        sys.exit(1)
+    ids = []
+    for nom in echecs:
+        if identifiant(nom) not in ids:
+            ids.append(identifiant(nom))
+    with open(sys.argv[4], "w", encoding="utf-8") as f:
+        f.write("".join(i + "\n" for i in ids))
+    print("\n".join(echecs))
+elif mode == "relance":
+    attendus = sys.argv[4:]
+    absents = [nom for nom in attendus if nom not in reussis]
+    verte = statut == 0 and not echecs and "passed" in resumes and "failed" not in resumes and not erreur and attendus and not absents
+    if absents:
+        print("\n".join(absents))
+    sys.exit(0 if verte else 1)
+else:
+    sys.exit(2)
+PY
+}
+
+# Branche d'échec de `swift test` (S-4) : relance UNIQUE, avec `--filter`, des
+# seuls tests tombés, et seulement s'ils sont TOUS au registre
+# scripts/tests-instables-connus.json (`ci-verdict.sh --instables`). Code 0 si
+# la relance est verte ; 1 pour tout autre cas, sans seconde relance. Corps en
+# sous-shell : ses fichiers temporaires ont leur propre trap.
+relance_instables() (
+  essai_status="$1"
+  tmp="$(mktemp -d)" || exit 1
+  trap 'rm -rf "$tmp"' EXIT
+  printf '%s\n' "$test_out" > "$tmp/essai.txt"
+
+  echecs=()
+  if analyse_swift_test essai "$tmp/essai.txt" "$essai_status" "$tmp/ids.txt" > "$tmp/echecs.txt"; then
+    while IFS= read -r nom; do
+      [ -n "$nom" ] && echecs+=("$nom")
+    done < "$tmp/echecs.txt"
+  fi
+  if [ "${#echecs[@]}" -eq 0 ]; then
+    echo "✗ échec de swift test non attribuable à un test nommé (compilation, plantage, sortie illisible ou interruption) : aucune relance"
+    exit 1
+  fi
+
+  bash "$ROOT/scripts/ci-verdict.sh" --instables "${echecs[@]}" > "$tmp/filtres.txt" 2> "$tmp/jugements.txt"
+  verdict=$?
+  cat "$tmp/jugements.txt"
+  [ "$verdict" -eq 0 ] || exit 1
+
+  motif=""
+  nb_filtres=0
+  while IFS= read -r filtre; do
+    [ -n "$filtre" ] || continue
+    nb_filtres=$((nb_filtres + 1))
+    motif="${motif:+$motif|}(?:$filtre)"
+    seul="$filtre"
+  done < "$tmp/filtres.txt"
+  [ "$nb_filtres" -gt 0 ] || exit 1
+  [ "$nb_filtres" -eq 1 ] && motif="$seul"
+
+  ids=""
+  while IFS= read -r id; do
+    [ -n "$id" ] && ids="${ids:+$ids, }$id"
+  done < "$tmp/ids.txt"
+
+  echo "↻ relance unique des tests instables connus : $ids"
+  relance_out="$(cd "$PKG" && swift "${SWIFT_TEST_ARGS[@]}" --filter "$motif" 2>&1)"
+  relance_status=$?
+  [ -n "$relance_out" ] && printf '%s\n' "$relance_out"
+  printf '%s\n' "$relance_out" > "$tmp/relance.txt"
+  if analyse_swift_test relance "$tmp/relance.txt" "$relance_status" "${echecs[@]}" > "$tmp/absents.txt"; then
+    echo "  ✓ relance verte des tests instables connus : $ids"
+    exit 0
+  fi
+  while IFS= read -r nom; do
+    [ -n "$nom" ] && echo "  ✗ non revalidé par la relance : $nom"
+  done < "$tmp/absents.txt"
+  echo "✗ relance rouge des tests instables connus : verdict bloquant, aucune autre relance"
+  exit 1
+)
+
+test_out="$(cd "$PKG" && swift "${SWIFT_TEST_ARGS[@]}" 2>&1)"
 test_status=$?
 [ -n "$test_out" ] && printf '%s\n' "$test_out"
-if [ "$test_status" -ne 0 ]; then
+if [ "$test_status" -ne 0 ] && ! relance_instables "$test_status"; then
   echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --build-system swiftbuild --scratch-path .build-app --no-parallel -Xswiftc -emit-const-values -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
   exit 1
 fi
