@@ -14,7 +14,7 @@ import type { Lot } from "./lot.ts";
 import type { ProjectModelDefault } from "./serviceModels.ts";
 
 
-export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "stopping" | "internal";
+export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "unavailable" | "stopping" | "internal";
 
 /** Une erreur d'API : le seul chemin par lequel un handler rend un code ≠ 200. */
 export class ServiceError extends Error {
@@ -34,6 +34,7 @@ export class ServiceError extends Error {
 export const badRequest = (reason: string) => new ServiceError(400, "bad_request", reason);
 export const notFound = (reason: string) => new ServiceError(404, "not_found", reason);
 export const conflict = (reason: string) => new ServiceError(409, "conflict", reason);
+export const unavailable = (reason: string) => new ServiceError(503, "unavailable", reason);
 export const unauthorized = () => new ServiceError(401, "unauthorized", "jeton absent ou invalide");
 
 

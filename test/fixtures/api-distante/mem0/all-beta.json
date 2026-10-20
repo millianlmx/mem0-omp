@@ -1,0 +1,14 @@
+[
+  {
+    "id": "m-beta-1",
+    "memory": "Mémoire du dépôt beta.",
+    "agent_id": "beta",
+    "updated_at": "2026-10-03T10:00:00Z",
+    "metadata": {
+      "tags": "ops,deploy"
+    },
+    "score_details": {
+      "semantic_score": 0.91
+    }
+  }
+]

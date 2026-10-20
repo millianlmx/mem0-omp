@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "a0d1700000000002",
+  "repoRoot": "$ROOT/repos/alpha",
+  "repoKey": "$KEY(repos/alpha)",
+  "key": "$ROOT/state/audits/a0d1700000000002",
+  "orientation": "performances",
+  "status": "stopped",
+  "createdAt": 1699999200000,
+  "updatedAt": 1699999300000,
+  "proposal": null,
+  "launches": [],
+  "failure": null
+}

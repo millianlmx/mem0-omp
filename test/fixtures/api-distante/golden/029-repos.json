@@ -1,0 +1,22 @@
+{
+  "body" : {
+    "rows" : [
+      {
+        "name" : "alpha",
+        "repoKey" : "$KEY(repos\/alpha)",
+        "repoRoot" : "$ROOT\/repos\/alpha"
+      },
+      {
+        "name" : "beta",
+        "repoKey" : "$KEY(repos\/beta)",
+        "repoRoot" : "$ROOT\/repos\/beta"
+      },
+      {
+        "name" : "gamma",
+        "repoKey" : "$KEY(repos\/gamma)",
+        "repoRoot" : "$ROOT\/repos\/gamma"
+      }
+    ]
+  },
+  "status" : 200
+}

@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "outdated_service",
+      "message" : "$MEM0\nréponse 404 du service (Not Found)"
+    }
+  },
+  "status" : 503
+}

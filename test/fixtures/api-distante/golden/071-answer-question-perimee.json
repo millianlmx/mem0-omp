@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "la question a changé depuis la demande"
+    }
+  },
+  "status" : 409
+}

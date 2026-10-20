@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "texte vide"
+    }
+  },
+  "status" : 400
+}

@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "modèle indisponible sur ce poste"
+    }
+  },
+  "status" : 409
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "id": "a0d1700000000001",
+  "repoRoot": "$ROOT/repos/alpha",
+  "repoKey": "$KEY(repos/alpha)",
+  "key": "$ROOT/state/audits/a0d1700000000001",
+  "orientation": "fiabilité des pipelines",
+  "status": "launched",
+  "createdAt": 1699999200000,
+  "updatedAt": 1699999300000,
+  "proposal": null,
+  "launches": [
+    {
+      "slug": "reprise-pipeline",
+      "launched": true,
+      "reason": null,
+      "state": "running",
+      "phase": "req",
+      "prUrl": null
+    }
+  ],
+  "failure": null
+}

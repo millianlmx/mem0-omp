@@ -12,6 +12,8 @@ import Foundation
 
 public struct RemoteVersionPayload: Codable, Equatable, Sendable {
     public var protocolVersion: Int
+    /// La machine qui répond (protocole 3) ; absente chez un serveur d'avant.
+    public var machine: ConsoleMachine?
 }
 
 public struct RemoteStorePayload: Codable, Equatable, Sendable {
@@ -801,6 +803,8 @@ public struct RemoteMergeRequest: Codable, Equatable, Sendable {
 
 public struct RemoteHelloEvent: Codable, Equatable, Sendable {
     public var protocolVersion: Int
+    /// La machine qui répond (protocole 3) ; absente chez un serveur d'avant.
+    public var machine: ConsoleMachine?
 }
 
 public struct RemoteSessionsEvent: Codable, Equatable, Sendable {

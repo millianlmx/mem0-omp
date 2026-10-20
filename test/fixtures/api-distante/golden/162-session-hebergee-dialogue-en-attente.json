@@ -1,0 +1,34 @@
+{
+  "body" : {
+    "dialogs" : [
+      {
+        "at" : 1700000000000,
+        "id" : "dlg-h1",
+        "method" : "select",
+        "optionDescriptions" : [
+          null,
+          "la branche de travail"
+        ],
+        "options" : [
+          "main",
+          "feat\/x"
+        ],
+        "promptStyle" : false,
+        "title" : "Choisir la branche"
+      }
+    ],
+    "model" : "anthropic\/claude-sonnet-5",
+    "projectName" : "alpha",
+    "sessionFile" : "$ROOT\/sessions\/session-host.jsonl",
+    "sessionId" : "sess-hosted-1",
+    "state" : "running",
+    "stateLabel" : "Session active",
+    "thinkingLevel" : "medium",
+    "transcript" : [
+
+    ],
+    "truncated" : false,
+    "turnRunning" : false
+  },
+  "status" : 200
+}

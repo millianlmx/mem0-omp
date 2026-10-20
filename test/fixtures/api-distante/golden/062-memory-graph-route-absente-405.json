@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "outdated_service",
+      "message" : "$MEM0\nréponse 405 du service (Method Not Allowed)"
+    }
+  },
+  "status" : 503
+}

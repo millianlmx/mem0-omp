@@ -134,7 +134,7 @@ func fullyPopulatedSnapshotRoundTripsThroughJSON() throws {
 
 @Test("contrat partagé : les constantes de service portent les valeurs figées")
 func serviceConstantsMatchTheContract() {
-    #expect(ConsoleAPI.protocolVersion == 2)
+    #expect(ConsoleAPI.protocolVersion == 3)
     #expect(ConsoleAPI.Service.defaultPort == 8787)
     #expect(ConsoleAPI.Service.basePath == "/v1")
     #expect(ConsoleAPI.Service.bonjourType == "_ompconsole._tcp")

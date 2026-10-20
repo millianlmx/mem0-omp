@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "id": "0000000000000a02",
+  "cwd": "$ROOT/worktrees/alpha/question-en-vol",
+  "label": "alpha/question-en-vol",
+  "phase": "req",
+  "state": "waiting",
+  "phaseStartedAt": 1699999700000,
+  "updatedAt": 1699999970000,
+  "owner": {
+    "pid": 2000000000
+  },
+  "sessionFile": "$ROOT/sessions/session-b.jsonl",
+  "sessionId": "session-b",
+  "inbox": "$ROOT/state/inbox/0000000000000a02-0",
+  "pendingAsk": {
+    "toolCallId": "call-q1",
+    "id": "ask-1",
+    "question": "Quelle branche ?",
+    "options": [
+      {
+        "label": "main",
+        "description": "la branche par défaut"
+      },
+      {
+        "label": "feat/x"
+      }
+    ]
+  }
+}

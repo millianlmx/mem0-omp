@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "racine de dépôt git invalide"
+    }
+  },
+  "status" : 400
+}

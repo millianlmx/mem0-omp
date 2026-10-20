@@ -1,0 +1,114 @@
+{
+  "body" : {
+    "projects" : [
+      {
+        "createdAt" : 1699910000000,
+        "current" : 1,
+        "function" : "Sert de magasin pour la preuve de parité des 44 routes.",
+        "hostSession" : "$ROOT\/sessions\/session-host.jsonl",
+        "purpose" : "Le dépôt de démonstration de la parité.",
+        "relayKey" : "$ROOT\/state\/projects\/$KEY(repos\/alpha)@1699990000000",
+        "repoKey" : "$KEY(repos\/alpha)",
+        "repoRoot" : "$ROOT\/repos\/alpha",
+        "segments" : [
+          {
+            "features" : [
+              {
+                "intention" : "Intention de socle-livre.",
+                "model" : "opencode-go\/deepseek-v4.1-flash",
+                "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/11",
+                "slug" : "socle-livre",
+                "status" : "merged",
+                "updatedAt" : 1699999880000
+              }
+            ],
+            "name" : "Fondations"
+          },
+          {
+            "features" : [
+              {
+                "intention" : "Intention de en-cours.",
+                "slug" : "en-cours",
+                "status" : "launched",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "intention" : "Intention de pr-suivie.",
+                "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/45",
+                "slug" : "pr-suivie",
+                "status" : "pr",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "intention" : "Intention de pr-en-echec.",
+                "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/99",
+                "slug" : "pr-en-echec",
+                "status" : "pr",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "intention" : "Intention de pr-rouge.",
+                "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/46",
+                "slug" : "pr-rouge",
+                "status" : "pr",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "intention" : "Intention de idee-future.",
+                "slug" : "idee-future",
+                "status" : "planned",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "intention" : "Intention de abandonnee.",
+                "removedReason" : "plus utile",
+                "slug" : "abandonnee",
+                "status" : "removed",
+                "updatedAt" : 1699999880000
+              }
+            ],
+            "name" : "Le réel"
+          }
+        ],
+        "status" : "running",
+        "updatedAt" : 1699999900000
+      },
+      {
+        "createdAt" : 1699910000000,
+        "current" : 0,
+        "function" : "Exerce les cartes `project:` et les documents absents.",
+        "purpose" : "Un dépôt sans lot, projet seul.",
+        "relayKey" : "$ROOT\/state\/projects\/$KEY(repos\/gamma)@1699990000000",
+        "repoKey" : "$KEY(repos\/gamma)",
+        "repoRoot" : "$ROOT\/repos\/gamma",
+        "segments" : [
+          {
+            "features" : [
+              {
+                "intention" : "Intention de exploration.",
+                "slug" : "exploration",
+                "status" : "planned",
+                "updatedAt" : 1699999880000
+              },
+              {
+                "failure" : {
+                  "at" : 1699999800000,
+                  "kind" : "lot",
+                  "reason" : "le lot a échoué"
+                },
+                "intention" : "Intention de echec-lot.",
+                "slug" : "echec-lot",
+                "status" : "failed",
+                "updatedAt" : 1699999880000
+              }
+            ],
+            "name" : "Exploration"
+          }
+        ],
+        "status" : "running",
+        "updatedAt" : 1699999900000
+      }
+    ]
+  },
+  "status" : 200
+}

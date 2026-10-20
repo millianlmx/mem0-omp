@@ -1,0 +1,20 @@
+{
+  "body" : {
+    "names" : {
+      "anthropic\/claude-sonnet-5" : "Claude Sonnet 5",
+      "opencode-go\/deepseek-v4.1-flash" : "DeepSeek V4.1 Flash"
+    },
+    "selectors" : [
+      "anthropic\/claude-sonnet-5",
+      "opencode-go\/deepseek-v4.1-flash"
+    ],
+    "thinking" : {
+      "anthropic\/claude-sonnet-5" : [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  },
+  "status" : 200
+}

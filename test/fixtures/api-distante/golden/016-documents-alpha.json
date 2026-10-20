@@ -1,0 +1,16 @@
+{
+  "body" : {
+    "documents" : [
+      {
+        "content" : "# Alpha\n\nDépôt de démonstration de la parité.\n\n## Segments\n\n- Fondations\n- Le réel\n",
+        "name" : "PROJECT.md",
+        "state" : "text"
+      },
+      {
+        "name" : "contract.md",
+        "state" : "missing"
+      }
+    ]
+  },
+  "status" : 200
+}

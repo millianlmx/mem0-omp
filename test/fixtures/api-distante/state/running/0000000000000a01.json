@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "0000000000000a01",
+  "cwd": "$ROOT/worktrees/alpha/en-cours",
+  "label": "alpha/en-cours",
+  "phase": "impl",
+  "state": "running",
+  "phaseStartedAt": 1699999700000,
+  "updatedAt": 1699999970000,
+  "owner": {
+    "pid": 2000000000
+  },
+  "sessionFile": "$ROOT/sessions/session-a.jsonl",
+  "sessionId": "session-a"
+}

@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "unavailable",
+      "message" : "gh est introuvable (cherché : chemin imposé par OMP_CONSOLE_GH_BINARY : $ROOT\/bin\/gh) — les statuts de PR ne peuvent pas être lus."
+    }
+  },
+  "status" : 503
+}

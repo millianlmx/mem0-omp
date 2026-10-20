@@ -1,0 +1,21 @@
+{
+  "body" : {
+    "offset" : 0,
+    "rows" : [
+      {
+        "agentId" : "beta",
+        "id" : "m-beta-1",
+        "score" : 0.91000000000000003,
+        "tags" : [
+          "ops",
+          "deploy"
+        ],
+        "text" : "Mémoire du dépôt beta.",
+        "updatedAt" : "2026-10-03T10:00:00Z"
+      }
+    ],
+    "scope" : "beta",
+    "total" : 1
+  },
+  "status" : 200
+}

@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "repoKey": "$KEY(repos/alpha)",
+  "repoRoot": "$ROOT/repos/alpha",
+  "relayKey": "$ROOT/state/projects/$KEY(repos/alpha)@1699990000000",
+  "purpose": "Le dépôt de démonstration de la parité.",
+  "function": "Sert de magasin pour la preuve de parité des 44 routes.",
+  "status": "running",
+  "segments": [
+    {
+      "name": "Fondations",
+      "features": [
+        {
+          "slug": "socle-livre",
+          "intention": "Intention de socle-livre.",
+          "status": "merged",
+          "prUrl": "https://github.com/proprietaire/depot/pull/11",
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000,
+          "model": "opencode-go/deepseek-v4.1-flash"
+        }
+      ]
+    },
+    {
+      "name": "Le réel",
+      "features": [
+        {
+          "slug": "en-cours",
+          "intention": "Intention de en-cours.",
+          "status": "launched",
+          "prUrl": null,
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "pr-suivie",
+          "intention": "Intention de pr-suivie.",
+          "status": "pr",
+          "prUrl": "https://github.com/proprietaire/depot/pull/45",
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "pr-en-echec",
+          "intention": "Intention de pr-en-echec.",
+          "status": "pr",
+          "prUrl": "https://github.com/proprietaire/depot/pull/99",
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "pr-rouge",
+          "intention": "Intention de pr-rouge.",
+          "status": "pr",
+          "prUrl": "https://github.com/proprietaire/depot/pull/46",
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "idee-future",
+          "intention": "Intention de idee-future.",
+          "status": "planned",
+          "prUrl": null,
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "abandonnee",
+          "intention": "Intention de abandonnee.",
+          "status": "removed",
+          "prUrl": null,
+          "failure": null,
+          "removedReason": "plus utile",
+          "updatedAt": 1699999880000
+        }
+      ]
+    }
+  ],
+  "current": 1,
+  "base": null,
+  "hostSession": "$ROOT/sessions/session-host.jsonl",
+  "createdAt": 1699910000000,
+  "updatedAt": 1699999900000
+}

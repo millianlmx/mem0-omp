@@ -1,0 +1,8 @@
+{
+  "body" : {
+    "homeDirectory" : "$MACHINE",
+    "ompInstalled" : true,
+    "ompPath" : "$MACHINE"
+  },
+  "status" : 200
+}

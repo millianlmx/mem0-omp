@@ -1,0 +1,10 @@
+{
+  "body" : {
+    "document" : {
+      "content" : "# Contrat — specs-a-valider\n\nMoment : specs.\n\n## S-1\n\nUn comportement observable de specs-a-valider.\n",
+      "name" : "contract.md",
+      "state" : "text"
+    }
+  },
+  "status" : 200
+}

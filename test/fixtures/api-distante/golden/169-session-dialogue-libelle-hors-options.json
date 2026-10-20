@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "libellé hors des options du dialogue"
+    }
+  },
+  "status" : 400
+}

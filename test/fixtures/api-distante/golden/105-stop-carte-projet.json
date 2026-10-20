@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "carte sans lot"
+    }
+  },
+  "status" : 409
+}

@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "not_found",
+      "message" : "audit inconnu"
+    }
+  },
+  "status" : 404
+}

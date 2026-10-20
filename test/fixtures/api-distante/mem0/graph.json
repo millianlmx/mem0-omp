@@ -1,0 +1,25 @@
+{
+  "total": 3,
+  "edges": [
+    {
+      "source": "m-alpha-1",
+      "target": "m-alpha-3",
+      "score": 0.81
+    },
+    {
+      "source": "m-alpha-2",
+      "target": "m-alpha-1",
+      "score": 0.57
+    },
+    {
+      "source": "m-alpha-1",
+      "target": "m-hors-portee",
+      "score": 0.9
+    },
+    {
+      "source": "m-alpha-2",
+      "target": "m-alpha-3",
+      "score": "illisible"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "body" : {
+    "devices" : [
+      {
+        "connected" : false,
+        "id" : "$UUID",
+        "lastSeenAtMs" : 1700000000000,
+        "name" : "Téléphone",
+        "pairedAtMs" : 1700000000000
+      }
+    ]
+  },
+  "status" : 200
+}

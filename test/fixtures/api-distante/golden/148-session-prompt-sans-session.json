@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "aucune session OMP n'est lancée"
+    }
+  },
+  "status" : 409
+}

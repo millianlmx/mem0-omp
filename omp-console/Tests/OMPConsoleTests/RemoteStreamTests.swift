@@ -129,6 +129,7 @@ func storeChangeAndLiveSessionPushUpdates() async throws {
         "l'évènement `hello` doit ouvrir le flux (échec=\(collector.failure ?? "aucun"))"
     )
     #expect(hello.contains("\"protocolVersion\":\(ConsoleAPI.protocolVersion)"))
+    #expect(hello.contains(#""machine":{"kind":"mac","name":"Mac de test"}"#), "vps-remote-api/AC-12 (socle) : `hello` dit la machine")
     let initial = try #require(await collector.waitFor("store"), "l'instantané courant doit suivre")
     #expect(initial.contains("\"running\""))
 

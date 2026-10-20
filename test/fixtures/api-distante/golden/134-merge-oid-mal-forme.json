@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "headOid mal formé"
+    }
+  },
+  "status" : 400
+}

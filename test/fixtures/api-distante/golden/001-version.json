@@ -1,0 +1,7 @@
+{
+  "body" : {
+    "machine" : "$MACHINE",
+    "protocolVersion" : 3
+  },
+  "status" : 200
+}

@@ -11,9 +11,11 @@
 /// Le socle du contrat de l'API distante du console.
 public enum ConsoleAPI {
     /// La version du protocole de l'API distante du console. Version 2 :
-    /// `POST /v1/cards/{id}/answer` exige `toolCallId` — une app de version 1,
-    /// qui ne l'envoie pas, est refusée (aucun double support).
-    public static let protocolVersion = 2
+    /// `POST /v1/cards/{id}/answer` exige `toolCallId`. Version 3 : `GET /v1/version`
+    /// et la trame `hello` disent la machine qui répond (`machine`) — le Mac et le VPS
+    /// servent le même protocole, et un client appairé aux deux doit les distinguer.
+    /// Une app d'une autre version est refusée (aucun double support).
+    public static let protocolVersion = 3
 
     /// Les constantes de SERVICE : ce que le serveur annonce et ce que le client
     /// doit connaître pour le joindre — partagées macOS/iOS, jamais dupliquées.
@@ -37,6 +39,22 @@ public enum ConsoleAPI {
         public static let pairingCodeTTLSeconds = 120
         /// Le nombre d'échecs tolérés avant verrouillage du code actif.
         public static let pairingAttemptLimit = 5
+    }
+}
+
+/// La machine qui répond à l'API distante : le Mac (serveur Swift) ou le VPS
+/// (service de pipelines, TypeScript). `kind` est `mac` ou `vps` ; `name` est le nom
+/// lisible de la machine (nom de l'ordinateur, nom d'hôte du VPS).
+public struct ConsoleMachine: Codable, Equatable, Sendable {
+    public static let macKind = "mac"
+    public static let vpsKind = "vps"
+
+    public var kind: String
+    public var name: String
+
+    public init(kind: String, name: String) {
+        self.kind = kind
+        self.name = name
     }
 }
 

@@ -1,0 +1,13 @@
+{
+  "body" : {
+    "dialogs" : [
+
+    ],
+    "state" : "closed",
+    "status" : {
+      "text" : "Arrêtée",
+      "tone" : "neutral"
+    }
+  },
+  "status" : 200
+}

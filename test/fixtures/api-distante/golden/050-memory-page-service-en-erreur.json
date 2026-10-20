@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "unavailable",
+      "message" : "$MEM0\nréponse 500 du service (boom)"
+    }
+  },
+  "status" : 503
+}

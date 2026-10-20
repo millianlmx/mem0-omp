@@ -28,6 +28,17 @@ enum RemoteLimits {
 
 struct RemoteVersionPayload: Codable, Equatable {
     var protocolVersion: Int
+    /// La machine qui répond (protocole 3) : le Mac, ici.
+    var machine: ConsoleMachine
+}
+
+extension ConsoleMachine {
+    /// Ce Mac, désigné par le nom de l'ordinateur (Réglages Système › Partage),
+    /// à défaut par son nom d'hôte.
+    static func thisMac() -> ConsoleMachine {
+        let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        return ConsoleMachine(kind: ConsoleMachine.macKind, name: name)
+    }
 }
 
 struct RemoteStorePayload: Codable {

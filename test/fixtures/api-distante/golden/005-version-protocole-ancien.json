@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "incompatible_protocol",
+      "message" : "version de protocole 2 refusée (supportée : 3)"
+    }
+  },
+  "status" : 400
+}

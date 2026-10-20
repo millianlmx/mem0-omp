@@ -1,0 +1,15 @@
+{
+  "body" : {
+    "dialogs" : [
+
+    ],
+    "state" : "idle",
+    "stateLabel" : "Aucune session",
+    "transcript" : [
+
+    ],
+    "truncated" : false,
+    "turnRunning" : false
+  },
+  "status" : 200
+}

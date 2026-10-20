@@ -1,0 +1,86 @@
+{
+  "body" : {
+    "links" : [
+      {
+        "a" : "memory:m-alpha-1",
+        "b" : "tag:deploy",
+        "kind" : "tag"
+      },
+      {
+        "a" : "memory:m-alpha-3",
+        "b" : "tag:deploy",
+        "kind" : "tag"
+      },
+      {
+        "a" : "memory:m-alpha-1",
+        "b" : "memory:m-alpha-3",
+        "kind" : "semantic",
+        "score" : 0.81000000000000005
+      },
+      {
+        "a" : "memory:m-alpha-2",
+        "b" : "memory:m-alpha-1",
+        "kind" : "semantic",
+        "score" : 0.56999999999999995
+      }
+    ],
+    "nodes" : [
+      {
+        "id" : "memory:m-alpha-1",
+        "label" : "Le déploiement passe par launchd",
+        "scope" : "alpha",
+        "tags" : [
+          "ops",
+          "deploy"
+        ],
+        "text" : "Le déploiement passe par launchd."
+      },
+      {
+        "id" : "memory:m-alpha-2",
+        "label" : "Les clés d’API vivent dans le trousseau",
+        "scope" : "alpha",
+        "tags" : [
+          "secu"
+        ],
+        "text" : "Les clés d’API vivent dans le trousseau."
+      },
+      {
+        "id" : "memory:m-alpha-3",
+        "label" : "Le pilote reprend un lot après un crash",
+        "scope" : "alpha",
+        "tags" : [
+          "pilote",
+          "deploy"
+        ],
+        "text" : "Le pilote reprend un lot après un crash."
+      },
+      {
+        "id" : "memory:m-alpha-4",
+        "label" : "Une ligne sans score ni étiquette",
+        "scope" : "alpha",
+        "tags" : [
+
+        ],
+        "text" : "Une ligne sans score ni étiquette."
+      },
+      {
+        "id" : "memory:7",
+        "label" : "Identifiant numérique",
+        "scope" : "alpha",
+        "tags" : [
+          "divers"
+        ],
+        "text" : "Identifiant numérique."
+      },
+      {
+        "id" : "tag:deploy",
+        "label" : "#deploy",
+        "scope" : ""
+      }
+    ],
+    "scope" : "alpha",
+    "total" : 6,
+    "truncated" : false
+  },
+  "status" : 200
+}

@@ -1,0 +1,66 @@
+{
+  "body" : {
+    "entries" : [
+      {
+        "index" : 1,
+        "kind" : "user",
+        "offset" : 123,
+        "text" : "Prépare le périmètre.",
+        "timestampMs" : 1767225600000
+      },
+      {
+        "index" : 2,
+        "kind" : "assistant",
+        "model" : "anthropic\/claude-sonnet-5",
+        "offset" : 295,
+        "text" : "",
+        "timestampMs" : 1767225600000,
+        "toolCalls" : [
+          {
+            "arguments" : {
+              "options" : [
+                {
+                  "label" : "main"
+                },
+                {
+                  "label" : "feat\/x"
+                }
+              ],
+              "question" : "Quelle branche ?"
+            },
+            "argumentsText" : "{\"question\":\"Quelle branche ?\",\"options\":[{\"label\":\"main\"},{\"label\":\"feat\/x\"}]}",
+            "id" : "call-q1",
+            "name" : "ask"
+          }
+        ],
+        "usage" : {
+          "cacheRead" : 3,
+          "cacheWrite" : 1,
+          "cost" : 0.33000000000000002,
+          "input" : 500,
+          "output" : 80,
+          "totalTokens" : 584
+        }
+      }
+    ],
+    "header" : {
+      "cwd" : "\/srv\/parite\/question-en-vol",
+      "id" : "session-b",
+      "timestamp" : "2026-01-01T00:00:00.000Z",
+      "version" : 3
+    },
+    "kind" : "topLevel",
+    "skipped" : [
+      {
+        "offset" : 761,
+        "reason" : "invalidJSON"
+      },
+      {
+        "offset" : 779,
+        "reason" : "unknownType"
+      }
+    ],
+    "truncated" : false
+  },
+  "status" : 200
+}

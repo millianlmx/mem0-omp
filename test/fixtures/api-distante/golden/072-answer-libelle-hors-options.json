@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "libellé hors des options de la question"
+    }
+  },
+  "status" : 400
+}

@@ -11,6 +11,7 @@
 // de l'hôte Bun (Doc-1 §11).
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pipelineStateDir, pidAlive, writeJsonAtomic } from "./store.ts";
 
@@ -98,6 +99,42 @@ export function servicePort(env: Record<string, string | undefined> = process.en
   if (raw === "") return SERVICE_PORT_DEFAULT;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0 || value > 65535) return SERVICE_PORT_DEFAULT;
+  return value;
+}
+
+
+/** `MEM0_PIPELINE_MACHINE` : la machine qui héberge ce service (S-2, S-5). */
+export type MachineKind = "mac" | "vps";
+
+/** `MEM0_REMOTE_API_PORT` : le port du protocole distant (défaut 8787, S-2). */
+export const REMOTE_API_PORT_DEFAULT = 8787;
+
+/**
+ * La machine du service : `vps` SEULEMENT si `MEM0_PIPELINE_MACHINE=vps`. Toute
+ * autre valeur (absente, `mac`, illisible) est le Mac, qui garde son serveur Swift.
+ */
+export function pipelineMachine(env: Record<string, string | undefined> = process.env): MachineKind {
+  return (env.MEM0_PIPELINE_MACHINE ?? "").trim().toLowerCase() === "vps" ? "vps" : "mac";
+}
+
+/** Le nom affiché de la machine : `MEM0_PIPELINE_MACHINE_NAME`, sinon le nom d'hôte. */
+export function pipelineMachineName(env: Record<string, string | undefined> = process.env): string {
+  const named = (env.MEM0_PIPELINE_MACHINE_NAME ?? "").trim();
+  return named !== "" ? named : os.hostname();
+}
+
+/** `MEM0_REMOTE_API_HOST` : l'adresse du second écouteur ; absente ou blanche ⇒ `null`. */
+export function remoteApiHost(env: Record<string, string | undefined> = process.env): string | null {
+  const host = (env.MEM0_REMOTE_API_HOST ?? "").trim();
+  return host === "" ? null : host;
+}
+
+/** `MEM0_REMOTE_API_PORT` : absent ou illisible ⇒ 8787 ; `0` (éphémère) est permis. */
+export function remoteApiPort(env: Record<string, string | undefined> = process.env): number {
+  const raw = (env.MEM0_REMOTE_API_PORT ?? "").trim();
+  if (raw === "") return REMOTE_API_PORT_DEFAULT;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) return REMOTE_API_PORT_DEFAULT;
   return value;
 }
 

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repoKey": "$KEY(repos/gamma)",
+  "repoRoot": "$ROOT/repos/gamma",
+  "relayKey": "$ROOT/state/projects/$KEY(repos/gamma)@1699990000000",
+  "purpose": "Un dépôt sans lot, projet seul.",
+  "function": "Exerce les cartes `project:` et les documents absents.",
+  "status": "running",
+  "segments": [
+    {
+      "name": "Exploration",
+      "features": [
+        {
+          "slug": "exploration",
+          "intention": "Intention de exploration.",
+          "status": "planned",
+          "prUrl": null,
+          "failure": null,
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        },
+        {
+          "slug": "echec-lot",
+          "intention": "Intention de echec-lot.",
+          "status": "failed",
+          "prUrl": null,
+          "failure": {
+            "kind": "lot",
+            "reason": "le lot a échoué",
+            "at": 1699999800000
+          },
+          "removedReason": null,
+          "updatedAt": 1699999880000
+        }
+      ]
+    }
+  ],
+  "current": 0,
+  "base": null,
+  "hostSession": null,
+  "createdAt": 1699910000000,
+  "updatedAt": 1699999900000
+}

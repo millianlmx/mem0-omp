@@ -2747,12 +2747,14 @@ un flux temps réel.
   type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
   protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
   adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
-- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 2` et
+- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 3` et
   chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
   partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie. La version 2
-  rend `toolCallId` obligatoire sur la réponse à une carte : une app de version 1 se
-  verrouille sur « Version de protocole incompatible (app 1, Mac 2) », sans double
-  support.
+  rend `toolCallId` obligatoire sur la réponse à une carte ; la version 3 fait dire à
+  `GET /v1/version` et à la trame `hello` la machine qui répond (`machine` :
+  `{"kind":"mac"|"vps","name":"…"}`, le Mac et le VPS servant le même protocole). Une app
+  d'une autre version se verrouille sur « Version de protocole incompatible », sans
+  double support.
 - **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
   qui rend le code partagé `outdated_service` (statut `503`, enveloppe
   `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
@@ -2773,7 +2775,7 @@ un flux temps réel.
   servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
   sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":2}`
+  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":3}`
   et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
   routes). Le code est généré dans **Réglages… › Appareils** (⌘, ou menu « OMP Console ›
   Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,

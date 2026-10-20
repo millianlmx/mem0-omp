@@ -175,10 +175,11 @@ struct RemoteVersionTests {
             """
         let response = try await rawConsoleExchange(port: stack.port, request)
         #expect(rawConsoleStatus(response) == 200)
-        #expect(response.contains(#"{"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#))
+        #expect(response.contains(#""protocolVersion":\#(ConsoleAPI.protocolVersion)}"#))
     }
 
-    @Test func versionRouteAnswersTheBaseVersion() async throws {
+    @Test("vps-remote-api/AC-12 (socle) : GET /v1/version annonce la machine qui répond — le Mac, par son nom")
+    func versionRouteAnswersTheBaseVersionAndTheMachine() async throws {
         let stack = try await RemoteStack.make()
         defer { stack.stop() }
         let token = try await stack.pair(name: "Téléphone")
@@ -187,7 +188,9 @@ struct RemoteVersionTests {
         #expect(reply.status == 200)
         let payload = try reply.json(RemoteVersionPayload.self)
         #expect(payload.protocolVersion == ConsoleAPI.protocolVersion)
-        #expect(reply.text == #"{"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#)
+        #expect(payload.machine == RemoteStack.testMachine)
+        // Clés triées : la même forme octet pour octet que celle du VPS.
+        #expect(reply.text == #"{"machine":{"kind":"mac","name":"Mac de test"},"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#)
     }
 }
 

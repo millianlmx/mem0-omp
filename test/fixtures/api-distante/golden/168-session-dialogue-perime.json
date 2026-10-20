@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "le dialogue a changé depuis la demande"
+    }
+  },
+  "status" : 409
+}

@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "server",
+      "message" : "Fusion refusée par GitHub : Pull request is not mergeable (PR #99)."
+    }
+  },
+  "status" : 500
+}

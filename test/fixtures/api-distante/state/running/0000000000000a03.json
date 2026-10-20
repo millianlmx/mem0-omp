@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "0000000000000a03",
+  "cwd": "$ROOT/repos/gamma",
+  "label": "gamma/exploration",
+  "phase": "req",
+  "state": "running",
+  "phaseStartedAt": 1699999700000,
+  "updatedAt": 1699999970000,
+  "owner": {
+    "pid": 2000000000
+  }
+}

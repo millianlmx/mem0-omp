@@ -85,6 +85,9 @@ struct RemoteStack {
     let server: RemoteServer
     let port: UInt16
 
+    /// La machine annoncée par les tests : un nom fixe, pas celui du poste qui les joue.
+    static let testMachine = ConsoleMachine(kind: ConsoleMachine.macKind, name: "Mac de test")
+
     var base: String { "http://127.0.0.1:\(port)" }
 
     /// `liveMemory` remplace le service scripté AUPRÈS DES ROUTES (banc de recette
@@ -106,7 +109,10 @@ struct RemoteStack {
         journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
         componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
         journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        prStates: PullRequestStateBook? = nil
+        prStates: PullRequestStateBook? = nil,
+        machine: ConsoleMachine = RemoteStack.testMachine,
+        environment: [String: String] = [:],
+        memoryLinks: URL? = nil
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
@@ -130,6 +136,7 @@ struct RemoteStack {
         let session = sessionModel ?? SessionConsoleModel()
         let project = projectModel ?? ProjectConsoleModel()
         let streams = RemoteStreamHub(
+            machine: machine,
             storeHub: hub,
             registry: registry,
             session: session,
@@ -149,12 +156,13 @@ struct RemoteStack {
         registry.changeHandler = { [weak streams] in streams?.broadcastDevices() }
         let config = memoryConfig ?? MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
         let reads = RemoteReads(
+            machine: machine,
             hub: hub,
             registry: registry,
             service: liveMemory ?? memory,
             memoryConfig: config,
-            memoryLinks: root.appendingPathComponent("memory-links.json"),
-            environment: [:],
+            memoryLinks: memoryLinks ?? root.appendingPathComponent("memory-links.json"),
+            environment: environment,
             clock: clock.clock,
             kanban: kanban,
             actions: actions,
@@ -173,7 +181,7 @@ struct RemoteStack {
                 makeClient: { throw ServiceClientError.unavailable }
             ),
             hub: hub,
-            environment: [:],
+            environment: environment,
             clock: clock.clock
         )
         let router = RemoteRouter(reads: reads, registry: registry, actions: remoteActions, streams: streams)

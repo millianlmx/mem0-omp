@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "Aucune session interrompue à relancer."
+    }
+  },
+  "status" : 409
+}

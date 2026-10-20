@@ -1,0 +1,20 @@
+{
+  "body" : {
+    "dialogs" : [
+
+    ],
+    "model" : "anthropic\/claude-sonnet-5",
+    "projectName" : "alpha",
+    "sessionFile" : "$ROOT\/sessions\/session-host.jsonl",
+    "sessionId" : "sess-hosted-1",
+    "state" : "running",
+    "stateLabel" : "Session active",
+    "thinkingLevel" : "medium",
+    "transcript" : [
+
+    ],
+    "truncated" : false,
+    "turnRunning" : false
+  },
+  "status" : 200
+}

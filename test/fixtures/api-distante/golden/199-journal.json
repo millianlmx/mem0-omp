@@ -1,0 +1,161 @@
+{
+  "body" : {
+    "entries" : [
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "lancement",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "Parité avec modèles"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "lancement",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "Parité des routes"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "arrêt",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "alpha"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "arrêt",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "alpha"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "reprise",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "bloquee"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "reprise",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "alpha"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "reprise",
+        "state" : {
+          "refused" : {
+            "reason" : "le lot est verrouillé par un autre pilote"
+          }
+        },
+        "targetLabel" : "echec-relance-refusee"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "reprise",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "echec-relance-ok"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "acceptation de la revue",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "revue-a-valider"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "validation des spécifications",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "specs-a-valider"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "message",
+        "state" : {
+          "delivered" : {
+
+          }
+        },
+        "targetLabel" : "alpha\/question-en-vol"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "réponse",
+        "state" : {
+          "taken" : {
+
+          }
+        },
+        "targetLabel" : "reponse-texte"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "réponse",
+        "state" : {
+          "delivered" : {
+
+          }
+        },
+        "targetLabel" : "alpha\/question-en-vol"
+      },
+      {
+        "at" : 1700000000000,
+        "id" : "$CMDID",
+        "kindLabel" : "réponse",
+        "state" : {
+          "delivered" : {
+
+          }
+        },
+        "targetLabel" : "alpha\/question-en-vol"
+      }
+    ]
+  },
+  "status" : 200
+}

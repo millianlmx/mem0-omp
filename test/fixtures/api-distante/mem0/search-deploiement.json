@@ -1,0 +1,61 @@
+{
+  "results": [
+    {
+      "id": "m-alpha-1",
+      "memory": "Le déploiement passe par launchd.",
+      "agent_id": "alpha",
+      "updated_at": "2026-10-03T10:00:00Z",
+      "metadata": {
+        "tags": "ops,deploy"
+      },
+      "score_details": {
+        "semantic_score": 0.91
+      }
+    },
+    {
+      "id": "m-alpha-2",
+      "memory": "Les clés d’API vivent dans le trousseau.",
+      "agent_id": "alpha",
+      "updated_at": "2026-10-02T10:00:00Z",
+      "metadata": {
+        "tags": "secu"
+      },
+      "score_details": {
+        "semantic_score": 0.62
+      }
+    },
+    {
+      "id": "m-alpha-3",
+      "memory": "Le pilote reprend un lot après un crash.",
+      "agent_id": "alpha",
+      "updated_at": "2026-10-01T10:00:00Z",
+      "metadata": {
+        "tags": "pilote,deploy"
+      },
+      "score_details": {
+        "semantic_score": 0.43
+      }
+    },
+    {
+      "id": "m-alpha-4",
+      "memory": "Une ligne sans score ni étiquette.",
+      "agent_id": "alpha",
+      "updated_at": "2026-09-30T10:00:00Z",
+      "metadata": {
+        "tags": ""
+      }
+    },
+    {
+      "id": 7,
+      "memory": "Identifiant numérique.",
+      "agent_id": "alpha",
+      "updated_at": "2026-09-29T10:00:00Z",
+      "metadata": {
+        "tags": "divers"
+      },
+      "score_details": {
+        "semantic_score": 0.7
+      }
+    }
+  ]
+}

@@ -26,7 +26,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 /** Protocole et en-tête figés par le contrat (ConsoleAPI.protocolVersion). */
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const PROTOCOL_HEADER = "X-Console-Protocol-Version";
 const DEFAULT_URL = "http://127.0.0.1:8787";
 /** `security(1)` vit ici sur macOS ; ailleurs, prérequis absent (sortie 2). */

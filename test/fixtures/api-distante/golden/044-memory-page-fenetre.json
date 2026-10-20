@@ -1,0 +1,32 @@
+{
+  "body" : {
+    "nextOffset" : 3,
+    "offset" : 1,
+    "rows" : [
+      {
+        "agentId" : "alpha",
+        "id" : "m-alpha-2",
+        "score" : 0.62,
+        "tags" : [
+          "secu"
+        ],
+        "text" : "Les clés d’API vivent dans le trousseau.",
+        "updatedAt" : "2026-10-02T10:00:00Z"
+      },
+      {
+        "agentId" : "alpha",
+        "id" : "m-alpha-3",
+        "score" : 0.42999999999999999,
+        "tags" : [
+          "pilote",
+          "deploy"
+        ],
+        "text" : "Le pilote reprend un lot après un crash.",
+        "updatedAt" : "2026-10-01T10:00:00Z"
+      }
+    ],
+    "scope" : "alpha",
+    "total" : 5
+  },
+  "status" : 200
+}

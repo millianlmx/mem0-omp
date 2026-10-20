@@ -711,7 +711,13 @@ export default function reqExtension(pi: ExtensionAPI) {
         },
       });
       serviceHost = host;
-      const started = await host.start();
+      // Un démarrage qui échoue (adresse distante non liable, port) sort en code 1 :
+      // le superviseur (systemd `Restart=always`, launchd) relance, il ne reste pas
+      // un process muet à moitié servi.
+      const started = await host.start().catch((err: unknown): never => {
+        process.stderr.write(`[service] démarrage impossible : ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      });
       if (started.kind === "already-running") {
         say(`[service] un service tourne déjà (pid ${started.pid})`);
         serviceHost = null;

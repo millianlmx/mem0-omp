@@ -1,0 +1,258 @@
+{
+  "audits" : [
+    {
+      "body" : {
+        "orientation" : "refus-du-service",
+        "repo" : "$ROOT\/repos\/alpha"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits"
+    },
+    {
+      "body" : {
+        "orientation" : "fiabilité des pipelines",
+        "repo" : "$ROOT\/repos\/alpha"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits"
+    },
+    {
+      "body" : {
+        "brief" : "b",
+        "selected" : [
+          "a"
+        ]
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000099\/launch"
+    },
+    {
+      "body" : {
+        "brief" : "b",
+        "selected" : [
+          "a"
+        ]
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000003\/launch"
+    },
+    {
+      "body" : {
+        "brief" : "",
+        "selected" : [
+          "a"
+        ]
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000004\/launch"
+    },
+    {
+      "body" : {
+        "brief" : "Relire le dépôt.",
+        "selected" : [
+          "relecture-complete",
+          "index-sessions"
+        ]
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000010\/launch"
+    },
+    {
+      "body" : {
+        "answer" : "oui",
+        "key" : "k",
+        "slug" : "reprise-pipeline"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000099\/escalations"
+    },
+    {
+      "body" : {
+        "answer" : "oui",
+        "key" : "k",
+        "slug" : "reprise-pipeline"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000003\/escalations"
+    },
+    {
+      "body" : {
+        "answer" : "Oui, reprendre.",
+        "key" : "question:reprise-pipeline:1",
+        "slug" : "reprise-pipeline"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000010\/escalations"
+    },
+    {
+      "body" : {
+        "decision" : "approve",
+        "key" : "jalon:reprise-pipeline:2",
+        "slug" : "reprise-pipeline"
+      },
+      "method" : "POST",
+      "path" : "\/v1\/audits\/a0d1700000000010\/escalations"
+    },
+    {
+      "body" : {
+
+      },
+      "method" : "DELETE",
+      "path" : "\/v1\/audits\/a0d1700000000099"
+    },
+    {
+      "body" : {
+
+      },
+      "method" : "DELETE",
+      "path" : "\/v1\/audits\/a0d1700000000010"
+    }
+  ],
+  "commands" : [
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "reply",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "reponse-texte",
+        "text" : "fusionne la PR",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "verdict",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "specs-a-valider",
+        "verdict" : "v",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "verdict",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "revue-a-valider",
+        "verdict" : "y",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "relaunch",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "echec-relance-ok",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "relaunch",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "echec-relance-refusee",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "relaunch",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "slug" : "bloquee",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "stop",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "id" : "$CMDID",
+        "kind" : "stop",
+        "repo" : "$ROOT\/repos\/alpha",
+        "sentAt" : 1700000000000,
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/alpha\/commands"
+    },
+    {
+      "body" : {
+        "description" : "Rendre les 44 routes du VPS identiques à celles du Mac.",
+        "id" : "$CMDID",
+        "kind" : "launch",
+        "repo" : "$ROOT\/repos\/beta",
+        "sentAt" : 1700000000000,
+        "title" : "Parité des routes",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/beta\/commands"
+    },
+    {
+      "body" : {
+        "description" : "Rendre les 44 routes du VPS identiques à celles du Mac.",
+        "id" : "$CMDID",
+        "kind" : "launch",
+        "modelImplReview" : "opencode-go\/deepseek-v4.1-flash",
+        "modelReqSpecs" : "anthropic\/claude-sonnet-5",
+        "repo" : "$ROOT\/repos\/beta",
+        "sentAt" : 1700000000000,
+        "title" : "Parité avec modèles",
+        "version" : 1
+      },
+      "path" : "\/v1\/repos\/$ROOT\/repos\/beta\/commands"
+    }
+  ],
+  "inbox" : {
+    "0000000000000a02-0" : [
+      {
+        "kind" : "text",
+        "sentAt" : 1699999999000,
+        "text" : "consigne déjà livrée",
+        "version" : 1
+      },
+      {
+        "kind" : "ask",
+        "selected" : "main",
+        "sentAt" : 1700000000000,
+        "toolCallId" : "call-q1",
+        "version" : 1
+      },
+      {
+        "custom" : "plutôt la branche release",
+        "kind" : "ask",
+        "sentAt" : 1700000000000,
+        "toolCallId" : "call-q1",
+        "version" : 1
+      },
+      {
+        "kind" : "text",
+        "sentAt" : 1700000000000,
+        "text" : "avance sur le magasin",
+        "version" : 1
+      }
+    ]
+  }
+}
