@@ -16,5 +16,5 @@
     "typeRoots": ["./.typecheck/node_modules/@types"],
     "paths": { "@oh-my-pi/*": ["./.typecheck/node_modules/@oh-my-pi/*"] }
   },
-  "include": ["omp-mem0-req/**/*.ts", "omp-mem0-memory/**/*.ts"]
+  "include": ["omp-mem0-req/**/*.ts", "omp-mem0-memory/**/*.ts", "omp-harness/**/*.ts"]
 }

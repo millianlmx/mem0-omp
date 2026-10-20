@@ -27,6 +27,8 @@ mem0-omp/                              racine = marketplace OMP
 │       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
+├── omp-harness/                       le Pipeline Service sur VPS : SQLite, runners OMP en RPC, heavy systemd
+│   └── deploy/                        unités et tranches systemd, zram, oomd, lanceur root, install.sh
 ├── mem0-stack/                        mem0-rs (binaire Rust + SQLite), la voie MANUELLE
 │   ├── mem0-rs/                       le serveur Rust mem0-rs (crate)
 │   └── README.md                      démarrer, migrer une pile mem0-http existante, retour arrière
@@ -55,6 +57,12 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
 └── .github/workflows/                 check.yml (PR), release-simulation.yml (PR), release.yml (merge sur main)
 ```
+
+Le harness VPS (`omp-harness/`) a lui aussi son document, `omp-harness/README.md`.
+C'est un service indépendant des deux plugins : il conduit chaque feature de /req
+au merge avec des runners OMP enfants (`omp --mode rpc`), plafonnés par systemd. Ce
+qui n'est pas tranché, il le décide seul par checkpoints WIP. L'irréversible, il le
+batche pour l'humain.
 
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son

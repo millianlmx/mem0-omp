@@ -1,0 +1,8 @@
+# Le budget du harness sur le VPS (32 Go) : ~16 Go, service + runners + heavy.
+# Pire cas : 5 runners × 1 Go + 2 heavy × 4 Go + service 1 Go = 14 Go, marge 2 Go.
+[Unit]
+Description=OMP harness — budget mémoire total
+
+[Slice]
+MemoryMax=16G
+MemoryHigh=15G

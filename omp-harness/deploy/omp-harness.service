@@ -1,0 +1,31 @@
+# Le Pipeline Service — un process, une base SQLite, l'API REST + SSE.
+# Installé par deploy/install.sh en /etc/systemd/system/omp-harness.service.
+[Unit]
+Description=OMP harness — Pipeline Service (API REST + SSE, runners, heavy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omp-harness
+Group=omp-harness
+SupplementaryGroups=omp-work
+# Les worktrees sont partagés avec les runners et les jobs heavy (groupe omp-work).
+UMask=0002
+Slice=omp-harness.slice
+WorkingDirectory=/var/lib/omp-harness/state
+EnvironmentFile=-/etc/omp-harness/env
+ExecStart=/usr/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning /opt/omp-harness/omp-harness/main.ts --config /etc/omp-harness/config.json
+Restart=on-failure
+RestartSec=5
+# SIGTERM : plus de requêtes, runners arrêtés ; au redémarrage, reprise au checkpoint.
+KillMode=mixed
+TimeoutStopSec=60
+# Le service : 1 Go, le DERNIER que l'OOM killer choisit, jamais tué par oomd.
+MemoryMax=1G
+OOMScoreAdjust=-900
+ManagedOOMPreference=omit
+# Pas de NoNewPrivileges : le lanceur root passe par sudo (seule élévation permise).
+
+[Install]
+WantedBy=multi-user.target

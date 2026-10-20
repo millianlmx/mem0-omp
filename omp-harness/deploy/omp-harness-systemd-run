@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Le lanceur ROOT du harness : la seule porte de `omp-harness` vers systemd.
+#
+# Installé en /usr/local/libexec/omp-harness-systemd-run (root:root 0755) et
+# autorisé par sudoers pour le seul user `omp-harness`. Il n'exécute que les TROIS
+# lignes que le service construit, après les avoir validées mot à mot :
+#
+#   --scope …  -- choom -n N -- omp …    un runner : scope MemoryMax, relancé sous
+#                                        RUNNER_USER (jamais root, jamais le service)
+#   --wait --pipe …  -- /bin/bash -c CMD un job heavy : service transitoire forcé
+#                                        User=HEAVY_USER, PrivateNetwork=yes,
+#                                        chemins inscriptibles sous WRITABLE_ROOTS
+#   --stop omp-(runner|heavy)-….scope|service
+#
+# Toute autre forme est refusée (sortie 64). Sans ce contrôle, autoriser
+# `systemd-run` à `omp-harness` reviendrait à lui donner root (`-p User=root`).
+#
+# La configuration (/etc/omp-harness/launcher.conf, root:root 0644) est LUE, jamais
+# sourcée : seules les clés connues sont prises. OMP_HARNESS_LAUNCHER_DRY_RUN=1
+# imprime la ligne finale au lieu de l'exécuter (tests) ; la configuration de
+# remplacement OMP_HARNESS_LAUNCHER_CONF n'est honorée qu'en essai ET hors root.
+set -euo pipefail
+umask 0002
+
+WORKTREES_ROOT=/var/lib/omp-harness/worktrees
+WRITABLE_ROOTS="/var/lib/omp-harness/worktrees /var/cache/omp-harness /var/lib/omp-heavy"
+HEAVY_USER=omp-heavy
+RUNNER_USER=omp-runner
+WORK_GROUP=omp-work
+HEAVY_SLICE=omp-harness-heavy.slice
+RUNNER_SLICE=omp-harness-runners.slice
+
+DRY_RUN=0
+CONF=/etc/omp-harness/launcher.conf
+if [ "${OMP_HARNESS_LAUNCHER_DRY_RUN:-}" = "1" ]; then
+  DRY_RUN=1
+  if [ "$(id -u)" != "0" ] && [ -n "${OMP_HARNESS_LAUNCHER_CONF:-}" ]; then CONF="$OMP_HARNESS_LAUNCHER_CONF"; fi
+fi
+
+if [ -r "$CONF" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      WORKTREES_ROOT) WORKTREES_ROOT="$value" ;;
+      WRITABLE_ROOTS) WRITABLE_ROOTS="$value" ;;
+      HEAVY_USER) HEAVY_USER="$value" ;;
+      RUNNER_USER) RUNNER_USER="$value" ;;
+      WORK_GROUP) WORK_GROUP="$value" ;;
+      HEAVY_SLICE) HEAVY_SLICE="$value" ;;
+      RUNNER_SLICE) RUNNER_SLICE="$value" ;;
+      *) ;;
+    esac
+  done < <(grep -E '^[A-Z_]+=' "$CONF" | sed 's/"//g')
+fi
+
+refuse() {
+  echo "omp-harness-systemd-run : refusé — $*" >&2
+  exit 64
+}
+
+# `path` est-il STRICTEMENT sous une des racines données (liens résolus) ?
+under() {
+  local target root resolved
+  target=$(realpath -m -- "$1")
+  shift
+  for root in "$@"; do
+    resolved=$(realpath -m -- "$root")
+    case "$target" in "$resolved"/?*) return 0 ;; esac
+  done
+  return 1
+}
+
+# `path` est-il une des racines, ou dessous ?
+within() {
+  local target root resolved
+  target=$(realpath -m -- "$1")
+  shift
+  for root in "$@"; do
+    resolved=$(realpath -m -- "$root")
+    [ "$target" = "$resolved" ] && return 0
+    case "$target" in "$resolved"/?*) return 0 ;; esac
+  done
+  return 1
+}
+
+run() {
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '%s\n' "$@"
+    exit 0
+  fi
+  exec "$@"
+}
+
+size_re='^[0-9]+[KMGT]?$'
+unit_id_re='^[A-Za-z0-9_-]+$'
+
+[ "$#" -ge 1 ] || refuse "aucun argument"
+
+case "$1" in
+  --stop)
+    [ "$#" -eq 2 ] || refuse "--stop prend une unité"
+    [[ "$2" =~ ^omp-(runner|heavy)-[A-Za-z0-9_-]+\.(scope|service)$ ]] || refuse "unité hors du harness : $2"
+    run systemctl stop -- "$2"
+    ;;
+
+  --scope)
+    # --scope --quiet --collect --unit=omp-runner-ID --slice=… -p MemoryMax=X -- choom -n N -- omp …
+    [ "$#" -ge 12 ] || refuse "ligne de runner trop courte"
+    [ "$2" = "--quiet" ] && [ "$3" = "--collect" ] || refuse "options de scope inattendues"
+    unit="${4#--unit=}"
+    [ "$4" = "--unit=$unit" ] && [[ "$unit" =~ ^omp-runner- ]] && [[ "${unit#omp-runner-}" =~ $unit_id_re ]] || refuse "unité de runner invalide : $4"
+    [ "$5" = "--slice=$RUNNER_SLICE" ] || refuse "tranche de runner invalide : $5"
+    [ "$6" = "-p" ] || refuse "propriété attendue"
+    memory="${7#MemoryMax=}"
+    [ "$7" = "MemoryMax=$memory" ] && [[ "$memory" =~ $size_re ]] || refuse "MemoryMax invalide : $7"
+    [ "$8" = "--" ] && [ "$9" = "choom" ] && [ "${10}" = "-n" ] || refuse "le runner doit passer par choom"
+    [[ "${11}" =~ ^[0-9]+$ ]] && [ "${11}" -le 1000 ] || refuse "score OOM invalide : ${11}"
+    [ "${12}" = "--" ] || refuse "choom -n N -- attendu"
+    shift 12
+    [ "$#" -ge 1 ] || refuse "commande de runner absente"
+    home=$(getent passwd "$RUNNER_USER" | cut -d: -f6 || true)
+    [ -n "$home" ] || [ "$DRY_RUN" = "1" ] || refuse "user de runner inconnu : $RUNNER_USER"
+    export HOME="${home:-/nonexistent}" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER"
+    run systemd-run --scope --quiet --collect "--unit=$unit" "--slice=$RUNNER_SLICE" -p "MemoryMax=$memory" \
+      "--uid=$RUNNER_USER" "--gid=$WORK_GROUP" -- choom -n "${11}" -- "$@"
+    ;;
+
+  --wait)
+    # Un job heavy : chaque mot est vérifié jusqu'à `--`, puis exactement /bin/bash -c CMD.
+    final=()
+    seen_user=0 seen_network=0 seen_memory=0 seen_nnp=0 seen_unit=0 seen_slice=0 seen_cwd=0
+    expected_flags=(--wait --pipe --collect --service-type=exec)
+    for flag in "${expected_flags[@]}"; do
+      [ "${1:-}" = "$flag" ] || refuse "option attendue : $flag (reçu ${1:-rien})"
+      final+=("$1")
+      shift
+    done
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+      arg="$1"
+      shift
+      case "$arg" in
+        --unit=omp-heavy-*)
+          [[ "${arg#--unit=omp-heavy-}" =~ $unit_id_re ]] || refuse "unité heavy invalide : $arg"
+          seen_unit=1
+          final+=("$arg")
+          ;;
+        --slice=*)
+          [ "$arg" = "--slice=$HEAVY_SLICE" ] || refuse "tranche heavy invalide : $arg"
+          seen_slice=1
+          final+=("$arg")
+          ;;
+        --working-directory=*)
+          under "${arg#--working-directory=}" "$WORKTREES_ROOT" || refuse "répertoire hors des worktrees : $arg"
+          seen_cwd=1
+          final+=("$arg")
+          ;;
+        --setenv=*)
+          [[ "${arg#--setenv=}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || refuse "variable invalide : $arg"
+          final+=("$arg")
+          ;;
+        -p)
+          [ "$#" -ge 1 ] || refuse "-p sans propriété"
+          prop="$1"
+          shift
+          key="${prop%%=*}"
+          value="${prop#*=}"
+          case "$key" in
+            MemoryMax) [[ "$value" =~ $size_re ]] || refuse "MemoryMax invalide : $value"; seen_memory=1 ;;
+            CPUQuota) [[ "$value" =~ ^[0-9]+%$ ]] || refuse "CPUQuota invalide : $value" ;;
+            User) [ "$value" = "$HEAVY_USER" ] || refuse "User doit être $HEAVY_USER (reçu $value)"; seen_user=1 ;;
+            PrivateNetwork) [ "$value" = "yes" ] || refuse "PrivateNetwork doit être yes"; seen_network=1 ;;
+            OOMScoreAdjust) [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -le 1000 ] || refuse "OOMScoreAdjust doit être entre 0 et 1000" ;;
+            RuntimeMaxSec) [[ "$value" =~ ^[0-9]+$ ]] || refuse "RuntimeMaxSec invalide : $value" ;;
+            NoNewPrivileges) [ "$value" = "yes" ] || refuse "NoNewPrivileges doit être yes"; seen_nnp=1 ;;
+            PrivateTmp) [ "$value" = "yes" ] || refuse "PrivateTmp doit être yes" ;;
+            ProtectSystem) [ "$value" = "strict" ] || refuse "ProtectSystem doit être strict" ;;
+            UMask) [[ "$value" =~ ^0[0-7]{3}$ ]] || refuse "UMask invalide : $value" ;;
+            ReadWritePaths)
+              for writable in $value; do
+                # shellcheck disable=SC2086
+                within "$writable" $WRITABLE_ROOTS || refuse "chemin inscriptible hors des racines : $writable"
+              done
+              ;;
+            *) refuse "propriété non permise : $key" ;;
+          esac
+          final+=(-p "$prop")
+          ;;
+        *) refuse "option non permise : $arg" ;;
+      esac
+    done
+    [ "$seen_user" = 1 ] && [ "$seen_network" = 1 ] && [ "$seen_memory" = 1 ] && [ "$seen_nnp" = 1 ] || refuse "User, PrivateNetwork, MemoryMax et NoNewPrivileges sont obligatoires"
+    [ "$seen_unit" = 1 ] && [ "$seen_slice" = 1 ] && [ "$seen_cwd" = 1 ] || refuse "--unit, --slice et --working-directory sont obligatoires"
+    [ "${1:-}" = "--" ] && [ "${2:-}" = "/bin/bash" ] && [ "${3:-}" = "-c" ] && [ "$#" -eq 4 ] || refuse "la commande doit être exactement -- /bin/bash -c CMD"
+    run systemd-run "${final[@]}" -- /bin/bash -c "$4"
+    ;;
+
+  *)
+    refuse "forme inconnue : $1"
+    ;;
+esac
