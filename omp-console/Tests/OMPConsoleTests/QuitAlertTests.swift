@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 private func sessionAlert() throws -> (QuitPrompt, NSAlert) {
-    let prompt = try #require(QuitPrompt.make([.session(name: "mem0-omp")]))
+    let prompt = try #require(QuitPrompt.make([.terminalCommand(name: "sleep")]))
     return (prompt, QuitAlert.make(prompt))
 }
 

@@ -279,6 +279,19 @@ diagnostic_dsym() {
   (cd "$PKG" && bash -c "$commande" 2>&1; echo "code $?") | tail -40 | sed 's/^/    /'
 }
 
+# Un « Failed frontend command » sans aucune ligne `fichier.swift:L:C: error:` :
+# swiftbuild a perdu les diagnostics du compilateur. Une seconde compilation
+# (incrémentale : seule la cible en échec recompile) les imprime ; on n'en garde
+# que les erreurs et leurs deux lignes de contexte.
+diagnostic_compilation() {
+  printf '%s\n' "$test_out" | grep -q 'Failed frontend command' || return 0
+  printf '%s\n' "$test_out" | grep -qE '\.swift:[0-9]+:[0-9]+: error:' && return 0
+  echo "  · erreurs du compilateur (seconde compilation pour le diagnostic) :"
+  (cd "$PKG" && swift build -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" --build-tests \
+    -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1) \
+    | grep -E -A2 '\.swift:[0-9]+:[0-9]+: error:' | head -80 | sed 's/^/    /'
+}
+
 # Branche d'échec de `swift test` (S-4) : relance UNIQUE, avec `--filter`, des
 # seuls tests tombés, et seulement s'ils sont TOUS au registre
 # scripts/tests-instables-connus.json (`ci-verdict.sh --instables`). Code 0 si
@@ -299,6 +312,7 @@ relance_instables() (
   if [ "${#echecs[@]}" -eq 0 ]; then
     echo "✗ échec de swift test non attribuable à un test nommé (compilation, plantage, sortie illisible ou interruption) : aucune relance"
     diagnostic_dsym
+    diagnostic_compilation
     exit 1
   fi
 

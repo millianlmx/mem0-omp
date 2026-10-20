@@ -125,15 +125,15 @@ func terminationGuardCoversTheThreeHooks() async {
 }
 
 @MainActor
-@Test("terminal-integre/AC-10 : l'accroche du terminal ne dépend ni de la session ni du projet")
+@Test("terminal-integre/AC-10 : l'accroche du terminal ne dépend pas de celle du service d'API distante")
 func terminalHookIsIndependentFromTheOthers() async {
     let saved = SavedQuitStatics()
     defer { saved.restore() }
     let delegate = AppDelegate()
 
-    var sessionCalled = false
+    var remoteCalled = false
     var terminalCalled = false
-    AppDelegate.terminateSession = { sessionCalled = true }
+    AppDelegate.terminateRemoteService = { remoteCalled = true }
     AppDelegate.terminateTerminal = { terminalCalled = true }
 
     var requested = false
@@ -141,5 +141,5 @@ func terminalHookIsIndependentFromTheOthers() async {
     delegate.quit.closeAttachedSheets = {}
     delegate.quit.requestTermination = { requested = true }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
-    #expect(await awaitMainTrue { sessionCalled && terminalCalled && requested })
+    #expect(await awaitMainTrue { remoteCalled && terminalCalled && requested })
 }
