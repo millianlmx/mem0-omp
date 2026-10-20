@@ -9,7 +9,7 @@
 #   --scope …  -- choom -n N -- OMP_BIN … un runner : scope MemoryMax, relancé sous
 #                                        RUNNER_USER (jamais root, jamais le service),
 #                                        avec les clés de RUNNER_ENV_FILE (root seul)
-#   --wait --pipe …  -- /bin/bash -c CMD un job heavy : service transitoire forcé
+#   --wait --pipe …  -- HEAVY_SHELL -c CMD un job heavy : service transitoire forcé
 #                                        User=HEAVY_USER, PrivateNetwork=yes,
 #                                        chemins inscriptibles sous WRITABLE_ROOTS
 #   --stop omp-(runner|heavy)-….scope|service
@@ -24,7 +24,8 @@
 set -euo pipefail
 set -f
 umask 0002
-PATH=/usr/sbin:/usr/bin:/sbin:/bin
+# /run/current-system/sw/bin : les outils du système sous NixOS (absent ailleurs).
+PATH=/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin
 export PATH
 cd /
 
@@ -37,6 +38,8 @@ HEAVY_SLICE=omp-harness-heavy.slice
 RUNNER_SLICE=omp-harness-runners.slice
 OMP_BIN=/usr/local/bin/omp
 RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+# Le bash des jobs heavy : `/bin/bash`, ou son chemin du store sous NixOS.
+HEAVY_SHELL=/bin/bash
 # Ce qu'un job heavy ne doit jamais voir, ajouté par le lanceur lui-même.
 HEAVY_HIDDEN="/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private"
 
@@ -60,6 +63,7 @@ if [ -r "$CONF" ]; then
       OMP_BIN) OMP_BIN="$value" ;;
       RUNNER_ENV_FILE) RUNNER_ENV_FILE="$value" ;;
       HEAVY_HIDDEN) HEAVY_HIDDEN="$value" ;;
+      HEAVY_SHELL) HEAVY_SHELL="$value" ;;
       *) ;;
     esac
   done < <(grep -E '^[A-Z_]+=' "$CONF" | sed 's/"//g')
@@ -170,7 +174,7 @@ case "$1" in
     ;;
 
   --wait)
-    # Un job heavy : chaque mot est vérifié jusqu'à `--`, puis exactement /bin/bash -c CMD.
+    # Un job heavy : chaque mot est vérifié jusqu'à `--`, puis exactement HEAVY_SHELL -c CMD.
     final=()
     seen_user=0 seen_network=0 seen_memory=0 seen_nnp=0 seen_unit=0 seen_slice=0 seen_cwd=0
     seen_protect=0 seen_tmp=0 seen_runtime=0
@@ -248,8 +252,8 @@ case "$1" in
     hidden=()
     for path in $HEAVY_HIDDEN; do hidden+=("-$path"); done
     final+=(-p "ProtectHome=yes" -p "InaccessiblePaths=${hidden[*]}" -p "PrivateDevices=yes" -p "PrivateIPC=yes")
-    [ "${1:-}" = "--" ] && [ "${2:-}" = "/bin/bash" ] && [ "${3:-}" = "-c" ] && [ "$#" -eq 4 ] || refuse "la commande doit être exactement -- /bin/bash -c CMD"
-    run systemd-run "${final[@]}" -- /bin/bash -c "$4"
+    [ "${1:-}" = "--" ] && [ "${2:-}" = "$HEAVY_SHELL" ] && [ "${3:-}" = "-c" ] && [ "$#" -eq 4 ] || refuse "la commande doit être exactement -- $HEAVY_SHELL -c CMD"
+    run systemd-run "${final[@]}" -- "$HEAVY_SHELL" -c "$4"
     ;;
 
   *)

@@ -120,7 +120,7 @@ struct IOSConnectionStatusTests {
         let local = ConsoleAPI.protocolVersion - 1
         let remote = ConsoleAPI.protocolVersion
         #expect(ConnectionText.incompatibleProtocol(local: local, remote: remote)
-            == "Version de protocole incompatible (app 1, Mac 2)")
+            == "Version de protocole incompatible (app 2, Mac 3)")
         for failed in [false, true] {
             #expect(
                 IOSConnectionStatus.resolve(.incompatibleProtocol(local: local, remote: remote), attemptFollowsFailure: failed)

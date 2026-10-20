@@ -89,6 +89,8 @@ export type HarnessConfig = {
     cargoTargetRoot: string | null;
     /** Les chemins inscriptibles en plus du worktree (caches sccache, store pnpm, HOME du user heavy). */
     readWritePaths: string[];
+    /** Le bash qui lance la commande d'un job : `/bin/bash`, ou son chemin du store sous NixOS. */
+    shell: string;
   };
   /** Admission sur `MemAvailable` : un process ne démarre que s'il laisse `reserveMiB` libres. */
   admission: { reserveMiB: number; runnerMiB: number; heavyMiB: number };
@@ -164,6 +166,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       env: {},
       cargoTargetRoot: null,
       readWritePaths: [],
+      shell: "/bin/bash",
     },
     admission: { reserveMiB: 2048, runnerMiB: 1024, heavyMiB: 4096 },
     models: { fast: [], heavy: [] },
@@ -213,6 +216,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   sizeMiB(config.runner.memoryMax);
   sizeMiB(config.heavy.memoryMax);
   if (!/^\d+%$/.test(config.heavy.cpuQuota)) fail("heavy.cpuQuota doit être un pourcentage (300%)");
+  if (typeof config.heavy.shell !== "string" || !path.isAbsolute(config.heavy.shell)) fail("heavy.shell doit être un chemin absolu");
   for (const isolation of [config.runner.isolation, config.heavy.isolation]) {
     if (isolation !== "systemd" && isolation !== "none") fail(`isolation inconnue : ${String(isolation)}`);
   }

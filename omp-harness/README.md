@@ -132,6 +132,51 @@ sudo systemctl enable --now omp-harness
 tailscale serve --bg --https=443 http://127.0.0.1:8790
 ```
 
+### Sur NixOS
+
+`install.sh` écrit dans `/etc` et `/usr/local`, que NixOS gère lui-même. Le module
+`deploy/nixos/module.nix` déclare la même chose : users, dossiers et droits, sudoers du
+lanceur root, tranches, services, oomd, zram. Les chemins viennent du store : node,
+le bash des jobs heavy (`heavy.shell`), le lanceur et `mem0-rs`, compilé depuis
+`mem0-stack/mem0-rs` (rustc ≥ 1.89).
+
+```nix
+# configuration.nix — clone du dépôt dans /etc/nixos/mem0-omp (ou input de flake, flake = false)
+{ pkgs, ... }: {
+  imports = [ ./mem0-omp/omp-harness/deploy/nixos/module.nix ];
+  services.omp-harness = {
+    enable = true;
+    ompBin = "/run/current-system/sw/bin/omp";      # chemin absolu d'omp, épinglé par le lanceur
+    heavyPackages = [ pkgs.nodejs_22 ];             # les outils des tests de tes dépôts
+    mem0.environment.OMLX_BASE_URL = "http://homelab:8000/v1";
+    settings = {                                    # fusionné sur les défauts, sans secret
+      models.fast = [ { provider = "anthropic"; model = "claude-haiku-5-5"; } ];
+      models.heavy = [ { provider = "anthropic"; model = "claude-opus-5-5"; } ];
+      providers.anthropic = { capacity = 20; refillPerMinute = 20; };
+      repos = [ {
+        name = "mon-produit";
+        path = "/var/lib/omp-harness/repos/mon-produit";
+        tests = { touched = "npm test -- {files}"; full = "npm test"; };
+        merge = "local";
+      } ];
+    };
+  };
+}
+```
+
+Puis `sudo nixos-rebuild switch`, et les gestes qui ne se déclarent pas :
+
+```bash
+sudo -u omp-harness git clone --bare <url> /var/lib/omp-harness/repos/mon-produit
+sudo -u omp-runner -H omp --profile pipeline      # /login, ou ANTHROPIC_API_KEY=… dans /etc/omp-harness/runner.env
+sudo systemctl restart omp-harness
+tailscale serve --bg --https=443 http://127.0.0.1:8790
+```
+
+`omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
+(root seul, jamais dans le store) avec le jeton partagé de mem0 ; `OMLX_API_TOKEN` s'y
+ajoute à la main.
+
 Pour développer sans systemd, passe `runner.isolation` et `heavy.isolation` à
 `none` et `launcher` à `[]`, puis :
 `node --experimental-strip-types omp-harness/main.ts --config ma-config.json`.

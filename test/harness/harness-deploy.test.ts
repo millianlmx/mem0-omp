@@ -181,7 +181,7 @@ test("harness-deploy/AC-5 : la configuration du lanceur est LUE, jamais ex√©cut√
   );
   assert.equal(DEFAULT_LAUNCHER.includes("-E"), false);
   assert.match(source, /^#!\/bin\/bash$/m);
-  assert.match(source, /^PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin$/m);
+  assert.match(source, /^PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin:\/run\/current-system\/sw\/bin$/m);
   assert.match(source, /^set -f$/m);
   assert.equal(
     read("sudoers")

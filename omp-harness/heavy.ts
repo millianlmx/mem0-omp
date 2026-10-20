@@ -118,7 +118,7 @@ export function heavyArgv(config: HarnessConfig, worktree: string, unit: string,
     "-p", `ReadWritePaths=${writable.join(" ")}`,
     ...Object.entries(env).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
-    "/bin/bash",
+    heavy.shell,
     "-c",
     command,
   ];
