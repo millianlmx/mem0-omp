@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { listTestFiles } from "../support/repo.ts";
+import { linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
@@ -201,6 +201,9 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sect
       return segments[0] !== "test" || segments.length === 1;
     },
   });
+  // `.typecheck/` n'est pas copié : la section Types y lance le TypeScript
+  // épinglé de ROOT, relié, jamais téléchargé.
+  linkPinnedTypescript(dir);
   fs.writeFileSync(path.join(dir, "test", "a.test.ts"), fixture(["fixture/a"]));
   fs.writeFileSync(path.join(dir, "test", "b.test.ts"), fixture(["fixture/b"]));
   const marker = path.join(tmpdir("ci-macos-marqueur-"), "ran");
@@ -506,6 +509,8 @@ function withoutBlock(steps: string[], block: string[]): string[] {
   assert.deepEqual(steps.slice(at, at + block.length), block);
   return [...steps.slice(0, at), ...steps.slice(at + block.length)];
 }
+/** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), ajoutée au job check après f3fbfe6. */
+const TYPESCRIPT_STEP = ["      - name: Installer le TypeScript épinglé du type-check", "        run: bash scripts/typecheck.sh --prepare"];
 
 /** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
 function withoutStep(steps: string[], first: string, count: number): string[] {
@@ -568,7 +573,11 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   old = old.filter((line) => !line.includes("MEM0_OMP_REQUIRE_HTTP_API"));
   assert.deepEqual(
     current.filter(
-      (line) => !QDRANT_STEP.includes(line) && !RUST_STEP.includes(line) && !line.includes("MEM0_OMP_REQUIRE_RUST"),
+      (line) =>
+        !QDRANT_STEP.includes(line) &&
+        !RUST_STEP.includes(line) &&
+        !TYPESCRIPT_STEP.includes(line) &&
+        !line.includes("MEM0_OMP_REQUIRE_RUST"),
     ),
     old,
   );

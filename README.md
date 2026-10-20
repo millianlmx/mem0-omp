@@ -38,7 +38,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/test-ac.sh                 preuve par critère : tests du diff portant AC-n, une passe node --test, pass|fail|absent
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois par swift-app.sh
-├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
+├── scripts/typecheck.sh               type-check des deux plugins et de test/ par le tsc épinglé de .typecheck/ (--prepare l'installe)
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
@@ -1637,9 +1637,14 @@ couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` 
 suite (lib ES2024). Les deux programmes appliquent `strict`, `noUnusedLocals`,
 `noUnusedParameters` et `noFallthroughCasesInSwitch` : une variable, un import ou
 un paramètre jamais lu (préfixe `_` pour un paramètre imposé par une signature)
-et un `case` non vide qui retombe dans le suivant font échouer le job. La
-validation ne se contente pas de transpiler les extensions :
-`scripts/plugin-smoke.ts` charge
+et un `case` non vide qui retombe dans le suivant font échouer le job. Ce `tsc`
+est TypeScript 5.9.3, installé une fois dans `.typecheck/typescript` (gitignoré)
+par `bash scripts/typecheck.sh --prepare` (réseau requis) ; ensuite le type-check
+ne touche ni au réseau ni au cache npm. Absent ou d'une autre version, la section
+Types rougit en donnant cette commande. La CI la lance avant `check.sh` (étape
+« Installer le TypeScript épinglé du type-check ») dans `check`, `macos-tests`,
+`release` et `release-simulation`. La validation ne se contente pas de
+transpiler les extensions : `scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
 vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 `mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
