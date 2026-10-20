@@ -28,6 +28,7 @@ import { arbiterCaptureOf, auditSessionOf, hostedSettingsOverrides, maillonIdent
 import { ARBITER_TOOLS, registerArbiterTool } from "./arbiter.ts";
 import { exhaustedUntil, quotaStopReason, startModelFor } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
+import { serviceVersionDrift } from "./serviceVersion.ts";
 import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefusal, handOverCollecte, lotDriverFor, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { ConversationRunTarget, WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
@@ -655,6 +656,12 @@ export default function reqExtension(pi: ExtensionAPI) {
             ? `[service] en marche (pid ${record.pid}, port ${record.port}) — ${serviceFilePath(storeDir())}`
             : `[service] arrêté — ${serviceFilePath(storeDir())} (job launchd : ${job.text})`,
         );
+        // Écart de version (service-version-drift-detection, S-2) : seulement un
+        // service en marche est sondé ; arrêté, muet ou 401 ⇒ silence.
+        if (record !== null) {
+          const notice = await serviceVersionDrift({ stateDir: storeDir() });
+          if (notice) say(notice, "warning");
+        }
         return;
       }
       if (action === "install") {
@@ -839,6 +846,14 @@ export default function reqExtension(pi: ExtensionAPI) {
     // enfant headless (sans interface, les branches ci-dessus ont déjà rendu la main).
     if (ctx.hasUI === true) {
       registerPilotTools(pi, { stateDir: storeDir, client: () => createServiceClient({ stateDir: storeDir() }) });
+      // ÉCART DE VERSION (service-version-drift-detection, S-3) : seule une
+      // session interactive non enfant contrôle — jamais attendu, la sonde est
+      // bornée et l'ouverture de la session ne l'attend pas.
+      void serviceVersionDrift({ stateDir: storeDir() })
+        .then(notice => {
+          if (notice) ctx.ui?.notify?.(notice, "warning");
+        })
+        .catch(() => {});
     }
   });
 
@@ -1534,6 +1549,7 @@ export * from "./panelSession.ts";
 export * from "./panelView.ts";
 export * from "./panelWidth.ts";
 export * from "./pilotTools.ts";
+export * from "./pluginVersion.ts";
 export * from "./project.ts";
 export * from "./projectDriver.ts";
 export * from "./projectRelay.ts";
@@ -1553,5 +1569,6 @@ export * from "./serviceRuns.ts";
 export * from "./serviceRuntime.ts";
 export * from "./serviceSessions.ts";
 export * from "./serviceState.ts";
+export * from "./serviceVersion.ts";
 export * from "./state.ts";
 export * from "./store.ts";

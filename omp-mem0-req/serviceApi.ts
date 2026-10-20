@@ -40,11 +40,14 @@ export const unauthorized = () => new ServiceError(401, "unauthorized", "jeton a
 // --- charge utile de GET /v1/health -----------------------------------------
 
 export type ServiceHealth = {
+  /** Version du FORMAT (SERVICE_VERSION, toujours 1). */
   version: number;
   pid: number;
   startedAt: number;
   sessions: number;
   lots: number;
+  /** Version d'omp-mem0-req chargée au démarrage du service ; `null` si illisible. */
+  pluginVersion: string | null;
 };
 
 

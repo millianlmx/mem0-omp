@@ -11,6 +11,7 @@ import { LOT_TICK_MS, lotRepoKey, lotStateDir, readLot } from "./lot.ts";
 import { createLotController } from "./lotController.ts";
 import type { LotController } from "./lotController.ts";
 import { readProject, writeProject } from "./project.ts";
+import { LOADED_PLUGIN_VERSION } from "./pluginVersion.ts";
 import type { Project } from "./project.ts";
 import { conduiteBusyRefusal } from "./projectRelay.ts";
 import { asCommand, commandShapeRefusal } from "./commands.ts";
@@ -281,6 +282,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
         startedAt: deps.startedAt ?? now(),
         sessions: deps.host.list().length,
         lots: storeFiles(lotStateDir(stateDir)).length,
+        pluginVersion: LOADED_PLUGIN_VERSION,
       };
     },
 

@@ -427,7 +427,9 @@ c'est lui qui exécute les maillons — plus aucun `omp -p` par maillon.
 - `/service start` — démarre le service DANS le process courant et ne rend jamais la
   main : c'est la commande que le job launchd exécute
   (`omp -p --no-session --pipeline-service "/service start"`).
-- `/service status` — dit `en marche (pid N, port P)` ou `arrêté`, et l'état du job.
+- `/service status` — dit `en marche (pid N, port P)` ou `arrêté`, et l'état du job ;
+  signale aussi un écart de version entre le service en marche et le plugin installé
+  (`[service] écart de version …`).
 - `/service stop` — arrêt propre : plus de nouvelles requêtes, tours coupés,
   contrôleurs arrêtés, `service.json` retiré.
 - `/service install` / `/service uninstall` — pose (ou retire) le job launchd
@@ -445,7 +447,7 @@ absolu percent-encodé, refus `{error, reason}`) :
 
 | Route | Rôle |
 |---|---|
-| `GET /v1/health` | version, pid, sessions, lots |
+| `GET /v1/health` | version (format, toujours 1), pid, sessions, lots, pluginVersion (version d'omp-mem0-req chargée au démarrage du service) |
 | `POST /v1/repos/{repo}/pilot` | réveille le pilote d'un dépôt |
 | `POST /v1/repos/{repo}/commands` | commande de pipeline, rend son accusé |
 | `GET /v1/repos/{repo}/lot` | état du lot du dépôt (`runs[]` avec pic et compactions) |

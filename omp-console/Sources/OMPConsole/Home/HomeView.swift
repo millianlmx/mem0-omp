@@ -39,6 +39,9 @@ struct HomeView: ConsoleSectionView {
     /// La préparation de l'app (S-5) : le fond « composants manquants » et le
     /// bandeau « Reprendre… » en dépendent.
     @ObservedObject var setup: SetupModel
+    /// L'écart de version du service OMP (S-4 de service-version-drift-detection) :
+    /// un bandeau sans bouton juste sous celui de la préparation.
+    @ObservedObject var serviceVersion: ServiceVersionModel
 
     var body: some View {
         Group {
@@ -46,6 +49,7 @@ struct HomeView: ConsoleSectionView {
             case .ompMissing:
                 VStack(spacing: 16) {
                     setupBanner
+                    serviceVersionBanner
                     ContentUnavailableView(
                         SetupText.homeMissingTitle,
                         systemImage: "shippingbox",
@@ -56,6 +60,7 @@ struct HomeView: ConsoleSectionView {
             case .loading:
                 VStack(spacing: 8) {
                     setupBanner
+                    serviceVersionBanner
                     ProgressView()
                     Text(KanbanBoardState.loadingText).foregroundStyle(.secondary)
                 }
@@ -76,6 +81,7 @@ struct HomeView: ConsoleSectionView {
     private var firstRunView: some View {
         VStack(spacing: 16) {
             setupBanner
+            serviceVersionBanner
             notificationsBanner
             launchBanner
             ContentUnavailableView {
@@ -108,6 +114,7 @@ struct HomeView: ConsoleSectionView {
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 28) {
                 setupBanner
+                serviceVersionBanner
                 notificationsBanner
                 launchBanner
 
@@ -419,6 +426,28 @@ struct HomeView: ConsoleSectionView {
             .consoleBanner(tint: .orange)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("home.setupBanner")
+        }
+    }
+
+    /// Le service OMP exécute une autre version d'omp-mem0-req que le module
+    /// installé (S-4) : un bandeau d'information, sans bouton — la relance se
+    /// fait par `/service install` dans OMP — retiré dès que `service.json` est
+    /// republié à la bonne version.
+    @ViewBuilder
+    private var serviceVersionBanner: some View {
+        if let text = serviceVersion.warning {
+            GroupBox {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    Text(text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(4)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("home.serviceVersionBanner")
         }
     }
 
