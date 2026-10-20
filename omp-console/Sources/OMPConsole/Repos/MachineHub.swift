@@ -45,6 +45,9 @@ final class MachineHub: ObservableObject, RemoteGestureRelay {
     let repos: UnifiedReposModel
     /// Le bloc de connexion au VPS de la section « Dépôts ».
     let connection: VpsConnectionModel
+    /// La Session OMP hébergée sur le VPS (S-8) : la section « Session OMP » la montre
+    /// quand le sélecteur « Mac | VPS » est sur « VPS ».
+    let session: VpsSessionModel
     /// Le choix de l'utilisateur pour les écrans mono-machine.
     @Published private(set) var chosen: RepoMachine = .mac
 
@@ -65,6 +68,7 @@ final class MachineHub: ObservableObject, RemoteGestureRelay {
         vpsSource = ClientMachineSource(vps)
         repos = UnifiedReposModel(mac: local, vps: vpsSource, preferences: preferences)
         connection = VpsConnectionModel(client: vps)
+        session = VpsSessionModel(client: vps)
         actions.relay = self
         for changes in [local.changes, vpsSource.changes] {
             changes

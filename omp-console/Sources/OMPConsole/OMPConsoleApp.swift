@@ -145,11 +145,19 @@ struct OMPConsoleApp: App {
         _remoteModel = StateObject(wrappedValue: remote)
         // Les deux machines : le Mac (ses modèles, par les gestes typés du service local) et
         // le VPS (client appairé, slot `.vps`). Aucun VPS configuré : rien ne change.
-        _machineHub = StateObject(wrappedValue: MachineHub.live(
+        let hub = MachineHub.live(
             local: LocalMacSource(actions: remote.remoteActions, hub: storeHub, kanban: kanban),
             kanban: kanban,
             actions: actions
-        ))
+        )
+        _machineHub = StateObject(wrappedValue: hub)
+        // Fermer l'app lâche la lecture de la session du VPS et n'envoie RIEN au VPS : la
+        // session y continue (S-8 de orchestrator-living-in-a-vps).
+        let quitLocalSession = AppDelegate.terminateSession
+        AppDelegate.terminateSession = {
+            await quitLocalSession?()
+            await hub.session.terminateForQuit()
+        }
         // Les intents Siri (siri-mac-questions-en-attente, S-5) résolvent les
         // modèles mêmes que les vues et l'API distante. `init()` tourne aussi au
         // lancement à froid par Siri, sans fenêtre : la lecture démarre l'ardoise.

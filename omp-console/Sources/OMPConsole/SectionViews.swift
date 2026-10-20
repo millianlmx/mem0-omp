@@ -40,7 +40,9 @@ struct SessionsView: ConsoleSectionView {
 struct SessionConsoleSectionView: ConsoleSectionView {
     static let section = ConsoleSection.session
     @ObservedObject var model: SessionConsoleModel
-    var body: some View { SessionConsoleView(model: model) }
+    /// Les deux machines : le sélecteur « Mac | VPS » et la session hébergée sur le VPS (S-8).
+    @ObservedObject var hub: MachineHub
+    var body: some View { SessionMachineView(model: model, hub: hub) }
 }
 
 struct TerminalSectionView: ConsoleSectionView {
@@ -129,7 +131,7 @@ struct SectionDetail: View {
         case .kanban: pilotage { KanbanView(model: kanban, actions: actions, contract: contract) }
         case .repos: ReposView(hub: hub)
         case .sessions: SessionsView(console: console)
-        case .session: SessionConsoleSectionView(model: sessionModel)
+        case .session: SessionConsoleSectionView(model: sessionModel, hub: hub)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)

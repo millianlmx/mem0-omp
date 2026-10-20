@@ -21,9 +21,21 @@
 // (`ConsoleCore/Viewer/SessionFollow.swift`, S-8 de `ios-sessions`).
 
 import Combine
+import ConsoleClient
 import ConsoleCore
 import CoreGraphics
 import Foundation
+
+/// La source d'un fil servi par un autre poste (S-8 de orchestrator-living-in-a-vps) :
+/// UNE lecture complète, puis les AJOUTS poussés par le flux. `ConsoleClientModel` s'y
+/// conforme tel quel : le fichier n'est jamais ouvert localement, c'est celui du VPS.
+@MainActor
+protocol RemoteSessionSource: AnyObject {
+    func session(file: String) async throws -> ConsoleClient.RemoteSessionPayload
+    func sessionFeed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem>
+}
+
+extension ConsoleClientModel: RemoteSessionSource {}
 
 /// Le modèle d'une fenêtre de visionneuse. Un modèle NEUF par fenêtre : c'est
 /// `@StateObject` sur le contenu d'un `WindowGroup` qui alloue ce stockage.
@@ -61,11 +73,17 @@ final class SessionViewerModel: ObservableObject {
     private var followRequestRetries = 0
     private var watcher: FileWatcher?
     private var watchTask: Task<Void, Never>?
+    /// Le fil d'une session d'une AUTRE machine (S-8) : sa source, l'abonné au flux
+    /// et la lecture complète. `nil` pour le fil d'un fichier local.
+    private let remote: (any RemoteSessionSource)?
+    private var feedTask: Task<Void, Never>?
+    private var remoteReadTask: Task<Void, Never>?
 
     /// `watch: false` est la couture des tests qui ne veulent qu'un tirage manuel ;
     /// en production la veille est toujours là.
     init(target: ViewerTarget, watch: Bool = true) {
         self.target = target
+        self.remote = nil
         self.reader = SessionReader(path: target.sessionFile)
 
         if watch {
@@ -85,10 +103,86 @@ final class SessionViewerModel: ObservableObject {
         refresh()
     }
 
+    /// Le fil d'une session servie par un autre poste (S-8) : l'abonné D'ABORD, puis UNE
+    /// lecture complète (`GET /v1/sessions/:fichier`) ; ensuite seules les trames
+    /// `sessions` du flux AJOUTENT des lignes. Aucun fichier local, aucune veille.
+    init(remote source: any RemoteSessionSource, target: ViewerTarget) {
+        self.target = target
+        self.remote = source
+        self.reader = SessionReader(path: target.sessionFile)
+        let feed = source.sessionFeed(forFile: target.sessionFile)
+        feedTask = Task { [weak self] in
+            for await item in feed {
+                guard let self else { return }
+                self.apply(item)
+            }
+        }
+        remoteReadTask = Task { [weak self] in await self?.readRemote() }
+    }
+
+    // MARK: - Fil distant (S-8)
+
+    /// UNE lecture complète. Ne lève jamais : un fichier absent est l'attente d'un premier
+    /// fait, tout autre échec est montré comme une lecture impossible.
+    private func readRemote() async {
+        guard let remote else { return }
+        do {
+            let payload = try await remote.session(file: target.sessionFile)
+            if Task.isCancelled { return }
+            if let reason = payload.unreadableReason {
+                state = .unreadable(reason)
+                return
+            }
+            var fresh = SessionRowBuilder()
+            if let cwd = payload.header?.cwd, !cwd.isEmpty { fresh.projectRoot = cwd }
+            fresh.append(SessionWire.entries(payload))
+            builder = fresh
+            rows = builder.rows
+            expanded = []
+            seedFolds(createdFrom: 0)
+            ignoredCount = payload.skipped.count
+            state = .ready
+            if !rows.isEmpty, following { requestScroll() }
+        } catch {
+            if Task.isCancelled { return }
+            if let clientError = error as? ClientError, case .api(.notFound) = clientError {
+                state = .waiting
+            } else {
+                state = .unreadable(ReposText.sessionReadFailed)
+            }
+        }
+    }
+
+    /// Un item du flux : des lignes qui S'AJOUTENT, ou l'ordre de tout relire parce que
+    /// le fichier a été réécrit.
+    func apply(_ item: RemoteSessionFeedItem) {
+        switch item {
+        case .added(let wireEntries):
+            let entries = wireEntries.compactMap { ConversationEntry($0) }
+            guard !entries.isEmpty else { return }
+            let before = builder.rows.count
+            builder.append(entries)
+            rows = builder.rows
+            seedFolds(createdFrom: before)
+            state = .ready
+            if rows.count > before, following { requestScroll() }
+        case .rewrote:
+            builder = SessionRowBuilder()
+            rows = []
+            expanded = []
+            ignoredCount = 0
+            reconstructions += 1
+            state = .ready
+            remoteReadTask?.cancel()
+            remoteReadTask = Task { [weak self] in await self?.readRemote() }
+        }
+    }
+
     // MARK: - Lecture
 
     /// LE point de lecture. Ne lève jamais : tout incident devient un état.
     func refresh() {
+        guard remote == nil else { return }
         var delta = reader.read()
         // Une réécriture rend le curseur caduc : on repart d'un lecteur neuf — et
         // on relit la nouvelle version DANS LA FOULÉE, sans quoi la fenêtre
@@ -240,6 +334,10 @@ final class SessionViewerModel: ObservableObject {
         watchTask = nil
         watcher?.stop()
         watcher = nil
+        feedTask?.cancel()
+        feedTask = nil
+        remoteReadTask?.cancel()
+        remoteReadTask = nil
     }
 
     deinit {
@@ -248,5 +346,7 @@ final class SessionViewerModel: ObservableObject {
         // quelle file.
         watchTask?.cancel()
         watcher?.stop()
+        feedTask?.cancel()
+        remoteReadTask?.cancel()
     }
 }
