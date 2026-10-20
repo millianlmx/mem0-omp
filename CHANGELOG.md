@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.33.1 — 2026-10-20
+
+- fix(req): jeton X-OMP-Service-Token comparé en temps constant (#220) (d20a0f7)
+
 ## omp-mem0-req 0.33.0 — 2026-10-18
 
 - feat(req,console): sélecteur de modèle et de réflexion dans la Session OMP — affichage permanent, changement sans relance, défaut OMP du projet (Mac, iPhone, iPad) (#217) (1eb498a)
