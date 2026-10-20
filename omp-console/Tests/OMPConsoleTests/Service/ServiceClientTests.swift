@@ -124,6 +124,21 @@ func clientPostsCommandAndDecodesAck() async throws {
 }
 
 @MainActor
+@Test("pilote-fins-de-run-ignorees-et-rang-impl/AC-5 : POST /commands décode l'accusé `already`")
+func clientDecodesAlreadyAck() async throws {
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/commands", ["ack": [
+        "version": 1, "id": "console-2-abcd", "repo": "/tmp/repo", "kind": "cancel",
+        "state": "already", "reason": NSNull(), "at": 13,
+    ]])
+    let ack = try await scriptedClient(transport).command(repo: "/tmp/repo", body: [
+        "version": 1, "id": "console-2-abcd", "sentAt": 1, "repo": "/tmp/repo", "kind": "cancel",
+    ])
+    #expect(ack.state == .already)
+    #expect(ack.kind == "cancel")
+}
+
+@MainActor
 @Test("coque-service : POST /v1/sessions porte cwd, purpose et le CHEMIN de reprise")
 func clientCreatesSession() async throws {
     let transport = ScriptedServiceTransport()

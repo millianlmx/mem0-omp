@@ -467,7 +467,7 @@ struct HomeView: ConsoleSectionView {
 
     private static func bannerTint(_ state: ActionJournalState) -> Color {
         switch state {
-        case .awaitingAck, .taken, .delivered: .accentColor
+        case .awaitingAck, .taken, .already, .delivered: .accentColor
         case .refused, .failed, .unacknowledged: .red
         }
     }

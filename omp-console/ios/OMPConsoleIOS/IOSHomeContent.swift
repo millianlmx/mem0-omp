@@ -155,7 +155,7 @@ enum IOSHomeContent {
     /// Le ton du bandeau d'accusé, selon l'état de l'entrée.
     static func launchTone(_ state: ActionJournalState) -> ConsoleTone {
         switch state {
-        case .awaitingAck, .taken, .delivered: .info
+        case .awaitingAck, .taken, .already, .delivered: .info
         case .refused, .failed, .unacknowledged: .danger
         }
     }

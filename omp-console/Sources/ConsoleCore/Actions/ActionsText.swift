@@ -23,6 +23,7 @@ public enum ActionsText {
     // --- états du journal (S-4) ----------------------------------------------
     public static let awaitingAck = "envoyé au pilote"
     public static let taken = "prise en charge"
+    public static let already = "annulation déjà en cours"
     public static let refused = "refusée"
     public static let delivered = "remis à l’agent"
     /// Une commande restée sans accusé après `ActionsModel.ackTimeoutMs` (S-8 de
@@ -70,6 +71,7 @@ public enum ActionsText {
         switch state {
         case .awaitingAck: awaitingAck
         case .taken: taken
+        case .already: already
         case .refused(nil): refused
         case .refused(let reason?): refused(reason)
         case .delivered: delivered

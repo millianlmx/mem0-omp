@@ -110,7 +110,9 @@ public enum HomeText {
         case .awaitingAck:
             "Lancement de « \(title) »…"
         case .taken:
-            "Pipeline « \(title) » lancée : la collecte des besoins démarre."
+            "Pipeline «\u{00A0}\(title)\u{00A0}» lancée\u{00A0}: la collecte des besoins démarre."
+        case .already:
+            "Annulation de «\u{00A0}\(title)\u{00A0}» déjà en cours."
         case .refused(let reason?):
             "Lancement de « \(title) » refusé : \(reason)"
         case .refused(nil):

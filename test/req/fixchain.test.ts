@@ -1006,9 +1006,10 @@ test("fixchain/AC-19 : une seconde annulation pendant la première ne s'empile p
 
   const first = controller.cancel("alpha", "keep");
   await flush();
-  // Le run est en vol : l'annulation attend sa mort. La seconde est un succès
-  // silencieux, et la première reste la seule à décider du sort de la feature.
-  assert.equal(await controller.cancel("alpha", "delete"), null, "la seconde ne s'empile pas");
+  // Le run est en vol : l'annulation attend sa mort. La seconde n'a aucun effet et
+  // le dit (« annulation déjà en cours »), et la première reste la seule à décider
+  // du sort de la feature.
+  assert.equal(await controller.cancel("alpha", "delete"), "annulation déjà en cours", "la seconde ne s'empile pas");
   gate.shift()!({ code: 124, killed: true, stdout: "", stderr: "" });
   assert.equal(await first, null);
   const after = current(stateDir, repoRoot, "alpha");

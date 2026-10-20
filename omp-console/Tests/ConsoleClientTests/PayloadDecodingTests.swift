@@ -138,4 +138,14 @@ struct PayloadDecodingTests {
             Issue.record("trame journal non décodée")
         }
     }
+
+    @Test("pilote-fins-de-run-ignorees-et-rang-impl/AC-5 : l'état `already` du journal fait l'aller-retour `{\"already\":{}}`")
+    func journalAlreadyRoundTrip() throws {
+        let json = #"{"id":"cmd-2","kindLabel":"arrêt","targetLabel":"alpha","state":{"already":{}},"at":2}"#
+        let entry = try JSONDecoder().decode(ActionJournalEntry.self, from: Data(json.utf8))
+        #expect(entry.state == .already)
+        let encoded = try JSONEncoder().encode(ActionJournalState.already)
+        #expect(String(decoding: encoded, as: UTF8.self) == #"{"already":{}}"#)
+        #expect(try JSONDecoder().decode(ActionJournalState.self, from: encoded) == .already)
+    }
 }

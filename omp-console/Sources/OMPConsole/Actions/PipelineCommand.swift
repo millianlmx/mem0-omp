@@ -54,11 +54,13 @@ enum OutgoingCommand: Sendable, Equatable {
     case relaunch(id: String, repo: String, slug: String)
 }
 
-/// L'état d'un accusé : `taken` (l'effet suit) ou `refused` (le motif est dans
-/// `reason`).
+/// L'état d'un accusé : `taken` (l'effet suit), `refused` (le motif est dans
+/// `reason`) ou `already` (une annulation de la même feature est déjà en cours :
+/// un succès, rien n'est refait).
 enum CommandAckState: String, Sendable, Equatable {
     case taken
     case refused
+    case already
 }
 
 /// L'accusé d'une commande, tel que le pilote l'écrit (`PipelineCommandAck`,

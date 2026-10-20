@@ -437,11 +437,15 @@ final class ActionsModel: ObservableObject {
         }
     }
 
-    /// Applique le résultat d'une commande à son entrée : prise en charge, refus
-    /// au motif VERBATIM, ou échec local.
+    /// Applique le résultat d'une commande à son entrée : prise en charge,
+    /// « déjà en cours » (un succès), ou refus au motif VERBATIM.
     private func settle(id: String, with ack: ServiceCommandAck) {
         guard let index = journal.firstIndex(where: { $0.id == id }) else { return }
-        journal[index].state = ack.state == .taken ? .taken : .refused(reason: ack.reason)
+        switch ack.state {
+        case .taken: journal[index].state = .taken
+        case .refused: journal[index].state = .refused(reason: ack.reason)
+        case .already: journal[index].state = .already
+        }
     }
 
     private func settle(id: String, with state: ActionJournalState) {

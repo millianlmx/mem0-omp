@@ -9,12 +9,13 @@
 import Foundation
 
 /// L'état d'une entrée de journal (S-4) : en attente d'accusé, prise en charge,
-/// refusée (avec le motif du pilote ou sans), déposée, en échec d'écriture, ou
-/// restée sans accusé au-delà de `ActionsModel.ackTimeoutMs` (S-8 de
-/// omp-console-redesign).
+/// déjà en cours (annulation déjà lancée : un succès), refusée (avec le motif du
+/// pilote ou sans), déposée, en échec d'écriture, ou restée sans accusé au-delà de
+/// `ActionsModel.ackTimeoutMs` (S-8 de omp-console-redesign).
 public enum ActionJournalState: Sendable, Equatable, Codable {
     case awaitingAck
     case taken
+    case already
     case refused(reason: String?)
     case delivered
     case failed(reason: String)
