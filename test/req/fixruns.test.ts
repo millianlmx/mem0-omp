@@ -190,7 +190,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   const live: Record<string, string> = { ...flagValues };
   const flags: string[] = [];
   let askTool:
-    | ((toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>)
+    | ((
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<AskResult>)
     | null = null;
   const pi = {
     registerCommand() {},
@@ -205,7 +211,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     arktype: (definition: unknown) => ({ definition, array: () => ({ definition: [definition] }) }),
     registerTool(definition: {
       name: string;
-      execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+      execute: (
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<AskResult>;
     }) {
       toolNames.push(definition.name);
       if (definition.name === "ask") askTool = definition.execute;
@@ -328,7 +340,11 @@ test("fixruns/AC-2 : un process armé n'a qu'une pompe et qu'un seul outil `ask`
 
   // La table des questions en vol est PARTAGÉE : la pompe de l'une résout la
   // question posée par l'autre — c'est ce qui rend le canal `ask` viable.
-  const pending = app.ask("call-1", { questions: [{ id: "q", question: "On garde ?", options: [{ label: "oui" }] }] }, ctx);
+  const pending = app.ask(
+    "call-1",
+    { questions: [{ id: "q", question: "On garde ?", options: [{ label: "oui" }] }] },
+    ctx,
+  );
   await flush(2);
   assert.equal(runStateOf(ctx).pendingAsk?.toolCallId, "call-1");
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 1 });

@@ -8,8 +8,6 @@ import { contractPathFor } from "./git.ts";
 import { LOT_REASON_MAX } from "./lot.ts";
 import type { LotWaitKind } from "./lot.ts";
 
-
-
 // --- la chaîne : une décision pure, appliquée par le pilote (S-4, S-5) --------
 
 export type ChainOutcome = "ok" | "error";
@@ -29,7 +27,6 @@ export type ChainAction =
   | { kind: "failed"; reason: string }
   | { kind: "done" };
 
-
 /**
  * La consigne d'une revue dont le verdict est illisible : la MÊME session reprend
  * et réécrit son champ au format exact, au lieu d'une revue neuve qui relirait
@@ -41,7 +38,6 @@ export const REVIEW_UNREADABLE_REFOCUS =
   "`- AC PAR AC : AC-<n> → test (fichier:ligne) → pass/fail` (tous les AC du contrat), puis EXACTEMENT " +
   "`- BLOQUANTS : aucun` s'il n'y a aucun bloquant, sinon une liste numérotée `1. …`, un par ligne, rien d'autre sur ce champ.";
 
-
 /**
  * Le périmètre d'une revue selon le tour de correction (C4) : après un --fix, la
  * revue est INCRÉMENTALE (bloquants levés + `## Corrections` + diff) tant qu'il
@@ -52,38 +48,35 @@ export function reviewScopeFor(input: { fixes: number; cap: number }): "full" | 
   return input.fixes > 0 && input.fixes < input.cap - 1 ? "incremental" : "full";
 }
 
-
 /**
  * Le verdict d'un run de revue, du point de vue du pilote : `unreadable` quand la
  * section `## Revue` n'a pas été réécrite par CE run — le texte lu viendrait alors
  * d'un autre maillon, jamais d'une revue. Partagé par la décision (`nextChainAction`)
  * et par ce que le pilote PUBLIE de ce verdict : une seule règle, deux lecteurs.
  */
-export function effectiveReviewVerdict(contract: string, reviewRewritten: boolean): "blockers" | "clean" | "unreadable" {
+export function effectiveReviewVerdict(
+  contract: string,
+  reviewRewritten: boolean,
+): "blockers" | "clean" | "unreadable" {
   if (!reviewRewritten) return "unreadable";
   return reviewVerdict(contract);
 }
 
-
 /** Motif d'un /impl rendu en succès sans aucun changement du worktree. */
 export const IMPL_NOTHING_PRODUCED = "/impl n'a rien produit";
 
-
 /** Préfixe du motif quand la vérification git du worktree échoue. */
 export const WORKTREE_CHECK_IMPOSSIBLE = "vérification du worktree impossible";
-
 
 /** Le motif de blocage d'une boucle revue ⇄ correction arrivée à son plafond (S-6). */
 export function reviewCapReason(cap: number): string {
   return `plafond de ${cap} tours de correction atteint, revue toujours bloquante`;
 }
 
-
 /** Le motif est-il celui du plafond de la boucle revue ⇄ correction ? */
 export function isReviewCapReason(reason: string | null): boolean {
   return reason !== null && /^plafond de \d+ tours de correction atteint, revue toujours bloquante$/.test(reason);
 }
-
 
 /**
  * Le maillon suivant, décidé par le seul contrat (+ l'issue du run, la question
@@ -132,8 +125,7 @@ export function nextChainAction(input: {
   const hasSpecs = contractHasSection(contract, "Spécifications");
   switch (phase) {
     case "req": {
-      const closed =
-        contractHasSection(contract, "Besoins") && contractHasSection(contract, "Critères d'acceptation");
+      const closed = contractHasSection(contract, "Besoins") && contractHasSection(contract, "Critères d'acceptation");
       // Collecte close (les deux sections sont écrites) ⇒ specs ; sinon le run a
       // posé ses questions et l'utilisateur doit répondre (AC-12).
       return closed ? { kind: "run", phase: "specs", fix: false } : { kind: "wait", waitKind: "answer" };
@@ -153,7 +145,10 @@ export function nextChainAction(input: {
       if (input.worktree?.kind === "unchanged") return { kind: "blocked", reason: IMPL_NOTHING_PRODUCED };
       if (input.worktree?.kind === "unknown") {
         const reason = `${WORKTREE_CHECK_IMPOSSIBLE} : ${input.worktree.detail}`;
-        return { kind: "blocked", reason: reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason };
+        return {
+          kind: "blocked",
+          reason: reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason,
+        };
       }
       return hasSpecs
         ? { kind: "run", phase: "review", fix: false }
@@ -173,14 +168,14 @@ export function nextChainAction(input: {
       if (asked !== null) return { kind: "wait", waitKind: "answer" };
       // Le budget de l'illisible est le SIEN (S-5) : les corrections ont le leur
       // (`fixes`), un seul compteur ferait bloquer une feature dès son 1er bloquant.
-      if (unreadableRuns < cap) return { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS };
+      if (unreadableRuns < cap)
+        return { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS };
       return { kind: "blocked", reason: `verdict de revue illisible après ${cap} passes` };
     }
     case "release":
       return { kind: "done" };
   }
 }
-
 
 /**
  * Un run interrompu (pilote disparu) se juge sur le seul indice disponible : le
@@ -196,16 +191,17 @@ export function reconcileInterrupted(input: {
   return "failed";
 }
 
-
 /** sha1 du contrat d'un worktree, `null` s'il n'existe pas encore. */
 export function contractHashOf(worktree: string): string | null {
   try {
-    return crypto.createHash("sha1").update(fs.readFileSync(contractPathFor(worktree), "utf8")).digest("hex");
+    return crypto
+      .createHash("sha1")
+      .update(fs.readFileSync(contractPathFor(worktree), "utf8"))
+      .digest("hex");
   } catch {
     return null;
   }
 }
-
 
 /**
  * sha1 de la DERNIÈRE section `## Revue` d'un worktree, `null` si elle n'existe
@@ -219,14 +215,12 @@ export function reviewSectionHash(worktree: string): string | null {
   return crypto.createHash("sha1").update(section).digest("hex");
 }
 
-
 /**
  * Titres du contrat dont la DISPARITION entre le lancement d'un run et sa fin le
  * rend « endommagé » (garde du pilote) : un maillon qui réécrit tout le fichier
  * perd ces sections sans que son run échoue.
  */
 export const REQUIRED_CONTRACT_SECTIONS = ["Besoins", "Critères d'acceptation", "Spécifications"] as const;
-
 
 /**
  * Les titres de `before` que `contract` ne porte plus (au sens de
@@ -235,7 +229,6 @@ export const REQUIRED_CONTRACT_SECTIONS = ["Besoins", "Critères d'acceptation",
 export function lostSections(before: readonly string[], contract: string): string[] {
   return before.filter((title) => !contractHasSection(contract, title));
 }
-
 
 /** Contenu du contrat d'un worktree, `""` s'il est absent ou illisible. */
 export function readContractText(worktree: string): string {

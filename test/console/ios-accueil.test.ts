@@ -257,10 +257,7 @@ test("ios-accueil/AC-7 : l'Accueil iOS ne nomme aucun jeton d'écriture du magas
 
   const copy = copyRepo("ios-accueil-copie-");
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSHomeState.swift");
-  fs.writeFileSync(
-    target,
-    `${fs.readFileSync(target, "utf8")}\nlet ecrit = PipelineWriter.self\n`,
-  );
+  fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet ecrit = PipelineWriter.self\n`);
   assert.ok(
     writeFaults(copy).some((f) => f.includes("PipelineWriter")),
     "un jeton d'écriture dans l'Accueil doit faire rougir la garde",

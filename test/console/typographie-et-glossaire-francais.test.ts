@@ -76,7 +76,11 @@ function parseGlossary(markdown: string): Glossary {
     for (const line of body.slice(start + 2)) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("|")) break;
-      const cells = trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+      const cells = trimmed
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((cell) => cell.trim());
       if (cells.length !== width) {
         faults.push(`ligne de ${cells.length} colonnes au lieu de ${width} dans ## ${name} : ${trimmed}`);
         continue;
@@ -101,7 +105,8 @@ function parseGlossary(markdown: string): Glossary {
   for (const [term = "", formsCell = "", retained = ""] of rows("Anglicismes bannis", BANNED_HEADER, 4)) {
     const pieces = formsCell === "" ? [] : formsCell.split(",").map((piece) => piece.trim());
     const forms = pieces.map((piece) => TICKED.exec(piece)?.[1]).filter((form): form is string => form !== undefined);
-    if (forms.length === 0 || forms.length !== pieces.length) faults.push(`ligne de forme vide ou mal écrite : ${term}`);
+    if (forms.length === 0 || forms.length !== pieces.length)
+      faults.push(`ligne de forme vide ou mal écrite : ${term}`);
     if (retained === "") faults.push(`terme retenu vide pour ${term}`);
     else if (/[,;/]/.test(retained) || /(?<![\p{L}\p{N}])ou(?![\p{L}\p{N}])/iu.test(retained)) {
       faults.push(`terme retenu multiple pour ${term} : ${retained}`);
@@ -119,36 +124,123 @@ type Exception = { file: string; reason: string } & ({ literal: string } | { con
 
 /** Les chaînes techniques des `*Text.swift`, exemptées de toutes les règles (S-4, E-1 à E-16). */
 const EXCEPTIONS: readonly Exception[] = [
-  { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: ":", reason: "caractère comparé par `titleHead` et `reducePaths`, jamais affiché" },
-  { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: ".!?", reason: "fins de phrase cherchées par `titleHead`, jamais affichées" },
-  { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: String.raw`!?\[([^\]]*)\]\([^)]*\)`, reason: "expression régulière (chaîne brute) des liens Markdown" },
-  { file: "omp-console/Sources/ConsoleCore/Viewer/ToolArgumentsText.swift", literal: "diff", reason: "clé brute d’un appel de l’outil `edit`, comparée à l’appel, jamais affichée" },
-  { file: "omp-console/ios/OMPConsoleIOS/ConnectionText.swift", literal: "hôte ou hôte:port", reason: "notation de saisie : `hôte:port` est une syntaxe d’adresse" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift", literal: "specs", reason: "valeur de fil `verdict` de l’API (`verdictSpecs`)" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift", literal: "review", reason: "valeur de fil `verdict` de l’API (`verdictReview`)" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift", constant: "longContract", reason: "contenu factice d’un contract.md de recette (Markdown et code)" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift", constant: "dialogJSON", reason: "JSON du fil de la recette" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift", constant: "editorDialogJSON", reason: "JSON du fil de la recette" },
-  { file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift", literal: String.raw`Qdrant (127.0.0.1:6333, conteneur omp-console-qdrant) injoignable${NBSP}: \(detail)`, reason: "diagnostic copiable : `hôte:port` est une syntaxe d’adresse" },
-  { file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift", literal: String.raw`podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué${NBSP}: \(detail)`, reason: "diagnostic copiable : `conteneur:chemin` est la syntaxe de `podman cp`" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift", literal: "://", reason: "fragment d’URL cherché dans un motif du Mac" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift", literal: String.raw`\"detail\"`, reason: "clé JSON cherchée dans un motif du Mac" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSSessionOmpText.swift", literal: "ios.sessionomp.launch.commit", reason: "identifiant d’accessibilité" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSSessionText.swift", literal: String.raw`ios.session.diff.\(rowId).\(index)`, reason: "identifiant d’accessibilité" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "ios.stats.chart.tokens", reason: "identifiant d’accessibilité" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "recette-specs", reason: "slug de feature de la recette" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "recette-impl", reason: "slug de feature de la recette" },
-  { file: "omp-console/ios/OMPConsoleIOS/ProjectText.swift", literal: "ios.projet.launch.commit", reason: "identifiant d’accessibilité" },
+  {
+    file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift",
+    literal: ":",
+    reason: "caractère comparé par `titleHead` et `reducePaths`, jamais affiché",
+  },
+  {
+    file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift",
+    literal: ".!?",
+    reason: "fins de phrase cherchées par `titleHead`, jamais affichées",
+  },
+  {
+    file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift",
+    literal: String.raw`!?\[([^\]]*)\]\([^)]*\)`,
+    reason: "expression régulière (chaîne brute) des liens Markdown",
+  },
+  {
+    file: "omp-console/Sources/ConsoleCore/Viewer/ToolArgumentsText.swift",
+    literal: "diff",
+    reason: "clé brute d’un appel de l’outil `edit`, comparée à l’appel, jamais affichée",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/ConnectionText.swift",
+    literal: "hôte ou hôte:port",
+    reason: "notation de saisie : `hôte:port` est une syntaxe d’adresse",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift",
+    literal: "specs",
+    reason: "valeur de fil `verdict` de l’API (`verdictSpecs`)",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift",
+    literal: "review",
+    reason: "valeur de fil `verdict` de l’API (`verdictReview`)",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift",
+    constant: "longContract",
+    reason: "contenu factice d’un contract.md de recette (Markdown et code)",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift",
+    constant: "dialogJSON",
+    reason: "JSON du fil de la recette",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift",
+    constant: "editorDialogJSON",
+    reason: "JSON du fil de la recette",
+  },
+  {
+    file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
+    literal: String.raw`Qdrant (127.0.0.1:6333, conteneur omp-console-qdrant) injoignable${NBSP}: \(detail)`,
+    reason: "diagnostic copiable : `hôte:port` est une syntaxe d’adresse",
+  },
+  {
+    file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
+    literal: String.raw`podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué${NBSP}: \(detail)`,
+    reason: "diagnostic copiable : `conteneur:chemin` est la syntaxe de `podman cp`",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
+    literal: "://",
+    reason: "fragment d’URL cherché dans un motif du Mac",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
+    literal: String.raw`\"detail\"`,
+    reason: "clé JSON cherchée dans un motif du Mac",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSSessionOmpText.swift",
+    literal: "ios.sessionomp.launch.commit",
+    reason: "identifiant d’accessibilité",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSSessionText.swift",
+    literal: String.raw`ios.session.diff.\(rowId).\(index)`,
+    reason: "identifiant d’accessibilité",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
+    literal: "ios.stats.chart.tokens",
+    reason: "identifiant d’accessibilité",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
+    literal: "recette-specs",
+    reason: "slug de feature de la recette",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
+    literal: "recette-impl",
+    reason: "slug de feature de la recette",
+  },
+  {
+    file: "omp-console/ios/OMPConsoleIOS/ProjectText.swift",
+    literal: "ios.projet.launch.commit",
+    reason: "identifiant d’accessibilité",
+  },
 ];
 
 /** Un terme en mot entier ; l'espace d'un terme de plusieurs mots s'apparie à `\s+`. */
 const wholeWord = (term: string, flags: string): RegExp =>
-  new RegExp(`(?<![\\p{L}\\p{N}])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, `gu${flags}`);
+  new RegExp(
+    `(?<![\\p{L}\\p{N}])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`,
+    `gu${flags}`,
+  );
 const UPPERCASE_FORM = /^[A-Z]{2,}s?$/;
 const isSoft = (c: string | undefined): boolean => c === NBSP || c === NNBSP;
 
 /** Les règles R-1 à R-6 appliquées au texte d'une unité. */
-function unitRules(text: string, conserved: readonly RegExp[], banned: readonly { form: string; retained: string; regex: RegExp }[]): string[] {
+function unitRules(
+  text: string,
+  conserved: readonly RegExp[],
+  banned: readonly { form: string; retained: string; regex: RegExp }[],
+): string[] {
   const rules: string[] = [];
   if (text.includes("'")) rules.push("apostrophe droite");
   for (let k = 0; k < text.length; k += 1) {
@@ -174,9 +266,14 @@ function unitRules(text: string, conserved: readonly RegExp[], banned: readonly 
 }
 
 /** Toutes les fautes des `*Text.swift`, du glossaire et des exceptions ; triées, sans doublon. */
-function typographyFaults(sources: Map<string, string>, glossary: string | null, exceptions: readonly Exception[]): string[] {
+function typographyFaults(
+  sources: Map<string, string>,
+  glossary: string | null,
+  exceptions: readonly Exception[],
+): string[] {
   const faults = new Set<string>();
-  const parsed: Glossary = glossary === null ? { conserved: [], banned: [], faults: ["fichier absent"] } : parseGlossary(glossary);
+  const parsed: Glossary =
+    glossary === null ? { conserved: [], banned: [], faults: ["fichier absent"] } : parseGlossary(glossary);
   for (const fault of parsed.faults) faults.add(`${GLOSSARY_PATH} : ${fault}`);
 
   // Les termes longs d'abord : « OMP Console » est masqué avant « OMP ».
@@ -190,13 +287,16 @@ function typographyFaults(sources: Map<string, string>, glossary: string | null,
     if (!inScope(file)) continue;
     for (const unit of swiftTextUnits(source)) {
       const exempt = exceptions.filter(
-        (e) => e.file === file && (("literal" in e && e.literal === unit.raw) || ("constant" in e && e.constant === unit.constant)),
+        (e) =>
+          e.file === file &&
+          (("literal" in e && e.literal === unit.raw) || ("constant" in e && e.constant === unit.constant)),
       );
       if (exempt.length > 0) {
         for (const e of exempt) used.add(e);
         continue;
       }
-      for (const rule of unitRules(unit.text, conserved, banned)) faults.add(`${file}:${unit.line} « ${unit.raw} » : ${rule}`);
+      for (const rule of unitRules(unit.text, conserved, banned))
+        faults.add(`${file}:${unit.line} « ${unit.raw} » : ${rule}`);
     }
   }
   for (const e of exceptions) {
@@ -209,7 +309,9 @@ function typographyFaults(sources: Map<string, string>, glossary: string | null,
 
 const SOURCES = swiftSourceTree(ROOT, ROOTS);
 // Glossaire absent : `null`, que `typographyFaults` rend en faute « fichier absent » (pas d'ENOENT au chargement).
-const GLOSSAIRE = fs.existsSync(path.join(ROOT, GLOSSARY_PATH)) ? fs.readFileSync(path.join(ROOT, GLOSSARY_PATH), "utf8") : null;
+const GLOSSAIRE = fs.existsSync(path.join(ROOT, GLOSSARY_PATH))
+  ? fs.readFileSync(path.join(ROOT, GLOSSARY_PATH), "utf8")
+  : null;
 const BASE = typographyFaults(SOURCES, GLOSSAIRE, EXCEPTIONS);
 
 const HOME_TEXT = "omp-console/Sources/ConsoleCore/Home/HomeText.swift";
@@ -226,7 +328,12 @@ function plant(sources: Map<string, string>, file: string, literal: string, name
 }
 
 /** Les fautes ajoutées par une plante (l'arbre réel est sain : ce sont toutes les fautes). */
-function plantedFaults(file: string, literal: string, exceptions: readonly Exception[] = EXCEPTIONS, name = "x"): string[] {
+function plantedFaults(
+  file: string,
+  literal: string,
+  exceptions: readonly Exception[] = EXCEPTIONS,
+  name = "x",
+): string[] {
   return typographyFaults(plant(SOURCES, file, literal, name), GLOSSAIRE, exceptions);
 }
 
@@ -244,7 +351,10 @@ test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 43 *Text.s
   const scoped = [...SOURCES.keys()].filter(inScope);
   assert.equal(scoped.length, 43, `43 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
-    assert.ok(scoped.some((file) => file.startsWith(`${base}/`)), `aucun *Text.swift sous ${base}`);
+    assert.ok(
+      scoped.some((file) => file.startsWith(`${base}/`)),
+      `aucun *Text.swift sous ${base}`,
+    );
   }
   // Un fichier jugé sans aucun littéral ne produit aucune faute.
   const empty = new Map(SOURCES);
@@ -264,7 +374,11 @@ test("typographie-et-glossaire-francais/AC-2 : une apostrophe droite échoue en 
   // Un littéral non fermé court jusqu'à la fin du fichier, sans boucle infinie.
   const unclosed = new Map(SOURCES);
   unclosed.set(HOME_TEXT, `${SOURCES.get(HOME_TEXT)}\nlet ouvert = "l'appairage`);
-  assert.ok(typographyFaults(unclosed, GLOSSAIRE, EXCEPTIONS).some((f) => f.startsWith(`${HOME_TEXT}:`) && f.endsWith(": apostrophe droite")));
+  assert.ok(
+    typographyFaults(unclosed, GLOSSAIRE, EXCEPTIONS).some(
+      (f) => f.startsWith(`${HOME_TEXT}:`) && f.endsWith(": apostrophe droite"),
+    ),
+  );
 });
 
 test("typographie-et-glossaire-francais/AC-3 : une espace ordinaire ou absente avant ; : ! ? échoue, une espace insécable passe", () => {
@@ -278,7 +392,11 @@ test("typographie-et-glossaire-francais/AC-3 : une espace ordinaire ou absente a
       `${HOME_TEXT}:${line} « Pourquoi${sign} » : aucune espace avant ${sign}`,
     ]);
     for (const space of [NBSP, NNBSP]) {
-      assert.deepEqual(plantedFaults(HOME_TEXT, `"Pourquoi${space}${sign}"`), [], `U+${space.codePointAt(0)?.toString(16)} avant ${sign}`);
+      assert.deepEqual(
+        plantedFaults(HOME_TEXT, `"Pourquoi${space}${sign}"`),
+        [],
+        `U+${space.codePointAt(0)?.toString(16)} avant ${sign}`,
+      );
     }
   }
 });
@@ -286,7 +404,9 @@ test("typographie-et-glossaire-francais/AC-3 : une espace ordinaire ou absente a
 test("typographie-et-glossaire-francais/AC-4 : guillemets droits, trois points et « » sans espace insécable échouent ; « » insécables et … passent", () => {
   assertSane();
   const at = `${HOME_TEXT}:${plantLine(HOME_TEXT)}`;
-  assert.deepEqual(plantedFaults(HOME_TEXT, String.raw`"dit \"mot\""`), [String.raw`${at} « dit \"mot\" » : guillemets droits`]);
+  assert.deepEqual(plantedFaults(HOME_TEXT, String.raw`"dit \"mot\""`), [
+    String.raw`${at} « dit \"mot\" » : guillemets droits`,
+  ]);
   assert.deepEqual(plantedFaults(HOME_TEXT, '"Attendez..."'), [`${at} « Attendez... » : trois points au lieu de …`]);
   for (const text of ["« mot »", "«mot»"]) {
     assert.deepEqual(plantedFaults(HOME_TEXT, `"${text}"`), [
@@ -301,8 +421,14 @@ test("typographie-et-glossaire-francais/AC-5 : chaque anglicisme banni par le gl
   assertSane();
   const { banned, conserved } = parseGlossary(GLOSSAIRE ?? "");
   const forms = banned.flatMap((row) => row.forms.map((form) => ({ form, retained: row.retained })));
-  assert.ok(forms.some(({ form }) => form === "worktree"), "« worktree » doit être une forme refusée");
-  assert.ok(forms.some(({ form }) => form === "run"), "« run » doit être une forme refusée");
+  assert.ok(
+    forms.some(({ form }) => form === "worktree"),
+    "« worktree » doit être une forme refusée",
+  );
+  assert.ok(
+    forms.some(({ form }) => form === "run"),
+    "« run » doit être une forme refusée",
+  );
   const at = `${HOME_TEXT}:${plantLine(HOME_TEXT)}`;
   for (const { form, retained } of forms) {
     const faults = plantedFaults(HOME_TEXT, `"Un ${form} ici"`);
@@ -320,7 +446,9 @@ test("typographie-et-glossaire-francais/AC-5 : chaque anglicisme banni par le gl
 test("typographie-et-glossaire-francais/AC-6 : une chaîne technique ne passe que déclarée nommément dans EXCEPTIONS", () => {
   assertSane();
   const at = `${HOME_TEXT}:${plantLine(HOME_TEXT)}`;
-  assert.deepEqual(plantedFaults(HOME_TEXT, '"http://exemple.fr"'), [`${at} « http://exemple.fr » : aucune espace avant :`]);
+  assert.deepEqual(plantedFaults(HOME_TEXT, '"http://exemple.fr"'), [
+    `${at} « http://exemple.fr » : aucune espace avant :`,
+  ]);
   assert.deepEqual(plantedFaults(HOME_TEXT, '"12:30"'), [`${at} « 12:30 » : aucune espace avant :`]);
 
   const declared: readonly Exception[] = [
@@ -331,11 +459,19 @@ test("typographie-et-glossaire-francais/AC-6 : une chaîne technique ne passe qu
   const both = plant(plant(SOURCES, HOME_TEXT, '"http://exemple.fr"', "url"), HOME_TEXT, '"12:30"', "heure");
   assert.deepEqual(typographyFaults(both, GLOSSAIRE, declared), []);
 
-  const byConstant: readonly Exception[] = [...EXCEPTIONS, { file: HOME_TEXT, constant: "horaire", reason: "heure de la plante" }];
+  const byConstant: readonly Exception[] = [
+    ...EXCEPTIONS,
+    { file: HOME_TEXT, constant: "horaire", reason: "heure de la plante" },
+  ];
   assert.deepEqual(plantedFaults(HOME_TEXT, '"12:30"', byConstant, "horaire"), []);
 
-  const orphan: readonly Exception[] = [...EXCEPTIONS, { file: HOME_TEXT, literal: "absent-du-source", reason: "orpheline" }];
-  assert.deepEqual(typographyFaults(SOURCES, GLOSSAIRE, orphan), [`${HOME_TEXT} : exception orpheline absent-du-source`]);
+  const orphan: readonly Exception[] = [
+    ...EXCEPTIONS,
+    { file: HOME_TEXT, literal: "absent-du-source", reason: "orpheline" },
+  ];
+  assert.deepEqual(typographyFaults(SOURCES, GLOSSAIRE, orphan), [
+    `${HOME_TEXT} : exception orpheline absent-du-source`,
+  ]);
 });
 
 test("typographie-et-glossaire-francais/AC-7 : une faute dans un Swift qui ne se termine pas par Text.swift n'est pas signalée", () => {
@@ -355,9 +491,36 @@ test("typographie-et-glossaire-francais/AC-7 : une faute dans un Swift qui ne se
 
 /** Anglicismes relevés dans les `*Text.swift` avant la feature (2026-10-10). */
 const RELEVE = [
-  "pull request", "specs", "review", "impl", "CI", "plugin", "commit", "diff", "shell", "API", "pid", "PTY", "process",
-  "embeddings", "fixture", "script", "run", "worktree", "PR", "app", "Web", "Git", "Given", "When", "Then", "Markdown",
-  "VoiceOver", "Swift", "Node", "CSV",
+  "pull request",
+  "specs",
+  "review",
+  "impl",
+  "CI",
+  "plugin",
+  "commit",
+  "diff",
+  "shell",
+  "API",
+  "pid",
+  "PTY",
+  "process",
+  "embeddings",
+  "fixture",
+  "script",
+  "run",
+  "worktree",
+  "PR",
+  "app",
+  "Web",
+  "Git",
+  "Given",
+  "When",
+  "Then",
+  "Markdown",
+  "VoiceOver",
+  "Swift",
+  "Node",
+  "CSV",
 ];
 
 test("typographie-et-glossaire-francais/AC-8 : le glossaire retient un seul terme par anglicisme relevé et conserve pipeline, feature et les étapes", () => {
@@ -369,7 +532,10 @@ test("typographie-et-glossaire-francais/AC-8 : le glossaire retient un seul term
     assert.ok(conserved.includes(term), `« ${term} » doit figurer parmi les termes conservés`);
   }
   for (const { term, retained } of banned) {
-    assert.ok(retained !== "" && !/[,;/]/.test(retained) && !/(?<![\p{L}\p{N}])ou(?![\p{L}\p{N}])/iu.test(retained), `terme retenu multiple pour ${term} : ${retained}`);
+    assert.ok(
+      retained !== "" && !/[,;/]/.test(retained) && !/(?<![\p{L}\p{N}])ou(?![\p{L}\p{N}])/iu.test(retained),
+      `terme retenu multiple pour ${term} : ${retained}`,
+    );
   }
   const forms = banned.flatMap((row) => row.forms.map((form) => form.toLowerCase()));
   for (const entry of RELEVE) {
@@ -378,11 +544,17 @@ test("typographie-et-glossaire-francais/AC-8 : le glossaire retient un seul term
 
   const twoTerms = glossary.replace(/^(\| run \| `run`, `runs` \| )exécution( \|)/m, "$1exécution ou lancement$2");
   assert.notEqual(twoTerms, glossary, "la faute « exécution ou lancement » ne peut pas être plantée");
-  assert.ok(typographyFaults(SOURCES, twoTerms, EXCEPTIONS).includes(`${GLOSSARY_PATH} : terme retenu multiple pour run : exécution ou lancement`));
+  assert.ok(
+    typographyFaults(SOURCES, twoTerms, EXCEPTIONS).includes(
+      `${GLOSSARY_PATH} : terme retenu multiple pour run : exécution ou lancement`,
+    ),
+  );
 
   const noFeature = glossary.replace(/^\| `feature` \|.*\n/m, "");
   assert.notEqual(noFeature, glossary, "la ligne `feature` ne peut pas être retirée");
-  assert.ok(typographyFaults(SOURCES, noFeature, EXCEPTIONS).includes(`${GLOSSARY_PATH} : terme conservé manquant feature`));
+  assert.ok(
+    typographyFaults(SOURCES, noFeature, EXCEPTIONS).includes(`${GLOSSARY_PATH} : terme conservé manquant feature`),
+  );
 
   assert.ok(typographyFaults(SOURCES, null, EXCEPTIONS).includes(`${GLOSSARY_PATH} : fichier absent`));
 });

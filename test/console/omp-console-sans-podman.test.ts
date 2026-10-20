@@ -52,7 +52,11 @@ test("omp-console-sans-podman/AC-1 : swift-app.sh compile mem0-rs, l'embarque si
   fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
   fs.cpSync(path.join(ROOT, "scripts", "app-intents"), path.join(copie, "scripts", "app-intents"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
-  fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), { recursive: true });
+  fs.cpSync(
+    path.join(ROOT, "omp-console", "Sources", "OMPConsole"),
+    path.join(copie, "omp-console", "Sources", "OMPConsole"),
+    { recursive: true },
+  );
   const anciennePile = path.join(ROOT, "omp-console", "stack");
   if (fs.existsSync(anciennePile)) {
     fs.cpSync(anciennePile, path.join(copie, "omp-console", "stack"), {
@@ -90,7 +94,11 @@ case "$*" in
     ;;
 esac`,
   );
-  doublure(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
+  doublure(
+    bin,
+    "otool",
+    "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'",
+  );
   doublure(bin, "codesign", `printf 'codesign %s\\n' "$*" >> '${journal}'`);
   // Trousseau sans identité : signature ad hoc, quel que soit le trousseau du poste.
   doublure(bin, "security", "printf '     0 valid identities found\\n'");
@@ -111,7 +119,11 @@ chmod +x "$target/release/mem0-rs"`,
 
   const environnementDeBase = { ...process.env };
   delete environnementDeBase.CARGO_TARGET_DIR;
-  const lancer = (args: string[], env: Record<string, string> = {}, chemin = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`) => {
+  const lancer = (
+    args: string[],
+    env: Record<string, string> = {},
+    chemin = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  ) => {
     fs.rmSync(journal, { force: true });
     const r = spawnSync("bash", ["scripts/swift-app.sh", ...args], {
       cwd: copie,
@@ -131,21 +143,33 @@ chmod +x "$target/release/mem0-rs"`,
   const complet = lancer([]);
   assert.equal(complet.status, 0, complet.sortie);
   assert.ok(complet.lignes.includes(argvCargo), `argv/cwd de cargo : ${complet.lignes.join(" | ")}`);
-  assert.ok(complet.lignes.includes(`lipo -archs ${path.join(copie, "mem0-stack/mem0-rs/target/release/mem0-rs")}`), complet.lignes.join(" | "));
+  assert.ok(
+    complet.lignes.includes(`lipo -archs ${path.join(copie, "mem0-stack/mem0-rs/target/release/mem0-rs")}`),
+    complet.lignes.join(" | "),
+  );
   assert.ok(complet.sortie.includes("  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"), complet.sortie);
   assert.ok(fs.existsSync(embarque), `${embarque} absent :\n${complet.sortie}`);
   assert.equal(fs.statSync(embarque).mode & 0o777, 0o755, "mem0-rs doit être en 0755");
-  assert.ok(fs.readFileSync(embarque, "utf8").includes("# cible=mem0-stack/mem0-rs/target"), "mem0-rs doit venir de la cible par défaut");
+  assert.ok(
+    fs.readFileSync(embarque, "utf8").includes("# cible=mem0-stack/mem0-rs/target"),
+    "mem0-rs doit venir de la cible par défaut",
+  );
 
   // Le binaire est signé ad hoc LUI-MÊME, avant la signature du bundle.
   const signatureBinaire = complet.lignes.indexOf(`codesign --force --sign - ${embarque}`);
   const signatureBundle = complet.lignes.indexOf(`codesign --force --sign - ${bundle}`);
   assert.notEqual(signatureBinaire, -1, `mem0-rs jamais signé : ${complet.lignes.join(" | ")}`);
   assert.notEqual(signatureBundle, -1, `bundle jamais signé : ${complet.lignes.join(" | ")}`);
-  assert.ok(signatureBinaire < signatureBundle, `mem0-rs doit être signé avant le bundle : ${complet.lignes.join(" | ")}`);
+  assert.ok(
+    signatureBinaire < signatureBundle,
+    `mem0-rs doit être signé avant le bundle : ${complet.lignes.join(" | ")}`,
+  );
 
   // Plus rien de l'ancienne pile : ni dossier Stack, ni Dockerfile, ni empreinte, ni source Python.
-  assert.ok(!fs.existsSync(path.join(bundle, "Contents", "Resources", "Stack")), "Contents/Resources/Stack existe encore");
+  assert.ok(
+    !fs.existsSync(path.join(bundle, "Contents", "Resources", "Stack")),
+    "Contents/Resources/Stack existe encore",
+  );
   const residus = arborescence(bundle).filter((entree) => {
     const nom = path.basename(entree);
     return nom === "Dockerfile" || nom === "STACK_FINGERPRINT" || nom.endsWith(".py");
@@ -157,7 +181,10 @@ chmod +x "$target/release/mem0-rs"`,
   const rapide = lancer(["--no-tests"], { CARGO_TARGET_DIR: "cible-rs" });
   assert.equal(rapide.status, 0, rapide.sortie);
   assert.ok(rapide.lignes.includes(argvCargo), `argv/cwd de cargo : ${rapide.lignes.join(" | ")}`);
-  assert.ok(fs.existsSync(path.join(copie, "cible-rs", "release", "mem0-rs")), "cargo doit écrire sous <racine>/cible-rs");
+  assert.ok(
+    fs.existsSync(path.join(copie, "cible-rs", "release", "mem0-rs")),
+    "cargo doit écrire sous <racine>/cible-rs",
+  );
   assert.ok(fs.readFileSync(embarque, "utf8").includes("# cible=cible-rs"), "mem0-rs doit venir de CARGO_TARGET_DIR");
 
   // (3) Un binaire qui n'est pas arm64 est refusé.
@@ -205,13 +232,16 @@ function racineBasculee(): { racine: string; bin: string; journal: string } {
   fs.writeFileSync(path.join(etat, "import-report.json"), '{"agents":[],"totaux":{}}\n');
   const bin = tmpdir("sans-podman-bin-");
   const journal = path.join(bin, "launchctl.log");
-  doublure(bin, "uname", 'echo Darwin');
+  doublure(bin, "uname", "echo Darwin");
   doublure(bin, "launchctl", `printf '%s\\n' "$*" >> '${journal}'\nexit 0`);
   return { racine, bin, journal };
 }
 
 /** Faux service mémoire : `/memory/all` et `/memory/search`, jeton exigé. */
-async function fauxService(servis: () => Souvenir[], jetonAttendu = JETON): Promise<{ port: number; fermer: () => Promise<void> }> {
+async function fauxService(
+  servis: () => Souvenir[],
+  jetonAttendu = JETON,
+): Promise<{ port: number; fermer: () => Promise<void> }> {
   const serveur = http.createServer((req, res) => {
     const repondre = (statut: number, corps: unknown) => {
       res.writeHead(statut, { "Content-Type": "application/json" });
@@ -276,7 +306,10 @@ test("omp-console-sans-podman/AC-6 : la recette apres n'est verte que si chaque 
   try {
     const sansGarde = await recette("apres", ctx, service.port, false);
     assert.equal(sansGarde.status, 2, sansGarde.sortie);
-    assert.ok(sansGarde.sortie.includes("non exécuté : MEM0_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"), sansGarde.sortie);
+    assert.ok(
+      sansGarde.sortie.includes("non exécuté : MEM0_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"),
+      sansGarde.sortie,
+    );
 
     const vert = await recette("apres", ctx, service.port);
     assert.equal(vert.status, 0, vert.sortie);
@@ -292,7 +325,10 @@ test("omp-console-sans-podman/AC-6 : la recette apres n'est verte que si chaque 
     }
     // Le label vérifié est celui de MemoryAgent.label(paths:) pour une racine surchargée.
     const label = `com.omp.console.mem0-rs.${createHash("sha256").update(ctx.racine).digest("hex").slice(0, 12)}`;
-    assert.match(fs.readFileSync(ctx.journal, "utf8"), new RegExp(`^print gui/\\d+/${label.replaceAll(".", "\\.")}$`, "m"));
+    assert.match(
+      fs.readFileSync(ctx.journal, "utf8"),
+      new RegExp(`^print gui/\\d+/${label.replaceAll(".", "\\.")}$`, "m"),
+    );
     assert.ok(fs.existsSync(path.join(ctx.racine, "stack", "podman-migration", "recette-apres.json")));
 
     // Un souvenir perdu, puis un texte altéré : rouge, sans aller plus loin.
@@ -332,16 +368,25 @@ test("omp-console-sans-podman/AC-7 : la recette relance rougit si bascule.json o
     // Inchangés : les deux empreintes passent ; la suite exige un Qdrant joignable
     // avec la vraie clé, absent ici (ou refusé avec la clé jetable) ⇒ rouge nommé.
     const intacte = await recette("relance", ctx, service.port);
-    assert.ok(intacte.sortie.includes("✓ bascule.json inchangé depuis apres (SHA-256 et mtime) : aucun second import"), intacte.sortie);
+    assert.ok(
+      intacte.sortie.includes("✓ bascule.json inchangé depuis apres (SHA-256 et mtime) : aucun second import"),
+      intacte.sortie,
+    );
     assert.ok(intacte.sortie.includes("✓ import-report.json inchangé depuis apres"), intacte.sortie);
     assert.equal(intacte.status, 1, intacte.sortie);
     assert.ok(intacte.sortie.includes("✗ Qdrant redémarré à la main et joignable"), intacte.sortie);
 
     // Un second import réécrit le rapport : rouge avant toute lecture de Qdrant.
-    fs.writeFileSync(path.join(ctx.racine, "stack", "podman-migration", "import-report.json"), '{"agents":[],"totaux":{"importes":0}}\n');
+    fs.writeFileSync(
+      path.join(ctx.racine, "stack", "podman-migration", "import-report.json"),
+      '{"agents":[],"totaux":{"importes":0}}\n',
+    );
     const reimport = await recette("relance", ctx, service.port);
     assert.equal(reimport.status, 1, reimport.sortie);
-    assert.ok(reimport.sortie.includes("✗ import-report.json inchangé depuis apres (SHA-256 et mtime)"), reimport.sortie);
+    assert.ok(
+      reimport.sortie.includes("✗ import-report.json inchangé depuis apres (SHA-256 et mtime)"),
+      reimport.sortie,
+    );
     assert.ok(!reimport.sortie.includes("Qdrant"), reimport.sortie);
   } finally {
     await service.fermer();
@@ -391,7 +436,10 @@ const RESTES_PODMAN = [
 ];
 
 test("omp-console-sans-podman/AC-11 : aucun reste du podman embarqué hors migration et nettoyage", () => {
-  const ceFichier = path.relative(ROOT, fileURLToPath(import.meta.url)).split(path.sep).join("/");
+  const ceFichier = path
+    .relative(ROOT, fileURLToPath(import.meta.url))
+    .split(path.sep)
+    .join("/");
   const liste = spawnSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], { cwd: ROOT, encoding: "utf8" });
   assert.equal(liste.status, 0, `git ls-files a échoué : ${liste.stderr}`);
   const fichiers = liste.stdout

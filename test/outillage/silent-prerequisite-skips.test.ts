@@ -54,7 +54,7 @@ const presentIn = (bin: string, searchPath: string) =>
   searchPath.split(":").some((dir) => fs.existsSync(path.join(dir, bin)));
 
 /** Un test fixture : `body` reçoit `t`. */
-const fixtureTest = (title: string, body: string) => "test(" + JSON.stringify(title) + ", async (t) => { " + body + " });";
+const fixtureTest = (title: string, body: string) => `test(${JSON.stringify(title)}, async (t) => { ${body} });`;
 
 /** Fichier de test fixture qui importe la forme unique du saut. */
 function fixture(...tests: string[]): string {
@@ -75,7 +75,10 @@ function lightCopy(tests: Record<string, string>): string {
   for (const script of ["check.sh", "test-files.sh"]) {
     fs.copyFileSync(path.join(ROOT, "scripts", script), path.join(dir, "scripts", script));
   }
-  fs.copyFileSync(path.join(ROOT, "test", "support", "prerequis.ts"), path.join(dir, "test", "support", "prerequis.ts"));
+  fs.copyFileSync(
+    path.join(ROOT, "test", "support", "prerequis.ts"),
+    path.join(dir, "test", "support", "prerequis.ts"),
+  );
   fs.writeFileSync(path.join(dir, "package.json"), '{ "type": "module" }\n');
   for (const [name, source] of Object.entries(tests)) {
     const target = path.join(dir, "test", name);
@@ -86,7 +89,10 @@ function lightCopy(tests: Record<string, string>): string {
 }
 
 /** Le saut « prérequis absent » de référence (S-2, exemple d'acceptation). */
-const TOOL_SKIP = fixtureTest("fixture/AC-1 : outil requis", 'prerequisAbsent(t, "outil-fictif", "preuve non exécutée");');
+const TOOL_SKIP = fixtureTest(
+  "fixture/AC-1 : outil requis",
+  'prerequisAbsent(t, "outil-fictif", "preuve non exécutée");',
+);
 const TOOL_LINE =
   "  ✗ test sauté en mode strict : « fixture/AC-1 : outil requis » — prérequis absent : outil-fictif — preuve non exécutée";
 
@@ -126,7 +132,9 @@ test("silent-prerequisite-skips/AC-1 : sans --strict, un prérequis installable 
     const rust = runCheck(ROOT, ["--sections=rust"], { PATH: BARE_PATH, MEM0_OMP_SKIP_RUST: "" });
     assert.equal(rust.status, 0, output(rust));
     assert.ok(
-      output(rust).includes("  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)\n"),
+      output(rust).includes(
+        "  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)\n",
+      ),
       output(rust),
     );
   });
@@ -136,7 +144,10 @@ test("silent-prerequisite-skips/AC-2 : en --strict, chaque saut « prérequis ab
   const dir = lightCopy({
     "outillage/fixture.test.ts": fixture(
       TOOL_SKIP,
-      fixtureTest("fixture/parent", 'await t.test("sous-test requis", (st) => prerequisAbsent(st, "autre-outil", "sous-preuve non exécutée"));'),
+      fixtureTest(
+        "fixture/parent",
+        'await t.test("sous-test requis", (st) => prerequisAbsent(st, "autre-outil", "sous-preuve non exécutée"));',
+      ),
       fixtureTest("fixture/passe", ""),
     ),
   });
@@ -229,12 +240,16 @@ test("silent-prerequisite-skips/AC-5 : en --strict, la section Tests rougit et n
   // quel, et la directive est le premier ` # SKIP `.
   fs.writeFileSync(
     path.join(dir, "test", "outillage", "fixture.test.ts"),
-    fixture(fixtureTest("fixture/diese # SKIP leurre", 'prerequisAbsent(t, "outil\\n  multiligne ", "preuve non exécutée");')),
+    fixture(
+      fixtureTest("fixture/diese # SKIP leurre", 'prerequisAbsent(t, "outil\\n  multiligne ", "preuve non exécutée");'),
+    ),
   );
   const hash = output(runCheck(dir, ["--sections=tests", "--strict"]));
   assert.deepEqual(
     lines(hash).filter((line) => line.startsWith(STRICT_SKIP)),
-    ["  ✗ test sauté en mode strict : « fixture/diese \\# SKIP leurre » — prérequis absent : outil multiligne — preuve non exécutée"],
+    [
+      "  ✗ test sauté en mode strict : « fixture/diese \\# SKIP leurre » — prérequis absent : outil multiligne — preuve non exécutée",
+    ],
     hash,
   );
 
@@ -246,7 +261,10 @@ test("silent-prerequisite-skips/AC-5 : en --strict, la section Tests rougit et n
   const red = runCheck(dir, ["--sections=tests", "--strict"]);
   const redLines = lines(output(red));
   assert.equal(red.status, 1, output(red));
-  assert.ok(redLines.some((line) => line.startsWith("not ok") && line.includes("fixture/tombe")), output(red));
+  assert.ok(
+    redLines.some((line) => line.startsWith("not ok") && line.includes("fixture/tombe")),
+    output(red),
+  );
   const named = redLines.indexOf(TOOL_LINE);
   assert.ok(named > 0, output(red));
   assert.ok(redLines[named + 1]?.startsWith("  ✗ tests unitaires — relance : "), output(red));
@@ -270,7 +288,10 @@ test("silent-prerequisite-skips/AC-6 : une variable MEM0_OMP_REQUIRE_* seule dur
     for (const args of [["--sections=rust"], ["--sections=rust", "--strict"]]) {
       const rust = runCheck(ROOT, args, { PATH: BARE_PATH, MEM0_OMP_SKIP_RUST: "", MEM0_OMP_REQUIRE_RUST: "1" });
       assert.equal(rust.status, 1, `${args.join(" ")} :\n${output(rust)}`);
-      assert.ok(lines(output(rust)).includes("  ✗ Rust mem0-rs — cargo absent (MEM0_OMP_REQUIRE_RUST=1)"), output(rust));
+      assert.ok(
+        lines(output(rust)).includes("  ✗ Rust mem0-rs — cargo absent (MEM0_OMP_REQUIRE_RUST=1)"),
+        output(rust),
+      );
     }
   });
 

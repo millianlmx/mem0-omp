@@ -22,7 +22,11 @@ process.env.HOME = HOME;
 // Le provisionnement DOIT avoir lieu : c'est le chemin qu'AC-4 exerce.
 delete process.env.MEM0_AUTOSETUP;
 
-const { default: mem0MemoryExtension, writeFileAtomic, BRIEF_VERSION } = await import("../../omp-mem0-memory/extension.ts");
+const {
+  default: mem0MemoryExtension,
+  writeFileAtomic,
+  BRIEF_VERSION,
+} = await import("../../omp-mem0-memory/extension.ts");
 
 const tmpDirs: string[] = [HOME];
 
@@ -30,7 +34,11 @@ test.after(() => {
   for (const dir of tmpDirs) {
     // Le cas « répertoire non inscriptible » rend le nettoyage impossible si le
     // mode n'est pas rendu : on le restaure, même si le test a échoué avant.
-    try { fs.chmodSync(dir, 0o700); } catch { /* déjà supprimé */ }
+    try {
+      fs.chmodSync(dir, 0o700);
+    } catch {
+      /* déjà supprimé */
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -76,8 +84,12 @@ function mkApp(): FakeApp {
     setLabel: (_label: string) => {},
     registerMessageRenderer: (_type: string, _render: unknown) => {},
     registerTool: (_def: unknown) => {},
-    registerCommand: (name: string, def: { handler: CommandHandler }) => { commands.set(name, def.handler); },
-    on: (name: string, handler: Hook) => { hooks.set(name, handler); },
+    registerCommand: (name: string, def: { handler: CommandHandler }) => {
+      commands.set(name, def.handler);
+    },
+    on: (name: string, handler: Hook) => {
+      hooks.set(name, handler);
+    },
   };
   mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
   return { commands, hooks };
@@ -114,7 +126,10 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
   const ref = fs.readFileSync(path.join(repo, ".omp", "mem0-brief.md"), "utf8");
   assert.ok(ref.includes(`<!-- mem0:brief ${BRIEF_VERSION} -->`), "le fichier de référence est complet");
   assert.ok(ref.trimEnd().endsWith("simplement faux."), "le fichier de référence est écrit jusqu'à sa dernière ligne");
-  assert.ok(body.trimEnd().endsWith("<!-- /mem0:brief -->"), "le bloc écrit dans AGENTS.md est complet (fermeture en fin de fichier)");
+  assert.ok(
+    body.trimEnd().endsWith("<!-- /mem0:brief -->"),
+    "le bloc écrit dans AGENTS.md est complet (fermeture en fin de fichier)",
+  );
   assert.deepEqual(tmpLeftovers(repo), [], "aucun AGENTS.md.tmp-* ni .omp/mem0-brief.md.tmp-* ne subsiste");
 
   // Preuve du mécanisme : le remplacement passe par temporaire + `renameSync`, pas
@@ -138,12 +153,19 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
   fs.chmodSync(readOnly, 0o500);
   try {
     let blocked = false;
-    try { fs.writeFileSync(path.join(readOnly, ".sonde"), "x"); } catch { blocked = true; }
+    try {
+      fs.writeFileSync(path.join(readOnly, ".sonde"), "x");
+    } catch {
+      blocked = true;
+    }
     assert.ok(blocked, "le répertoire doit être réellement non inscriptible (uid non privilégié)");
     assert.throws(() => writeFileAtomic(target, "remplacé"), /EACCES|EPERM|permission/i);
     assert.ok(fs.readFileSync(target).equals(before), "fichier d'origine inchangé octet pour octet");
-    assert.deepEqual(tmpLeftovers(readOnly).filter((p) => p.includes("AGENTS.md.tmp-")), [],
-      "aucun temporaire laissé par l'écriture en échec");
+    assert.deepEqual(
+      tmpLeftovers(readOnly).filter((p) => p.includes("AGENTS.md.tmp-")),
+      [],
+      "aucun temporaire laissé par l'écriture en échec",
+    );
   } finally {
     fs.chmodSync(readOnly, 0o700);
   }

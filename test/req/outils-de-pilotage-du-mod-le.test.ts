@@ -46,7 +46,14 @@ import reqExtension, {
 } from "../../omp-mem0-req/extension.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
-import { assistantEntry, liveEntry, resetAudit, sessionFileIn, userEntry, writeSession } from "../support/req-fixtures.ts";
+import {
+  assistantEntry,
+  liveEntry,
+  resetAudit,
+  sessionFileIn,
+  userEntry,
+  writeSession,
+} from "../support/req-fixtures.ts";
 
 const T0 = 1_700_000_000_000;
 
@@ -188,7 +195,11 @@ function mkWorld(
     const id = `cmd-${seq}`;
     const cmd = { version: 1, id, sentAt: clock, repo, ...body } as PipelineCommand;
     writeCommand(stateDir, cmd);
-    const name = fs.readdirSync(commandDir(stateDir)).filter((n) => n.endsWith(".json")).sort().pop()!;
+    const name = fs
+      .readdirSync(commandDir(stateDir))
+      .filter((n) => n.endsWith(".json"))
+      .sort()
+      .pop()!;
     const file = commandFilePath(stateDir, name);
     const seconds = (clock - COMMAND_SETTLE_MS - 10) / 1000;
     fs.utimesSync(file, seconds, seconds);
@@ -199,7 +210,19 @@ function mkWorld(
   const arbitrate = (slug: string, text: string) => post({ kind: "arbitrage", slug, text });
   const advance = (slug: string) => post({ kind: "avance", slug });
   const alpha = () => lotFeature(readLot(stateDir, repoKey)!, "alpha")!;
-  return { repo, stateDir, repoKey, runs, notices, controller, seed, arbitrate, advance, alpha, journal: () => journalFor(stateDir, repoKey, "alpha") };
+  return {
+    repo,
+    stateDir,
+    repoKey,
+    runs,
+    notices,
+    controller,
+    seed,
+    arbitrate,
+    advance,
+    alpha,
+    journal: () => journalFor(stateDir, repoKey, "alpha"),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +244,11 @@ test("outils-de-pilotage-du-mod-le/AC-9 : un arbitrage sur une feature annulée 
   assert.ok(contract.startsWith(CONTRACT), "le contrat d'origine est conservé tel quel");
   assert.ok(contract.includes("\n## Arbitrages du pilote\n"), "la section est créée");
   assert.ok(contract.includes("X : garder l'API publique telle quelle"), "le texte est consigné");
-  assert.match(contract, /### Arbitrage du \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n\nX : garder/, "un paragraphe daté, texte nettoyé");
+  assert.match(
+    contract,
+    /### Arbitrage du \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n\nX : garder/,
+    "un paragraphe daté, texte nettoyé",
+  );
 
   assert.equal(world.runs.length, 1, "la feature est relancée");
   assert.equal(world.runs[0]!.cwd, worktree);
@@ -363,7 +390,10 @@ test("outils-de-pilotage-du-mod-le/S-5 : une relance refusée après l'accusé r
   assert.deepEqual(world.journal(), [], "pas de journal");
   assert.equal(world.runs.length, 0);
   assert.ok(
-    world.notices.some((text) => text.startsWith("[pipeline] commande arbitrage : worktree sans branche") && text.endsWith("— contrat restauré")),
+    world.notices.some(
+      (text) =>
+        text.startsWith("[pipeline] commande arbitrage : worktree sans branche") && text.endsWith("— contrat restauré"),
+    ),
     `notification attendue, reçu ${JSON.stringify(world.notices)}`,
   );
 });
@@ -381,7 +411,10 @@ test("outils-de-pilotage-du-mod-le/S-5 : appendPilotArbitrage crée la section, 
   // Section existante suivie d'une autre : le nouveau paragraphe s'insère AVANT la suivante.
   const existing = `## A\n\nt\n\n## Arbitrages du pilote\n\n### Arbitrage du 2026-10-14T00:00:00Z\n\nPremier\n\n## Suite\n\nz\n`;
   const next = appendPilotArbitrage(existing, "Second", at);
-  assert.equal(next, `## A\n\nt\n\n## Arbitrages du pilote\n\n### Arbitrage du 2026-10-14T00:00:00Z\n\nPremier\n\n${stamp}\n\nSecond\n\n## Suite\n\nz\n`);
+  assert.equal(
+    next,
+    `## A\n\nt\n\n## Arbitrages du pilote\n\n### Arbitrage du 2026-10-14T00:00:00Z\n\nPremier\n\n${stamp}\n\nSecond\n\n## Suite\n\nz\n`,
+  );
   assert.equal(next.split("## Arbitrages du pilote").length, 2, "une seule section");
 });
 
@@ -410,11 +443,16 @@ function mkAvanceWorld(options: { ghCode?: number } = {}) {
   const world = mkWorld({
     runGh: async (args) => {
       gh.push(args);
-      return options.ghCode ? { code: options.ghCode, stdout: "", stderr: "gh: boom" } : { code: 0, stdout: GH_VIEW, stderr: "" };
+      return options.ghCode
+        ? { code: options.ghCode, stdout: "", stderr: "gh: boom" }
+        : { code: 0, stdout: GH_VIEW, stderr: "" };
     },
     runGitNet: async (args, cwd) => {
       net.push(args);
-      return gitRunner(args.map((a) => (a === REMOTE_URL ? bare : a)), cwd);
+      return gitRunner(
+        args.map((a) => (a === REMOTE_URL ? bare : a)),
+        cwd,
+      );
     },
   });
   bare = path.join(tmpdir("opm-bare-"), "remote.git");
@@ -450,7 +488,11 @@ test("outils-de-pilotage-du-mod-le/AC-12 : l'avance d'une feature au repos fait 
   assert.equal(ack?.state, "taken");
   assert.equal(ack?.reason, null);
   assert.equal(world.head(), remoteHead, "HEAD du worktree = nouveau HEAD de la base");
-  assert.equal(sh(world.worktree, "rev-parse", "--abbrev-ref", "HEAD"), "feat/alpha", "la branche de la feature avance");
+  assert.equal(
+    sh(world.worktree, "rev-parse", "--abbrev-ref", "HEAD"),
+    "feat/alpha",
+    "la branche de la feature avance",
+  );
   assert.ok(fs.existsSync(path.join(world.worktree, "remote.txt")), "l'arbre porte le fichier de la base");
 
   const entries = world.journal().filter((entry) => entry.kind === "avance");
@@ -460,7 +502,10 @@ test("outils-de-pilotage-du-mod-le/AC-12 : l'avance d'une feature au repos fait 
   assert.equal(entries[0]!.source, "utilisateur");
   assert.equal(entries[0]!.context, null);
 
-  assert.ok(world.net.some((args) => args[0] === "fetch" && args.includes("--no-tags")), "un fetch a eu lieu");
+  assert.ok(
+    world.net.some((args) => args[0] === "fetch" && args.includes("--no-tags")),
+    "un fetch a eu lieu",
+  );
   assert.ok(
     world.net[0]!.includes("+refs/heads/main:refs/omp-pipeline/avance/alpha"),
     "vers la ref privée portant le slug",
@@ -550,7 +595,14 @@ test("outils-de-pilotage-du-mod-le/S-7 : les refus de pré-vol sont nommés et n
 
   // Worktree absent du disque.
   world = mkAvanceWorld();
-  world.seed([feature("alpha", { worktree: path.join(tmpdir("opm-gone-"), "alpha"), state: "failed", stopReason: "boom", endedAt: T0 })]);
+  world.seed([
+    feature("alpha", {
+      worktree: path.join(tmpdir("opm-gone-"), "alpha"),
+      state: "failed",
+      stopReason: "boom",
+      endedAt: T0,
+    }),
+  ]);
   assert.equal((await world.advance("alpha"))?.reason, "avance impossible : worktree introuvable sur le disque");
 
   // gh en échec.
@@ -569,7 +621,11 @@ test("outils-de-pilotage-du-mod-le/S-7 : les refus de pré-vol sont nommés et n
   assert.equal(ack?.state, "refused");
   assert.equal(ack?.reason, "avance refusée : modifications locales en conflit avec main : remote.txt");
   assert.equal(world.head(), before);
-  assert.equal(fs.readFileSync(path.join(world.worktree, "remote.txt"), "utf8"), "local\n", "le fichier local est intact");
+  assert.equal(
+    fs.readFileSync(path.join(world.worktree, "remote.txt"), "utf8"),
+    "local\n",
+    "le fichier local est intact",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -581,7 +637,13 @@ type PilotTool = {
   name: string;
   approval: unknown;
   loadMode: string;
-  execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<PilotResult>;
+  execute: (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ) => Promise<PilotResult>;
 };
 
 const arktype = (definition: unknown) => ({ definition, array: () => ({ definition: [definition] }) });
@@ -606,10 +668,24 @@ function mkToolPi() {
  * POST, et — en mode relais — remet la commande au contrôleur RÉEL du monde (`acceptCommand`,
  * ce que fait le service) avant de rendre `{ack}` comme le fait l'API HTTP.
  */
-function mkPilot(world: { repo: string; stateDir: string; controller: { acceptCommand: (cmd: PipelineCommand) => Promise<unknown> } }, options: { relay?: boolean; service?: boolean } = {}) {
+function mkPilot(
+  world: { repo: string; stateDir: string; controller: { acceptCommand: (cmd: PipelineCommand) => Promise<unknown> } },
+  options: { relay?: boolean; service?: boolean } = {},
+) {
   const posts: { url: string; token: string | null; body: Record<string, unknown> }[] = [];
   if (options.service !== false) {
-    writeService({ version: 1, pid: process.pid, port: 8788, token: "c".repeat(32), startedAt: T0, stateDir: world.stateDir, sessionFile: null }, world.stateDir);
+    writeService(
+      {
+        version: 1,
+        pid: process.pid,
+        port: 8788,
+        token: "c".repeat(32),
+        startedAt: T0,
+        stateDir: world.stateDir,
+        sessionFile: null,
+      },
+      world.stateDir,
+    );
   }
   const fetchImpl = (async (url: string, init: { headers: Record<string, string>; body: string }) => {
     const body = JSON.parse(init.body) as Record<string, unknown>;
@@ -671,7 +747,11 @@ function mkApp(flags: Record<string, string> = {}) {
     };
     await hooks.get("session_start")!({ type: "session_start" }, ctx);
   };
-  const names = (): string[] => registered.filter((tool) => tool.name.startsWith("pipeline_")).map((tool) => tool.name).sort();
+  const names = (): string[] =>
+    registered
+      .filter((tool) => tool.name.startsWith("pipeline_"))
+      .map((tool) => tool.name)
+      .sort();
   return { registered, start, names };
 }
 
@@ -703,7 +783,11 @@ test("outils-de-pilotage-du-mod-le/AC-1 : une session interactive reçoit les qu
     await app.start(repo, true);
   });
 
-  assert.equal(app.registered.filter((t) => t.name.startsWith("pipeline_")).length, 4, "l'inscription n'a lieu qu'une fois");
+  assert.equal(
+    app.registered.filter((t) => t.name.startsWith("pipeline_")).length,
+    4,
+    "l'inscription n'a lieu qu'une fois",
+  );
 });
 
 test("outils-de-pilotage-du-mod-le/AC-2 : un enfant de lot, une session sans interface et une session servie n'ont aucun des quatre outils", async () => {
@@ -779,7 +863,11 @@ test("outils-de-pilotage-du-mod-le/AC-3 : pipeline_state rend la question de plu
   assert.equal(alpha!.waitKind, "answer");
   assert.equal(alpha!.prUrl, "https://github.com/o/r/pull/7");
   assert.equal(alpha!.base, "a".repeat(40));
-  assert.deepEqual(alpha!.questions, [{ kind: "text", question: head, options, source: "session" }], "la question et chaque option, sans troncature");
+  assert.deepEqual(
+    alpha!.questions,
+    [{ kind: "text", question: head, options, source: "session" }],
+    "la question et chaque option, sans troncature",
+  );
   assert.equal(textOf(result).includes("…"), false, "aucune ellipse ajoutée");
   assert.equal(beta!.state, "pending");
   assert.deepEqual(beta!.questions, []);
@@ -818,7 +906,11 @@ test("outils-de-pilotage-du-mod-le/AC-5 : relaunch d'une feature échouée est a
 
   assert.equal(pilot.posts.length, 1, "un seul POST");
   const post = pilot.posts[0]!;
-  assert.equal(post.url, `http://127.0.0.1:8788/v1/repos/${encodeURIComponent(world.repo)}/commands`, "l'URL (dépôt encodé) est posée par l'outil");
+  assert.equal(
+    post.url,
+    `http://127.0.0.1:8788/v1/repos/${encodeURIComponent(world.repo)}/commands`,
+    "l'URL (dépôt encodé) est posée par l'outil",
+  );
   assert.equal(post.token, "c".repeat(32), "le jeton vient de service.json");
   assert.deepEqual(Object.keys(post.body).sort(), ["id", "kind", "repo", "sentAt", "slug", "version"]);
   assert.equal(post.body.kind, "relaunch");
@@ -849,7 +941,11 @@ test("outils-de-pilotage-du-mod-le/AC-6 : relaunch d'une feature en cours rend l
   assert.deepEqual(world.journal(), []);
   assert.equal(world.alpha().state, "running");
   assert.equal(world.alpha().sinceAt, T0 + 3);
-  assert.equal(fs.readFileSync(path.join(world.stateDir, "lots", `${world.repoKey}.json`), "utf8"), before, "le lot est octet pour octet inchangé");
+  assert.equal(
+    fs.readFileSync(path.join(world.stateDir, "lots", `${world.repoKey}.json`), "utf8"),
+    before,
+    "le lot est octet pour octet inchangé",
+  );
 });
 
 test("outils-de-pilotage-du-mod-le/AC-7 : répondre à une question en vol passe par le contrôleur (journal, answeredAsks), l'outil n'écrit rien dans l'inbox", async () => {
@@ -863,7 +959,12 @@ test("outils-de-pilotage-du-mod-le/AC-7 : répondre à une question en vol passe
     phase: "impl",
     owner: { pid: process.pid },
     inbox,
-    pendingAsk: { toolCallId: "T", id: "ask-1", question: "Quelle option ?", options: [{ label: "A" }, { label: "B" }] },
+    pendingAsk: {
+      toolCallId: "T",
+      id: "ask-1",
+      question: "Quelle option ?",
+      options: [{ label: "A" }, { label: "B" }],
+    },
   });
   const answer = { kind: "answer", slug: "alpha", toolCallId: "T", selected: "B" };
 
@@ -874,8 +975,14 @@ test("outils-de-pilotage-du-mod-le/AC-7 : répondre à une question en vol passe
   assert.equal(fs.existsSync(inbox), false, "l'outil n'a créé aucun fichier dans l'inbox");
   assert.deepEqual(world.journal(), []);
   const asked = (pilotState: Record<string, unknown>) =>
-    (pilotState as { lots: { features: { questions: { toolCallId?: string }[] }[] }[] }).lots[0]!.features[0]!.questions.map((q) => q.toolCallId);
-  assert.deepEqual(asked(bare.json(await bare.call("pipeline_state", {}))), ["T"], "la question est visible tant que la réponse n'est pas livrée");
+    (
+      pilotState as { lots: { features: { questions: { toolCallId?: string }[] }[] }[] }
+    ).lots[0]!.features[0]!.questions.map((q) => q.toolCallId);
+  assert.deepEqual(
+    asked(bare.json(await bare.call("pipeline_state", {}))),
+    ["T"],
+    "la question est visible tant que la réponse n'est pas livrée",
+  );
 
   // (b) Le geste atteint le contrôleur : journal, `answeredAsks`, livraison de la réponse.
   const pilot = mkPilot(world);
@@ -949,11 +1056,18 @@ test("outils-de-pilotage-du-mod-le/S-3 : pipeline_command arbitrage sur une feat
   world.seed([feature("alpha", { worktree, state: "cancelled", stopReason: "annulée", endedAt: T0 })]);
   const pilot = mkPilot(world);
 
-  const result = await pilot.call("pipeline_command", { kind: "arbitrage", slug: "alpha", text: "Garder l'API publique." });
+  const result = await pilot.call("pipeline_command", {
+    kind: "arbitrage",
+    slug: "alpha",
+    text: "Garder l'API publique.",
+  });
 
   assert.equal(result.isError, undefined, textOf(result));
   assert.equal(pilot.json(result).state, "taken");
-  assert.match(fs.readFileSync(contractPathFor(worktree), "utf8"), /## Arbitrages du pilote[\s\S]*Garder l'API publique\./);
+  assert.match(
+    fs.readFileSync(contractPathFor(worktree), "utf8"),
+    /## Arbitrages du pilote[\s\S]*Garder l'API publique\./,
+  );
   assert.equal(world.runs.length, 1, "la feature est relancée");
   assert.equal(world.journal().filter((entry) => entry.kind === "arbitrage").length, 1);
 });
@@ -962,12 +1076,21 @@ test("outils-de-pilotage-du-mod-le/S-3 : pipeline_command arbitrage sur une feat
 
 test("outils-de-pilotage-du-mod-le/AC-11 : pipeline_session_tail rend au plus n messages, du plus ancien au plus récent, arguments complets", async () => {
   const world = mkWorld();
-  const bigArgs = { path: "src/a.ts", content: "x".repeat(6000), nested: { lignes: Array.from({ length: 50 }, (_, i) => `ligne ${i} — ${"y".repeat(100)}`) } };
+  const bigArgs = {
+    path: "src/a.ts",
+    content: "x".repeat(6000),
+    nested: { lignes: Array.from({ length: 50 }, (_, i) => `ligne ${i} — ${"y".repeat(100)}`) },
+  };
   const toolResult = {
     type: "message",
     id: "r",
     timestamp: "2026-09-19T00:00:03.000Z",
-    message: { role: "toolResult", toolCallId: "c0", isError: true, content: [{ type: "text", text: "échec de l'écriture" }] },
+    message: {
+      role: "toolResult",
+      toolCallId: "c0",
+      isError: true,
+      content: [{ type: "text", text: "échec de l'écriture" }],
+    },
   };
   const file = sessionFileIn(tmpdir("opm-tail-"), "run.jsonl");
   writeSession(file, world.repo, [
@@ -979,21 +1102,39 @@ test("outils-de-pilotage-du-mod-le/AC-11 : pipeline_session_tail rend au plus n 
   ]);
   world.seed([feature("alpha", { state: "failed", stopReason: "boom", endedAt: T0, lastRunSessionFile: file })]);
   const pilot = mkPilot(world);
-  type Message = { role: string; text: string; toolCalls: { id: string; name: string; arguments: unknown }[]; toolCallId?: string; isError?: boolean };
+  type Message = {
+    role: string;
+    text: string;
+    toolCalls: { id: string; name: string; arguments: unknown }[];
+    toolCallId?: string;
+    isError?: boolean;
+  };
   const messages = async (n: number): Promise<Message[]> =>
     JSON.parse(textOf(await pilot.call("pipeline_session_tail", { slug: "alpha", n }))) as Message[];
 
   const last3 = await messages(3);
-  assert.deepEqual(last3.map((m) => m.role), ["assistant", "toolResult", "assistant"], "les 3 derniers, du plus ancien au plus récent");
+  assert.deepEqual(
+    last3.map((m) => m.role),
+    ["assistant", "toolResult", "assistant"],
+    "les 3 derniers, du plus ancien au plus récent",
+  );
   assert.equal(last3[0]!.text, "j'écris le fichier");
-  assert.deepEqual(last3[0]!.toolCalls, [{ id: "c0", name: "write", arguments: bigArgs }], "les arguments sont égaux en profondeur à l'original");
+  assert.deepEqual(
+    last3[0]!.toolCalls,
+    [{ id: "c0", name: "write", arguments: bigArgs }],
+    "les arguments sont égaux en profondeur à l'original",
+  );
   assert.equal(last3[1]!.text, "échec de l'écriture");
   assert.equal(last3[1]!.toolCallId, "c0");
   assert.equal(last3[1]!.isError, true);
   assert.equal(last3[2]!.text, "terminé");
 
   const all = await messages(1000);
-  assert.deepEqual(all.map((m) => m.role), ["user", "assistant", "assistant", "toolResult", "assistant"], "n au-delà du fichier : tout, jamais plus");
+  assert.deepEqual(
+    all.map((m) => m.role),
+    ["user", "assistant", "assistant", "toolResult", "assistant"],
+    "n au-delà du fichier : tout, jamais plus",
+  );
   assert.equal(all[0]!.text, "consigne");
   assert.equal((await messages(1)).length, 1);
 });
@@ -1053,7 +1194,13 @@ test("outils-de-pilotage-du-mod-le/S-7 : pipeline_advance sur une branche diverg
 
 test("outils-de-pilotage-du-mod-le/S-7 : pipeline_advance avec un maillon vivant rend un refus nommé sans gh, fetch ni merge", async () => {
   const world = mkAvanceWorld();
-  liveEntry(world.stateDir, { cwd: world.worktree, label: "alpha", phase: "impl", owner: { pid: process.pid }, inbox: path.join(tmpdir("opm-inbox-"), "run-1") });
+  liveEntry(world.stateDir, {
+    cwd: world.worktree,
+    label: "alpha",
+    phase: "impl",
+    owner: { pid: process.pid },
+    inbox: path.join(tmpdir("opm-inbox-"), "run-1"),
+  });
   world.seed([feature("alpha", { worktree: world.worktree, state: "failed", stopReason: "boom", endedAt: T0 })]);
   world.advanceRemote();
   const before = world.head();
@@ -1087,13 +1234,25 @@ test("outils-de-pilotage-du-mod-le/AC-15 : le README décrit les quatre outils, 
   }
   // Les deux kinds, avec leurs refus et effets, dans « Le canal de commande ».
   assert.ok(channel.includes("**`arbitrage` `{slug, text}`**"), "README : kind arbitrage absent du canal de commande");
-  assert.ok(channel.includes("## Arbitrages du pilote"), "README : la section de contrat de l'arbitrage n'est pas nommée");
-  assert.ok(channel.includes("arbitrage refusé : la feature est en cours"), "README : refus de l'arbitrage d'une feature en cours absent");
+  assert.ok(
+    channel.includes("## Arbitrages du pilote"),
+    "README : la section de contrat de l'arbitrage n'est pas nommée",
+  );
+  assert.ok(
+    channel.includes("arbitrage refusé : la feature est en cours"),
+    "README : refus de l'arbitrage d'une feature en cours absent",
+  );
   assert.ok(channel.includes("**Tout ou rien**"), "README : le tout-ou-rien de l'arbitrage absent");
   assert.ok(channel.includes("**`avance` `{slug}`**"), "README : kind avance absent du canal de commande");
   assert.ok(channel.includes("avance refusée : non fast-forward"), "README : refus « non fast-forward » absent");
-  assert.ok(channel.includes("avance refusée : un maillon tourne dans le worktree"), "README : refus du maillon vivant absent");
-  assert.ok(channel.includes("HTTPS") && channel.includes("--ff-only"), "README : fetch HTTPS et merge --ff-only absents");
+  assert.ok(
+    channel.includes("avance refusée : un maillon tourne dans le worktree"),
+    "README : refus du maillon vivant absent",
+  );
+  assert.ok(
+    channel.includes("HTTPS") && channel.includes("--ff-only"),
+    "README : fetch HTTPS et merge --ff-only absents",
+  );
   for (const kind of ["relaunch", "cancel", "start"]) {
     assert.ok(channel.includes(`\`${kind}\``), `README : le kind existant ${kind} n'est pas listé`);
   }

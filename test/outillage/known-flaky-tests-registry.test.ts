@@ -105,7 +105,8 @@ const AUTRE = '"autre-feature/AC-1 : x"';
 
 const echoue = (nom: string) => `✘ Test ${nom} failed after 0.307 seconds with 1 issue.`;
 const passe = (nom: string) => `✔ Test ${nom} passed after 0.072 seconds.`;
-const issue = (nom: string) => `✘ Test ${nom} recorded an issue at RemoteVersionTests.swift:150:5: Expectation failed: (status → 200) == 400`;
+const issue = (nom: string) =>
+  `✘ Test ${nom} recorded an issue at RemoteVersionTests.swift:150:5: Expectation failed: (status → 200) == 400`;
 const RESUME_ROUGE = "✘ Test run with 1516 tests in 41 suites failed after 169.921 seconds with 1 issue.";
 const RESUME_CLIENT = "✔ Test run with 120 tests in 27 suites passed after 6.349 seconds.";
 
@@ -160,7 +161,10 @@ function assertRougeSansRelance(r: Lancement, contexte: string) {
   assert.ok(r.sortie.includes(L187), `${contexte} : ligne rouge finale absente\n${trace(r)}`);
   assert.equal(r.appels.length, 1, `${contexte} : une relance a été lancée\n${trace(r)}`);
   assert.ok(!r.sortie.includes("↻"), `${contexte} : ligne ↻ présente\n${trace(r)}`);
-  assert.ok(!r.sortie.includes("  ✓ compilation release (OMPConsole) et tests release"), `${contexte} : ✓ des tests affiché\n${trace(r)}`);
+  assert.ok(
+    !r.sortie.includes("  ✓ compilation release (OMPConsole) et tests release"),
+    `${contexte} : ✓ des tests affiché\n${trace(r)}`,
+  );
 }
 
 test("known-flaky-tests-registry/AC-1 : un seul test rouge listé au registre, relancé une fois par swift-app.sh avec succès, donne un verdict vert qui nomme le test", () => {
@@ -199,7 +203,9 @@ test("known-flaky-tests-registry/AC-1 : un seul test rouge listé au registre, r
   assert.ok(deux.sortie.includes(`  ✓ relance verte des tests instables connus : ${ids}\n`), trace(deux));
   assert.equal(deux.appels.length, 2, trace(deux));
   assert.ok(
-    deux.appels[1].endsWith(" --filter (?:\\.startPollsUntilStopped\\(\\))|(?:RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\))"),
+    deux.appels[1].endsWith(
+      " --filter (?:\\.startPollsUntilStopped\\(\\))|(?:RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\))",
+    ),
     trace(deux),
   );
 });
@@ -208,7 +214,15 @@ test("known-flaky-tests-registry/AC-2 : le test listé rougit de nouveau, ou n'e
   // (a) Le même test échoue de nouveau.
   const rouge = lancerSwiftApp(
     { sortie: essaiRouge(CLIENT), code: 1 },
-    { sortie: ["◇ Test run started.", issue(CLIENT), echoue(CLIENT), "✘ Test run with 1 test in 1 suite failed after 0.4 seconds with 1 issue."].join("\n"), code: 1 },
+    {
+      sortie: [
+        "◇ Test run started.",
+        issue(CLIENT),
+        echoue(CLIENT),
+        "✘ Test run with 1 test in 1 suite failed after 0.4 seconds with 1 issue.",
+      ].join("\n"),
+      code: 1,
+    },
   );
   assert.equal(rouge.status, 1, trace(rouge));
   assert.ok(rouge.sortie.includes(`  ✗ non revalidé par la relance : ${CLIENT}\n`), trace(rouge));
@@ -262,7 +276,10 @@ test("known-flaky-tests-registry/AC-5 : un autre test listé qui rougit pendant 
     },
   );
   assert.equal(r.status, 1, trace(r));
-  assert.ok(r.sortie.includes("↻ relance unique des tests instables connus : duplicateHeaderIsBadRequest()\n"), trace(r));
+  assert.ok(
+    r.sortie.includes("↻ relance unique des tests instables connus : duplicateHeaderIsBadRequest()\n"),
+    trace(r),
+  );
   assert.ok(r.sortie.includes(`${RELANCE_ROUGE}\n${L187}`), trace(r));
   assert.ok(!r.sortie.includes("non revalidé"), trace(r));
   assert.equal(r.appels.length, 2, trace(r));
@@ -304,7 +321,10 @@ test("known-flaky-tests-registry/AC-9 : ces tests tournent dans la section tests
   for (const args of [[], ["--scope=macos"]]) {
     const r = spawnSync("bash", ["scripts/test-files.sh", ...args], { cwd: ROOT, encoding: "utf8" });
     assert.equal(r.status, 0, output(r));
-    assert.ok(r.stdout.split("\n").includes(fichier), `test-files.sh ${args.join(" ")} ne liste pas ${fichier}\n${output(r)}`);
+    assert.ok(
+      r.stdout.split("\n").includes(fichier),
+      `test-files.sh ${args.join(" ")} ne liste pas ${fichier}\n${output(r)}`,
+    );
   }
   const check = fs.readFileSync(path.join(ROOT, "scripts/check.sh"), "utf8");
   const ids = /^SECTION_IDS="([^"]*)"$/m.exec(check)?.[1];

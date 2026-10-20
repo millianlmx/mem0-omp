@@ -10,11 +10,16 @@ import { LOT_EDITOR_MAX, lotFeature, lotRepoKey, lotReplaceable, readLot } from 
 import type { Lot, LotFeature } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import { askFeatureModels } from "./models.ts";
-import { ABANDON_FEATURE, createRelay, escalationRelayMessage, quotaRelayMessage, relayItemsOf, relayToolText as toolText } from "./relay.ts";
+import {
+  ABANDON_FEATURE,
+  createRelay,
+  escalationRelayMessage,
+  quotaRelayMessage,
+  relayItemsOf,
+  relayToolText as toolText,
+} from "./relay.ts";
 import type { RelayCore, RelayDeps, RelayItem, RelayState, RelayToolResult } from "./relay.ts";
 import type { RunningEntry } from "./store.ts";
-
-
 
 // ---------------------------------------------------------------------------
 // Le relais /audit — une session interactive qui tranche pour l'utilisateur.
@@ -39,7 +44,6 @@ export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap" | "f
 /** Un élément relayé à la session /audit : une question ou un jalon d'une feature /audit (S-6). */
 export type AuditItem = RelayItem & { kind: AuditItemKind };
 
-
 /** L'état /audit du process : partagé par les instances de l'extension (même patron que `runState`). */
 export type AuditState = RelayState & {
   /**
@@ -49,7 +53,6 @@ export type AuditState = RelayState & {
    */
   launched: Map<string, Set<string>>;
 };
-
 
 const AUDIT_STATE_KEY = Symbol.for("omp-mem0-req.auditState");
 
@@ -81,7 +84,6 @@ export const auditState: AuditState = (() => {
   return created;
 })();
 
-
 export type AuditRelay = {
   markCreated(sessionFile: string): void;
   sync(ctx: ExtensionContext): void;
@@ -90,9 +92,7 @@ export type AuditRelay = {
   items(): AuditItem[];
 };
 
-
 export type AuditRelayDeps = RelayDeps;
-
 
 /**
  * Les éléments courants des features /audit d'une session, dans l'ordre du lot,
@@ -105,7 +105,6 @@ export function auditItemsOf(
 ): AuditItem[] {
   return relayItemsOf(lot, sessionFile, liveOf, { cap: true, failure: true }) as AuditItem[];
 }
-
 
 /** Le message injecté dans la session /audit pour un élément, mot pour mot (S-6). */
 export function buildRelayMessage(item: AuditItem): string {
@@ -134,7 +133,6 @@ export function buildRelayMessage(item: AuditItem): string {
       ].join("\n");
   }
 }
-
 
 /** La nature d'un élément proposé par /audit. */
 export type ProposalElementKind = "weakness" | "feature";
@@ -222,7 +220,8 @@ export function checkProposal(input: unknown): { ok: true; proposal: Proposal } 
     }
     for (const entry of raw as string[]) {
       const dep = toSlug(entry);
-      if (dep === null || !seen.has(dep)) return fail(`Error: « ${element.slug} » depends on unknown « ${entry.trim()} »`);
+      if (dep === null || !seen.has(dep))
+        return fail(`Error: « ${element.slug} » depends on unknown « ${entry.trim()} »`);
       if (dep === element.slug) return fail(`Error: « ${element.slug} » depends on itself`);
       if (!element.deps.includes(dep)) element.deps.push(dep);
     }
@@ -256,7 +255,6 @@ export function launchOrder<T extends { slug: string; deps: readonly string[] }>
   }
   return order;
 }
-
 
 /** Un élément à enrôler dans le lot : slug, intention, dépendances, et ses modèles éventuels. */
 export type EnrolElement = {
@@ -313,7 +311,12 @@ export async function enrolElements(input: {
       if (feature !== undefined && feature.state !== "cancelled") kept.push(dep);
     }
     if (missing !== null) {
-      outcomes.push({ slug: element.slug, launched: false, reason: `dépend de ${missing}, non lancée`, refused: false });
+      outcomes.push({
+        slug: element.slug,
+        launched: false,
+        reason: `dépend de ${missing}, non lancée`,
+        refused: false,
+      });
       continue;
     }
     const refusal = await input.add({
@@ -334,13 +337,11 @@ export async function enrolElements(input: {
   return outcomes;
 }
 
-
 const LAUNCH_ID = "audit-launch";
 const LAUNCH_TITLE =
   "Quelles pipelines lancer ? Coche un ou plusieurs éléments puis valide — valider sans rien cocher ne lance rien.";
 const LAUNCH_ACTION = "Lancer la sélection";
 const INTERRUPTED = "Aucune pipeline lancée : dialogue interrompu.";
-
 
 /** La fabrique du relais /audit (S-6) : le profil /audit sur le relais générique, plus `audit_propose`. */
 export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
@@ -370,7 +371,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     const ui = ctx.ui;
     if (typeof ui.askDialog === "function") {
       const result = await ui.askDialog([{ id: LAUNCH_ID, question: title, options, multi: true }], { signal });
-      if (!result || result.kind !== "submit") return null;
+      if (result?.kind !== "submit") return null;
       const first = result.results[0];
       if (!first || first.timedOut === true) return null;
       const picked = new Set(first.selectedOptions);
@@ -438,7 +439,8 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     if (selection === null) return toolText("Aucune pipeline lancée : sélection abandonnée.");
     const { checked, free } = selection;
     const freeLine = free === null ? [] : [`Texte libre de l'utilisateur, non lancé : « ${free} »`];
-    if (checked.length === 0) return toolText(["Aucune pipeline lancée : aucun élément coché.", ...freeLine].join("\n"));
+    if (checked.length === 0)
+      return toolText(["Aucune pipeline lancée : aucun élément coché.", ...freeLine].join("\n"));
 
     // S-3 — TOUS les dialogues avant le premier ajout : son run de collecte porte
     // déjà ses `--model`, et un abandon tardif n'a rien écrit. L'ordre (S-6) :
@@ -496,7 +498,12 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
       let fallbackReqSpecs: string | null = null;
       let fallbackImplReview: string | null = null;
       if (catalogue.length > 0) {
-        const chosen = await askFeatureModels((title, options, opts) => ctx.ui.select(title, options, opts), catalogue, slug, signal);
+        const chosen = await askFeatureModels(
+          (title, options, opts) => ctx.ui.select(title, options, opts),
+          catalogue,
+          slug,
+          signal,
+        );
         if (chosen === null) {
           reasons.set(slug, "modèle non choisi");
           continue;
@@ -506,7 +513,15 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         fallbackReqSpecs = chosen.fallbacks.reqSpecs;
         fallbackImplReview = chosen.fallbacks.implReview;
       }
-      retained.push({ slug, intention, deps: elementDeps, modelReqSpecs, modelImplReview, fallbackReqSpecs, fallbackImplReview });
+      retained.push({
+        slug,
+        intention,
+        deps: elementDeps,
+        modelReqSpecs,
+        modelImplReview,
+        fallbackReqSpecs,
+        fallbackImplReview,
+      });
     }
     if (interrupted()) return toolText(INTERRUPTED);
     if (briefText !== null && retained.length > 0) {
@@ -572,7 +587,8 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     for (const { slug, intention } of retained) {
       if (started.has(slug)) lines.push(`Intention transmise à /req — ${slug} :`, intention);
     }
-    if (started.size > 0) lines.push("Les questions des maillons et les jalons te seront relayés par des messages [audit].");
+    if (started.size > 0)
+      lines.push("Les questions des maillons et les jalons te seront relayés par des messages [audit].");
     return toolText(lines.join("\n"), started.size === 0 && refused);
   }
 
@@ -635,7 +651,13 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
           approval: "read",
           loadMode: "essential",
           parameters: proposalParameters(pi),
-          async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+          async execute(
+            _toolCallId: string,
+            params: unknown,
+            signal?: AbortSignal,
+            _onUpdate?: unknown,
+            ctx?: ExtensionContext,
+          ) {
             const checked = checkProposal(params);
             if (!checked.ok) return toolText(checked.error, true);
             if (!armedOn(ctx) || ctx === undefined) return toolText(notArmed, true);
@@ -644,7 +666,16 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             const repoRoot = state.repoRoot as string;
             return inDialogTurn(
               signal,
-              () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, checked.proposal.brief, checked.proposal.report, signal),
+              () =>
+                propose(
+                  ctx,
+                  sessionFile,
+                  repoRoot,
+                  checked.proposal.elements,
+                  checked.proposal.brief,
+                  checked.proposal.report,
+                  signal,
+                ),
               () => toolText(INTERRUPTED),
             );
           },
@@ -654,7 +685,6 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     deps,
   ) as AuditRelay;
 }
-
 
 /** Le schéma des paramètres d'une proposition : partagé par `audit_propose` et `audit_report`. */
 function proposalParameters(pi: ExtensionAPI) {
@@ -672,7 +702,6 @@ function proposalParameters(pi: ExtensionAPI) {
     rapport: "string",
   });
 }
-
 
 /**
  * `audit_report` (S-1) : la SEULE surface de la session d'analyse d'un audit de
@@ -703,7 +732,10 @@ export function registerAuditReportTool(pi: ExtensionAPI, binding: { auditId: st
       try {
         writeAuditReportDraft(binding.stateDir, binding.auditId, report);
       } catch (error) {
-        return toolText(`Error: rapport non enregistré : ${error instanceof Error ? error.message : String(error)}`, true);
+        return toolText(
+          `Error: rapport non enregistré : ${error instanceof Error ? error.message : String(error)}`,
+          true,
+        );
       }
       const weaknesses = elements.filter((element) => element.kind === "weakness");
       writeAudit(binding.stateDir, {
@@ -716,7 +748,6 @@ export function registerAuditReportTool(pi: ExtensionAPI, binding: { auditId: st
     },
   });
 }
-
 
 /**
  * Le dépôt d'un audit ouvert depuis `cwd`, ou le refus — mêmes textes pour
@@ -731,6 +762,7 @@ export function auditRepoRootOf(cwd: string): { ok: true; repoRoot: string } | {
       refusal: `[audit] déjà dans le worktree d'une feature (${root.dir}) — /audit s'ouvre depuis le dépôt principal (${root.primary})`,
     };
   }
-  if (!fs.existsSync(path.join(root.dir, ".git"))) return { ok: false, refusal: `[audit] ${root.dir} n'est pas un dépôt git` };
+  if (!fs.existsSync(path.join(root.dir, ".git")))
+    return { ok: false, refusal: `[audit] ${root.dir} n'est pas un dépôt git` };
   return { ok: true, repoRoot: root.dir };
 }

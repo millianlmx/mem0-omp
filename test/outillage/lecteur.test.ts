@@ -45,22 +45,10 @@ test("lecteur-de-sessions-omp/AC-11 : aucune transcription .jsonl dans le dépô
   });
   if (probe.status === 0 && probe.stdout.trim() === "true") {
     const tracked = spawnSync("git", ["ls-files", "*.jsonl"], { cwd: ROOT, encoding: "utf8" });
-    assert.equal(
-      tracked.status,
-      0,
-      `git ls-files *.jsonl a échoué (status ${tracked.status}) : ${tracked.stderr}`,
-    );
-    assert.equal(
-      tracked.stdout.trim(),
-      "",
-      `git indexe des transcriptions .jsonl : ${tracked.stdout.trim()}`,
-    );
+    assert.equal(tracked.status, 0, `git ls-files *.jsonl a échoué (status ${tracked.status}) : ${tracked.stderr}`);
+    assert.equal(tracked.stdout.trim(), "", `git indexe des transcriptions .jsonl : ${tracked.stdout.trim()}`);
   }
 
   const jsonl = findJsonl(ROOT);
-  assert.deepEqual(
-    jsonl,
-    [],
-    `transcriptions .jsonl présentes sur le disque : ${jsonl.join(", ")}`,
-  );
+  assert.deepEqual(jsonl, [], `transcriptions .jsonl présentes sur le disque : ${jsonl.join(", ")}`);
 });

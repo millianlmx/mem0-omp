@@ -14,7 +14,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipelineStateDir, pidAlive, writeJsonAtomic } from "./store.ts";
 
-
 /** Le drapeau CLI qui fait d'un process `omp` le service (S-1). */
 export const SERVICE_FLAG = "pipeline-service";
 
@@ -33,7 +32,6 @@ export const SERVICE_LOG_FILE = "service.log";
 /** Le label du job launchd (S-1) : un seul, pour la machine. */
 export const SERVICE_LABEL = "com.millianlmx.mem0-omp-service";
 
-
 /**
  * L'enregistrement d'un service vivant. `stateDir` et `sessionFile` sont absolus :
  * le pod du service et celui des clients peuvent différer (l'app n'a pas le même
@@ -50,11 +48,9 @@ export type ServiceRecord = {
   sessionFile: string | null;
 };
 
-
 export function serviceFilePath(stateDir: string = pipelineStateDir()): string {
   return path.join(stateDir, SERVICE_FILE);
 }
-
 
 /**
  * Le marqueur de PROCESS du service. Le drapeau `--pipeline-service` suffit à la
@@ -77,17 +73,14 @@ export function isMarkedServiceProcess(): boolean {
   return (globalThis as Record<symbol, unknown>)[SERVICE_PROCESS_KEY] === true;
 }
 
-
 export function serviceLogPath(stateDir: string = pipelineStateDir()): string {
   return path.join(stateDir, SERVICE_LOG_FILE);
 }
-
 
 /** Un jeton neuf : 16 octets d'aléa, 32 hexadécimaux (S-1). */
 export function newServiceToken(): string {
   return crypto.randomBytes(16).toString("hex");
 }
-
 
 /**
  * `MEM0_SERVICE_PORT` : le port demandé. Absent ou illisible ⇒ 8788 ; `0` est
@@ -101,13 +94,11 @@ export function servicePort(env: Record<string, string | undefined> = process.en
   return value;
 }
 
-
 /** Le port du fichier est-il plausible ? (0 = éphémère, jamais un port publié). */
 function asPort(raw: unknown): number | null {
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0 || raw > 65535) return null;
   return raw;
 }
-
 
 /**
  * Lit un enregistrement SANS conclure sur sa vivacité, et rend `null` dès qu'une
@@ -130,7 +121,6 @@ export function asServiceRecord(raw: unknown): ServiceRecord | null {
   return { version: SERVICE_VERSION, pid, port, token, startedAt, stateDir, sessionFile };
 }
 
-
 /**
  * La forme de l'enregistrement, sans juger sa vivacité : c'est elle qui distingue
  * « rien du tout » d'un « enregistrement périmé » (pid mort après un `kill -9`).
@@ -144,7 +134,6 @@ export function readServiceRecord(stateDir: string = pipelineStateDir()): Servic
   }
   return asServiceRecord(raw);
 }
-
 
 /**
  * L'enregistrement VIVANT du service, ou `null`. `null` couvre : fichier absent,
@@ -169,12 +158,10 @@ export function readService(
   return alive(record.pid) ? record : null;
 }
 
-
 /** Écrit l'enregistrement (0600) : temporaire dans le même dossier, puis `rename`. */
 export function writeService(record: ServiceRecord, stateDir: string = record.stateDir): void {
   writeJsonAtomic(serviceFilePath(stateDir), record);
 }
-
 
 /** Retire l'enregistrement : l'arrêt propre du service (S-1). */
 export function removeService(stateDir: string = pipelineStateDir()): void {
@@ -184,7 +171,6 @@ export function removeService(stateDir: string = pipelineStateDir()): void {
     /* déjà retiré */
   }
 }
-
 
 /**
  * Un service tourne-t-il DÉJÀ ? Le pid enregistré doit être vivant : un fichier
@@ -196,7 +182,6 @@ export function serviceRunning(
 ): ServiceRecord | null {
   return readService(stateDir, deps);
 }
-
 
 /**
  * L'URL de base de l'API d'un service : `http://127.0.0.1:<port>/v1` (S-2). Écrite

@@ -24,7 +24,6 @@ import { SERVICE_VERSION } from "./serviceState.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-
 export type PilotDeps = {
   stateDir: string;
   host: SessionHost;
@@ -63,7 +62,6 @@ export interface ServicePilot {
   stopConduite: (repo: string) => Promise<void>;
 }
 
-
 /**
  * Le dépôt visé par une route : chemin absolu EXISTANT. Un chemin relatif ou
  * disparu est un 404 nommé (S-2, cas limites) — jamais un lot créé ailleurs.
@@ -74,7 +72,6 @@ export function requireRepo(repo: string): string {
   return realpathOr(repo);
 }
 
-
 /** Les fichiers `*.json` d'un dossier du magasin, dans l'ordre stable des noms. */
 function storeFiles(dir: string): string[] {
   let names: string[];
@@ -83,9 +80,11 @@ function storeFiles(dir: string): string[] {
   } catch {
     return [];
   }
-  return names.filter(name => name.endsWith(".json")).sort().map(name => path.join(dir, name));
+  return names
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => path.join(dir, name));
 }
-
 
 export function createServicePilot(deps: PilotDeps): ServicePilot {
   const log = deps.log ?? (() => {});
@@ -126,7 +125,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       const repoRoot = project.repoRoot;
       const resumeFile = project.hostSession;
       void deps.host.open({ cwd: repoRoot, purpose: "project", resume: resumeFile }).then(
-        hosted => log(`[service] conduite reprise pour ${repoRoot} (session ${hosted.id})`),
+        (hosted) => log(`[service] conduite reprise pour ${repoRoot} (session ${hosted.id})`),
         (err: unknown) => {
           log(`[service] reprise de conduite en échec : ${err instanceof Error ? err.message : String(err)}`);
         },
@@ -216,10 +215,13 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
     start(): void {
       if (stopSweep !== null) return;
       sweep();
-      stopSweep = (deps.schedule ?? ((callback, ms) => {
-        const timer = setInterval(callback, ms);
-        return () => clearInterval(timer);
-      }))(() => {
+      stopSweep = (
+        deps.schedule ??
+        ((callback, ms) => {
+          const timer = setInterval(callback, ms);
+          return () => clearInterval(timer);
+        })
+      )(() => {
         try {
           sweep();
         } catch (err) {
@@ -307,7 +309,8 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
           `[project] ${root} n'a aucun dépôt distant GitHub (git remote -v) — ajoute-le (git remote add origin <URL du dépôt GitHub>), puis relance /project. Rien n'a été créé.`,
         );
       }
-      const name = body && typeof body === "object" && !Array.isArray(body) ? (body as { name?: unknown }).name : undefined;
+      const name =
+        body && typeof body === "object" && !Array.isArray(body) ? (body as { name?: unknown }).name : undefined;
       if (typeof name !== "string") throw badRequest("champ « name » manquant");
       const existing = deps.host.conduiteFor(root);
       if (existing !== null) {
@@ -328,7 +331,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       // fichier de session est repris par le handler lui-même (`resume`).
       const resumed = project !== null && project.status === "running" && project.hostSession !== null;
       if (!resumed) {
-        const prompt = hosted.session.prompt(`/project ${name.trim()}`).catch(err => {
+        const prompt = hosted.session.prompt(`/project ${name.trim()}`).catch((err) => {
           log(`[service] amorce de conduite en échec : ${err instanceof Error ? err.message : String(err)}`);
         });
         // Le cadrage NEUF se joue d'un trait (aucun dialogue n'y est attendu) : la

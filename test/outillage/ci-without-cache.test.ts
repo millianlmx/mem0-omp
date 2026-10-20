@@ -41,7 +41,8 @@ function workflowJobs(workflow: string): Map<string, string> {
 }
 
 /** L'en-tête d'un job : ses lignes jusqu'à `steps:` (nom, matrice, needs, if, runs-on…). */
-const jobHeader = (job: string) => (job.split(/^ {4}steps:\s*$/m)[0] ?? "").split("\n").filter((line) => line.trim() !== "");
+const jobHeader = (job: string) =>
+  (job.split(/^ {4}steps:\s*$/m)[0] ?? "").split("\n").filter((line) => line.trim() !== "");
 
 /** Les étapes d'un job, une par bloc (`      - ` ouvre une étape), sans lignes vides. */
 function stepsOf(job: string): string[][] {
@@ -97,7 +98,9 @@ function cacheStep(name: string, family: Family, paths: string[], condition?: st
     ...(condition ? [`        if: ${condition}`] : []),
     "        uses: actions/cache@v6",
     "        with:",
-    ...(paths.length === 1 ? [`          path: ${paths[0]}`] : ["          path: |", ...paths.map((p) => `            ${p}`)]),
+    ...(paths.length === 1
+      ? [`          path: ${paths[0]}`]
+      : ["          path: |", ...paths.map((p) => `            ${p}`)]),
     `          key: ${keyOf(family)}`,
   ];
 }
@@ -147,7 +150,10 @@ const EXPECTED: Expected[] = [
     anchor: "      - uses: actions/setup-node@v4",
     caches: [
       { family: "npm", step: NPM },
-      { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2' || github.event_name == 'push'") },
+      {
+        family: "cargo",
+        step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2' || github.event_name == 'push'"),
+      },
       {
         family: "swiftpm",
         step: cacheStep("Cache SwiftPM (.build-node)", "swiftpm", ["omp-console/.build-node"], "matrix.part == '1/2'"),
@@ -186,7 +192,10 @@ function renderKey(key: string, job: string): string {
 }
 
 test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Rust ou du Swift restaure un cache par famille, aux chemins et clés de S-1", () => {
-  const files: Record<string, string> = { [CHECK_FILE]: readFile(CHECK_FILE), [SIMULATION_FILE]: readFile(SIMULATION_FILE) };
+  const files: Record<string, string> = {
+    [CHECK_FILE]: readFile(CHECK_FILE),
+    [SIMULATION_FILE]: readFile(SIMULATION_FILE),
+  };
   const keys: string[] = [];
 
   for (const expected of EXPECTED) {
@@ -199,7 +208,9 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
     // texte près (uses, chemins, clé, condition), d'un seul tenant et dans l'ordre.
     const anchor = stepIndex(steps, expected.anchor, where);
     assert.deepEqual(steps[anchor + 1], FINGERPRINT_STEP, `${where} : empreinte absente après l'ancrage`);
-    expected.caches.forEach(({ step }, i) => assert.deepEqual(steps[anchor + 2 + i], step, `${where} : cache n°${i + 1}`));
+    expected.caches.forEach(({ step }, i) => {
+      assert.deepEqual(steps[anchor + 2 + i], step, `${where} : cache n°${i + 1}`);
+    });
     // Aucun autre cache que ceux du tableau.
     assert.deepEqual(
       steps.filter(isCache).map(stepName),
@@ -211,7 +222,8 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
     const consumer = stepIndex(steps, expected.consumer, where);
     for (const [i, { family }] of expected.caches.entries()) {
       const at = anchor + 2 + i;
-      if (family === "npm") assert.ok(at < stepIndex(steps, INSTALL, where), `${where} : cache npm après l'installation`);
+      if (family === "npm")
+        assert.ok(at < stepIndex(steps, INSTALL, where), `${where} : cache npm après l'installation`);
       else assert.ok(at < consumer, `${where} : cache ${family} après son consommateur`);
       keys.push(`${expected.job}|${keyOf(family)}`);
     }
@@ -219,16 +231,21 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
 
   // check-macos ne cache rien : il ne lance que ci-verdict.sh. macos-app-ios non
   // plus : un DerivedData restauré n'y fait rien gagner (mesuré, S-2).
-  for (const [id, run] of [["check-macos", "scripts/ci-verdict.sh"], ["macos-app-ios", "./scripts/check.sh --sections=app-ios"]] as const) {
+  for (const [id, run] of [
+    ["check-macos", "scripts/ci-verdict.sh"],
+    ["macos-app-ios", "./scripts/check.sh --sections=app-ios"],
+  ] as const) {
     const job = workflowJobs(files[CHECK_FILE] ?? "").get(id) ?? "";
     assert.ok(job.includes(run), `${id} : « ${run} » attendu\n${job}`);
     assert.ok(!job.includes("actions/cache") && !job.includes("id: toolchain"), `${id} : cache inattendu\n${job}`);
   }
 
   // (5) Chaque fichier passé à hashFiles existe : un hashFiles vide figerait la clé.
-  const hashed = [...Object.values(files).join("\n").matchAll(/hashFiles\(([^)]*)\)/g)].flatMap((call) =>
-    [...(call[1] ?? "").matchAll(/'([^']+)'/g)].map((arg) => arg[1] as string),
-  );
+  const hashed = [
+    ...Object.values(files)
+      .join("\n")
+      .matchAll(/hashFiles\(([^)]*)\)/g),
+  ].flatMap((call) => [...(call[1] ?? "").matchAll(/'([^']+)'/g)].map((arg) => arg[1] as string));
   assert.ok(hashed.length > 0, "aucun hashFiles dans les workflows");
   for (const file of hashed) assert.ok(fs.existsSync(path.join(ROOT, file)), `hashFiles('${file}') : fichier absent`);
 
@@ -272,7 +289,14 @@ test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent
   for (const file of [CHECK_FILE, SIMULATION_FILE]) {
     const yaml = uncommented(readFile(file));
     // (1) Ni restore-keys, ni sauvegarde forcée, ni échec toléré.
-    for (const forbidden of ["restore-keys", "save-always", "lookup-only", "fail-on-cache-miss", "enableCrossOsArchive", "continue-on-error"]) {
+    for (const forbidden of [
+      "restore-keys",
+      "save-always",
+      "lookup-only",
+      "fail-on-cache-miss",
+      "enableCrossOsArchive",
+      "continue-on-error",
+    ]) {
       assert.ok(!yaml.includes(forbidden), `${file} : ${forbidden}`);
     }
     assert.doesNotMatch(yaml, /actions\/cache\/(restore|save)/, `${file} : cache découpé`);
@@ -314,7 +338,8 @@ test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent
     const now = workflowJobs(readFile(file));
     const old = workflowJobs(before.stdout);
     assert.deepEqual([...now.keys()], [...old.keys()], `${file} : jobs`);
-    for (const [id, job] of now) assert.deepEqual(jobHeader(job), jobHeader(old.get(id) ?? ""), `${file} › ${id} : en-tête`);
+    for (const [id, job] of now)
+      assert.deepEqual(jobHeader(job), jobHeader(old.get(id) ?? ""), `${file} › ${id} : en-tête`);
     const block = (yaml: string, key: string) =>
       new RegExp(`^${key}:\\s*\\n((?: {2}.*\\n)+)`, "m").exec(uncommented(yaml))?.[1] ?? null;
     for (const key of ["on", "concurrency", "permissions"]) {
@@ -322,7 +347,9 @@ test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent
     }
   }
   const check = workflowJobs(readFile(CHECK_FILE));
-  const oldCheck = workflowJobs(spawnSync("git", ["show", `${BASE}:${CHECK_FILE}`], { cwd: ROOT, encoding: "utf8" }).stdout);
+  const oldCheck = workflowJobs(
+    spawnSync("git", ["show", `${BASE}:${CHECK_FILE}`], { cwd: ROOT, encoding: "utf8" }).stdout,
+  );
   assert.equal(check.get("check-macos"), oldCheck.get("check-macos"), "agrégateur check-macos modifié");
   assert.match(check.get("check-macos") ?? "", /^ {4}name: check \(macos-latest\)$/m);
   assert.match(check.get("check") ?? "", /^ {8}os: \[ubuntu-latest\]$/m);

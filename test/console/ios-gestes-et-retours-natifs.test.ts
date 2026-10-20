@@ -117,23 +117,33 @@ function pullFaults(files: { pipelines: string; memory: string; model: string; a
   const faults: string[] = [];
   const pipelines = stripComments(files.pipelines);
   for (const host of ["func list<", "func regularBoard"]) {
-    if (count(memberBody(pipelines, host), PIPELINES_PULL) !== 1) faults.push(`PipelinesScreen.swift : ${host} sans « ${PIPELINES_PULL} »`);
+    if (count(memberBody(pipelines, host), PIPELINES_PULL) !== 1)
+      faults.push(`PipelinesScreen.swift : ${host} sans « ${PIPELINES_PULL} »`);
   }
-  if (count(pipelines, ".refreshable") !== 2) faults.push(`PipelinesScreen.swift : ${count(pipelines, ".refreshable")} .refreshable (attendu 2)`);
+  if (count(pipelines, ".refreshable") !== 2)
+    faults.push(`PipelinesScreen.swift : ${count(pipelines, ".refreshable")} .refreshable (attendu 2)`);
 
   const memory = stripComments(files.memory);
-  if (count(memberBody(memory, "private var surface"), MEMORY_PULL) !== 1) faults.push(`IOSMemoryScreen.swift : la liste de surface sans « ${MEMORY_PULL} »`);
-  if (count(memory, ".refreshable") !== 1) faults.push(`IOSMemoryScreen.swift : ${count(memory, ".refreshable")} .refreshable (attendu 1, la liste seule)`);
+  if (count(memberBody(memory, "private var surface"), MEMORY_PULL) !== 1)
+    faults.push(`IOSMemoryScreen.swift : la liste de surface sans « ${MEMORY_PULL} »`);
+  if (count(memory, ".refreshable") !== 1)
+    faults.push(`IOSMemoryScreen.swift : ${count(memory, ".refreshable")} .refreshable (attendu 1, la liste seule)`);
 
   const model = stripComments(files.model);
-  if (!/static func refresh\(_ client: ConsoleClientModel\) async\b/.test(model)) faults.push("PipelinesModel.swift : static func refresh(_ client:) async absente");
-  if (!model.includes("static func canRefresh(connection: ClientState) -> Bool")) faults.push("PipelinesModel.swift : canRefresh(connection:) absente");
+  if (!/static func refresh\(_ client: ConsoleClientModel\) async\b/.test(model))
+    faults.push("PipelinesModel.swift : static func refresh(_ client:) async absente");
+  if (!model.includes("static func canRefresh(connection: ClientState) -> Bool"))
+    faults.push("PipelinesModel.swift : canRefresh(connection:) absente");
 
-  faults.push(...toolbarRefreshFaults("PipelinesScreen.swift", files.pipelines), ...toolbarRefreshFaults("IOSMemoryScreen.swift", files.memory));
+  faults.push(
+    ...toolbarRefreshFaults("PipelinesScreen.swift", files.pipelines),
+    ...toolbarRefreshFaults("IOSMemoryScreen.swift", files.memory),
+  );
   for (const [name, source] of files.all) {
     const code = stripComments(source);
     for (const id of ["PipelinesAccessibility.refresh", "IOSMemoryAccessibility.refresh"]) {
-      if (new RegExp(`${id.replace(".", "\\.")}\\b`).test(code)) faults.push(`${name} : identifiant de ↻ ${id} encore cité`);
+      if (new RegExp(`${id.replace(".", "\\.")}\\b`).test(code))
+        faults.push(`${name} : identifiant de ↻ ${id} encore cité`);
     }
   }
   return faults;
@@ -143,9 +153,12 @@ function pullFaults(files: { pipelines: string; memory: string; model: string; a
 function memoryBarFaults(memory: string): string[] {
   const faults: string[] = [];
   const items = toolbarItems(stripComments(memory));
-  if (items.length !== 2) faults.push(`IOSMemoryScreen.swift : ${items.length} ToolbarItem (attendu 2 ; + l'antenne de RootView = 3)`);
-  if (!items.some((item) => item.includes("summaryButton"))) faults.push("IOSMemoryScreen.swift : « Sommaire » absent de la barre");
-  if (!items.some((item) => item.includes("IOSMemoryAccessibility.graphToggle"))) faults.push("IOSMemoryScreen.swift : bascule Graphe/Liste absente de la barre");
+  if (items.length !== 2)
+    faults.push(`IOSMemoryScreen.swift : ${items.length} ToolbarItem (attendu 2 ; + l'antenne de RootView = 3)`);
+  if (!items.some((item) => item.includes("summaryButton")))
+    faults.push("IOSMemoryScreen.swift : « Sommaire » absent de la barre");
+  if (!items.some((item) => item.includes("IOSMemoryAccessibility.graphToggle")))
+    faults.push("IOSMemoryScreen.swift : bascule Graphe/Liste absente de la barre");
   faults.push(...toolbarRefreshFaults("IOSMemoryScreen.swift", memory));
   return faults;
 }
@@ -196,7 +209,9 @@ function menuFaults(name: string, source: string): string[] {
 
 /** Aucune action par balayage dans l'app (B-3 : hors périmètre). */
 function swipeFaults(all: Map<string, string>): string[] {
-  return [...all].filter(([, source]) => stripComments(source).includes(".swipeActions")).map(([name]) => `${name} : .swipeActions`);
+  return [...all]
+    .filter(([, source]) => stripComments(source).includes(".swipeActions"))
+    .map(([name]) => `${name} : .swipeActions`);
 }
 
 // MARK: - AC-8 : retour haptique à la réponse du Mac
@@ -211,18 +226,30 @@ function feedbackFaults(all: Map<string, string>): string[] {
   for (const [name, source] of all) {
     const code = stripComments(source);
     for (let i = 0; i < count(code, ".sensoryFeedback("); i++) hosts.push(name);
-    if (/UI(Impact|Notification|Selection)FeedbackGenerator/.test(code)) faults.push(`${name} : générateur haptique UIKit`);
+    if (/UI(Impact|Notification|Selection)FeedbackGenerator/.test(code))
+      faults.push(`${name} : générateur haptique UIKit`);
   }
-  if (hosts.length !== 1 || hosts[0] !== "RootView.swift") faults.push(`.sensoryFeedback( posé par [${hosts.join(", ")}] (attendu : RootView.swift seul)`);
+  if (hosts.length !== 1 || hosts[0] !== "RootView.swift")
+    faults.push(`.sensoryFeedback( posé par [${hosts.join(", ")}] (attendu : RootView.swift seul)`);
   const root = stripComments(all.get("RootView.swift") ?? "");
-  if (!/\.sensoryFeedback\(trigger: client\.commandOutcome\)\s*\{\s*_, outcome in\s*IOSCommandFeedback\.feedback\(for: outcome\)/.test(root)) {
-    faults.push("RootView.swift : .sensoryFeedback ne suit pas client.commandOutcome par IOSCommandFeedback.feedback(for:)");
+  if (
+    !/\.sensoryFeedback\(trigger: client\.commandOutcome\)\s*\{\s*_, outcome in\s*IOSCommandFeedback\.feedback\(for: outcome\)/.test(
+      root,
+    )
+  ) {
+    faults.push(
+      "RootView.swift : .sensoryFeedback ne suit pas client.commandOutcome par IOSCommandFeedback.feedback(for:)",
+    );
   }
   return faults;
 }
 
 /** Les écritures qui ne sont pas des commandes de l'utilisateur (S-5). */
-const NON_COMMAND_PATHS = ['ConsoleAPI.Service.basePath + "/pair"', 'ConsoleAPI.Service.basePath + "/devices/self"', '"/v1/pull-request-states/refresh"'];
+const NON_COMMAND_PATHS = [
+  'ConsoleAPI.Service.basePath + "/pair"',
+  'ConsoleAPI.Service.basePath + "/devices/self"',
+  '"/v1/pull-request-states/refresh"',
+];
 
 /**
  * AC-8 (S-5) : dans le client, chaque requête POST/DELETE est l'argument d'un
@@ -238,13 +265,18 @@ function commandRouteFaults(client: string): string[] {
     const pathText = match[2];
     const line = code.slice(0, match.index).split("\n").length;
     if (NON_COMMAND_PATHS.some((p) => pathText.startsWith(p))) {
-      if (/perform(Command|Gesture)\($/.test(routed)) faults.push(`ConsoleClientModel.swift l.${line} : ${pathText.split(",")[0]} n'est pas une commande`);
+      if (/perform(Command|Gesture)\($/.test(routed))
+        faults.push(`ConsoleClientModel.swift l.${line} : ${pathText.split(",")[0]} n'est pas une commande`);
       continue;
     }
     commands++;
-    if (!/perform(Command|Gesture)\($/.test(routed)) faults.push(`ConsoleClientModel.swift l.${line} : ${match[1]} ${pathText.split(",")[0]} hors de performCommand/performGesture`);
+    if (!/perform(Command|Gesture)\($/.test(routed))
+      faults.push(
+        `ConsoleClientModel.swift l.${line} : ${match[1]} ${pathText.split(",")[0]} hors de performCommand/performGesture`,
+      );
   }
-  if (commands < 16) faults.push(`ConsoleClientModel.swift : ${commands} commandes POST/DELETE trouvées (au moins 16 attendues)`);
+  if (commands < 16)
+    faults.push(`ConsoleClientModel.swift : ${commands} commandes POST/DELETE trouvées (au moins 16 attendues)`);
   return faults;
 }
 
@@ -252,7 +284,12 @@ function commandRouteFaults(client: string): string[] {
 
 /** Les surfaces de texte sélectionnable (S-6), une pose chacune — plus l'orientation
  *  en titre du détail d'un audit (audit-ui-redesign, S-6 : sélectionnable par appui long). */
-const SELECTABLE = ["IOSSessionViewerSheet.swift", "HomeContractSheet.swift", "IOSMemoryDetailView.swift", "IOSAuditDetailView.swift"];
+const SELECTABLE = [
+  "IOSSessionViewerSheet.swift",
+  "HomeContractSheet.swift",
+  "IOSMemoryDetailView.swift",
+  "IOSAuditDetailView.swift",
+];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {
@@ -292,9 +329,14 @@ function hoverFaults(all: Map<string, string>): string[] {
     if (!chain) faults.push(`${name} : ancre ${anchor} introuvable`);
     else if (!chain.includes(".iosHoverEffect()")) faults.push(`${name} : ${anchor} sans .iosHoverEffect()`);
   }
-  const modifier = memberBody(stripComments(all.get(path.join("Design", "IOSSurface.swift")) ?? ""), "func iosHoverEffect()");
-  if (!modifier.includes(".hoverEffect(.highlight)")) faults.push("IOSSurface.swift : iosHoverEffect() ne pose pas .hoverEffect(.highlight)");
-  if (!modifier.includes("contentShape(.hoverEffect, .rect(cornerRadius: IOSSurface.cardRadius))")) faults.push("IOSSurface.swift : iosHoverEffect() sans forme de carte");
+  const modifier = memberBody(
+    stripComments(all.get(path.join("Design", "IOSSurface.swift")) ?? ""),
+    "func iosHoverEffect()",
+  );
+  if (!modifier.includes(".hoverEffect(.highlight)"))
+    faults.push("IOSSurface.swift : iosHoverEffect() ne pose pas .hoverEffect(.highlight)");
+  if (!modifier.includes("contentShape(.hoverEffect, .rect(cornerRadius: IOSSurface.cardRadius))"))
+    faults.push("IOSSurface.swift : iosHoverEffect() sans forme de carte");
   return faults;
 }
 
@@ -302,13 +344,17 @@ function hoverFaults(all: Map<string, string>): string[] {
 function motionFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
   const home = stripComments(all.get("HomeView.swift") ?? "");
-  if (!home.includes("@Environment(\\.accessibilityReduceMotion) private var reduceMotion")) faults.push("HomeView.swift : accessibilityReduceMotion n'est pas lu");
-  if (!home.includes("withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion))")) faults.push("HomeView.swift : le défilement n'emploie pas IOSMotion.scrollAnimation(reduceMotion:)");
+  if (!home.includes("@Environment(\\.accessibilityReduceMotion) private var reduceMotion"))
+    faults.push("HomeView.swift : accessibilityReduceMotion n'est pas lu");
+  if (!home.includes("withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion))"))
+    faults.push("HomeView.swift : le défilement n'emploie pas IOSMotion.scrollAnimation(reduceMotion:)");
   for (const [name, source] of all) {
     const code = stripComments(source);
     for (const match of code.matchAll(/withAnimation\s*(\(|\{)/g)) {
       if (!code.startsWith("withAnimation(IOSMotion.scrollAnimation(", match.index)) {
-        faults.push(`${name} l.${code.slice(0, match.index).split("\n").length} : withAnimation hors d'IOSMotion.scrollAnimation`);
+        faults.push(
+          `${name} l.${code.slice(0, match.index).split("\n").length} : withAnimation hors d'IOSMotion.scrollAnimation`,
+        );
       }
     }
   }
@@ -318,7 +364,11 @@ function motionFaults(all: Map<string, string>): string[] {
 /** Les symboles décoratifs de S-9 : fichier → début d'`Image` → occurrences attendues. */
 const DECORATIVE: { name: string; image: string; times: number }[] = [
   { name: "IOSSectionView.swift", image: "Image(systemName: content.systemImage)", times: 1 },
-  { name: "IOSSessionThreadView.swift", image: "Image(systemName: model.state == .waiting ? IOSSessionText.waitingSymbol", times: 1 },
+  {
+    name: "IOSSessionThreadView.swift",
+    image: "Image(systemName: model.state == .waiting ? IOSSessionText.waitingSymbol",
+    times: 1,
+  },
   { name: "IOSSessionRowView.swift", image: "Image(systemName: IOSSessionText.chevron(isThinkingOpen))", times: 1 },
   { name: "IOSSessionRowView.swift", image: "Image(systemName: IOSSessionText.chevron(isOpen))", times: 2 },
   { name: "IOSSessionRowView.swift", image: "Image(systemName: symbol)", times: 1 },
@@ -352,12 +402,20 @@ function symbolFaults(all: Map<string, string>): string[] {
   }
   const rows = stripComments(all.get("IOSSessionRowView.swift") ?? "");
   for (const anchor of FOLD_TOGGLES) {
-    if (!/\.accessibilityValue\(\w+ \? KanbanText\.laneUnfolded : KanbanText\.laneFolded\)/.test(chainAround(rows, anchor))) {
+    if (
+      !/\.accessibilityValue\(\w+ \? KanbanText\.laneUnfolded : KanbanText\.laneFolded\)/.test(
+        chainAround(rows, anchor),
+      )
+    ) {
       faults.push(`IOSSessionRowView.swift : ${anchor} sans état de pli annoncé`);
     }
   }
   const answer = stripComments(all.get("HomeAnswerSheet.swift") ?? "");
-  if (!chainAround(answer, ".accessibilityIdentifier(IOSHomeAccessibility.answerOption(index))").includes(".accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])")) {
+  if (
+    !chainAround(answer, ".accessibilityIdentifier(IOSHomeAccessibility.answerOption(index))").includes(
+      ".accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])",
+    )
+  ) {
     faults.push("HomeAnswerSheet.swift : l'option choisie n'est pas annoncée sélectionnée");
   }
   return faults;
@@ -374,16 +432,27 @@ function summaryFaults(all: Map<string, string>): string[] {
   const memory = stripComments(all.get("IOSMemoryScreen.swift") ?? "");
   const button = memberBody(memory, "private var summaryButton");
   if (!button) return ["IOSMemoryScreen.swift : summaryButton absent"];
-  if (!button.includes(".disabled(!model.summaryAvailable(graphShown: graph.shown))")) faults.push("summaryButton n'est pas désactivé par summaryAvailable");
-  for (const token of [".popover", ".tint(", ".foregroundStyle(", ".opacity(", ".accessibilityHint(", ".accessibilityValue("]) {
+  if (!button.includes(".disabled(!model.summaryAvailable(graphShown: graph.shown))"))
+    faults.push("summaryButton n'est pas désactivé par summaryAvailable");
+  for (const token of [
+    ".popover",
+    ".tint(",
+    ".foregroundStyle(",
+    ".opacity(",
+    ".accessibilityHint(",
+    ".accessibilityValue(",
+  ]) {
     if (button.includes(token)) faults.push(`summaryButton porte ${token}`);
   }
-  if (!toolbarItems(memory).some((item) => /^\{\s*summaryButton\s*\}$/.test(item))) faults.push("« Sommaire » n'est pas une ToolbarItem inconditionnelle");
+  if (!toolbarItems(memory).some((item) => /^\{\s*summaryButton\s*\}$/.test(item)))
+    faults.push("« Sommaire » n'est pas une ToolbarItem inconditionnelle");
   for (const [name, source] of all) {
-    if (/summaryUnavailableReason|summaryReason/.test(stripComments(source))) faults.push(`${name} : raison d'indisponibilité de « Sommaire » encore présente`);
+    if (/summaryUnavailableReason|summaryReason/.test(stripComments(source)))
+      faults.push(`${name} : raison d'indisponibilité de « Sommaire » encore présente`);
   }
   const model = stripComments(all.get("IOSMemoryModel.swift") ?? "");
-  if (!/static func summaryAvailable\(graphShown: Bool, isSearching: Bool, isLoading: Bool\) -> Bool/.test(model)) faults.push("IOSMemoryModel.swift : summaryAvailable statique absente");
+  if (!/static func summaryAvailable\(graphShown: Bool, isSearching: Bool, isLoading: Bool\) -> Bool/.test(model))
+    faults.push("IOSMemoryModel.swift : summaryAvailable statique absente");
   return faults;
 }
 
@@ -442,21 +511,28 @@ function designFaults(design: string): string[] {
   const section = sectionOf(design, SECTION);
   if (!section) return [`DESIGN.md : section « ${SECTION} » absente`];
   const errors = design.indexOf("\n## Erreurs du Mac");
-  if (errors !== -1 && design.indexOf(`\n${SECTION}`) > errors) faults.push(`DESIGN.md : « ${SECTION} » n'est pas avant « ## Erreurs du Mac »`);
+  if (errors !== -1 && design.indexOf(`\n${SECTION}`) > errors)
+    faults.push(`DESIGN.md : « ${SECTION} » n'est pas avant « ## Erreurs du Mac »`);
   const items = bullets(section);
-  if (items.length < SECTION_MARKERS.length) faults.push(`DESIGN.md, ${SECTION} : ${items.length} puces (au moins ${SECTION_MARKERS.length} attendues)`);
+  if (items.length < SECTION_MARKERS.length)
+    faults.push(`DESIGN.md, ${SECTION} : ${items.length} puces (au moins ${SECTION_MARKERS.length} attendues)`);
   for (const lines of items) {
-    if (!/\[(test|capture|garde): [^\]]+\]`?$/.test(lines[lines.length - 1])) faults.push(`DESIGN.md, ${SECTION} : puce sans marqueur « ${lines[0].slice(0, 50)}… »`);
+    if (!/\[(test|capture|garde): [^\]]+\]`?$/.test(lines[lines.length - 1]))
+      faults.push(`DESIGN.md, ${SECTION} : puce sans marqueur « ${lines[0].slice(0, 50)}… »`);
   }
   for (const marker of SECTION_MARKERS) {
     if (!section.includes(marker)) faults.push(`DESIGN.md, ${SECTION} : marqueur ${marker} absent`);
   }
-  const summary = bullets(sectionOf(design, "## Mémoire (feature `ios-memoire`)")).find((lines) => lines[0].includes("« Sommaire »"));
+  const summary = bullets(sectionOf(design, "## Mémoire (feature `ios-memoire`)")).find((lines) =>
+    lines[0].includes("« Sommaire »"),
+  );
   if (!summary) faults.push("DESIGN.md, Mémoire : puce « Sommaire » absente");
   else {
     // « sans teinte ni bulle » est la règle elle-même : seule une bulle AFFIRMÉE rougit.
-    if (/(?<!ni )bulle/.test(summary.join("\n"))) faults.push("DESIGN.md, Mémoire : la puce « Sommaire » parle encore d'une bulle");
-    if (!summary.join("\n").includes("[test: summaryAvailability]")) faults.push("DESIGN.md, Mémoire : la puce « Sommaire » ne renvoie pas à summaryAvailability");
+    if (/(?<!ni )bulle/.test(summary.join("\n")))
+      faults.push("DESIGN.md, Mémoire : la puce « Sommaire » parle encore d'une bulle");
+    if (!summary.join("\n").includes("[test: summaryAvailability]"))
+      faults.push("DESIGN.md, Mémoire : la puce « Sommaire » ne renvoie pas à summaryAvailability");
   }
   for (const stale of ["Rafraîchir", "pipelines.refresh", "ios.memoire.refresh"]) {
     if (design.includes(stale)) faults.push(`DESIGN.md : « ${stale} » encore décrit`);
@@ -477,21 +553,48 @@ test("ios-gestes-et-retours-natifs/AC-2 : Pipelines et la liste de la Mémoire s
   assert.deepEqual(pullFaults(files()), []);
 
   // Faute plantée : le kanban iPad perd son tirage ⇒ rouge.
-  const board = plant(files().pipelines, (s) => s.replace(`.background(Color(uiColor: .systemGroupedBackground))\n        ${PIPELINES_PULL}`, ".background(Color(uiColor: .systemGroupedBackground))"));
-  assert.ok(pullFaults({ ...files(), pipelines: board }).some((f) => f.includes("func regularBoard")), "un kanban sans tirage doit rougir");
+  const board = plant(files().pipelines, (s) =>
+    s.replace(
+      `.background(Color(uiColor: .systemGroupedBackground))\n        ${PIPELINES_PULL}`,
+      ".background(Color(uiColor: .systemGroupedBackground))",
+    ),
+  );
+  assert.ok(
+    pullFaults({ ...files(), pipelines: board }).some((f) => f.includes("func regularBoard")),
+    "un kanban sans tirage doit rougir",
+  );
 
   // Faute plantée : la liste de la Mémoire perd son tirage ⇒ rouge.
   const list = plant(files().memory, (s) => s.replace(MEMORY_PULL, ""));
-  assert.ok(pullFaults({ ...files(), memory: list }).some((f) => f.includes("IOSMemoryScreen.swift")), "une liste Mémoire sans tirage doit rougir");
+  assert.ok(
+    pullFaults({ ...files(), memory: list }).some((f) => f.includes("IOSMemoryScreen.swift")),
+    "une liste Mémoire sans tirage doit rougir",
+  );
 
   // Faute plantée : un ↻ remis dans la barre de Pipelines ⇒ rouge.
-  const bar = plant(files().pipelines, (s) => s.replace("Label(NewFeatureText.command, systemImage: \"plus\")", "Label(NewFeatureText.command, systemImage: \"arrow.clockwise\")"));
-  assert.ok(pullFaults({ ...files(), pipelines: bar }).some((f) => f.includes("arrow.clockwise")), "un ↻ de barre doit rougir");
+  const bar = plant(files().pipelines, (s) =>
+    s.replace(
+      'Label(NewFeatureText.command, systemImage: "plus")',
+      'Label(NewFeatureText.command, systemImage: "arrow.clockwise")',
+    ),
+  );
+  assert.ok(
+    pullFaults({ ...files(), pipelines: bar }).some((f) => f.includes("arrow.clockwise")),
+    "un ↻ de barre doit rougir",
+  );
 
   // Faute plantée : l'identifiant du ↻ de la Mémoire revient ⇒ rouge.
-  const id = plant(files().memory, (s) => s.replace(".accessibilityIdentifier(IOSMemoryAccessibility.summary)", ".accessibilityIdentifier(IOSMemoryAccessibility.refresh)"));
+  const id = plant(files().memory, (s) =>
+    s.replace(
+      ".accessibilityIdentifier(IOSMemoryAccessibility.summary)",
+      ".accessibilityIdentifier(IOSMemoryAccessibility.refresh)",
+    ),
+  );
   const withId = withFile(all, "IOSMemoryScreen.swift", id);
-  assert.ok(pullFaults({ ...files(), memory: id, all: withId }).some((f) => f.includes("IOSMemoryAccessibility.refresh")), "l'identifiant du ↻ doit rougir");
+  assert.ok(
+    pullFaults({ ...files(), memory: id, all: withId }).some((f) => f.includes("IOSMemoryAccessibility.refresh")),
+    "l'identifiant du ↻ doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-4 : la barre de la Mémoire porte trois boutons au plus, dans les deux modes", () => {
@@ -500,13 +603,21 @@ test("ios-gestes-et-retours-natifs/AC-4 : la barre de la Mémoire porte trois bo
   assert.deepEqual(antennaFaults(appSource("RootView.swift")), []);
 
   // Faute plantée : une troisième ToolbarItem (↻) dans la Mémoire ⇒ rouge.
-  const third = plant(memory, (s) => s.replace(
-    "ToolbarItem(placement: .topBarTrailing) { summaryButton }",
-    "ToolbarItem(placement: .topBarTrailing) { Button { refreshShown() } label: { Image(systemName: \"arrow.clockwise\") } }\n                ToolbarItem(placement: .topBarTrailing) { summaryButton }",
-  ));
+  const third = plant(memory, (s) =>
+    s.replace(
+      "ToolbarItem(placement: .topBarTrailing) { summaryButton }",
+      'ToolbarItem(placement: .topBarTrailing) { Button { refreshShown() } label: { Image(systemName: "arrow.clockwise") } }\n                ToolbarItem(placement: .topBarTrailing) { summaryButton }',
+    ),
+  );
   const faults = memoryBarFaults(third);
-  assert.ok(faults.some((f) => f.includes("3 ToolbarItem")), "trois ToolbarItem doivent rougir");
-  assert.ok(faults.some((f) => f.includes("arrow.clockwise")), "un ↻ doit rougir");
+  assert.ok(
+    faults.some((f) => f.includes("3 ToolbarItem")),
+    "trois ToolbarItem doivent rougir",
+  );
+  assert.ok(
+    faults.some((f) => f.includes("arrow.clockwise")),
+    "un ↻ doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-5 : cartes Pipelines et Accueil, rangées Sessions et Mémoire ont un menu contextuel natif, sans balayage", () => {
@@ -519,16 +630,33 @@ test("ios-gestes-et-retours-natifs/AC-5 : cartes Pipelines et Accueil, rangées 
   assert.ok(menuFaults("IOSSessionsScreen.swift", sessions).length > 0, "une rangée Sessions sans menu doit rougir");
 
   // Faute plantée : un menu de carte Pipelines qui n'emprunte pas IOSContextMenu ⇒ rouge.
-  const pipelines = plant(all.get("PipelinesScreen.swift")!, (s) => s.replace("IOSContextMenuItems(actions: IOSContextMenu.pipelinesCard(", "IOSContextMenuItems(actions: menuActions("));
-  assert.ok(menuFaults("PipelinesScreen.swift", pipelines).some((f) => f.includes("IOSContextMenu.")), "un menu hors IOSContextMenu doit rougir");
+  const pipelines = plant(all.get("PipelinesScreen.swift")!, (s) =>
+    s.replace(
+      "IOSContextMenuItems(actions: IOSContextMenu.pipelinesCard(",
+      "IOSContextMenuItems(actions: menuActions(",
+    ),
+  );
+  assert.ok(
+    menuFaults("PipelinesScreen.swift", pipelines).some((f) => f.includes("IOSContextMenu.")),
+    "un menu hors IOSContextMenu doit rougir",
+  );
 
   // Faute plantée : une rangée de l'Accueil perd son menu ⇒ rouge.
-  const home = plant(all.get("HomeView.swift")!, (s) => s.replace(".contextMenu { rowMenu(card, kind: .delivered) }", ""));
-  assert.ok(menuFaults("HomeView.swift", home).some((f) => f.includes("4 .contextMenu")), "une rangée de l'Accueil sans menu doit rougir");
+  const home = plant(all.get("HomeView.swift")!, (s) =>
+    s.replace(".contextMenu { rowMenu(card, kind: .delivered) }", ""),
+  );
+  assert.ok(
+    menuFaults("HomeView.swift", home).some((f) => f.includes("4 .contextMenu")),
+    "une rangée de l'Accueil sans menu doit rougir",
+  );
 
   // Faute plantée : une action par balayage ⇒ rouge.
-  const swipe = plant(all.get("IOSMemoryScreen.swift")!, (s) => s.replace(".iosHoverEffect()", ".swipeActions { EmptyView() }\n                .iosHoverEffect()"));
-  assert.deepEqual(swipeFaults(withFile(all, "IOSMemoryScreen.swift", swipe)), ["IOSMemoryScreen.swift : .swipeActions"]);
+  const swipe = plant(all.get("IOSMemoryScreen.swift")!, (s) =>
+    s.replace(".iosHoverEffect()", ".swipeActions { EmptyView() }\n                .iosHoverEffect()"),
+  );
+  assert.deepEqual(swipeFaults(withFile(all, "IOSMemoryScreen.swift", swipe)), [
+    "IOSMemoryScreen.swift : .swipeActions",
+  ]);
 });
 
 test("ios-gestes-et-retours-natifs/AC-8 : le retour haptique suit l'issue de chaque commande, posé une seule fois par RootView", () => {
@@ -538,16 +666,40 @@ test("ios-gestes-et-retours-natifs/AC-8 : le retour haptique suit l'issue de cha
   assert.deepEqual(commandRouteFaults(client), []);
 
   // Faute plantée : un second retour, joué au toucher d'un écran ⇒ rouge.
-  const second = plant(all.get("HomeView.swift")!, (s) => s.replace("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", "@Environment(\\.accessibilityReduceMotion) private var reduceMotion\n    var tapFeedback: some View { EmptyView().sensoryFeedback(.success, trigger: 0) }"));
-  assert.ok(feedbackFaults(withFile(all, "HomeView.swift", second)).some((f) => f.includes("HomeView.swift")), "un second .sensoryFeedback doit rougir");
+  const second = plant(all.get("HomeView.swift")!, (s) =>
+    s.replace(
+      "@Environment(\\.accessibilityReduceMotion) private var reduceMotion",
+      "@Environment(\\.accessibilityReduceMotion) private var reduceMotion\n    var tapFeedback: some View { EmptyView().sensoryFeedback(.success, trigger: 0) }",
+    ),
+  );
+  assert.ok(
+    feedbackFaults(withFile(all, "HomeView.swift", second)).some((f) => f.includes("HomeView.swift")),
+    "un second .sensoryFeedback doit rougir",
+  );
 
   // Faute plantée : une commande qui court-circuite performCommand ⇒ rouge.
-  const bypass = plant(client, (s) => s.replace("let payload = try await performCommand(\n            ClientHTTPRequest(method: \"POST\", path: \"/v1/session/stop\")", "let payload = try await perform(\n            ClientHTTPRequest(method: \"POST\", path: \"/v1/session/stop\")"));
-  assert.ok(commandRouteFaults(bypass).some((f) => f.includes("/v1/session/stop")), "une commande hors performCommand doit rougir");
+  const bypass = plant(client, (s) =>
+    s.replace(
+      'let payload = try await performCommand(\n            ClientHTTPRequest(method: "POST", path: "/v1/session/stop")',
+      'let payload = try await perform(\n            ClientHTTPRequest(method: "POST", path: "/v1/session/stop")',
+    ),
+  );
+  assert.ok(
+    commandRouteFaults(bypass).some((f) => f.includes("/v1/session/stop")),
+    "une commande hors performCommand doit rougir",
+  );
 
   // Faute plantée : la relecture des PR comptée comme commande ⇒ rouge.
-  const refresh = plant(client, (s) => s.replace("try await perform(\n            ClientHTTPRequest(method: \"POST\", path: \"/v1/pull-request-states/refresh\")", "try await performCommand(\n            ClientHTTPRequest(method: \"POST\", path: \"/v1/pull-request-states/refresh\")"));
-  assert.ok(commandRouteFaults(refresh).some((f) => f.includes("n'est pas une commande")), "une relecture publiée comme commande doit rougir");
+  const refresh = plant(client, (s) =>
+    s.replace(
+      'try await perform(\n            ClientHTTPRequest(method: "POST", path: "/v1/pull-request-states/refresh")',
+      'try await performCommand(\n            ClientHTTPRequest(method: "POST", path: "/v1/pull-request-states/refresh")',
+    ),
+  );
+  assert.ok(
+    commandRouteFaults(refresh).some((f) => f.includes("n'est pas une commande")),
+    "une relecture publiée comme commande doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-9 : la visionneuse, le contrat et la fiche d'un souvenir ont un texte sélectionnable", () => {
@@ -556,11 +708,23 @@ test("ios-gestes-et-retours-natifs/AC-9 : la visionneuse, le contrat et la fiche
 
   // Faute plantée : la fiche d'un souvenir perd sa sélection ⇒ rouge.
   const detail = plant(all.get("IOSMemoryDetailView.swift")!, (s) => s.replace(".textSelection(.enabled)", ""));
-  assert.ok(selectionFaults(withFile(all, "IOSMemoryDetailView.swift", detail)).some((f) => f.includes("IOSMemoryDetailView.swift : 0")), "une fiche sans sélection doit rougir");
+  assert.ok(
+    selectionFaults(withFile(all, "IOSMemoryDetailView.swift", detail)).some((f) =>
+      f.includes("IOSMemoryDetailView.swift : 0"),
+    ),
+    "une fiche sans sélection doit rougir",
+  );
 
   // Faute plantée : une seconde pose dans le contrat ⇒ rouge.
-  const twice = plant(all.get("HomeContractSheet.swift")!, (s) => s.replace(".textSelection(.enabled)", ".textSelection(.enabled)\n                .textSelection(.enabled)"));
-  assert.ok(selectionFaults(withFile(all, "HomeContractSheet.swift", twice)).some((f) => f.includes("HomeContractSheet.swift : 2")), "deux poses doivent rougir");
+  const twice = plant(all.get("HomeContractSheet.swift")!, (s) =>
+    s.replace(".textSelection(.enabled)", ".textSelection(.enabled)\n                .textSelection(.enabled)"),
+  );
+  assert.ok(
+    selectionFaults(withFile(all, "HomeContractSheet.swift", twice)).some((f) =>
+      f.includes("HomeContractSheet.swift : 2"),
+    ),
+    "deux poses doivent rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-10 : chaque carte et rangée touchable porte le survol natif d'iPad", () => {
@@ -569,16 +733,25 @@ test("ios-gestes-et-retours-natifs/AC-10 : chaque carte et rangée touchable por
 
   // Faute plantée : la rangée Mémoire perd son survol ⇒ rouge.
   const memory = plant(all.get("IOSMemoryScreen.swift")!, (s) => s.replace(".iosHoverEffect()", ""));
-  assert.ok(hoverFaults(withFile(all, "IOSMemoryScreen.swift", memory)).some((f) => f.includes("IOSMemoryAccessibility.row")), "une rangée sans survol doit rougir");
+  assert.ok(
+    hoverFaults(withFile(all, "IOSMemoryScreen.swift", memory)).some((f) => f.includes("IOSMemoryAccessibility.row")),
+    "une rangée sans survol doit rougir",
+  );
 
   // Faute plantée : la rangée de plan perd son survol ⇒ rouge.
   const plan = plant(all.get("IOSProjectPlanView.swift")!, (s) => s.replace(".iosHoverEffect()", ""));
-  assert.ok(hoverFaults(withFile(all, "IOSProjectPlanView.swift", plan)).some((f) => f.includes("IOSProjectPlanView.swift")), "une rangée de plan sans survol doit rougir");
+  assert.ok(
+    hoverFaults(withFile(all, "IOSProjectPlanView.swift", plan)).some((f) => f.includes("IOSProjectPlanView.swift")),
+    "une rangée de plan sans survol doit rougir",
+  );
 
   // Faute plantée : le modificateur ne pose plus l'effet système ⇒ rouge.
   const surfaceName = path.join("Design", "IOSSurface.swift");
   const surface = plant(all.get(surfaceName)!, (s) => s.replace(".hoverEffect(.highlight)", ".hoverEffect(.lift)"));
-  assert.ok(hoverFaults(withFile(all, surfaceName, surface)).some((f) => f.includes(".hoverEffect(.highlight)")), "un autre effet doit rougir");
+  assert.ok(
+    hoverFaults(withFile(all, surfaceName, surface)).some((f) => f.includes(".hoverEffect(.highlight)")),
+    "un autre effet doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-11 : le défilement automatique de l'Accueil suit Réduire les animations", () => {
@@ -586,13 +759,26 @@ test("ios-gestes-et-retours-natifs/AC-11 : le défilement automatique de l'Accue
   assert.deepEqual(motionFaults(all), []);
 
   // Faute plantée : le défilement redevient toujours animé ⇒ rouge.
-  const home = plant(all.get("HomeView.swift")!, (s) => s.replace("withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion))", "withAnimation(.default)"));
+  const home = plant(all.get("HomeView.swift")!, (s) =>
+    s.replace("withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion))", "withAnimation(.default)"),
+  );
   const faults = motionFaults(withFile(all, "HomeView.swift", home));
-  assert.ok(faults.some((f) => f.includes("withAnimation hors")), "une animation forcée doit rougir");
+  assert.ok(
+    faults.some((f) => f.includes("withAnimation hors")),
+    "une animation forcée doit rougir",
+  );
 
   // Faute plantée : une animation nue ailleurs ⇒ rouge.
-  const pipelines = plant(all.get("PipelinesScreen.swift")!, (s) => s.replace("unfoldedLanes.formSymmetricDifference([row.lane])", "withAnimation { unfoldedLanes.formSymmetricDifference([row.lane]) }"));
-  assert.ok(motionFaults(withFile(all, "PipelinesScreen.swift", pipelines)).some((f) => f.startsWith("PipelinesScreen.swift")), "un withAnimation nu doit rougir");
+  const pipelines = plant(all.get("PipelinesScreen.swift")!, (s) =>
+    s.replace(
+      "unfoldedLanes.formSymmetricDifference([row.lane])",
+      "withAnimation { unfoldedLanes.formSymmetricDifference([row.lane]) }",
+    ),
+  );
+  assert.ok(
+    motionFaults(withFile(all, "PipelinesScreen.swift", pipelines)).some((f) => f.startsWith("PipelinesScreen.swift")),
+    "un withAnimation nu doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-12 : les symboles décoratifs sont masqués à VoiceOver, l'état qu'ils portaient est annoncé", () => {
@@ -601,15 +787,28 @@ test("ios-gestes-et-retours-natifs/AC-12 : les symboles décoratifs sont masqué
 
   // Faute plantée : l'icône d'un état de section redevient lue ⇒ rouge.
   const section = plant(all.get("IOSSectionView.swift")!, (s) => s.replace(".accessibilityHidden(true)", ""));
-  assert.ok(symbolFaults(withFile(all, "IOSSectionView.swift", section)).some((f) => f.includes("lu par VoiceOver")), "un symbole lu doit rougir");
+  assert.ok(
+    symbolFaults(withFile(all, "IOSSectionView.swift", section)).some((f) => f.includes("lu par VoiceOver")),
+    "un symbole lu doit rougir",
+  );
 
   // Faute plantée : une bascule du fil sans état de pli ⇒ rouge.
-  const rows = plant(all.get("IOSSessionRowView.swift")!, (s) => s.replace(".accessibilityValue(isThinkingOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)", ""));
-  assert.ok(symbolFaults(withFile(all, "IOSSessionRowView.swift", rows)).some((f) => f.includes("thinking")), "une bascule muette doit rougir");
+  const rows = plant(all.get("IOSSessionRowView.swift")!, (s) =>
+    s.replace(".accessibilityValue(isThinkingOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)", ""),
+  );
+  assert.ok(
+    symbolFaults(withFile(all, "IOSSessionRowView.swift", rows)).some((f) => f.includes("thinking")),
+    "une bascule muette doit rougir",
+  );
 
   // Faute plantée : l'option choisie de « Répondre » n'a plus son trait ⇒ rouge.
-  const answer = plant(all.get("HomeAnswerSheet.swift")!, (s) => s.replace(".accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])", ""));
-  assert.ok(symbolFaults(withFile(all, "HomeAnswerSheet.swift", answer)).some((f) => f.includes("sélectionnée")), "une option choisie muette doit rougir");
+  const answer = plant(all.get("HomeAnswerSheet.swift")!, (s) =>
+    s.replace(".accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])", ""),
+  );
+  assert.ok(
+    symbolFaults(withFile(all, "HomeAnswerSheet.swift", answer)).some((f) => f.includes("sélectionnée")),
+    "une option choisie muette doit rougir",
+  );
 });
 
 test("ios-gestes-et-retours-natifs/AC-13 : « Sommaire » est un vrai bouton désactivé, toujours visible, sans teinte ni bulle", () => {
@@ -617,16 +816,30 @@ test("ios-gestes-et-retours-natifs/AC-13 : « Sommaire » est un vrai bouton dé
   assert.deepEqual(summaryFaults(all), []);
 
   // Faute plantée : la bulle d'explication revient ⇒ rouge.
-  const popover = plant(all.get("IOSMemoryScreen.swift")!, (s) => s.replace(
-    ".disabled(!model.summaryAvailable(graphShown: graph.shown))",
-    ".popover(isPresented: .constant(false)) { EmptyView() }\n        .tint(Color(uiColor: .tertiaryLabel))",
-  ));
+  const popover = plant(all.get("IOSMemoryScreen.swift")!, (s) =>
+    s.replace(
+      ".disabled(!model.summaryAvailable(graphShown: graph.shown))",
+      ".popover(isPresented: .constant(false)) { EmptyView() }\n        .tint(Color(uiColor: .tertiaryLabel))",
+    ),
+  );
   const faults = summaryFaults(withFile(all, "IOSMemoryScreen.swift", popover));
-  for (const needle of ["n'est pas désactivé", ".popover", ".tint("]) assert.ok(faults.some((f) => f.includes(needle)), `${needle} doit rougir`);
+  for (const needle of ["n'est pas désactivé", ".popover", ".tint("])
+    assert.ok(
+      faults.some((f) => f.includes(needle)),
+      `${needle} doit rougir`,
+    );
 
   // Faute plantée : « Sommaire » masqué hors disponibilité ⇒ rouge.
-  const hidden = plant(all.get("IOSMemoryScreen.swift")!, (s) => s.replace("ToolbarItem(placement: .topBarTrailing) { summaryButton }", "ToolbarItem(placement: .topBarTrailing) { if model.canShowSummary { summaryButton } }"));
-  assert.ok(summaryFaults(withFile(all, "IOSMemoryScreen.swift", hidden)).some((f) => f.includes("inconditionnelle")), "un « Sommaire » conditionnel doit rougir");
+  const hidden = plant(all.get("IOSMemoryScreen.swift")!, (s) =>
+    s.replace(
+      "ToolbarItem(placement: .topBarTrailing) { summaryButton }",
+      "ToolbarItem(placement: .topBarTrailing) { if model.canShowSummary { summaryButton } }",
+    ),
+  );
+  assert.ok(
+    summaryFaults(withFile(all, "IOSMemoryScreen.swift", hidden)).some((f) => f.includes("inconditionnelle")),
+    "un « Sommaire » conditionnel doit rougir",
+  );
 });
 
 // MARK: - AC-14 : recette de captures avant/après
@@ -705,42 +918,80 @@ test("ios-gestes-et-retours-natifs/AC-14 : DESIGN.md décrit les gestes et retou
   assert.deepEqual(designFaults(missing), [`DESIGN.md : section « ${SECTION} » absente`]);
 
   // Faute plantée : une puce perd son marqueur ⇒ rouge.
-  const unmarked = plant(design, (s) => s.replace(" `[garde: " + SLUG + "/AC-9]`", ""));
-  assert.ok(designFaults(unmarked).some((f) => f.includes("puce sans marqueur")), "une puce sans marqueur doit rougir");
+  const unmarked = plant(design, (s) => s.replace(` \`[garde: ${SLUG}/AC-9]\``, ""));
+  assert.ok(
+    designFaults(unmarked).some((f) => f.includes("puce sans marqueur")),
+    "une puce sans marqueur doit rougir",
+  );
 
   // Faute plantée : la bulle de « Sommaire » revient ⇒ rouge.
-  const bubble = plant(design, (s) => s.replace("sans teinte\n  ni bulle.", "et un toucher\n  montre la raison dans une bulle."));
-  assert.ok(designFaults(bubble).some((f) => f.includes("bulle")), "la bulle doit rougir");
+  const bubble = plant(design, (s) =>
+    s.replace("sans teinte\n  ni bulle.", "et un toucher\n  montre la raison dans une bulle."),
+  );
+  assert.ok(
+    designFaults(bubble).some((f) => f.includes("bulle")),
+    "la bulle doit rougir",
+  );
 
   // Faute plantée : le ↻ « Rafraîchir » de Pipelines revient ⇒ rouge.
-  const stale = plant(design, (s) => s.replace("« Nouvelle feature… » (`NewFeatureText.command`)", "« Rafraîchir » (`KanbanText.refresh`), « Nouvelle feature… » (`NewFeatureText.command`)"));
-  assert.ok(designFaults(stale).some((f) => f.includes("Rafraîchir")), "« Rafraîchir » doit rougir");
+  const stale = plant(design, (s) =>
+    s.replace(
+      "« Nouvelle feature… » (`NewFeatureText.command`)",
+      "« Rafraîchir » (`KanbanText.refresh`), « Nouvelle feature… » (`NewFeatureText.command`)",
+    ),
+  );
+  assert.ok(
+    designFaults(stale).some((f) => f.includes("Rafraîchir")),
+    "« Rafraîchir » doit rougir",
+  );
 
   const script = fs.readFileSync(RECIPE, "utf8");
   assert.deepEqual(recipeScriptFaults(script), []);
 
   // Faute plantée : la recette ne supprime plus ses simulateurs ⇒ rouge.
   const kept = plant(script, (s) => s.replaceAll("simctl delete", "simctl shutdown"));
-  assert.ok(recipeScriptFaults(kept).some((f) => f.includes("simctl delete")), "des simulateurs conservés doivent rougir");
+  assert.ok(
+    recipeScriptFaults(kept).some((f) => f.includes("simctl delete")),
+    "des simulateurs conservés doivent rougir",
+  );
 
   // Faute plantée : la construction n'est plus signée ⇒ rouge.
   const unsigned = plant(script, (s) => s.replace("CODE_SIGN_IDENTITY=- ", ""));
-  assert.ok(recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")), "une app non signée doit rougir");
+  assert.ok(
+    recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")),
+    "une app non signée doit rougir",
+  );
 
   // Faute plantée : le contrôle AC-13 disparaît (ne reste qu'en commentaire) ⇒ rouge.
-  const noSummary = plant(script, (s) => s.replaceAll('"AC-13"', '"AC-X"') + '\n# "AC-13"\n');
-  assert.ok(recipeScriptFaults(noSummary).some((f) => f.includes("AC-13")), "un AC-13 non contrôlé doit rougir");
+  const noSummary = plant(script, (s) => `${s.replaceAll('"AC-13"', '"AC-X"')}\n# "AC-13"\n`);
+  assert.ok(
+    recipeScriptFaults(noSummary).some((f) => f.includes("AC-13")),
+    "un AC-13 non contrôlé doit rougir",
+  );
 
   // Faute plantée : un menu sort de la matrice ⇒ rouge.
-  const noMenu = plant(script, (s) => s.replace('("-section", "sessions", "-sessions.recipe", "liste")', '("-section", "sessions")'));
-  assert.ok(recipeScriptFaults(noMenu).some((f) => f.includes("liste")), "une surface absente doit rougir");
+  const noMenu = plant(script, (s) =>
+    s.replace('("-section", "sessions", "-sessions.recipe", "liste")', '("-section", "sessions")'),
+  );
+  assert.ok(
+    recipeScriptFaults(noMenu).some((f) => f.includes("liste")),
+    "une surface absente doit rougir",
+  );
 
   // Faute plantée : le Simulateur au premier plan, l'app Mac relancée, la PR fusionnée ⇒ rouge, même en commentaire.
-  for (const intrusion of ['open -a Simulator --args -CurrentDeviceUDID "$iphone"', 'open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"', "# bash scripts/run-console.sh", "# gh pr merge --squash"]) {
+  for (const intrusion of [
+    'open -a Simulator --args -CurrentDeviceUDID "$iphone"',
+    'open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
+    "# bash scripts/run-console.sh",
+    "# gh pr merge --squash",
+  ]) {
     const intrusive = plant(script, (s) => s.replace("trap cleanup EXIT", `trap cleanup EXIT\n${intrusion}`));
     assert.ok(recipeScriptFaults(intrusive).length > 0, `« ${intrusion} » doit rougir`);
   }
 
   // Simulator.app cité en commentaire reste admis (le script explique ce qu'il ne fait pas).
-  assert.deepEqual(recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")), []);
+  assert.deepEqual(
+    recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")),
+    [],
+  );
 });

@@ -4,13 +4,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { asStringOrNull } from "./store.ts";
 
-
-
 // --- rejoindre la session d'une entrée (S-5) --------------------------------
 
 /** En-tête exploitable d'un fichier de session : ce qu'on en garde pour la bascule. */
 export type SessionHeaderInfo = { cwd: string | null };
-
 
 /**
  * Borne de lecture de l'en-tête : une session pèse des mégaoctets et le panneau
@@ -18,7 +15,6 @@ export type SessionHeaderInfo = { cwd: string | null };
  * rafraîchissement n'appelle même pas cette fonction.
  */
 export const SESSION_HEADER_READ_BYTES = 8192;
-
 
 /**
  * En-tête d'un fichier de session : la PREMIÈRE ligne dont l'objet JSON satisfait
@@ -54,7 +50,6 @@ export function readSessionHeader(file: string, maxBytes = SESSION_HEADER_READ_B
   }
   return null;
 }
-
 
 // --- la vue de session : lire un JSONL de session, borné et sans jamais écrire --
 //
@@ -100,7 +95,6 @@ export type SessionEntryLike =
   | { type: "oversized"; at: number; id: string; timestamp: string; bytes: number }
   | { type: "other"; at: number; id: string; timestamp: string };
 
-
 /**
  * Bornes du lecteur (S-8). `SESSION_VIEW_READ_BYTES` est ce que coûte la PREMIÈRE
  * peinture, sondes d'identité comprises ; `SESSION_VIEW_MAX_BYTES` est la fenêtre
@@ -121,7 +115,6 @@ export const SESSION_BLOCK_BYTES = 256 * 1024;
 /** Ce que la fenêtre du premier chargement laisse aux trois sondes qui la débordent. */
 export const SESSION_FIRST_WINDOW_BYTES = SESSION_VIEW_READ_BYTES - SESSION_SENTINEL_BYTES * 3;
 
-
 /**
  * Le rang de remplacement d'une ligne trop volumineuse (VIEW-6) : la vue ne charge
  * pas la ligne, mais elle la NOMME et donne son premier octet — `tail.start` s'y
@@ -130,7 +123,6 @@ export const SESSION_FIRST_WINDOW_BYTES = SESSION_VIEW_READ_BYTES - SESSION_SENT
 export function oversizedEntry(at: number, bytes: number): SessionEntryLike {
   return { type: "oversized", at, id: "", timestamp: "", bytes };
 }
-
 
 /**
  * Le dernier saut de ligne AVANT `before`, en reculant par blocs depuis `before`
@@ -155,10 +147,8 @@ export function previousNewline(file: string, before: number, floor: number, rea
   return null;
 }
 
-
 /** Une sonde d'identité : un bloc du fichier, résumé par un digest. */
 export type SessionSentinel = { offset: number; length: number; digest: string };
-
 
 /**
  * L'état du lecteur d'un fichier : de quoi reprendre la lecture au bon octet et de
@@ -180,7 +170,6 @@ export type SessionTail = {
   sentinels: SessionSentinel[];
 };
 
-
 /**
  * Le résultat d'une lecture : les entrées lues, et ce que l'appelant doit en
  * faire — `reset` (elles remplacent la fenêtre), `append` (elles s'y ajoutent),
@@ -197,7 +186,6 @@ export type SessionRead = {
   error: string | null;
 };
 
-
 /**
  * La lecture d'un bloc du fichier, telle que le lecteur la fait. C'est un SEAM
  * injecté (comme `GitRunner`, `SessionProbe` ou l'horloge du panneau) : les tests
@@ -205,7 +193,6 @@ export type SessionRead = {
  * d'acceptation, donc elle se prouve sur un compteur, pas sur une intention.
  */
 export type SessionReader = (file: string, offset: number, length: number) => Buffer | null;
-
 
 /** Lit `length` octets à `offset` : `null` si le fichier a disparu ou est illisible. */
 export function readBytesAt(file: string, offset: number, length: number): Buffer | null {
@@ -236,7 +223,6 @@ export function readBytesAt(file: string, offset: number, length: number): Buffe
   }
 }
 
-
 /** Les trois offsets sondés (tête, milieu, queue), sans doublon sur un petit fichier. */
 export function sentinelOffsets(size: number): number[] {
   if (size <= 0) return [];
@@ -247,7 +233,6 @@ export function sentinelOffsets(size: number): number[] {
   }
   return out;
 }
-
 
 /**
  * Les sondes d'identité d'un fichier de `size` octets, ou `null` s'il a disparu en
@@ -263,8 +248,7 @@ export function computeSentinels(
   const length = Math.min(SESSION_SENTINEL_BYTES, size);
   const out: SessionSentinel[] = [];
   for (const offset of sentinelOffsets(size)) {
-    const inHand =
-      have !== undefined && offset >= have.start && offset + length <= have.start + have.bytes.byteLength;
+    const inHand = have !== undefined && offset >= have.start && offset + length <= have.start + have.bytes.byteLength;
     const block = inHand
       ? have.bytes.subarray(offset - have.start, offset - have.start + length)
       : read(file, offset, length);
@@ -273,7 +257,6 @@ export function computeSentinels(
   }
   return out;
 }
-
 
 /**
  * Les sondes tiennent-elles encore ? Une réécriture EN PLACE qui garde la même
@@ -288,7 +271,6 @@ export function sentinelsHold(file: string, sentinels: SessionSentinel[], read: 
   }
   return true;
 }
-
 
 /** Une ligne JSONL → l'entrée de fichier correspondante, ou `null` (vide, invalide). */
 export function sessionEntryOf(line: string, at: number): SessionEntryLike | null {
@@ -322,7 +304,6 @@ export function sessionEntryOf(line: string, at: number): SessionEntryLike | nul
   return { type: "other", at, id, timestamp };
 }
 
-
 /**
  * Les entrées d'un bloc de lignes COMPLÈTES, dans l'ordre du fichier, avec l'octet
  * de chacune. `from` est l'octet de la première ligne du bloc : les offsets sont
@@ -341,7 +322,6 @@ export function entriesOfText(text: string, from: number): SessionEntryLike[] {
   }
   return entries;
 }
-
 
 /**
  * Lit un fichier de session à partir de l'état précédent (S-8) : les octets NEUFS
@@ -373,7 +353,12 @@ export function readSessionTail(
     sentinelsHold(file, previous.sentinels, read)
   ) {
     const chunk = read(file, previous.offset, stat.size - previous.offset);
-    const sentinels = computeSentinels(file, stat.size, read, chunk ? { start: previous.offset, bytes: chunk } : undefined);
+    const sentinels = computeSentinels(
+      file,
+      stat.size,
+      read,
+      chunk ? { start: previous.offset, bytes: chunk } : undefined,
+    );
     if (chunk !== null && sentinels !== null) {
       const combined = previous.pending + chunk.toString("utf8");
       const lastNewline = combined.lastIndexOf("\n");
@@ -450,9 +435,11 @@ export function readSessionTail(
         // la fenêtre commence au premier octet lu (`floor`) — ce qui précède reste à
         // portée du défilement.
         const head = read(file, floor, stat.size - floor);
-        if (head === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        if (head === null)
+          return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
         const sentinels = computeSentinels(file, stat.size, read, { start: floor, bytes: head });
-        if (sentinels === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        if (sentinels === null)
+          return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
         const tail: SessionTail = {
           path: file,
           dev: stat.dev,
@@ -485,7 +472,8 @@ export function readSessionTail(
         const complete = restNl >= 0 ? rest.slice(0, restNl + 1) : "";
         const pending = restNl >= 0 ? rest.slice(restNl + 1) : rest;
         const sentinels = computeSentinels(file, stat.size, read, { start: lineStart, bytes: line });
-        if (sentinels === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        if (sentinels === null)
+          return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
         let oversized: SessionEntryLike[] = [
           oversizedEntry(lineStart, end),
           ...(complete === "" ? [] : entriesOfText(complete, restStart)),
@@ -558,7 +546,6 @@ export function readSessionTail(
   };
 }
 
-
 /**
  * Étend la fenêtre VERS LE DÉBUT, par blocs bornés (S-8) : c'est ce qu'appelle
  * `Début`, ou un défilement qui arrive en haut de ce qui est chargé. Le fichier
@@ -566,11 +553,7 @@ export function readSessionTail(
  * quand il n'y a plus rien à montrer au-dessus. La fenêtre totale est bornée par
  * `SESSION_VIEW_MAX_BYTES`, et `more` dit alors qu'il reste des octets avant elle.
  */
-export function extendSessionTail(
-  file: string,
-  previous: SessionTail,
-  read: SessionReader = readBytesAt,
-): SessionRead {
+export function extendSessionTail(file: string, previous: SessionTail, read: SessionReader = readBytesAt): SessionRead {
   if (previous.start <= 0) {
     return { entries: [], mode: "prepend", tail: previous, truncated: false, more: false, error: null };
   }
@@ -647,7 +630,6 @@ export function extendSessionTail(
   };
 }
 
-
 /** Sondes disque de la décision — injectées, pour que `switchDecision` reste PURE. */
 export type SessionProbe = {
   /** Le chemin existe ET est un fichier régulier. */
@@ -657,7 +639,6 @@ export type SessionProbe = {
   /** Le répertoire existe et est un répertoire (`statSync` suit les liens symboliques). */
   isDirectory: (dir: string) => boolean;
 };
-
 
 /** Sonde disque réelle, synchrone et bornée : aucune exception ne sort d'ici. */
 export const diskProbe: SessionProbe = {
@@ -678,11 +659,9 @@ export const diskProbe: SessionProbe = {
   },
 };
 
-
 export type JoinDecision =
   | { kind: "switch"; path: string; cwd: string | null }
   | { kind: "unavailable"; message: string };
-
 
 /**
  * Décision de bascule, PURE (toute lecture passe par `probe`). Les contrôles sont
@@ -712,7 +691,6 @@ export function switchDecision(entry: { sessionFile?: string | null }, probe: Se
   return { kind: "switch", path: file, cwd: header.cwd };
 }
 
-
 /**
  * Le gestionnaire de session VIVANT (`ctx.sessionManager`) : méthodes optionnelles
  * parce que la façade publique d'OMP masque celles de relocalisation
@@ -726,13 +704,11 @@ export type NavSessionManager = {
   restoreState?: (snapshot: unknown) => void;
 };
 
-
 /** Le strict nécessaire d'un contexte de COMMANDE pour basculer. */
 export type SwitchCtx = {
   switchSession?: (sessionPath: string) => Promise<{ cancelled: boolean }>;
   sessionManager?: NavSessionManager;
 };
-
 
 export type JoinDeps = {
   /** Contexte de commande : `switchSession` y est disponible, commande comme raccourci. */
@@ -746,7 +722,6 @@ export type JoinDeps = {
   /** Notice DURABLE dans le transcript (bascule refusée). */
   notify: (text: string) => void;
 };
-
 
 /**
  * Aménagement du cwd de la session COURANTE avant la bascule, ou `null` si inutile
@@ -790,7 +765,6 @@ export function relocateCwd(
   }
   return { sm, snapshot };
 }
-
 
 /**
  * Rejoint la session d'une entrée, dans cet ordre (S-1) : décision, notice DANS le

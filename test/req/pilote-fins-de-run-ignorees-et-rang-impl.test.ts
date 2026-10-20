@@ -425,7 +425,11 @@ async function ac5ChannelAndReplay(): Promise<void> {
   await world.controller.pumpCommands();
   assert.equal(readCommandAck(world.stateDir, "c-file")?.state, "already");
   assert.equal(readCommandAck(world.stateDir, "c-file")?.reason, CANCEL_ALREADY_REASON);
-  assert.deepEqual(fs.readdirSync(commandDir(world.stateDir)).filter((n) => n.endsWith(".json")), [], "la commande est retirée");
+  assert.deepEqual(
+    fs.readdirSync(commandDir(world.stateDir)).filter((n) => n.endsWith(".json")),
+    [],
+    "la commande est retirée",
+  );
 
   run.finish(KILLED);
   assert.equal(await first, null);
@@ -594,7 +598,11 @@ test("pilote-fins-de-run-ignorees-et-rang-impl/AC-10 : une fin sans succès d'un
     commitWork(last);
     await ending.end(last, lastRun);
     await waitFor(() => last.runs.length === 2);
-    assert.deepEqual(last.runs.map((r) => r.phase), ["impl", "review"], `${ending.name} : le dernier lot enchaîne /review`);
+    assert.deepEqual(
+      last.runs.map((r) => r.phase),
+      ["impl", "review"],
+      `${ending.name} : le dernier lot enchaîne /review`,
+    );
     assert.equal(current(last).phase, "review", ending.name);
     assert.notEqual(current(last).state, "blocked", ending.name);
   }
@@ -603,7 +611,13 @@ test("pilote-fins-de-run-ignorees-et-rang-impl/AC-10 : une fin sans succès d'un
 test("pilote-fins-de-run-ignorees-et-rang-impl/AC-11 : un lot tué avec un arbre sale, ou sans commit, garde son rang et se refait", async () => {
   const cases: Array<[string, (world: World) => void]> = [
     ["arbre sale, sans commit", dirtyWork],
-    ["commit puis arbre sale", (world) => (commitWork(world), dirtyWork(world))],
+    [
+      "commit puis arbre sale",
+      (world) => {
+        commitWork(world);
+        dirtyWork(world);
+      },
+    ],
     ["aucun commit", () => undefined],
   ];
   for (const [name, work] of cases) {

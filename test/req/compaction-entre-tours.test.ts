@@ -114,7 +114,7 @@ type FakeHost = {
   disposed: () => number;
 };
 
-const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /**
  * Un hôte de doublure dont chaque `prompt` rejoue un TOUR scripté : ses évènements
@@ -122,7 +122,12 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
  * que `session.model` rend ; `steer` et `compact` sont espionnés ; `beforeMeasure`
  * est appelé avant chaque mesure (avancer l'horloge du runner).
  */
-function fakeHost(options: { startModel: string | null; turns: Turn[]; hold?: boolean; beforeMeasure?: (total: number) => void }): FakeHost {
+function fakeHost(options: {
+  startModel: string | null;
+  turns: Turn[];
+  hold?: boolean;
+  beforeMeasure?: (total: number) => void;
+}): FakeHost {
   const received: string[] = [];
   const steers: string[] = [];
   const compacts: unknown[] = [];
@@ -137,7 +142,10 @@ function fakeHost(options: { startModel: string | null; turns: Turn[]; hold?: bo
       const messages: Array<Record<string, unknown>> = [];
       let rejectHeld: ((err: Error) => void) | null = null;
       let interrupted = false;
-      const split = (selector: string) => ({ provider: selector.slice(0, selector.indexOf("/")), id: selector.slice(selector.indexOf("/") + 1) });
+      const split = (selector: string) => ({
+        provider: selector.slice(0, selector.indexOf("/")),
+        id: selector.slice(selector.indexOf("/") + 1),
+      });
       const session = {
         get messages() {
           return messages;
@@ -162,12 +170,16 @@ function fakeHost(options: { startModel: string | null; turns: Turn[]; hold?: bo
           messages.push({ role: "user", content: [{ type: "text", text }] });
           const turn = turns.shift() ?? {};
           for (const event of turn.events ?? []) {
-            listeners.forEach(listener => listener(event));
+            listeners.forEach((listener) => {
+              listener(event);
+            });
             await tick();
           }
           for (const total of turn.measures ?? []) {
             options.beforeMeasure?.(total);
-            listeners.forEach(listener => listener(usageEvent(total)));
+            listeners.forEach((listener) => {
+              listener(usageEvent(total));
+            });
             await tick();
           }
           if (options.hold === true && rank === options.turns.length - 1) {
@@ -232,19 +244,35 @@ function runSpec(stateDir: string, worktree: string, over: Partial<LotRunSpec> =
   };
 }
 
-async function run(fake: FakeHost, over: Partial<LotRunSpec> = {}, env: Record<string, string> = ENV, clock: { now: number } = { now: T0 }) {
+async function run(
+  fake: FakeHost,
+  over: Partial<LotRunSpec> = {},
+  env: Record<string, string> = ENV,
+  clock: { now: number } = { now: T0 },
+) {
   const logs: string[] = [];
   const worktree = tmpdir("cet-wt-");
   const stateDir = tmpdir("cet-state-");
-  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => clock.now, env });
-  const result = await runner({ spec: runSpec(stateDir, worktree, over), cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
+  const runner = createMaillonRunner({ host: fake.host, log: (line) => logs.push(line), now: () => clock.now, env });
+  const result = await runner({
+    spec: runSpec(stateDir, worktree, over),
+    cwd: worktree,
+    timeout: 60_000,
+    signal: new AbortController().signal,
+  });
   return { result, logs, stateDir };
 }
 
 // --- D1 : le modèle effectif ------------------------------------------------
 
 test("compaction-entre-tours/AC-1 : le runner rend le modèle EFFECTIF du dernier tour — le repli après quota, pas le modèle de départ — et journalise chaque bascule avec son tour", async () => {
-  const fake = fakeHost({ startModel: P, turns: [{ messages: [quotaError("prov", "principal")] }, { messages: [assistantText("prov", "repli", "fini sur le repli")] }] });
+  const fake = fakeHost({
+    startModel: P,
+    turns: [
+      { messages: [quotaError("prov", "principal")] },
+      { messages: [assistantText("prov", "repli", "fini sur le repli")] },
+    ],
+  });
   const { result, logs, stateDir } = await run(fake);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.model, R, "le modèle rendu est celui qui a fini le run");
@@ -260,7 +288,9 @@ test("compaction-entre-tours/AC-1b : sans repli, le modèle rendu est le modèle
   assert.equal((await run(none, { model: null, primary: null, fallback: null })).result.model, null);
   const native = fakeHost({
     startModel: P,
-    turns: [{ events: [{ type: "retry_fallback_applied", from: P, to: R, role: "default", reason: "usage limit reached" }] }],
+    turns: [
+      { events: [{ type: "retry_fallback_applied", from: P, to: R, role: "default", reason: "usage limit reached" }] },
+    ],
   });
   const { logs, stateDir } = await run(native);
   assert.ok(logs.includes(`[service] run iso/impl : repli natif ${P} → ${R} au tour 1`), JSON.stringify(logs));
@@ -271,7 +301,11 @@ test("compaction-entre-tours/AC-2 : `lastVerdictModel` fait l'aller-retour disqu
   const stateDir = tmpdir("cet-lot-");
   const repoRoot = tmpdir("cet-repo-");
   const key = lotRepoKey(repoRoot);
-  seedLot(stateDir, repoRoot, [feature("alpha", { lastVerdictModel: R }), feature("beta", { lastVerdictModel: null }), feature("gamma")]);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { lastVerdictModel: R }),
+    feature("beta", { lastVerdictModel: null }),
+    feature("gamma"),
+  ]);
   const lot = readLot(stateDir, key)!;
   assert.equal(lot.features[0]!.lastVerdictModel, R);
   assert.equal(lot.features[1]!.lastVerdictModel, null);
@@ -297,11 +331,17 @@ test("compaction-entre-tours/AC-3 : le franchissement de SOFT n'interrompt pas l
   assert.equal(fake.received.length, 2);
   const reminder = fake.received[1]!;
   assert.equal(reminder, compactionReminder(phaseDeliverable("specs")));
-  assert.equal(reminder, "[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable attendu : `## Spécifications` et `## Lots`. L'extrait du contrat de ton prompt initial reste valable.");
+  assert.equal(
+    reminder,
+    "[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable attendu : `## Spécifications` et `## Lots`. L'extrait du contrat de ton prompt initial reste valable.",
+  );
   assert.ok(reminder.length <= 400);
   assert.equal(reminder.includes(LOT_WORKER_DIRECTIVE), false);
   assert.equal(reminder.includes("PROMPT-DU-MAILLON"), false);
-  assert.ok(logs.includes("[service] run iso/specs : seuil SOFT franchi à 110000, compaction à la fin du tour"), JSON.stringify(logs));
+  assert.ok(
+    logs.includes("[service] run iso/specs : seuil SOFT franchi à 110000, compaction à la fin du tour"),
+    JSON.stringify(logs),
+  );
   assert.equal(result.code, 0);
   assert.equal(result.compactions, 1);
   assert.equal(result.peakContext, 120_000);
@@ -309,7 +349,10 @@ test("compaction-entre-tours/AC-3 : le franchissement de SOFT n'interrompt pas l
 
 test("compaction-entre-tours/AC-3b : une compaction NATIVE d'OMP pendant le tour compte comme compaction du run, rend la différée sans objet, et réarme le palier", async () => {
   const native = { type: "auto_compaction_end", action: "context-full", result: {}, aborted: false, willRetry: false };
-  const fake = fakeHost({ startModel: P, turns: [{ measures: [110_000] }, { events: [native], measures: [40_000, 115_000] }, {}] });
+  const fake = fakeHost({
+    startModel: P,
+    turns: [{ measures: [110_000] }, { events: [native], measures: [40_000, 115_000] }, {}],
+  });
   const { result, logs } = await run(fake);
   // Tour 1 : SOFT noté → compaction de fin de tour (1). Tour 2 : compaction native (2)
   // efface la mesure 110000 en attente, 40000 reste sous SOFT, 115000 rouvre un palier → compaction de fin de tour (3).
@@ -320,11 +363,17 @@ test("compaction-entre-tours/AC-3b : une compaction NATIVE d'OMP pendant le tour
 });
 
 test("compaction-entre-tours/AC-3c : un tour fini en quota ET au-dessus de SOFT est compacté puis repris sur le repli — le quota se lit avant la compaction", async () => {
-  const fake = fakeHost({ startModel: P, turns: [{ measures: [110_000], messages: [quotaError("prov", "principal")] }, {}] });
+  const fake = fakeHost({
+    startModel: P,
+    turns: [{ measures: [110_000], messages: [quotaError("prov", "principal")] }, {}],
+  });
   const { result } = await run(fake);
   assert.equal(fake.compacts.length, 1);
   assert.deepEqual(fake.setModels, [R]);
-  assert.ok(fake.received[1]!.startsWith("[reprise] Le modèle"), "la reprise de quota prime sur la consigne de compaction");
+  assert.ok(
+    fake.received[1]!.startsWith("[reprise] Le modèle"),
+    "la reprise de quota prime sur la consigne de compaction",
+  );
   assert.equal(result.model, R);
   assert.equal(result.code, 0);
 });
@@ -337,18 +386,27 @@ test("compaction-entre-tours/AC-4 : le runner applique le SOFT de la phase — u
   const impl = fakeHost({ startModel: P, turns: [{ measures: [95_000] }] });
   assert.equal((await run(impl, { phase: "impl" }, {})).result.compactions, 0, "95000 < 120000 : rien");
   const tuned = fakeHost({ startModel: P, turns: [{ measures: [95_000] }] });
-  assert.equal((await run(tuned, { phase: "review" }, { MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "200000" })).result.compactions, 0);
+  assert.equal(
+    (await run(tuned, { phase: "review" }, { MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "200000" })).result.compactions,
+    0,
+  );
 });
 
 test("compaction-entre-tours/AC-5 : au plafond HARD, un dernier tour forcé est injecté dans le tour (steer, sans abort) avec la section livrable de la phase ; s'il finit dans sa borne, le run finit normalement", async () => {
   const fake = fakeHost({ startModel: P, turns: [{ measures: [120_000, 255_000, 256_000] }] });
   const { result, logs } = await run(fake, { phase: "review" });
   assert.deepEqual(fake.steers, [saturatedContextPrompt(phaseDeliverable("review"))]);
-  assert.equal(fake.steers[0], "[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (`## Revue`) avec ce que tu as, puis arrête-toi.");
+  assert.equal(
+    fake.steers[0],
+    "[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (`## Revue`) avec ce que tu as, puis arrête-toi.",
+  );
   assert.deepEqual(fake.aborts, []);
   assert.equal(fake.compacts.length, 0, "le SOFT en attente est abandonné : le dernier tour livre, il ne compacte pas");
   assert.equal(fake.received.length, 1);
-  assert.ok(logs.includes("[service] run iso/review : contexte saturé à 255000, dernier tour forcé (5 min)"), JSON.stringify(logs));
+  assert.ok(
+    logs.includes("[service] run iso/review : contexte saturé à 255000, dernier tour forcé (5 min)"),
+    JSON.stringify(logs),
+  );
   assert.equal(result.code, 0);
   assert.equal(result.killed, false);
   assert.equal(result.contextExceeded, undefined);
@@ -363,14 +421,18 @@ test("compaction-entre-tours/AC-5b : le dernier tour forcé qui dépasse 5 minut
     startModel: P,
     turns: [{ measures: [255_000, 256_000, 257_000] }],
     hold: true,
-    beforeMeasure: total => {
+    beforeMeasure: (total) => {
       if (total === 256_000) clock.now = T0 + CONTEXT_LAST_TURN_MS - 1;
       if (total === 257_000) clock.now = T0 + CONTEXT_LAST_TURN_MS;
     },
   });
   const { result } = await run(fake, {}, ENV, clock);
   assert.equal(fake.steers.length, 1, "une seule consigne, aux trois mesures au plafond");
-  assert.deepEqual(fake.aborts, ["contexte dépassé (255000 tokens)"], "coupé à la borne seulement, et la mesure citée est celle du plafond");
+  assert.deepEqual(
+    fake.aborts,
+    ["contexte dépassé (255000 tokens)"],
+    "coupé à la borne seulement, et la mesure citée est celle du plafond",
+  );
   assert.equal(result.code, 124);
   assert.equal(result.killed, true);
   assert.equal(result.contextExceeded, 255_000);

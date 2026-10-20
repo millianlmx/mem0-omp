@@ -243,7 +243,10 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
     [["--sections=noms,,catalogue"], `✗ section inconnue : «  » (attendu : ${ids})`],
-    [["--bogus"], "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)"],
+    [
+      ["--bogus"],
+      "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)",
+    ],
     [["--tests-scope=linux"], "✗ --tests-scope : valeur inconnue « linux » (attendu : macos)"],
     [["--tests-part=3/3"], "✗ --tests-part : valeur inconnue « 3/3 » (attendu : 1/2, 2/2)"],
     [["--sections=noms", "--sections=catalogue"], "✗ option répétée : --sections"],
@@ -310,13 +313,18 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
 
   // Ce que le job macOS lance : --tests-scope=macos, puis les deux parts.
   const dir = lightCopy({
-    "outillage/check.test.ts": fixture(["socle-app-swift/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"], "lance swift"),
+    "outillage/check.test.ts": fixture(
+      ["socle-app-swift/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"],
+      "lance swift",
+    ),
     "console/ios-zz.test.ts": fixture(["ios-zz/fixture-d"]),
     "req/plain.test.ts": fixture(["plain/fixture-e"]),
   });
   const ran = (part: string) => {
     const marker = path.join(tmpdir("ci-macos-marqueur-"), "ran");
-    const run = runCheck(dir, ["--tests-part=" + part, "--sections=tests", "--tests-scope=macos"], { CI_MACOS_MARKER: marker });
+    const run = runCheck(dir, [`--tests-part=${part}`, "--sections=tests", "--tests-scope=macos"], {
+      CI_MACOS_MARKER: marker,
+    });
     assert.equal(run.status, 0, output(run));
     assert.deepEqual(headersOf(output(run)), ["── Tests"], output(run));
     return { out: output(run), names: fs.existsSync(marker) ? lines(fs.readFileSync(marker, "utf8")) : [] };
@@ -328,7 +336,10 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
   assert.deepEqual(first.names.sort(), ["socle-app-swift/fixture-a", "socle-app-swift/fixture-c"]);
 
   const second = ran("2/2");
-  assert.ok(second.out.includes("  · 2 fichier(s) de test : test/console/ios-zz.test.ts test/outillage/check.test.ts\n"), second.out);
+  assert.ok(
+    second.out.includes("  · 2 fichier(s) de test : test/console/ios-zz.test.ts test/outillage/check.test.ts\n"),
+    second.out,
+  );
   assert.ok(second.out.includes("  · filtre de noms : --test-skip-pattern=^socle-app-swift/\n"), second.out);
   assert.deepEqual(second.names.sort(), ["check/fixture-b", "ios-zz/fixture-d"]);
 
@@ -343,7 +354,9 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
   const empty = runCheck(dir, ["--sections=tests", "--tests-scope=macos", "--tests-part=1/2"]);
   assert.equal(empty.status, 1, output(empty));
   assert.ok(
-    output(empty).includes("  ✗ tests unitaires — aucun fichier de test retenu (--tests-scope=macos, --tests-part=1/2)\n"),
+    output(empty).includes(
+      "  ✗ tests unitaires — aucun fichier de test retenu (--tests-scope=macos, --tests-part=1/2)\n",
+    ),
     output(empty),
   );
   assert.ok(!output(empty).includes("fichier(s) de test :"), output(empty));
@@ -407,8 +420,16 @@ test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests
   const onMacos = [...jobs].filter(([, job]) => jobKey(job, "runs-on") === "macos-latest").map(([id]) => id);
   assert.deepEqual(onMacos, MACOS_JOBS, "exactement trois définitions de jobs macOS (4 runners avec la matrice)");
   for (const [id, job] of jobs) {
-    assert.equal(jobKey(job, "needs"), id === "check-macos" ? "[macos-app-swift, macos-app-ios, macos-tests]" : null, id);
-    assert.equal(jobKey(job, "if"), id === "check-macos" ? "${{ always() }}" : null, `${id} : aucun if: de job hors agrégateur`);
+    assert.equal(
+      jobKey(job, "needs"),
+      id === "check-macos" ? "[macos-app-swift, macos-app-ios, macos-tests]" : null,
+      id,
+    );
+    assert.equal(
+      jobKey(job, "if"),
+      id === "check-macos" ? "${{ always() }}" : null,
+      `${id} : aucun if: de job hors agrégateur`,
+    );
   }
 
   const tests = jobs.get("macos-tests") ?? "";
@@ -430,7 +451,11 @@ test("ci-macos-jobs-paralleles/AC-2 : check.yml et release-simulation.yml produi
   const simulation = fs.readFileSync(path.join(ROOT, ".github/workflows/release-simulation.yml"), "utf8");
   const produced = [...statusContexts(workflowJobs(readWorkflow())), ...statusContexts(workflowJobs(simulation))];
   for (const context of ["check (ubuntu-latest)", "check (macos-latest)", "release-simulation"]) {
-    assert.equal(produced.filter((c) => c === context).length, 1, `${context} doit être produit par un seul job : ${produced.join(", ")}`);
+    assert.equal(
+      produced.filter((c) => c === context).length,
+      1,
+      `${context} doit être produit par un seul job : ${produced.join(", ")}`,
+    );
   }
 });
 
@@ -474,7 +499,10 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
 });
 
 /** L'étape de la Qdrant source des tests d'import mem0-rs, ajoutée au job check après f3fbfe6. */
-const QDRANT_STEP = ["      - name: Préparer la Qdrant source des tests d'import mem0-rs", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
+const QDRANT_STEP = [
+  "      - name: Préparer la Qdrant source des tests d'import mem0-rs",
+  "        run: bash scripts/mem0-http-contrat.sh --prepare",
+];
 /** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle de la Qdrant source. */
 const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
 /** L'étape d'empreinte des toolchains (ci-without-cache S-1), juste après setup-node : elle nourrit les clés de cache. */
@@ -510,7 +538,8 @@ const CARGO_CACHE_STEP = [
 ];
 /** L'installation de l'hôte : la version, littérale dans f3fbfe6, vient de l'`env:` du workflow (ci-without-cache S-1). */
 const HOST_INSTALL = {
-  f3fbfe6: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
+  f3fbfe6:
+    '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
   now: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"',
 };
 
@@ -523,7 +552,10 @@ function withoutBlock(steps: string[], block: string[]): string[] {
   return [...steps.slice(0, at), ...steps.slice(at + block.length)];
 }
 /** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), ajoutée au job check après f3fbfe6. */
-const TYPESCRIPT_STEP = ["      - name: Installer le TypeScript épinglé du type-check", "        run: bash scripts/typecheck.sh --prepare"];
+const TYPESCRIPT_STEP = [
+  "      - name: Installer le TypeScript épinglé du type-check",
+  "        run: bash scripts/typecheck.sh --prepare",
+];
 /** Le lancement de check.sh du job check, en mode strict (silent-prerequisite-skips S-6) ; f3fbfe6 le lançait sans option. */
 const STRICT_RUN = "        run: ./scripts/check.sh --strict";
 /** L'étape du linter épinglé (no-ts-lint-formatter S-6), juste avant celle de la Qdrant source. */
@@ -543,7 +575,11 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   const check = jobs.get("check") ?? "";
   assert.equal(jobKey(check, "runs-on"), "${{ matrix.os }}");
   assert.equal(jobKey(check, "name"), null);
-  assert.equal(stepsOf(check).filter((line) => line === STRICT_RUN).length, 1, "check.sh --strict, une seule fois, sur ubuntu");
+  assert.equal(
+    stepsOf(check).filter((line) => line === STRICT_RUN).length,
+    1,
+    "check.sh --strict, une seule fois, sur ubuntu",
+  );
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
   // (a) Plus aucune trace du banc Python de mem0-http.
   const steps = stepsOf(check);
@@ -569,9 +605,10 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   const caches = [...FINGERPRINT_STEP, ...NPM_CACHE_STEP, ...CARGO_CACHE_STEP];
   assert.deepEqual(steps.slice(fingerprint, fingerprint + caches.length), caches, check);
   assert.equal(steps.filter((line) => line === HOST_INSTALL.now).length, 1, check);
-  const current = withoutBlock(withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP), CARGO_CACHE_STEP).map(
-    (line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line),
-  );
+  const current = withoutBlock(
+    withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP),
+    CARGO_CACHE_STEP,
+  ).map((line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line));
   // (b'') L'étape du linter épinglé : une seule fois, ses deux lignes consécutives,
   // immédiatement avant l'étape de la Qdrant source.
   assert.equal(steps.filter((line) => LINT_STEP.includes(line)).length, 2, check);
@@ -584,7 +621,9 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   }
   const before = spawnSync("git", ["show", `f3fbfe6:${WORKFLOW_FILE}`], { cwd: ROOT, encoding: "utf8" });
   assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
-  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
+  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter(
+    (line) => !line.includes("MEM0_OMP_REQUIRE_IOS"),
+  );
   assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
   // (c) f3fbfe6 moins le banc Python retiré : l'étape `image_python` (2 lignes),
   // `setup-python` (3 lignes), la préparation du test d'API (2 lignes) et

@@ -115,10 +115,7 @@ test("readme-scripts-tree-guard/AC-2 : un fichier ajouté sans ligne, exécutabl
     fs.chmodSync(path.join(tmp, "ajout-executable.sh"), 0o755);
     assert.throws(
       () => assertScriptsTree(readme, listRootFiles(tmp)),
-      expected(
-        "- scripts/ajout-executable.sh : absent de l'arbre",
-        "- scripts/ajout-sans-bit.ts : absent de l'arbre",
-      ),
+      expected("- scripts/ajout-executable.sh : absent de l'arbre", "- scripts/ajout-sans-bit.ts : absent de l'arbre"),
     );
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -128,17 +125,11 @@ test("readme-scripts-tree-guard/AC-2 : un fichier ajouté sans ligne, exécutabl
 test("readme-scripts-tree-guard/AC-3 : une ligne qui cite un fichier retiré ou renommé est nommée « cité mais inexistant »", () => {
   assert.equal(rootEntries(readme).filter((name) => name === victim).length, 1);
   const removed = real.filter((name) => name !== victim);
-  assert.throws(
-    () => assertScriptsTree(readme, removed),
-    expected(`- scripts/${victim} : cité mais inexistant`),
-  );
+  assert.throws(() => assertScriptsTree(readme, removed), expected(`- scripts/${victim} : cité mais inexistant`));
   const renamed = real.map((name) => (name === victim ? `${victim}.renomme` : name));
   assert.throws(
     () => assertScriptsTree(readme, renamed),
-    expected(
-      `- scripts/${victim} : cité mais inexistant`,
-      `- scripts/${victim}.renomme : absent de l'arbre`,
-    ),
+    expected(`- scripts/${victim} : cité mais inexistant`, `- scripts/${victim}.renomme : absent de l'arbre`),
   );
 });
 
@@ -146,10 +137,7 @@ test("readme-scripts-tree-guard/AC-4 : une ligne racine dupliquée est nommée c
   const line = rootLine(readme, victim);
   assert.equal(readme.split(line).length, 2, `ligne de scripts/${victim} non unique dans le README`);
   const duplicated = readme.replace(line, `${line}\n${line}`);
-  assert.throws(
-    () => assertScriptsTree(duplicated, real),
-    expected(`- scripts/${victim} : doublon (2 lignes)`),
-  );
+  assert.throws(() => assertScriptsTree(duplicated, real), expected(`- scripts/${victim} : doublon (2 lignes)`));
 });
 
 test("readme-scripts-tree-guard/AC-5 : les lignes de sous-chemin et les mentions hors de l'arbre ne sont pas comparées", () => {

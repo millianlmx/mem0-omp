@@ -145,7 +145,8 @@ function mkCtx(app: App, cwd: string, options: MkCtxOptions = {}) {
     waitForIdle: async () => {},
     models: {
       list: () => KNOWN,
-      resolve: (selector: string) => KNOWN.find((m) => known.includes(selector) && `${m.provider}/${m.id}` === selector),
+      resolve: (selector: string) =>
+        KNOWN.find((m) => known.includes(selector) && `${m.provider}/${m.id}` === selector),
     },
     newSession: async (opts?: { setup?: (sm: { moveTo: (cwd: string) => Promise<void> }) => Promise<void> }) => {
       app.journal.push("newSession");
@@ -170,7 +171,9 @@ async function inRepo<T>(fn: (env: Env) => Promise<T>): Promise<T> {
   const root = emptyGitRepo("modele-du-groupe-repo-");
   const stateDir = tmpdir("modele-du-groupe-state-");
   const base = tmpdir("modele-du-groupe-wt-");
-  return withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, () => fn({ root, stateDir }));
+  return withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, () =>
+    fn({ root, stateDir }),
+  );
 }
 
 const featureOf = (env: Env, slug: string): LotFeature | undefined =>
@@ -295,12 +298,25 @@ test("modele-du-groupe-en-session-interactive/AC-5 : /req avertit quand setModel
 
       const warned = warnings(notices);
       assert.equal(warned.length, 1, c.name);
-      assert.equal(warned[0]!.message, `[req] modèle ${MODEL_A} non appliqué (${c.reason}) — modèle de la session conservé`, c.name);
-      assert.equal(app.journal.includes(`setModel:${MODEL_A}`), c.name !== "inconnu", `${c.name} : setModel seulement si le modèle est résolu`);
+      assert.equal(
+        warned[0]!.message,
+        `[req] modèle ${MODEL_A} non appliqué (${c.reason}) — modèle de la session conservé`,
+        c.name,
+      );
+      assert.equal(
+        app.journal.includes(`setModel:${MODEL_A}`),
+        c.name !== "inconnu",
+        `${c.name} : setModel seulement si le modèle est résolu`,
+      );
       assert.equal(moved.length, 1, "la session relocalisée est conservée");
       const enrolled = featureOf(env, "alpha");
       assert.deepEqual(
-        [enrolled?.modelReqSpecs, enrolled?.fallbackReqSpecs, enrolled?.modelImplReview, enrolled?.fallbackImplReview ?? null],
+        [
+          enrolled?.modelReqSpecs,
+          enrolled?.fallbackReqSpecs,
+          enrolled?.modelImplReview,
+          enrolled?.fallbackImplReview ?? null,
+        ],
         [MODEL_A, MODEL_F, MODEL_B, null],
         `${c.name} : les quatre clés de modèle`,
       );
@@ -318,7 +334,10 @@ test("modele-du-groupe-en-session-interactive/AC-6 : /req n'appelle pas setModel
 
       assert.deepEqual(app.journal, ["newSession"], `${session} : aucun setModel`);
       assert.equal(featureOf(env, "alpha"), undefined, "la feature n'est pas enrôlée");
-      assert.ok(notices.some((n) => n.message.includes("session dans le worktree impossible")), session);
+      assert.ok(
+        notices.some((n) => n.message.includes("session dans le worktree impossible")),
+        session,
+      );
     });
   }
 });
@@ -393,7 +412,10 @@ test("modele-du-groupe-en-session-interactive/AC-9 : hors lot ou sans modèle de
     // `alpha` : le lot est oublié (le cwd n'est plus le worktree d'aucune feature) ;
     // `beta` : créée sans UI, donc ses groupes sont sur défaut OMP.
     // L'ordre compte : `beta` doit être lue AVANT l'oubli du lot.
-    for (const [worktree, forget] of [[headless, false], [forgotten, true]] as const) {
+    for (const [worktree, forget] of [
+      [headless, false],
+      [forgotten, true],
+    ] as const) {
       if (forget) fs.rmSync(lotPathFor(env.stateDir, lotRepoKey(env.root)), { force: true });
       for (const phase of PHASES) {
         app.reset();
@@ -428,12 +450,15 @@ test("modele-du-groupe-en-session-interactive/AC-10 : /specs avertit quand setMo
         [`[specs] modèle ${MODEL_A} non appliqué (${reason}) — modèle de la session conservé`],
         behavior,
       );
-      assert.deepEqual(app.journal, ["newSession", `setModel:${MODEL_A}`], "la nouvelle session est conservée : un seul newSession");
+      assert.deepEqual(
+        app.journal,
+        ["newSession", `setModel:${MODEL_A}`],
+        "la nouvelle session est conservée : un seul newSession",
+      );
       assert.equal(app.seeds.length, 1, "l'amorce part dans la nouvelle session");
     });
   }
 });
-
 
 // ---------------------------------------------------------------------------
 // Run de conversation (S-5, lot BR-3) — AC-11 à AC-14
@@ -473,7 +498,14 @@ function conversationHarness() {
   });
   const exhaustModel = (selector: string): number => {
     const until = Date.now() + 3_600_000;
-    markExhausted(stateDir, { model: selector, provider: selector.split("/")[0] ?? "", until, announced: true, at: Date.now(), reason: "429" });
+    markExhausted(stateDir, {
+      model: selector,
+      provider: selector.split("/")[0] ?? "",
+      until,
+      announced: true,
+      at: Date.now(),
+      reason: "429",
+    });
     return until;
   };
   return { stateDir, inbox, calls, errors, deps, target, exhaustModel };
@@ -527,7 +559,10 @@ test("modele-du-groupe-en-session-interactive/AC-13 : principal épuisé sans re
     assert.ok(reason !== null, `repli ${fallback}`);
     assert.ok(reason.includes(MODEL_A), reason);
     assert.ok(reason.includes(quotaDeadlineLabel(until, true)), reason);
-    assert.equal(reason, `écriture impossible : ${quotaStopReason({ model: MODEL_A, provider: "anthropic", until, announced: true })}`);
+    assert.equal(
+      reason,
+      `écriture impossible : ${quotaStopReason({ model: MODEL_A, provider: "anthropic", until, announced: true })}`,
+    );
     assert.equal(h.calls.length, 0, "exec n'est pas appelé");
     assert.ok(!fs.existsSync(`${h.stateDir}/conversation-overlays`), "aucun overlay écrit");
     assert.ok(!fs.existsSync(h.inbox), "la boîte n'est pas créée");

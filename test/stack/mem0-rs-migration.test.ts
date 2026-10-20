@@ -25,7 +25,14 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { JETON_OPENAI, MODELE_CHAT, MODELE_EMBEDDINGS, demarrerFauxOpenAI, plonger, type FauxOpenAI } from "../../scripts/mem0-http-contrat/faux-openai.ts";
+import {
+  JETON_OPENAI,
+  MODELE_CHAT,
+  MODELE_EMBEDDINGS,
+  demarrerFauxOpenAI,
+  plonger,
+  type FauxOpenAI,
+} from "../../scripts/mem0-http-contrat/faux-openai.ts";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -40,7 +47,9 @@ const MANIFESTE = "mem0-stack/mem0-rs/Cargo.toml";
 /** Pièce manquante (cargo, Qdrant) : échec au lieu d'un saut (CI). */
 const REQUIRE_RUST = process.env.MEM0_OMP_REQUIRE_RUST === "1";
 const BINAIRE = path.join(
-  process.env.CARGO_TARGET_DIR ? path.resolve(ROOT, process.env.CARGO_TARGET_DIR) : path.join(ROOT, "mem0-stack", "mem0-rs", "target"),
+  process.env.CARGO_TARGET_DIR
+    ? path.resolve(ROOT, process.env.CARGO_TARGET_DIR)
+    : path.join(ROOT, "mem0-stack", "mem0-rs", "target"),
   "debug",
   "mem0-rs",
 );
@@ -86,7 +95,8 @@ function envEnfant(poses: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [cle, valeur] of Object.entries(process.env)) {
     if (valeur === undefined) continue;
-    if (cle === "NODE_TEST_CONTEXT" || cle === "NODE_TEST_WORKER_ID" || cle === "MEM0_RS_BIN" || cle === "MEM0_DB_PATH") continue;
+    if (cle === "NODE_TEST_CONTEXT" || cle === "NODE_TEST_WORKER_ID" || cle === "MEM0_RS_BIN" || cle === "MEM0_DB_PATH")
+      continue;
     if (cle.startsWith("MEM0_CONTRAT_") || cle.startsWith("QDRANT_")) continue;
     env[cle] = valeur;
   }
@@ -175,7 +185,13 @@ function finDeJournal(journal: string): string {
 }
 
 /** Démarre `<commande> <args>` dans son propre groupe de processus et attend `sante` en 200. */
-async function demarrerServeur(commande: string, args: string[], env: Record<string, string>, port: number, sante = "/health"): Promise<Serveur> {
+async function demarrerServeur(
+  commande: string,
+  args: string[],
+  env: Record<string, string>,
+  port: number,
+  sante = "/health",
+): Promise<Serveur> {
   const journal = path.join(tmpdir("mem0-migration-journal-"), "serveur.log");
   const fd = fs.openSync(journal, "w");
   const enfant = spawn(commande, args, { cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env });
@@ -196,8 +212,11 @@ async function demarrerServeur(commande: string, args: string[], env: Record<str
   for (;;) {
     if (serveur.sortie !== null) {
       await arreter(serveur);
-      if (serveur.sortie === "2") throw new NonExecute(fs.readFileSync(journal, "utf8").split("\n")[0] ?? "non exécuté");
-      throw new Error(`${commande} s'est arrêté (code ${serveur.sortie}) avant de répondre sur ${sante} :\n${finDeJournal(journal)}`);
+      if (serveur.sortie === "2")
+        throw new NonExecute(fs.readFileSync(journal, "utf8").split("\n")[0] ?? "non exécuté");
+      throw new Error(
+        `${commande} s'est arrêté (code ${serveur.sortie}) avant de répondre sur ${sante} :\n${finDeJournal(journal)}`,
+      );
     }
     try {
       const r = await fetch(`${serveur.url}${sante}`, { signal: AbortSignal.timeout(2_000) });
@@ -208,7 +227,9 @@ async function demarrerServeur(commande: string, args: string[], env: Record<str
     }
     if (Date.now() >= limite) {
       await arreter(serveur);
-      throw new Error(`${commande} n'a pas répondu sur ${sante} en ${DELAI_SANTE_MS / 1000} s :\n${finDeJournal(journal)}`);
+      throw new Error(
+        `${commande} n'a pas répondu sur ${sante} en ${DELAI_SANTE_MS / 1000} s :\n${finDeJournal(journal)}`,
+      );
     }
     await Promise.race([pause(250), serveur.fin]);
   }
@@ -238,7 +259,12 @@ async function arreter(serveur: Serveur): Promise<void> {
 type Omlx = Record<string, string>;
 
 function omlxFaux(faux: FauxOpenAI): Omlx {
-  return { OMLX_BASE_URL: faux.url, OMLX_API_TOKEN: JETON_OPENAI, OMLX_LLM_MODEL: MODELE_CHAT, OMLX_EMBED_MODEL: MODELE_EMBEDDINGS };
+  return {
+    OMLX_BASE_URL: faux.url,
+    OMLX_API_TOKEN: JETON_OPENAI,
+    OMLX_LLM_MODEL: MODELE_CHAT,
+    OMLX_EMBED_MODEL: MODELE_EMBEDDINGS,
+  };
 }
 
 /** Variables communes des serveurs : embedder, jeton, 1024 dimensions. */
@@ -277,7 +303,12 @@ async function demarrerQdrant(): Promise<QdrantJetable> {
 
 async function demarrerRs(omlx: Omlx, base: string): Promise<Serveur> {
   const port = await portLibre();
-  return demarrerServeur(BINAIRE, ["--host", "127.0.0.1", "--port", String(port)], envServeur(omlx, { MEM0_DB_PATH: base }), port);
+  return demarrerServeur(
+    BINAIRE,
+    ["--host", "127.0.0.1", "--port", String(port)],
+    envServeur(omlx, { MEM0_DB_PATH: base }),
+    port,
+  );
 }
 
 /** Démarre Qdrant ; Qdrant non préparée est un saut (ou un échec sous REQUIRE_RUST). Rend null si sauté. */
@@ -319,7 +350,10 @@ async function qdrant(source: SourceQdrant, methode: string, chemin: string, cor
   const texte = await r.text();
   assert.equal(r.status, 200, `Qdrant ${methode} ${chemin} → ${r.status} : ${texte}`);
   const reponse: unknown = JSON.parse(texte);
-  assert.ok(reponse !== null && typeof reponse === "object" && "result" in reponse, `Qdrant ${chemin} : réponse sans result`);
+  assert.ok(
+    reponse !== null && typeof reponse === "object" && "result" in reponse,
+    `Qdrant ${chemin} : réponse sans result`,
+  );
   return reponse.result;
 }
 
@@ -375,7 +409,10 @@ function etatDossier(dossier: string): Record<string, string> {
 }
 
 /** POST /memory/add ; rend les ids écrits. */
-async function ajouter(url: string, corps: { text: string; agent_id: string; tags?: string; infer: boolean }): Promise<string[]> {
+async function ajouter(
+  url: string,
+  corps: { text: string; agent_id: string; tags?: string; infer: boolean },
+): Promise<string[]> {
   const r = (await api(url, "POST", "/memory/add", corps)) as { results: { id: string }[] };
   return r.results.map((x) => x.id);
 }
@@ -391,8 +428,13 @@ function datePython(n: number): string {
 
 /** Vecteur creux `bm25` : un indice par jeton distinct (sha256 mod 2^31, trié), poids 1. */
 function creuxBm25(texte: string): { indices: number[]; values: number[] } {
-  const jetons = texte.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  const indices = [...new Set(jetons.map((j) => createHash("sha256").update(j, "utf8").digest().readUInt32BE(0) % 2 ** 31))].sort((a, b) => a - b);
+  const jetons = texte
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const indices = [
+    ...new Set(jetons.map((j) => createHash("sha256").update(j, "utf8").digest().readUInt32BE(0) % 2 ** 31)),
+  ].sort((a, b) => a - b);
   return { indices, values: indices.map(() => 1) };
 }
 
@@ -400,7 +442,16 @@ function creuxBm25(texte: string): { indices: number[]; values: number[] } {
  * Un souvenir semé : `data` est son texte courant ; `initial` (texte avant UPDATE) et
  * `maj` (instant de l'UPDATE) seulement s'il a été modifié ; `nu` = vecteur en liste nue.
  */
-type Semis = { id: string; agent: string; data: string; tags?: string; n: number; initial?: string; maj?: number; nu?: boolean };
+type Semis = {
+  id: string;
+  agent: string;
+  data: string;
+  tags?: string;
+  n: number;
+  initial?: string;
+  maj?: number;
+  nu?: boolean;
+};
 
 /** Payload de mem0 2.2.1 pour un add infer=false (README de mem0-rs, tests/common/mod.rs). */
 function payloadMem0(s: Semis): Record<string, unknown> {
@@ -433,7 +484,15 @@ type LigneHistorique = {
 };
 
 function ligneAdd(s: Semis): LigneHistorique {
-  return { memory_id: s.id, event: "ADD", old_memory: null, new_memory: s.initial ?? s.data, created_at: datePython(s.n), updated_at: null, is_deleted: 0 };
+  return {
+    memory_id: s.id,
+    event: "ADD",
+    old_memory: null,
+    new_memory: s.initial ?? s.data,
+    created_at: datePython(s.n),
+    updated_at: null,
+    is_deleted: 0,
+  };
 }
 
 /** DDL de `HistoryDb::nouveau` (mem0-stack/mem0-rs/tests/common/mod.rs). */
@@ -470,7 +529,16 @@ async function ecrireHistoryDb(chemin: string, lignes: LigneHistorique[]): Promi
       "INSERT INTO history (id, memory_id, old_memory, new_memory, event, created_at, updated_at, is_deleted, actor_id, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'user')",
     );
     for (const l of lignes) {
-      insertion.run(randomUUID(), l.memory_id, l.old_memory, l.new_memory, l.event, l.created_at, l.updated_at, l.is_deleted);
+      insertion.run(
+        randomUUID(),
+        l.memory_id,
+        l.old_memory,
+        l.new_memory,
+        l.event,
+        l.created_at,
+        l.updated_at,
+        l.is_deleted,
+      );
     }
   } finally {
     db.close();
@@ -489,7 +557,14 @@ async function semer(q: QdrantJetable, avecBm25: boolean, points: Semis[], ligne
 }
 
 type Rapport = {
-  agents: { agent_id: string | null; importes: number; deja_presents: number; rejetes: unknown[]; revisions: number; messages: number }[];
+  agents: {
+    agent_id: string | null;
+    importes: number;
+    deja_presents: number;
+    rejetes: unknown[];
+    revisions: number;
+    messages: number;
+  }[];
   totaux: { importes: number; deja_presents: number; rejetes: number; revisions: number; messages: number };
 };
 
@@ -534,7 +609,10 @@ type Resultats = { results: { id: string; memory: string; score: number }[] };
 async function recherches(url: string, requetes: Requete[]): Promise<Record<string, Resultats>> {
   const resultat: Record<string, Resultats> = {};
   for (const q of requetes) {
-    resultat[`${q.agent_id ?? "(sans agent)"} · ${q.query}`] = (await api(url, "POST", "/memory/search", { ...q, limit: 10 })) as Resultats;
+    resultat[`${q.agent_id ?? "(sans agent)"} · ${q.query}`] = (await api(url, "POST", "/memory/search", {
+      ...q,
+      limit: 10,
+    })) as Resultats;
   }
   return resultat;
 }
@@ -547,18 +625,28 @@ async function recherches(url: string, requetes: Requete[]): Promise<Record<stri
 async function comparerRecherches(py: string, rs: string, requetes: Requete[]): Promise<void> {
   const attendu = await recherches(py, requetes);
   const obtenu = await recherches(rs, requetes);
-  assert.ok(Object.values(attendu).some((r) => r.results.length > 1), "le jeu de requêtes ne classe rien");
+  assert.ok(
+    Object.values(attendu).some((r) => r.results.length > 1),
+    "le jeu de requêtes ne classe rien",
+  );
   const ligne = (x: Resultats["results"][number]): string => `      ${x.score.toFixed(6)} ${x.id} ${x.memory}`;
   const exAequo: string[] = [];
   const ecarts: string[] = [];
   for (const [libelle, r] of Object.entries(attendu)) {
-    if (r.results.some((x, i) => i > 0 && x.score === r.results[i - 1].score)) exAequo.push(`  ${libelle}\n${r.results.map(ligne).join("\n")}`);
+    if (r.results.some((x, i) => i > 0 && x.score === r.results[i - 1].score))
+      exAequo.push(`  ${libelle}\n${r.results.map(ligne).join("\n")}`);
     const idsPy = r.results.map((x) => x.id);
     const idsRs = obtenu[libelle].results.map((x) => x.id);
     if (JSON.stringify(idsPy) === JSON.stringify(idsRs)) continue;
-    ecarts.push(`  ${libelle}\n    Python :\n${r.results.map(ligne).join("\n")}\n    mem0-rs :\n${obtenu[libelle].results.map(ligne).join("\n")}`);
+    ecarts.push(
+      `  ${libelle}\n    Python :\n${r.results.map(ligne).join("\n")}\n    mem0-rs :\n${obtenu[libelle].results.map(ligne).join("\n")}`,
+    );
   }
-  assert.deepStrictEqual(exAequo, [], `ex-aequo dans le classement Python — changer le corpus, pas l'assertion :\n${exAequo.join("\n")}`);
+  assert.deepStrictEqual(
+    exAequo,
+    [],
+    `ex-aequo dans le classement Python — changer le corpus, pas l'assertion :\n${exAequo.join("\n")}`,
+  );
   assert.deepStrictEqual(ecarts, [], `classements différents :\n${ecarts.join("\n")}`);
 }
 
@@ -599,7 +687,10 @@ const CORPUS_A: Record<string, { text: string; tags?: string }[]> = {
 };
 
 /** Points en liste nue sur migr-c. */
-const LISTE_NUE_A = ["Le schéma SQLite v3 ajoute la colonne metadata", "Le faux OpenAI rend des embeddings déterministes"];
+const LISTE_NUE_A = [
+  "Le schéma SQLite v3 ajoute la colonne metadata",
+  "Le faux OpenAI rend des embeddings déterministes",
+];
 
 /** Nouveau texte du souvenir n° 1 de migr-a (ligne UPDATE de history.db). */
 const MAJ_A = "La CI GitHub Actions tourne sur ubuntu-latest et macos-15";
@@ -630,12 +721,18 @@ async function verifierRechercheExacte(url: string, points: Semis[], agents: str
   for (const agent of agents) {
     const premier = points.find((p) => p.agent === agent);
     assert.ok(premier, `aucun souvenir semé pour ${agent}`);
-    const r = (await api(url, "POST", "/memory/search", { query: premier.data, agent_id: agent, limit: 10 })) as Resultats;
+    const r = (await api(url, "POST", "/memory/search", {
+      query: premier.data,
+      agent_id: agent,
+      limit: 10,
+    })) as Resultats;
     assert.equal(r.results[0]?.id, premier.id, `${agent} · « ${premier.data} » : ${JSON.stringify(r.results)}`);
   }
 }
 
-test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native semée (forme mixte) puis mem0-rs reproduit la graine, critère par sous-test", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native semée (forme mixte) puis mem0-rs reproduit la graine, critère par sous-test", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (!(await preparer(t))) return;
   const q = await qdrantOuSaut(t);
   if (q === null) return;
@@ -662,7 +759,12 @@ test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native sem
     modifie.initial = modifie.data;
     modifie.data = MAJ_A;
     modifie.maj = n++;
-    const supprimesSemes: Semis[] = SUPPRIMES_A.map((s) => ({ id: randomUUID(), agent: s.agent, data: s.text, n: n++ }));
+    const supprimesSemes: Semis[] = SUPPRIMES_A.map((s) => ({
+      id: randomUUID(),
+      agent: s.agent,
+      data: s.text,
+      n: n++,
+    }));
     const supprimes = supprimesSemes.map((s) => s.id);
 
     const lignes: LigneHistorique[] = points.map(ligneAdd);
@@ -677,7 +779,15 @@ test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native sem
     });
     for (const s of supprimesSemes) {
       lignes.push(ligneAdd(s));
-      lignes.push({ memory_id: s.id, event: "DELETE", old_memory: s.data, new_memory: null, created_at: datePython(s.n), updated_at: datePython(n++), is_deleted: 1 });
+      lignes.push({
+        memory_id: s.id,
+        event: "DELETE",
+        old_memory: s.data,
+        new_memory: null,
+        created_at: datePython(s.n),
+        updated_at: datePython(n++),
+        is_deleted: 1,
+      });
     }
     const source = await semer(q, true, points, lignes);
 
@@ -706,43 +816,60 @@ test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native sem
       rapportSimule = r.stdout;
     });
 
-    await t.test("mem0-rs-migration/AC-9 et AC-2 : l'import réel rend le rapport de la simulation, sans aucun appel à l'embedder", async () => {
-      const avant = faux.compteurs();
-      const r = await importer(source, omlxFaux(faux), base, []);
-      exigerCode0(r, "import");
-      assert.deepStrictEqual(faux.compteurs(), avant, "le faux OpenAI a reçu un appel pendant l'import");
-      assert.equal(r.stdout, rapportSimule);
-    });
+    await t.test(
+      "mem0-rs-migration/AC-9 et AC-2 : l'import réel rend le rapport de la simulation, sans aucun appel à l'embedder",
+      async () => {
+        const avant = faux.compteurs();
+        const r = await importer(source, omlxFaux(faux), base, []);
+        exigerCode0(r, "import");
+        assert.deepStrictEqual(faux.compteurs(), avant, "le faux OpenAI a reçu un appel pendant l'import");
+        assert.equal(r.stdout, rapportSimule);
+      },
+    );
 
-    await t.test("mem0-rs-migration/AC-8 : la collection et history.db sont inchangés par la simulation et l'import", async () => {
-      assert.deepStrictEqual(await empreinteSource(source), source0);
-    });
+    await t.test(
+      "mem0-rs-migration/AC-8 : la collection et history.db sont inchangés par la simulation et l'import",
+      async () => {
+        assert.deepStrictEqual(await empreinteSource(source), source0);
+      },
+    );
 
     rs = await demarrerRs(omlxFaux(faux), base);
     const rsUrl = rs.url;
     const totalImporte = (await idsAll(rsUrl)).length;
 
-    await t.test("mem0-rs-migration/AC-1 : GET /memory/all et l'historique de chaque id reproduisent la graine", async () => {
-      await verifierAll(rsUrl, points, AGENTS_A);
-      for (const id of [...points.map((p) => p.id), ...supprimes]) {
-        const chemin = `/memory/${encodeURIComponent(id)}/history`;
-        const obtenu = (await api(rsUrl, "GET", chemin)) as { event: string; old_memory?: string | null; new_memory?: string | null }[];
-        const attendu = lignes.filter((l) => l.memory_id === id);
-        assert.equal(obtenu.length, attendu.length, `GET ${chemin} : nombre d'entrées`);
-        assert.deepStrictEqual(
-          obtenu.map((h) => [h.event, h.old_memory ?? null, h.new_memory ?? null]),
-          attendu.map((l) => [l.event, l.old_memory, l.new_memory]),
-          `GET ${chemin}`,
-        );
-      }
-      await verifierRechercheExacte(rsUrl, points, AGENTS_A);
-    });
+    await t.test(
+      "mem0-rs-migration/AC-1 : GET /memory/all et l'historique de chaque id reproduisent la graine",
+      async () => {
+        await verifierAll(rsUrl, points, AGENTS_A);
+        for (const id of [...points.map((p) => p.id), ...supprimes]) {
+          const chemin = `/memory/${encodeURIComponent(id)}/history`;
+          const obtenu = (await api(rsUrl, "GET", chemin)) as {
+            event: string;
+            old_memory?: string | null;
+            new_memory?: string | null;
+          }[];
+          const attendu = lignes.filter((l) => l.memory_id === id);
+          assert.equal(obtenu.length, attendu.length, `GET ${chemin} : nombre d'entrées`);
+          assert.deepStrictEqual(
+            obtenu.map((h) => [h.event, h.old_memory ?? null, h.new_memory ?? null]),
+            attendu.map((l) => [l.event, l.old_memory, l.new_memory]),
+            `GET ${chemin}`,
+          );
+        }
+        await verifierRechercheExacte(rsUrl, points, AGENTS_A);
+      },
+    );
 
     const nouveauTexte = "Le dépôt utilise bash 3.2 et zsh pour les scripts de release";
     let nouvelId = "";
     await t.test("mem0-rs-migration/AC-5 : PUT d'un souvenir importé et add d'un nouveau via mem0-rs", async () => {
       await api(rsUrl, "PUT", `/memory/${ids["migr-a"][0]}`, { text: nouveauTexte });
-      [nouvelId] = await ajouter(rsUrl, { text: "Souvenir ajouté par mem0-rs après l'import", agent_id: "migr-a", infer: false });
+      [nouvelId] = await ajouter(rsUrl, {
+        text: "Souvenir ajouté par mem0-rs après l'import",
+        agent_id: "migr-a",
+        infer: false,
+      });
       assert.ok(nouvelId);
     });
     await arreter(rs);
@@ -751,33 +878,46 @@ test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native sem
     const source8 = await empreinteSource(source);
     const cible8 = etatDossier(cible);
     let rapportSimule8 = "";
-    await t.test("mem0-rs-migration/AC-9 et AC-8 : --dry-run sur la cible existante ne change ni la cible ni la source", async () => {
-      const r = await importer(source, omlxFaux(faux), base, ["--dry-run"]);
-      exigerCode0(r, "simulation sur cible existante");
-      assert.deepStrictEqual(etatDossier(cible), cible8);
-      assert.deepStrictEqual(await empreinteSource(source), source8);
-      rapportSimule8 = r.stdout;
-    });
+    await t.test(
+      "mem0-rs-migration/AC-9 et AC-8 : --dry-run sur la cible existante ne change ni la cible ni la source",
+      async () => {
+        const r = await importer(source, omlxFaux(faux), base, ["--dry-run"]);
+        exigerCode0(r, "simulation sur cible existante");
+        assert.deepStrictEqual(etatDossier(cible), cible8);
+        assert.deepStrictEqual(await empreinteSource(source), source8);
+        rapportSimule8 = r.stdout;
+      },
+    );
 
-    await t.test("mem0-rs-migration/AC-5 et AC-9 : le ré-import compte tout en déjà présents et rend le rapport de la simulation", async () => {
-      const r = await importer(source, omlxFaux(faux), base, []);
-      const rapport = exigerCode0(r, "ré-import");
-      assert.equal(r.stdout, rapportSimule8);
-      assert.equal(rapport.totaux.deja_presents, (await scrollComplet(source.qdrant)).length);
-      assert.equal(rapport.totaux.importes, 0);
-      assert.deepStrictEqual(await empreinteSource(source), source8, "AC-8 : la source a changé pendant le ré-import");
-    });
+    await t.test(
+      "mem0-rs-migration/AC-5 et AC-9 : le ré-import compte tout en déjà présents et rend le rapport de la simulation",
+      async () => {
+        const r = await importer(source, omlxFaux(faux), base, []);
+        const rapport = exigerCode0(r, "ré-import");
+        assert.equal(r.stdout, rapportSimule8);
+        assert.equal(rapport.totaux.deja_presents, (await scrollComplet(source.qdrant)).length);
+        assert.equal(rapport.totaux.importes, 0);
+        assert.deepStrictEqual(
+          await empreinteSource(source),
+          source8,
+          "AC-8 : la source a changé pendant le ré-import",
+        );
+      },
+    );
 
     rs = await demarrerRs(omlxFaux(faux), base);
     const rsUrl2 = rs.url;
-    await t.test("mem0-rs-migration/AC-5 : la cible gagne — version mem0-rs gardée, nouveau souvenir conservé, aucun doublon", async () => {
-      const tous = (await api(rsUrl2, "GET", "/memory/all")) as Tous;
-      assert.equal(tous.total, totalImporte + 1);
-      const vus = tous.results.map((x) => x.id);
-      assert.equal(new Set(vus).size, vus.length, "id en double");
-      assert.equal(tous.results.find((x) => x.id === ids["migr-a"][0])?.memory, nouveauTexte);
-      assert.ok(vus.includes(nouvelId), "le souvenir ajouté par mem0-rs a disparu");
-    });
+    await t.test(
+      "mem0-rs-migration/AC-5 : la cible gagne — version mem0-rs gardée, nouveau souvenir conservé, aucun doublon",
+      async () => {
+        const tous = (await api(rsUrl2, "GET", "/memory/all")) as Tous;
+        assert.equal(tous.total, totalImporte + 1);
+        const vus = tous.results.map((x) => x.id);
+        assert.equal(new Set(vus).size, vus.length, "id en double");
+        assert.equal(tous.results.find((x) => x.id === ids["migr-a"][0])?.memory, nouveauTexte);
+        assert.ok(vus.includes(nouvelId), "le souvenir ajouté par mem0-rs a disparu");
+      },
+    );
   } finally {
     if (rs !== null) await arreter(rs);
     await arreter(q.serveur);
@@ -791,11 +931,21 @@ test("mem0-rs-migration/S-12 : phase A — import d'une source Qdrant native sem
 // ---------------------------------------------------------------------------
 
 const CORPUS_B: Record<string, string[]> = {
-  "nue-a": ["Le module verrou pose flock sur un fichier dédié", "La release publie un tag git signé", "Les journaux du serveur vont dans stderr"],
-  "nue-b": ["Qdrant garde les anciens points sans vecteur creux", "La recherche dense compare des cosinus", "Le rapport JSON est lu par l'app Swift"],
+  "nue-a": [
+    "Le module verrou pose flock sur un fichier dédié",
+    "La release publie un tag git signé",
+    "Les journaux du serveur vont dans stderr",
+  ],
+  "nue-b": [
+    "Qdrant garde les anciens points sans vecteur creux",
+    "La recherche dense compare des cosinus",
+    "Le rapport JSON est lu par l'app Swift",
+  ],
 };
 
-test("mem0-rs-migration/AC-3 : une collection en liste nue seule (sans slot bm25) s'importe et sert ses souvenirs", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-rs-migration/AC-3 : une collection en liste nue seule (sans slot bm25) s'importe et sert ses souvenirs", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (!(await preparer(t))) return;
   const q = await qdrantOuSaut(t);
   if (q === null) return;
@@ -804,7 +954,9 @@ test("mem0-rs-migration/AC-3 : une collection en liste nue seule (sans slot bm25
   let rs: Serveur | null = null;
   try {
     let n = 0;
-    const points: Semis[] = Object.entries(CORPUS_B).flatMap(([agent, textes]) => textes.map((data) => ({ id: randomUUID(), agent, data, n: n++, nu: true })));
+    const points: Semis[] = Object.entries(CORPUS_B).flatMap(([agent, textes]) =>
+      textes.map((data) => ({ id: randomUUID(), agent, data, n: n++, nu: true })),
+    );
     const source = await semer(q, false, points, points.map(ligneAdd));
 
     const cible = tmpdir("mem0-migration-cible-b-");
@@ -891,78 +1043,105 @@ async function idsHistorique(historyDb: string): Promise<string[]> {
 const AGENT_REEL = "mem0-omp";
 
 const REQUETES_REEL: Requete[] = [
-  ...["EMBEDDING_DIMS", "check.sh sections", "podman machine", "clé API Qdrant", "workflow de release", "SwiftUI", "schéma SQLite mem0-rs", "bash 3.2"].map(
-    (query) => ({ query, agent_id: AGENT_REEL }),
-  ),
+  ...[
+    "EMBEDDING_DIMS",
+    "check.sh sections",
+    "podman machine",
+    "clé API Qdrant",
+    "workflow de release",
+    "SwiftUI",
+    "schéma SQLite mem0-rs",
+    "bash 3.2",
+  ].map((query) => ({ query, agent_id: AGENT_REEL })),
   { query: "Qdrant" },
   { query: "tests instables" },
 ];
 
-test(
-  "mem0-rs-migration/AC-12 : la vraie mémoire du poste importée vers une base jetable rend les mêmes résultats que mem0-http, source et base en service intactes",
-  { timeout: DELAI_LOURD },
-  async (t) => {
-    if (process.env.MEM0_RS_MIGRATION_REEL !== "1") {
-      t.skip("vraie mémoire du poste : lancer avec MEM0_RS_MIGRATION_REEL=1");
-      return;
-    }
-    if (!(await preparer(t))) return;
-    const copie = process.env.MEM0_RS_MIGRATION_HISTORY_DB;
-    assert.ok(copie, `MEM0_RS_MIGRATION_HISTORY_DB manquant : copier history.db hors du conteneur par\n  ${COPIE_HISTORY}`);
-    const source: Source = {
-      qdrant: { url: process.env.MEM0_RS_MIGRATION_QDRANT_URL || "http://127.0.0.1:6333", cle: process.env.QDRANT_API_KEY || "mem0-local-qdrant-key" },
-      historyDb: path.resolve(copie),
-    };
-    const python = process.env.MEM0_RS_MIGRATION_HTTP_URL || "http://127.0.0.1:8321";
-    const baseEnService = path.join(os.homedir(), ".mem0", "mem0-rs.db");
-    const omlx = omlxReel();
+test("mem0-rs-migration/AC-12 : la vraie mémoire du poste importée vers une base jetable rend les mêmes résultats que mem0-http, source et base en service intactes", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
+  if (process.env.MEM0_RS_MIGRATION_REEL !== "1") {
+    t.skip("vraie mémoire du poste : lancer avec MEM0_RS_MIGRATION_REEL=1");
+    return;
+  }
+  if (!(await preparer(t))) return;
+  const copie = process.env.MEM0_RS_MIGRATION_HISTORY_DB;
+  assert.ok(
+    copie,
+    `MEM0_RS_MIGRATION_HISTORY_DB manquant : copier history.db hors du conteneur par\n  ${COPIE_HISTORY}`,
+  );
+  const source: Source = {
+    qdrant: {
+      url: process.env.MEM0_RS_MIGRATION_QDRANT_URL || "http://127.0.0.1:6333",
+      cle: process.env.QDRANT_API_KEY || "mem0-local-qdrant-key",
+    },
+    historyDb: path.resolve(copie),
+  };
+  const python = process.env.MEM0_RS_MIGRATION_HTTP_URL || "http://127.0.0.1:8321";
+  const baseEnService = path.join(os.homedir(), ".mem0", "mem0-rs.db");
+  const omlx = omlxReel();
 
-    // 1. Instantanés.
-    const p1 = (await api(python, "GET", "/memory/all")) as Tous;
-    const source1 = await empreinteSource(source);
-    const service1 = etatFichier(baseEnService);
+  // 1. Instantanés.
+  const p1 = (await api(python, "GET", "/memory/all")) as Tous;
+  const source1 = await empreinteSource(source);
+  const service1 = etatFichier(baseEnService);
 
-    // 2. Import vers une base jetable.
-    const base = path.join(tmpdir("mem0-migration-reel-"), "mem0-rs.db");
-    const debut = Date.now();
-    const r = await importer(source, omlx, base, []);
-    assert.ok(r.code === 0 || r.code === 3, `import : code ${r.code}\nstdout : ${r.stdout}\nstderr : ${r.stderr}`);
-    const rapport = JSON.parse(r.stdout) as Rapport;
-    t.diagnostic(`import en ${((Date.now() - debut) / 1000).toFixed(1)} s, code ${r.code}, totaux ${JSON.stringify(rapport.totaux)}`);
-    for (const a of rapport.agents) {
-      t.diagnostic(`  ${a.agent_id ?? "(sans agent)"} : ${a.importes} importés, ${a.revisions} révisions, ${a.messages} messages`);
-      for (const rejet of a.rejetes) t.diagnostic(`  rejet ${JSON.stringify(rejet)}`);
-    }
-    assert.equal(rapport.totaux.importes + rapport.totaux.rejetes, p1.total, "chaque souvenir du Python est importé ou rejeté");
+  // 2. Import vers une base jetable.
+  const base = path.join(tmpdir("mem0-migration-reel-"), "mem0-rs.db");
+  const debut = Date.now();
+  const r = await importer(source, omlx, base, []);
+  assert.ok(r.code === 0 || r.code === 3, `import : code ${r.code}\nstdout : ${r.stdout}\nstderr : ${r.stderr}`);
+  const rapport = JSON.parse(r.stdout) as Rapport;
+  t.diagnostic(
+    `import en ${((Date.now() - debut) / 1000).toFixed(1)} s, code ${r.code}, totaux ${JSON.stringify(rapport.totaux)}`,
+  );
+  for (const a of rapport.agents) {
+    t.diagnostic(
+      `  ${a.agent_id ?? "(sans agent)"} : ${a.importes} importés, ${a.revisions} révisions, ${a.messages} messages`,
+    );
+    for (const rejet of a.rejetes) t.diagnostic(`  rejet ${JSON.stringify(rejet)}`);
+  }
+  assert.equal(
+    rapport.totaux.importes + rapport.totaux.rejetes,
+    p1.total,
+    "chaque souvenir du Python est importé ou rejeté",
+  );
 
-    // 3. Comparaisons ; un écart n'est jugé qu'une fois la mémoire réelle reconnue stable (étape 4).
-    let ecart: unknown = null;
-    const rs = await demarrerRs(omlx, base);
-    try {
-      const agents = [...new Set(p1.results.map((x) => x.agent_id).filter((a): a is string => typeof a === "string"))].sort();
-      await comparerAll(python, rs.url, agents);
-      const vivants = p1.results.map((x) => x.id);
-      const connus = new Set(vivants);
-      const disparus = (await idsHistorique(source.historyDb)).filter((id) => !connus.has(id));
-      await comparerHistoriques(python, rs.url, [...vivants, ...disparus]);
-      await comparerRecherches(python, rs.url, REQUETES_REEL);
-      t.diagnostic(`${agents.length} agents, ${vivants.length} historiques vivants, ${disparus.length} supprimés, ${REQUETES_REEL.length} recherches comparés`);
-    } catch (e) {
-      ecart = e;
-      t.diagnostic(`journal de mem0-rs :\n${finDeJournal(rs.journal)}`);
-    } finally {
-      await arreter(rs);
-    }
+  // 3. Comparaisons ; un écart n'est jugé qu'une fois la mémoire réelle reconnue stable (étape 4).
+  let ecart: unknown = null;
+  const rs = await demarrerRs(omlx, base);
+  try {
+    const agents = [
+      ...new Set(p1.results.map((x) => x.agent_id).filter((a): a is string => typeof a === "string")),
+    ].sort();
+    await comparerAll(python, rs.url, agents);
+    const vivants = p1.results.map((x) => x.id);
+    const connus = new Set(vivants);
+    const disparus = (await idsHistorique(source.historyDb)).filter((id) => !connus.has(id));
+    await comparerHistoriques(python, rs.url, [...vivants, ...disparus]);
+    await comparerRecherches(python, rs.url, REQUETES_REEL);
+    t.diagnostic(
+      `${agents.length} agents, ${vivants.length} historiques vivants, ${disparus.length} supprimés, ${REQUETES_REEL.length} recherches comparés`,
+    );
+  } catch (e) {
+    ecart = e;
+    t.diagnostic(`journal de mem0-rs :\n${finDeJournal(rs.journal)}`);
+  } finally {
+    await arreter(rs);
+  }
 
-    // 4. La mémoire réelle est vivante : une écriture pendant la preuve l'invalide.
-    if (!isDeepStrictEqual(await api(python, "GET", "/memory/all"), p1)) {
-      t.skip("mémoire réelle modifiée pendant la preuve — relancer");
-      return;
-    }
-    if (ecart !== null) throw ecart;
+  // 4. La mémoire réelle est vivante : une écriture pendant la preuve l'invalide.
+  if (!isDeepStrictEqual(await api(python, "GET", "/memory/all"), p1)) {
+    t.skip("mémoire réelle modifiée pendant la preuve — relancer");
+    return;
+  }
+  if (ecart !== null) throw ecart;
 
-    // 5. Source et base en service intactes.
-    assert.deepStrictEqual(await empreinteSource(source), source1, "la source (collection ou copie de history.db) a changé");
-    assert.equal(etatFichier(baseEnService), service1, `${baseEnService} a été touché`);
-  },
-);
+  // 5. Source et base en service intactes.
+  assert.deepStrictEqual(
+    await empreinteSource(source),
+    source1,
+    "la source (collection ou copie de history.db) a changé",
+  );
+  assert.equal(etatFichier(baseEnService), service1, `${baseEnService} a été touché`);
+});

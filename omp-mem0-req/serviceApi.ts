@@ -13,7 +13,6 @@ import type { PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import type { Lot } from "./lot.ts";
 import type { ProjectModelDefault } from "./serviceModels.ts";
 
-
 export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "stopping" | "internal";
 
 /** Une erreur d'API : le seul chemin par lequel un handler rend un code ≠ 200. */
@@ -30,12 +29,10 @@ export class ServiceError extends Error {
   }
 }
 
-
 export const badRequest = (reason: string) => new ServiceError(400, "bad_request", reason);
 export const notFound = (reason: string) => new ServiceError(404, "not_found", reason);
 export const conflict = (reason: string) => new ServiceError(409, "conflict", reason);
 export const unauthorized = () => new ServiceError(401, "unauthorized", "jeton absent ou invalide");
-
 
 // --- charge utile de GET /v1/health -----------------------------------------
 
@@ -49,7 +46,6 @@ export type ServiceHealth = {
   /** Version d'omp-mem0-req chargée au démarrage du service ; `null` si illisible. */
   pluginVersion: string | null;
 };
-
 
 // --- sessions (S-6) ---------------------------------------------------------
 
@@ -102,7 +98,6 @@ export type SessionView = SessionDescription & { dialogs: DialogRequest[] };
 /** `GET /v1/repos/{repo}/lot` : le lot normalisé du dépôt, ou `null` quand il n'en a pas. */
 export type LotSnapshot = { repoKey: string; lot: Lot | null };
 
-
 // --- trames SSE (S-6) -------------------------------------------------------
 
 export type ServiceFrame =
@@ -114,7 +109,6 @@ export type ServiceFrame =
   /** Le modèle et le niveau actifs : un REMPLACEMENT d'état, jamais un delta (S-1). */
   | { event: "model"; data: { model: string | null; thinkingLevel: string | null } };
 
-
 /** Un abonnement à une session : l'instantané, puis le flux. */
 export type SessionSubscription = {
   /** Les trames d'entrée : le dialogue en vol, l'état courant, s'il y en a. */
@@ -123,11 +117,9 @@ export type SessionSubscription = {
   subscribe: (listener: (frame: ServiceFrame) => void) => () => void;
 };
 
-
 // --- refus et accusés de commandes (S-9) ------------------------------------
 
 export type CommandOutcome = { command: PipelineCommand; ack: PipelineCommandAck };
-
 
 // --- audits de l'app (S-1 à S-4) --------------------------------------------
 
@@ -145,7 +137,6 @@ export type AuditAnswerResult = { accepted: true };
 
 /** `DELETE /v1/audits/{id}` : les features annulées, gardées (livrées) et refusées. */
 export type AuditStopResult = { cancelled: string[]; kept: string[]; refused: Array<{ slug: string; reason: string }> };
-
 
 // --- la surface que le routeur appelle (S-2 à S-9) --------------------------
 //

@@ -21,8 +21,6 @@ import { lastLine, releaseTarget } from "./runs.ts";
 import type { ReleaseTarget } from "./runs.ts";
 import { ensureStateDir, STATE_DIR_MODE } from "./store.ts";
 
-
-
 // ---------------------------------------------------------------------------
 // Le pilote du projet — il ne conduit AUCUN maillon.
 // ---------------------------------------------------------------------------
@@ -79,7 +77,6 @@ export const projectState: ProjectState = (() => {
   return created;
 })();
 
-
 export type ProjectDriverDeps = {
   stateDir: () => string;
   repoRoot: string;
@@ -92,7 +89,6 @@ export type ProjectDriverDeps = {
   notify: (text: string) => void;
   now?: () => number;
 };
-
 
 export type ProjectDriver = {
   /** Une passe (S-7), sérialisée derrière la précédente ; la promesse se résout à sa fin. */
@@ -109,7 +105,6 @@ export type ProjectDriver = {
   waiting(): string | null;
 };
 
-
 /** Le ref local qui reçoit la branche par défaut du distant (hors `refs/remotes/`, cf. `## Documentation` §2). */
 const BASE_REF = "refs/omp-project/base";
 
@@ -117,12 +112,10 @@ const DOC_REF = `refs/heads/${PROJECT_DOC_BRANCH}`;
 
 const NO_PUSH_URL = "URL HTTPS du dépôt introuvable (gh repo view)";
 
-
 /** La feature `slug` du segment courant, ou `undefined`. */
 function currentFeature(project: Project, slug: string): ProjectFeature | undefined {
   return (project.segments[project.current] as ProjectSegment).features.find((feature) => feature.slug === slug);
 }
-
 
 /** L'état d'une PR lu dans `gh pr view --json state,url`, ou `null` (JSON illisible). */
 function prStateOf(stdout: string): "OPEN" | "CLOSED" | "MERGED" | null {
@@ -138,7 +131,6 @@ function prStateOf(stdout: string): "OPEN" | "CLOSED" | "MERGED" | null {
 export function projectRepoName(repoRoot: string): string {
   return path.basename(realpathOr(repoRoot)) || realpathOr(repoRoot);
 }
-
 
 /** Le pilote du projet d'un dépôt (S-7, S-8, S-5). */
 export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
@@ -418,17 +410,25 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
       }
       const refusal = await addToLot(fresh, feature, base.sha);
       if (refusal === null) {
-        updateFeature(slug, (f) => f.status === "planned", (f) => {
-          f.status = "launched";
-        });
+        updateFeature(
+          slug,
+          (f) => f.status === "planned",
+          (f) => {
+            f.status = "launched";
+          },
+        );
         syncDoc([`${slug} lancée`]);
         launched.push(slug);
       } else {
         const at = now();
-        updateFeature(slug, (f) => f.status === "planned", (f) => {
-          f.status = "failed";
-          f.failure = { kind: "launch", reason: `lancement refusé : ${refusal}`, at };
-        });
+        updateFeature(
+          slug,
+          (f) => f.status === "planned",
+          (f) => {
+            f.status = "failed";
+            f.failure = { kind: "launch", reason: `lancement refusé : ${refusal}`, at };
+          },
+        );
         syncDoc([`${slug} en échec`]);
       }
     }
@@ -515,10 +515,14 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
   }
 
   const markRelaunched = (slug: string, status: "launched" | "pr") => {
-    updateFeature(slug, (f) => f.status === "failed", (f) => {
-      f.status = status;
-      f.failure = null;
-    });
+    updateFeature(
+      slug,
+      (f) => f.status === "failed",
+      (f) => {
+        f.status = status;
+        f.failure = null;
+      },
+    );
     syncDoc([`${slug} relancée`]);
   };
 
@@ -550,9 +554,13 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
       if (refusal !== null) {
         const reason = `lancement refusé : ${refusal}`;
         const at = now();
-        updateFeature(slug, (f) => f.status === "failed", (f) => {
-          f.failure = { kind: "launch", reason, at };
-        });
+        updateFeature(
+          slug,
+          (f) => f.status === "failed",
+          (f) => {
+            f.failure = { kind: "launch", reason, at };
+          },
+        );
         syncDoc([`${slug} en échec`]);
         return reason;
       }
@@ -571,11 +579,15 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
           if (refusal !== null) return refusal;
         }
       }
-      const removed = updateFeature(slug, (f) => f.status === "failed", (f) => {
-        f.status = "removed";
-        f.removedReason = `retirée par l'utilisateur après échec : ${f.failure?.reason ?? ""}`;
-        f.failure = null;
-      });
+      const removed = updateFeature(
+        slug,
+        (f) => f.status === "failed",
+        (f) => {
+          f.status = "removed";
+          f.removedReason = `retirée par l'utilisateur après échec : ${f.failure?.reason ?? ""}`;
+          f.failure = null;
+        },
+      );
       if (removed === null) return `« ${slug} » n'est pas en échec dans le segment courant`;
       syncDoc([`${slug} retirée`]);
       return null;

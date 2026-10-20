@@ -25,7 +25,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { demarrerFauxOpenAI, JETON_OPENAI, MODELE_CHAT, MODELE_EMBEDDINGS } from "../../scripts/mem0-http-contrat/faux-openai.ts";
+import {
+  demarrerFauxOpenAI,
+  JETON_OPENAI,
+  MODELE_CHAT,
+  MODELE_EMBEDDINGS,
+} from "../../scripts/mem0-http-contrat/faux-openai.ts";
 import { doctorEnv, runDoctor, startApi, writeShim } from "../support/doctor-banc.ts";
 // `tmpdir` rend le chemin RÉEL du tmp (/private/var/folders), celui que la machine podman partage.
 import { ROOT, tmpdir } from "../support/repo.ts";
@@ -53,7 +58,9 @@ test("mem0-stack-bascule-rust/AC-1 : le compose ne sert que mem0-rs, en image mu
     if (!/^\s/.test(ligne)) break;
     sousServices.push(ligne);
   }
-  const services = sousServices.filter((ligne) => /^ {2}[\w-]+:$/.test(ligne)).map((ligne) => ligne.trim().slice(0, -1));
+  const services = sousServices
+    .filter((ligne) => /^ {2}[\w-]+:$/.test(ligne))
+    .map((ligne) => ligne.trim().slice(0, -1));
   assert.deepEqual(services, ["mem0-rs"], `services déclarés : ${services.join(", ")}`);
 
   const corps = sousServices.map((ligne) => ligne.trim());
@@ -223,7 +230,8 @@ test("mem0-stack-bascule-rust/AC-10 : la migration importe avant d'arrêter l'an
 
   // Aucune commande ne supprime ni ne modifie l'ancien volume Qdrant ou history.db.
   // Le `--rm` de `run --rm` ne supprime que le conteneur éphémère de l'import.
-  const destructrice = /(?<!-)\brm\b|\bprune\b|--remove-orphans|\bdown\b|volume rm|qdrant_storage|\bcp\s+\S+\s+mem0-(http|qdrant):/;
+  const destructrice =
+    /(?<!-)\brm\b|\bprune\b|--remove-orphans|\bdown\b|volume rm|qdrant_storage|\bcp\s+\S+\s+mem0-(http|qdrant):/;
   const fautives = [...migration, ...retour].filter((ligne) => destructrice.test(ligne));
   assert.deepEqual(fautives, [], `commandes qui touchent l'ancienne pile :\n${fautives.join("\n")}`);
 
@@ -418,7 +426,8 @@ function executer(commande: string, args: string[], env: Record<string, string>)
   return fin.promise;
 }
 
-const ce = (args: string[], poses: Record<string, string> = {}): Promise<Execution> => executer(CE, args, envEnfant(poses));
+const ce = (args: string[], poses: Record<string, string> = {}): Promise<Execution> =>
+  executer(CE, args, envEnfant(poses));
 
 function exiger0(r: Execution, quoi: string): Execution {
   assert.equal(r.code, 0, `${quoi} : code ${r.code}\n${`${r.stdout}${r.stderr}`.split("\n").slice(-40).join("\n")}`);
@@ -496,7 +505,8 @@ async function attendre(url: string, chemin: string): Promise<void> {
     } catch (e) {
       dernier = e instanceof Error ? e.message : String(e);
     }
-    if (Date.now() >= limite) assert.fail(`${url}${chemin} n'a pas répondu 200 en ${DELAI_SANTE_MS / 1000} s (${dernier})`);
+    if (Date.now() >= limite)
+      assert.fail(`${url}${chemin} n'a pas répondu 200 en ${DELAI_SANTE_MS / 1000} s (${dernier})`);
     await pause(500);
   }
 }
@@ -522,7 +532,9 @@ async function journal(t: TestContext, conteneur: string): Promise<void> {
 
 type Tous = { total: number; results: { id: string; memory: string }[] };
 
-test("mem0-stack-bascule-rust/AC-2 : le conteneur du compose garde un souvenir après down/up, base SQLite visible dans le dossier de l'hôte", { timeout: DELAI_CONTENEUR }, async (t) => {
+test("mem0-stack-bascule-rust/AC-2 : le conteneur du compose garde un souvenir après down/up, base SQLite visible dans le dossier de l'hôte", {
+  timeout: DELAI_CONTENEUR,
+}, async (t) => {
   if (!gardes(t, "MEM0_BASCULE_CONTENEUR", "preuve conteneur : MEM0_BASCULE_CONTENEUR=1")) return;
   await gardeMoteur();
   await construireImage();
@@ -547,7 +559,11 @@ test("mem0-stack-bascule-rust/AC-2 : le conteneur du compose garde un souvenir a
   try {
     exiger0(await compose(projet, ["up", "-d"], vars), "up");
     await attendre(url, "/health");
-    const ajout = (await appeler(url, JETON_BASCULE, "POST", "/memory/add", { text: texte, agent_id: "bascule", infer: false })) as { results: { id: string }[] };
+    const ajout = (await appeler(url, JETON_BASCULE, "POST", "/memory/add", {
+      text: texte,
+      agent_id: "bascule",
+      infer: false,
+    })) as { results: { id: string }[] };
     const ids = ajout.results.map((x) => x.id);
     assert.equal(ids.length, 1, `un souvenir écrit attendu : ${JSON.stringify(ajout)}`);
 
@@ -561,7 +577,10 @@ test("mem0-stack-bascule-rust/AC-2 : le conteneur du compose garde un souvenir a
       tous.results.some((x) => x.id === ids[0] && x.memory === texte),
       `le souvenir ${ids[0]} n'est plus servi après down/up : ${JSON.stringify(tous)}`,
     );
-    assert.ok(fs.existsSync(path.join(donnees, "mem0-rs.db")), `${donnees}/mem0-rs.db absent de l'hôte (${fs.readdirSync(donnees).join(", ")})`);
+    assert.ok(
+      fs.existsSync(path.join(donnees, "mem0-rs.db")),
+      `${donnees}/mem0-rs.db absent de l'hôte (${fs.readdirSync(donnees).join(", ")})`,
+    );
     t.diagnostic(`dossier de l'hôte : ${fs.readdirSync(donnees).sort().join(", ")}`);
   } catch (e) {
     await journal(t, projet);
@@ -586,7 +605,9 @@ async function nettoyerContrat(): Promise<void> {
   if (volumes.length > 0) await ce(["volume", "rm", ...volumes]);
 }
 
-test("mem0-stack-bascule-rust/AC-3 : le contrat boîte noire est conforme contre le conteneur du compose, sur un port de test", { timeout: DELAI_CONTENEUR }, async (t) => {
+test("mem0-stack-bascule-rust/AC-3 : le contrat boîte noire est conforme contre le conteneur du compose, sur un port de test", {
+  timeout: DELAI_CONTENEUR,
+}, async (t) => {
   if (!gardes(t, "MEM0_BASCULE_CONTENEUR", "preuve conteneur : MEM0_BASCULE_CONTENEUR=1")) return;
   await gardeMoteur();
   await construireImage();
@@ -606,7 +627,11 @@ test("mem0-stack-bascule-rust/AC-3 : le contrat boîte noire est conforme contre
     assert.ok(conforme && Number(conforme[1]) > 0, `ligne « Contrat conforme : N cas. » absente :\n${sortie}`);
     const cibles = r.stdout.split("\n").filter((ligne) => ligne.startsWith("contrat mem0-http — cible "));
     assert.ok(cibles.length > 0, `aucun journal de phase :\n${sortie}`);
-    assert.deepEqual(cibles.filter((ligne) => /:8321\b/.test(ligne)), [], "une phase vise le port 8321");
+    assert.deepEqual(
+      cibles.filter((ligne) => /:8321\b/.test(ligne)),
+      [],
+      "une phase vise le port 8321",
+    );
     t.diagnostic(`${conforme[0]} — ${cibles.length} phase(s) : ${cibles.join(" | ")}`);
   } finally {
     await nettoyerContrat();
@@ -650,9 +675,16 @@ type Resultats = { results: { id: string; memory: string; score: number }[] };
 
 /** Recherches témoins (recopiées de test/stack/mem0-rs-migration.test.ts, AC-12). */
 const REQUETES_REEL: Requete[] = [
-  ...["EMBEDDING_DIMS", "check.sh sections", "podman machine", "clé API Qdrant", "workflow de release", "SwiftUI", "schéma SQLite mem0-rs", "bash 3.2"].map(
-    (query) => ({ query, agent_id: "mem0-omp" }),
-  ),
+  ...[
+    "EMBEDDING_DIMS",
+    "check.sh sections",
+    "podman machine",
+    "clé API Qdrant",
+    "workflow de release",
+    "SwiftUI",
+    "schéma SQLite mem0-rs",
+    "bash 3.2",
+  ].map((query) => ({ query, agent_id: "mem0-omp" })),
   { query: "Qdrant" },
   { query: "tests instables" },
 ];
@@ -661,7 +693,10 @@ const REQUETES_REEL: Requete[] = [
 async function recherches(url: string, jeton: string): Promise<Record<string, Resultats>> {
   const resultat: Record<string, Resultats> = {};
   for (const q of REQUETES_REEL) {
-    resultat[`${q.agent_id ?? "(sans agent)"} · ${q.query}`] = (await appeler(url, jeton, "POST", "/memory/search", { ...q, limit: 10 })) as Resultats;
+    resultat[`${q.agent_id ?? "(sans agent)"} · ${q.query}`] = (await appeler(url, jeton, "POST", "/memory/search", {
+      ...q,
+      limit: 10,
+    })) as Resultats;
   }
   return resultat;
 }
@@ -673,7 +708,9 @@ const tetes = (r: Record<string, Resultats>): Record<string, string | null> =>
 function demarragesOmp(): Record<string, string> {
   const demarrages: Record<string, string> = {};
   for (const nom of CONTENEURS_OMP) {
-    const r = spawnSync(PODMAN_OMP, ["--url", SOCKET_OMP, "inspect", "--format", "{{.State.StartedAt}}", nom], { encoding: "utf8" });
+    const r = spawnSync(PODMAN_OMP, ["--url", SOCKET_OMP, "inspect", "--format", "{{.State.StartedAt}}", nom], {
+      encoding: "utf8",
+    });
     assert.equal(r.status, 0, `inspect ${nom} : ${r.stdout}${r.stderr}`);
     demarrages[nom] = r.stdout.trim();
   }
@@ -700,13 +737,19 @@ async function qdrant(source: SourceQdrant, methode: string, chemin: string, cor
   const texte = await r.text();
   assert.equal(r.status, 200, `Qdrant ${methode} ${chemin} → ${r.status} : ${texte}`);
   const reponse: unknown = JSON.parse(texte);
-  assert.ok(reponse !== null && typeof reponse === "object" && "result" in reponse, `Qdrant ${chemin} : réponse sans result`);
+  assert.ok(
+    reponse !== null && typeof reponse === "object" && "result" in reponse,
+    `Qdrant ${chemin} : réponse sans result`,
+  );
   return reponse.result;
 }
 
 async function compter(source: SourceQdrant): Promise<number> {
   const resultat = await qdrant(source, "POST", `/collections/${COLLECTION}/points/count`, { exact: true });
-  assert.ok(resultat !== null && typeof resultat === "object" && "count" in resultat && typeof resultat.count === "number", "Qdrant points/count : réponse sans count");
+  assert.ok(
+    resultat !== null && typeof resultat === "object" && "count" in resultat && typeof resultat.count === "number",
+    "Qdrant points/count : réponse sans count",
+  );
   return resultat.count;
 }
 
@@ -719,14 +762,20 @@ async function scrollComplet(source: SourceQdrant): Promise<Point[]> {
   do {
     const corps: Record<string, unknown> = { limit: 256, with_payload: true, with_vector: true };
     if (offset !== null) corps.offset = offset;
-    const page = (await qdrant(source, "POST", `/collections/${COLLECTION}/points/scroll`, corps)) as { points: Point[]; next_page_offset?: unknown };
+    const page = (await qdrant(source, "POST", `/collections/${COLLECTION}/points/scroll`, corps)) as {
+      points: Point[];
+      next_page_offset?: unknown;
+    };
     points.push(...page.points);
     offset = page.next_page_offset ?? null;
   } while (offset !== null);
   return points;
 }
 
-type Rapport = { agents: unknown[]; totaux: { importes: number; deja_presents: number; rejetes: number; revisions: number; messages: number } };
+type Rapport = {
+  agents: unknown[];
+  totaux: { importes: number; deja_presents: number; rejetes: number; revisions: number; messages: number };
+};
 
 /** `mem0-rs import --json` : code 0 (sans rejet) ou 3 (rejets listés), rapport sur stdout. */
 function rapportImport(r: Execution, quoi: string): Rapport {
@@ -734,7 +783,9 @@ function rapportImport(r: Execution, quoi: string): Rapport {
   return JSON.parse(r.stdout) as Rapport;
 }
 
-test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédure documentée, rejouée sur une copie de la vraie mémoire, sert les mêmes souvenirs ; la pile d'omp-console n'est jamais touchée", { timeout: DELAI_CONTENEUR }, async (t) => {
+test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédure documentée, rejouée sur une copie de la vraie mémoire, sert les mêmes souvenirs ; la pile d'omp-console n'est jamais touchée", {
+  timeout: DELAI_CONTENEUR,
+}, async (t) => {
   if (!gardes(t, "MEM0_BASCULE_REEL", "répétition à blanc : MEM0_BASCULE_REEL=1")) return;
   const copie = process.env.MEM0_BASCULE_HISTORY_DB;
   assert.ok(copie, `MEM0_BASCULE_HISTORY_DB manquant : copier history.db hors du conteneur par\n  ${COPIE_HISTORY}`);
@@ -771,7 +822,9 @@ test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédu
   let ecart: unknown = null;
   try {
     // 2. Source réelle, en lecture seule.
-    const collection = (await qdrant(source, "GET", `/collections/${COLLECTION}`)) as { config: { params: Record<string, unknown> } };
+    const collection = (await qdrant(source, "GET", `/collections/${COLLECTION}`)) as {
+      config: { params: Record<string, unknown> };
+    };
     const compteSource = await compter(source);
     const points = await scrollComplet(source);
     assert.equal(points.length, compteSource, "le scroll de la source ne rend pas le compte exact");
@@ -779,10 +832,16 @@ test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédu
     // 3. Réplique de l'ancienne pile sur la machine par défaut.
     exiger0(
       await ce([
-        "run", "-d", "--name", "mem0-qdrant-repetition",
-        "-p", `127.0.0.1:${portReplique}:6333`,
-        "-e", `QDRANT__SERVICE__API_KEY=${CLE_REPLIQUE}`,
-        "-v", "mem0-repetition-qdrant:/qdrant/storage",
+        "run",
+        "-d",
+        "--name",
+        "mem0-qdrant-repetition",
+        "-p",
+        `127.0.0.1:${portReplique}:6333`,
+        "-e",
+        `QDRANT__SERVICE__API_KEY=${CLE_REPLIQUE}`,
+        "-v",
+        "mem0-repetition-qdrant:/qdrant/storage",
         "qdrant/qdrant:v1.19.0",
       ]),
       "lancement de la réplique Qdrant",
@@ -805,11 +864,20 @@ test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédu
     await construireImage();
     const importer = (simulation: boolean): Promise<Execution> =>
       ce([
-        "run", "--rm", "--network", "container:mem0-qdrant-repetition",
-        "-e", `QDRANT_API_KEY=${CLE_REPLIQUE}`,
-        "-v", `${migration}:/migration:ro`,
-        "-v", `${donnees}:/data`,
-        "mem0-rs:local", "import", "--history-db", "/migration/history.db",
+        "run",
+        "--rm",
+        "--network",
+        "container:mem0-qdrant-repetition",
+        "-e",
+        `QDRANT_API_KEY=${CLE_REPLIQUE}`,
+        "-v",
+        `${migration}:/migration:ro`,
+        "-v",
+        `${donnees}:/data`,
+        "mem0-rs:local",
+        "import",
+        "--history-db",
+        "/migration/history.db",
         ...(simulation ? ["--dry-run"] : []),
         "--json",
       ]);
@@ -823,12 +891,20 @@ test("mem0-stack-bascule-rust/AC-11, mem0-stack-bascule-rust/AC-12 : la procédu
 
     // 6. AC-11 : tous les souvenirs importés sont servis, mêmes têtes de recherche.
     const servis = (await appeler(urlRs, JETON_BASCULE, "GET", "/memory/all")) as Tous;
-    t.diagnostic(`servis par le conteneur : ${servis.total} (source ${compteSource} − ${rapport.totaux.rejetes} rejet(s))`);
+    t.diagnostic(
+      `servis par le conteneur : ${servis.total} (source ${compteSource} − ${rapport.totaux.rejetes} rejet(s))`,
+    );
     assert.equal(servis.total, compteSource - rapport.totaux.rejetes, "nombre de souvenirs servis ≠ source − rejets");
     const obtenues = await recherches(urlRs, JETON_BASCULE);
     const ecarts = Object.entries(tetes(obtenues))
       .filter(([libelle, id]) => id !== p1.tetes[libelle])
-      .map(([libelle, id]) => `  ${libelle} : ancienne pile ${p1.tetes[libelle]}, conteneur ${id} (${obtenues[libelle].results.slice(0, 3).map((x) => `${x.score.toFixed(4)} ${x.id}`).join(", ")})`);
+      .map(
+        ([libelle, id]) =>
+          `  ${libelle} : ancienne pile ${p1.tetes[libelle]}, conteneur ${id} (${obtenues[libelle].results
+            .slice(0, 3)
+            .map((x) => `${x.score.toFixed(4)} ${x.id}`)
+            .join(", ")})`,
+      );
     assert.deepEqual(ecarts, [], `têtes de recherche différentes :\n${ecarts.join("\n")}`);
     t.diagnostic(`têtes : ${JSON.stringify(p1.tetes)}`);
 

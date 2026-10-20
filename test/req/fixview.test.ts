@@ -134,7 +134,10 @@ function assistantEntry(text: string, calls: Array<{ id: string; name: string }>
     timestamp: "2026-09-19T00:00:02.000Z",
     message: {
       role: "assistant",
-      content: [{ type: "text", text }, ...calls.map((call) => ({ type: "toolCall", id: call.id, name: call.name, arguments: {} }))],
+      content: [
+        { type: "text", text },
+        ...calls.map((call) => ({ type: "toolCall", id: call.id, name: call.name, arguments: {} })),
+      ],
     },
   };
 }
@@ -251,7 +254,10 @@ function fakeKit() {
       released.push("UserMessageComponent");
     }
     render(width: number): readonly string[] {
-      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+      return frame(
+        this.#text.split("\n").map((line) => `▸ toi : ${line}`),
+        width,
+      );
     }
   }
   class FakeAssistant {
@@ -269,7 +275,10 @@ function fakeKit() {
     render(width: number): readonly string[] {
       const text = textOf(this.#message);
       if (text.trim() === "") return [];
-      return frame(text.split("\n").map((line) => `▸ agent : ${line}`), width);
+      return frame(
+        text.split("\n").map((line) => `▸ agent : ${line}`),
+        width,
+      );
     }
   }
   class FakeTool {
@@ -310,7 +319,10 @@ function fakeKit() {
       released.push("ReadToolGroupComponent");
     }
     render(width: number): readonly string[] {
-      return frame(this.#calls.map(() => "→ read"), width);
+      return frame(
+        this.#calls.map(() => "→ read"),
+        width,
+      );
     }
   }
   class FakeCustom {
@@ -417,7 +429,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}): P
 function selectLabel(panel: PanelHarness, label: string): void {
   for (let i = 0; i < 8; i += 1) {
     const selected = panel.component.render(120).find((row) => row.includes("> "));
-    if (selected !== undefined && selected.includes(label)) return;
+    if (selected?.includes(label)) return;
     panel.component.handleInput("j");
   }
   assert.fail(`le rang « ${label} » n'est pas atteignable :\n${panel.screen()}`);
@@ -432,7 +444,9 @@ async function flush(times = 6): Promise<void> {
 function deliveredTexts(dir: string): string[] {
   return readDeliveries(dir)
     .map((entry) => entry.delivery)
-    .filter((delivery): delivery is { version: 1; kind: "text"; text: string; sentAt: number } => delivery?.kind === "text")
+    .filter(
+      (delivery): delivery is { version: 1; kind: "text"; text: string; sentAt: number } => delivery?.kind === "text",
+    )
     .map((delivery) => delivery.text);
 }
 
@@ -456,7 +470,9 @@ test("fixview/AC-1 : la vue suit le fichier du maillon courant, et celui du run 
     const worktree = tmpdir("fixview-ac1-wt-");
     const review = path.join(stateDir, "sessions", "review.jsonl");
     writeSession(review, worktree, [assistantEntry("REVUE: je lis le diff")]);
-    seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile: review, state: "running", phase: "review" })]);
+    seedLot(stateDir, repoRoot, [
+      feature("alpha", { worktree, sessionFile: review, state: "running", phase: "review" }),
+    ]);
     liveEntry(stateDir, { cwd: worktree, sessionFile: review, label: "repo/alpha", phase: "review" });
 
     const panel = mountPanel(stateDir, { repoRoot });
@@ -468,7 +484,14 @@ test("fixview/AC-1 : la vue suit le fichier du maillon courant, et celui du run 
     const fix = path.join(stateDir, "sessions", "fix.jsonl");
     writeSession(fix, worktree, [assistantEntry("FIX: je corrige B-1")]);
     seedLot(stateDir, repoRoot, [
-      feature("alpha", { worktree, sessionFile: review, lastRunSessionFile: review, state: "running", phase: "impl", fixes: 1 }),
+      feature("alpha", {
+        worktree,
+        sessionFile: review,
+        lastRunSessionFile: review,
+        state: "running",
+        phase: "impl",
+        fixes: 1,
+      }),
     ]);
     liveEntry(stateDir, { cwd: worktree, sessionFile: fix, label: "repo/alpha", phase: "impl" });
     panel.component.refresh();
@@ -589,7 +612,12 @@ test("fixview/AC-3 : la zone refuse d'écrire dans la session courante du pannea
   ]);
 
   const answers: string[] = [];
-  const lot = { answer: async (_slug: string, text: string) => (answers.push(text), null) } as unknown as LotPanelActions;
+  const lot = {
+    answer: async (_slug: string, text: string) => {
+      answers.push(text);
+      return null;
+    },
+  } as unknown as LotPanelActions;
   // `o` a déjà rejoint cette session : c'est CELLE de ce process.
   const panel = mountPanel(stateDir, { repoRoot, lot, currentSessionFile: session });
   panel.component.handleInput("\r");
@@ -719,7 +747,11 @@ test("fixview/AC-6 : une ligne de 300 Kio laisse les entrées antérieures attei
   const screen = panel.screen();
   // La ligne est plus grosse que la première peinture : elle n'est pas chargée, mais
   // elle est DITE — la vue ne part plus dans le vide.
-  assert.match(screen, /entrée trop volumineuse \(300 Kio\) — non chargée/, "la ligne est nommée, jamais coupée en silence");
+  assert.match(
+    screen,
+    /entrée trop volumineuse \(300 Kio\) — non chargée/,
+    "la ligne est nommée, jamais coupée en silence",
+  );
   assert.doesNotMatch(screen, /aucune entrée à afficher/, "la transcription n'est plus vide");
 
   // Et ce qui la précède reste atteignable : `Début` charge le bloc d'avant, où les
@@ -743,7 +775,13 @@ test("fixview/AC-7 : Échap libère les composants de l'assemblage", () => {
   // s'inscrit au ticker de l'hôte et demande un repaint toutes les 80 ms tant qu'elle
   // n'est pas libérée — panneau fermé compris.
   writeSession(session, worktree, [
-    { type: "message", id: "u0", parentId: null, timestamp: "t", message: { role: "user", content: [{ type: "text", text: "lance" }] } },
+    {
+      type: "message",
+      id: "u0",
+      parentId: null,
+      timestamp: "t",
+      message: { role: "user", content: [{ type: "text", text: "lance" }] },
+    },
     assistantEntry("j'appelle mem0", [{ id: "c0", name: "mem0_add" }]),
   ]);
   seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile: session, state: "running", phase: "impl" })]);

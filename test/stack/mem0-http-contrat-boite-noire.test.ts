@@ -239,7 +239,12 @@ async function runLourd(muter?: Mutation): Promise<RunLourd> {
 
 /** Pièce manquante : échec sous MEM0_OMP_REQUIRE_RUST=1 (CI), saut annoncé sinon. */
 function manque(t: TestContext, prerequis: string, consequence: string): void {
-  prerequisAbsent(t, prerequis, consequence, process.env.MEM0_OMP_REQUIRE_RUST === "1" ? "MEM0_OMP_REQUIRE_RUST=1" : null);
+  prerequisAbsent(
+    t,
+    prerequis,
+    consequence,
+    process.env.MEM0_OMP_REQUIRE_RUST === "1" ? "MEM0_OMP_REQUIRE_RUST=1" : null,
+  );
 }
 
 /** Pièce manquante au run : `false` = sauté. */
@@ -284,7 +289,9 @@ const NEUF_ROUTES = [
   "GET /memory/{id}/history",
 ];
 
-test("mem0-http-contrat-boite-noire/AC-2 : MEM0_CONTRAT_URL et MEM0_CONTRAT_START font viser un autre serveur, qui reçoit les 9 routes", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-http-contrat-boite-noire/AC-2 : MEM0_CONTRAT_URL et MEM0_CONTRAT_START font viser un autre serveur, qui reçoit les 9 routes", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -297,7 +304,9 @@ test("mem0-http-contrat-boite-noire/AC-2 : MEM0_CONTRAT_URL et MEM0_CONTRAT_STAR
   for (const route of NEUF_ROUTES) assert.ok(recues.has(route), `${route} absente des requêtes reçues par le proxy`);
 });
 
-test("mem0-http-contrat-boite-noire/AC-14 : MEM0_CONTRAT_INFER=0 annonce le groupe infer désactivé, n'en exécute aucun cas et le contrat passe", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-http-contrat-boite-noire/AC-14 : MEM0_CONTRAT_INFER=0 annonce le groupe infer désactivé, n'en exécute aucun cas et le contrat passe", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -331,7 +340,9 @@ const FAUSSER: Mutation = (route, corps) => {
   return undefined;
 };
 
-test("mem0-http-contrat-boite-noire/AC-4 : une clé en trop, une clé manquante ou un type changé fait échouer le contrat en nommant la route et la clé", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-http-contrat-boite-noire/AC-4 : une clé en trop, une clé manquante ou un type changé fait échouer le contrat en nommant la route et la clé", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -342,5 +353,8 @@ test("mem0-http-contrat-boite-noire/AC-4 : une clé en trop, une clé manquante 
   assert.equal(run.code, CODES_SORTIE.echec, run.sortie);
   assert.ok(run.sortie.includes("GET /health : clé en trop « intrus »"), run.sortie);
   assert.ok(run.sortie.includes("GET /memory/all : clé manquante « total »"), run.sortie);
-  assert.ok(run.sortie.includes("POST /memory/search : type de « results[0].score » attendu number, reçu string"), run.sortie);
+  assert.ok(
+    run.sortie.includes("POST /memory/search : type de « results[0].score » attendu number, reçu string"),
+    run.sortie,
+  );
 });

@@ -4,7 +4,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { SERVICE_DOWN_REFUSAL, createServiceClient, createServiceLotActions } from "../../omp-mem0-req/serviceClient.ts";
+import {
+  SERVICE_DOWN_REFUSAL,
+  createServiceClient,
+  createServiceLotActions,
+} from "../../omp-mem0-req/serviceClient.ts";
 import { driverLabel, panelDriver } from "../../omp-mem0-req/panelRows.ts";
 import type { Lot } from "../../omp-mem0-req/lot.ts";
 import { writeService } from "../../omp-mem0-req/serviceState.ts";
@@ -74,7 +78,13 @@ test("service-panel/AC-10 : chaque geste du panneau part en commande, et son ref
   // `l` : le geste de lancement (le lot passe en marche, ses features partent).
   assert.equal(await actions.launch(), "« alpha » est déjà dans le lot", "un refus rend son motif, tel quel");
   // `a` : l'ajout d'une feature, avec ses deux modèles et ses dépendances.
-  await actions.add({ name: "beta", description: "l'intention", deps: ["alpha"], modelReqSpecs: "m1", modelImplReview: null });
+  await actions.add({
+    name: "beta",
+    description: "l'intention",
+    deps: ["alpha"],
+    modelReqSpecs: "m1",
+    modelImplReview: null,
+  });
   // `x` : le retrait d'une feature qui n'a pas démarré.
   await actions.remove("beta");
   // `v` / `y` : les deux jalons.
@@ -89,7 +99,7 @@ test("service-panel/AC-10 : chaque geste du panneau part en commande, et son ref
   await actions.answer("beta", "voici ma réponse");
 
   assert.deepEqual(
-    calls.map(call => call.body.kind),
+    calls.map((call) => call.body.kind),
     ["start", "add", "remove", "verdict", "verdict", "relaunch", "cancel", "models", "reply"],
   );
   const add = calls[1]!.body;
@@ -149,10 +159,10 @@ test("service-panel/AC-16 : le pilote est NOMMÉ — le service, en adoption, ou
   assert.equal(driverLabel({ kind: "service", pid: 4242 }), "pilote : le service (pid 4242)");
   // Un lot que le service n'a pas encore adopté : « en adoption » (S-11) — et
   // jamais « pilote absent », puisque le service vit.
-  assert.deepEqual(
-    panelDriver({ ...lot, owner: { ...lot.owner, pid: 999_999 } }, 1_700_000_000_000, process.pid),
-    { kind: "service", pid: null },
-  );
+  assert.deepEqual(panelDriver({ ...lot, owner: { ...lot.owner, pid: 999_999 } }, 1_700_000_000_000, process.pid), {
+    kind: "service",
+    pid: null,
+  });
   assert.equal(driverLabel({ kind: "service", pid: null }), "pilote : le service (en adoption)");
   // Sans service, plus aucune reprise locale : l'en-tête dit que rien n'avance.
   assert.equal(driverLabel({ kind: "dead" }), "pilote absent — les pipelines n'avancent plus (/service start)");

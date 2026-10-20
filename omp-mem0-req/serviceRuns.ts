@@ -16,14 +16,20 @@ import type { PipelinePhase } from "./contract.ts";
 import { lotContextThresholds } from "./lot.ts";
 import type { ContextThresholds } from "./lot.ts";
 import { closePipeline } from "./publish.ts";
-import { exhaustedUntil, isQuotaFailure, isQuotaMessage, markExhausted, quotaHitFor, quotaStopReason } from "./quota.ts";
+import {
+  exhaustedUntil,
+  isQuotaFailure,
+  isQuotaMessage,
+  markExhausted,
+  quotaHitFor,
+  quotaStopReason,
+} from "./quota.ts";
 import type { QuotaHit } from "./quota.ts";
 import { runCompact } from "./serviceRuntime.ts";
 import { createContextMeter, forgetMaillonIdentity } from "./serviceSessions.ts";
 import { readStore, runningIdFor } from "./store.ts";
 import type { PanelPendingAsk } from "./store.ts";
 import type { ContextMeter, HostedSession, MaillonIdentity, SessionHost } from "./serviceSessions.ts";
-
 
 /**
  * Ce qu'un run de maillon rend : la sortie du tour et son issue (contrat figé).
@@ -90,31 +96,26 @@ export const MAX_QUOTA_RESUMES = 3;
 /** Le motif d'un run dont le dernier tour finit en `stopReason: "error"` sans message d'erreur (S-1). */
 export const RUN_TURN_ERROR_WITHOUT_MESSAGE = "dernier tour du run en stopReason error, sans message d'erreur";
 
-
 /** `true` quand l'échéance est passée : le runner coupe et rend 124. */
 function expired(deadline: number | null, now: number): boolean {
   return deadline !== null && Number.isFinite(deadline) && now >= deadline;
 }
-
 
 /** Le sélecteur `provider/id` d'un modèle d'hôte, ou `null`. */
 function selectorOf(model: { provider: string; id: string } | undefined): string | null {
   return model ? `${model.provider}/${model.id}` : null;
 }
 
-
 /** La question `ask` publiée par le run du worktree, ou `null` : lue au moment de la coupure, avant la clôture. */
 function pendingAskOf(stateDir: string, worktree: string): PanelPendingAsk | null {
   const id = runningIdFor(worktree);
-  return readStore(stateDir).running.find(entry => entry.id === id)?.pendingAsk ?? null;
+  return readStore(stateDir).running.find((entry) => entry.id === id)?.pendingAsk ?? null;
 }
-
 
 /** Le motif exact d'un run coupé au plafond de contexte (S-4) : `n` est la mesure entière brute. */
 function contextExceededReason(measure: number): string {
   return `contexte dépassé (${measure} tokens)`;
 }
-
 
 /** Le livrable d'un maillon, par phase : ce que la consigne de compaction et le dernier tour forcé lui rappellent. */
 export function phaseDeliverable(phase: PipelinePhase): string {
@@ -132,7 +133,6 @@ export function phaseDeliverable(phase: PipelinePhase): string {
   }
 }
 
-
 /**
  * La consigne renvoyée à un run après la compaction de fin de tour (S-3) : minimale,
  * sans réinjecter la directive — l'extrait du contrat du prompt initial survit à la
@@ -142,34 +142,35 @@ export function compactionReminder(deliverable: string): string {
   return `[compaction] Le contexte a été compacté. Reprends à l'étape où tu étais ; livrable attendu : ${deliverable}. L'extrait du contrat de ton prompt initial reste valable.`;
 }
 
-
 /** La consigne du DERNIER tour forcé au plafond HARD : livrer maintenant avec ce qu'on a. */
 export function saturatedContextPrompt(deliverable: string): string {
   return `[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (${deliverable}) avec ce que tu as, puis arrête-toi.`;
 }
 
-
 /** La borne du dernier tour forcé au plafond (5 min) : au-delà, le run est coupé. */
 export const CONTEXT_LAST_TURN_MS = 300_000;
-
 
 /** Un signal « le run est coupé » : une compaction en vol ne retient jamais un run coupé. */
 function createCutNotice(): { fire: () => void; promise: Promise<void> } {
   let fire: () => void = () => {};
-  const promise = new Promise<void>(resolve => {
+  const promise = new Promise<void>((resolve) => {
     fire = resolve;
   });
   return { fire, promise };
 }
 
-
 /** `auto_compaction_end` d'OMP qui a ABOUTI : ni annulé, ni sauté, avec un résultat. */
 function isNativeCompactionEnd(event: unknown): boolean {
   if (!event || typeof event !== "object") return false;
   const e = event as { type?: unknown; aborted?: unknown; skipped?: unknown; result?: unknown };
-  return e.type === "auto_compaction_end" && e.aborted !== true && e.skipped !== true && e.result !== undefined && e.result !== null;
+  return (
+    e.type === "auto_compaction_end" &&
+    e.aborted !== true &&
+    e.skipped !== true &&
+    e.result !== undefined &&
+    e.result !== null
+  );
 }
-
 
 /** La garde de contexte d'une session hébergée : ce que la boucle de prompt lui demande. */
 type ContextGuard = {
@@ -219,11 +220,17 @@ function createContextGuard(options: {
         if (lastTurn !== null) return;
         lastTurn = { measure: step.measure, at: options.now() };
         softPending = null;
-        options.log(`${options.label} : contexte saturé à ${step.measure}, dernier tour forcé (${CONTEXT_LAST_TURN_MS / 60_000} min)`);
+        options.log(
+          `${options.label} : contexte saturé à ${step.measure}, dernier tour forcé (${CONTEXT_LAST_TURN_MS / 60_000} min)`,
+        );
         // Hors du tick de l'abonné : un `steer` qui jette (session en cours d'arrêt) ne doit pas casser la mesure.
         void Promise.resolve()
           .then(() => options.session.steer(options.lastTurnPrompt))
-          .catch(err => options.log(`${options.label} : consigne du dernier tour non livrée (${err instanceof Error ? err.message : String(err)})`));
+          .catch((err) =>
+            options.log(
+              `${options.label} : consigne du dernier tour non livrée (${err instanceof Error ? err.message : String(err)})`,
+            ),
+          );
         return;
       }
       if (lastTurn !== null) return;
@@ -248,7 +255,9 @@ function createContextGuard(options: {
         options.log(`${options.label} : contexte compacté à ${measure}`);
         return true;
       } catch (err) {
-        options.log(`${options.label} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
+        options.log(
+          `${options.label} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`,
+        );
         return false;
       }
     },
@@ -256,7 +265,6 @@ function createContextGuard(options: {
     lastTurn: () => lastTurn?.measure ?? null,
   };
 }
-
 
 /**
  * Le quota qui a arrêté le DERNIER tour assistant du prompt (S-2), ou `null`.
@@ -280,7 +288,6 @@ function quotaOfLastTurn(session: HostedSession["session"], since: number, at: n
   return null;
 }
 
-
 /**
  * Le dernier message assistant de la session (S-1). `getLastAssistantMessage()`
  * est la voie d'autorité : elle rend aussi un refus de classifieur élagué du
@@ -303,7 +310,6 @@ function turnErrorText(message: object): string {
   const text = raw.replace(/\s+/g, " ").trim();
   return text === "" ? RUN_TURN_ERROR_WITHOUT_MESSAGE : text;
 }
-
 
 export type MaillonRunnerDeps = {
   host: SessionHost;
@@ -335,7 +341,11 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
     const thresholds = lotContextThresholds(deps.env ?? process.env, spec.phase);
     const meter = createContextMeter(thresholds);
     /** Les mesures communes à tout résultat : pic, compactions, modèle EFFECTIF du dernier tour (après replis). */
-    const tally = () => ({ peakContext: meter.peak(), compactions: meter.compactions(), model: hosted ? selectorOf(hosted.session.model) : null });
+    const tally = () => ({
+      peakContext: meter.peak(),
+      compactions: meter.compactions(),
+      model: hosted ? selectorOf(hosted.session.model) : null,
+    });
     const cutNotice = createCutNotice();
     const cut = (reason: string) => {
       if (killed) return;
@@ -376,7 +386,8 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
     /** Bascule la session sur `selector` (jamais persistée : `setModel` sans `persist`). */
     const switchTo = async (session: HostedSession["session"], selector: string): Promise<boolean> => {
       const slash = selector.indexOf("/");
-      const model = slash < 0 ? undefined : session.modelRegistry.find(selector.slice(0, slash), selector.slice(slash + 1));
+      const model =
+        slash < 0 ? undefined : session.modelRegistry.find(selector.slice(0, slash), selector.slice(slash + 1));
       if (!model) {
         log(`[service] run ${spec.slug}/${spec.phase} : modèle inconnu ${selector}`);
         return false;
@@ -385,7 +396,9 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
         await session.setModel(model);
         return true;
       } catch (err) {
-        log(`[service] run ${spec.slug}/${spec.phase} : ${selector} inutilisable (${err instanceof Error ? err.message : String(err)})`);
+        log(
+          `[service] run ${spec.slug}/${spec.phase} : ${selector} inutilisable (${err instanceof Error ? err.message : String(err)})`,
+        );
         return false;
       }
     };
@@ -429,7 +442,7 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       });
       // Le repli natif d'OMP suspend le modèle quitté : le registre du service le
       // retient pour que ni ce run ni un autre ne le relance avant l'échéance.
-      unsubscribe = session.subscribe(event => {
+      unsubscribe = session.subscribe((event) => {
         if (!killed) {
           guard.observe(event);
           const overrun = guard.overrun();
@@ -505,7 +518,13 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       // un échec du run, pas un succès muet. Une erreur plus tôt dans le run, suivie
       // d'un tour qui a abouti, n'en est pas un.
       const last = lastAssistantMessage(session);
-      if (last !== null && typeof last === "object" && "stopReason" in last && last.stopReason === "error" && !isQuotaFailure(last)) {
+      if (
+        last !== null &&
+        typeof last === "object" &&
+        "stopReason" in last &&
+        last.stopReason === "error" &&
+        !isQuotaFailure(last)
+      ) {
         return { code: 1, killed: false, stdout, stderr: turnErrorText(last), ...tally() };
       }
       return { code: 0, killed: false, stdout, stderr: "", ...tally() };
@@ -534,7 +553,6 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
     }
   };
 }
-
 
 // --- le PILOTE DE LOT (S-9) ---------------------------------------------------
 
@@ -593,7 +611,6 @@ export type ArbiterRunResult = {
 export type ArbiterRunner = ((input: ArbiterRunInput) => Promise<ArbiterRunResult>) & {
   close?: (pilot: string) => Promise<void>;
 };
-
 
 /** Le livrable de l'arbitre : sa décision, par l'outil `arbiter_decide`. */
 export const ARBITER_DELIVERABLE = "ta décision, par l'outil `arbiter_decide`";
@@ -668,12 +685,22 @@ export function createArbiterRunner(deps: {
       log,
       now,
     });
-    const pilot: Pilot = { hosted, capture, meter, guard, model: input.model, fallback: input.fallback, turns: 0, current: null, exceeded: null };
+    const pilot: Pilot = {
+      hosted,
+      capture,
+      meter,
+      guard,
+      model: input.model,
+      fallback: input.fallback,
+      turns: 0,
+      current: null,
+      exceeded: null,
+    };
     const saturated = (measure: number) => {
       pilot.exceeded = measure;
       pilot.current?.cut(contextExceededReason(measure));
     };
-    hosted.session.subscribe(event => {
+    hosted.session.subscribe((event) => {
       const turn = pilot.current;
       if (turn === null || turn.killed) return;
       guard.observe(event);

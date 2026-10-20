@@ -26,7 +26,13 @@ import {
   type LotRunSpec,
 } from "../../omp-mem0-req/extension.ts";
 import { IMPL_NOTHING_PRODUCED, REVIEW_UNREADABLE_REFOCUS, reviewCapReason } from "../../omp-mem0-req/chain.ts";
-import { HISTORY_KEEP, pipelineHistoryDir, pipelineRunningDir, pruneHistory, readStore } from "../../omp-mem0-req/store.ts";
+import {
+  HISTORY_KEEP,
+  pipelineHistoryDir,
+  pipelineRunningDir,
+  pruneHistory,
+  readStore,
+} from "../../omp-mem0-req/store.ts";
 import { emptyGitRepo, gitRunner } from "../support/git.ts";
 import { tmpdir } from "../support/repo.ts";
 import { assistantEntry, seedLot, userEntry, writeContract, writeSession } from "../support/req-fixtures.ts";
@@ -130,7 +136,13 @@ function mkWorld(options: { arbiter?: ArbiterScript; notify?: (text: string) => 
       : {
           arbiter: async ({ prompt }: { prompt: string }) => {
             prompts.push(prompt);
-            return { decision: options.arbiter!(prompt), sessionId: null, sessionFile: null, startedAt: T0, endedAt: T0 };
+            return {
+              decision: options.arbiter!(prompt),
+              sessionId: null,
+              sessionFile: null,
+              startedAt: T0,
+              endedAt: T0,
+            };
           },
         }),
     runGit: gitRunner,
@@ -175,8 +187,19 @@ test("blocked-arbitrables/AC-1 : un `blocked` hors plafond et hors quota est un 
     feature("illisible", { state: "blocked", phase: "review", stopReason: UNREADABLE_REASON, auditSession: CTX }),
     feature("sans-diff", { state: "blocked", phase: "impl", stopReason: IMPL_NOTHING_PRODUCED, auditSession: CTX }),
     feature("specs-vide", { state: "blocked", phase: "specs", stopReason: SPECS_EMPTY_REASON, auditSession: CTX }),
-    feature("abime", { state: "blocked", phase: "impl", stopReason: "contrat endommagé par /impl — section(s) disparue(s) : ## Besoins", auditSession: CTX }),
-    feature("plafond", { state: "blocked", phase: "review", stopReason: reviewCapReason(3), auditSession: CTX, fixes: 3 }),
+    feature("abime", {
+      state: "blocked",
+      phase: "impl",
+      stopReason: "contrat endommagé par /impl — section(s) disparue(s) : ## Besoins",
+      auditSession: CTX,
+    }),
+    feature("plafond", {
+      state: "blocked",
+      phase: "review",
+      stopReason: reviewCapReason(3),
+      auditSession: CTX,
+      fixes: 3,
+    }),
     feature("quota", {
       state: "blocked",
       phase: "impl",
@@ -185,7 +208,13 @@ test("blocked-arbitrables/AC-1 : un `blocked` hors plafond et hors quota est un 
       quota: { provider: "prov", model: "prov/m", until: T0 + 60_000, announced: true, phase: "impl" },
     }),
     feature("amont", { state: "failed", phase: "impl", stopReason: "boum", auditSession: CTX }),
-    feature("aval", { state: "blocked", phase: "req", deps: ["amont"], stopReason: "dépend de amont (échouée)", auditSession: CTX }),
+    feature("aval", {
+      state: "blocked",
+      phase: "req",
+      deps: ["amont"],
+      stopReason: "dépend de amont (échouée)",
+      auditSession: CTX,
+    }),
   ]);
   const items = relayItemsOf(lot, CTX, () => null, { cap: true, failure: true });
   const byKind = (slug: string) => items.find((item) => item.slug === slug);
@@ -202,23 +231,40 @@ test("blocked-arbitrables/AC-1 : un `blocked` hors plafond et hors quota est un 
   const quota = items.filter((item) => item.kind === "quota");
   assert.equal(quota.length, 1);
   assert.equal(quota[0]!.slug, "quota");
-  assert.equal(items.filter((item) => item.slug === "quota" && item.kind === "failure").length, 0, "un quota n'est jamais un échec");
+  assert.equal(
+    items.filter((item) => item.slug === "quota" && item.kind === "failure").length,
+    0,
+    "un quota n'est jamais un échec",
+  );
   // Sans `failure`, aucun de ces blocages n'est relayé (le profil /project garde ses propres échecs).
   const noFailure = relayItemsOf(lot, CTX, () => null, { cap: true, failure: false });
-  assert.deepEqual(noFailure.filter((item) => item.kind === "failure"), []);
+  assert.deepEqual(
+    noFailure.filter((item) => item.kind === "failure"),
+    [],
+  );
 });
 
 test("blocked-arbitrables/AC-2 : une revue ILLISIBLE bloquée est arbitrée comme un échec et relancée au maillon /review, en reprenant sa session", async () => {
   const world = mkWorld({ arbiter: () => relaunchOn("verdict de revue illisible") });
   world.seedBlocked(
-    { phase: "review", stopReason: UNREADABLE_REASON, unreadableRuns: 3, failureOutput: { stderr: "", stdout: "je crois que tout passe" } },
+    {
+      phase: "review",
+      stopReason: UNREADABLE_REASON,
+      unreadableRuns: 3,
+      failureOutput: { stderr: "", stdout: "je crois que tout passe" },
+    },
     CONTRACT_UNREADABLE,
   );
   await world.controller.tick();
   await until(() => world.prompts.length === 1, "le blocage part à l'arbitre");
   await until(() => world.runs.length === 1, "le run est relancé");
   const prompt = world.prompts[0]!;
-  for (const piece of ["type : échec du run", `raison d'arrêt : ${UNREADABLE_REASON}`, "je crois que tout passe", "- relaunch :"]) {
+  for (const piece of [
+    "type : échec du run",
+    `raison d'arrêt : ${UNREADABLE_REASON}`,
+    "je crois que tout passe",
+    "- relaunch :",
+  ]) {
     assert.ok(prompt.includes(piece), piece);
   }
   const run = world.runs[0]!.spec;
@@ -234,7 +280,10 @@ test("blocked-arbitrables/AC-2 : une revue ILLISIBLE bloquée est arbitrée comm
 
 test("blocked-arbitrables/AC-3 : « /impl n'a rien produit » est arbitré comme un échec et relancé en /impl ; « aucune spécification écrite » en /specs", async () => {
   const impl = mkWorld({ arbiter: () => relaunchOn("n'a rien produit") });
-  impl.seedBlocked({ phase: "impl", stopReason: IMPL_NOTHING_PRODUCED, failureOutput: { stderr: "", stdout: "rien" } }, CONTRACT_SPECS);
+  impl.seedBlocked(
+    { phase: "impl", stopReason: IMPL_NOTHING_PRODUCED, failureOutput: { stderr: "", stdout: "rien" } },
+    CONTRACT_SPECS,
+  );
   await impl.controller.tick();
   await until(() => impl.runs.length === 1, "le run d'impl est relancé");
   assert.equal(impl.runs[0]!.spec.phase, "impl");
@@ -242,7 +291,10 @@ test("blocked-arbitrables/AC-3 : « /impl n'a rien produit » est arbitré comme
   assert.equal(impl.alpha().phase, "impl");
 
   const specs = mkWorld({ arbiter: () => relaunchOn("aucune spécification écrite") });
-  specs.seedBlocked({ phase: "specs", stopReason: SPECS_EMPTY_REASON, failureOutput: { stderr: "", stdout: "question ?" } }, CONTRACT_CLOSED);
+  specs.seedBlocked(
+    { phase: "specs", stopReason: SPECS_EMPTY_REASON, failureOutput: { stderr: "", stdout: "question ?" } },
+    CONTRACT_CLOSED,
+  );
   await specs.controller.tick();
   await until(() => specs.runs.length === 1, "le run de specs est relancé");
   assert.equal(specs.runs[0]!.spec.phase, "specs");
@@ -268,7 +320,12 @@ test("blocked-arbitrables/AC-4 : sans arbitre, un `blocked` hors plafond reste u
 
 test("blocked-arbitrables/AC-5 : la relance du plafond par l'arbitre garde fixes = cap − 1 avant armement (un seul tour de correction), là où R rouvre un crédit entier", async () => {
   const arbiter = mkWorld({
-    arbiter: () => ({ decision: "relaunch", refocus: "lever le bloquant 1", citations: ["le test de bord manque"], reason: "bloquant précis" }),
+    arbiter: () => ({
+      decision: "relaunch",
+      refocus: "lever le bloquant 1",
+      citations: ["le test de bord manque"],
+      reason: "bloquant précis",
+    }),
   });
   arbiter.seedBlocked({ phase: "review", stopReason: reviewCapReason(3), fixes: 3 }, CONTRACT_BLOCKED);
   await arbiter.controller.tick();
@@ -302,7 +359,11 @@ test("blocked-arbitrables/AC-6 : une revue au verdict illisible (sous le plafond
   await until(() => world.runs.length === 2, "la revue illisible est relancée");
   const second = world.runs[1]!.spec;
   assert.equal(second.phase, "review");
-  assert.equal(second.sessionFile, "/sessions/alpha-review.jsonl", "la relance reprend la session de la revue illisible");
+  assert.equal(
+    second.sessionFile,
+    "/sessions/alpha-review.jsonl",
+    "la relance reprend la session de la revue illisible",
+  );
   assert.ok(second.prompt.includes(REVIEW_UNREADABLE_REFOCUS), "la consigne de réécriture est dans le prompt");
   assert.equal(world.alpha().unreadableRuns, 2);
 });
@@ -320,7 +381,10 @@ test("blocked-arbitrables/AC-7 : le prompt d'un lot BR-2 porte `[extrait du cont
   writeContract(worktree, contract);
   const sessions = tmpdir("ba-sess-");
   const previous = path.join(sessions, "br1.jsonl");
-  writeSession(previous, worktree, [userEntry("[impl] BR-1"), assistantEntry("BR-1 livré : la base est en place, reste S-2.")]);
+  writeSession(previous, worktree, [
+    userEntry("[impl] BR-1"),
+    assistantEntry("BR-1 livré : la base est en place, reste S-2."),
+  ]);
   seedLot(world.stateDir, world.repoRoot, [
     feature("alpha", {
       worktree,
@@ -340,7 +404,10 @@ test("blocked-arbitrables/AC-7 : le prompt d'un lot BR-2 porte `[extrait du cont
   assert.equal(prompt.includes("S-1 (AC-1) : la base."), false, "la S de BR-1 n'y est pas");
   assert.ok(prompt.includes("BR-2 — type : archi\nS-2 — la suite."), "le bloc BR-2");
   assert.ok(prompt.includes("\n[résumé du run précédent]\n"), prompt);
-  assert.ok(prompt.includes("BR-1 livré : la base est en place, reste S-2."), "le dernier message assistant du run précédent");
+  assert.ok(
+    prompt.includes("BR-1 livré : la base est en place, reste S-2."),
+    "le dernier message assistant du run précédent",
+  );
 });
 
 test("blocked-arbitrables/AC-8 : un lot BR-1 (index 0) ne reçoit aucun résumé de run précédent", async () => {
@@ -395,7 +462,13 @@ test("blocked-arbitrables/AC-10 : une passe lit running/ UNE seule fois, quel qu
   seedLot(world.stateDir, world.repoRoot, [
     feature("a", { worktree: worktrees[0]!, state: "waiting", waitKind: "specs", phase: "specs", auditSession: CTX }),
     feature("b", { worktree: worktrees[1]!, state: "waiting", waitKind: "review", phase: "review", auditSession: CTX }),
-    feature("c", { worktree: worktrees[2]!, state: "blocked", phase: "impl", stopReason: IMPL_NOTHING_PRODUCED, auditSession: CTX }),
+    feature("c", {
+      worktree: worktrees[2]!,
+      state: "blocked",
+      phase: "impl",
+      stopReason: IMPL_NOTHING_PRODUCED,
+      auditSession: CTX,
+    }),
   ]);
   const runningDir = pipelineRunningDir(world.stateDir);
   const original = fs.readdirSync;
@@ -430,7 +503,10 @@ test("blocked-arbitrables/AC-11 : `pruneHistory` garde les 200 entrées les plus
   // Un fichier étranger n'est ni compté ni retiré.
   fs.writeFileSync(path.join(dir, ".DS_Store"), "", "utf8");
   assert.equal(pruneHistory(stateDir), 5);
-  const left = fs.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+  const left = fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .sort();
   assert.equal(left.length, HISTORY_KEEP);
   assert.deepEqual(left.slice(0, 5), names.slice(5, 10), "les 5 plus anciens sont partis");
   assert.ok(fs.existsSync(path.join(dir, ".DS_Store")));

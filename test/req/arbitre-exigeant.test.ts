@@ -12,7 +12,13 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { arbiterContractExcerpt, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, validateArbiterDecision } from "../../omp-mem0-req/arbiter.ts";
+import {
+  arbiterContractExcerpt,
+  buildArbiterCorpus,
+  buildArbiterPrompt,
+  buildPilotOpening,
+  validateArbiterDecision,
+} from "../../omp-mem0-req/arbiter.ts";
 import type { ArbiterDecision, ArbiterGround, ArbiterItem } from "../../omp-mem0-req/arbiter.ts";
 import { SAMPLED_AC_COUNT, collectReviewEvidence, sampleAcIds } from "../../omp-mem0-req/arbiterReview.ts";
 import { GIT_ENV, emptyGitRepo, gitRunner } from "../support/git.ts";
@@ -58,7 +64,11 @@ function mkReviewRepo(): string {
   gitIn(repo, ["add", "."]);
   gitIn(repo, ["commit", "-q", "-m", "base"]);
   write(repo, "src/a.ts", "export const a = 1; // AC-1\n");
-  write(repo, "test/neuf.test.ts", 'test("alpha/AC-1 : premier", () => {});\ntest("alpha/AC-3 : troisième", () => {});\n');
+  write(
+    repo,
+    "test/neuf.test.ts",
+    'test("alpha/AC-1 : premier", () => {});\ntest("alpha/AC-3 : troisième", () => {});\n',
+  );
   write(repo, ".omp/pipeline/contract.md", CONTRACT);
   return repo;
 }
@@ -68,10 +78,16 @@ test("arbitre-exigeant/AC-1 : l'approbation d'un jalon sans justification vérif
   const bare: ArbiterDecision = { decision: "approve", reason: "tout est couvert" };
   assert.deepEqual(validateArbiterDecision(SPECS_ITEM, bare, groundOf(repo)), refused("aucune justification"));
   const invented: ArbiterDecision = { ...bare, citations: ["phrase inventée"] };
-  assert.deepEqual(validateArbiterDecision(SPECS_ITEM, invented, groundOf(repo)), refused("aucune justification vérifiée — citation absente du corpus « phrase inventée »"));
+  assert.deepEqual(
+    validateArbiterDecision(SPECS_ITEM, invented, groundOf(repo)),
+    refused("aucune justification vérifiée — citation absente du corpus « phrase inventée »"),
+  );
   // La couverture AC → S-n est vérifiée AVANT la justification : son motif prime.
   const uncovered = CONTRACT.replace("### S-1 (AC-1, AC-2, AC-3)", "### S-1 (AC-1, AC-2)");
-  assert.deepEqual(validateArbiterDecision(SPECS_ITEM, bare, groundOf(repo, { contract: uncovered })), refused("critères sans spécification S-n : AC-3"));
+  assert.deepEqual(
+    validateArbiterDecision(SPECS_ITEM, bare, groundOf(repo, { contract: uncovered })),
+    refused("critères sans spécification S-n : AC-3"),
+  );
   // Le prompt du jalon exige la justification, et la description de l'outil aussi.
   const prompt = buildArbiterPrompt(SPECS_ITEM, "c");
   assert.ok(prompt.includes("approbation justifiée : au moins une `citations`"), prompt);
@@ -79,28 +95,52 @@ test("arbitre-exigeant/AC-1 : l'approbation d'un jalon sans justification vérif
 
 test("arbitre-exigeant/AC-2 : l'approbation « specs validées » citant le contrat est acceptée, la citation vérifiée au journal", () => {
   const repo = emptyGitRepo("arbitre-exigeant-cite-");
-  const cited: ArbiterDecision = { decision: "approve", reason: "S-1 couvre les trois critères", citations: ["### S-1 (AC-1,   AC-2, AC-3) — tout"] };
+  const cited: ArbiterDecision = {
+    decision: "approve",
+    reason: "S-1 couvre les trois critères",
+    citations: ["### S-1 (AC-1,   AC-2, AC-3) — tout"],
+  };
   assert.deepEqual(validateArbiterDecision(SPECS_ITEM, cited, groundOf(repo)), {
     kind: "approve",
-    justification: { reason: "S-1 couvre les trois critères", citations: ["### S-1 (AC-1,   AC-2, AC-3) — tout"], references: [], rubriques: [] },
+    justification: {
+      reason: "S-1 couvre les trois critères",
+      citations: ["### S-1 (AC-1,   AC-2, AC-3) — tout"],
+      references: [],
+      rubriques: [],
+    },
   });
 });
 
 test("arbitre-exigeant/AC-3 : l'évidence de « revue propre » ne cherche les critères que dans les fichiers du diff — un id porté seulement par un fichier commité hors diff vaut « (aucun fichier) »", async () => {
   const repo = mkReviewRepo();
   const evidence = await collectReviewEvidence({ worktree: repo, acIds: ["AC-1", "AC-2", "AC-3"], runGit: gitRunner });
-  assert.deepEqual(evidence.names, ["src/a.ts", "test/neuf.test.ts"], "suivi modifié + non suivi, jamais `.omp/` ni le fichier commité intact");
+  assert.deepEqual(
+    evidence.names,
+    ["src/a.ts", "test/neuf.test.ts"],
+    "suivi modifié + non suivi, jamais `.omp/` ni le fichier commité intact",
+  );
   assert.deepEqual(evidence.acFiles, [
     { id: "AC-1", files: ["src/a.ts", "test/neuf.test.ts"] },
     { id: "AC-2", files: [] },
     { id: "AC-3", files: ["test/neuf.test.ts"] },
   ]);
   const prompt = buildArbiterPrompt(REVIEW_ITEM, "c", evidence);
-  assert.ok(prompt.includes("## Critères et fichiers du diff\n- AC-1 : src/a.ts, test/neuf.test.ts\n- AC-2 : (aucun fichier)\n- AC-3 : test/neuf.test.ts"), prompt);
+  assert.ok(
+    prompt.includes(
+      "## Critères et fichiers du diff\n- AC-1 : src/a.ts, test/neuf.test.ts\n- AC-2 : (aucun fichier)\n- AC-3 : test/neuf.test.ts",
+    ),
+    prompt,
+  );
   // Un diff vide n'a rien à livrer : l'approbation est refusée avant toute attestation.
   const approve: ArbiterDecision = { decision: "approve", reason: "livré", attestations: ["AC-1 src/a.ts:1"] };
   assert.deepEqual(
-    validateArbiterDecision(REVIEW_ITEM, approve, groundOf(repo, { review: { ...evidence, names: [], acFiles: evidence.acFiles!.map(({ id }) => ({ id, files: [] })) } })),
+    validateArbiterDecision(
+      REVIEW_ITEM,
+      approve,
+      groundOf(repo, {
+        review: { ...evidence, names: [], acFiles: evidence.acFiles!.map(({ id }) => ({ id, files: [] })) },
+      }),
+    ),
     refused("diff vide : aucun changement à livrer"),
   );
 
@@ -108,7 +148,8 @@ test("arbitre-exigeant/AC-3 : l'évidence de « revue propre » ne cherche les c
   const broken = await collectReviewEvidence({
     worktree: repo,
     acIds: ["AC-1"],
-    runGit: async (args, cwd) => (args.includes("--name-only") ? { code: 128, stdout: "", stderr: "fatal: cassé" } : gitRunner(args, cwd)),
+    runGit: async (args, cwd) =>
+      args.includes("--name-only") ? { code: 128, stdout: "", stderr: "fatal: cassé" } : gitRunner(args, cwd),
   });
   assert.equal(broken.names, null);
   assert.equal(broken.acFiles, null);
@@ -142,11 +183,18 @@ test("arbitre-exigeant/AC-5 : au jalon « revue propre », chaque critère tiré
   // AC-2 n'est porté par aucun fichier du diff (preuve hors test) ; AC-3 l'est par test/neuf.test.ts.
   const sampled = { ...evidence, sampledAcIds: ["AC-2", "AC-3"] };
   const ground = groundOf(repo, { review: sampled });
-  assert.ok(buildArbiterPrompt(REVIEW_ITEM, "c", sampled).includes("vérification exigée : pour AC-2 et AC-3, rends `attestations`"));
+  assert.ok(
+    buildArbiterPrompt(REVIEW_ITEM, "c", sampled).includes(
+      "vérification exigée : pour AC-2 et AC-3, rends `attestations`",
+    ),
+  );
 
   // Une citation seule : vérifiée, mais aucun critère attesté.
   const cited: ArbiterDecision = { decision: "approve", reason: "livré", citations: ["- BLOQUANTS : aucun"] };
-  assert.deepEqual(validateArbiterDecision(REVIEW_ITEM, cited, ground), refused("attestation manquante pour AC-2 (aucune attestation), AC-3 (aucune attestation)"));
+  assert.deepEqual(
+    validateArbiterDecision(REVIEW_ITEM, cited, ground),
+    refused("attestation manquante pour AC-2 (aucune attestation), AC-3 (aucune attestation)"),
+  );
   // Hors du diff, ou hors du fichier qui porte l'id quand il y en a un : refusé, avec le motif par critère.
   const wrong: ArbiterDecision = { ...cited, attestations: ["AC-2 test/ancien.test.ts:1", "AC-3 src/a.ts:1"] };
   assert.deepEqual(
@@ -160,7 +208,10 @@ test("arbitre-exigeant/AC-5 : au jalon « revue propre », chaque critère tiré
   const full: ArbiterDecision = { ...cited, attestations: ["AC-2 → src/a.ts:1", "AC-3: test/neuf.test.ts:2"] };
   const effect = validateArbiterDecision(REVIEW_ITEM, full, ground);
   assert.equal(effect.kind, "approve", JSON.stringify(effect));
-  assert.deepEqual(effect.kind === "approve" ? effect.justification?.references : undefined, ["AC-2 src/a.ts:1", "AC-3 test/neuf.test.ts:2"]);
+  assert.deepEqual(effect.kind === "approve" ? effect.justification?.references : undefined, [
+    "AC-2 src/a.ts:1",
+    "AC-3 test/neuf.test.ts:2",
+  ]);
   // Les attestations vérifiées suffisent à justifier l'approbation.
   const bare: ArbiterDecision = { decision: "approve", reason: "livré", attestations: full.attestations! };
   assert.equal(validateArbiterDecision(REVIEW_ITEM, bare, ground).kind, "approve");
@@ -172,27 +223,55 @@ test("arbitre-exigeant/AC-6 : le corpus du jalon « revue propre » porte le con
   const review = buildArbiterCorpus({ ...base, kind: "review" });
   assert.equal(review.includes("## Revue"), false, review);
   assert.equal(review.includes("BLOQUANTS"), false);
-  for (const kept of ["### Contrat\n## Besoins", "## Critères d'acceptation", "## Spécifications", "## Lots", "## Corrections\n\n- rien.", "### Journal du lot depuis le dernier tour", "### Journal de la feature alpha"]) {
+  for (const kept of [
+    "### Contrat\n## Besoins",
+    "## Critères d'acceptation",
+    "## Spécifications",
+    "## Lots",
+    "## Corrections\n\n- rien.",
+    "### Journal du lot depuis le dernier tour",
+    "### Journal de la feature alpha",
+  ]) {
     assert.ok(review.includes(kept), `corpus de revue sans « ${kept} »`);
   }
-  assert.equal(arbiterContractExcerpt(doubled, "review").includes("## Revue"), false, "les deux occurrences sont retirées");
+  assert.equal(
+    arbiterContractExcerpt(doubled, "review").includes("## Revue"),
+    false,
+    "les deux occurrences sont retirées",
+  );
 
   const cap = buildArbiterCorpus({ ...base, kind: "cap" });
-  assert.ok(cap.includes("## Critères d'acceptation") && cap.includes("## Revue\n- STATUT : REFUSÉ") && cap.includes("## Corrections"), cap);
+  assert.ok(
+    cap.includes("## Critères d'acceptation") &&
+      cap.includes("## Revue\n- STATUT : REFUSÉ") &&
+      cap.includes("## Corrections"),
+    cap,
+  );
   for (const dropped of ["## Besoins", "## Spécifications", "## Lots"]) {
     assert.equal(cap.includes(dropped), false, `corpus du plafond avec « ${dropped} »`);
   }
   const specs = buildArbiterCorpus({ ...base, kind: "specs" });
-  assert.ok(specs.includes("## Critères d'acceptation") && specs.includes("## Spécifications") && specs.includes("## Lots"));
+  assert.ok(
+    specs.includes("## Critères d'acceptation") && specs.includes("## Spécifications") && specs.includes("## Lots"),
+  );
   assert.equal(specs.includes("## Besoins") || specs.includes("## Revue"), false, specs);
 
   // Le rapport et le brief ouvrent la session du pilote : aucun tour, quel qu'en soit le genre, n'a de section pour eux.
-  const opening = buildPilotOpening({ report: "## Faiblesses\nLe rapport.", brief: "Le brief.", lotEntries: [], lotMax: 200 });
+  const opening = buildPilotOpening({
+    report: "## Faiblesses\nLe rapport.",
+    brief: "Le brief.",
+    lotEntries: [],
+    lotMax: 200,
+  });
   assert.ok(opening.includes("### Rapport\n## Faiblesses\nLe rapport.") && opening.includes("### Brief\nLe brief."));
   for (const kind of ["review", "cap", "failure", "specs", "question", "ask"] as const) {
     const corpus = buildArbiterCorpus({ ...base, kind });
     assert.ok(corpus.startsWith("### Contrat\n"), kind);
-    assert.equal(corpus.includes("### Rapport") || corpus.includes("### Brief"), false, `tour « ${kind} » avec rapport ou brief`);
+    assert.equal(
+      corpus.includes("### Rapport") || corpus.includes("### Brief"),
+      false,
+      `tour « ${kind} » avec rapport ou brief`,
+    );
   }
 });
 
@@ -201,12 +280,23 @@ test("arbitre-exigeant/AC-7 : une question reçoit les seules sections du contra
   const impl = buildArbiterCorpus({ ...base, kind: "question", phase: "impl" });
   assert.equal(impl.includes("## Besoins"), false, impl);
   assert.equal(impl.includes("## Revue"), false);
-  assert.ok(impl.includes("## Critères d'acceptation") && impl.includes("## Spécifications") && impl.includes("## Lots"));
+  assert.ok(
+    impl.includes("## Critères d'acceptation") && impl.includes("## Spécifications") && impl.includes("## Lots"),
+  );
   const req = buildArbiterCorpus({ ...base, kind: "ask", phase: "req" });
   assert.ok(req.includes("## Besoins\nB-1 : un besoin.") && req.includes("## Critères d'acceptation"), req);
   assert.equal(req.includes("## Spécifications"), false);
   const review = buildArbiterCorpus({ ...base, kind: "question", phase: "review" });
-  assert.ok(review.includes("## Revue") && review.includes("## Critères d'acceptation") && !review.includes("## Spécifications"), review);
+  assert.ok(
+    review.includes("## Revue") &&
+      review.includes("## Critères d'acceptation") &&
+      !review.includes("## Spécifications"),
+    review,
+  );
   assert.ok(buildArbiterCorpus({ ...base, kind: "question" }).includes("## Besoins"), "sans étape, le contrat entier");
-  assert.ok(buildArbiterCorpus({ ...base, kind: "question", phase: "impl", contract: null }).includes("### Contrat\n(contrat absent)"));
+  assert.ok(
+    buildArbiterCorpus({ ...base, kind: "question", phase: "impl", contract: null }).includes(
+      "### Contrat\n(contrat absent)",
+    ),
+  );
 });

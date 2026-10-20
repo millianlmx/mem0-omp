@@ -119,10 +119,15 @@ function plusFaults(root: string): string[] {
  */
 function screenFaults(root: string): string[] {
   const { screen, chain } = segments(root);
-  if (screen === null) return ["RootView.swift : le segment de l'écran de section (`func sectionScreen(`) est introuvable"];
+  if (screen === null)
+    return ["RootView.swift : le segment de l'écran de section (`func sectionScreen(`) est introuvable"];
   const faults = placementFaults("l'écran de section", screen);
   if (chain === null) return [...faults, "RootView.swift : la chaîne du `TabView(selection:` est introuvable"];
-  if (!/Tab\([^\n]*value: IOSTab\.section\(section\)\)\s*\{\s*NavigationStack\s*\{\s*sectionScreen\(section\)\s*\}/.test(chain)) {
+  if (
+    !/Tab\([^\n]*value: IOSTab\.section\(section\)\)\s*\{\s*NavigationStack\s*\{\s*sectionScreen\(section\)\s*\}/.test(
+      chain,
+    )
+  ) {
     faults.push("l'onglet de section ne rend pas `NavigationStack { sectionScreen(section) }`");
   }
   if (!/\.navigationDestination\(for: ConsoleSection\.self\)\s*\{\s*sectionScreen\(\$0\)\s*\}/.test(chain)) {
@@ -193,14 +198,17 @@ function scopeFaults(root: string): string[] {
     }
   }
   const rootView = source(root, ROOT_VIEW);
-  if (!rootView.includes("antenna.radiowaves.left.and.right")) faults.push("RootView.swift ne porte plus le symbole antenne");
-  if (!/ConnectionAccessibility\.open\b/.test(rootView)) faults.push("RootView.swift ne référence pas ConnectionAccessibility.open");
+  if (!rootView.includes("antenna.radiowaves.left.and.right"))
+    faults.push("RootView.swift ne porte plus le symbole antenne");
+  if (!/ConnectionAccessibility\.open\b/.test(rootView))
+    faults.push("RootView.swift ne référence pas ConnectionAccessibility.open");
   const text = source(root, CONNECTION_TEXT);
   if (!text.includes('static let open = "connection.open"')) {
     faults.push('ConnectionText.swift ne déclare pas `static let open = "connection.open"`');
   }
   const list = between(text, "static let identifiers", "\n    ]");
-  if (list === null || !/\bopen,/.test(list)) faults.push("ConnectionAccessibility.identifiers ne contient pas `open,`");
+  if (list === null || !/\bopen,/.test(list))
+    faults.push("ConnectionAccessibility.identifiers ne contient pas `open,`");
   return faults;
 }
 
@@ -231,9 +239,14 @@ function recipeFaults(root: string, ac: string): string[] {
   }
   // Le build doit rester SIGNÉ : sans `application-identifier` le trousseau du simulateur
   // refuse l'écriture du jeton (-34018) et l'état connecté est inatteignable.
-  const code = text.split("\n").filter((line) => !line.trim().startsWith("#")).join("\n");
+  const code = text
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("#"))
+    .join("\n");
   if (/CODE_SIGNING_ALLOWED\s*=\s*NO/.test(code)) {
-    faults.push(`${RECIPE} compile sans signature (CODE_SIGNING_ALLOWED=NO) : le trousseau du simulateur refuse le jeton`);
+    faults.push(
+      `${RECIPE} compile sans signature (CODE_SIGNING_ALLOWED=NO) : le trousseau du simulateur refuse le jeton`,
+    );
   }
   return faults;
 }
@@ -256,7 +269,10 @@ function plantBetween(root: string, start: string, end: string, from: string, to
   const b = text.indexOf(end, a + start.length);
   assert.ok(a !== -1 && b > a, `segment « ${start} » … « ${end} » introuvable dans la copie`);
   const segment = text.slice(a, b);
-  assert.ok(segment.includes(from), `la faute ne peut pas être plantée : « ${from} » est absent du segment « ${start} »`);
+  assert.ok(
+    segment.includes(from),
+    `la faute ne peut pas être plantée : « ${from} » est absent du segment « ${start} »`,
+  );
   fs.writeFileSync(file, text.slice(0, a) + segment.replace(from, to) + text.slice(b));
 }
 
@@ -269,8 +285,16 @@ test("ios-bouton-connexion-introuvable/AC-1 : la liste « Plus » porte le bouto
   assert.ok(plusFaults(copy).length > 0, "une liste « Plus » sans bouton doit faire rougir la garde");
   // Un build sans signature rend l'état connecté inatteignable au simulateur (-34018).
   const unsigned = shared.fresh();
-  plant(unsigned, RECIPE, "-destination \"generic/platform=iOS Simulator\" \\", "-destination \"generic/platform=iOS Simulator\" CODE_SIGNING_ALLOWED=NO \\");
-  assert.ok(recipeFaults(unsigned, "AC-1").length > 0, "une recette compilée sans signature doit faire rougir la garde");
+  plant(
+    unsigned,
+    RECIPE,
+    '-destination "generic/platform=iOS Simulator" \\',
+    '-destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO \\',
+  );
+  assert.ok(
+    recipeFaults(unsigned, "AC-1").length > 0,
+    "une recette compilée sans signature doit faire rougir la garde",
+  );
 });
 
 test("ios-bouton-connexion-introuvable/AC-2 : chaque écran de section porte le bouton antenne", () => {
@@ -281,7 +305,10 @@ test("ios-bouton-connexion-introuvable/AC-2 : chaque écran de section porte le 
   assert.ok(screenFaults(bare).length > 0, "un écran de section sans bouton doit faire rougir la garde");
   const bypass = shared.fresh();
   plant(bypass, ROOT_VIEW, "{ sectionScreen($0) }", "{ IOSSectionView(section: $0) }");
-  assert.ok(screenFaults(bypass).length > 0, "une destination de « Plus » qui contourne sectionScreen doit faire rougir la garde");
+  assert.ok(
+    screenFaults(bypass).length > 0,
+    "une destination de « Plus » qui contourne sectionScreen doit faire rougir la garde",
+  );
 });
 
 test("ios-bouton-connexion-introuvable/AC-3 : le bouton ne dépend pas de l'état de connexion", () => {
@@ -307,11 +334,22 @@ test("ios-bouton-connexion-introuvable/AC-5 : un seul bouton antenne par écran"
   assert.deepEqual(recipeFaults(ROOT, "AC-5"), []);
 
   const doubled = shared.fresh();
-  plant(doubled, ROOT_VIEW, ".tabViewStyle(.sidebarAdaptable)", `.tabViewStyle(.sidebarAdaptable)\n        .toolbar { ${ITEM} }`);
+  plant(
+    doubled,
+    ROOT_VIEW,
+    ".tabViewStyle(.sidebarAdaptable)",
+    `.tabViewStyle(.sidebarAdaptable)\n        .toolbar { ${ITEM} }`,
+  );
   assert.ok(uniqueFaults(doubled).length > 0, "un .toolbar sur le TabView doit faire rougir la garde");
 
   const sized = shared.fresh();
-  plantBetween(sized, "func sectionScreen(", "var plusList", `.toolbar { ${ITEM} }`, `.toolbar { if sizeClass == .regular { ${ITEM} } }`);
+  plantBetween(
+    sized,
+    "func sectionScreen(",
+    "var plusList",
+    `.toolbar { ${ITEM} }`,
+    `.toolbar { if sizeClass == .regular { ${ITEM} } }`,
+  );
   assert.ok(uniqueFaults(sized).length > 0, "un bouton conditionné à la classe de taille doit faire rougir la garde");
 });
 

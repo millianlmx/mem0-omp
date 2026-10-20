@@ -152,7 +152,10 @@ test("package-json-without-scripts/AC-7 : npm test -- <option> transmet --tests-
     assert.ok(!n.stderr.includes("option inconnue"), `${arg} : ${n.stderr}`);
     assert.ok(!b.stderr.includes("option inconnue"), `${arg} : ${b.stderr}`);
   }
-  assert.ok(!fs.existsSync(path.join(dir, RAN_MARKER)), "le test fixture a tourné alors que le filtre ne retenait rien");
+  assert.ok(
+    !fs.existsSync(path.join(dir, RAN_MARKER)),
+    "le test fixture a tourné alors que le filtre ne retenait rien",
+  );
 });
 
 test("package-json-without-scripts/AC-8 : le README associe npm run check, npm run typecheck et npm test au script qu'ils lancent", () => {
@@ -163,17 +166,30 @@ test("package-json-without-scripts/AC-8 : le README associe npm run check, npm r
     ["npm run typecheck", "bash scripts/typecheck.sh"],
     ["npm test", "bash scripts/check.sh --sections=tests"],
   ]) {
-    assert.ok(readme.includes(`\`${command}\` lance \`${script}\``), `README.md : « \`${command}\` lance \`${script}\` » absent`);
+    assert.ok(
+      readme.includes(`\`${command}\` lance \`${script}\``),
+      `README.md : « \`${command}\` lance \`${script}\` » absent`,
+    );
   }
 });
 
 test("package-json-without-scripts/AC-9 : check.sh garde les 12 sections de la base et ne contrôle pas les alias npm", () => {
   const checkSh = fs.readFileSync(path.join(ROOT, "scripts", "check.sh"), "utf8");
   const line = checkSh.match(/^SECTION_IDS="([^"]*)"$/m);
-  assert.ok(line, "ligne SECTION_IDS=\"…\" introuvable dans scripts/check.sh");
+  assert.ok(line, 'ligne SECTION_IDS="…" introuvable dans scripts/check.sh');
   assert.deepEqual(line[1].split(/\s+/), [
-    "catalogue", "noms", "plugins", "versions", "extension", "types",
-    "rust", "smoke", "tests", "noyau", "app-swift", "app-ios",
+    "catalogue",
+    "noms",
+    "plugins",
+    "versions",
+    "extension",
+    "types",
+    "rust",
+    "smoke",
+    "tests",
+    "noyau",
+    "app-swift",
+    "app-ios",
   ]);
   for (const needle of ["npm run", "npm test", '"scripts"']) {
     assert.ok(!checkSh.includes(needle), `scripts/check.sh contient ${needle}`);

@@ -70,7 +70,10 @@ test("client-distant-ios/AC-19 : la CI compile l'iOS et joue les tests hermétiq
   ];
   for (const name of expected) {
     const file = path.join(CLIENT_TESTS, name);
-    assert.ok(fs.existsSync(file), `la suite hermétique ${name} doit exister sous omp-console/Tests/ConsoleClientTests/`);
+    assert.ok(
+      fs.existsSync(file),
+      `la suite hermétique ${name} doit exister sous omp-console/Tests/ConsoleClientTests/`,
+    );
   }
 
   // L'exigence iOS (un « non exécuté » est un échec en CI) est portée par le

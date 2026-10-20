@@ -299,7 +299,9 @@ test("service-version-drift-detection/AC-3 : `/service status` signale un servic
         publishService(stateDir, service.port);
         const emitted = await mkApp().status();
         assert.ok(
-          emitted.some((notice) => notice.message.startsWith(`[service] en marche (pid ${process.pid}, port ${service.port})`)),
+          emitted.some((notice) =>
+            notice.message.startsWith(`[service] en marche (pid ${process.pid}, port ${service.port})`),
+          ),
           "la ligne d'état reste émise",
         );
         const drifts = emitted.filter((notice) => notice.message.includes("écart de version"));
@@ -321,7 +323,10 @@ test("service-version-drift-detection/AC-4 : `/service status` ne signale rien q
       const emitted = await mkApp().status();
       assert.equal(service.requests(), 1, "le service a bien été sondé");
       assert.ok(emitted.some((notice) => notice.message.startsWith("[service] en marche")));
-      assert.deepEqual(emitted.filter((notice) => notice.message.includes("écart de version")), []);
+      assert.deepEqual(
+        emitted.filter((notice) => notice.message.includes("écart de version")),
+        [],
+      );
     } finally {
       await service.close();
     }
@@ -450,7 +455,9 @@ test("service-version-drift-detection/AC-7 : ni le service, ni une session hébe
       await sleep(SERVICE_VERSION_PROBE_TIMEOUT_MS + 1000);
 
       assert.equal(service.requests(), 1, "seul le témoin a sondé le service");
-      silent.forEach((app, at) => assert.deepEqual(app.drifts(), [], `cas ${"abcd"[at]} : aucun signalement`));
+      silent.forEach((app, at) => {
+        assert.deepEqual(app.drifts(), [], `cas ${"abcd"[at]} : aucun signalement`);
+      });
     } finally {
       await service.close();
     }

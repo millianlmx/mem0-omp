@@ -142,7 +142,10 @@ test("runner-echec-reel-et-impl-sans-diff/AC-23 : les prompts de lot restent ide
     buildLotPrompt({ kind: "phase", phase: "specs", slug, focus: "cadrer" }),
     `${buildSpecsSeed("cadrer")}${tail}`,
   );
-  assert.equal(buildLotPrompt({ kind: "phase", phase: "impl", slug, focus: "go" }), `${buildImplSeed("go", false)}${tail}`);
+  assert.equal(
+    buildLotPrompt({ kind: "phase", phase: "impl", slug, focus: "go" }),
+    `${buildImplSeed("go", false)}${tail}`,
+  );
   assert.equal(
     buildLotPrompt({ kind: "phase", phase: "impl", slug, focus: "go", fix: true }),
     `${buildImplSeed("go", true)}${tail}`,
@@ -185,7 +188,10 @@ test("runner-echec-reel-et-impl-sans-diff/AC-24 : le README décrit les bornes r
   const lot = flat("Lot de features");
   const config = flat("Config");
 
-  for (const [name, text] of [["Lot de features", lot], ["Config", config]] as const) {
+  for (const [name, text] of [
+    ["Lot de features", lot],
+    ["Config", config],
+  ] as const) {
     assert.ok(!text.includes("--pipeline-deadline"), `${name} cite encore --pipeline-deadline`);
     assert.ok(!text.includes("reviewRuns"), `${name} cite encore reviewRuns`);
   }

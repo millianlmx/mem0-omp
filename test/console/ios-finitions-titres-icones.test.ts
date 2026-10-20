@@ -75,7 +75,9 @@ function anchorFaults(root: string): string[] {
   const anchored = /\.iosPanel\(\)\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity, alignment: \.top\)/;
   return anchored.test(view)
     ? []
-    : ["IOSSectionView.swift : .iosPanel() n'est pas suivi de .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)"];
+    : [
+        "IOSSectionView.swift : .iosPanel() n'est pas suivi de .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)",
+      ];
 }
 
 /** AC-3 : l'appel à l'action de Projet est un bouton plein de 44 pt, même action. */
@@ -157,13 +159,19 @@ function featureNameFaults(root: string): string[] {
   if (home === "") return ["HomeView.swift absent"];
   const faults: string[] = [];
   const routed = home.split("IOSHomeText.featureName(card.title)").length - 1;
-  if (routed !== 3) faults.push(`HomeView.swift : ${routed} appel(s) de IOSHomeText.featureName(card.title), attendu 3`);
+  if (routed !== 3)
+    faults.push(`HomeView.swift : ${routed} appel(s) de IOSHomeText.featureName(card.title), attendu 3`);
   forbidAll(faults, "HomeView.swift", home, ["Text(card.title)"]);
   return faults;
 }
 
 /** Une faute plantée dans `rel` de la copie jetable, puis retirée : la garde doit rougir. */
-function plant(copy: string, rel: string[], mutate: (text: string) => string, run: (root: string) => string[]): string[] {
+function plant(
+  copy: string,
+  rel: string[],
+  mutate: (text: string) => string,
+  run: (root: string) => string[],
+): string[] {
   const file = path.join(copy, ...rel);
   const original = fs.readFileSync(file, "utf8");
   const mutated = mutate(original);
@@ -193,12 +201,20 @@ test("ios-finitions-titres-icones/AC-1 : Projet et Statistiques n'ont que le tit
     (text) => text.replace(".iosPanel()", ".iosPanel()\n        .overlay { Text(section.title) }"),
     titleFaults,
   );
-  assert.ok(faults.some((f) => f.includes("Text(section.title)")), `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("Text(section.title)")),
+    `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-2 : le panneau est ancré en haut, cadre posé après iosPanel()", () => {
   assert.deepEqual(anchorFaults(ROOT), []);
-  const faults = plant(copy(), app("IOSSectionView.swift"), (text) => text.replace("maxHeight: .infinity, ", ""), anchorFaults);
+  const faults = plant(
+    copy(),
+    app("IOSSectionView.swift"),
+    (text) => text.replace("maxHeight: .infinity, ", ""),
+    anchorFaults,
+  );
   assert.ok(faults.length > 0, "un cadre sans maxHeight doit faire rougir la garde");
 });
 
@@ -210,7 +226,10 @@ test("ios-finitions-titres-icones/AC-3 : « Piloter un projet… » est un bouto
     (text) => text.replace(".buttonStyle(.borderedProminent)", ".buttonStyle(.plain)"),
     startButtonFaults,
   );
-  assert.ok(faults.some((f) => f.includes(".borderedProminent")), `un bouton non plein doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes(".borderedProminent")),
+    `un bouton non plein doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-4 : l'icône de Sessions est celle d'iOS, le noyau macOS ne bouge pas", () => {
@@ -222,7 +241,10 @@ test("ios-finitions-titres-icones/AC-4 : l'icône de Sessions est celle d'iOS, l
     (text) => text.replace("IOSSection.systemImage(of: section)", "section.systemImage"),
     sectionIconFaults,
   );
-  assert.ok(root.some((f) => f.includes("RootView.swift")), `une icône du noyau dans la barre latérale doit faire rougir la garde : ${root.join(" | ")}`);
+  assert.ok(
+    root.some((f) => f.includes("RootView.swift")),
+    `une icône du noyau dans la barre latérale doit faire rougir la garde : ${root.join(" | ")}`,
+  );
 
   const core = plant(
     copy(),
@@ -230,7 +252,10 @@ test("ios-finitions-titres-icones/AC-4 : l'icône de Sessions est celle d'iOS, l
     (text) => text.replace('"bubble.left.and.text.bubble.right"', '"clock.arrow.circlepath"'),
     sectionIconFaults,
   );
-  assert.ok(core.some((f) => f.includes("ConsoleSection.swift")), `une icône macOS changée doit faire rougir la garde : ${core.join(" | ")}`);
+  assert.ok(
+    core.some((f) => f.includes("ConsoleSection.swift")),
+    `une icône macOS changée doit faire rougir la garde : ${core.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-5 : « Sommaire » et « Liste » portent deux symboles distincts", () => {
@@ -241,7 +266,10 @@ test("ios-finitions-titres-icones/AC-5 : « Sommaire » et « Liste » portent d
     (text) => text.replace("IOSMemoryText.summarySymbol", "IOSMemoryText.listSymbol"),
     memoryIconFaults,
   );
-  assert.ok(faults.some((f) => f.includes("summarySymbol")), `Sommaire sans son symbole doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("summarySymbol")),
+    `Sommaire sans son symbole doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-7 : la fiche d'un souvenir a son bouton « Fermer » de 44 pt", () => {
@@ -252,7 +280,10 @@ test("ios-finitions-titres-icones/AC-7 : la fiche d'un souvenir a son bouton « 
     (text) => text.replace(/^.*\.accessibilityIdentifier\(IOSMemoryAccessibility\.close\)\n/m, ""),
     detailCloseFaults,
   );
-  assert.ok(faults.some((f) => f.includes("IOSMemoryAccessibility.close")), `un bouton sans identifiant doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("IOSMemoryAccessibility.close")),
+    `un bouton sans identifiant doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-8 : les trois noms de feature de l'Accueil passent par featureName", () => {
@@ -263,5 +294,8 @@ test("ios-finitions-titres-icones/AC-8 : les trois noms de feature de l'Accueil 
     (text) => text.replace("Text(IOSHomeText.featureName(card.title))", "Text(card.title)"),
     featureNameFaults,
   );
-  assert.ok(faults.some((f) => f.includes("Text(card.title)")), `un nom brut doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("Text(card.title)")),
+    `un nom brut doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });

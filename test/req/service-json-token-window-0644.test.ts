@@ -60,7 +60,14 @@ function withUmask022<T>(body: () => T): T {
   }
 }
 
-type RenameObservation = { from: string; to: string; tmpMode: number; targetExisted: boolean; targetModeBefore: number | null; targetModeAfter: number };
+type RenameObservation = {
+  from: string;
+  to: string;
+  tmpMode: number;
+  targetExisted: boolean;
+  targetModeBefore: number | null;
+  targetModeAfter: number;
+};
 
 /** `body` exécuté avec un espion de `fs.renameSync` qui relève les modes juste avant et juste après le `rename` réel. */
 function observeRenames(body: () => void): RenameObservation[] {
@@ -71,7 +78,14 @@ function observeRenames(body: () => void): RenameObservation[] {
     const targetExisted = fs.existsSync(to);
     const targetModeBefore = targetExisted ? fs.statSync(to).mode & 0o777 : null;
     original(from, to);
-    seen.push({ from: String(from), to: String(to), tmpMode, targetExisted, targetModeBefore, targetModeAfter: fs.statSync(to).mode & 0o777 });
+    seen.push({
+      from: String(from),
+      to: String(to),
+      tmpMode,
+      targetExisted,
+      targetModeBefore,
+      targetModeAfter: fs.statSync(to).mode & 0o777,
+    });
   }) as typeof fs.renameSync;
   syncBuiltinESMExports();
   try {
@@ -152,7 +166,10 @@ test("service-json-token-window-0644/AC-4 : le propriétaire relit le jeton de s
   const reread = readService(stateDir, { alive: () => true });
   assert.deepEqual(reread, written);
 
-  const handle = createServiceRequestHandler({ api: { lot: () => null } as unknown as ServiceApi, token: written.token });
+  const handle = createServiceRequestHandler({
+    api: { lot: () => null } as unknown as ServiceApi,
+    token: written.token,
+  });
   const get = (headers: Record<string, string>) =>
     handle(new Request(`http://127.0.0.1/v1/repos/${encodeURIComponent(stateDir)}/lot`, { method: "GET", headers }));
   assert.equal((await get({ [SERVICE_TOKEN_HEADER]: reread!.token })).status, 200, "jeton relu accepté");

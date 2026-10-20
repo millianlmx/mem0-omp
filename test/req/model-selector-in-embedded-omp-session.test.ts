@@ -46,7 +46,12 @@ process.on("exit", () => {
 
 const DEEP = { provider: "p", id: "deep", reasoning: true, thinking: { efforts: ["low", "high"] } };
 const PLAIN = { provider: "p", id: "plain", reasoning: false };
-const OTHER = { provider: "q", id: "other", reasoning: true, thinking: { efforts: ["minimal", "low", "medium", "high", "xhigh", "max"] } };
+const OTHER = {
+  provider: "q",
+  id: "other",
+  reasoning: true,
+  thinking: { efforts: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+};
 /** Connu d'OMP mais sans authentification : `getAvailableModels` ne le rend JAMAIS. */
 const UNAUTHENTICATED = "z/unauth";
 type FakeModel = typeof DEEP | typeof PLAIN | typeof OTHER;
@@ -158,7 +163,11 @@ function fakePi(options: { setModelError?: () => Error | null } = {}) {
           const file = path.join(cwd, `session-${seq}.jsonl`);
           return { getSessionId: () => `sess-${seq}`, getSessionFile: () => file, getCwd: () => cwd };
         },
-        open: async (file: string) => ({ getSessionId: () => `resume-${path.basename(file)}`, getSessionFile: () => file, getCwd: () => path.dirname(file) }),
+        open: async (file: string) => ({
+          getSessionId: () => `resume-${path.basename(file)}`,
+          getSessionFile: () => file,
+          getCwd: () => path.dirname(file),
+        }),
       },
       createAgentSession: async (opts: { cwd: string; modelPattern?: string; settings: unknown }) => {
         openOptions.push(opts);
@@ -176,7 +185,7 @@ function framesOf(host: SessionHost, id: string): ServiceFrame[] {
   const subscription = host.subscribe(id);
   assert.ok(subscription, `la session ${id} est abonnable`);
   frames.push(...subscription.snapshot);
-  subscription.subscribe(frame => frames.push(frame));
+  subscription.subscribe((frame) => frames.push(frame));
   return frames;
 }
 
@@ -192,13 +201,15 @@ async function refusal(promise: Promise<unknown>): Promise<ServiceError> {
 }
 
 /** Un magasin de défauts en mémoire, qui compte ses lectures et ses écritures. */
-function memoryStore(initial: { model: string | null; thinkingLevel: string | null } = { model: null, thinkingLevel: null }) {
+function memoryStore(
+  initial: { model: string | null; thinkingLevel: string | null } = { model: null, thinkingLevel: null },
+) {
   const reads: string[] = [];
   const writes: Array<{ cwd: string; value: string }> = [];
   let failWrite: Error | null = null;
   const state = { ...initial };
   const store: ProjectModelStore = {
-    read: async cwd => {
+    read: async (cwd) => {
       reads.push(cwd);
       return { ...state };
     },
@@ -222,15 +233,27 @@ function sessionHost(pi: unknown, store: ProjectModelStore, stateDir = mktmp("ms
 
 test("model-selector-in-embedded-omp-session : niveaux proposés, lecture et écriture du défaut `sélecteur[:niveau]`", () => {
   assert.deepEqual(supportedEfforts(DEEP), ["low", "high"]);
-  assert.deepEqual(supportedEfforts({ ...DEEP, reasoning: false }), [], "reasoning faux ⇒ aucun effort, même si le catalogue en liste");
+  assert.deepEqual(
+    supportedEfforts({ ...DEEP, reasoning: false }),
+    [],
+    "reasoning faux ⇒ aucun effort, même si le catalogue en liste",
+  );
   assert.deepEqual(offeredLevels(DEEP), ["off", "low", "high"]);
   assert.deepEqual(offeredLevels(PLAIN), []);
   assert.deepEqual(offeredLevels({ provider: "a", id: "b", reasoning: true, thinking: null }), []);
 
   assert.deepEqual(parseModelDefault("p/deep:high"), { model: "p/deep", thinkingLevel: "high" });
   assert.deepEqual(parseModelDefault("p/deep"), { model: "p/deep", thinkingLevel: null });
-  assert.deepEqual(parseModelDefault("local/llama:7b"), { model: "local/llama:7b", thinkingLevel: null }, "un suffixe qui n'est pas un niveau fait partie du sélecteur");
-  assert.deepEqual(parseModelDefault("local/llama:7b:low"), { model: "local/llama:7b", thinkingLevel: "low" }, "seul le DERNIER « : » compte");
+  assert.deepEqual(
+    parseModelDefault("local/llama:7b"),
+    { model: "local/llama:7b", thinkingLevel: null },
+    "un suffixe qui n'est pas un niveau fait partie du sélecteur",
+  );
+  assert.deepEqual(
+    parseModelDefault("local/llama:7b:low"),
+    { model: "local/llama:7b", thinkingLevel: "low" },
+    "seul le DERNIER « : » compte",
+  );
   assert.deepEqual(parseModelDefault(undefined), { model: null, thinkingLevel: null });
   assert.equal(formatModelDefault("p/deep", "high"), "p/deep:high");
   assert.equal(formatModelDefault("p/deep", null), "p/deep");
@@ -250,10 +273,17 @@ test("model-selector-in-embedded-omp-session/AC-1 : la description et le snapsho
   const description = host.view(hosted.id);
   assert.equal(description?.model, "q/other");
   assert.equal(description?.thinkingLevel, "medium");
-  assert.deepEqual(host.list().map(({ model, thinkingLevel }) => ({ model, thinkingLevel })), [{ model: "q/other", thinkingLevel: "medium" }]);
+  assert.deepEqual(
+    host.list().map(({ model, thinkingLevel }) => ({ model, thinkingLevel })),
+    [{ model: "q/other", thinkingLevel: "medium" }],
+  );
 
   const frames = framesOf(host, hosted.id);
-  assert.deepEqual(frames, [{ event: "model", data: { model: "q/other", thinkingLevel: "medium" } }], "le snapshot d'une session de la section porte l'état courant");
+  assert.deepEqual(
+    frames,
+    [{ event: "model", data: { model: "q/other", thinkingLevel: "medium" } }],
+    "le snapshot d'une session de la section porte l'état courant",
+  );
 
   // Un autre auteur (l'autre appareil, `/model` du terminal) change le modèle : OMP émet l'évènement.
   fake.session.model = DEEP;
@@ -267,7 +297,10 @@ test("model-selector-in-embedded-omp-session/AC-1 : la description et le snapsho
   // Une session sans modèle ni niveau : `null`, jamais une chaîne vide.
   fake.session.model = undefined;
   fake.session.level = undefined;
-  assert.deepEqual({ model: host.view(hosted.id)?.model, level: host.view(hosted.id)?.thinkingLevel }, { model: null, level: null });
+  assert.deepEqual(
+    { model: host.view(hosted.id)?.model, level: host.view(hosted.id)?.thinkingLevel },
+    { model: null, level: null },
+  );
 
   // La conduite (`project`) porte les champs mais pas la trame de snapshot.
   const conduite = await host.open({ cwd, purpose: "project" });
@@ -292,13 +325,24 @@ test("model-selector-in-embedded-omp-session/AC-3 : setModel puis setThinkingLev
   const frames = framesOf(host, hosted.id);
 
   const description = await host.setSessionModel(hosted.id, { model: "p/deep", thinkingLevel: "high" });
-  assert.deepEqual(fake.calls, ["setModel:p/deep", "setThinkingLevel:high"], "setModel d'abord : il ré-applique le niveau par défaut du modèle");
+  assert.deepEqual(
+    fake.calls,
+    ["setModel:p/deep", "setThinkingLevel:high"],
+    "setModel d'abord : il ré-applique le niveau par défaut du modèle",
+  );
   assert.equal(description.id, hosted.id);
   assert.equal(description.sessionFile, fileBefore, "la session n'est pas relancée : même fichier");
   assert.equal(description.model, "p/deep");
   assert.equal(description.thinkingLevel, "high");
-  assert.deepEqual(memory.writes, [{ cwd, value: "p/deep:high" }], "le défaut du projet est écrit, avec le niveau en suffixe");
-  assert.deepEqual(frames.filter(frame => frame.event === "model").at(-1), { event: "model", data: { model: "p/deep", thinkingLevel: "high" } });
+  assert.deepEqual(
+    memory.writes,
+    [{ cwd, value: "p/deep:high" }],
+    "le défaut du projet est écrit, avec le niveau en suffixe",
+  );
+  assert.deepEqual(frames.filter((frame) => frame.event === "model").at(-1), {
+    event: "model",
+    data: { model: "p/deep", thinkingLevel: "high" },
+  });
   assert.equal(host.sessions.size, 1, "aucune réouverture");
 
   // Le prompt suivant passe par la MÊME session (même doublure), et la conversation est là.
@@ -328,27 +372,48 @@ test("model-selector-in-embedded-omp-session/AC-4 : la route HTTP POST /v1/sessi
   const token = "t".repeat(32);
   const handle = createServiceRequestHandler({ api, token });
   const call = (url: string, method: string, body?: unknown) =>
-    handle(new Request(`http://127.0.0.1/v1/${url}`, { method, headers: { [SERVICE_TOKEN_HEADER]: token, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
+    handle(
+      new Request(`http://127.0.0.1/v1/${url}`, {
+        method,
+        headers: { [SERVICE_TOKEN_HEADER]: token, "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    );
 
   const changed = await call(`sessions/${hosted.id}/model`, "POST", { model: "p/deep", thinkingLevel: "low" });
   assert.equal(changed.status, 200);
   const payload = (await changed.json()) as { id: string; model: string; thinkingLevel: string };
-  assert.deepEqual({ id: payload.id, model: payload.model, thinkingLevel: payload.thinkingLevel }, { id: hosted.id, model: "p/deep", thinkingLevel: "low" });
+  assert.deepEqual(
+    { id: payload.id, model: payload.model, thinkingLevel: payload.thinkingLevel },
+    { id: hosted.id, model: "p/deep", thinkingLevel: "low" },
+  );
   assert.deepEqual(created[0]!.calls, ["setModel:p/deep", "setThinkingLevel:low"]);
 
   const refused = await call(`sessions/${hosted.id}/model`, "POST", { model: UNAUTHENTICATED });
   assert.equal(refused.status, 409);
   assert.deepEqual(await refused.json(), { error: "conflict", reason: R_UNAVAILABLE(UNAUTHENTICATED) });
   assert.equal((await call("sessions/inconnue/model", "POST", { model: "p/deep" })).status, 404);
-  assert.equal((await call(`sessions/${hosted.id}/model`, "GET")).status, 404, "une route connue avec la mauvaise méthode est inconnue");
+  assert.equal(
+    (await call(`sessions/${hosted.id}/model`, "GET")).status,
+    404,
+    "une route connue avec la mauvaise méthode est inconnue",
+  );
 
   const encoded = encodeURIComponent(cwd);
   const read = await call(`projects/${encoded}/model`, "GET");
-  assert.deepEqual(await read.json(), { model: "p/deep", thinkingLevel: "low" }, "le changement de session a écrit le défaut du projet");
+  assert.deepEqual(
+    await read.json(),
+    { model: "p/deep", thinkingLevel: "low" },
+    "le changement de session a écrit le défaut du projet",
+  );
   const written = await call(`projects/${encoded}/model`, "POST", { model: "q/other", thinkingLevel: "max" });
   assert.equal(written.status, 200);
   assert.deepEqual(await written.json(), { model: "q/other", thinkingLevel: "max" });
-  assert.equal((await call(`projects/${encodeURIComponent(path.join(cwd, "absent"))}/model`, "GET")).status, 400, "un dossier inexistant est refusé");
+  assert.equal(
+    (await call(`projects/${encodeURIComponent(path.join(cwd, "absent"))}/model`, "GET")).status,
+    400,
+    "un dossier inexistant est refusé",
+  );
   assert.equal((await call(`projects/relatif/model`, "GET")).status, 400, "un chemin relatif est refusé");
 });
 
@@ -381,7 +446,10 @@ test("model-selector-in-embedded-omp-session/AC-6 : un niveau hors de la liste p
   assert.equal(outside.status, 400);
   assert.equal(outside.reason, R_LEVEL("p/deep", "medium"));
   // `auto` n'est jamais proposé.
-  assert.equal((await refusal(host.setSessionModel(hosted.id, { model: "p/deep", thinkingLevel: "auto" }))).reason, R_LEVEL("p/deep", "auto"));
+  assert.equal(
+    (await refusal(host.setSessionModel(hosted.id, { model: "p/deep", thinkingLevel: "auto" }))).reason,
+    R_LEVEL("p/deep", "auto"),
+  );
   // Un modèle sans réflexion : tout niveau est refusé, y compris `off`.
   for (const level of ["off", "high"]) {
     const plain = await refusal(host.setSessionModel(hosted.id, { model: "p/plain", thinkingLevel: level }));
@@ -394,10 +462,20 @@ test("model-selector-in-embedded-omp-session/AC-6 : un niveau hors de la liste p
   // Les niveaux proposés sont acceptés : `off` et les efforts du modèle.
   await host.setSessionModel(hosted.id, { model: "p/deep", thinkingLevel: "off" });
   await host.setSessionModel(hosted.id, { model: "p/deep", thinkingLevel: "low" });
-  assert.deepEqual(fake.calls.filter((call: string) => call.startsWith("setThinkingLevel")), ["setThinkingLevel:off", "setThinkingLevel:low"]);
+  assert.deepEqual(
+    fake.calls.filter((call: string) => call.startsWith("setThinkingLevel")),
+    ["setThinkingLevel:off", "setThinkingLevel:low"],
+  );
 
   // La forme : sélecteur sans « / », niveau inconnu, corps non objet ⇒ 400, avant tout autre contrôle.
-  for (const body of [{ model: "sansslash" }, { model: "" }, { model: "p/deep", thinkingLevel: "énorme" }, { model: "p/deep", thinkingLevel: 3 }, [], null]) {
+  for (const body of [
+    { model: "sansslash" },
+    { model: "" },
+    { model: "p/deep", thinkingLevel: "énorme" },
+    { model: "p/deep", thinkingLevel: 3 },
+    [],
+    null,
+  ]) {
     assert.equal((await refusal(host.setSessionModel(hosted.id, body))).status, 400, JSON.stringify(body));
   }
 });
@@ -449,7 +527,11 @@ test("model-selector-in-embedded-omp-session/AC-12 : un refus d'OMP est rendu en
   assert.equal(noKey.reason, R_UNAVAILABLE("p/deep"));
   assert.equal(host.view(hosted.id)?.model, "q/other", "description inchangée");
   assert.equal(host.view(hosted.id)?.thinkingLevel, "medium");
-  assert.deepEqual(created[0]!.calls, ["setModel:p/deep"], "setThinkingLevel n'est pas appelé après un setModel refusé");
+  assert.deepEqual(
+    created[0]!.calls,
+    ["setModel:p/deep"],
+    "setThinkingLevel n'est pas appelé après un setModel refusé",
+  );
   assert.deepEqual(memory.writes, [], "le défaut n'est pas écrit");
 
   failure = new Error("quota dépassé");
@@ -472,7 +554,10 @@ test("model-selector-in-embedded-omp-session/AC-12 : un refus d'OMP est rendu en
   assert.equal(saveFailure.code, "internal");
   assert.equal(saveFailure.reason, R_SAVE("disque plein"));
   assert.equal(host.view(hosted.id)?.model, "p/deep", "le changement de session est conservé");
-  assert.deepEqual(frames.filter(frame => frame.event === "notice"), [{ event: "notice", data: { level: "warning", message: R_SAVE("disque plein") } }]);
+  assert.deepEqual(
+    frames.filter((frame) => frame.event === "notice"),
+    [{ event: "notice", data: { level: "warning", message: R_SAVE("disque plein") } }],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -509,10 +594,19 @@ test("model-selector-in-embedded-omp-session/AC-9 : l'écriture passe par Settin
 
   // Un fichier illisible : 500 nommé.
   const broken: ProjectModelStore = createProjectModelStore({
-    pi: { Settings: { loadIsolated: async () => { throw new Error("YAML invalide"); } } },
+    pi: {
+      Settings: {
+        loadIsolated: async () => {
+          throw new Error("YAML invalide");
+        },
+      },
+    },
   } as never);
   const unreadable = await refusal(broken.read(repo));
-  assert.deepEqual({ status: unreadable.status, reason: unreadable.reason }, { status: 500, reason: "Défaut du projet illisible : YAML invalide." });
+  assert.deepEqual(
+    { status: unreadable.status, reason: unreadable.reason },
+    { status: 500, reason: "Défaut du projet illisible : YAML invalide." },
+  );
 });
 
 test("model-selector-in-embedded-omp-session/AC-10 : écrire le défaut de P ne charge que P et laisse le fichier de Q octet pour octet", async () => {
@@ -526,11 +620,19 @@ test("model-selector-in-embedded-omp-session/AC-10 : écrire le défaut de P ne 
   settings.loads.length = 0;
 
   await host.setProjectModel(projectP, { model: "p/deep", thinkingLevel: "low" });
-  assert.deepEqual(settings.loads.filter(cwd => cwd !== projectP), [], "seul le projet P est chargé");
+  assert.deepEqual(
+    settings.loads.filter((cwd) => cwd !== projectP),
+    [],
+    "seul le projet P est chargé",
+  );
   assert.deepEqual(fs.readFileSync(qFile), qBytes, "le fichier de Q est inchangé");
   assert.deepEqual(await host.projectModel(projectQ), { model: "q/other", thinkingLevel: "max" });
   assert.deepEqual(await host.projectModel(projectP), { model: "p/deep", thinkingLevel: "low" });
-  assert.equal(fs.existsSync(path.join(projectP, ".omp", "settings.json")), false, "aucun autre fichier de P n'est écrit");
+  assert.equal(
+    fs.existsSync(path.join(projectP, ".omp", "settings.json")),
+    false,
+    "aucun autre fichier de P n'est écrit",
+  );
   // La config globale n'est jamais visée : le service n'écrit que sous `<repo>/.omp/`.
   assert.deepEqual(fs.readdirSync(projectP).sort(), [".omp"]);
 });
@@ -547,7 +649,15 @@ test("model-selector-in-embedded-omp-session/AC-11 : les maillons, l'arbitre et 
   // Un lot témoin (groupes à modèle explicite et « défaut OMP ») que S-3 ne doit pas toucher.
   fs.mkdirSync(path.join(stateDir, "lots"), { recursive: true });
   const lotFile = path.join(stateDir, "lots", "witness.json");
-  fs.writeFileSync(lotFile, JSON.stringify({ features: [{ slug: "a", modelReqSpecs: "q/other" }, { slug: "b", modelReqSpecs: null }] }));
+  fs.writeFileSync(
+    lotFile,
+    JSON.stringify({
+      features: [
+        { slug: "a", modelReqSpecs: "q/other" },
+        { slug: "b", modelReqSpecs: null },
+      ],
+    }),
+  );
   const lotBytes = fs.readFileSync(lotFile);
 
   await host.open({ cwd: repo, purpose: "run", model: "q/other", identity: undefined });
@@ -556,8 +666,16 @@ test("model-selector-in-embedded-omp-session/AC-11 : les maillons, l'arbitre et 
   await host.open({ cwd: repo, purpose: "project" });
   assert.deepEqual(memory.reads, [], "le magasin de défauts n'est jamais lu pour run/arbiter/project");
   assert.deepEqual(settings.loads, [], "Settings.loadIsolated n'est jamais appelé");
-  assert.deepEqual(created.flatMap(fake => fake.calls), [], "aucune de ces sessions n'est basculée");
-  assert.deepEqual(openOptions.map(options => options.modelPattern), ["q/other", undefined, undefined, undefined], "un groupe explicite garde son modèle, « défaut OMP » le choix automatique d'OMP");
+  assert.deepEqual(
+    created.flatMap((fake) => fake.calls),
+    [],
+    "aucune de ces sessions n'est basculée",
+  );
+  assert.deepEqual(
+    openOptions.map((options) => options.modelPattern),
+    ["q/other", undefined, undefined, undefined],
+    "un groupe explicite garde son modèle, « défaut OMP » le choix automatique d'OMP",
+  );
 
   await host.setProjectModel(repo, { model: "q/other" });
   assert.deepEqual(fs.readFileSync(lotFile), lotBytes, "lots/*.json est inchangé par une écriture du défaut");
@@ -577,7 +695,11 @@ test("model-selector-in-embedded-omp-session/AC-8 : une session de la section s'
   const host = sessionHost(pi, memory.store);
 
   const hosted = await host.open({ cwd, purpose: "session" });
-  assert.deepEqual(created[0]!.calls, ["setModel:p/deep", "setThinkingLevel:high"], "appliqué à l'ouverture, avant la réponse");
+  assert.deepEqual(
+    created[0]!.calls,
+    ["setModel:p/deep", "setThinkingLevel:high"],
+    "appliqué à l'ouverture, avant la réponse",
+  );
   assert.deepEqual(memory.writes, [], "l'application du défaut n'écrit rien");
   assert.equal(host.describe(hosted).model, "p/deep");
   assert.equal(host.describe(hosted).thinkingLevel, "high", "la réponse de création porte les valeurs effectives");
@@ -599,9 +721,15 @@ test("model-selector-in-embedded-omp-session/AC-8 : une session de la section s'
     event: "notice",
     data: { level: "warning", message: R_DEFAULT_NOT_APPLIED(UNAUTHENTICATED, R_UNAVAILABLE(UNAUTHENTICATED)) },
   };
-  assert.deepEqual(framesOf(host, fallback.id), [{ event: "model", data: { model: "q/other", thinkingLevel: "medium" } }, expected]);
+  assert.deepEqual(framesOf(host, fallback.id), [
+    { event: "model", data: { model: "q/other", thinkingLevel: "medium" } },
+    expected,
+  ]);
   assert.deepEqual(framesOf(host, fallback.id).at(-1), expected, "rejoué pour chaque abonné");
-  assert.match(expected.data.message, /^Défaut du projet non appliqué \(z\/unauth\) : Modèle inutilisable : OMP n'a pas d'authentification pour z\/unauth\. La session tourne sur le modèle choisi par OMP\.$/);
+  assert.match(
+    expected.data.message,
+    /^Défaut du projet non appliqué \(z\/unauth\) : Modèle inutilisable : OMP n'a pas d'authentification pour z\/unauth\. La session tourne sur le modèle choisi par OMP\.$/,
+  );
 
   // Le premier S-2 réussi éteint la notice.
   await host.setSessionModel(fallback.id, { model: "p/plain" });
@@ -613,7 +741,7 @@ test("model-selector-in-embedded-omp-session/AC-8 : une session de la section s'
   memory.state.thinkingLevel = "high";
   const badLevel = await host.open({ cwd, purpose: "session" });
   assert.deepEqual(created[3]!.calls, []);
-  assert.ok(framesOf(host, badLevel.id).some(frame => frame.event === "notice"));
+  assert.ok(framesOf(host, badLevel.id).some((frame) => frame.event === "notice"));
   await host.close(badLevel.id);
 
   // Un magasin illisible ne bloque pas non plus l'ouverture.
@@ -621,9 +749,12 @@ test("model-selector-in-embedded-omp-session/AC-8 : une session de la section s'
     throw new ServiceError(500, "internal", "Défaut du projet illisible : YAML invalide.");
   };
   const unreadable = await host.open({ cwd, purpose: "session" });
-  const unreadableNotice = framesOf(host, unreadable.id).find(frame => frame.event === "notice");
+  const unreadableNotice = framesOf(host, unreadable.id).find((frame) => frame.event === "notice");
   assert.ok(unreadableNotice?.event === "notice");
-  assert.match(unreadableNotice.data.message, /illisible : YAML invalide\. La session tourne sur le modèle choisi par OMP\.$/);
+  assert.match(
+    unreadableNotice.data.message,
+    /illisible : YAML invalide\. La session tourne sur le modèle choisi par OMP\.$/,
+  );
 
   // Une reprise (`resume`) applique le défaut comme une ouverture neuve.
   await host.close(unreadable.id);

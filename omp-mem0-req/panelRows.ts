@@ -3,20 +3,56 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { ARBITER_RELAUNCH_MAX, auditRelayOpen, blockedQuotaOf, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, quotaGroupsOf, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
+import {
+  ARBITER_RELAUNCH_MAX,
+  auditRelayOpen,
+  blockedQuotaOf,
+  freeSlots,
+  hasFreeSlot,
+  heldBySlots,
+  lotFeature,
+  lotOwnerAlive,
+  lotPathFor,
+  lotRepoKey,
+  lotStateLabel,
+  lotTotals,
+  lotWaitLabel,
+  quotaGroupsOf,
+  readLot,
+  relayFooter,
+  rowReply,
+  runnable,
+} from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState, LotRunRecord, QuotaGroup } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
-import { DEFAULT_MODEL_SHORT_LABEL, MODEL_GROUP_LABELS, featureFallbackForPhase, featureModelSlots, filterModelChoices, groupOfStep, isFallbackStep, stepChoices } from "./models.ts";
+import {
+  DEFAULT_MODEL_SHORT_LABEL,
+  MODEL_GROUP_LABELS,
+  featureFallbackForPhase,
+  featureModelSlots,
+  filterModelChoices,
+  groupOfStep,
+  isFallbackStep,
+  stepChoices,
+} from "./models.ts";
 import type { ModelChoice, ModelStep, ModelStepDraft } from "./models.ts";
 import { quotaDeadlineLabel } from "./quota.ts";
 import type { PanelTui } from "./panelHost.ts";
-import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, PANEL_WRAP_MAX_LINES, ROW_PADDING_X, displayWidth, sectionSelection, serviceRow, textWindow, wrapVisible } from "./panelWidth.ts";
+import {
+  LIST_MODE_MAX_LINES,
+  PANEL_NOTICE_MAX_LINES,
+  PANEL_WRAP_MAX_LINES,
+  ROW_PADDING_X,
+  displayWidth,
+  sectionSelection,
+  serviceRow,
+  textWindow,
+  wrapVisible,
+} from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { WorktreeFate } from "./runs.ts";
 import { asStringOrNull, elapsedLabel, pidAlive, reconcileStore } from "./store.ts";
 import type { HistoryEntry, PipelineRunState, RunningEntry } from "./store.ts";
-
-
 
 // ---------------------------------------------------------------------------
 // Panneau des pipelines — un plein écran, pilotable au clavier ET à la souris.
@@ -93,10 +129,8 @@ export type PanelRow = {
   fill?: boolean;
 };
 
-
 /** Les glyphes injectés (S-1) : le curseur de sélection vient de `theme.nav.cursor`. */
 export type PanelGlyphs = { cursor: string };
-
 
 /**
  * L'état du PILOTE d'un lot (PANEL-4), tel que le panneau le calcule : `self` —
@@ -110,7 +144,6 @@ export type PanelDriver =
   /** Le service pilote : `pid` = le sien, `null` = lot pas encore adopté (S-11). */
   | { kind: "service"; pid: number | null }
   | { kind: "dead" };
-
 
 /**
  * L'état du pilote d'un lot : le SERVICE quand il vit (c'est lui le pilote de la
@@ -129,7 +162,6 @@ export function panelDriver(lot: Lot | null, now: number, servicePid: number | n
   return { kind: "dead" };
 }
 
-
 /** Le mot du pilote dans l'en-tête du lot (PANEL-4, S-11) : jamais un silence. */
 export function driverLabel(driver: PanelDriver): string {
   switch (driver.kind) {
@@ -144,7 +176,6 @@ export function driverLabel(driver: PanelDriver): string {
       return "pilote absent — les pipelines n'avancent plus (/service start)";
   }
 }
-
 
 export type PanelModel = {
   /**
@@ -195,7 +226,6 @@ export type PanelModel = {
   unreadable: number;
 };
 
-
 /**
  * Les quatre étapes de liste d'un ajout ou d'une édition (S-1, S-4) : principal puis
  * repli de `cadrage+revue`, principal puis repli d'`exécution`, dans l'ordre du flux.
@@ -216,7 +246,7 @@ export type ModelListState = {
 /** Les modes du panneau : consulter, ajouter, éditer les modèles, choisir un sort, confirmer. */
 export type LotPanelMode =
   | { kind: "browse" }
-  | {
+  | ({
       kind: "add";
       step: "name" | "description" | "deps" | AddModelStep;
       draft: {
@@ -230,8 +260,8 @@ export type LotPanelMode =
        * curseur écrit —, `PageUp`/`PageDown` la remontent jusqu'à sa première ligne.
        */
       scroll?: TextWindow;
-    } & ModelListState
-  | {
+    } & ModelListState)
+  | ({
       /**
        * L'ÉDITION des modèles d'une feature (S-4, geste `m`) : les deux étapes de
        * liste, pré-positionnées sur les valeurs RÉSOLUES de la feature. `draft`
@@ -244,8 +274,8 @@ export type LotPanelMode =
       draft: ModelStepDraft;
       buffer: string;
       scroll?: TextWindow;
-    } & ModelListState
-  | {
+    } & ModelListState)
+  | ({
       /**
        * Le choix du repli d'un groupe de quota (S-5) : la liste du catalogue sans
        * « défaut OMP » ni sélecteur épuisé, avec la même recherche au clavier.
@@ -253,7 +283,7 @@ export type LotPanelMode =
       kind: "quotaModel";
       provider: string;
       scroll?: TextWindow;
-    } & ModelListState
+    } & ModelListState)
   | { kind: "cancel"; slug: string; scroll?: TextWindow }
   | {
       /**
@@ -267,7 +297,6 @@ export type LotPanelMode =
       /** La fenêtre de la tête d'aperçu (S-2), comme celle d'un champ. */
       scroll?: TextWindow;
     };
-
 
 /**
  * Un geste qui change l'état du lot (S-8). Sa forme est une donnée pure : l'aperçu
@@ -299,12 +328,10 @@ export type PanelGesture =
   /** La décision de quota (S-5) : `model` devient le repli des `count` features bloquées par `provider`. */
   | { kind: "quota"; provider: string; model: string; count: number };
 
-
 /** Le libellé du devenir d'un worktree, tel qu'il s'annonce dans l'aperçu. */
 export function fateLabel(fate: WorktreeFate): string {
   return fate === "keep" ? "gardé" : fate === "archive" ? "archivé" : "supprimé";
 }
-
 
 /** L'état d'une feature dans les mots du panneau (S-7, S-10) : jamais un état inventé. */
 export function featureStateLabel(lot: Lot | null, feature: LotFeature): string {
@@ -323,12 +350,10 @@ export function featureStateLabel(lot: Lot | null, feature: LotFeature): string 
   return lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
 }
 
-
 /** Le libellé de la feature d'un geste : son slug suffit à nommer la cible. */
 export function gestureFeature(lot: Lot | null, slug: string): LotFeature | undefined {
   return lot?.features.find((feature) => feature.slug === slug);
 }
-
 
 /**
  * Le motif pour lequel l'aperçu d'un geste n'est PLUS valable (PANEL-9), ou `null`.
@@ -366,7 +391,6 @@ export function staleGestureNotice(gesture: PanelGesture, lot: Lot | null): stri
   if (holds) return null;
   return `${gesture.slug} a changé d'état (${lotStateLabel(feature.state)}) — aperçu fermé`;
 }
-
 
 /**
  * L'aperçu d'un geste de la liste (S-8) : le rang de tête (ce qui va se passer) et
@@ -440,7 +464,8 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
       // Les groupes RENSEIGNÉS s'annoncent EN DERNIER (S-4), dans l'ordre cadrage+revue
       // puis exécution : un groupe laissé au défaut OMP est omis, et les deux omis
       // rendent la tête d'aujourd'hui à l'octet près.
-      const given = (value: string | null | undefined): string | null => (value !== undefined && value !== null && value !== "" ? value : null);
+      const given = (value: string | null | undefined): string | null =>
+        value !== undefined && value !== null && value !== "" ? value : null;
       const reqSpecs = given(gesture.input.modelReqSpecs);
       const implReview = given(gesture.input.modelImplReview);
       const fallbackReq = given(gesture.input.fallbackReqSpecs);
@@ -479,7 +504,6 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
   }
 }
 
-
 /**
  * `cadrage+revue <A> · exécution <B>` — les DEUX groupes d'un état de modèles, un
  * groupe vide nommé `défaut OMP` (S-4). Même composition pour le rang d'une feature
@@ -497,7 +521,6 @@ export function modelSlotsLabel(
     `${MODEL_GROUP_LABELS.modelImplReview} ${slots.implReview ?? DEFAULT_MODEL_SHORT_LABEL}${repli(fallbacks.implReview)}`
   );
 }
-
 
 /**
  * L'aperçu d'une livraison depuis la VUE (S-6, S-7, S-8) : la réponse à une
@@ -543,11 +566,9 @@ export function replyPreview(input: {
   };
 }
 
-
 export const PANEL_REFRESH_MS = 1000;
 
 export const PANEL_MIN_ROWS = 8;
-
 
 /**
  * Le panneau occupe tout l'écran (S-4) : le budget est la hauteur du terminal,
@@ -561,7 +582,6 @@ export function panelBudget(terminalRows: number): number {
   return Math.max(PANEL_MIN_ROWS, Math.floor(rows));
 }
 
-
 /**
  * La hauteur du cadre, en rangs : celle du terminal, ou le repli de 24. C'est elle
  * que le COMPOSANT remplit (S-1) : le constructeur de rangs, lui, ne connaît que
@@ -571,7 +591,6 @@ export function panelHeight(tui: PanelTui): number {
   const rows = tui.terminal?.rows;
   return Number.isFinite(rows) && (rows as number) > 0 ? Math.floor(rows as number) : 24;
 }
-
 
 /** Rapport SGR de souris décodé (S-4) : `row`/`col` sont 0-based et indexent les rangs rendus. */
 export type SgrMouseEvent = {
@@ -584,10 +603,8 @@ export type SgrMouseEvent = {
   release: boolean;
 };
 
-
 /** `ESC [ < bouton ; colonne ; ligne M|m` — la seule forme émise par `pi-tui`. */
 export const SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
-
 
 /**
  * Décodage LOCAL d'un rapport de souris (## Documentation §1) : le dépôt interdit
@@ -614,13 +631,11 @@ export function parseSgrMouse(data: string): SgrMouseEvent | null {
   };
 }
 
-
 export function clampSelection(selection: number, count: number): number {
   if (count <= 0) return -1;
   if (!Number.isFinite(selection)) return 0;
   return Math.min(Math.max(Math.trunc(selection), 0), count - 1);
 }
-
 
 /** Déplacement borné, sans bouclage : on ne sort pas de la liste. */
 export function moveSelection(selection: number, count: number, delta: number): number {
@@ -629,7 +644,6 @@ export function moveSelection(selection: number, count: number, delta: number): 
   const current = selection < 0 ? -1 : clampSelection(selection, count);
   return clampSelection(current + delta, count);
 }
-
 
 /**
  * Modèle du panneau : lecture du magasin, réconciliation des propriétaires morts,
@@ -689,7 +703,10 @@ export function readPanelModel(input: {
   // Les features bloquées par un quota dont une session ouverte porte l'escalade
   // n'apparaissent PAS ici : elles sont décidées dans cette session (S-5).
   const quota: QuotaRow[] = lot
-    ? quotaGroupsOf(lot, (feature) => relayed[feature.slug] !== true).map((group) => ({ ...group, kind: "quota" as const }))
+    ? quotaGroupsOf(lot, (feature) => relayed[feature.slug] !== true).map((group) => ({
+        ...group,
+        kind: "quota" as const,
+      }))
     : [];
   const count = quota.length + features.length + running.length + snapshot.history.length;
   return {
@@ -709,7 +726,6 @@ export function readPanelModel(input: {
   };
 }
 
-
 // --- le rang sélectionnable : sa session, son cwd, la vivacité de son écrivain --
 
 /** Le rang d'un groupe de quota (S-5) : un fournisseur épuisé et les features qu'il bloque. */
@@ -718,30 +734,25 @@ export type QuotaRow = QuotaGroup & { kind: "quota" };
 /** Un rang SÉLECTIONNABLE du panneau : un groupe de quota, une feature du lot, ou une entrée du magasin. */
 export type PanelRowRef = QuotaRow | LotFeature | RunningEntry | HistoryEntry;
 
-
 /** Un rang de groupe de quota se reconnaît à son `kind` ; aucune autre forme n'en porte. */
 export function isQuotaRow(row: PanelRowRef): row is QuotaRow {
   return "kind" in row && row.kind === "quota";
 }
-
 
 /** Une feature du lot se reconnaît à son worktree ; une entrée du magasin a un `cwd`. */
 export function isLotFeature(row: PanelRowRef): row is LotFeature {
   return "worktree" in row;
 }
 
-
 /** Les rangs de groupe de quota (S-5) : en TÊTE de l'index de sélection, avant les features. */
 export function quotaRowCount(model: PanelModel): number {
   return model.quota?.length ?? 0;
 }
 
-
 /** Le nombre de rangs sélectionnables : features du lot, puis entrées non appariées, puis historique. */
 export function panelRowCount(model: PanelModel): number {
   return quotaRowCount(model) + (model.lot?.features.length ?? 0) + model.running.length + model.history.length;
 }
-
 
 /** Le rang sélectionnable d'index `selection`, dans l'ordre de la liste. Pur, sans allocation. */
 export function panelRowAt(model: PanelModel, selection: number): PanelRowRef | undefined {
@@ -755,7 +766,6 @@ export function panelRowAt(model: PanelModel, selection: number): PanelRowRef | 
   if (index < model.running.length) return model.running[index];
   return model.history[index - model.running.length];
 }
-
 
 /**
  * La CLÉ STABLE d'un rang (PANEL-3) : son identité, pas sa position. La liste est
@@ -771,13 +781,11 @@ export function panelRowKey(row: PanelRowRef): string {
   return "finalState" in row ? `hist:${row.id}` : `run:${row.id}`;
 }
 
-
 /** La clé du rang SÉLECTIONNÉ, ou `null` (sélection vide). C'est elle qu'on mémorise. */
 export function panelSelectionKey(model: PanelModel): string | null {
   const row = panelRowAt(model, model.selection);
   return row ? panelRowKey(row) : null;
 }
-
 
 /**
  * L'index du rang qui porte cette CLÉ, dans le modèle FRAIS : `fallback` (borné)
@@ -795,14 +803,12 @@ export function panelIndexForKey(model: PanelModel, key: string | null | undefin
   return clampSelection(fallback, count);
 }
 
-
 /** Le cwd d'un rang : le worktree de la feature, le cwd de l'entrée. `null` si indéterminé. */
 export function rowCwd(row: PanelRowRef): string | null {
   if (isQuotaRow(row)) return null;
   if (!isLotFeature(row)) return asStringOrNull(row.cwd);
   return row.worktree === "" ? null : row.worktree;
 }
-
 
 /**
  * La session COURANTE d'un rang, quelle que soit sa section (S-1) : celle du run
@@ -814,7 +820,6 @@ export function rowSessionFile(model: PanelModel, row: PanelRowRef): string | nu
   if (!isLotFeature(row)) return asStringOrNull(row.sessionFile);
   return asStringOrNull(model.live[row.slug]?.sessionFile) ?? asStringOrNull(row.sessionFile);
 }
-
 
 /**
  * Le pid du process qui écrit DÉJÀ la session de ce rang, ou `null` (S-1) : c'est
@@ -839,12 +844,10 @@ export function liveWriterPid(model: PanelModel, row: PanelRowRef): number | nul
   return null;
 }
 
-
 /** Un run VIVANT écrit-il la session de ce rang ? C'est la question des deux gardes de `o`. */
 export function hasLiveWriter(model: PanelModel, row: PanelRowRef): boolean {
   return liveWriterPid(model, row) !== null;
 }
-
 
 /**
  * Le libellé d'un rang, tel que le panneau l'écrit : la ligne du lot, ou celle de
@@ -855,18 +858,15 @@ export function rowLabel(row: PanelRowRef): string {
   return isLotFeature(row) ? lotFeatureLabel(row) : row.label;
 }
 
-
 /** Le rang d'un groupe de quota (S-5) : le fournisseur, l'échéance la plus proche, le nombre de features bloquées. */
 export function quotaRowLabel(group: QuotaGroup): string {
   return `quota ${group.provider} épuisé ${quotaDeadlineLabel(group.until, group.announced)} · ${group.slugs.length} feature(s) bloquée(s)`;
 }
 
-
 /** Le maillon d'un rang : celui du run apparié quand il y en a un, sinon le sien. */
 export function rowPhase(model: PanelModel, row: Exclude<PanelRowRef, QuotaRow>): PipelinePhase {
   return isLotFeature(row) ? (model.live[row.slug]?.phase ?? row.phase) : row.phase;
 }
-
 
 /**
  * L'état d'un run VIVANT dans les mots du panneau (PANEL-6) : une question `ask`
@@ -877,7 +877,6 @@ export function liveStateLabel(live: Pick<RunningEntry, "state" | "pendingAsk">)
   if (live.pendingAsk) return "attend réponse";
   return live.state === "waiting" ? "attend" : "tourne";
 }
-
 
 /**
  * L'état d'un rang, dans les mots du panneau (S-1, S-9) : jamais un état inventé.
@@ -899,7 +898,6 @@ export function rowStateLabel(model: PanelModel, row: PanelRowRef): string {
   return liveStateLabel(row);
 }
 
-
 /** La notice d'un rang sans session (S-2) : le texte existant, par section. */
 export function noSessionNotice(row: PanelRowRef): string {
   return isLotFeature(row)
@@ -907,14 +905,12 @@ export function noSessionNotice(row: PanelRowRef): string {
     : "session introuvable — entrée non reprenable";
 }
 
-
 // --- la section « Lot » du panneau ------------------------------------------
 
 /** Les dépendances d'une feature qui ne sont pas TERMINÉES, dans l'ordre déclaré. */
 export function pendingDeps(lot: Lot, feature: LotFeature): string[] {
   return feature.deps.filter((dep) => lotFeature(lot, dep)?.state !== "done");
 }
-
 
 /**
  * Une feature que `l lancer` démarre (PANEL-8) : une feature `pending` que ses
@@ -927,7 +923,6 @@ export function isLaunchable(lot: Lot, feature: LotFeature, live?: RunningEntry 
   return feature.state === "running" && !live;
 }
 
-
 /**
  * `<slug> ← deps` : la ligne d'une feature dit de quoi elle dépend — et, quand des
  * messages attendent leur prochain run, combien (S-5/S-7) : la file se voit dans
@@ -939,7 +934,10 @@ export function lotFeatureLabel(feature: LotFeature): string {
   // rien du tout quand `featureModelSlots` est `null`, soit le libellé d'aujourd'hui
   // à l'octet près.
   // Le segment s'affiche dès qu'un modèle OU un repli existe (S-1).
-  const fallbacks = { reqSpecs: featureFallbackForPhase(feature, "req"), implReview: featureFallbackForPhase(feature, "impl") };
+  const fallbacks = {
+    reqSpecs: featureFallbackForPhase(feature, "req"),
+    implReview: featureFallbackForPhase(feature, "impl"),
+  };
   const slots =
     featureModelSlots(feature) ??
     (fallbacks.reqSpecs !== null || fallbacks.implReview !== null ? { reqSpecs: null, implReview: null } : null);
@@ -948,7 +946,6 @@ export function lotFeatureLabel(feature: LotFeature): string {
   if (queued === 0) return withModel;
   return `${withModel} · ${queued} message${queued > 1 ? "s" : ""} en attente`;
 }
-
 
 /**
  * Le TOUR de la boucle `/review` ⇄ `/impl --fix` (PANEL-5), quand il y a quelque
@@ -967,7 +964,6 @@ export function reviewLoopLabel(lot: Lot, feature: LotFeature): string | null {
   return null;
 }
 
-
 /**
  * Le rang de la DERNIÈRE REVUE (PANEL-5) : le verdict BLOQUANT et son compte, tels
  * que le pilote les a posés. C'est ce qui rend la boucle lisible AVANT son
@@ -979,7 +975,6 @@ export function reviewVerdictRow(feature: LotFeature): string | null {
   return `dernière revue : ${count} bloquant${count > 1 ? "s" : ""}`;
 }
 
-
 /** Le rang de l'URL de PR d'une feature livrée (PANEL-7) : le README la promet. */
 export function prRow(feature: LotFeature): string | null {
   if (feature.state !== "done") return null;
@@ -987,14 +982,20 @@ export function prRow(feature: LotFeature): string | null {
   return url === null ? null : `PR : ${url}`;
 }
 
-
 /** Le pic de contexte (tokens) au-delà duquel un run est signalé (S-12, Doc-4). */
 export const CONTEXT_PEAK_LIMIT = 120000;
 
 /** Le marqueur textuel d'un dépassement : porté par le texte, pas seulement par le ton. */
 const CONTEXT_PEAK_MARK = " ⚠";
 
-const CONTEXT_PEAK_STEPS: ReadonlyArray<LotRunRecord["step"]> = ["req", "specs", "impl", "review", "release", "arbitre"];
+const CONTEXT_PEAK_STEPS: ReadonlyArray<LotRunRecord["step"]> = [
+  "req",
+  "specs",
+  "impl",
+  "review",
+  "release",
+  "arbitre",
+];
 
 /** Un pic : `<n>` sous 1000, sinon `<n/1000 arrondi>k` ; `—` sans mesure ; ` ⚠` au-delà de la limite. */
 function peakLabel(peak: number | null): string {
@@ -1055,7 +1056,6 @@ export function arbiterRelaunchRow(feature: LotFeature): string | null {
   return `relancé par l'arbitre (${relaunches[relaunches.last]}/${ARBITER_RELAUNCH_MAX})`;
 }
 
-
 /** Le maillon d'un rang : `/impl <id> (<i>/<N>)` pendant l'impl par lot (S-13), `/<phase>` sinon. */
 function phaseLabel(feature: LotFeature, phase: PipelinePhase): string {
   const lots = feature.implLots;
@@ -1063,7 +1063,6 @@ function phaseLabel(feature: LotFeature, phase: PipelinePhase): string {
   if (phase !== "impl" || lots === undefined || rank === undefined || lots[rank] === undefined) return `/${phase}`;
   return `/impl ${lots[rank]} (${rank + 1}/${lots.length})`;
 }
-
 
 /** La colonne de droite : maillon, état (le jalon nommé quand il y en a un), temps. */
 export function lotFeatureRight(lot: Lot, feature: LotFeature, now: number): string {
@@ -1074,18 +1073,21 @@ export function lotFeatureRight(lot: Lot, feature: LotFeature, now: number): str
   return parts.join(" · ");
 }
 
-
 /**
  * La colonne de droite d'une ENTRÉE en cours : même format que celle d'un rang de
  * lot, pour qu'une feature appariée à son run ne change pas de forme (S-1).
  */
 export function entryRight(
-  entry: { phase: PipelinePhase; state: PipelineRunState; phaseStartedAt: number; pendingAsk?: RunningEntry["pendingAsk"] },
+  entry: {
+    phase: PipelinePhase;
+    state: PipelineRunState;
+    phaseStartedAt: number;
+    pendingAsk?: RunningEntry["pendingAsk"];
+  },
   now: number,
 ): string {
   return `/${entry.phase} · ${liveStateLabel(entry)} · ${elapsedLabel(now - entry.phaseStartedAt)}`;
 }
-
 
 /**
  * La colonne de droite d'une feature APPARIÉE à son run (S-9) : le jalon de la
@@ -1097,11 +1099,14 @@ export function entryRight(
 export function pairedRight(lot: Lot, feature: LotFeature, live: RunningEntry, now: number): string {
   const state = lotWaitLabel(feature.waitKind) ?? liveStateLabel(live);
   const loop = reviewLoopLabel(lot, feature);
-  const parts = [phaseLabel(feature, live.phase), state, elapsedLabel(now - Math.min(feature.sinceAt, live.phaseStartedAt))];
+  const parts = [
+    phaseLabel(feature, live.phase),
+    state,
+    elapsedLabel(now - Math.min(feature.sinceAt, live.phaseStartedAt)),
+  ];
   if (loop !== null) parts.push(loop);
   return parts.join(" · ");
 }
-
 
 export function lotStateTone(state: LotFeatureState): PanelTone {
   switch (state) {
@@ -1118,7 +1123,6 @@ export function lotStateTone(state: LotFeatureState): PanelTone {
       return "dim";
   }
 }
-
 
 /**
  * Le titre de la section du lot (S-10) : le dépôt, le nombre de features, puis la
@@ -1144,7 +1148,6 @@ export function lotSectionTitle(lot: Lot, driver?: PanelDriver | null): string {
   );
   return parts.join(" · ");
 }
-
 
 /**
  * Le CONTENU et l'AIDE d'un mode de saisie (S-2) : `content` est le contenu DÉJÀ
@@ -1172,7 +1175,14 @@ export function lotModeText(
   }
   if (mode.kind === "quotaModel") {
     return modelListRows(
-      { title: `Repli pour ${mode.provider}`, noun: "Repli", choices: mode.choices, sel: mode.sel, query: mode.query, last: true },
+      {
+        title: `Repli pour ${mode.provider}`,
+        noun: "Repli",
+        choices: mode.choices,
+        sel: mode.sel,
+        query: mode.query,
+        last: true,
+      },
       innerW,
       glyphs,
     );
@@ -1196,7 +1206,6 @@ export function lotModeText(
   return { content, focus: content.length - 1, help: [`Entrée ${next} · Échap annuler`] };
 }
 
-
 /**
  * Le CONTENU d'une étape de liste de modèle (S-3, S-4), ajout comme édition :
  * l'en-tête `Modèle <groupe>` (le filtre en cours d'écriture), puis UNE ligne par
@@ -1208,12 +1217,8 @@ export function lotModeText(
 /** Ce que `modelListRows` rend : un titre, son nom de choix, la liste AFFICHABLE, et si l'étape ferme le flux. */
 type ModelListView = { title: string; noun: "Modèle" | "Repli"; last: boolean } & ModelListState;
 
-
 /** La vue d'une étape de liste d'un ajout ou d'une édition : la liste d'un repli exclut le principal choisi (S-1). */
-function stepListMode(
-  step: AddModelStep,
-  mode: ModelListState & { draft: ModelStepDraft },
-): ModelListView {
+function stepListMode(step: AddModelStep, mode: ModelListState & { draft: ModelStepDraft }): ModelListView {
   const noun = isFallbackStep(step) ? "Repli" : "Modèle";
   return {
     title: `${noun} ${MODEL_GROUP_LABELS[groupOfStep(step)]}`,
@@ -1224,7 +1229,6 @@ function stepListMode(
     last: step === "fallbackImplReview",
   };
 }
-
 
 function modelListRows(
   mode: ModelListView,
@@ -1263,7 +1267,6 @@ function modelListRows(
   };
 }
 
-
 /**
  * Les rangs de la RÉGION DE SAISIE de la liste (S-2) : le contenu du mode courant,
  * fenêtré et ancré sur son curseur, puis ses lignes d'aide. Ce sont des rangs de
@@ -1284,7 +1287,6 @@ export function lotModeRows(
   for (const line of parts.help) rows.push(...serviceRow(line, "dim", innerW));
   return rows;
 }
-
 
 /**
  * Les touches qui s'appliquent à la ligne sélectionnée, dans l'ordre du pied. Ce
@@ -1324,7 +1326,6 @@ export function lotFooterActions(
   return actions.length > 0 ? actions.join(" · ") : "aucune action";
 }
 
-
 /**
  * La seconde ligne du pied : ce qui s'applique à la LIGNE SÉLECTIONNÉE, quelle
  * qu'elle soit. Un rang de lot passe par `lotFooterActions` ; une entrée
@@ -1355,7 +1356,6 @@ export function panelFooterActions(model: PanelModel, runningCount: number): str
   return base === "aucune action" ? "o rejoindre" : `${base} · o rejoindre`;
 }
 
-
 /**
  * Le contenu d'un rang de pipeline (S-1, S-10) : `<label>` à gauche, `<droite>`
  * aligné à droite, curseur de sélection en tête. Le REPLI n'est pas fait ici —
@@ -1368,7 +1368,13 @@ export function panelFooterActions(model: PanelModel, runningCount: number): str
  * sélection compris) — l'état et le temps ne sont jamais coupés en deux, et les
  * deux rangs portent la même cible de clic et le même surlignage (S-10).
  */
-export function entryContent(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string[] {
+export function entryContent(
+  label: string,
+  right: string,
+  selected: boolean,
+  glyphs: PanelGlyphs,
+  innerW: number,
+): string[] {
   const prefix = selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
   if (right === "") return [prefix + label];
   const room = Math.max(1, innerW - displayWidth(prefix));
@@ -1376,7 +1382,6 @@ export function entryContent(label: string, right: string, selected: boolean, gl
   const gap = Math.max(1, room - displayWidth(label) - displayWidth(right));
   return [`${prefix}${label}${" ".repeat(gap)}${right}`];
 }
-
 
 /** Le rang de notice, unique, compose l'illisible et le message d'action. */
 export function noticeText(model: PanelModel): string | null {
@@ -1388,7 +1393,6 @@ export function noticeText(model: PanelModel): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-
 /**
  * Une SECTION de la liste — le lot, les pipelines hors lot, l'historique : ses
  * entrées (une par rang sélectionnable, chacune avec ses rangs de service), son
@@ -1398,13 +1402,10 @@ export function noticeText(model: PanelModel): string | null {
  */
 type Section = { entries: PanelRow[][]; sel: number; name: string; room: number; plan: Plan };
 
-
 /** La fenêtre d'une section : les entrées montrées, et les marqueurs qui se paient. */
 type Plan = { start: number; end: number; above: boolean; below: boolean };
 
-
 const EMPTY_PLAN: Plan = { start: 0, end: 0, above: false, below: false };
-
 
 /**
  * Tous les rangs du panneau, DANS L'ORDRE : règle d'ouverture, titre, section du
@@ -1435,7 +1436,14 @@ const EMPTY_PLAN: Plan = { start: 0, end: 0, above: false, below: false };
  */
 export function buildPanelRows(
   model: PanelModel,
-  opts: { width: number; budget: number; glyphs: PanelGlyphs; now: number; canDrive?: boolean; servicePid?: number | null },
+  opts: {
+    width: number;
+    budget: number;
+    glyphs: PanelGlyphs;
+    now: number;
+    canDrive?: boolean;
+    servicePid?: number | null;
+  },
 ): PanelRow[] {
   const width = Math.max(1, Math.floor(opts.width));
   const glyphs = opts.glyphs;
@@ -1480,7 +1488,8 @@ export function buildPanelRows(
   // peut réellement conduire le lot : un pilote injecté (`canDrive`), et personne
   // d'autre à la barre (PANEL-4). `l` ne s'annonce pas non plus quand il n'y a
   // rien à lancer (PANEL-8) — son aperçu le disait déjà.
-  const launchable = lot !== null && (lot.status === "draft" || lot.features.some((f) => isLaunchable(lot, f, model.live[f.slug])));
+  const launchable =
+    lot !== null && (lot.status === "draft" || lot.features.some((f) => isLaunchable(lot, f, model.live[f.slug])));
   const footTop = driveable
     ? `a ajouter · ${launchable ? "l lancer · " : ""}Entrée session`
     : `↑↓ naviguer · Entrée session${opts.canDrive === true && lot === null ? " · a ajouter" : ""}`;
@@ -1535,18 +1544,16 @@ export function buildPanelRows(
         // son ton (S-1) : c'est le run qui travaille, c'est lui qui se lit.
         const live = model.live[feature.slug];
         const right = live ? pairedRight(lot, feature, live, opts.now) : lotFeatureRight(lot, feature, opts.now);
-        const tone: PanelTone = live
-          ? live.state === "waiting"
-            ? "warning"
-            : "success"
-          : lotStateTone(feature.state);
+        const tone: PanelTone = live ? (live.state === "waiting" ? "warning" : "success") : lotStateTone(feature.state);
         const selected = model.selection === index;
-        const entry: PanelRow[] = entryContent(lotFeatureLabel(feature), right, selected, glyphs, innerW).map((text) => ({
-          text,
-          tone,
-          target: index,
-          selected,
-        }));
+        const entry: PanelRow[] = entryContent(lotFeatureLabel(feature), right, selected, glyphs, innerW).map(
+          (text) => ({
+            text,
+            tone,
+            target: index,
+            selected,
+          }),
+        );
         // Ce que la ligne CACHE (PANEL-5, PANEL-7, S-9) s'ajoute APRÈS elle, dans la
         // même entrée, avec la même cible de clic et le même surlignage : le verdict
         // de la dernière revue, la raison d'arrêt d'une feature bloquée ou échouée,
@@ -1577,7 +1584,12 @@ export function buildPanelRows(
         if (pr !== null) entry.push(...serviceRow(pr, "dim", innerW, { target: index, selected }));
         const peaks = contextPeakLine(feature.runs);
         if (peaks !== null) {
-          entry.push(...serviceRow(peaks, peaks.includes(CONTEXT_PEAK_MARK) ? "warning" : "dim", innerW, { target: index, selected }));
+          entry.push(
+            ...serviceRow(peaks, peaks.includes(CONTEXT_PEAK_MARK) ? "warning" : "dim", innerW, {
+              target: index,
+              selected,
+            }),
+          );
         }
         lotEntries.push(entry);
       });
@@ -1675,7 +1687,13 @@ export function buildPanelRows(
   // est la place, en LIGNES, que chacune paie au budget, et `plan` la fenêtre
   // qu'elle en tire.
   const sections: [Section, Section, Section] = [
-    { entries: lotEntries, sel: sectionSelection(model.selection, lotOffset, features), name: "le lot", room: 0, plan: EMPTY_PLAN },
+    {
+      entries: lotEntries,
+      sel: sectionSelection(model.selection, lotOffset, features),
+      name: "le lot",
+      room: 0,
+      plan: EMPTY_PLAN,
+    },
     {
       entries: runningEntries,
       sel: sectionSelection(model.selection - features, 0, runningCount),

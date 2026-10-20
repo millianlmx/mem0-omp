@@ -93,17 +93,9 @@ test("verdict-de-revue-robuste/AC-8 : non-régression — recommandations exclue
   const withRecos = revue("- BLOQUANTS : aucun", "- RECOMMANDATIONS :", "  - a", "  - b");
   assert.deepEqual(read(withRecos), ["clean", 0]);
 
-  const twoReviews = [
-    "## Revue",
-    "",
-    "- BLOQUANTS : aucun",
-    "",
-    "## Revue",
-    "",
-    "- BLOQUANTS :",
-    "1. x",
-    "",
-  ].join("\n");
+  const twoReviews = ["## Revue", "", "- BLOQUANTS : aucun", "", "## Revue", "", "- BLOQUANTS :", "1. x", ""].join(
+    "\n",
+  );
   assert.deepEqual(read(twoReviews), ["blockers", 1]);
 
   assert.deepEqual(read(revue("- STATUT : APPROUVÉ", "- RECOMMANDATIONS : x")), ["unreadable", 0]);
@@ -282,7 +274,11 @@ test("verdict-de-revue-robuste/AC-13 : un /review qui réécrit le contrat sans 
   await flush();
   assert.equal(runs.length, 1);
   assert.equal(runs[0]!.phase, "review");
-  assert.deepEqual(current(stateDir, repoRoot, "alpha").launchSections, ["Besoins", "Critères d'acceptation", "Spécifications"]);
+  assert.deepEqual(current(stateDir, repoRoot, "alpha").launchSections, [
+    "Besoins",
+    "Critères d'acceptation",
+    "Spécifications",
+  ]);
   // L'agent de revue RÉÉCRIT tout le fichier : seule `## Revue` survit.
   writeContract(worktree, "## Revue\n\n- BLOQUANTS : aucun\n");
   gate.shift()!(OK);
@@ -348,7 +344,9 @@ test("verdict-de-revue-robuste/AC-15 : la garde laisse passer /req qui crée ses
     writeContract(worktree, FULL);
     const { runner, runs, gate } = mkRunner();
     const { controller, stateDir } = mkCtl(repoRoot, runner);
-    seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
+    seedLot(stateDir, repoRoot, [
+      feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
+    ]);
 
     await controller.tick();
     await flush();

@@ -70,7 +70,13 @@ function scriptedHost(script: (prompt: string) => Turn) {
             toolResults.push(recorded.text);
             if (!recorded.isError) break;
           }
-          messages.push({ role: "assistant", provider: "prov", model: "p", stopReason: "stop", content: [{ type: "text", text: "décidé" }] });
+          messages.push({
+            role: "assistant",
+            provider: "prov",
+            model: "p",
+            stopReason: "stop",
+            content: [{ type: "text", text: "décidé" }],
+          });
           return true;
         },
         waitForIdle: async () => {},
@@ -129,7 +135,11 @@ function world(script: (prompt: string) => Turn) {
     assert.ok(done(), what);
   };
   const add = async (...slugs: string[]) => {
-    for (const slug of slugs) assert.equal(await controller.add({ name: slug, description: `Faire ${slug}.`, deps: [], auditSession: CTX }), null);
+    for (const slug of slugs)
+      assert.equal(
+        await controller.add({ name: slug, description: `Faire ${slug}.`, deps: [], auditSession: CTX }),
+        null,
+      );
     await controller.launch();
     await until(() => slugs.every((slug) => gates.has(slug)), "chaque /req est en vol");
     writeBrief(stateDir, CTX, `## But\n${FORMAT_FACT}\n`);
@@ -143,11 +153,19 @@ function world(script: (prompt: string) => Turn) {
   return { controller, read, feature, until, add, askInText, arb, notices, toasts, repoRoot, repoKey, stateDir };
 }
 
-const answer = (text: string, citation: string): ArbiterDecision => ({ decision: "answer", answer: text, source: "contexte", citations: [citation], reason: "le brief le dit" });
+const answer = (text: string, citation: string): ArbiterDecision => ({
+  decision: "answer",
+  answer: text,
+  source: "contexte",
+  citations: [citation],
+  reason: "le brief le dit",
+});
 
 test("arbitre-jalons-et-visibilite : une décision refusée par le pilote revient à l'arbitre avec son motif ; corrigée dans le même tour, elle est appliquée sans escalade", async () => {
   const w = world((prompt) =>
-    prompt.includes("question : Quel format de sortie ?") ? { calls: [answer("YAML", "phrase inventée"), answer("YAML", FORMAT_FACT)] } : { calls: [] },
+    prompt.includes("question : Quel format de sortie ?")
+      ? { calls: [answer("YAML", "phrase inventée"), answer("YAML", FORMAT_FACT)] }
+      : { calls: [] },
   );
   await w.add("alpha");
   w.askInText("alpha", "Quel format de sortie ?");
@@ -164,14 +182,18 @@ test("arbitre-jalons-et-visibilite : une décision refusée par le pilote revien
   assert.ok(w.arb.toolResults[0]!.includes(`(essai 2/${ARBITER_RETRY_MAX + 1})`), w.arb.toolResults[0]);
   assert.equal(w.arb.toolResults[1], "décision enregistrée");
   const [entry] = journalOfContext(w.stateDir, w.repoKey, CTX);
-  assert.deepEqual([entry!.answer, entry!.source, entry!.justification?.citations], ["YAML", "contexte", [FORMAT_FACT]]);
+  assert.deepEqual(
+    [entry!.answer, entry!.source, entry!.justification?.citations],
+    ["YAML", "contexte", [FORMAT_FACT]],
+  );
   assert.equal(w.feature("alpha").escalation, undefined);
   assert.deepEqual(w.notices, [], "rien n'appelle l'utilisateur : l'arbitre a tranché");
 });
 
 test("arbitre-jalons-et-visibilite : refusée à chaque essai, ou laissée sans nouvel appel, la décision escalade avec le VRAI motif du pilote — jamais « arbitre sans décision »", async () => {
   const bad = answer("YAML", "phrase inventée");
-  const motive = "décision d'arbitre invalide : aucune justification vérifiée — citation absente du corpus « phrase inventée »";
+  const motive =
+    "décision d'arbitre invalide : aucune justification vérifiée — citation absente du corpus « phrase inventée »";
   for (const calls of [Array.from({ length: ARBITER_RETRY_MAX + 1 }, () => bad), [bad]]) {
     const w = world((prompt) => (prompt.includes("question : Quel format de sortie ?") ? { calls } : { calls: [] }));
     await w.add("alpha");
@@ -179,7 +201,10 @@ test("arbitre-jalons-et-visibilite : refusée à chaque essai, ou laissée sans 
     await w.until(() => w.feature("alpha").escalation !== undefined, "escaladée");
     assert.equal(w.feature("alpha").escalation!.reason, motive, `${calls.length} appel(s)`);
     assert.equal(w.arb.toolResults.length, calls.length);
-    assert.equal(w.arb.toolResults.at(-1), calls.length > ARBITER_RETRY_MAX ? "décision enregistrée" : w.arb.toolResults[0]);
+    assert.equal(
+      w.arb.toolResults.at(-1),
+      calls.length > ARBITER_RETRY_MAX ? "décision enregistrée" : w.arb.toolResults[0],
+    );
   }
   // L'outil seul : une escalade n'est jamais refusée, même quand tout le reste l'est.
   const capture: ArbiterCapture = { decision: null, check: () => "toujours refusé" };
@@ -190,8 +215,10 @@ test("arbitre-jalons-et-visibilite : refusée à chaque essai, ou laissée sans 
 test("arbitre-jalons-et-visibilite : une feature arbitrée est marquée « en file » dès sa mise en attente puis « décide » au départ de son tour, n'alerte personne pendant l'arbitrage, et n'alerte qu'à l'escalade, motif compris", async () => {
   const gate = Promise.withResolvers<void>();
   const w = world((prompt) => {
-    if (prompt.includes("question : Quel format de sortie ?")) return { gate: gate.promise, calls: [answer("YAML", FORMAT_FACT)] };
-    if (prompt.includes("question : Quelle couleur de logo ?")) return { calls: [{ decision: "escalate", reason: "identité visuelle : choix de produit" }] };
+    if (prompt.includes("question : Quel format de sortie ?"))
+      return { gate: gate.promise, calls: [answer("YAML", FORMAT_FACT)] };
+    if (prompt.includes("question : Quelle couleur de logo ?"))
+      return { calls: [{ decision: "escalate", reason: "identité visuelle : choix de produit" }] };
     return { calls: [] };
   });
   await w.add("alpha", "bravo");
@@ -203,7 +230,10 @@ test("arbitre-jalons-et-visibilite : une feature arbitrée est marquée « en fi
 
   // bravo attend derrière alpha dans la MÊME session de pilote : en file, pas « décide ».
   w.askInText("bravo", "Quelle couleur de logo ?");
-  await w.until(() => w.feature("bravo").state === "waiting" && w.feature("bravo").arbitration !== undefined, "bravo marqué");
+  await w.until(
+    () => w.feature("bravo").state === "waiting" && w.feature("bravo").arbitration !== undefined,
+    "bravo marqué",
+  );
   assert.equal(w.feature("bravo").arbitration!.status, "queued");
   assert.equal(w.feature("bravo").escalation, undefined);
   assert.deepEqual(w.notices, [], "aucune alerte « attend ta réponse » pendant l'arbitrage");
@@ -216,5 +246,9 @@ test("arbitre-jalons-et-visibilite : une feature arbitrée est marquée « en fi
     "motif de l'arbitre : identité visuelle : choix de produit\nQuelle couleur de logo ?";
   assert.deepEqual(w.notices, [alert], "la seule alerte : l'escalade, avec son motif");
   assert.deepEqual(w.toasts, [alert]);
-  assert.equal(journalOfContext(w.stateDir, w.repoKey, CTX)[0]!.answer, "YAML", "alpha tranché par l'arbitre, sans alerte");
+  assert.equal(
+    journalOfContext(w.stateDir, w.repoKey, CTX)[0]!.answer,
+    "YAML",
+    "alpha tranché par l'arbitre, sans alerte",
+  );
 });

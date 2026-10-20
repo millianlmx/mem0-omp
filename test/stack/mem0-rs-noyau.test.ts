@@ -167,7 +167,9 @@ function attendreEcartDeRang(r: Resultat, requete: string): void {
   assert.ok(r.sortie.includes(`rang ${requete} : attendu [`), r.sortie);
 }
 
-test("mem0-rs-noyau/AC-13 : une fixture de rang divergente fait échouer le contrat contre mem0-rs", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-rs-noyau/AC-13 : une fixture de rang divergente fait échouer le contrat contre mem0-rs", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`cargo et serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -220,7 +222,9 @@ const CIBLE_COPIES = path.join(
   "test-copies",
 );
 
-test("mem0-rs-noyau/AC-16 : un avertissement clippy ou un cargo test en échec fait échouer check.sh", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-rs-noyau/AC-16 : un avertissement clippy ou un cargo test en échec fait échouer check.sh", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`cargo à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -305,7 +309,9 @@ test("mem0-rs-noyau/AC-17 : sans cargo, check.sh saute la section Rust en local 
   const local = await check("");
   assert.equal(local.code, 0, local.sortie);
   assert.ok(
-    local.sortie.includes("\n  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)\n"),
+    local.sortie.includes(
+      "\n  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)\n",
+    ),
     local.sortie,
   );
   assert.ok(!/^ {2}[✓✗] /m.test(local.sortie), local.sortie);

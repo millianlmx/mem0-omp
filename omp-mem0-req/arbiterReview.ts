@@ -12,7 +12,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { GitResult, GitRunner } from "./git.ts";
 
-
 /** La borne du diff soumis à l'arbitre, en caractères. */
 export const ARBITER_DIFF_MAX_CHARS = 60_000;
 
@@ -35,11 +34,14 @@ export type ReviewEvidence = {
   sampledAcIds: string[];
 };
 
-
 function firstLine(text: string): string {
-  return text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
+  return (
+    text
+      .split("\n")
+      .find((line) => line.trim() !== "")
+      ?.trim() ?? ""
+  );
 }
-
 
 async function git(runGit: GitRunner, args: string[], cwd: string): Promise<GitResult> {
   try {
@@ -49,11 +51,9 @@ async function git(runGit: GitRunner, args: string[], cwd: string): Promise<GitR
   }
 }
 
-
 function failure(result: GitResult): string {
   return firstLine(result.stderr) || `code ${result.code}`;
 }
-
 
 /** Le contenu texte d'un fichier régulier du worktree (≤ 1 Mio, sans NUL), sinon `null`. */
 function readScannable(worktree: string, relative: string): string | null {
@@ -69,11 +69,9 @@ function readScannable(worktree: string, relative: string): string | null {
   }
 }
 
-
 function nulList(stdout: string): string[] {
   return stdout.split("\0").filter((name) => name !== "");
 }
-
 
 /** Le nombre de lignes : une fin `\n` ne compte pas de ligne vide en plus. */
 function lineCountOf(text: string): number {
@@ -82,19 +80,30 @@ function lineCountOf(text: string): number {
   return text.endsWith("\n") ? lines - 1 : lines;
 }
 
-
 /** Un fichier non suivi, rendu comme un ajout : sa ligne de stat et, s'il est lisible, son bloc. */
 function untrackedEntry(worktree: string, name: string): { stat: string; block: string | null } {
   const text = readScannable(worktree, name);
   if (text === null) return { stat: ` ${name} | (binaire ou > 1 Mio : contenu omis) (non suivi)`, block: null };
   const count = lineCountOf(text);
-  const body = count === 0 ? [] : text.replace(/\n$/, "").split("\n").map((line) => `+${line}`);
+  const body =
+    count === 0
+      ? []
+      : text
+          .replace(/\n$/, "")
+          .split("\n")
+          .map((line) => `+${line}`);
   return {
     stat: ` ${name} | ${count} + (non suivi)`,
-    block: [`diff --git a/${name} b/${name}`, "new file (non suivi)", "--- /dev/null", `+++ b/${name}`, `@@ -0,0 +1,${count} @@`, ...body].join("\n"),
+    block: [
+      `diff --git a/${name} b/${name}`,
+      "new file (non suivi)",
+      "--- /dev/null",
+      `+++ b/${name}`,
+      `@@ -0,0 +1,${count} @@`,
+      ...body,
+    ].join("\n"),
   };
 }
-
 
 /**
  * Les critères que l'arbitre doit attester : au plus `SAMPLED_AC_COUNT` ids de `acIds`,
@@ -108,7 +117,6 @@ export function sampleAcIds(acIds: readonly string[], seed: string): string[] {
   const second = (first + 1 + (digest.readUInt32BE(4) % (acIds.length - 1))) % acIds.length;
   return [Math.min(first, second), Math.max(first, second)].map((index) => acIds[index] as string);
 }
-
 
 /**
  * Le diff du worktree par rapport à HEAD (suivis et non suivis non ignorés), borné
@@ -145,14 +153,23 @@ export async function collectReviewEvidence(input: {
     statLines.push(unavailable(others));
   }
   const whole = `### git diff --stat\n${statLines.filter((line) => line !== "").join("\n")}\n\n### Changements\n${blocks.filter((block) => block !== "").join("\n")}`;
-  const diff = whole.length > maxChars ? `${whole.slice(0, maxChars)}\n(diff tronqué à ${maxChars} caractères sur ${whole.length})` : whole;
+  const diff =
+    whole.length > maxChars
+      ? `${whole.slice(0, maxChars)}\n(diff tronqué à ${maxChars} caractères sur ${whole.length})`
+      : whole;
   const sampledAcIds = sampleAcIds(acIds, whole);
 
   const changed = await git(runGit, ["diff", "-z", "--name-only", "HEAD"], worktree);
   const failed = changed.code !== 0 ? changed : others.code !== 0 ? others : null;
   if (failed !== null) return { diff, names: null, acFiles: null, searchError: failure(failed), sampledAcIds };
-  const names = [...new Set([...nulList(changed.stdout), ...nulList(others.stdout)])].filter((name) => !name.startsWith(".omp/")).sort();
-  const patterns = acIds.map((id) => ({ id, files: [] as string[], pattern: new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`) }));
+  const names = [...new Set([...nulList(changed.stdout), ...nulList(others.stdout)])]
+    .filter((name) => !name.startsWith(".omp/"))
+    .sort();
+  const patterns = acIds.map((id) => ({
+    id,
+    files: [] as string[],
+    pattern: new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`),
+  }));
   for (const name of names) {
     const text = readScannable(worktree, name);
     if (text === null) continue;
@@ -160,7 +177,6 @@ export async function collectReviewEvidence(input: {
   }
   return { diff, names, acFiles: patterns.map(({ id, files }) => ({ id, files })), searchError: null, sampledAcIds };
 }
-
 
 /** Le bloc d'évidence du prompt de l'arbitre (S-9). */
 export function renderReviewEvidence(evidence: ReviewEvidence): string {

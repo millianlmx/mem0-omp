@@ -55,8 +55,18 @@ interface Control {
 }
 
 const CONTROLS: Control[] = [
-  { name: "Tout afficher", file: HOME_VIEW, label: "HomeText.allPipelines", identifier: "IOSHomeAccessibility.allPipelines" },
-  { name: "Lire le contrat", file: HOME_VIEW, label: "ContractText.open", identifier: "IOSHomeAccessibility.attentionContract(card.id)" },
+  {
+    name: "Tout afficher",
+    file: HOME_VIEW,
+    label: "HomeText.allPipelines",
+    identifier: "IOSHomeAccessibility.allPipelines",
+  },
+  {
+    name: "Lire le contrat",
+    file: HOME_VIEW,
+    label: "ContractText.open",
+    identifier: "IOSHomeAccessibility.attentionContract(card.id)",
+  },
   // ios-finitions-titres-icones (état vide de Projet) fait de « Piloter un projet… »
   // le bouton plein de l'écran : ce style-là est le sien, tout autre reste interdit.
   {
@@ -69,7 +79,11 @@ const CONTROLS: Control[] = [
 ];
 
 /** Les formes courtes `Button("mot")` dont le libellé n'a aucun cadre. */
-const SHORT_FORMS = ["Button(HomeText.allPipelines)", "Button(ContractText.open)", "Button(ProjectViewText.startConduite"];
+const SHORT_FORMS = [
+  "Button(HomeText.allPipelines)",
+  "Button(ContractText.open)",
+  "Button(ProjectViewText.startConduite",
+];
 
 /**
  * L'expression d'un contrôle : du `Button` qui précède son `Text(<libellé>)` jusqu'à son
@@ -87,7 +101,7 @@ function expression(root: string, control: Control): string | null {
   return text.slice(start, end + needle.length);
 }
 
-const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Chaque contrôle est un `Button` dont le libellé porte le cadre minimal puis la forme de toucher. */
 function targetFaults(root: string): string[] {
@@ -95,14 +109,18 @@ function targetFaults(root: string): string[] {
   for (const control of CONTROLS) {
     const expr = expression(root, control);
     if (expr === null) {
-      faults.push(`${control.name} : le Button de libellé Text(${control.label}) suivi de son identifiant est introuvable dans ${control.file}`);
+      faults.push(
+        `${control.name} : le Button de libellé Text(${control.label}) suivi de son identifiant est introuvable dans ${control.file}`,
+      );
       continue;
     }
     const shape = new RegExp(
-      `Text\\(${escape(control.label)}\\)\\s*\\.frame\\(minWidth: IOSMetrics\\.minimumTarget, minHeight: IOSMetrics\\.minimumTarget\\)\\s*\\.contentShape\\(Rectangle\\(\\)\\)`,
+      `Text\\(${escapeRegExp(control.label)}\\)\\s*\\.frame\\(minWidth: IOSMetrics\\.minimumTarget, minHeight: IOSMetrics\\.minimumTarget\\)\\s*\\.contentShape\\(Rectangle\\(\\)\\)`,
     );
     if (!shape.test(expr)) {
-      faults.push(`${control.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) puis .contentShape(Rectangle())`);
+      faults.push(
+        `${control.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) puis .contentShape(Rectangle())`,
+      );
     }
   }
   for (const form of SHORT_FORMS) {
@@ -117,18 +135,20 @@ function targetFaults(root: string): string[] {
 function identifierFaults(root: string): string[] {
   const faults: string[] = [];
   const containers: Array<[string, string, string]> = [
-    [SECTION_VIEW, 'IOSSectionView.genericBody', '.accessibilityIdentifier("ios.screen." + section.rawValue)'],
+    [SECTION_VIEW, "IOSSectionView.genericBody", '.accessibilityIdentifier("ios.screen." + section.rawValue)'],
     [PROJECT_SCREEN, "IOSProjectScreen.body", ".accessibilityIdentifier(ProjectAccessibility.screen)"],
   ];
   for (const [file, name, id] of containers) {
-    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escape(id)}`);
+    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escapeRegExp(id)}`);
     if (!pattern.test(source(root, file))) {
       faults.push(`${name} : .accessibilityElement(children: .contain) doit précéder immédiatement ${id}`);
     }
   }
   for (const control of CONTROLS) {
     if (expression(root, control) === null) {
-      faults.push(`${control.name} : .accessibilityIdentifier(${control.identifier}) est absent ou détaché de son Button`);
+      faults.push(
+        `${control.name} : .accessibilityIdentifier(${control.identifier}) est absent ou détaché de son Button`,
+      );
     }
   }
   return faults;
@@ -151,7 +171,16 @@ function forbiddenFaults(root: string, forbidden: string[]): string[] {
   return faults;
 }
 
-const STYLE_TOKENS = [".buttonStyle(", ".buttonBorderShape(", ".background(", ".overlay(", ".border(", ".tint(", ".font(", ".foregroundStyle("];
+const STYLE_TOKENS = [
+  ".buttonStyle(",
+  ".buttonBorderShape(",
+  ".background(",
+  ".overlay(",
+  ".border(",
+  ".tint(",
+  ".font(",
+  ".foregroundStyle(",
+];
 const CAP_TOKENS = ["lineLimit", ".fixedSize(", ".dynamicTypeSize(", "maxHeight:"];
 
 const HOME_ALL_BLOCK = `                .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)`;
@@ -172,7 +201,12 @@ test("ios-cibles-tactiles-sous-44pt/AC-1 : « Tout afficher », « Lire le contr
   );
   assert.ok(targetFaults(short).length > 0, "la forme courte restaurée doit faire rougir la garde");
   const noShape = copyRepo("ios-cibles-tactiles-copie-");
-  plant(noShape, HOME_VIEW, "                        .contentShape(Rectangle())\n                    }\n                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract", "                    }\n                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract");
+  plant(
+    noShape,
+    HOME_VIEW,
+    "                        .contentShape(Rectangle())\n                    }\n                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract",
+    "                    }\n                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract",
+  );
   assert.ok(targetFaults(noShape).length > 0, "un libellé sans contentShape doit faire rougir la garde");
 });
 

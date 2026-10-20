@@ -5,12 +5,19 @@
 // sous `node --test`, donc `Bun` n'est jamais REQUIS à l'import — il est lu
 // paresseusement, derrière une déclaration locale (aucun type `Bun` n'existe,
 // `tsconfig.json` ne déclare que `node`).
-import { SERVICE_VERSION, newServiceToken, servicePort, serviceFilePath, removeService, serviceRunning, writeService } from "./serviceState.ts";
+import {
+  SERVICE_VERSION,
+  newServiceToken,
+  servicePort,
+  serviceFilePath,
+  removeService,
+  serviceRunning,
+  writeService,
+} from "./serviceState.ts";
 import type { ServiceRecord } from "./serviceState.ts";
 import { createServiceRequestHandler } from "./serviceHttp.ts";
 import type { ServiceApi } from "./serviceApi.ts";
 import { pipelineStateDir } from "./store.ts";
-
 
 /** Le client qu'une requête peut joindre pendant qu'elle est en vol (arrêt). */
 export type ServiceHandle = {
@@ -22,10 +29,7 @@ export type ServiceHandle = {
   stop: () => Promise<void>;
 };
 
-export type ServiceStartResult =
-  | { kind: "started"; handle: ServiceHandle }
-  | { kind: "already-running"; pid: number };
-
+export type ServiceStartResult = { kind: "started"; handle: ServiceHandle } | { kind: "already-running"; pid: number };
 
 /** La surface de `Bun` que l'hôte utilise, déclarée localement (Doc-1 §11). */
 type BunServerLike = {
@@ -46,7 +50,6 @@ type BunLike = {
   sleepSync?: (ms: number) => void;
 };
 
-
 /** `Bun` du process, ou une erreur NOMMÉE : le service n'existe que sous l'hôte. */
 export function bunRuntime(): BunLike {
   // `Bun` est un global de l'hôte que `types: ["node"]` ne déclare pas : la seule
@@ -62,7 +65,6 @@ export function bunRuntime(): BunLike {
   return bun as BunLike;
 }
 
-
 export type StartServiceDeps = {
   api: ServiceApi;
   stateDir?: string;
@@ -74,7 +76,6 @@ export type StartServiceDeps = {
   /** Appelé au premier signal d'arrêt, avant la fermeture du serveur. */
   onStop?: () => void | Promise<void>;
 };
-
 
 /**
  * Démarre le service : contrôle d'unicité, écoute sur `127.0.0.1`, publication de
@@ -98,7 +99,7 @@ export async function startService(deps: StartServiceDeps): Promise<ServiceStart
     api: deps.api,
     token,
     stopping: () => stopping,
-    onLongLived: req => {
+    onLongLived: (req) => {
       try {
         server?.timeout?.(req, 0);
       } catch {

@@ -351,7 +351,11 @@ test("shutdown/AC-5 : dans le service, une session qui se ferme ne reste pas ret
     markServiceProcess(false);
   }
 
-  assert.notEqual(runStateOf(ctx), before, "l'état de la session fermée est oublié : une lecture repart d'un état neuf");
+  assert.notEqual(
+    runStateOf(ctx),
+    before,
+    "l'état de la session fermée est oublié : une lecture repart d'un état neuf",
+  );
   assert.equal(stops, 1, "la pompe de la session fermée est arrêtée");
   assert.equal(runStateOf(undefined), runState, "l'état du PROCESS survit à ses sessions");
   assert.ok(fs.existsSync(relayFile), "le service garde ses relais : seul l'état de la session est oublié");

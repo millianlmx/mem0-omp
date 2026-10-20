@@ -8,7 +8,6 @@
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-
 /** Le champ `version` d'un package.json, ou `null` (absent, illisible, invalide, vide). Ne lève jamais. */
 export function readPackageVersion(file: string): string | null {
   try {
@@ -21,7 +20,6 @@ export function readPackageVersion(file: string): string | null {
   }
 }
 
-
 function loadedPluginVersion(): string | null {
   try {
     return readPackageVersion(fileURLToPath(new URL("./package.json", import.meta.url)));
@@ -29,7 +27,6 @@ function loadedPluginVersion(): string | null {
     return null;
   }
 }
-
 
 /** La version d'omp-mem0-req chargée par ce process, figée au chargement du module. */
 export const LOADED_PLUGIN_VERSION: string | null = loadedPluginVersion();

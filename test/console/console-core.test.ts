@@ -41,7 +41,14 @@ function runCheck(cwd: string, sections: string, env: Record<string, string> = {
   return spawnSync("bash", ["scripts/check.sh", `--sections=${sections}`], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", MEM0_OMP_SKIP_RUST: "1", ...env },
+    env: {
+      ...process.env,
+      MEM0_CHECK_DEPTH: String(DEPTH + 1),
+      MEM0_OMP_SKIP_SWIFT_APP: "1",
+      MEM0_OMP_SKIP_IOS: "1",
+      MEM0_OMP_SKIP_RUST: "1",
+      ...env,
+    },
     timeout: 900_000,
   });
 }
@@ -302,7 +309,11 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   const manifest = declaredTargets(pkg);
   const core = manifest.find((t) => t.name === "ConsoleCore");
   assert.ok(core !== undefined, "ConsoleCore n'est pas déclarée dans omp-console/Package.swift");
-  assert.equal(core.factory, "target", `ConsoleCore est déclarée par .${core.factory}( — cible régulière (bibliothèque) attendue`);
+  assert.equal(
+    core.factory,
+    "target",
+    `ConsoleCore est déclarée par .${core.factory}( — cible régulière (bibliothèque) attendue`,
+  );
 
   const declared = manifest.map((t) => t.name);
   assert.deepEqual(
@@ -325,11 +336,7 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   for (const [name, dependencies] of Object.entries(EXPECTED_DEPENDENCIES)) {
     const target = manifest.find((t) => t.name === name);
     assert.ok(target !== undefined, `${name} absente de omp-console/Package.swift`);
-    assert.deepEqual(
-      target.dependencies,
-      dependencies,
-      `${name} : dépendances attendues ${dependencies.join(", ")}`,
-    );
+    assert.deepEqual(target.dependencies, dependencies, `${name} : dépendances attendues ${dependencies.join(", ")}`);
   }
 
   // Preuve SwiftPM de D2 : la cible décrite est bien une bibliothèque sans
@@ -394,7 +401,8 @@ test("noyau-partage-console/AC-2 : les sources de ConsoleCore n'importent ni App
 
 test("noyau-partage-console/AC-3 : chaque symbole déplacé n'est plus déclaré que dans ConsoleCore", () => {
   for (const name of MOVED) {
-    const inCore = declaresType(CORE_SOURCES, name) || swiftFiles(CORE_SOURCES).some((f) => path.basename(f) === `${name}.swift`);
+    const inCore =
+      declaresType(CORE_SOURCES, name) || swiftFiles(CORE_SOURCES).some((f) => path.basename(f) === `${name}.swift`);
     assert.ok(inCore, `${name} n'est déclaré ni comme type ni comme fichier sous ${SWIFT_SOURCES}`);
     assert.ok(
       !declaresType(SHELL_SOURCES, name),
@@ -413,7 +421,9 @@ test("noyau-partage-console/AC-4 : ConsoleCore porte le socle de l'API distante 
   assert.ok(!declaresType(SHELL_SOURCES, "ConsoleAPI"), "ConsoleAPI est déclaré deux fois");
 
   // La version du protocole vit en UN point : un seul littéral dans tout le paquet.
-  const versions = swiftFiles(CORE_SOURCES).filter((file) => /\bprotocolVersion\b\s*(?::[^=]*)?=\s*\d/.test(code(file)));
+  const versions = swiftFiles(CORE_SOURCES).filter((file) =>
+    /\bprotocolVersion\b\s*(?::[^=]*)?=\s*\d/.test(code(file)),
+  );
   assert.equal(versions.length, 1, `protocolVersion déclaré ${versions.length} fois : ${versions.join(", ")}`);
 
   // `RpcDialogRequest` et `PendingRequest` ne sont pas des charges utiles de
@@ -435,7 +445,10 @@ test("noyau-partage-console/AC-4 : ConsoleCore porte le socle de l'API distante 
       assert.ok(!pattern.test(body), `${path.relative(ROOT, file)} porte ${label} : ConsoleCore n'est pas le serveur`);
     }
     for (const [, name] of body.matchAll(payloadType)) {
-      assert.ok(DOMAIN_TYPES[name!], `${path.relative(ROOT, file)} porte un type …Request/…Response (${name}) : ConsoleCore n'est pas le serveur`);
+      assert.ok(
+        DOMAIN_TYPES[name!],
+        `${path.relative(ROOT, file)} porte un type …Request/…Response (${name}) : ConsoleCore n'est pas le serveur`,
+      );
     }
   }
 });
@@ -468,10 +481,15 @@ test("noyau-partage-console/AC-8 : un test purement textuel confronte les cibles
   // Cible fantôme : déclarée au manifeste, absente du README ⇒ échec.
   const ghost = docOnlyCopy();
   const pkg = path.join(ghost, "omp-console", "Package.swift");
-  fs.writeFileSync(pkg, fs.readFileSync(pkg, "utf8").replace(
-    '.target(name: "ConsoleCore"',
-    '.target(name: "CibleFantome", path: "Sources/CibleFantome"),\n        .target(name: "ConsoleCore"',
-  ));
+  fs.writeFileSync(
+    pkg,
+    fs
+      .readFileSync(pkg, "utf8")
+      .replace(
+        '.target(name: "ConsoleCore"',
+        '.target(name: "CibleFantome", path: "Sources/CibleFantome"),\n        .target(name: "ConsoleCore"',
+      ),
+  );
   assert.deepEqual(undocumentedTargets(ghost), ["CibleFantome"]);
 
   // ConsoleCore retirée du README ⇒ échec.
@@ -509,7 +527,10 @@ test("noyau-partage-console/AC-10 : aucune garde nouvelle n'exige macOS ni un to
   const section = tail.split("── App Swift")[0].replace(/^if section_on [a-z-]+; then$/gm, "");
   assert.ok(!/\bswift\b/.test(stripComments(section)), "la garde de portabilité nomme swift");
   assert.ok(!/\buname\b/.test(stripComments(section)), "la garde de portabilité dépend de la plateforme");
-  assert.ok(head !== undefined && section.includes("python3"), "la garde de portabilité doit tourner sans toolchain Swift");
+  assert.ok(
+    head !== undefined && section.includes("python3"),
+    "la garde de portabilité doit tourner sans toolchain Swift",
+  );
 
   if (IN_COPY) {
     t.skip("copie jetable — la suite sans toolchain est vérifiée à la racine");
@@ -528,5 +549,8 @@ test("noyau-partage-console/AC-10 : aucune garde nouvelle n'exige macOS ni un to
   const out = output(run);
   assert.equal(run.status, 0, out);
   assert.ok(out.includes("✓ la cible partagée ConsoleCore n'importe ni AppKit ni UIKit"), out);
-  assert.ok(!fs.existsSync(log), `swift ne doit jamais être appelé : ${fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""}`);
+  assert.ok(
+    !fs.existsSync(log),
+    `swift ne doit jamais être appelé : ${fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""}`,
+  );
 });

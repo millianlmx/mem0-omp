@@ -93,16 +93,16 @@ function messageLine(id: string, text: string): string {
 /** Écrit un fichier de session (une ligne JSON par entrée, terminée par `\n`). */
 function sessionFile(dir: string, lines: string[]): string {
   const file = path.join(dir, "session.jsonl");
-  fs.writeFileSync(file, lines.map((line) => line + "\n").join(""));
+  fs.writeFileSync(file, lines.map((line) => `${line}\n`).join(""));
   return file;
 }
 
 function appendLines(file: string, lines: string[]): void {
-  fs.appendFileSync(file, lines.map((line) => line + "\n").join(""));
+  fs.appendFileSync(file, lines.map((line) => `${line}\n`).join(""));
 }
 
 function bytesOf(lines: string[]): number {
-  return lines.reduce((total, line) => total + Buffer.byteLength(line + "\n", "utf8"), 0);
+  return lines.reduce((total, line) => total + Buffer.byteLength(`${line}\n`, "utf8"), 0);
 }
 
 /** L'identifiant d'un message d'un gros fichier : longueur FIXE, donc lignes de taille égale. */
@@ -120,7 +120,7 @@ function bigFile(dir: string, count: number, pad: number): string {
 /** Le texte du dernier message rendu, ou `undefined` — jamais une assertion sur l'interne. */
 function lastMessageText(entries: SessionEntryLike[]): string | undefined {
   const last = entries[entries.length - 1];
-  if (!last || last.type !== "message") return undefined;
+  if (last?.type !== "message") return undefined;
   const content = last.message.content;
   if (!Array.isArray(content)) return undefined;
   const first = content[0] as { text?: unknown } | undefined;
@@ -141,7 +141,10 @@ test("une entrée ajoutée ne coûte que ses propres octets", () => {
   // et un ajout doit coûter ses propres octets, jamais la transcription entière.
   const file = bigFile(dir, 3000, 320);
   const size1 = fs.statSync(file).size;
-  assert.ok(size1 > 1024 * 1024, `fichier de départ trop petit pour que la mesure veuille dire quelque chose : ${size1}`);
+  assert.ok(
+    size1 > 1024 * 1024,
+    `fichier de départ trop petit pour que la mesure veuille dire quelque chose : ${size1}`,
+  );
 
   const stats1 = newStats();
   const first = readSessionTail(file, null, countingReader(stats1));
@@ -151,7 +154,11 @@ test("une entrée ajoutée ne coûte que ses propres octets", () => {
   assert.equal(first.truncated, true, "le début du fichier n'est pas chargé");
   assert.ok(first.entries.length > 0, "la première lecture doit rendre des entrées");
 
-  const added = [messageLine("n0", "b".repeat(250)), messageLine("n1", "b".repeat(250)), messageLine("n2", "b".repeat(250))];
+  const added = [
+    messageLine("n0", "b".repeat(250)),
+    messageLine("n1", "b".repeat(250)),
+    messageLine("n2", "b".repeat(250)),
+  ];
   const addedBytes = bytesOf(added);
   appendLines(file, added);
 
@@ -280,7 +287,7 @@ test("un fichier réécrit ou tronqué repart de zéro", () => {
   // `ino` et `size` n'y voient rien, seules les sondes d'identité le voient.
   const rewritten = [headerLine("s")];
   for (let i = 0; i < 30; i += 1) rewritten.push(messageLine(`m${i}`, "b".repeat(200)));
-  fs.writeFileSync(file, rewritten.map((line) => line + "\n").join(""));
+  fs.writeFileSync(file, rewritten.map((line) => `${line}\n`).join(""));
   assert.equal(fs.statSync(file).size, before, "la réécriture doit garder la taille du fichier");
 
   const again = readSessionTail(file, first.tail, countingReader(newStats()));
@@ -302,7 +309,7 @@ test("le début se charge à la demande, par blocs bornés", () => {
   const dir = tmpdir("tail-prepend-");
   const file = bigFile(dir, 12000, 320);
   const size = fs.statSync(file).size;
-  const messageBytes = Buffer.byteLength(messageLine(bigId(0), "x".repeat(320)) + "\n", "utf8");
+  const messageBytes = Buffer.byteLength(`${messageLine(bigId(0), "x".repeat(320))}\n`, "utf8");
 
   const first = readSessionTail(file, null, countingReader(newStats()));
   assert.ok(first.tail, "une première lecture réussie doit rendre un état");

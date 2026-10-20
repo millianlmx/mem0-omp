@@ -97,7 +97,13 @@ export function writeSession(file: string, cwd: string, entries: unknown[] = [])
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     JSON.stringify({ type: "title", v: 1, title: "session de test", updatedAt: 1 }),
-    JSON.stringify({ type: "session", version: 3, id: path.basename(file), timestamp: "2026-09-19T00:00:00.000Z", cwd }),
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: path.basename(file),
+      timestamp: "2026-09-19T00:00:00.000Z",
+      cwd,
+    }),
     ...entries.map((entry) => JSON.stringify(entry)),
   ];
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
@@ -120,7 +126,10 @@ export function userEntry(text: string, id = "u"): unknown {
   };
 }
 
-export function assistantEntry(text: string, calls: Array<{ name: string; arguments: Record<string, unknown> }> = []): unknown {
+export function assistantEntry(
+  text: string,
+  calls: Array<{ name: string; arguments: Record<string, unknown> }> = [],
+): unknown {
   return {
     type: "message",
     id: "a",
@@ -245,7 +254,10 @@ export function fakeKit() {
       this.#text = text;
     }
     render(width: number): readonly string[] {
-      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+      return frame(
+        this.#text.split("\n").map((line) => `▸ toi : ${line}`),
+        width,
+      );
     }
   }
   class FakeAssistant {

@@ -16,18 +16,18 @@ test("pickSessionStopNudge: déjà écrit en mémoire → null, quel que soit le
 
 test("pickSessionStopNudge: fichiers modifiés sans écriture → nudge mutation", () => {
   const msg = pickSessionStopNudge({ adds: 0, mutations: 3, substantiveTurns: 0 });
-  assert.ok(msg && msg.includes("3 fichier(s)"), "mentionne le nombre de fichiers");
+  assert.ok(msg?.includes("3 fichier(s)"), "mentionne le nombre de fichiers");
 });
 
 test("pickSessionStopNudge: la mutation prime sur la discussion", () => {
   const msg = pickSessionStopNudge({ adds: 0, mutations: 2, substantiveTurns: 9 });
-  assert.ok(msg && msg.includes("fichier(s)"));
+  assert.ok(typeof msg === "string" && msg.includes("fichier(s)"));
   assert.ok(!msg.includes("tour(s) substantiel"), "ne bascule pas sur le message discussion");
 });
 
 test("pickSessionStopNudge: discussion substantielle sans édition → nudge discussion", () => {
   const msg = pickSessionStopNudge({ adds: 0, mutations: 0, substantiveTurns: 4 });
-  assert.ok(msg && msg.includes("tour(s) substantiel"), "capture la session de pure discussion");
+  assert.ok(msg?.includes("tour(s) substantiel"), "capture la session de pure discussion");
 });
 
 test("pickSessionStopNudge: discussion sous le seuil (DISCUSSION_MIN_TURNS=4) → null", () => {

@@ -38,7 +38,10 @@ const swiftFilesIn = (dir: string) => (fs.existsSync(dir) ? swiftFiles(dir) : []
 
 /** Les sources de l'APP iOS (la cible compilée), commentaires retirés. */
 function appSources(root: string): { file: string; code: string }[] {
-  return swiftFilesIn(path.join(root, "omp-console", "ios", "OMPConsoleIOS")).map((file) => ({ file, code: code(file) }));
+  return swiftFilesIn(path.join(root, "omp-console", "ios", "OMPConsoleIOS")).map((file) => ({
+    file,
+    code: code(file),
+  }));
 }
 
 /** La source d'un fichier de l'app, ou la chaîne vide. */
@@ -136,7 +139,9 @@ function provisionalFaults(root: string): string[] {
   }
   const literals = stringLiterals(text).filter((literal) => HAS_LETTER.test(literal));
   if (literals.length !== Object.keys(PROVISIONAL).length) {
-    faults.push(`IOSText porte ${literals.length} littéraux (${Object.keys(PROVISIONAL).length} attendus) : le vocabulaire provisoire est clos`);
+    faults.push(
+      `IOSText porte ${literals.length} littéraux (${Object.keys(PROVISIONAL).length} attendus) : le vocabulaire provisoire est clos`,
+    );
   }
   const readme = path.join(root, "omp-console", "README.md");
   if (!fs.readFileSync(readme, "utf8").includes("-ios.state error")) {
@@ -166,14 +171,54 @@ function typographyFaults(root: string): string[] {
 type SectionWord = { message: string; constant: string; core: string; detail: string | null };
 
 const SECTION_WORDS: Record<string, SectionWord> = {
-  home: { message: "Lancez votre première feature", constant: "HomeText.firstRunTitle", core: "Home/HomeText.swift", detail: "HomeText.firstRunBody" },
-  kanban: { message: "Aucune pipeline pour l’instant.", constant: "KanbanText.noPipeline", core: "Kanban/KanbanText.swift", detail: null },
-  project: { message: "Aucun projet piloté.", constant: "ProjectViewText.emptyTitle", core: "Project/ProjectViewText.swift", detail: "ProjectViewText.emptyHelp" },
-  audit: { message: "Aucun audit.", constant: "AuditText.emptyTitle", core: "Audit/AuditText.swift", detail: "AuditText.emptyHelp" },
-  session: { message: "Aucune session", constant: "SessionConsoleText.noProjectTitle", core: "Session/SessionConsoleText.swift", detail: "SessionConsoleText.noProjectBody" },
-  sessions: { message: "Aucune session", constant: "SessionSelectorText.emptyTitle", core: "Viewer/SessionSelectorText.swift", detail: "SessionSelectorText.noRun" },
-  memory: { message: "Aucun projet ouvert", constant: "MemoryText.noProjectTitle", core: "Memory/MemoryText.swift", detail: null },
-  stats: { message: "Aucun projet", constant: "StatsPresentation.noProjectTitle", core: "Stats/StatsPresentation.swift", detail: "StatsPresentation.noProject" },
+  home: {
+    message: "Lancez votre première feature",
+    constant: "HomeText.firstRunTitle",
+    core: "Home/HomeText.swift",
+    detail: "HomeText.firstRunBody",
+  },
+  kanban: {
+    message: "Aucune pipeline pour l’instant.",
+    constant: "KanbanText.noPipeline",
+    core: "Kanban/KanbanText.swift",
+    detail: null,
+  },
+  project: {
+    message: "Aucun projet piloté.",
+    constant: "ProjectViewText.emptyTitle",
+    core: "Project/ProjectViewText.swift",
+    detail: "ProjectViewText.emptyHelp",
+  },
+  audit: {
+    message: "Aucun audit.",
+    constant: "AuditText.emptyTitle",
+    core: "Audit/AuditText.swift",
+    detail: "AuditText.emptyHelp",
+  },
+  session: {
+    message: "Aucune session",
+    constant: "SessionConsoleText.noProjectTitle",
+    core: "Session/SessionConsoleText.swift",
+    detail: "SessionConsoleText.noProjectBody",
+  },
+  sessions: {
+    message: "Aucune session",
+    constant: "SessionSelectorText.emptyTitle",
+    core: "Viewer/SessionSelectorText.swift",
+    detail: "SessionSelectorText.noRun",
+  },
+  memory: {
+    message: "Aucun projet ouvert",
+    constant: "MemoryText.noProjectTitle",
+    core: "Memory/MemoryText.swift",
+    detail: null,
+  },
+  stats: {
+    message: "Aucun projet",
+    constant: "StatsPresentation.noProjectTitle",
+    core: "Stats/StatsPresentation.swift",
+    detail: "StatsPresentation.noProject",
+  },
 };
 
 /** Les manques des huit écrans : contenu, mots partagés, composants employés. */
@@ -384,7 +429,10 @@ function recipeFaults(root: string): string[] {
       if (kind === "test" && !new RegExp(`func ${value}\\s*\\(`).test(funcs)) {
         faults.push(`[test: ${value}] : aucune fonction de ce nom dans les tests iOS`);
       }
-      if (kind === "capture" && !names.some((name) => shotPattern(value).test(name) || shotPattern(`${value}.png`).test(name))) {
+      if (
+        kind === "capture" &&
+        !names.some((name) => shotPattern(value).test(name) || shotPattern(`${value}.png`).test(name))
+      ) {
         faults.push(`[capture: ${value}] : aucune capture de ce motif`);
       }
       if (kind === "garde" && !guardFile.includes(`test("${value} `)) {
@@ -451,7 +499,10 @@ test("design-ios/AC-1 : les huit écrans portent le kit (surfaces, pastille, mé
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("iosPanel()", "padding(0)"));
-  assert.ok(screenFaults(copy).some((f) => f.includes("iosPanel()")), "une surface retirée doit faire rougir la garde");
+  assert.ok(
+    screenFaults(copy).some((f) => f.includes("iosPanel()")),
+    "une surface retirée doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent le bandeau d'erreur", () => {
@@ -460,7 +511,10 @@ test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent l
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSScreenState.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("tone: .danger", "tone: .info"));
-  assert.ok(screenFaults(copy).some((f) => f.includes("danger")), "un bandeau non dangereux doit faire rougir la garde");
+  assert.ok(
+    screenFaults(copy).some((f) => f.includes("danger")),
+    "un bandeau non dangereux doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", () => {
@@ -468,8 +522,14 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Kanban", "KanbanText.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l’instant."', '"Aucune pipeline."'));
-  assert.ok(screenFaults(copy).some((f) => f.includes("KanbanText")), "un mot réécrit doit faire rougir la garde");
+  fs.writeFileSync(
+    target,
+    fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l’instant."', '"Aucune pipeline."'),
+  );
+  assert.ok(
+    screenFaults(copy).some((f) => f.includes("KanbanText")),
+    "un mot réécrit doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-4 : le vocabulaire provisoire est clos et le crochet documenté", () => {
@@ -478,16 +538,25 @@ test("design-ios/AC-4 : le vocabulaire provisoire est clos et le crochet documen
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSText.swift");
   fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet extra = "Un mot réinventé."\n`);
-  assert.ok(provisionalFaults(copy).some((f) => f.includes("IOSText")), "un message de plus doit faire rougir la garde");
+  assert.ok(
+    provisionalFaults(copy).some((f) => f.includes("IOSText")),
+    "un message de plus doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire", () => {
   assert.deepEqual(literalFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  fs.writeFileSync(path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Libelle.swift"), 'let bonjour = "Bonjour"\n');
+  fs.writeFileSync(
+    path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Libelle.swift"),
+    'let bonjour = "Bonjour"\n',
+  );
   const faults = literalFaults(copy);
-  assert.ok(faults.some((f) => f.includes("Bonjour")), `un libellé en dur doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("Bonjour")),
+    `un libellé en dur doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
@@ -498,7 +567,10 @@ test("design-ios/AC-6 : le script produit les captures et n'en committe aucune",
   const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("sips", "file"));
-  assert.ok(shotsFaults(copy).some((f) => f.includes("sips")), "une sonde retirée doit faire rougir la garde");
+  assert.ok(
+    shotsFaults(copy).some((f) => f.includes("sips")),
+    "une sonde retirée doit faire rougir la garde",
+  );
 
   const replant = shared.fresh();
   const pbxproj = path.join(replant, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
@@ -515,9 +587,12 @@ test("design-ios/AC-7 : aucune taille en points ni lineLimit numérique", () => 
   const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Pointe.swift"),
-    'let grosse = Font.system(size: 22)\n',
+    "let grosse = Font.system(size: 22)\n",
   );
-  assert.ok(typographyFaults(copy).some((f) => f.includes("taille de police en points")), "une taille en points doit faire rougir la garde");
+  assert.ok(
+    typographyFaults(copy).some((f) => f.includes("taille de police en points")),
+    "une taille en points doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-8 : la cible tactile minimale est 44 pt et aucun contrôle n'est maison", () => {
@@ -525,8 +600,14 @@ test("design-ios/AC-8 : la cible tactile minimale est 44 pt et aucun contrôle n
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Design", "IOSMetrics.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("minimumTarget: CGFloat = 44", "minimumTarget: CGFloat = 32"));
-  assert.ok(typographyFaults(copy).some((f) => f.includes("minimumTarget")), "une cible sous 44 doit faire rougir la garde");
+  fs.writeFileSync(
+    target,
+    fs.readFileSync(target, "utf8").replace("minimumTarget: CGFloat = 44", "minimumTarget: CGFloat = 32"),
+  );
+  assert.ok(
+    typographyFaults(copy).some((f) => f.includes("minimumTarget")),
+    "une cible sous 44 doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-9 : chaque règle de la recette est vérifiable, et le README y renvoie", () => {
@@ -536,7 +617,10 @@ test("design-ios/AC-9 : chaque règle de la recette est vérifiable, et le READM
   const target = path.join(copy, "omp-console", "ios", "DESIGN.md");
   const text = fs.readFileSync(target, "utf8").replace("`[test: minimumTargetIsFortyFour]`", "");
   fs.writeFileSync(target, text);
-  assert.ok(recipeFaults(copy).some((f) => f.includes("marqueur")), "une puce sans marqueur doit faire rougir la garde");
+  assert.ok(
+    recipeFaults(copy).some((f) => f.includes("marqueur")),
+    "une puce sans marqueur doit faire rougir la garde",
+  );
 });
 
 test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore reste sans cadre", () => {
@@ -544,6 +628,12 @@ test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore r
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Stats", "StatsModels.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("StatsPresentation.noProject", '"Les statistiques viendront."'));
-  assert.ok(macOSFaults(copy).some((f) => f.includes("StatsText.noProject")), "un mot réécrit dans la coque doit faire rougir la garde");
+  fs.writeFileSync(
+    target,
+    fs.readFileSync(target, "utf8").replace("StatsPresentation.noProject", '"Les statistiques viendront."'),
+  );
+  assert.ok(
+    macOSFaults(copy).some((f) => f.includes("StatsText.noProject")),
+    "un mot réécrit dans la coque doit faire rougir la garde",
+  );
 });

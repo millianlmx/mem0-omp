@@ -59,9 +59,11 @@ function repoWordFaults(root: string): string[] {
   const faults: string[] = [];
   const uses = view.match(/NewFeatureText\.repo\b/g)?.length ?? 0;
   if (uses !== 1) faults.push(`NewFeatureText.repo employé ${uses} fois (1 attendue : le libellé du Picker)`);
-  if (!view.includes("Picker(NewFeatureText.repo, selection: $repo)")) faults.push("le sélecteur n'est pas le Picker libellé « Dépôt »");
+  if (!view.includes("Picker(NewFeatureText.repo, selection: $repo)"))
+    faults.push("le sélecteur n'est pas le Picker libellé « Dépôt »");
   if (view.includes("Section(NewFeatureText.repo)")) faults.push("un en-tête de section redit « Dépôt »");
-  if (view.includes(".accessibilityLabel(NewFeatureText.repo)")) faults.push("un libellé d'accessibilité redit « Dépôt »");
+  if (view.includes(".accessibilityLabel(NewFeatureText.repo)"))
+    faults.push("un libellé d'accessibilité redit « Dépôt »");
   return faults;
 }
 
@@ -69,8 +71,10 @@ function repoWordFaults(root: string): string[] {
 function shownRepoFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
-  if (!view.includes("KanbanLaunchRepos.choices(")) faults.push("la feuille ne calcule pas les libellés par KanbanLaunchRepos.choices");
-  if (!view.includes(".tag(choice.root)")) faults.push("les entrées du Picker ne sont pas étiquetées par leur racine : la valeur choisie ne s'affiche pas");
+  if (!view.includes("KanbanLaunchRepos.choices("))
+    faults.push("la feuille ne calcule pas les libellés par KanbanLaunchRepos.choices");
+  if (!view.includes(".tag(choice.root)"))
+    faults.push("les entrées du Picker ne sont pas étiquetées par leur racine : la valeur choisie ne s'affiche pas");
   return faults;
 }
 
@@ -78,12 +82,15 @@ function shownRepoFaults(root: string): string[] {
 function promptFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
-  if (!view.includes("NewFeatureText.repoPrompt")) faults.push("la feuille n'affiche pas l'invite « Choisir un dépôt »");
-  const ready = view.match(/private var ready: Bool \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  if (!view.includes("NewFeatureText.repoPrompt"))
+    faults.push("la feuille n'affiche pas l'invite « Choisir un dépôt »");
+  const ready = view.match(/private var ready: Bool \{([\s\S]*?)\n {4}\}/)?.[1] ?? "";
   if (!ready.includes("repos.contains(repo)")) faults.push("« Lancer » n'exige pas un dépôt effectivement proposé");
-  if (!view.includes(".disabled(!ready")) faults.push("« Lancer » n'est pas désactivé quand la feuille n'est pas prête");
+  if (!view.includes(".disabled(!ready"))
+    faults.push("« Lancer » n'est pas désactivé quand la feuille n'est pas prête");
   const text = code(root, "omp-console/Sources/ConsoleCore/Kanban/NewFeatureText.swift");
-  if (!/repoPrompt\s*=\s*"Choisir un dépôt"/.test(text)) faults.push("NewFeatureText.repoPrompt n'est pas « Choisir un dépôt »");
+  if (!/repoPrompt\s*=\s*"Choisir un dépôt"/.test(text))
+    faults.push("NewFeatureText.repoPrompt n'est pas « Choisir un dépôt »");
   if (/@State private var repo = [^"\s]/.test(view)) faults.push("la feuille présélectionne un dépôt");
   return faults;
 }
@@ -93,7 +100,8 @@ function menuNamesFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
   if (view.includes("ConsoleFormat.path(")) faults.push("la feuille affiche encore un chemin (ConsoleFormat.path)");
-  if (!view.includes("Text(verbatim: choice.label)")) faults.push("les entrées du menu ne montrent pas le libellé de dépôt");
+  if (!view.includes("Text(verbatim: choice.label)"))
+    faults.push("les entrées du menu ne montrent pas le libellé de dépôt");
   return faults;
 }
 
@@ -106,7 +114,8 @@ function launchedRootFaults(root: string): string[] {
   const body = submitBody(view);
   if (body === "") faults.push("submit() introuvable");
   if (body.includes(".label")) faults.push("submit() emploie un libellé d'affichage");
-  if (!/client\.launch\(\s*repoRoot:\s*repoRoot/.test(body)) faults.push("le lancement n'envoie pas la racine du dépôt");
+  if (!/client\.launch\(\s*repoRoot:\s*repoRoot/.test(body))
+    faults.push("le lancement n'envoie pas la racine du dépôt");
   return faults;
 }
 
@@ -114,8 +123,10 @@ function launchedRootFaults(root: string): string[] {
 function fieldLabelFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
-  if (!view.includes(".accessibilityLabel(NewFeatureText.featureTitle)")) faults.push("le champ titre n'a pas de libellé « Titre »");
-  if (!view.includes(".accessibilityLabel(NewFeatureText.need)")) faults.push("le champ besoin n'a pas de libellé « Besoin »");
+  if (!view.includes(".accessibilityLabel(NewFeatureText.featureTitle)"))
+    faults.push("le champ titre n'a pas de libellé « Titre »");
+  if (!view.includes(".accessibilityLabel(NewFeatureText.need)"))
+    faults.push("le champ besoin n'a pas de libellé « Besoin »");
   if (!view.includes("PipelinesAccessibility.titleField")) faults.push("le champ titre perd son identifiant");
   if (!view.includes("PipelinesAccessibility.needField")) faults.push("le champ besoin perd son identifiant");
   const access = code(root, "omp-console/ios/OMPConsoleIOS/PipelinesText.swift");
@@ -147,11 +158,16 @@ function growFaults(root: string): string[] {
   const range = needRange(root);
   if (!range) faults.push("IOSMetrics.needLines n'est pas une plage a...b de ClosedRange<Int>");
   else if (range[1] !== 8) faults.push(`borne haute de needLines = ${range[1]} (8 attendues)`);
-  if (!/TextField\(NewFeatureText\.needPlaceholder,[^)]*axis: \.vertical\)\s*\.lineLimit\(IOSMetrics\.needLines\)/.test(view)) {
+  if (
+    !/TextField\(NewFeatureText\.needPlaceholder,[^)]*axis: \.vertical\)\s*\.lineLimit\(IOSMetrics\.needLines\)/.test(
+      view,
+    )
+  ) {
     faults.push("le champ besoin n'est pas un TextField vertical borné par IOSMetrics.needLines");
   }
   if (view.includes("ScrollView")) faults.push("la feuille ajoute un ScrollView (second défilement imbriqué)");
-  if (/\.frame\([^)]*\bheight:\s*\d/.test(view)) faults.push("une hauteur en points fige le champ (le Dynamic Type ne la suit plus)");
+  if (/\.frame\([^)]*\bheight:\s*\d/.test(view))
+    faults.push("une hauteur en points fige le champ (le Dynamic Type ne la suit plus)");
   return faults;
 }
 
@@ -160,15 +176,18 @@ function shotsFaults(root: string): string[] {
   const script = fs.existsSync(path.join(root, SHOTS)) ? fs.readFileSync(path.join(root, SHOTS), "utf8") : "";
   if (script === "") return ["scripts/recette/ios-shots.sh absent"];
   const faults: string[] = [];
-  if (!script.includes("nouvelle_feature_recipes=(vide choisi rempli)")) faults.push("les trois recettes vide/choisi/rempli ne sont pas listées");
+  if (!script.includes("nouvelle_feature_recipes=(vide choisi rempli)"))
+    faults.push("les trois recettes vide/choisi/rempli ne sont pas listées");
   if (!script.includes("-pipelines.recipe")) faults.push("le passage ne lance pas le crochet -pipelines.recipe");
-  if (!script.includes("nouvelle-feature-$recipe")) faults.push("les captures ne portent pas le nom nouvelle-feature-<recette>");
+  if (!script.includes("nouvelle-feature-$recipe"))
+    faults.push("les captures ne portent pas le nom nouvelle-feature-<recette>");
   if (!script.includes('"132"')) faults.push("le total contrôlé n'est pas 132");
   if (!/shoot_nouvelle_feature iphone /.test(script)) faults.push("le passage n'est pas appelé pour iPhone");
   if (!/shoot_nouvelle_feature ipad /.test(script)) faults.push("le passage n'est pas appelé pour iPad");
   const recipe = code(root, "omp-console/ios/OMPConsoleIOS/IOSPipelinesRecipe.swift");
   for (const state of ["vide", "choisi", "rempli"]) {
-    if (!new RegExp(`case[^\\n]*\\b${state}\\b`).test(recipe)) faults.push(`IOSPipelinesRecipe n'a pas le cas ${state}`);
+    if (!new RegExp(`case[^\\n]*\\b${state}\\b`).test(recipe))
+      faults.push(`IOSPipelinesRecipe n'a pas le cas ${state}`);
   }
   return faults;
 }
@@ -180,68 +199,106 @@ test("ios-nouvelle-feature-formulaire/AC-1 : le mot « Dépôt » n'est écrit q
   assert.deepEqual(repoWordFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) =>
-    t.replace("Section {\n            if repos.isEmpty", "Section(NewFeatureText.repo) {\n            if repos.isEmpty"),
+    t.replace(
+      "Section {\n            if repos.isEmpty",
+      "Section(NewFeatureText.repo) {\n            if repos.isEmpty",
+    ),
   );
   const faults = repoWordFaults(copy);
-  assert.ok(faults.some((f) => f.includes("en-tête")), "un en-tête « Dépôt » réinséré doit faire rougir la garde");
-  assert.ok(faults.some((f) => f.includes("2 fois")), "« Dépôt » écrit deux fois doit faire rougir la garde");
+  assert.ok(
+    faults.some((f) => f.includes("en-tête")),
+    "un en-tête « Dépôt » réinséré doit faire rougir la garde",
+  );
+  assert.ok(
+    faults.some((f) => f.includes("2 fois")),
+    "« Dépôt » écrit deux fois doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-2 : le sélecteur affiche en clair le nom du dépôt choisi", () => {
   assert.deepEqual(shownRepoFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ""));
-  assert.ok(shownRepoFaults(copy).some((f) => f.includes("racine")), "des entrées sans tag doivent faire rougir la garde");
+  assert.ok(
+    shownRepoFaults(copy).some((f) => f.includes("racine")),
+    "des entrées sans tag doivent faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-3 : sans dépôt choisi, l'invite « Choisir un dépôt » s'affiche et « Lancer » est inactif", () => {
   assert.deepEqual(promptFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace("repos.contains(repo) &&", "!repo.isEmpty &&"));
-  assert.ok(promptFaults(copy).some((f) => f.includes("Lancer")), "une activation sur simple non-vide doit faire rougir la garde");
+  assert.ok(
+    promptFaults(copy).some((f) => f.includes("Lancer")),
+    "une activation sur simple non-vide doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-5 : le menu de dépôts ne montre que des noms, aucun chemin absolu", () => {
   assert.deepEqual(menuNamesFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
-  plant(copy, SHEET, (t) => t.replace("Text(verbatim: choice.label)", "Text(verbatim: ConsoleFormat.path(choice.root))"));
-  assert.ok(menuNamesFaults(copy).some((f) => f.includes("chemin")), "un chemin affiché doit faire rougir la garde");
+  plant(copy, SHEET, (t) =>
+    t.replace("Text(verbatim: choice.label)", "Text(verbatim: ConsoleFormat.path(choice.root))"),
+  );
+  assert.ok(
+    menuNamesFaults(copy).some((f) => f.includes("chemin")),
+    "un chemin affiché doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-6 : la feature est lancée avec le chemin complet du dépôt choisi", () => {
   assert.deepEqual(launchedRootFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ".tag(choice.label)"));
-  assert.ok(launchedRootFaults(copy).some((f) => f.includes("libellé")), "un libellé posé comme dépôt doit faire rougir la garde");
+  assert.ok(
+    launchedRootFaults(copy).some((f) => f.includes("libellé")),
+    "un libellé posé comme dépôt doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-7 : les champs titre et besoin portent les libellés « Titre » et « Besoin » et des identifiants distincts", () => {
   assert.deepEqual(fieldLabelFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".accessibilityLabel(NewFeatureText.need)", ""));
-  assert.ok(fieldLabelFaults(copy).some((f) => f.includes("« Besoin »")), "un besoin sans libellé doit faire rougir la garde");
+  assert.ok(
+    fieldLabelFaults(copy).some((f) => f.includes("« Besoin »")),
+    "un besoin sans libellé doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-8 : le champ besoin vide réserve au moins 3 lignes", () => {
   assert.deepEqual(emptyHeightFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, METRICS, (t) => t.replace("3...8", "1...8"));
-  assert.ok(emptyHeightFaults(copy).some((f) => f.includes("borne basse")), "une borne basse à 1 doit faire rougir la garde");
+  assert.ok(
+    emptyHeightFaults(copy).some((f) => f.includes("borne basse")),
+    "une borne basse à 1 doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-9 : le champ besoin grandit jusqu'à 8 lignes puis défile en lui-même", () => {
   assert.deepEqual(growFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
   plant(copy, SHEET, (t) => t.replace(".lineLimit(IOSMetrics.needLines)", ""));
-  assert.ok(growFaults(copy).some((f) => f.includes("borné")), "un champ sans plage de lignes doit faire rougir la garde");
+  assert.ok(
+    growFaults(copy).some((f) => f.includes("borné")),
+    "un champ sans plage de lignes doit faire rougir la garde",
+  );
   const copy2 = shared.fresh();
   plant(copy2, SHEET, (t) => t.replace("Form {", "ScrollView {"));
-  assert.ok(growFaults(copy2).some((f) => f.includes("ScrollView")), "un second défilement doit faire rougir la garde");
+  assert.ok(
+    growFaults(copy2).some((f) => f.includes("ScrollView")),
+    "un second défilement doit faire rougir la garde",
+  );
 });
 
 test("ios-nouvelle-feature-formulaire/AC-10 : la feuille est capturée sur iPhone ET iPad dans ses trois états, sans régression", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
-  plant(copy, SHOTS, (t) => t.replace("  shoot_nouvelle_feature ipad \"$ipad\" \"$appearance\"\n", ""));
-  assert.ok(shotsFaults(copy).some((f) => f.includes("iPad")), "un passage sans iPad doit faire rougir la garde");
+  plant(copy, SHOTS, (t) => t.replace('  shoot_nouvelle_feature ipad "$ipad" "$appearance"\n', ""));
+  assert.ok(
+    shotsFaults(copy).some((f) => f.includes("iPad")),
+    "un passage sans iPad doit faire rougir la garde",
+  );
 });

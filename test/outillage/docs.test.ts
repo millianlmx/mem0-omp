@@ -12,7 +12,7 @@ import { ROOT } from "../support/repo.ts";
 // tests de la console citent des URL de PR fictives qui n'ont aucun handle à
 // remplacer. Assemblé, jamais littéral : ce fichier de test ne doit pas être
 // lui-même une occurrence, sinon l'ensemble calculé s'inclurait lui-même.
-const URL_MARK = new RegExp(["github", "com/"].join("\\.") + "[^/\\s]+/mem0-omp");
+const URL_MARK = new RegExp(`${["github", "com/"].join("\\.")}[^/\\s]+/mem0-omp`);
 
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -26,8 +26,7 @@ type PluginEntry = {
 };
 type Catalog = { metadata?: { version?: string }; plugins: PluginEntry[] };
 
-const catalog = (rel = ".omp-plugin/marketplace.json"): Catalog =>
-  JSON.parse(read(rel)) as Catalog;
+const catalog = (rel = ".omp-plugin/marketplace.json"): Catalog => JSON.parse(read(rel)) as Catalog;
 
 /**
  * Violations de la règle de vocabulaire du sommaire : « sommaire exhaustif »
@@ -64,8 +63,7 @@ const ignoredPaths = fs
   .map((line) => line.trim().replace(/\/$/, ""))
   .filter((line) => line !== "" && !line.startsWith("#") && !line.includes("*"));
 
-const isIgnored = (rel: string) =>
-  ignoredPaths.some((entry) => rel === entry || rel.startsWith(`${entry}/`));
+const isIgnored = (rel: string) => ignoredPaths.some((entry) => rel === entry || rel.startsWith(`${entry}/`));
 
 /** Tous les fichiers du dépôt, hors `.git`, `node_modules` et artefacts ignorés. */
 function repoFiles(): string[] {
@@ -297,11 +295,7 @@ test("docs/AC-23 : le README documente le plafond de runs parallèles du lot", (
     /^\| `MEM0_PIPELINE_SLOTS` \| `4` \| .+attend un créneau/m,
     "le rôle nomme le motif que /pipelines affiche",
   );
-  assert.equal(
-    config.match(/MEM0_PIPELINE_SLOTS/g)?.length,
-    1,
-    "la variable n'est citée qu'une fois dans la section",
-  );
+  assert.equal(config.match(/MEM0_PIPELINE_SLOTS/g)?.length, 1, "la variable n'est citée qu'une fois dans la section");
 });
 
 // AC-4 : ce que l'utilisateur lit à l'installation (la description des
@@ -310,11 +304,7 @@ test("docs/AC-23 : le README documente le plafond de runs parallèles du lot", (
 test("documentation-derivee/AC-4 : les descriptions des catalogues ne sur-promettent pas le sommaire", () => {
   for (const rel of [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"]) {
     for (const entry of catalog(rel).plugins) {
-      assert.deepEqual(
-        summaryWording(entry.description ?? "", 0),
-        [],
-        `${rel} / ${entry.name}`,
-      );
+      assert.deepEqual(summaryWording(entry.description ?? "", 0), [], `${rel} / ${entry.name}`);
     }
   }
 });

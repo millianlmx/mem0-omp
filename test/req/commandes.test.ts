@@ -185,7 +185,17 @@ function mkCtl(
     archiveBase: path.join(path.dirname(stateDir), "archive"),
     reviewCap: 3,
   });
-  return { controller, notices, ghCalls, pushes, stateDir, delays, get cancels() { return cancels; } };
+  return {
+    controller,
+    notices,
+    ghCalls,
+    pushes,
+    stateDir,
+    delays,
+    get cancels() {
+      return cancels;
+    },
+  };
 }
 
 function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
@@ -325,7 +335,10 @@ function ackNames(stateDir: string): string[] {
 /** Les noms des fichiers de commande présents dans le canal, triés. */
 function commandNames(stateDir: string): string[] {
   try {
-    return fs.readdirSync(commandDir(stateDir)).filter((name) => name.endsWith(".json")).sort();
+    return fs
+      .readdirSync(commandDir(stateDir))
+      .filter((name) => name.endsWith(".json"))
+      .sort();
   } catch {
     return [];
   }
@@ -522,13 +535,19 @@ test("canal/AC-4 : un verdict `v` (resp. `y`) franchit le jalon, accusé écrit 
 
   assert.equal(observed.ackAtRunStart, "taken", "l'accusé est écrit AVANT le franchissement du jalon");
   assert.equal(readCommandAck(stateDir, "c-v")?.state, "taken");
-  assert.deepEqual(runs.map((run) => `${slugOf(run)}:${phaseOf(run)}`), ["alpha:impl"]);
+  assert.deepEqual(
+    runs.map((run) => `${slugOf(run)}:${phaseOf(run)}`),
+    ["alpha:impl"],
+  );
   assert.equal(stateOf(stateDir, repo, "alpha"), "running:");
 
   deposit(stateDir, verdictCmd("c-y", repo, "beta", "y"));
   await controller.pumpCommands();
   assert.equal(readCommandAck(stateDir, "c-y")?.state, "taken");
-  assert.deepEqual(runs.map((run) => `${slugOf(run)}:${phaseOf(run)}`), ["alpha:impl", "beta:release"]);
+  assert.deepEqual(
+    runs.map((run) => `${slugOf(run)}:${phaseOf(run)}`),
+    ["alpha:impl", "beta:release"],
+  );
   assert.equal(stateOf(stateDir, repo, "beta"), "running:");
 });
 
@@ -667,10 +686,22 @@ test("omp-console-redesign/AC-6 : une commande reply répond à une feature en a
       branch: "feat/alpha",
       sessionFile,
     }),
-    feature("beta", { state: "running", phase: "impl", worktree: path.join(tmpdir("cmd-wt-"), "beta"), branch: "feat/beta" }),
+    feature("beta", {
+      state: "running",
+      phase: "impl",
+      worktree: path.join(tmpdir("cmd-wt-"), "beta"),
+      branch: "feat/beta",
+    }),
   ]);
-  const reply = (id: string, slug: string, text: string): PipelineCommand =>
-    ({ version: 1, id, sentAt: at(), repo, kind: "reply", slug, text });
+  const reply = (id: string, slug: string, text: string): PipelineCommand => ({
+    version: 1,
+    id,
+    sentAt: at(),
+    repo,
+    kind: "reply",
+    slug,
+    text,
+  });
 
   deposit(stateDir, reply("c-reply", "alpha", "Postgres, la base existante"));
   await controller.pumpCommands();
@@ -1057,7 +1088,10 @@ test("canal/AC-16 : un pilote sans terminal est piloté de bout en bout par le c
   assert.ok(lot !== null, "le lot existe");
   assert.equal(lotFeature(lot, "de-bout-en-bout")?.prUrl, `${GH}/o/r/pull/7`);
   assert.deepEqual(ctl.pushes, [["push", "-u", `${GH}/o/r.git`, "feat/de-bout-en-bout"]]);
-  assert.ok(ctl.ghCalls.some((args) => args[0] === "pr" && args[1] === "create"), "la PR est ouverte");
+  assert.ok(
+    ctl.ghCalls.some((args) => args[0] === "pr" && args[1] === "create"),
+    "la PR est ouverte",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1159,7 +1193,9 @@ test("canal/S-1 : une commande adressée à un lot conduit par une autre session
   // `process.ppid` : un pid VIVANT et étranger, avec un battement frais — un
   // propriétaire repris, pas un pilote disparu.
   const otherPid = process.ppid;
-  seedLot(stateDir, repo, [GUARD], { owner: { pid: otherPid, sessionFile: null, sessionId: null, heartbeatAt: clock } });
+  seedLot(stateDir, repo, [GUARD], {
+    owner: { pid: otherPid, sessionFile: null, sessionId: null, heartbeatAt: clock },
+  });
 
   deposit(stateDir, launchCmd("c-1", repo, "Feature", "intention"));
   await controller.pumpCommands();

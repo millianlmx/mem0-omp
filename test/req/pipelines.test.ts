@@ -274,7 +274,15 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}) {
 test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => {
   // Aucune entrée du tout : le panneau s'affiche quand même (titre, sections
   // vides, pied) — il ne se ferme pas tout seul.
-  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0, relayed: {} };
+  const model: PanelModel = {
+    running: [],
+    live: {},
+    history: [],
+    selection: -1,
+    notice: null,
+    unreadable: 0,
+    relayed: {},
+  };
   const rows = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 1_000 });
   const text = rowsText(rows);
 
@@ -696,7 +704,10 @@ test("un historique illisible est ignoré et compté", () => {
   fs.writeFileSync(path.join(pipelineHistoryDir(stateDir), "abcdef0123456789.json"), '{"version": 2}');
 
   const model = readPanelModel({ stateDir });
-  assert.deepEqual(model.history.map((entry) => entry.label), ["depot/propre"]);
+  assert.deepEqual(
+    model.history.map((entry) => entry.label),
+    ["depot/propre"],
+  );
   assert.equal(model.unreadable, 1);
 });
 

@@ -87,7 +87,8 @@ function hostedStateFaults(root: string): string[] {
     if (!screen.includes(token)) faults.push(`IOSSessionOmpScreen ne lit pas ${token}`);
   }
   const model = code(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSessionOmpModel.swift"));
-  if (!model.includes("client.hosted?.sessionFile")) faults.push("IOSSessionOmpModel ne lit pas client.hosted?.sessionFile");
+  if (!model.includes("client.hosted?.sessionFile"))
+    faults.push("IOSSessionOmpModel ne lit pas client.hosted?.sessionFile");
   return faults;
 }
 
@@ -99,13 +100,17 @@ function launchExclusivityFaults(root: string): string[] {
   // Le refus est la cause typée `sessionBusy`, que `GestureRefusal.apiError`
   // traduit seule en 409 au texte SessionConsoleText.launchBusy.
   if (
-    !/guard\s+session\.canStart\s+else\s*\{\s*throw\s+(GestureRefusal)?\.sessionBusy\b/.test(actions)
-    || !/case\s+\.sessionBusy[\s\S]*?SessionConsoleText\.launchBusy/.test(refusals)
+    !/guard\s+session\.canStart\s+else\s*\{\s*throw\s+(GestureRefusal)?\.sessionBusy\b/.test(actions) ||
+    !/case\s+\.sessionBusy[\s\S]*?SessionConsoleText\.launchBusy/.test(refusals)
   ) {
     faults.push("RemoteActions ne refuse pas un second lancement avec SessionConsoleText.launchBusy");
   }
   const model = code(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSessionOmpModel.swift"));
-  if (!/static func canLaunch\(_ hosted: RemoteHostedEvent\?\)[\s\S]*?case \.idle, \.stopped, \.failed: return true/.test(model)) {
+  if (
+    !/static func canLaunch\(_ hosted: RemoteHostedEvent\?\)[\s\S]*?case \.idle, \.stopped, \.failed: return true/.test(
+      model,
+    )
+  ) {
     faults.push("IOSSessionOmpModel.canLaunch n'exclut pas launching/running/stopping");
   }
   const screen = code(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSessionOmpScreen.swift"));
@@ -197,8 +202,14 @@ function auditRouteFaults(root: string): string[] {
   const catalog = code(path.join(root, "omp-console", "Sources", "ConsoleClient", "ClientRoute.swift"));
   const pairs = [
     ['"POST", "v1/audits", "audit.start"', 'name: "audit.start", method: "POST", path: "/v1/audits"'],
-    ['"POST", "v1/audits/:id/launch", "audit.launch"', 'name: "audit.launch", method: "POST", path: "/v1/audits/{id}/launch"'],
-    ['"POST", "v1/audits/:id/escalations", "audit.answer"', 'name: "audit.answer", method: "POST", path: "/v1/audits/{id}/escalations"'],
+    [
+      '"POST", "v1/audits/:id/launch", "audit.launch"',
+      'name: "audit.launch", method: "POST", path: "/v1/audits/{id}/launch"',
+    ],
+    [
+      '"POST", "v1/audits/:id/escalations", "audit.answer"',
+      'name: "audit.answer", method: "POST", path: "/v1/audits/{id}/escalations"',
+    ],
     ['"DELETE", "v1/audits/:id", "audit.stop"', 'name: "audit.stop", method: "DELETE", path: "/v1/audits/{id}"'],
   ];
   for (const [served, mirrored] of pairs) {
@@ -220,7 +231,10 @@ test("audit-panel-in-omp-console-remote/AC-8 : les quatre routes d'audit existen
 
   const copy = copyRepo("ios-session-omp-audit-");
   const catalog = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientRoute.swift");
-  fs.writeFileSync(catalog, fs.readFileSync(catalog, "utf8").replace('path: "/v1/audits/{id}/escalations"', 'path: "/v1/audits/{id}/answer"'));
+  fs.writeFileSync(
+    catalog,
+    fs.readFileSync(catalog, "utf8").replace('path: "/v1/audits/{id}/escalations"', 'path: "/v1/audits/{id}/answer"'),
+  );
   assert.ok(
     auditRouteFaults(copy).some((f) => f.includes("audit.answer")),
     "une route d'audit absente du catalogue doit faire rougir la garde",
@@ -232,10 +246,7 @@ test("ios-session-omp/AC-2 : le nom du dépôt est servi des deux côtés et l'�
 
   const copy = copyRepo("ios-session-omp-copie-");
   const payloads = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "Payloads.swift");
-  fs.writeFileSync(
-    payloads,
-    fs.readFileSync(payloads, "utf8").replace("    var projectName: String?\n", ""),
-  );
+  fs.writeFileSync(payloads, fs.readFileSync(payloads, "utf8").replace("    var projectName: String?\n", ""));
   assert.ok(
     hostedStateFaults(copy).some((f) => f.includes("projectName")),
     "un champ manquant doit faire rougir la garde",
@@ -247,10 +258,7 @@ test("ios-session-omp/AC-3 : le lancement est exclusif côté serveur et l'écra
 
   const copy = copyRepo("ios-session-omp-copie-");
   const actions = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteActions.swift");
-  fs.writeFileSync(
-    actions,
-    fs.readFileSync(actions, "utf8").replace("guard session.canStart else", "guard true else"),
-  );
+  fs.writeFileSync(actions, fs.readFileSync(actions, "utf8").replace("guard session.canStart else", "guard true else"));
   assert.ok(
     launchExclusivityFaults(copy).some((f) => f.includes("second lancement")),
     "un lancement non exclusif doit faire rougir la garde",

@@ -109,10 +109,7 @@ type RecordedRun = { spec: LotRunSpec; cwd: string };
  * vérifier un enchaînement sans course.
  */
 function mkRunner(
-  plan:
-    | { mode: "pending" }
-    | { mode: "result"; result: (spec: LotRunSpec) => LotRunnerResult }
-    | { mode: "gate" },
+  plan: { mode: "pending" } | { mode: "result"; result: (spec: LotRunSpec) => LotRunnerResult } | { mode: "gate" },
 ) {
   const runs: RecordedRun[] = [];
   const gate: Array<(result: LotRunnerResult) => void> = [];
@@ -362,7 +359,10 @@ function fakeKit() {
       this.#text = text;
     }
     render(width: number): readonly string[] {
-      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+      return frame(
+        this.#text.split("\n").map((line) => `▸ toi : ${line}`),
+        width,
+      );
     }
   }
   class FakeAssistant {
@@ -724,26 +724,23 @@ test("le préambule d'un run annonce `ask` et ne clôt jamais une collecte", () 
 test("les utilitaires de sortie : dernière ligne, URL de PR, cible de livraison", () => {
   assert.equal(lastLine("a\n\n  b  \n"), "b");
   assert.equal(lastLine("   "), "");
-  assert.equal(parsePrUrl("Creating pull request\n" + GH + "/o/r/pull/7\n"), GH + "/o/r/pull/7");
+  assert.equal(parsePrUrl(`Creating pull request\n${GH}/o/r/pull/7\n`), `${GH}/o/r/pull/7`);
   assert.equal(parsePrUrl("rien ici"), null);
   // `gh pr view --json url` rend du JSON, pas l'URL nue : deux formes, deux lectures
   // — c'est la seconde qui sert à adopter une PR déjà ouverte (S-6).
-  assert.equal(prUrlOfView(JSON.stringify({ url: GH + "/o/r/pull/7" })), GH + "/o/r/pull/7");
+  assert.equal(prUrlOfView(JSON.stringify({ url: `${GH}/o/r/pull/7` })), `${GH}/o/r/pull/7`);
   assert.equal(prUrlOfView('{"url":"pas une url de PR"}'), null);
   assert.equal(prUrlOfView("no pull requests found for branch alpha"), null);
   assert.equal(prUrlOfView("{}"), null);
-  assert.deepEqual(releaseTarget({ url: GH + "/o/r", defaultBranchRef: { name: "main" } }), {
-    pushUrl: GH + "/o/r.git",
+  assert.deepEqual(releaseTarget({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }), {
+    pushUrl: `${GH}/o/r.git`,
     base: "main",
   });
   assert.deepEqual(releaseTarget(null), { pushUrl: null, base: null });
-  assert.deepEqual(
-    releaseArgs({ pushUrl: GH + "/o/r.git", branch: "feat/x", base: "main", title: "t", body: "b" }),
-    {
-      push: ["push", "-u", GH + "/o/r.git", "feat/x"],
-      pr: ["pr", "create", "-B", "main", "-H", "feat/x", "-t", "t", "-b", "b"],
-    },
-  );
+  assert.deepEqual(releaseArgs({ pushUrl: `${GH}/o/r.git`, branch: "feat/x", base: "main", title: "t", body: "b" }), {
+    push: ["push", "-u", `${GH}/o/r.git`, "feat/x"],
+    pr: ["pr", "create", "-B", "main", "-H", "feat/x", "-t", "t", "-b", "b"],
+  });
   assert.deepEqual(
     releaseArgs({
       pushUrl: "u",
@@ -842,7 +839,10 @@ test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux
   assert.deepEqual(after.features.slice(0, 2), before, "les pipelines en cours n'ont pas bougé");
   assert.equal(after.features[3]!.state, "running", "la nouvelle feature a démarré sans autre action");
   assert.equal(runs.length, 3);
-  assert.ok(runs.some((run) => run.spec.slug === "gamma"), "un run porte la nouvelle feature");
+  assert.ok(
+    runs.some((run) => run.spec.slug === "gamma"),
+    "un run porte la nouvelle feature",
+  );
 
   // Le battement armé fait avancer la dépendante dès que sa dépendance se termine.
   const done = readLot(stateDir, lotRepoKey(repoRoot))!;
@@ -907,7 +907,10 @@ test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux
     after2.features[0]!.phase,
     "alpha n'est pas figée `running` : son maillon courant a bien un run",
   );
-  assert.ok(gated.runs.some((run) => run.spec.prompt.includes("beta")), "un run porte la feature ajoutée");
+  assert.ok(
+    gated.runs.some((run) => run.spec.prompt.includes("beta")),
+    "un run porte la feature ajoutée",
+  );
 });
 
 test("lot/AC-3 : une feature qui n'a pas démarré se retire, et aucun pipeline ne démarre pour elle", async () => {
@@ -951,7 +954,7 @@ test("une annulation nomme le worktree introuvable, et un retrait refusé bloque
   );
 
   const refused = await controller.cancel("ordinaire", "delete");
-  assert.ok(refused !== null && refused.startsWith("retrait du worktree refusé : "), `motif de git rendu : ${refused}`);
+  assert.ok(refused?.startsWith("retrait du worktree refusé : "), `motif de git rendu : ${refused}`);
   const after = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(after.features[1]!.state, "blocked", "un retrait refusé laisse la feature bloquée, pas annulée");
   assert.equal(after.features[1]!.stopReason, refused);
@@ -1045,7 +1048,7 @@ test("lot/AC-16 : une feature dépendante ne démarre qu'après la fin de celle 
 
   assert.equal(runs.length, 1, "seule alpha démarre");
   assert.match(runs[0]!.spec.prompt, /alpha|req/);
-  let lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[1]!.state, "pending", "beta attend, sans erreur");
 
   lot.features[0]!.state = "done";
@@ -1149,9 +1152,7 @@ test("`waitPrompt` et les motifs gardent la FIN du texte, bornés", async () => 
   const secondRunner = mkRunner({ mode: "gate" });
   const second = mkCtl(repoRoot, { runner: secondRunner.runner });
   const secondWt = tmpdir("lot-reason-wt-");
-  seedLot(second.stateDir, repoRoot, [
-    feature("beta", { worktree: secondWt, state: "running", phase: "req" }),
-  ]);
+  seedLot(second.stateDir, repoRoot, [feature("beta", { worktree: secondWt, state: "running", phase: "req" })]);
   void second.controller.tick();
   await flush(4);
   secondRunner.gate.shift()!({ code: 1, killed: false, stdout: "", stderr: `${"x".repeat(500)}\nla vraie panne` });
@@ -1161,9 +1162,7 @@ test("`waitPrompt` et les motifs gardent la FIN du texte, bornés", async () => 
   const thirdRunner = mkRunner({ mode: "gate" });
   const third = mkCtl(repoRoot, { runner: thirdRunner.runner });
   const thirdWt = tmpdir("lot-reason2-wt-");
-  seedLot(third.stateDir, repoRoot, [
-    feature("gamma", { worktree: thirdWt, state: "running", phase: "req" }),
-  ]);
+  seedLot(third.stateDir, repoRoot, [feature("gamma", { worktree: thirdWt, state: "running", phase: "req" })]);
   void third.controller.tick();
   await flush(4);
   thirdRunner.gate.shift()!({ code: 1, killed: false, stdout: "", stderr: "z".repeat(400) });
@@ -1347,7 +1346,11 @@ test("lot/AC-4 : une feature ouverte par /req suit la même chaîne dès sa basc
       sessionFile: "/tmp/collecte.jsonl",
       notify,
     });
-  assert.equal(handOver((text) => announced.push(text)), false, "l'écriture a échoué : pas de bascule");
+  assert.equal(
+    handOver((text) => announced.push(text)),
+    false,
+    "l'écriture a échoué : pas de bascule",
+  );
   assert.equal(
     readLot(blocked.stateDir, lotRepoKey(repoRoot))!.features[0]!.phase,
     "req",
@@ -1360,7 +1363,11 @@ test("lot/AC-4 : une feature ouverte par /req suit la même chaîne dès sa basc
   assert.equal(announced.filter((text) => text.startsWith("[pipeline] état")).length, 1, "une seule fois par session");
   fs.rmdirSync(tmp);
   const after: string[] = [];
-  assert.equal(handOver((text) => after.push(text)), true, "l'obstacle levé, la même bascule passe");
+  assert.equal(
+    handOver((text) => after.push(text)),
+    true,
+    "l'obstacle levé, la même bascule passe",
+  );
   assert.equal(readLot(blocked.stateDir, lotRepoKey(repoRoot))!.features[0]!.phase, "specs");
   assert.deepEqual(after, [], "un succès ne signale rien");
 });
@@ -1465,15 +1472,21 @@ test("lot/AC-9 : mon accord livre — la branche est poussée vers l'URL HTTPS e
       if (args[0] === "repo") {
         return {
           code: 0,
-          stdout: JSON.stringify({ url: GH + "/o/r", defaultBranchRef: { name: "main" } }),
+          stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }),
           stderr: "",
         };
       }
-      return { code: 0, stdout: GH + "/o/r/pull/12\n", stderr: "" };
+      return { code: 0, stdout: `${GH}/o/r/pull/12\n`, stderr: "" };
     },
   });
   seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree: repoRoot, branch: "feat/alpha", state: "waiting", phase: "review", waitKind: "review" }),
+    feature("alpha", {
+      worktree: repoRoot,
+      branch: "feat/alpha",
+      state: "waiting",
+      phase: "review",
+      waitKind: "review",
+    }),
   ]);
   // Le corps de PR est écrit par le run `release` (S-15) : le pilote passe le
   // fichier tel quel, c'est ce qui rend la PR lisible sans action de l'utilisateur.
@@ -1486,10 +1499,10 @@ test("lot/AC-9 : mon accord livre — la branche est poussée vers l'URL HTTPS e
 
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "done");
-  assert.equal(lot.features[0]!.prUrl, GH + "/o/r/pull/12");
+  assert.equal(lot.features[0]!.prUrl, `${GH}/o/r/pull/12`);
   assert.equal(runs.length, 1, "le maillon de livraison a tourné une fois");
   assert.equal(runs[0]!.spec.phase, "release");
-  assert.deepEqual(pushes, [["push", "-u", GH + "/o/r.git", "feat/alpha"]]);
+  assert.deepEqual(pushes, [["push", "-u", `${GH}/o/r.git`, "feat/alpha"]]);
   assert.deepEqual(ghCalls[0], ["repo", "view", "--json", "url,defaultBranchRef"]);
   assert.deepEqual(ghCalls[1], [
     "pr",
@@ -1519,7 +1532,7 @@ test("la livraison adopte la PR déjà ouverte quand `gh pr create` la refuse (S
       if (args[0] === "repo") {
         return {
           code: 0,
-          stdout: JSON.stringify({ url: GH + "/o/r", defaultBranchRef: { name: "main" } }),
+          stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }),
           stderr: "",
         };
       }
@@ -1527,11 +1540,17 @@ test("la livraison adopte la PR déjà ouverte quand `gh pr create` la refuse (S
       if (args[1] === "create") {
         return { code: 1, stdout: "", stderr: `a pull request for branch "feat/alpha" already exists` };
       }
-      return { code: 0, stdout: JSON.stringify({ url: GH + "/o/r/pull/12" }), stderr: "" };
+      return { code: 0, stdout: JSON.stringify({ url: `${GH}/o/r/pull/12` }), stderr: "" };
     },
   });
   seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree: repoRoot, branch: "feat/alpha", state: "waiting", phase: "review", waitKind: "review" }),
+    feature("alpha", {
+      worktree: repoRoot,
+      branch: "feat/alpha",
+      state: "waiting",
+      phase: "review",
+      waitKind: "review",
+    }),
   ]);
 
   assert.equal(await controller.accept("alpha"), null);
@@ -1539,7 +1558,7 @@ test("la livraison adopte la PR déjà ouverte quand `gh pr create` la refuse (S
 
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "done", "la PR existante est adoptée, pas déclarée manquante");
-  assert.equal(lot.features[0]!.prUrl, GH + "/o/r/pull/12");
+  assert.equal(lot.features[0]!.prUrl, `${GH}/o/r/pull/12`);
   assert.deepEqual(ghCalls.at(-1), ["pr", "view", "feat/alpha", "--json", "url"]);
   assert.ok(notices.some((n) => n.includes(`alpha terminé — PR ${GH}/o/r/pull/12`)));
 });
@@ -1632,7 +1651,10 @@ test("la collecte d'une feature de lot se répond dans la session, pas au pannea
   const { controller, runs } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner });
   controller.enrol({ slug: "solo", name: "solo", branch: "feat/solo", worktree });
 
-  assert.equal(await controller.answer("solo", "bonjour"), "la collecte se déroule dans ta session — réponds-y directement");
+  assert.equal(
+    await controller.answer("solo", "bonjour"),
+    "la collecte se déroule dans ta session — réponds-y directement",
+  );
   assert.equal(runs.length, 0);
 });
 
@@ -1666,7 +1688,11 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
     1,
     "la relance ouvre un nouveau crédit, et le run de correction qu'elle lance est compté",
   );
-  assert.equal(lot.features[0]!.unreadableRuns, 0, "la relance remet le compteur illisible à zéro, aucune revue lancée");
+  assert.equal(
+    lot.features[0]!.unreadableRuns,
+    0,
+    "la relance remet le compteur illisible à zéro, aucune revue lancée",
+  );
   assert.match(runs[0]!.spec.prompt, /^\[reprise\]/);
   assert.match(runs[0]!.spec.prompt, /\[impl --fix\]/, "la revue bloquante impose la correction");
   assert.deepEqual(lot.features[1]!, otherBefore, "l'autre pipeline est intact");
@@ -2039,9 +2065,7 @@ test("un run tué par le délai où un binaire absent est nommé, pas confondu",
   const { controller, stateDir } = mkCtl(repoRoot, {
     runner: async () => ({ code: 127, killed: false, stdout: "", stderr: "" }),
   });
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: "x" }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: "x" })]);
   writeContract(worktree, CONTRACT_SPECS);
   await controller.tick();
   await flush(6);
@@ -2053,10 +2077,7 @@ test("un run tué par le délai où un binaire absent est nommé, pas confondu",
   ]);
   await killed.controller.tick();
   await flush(6);
-  assert.match(
-    readLot(killed.stateDir, lotRepoKey(repoRoot))!.features[0]!.stopReason!,
-    /^délai dépassé \(\d+ min\)$/,
-  );
+  assert.match(readLot(killed.stateDir, lotRepoKey(repoRoot))!.features[0]!.stopReason!, /^délai dépassé \(\d+ min\)$/);
 });
 
 test("lot/AC-11 : chaque transition qui m'appelle est annoncée une fois", async () => {
@@ -2083,7 +2104,7 @@ test("lot/AC-11 : chaque transition qui m'appelle est annoncée une fois", async
     buildLotAlert("r", feature("a", { state: "waiting", waitKind: "review" })),
     buildLotAlert("r", feature("a", { state: "blocked", stopReason: "boom" })),
     buildLotAlert("r", feature("a", { state: "failed", stopReason: "boom" })),
-    buildLotAlert("r", feature("a", { state: "done", prUrl: GH + "/o/r/pull/1" })),
+    buildLotAlert("r", feature("a", { state: "done", prUrl: `${GH}/o/r/pull/1` })),
     buildLotAlert("r", feature("a", { state: "running" })),
     buildLotAlert("r", feature("a", { state: "pending" })),
     buildLotAlert("r", feature("a", { state: "cancelled" })),
@@ -2122,7 +2143,15 @@ test("le récap nomme le décompte exact et omet les catégories vides", () => {
 // Le panneau
 // ---------------------------------------------------------------------------
 
-const emptyModel: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0, relayed: {} };
+const emptyModel: PanelModel = {
+  running: [],
+  live: {},
+  history: [],
+  selection: -1,
+  notice: null,
+  unreadable: 0,
+  relayed: {},
+};
 
 test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et son état", async () => {
   const states: Array<[LotFeatureState, string]> = [
@@ -2194,7 +2223,11 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     .slice(-3);
   assert.match(footer[0]!, /a ajouter · l lancer · Entrée session/);
   assert.ok(!footer[0]!.includes("d supprimer"), `aucune touche morte annoncée : ${footer[0]}`);
-  assert.match(footer[1]!, /x retirer · m modèles · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
+  assert.match(
+    footer[1]!,
+    /x retirer · m modèles · c annuler/,
+    "la touche de retrait est annoncée sur la ligne qui la porte",
+  );
 
   // S-11 : une ligne qui accepte une écriture l'annonce par `Entrée` (la touche `i`
   // n'existe plus — on répond dans la VUE du rang).
@@ -2234,7 +2267,10 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     `l'état dit ce qui retient la feature, sans répéter les dépendances : ${heldRow.text}`,
   );
   const waitingRow = held.find((row) => row.text.includes("f3 "));
-  assert.ok(waitingRow?.text.includes("attend réponse"), `l'attente de réponse se lit sur son rang : ${waitingRow?.text}`);
+  assert.ok(
+    waitingRow?.text.includes("attend réponse"),
+    `l'attente de réponse se lit sur son rang : ${waitingRow?.text}`,
+  );
 
   // Sur une entrée d'historique — le seul rang que `d` supprime —, la seconde
   // ligne le dit : la touche n'est jamais perdue de vue.
@@ -2468,7 +2504,25 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   };
   const opts = { width: 64, budget: 18, glyphs: GLYPHS, now: 0 };
   const add = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", modelReqSpecs: null, fallbackReqSpecs: null, modelImplReview: null, fallbackImplReview: null }, buffer: "une intention" } },
+    {
+      ...emptyModel,
+      lot,
+      selection: 0,
+      mode: {
+        kind: "add",
+        step: "description",
+        draft: {
+          name: "a",
+          description: "",
+          deps: "",
+          modelReqSpecs: null,
+          fallbackReqSpecs: null,
+          modelImplReview: null,
+          fallbackImplReview: null,
+        },
+        buffer: "une intention",
+      },
+    },
     opts,
   );
   assert.match(rowsText(add), /Description : une intention▏/);
@@ -2488,10 +2542,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   assert.match(rowsText(confirm), /Lancer le lot \? · 0 feature\(s\) à venir démarrent/);
   assert.match(rowsText(confirm), /Entrée lancer · Échap annuler/);
 
-  const cancel = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "cancel", slug: "alpha" } },
-    opts,
-  );
+  const cancel = buildPanelRows({ ...emptyModel, lot, selection: 0, mode: { kind: "cancel", slug: "alpha" } }, opts);
   assert.match(rowsText(cancel), /Annuler alpha \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   assert.match(rowsText(cancel), /la branche reste · 2 copie les ignorés · Échap annuler/);
   for (const rows of [add, confirm, cancel]) {
@@ -2611,7 +2662,10 @@ function mkPanel(repoRoot: string, stateDir: string, actions: LotPanelActions, r
     // Largeur confortable : une formulation d'aperçu plus longue que le cadre s'y lit
     // d'un seul rang, sans deviner où le repli tombe.
     wide: () => component.render(200).join("\n"),
-    tick: () => scheduled.forEach((callback) => callback()),
+    tick: () =>
+      scheduled.forEach((callback) => {
+        callback();
+      }),
     runs,
   };
 }
@@ -2681,11 +2735,7 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   component.handleInput("2");
   assert.match(wide(), /Annuler alpha \? · en cours → annulé · worktree archivé · la branche reste/);
   assert.match(wide(), /Entrée annuler · Échap retour/);
-  assert.equal(
-    readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state,
-    "running",
-    "l'aperçu n'a rien annulé",
-  );
+  assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running", "l'aperçu n'a rien annulé");
   component.handleInput("\r");
   // L'annulation attend la fin du run en vol (borne de 10 s) : on observe l'état.
   await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state === "cancelled");
@@ -3206,7 +3256,10 @@ test("lot-ask/AC-17 : chaque section est nommée et chaque marqueur attribué", 
       .filter((target): target is number => target !== undefined);
   const inLot = targets(lotAt, outAt);
   assert.ok(inLot.length > 0, "le lot garde des rangs");
-  assert.ok(inLot.every((target) => target < features.length), "ils sont tous sous l'en-tête du LOT");
+  assert.ok(
+    inLot.every((target) => target < features.length),
+    "ils sont tous sous l'en-tête du LOT",
+  );
   const outLot = targets(outAt, sepAt);
   assert.deepEqual(outLot, [features.length], "le rang « hors lot » est sous SON en-tête");
   assert.deepEqual(targets(histAt, rows.length), [], "et l'historique vide n'a aucun rang");

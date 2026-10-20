@@ -142,9 +142,17 @@ function observeRenames(root: string, body: () => void): RenameObservation[] {
   const original = fs.renameSync;
   fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
     const tmpMode = fs.statSync(from).mode & 0o777;
-    const widerFiles = walk(root).files.filter(([, mode]) => (mode & 0o077) !== 0).map(([file, mode]) => `${file} (${mode.toString(8)})`);
+    const widerFiles = walk(root)
+      .files.filter(([, mode]) => (mode & 0o077) !== 0)
+      .map(([file, mode]) => `${file} (${mode.toString(8)})`);
     original(from, to);
-    seen.push({ from: String(from), to: String(to), tmpMode, widerFiles, targetModeAfter: fs.statSync(to).mode & 0o777 });
+    seen.push({
+      from: String(from),
+      to: String(to),
+      tmpMode,
+      widerFiles,
+      targetModeAfter: fs.statSync(to).mode & 0o777,
+    });
   }) as typeof fs.renameSync;
   syncBuiltinESMExports();
   try {
@@ -158,8 +166,21 @@ function observeRenames(root: string, body: () => void): RenameObservation[] {
 
 /** Un run publie son état (running/ puis history/), écrit le journal, un brief, un rapport et un brouillon d'audit. */
 function publishRun(stateDir: string): string[] {
-  const base = { id: "r-1", cwd: "/dépôt/alpha", label: "alpha", phase: "impl", sessionFile: null, sessionId: null, phaseStartedAt: 1_700_000_000_000 } as const;
-  writeRunningEntry(stateDir, { ...base, state: "running", updatedAt: 1_700_000_000_000, owner: { pid: process.pid } } satisfies RunningEntry);
+  const base = {
+    id: "r-1",
+    cwd: "/dépôt/alpha",
+    label: "alpha",
+    phase: "impl",
+    sessionFile: null,
+    sessionId: null,
+    phaseStartedAt: 1_700_000_000_000,
+  } as const;
+  writeRunningEntry(stateDir, {
+    ...base,
+    state: "running",
+    updatedAt: 1_700_000_000_000,
+    owner: { pid: process.pid },
+  } satisfies RunningEntry);
   writeHistoryEntry(stateDir, { ...base, finalState: "done", endedAt: 1_700_000_000_500 } satisfies HistoryEntry);
   appendJournal(stateDir, "depot-1234", {
     at: 1_700_000_000_000,
@@ -212,7 +233,13 @@ async function withEnvAsync<T>(vars: Record<string, string | undefined>, body: (
 function writeSessionFile(file: string, cwd: string): string {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const title = { type: "title", v: 1, title: "", updatedAt: "2026-10-19T00:00:00.000Z", pad: " ".repeat(40) };
-  const header = { type: "session", version: 3, id: path.basename(file, ".jsonl"), timestamp: "2026-10-19T00:00:00.000Z", cwd };
+  const header = {
+    type: "session",
+    version: 3,
+    id: path.basename(file, ".jsonl"),
+    timestamp: "2026-10-19T00:00:00.000Z",
+    cwd,
+  };
   fs.writeFileSync(file, `${JSON.stringify(title)}\n${JSON.stringify(header)}\n`, "utf8");
   return file;
 }
@@ -318,7 +345,10 @@ function seedLegacyStore(root: string): LegacyStore {
 /** Après balayage : sous-dossiers 0700 (sauf le 0500 inchangé), fichiers 0600 (l'exécutable 0700), lien et cible intacts. */
 function assertTightened(root: string, legacy: LegacyStore, label: string, except: string[] = []): void {
   const { dirs, files } = walk(root);
-  assert.ok(dirs.length >= 9 && files.length >= 9, `${label} : le magasin est parcouru (${dirs.length} dossiers, ${files.length} fichiers)`);
+  assert.ok(
+    dirs.length >= 9 && files.length >= 9,
+    `${label} : le magasin est parcouru (${dirs.length} dossiers, ${files.length} fichiers)`,
+  );
   for (const [dir, mode] of dirs) {
     assert.equal(mode, dir === legacy.narrow ? 0o500 : 0o700, `${label} : ${dir} (vu ${mode.toString(8)})`);
   }
@@ -331,7 +361,8 @@ function assertTightened(root: string, legacy: LegacyStore, label: string, excep
 }
 
 const isTightenWarning = (message: SentMessage): boolean =>
-  message.customType === "pipeline" && message.content.startsWith("[pipeline] droits du magasin d'état non resserrés :");
+  message.customType === "pipeline" &&
+  message.content.startsWith("[pipeline] droits du magasin d'état non resserrés :");
 
 /** `body` avec `fs.chmodSync` qui lève `EPERM` pour chaque chemin de `blocked`, restauré quoi qu'il arrive. */
 async function withChmodFailing<T>(blocked: string[], body: () => Promise<T>): Promise<T> {
@@ -381,7 +412,11 @@ test(`${SLUG}/AC-1 : HOME isolé sans magasin, umask 022 — ~/.omp/agent/pipeli
         context: null,
       });
       assert.equal(modeOf(journal), 0o600, "journal 0644 resserré à l'ajout");
-      assert.equal(fs.readFileSync(journal, "utf8").trim().split("\n").length, 2, "une ligne ajoutée, la première intacte");
+      assert.equal(
+        fs.readFileSync(journal, "utf8").trim().split("\n").length,
+        2,
+        "une ligne ajoutée, la première intacte",
+      );
     }),
   );
 });
@@ -391,9 +426,17 @@ test(`${SLUG}/AC-2 : umask 022 — le temporaire de l'écriture atomique est dé
     // Magasin neuf : chaque écriture, JSON, texte et octets, observée à l'instant du rename.
     const stateDir = path.join(mktmp("psfwr-ac2-"), "pipeline");
     const writes: Array<[string, () => void, string]> = [
-      ["writeJsonAtomic", () => writeJsonAtomic(path.join(stateDir, "lots", "l-1.json"), { version: 1 }), `${JSON.stringify({ version: 1 }, null, 2)}\n`],
+      [
+        "writeJsonAtomic",
+        () => writeJsonAtomic(path.join(stateDir, "lots", "l-1.json"), { version: 1 }),
+        `${JSON.stringify({ version: 1 }, null, 2)}\n`,
+      ],
       ["writeStateFileAtomic (texte)", () => writeStateFileAtomic(path.join(stateDir, "briefs", "b.md"), "é\n"), "é\n"],
-      ["writeStateFileAtomic (octets)", () => writeStateFileAtomic(path.join(stateDir, "raw", "x.bin"), new TextEncoder().encode("octets")), "octets"],
+      [
+        "writeStateFileAtomic (octets)",
+        () => writeStateFileAtomic(path.join(stateDir, "raw", "x.bin"), new TextEncoder().encode("octets")),
+        "octets",
+      ],
     ];
     for (const [label, write, expected] of writes) {
       const seen = observeRenames(stateDir, write);
@@ -427,7 +470,10 @@ test(`${SLUG}/AC-2 : umask 022 — le temporaire de l'écriture atomique est dé
     // Échec du rename (la cible est un dossier non vide) : même erreur, aucun temporaire laissé.
     const blocked = path.join(stateDir, "lots", "occupé.json");
     fs.mkdirSync(path.join(blocked, "dedans"), { recursive: true });
-    assert.throws(() => writeStateFileAtomic(blocked, "x"), (err: NodeJS.ErrnoException) => typeof err.code === "string");
+    assert.throws(
+      () => writeStateFileAtomic(blocked, "x"),
+      (err: NodeJS.ErrnoException) => typeof err.code === "string",
+    );
     assert.equal(fs.existsSync(`${blocked}.tmp-${process.pid}`), false, "temporaire d'un échec retiré");
   });
 
@@ -491,7 +537,11 @@ test(`${SLUG}/AC-4 : ~/.omp/agent/pipeline existant en 0755 (sous-dossiers 0755,
     // Second accès du même process : aucun second balayage.
     const late = path.join(stateDir, "lots", "l-1.json");
     fs.chmodSync(late, 0o644);
-    assert.equal(secureStateStore(stateDir, () => assert.fail("aucun avertissement")), null, "déjà balayé : rien");
+    assert.equal(
+      secureStateStore(stateDir, () => assert.fail("aucun avertissement")),
+      null,
+      "déjà balayé : rien",
+    );
     await startOrdinarySession({});
     assert.equal(modeOf(late), 0o644, "un seul balayage par process et par magasin");
   });
@@ -538,7 +588,11 @@ test(`${SLUG}/AC-6 : un fichier d'état dont le resserrement échoue — avertis
     const messages = await startOrdinarySession({ "pipeline-state-dir": root });
     const warnings = messages.filter(isTightenWarning);
     assert.equal(warnings.length, 1, "un seul avertissement");
-    assert.equal(warnings[0]!.content, `[pipeline] droits du magasin d'état non resserrés :\n- ${blocked} (EPERM)`, "il nomme le chemin et le code");
+    assert.equal(
+      warnings[0]!.content,
+      `[pipeline] droits du magasin d'état non resserrés :\n- ${blocked} (EPERM)`,
+      "il nomme le chemin et le code",
+    );
     assert.equal(modeOf(blocked), 0o644, "le fichier en échec garde ses droits");
     assertTightened(root, legacy, "les autres chemins", [blocked]);
 
@@ -560,8 +614,15 @@ test(`${SLUG}/AC-6 : un fichier d'état dont le resserrement échoue — avertis
     writeRunningEntry(root, live);
     assert.equal(modeOf(path.join(pipelineRunningDir(root), `${live.id}.json`)), 0o600);
     const model = readPanelModel({ stateDir: root });
-    assert.deepEqual(model.running.map((entry) => entry.id), [live.id], "l'entrée publiée est lue");
-    assert.ok(model.history.some((entry) => entry.id === old.id), "l'entrée non resserrée reste lisible");
+    assert.deepEqual(
+      model.running.map((entry) => entry.id),
+      [live.id],
+      "l'entrée publiée est lue",
+    );
+    assert.ok(
+      model.history.some((entry) => entry.id === old.id),
+      "l'entrée non resserrée reste lisible",
+    );
   });
 
   // Plus de dix échecs : dix chemins nommés, le reste compté ; un second appel ne balaie ni ne prévient.
@@ -581,16 +642,27 @@ test(`${SLUG}/AC-6 : un fichier d'état dont le resserrement échoue — avertis
     assert.equal(lines.length, 12, "titre + 10 chemins + le reste");
     assert.equal(lines[0], "[pipeline] droits du magasin d'état non resserrés :");
     assert.equal(lines[11], "- … et 2 autre(s)");
-    assert.equal(secureStateStore(many, (text) => warned.push(text)), null);
+    assert.equal(
+      secureStateStore(many, (text) => warned.push(text)),
+      null,
+    );
     assert.equal(warned.length, 1, "un seul avertissement par process et par magasin");
   });
   // `warn` qui lève, racine absente : `secureStateStore` ne lève jamais.
   const throwing = mktmp("psfwr-ac6-warn-");
   fs.writeFileSync(path.join(throwing, "x.json"), "{}\n", "utf8");
   await withChmodFailing([path.join(throwing, "x.json")], async () => {
-    assert.equal(secureStateStore(throwing, () => { throw new Error("canal en panne"); })?.failures.length, 1);
+    assert.equal(
+      secureStateStore(throwing, () => {
+        throw new Error("canal en panne");
+      })?.failures.length,
+      1,
+    );
   });
-  assert.deepEqual(tightenStateStore(path.join(throwing, "absent"), { includeRoot: true }), { tightened: [], failures: [] });
+  assert.deepEqual(tightenStateStore(path.join(throwing, "absent"), { includeRoot: true }), {
+    tightened: [],
+    failures: [],
+  });
 });
 
 test(`${SLUG}/AC-7 : magasin resserré — panneau, pid mort balayé vers history/, inbox, commande et accusé, service HTTP : mêmes résultats qu'avant`, async () => {
@@ -598,8 +670,26 @@ test(`${SLUG}/AC-7 : magasin resserré — panneau, pid mort balayé vers histor
   const worktree = mktmp("psfwr-ac7-wt-");
   const repo = mktmp("psfwr-ac7-repo-");
   const base = { label: "depot/feature", sessionFile: null, sessionId: null } as const;
-  const live: RunningEntry = { ...base, id: runningIdFor(worktree), cwd: worktree, phase: "impl", phaseStartedAt: 1_000, state: "running", updatedAt: 2_000, owner: { pid: process.pid } };
-  const dead: RunningEntry = { ...base, id: runningIdFor(repo), cwd: repo, phase: "review", phaseStartedAt: 1_500, state: "running", updatedAt: 4_000, owner: { pid: deadPid() } };
+  const live: RunningEntry = {
+    ...base,
+    id: runningIdFor(worktree),
+    cwd: worktree,
+    phase: "impl",
+    phaseStartedAt: 1_000,
+    state: "running",
+    updatedAt: 2_000,
+    owner: { pid: process.pid },
+  };
+  const dead: RunningEntry = {
+    ...base,
+    id: runningIdFor(repo),
+    cwd: repo,
+    phase: "review",
+    phaseStartedAt: 1_500,
+    state: "running",
+    updatedAt: 4_000,
+    owner: { pid: deadPid() },
+  };
   writeRunningEntry(stateDir, live);
   writeRunningEntry(stateDir, dead);
   // Un magasin d'avant le correctif, puis resserré par le premier accès.
@@ -611,13 +701,20 @@ test(`${SLUG}/AC-7 : magasin resserré — panneau, pid mort balayé vers histor
 
   // Panneau : l'entrée vivante est lue ; le pid mort rejoint l'historique en « échoué ».
   const model = readPanelModel({ stateDir });
-  assert.deepEqual(model.running.map((entry) => entry.id), [live.id]);
+  assert.deepEqual(
+    model.running.map((entry) => entry.id),
+    [live.id],
+  );
   assert.equal(model.history.length, 1);
   const record = model.history[0]!;
   assert.equal(record.finalState, "failed");
   assert.equal(record.phase, "review");
   assert.equal(record.endedAt, dead.updatedAt, "l'instant de fin est le dernier battement");
-  assert.equal(fs.existsSync(path.join(pipelineRunningDir(stateDir), `${dead.id}.json`)), false, "running/ ne la contient plus");
+  assert.equal(
+    fs.existsSync(path.join(pipelineRunningDir(stateDir), `${dead.id}.json`)),
+    false,
+    "running/ ne la contient plus",
+  );
   const historyFile = path.join(pipelineHistoryDir(stateDir), `${record.id}.json`);
   assert.equal(modeOf(historyFile), 0o600, "l'historique écrit par le second processus est en 0600");
   assert.equal(readPanelModel({ stateDir }).history.length, 1, "idempotent");
@@ -632,20 +729,47 @@ test(`${SLUG}/AC-7 : magasin resserré — panneau, pid mort balayé vers histor
   assert.equal(modeOf(delivered[0]!.file), 0o600);
 
   // Canal de commandes : la commande est en attente, l'accusé est relu.
-  const cmd: PipelineCommand = { version: 1, id: "c-1", sentAt: 1_700_000_000_000, repo, kind: "launch", title: "Titre", description: "faire" };
+  const cmd: PipelineCommand = {
+    version: 1,
+    id: "c-1",
+    sentAt: 1_700_000_000_000,
+    repo,
+    kind: "launch",
+    title: "Titre",
+    description: "faire",
+  };
   writeCommand(stateDir, cmd);
   assert.equal(hasPendingCommands(stateDir, repo), true, "la commande déposée est en attente");
-  const ack: PipelineCommandAck = { version: 1, id: "c-1", repo, kind: "launch", state: "taken", reason: null, at: 1_700_000_000_100 };
+  const ack: PipelineCommandAck = {
+    version: 1,
+    id: "c-1",
+    repo,
+    kind: "launch",
+    state: "taken",
+    reason: null,
+    at: 1_700_000_000_100,
+  };
   writeCommandAck(stateDir, ack);
   assert.deepEqual(readCommandAck(stateDir, "c-1"), ack);
 
   // Service HTTP : le jeton relu de service.json (0600) authentifie comme avant.
-  const written: ServiceRecord = { version: SERVICE_VERSION, pid: process.pid, port: 8788, token: newServiceToken(), startedAt: 1_700_000_000_000, stateDir, sessionFile: null };
+  const written: ServiceRecord = {
+    version: SERVICE_VERSION,
+    pid: process.pid,
+    port: 8788,
+    token: newServiceToken(),
+    startedAt: 1_700_000_000_000,
+    stateDir,
+    sessionFile: null,
+  };
   writeService(written);
   assert.equal(modeOf(serviceFilePath(stateDir)), 0o600);
   const reread = readService(stateDir, { alive: () => true });
   assert.deepEqual(reread, written);
-  const handle = createServiceRequestHandler({ api: { lot: () => null } as unknown as ServiceApi, token: written.token });
+  const handle = createServiceRequestHandler({
+    api: { lot: () => null } as unknown as ServiceApi,
+    token: written.token,
+  });
   const get = (headers: Record<string, string>) =>
     handle(new Request(`http://127.0.0.1/v1/repos/${encodeURIComponent(stateDir)}/lot`, { method: "GET", headers }));
   assert.equal((await get({ [SERVICE_TOKEN_HEADER]: reread!.token })).status, 200, "jeton relu accepté");

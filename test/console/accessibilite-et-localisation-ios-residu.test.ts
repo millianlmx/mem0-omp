@@ -45,8 +45,22 @@ type Sources = Map<string, string>;
 /** Les sources du dépôt (commentaires retirés pour le Swift, texte brut pour le JSON, le pbxproj et le plist). */
 function repoSources(): Sources {
   const files = [
-    HOME_VIEW, WELCOME, PIPELINES, CARD_SHEET, CARD_RECIPE, PIPELINES_TEXT, PLAN, PROJECT,
-    SECTION_VIEW, MEMORY, GRAPH, KANBAN_TEXT, NEW_FEATURE_TEXT, ROOT_VIEW, HOME_TEXT, CONNECTION_STATE,
+    HOME_VIEW,
+    WELCOME,
+    PIPELINES,
+    CARD_SHEET,
+    CARD_RECIPE,
+    PIPELINES_TEXT,
+    PLAN,
+    PROJECT,
+    SECTION_VIEW,
+    MEMORY,
+    GRAPH,
+    KANBAN_TEXT,
+    NEW_FEATURE_TEXT,
+    ROOT_VIEW,
+    HOME_TEXT,
+    CONNECTION_STATE,
   ];
   const sources: Sources = new Map();
   for (const rel of files) sources.set(rel, stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8")));
@@ -70,7 +84,7 @@ function plant(sources: Sources, rel: string, from: string | RegExp, to: string)
   return copy;
 }
 
-const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // ── AC-1 : symboles décoratifs muets (S-1) ─────────────────────────────────────
 
@@ -103,8 +117,14 @@ function meaningfulFaults(sources: Sources): string[] {
   const faults: string[] = [];
   const screen = get(sources, PIPELINES);
   // `.disabled(…)` : le « + » est grisé hors connexion (etats-non-connecte-heterogenes-ios, S-5).
-  if (!/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*(?:\.disabled\([^()]*\)\s*)?\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(screen)) {
-    faults.push("PipelinesScreen : le bouton pipelines.newFeature n'a plus Label(NewFeatureText.command, systemImage: \"plus\") pour libellé");
+  if (
+    !/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*(?:\.disabled\([^()]*\)\s*)?\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(
+      screen,
+    )
+  ) {
+    faults.push(
+      'PipelinesScreen : le bouton pipelines.newFeature n\'a plus Label(NewFeatureText.command, systemImage: "plus") pour libellé',
+    );
   }
   if (!get(sources, KANBAN_TEXT).includes('public static let refresh = "Rafraîchir"')) {
     faults.push("KanbanText.refresh n'est plus « Rafraîchir »");
@@ -132,7 +152,7 @@ interface ExceptionEntry {
 function containerFaults(sources: Sources): string[] {
   const faults: string[] = [];
   for (const [rel, id] of CONTAINERS) {
-    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escape(id)}`);
+    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escapeRegExp(id)}`);
     if (!pattern.test(get(sources, rel))) {
       faults.push(`${rel} : .accessibilityElement(children: .contain) doit précéder immédiatement ${id}`);
     }
@@ -166,8 +186,14 @@ function cardFaults(sources: Sources): string[] {
   if (!/if cardRecipe\.forcedBoard != nil \{[^}]*cardRecipe\.announce\(\)/.test(screen)) {
     faults.push("PipelinesScreen.onAppear n'annonce pas le crochet `ardoise` (signal pipelines-recipe-ready)");
   }
-  if (!/Button \{ sheet = \.card\(card\.id\) \} label: \{\s*cardLabel\(card, showsRepo: showsRepo\)\s*\}\s*\.buttonStyle\(\.plain\)\s*\.accessibilityIdentifier\(PipelinesAccessibility\.card\(card\.id\)\)/.test(screen)) {
-    faults.push("PipelinesScreen.cardButton : le corps de carte ne porte plus .accessibilityIdentifier(PipelinesAccessibility.card(card.id))");
+  if (
+    !/Button \{ sheet = \.card\(card\.id\) \} label: \{\s*cardLabel\(card, showsRepo: showsRepo\)\s*\}\s*\.buttonStyle\(\.plain\)\s*\.accessibilityIdentifier\(PipelinesAccessibility\.card\(card\.id\)\)/.test(
+      screen,
+    )
+  ) {
+    faults.push(
+      "PipelinesScreen.cardButton : le corps de carte ne porte plus .accessibilityIdentifier(PipelinesAccessibility.card(card.id))",
+    );
   }
   const text = get(sources, PIPELINES_TEXT);
   if (!text.includes('static func card(_ id: String) -> String { "pipelines.card.\\(id)" }')) {
@@ -190,15 +216,61 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { name: "Se connecter", file: CONNECTION_STATE, label: "Text(IOSConnectionStateText.connect)", anchor: ".accessibilityIdentifier(IOSConnectionStateAccessibility.connect)" },
-  { name: "Ouvrir la PR (Accueil)", file: HOME_VIEW, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))" },
-  { name: "Ouvrir la PR (carte Pipelines)", file: PIPELINES, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))" },
-  { name: "Ouvrir la PR (fiche de carte)", file: CARD_SHEET, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))" },
-  { name: "Ouvrir la PR (plan Projet)", file: PLAN, label: "Text(ProjectViewText.prOpen)", anchor: "Link(destination: link) {", opens: true },
-  { name: "Réessayer (Mémoire)", file: MEMORY, label: "Label(MemoryText.retry,", anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.retry)" },
-  { name: "Réessayer (page suivante)", file: MEMORY, label: "Label(MemoryText.retry,", anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)" },
-  { name: "Réessayer (graphe)", file: GRAPH, label: "Label(MemoryText.retry,", anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.retry)" },
-  { name: "Menu d'étiquettes du graphe", file: GRAPH, label: "Label(MemoryText.tagMenu,", anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.graphTagMenu)" },
+  {
+    name: "Se connecter",
+    file: CONNECTION_STATE,
+    label: "Text(IOSConnectionStateText.connect)",
+    anchor: ".accessibilityIdentifier(IOSConnectionStateAccessibility.connect)",
+  },
+  {
+    name: "Ouvrir la PR (Accueil)",
+    file: HOME_VIEW,
+    label: "Text(HomeText.openPR)",
+    anchor: ".accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))",
+  },
+  {
+    name: "Ouvrir la PR (carte Pipelines)",
+    file: PIPELINES,
+    label: "Text(HomeText.openPR)",
+    anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))",
+  },
+  {
+    name: "Ouvrir la PR (fiche de carte)",
+    file: CARD_SHEET,
+    label: "Text(HomeText.openPR)",
+    anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))",
+  },
+  {
+    name: "Ouvrir la PR (plan Projet)",
+    file: PLAN,
+    label: "Text(ProjectViewText.prOpen)",
+    anchor: "Link(destination: link) {",
+    opens: true,
+  },
+  {
+    name: "Réessayer (Mémoire)",
+    file: MEMORY,
+    label: "Label(MemoryText.retry,",
+    anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.retry)",
+  },
+  {
+    name: "Réessayer (page suivante)",
+    file: MEMORY,
+    label: "Label(MemoryText.retry,",
+    anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)",
+  },
+  {
+    name: "Réessayer (graphe)",
+    file: GRAPH,
+    label: "Label(MemoryText.retry,",
+    anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.retry)",
+  },
+  {
+    name: "Menu d'étiquettes du graphe",
+    file: GRAPH,
+    label: "Label(MemoryText.tagMenu,",
+    anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.graphTagMenu)",
+  },
 ];
 
 /** Le cadre de 44 pt du libellé : carré minimal, ou ligne pleine largeur d'au moins 44 pt de haut (« Ouvrir la PR » d'une carte Pipelines). */
@@ -222,9 +294,7 @@ function targetFaults(sources: Sources): string[] {
       faults.push(`${target.name} : ${target.anchor} doit apparaître exactement une fois dans ${target.file}`);
       continue;
     }
-    const labelAt = target.opens
-      ? text.indexOf(target.label, anchorAt)
-      : text.lastIndexOf(target.label, anchorAt);
+    const labelAt = target.opens ? text.indexOf(target.label, anchorAt) : text.lastIndexOf(target.label, anchorAt);
     if (labelAt === -1) {
       faults.push(`${target.name} : le libellé ${target.label} est introuvable près de ${target.anchor}`);
       continue;
@@ -235,9 +305,11 @@ function targetFaults(sources: Sources): string[] {
       continue;
     }
     const segment = target.opens ? text.slice(labelAt) : text.slice(labelAt, anchorAt);
-    const shape = new RegExp(`^${escape(target.label)}${SHAPE}`).exec(segment);
+    const shape = new RegExp(`^${escapeRegExp(target.label)}${SHAPE}`).exec(segment);
     if (shape === null) {
-      faults.push(`${target.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) (ou une ligne .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)) puis .contentShape(Rectangle())`);
+      faults.push(
+        `${target.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) (ou une ligne .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)) puis .contentShape(Rectangle())`,
+      );
       continue;
     }
     if (!target.opens) {
@@ -267,7 +339,9 @@ function validate(entries: ExceptionEntry[]): { status: number | null; stderr: s
     ...e,
   }));
   fs.writeFileSync(file, JSON.stringify(full));
-  const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", file, "--valider-seulement"], { encoding: "utf8" });
+  const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", file, "--valider-seulement"], {
+    encoding: "utf8",
+  });
   return { status: r.status, stderr: r.stderr };
 }
 
@@ -276,10 +350,26 @@ function validate(entries: ExceptionEntry[]): { status: number | null; stderr: s
 test("accessibilite-et-localisation-ios-residu/AC-1 : les symboles décoratifs de l'Accueil, de la Bienvenue et des Pipelines sont masqués à VoiceOver", () => {
   const sources = repoSources();
   assert.deepEqual(decorativeFaults(sources), []);
-  const planted = plant(sources, WELCOME, /(Image\(systemName: promise\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/, "$1");
-  assert.ok(decorativeFaults(planted).some((f) => f.includes("promise.symbol")), "un symbole de promesse lu par VoiceOver doit faire rougir la garde");
-  const lane = plant(sources, PIPELINES, /(Image\(systemName: row\.lane\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/, "$1");
-  assert.ok(decorativeFaults(lane).some((f) => f.includes("row.lane.symbol")), "un symbole de voie lu par VoiceOver doit faire rougir la garde");
+  const planted = plant(
+    sources,
+    WELCOME,
+    /(Image\(systemName: promise\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
+    "$1",
+  );
+  assert.ok(
+    decorativeFaults(planted).some((f) => f.includes("promise.symbol")),
+    "un symbole de promesse lu par VoiceOver doit faire rougir la garde",
+  );
+  const lane = plant(
+    sources,
+    PIPELINES,
+    /(Image\(systemName: row\.lane\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
+    "$1",
+  );
+  assert.ok(
+    decorativeFaults(lane).some((f) => f.includes("row.lane.symbol")),
+    "un symbole de voie lu par VoiceOver doit faire rougir la garde",
+  );
 });
 
 // Le bouton ↻ de Pipelines est retiré par ios-gestes-et-retours-natifs (S-2, tirer
@@ -287,8 +377,16 @@ test("accessibilite-et-localisation-ios-residu/AC-1 : les symboles décoratifs d
 test("accessibilite-et-localisation-ios-residu/AC-2 : Nouvelle feature… garde son libellé français, jamais le nom du symbole", () => {
   const sources = repoSources();
   assert.deepEqual(meaningfulFaults(sources), []);
-  const icon = plant(sources, PIPELINES, 'Label(NewFeatureText.command, systemImage: "plus")', 'Image(systemName: "plus")');
-  assert.ok(meaningfulFaults(icon).some((f) => f.includes("pipelines.newFeature")), "un symbole nu sur Nouvelle feature… doit faire rougir la garde");
+  const icon = plant(
+    sources,
+    PIPELINES,
+    'Label(NewFeatureText.command, systemImage: "plus")',
+    'Image(systemName: "plus")',
+  );
+  assert.ok(
+    meaningfulFaults(icon).some((f) => f.includes("pipelines.newFeature")),
+    "un symbole nu sur Nouvelle feature… doit faire rougir la garde",
+  );
 });
 
 test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran Pipelines, Mémoire et Projet ne se propagent plus à leurs enfants", () => {
@@ -300,30 +398,45 @@ test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran 
     /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\(PipelinesAccessibility\.screen\))/,
     "$1",
   );
-  assert.ok(containerFaults(planted).some((f) => f.includes("PipelinesAccessibility.screen")), "un écran Pipelines sans .contain doit faire rougir la garde");
+  assert.ok(
+    containerFaults(planted).some((f) => f.includes("PipelinesAccessibility.screen")),
+    "un écran Pipelines sans .contain doit faire rougir la garde",
+  );
   const memory = plant(
     sources,
     MEMORY,
     /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\(IOSMemoryAccessibility\.screen\))/,
     "$1",
   );
-  assert.ok(containerFaults(memory).some((f) => f.includes("IOSMemoryAccessibility.screen")), "un écran Mémoire sans .contain doit faire rougir la garde");
+  assert.ok(
+    containerFaults(memory).some((f) => f.includes("IOSMemoryAccessibility.screen")),
+    "un écran Mémoire sans .contain doit faire rougir la garde",
+  );
   const excepted = plant(sources, EXCEPTIONS, /^\[/, '[{"regle": "id-duplique", "element": "id:ios.memoire.screen"},');
-  assert.ok(containerFaults(excepted).some((f) => f.includes("id:ios.memoire.screen")), "une exception sur ios.memoire.screen doit faire rougir la garde");
+  assert.ok(
+    containerFaults(excepted).some((f) => f.includes("id:ios.memoire.screen")),
+    "une exception sur ios.memoire.screen doit faire rougir la garde",
+  );
 });
 
 test("accessibilite-et-localisation-ios-residu/AC-4 : chaque carte de Pipelines porte son identifiant propre, et le crochet ardoise les montre sans appairage", () => {
   const sources = repoSources();
   assert.deepEqual(cardFaults(sources), []);
   const planted = plant(sources, CARD_RECIPE, "case PipelinesText.recipeArdoise: return .ardoise", "");
-  assert.ok(cardFaults(planted).some((f) => f.includes("ardoise")), "un crochet ardoise non reconnu doit faire rougir la garde");
+  assert.ok(
+    cardFaults(planted).some((f) => f.includes("ardoise")),
+    "un crochet ardoise non reconnu doit faire rougir la garde",
+  );
   const shared = plant(
     sources,
     PIPELINES,
     ".accessibilityIdentifier(PipelinesAccessibility.card(card.id))",
     ".accessibilityIdentifier(PipelinesAccessibility.lane(card.id))",
   );
-  assert.ok(cardFaults(shared).some((f) => f.includes("corps de carte")), "un corps de carte sans identifiant propre doit faire rougir la garde");
+  assert.ok(
+    cardFaults(shared).some((f) => f.includes("corps de carte")),
+    "un corps de carte sans identifiant propre doit faire rougir la garde",
+  );
 });
 
 test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter, Réessayer et le menu d'étiquettes portent une cible de 44 pt sur leur libellé", () => {
@@ -337,16 +450,30 @@ test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter
     /Text\(IOSConnectionStateText\.connect\)\s*\.frame\(minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget\)\s*\.contentShape\(Rectangle\(\)\)\s*\}/,
     "Text(IOSConnectionStateText.connect)\n        }\n        .frame(minHeight: IOSMetrics.minimumTarget)",
   );
-  assert.ok(targetFaults(outside).some((f) => f.startsWith("Se connecter")), "une cible posée sur le Button doit faire rougir la garde");
-  const menu = plant(sources, GRAPH, /(Label\(MemoryText\.tagMenu, systemImage: "tag"\)\s*\.frame\([^)]*\))\s*\.contentShape\(Rectangle\(\)\)/, "$1");
-  assert.ok(targetFaults(menu).some((f) => f.startsWith("Menu d'étiquettes")), "un menu sans forme de toucher doit faire rougir la garde");
+  assert.ok(
+    targetFaults(outside).some((f) => f.startsWith("Se connecter")),
+    "une cible posée sur le Button doit faire rougir la garde",
+  );
+  const menu = plant(
+    sources,
+    GRAPH,
+    /(Label\(MemoryText\.tagMenu, systemImage: "tag"\)\s*\.frame\([^)]*\))\s*\.contentShape\(Rectangle\(\)\)/,
+    "$1",
+  );
+  assert.ok(
+    targetFaults(menu).some((f) => f.startsWith("Menu d'étiquettes")),
+    "un menu sans forme de toucher doit faire rougir la garde",
+  );
   const excepted = plant(
     sources,
     EXCEPTIONS,
     /^\[/,
     '[{"regle": "cible-44", "element": "id:ios.home.delivered.open.feature:ade5316c34182862:terminee"},',
   );
-  assert.ok(targetFaults(excepted).some((f) => f.includes("ios.home.delivered.open")), "une exception sur Ouvrir la PR doit faire rougir la garde");
+  assert.ok(
+    targetFaults(excepted).some((f) => f.includes("ios.home.delivered.open")),
+    "une exception sur Ouvrir la PR doit faire rougir la garde",
+  );
 
   // L'analyseur refuse désormais d'excepter un contrôle de S-4.
   for (const entry of PROTECTED_S4) {
@@ -354,7 +481,11 @@ test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter
     assert.equal(r.status, 2, JSON.stringify(entry));
     assert.match(r.stderr, /^exception 2 interdite/, JSON.stringify(entry));
   }
-  assert.equal(validate([{ regle: "cible-44", element: "id:ios.home.root" }]).status, 0, "un voisin légitime reste permis");
+  assert.equal(
+    validate([{ regle: "cible-44", element: "id:ios.home.root" }]).status,
+    0,
+    "un voisin légitime reste permis",
+  );
 });
 
 // ── AC-6 : app française seulement (S-5) ───────────────────────────────────────
@@ -381,8 +512,14 @@ function languageFaults(sources: Sources, artifacts: string[]): string[] {
     faults.push(`developmentRegion doit valoir fr une seule fois (lu : ${regions.join(", ") || "absent"})`);
   }
   const known = pbxproj.match(/^\s*knownRegions = \(([^)]*)\);$/m);
-  const knownList = known ? known[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
-  if (knownList.join(",") !== "fr,Base") faults.push(`knownRegions doit valoir (fr, Base) (lu : ${knownList.join(", ") || "absent"})`);
+  const knownList = known
+    ? known[1]
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  if (knownList.join(",") !== "fr,Base")
+    faults.push(`knownRegions doit valoir (fr, Base) (lu : ${knownList.join(", ") || "absent"})`);
   if (/CFBundleLocalizations/.test(pbxproj) || /CFBundleLocalizations/.test(get(sources, INFO_PLIST))) {
     faults.push("CFBundleLocalizations ne doit pas être déclaré");
   }
@@ -396,11 +533,25 @@ test("accessibilite-et-localisation-ios-residu/AC-6 : l'app iOS est française s
   assert.deepEqual(languageFaults(sources, artifacts), []);
 
   const english = plant(sources, PBXPROJ, "developmentRegion = fr;", "developmentRegion = en;");
-  assert.ok(languageFaults(english, artifacts).some((f) => f.startsWith("developmentRegion")), "developmentRegion en doit faire rougir la garde");
+  assert.ok(
+    languageFaults(english, artifacts).some((f) => f.startsWith("developmentRegion")),
+    "developmentRegion en doit faire rougir la garde",
+  );
   const known = plant(sources, PBXPROJ, /(knownRegions = \(\s*)fr,/, "$1en,\n\t\t\t\tfr,");
-  assert.ok(languageFaults(known, artifacts).some((f) => f.startsWith("knownRegions")), "une région en doit faire rougir la garde");
-  const plist = plant(sources, INFO_PLIST, "<dict>", "<dict>\n\t<key>CFBundleLocalizations</key>\n\t<array><string>en</string></array>");
-  assert.ok(languageFaults(plist, artifacts).some((f) => f.includes("CFBundleLocalizations")), "CFBundleLocalizations doit faire rougir la garde");
+  assert.ok(
+    languageFaults(known, artifacts).some((f) => f.startsWith("knownRegions")),
+    "une région en doit faire rougir la garde",
+  );
+  const plist = plant(
+    sources,
+    INFO_PLIST,
+    "<dict>",
+    "<dict>\n\t<key>CFBundleLocalizations</key>\n\t<array><string>en</string></array>",
+  );
+  assert.ok(
+    languageFaults(plist, artifacts).some((f) => f.includes("CFBundleLocalizations")),
+    "CFBundleLocalizations doit faire rougir la garde",
+  );
   assert.ok(
     languageFaults(sources, [path.join(APP, "en.lproj")]).some((f) => f.includes("en.lproj")),
     "un .lproj doit faire rougir la garde",
@@ -413,7 +564,9 @@ const DISPLAY_NAME = 'INFOPLIST_KEY_CFBundleDisplayName = "OMP Console";';
 
 /** Les blocs `XCBuildConfiguration` : nom (Debug/Release), bundle, réglages. */
 function buildConfigurations(pbxproj: string): Array<{ name: string; bundle: string; body: string }> {
-  const section = pbxproj.split("/* Begin XCBuildConfiguration section */")[1]?.split("/* End XCBuildConfiguration section */")[0] ?? "";
+  const section =
+    pbxproj.split("/* Begin XCBuildConfiguration section */")[1]?.split("/* End XCBuildConfiguration section */")[0] ??
+    "";
   const out: Array<{ name: string; bundle: string; body: string }> = [];
   for (const match of section.matchAll(/[0-9A-F]{24} \/\*[^*]*\*\/ = \{([\s\S]*?)\n\t\t\};/g)) {
     const body = match[1];
@@ -433,14 +586,20 @@ function displayNameFaults(sources: Sources): string[] {
   if (total !== 2) faults.push(`${DISPLAY_NAME} doit apparaître exactement 2 fois (lu : ${total})`);
   const configs = buildConfigurations(pbxproj);
   const app = configs.filter((c) => c.bundle === "com.omp.console.ios");
-  if (app.map((c) => c.name).sort().join(",") !== "Debug,Release") {
+  if (
+    app
+      .map((c) => c.name)
+      .sort()
+      .join(",") !== "Debug,Release"
+  ) {
     faults.push(`la cible app doit avoir un bloc Debug et un bloc Release (lu : ${app.map((c) => c.name).join(", ")})`);
   }
   for (const config of configs) {
     const has = config.body.includes(DISPLAY_NAME);
     const isApp = config.bundle === "com.omp.console.ios";
     if (isApp && !has) faults.push(`bloc ${config.name} de la cible app sans ${DISPLAY_NAME}`);
-    if (!isApp && has) faults.push(`bloc ${config.name} (${config.bundle || "projet"}) porte ${DISPLAY_NAME} hors de la cible app`);
+    if (!isApp && has)
+      faults.push(`bloc ${config.name} (${config.bundle || "projet"}) porte ${DISPLAY_NAME} hors de la cible app`);
   }
   return faults;
 }
@@ -450,14 +609,20 @@ test("accessibilite-et-localisation-ios-residu/AC-7 : l'icône est légendée «
   assert.deepEqual(displayNameFaults(sources), []);
 
   const missing = plant(sources, PBXPROJ, `\t\t\t\t${DISPLAY_NAME}\n`, "");
-  assert.ok(displayNameFaults(missing).some((f) => f.includes("sans")), "un bloc app sans nom affiché doit faire rougir la garde");
+  assert.ok(
+    displayNameFaults(missing).some((f) => f.includes("sans")),
+    "un bloc app sans nom affiché doit faire rougir la garde",
+  );
   const tests = plant(
     sources,
     PBXPROJ,
     "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests;",
     `PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests;\n\t\t\t\t${DISPLAY_NAME}`,
   );
-  assert.ok(displayNameFaults(tests).some((f) => f.includes("hors de la cible app")), "le nom affiché dans la cible de tests doit faire rougir la garde");
+  assert.ok(
+    displayNameFaults(tests).some((f) => f.includes("hors de la cible app")),
+    "le nom affiché dans la cible de tests doit faire rougir la garde",
+  );
   const renamed = plant(sources, PBXPROJ, DISPLAY_NAME, 'INFOPLIST_KEY_CFBundleDisplayName = "OMPConsoleIOS";');
   assert.ok(displayNameFaults(renamed).length > 0, "un autre nom affiché doit faire rougir la garde");
 });
@@ -492,7 +657,8 @@ function rootTitleFaults(sources: Sources): string[] {
   const titles = root.split(TITLE_TEXT).length - 1;
   if (titles !== 1) faults.push(`RootView.swift pose ${TITLE_TEXT} ${titles} fois (attendu : 1)`);
   const header = block(root, SIDEBAR_HEADER);
-  if (header === null) return [...faults, `RootView.swift : l'en-tête de barre latérale ${SIDEBAR_HEADER} est introuvable`];
+  if (header === null)
+    return [...faults, `RootView.swift : l'en-tête de barre latérale ${SIDEBAR_HEADER} est introuvable`];
   if (!header.includes(TITLE_TEXT)) faults.push(`${TITLE_TEXT} n'est pas dans l'en-tête ${SIDEBAR_HEADER}`);
   return faults;
 }
@@ -512,8 +678,12 @@ function chevronFaults(sources: Sources): string[] {
   const root = get(sources, ROOT_VIEW);
   const plus = block(root, "var plusList");
   if (plus === null) return ["RootView.swift : la liste « Plus » (`var plusList`) est introuvable"];
-  if (!plus.includes("NavigationLink(value: section)")) faults.push("la liste « Plus » n'enveloppe pas ses rangées dans NavigationLink(value: section)");
-  else if (!ROW.test(plus)) faults.push("la rangée de « Plus » n'a pas la forme NavigationLink { Label } .accessibilityIdentifier(ios.plus.<raw>)");
+  if (!plus.includes("NavigationLink(value: section)"))
+    faults.push("la liste « Plus » n'enveloppe pas ses rangées dans NavigationLink(value: section)");
+  else if (!ROW.test(plus))
+    faults.push(
+      "la rangée de « Plus » n'a pas la forme NavigationLink { Label } .accessibilityIdentifier(ios.plus.<raw>)",
+    );
   if (/chevron/i.test(root)) faults.push("RootView.swift dessine un chevron à la main : c'est le système qui les rend");
   return faults;
 }
@@ -523,16 +693,30 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   assert.deepEqual(rootTitleFaults(sources), []);
 
   const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(IOSHomeText.plusTitle)");
-  assert.ok(rootTitleFaults(removed).some((f) => f.includes("fois")), "un titre retiré doit faire rougir la garde");
+  assert.ok(
+    rootTitleFaults(removed).some((f) => f.includes("fois")),
+    "un titre retiré doit faire rougir la garde",
+  );
   const renamed = plant(sources, HOME_TEXT, ROOT_TITLE, 'static let rootTitle = "OMPConsoleIOS"');
-  assert.ok(rootTitleFaults(renamed).some((f) => f.startsWith("IOSHomeText.swift")), "un autre titre doit faire rougir la garde");
+  assert.ok(
+    rootTitleFaults(renamed).some((f) => f.startsWith("IOSHomeText.swift")),
+    "un autre titre doit faire rougir la garde",
+  );
   const elsewhere = plant(
-    plant(sources, ROOT_VIEW, /(\.tabViewSidebarHeader \{\s*)Text\(IOSHomeText\.rootTitle\)/, "$1Text(IOSHomeText.plusTitle)"),
+    plant(
+      sources,
+      ROOT_VIEW,
+      /(\.tabViewSidebarHeader \{\s*)Text\(IOSHomeText\.rootTitle\)/,
+      "$1Text(IOSHomeText.plusTitle)",
+    ),
     ROOT_VIEW,
     ".navigationTitle(IOSHomeText.plusTitle)",
     `.navigationTitle(IOSHomeText.plusTitle)\n        .overlay { ${TITLE_TEXT} }`,
   );
-  assert.ok(rootTitleFaults(elsewhere).some((f) => f.includes("en-tête")), "un titre posé hors de l'en-tête de la barre latérale doit faire rougir la garde");
+  assert.ok(
+    rootTitleFaults(elsewhere).some((f) => f.includes("en-tête")),
+    "un titre posé hors de l'en-tête de la barre latérale doit faire rougir la garde",
+  );
 });
 
 test("accessibilite-et-localisation-ios-residu/AC-9 : les rangées de « Plus » sont des NavigationLink sans chevron dessiné", () => {
@@ -540,9 +724,23 @@ test("accessibilite-et-localisation-ios-residu/AC-9 : les rangées de « Plus »
   assert.deepEqual(chevronFaults(sources), []);
 
   const bare = plant(sources, ROOT_VIEW, /NavigationLink\(value: section\) \{\s*(Label\([^\n]*\))\s*\}/, "$1");
-  assert.ok(chevronFaults(bare).some((f) => f.includes("n'enveloppe pas")), "une rangée sans lien doit faire rougir la garde");
+  assert.ok(
+    chevronFaults(bare).some((f) => f.includes("n'enveloppe pas")),
+    "une rangée sans lien doit faire rougir la garde",
+  );
   const oldId = plant(sources, ROOT_VIEW, '"ios.plus." + section.rawValue', '"ios.section." + section.rawValue');
-  assert.ok(chevronFaults(oldId).some((f) => f.includes("forme")), "une rangée à l'identifiant de l'ancienne liste racine doit faire rougir la garde");
-  const drawn = plant(sources, ROOT_VIEW, /(Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\))/, '$1\nImage(systemName: "chevron.right")');
-  assert.ok(chevronFaults(drawn).some((f) => f.includes("à la main")), "un chevron dessiné à la main doit faire rougir la garde");
+  assert.ok(
+    chevronFaults(oldId).some((f) => f.includes("forme")),
+    "une rangée à l'identifiant de l'ancienne liste racine doit faire rougir la garde",
+  );
+  const drawn = plant(
+    sources,
+    ROOT_VIEW,
+    /(Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\))/,
+    '$1\nImage(systemName: "chevron.right")',
+  );
+  assert.ok(
+    chevronFaults(drawn).some((f) => f.includes("à la main")),
+    "un chevron dessiné à la main doit faire rougir la garde",
+  );
 });

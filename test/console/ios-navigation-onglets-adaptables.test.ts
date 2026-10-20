@@ -26,7 +26,10 @@ type Sources = Map<string, string>;
 /** Une copie des sources où `from` est remplacé par `to` dans `rel` ; la faute doit exister. */
 function plant(sources: Sources, rel: string, from: string, to: string): Sources {
   const before = sources.get(rel);
-  assert.ok(before !== undefined && before.includes(from), `la faute ne peut pas être plantée : « ${from} » est absent de ${rel}`);
+  assert.ok(
+    typeof before === "string" && before.includes(from),
+    `la faute ne peut pas être plantée : « ${from} » est absent de ${rel}`,
+  );
   return new Map(sources).set(rel, before.replace(from, to));
 }
 
@@ -79,20 +82,48 @@ function identifierFaults(sources: Sources): string[] {
 }
 
 test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'onglets et la barre latérale, sans puce de l'ancienne coque, et l'app n'emploie plus ios.section.", () => {
-  const sources: Sources = new Map([[DESIGN, fs.readFileSync(path.join(ROOT, DESIGN), "utf8")], ...swiftSources(path.join(ROOT, APP), ROOT)]);
+  const sources: Sources = new Map([
+    [DESIGN, fs.readFileSync(path.join(ROOT, DESIGN), "utf8")],
+    ...swiftSources(path.join(ROOT, APP), ROOT),
+  ]);
   assert.deepEqual(designFaults(sources), [], "l'arbre réel doit être sain");
   assert.deepEqual(identifierFaults(sources), []);
 
-  const oldBullet = plant(sources, DESIGN, "## Les six tons", "- La liste racine porte le titre « OMP Console ». `[capture: ipad-home-light]`\n\n## Les six tons");
-  assert.ok(designFaults(oldBullet).some((f) => f.includes("liste racine")), "une puce sur la liste racine doit faire rougir la garde");
-  const stack = plant(sources, DESIGN, "## Les six tons", "- Sur iPhone, la barre latérale se replie en pile. `[capture: iphone-home-light]`\n\n## Les six tons");
-  assert.ok(designFaults(stack).some((f) => f.includes("pile")), "une puce sur la pile repliée doit faire rougir la garde");
+  const oldBullet = plant(
+    sources,
+    DESIGN,
+    "## Les six tons",
+    "- La liste racine porte le titre « OMP Console ». `[capture: ipad-home-light]`\n\n## Les six tons",
+  );
+  assert.ok(
+    designFaults(oldBullet).some((f) => f.includes("liste racine")),
+    "une puce sur la liste racine doit faire rougir la garde",
+  );
+  const stack = plant(
+    sources,
+    DESIGN,
+    "## Les six tons",
+    "- Sur iPhone, la barre latérale se replie en pile. `[capture: iphone-home-light]`\n\n## Les six tons",
+  );
+  assert.ok(
+    designFaults(stack).some((f) => f.includes("pile")),
+    "une puce sur la pile repliée doit faire rougir la garde",
+  );
   const unmarked = plant(sources, DESIGN, "[test: plusListsTheFourOtherSections]", "[test: groupedSections]");
-  assert.ok(designFaults(unmarked).some((f) => f.includes("plusListsTheFourOtherSections")), "une puce « Plus » sans son test doit faire rougir la garde");
+  assert.ok(
+    designFaults(unmarked).some((f) => f.includes("plusListsTheFourOtherSections")),
+    "une puce « Plus » sans son test doit faire rougir la garde",
+  );
   const renamed = plant(sources, DESIGN, "## Navigation", "## Parcours");
-  assert.ok(designFaults(renamed).some((f) => f.includes("section « ## Navigation »")), "une section Navigation absente doit faire rougir la garde");
+  assert.ok(
+    designFaults(renamed).some((f) => f.includes("section « ## Navigation »")),
+    "une section Navigation absente doit faire rougir la garde",
+  );
 
   const rootView = path.join(APP, "RootView.swift");
   const oldId = plant(sources, rootView, '"ios.tab." + section.rawValue', '"ios.section." + section.rawValue');
-  assert.ok(identifierFaults(oldId).some((f) => f.includes("RootView.swift")), "un identifiant ios.section. doit faire rougir la garde");
+  assert.ok(
+    identifierFaults(oldId).some((f) => f.includes("RootView.swift")),
+    "un identifiant ios.section. doit faire rougir la garde",
+  );
 });

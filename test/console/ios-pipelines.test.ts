@@ -54,7 +54,8 @@ function boardFaults(root: string): string[] {
     faults.push("la carte ne montre pas le lien PR de l'ardoise (S-2)");
   }
   const shellView = code(path.join(root, "omp-console/ios/OMPConsoleIOS/IOSSectionView.swift"));
-  if (!shellView.includes("PipelinesScreen(client:")) faults.push("IOSSectionView ne délègue pas .kanban à PipelinesScreen");
+  if (!shellView.includes("PipelinesScreen(client:"))
+    faults.push("IOSSectionView ne délègue pas .kanban à PipelinesScreen");
   return faults;
 }
 
@@ -63,7 +64,11 @@ function liveFaults(root: string): string[] {
   const faults: string[] = [];
   const model = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesModel.swift"));
   if (!/client\.snapshot/.test(model)) faults.push("PipelinesModel ne lit pas l'instantané du client");
-  if (/\bTimer\b|Task\.sleep|scheduledTimer/.test(model + code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift")))) {
+  if (
+    /\bTimer\b|Task\.sleep|scheduledTimer/.test(
+      model + code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift")),
+    )
+  ) {
     faults.push("l'écran Pipelines sonde le magasin (minuterie interdite)");
   }
   const clientModel = code(path.join(root, "omp-console/Sources/ConsoleClient/ConsoleClientModel.swift"));
@@ -98,7 +103,15 @@ function wiringFaults(root: string): string[] {
     if (!cm.includes(method)) faults.push(`ConsoleClientModel.${method} absent`);
   }
   const sheet = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesCardSheet.swift"));
-  for (const call of ["client.answer(", "client.reply(", "client.verdict(", "client.resume(", "client.stop(", "client.pullRequests(", "client.merge("]) {
+  for (const call of [
+    "client.answer(",
+    "client.reply(",
+    "client.verdict(",
+    "client.resume(",
+    "client.stop(",
+    "client.pullRequests(",
+    "client.merge(",
+  ]) {
     if (!sheet.includes(call)) faults.push(`PipelinesCardSheet n'appelle pas ${call}`);
   }
   if (!sheet.includes("openURL(")) faults.push("PipelinesCardSheet n'ouvre pas la PR par openURL");
@@ -115,7 +128,7 @@ function routeFaults(root: string, route: string): string[] {
   const routes = code(path.join(root, "omp-console/Sources/ConsoleClient/ClientRoute.swift"));
   const faults: string[] = [];
   if (!router.includes(route)) faults.push(`le routeur ne sert pas ${route}`);
-  const mirrored = "/" + route.replace(":id", "{id}");
+  const mirrored = `/${route.replace(":id", "{id}")}`;
   if (!routes.includes(mirrored)) faults.push(`le client ne connaît pas ${mirrored}`);
   return faults;
 }
@@ -132,7 +145,8 @@ function mergeConfirmFaults(root: string): string[] {
   const sheet = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesCardSheet.swift"));
   if (!sheet.includes("confirmationDialog(")) faults.push("PipelinesCardSheet n'a pas de confirmationDialog");
   if (!sheet.includes("ProjectViewText.prMergeConfirmTitle")) faults.push("la fusion n'emploie pas le titre de macOS");
-  if (!sheet.includes("ProjectViewText.prMergeConfirmButton")) faults.push("la fusion n'emploie pas le bouton de macOS");
+  if (!sheet.includes("ProjectViewText.prMergeConfirmButton"))
+    faults.push("la fusion n'emploie pas le bouton de macOS");
   if (!sheet.includes("PipelinesText.noPullRequestRow")) faults.push("la fusion ne gère pas l'absence de ligne de PR");
   const payload = code(path.join(root, "omp-console/Sources/ConsoleClient/ClientPayloads.swift"));
   if (!/headOid: String\?/.test(payload)) faults.push("ProjectPRRow ne porte pas headOid");
@@ -203,12 +217,18 @@ test("ios-pipelines/AC-1 : l'ardoise de l'app est la dérivation PARTAGÉE, la m
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/IOSSectionView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelinesScreen(client:", "Placeholder("));
-  assert.ok(boardFaults(copy).some((f) => f.includes("PipelinesScreen")), "un écran non branché doit faire rougir la garde");
+  assert.ok(
+    boardFaults(copy).some((f) => f.includes("PipelinesScreen")),
+    "un écran non branché doit faire rougir la garde",
+  );
 
   const copy2 = shared.fresh();
   const cardTarget = path.join(copy2, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
   fs.writeFileSync(cardTarget, fs.readFileSync(cardTarget, "utf8").replaceAll("HomeText.openPR", "KanbanText.openPR"));
-  assert.ok(boardFaults(copy2).some((f) => f.includes("lien PR")), "une carte sans lien PR doit faire rougir la garde");
+  assert.ok(
+    boardFaults(copy2).some((f) => f.includes("lien PR")),
+    "une carte sans lien PR doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-2 : l'écran suit le magasin sans bouton ni minuterie de rafraîchissement", () => {
@@ -217,7 +237,10 @@ test("ios-pipelines/AC-2 : l'écran suit le magasin sans bouton ni minuterie de 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesModel.swift");
   fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet sonde = Timer()\n`);
-  assert.ok(liveFaults(copy).some((f) => f.includes("minuterie")), "une minuterie de sondage doit faire rougir la garde");
+  assert.ok(
+    liveFaults(copy).some((f) => f.includes("minuterie")),
+    "une minuterie de sondage doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-4 : les deux formes atteignent toutes les voies (compacte empilée, régulière en ligne)", () => {
@@ -226,23 +249,36 @@ test("ios-pipelines/AC-4 : les deux formes atteignent toutes les voies (compacte
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("ScrollView(.vertical)", "VStack("));
-  assert.ok(formFaults(copy).some((f) => f.includes("défilement")), "l'absence de défilement doit faire rougir la garde");
+  assert.ok(
+    formFaults(copy).some((f) => f.includes("défilement")),
+    "l'absence de défilement doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-5 : choisir une option envoie une réponse « selected » à la bonne route", () => {
   assert.deepEqual(wiringFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(routeFaults(ROOT, "v1/cards/:id/answer"), [], "la route de réponse doit exister des deux côtés");
   assert.deepEqual(callFaults(ROOT, "client.answer("), [], "la feuille doit envoyer la réponse");
-  assert.ok(app("PipelinesCardSheet.swift").includes("PipelinesAnswerKind.selected"), "l'option part en nature « selected »");
+  assert.ok(
+    app("PipelinesCardSheet.swift").includes("PipelinesAnswerKind.selected"),
+    "l'option part en nature « selected »",
+  );
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Sources/ConsoleClient/ConsoleClientModel.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("public func verdict(", "func retiredVerdict("));
-  assert.ok(wiringFaults(copy).some((f) => f.includes("verdict")), "un geste retiré doit faire rougir la garde");
+  assert.ok(
+    wiringFaults(copy).some((f) => f.includes("verdict")),
+    "un geste retiré doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-6 : le texte libre part en réponse « custom », et en « reply » hors question en vol", () => {
-  assert.deepEqual(routeFaults(ROOT, "v1/cards/:id/reply"), [], "la route de réponse en texte doit exister des deux côtés");
+  assert.deepEqual(
+    routeFaults(ROOT, "v1/cards/:id/reply"),
+    [],
+    "la route de réponse en texte doit exister des deux côtés",
+  );
   assert.deepEqual(callFaults(ROOT, "client.reply("), [], "la feuille doit envoyer la réponse en texte");
   const sheet = app("PipelinesCardSheet.swift");
   assert.ok(sheet.includes("PipelinesAnswerKind.custom"), "le texte libre part en nature « custom »");
@@ -253,7 +289,10 @@ test("ios-pipelines/AC-7 : valider un jalon envoie le verdict specs ou revue", (
   assert.deepEqual(routeFaults(ROOT, "v1/cards/:id/verdict"), [], "la route de verdict doit exister des deux côtés");
   assert.deepEqual(callFaults(ROOT, "client.verdict("), [], "la feuille doit valider le jalon");
   const gestures = app("PipelinesGesture.swift");
-  assert.ok(gestures.includes("PipelinesVerdict.specs") && gestures.includes("PipelinesVerdict.review"), "les deux verdicts existent");
+  assert.ok(
+    gestures.includes("PipelinesVerdict.specs") && gestures.includes("PipelinesVerdict.review"),
+    "les deux verdicts existent",
+  );
 });
 
 test("ios-pipelines/AC-8 : reprendre une feature en échec passe par la route de mise en route", () => {
@@ -265,7 +304,10 @@ test("ios-pipelines/AC-9 : arrêter demande confirmation AVANT tout effet", () =
   assert.deepEqual(routeFaults(ROOT, "v1/cards/:id/stop"), [], "la route d'arrêt doit exister des deux côtés");
   assert.deepEqual(callFaults(ROOT, "client.stop("), [], "la feuille doit arrêter le run");
   const sheet = app("PipelinesCardSheet.swift");
-  assert.ok(sheet.includes("KanbanText.stopConfirmTitle") && sheet.includes("KanbanText.stopConfirm"), "la confirmation d'arrêt emploie les mots de macOS");
+  assert.ok(
+    sheet.includes("KanbanText.stopConfirmTitle") && sheet.includes("KanbanText.stopConfirm"),
+    "la confirmation d'arrêt emploie les mots de macOS",
+  );
 });
 
 test("ios-pipelines/AC-10 : ouvrir la PR passe par openURL, sans requête", () => {
@@ -277,7 +319,10 @@ test("ios-pipelines/AC-10 : ouvrir la PR passe par openURL, sans requête", () =
 
 test("ios-pipelines/AC-12 : lancer une feature jamais en route passe par la route de mise en route", () => {
   assert.deepEqual(routeFaults(ROOT, "v1/cards/:id/resume"), [], "la mise en route partage la route de reprise");
-  assert.ok(app("PipelinesGesture.swift").includes(".launch"), "le geste « lancer » est offert sur une carte en attente");
+  assert.ok(
+    app("PipelinesGesture.swift").includes(".launch"),
+    "le geste « lancer » est offert sur une carte en attente",
+  );
   assert.deepEqual(callFaults(ROOT, "client.resume("), [], "la feuille met la feature en route");
 });
 
@@ -286,8 +331,14 @@ test("ios-pipelines/AC-11 : la fusion demande confirmation AVANT tout effet et e
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Sources/ConsoleClient/ClientPayloads.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("public var headOid: String? = nil", "public var removed: Int = 0"));
-  assert.ok(mergeConfirmFaults(copy).some((f) => f.includes("headOid")), "un headOid retiré doit faire rougir la garde");
+  fs.writeFileSync(
+    target,
+    fs.readFileSync(target, "utf8").replace("public var headOid: String? = nil", "public var removed: Int = 0"),
+  );
+  assert.ok(
+    mergeConfirmFaults(copy).some((f) => f.includes("headOid")),
+    "un headOid retiré doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-13 : la feuille propose un dépôt, deux modèles, un titre et un besoin", () => {
@@ -296,7 +347,10 @@ test("ios-pipelines/AC-13 : la feuille propose un dépôt, deux modèles, un tit
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("KanbanLaunchRepos.options(", "Unused.options("));
-  assert.ok(newFeatureFaults(copy).some((f) => f.includes("dépôts")), "des dépôts inventés doivent faire rougir la garde");
+  assert.ok(
+    newFeatureFaults(copy).some((f) => f.includes("dépôts")),
+    "des dépôts inventés doivent faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-14 : valider crée la feature avec ses deux modèles et referme la feuille", () => {
@@ -305,7 +359,10 @@ test("ios-pipelines/AC-14 : valider crée la feature avec ses deux modèles et r
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("client.launch(", "Unused.launch("));
-  assert.ok(createFaults(copy).some((f) => f.includes("client.launch")), "une création non câblée doit faire rougir la garde");
+  assert.ok(
+    createFaults(copy).some((f) => f.includes("client.launch")),
+    "une création non câblée doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines/AC-15 : la recette de bout en bout existe, gardée par MEM0_PIPELINES_RECIPE", () => {
@@ -314,5 +371,8 @@ test("ios-pipelines/AC-15 : la recette de bout en bout existe, gardée par MEM0_
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/Tests/ConsoleClientTests/IosPipelinesRecipeTests.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("MEM0_PIPELINES_RECIPE", "ALWAYS"));
-  assert.ok(recipeFaults(copy).some((f) => f.includes("MEM0_PIPELINES_RECIPE")), "une recette non gardée doit faire rougir la garde");
+  assert.ok(
+    recipeFaults(copy).some((f) => f.includes("MEM0_PIPELINES_RECIPE")),
+    "une recette non gardée doit faire rougir la garde",
+  );
 });

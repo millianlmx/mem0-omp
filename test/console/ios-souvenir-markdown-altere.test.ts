@@ -55,9 +55,7 @@ function verbatimTests(root: string): string {
 /** Les jetons interdits présents dans le code de la section Mémoire. */
 function forbiddenFaults(root: string): string[] {
   const memory = memoryAppCode(root);
-  return FORBIDDEN.filter((token) => memory.includes(token)).map(
-    (token) => `la section Mémoire iOS contient ${token}`,
-  );
+  return FORBIDDEN.filter((token) => memory.includes(token)).map((token) => `la section Mémoire iOS contient ${token}`);
 }
 
 // ---------------------------------------------------------------------------

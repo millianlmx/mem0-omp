@@ -46,7 +46,15 @@ import reqExtension, {
 } from "../../omp-mem0-req/extension.ts";
 import { emptyGitRepo, gitRunner } from "../support/git.ts";
 import { tmpdir } from "../support/repo.ts";
-import { THEME, assistantEntry, fakeKit, liveEntry, seedLot, userEntry, writeSession } from "../support/req-fixtures.ts";
+import {
+  THEME,
+  assistantEntry,
+  fakeKit,
+  liveEntry,
+  seedLot,
+  userEntry,
+  writeSession,
+} from "../support/req-fixtures.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures : répertoires, dépôt git, magasin, lot, fichiers de session
@@ -330,7 +338,9 @@ test("sessions/AC-5 : une feature du lot n'occupe qu'une ligne, à tout instant 
   // 3. Maillon terminé : l'entrée close rejoint l'historique, la feature reste.
   fs.rmSync(path.join(stateDir, "running", `${live.id}.json`));
   closedEntry(stateDir, { cwd: worktree, label: "repo/alpha", phase: "impl", sessionFile });
-  lot = seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "waiting", phase: "specs", waitKind: "specs" })]);
+  lot = seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, state: "waiting", phase: "specs", waitKind: "specs" }),
+  ]);
   seen = panel(lot);
   assert.equal(sectionRows(seen.rows, 1, 0, /alpha/), 1, "une seule ligne dans la section du lot");
   assert.equal(seen.model.history.length, 1, "le maillon terminé laisse UNE trace en historique");
@@ -342,7 +352,9 @@ test("sessions/AC-5 : une feature du lot n'occupe qu'une ligne, à tout instant 
   assert.equal(sectionRows(seen.rows, 1, 0, /alpha/), 1, "toujours une seule ligne");
 
   // 5. Terminale : la feature est finie, sa ligne reste unique.
-  lot = seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "done", phase: "release", endedAt: 1_700_000_000_100 })]);
+  lot = seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, state: "done", phase: "release", endedAt: 1_700_000_000_100 }),
+  ]);
   seen = panel(lot);
   assert.equal(sectionRows(seen.rows, 1, 0, /alpha/), 1, "une seule ligne, jusqu'au bout");
 
@@ -370,10 +382,20 @@ test("sessions/AC-6 : la ligne d'une feature en cours de travail est dans la sec
   // La section du lot est celle qui précède le séparateur : la ligne y est.
   const separator = rows.findIndex((row) => row.rule === "separator");
   assert.ok(separator > 0, "le séparateur des sections est rendu");
-  const lotSection = rows.slice(0, separator).map((row) => row.text).join("\n");
+  const lotSection = rows
+    .slice(0, separator)
+    .map((row) => row.text)
+    .join("\n");
   assert.match(lotSection, /> alpha/, "la feature est dans la section du lot, sélectionnée");
   assert.match(lotSection, /\/impl · tourne/, "avec le maillon et l'état de son run");
-  assert.doesNotMatch(screen.split("\n").slice(separator + 1).join("\n"), /alpha/, "jamais dans l'historique");
+  assert.doesNotMatch(
+    screen
+      .split("\n")
+      .slice(separator + 1)
+      .join("\n"),
+    /alpha/,
+    "jamais dans l'historique",
+  );
   assert.equal(model.running.length, 0, "jamais dans « en cours »");
   assert.deepEqual(targets(rows), [0], "un seul rang sélectionnable : sa ligne de lot");
   assert.equal(rowSessionFile(model, panelRowAt(model, 0)!), sessionFile, "sa ligne porte la session de son run");
@@ -553,7 +575,13 @@ test("sessions/AC-8 : un maillon terminé laisse une trace consultable, jamais u
   seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "specs" })]);
   // Deux maillons terminés, donc deux traces ; plus un run vivant sur un troisième.
   closedEntry(stateDir, { cwd: worktree, label: "repo/alpha", phase: "impl", sessionFile: implSession });
-  closedEntry(stateDir, { cwd: worktree, label: "repo/alpha", phase: "review", sessionFile: reviewSession, updatedAt: 1_700_000_000_500 });
+  closedEntry(stateDir, {
+    cwd: worktree,
+    label: "repo/alpha",
+    phase: "review",
+    sessionFile: reviewSession,
+    updatedAt: 1_700_000_000_500,
+  });
   liveEntry(stateDir, { cwd: worktree, label: "repo/alpha", phase: "specs", sessionFile: null });
 
   const model = readPanelModel({ stateDir, repoRoot, selection: 0 });
@@ -568,12 +596,23 @@ test("sessions/AC-8 : un maillon terminé laisse une trace consultable, jamais u
   }
   // La session de chaque maillon est retrouvable depuis son rang : c'est ce qui
   // permet d'ouvrir sa transcription après coup.
-  assert.equal(rowSessionFile(model, panelRowAt(model, 1)!), reviewSession, "le rang le plus récent est le dernier maillon");
-  assert.equal(rowSessionFile(model, panelRowAt(model, 2)!), implSession, "chaque rang porte la session de SON maillon");
+  assert.equal(
+    rowSessionFile(model, panelRowAt(model, 1)!),
+    reviewSession,
+    "le rang le plus récent est le dernier maillon",
+  );
+  assert.equal(
+    rowSessionFile(model, panelRowAt(model, 2)!),
+    implSession,
+    "chaque rang porte la session de SON maillon",
+  );
 
   // Aucun rang d'historique n'est vivant : la ligne vivante est celle du lot.
   const separator = rows.findIndex((row) => row.rule === "separator");
-  const historySection = rows.slice(separator + 1).map((row) => row.text).join("\n");
+  const historySection = rows
+    .slice(separator + 1)
+    .map((row) => row.text)
+    .join("\n");
   assert.doesNotMatch(historySection, /specs/, "la feature qui avance ne laisse pas de ligne vivante en historique");
   assert.equal(model.running.length, 0, "son run est absorbé par le rang du lot");
   assert.equal(model.live.alpha?.sessionFile, null, "le run n'a pas encore publié de session");
@@ -664,7 +703,14 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
 
     const options = mounted[0]!.options as {
       overlay?: boolean;
-      overlayOptions?: { fullscreen?: boolean; mouseTracking?: boolean; anchor?: unknown; width?: unknown; maxHeight?: unknown; margin?: unknown };
+      overlayOptions?: {
+        fullscreen?: boolean;
+        mouseTracking?: boolean;
+        anchor?: unknown;
+        width?: unknown;
+        maxHeight?: unknown;
+        margin?: unknown;
+      };
     };
     assert.equal(options.overlay, true, "toujours un overlay");
     assert.equal(options.overlayOptions?.fullscreen, true, "buffer alterné : le chat n'est pas derrière");
@@ -679,12 +725,9 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
 
     // Le RENDU : autant de rangs que l'écran en a, chacun de la largeur reçue.
     const tui = { terminal: { rows: 24 } as { rows?: number }, requestRender: () => {} };
-    const component = mounted[0]!.factory(
-      tui as never,
-      THEME as never,
-      KEYS as never,
-      (() => {}) as never,
-    ) as { render(width: number): string[] };
+    const component = mounted[0]!.factory(tui as never, THEME as never, KEYS as never, (() => {}) as never) as {
+      render(width: number): string[];
+    };
 
     let rows = component.render(64);
     assert.equal(rows.length, 24, "le cadre occupe exactement la hauteur du terminal");
@@ -881,7 +924,10 @@ test("sessions/AC-1 : entrer dans la session d'un maillon vivant ne l'interrompt
   // `o` : refusé, avec le chemin de lecture immédiate.
   panel.component.handleInput("o");
   await Promise.all(panel.pending);
-  assert.match(panel.screen(200), /run en cours — la session s'ouvre en lecture seule \(Entrée\) ; o attend la fin du maillon/);
+  assert.match(
+    panel.screen(200),
+    /run en cours — la session s'ouvre en lecture seule \(Entrée\) ; o attend la fin du maillon/,
+  );
   assert.deepEqual(switched, [], "aucune bascule sur la session d'un run vivant");
   assert.equal(panel.closed(), 0, "le panneau reste ouvert");
 
@@ -1069,11 +1115,29 @@ test("S-4 : ctrl+o déplie TOUTES les cartes de la vue, et les replie d'un coup"
     id: `r-${id}`,
     parentId: "a0",
     timestamp: "t",
-    message: { role: "toolResult", toolCallId: id, toolName: "edit", content: [{ type: "text", text: output }], isError: false },
+    message: {
+      role: "toolResult",
+      toolCallId: id,
+      toolName: "edit",
+      content: [{ type: "text", text: output }],
+      isError: false,
+    },
   });
   writeSession(sessionFile, worktree, [
-    { type: "message", id: "u0", parentId: null, timestamp: "t", message: { role: "user", content: [{ type: "text", text: "corrige" }] } },
-    { type: "message", id: "a0", parentId: "u0", timestamp: "t", message: { role: "assistant", content: [call("c0", "a.ts"), call("c1", "b.ts")] } },
+    {
+      type: "message",
+      id: "u0",
+      parentId: null,
+      timestamp: "t",
+      message: { role: "user", content: [{ type: "text", text: "corrige" }] },
+    },
+    {
+      type: "message",
+      id: "a0",
+      parentId: "u0",
+      timestamp: "t",
+      message: { role: "assistant", content: [call("c0", "a.ts"), call("c1", "b.ts")] },
+    },
     result("c0"),
     result("c1"),
   ]);
@@ -1105,7 +1169,9 @@ test("la vue n'écrit rien et ne bascule jamais : elle lit un fichier de session
   writeSession(sessionFile, worktree, [userEntry("un tour"), assistantEntry("une réponse")]);
   const before = fs.readFileSync(sessionFile, "utf8");
   const entriesBefore = fs.readdirSync(path.dirname(sessionFile)).sort();
-  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "waiting", phase: "specs", waitKind: "specs" })]);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, sessionFile, state: "waiting", phase: "specs", waitKind: "specs" }),
+  ]);
   liveEntry(stateDir, { cwd: worktree, sessionFile, label: "repo/alpha", phase: "specs", state: "waiting" });
 
   const switched: string[] = [];
@@ -1179,7 +1245,11 @@ test("S-5 : une entrée ajoutée apparaît sans touche, sans déplacer la lectur
   // changement rend le MÊME tableau — c'est la condition du « sans clignotement ».
   const bottom = panel.component.render(64);
   assert.match(bottom.join("\n"), /tour 39/, "la vue s'ouvre ancrée sur la fin");
-  assert.equal(panel.component.render(64), bottom, "rien n'a changé : le tableau rendu est identique (aucune repeinture)");
+  assert.equal(
+    panel.component.render(64),
+    bottom,
+    "rien n'a changé : le tableau rendu est identique (aucune repeinture)",
+  );
 
   // Un ajout au fichier : il apparaît au battement suivant, sans aucune touche.
   fs.appendFileSync(sessionFile, `${JSON.stringify(userEntry("la suite arrive", "u40"))}\n`);
@@ -1271,7 +1341,9 @@ test("le défilement de la vue remonte le temps, borné aux rangs rendus", () =>
 test("la fenêtre d'une section tronquée contient le rang sélectionné", () => {
   const stateDir = tmpdir("sessions-window-");
   const repoRoot = tmpdir("sessions-window-repo-");
-  const features = Array.from({ length: 12 }, (_, i) => feature(`g${i}`, { worktree: tmpdir(`sessions-window-wt-${i}-`) }));
+  const features = Array.from({ length: 12 }, (_, i) =>
+    feature(`g${i}`, { worktree: tmpdir(`sessions-window-wt-${i}-`) }),
+  );
   const lot = seedLot(stateDir, repoRoot, features);
 
   const render = (selection: number) =>
@@ -1293,11 +1365,7 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   // lot porte le basename du dépôt (`sessions-window-repo-XXXXXX`), et un suffixe
   // `mkdtemp` finissant par « g0 » faisait matcher `/g0 /` sur ce seul nom
   // (échec de CI mesuré le 2026-10-04, PR de release #60).
-  assert.equal(
-    rows.filter((row) => /^\s*>?\s*g0\b/.test(row.text)).length,
-    0,
-    "et la fenêtre ne montre pas le début",
-  );
+  assert.equal(rows.filter((row) => /^\s*>?\s*g0\b/.test(row.text)).length, 0, "et la fenêtre ne montre pas le début");
   // Le marqueur dit de quel CÔTÉ sont les rangs cachés (PANEL-12) : la sélection est
   // en fin de section, donc ils sont au-dessus — et il compte ce qui manque (12
   // features, 3 rendues).
@@ -1307,7 +1375,11 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   // Sélection en tête : la fenêtre revient au début, le marqueur reste unique.
   const head = render(0);
   assert.match(head.map((row) => row.text).join("\n"), /> g0/);
-  assert.equal(head.filter((row) => /(de plus|au-dessus|en dessous)/.test(row.text)).length, 1, "un seul marqueur par section");
+  assert.equal(
+    head.filter((row) => /(de plus|au-dessus|en dessous)/.test(row.text)).length,
+    1,
+    "un seul marqueur par section",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1410,7 +1482,10 @@ test("les deux gardes de `o` refusent sans basculer, et nomment le chemin de lec
   // Garde 1 : un run vivant écrit la session visée.
   panel.component.handleInput("o");
   await Promise.all(panel.pending);
-  assert.match(panel.screen(200), /run en cours — la session s'ouvre en lecture seule \(Entrée\) ; o attend la fin du maillon/);
+  assert.match(
+    panel.screen(200),
+    /run en cours — la session s'ouvre en lecture seule \(Entrée\) ; o attend la fin du maillon/,
+  );
   assert.deepEqual<typeof switched>(switched, [], "aucune bascule");
   assert.equal(panel.closed(), 0);
 
@@ -1450,7 +1525,11 @@ test("les deux gardes de `o` refusent sans basculer, et nomment le chemin de lec
   bare.component.handleInput("o");
   assert.match(bare.screen(200), /cette feature n'a pas encore de session — attends son premier maillon/);
   bare.component.handleInput("\r");
-  assert.match(bare.screen(200), /pas de transcription — en cours/, "Entrée ouvre la vue d'un rang qui accepte une écriture");
+  assert.match(
+    bare.screen(200),
+    /pas de transcription — en cours/,
+    "Entrée ouvre la vue d'un rang qui accepte une écriture",
+  );
   assert.match(bare.screen(200), /Réponse : ▏/, "avec sa zone de saisie");
   assert.deepEqual(switched, [], "aucune session fabriquée ni adoptée");
   assert.equal(bare.closed(), 0);
@@ -1477,7 +1556,9 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
   const worktree = tmpdir("sessions-footer-wt-");
   const sessionFile = path.join(stateDir, "session-alpha.jsonl");
   writeSession(sessionFile, worktree, [userEntry("un tour")]);
-  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "waiting", phase: "specs", waitKind: "specs" })]);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, sessionFile, state: "waiting", phase: "specs", waitKind: "specs" }),
+  ]);
 
   const model = readPanelModel({ stateDir, repoRoot, selection: 0 });
   const text = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 })
@@ -1486,7 +1567,11 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
   // `l lancer` ne s'annonce que s'il y a quelque chose à lancer (PANEL-8) : cette
   // feature attend une validation, donc le pied ne le propose pas.
   assert.match(text, /a ajouter · Entrée session/, "la bascule n'est plus annoncée sur Entrée");
-  assert.match(text, /v valider · m modèles · c annuler · o rejoindre/, "la ligne qui a une session annonce sa bascule");
+  assert.match(
+    text,
+    /v valider · m modèles · c annuler · o rejoindre/,
+    "la ligne qui a une session annonce sa bascule",
+  );
 
   // Les deux écritures d'une ligne de lot s'annoncent par leur état (S-11) : la
   // réponse pour une feature qui attend, l'écriture pour une feature en cours — la
@@ -1528,7 +1613,10 @@ test("la sélection du panneau est mémorisée par dépôt, et re-bornée si la 
   const stateDir = path.join(tmpdir("sessions-memory-"), "pipeline");
   const repoA = tmpdir("sessions-memory-a-");
   const repoB = tmpdir("sessions-memory-b-");
-  seedLot(stateDir, repoA, [feature("alpha", { worktree: tmpdir("sessions-memory-wa-") }), feature("beta", { worktree: tmpdir("sessions-memory-wb-") })]);
+  seedLot(stateDir, repoA, [
+    feature("alpha", { worktree: tmpdir("sessions-memory-wa-") }),
+    feature("beta", { worktree: tmpdir("sessions-memory-wb-") }),
+  ]);
   seedLot(stateDir, repoB, [feature("gamma", { worktree: tmpdir("sessions-memory-wc-") })]);
 
   const first = mountPanel(stateDir, { repoRoot: repoA });
@@ -1567,7 +1655,11 @@ test("le panneau ne publie ni ne clôt rien : la chaîne du lot ne dépend pas d
   }
   await flush();
   assert.deepEqual(storeFiles(stateDir, "history"), before, "aucune entrée close");
-  assert.deepEqual(readStore(stateDir).running.map((entry) => entry.id), [runningIdFor(worktree)], "le magasin est intact");
+  assert.deepEqual(
+    readStore(stateDir).running.map((entry) => entry.id),
+    [runningIdFor(worktree)],
+    "le magasin est intact",
+  );
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running", "le lot n'a pas bougé");
   assert.equal(runs.runs[0]!.aborted(), false, "aucun run n'a été arrêté");
   assert.equal(fs.existsSync(lotPathFor(stateDir, lotRepoKey(repoRoot))), true);

@@ -36,7 +36,6 @@ import type { ServiceClient } from "./serviceClient.ts";
 import { liveRunFor, readDeliveries, readStore, panelInboxDirOf } from "./store.ts";
 import type { PanelAskOption, RunningEntry } from "./store.ts";
 
-
 /**
  * L'approbation des outils d'ÉCRITURE : `policy: "prompt"` fait demander l'utilisateur dans les
  * trois modes (always-ask, write, yolo) — sans elle, `{tier: "write"}` serait auto-approuvé en
@@ -59,7 +58,6 @@ export const PILOT_TAIL_MAX = 1000;
 export const PILOT_COMMAND_KINDS: readonly Exclude<CommandKind, "avance">[] = (
   Object.keys(COMMAND_KINDS) as CommandKind[]
 ).filter((kind): kind is Exclude<CommandKind, "avance"> => kind !== "avance");
-
 
 // --- sorties ------------------------------------------------------------------
 
@@ -110,9 +108,10 @@ const refuse = (text: string): ToolResult => ({ content: [{ type: "text", text }
 
 /** Un objet ordinaire en lecture (sinon `{}`) : une entrée de session ou des paramètres d'outil sont des données externes. */
 function recordOf(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : {};
 }
-
 
 // --- le dépôt de la session -----------------------------------------------------
 
@@ -120,7 +119,6 @@ function recordOf(value: unknown): Record<string, unknown> {
 function sessionRepoOf(ctx: ExtensionContext | undefined): string {
   return realpathOr(repoRootOf(ctx?.cwd ?? process.cwd()));
 }
-
 
 // --- lecture d'une session ------------------------------------------------------
 
@@ -185,7 +183,6 @@ export function pilotMessagesOf(entries: SessionEntryLike[]): PilotMessage[] {
   return out;
 }
 
-
 // --- pipeline_state -------------------------------------------------------------
 
 /** La question en TEXTE d'une feature `waiting`/`answer` : le dernier message assistant, en entier. */
@@ -195,11 +192,21 @@ function textQuestionOf(feature: LotFeature): PilotQuestion {
     const assistants = pilotMessagesOf(entries).filter((m) => m.role === "assistant" && m.text.trim() !== "");
     const last = assistants[assistants.length - 1];
     if (last !== undefined) {
-      return { kind: "text", question: questionOf(last.text) ?? last.text, options: parseReplyOptions(last.text), source: "session" };
+      return {
+        kind: "text",
+        question: questionOf(last.text) ?? last.text,
+        options: parseReplyOptions(last.text),
+        source: "session",
+      };
     }
   }
   const prompt = feature.waitPrompt ?? "";
-  return { kind: "text", question: questionOf(prompt) ?? prompt, options: parseReplyOptions(prompt), source: "waitPrompt" };
+  return {
+    kind: "text",
+    question: questionOf(prompt) ?? prompt,
+    options: parseReplyOptions(prompt),
+    source: "waitPrompt",
+  };
 }
 
 /** La question `ask` en vol, sauf si sa réponse est déjà livrée (acheminée, pas encore consommée). */
@@ -245,7 +252,6 @@ export function pilotStateOf(stateDir: string, repoRoot: string): PilotState {
   return { repoRoot, lots: [{ id: lot.id, status: lot.status, features }] };
 }
 
-
 // --- pipeline_session_tail ------------------------------------------------------
 
 /** Les `n` derniers messages du dernier run de la feature, du plus ancien au plus récent, ou un refus. */
@@ -270,7 +276,6 @@ export function pilotTailOf(
   }
   return { ok: false, reason: `aucune session pour la feature « ${slug} »` };
 }
-
 
 // --- pipeline_command / pipeline_advance ----------------------------------------
 
@@ -328,7 +333,6 @@ const ADVANCE_DESCRIPTION =
   "puis fait `merge --ff-only`. Refusé, par un motif nommé et sans rien modifier, si un maillon tourne dans le worktree ou si l'avance n'est pas fast-forward. " +
   "Rend l'accusé du service tel quel.";
 
-
 /**
  * Inscrit les quatre outils de pilotage. Une seule fois par process : un second appel (second
  * `session_start` interactif) n'enregistre rien de plus — comme `state.tools` du relais.
@@ -351,7 +355,13 @@ export function registerPilotTools(pi: ExtensionAPI, deps: PilotToolsDeps): void
     approval: PILOT_READ_APPROVAL,
     loadMode: "essential",
     parameters: pi.arktype({}),
-    async execute(_toolCallId: string, _params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+    async execute(
+      _toolCallId: string,
+      _params: unknown,
+      _signal?: AbortSignal,
+      _onUpdate?: unknown,
+      ctx?: ExtensionContext,
+    ) {
       return ok(pilotStateOf(deps.stateDir(), sessionRepoOf(ctx)));
     },
   });
@@ -381,7 +391,13 @@ export function registerPilotTools(pi: ExtensionAPI, deps: PilotToolsDeps): void
       "text?": "string",
       "fate?": "'keep' | 'archive' | 'delete'",
     }),
-    async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+    async execute(
+      _toolCallId: string,
+      params: unknown,
+      _signal?: AbortSignal,
+      _onUpdate?: unknown,
+      ctx?: ExtensionContext,
+    ) {
       const given = recordOf(params);
       // Seuls les champs déclarés passent : le modèle ne peut ni choisir l'identifiant, ni le dépôt.
       // `kind` « avance » reste réservé à `pipeline_advance` (le schéma le refuse déjà ; défense en profondeur).
@@ -406,7 +422,13 @@ export function registerPilotTools(pi: ExtensionAPI, deps: PilotToolsDeps): void
     approval: PILOT_READ_APPROVAL,
     loadMode: "essential",
     parameters: pi.arktype({ slug: "string", n: "number" }),
-    async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+    async execute(
+      _toolCallId: string,
+      params: unknown,
+      _signal?: AbortSignal,
+      _onUpdate?: unknown,
+      ctx?: ExtensionContext,
+    ) {
       const { slug, n } = recordOf(params);
       const tail = pilotTailOf(deps.stateDir(), sessionRepoOf(ctx), typeof slug === "string" ? slug : "", n);
       return tail.ok ? ok(tail.messages) : refuse(tail.reason);
@@ -420,7 +442,13 @@ export function registerPilotTools(pi: ExtensionAPI, deps: PilotToolsDeps): void
     approval: PILOT_WRITE_APPROVAL,
     loadMode: "essential",
     parameters: pi.arktype({ slug: "string" }),
-    async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+    async execute(
+      _toolCallId: string,
+      params: unknown,
+      _signal?: AbortSignal,
+      _onUpdate?: unknown,
+      ctx?: ExtensionContext,
+    ) {
       const slug = recordOf(params).slug;
       const repo = sessionRepoOf(ctx);
       return postGesture(deps, repo, { ...envelopeOf(deps, repo), kind: "avance", slug });

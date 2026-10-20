@@ -11,47 +11,54 @@ import type { ServiceRecord } from "./serviceState.ts";
 import { serviceRunning } from "./serviceState.ts";
 import { pipelineStateDir } from "./store.ts";
 
-
 /** Le dossier des agents utilisateur : `~/Library/LaunchAgents` (Doc-3 §1). */
 export function launchAgentDir(home: string): string {
   return path.join(home, "Library", "LaunchAgents");
 }
 
-
 export function launchAgentPath(home: string, label: string = SERVICE_LABEL): string {
   return path.join(launchAgentDir(home), `${label}.plist`);
 }
-
 
 /** Le domaine launchd d'un utilisateur : `gui/<uid>` (Doc-3 §1). */
 export function launchDomain(uid: number): string {
   return `gui/${uid}`;
 }
 
-
 /** Ce que le service écrit sur sa sortie : le fichier où lire une panne de job. */
 export function launchdStdioPath(stateDir: string): string {
   return serviceLogPath(stateDir);
 }
 
-
 /** Les trois binaires d'un PATH launchd utilisable par `omp` (Doc-3 §5). */
 export function launchdPath(ompBin: string, home: string): string {
   const ompDir = path.dirname(path.resolve(ompBin));
-  const parts = [ompDir, path.join(home, ".bun", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const parts = [
+    ompDir,
+    path.join(home, ".bun", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
   const seen = new Set<string>();
-  return parts.filter(part => (seen.has(part) ? false : (seen.add(part), true))).join(":");
+  return parts
+    .filter((part) => {
+      if (seen.has(part)) return false;
+      seen.add(part);
+      return true;
+    })
+    .join(":");
 }
-
 
 const XML_ESCAPE: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" };
 
-
 /** Le texte d'une valeur XML : jamais un `<` brut qui casserait le plist. */
 export function plistText(value: string): string {
-  return value.replace(/[&<>"']/g, char => XML_ESCAPE[char] as string);
+  return value.replace(/[&<>"']/g, (char) => XML_ESCAPE[char] as string);
 }
-
 
 export type ServiceJobSpec = {
   label: string;
@@ -63,7 +70,6 @@ export type ServiceJobSpec = {
   /** `ThrottleInterval` : l'étranglement d'un job qui meurt en boucle (Doc-3 §2). */
   throttleSeconds?: number;
 };
-
 
 /**
  * Le plist du service, rendu EXACTEMENT : `RunAtLoad` + `KeepAlive` (relance après
@@ -85,7 +91,7 @@ export function renderServicePlist(spec: ServiceJobSpec): string {
     `  <string>${plistText(spec.label)}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
-    ...spec.argv.map(arg => `    <string>${plistText(arg)}</string>`),
+    ...spec.argv.map((arg) => `    <string>${plistText(arg)}</string>`),
     `  </array>`,
     `  <key>RunAtLoad</key>`,
     `  <true/>`,
@@ -109,12 +115,10 @@ export function renderServicePlist(spec: ServiceJobSpec): string {
   ].join("\n");
 }
 
-
 /** La ligne de commande du job : le service est un process `omp -p` sans session. */
 export function serviceJobArgv(ompBin: string): string[] {
   return [ompBin, "-p", "--no-session", "--pipeline-service", "/service start"];
 }
-
 
 /**
  * Le CHEMIN ABSOLU du binaire `omp` du job launchd, ou le motif de son absence.
@@ -153,7 +157,6 @@ export function resolveLaunchdOmpBinary(
   };
 }
 
-
 /** Le résultat d'une commande externe : `pi.exec` en production, un double en test. */
 export type LaunchdExec = (argv: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
 
@@ -170,7 +173,6 @@ export type LaunchdDeps = {
   now?: () => number;
 };
 
-
 export type LaunchdStatus = {
   installed: boolean;
   /** `launchctl print` a répondu pour ce job. */
@@ -181,7 +183,6 @@ export type LaunchdStatus = {
   text: string;
 };
 
-
 /** Le texte d'état, mot pour mot : le panneau et l'app le lisent tel quel (S-1). */
 export function launchdStatusText(status: Omit<LaunchdStatus, "text">): string {
   if (status.running !== null) return `en marche (pid ${status.running.pid}, port ${status.running.port})`;
@@ -189,7 +190,6 @@ export function launchdStatusText(status: Omit<LaunchdStatus, "text">): string {
   if (!status.loaded) return "arrêté — job launchd installé mais non chargé (/service install)";
   return "arrêté";
 }
-
 
 /**
  * Le pilotage launchd du service : `bootstrap` à l'installation, `bootout` au
@@ -259,7 +259,8 @@ export function createLaunchd(deps: LaunchdDeps) {
     async uninstall(): Promise<{ ok: boolean; text: string }> {
       const boot = await deps.exec(["launchctl", "bootout", `${domain}/${label}`]);
       fs.rmSync(plist, { force: true });
-      if (boot.code === 0 || (await printLoaded()) === false) return { ok: true, text: "service désinstallé (launchd)" };
+      if (boot.code === 0 || (await printLoaded()) === false)
+        return { ok: true, text: "service désinstallé (launchd)" };
       return { ok: false, text: `launchctl bootout a échoué : ${boot.stderr.trim() || `code ${boot.code}`}` };
     },
 

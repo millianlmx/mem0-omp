@@ -46,13 +46,21 @@ test("verdict-croise/AC-1 : contradiction — BLOQUANTS : aucun avec un AC en fa
     { id: "AC-2", status: "fail" },
     { id: "AC-3", status: "missing" },
   ]);
-  assert.deepEqual(reviewImpliedBlockers(c), ["AC-2 : échec en AC PAR AC", "AC-3 : non prouvé en AC PAR AC (aucun test)"]);
+  assert.deepEqual(reviewImpliedBlockers(c), [
+    "AC-2 : échec en AC PAR AC",
+    "AC-3 : non prouvé en AC PAR AC (aucun test)",
+  ]);
   assert.deepEqual(read(c), ["blockers", 2]);
   assert.deepEqual(reviewBlockerList(c), reviewImpliedBlockers(c));
 });
 
 test("verdict-croise/AC-2 : AC manquant — un id du contrat absent d'une table présente est un bloquant", () => {
-  const c = contract("- AC PAR AC :", "  - AC-1 → test/x.test.ts:10 → pass", "  - AC-2 : test/x.test.ts:20 -> pass", "- BLOQUANTS : aucun");
+  const c = contract(
+    "- AC PAR AC :",
+    "  - AC-1 → test/x.test.ts:10 → pass",
+    "  - AC-2 : test/x.test.ts:20 -> pass",
+    "- BLOQUANTS : aucun",
+  );
   assert.deepEqual(reviewImpliedBlockers(c), ["AC-3 : non prouvé en AC PAR AC (absent de la table)"]);
   assert.deepEqual(read(c), ["blockers", 1]);
   // Sans aucune table, rien n'est croisé : le champ BLOQUANTS seul décide (limite connue).
@@ -62,29 +70,65 @@ test("verdict-croise/AC-2 : AC manquant — un id du contrat absent d'une table 
 
 test("verdict-croise/AC-3 : cohérent — table complète en pass et BLOQUANTS : aucun rend clean ; formes tolérées", () => {
   const forms = [
-    ["- AC PAR AC :", "  - AC-1 → test/x.test.ts:10 → pass", "  - AC-2 -> test/x.test.ts:20 -> pass", "  - AC-3 : test/x.test.ts:30 : pass"],
-    ["- AC PAR AC :", "| AC-1 | test/x.test.ts:10 | pass |", "| AC-2 | test/x.test.ts:20 | ok |", "| AC-3 | test/x.test.ts:30 | passe |"],
+    [
+      "- AC PAR AC :",
+      "  - AC-1 → test/x.test.ts:10 → pass",
+      "  - AC-2 -> test/x.test.ts:20 -> pass",
+      "  - AC-3 : test/x.test.ts:30 : pass",
+    ],
+    [
+      "- AC PAR AC :",
+      "| AC-1 | test/x.test.ts:10 | pass |",
+      "| AC-2 | test/x.test.ts:20 | ok |",
+      "| AC-3 | test/x.test.ts:30 | passe |",
+    ],
     ["- **AC PAR AC** : AC-1 → t:1 → pass", "  AC-2 → t:2 → pass", "  AC-3 → t:3 → pass"],
   ];
   for (const table of forms) {
     const c = contract(...table, "- BLOQUANTS : aucun", "- RECOMMANDATIONS : x");
-    assert.deepEqual(reviewAcTable(c).map((row) => row.status), ["pass", "pass", "pass"], table.join(" | "));
+    assert.deepEqual(
+      reviewAcTable(c).map((row) => row.status),
+      ["pass", "pass", "pass"],
+      table.join(" | "),
+    );
     assert.deepEqual(read(c), ["clean", 0], table.join(" | "));
   }
   // Un statut hors vocabulaire n'est pas un bloquant ; « sans test » en est un.
-  assert.deepEqual(reviewAcTable(contract("- AC PAR AC :", "  - AC-1 → t:1 → voir plus bas", "  - AC-2 → sans test → fail", "  - AC-3 → sans test")), [
-    { id: "AC-1", status: "unknown" },
-    { id: "AC-2", status: "fail" },
-    { id: "AC-3", status: "missing" },
-  ]);
+  assert.deepEqual(
+    reviewAcTable(
+      contract(
+        "- AC PAR AC :",
+        "  - AC-1 → t:1 → voir plus bas",
+        "  - AC-2 → sans test → fail",
+        "  - AC-3 → sans test",
+      ),
+    ),
+    [
+      { id: "AC-1", status: "unknown" },
+      { id: "AC-2", status: "fail" },
+      { id: "AC-3", status: "missing" },
+    ],
+  );
   // Un champ BLOQUANTS explicite s'ajoute aux impliqués.
-  const both = contract("- AC PAR AC :", "  - AC-1 → t:1 → pass", "  - AC-2 → t:2 → fail", "  - AC-3 → t:3 → pass", "- BLOQUANTS :", "1. le README manque");
+  const both = contract(
+    "- AC PAR AC :",
+    "  - AC-1 → t:1 → pass",
+    "  - AC-2 → t:2 → fail",
+    "  - AC-3 → t:3 → pass",
+    "- BLOQUANTS :",
+    "1. le README manque",
+  );
   assert.deepEqual(read(both), ["blockers", 2]);
   assert.deepEqual(reviewBlockerList(both), ["1. le README manque", "AC-2 : échec en AC PAR AC"]);
 });
 
 test("verdict-croise/AC-4 : « aucun bloquant » suivi d'un texte ou une ligne numérotée barrée est ambigu : illisible, plus jamais clean", () => {
-  for (const line of ["Aucun bloquant ; voir recommandations", "Aucun bloquant mais AC-2 reste à prouver", "aucun bloquant sauf le README", "1. ~~AC-4 manquant~~"]) {
+  for (const line of [
+    "Aucun bloquant ; voir recommandations",
+    "Aucun bloquant mais AC-2 reste à prouver",
+    "aucun bloquant sauf le README",
+    "1. ~~AC-4 manquant~~",
+  ]) {
     assert.equal(isAmbiguous(line), true, line);
     assert.equal(isVacuous(line), false, line);
   }
@@ -115,17 +159,33 @@ test("verdict-croise/AC-5 : une revue illisible sous le plafond reprend sa sessi
     reason: "verdict de revue illisible après 3 passes",
   });
   // La contradiction table/champ n'est pas illisible : elle part en correction.
-  const contradiction = contract("- AC PAR AC :", "  - AC-1 → t:1 → fail", "  - AC-2 → t:2 → pass", "  - AC-3 → t:3 → pass", "- BLOQUANTS : aucun");
+  const contradiction = contract(
+    "- AC PAR AC :",
+    "  - AC-1 → t:1 → fail",
+    "  - AC-2 → t:2 → pass",
+    "  - AC-3 → t:3 → pass",
+    "- BLOQUANTS : aucun",
+  );
   assert.deepEqual(nextChainAction({ ...base, contract: contradiction }), { kind: "run", phase: "impl", fix: true });
   assert.match(REVIEW_UNREADABLE_REFOCUS, /- BLOQUANTS : aucun/);
 });
 
 test("verdict-croise/AC-6 : la graine --fix cite les bloquants impliqués par la table", () => {
-  const seed = buildImplSeed("", true, { impliedBlockers: ["AC-2 : échec en AC PAR AC", "AC-3 : non prouvé en AC PAR AC (aucun test)"] });
+  const seed = buildImplSeed("", true, {
+    impliedBlockers: ["AC-2 : échec en AC PAR AC", "AC-3 : non prouvé en AC PAR AC (aucun test)"],
+  });
   assert.match(seed, /^\[impl --fix\]/);
-  assert.ok(seed.includes("Bloquants impliqués par la table AC PAR AC de la revue (à lever comme ceux du champ BLOQUANTS) :\n- AC-2 : échec en AC PAR AC\n- AC-3 : non prouvé en AC PAR AC (aucun test)\n\n"));
+  assert.ok(
+    seed.includes(
+      "Bloquants impliqués par la table AC PAR AC de la revue (à lever comme ceux du champ BLOQUANTS) :\n- AC-2 : échec en AC PAR AC\n- AC-3 : non prouvé en AC PAR AC (aucun test)\n\n",
+    ),
+  );
   assert.equal(buildImplSeed("", true).includes("Bloquants impliqués"), false);
-  assert.equal(buildImplSeed("", false, { impliedBlockers: ["x"] }).includes("Bloquants impliqués"), false, "sans --fix, rien à lever");
+  assert.equal(
+    buildImplSeed("", false, { impliedBlockers: ["x"] }).includes("Bloquants impliqués"),
+    false,
+    "sans --fix, rien à lever",
+  );
 });
 
 test("verdict-croise/AC-7 : reviewScopeFor — intégrale au premier tour et aux deux derniers, incrémentale entre", () => {

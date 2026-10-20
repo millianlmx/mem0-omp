@@ -92,7 +92,12 @@ const FORT = "p/fort";
 const FORT_REPLI = "p/fort-repli";
 const ECO = "p/eco";
 const ECO_REPLI = "p/eco-repli";
-const FOUR_KEYS = { modelReqSpecs: FORT, fallbackReqSpecs: FORT_REPLI, modelImplReview: ECO, fallbackImplReview: ECO_REPLI };
+const FOUR_KEYS = {
+  modelReqSpecs: FORT,
+  fallbackReqSpecs: FORT_REPLI,
+  modelImplReview: ECO,
+  fallbackImplReview: ECO_REPLI,
+};
 
 async function flush(times = 8): Promise<void> {
   for (let i = 0; i < times; i++) {
@@ -288,9 +293,15 @@ test("revue-sur-le-groupe-fort/AC-1 : req, specs et review résolvent le groupe 
 
   // Cas limites : un seul groupe renseigné, valeur faite d'espaces = absente.
   const onlyFort = { modelReqSpecs: FORT };
-  assert.deepEqual(PHASES.map((phase) => featureModelForPhase(onlyFort, phase)), [FORT, FORT, null, FORT, null]);
+  assert.deepEqual(
+    PHASES.map((phase) => featureModelForPhase(onlyFort, phase)),
+    [FORT, FORT, null, FORT, null],
+  );
   const onlyEco = { modelImplReview: ECO };
-  assert.deepEqual(PHASES.map((phase) => featureModelForPhase(onlyEco, phase)), [null, null, ECO, null, ECO]);
+  assert.deepEqual(
+    PHASES.map((phase) => featureModelForPhase(onlyEco, phase)),
+    [null, null, ECO, null, ECO],
+  );
   assert.equal(featureModelForPhase({ modelReqSpecs: "   ", model: "p/vieux" }, "review"), "p/vieux");
   assert.equal(featureFallbackForPhase({ fallbackReqSpecs: "  " }, "review"), null);
 });
@@ -359,9 +370,18 @@ function featureRow(slug: string, over: Partial<LotFeature> = {}): LotFeature {
 
 test("revue-sur-le-groupe-fort/AC-3 : l'ancien `model` remplit les cinq phases, l'absence de clé donne le défaut OMP, et un lot à quatre clés se relit sans perte", async () => {
   // Résolution pure : aucun ancien champ de repli à relire.
-  assert.deepEqual(PHASES.map((phase) => featureModelForPhase({ model: "p/vieux" }, phase)), Array(5).fill("p/vieux"));
-  assert.deepEqual(PHASES.map((phase) => featureModelForPhase({}, phase)), Array(5).fill(null));
-  assert.deepEqual(PHASES.map((phase) => featureFallbackForPhase({}, phase)), Array(5).fill(null));
+  assert.deepEqual(
+    PHASES.map((phase) => featureModelForPhase({ model: "p/vieux" }, phase)),
+    Array(5).fill("p/vieux"),
+  );
+  assert.deepEqual(
+    PHASES.map((phase) => featureModelForPhase({}, phase)),
+    Array(5).fill(null),
+  );
+  assert.deepEqual(
+    PHASES.map((phase) => featureFallbackForPhase({}, phase)),
+    Array(5).fill(null),
+  );
 
   // Les runs réels : `model: "p/vieux"` part sur les cinq phases, sans clé aucun run ne porte de modèle.
   for (const [keys, expected] of [
@@ -454,7 +474,8 @@ test("revue-sur-le-groupe-fort/AC-4 : la décision de quota d'une étape review 
       { name: "bravo", ...own },
     ]);
     await until(() => findLot(stateDir).features.every((f) => f.state === "blocked"));
-    for (const f of findLot(stateDir).features) assert.equal(f.quota?.phase, "review", `${f.slug} : bloquée à la revue`);
+    for (const f of findLot(stateDir).features)
+      assert.equal(f.quota?.phase, "review", `${f.slug} : bloquée à la revue`);
     const before = specs.length;
 
     assert.equal(await controller.resolveQuota("p", decided, { kind: "all" }), null);
@@ -521,12 +542,18 @@ function arbiterHost(script: ArbiterScript) {
   const cwds: string[] = [];
   const counter = { prompts: 0 };
   const host = {
-    open: async (o: { cwd: string; purpose: string; model?: string | null; fallback?: string | null; arbiter?: { decision: ArbiterDecision | null } }) => {
+    open: async (o: {
+      cwd: string;
+      purpose: string;
+      model?: string | null;
+      fallback?: string | null;
+      arbiter?: { decision: ArbiterDecision | null };
+    }) => {
       const id = `arb-${opens.length + 1}`;
       opens.push({ purpose: o.purpose, model: o.model ?? null, fallback: o.fallback ?? null });
       cwds.push(o.cwd);
       let release: () => void = () => {};
-      const disposed = new Promise<void>(resolve => {
+      const disposed = new Promise<void>((resolve) => {
         release = resolve;
       });
       const messages: Array<Record<string, unknown>> = [];
@@ -544,7 +571,13 @@ function arbiterHost(script: ArbiterScript) {
           messages.push({ role: "user", content: [{ type: "text", text }] });
           const params = script(text, counter.prompts);
           if (params !== null && o.arbiter) recordArbiterDecision(o.arbiter as never, params);
-          messages.push({ role: "assistant", provider: "prov", model: "principal", stopReason: "stop", content: [{ type: "text", text: "décidé" }] });
+          messages.push({
+            role: "assistant",
+            provider: "prov",
+            model: "principal",
+            stopReason: "stop",
+            content: [{ type: "text", text: "décidé" }],
+          });
           return true;
         },
         waitForIdle: async () => {},
@@ -574,7 +607,11 @@ function arbiterHost(script: ArbiterScript) {
  * parti ; `park` la met en attente d'une réponse ou d'un jalon, comme le fait la fin
  * d'un run, pour que `tick` la fasse arbitrer.
  */
-async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters<LotController["add"]>[0]>, legacyModel?: string) {
+async function arbiterScenario(
+  script: ArbiterScript,
+  models: Partial<Parameters<LotController["add"]>[0]>,
+  legacyModel?: string,
+) {
   const arb = arbiterHost(script);
   const arbiter: ArbiterRunner = createArbiterRunner({ host: arb.host, log: () => {}, now: () => T0 });
   const specs: LotRunSpec[] = [];
@@ -603,10 +640,20 @@ async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters
   writeBrief(
     stateDir,
     parentFile,
-    renderBrief({ title: "/audit rgf", purpose: "Exporter les données.", function: ARBITER_FACT, decisions: ["Pas de base distante."], constraints: [], nonGoals: [] }),
+    renderBrief({
+      title: "/audit rgf",
+      purpose: "Exporter les données.",
+      function: ARBITER_FACT,
+      decisions: ["Pas de base distante."],
+      constraints: [],
+      nonGoals: [],
+    }),
   );
   assert.ok(readBrief(stateDir, parentFile), "le brief est lisible");
-  assert.equal(await controller.add({ name: "alpha", description: "Faire A.", deps: [], auditSession: parentFile, ...models }), null);
+  assert.equal(
+    await controller.add({ name: "alpha", description: "Faire A.", deps: [], auditSession: parentFile, ...models }),
+    null,
+  );
   if (legacyModel !== undefined) {
     const lot = findLot(stateDir);
     (lotFeature(lot, "alpha") as LotFeature).model = legacyModel;
@@ -628,7 +675,12 @@ async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters
     writeLot(stateDir, lot);
   };
   /** Arbitre UN élément : l'élément est parqué, `tick` l'arbitre, le tour `expectedTurn` part, l'arbitrage se termine. */
-  const arbitrate = async (waitKind: "answer" | "specs" | "review", phase: PipelinePhase, waitPrompt: string | null, expectedTurn: number) => {
+  const arbitrate = async (
+    waitKind: "answer" | "specs" | "review",
+    phase: PipelinePhase,
+    waitPrompt: string | null,
+    expectedTurn: number,
+  ) => {
     park(waitKind, phase, waitPrompt);
     await controller.tick();
     await until(() => arb.counter.prompts === expectedTurn);
@@ -637,7 +689,13 @@ async function arbiterScenario(script: ArbiterScript, models: Partial<Parameters
   return { arb, stateDir, specs, park, feature, controller, arbitrate, repoRoot };
 }
 
-const citeFact = (answer: string) => ({ decision: "answer", answer, source: "contexte", citations: [ARBITER_FACT], reason: "le brief le dit" });
+const citeFact = (answer: string) => ({
+  decision: "answer",
+  answer,
+  source: "contexte",
+  citations: [ARBITER_FACT],
+  reason: "le brief le dit",
+});
 const approve = { decision: "approve", reason: "les specs couvrent chaque AC", citations: [ARBITER_FACT] };
 
 /** Exhauste un modèle dans le registre des quotas, comme le fait un run qui touche le quota. */
@@ -679,13 +737,21 @@ test("revue-sur-le-groupe-fort/AC-5 : l'arbitre s'ouvre sur le modèle et le rep
   assert.deepEqual(bare.arb.opens, [{ purpose: "arbiter", model: null, fallback: null }]);
 
   // Une feature qui ne porte que le groupe exécution : l'arbitre reste au défaut OMP, il ne lit jamais `modelImplReview`.
-  const ecoOnly = await arbiterScenario(() => citeFact("JSON"), { modelImplReview: ECO, fallbackImplReview: ECO_REPLI });
+  const ecoOnly = await arbiterScenario(() => citeFact("JSON"), {
+    modelImplReview: ECO,
+    fallbackImplReview: ECO_REPLI,
+  });
   await ecoOnly.arbitrate("answer", "impl", "Quel format de sortie ?", 1);
   assert.deepEqual(ecoOnly.arb.opens, [{ purpose: "arbiter", model: null, fallback: null }]);
 });
 
 test("revue-sur-le-groupe-fort/AC-6 : groupe cadrage+revue épuisé, l'arbitre escalade « arbitre indisponible : quota épuisé (…) » sans jamais ouvrir de session sur le groupe exécution", async () => {
-  const strong = { modelReqSpecs: "fort/m", fallbackReqSpecs: "fort/repli", modelImplReview: "eco/m", fallbackImplReview: "eco/repli" };
+  const strong = {
+    modelReqSpecs: "fort/m",
+    fallbackReqSpecs: "fort/repli",
+    modelImplReview: "eco/m",
+    fallbackImplReview: "eco/repli",
+  };
   const s = await arbiterScenario(() => assert.fail("pas d'arbitre sur un groupe épuisé"), strong);
   exhaust(s.stateDir, "fort/m");
   exhaust(s.stateDir, "fort/repli");
@@ -868,11 +934,21 @@ test("revue-sur-le-groupe-fort/AC-7 : les groupes s'affichent « cadrage+revue �
   ]);
 
   // Le refus d'un repli identique au principal, pour chaque groupe.
-  assert.equal(fallbackEqualsPrimaryRefusal("prov/a", "prov/a", "modelReqSpecs"), "repli identique au modèle principal (cadrage+revue)");
-  assert.equal(fallbackEqualsPrimaryRefusal("prov/b", "prov/b", "modelImplReview"), "repli identique au modèle principal (exécution)");
+  assert.equal(
+    fallbackEqualsPrimaryRefusal("prov/a", "prov/a", "modelReqSpecs"),
+    "repli identique au modèle principal (cadrage+revue)",
+  );
+  assert.equal(
+    fallbackEqualsPrimaryRefusal("prov/b", "prov/b", "modelImplReview"),
+    "repli identique au modèle principal (exécution)",
+  );
 
   // Le rang de la feature.
-  const alpha = featureRow("alpha", { modelReqSpecs: "prov/a", fallbackReqSpecs: "autre/m", modelImplReview: "prov/b" });
+  const alpha = featureRow("alpha", {
+    modelReqSpecs: "prov/a",
+    fallbackReqSpecs: "autre/m",
+    modelImplReview: "prov/b",
+  });
   const label = "alpha · cadrage+revue prov/a (repli autre/m) · exécution prov/b";
   assert.equal(lotFeatureLabel(alpha), label);
 
@@ -941,7 +1017,15 @@ test("revue-sur-le-groupe-fort/AC-7 : les groupes s'affichent « cadrage+revue �
         {
           name: "Socle",
           features: [
-            { slug: "a", intention: "Intention A.", status: "planned", prUrl: null, failure: null, removedReason: null, updatedAt: T0 },
+            {
+              slug: "a",
+              intention: "Intention A.",
+              status: "planned",
+              prUrl: null,
+              failure: null,
+              removedReason: null,
+              updatedAt: T0,
+            },
           ],
         },
       ],
@@ -1006,7 +1090,11 @@ test("revue-sur-le-groupe-fort/AC-8 : aucune source omp-mem0-req ne porte « req
     notices.includes("[pipeline] commande models : repli identique au modèle principal (cadrage+revue)"),
     `notice de refus : ${notices.join(" | ")}`,
   );
-  assert.equal((lotFeature(findLot(stateDir), "alpha") as LotFeature).fallbackReqSpecs, FORT_REPLI, "le refus ne modifie rien");
+  assert.equal(
+    (lotFeature(findLot(stateDir), "alpha") as LotFeature).fallbackReqSpecs,
+    FORT_REPLI,
+    "le refus ne modifie rien",
+  );
 });
 
 // Lot BR-3 — AC-9, AC-10 : les libellés des deux sélecteurs d'omp-console.
@@ -1023,8 +1111,14 @@ test("revue-sur-le-groupe-fort/AC-9 : les sélecteurs de la console se libellent
 
   // modelsLine compose « <A> · <B> » à partir de ces deux seules constantes.
   const body = memberBody(kanban, "static func modelsLine");
-  assert.ok(body.includes("KanbanCardPresentation.modelLine(modelReqSpecs, models.reqSpecs)"), "modelsLine : ligne cadrage+revue");
-  assert.ok(body.includes("KanbanCardPresentation.modelLine(modelImplReview, models.implReview)"), "modelsLine : ligne exécution");
+  assert.ok(
+    body.includes("KanbanCardPresentation.modelLine(modelReqSpecs, models.reqSpecs)"),
+    "modelsLine : ligne cadrage+revue",
+  );
+  assert.ok(
+    body.includes("KanbanCardPresentation.modelLine(modelImplReview, models.implReview)"),
+    "modelsLine : ligne exécution",
+  );
   assert.ok(body.includes('"\\(reqSpecs) · \\(implReview)"'), "modelsLine : séparateur « · »");
 
   // Les deux feuilles libellent leurs sélecteurs par ces constantes, jamais par un texte recopié.
@@ -1034,11 +1128,18 @@ test("revue-sur-le-groupe-fort/AC-9 : les sélecteurs de la console se libellent
   const modelsSheet = read("Sources", "OMPConsole", "Launch", "ModelsSheet.swift");
   assert.ok(modelsSheet.includes("picker(KanbanText.modelReqSpecs"), "Mac : sélecteur cadrage+revue");
   assert.ok(modelsSheet.includes("picker(KanbanText.modelImplReview"), "Mac : sélecteur exécution");
-  assert.ok(read("Sources", "OMPConsole", "Launch", "NewFeatureSheet.swift").includes("ModelSlotsPicker("), "Mac : la feuille emploie ModelSlotsPicker");
+  assert.ok(
+    read("Sources", "OMPConsole", "Launch", "NewFeatureSheet.swift").includes("ModelSlotsPicker("),
+    "Mac : la feuille emploie ModelSlotsPicker",
+  );
 
   // Les clés JSON transmises ne changent pas.
   const macSheet = read("Sources", "OMPConsole", "Launch", "NewFeatureSheet.swift");
-  for (const [file, text] of [["NewFeatureSheet.swift", macSheet], ["NewFeatureSheetView.swift", iosSheet], ["ModelsSheet.swift", modelsSheet]] as const) {
+  for (const [file, text] of [
+    ["NewFeatureSheet.swift", macSheet],
+    ["NewFeatureSheetView.swift", iosSheet],
+    ["ModelsSheet.swift", modelsSheet],
+  ] as const) {
     assert.ok(text.includes("modelReqSpecs:"), `${file} : clé modelReqSpecs`);
     assert.ok(text.includes("modelImplReview:"), `${file} : clé modelImplReview`);
   }
@@ -1048,7 +1149,11 @@ test("revue-sur-le-groupe-fort/AC-9 : les sélecteurs de la console se libellent
   assert.ok(tree.size > 100, `fichiers Swift lus : ${tree.size}`);
   for (const [file, source] of tree) {
     for (const unit of swiftTextUnits(source)) {
-      assert.equal(/\/req et \/specs|\/impl et \/review/.test(unit.text), false, `${file}:${unit.line} « ${unit.raw} » : ancien libellé`);
+      assert.equal(
+        /\/req et \/specs|\/impl et \/review/.test(unit.text),
+        false,
+        `${file}:${unit.line} « ${unit.raw} » : ancien libellé`,
+      );
     }
   }
 });
@@ -1067,7 +1172,10 @@ test("revue-sur-le-groupe-fort/AC-10 : README, GLOSSAIRE et DESIGN d'omp-console
 // Lot BR-4 — AC-11 : README racine.
 test("revue-sur-le-groupe-fort/AC-11 : le README n'emploie plus « req+specs » ni « impl+review » et énonce l'affectation des phases aux groupes et l'arbitre sur cadrage+revue", () => {
   // Normalisation du contrat : sans `**` ni backticks, blancs réduits à un seul.
-  const text = fs.readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/\*\*|`/g, "").replace(/\s+/g, " ");
+  const text = fs
+    .readFileSync(path.join(ROOT, "README.md"), "utf8")
+    .replace(/\*\*|`/g, "")
+    .replace(/\s+/g, " ");
   assert.ok(text.length > 10_000, "le README est lu");
   assert.equal(text.includes("req+specs"), false, "« req+specs » subsiste");
   assert.equal(text.includes("impl+review"), false, "« impl+review » subsiste");

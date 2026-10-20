@@ -42,7 +42,7 @@ const RULES: Rule[] = [
 ];
 
 const PATH_WORD = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.(?:md|sh|ts|json|yml)$/;
-const SECTION_CITE = /([A-Za-z0-9_.\/-]+\.md)`?\s*§\s*«\s*([^»]+?)\s*»/g;
+const SECTION_CITE = /([A-Za-z0-9_./-]+\.md)`?\s*§\s*«\s*([^»]+?)\s*»/g;
 const CASE_BRANCH = /^\s*(--[^\s|)]+(?:\s*\|\s*--[^\s|)]+)*)\)/;
 const LINK = /\[[^\]]*\]\(CONTRIBUTING\.md\)/;
 
@@ -172,11 +172,12 @@ test("no-contributing-guide/AC-1 : le guide énonce les six règles, chacune ave
   const real = realGuide();
   assert.deepEqual(guideFaults(real, ROOT), []);
   const scoped = ruleSection(real, RULES[1].heading);
-  assert.ok(scoped !== null && scoped.includes(`${TEST_FILES} --scope=changed`), "règle 2 : juge absent");
+  assert.ok(scoped?.includes(`${TEST_FILES} --scope=changed`), "règle 2 : juge absent");
   for (const rule of RULES) {
     const body = ruleSection(real, rule.heading);
     assert.ok(body !== null, `règle manquante : ${rule.heading}`);
-    for (const judge of rule.judges) assert.ok(body.includes(judge), `règle « ${rule.heading} » : juge absent : ${judge}`);
+    for (const judge of rule.judges)
+      assert.ok(body.includes(judge), `règle « ${rule.heading} » : juge absent : ${judge}`);
   }
   assert.ok(!real.includes("test/docs.test.ts"), "le guide cite test/docs.test.ts");
 });
@@ -210,7 +211,10 @@ test("no-contributing-guide/AC-3 : la section tests de check.sh lance la garde, 
   assert.ok(start >= 0, "section tests introuvable dans check.sh");
   let end = start + 1;
   while (end < lines.length && !lines[end].startsWith("if section_on ")) end += 1;
-  assert.ok(lines.slice(start, end).join("\n").includes(`bash ${TEST_FILES}`), "la section tests ne lance pas test-files.sh");
+  assert.ok(
+    lines.slice(start, end).join("\n").includes(`bash ${TEST_FILES}`),
+    "la section tests ne lance pas test-files.sh",
+  );
 
   const ids = /^SECTION_IDS="([^"]*)"$/m.exec(check);
   assert.ok(ids !== null, "SECTION_IDS introuvable dans check.sh");
@@ -226,7 +230,11 @@ test("no-contributing-guide/AC-4 : un chemin cité absent fait échouer la garde
 
 test("no-contributing-guide/AC-5 : une option refusée par test-files.sh échoue, chaque option acceptée passe", () => {
   const real = realGuide();
-  assert.equal(real.split(`${TEST_FILES} --scope=`).length, 2, "l'option de test-files.sh doit être citée une seule fois");
+  assert.equal(
+    real.split(`${TEST_FILES} --scope=`).length,
+    2,
+    "l'option de test-files.sh doit être citée une seule fois",
+  );
   const cited = `${TEST_FILES} --scope=changed`;
 
   const copy = mutate(real, cited, `${TEST_FILES} --scope=inexistant`);

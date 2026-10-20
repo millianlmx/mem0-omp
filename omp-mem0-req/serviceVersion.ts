@@ -12,19 +12,15 @@ import { readPackageVersion } from "./pluginVersion.ts";
 import { pluginsInstallRoot } from "./runs.ts";
 import { serviceBaseUrl, serviceRunning } from "./serviceState.ts";
 
-
 /** La borne de la sonde : au-delà, le service est tenu pour muet (aucun signalement). */
 export const SERVICE_VERSION_PROBE_TIMEOUT_MS = 1500;
-
 
 /** La version du plugin installé (`~/.omp/plugins/node_modules/omp-mem0-req`), relue à chaque appel. */
 export function installedPluginVersion(home: string = os.homedir()): string | null {
   return readPackageVersion(path.join(pluginsInstallRoot(home), "node_modules", "omp-mem0-req", "package.json"));
 }
 
-
 export type ServiceVersionProbe = { kind: "silent" } | { kind: "exposed"; pluginVersion: string | null };
-
 
 /**
  * Interroge GET /v1/health du service en marche, borné par `timeoutMs` (en-têtes
@@ -58,7 +54,6 @@ export async function probeServiceVersion(
   }
 }
 
-
 /** Le texte du signalement d'écart, ou `null` (silence, plugin installé illisible, versions égales). */
 export function versionDriftNotice(probe: ServiceVersionProbe, installed: string | null): string | null {
   if (probe.kind === "silent" || installed === null || probe.pluginVersion === installed) return null;
@@ -66,7 +61,6 @@ export function versionDriftNotice(probe: ServiceVersionProbe, installed: string
     ? `[service] écart de version : le service n'expose pas sa version, le plugin installé est en ${installed} — relance /service install`
     : `[service] écart de version : le service exécute omp-mem0-req ${probe.pluginVersion}, le plugin installé est en ${installed} — relance /service install`;
 }
-
 
 /** Le contrôle complet : plugin installé lu maintenant, puis sonde du service ; `null` = rien à signaler. */
 export async function serviceVersionDrift(opts: {

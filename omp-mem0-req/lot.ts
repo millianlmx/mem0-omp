@@ -5,7 +5,18 @@ import * as path from "node:path";
 import { REQUIRED_CONTRACT_SECTIONS } from "./chain.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr } from "./git.ts";
-import { AUDIT_RELAY_STALE_MS, LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_OWNER_STALE_MS, LOT_PENDING_MAX, LOT_RUNS_MAX, MAX_REPLY_OPTIONS, PIPELINE_SLOTS_DEFAULT, PIPELINE_SLOTS_MAX, envInt } from "./lotLimits.ts";
+import {
+  AUDIT_RELAY_STALE_MS,
+  LOT_ALERT_PROMPT_MAX,
+  LOT_EDITOR_MAX,
+  LOT_OWNER_STALE_MS,
+  LOT_PENDING_MAX,
+  LOT_RUNS_MAX,
+  MAX_REPLY_OPTIONS,
+  PIPELINE_SLOTS_DEFAULT,
+  PIPELINE_SLOTS_MAX,
+  envInt,
+} from "./lotLimits.ts";
 import { clipTail } from "./panelWidth.ts";
 // Type SEUL (`import type`) : la dépendance est effacée au chargement, donc aucun
 // cycle runtime avec `runs.ts`, qui importe ce module.
@@ -14,8 +25,6 @@ import { PIPELINE_PHASES, asStringOrNull, pidAlive, readAuditRelay, readJsonFile
 import type { PanelAskOption, PanelPendingAsk } from "./store.ts";
 // Les bornes du lot vivent dans lotLimits.ts : ce module les réexporte pour ses importeurs.
 export * from "./lotLimits.ts";
-
-
 
 // ---------------------------------------------------------------------------
 // Lot de features — le magasin, la chaîne, le pilote.
@@ -36,7 +45,6 @@ export * from "./lotLimits.ts";
 
 export const LOT_VERSION = 1;
 
-
 export type LotFeatureState = "pending" | "running" | "waiting" | "blocked" | "failed" | "done" | "cancelled";
 
 export type LotWaitKind = "answer" | "specs" | "review";
@@ -47,7 +55,6 @@ export type LotWaitKind = "answer" | "specs" | "review";
  * maillon `req` n'est pas clos. `panneau` : tout est run, collecte comprise.
  */
 export type LotOrigin = "session" | "panneau";
-
 
 /**
  * Le lancement qu'un geste a demandé SANS qu'un créneau soit libre (S-3) : il est
@@ -69,13 +76,11 @@ export type HeldLaunch = {
   refocus?: string;
 };
 
-
 /**
  * Le quota qui bloque une feature (S-5) : le fournisseur, le modèle épuisé, son
  * échéance (epoch ms), si elle a été ANNONCÉE par le fournisseur, et la phase du run.
  */
 export type FeatureQuota = { provider: string; model: string; until: number; announced: boolean; phase: PipelinePhase };
-
 
 /**
  * Un GROUPE de quota (S-5) : les features `blocked` portant le quota d'un même
@@ -99,7 +104,12 @@ export function quotaGroupsOf(lot: Lot, keep: (feature: LotFeature) => boolean =
     if (quota === null || !keep(feature)) continue;
     const known = groups.get(quota.provider);
     if (known === undefined) {
-      groups.set(quota.provider, { provider: quota.provider, slugs: [feature.slug], until: quota.until, announced: quota.announced });
+      groups.set(quota.provider, {
+        provider: quota.provider,
+        slugs: [feature.slug],
+        until: quota.until,
+        announced: quota.announced,
+      });
       continue;
     }
     known.slugs.push(feature.slug);
@@ -111,14 +121,18 @@ export function quotaGroupsOf(lot: Lot, keep: (feature: LotFeature) => boolean =
   return [...groups.values()];
 }
 
-
 /**
  * Un arbitrage en vol (S-9) : la clé de l'élément arbitré, l'instant de mise en file
  * (`startedAt`) et son ÉTAT, lu par la Console — `queued` : en file derrière d'autres
  * éléments de la même session de pilote ; `deciding` : le tour du pilote a commencé à
  * `decidingAt`. Absent (fichier ancien) = `queued`.
  */
-export type FeatureArbitration = { key: string; startedAt: number; status?: "queued" | "deciding"; decidingAt?: number };
+export type FeatureArbitration = {
+  key: string;
+  startedAt: number;
+  status?: "queued" | "deciding";
+  decidingAt?: number;
+};
 
 /** Le motif d'une relance appliquée par l'arbitre. */
 export type ArbiterRelaunchMotive = "cap" | "failure";
@@ -142,7 +156,6 @@ export type LotRunRecord = {
   sessionFile: string | null;
 };
 
-
 /** Un élément que l'arbitre n'a pas pu trancher : il attend l'utilisateur (S-9, S-10). */
 export type FeatureEscalation = {
   key: string;
@@ -153,7 +166,6 @@ export type FeatureEscalation = {
   reason: string;
   at: number;
 };
-
 
 export type LotFeature = {
   slug: string;
@@ -314,7 +326,6 @@ export type LotFeature = {
   endedAt: number | null;
 };
 
-
 export type Lot = {
   version: 1;
   id: string;
@@ -353,9 +364,7 @@ export type Lot = {
   features: LotFeature[];
 };
 
-
 export type LotTotals = { done: number; blocked: number; failed: number; cancelled: number; live: number };
-
 
 export const LOT_FEATURE_STATES: Record<LotFeatureState, true> = {
   pending: true,
@@ -371,12 +380,10 @@ export const LOT_WAIT_KINDS: Record<LotWaitKind, true> = { answer: true, specs: 
 
 export const LOT_ORIGINS: Record<LotOrigin, true> = { session: true, panneau: true };
 
-
 /** Un état terminal ne repart que par une relance explicite (S-9). */
 export function lotStateTerminal(state: LotFeatureState): boolean {
   return state === "blocked" || state === "failed" || state === "done" || state === "cancelled";
 }
-
 
 /**
  * Une feature peut-elle être ABANDONNÉE (S-9) ? Tout sauf `done` et `cancelled` :
@@ -387,7 +394,6 @@ export function lotStateTerminal(state: LotFeatureState): boolean {
 export function lotStateCancellable(state: LotFeatureState): boolean {
   return state !== "done" && state !== "cancelled";
 }
-
 
 /**
  * Le propriétaire d'un lot est-il encore là ? Le pid vivant ne suffit pas : après
@@ -402,7 +408,6 @@ export function lotOwnerAlive(owner: Lot["owner"], now: number): boolean {
   if (typeof beat !== "number" || !Number.isFinite(beat)) return true;
   return now - beat <= LOT_OWNER_STALE_MS;
 }
-
 
 export function lotStateLabel(state: LotFeatureState): string {
   switch (state) {
@@ -423,7 +428,6 @@ export function lotStateLabel(state: LotFeatureState): string {
   }
 }
 
-
 /** Le libellé du jalon en cours d'attente (« attend ma réponse », …). */
 export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
   if (waitKind === "answer") return "attend réponse";
@@ -431,7 +435,6 @@ export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
   if (waitKind === "review") return "attend accord";
   return null;
 }
-
 
 /**
  * La forme EXACTE d'une option de question (S-3) : `- (1) <libellé>`. Le `\s*`
@@ -441,7 +444,6 @@ export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
  */
 export const REPLY_OPTION = /^[-*]?\s*\((\d{1,2})\)\s+(\S.*)$/;
 
-
 /** Le libellé d'une ligne d'option, ou `null` si la ligne n'en est pas une. */
 export function replyOptionLabel(line: string): string | null {
   const match = REPLY_OPTION.exec(line.trim());
@@ -449,7 +451,6 @@ export function replyOptionLabel(line: string): string | null {
   const label = (match[2] as string).trim();
   return label === "" ? null : label;
 }
-
 
 /**
  * Les bornes du DERNIER bloc contigu de lignes d'options d'un texte, ou `null`.
@@ -471,7 +472,6 @@ export function optionBlock(lines: string[]): { first: number; last: number } | 
   return { first, last };
 }
 
-
 /**
  * Les libellés d'options d'une question en attente, dans l'ordre, au plus
  * MAX_REPLY_OPTIONS. Pure : la question est le `waitPrompt` du lot, déjà lu.
@@ -489,7 +489,6 @@ export function parseReplyOptions(text: string | null): string[] {
   return options;
 }
 
-
 /**
  * La QUESTION d'un prompt de maillon (S-7) : ses lignes, SANS le bloc d'options
  * final — celui-ci est rendu juste après, numéroté et sélectionnable. Sans ça, la
@@ -503,7 +502,6 @@ export function questionOf(prompt: string | null): string | null {
   const head = (block === null ? lines : lines.slice(0, block.first)).join("\n").trim();
   return head === "" ? null : head;
 }
-
 
 /**
  * La question en TEXTE qui TERMINE une sortie de run (S-8 §1), ou `null`. Deux
@@ -525,7 +523,6 @@ export function trailingQuestion(stdout: string): string | null {
   return questionOf(text);
 }
 
-
 /**
  * Ce qu'un rang accepte comme écriture (S-11, S-6, S-7, S-8) : la règle unique,
  * appliquée deux fois — le panneau s'en sert pour poser sa zone de saisie, et
@@ -537,12 +534,18 @@ export function trailingQuestion(stdout: string): string | null {
  */
 export type RowReply =
   | { kind: "reply"; phase: PipelinePhase; question: string | null; options: string[] }
-  | { kind: "ask"; phase: PipelinePhase; question: string; options: PanelAskOption[]; toolCallId: string; inbox: string }
+  | {
+      kind: "ask";
+      phase: PipelinePhase;
+      question: string;
+      options: PanelAskOption[];
+      toolCallId: string;
+      inbox: string;
+    }
   | { kind: "steer"; phase: PipelinePhase; inbox: string }
   | { kind: "text"; phase: PipelinePhase }
   | { kind: "queue"; phase: PipelinePhase }
   | { kind: "closed"; reason: string };
-
 
 /** Ce que la règle d'écriture sait du run VIVANT d'une feature (S-6, S-7). */
 export type RowLiveWriter = {
@@ -553,28 +556,29 @@ export type RowLiveWriter = {
   viaArbiter?: boolean;
 };
 
-
 /** Refus d'écriture d'une question confiée à /audit, mot pour mot (S-3). */
 export const AUDIT_RELAY_REFUSAL = "question confiée à la session /audit — elle revient ici si cette session se ferme";
 
 /** Refus des touches `v`/`y` sur un jalon confié à /audit, mot pour mot (S-3). */
-export const AUDIT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /audit — il revient ici si cette session se ferme";
+export const AUDIT_RELAY_MILESTONE_REFUSAL =
+  "jalon confié à la session /audit — il revient ici si cette session se ferme";
 
 /** Premier item du pied d'une feature relayée (S-3). */
 export const AUDIT_RELAY_FOOTER = "relayé à /audit";
 
 /** Refus d'écriture d'une question confiée à /project, mot pour mot (S-6 §6). */
-export const PROJECT_RELAY_REFUSAL = "question confiée à la session /project — elle revient ici si cette session se ferme";
+export const PROJECT_RELAY_REFUSAL =
+  "question confiée à la session /project — elle revient ici si cette session se ferme";
 
 /** Refus des touches `v`/`y` sur un jalon confié à /project, mot pour mot (S-6 §6). */
-export const PROJECT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /project — il revient ici si cette session se ferme";
+export const PROJECT_RELAY_MILESTONE_REFUSAL =
+  "jalon confié à la session /project — il revient ici si cette session se ferme";
 
 /** Premier item du pied d'une feature relayée à /project (S-6 §6). */
 export const PROJECT_RELAY_FOOTER = "relayé à /project";
 
 /** Le refus de réponse, de `v` et de `y` pendant qu'un arbitre juge l'élément courant (S-10), mot pour mot. */
 export const ARBITRATION_REFUSAL = "arbitrage en cours — la décision sera consignée au journal";
-
 
 /** Le refus d'écriture d'une question relayée : le texte du GENRE de relais de la feature. */
 export function relayRefusal(feature: LotFeature): string {
@@ -604,7 +608,6 @@ export function milestoneGestureRefusal(feature: LotFeature, relayed: boolean): 
   if (feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
   return relayed ? relayMilestoneRefusal(feature) : null;
 }
-
 
 // --- les refus du lot, mot pour mot ------------------------------------------
 // Une seule source pour chaque motif : le geste du panneau, le relais et la
@@ -650,7 +653,6 @@ export function lotRemoveDependentRefusal(slug: string): string {
   return `retrait refusé : ${slug} en dépend`;
 }
 
-
 /**
  * Ce qu'une feature du lot accepte, dans cet ordre (S-11, S-6, S-7, S-8) : la
  * collecte d'une feature ouverte par /req se répond DANS la session ; une feature
@@ -665,7 +667,11 @@ export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowR
   // Une question relayée ne se répond pas ici : c'est la session /audit ou
   // /project qui la tranche (S-3, S-6 §6). Les autres écritures (steer, file,
   // texte) restent.
-  if (feature.arbitration !== undefined && live?.viaArbiter !== true && (reply.kind === "ask" || reply.kind === "reply")) {
+  if (
+    feature.arbitration !== undefined &&
+    live?.viaArbiter !== true &&
+    (reply.kind === "ask" || reply.kind === "reply")
+  ) {
     return { kind: "closed", reason: ARBITRATION_REFUSAL };
   }
   if (live?.auditRelay === true && (reply.kind === "ask" || reply.kind === "reply")) {
@@ -673,7 +679,6 @@ export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowR
   }
   return reply;
 }
-
 
 function rowReplyOf(feature: LotFeature, live?: RowLiveWriter | null): RowReply {
   if (feature.origin === "session" && feature.phase === "req") {
@@ -712,7 +717,6 @@ function rowReplyOf(feature: LotFeature, live?: RowLiveWriter | null): RowReply 
   return { kind: "closed", reason: lotReplyRefusal(feature.state) };
 }
 
-
 /**
  * Le motif d'un refus d'écriture, un libellé CORRECT par état (F6) : l'ancien
  * gabarit `la feature est ${lotStateLabel}` produisait « la feature est attend »,
@@ -736,7 +740,6 @@ export function lotReplyRefusal(state: LotFeatureState): string {
       return "rien à répondre : la feature est annulée";
   }
 }
-
 
 /**
  * Le motif d'un refus d'annulation, dans les mêmes mots que le refus d'écriture
@@ -762,23 +765,19 @@ export function lotCancelRefusal(state: LotFeatureState): string {
   }
 }
 
-
 /** `<stateDir>/lots` : un fichier par dépôt. */
 export function lotStateDir(stateDir: string): string {
   return path.join(stateDir, "lots");
 }
-
 
 /** `sha1(realpath(repoRoot)).slice(0,16)` : même famille d'id que `runningIdFor`. */
 export function lotRepoKey(repoRoot: string): string {
   return crypto.createHash("sha1").update(realpathOr(repoRoot)).digest("hex").slice(0, 16);
 }
 
-
 export function lotPathFor(stateDir: string, repoKey: string): string {
   return path.join(lotStateDir(stateDir), `${repoKey}.json`);
 }
-
 
 export function asLotFeatureState(value: unknown): LotFeatureState | null {
   return typeof value === "string" && LOT_FEATURE_STATES[value as LotFeatureState] === true
@@ -786,12 +785,10 @@ export function asLotFeatureState(value: unknown): LotFeatureState | null {
     : null;
 }
 
-
 /** Le verdict de revue publié dans le lot : absent ou hors vocabulaire vaut `null`. */
 export function asReviewVerdict(value: unknown): "blockers" | "clean" | "unreadable" | null {
   return value === "blockers" || value === "clean" || value === "unreadable" ? value : null;
 }
-
 
 /**
  * Un lancement retenu (S-3), lu TOLÉRAMMENT : absent, hors vocabulaire ou
@@ -818,7 +815,6 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
   };
 }
 
-
 /**
  * Un sha de base de worktree valide (S-7) : 40 hexadécimaux minuscules (SHA-1) ou
  * 64 (SHA-256) — la seule forme que le lot écrit et relit dans `LotFeature.base`.
@@ -826,7 +822,6 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
 export function isLotBaseSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value);
 }
-
 
 /** Le quota d'une feature relu du disque : complet ou absent (S-5), jamais un rejet. */
 function asFeatureQuota(raw: unknown): FeatureQuota | null {
@@ -837,7 +832,13 @@ function asFeatureQuota(raw: unknown): FeatureQuota | null {
   if (typeof q.until !== "number" || !Number.isFinite(q.until)) return null;
   if (typeof q.announced !== "boolean") return null;
   if (!PIPELINE_PHASES.includes(q.phase as PipelinePhase)) return null;
-  return { provider: q.provider, model: q.model, until: q.until, announced: q.announced, phase: q.phase as PipelinePhase };
+  return {
+    provider: q.provider,
+    model: q.model,
+    until: q.until,
+    announced: q.announced,
+    phase: q.phase as PipelinePhase,
+  };
 }
 
 /** Les enregistrements de run relus du disque (S-12) : seuls les complets, au plus `LOT_RUNS_MAX`. */
@@ -847,9 +848,18 @@ function asRunRecords(raw: unknown): LotRunRecord[] {
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
     const r = entry as Record<string, unknown>;
-    const step = r.step === "arbitre" || PIPELINE_PHASES.includes(r.step as PipelinePhase) ? (r.step as LotRunRecord["step"]) : null;
+    const step =
+      r.step === "arbitre" || PIPELINE_PHASES.includes(r.step as PipelinePhase)
+        ? (r.step as LotRunRecord["step"])
+        : null;
     if (step === null || typeof r.fix !== "boolean") continue;
-    if (typeof r.startedAt !== "number" || !Number.isFinite(r.startedAt) || typeof r.endedAt !== "number" || !Number.isFinite(r.endedAt)) continue;
+    if (
+      typeof r.startedAt !== "number" ||
+      !Number.isFinite(r.startedAt) ||
+      typeof r.endedAt !== "number" ||
+      !Number.isFinite(r.endedAt)
+    )
+      continue;
     const peak = typeof r.peakContext === "number" && Number.isFinite(r.peakContext) ? r.peakContext : null;
     out.push({
       step,
@@ -858,7 +868,8 @@ function asRunRecords(raw: unknown): LotRunRecord[] {
       startedAt: r.startedAt,
       endedAt: r.endedAt,
       peakContext: peak,
-      compactions: typeof r.compactions === "number" && Number.isInteger(r.compactions) && r.compactions >= 0 ? r.compactions : 0,
+      compactions:
+        typeof r.compactions === "number" && Number.isInteger(r.compactions) && r.compactions >= 0 ? r.compactions : 0,
       sessionFile: typeof r.sessionFile === "string" && r.sessionFile !== "" ? r.sessionFile : null,
     });
   }
@@ -870,12 +881,12 @@ export function appendRunRecord(feature: LotFeature, record: LotRunRecord): void
   feature.runs = [...(feature.runs ?? []), record].slice(-LOT_RUNS_MAX);
 }
 
-
 /** L'arbitrage en vol relu du disque (S-9) : complet ou absent. */
 function asFeatureArbitration(raw: unknown): FeatureArbitration | null {
   if (!raw || typeof raw !== "object") return null;
   const a = raw as Record<string, unknown>;
-  if (typeof a.key !== "string" || a.key === "" || typeof a.startedAt !== "number" || !Number.isFinite(a.startedAt)) return null;
+  if (typeof a.key !== "string" || a.key === "" || typeof a.startedAt !== "number" || !Number.isFinite(a.startedAt))
+    return null;
   return {
     key: a.key,
     startedAt: a.startedAt,
@@ -883,7 +894,6 @@ function asFeatureArbitration(raw: unknown): FeatureArbitration | null {
     ...(typeof a.decidingAt === "number" && Number.isFinite(a.decidingAt) ? { decidingAt: a.decidingAt } : {}),
   };
 }
-
 
 /** L'escalade relue du disque (S-9, S-10) : complète ou absente. */
 function asFeatureEscalation(raw: unknown): FeatureEscalation | null {
@@ -923,8 +933,6 @@ function asFailureOutput(raw: unknown): { stderr: string; stdout: string } | nul
   if (typeof o.stderr !== "string" || typeof o.stdout !== "string") return null;
   return { stderr: o.stderr, stdout: o.stdout };
 }
-
-
 
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
 export function asLotFeature(raw: unknown): LotFeature | null {
@@ -1021,16 +1029,24 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     ...(arbitration ? { arbitration } : {}),
     ...(escalation ? { escalation } : {}),
     ...(runs.length > 0 ? { runs } : {}),
-    ...(f.milestoneSource === "arbitrage" || f.milestoneSource === "utilisateur" ? { milestoneSource: f.milestoneSource } : {}),
+    ...(f.milestoneSource === "arbitrage" || f.milestoneSource === "utilisateur"
+      ? { milestoneSource: f.milestoneSource }
+      : {}),
     ...(() => {
-      const ids = Array.isArray(f.implLots) ? f.implLots.filter((id): id is string => typeof id === "string" && id !== "") : [];
+      const ids = Array.isArray(f.implLots)
+        ? f.implLots.filter((id): id is string => typeof id === "string" && id !== "")
+        : [];
       const rank = Math.trunc(num(f.implLot, -1));
       return ids.length >= 2 && rank >= 0 && rank < ids.length ? { implLots: ids, implLot: rank } : {};
     })(),
     // Garde « contrat endommagé » : seules les chaînes connues sont gardées ; un
     // non-tableau laisse la clé absente (garde inactive).
     ...(Array.isArray(f.launchSections)
-      ? { launchSections: f.launchSections.filter((t): t is string => typeof t === "string" && (REQUIRED_CONTRACT_SECTIONS as readonly string[]).includes(t)) }
+      ? {
+          launchSections: f.launchSections.filter(
+            (t): t is string => typeof t === "string" && (REQUIRED_CONTRACT_SECTIONS as readonly string[]).includes(t),
+          ),
+        }
       : {}),
     // Le quota bloquant (S-5) : relu seulement quand il est complet, sinon absent.
     ...(featureQuota ? { quota: featureQuota } : {}),
@@ -1058,7 +1074,6 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     endedAt: typeof f.endedAt === "number" && Number.isFinite(f.endedAt) ? f.endedAt : null,
   };
 }
-
 
 export function asLot(raw: unknown): Lot | null {
   if (!raw || typeof raw !== "object") return null;
@@ -1113,28 +1128,23 @@ export function asLot(raw: unknown): Lot | null {
   };
 }
 
-
 /** Le lot du dépôt, ou `null` (absent, illisible, ou schéma d'une autre version). */
 export function readLot(stateDir: string, repoKey: string): Lot | null {
   return asLot(readJsonFile(lotPathFor(stateDir, repoKey)));
 }
 
-
 export function writeLot(stateDir: string, lot: Lot): void {
   writeJsonAtomic(lotPathFor(stateDir, lot.id), { ...lot, version: LOT_VERSION });
 }
-
 
 export function lotFeature(lot: Lot, slug: string): LotFeature | undefined {
   return lot.features.find((f) => f.slug === slug);
 }
 
-
 /** Une feature sans dépendance satisfaite n'a pas le droit de démarrer (S-10). */
 export function runnable(lot: Lot, feature: LotFeature): boolean {
   return feature.deps.every((dep) => lotFeature(lot, dep)?.state === "done");
 }
-
 
 /**
  * Le nombre de créneaux OCCUPÉS (S-1) : les features du lot `running`, hors
@@ -1153,18 +1163,15 @@ export function slotBusy(lot: Lot): number {
   return busy;
 }
 
-
 /** Reste-t-il un créneau ? Le plafond effectif est `lot.slotCap`, jamais l'environnement. */
 export function hasFreeSlot(lot: Lot): boolean {
   return slotBusy(lot) < lot.slotCap;
 }
 
-
 /** Le nombre de créneaux libres, jamais négatif : c'est lui qui borne une passe. */
 export function freeSlots(lot: Lot): number {
   return Math.max(0, lot.slotCap - slotBusy(lot));
 }
-
 
 /**
  * Une feature RUNNABLE retenue par le plafond, telle que la passe la verrait (S-1,
@@ -1182,7 +1189,6 @@ export function heldBySlots(lot: Lot, feature: LotFeature): boolean {
   );
 }
 
-
 /**
  * Raison de blocage héritée d'une dépendance, ou `null`. Une dépendance `done`
  * libère ; une dépendance en cours ou en attente fait patienter (sans erreur) ;
@@ -1199,7 +1205,6 @@ export function dependencyBlock(lot: Lot, feature: LotFeature): string | null {
   return null;
 }
 
-
 /**
  * Le motif de blocage vient-il d'une DÉPENDANCE (et non du maillon lui-même) ? Seul
  * ce blocage se défait tout seul : quand les dépendances redeviennent saines, la
@@ -1209,7 +1214,6 @@ export function dependencyBlock(lot: Lot, feature: LotFeature): string | null {
 export function dependencyStopReason(reason: string | null): boolean {
   return reason !== null && (reason.startsWith("dépend de ") || reason.startsWith("dépendance inconnue : "));
 }
-
 
 export function lotTotals(lot: Lot): LotTotals {
   const totals: LotTotals = { done: 0, blocked: 0, failed: 0, cancelled: 0, live: 0 };
@@ -1223,7 +1227,6 @@ export function lotTotals(lot: Lot): LotTotals {
   return totals;
 }
 
-
 /**
  * Le lot peut-il être REMPLACÉ par un lot neuf ? Seulement quand toutes ses
  * features sont `done` ou `cancelled` — les deux seuls états dont on ne repart
@@ -1234,7 +1237,6 @@ export function lotTotals(lot: Lot): LotTotals {
 export function lotReplaceable(lot: Lot): boolean {
   return lot.features.length > 0 && lot.features.every((f) => f.state === "done" || f.state === "cancelled");
 }
-
 
 /**
  * Récap de fin de lot (AC-15) : le décompte exact et une ligne par catégorie non
@@ -1261,9 +1263,7 @@ export function buildLotRecap(repo: string, lot: Lot): string {
   return lines.join("\n");
 }
 
-
 export type LotAlert = { text: string; tone: "info" | "warning" | "error" };
-
 
 /**
  * Alerte d'une transition (AC-11) : une par transition, jamais rejouée par une
@@ -1275,7 +1275,10 @@ export function buildLotAlert(repo: string, feature: LotFeature): LotAlert | nul
   const head = `${repo}/${feature.slug}`;
   if (feature.state === "waiting") {
     if (feature.waitKind === "specs") {
-      return { text: `[pipeline] ${head} : spécifications prêtes, attend ta validation — v dans /pipelines`, tone: "warning" };
+      return {
+        text: `[pipeline] ${head} : spécifications prêtes, attend ta validation — v dans /pipelines`,
+        tone: "warning",
+      };
     }
     if (feature.waitKind === "review") {
       return {
@@ -1290,17 +1293,25 @@ export function buildLotAlert(repo: string, feature: LotFeature): LotAlert | nul
     };
   }
   if (feature.state === "blocked") {
-    return { text: `[pipeline] ${head} bloqué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`, tone: "error" };
+    return {
+      text: `[pipeline] ${head} bloqué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`,
+      tone: "error",
+    };
   }
   if (feature.state === "failed") {
-    return { text: `[pipeline] ${head} échoué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`, tone: "error" };
+    return {
+      text: `[pipeline] ${head} échoué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`,
+      tone: "error",
+    };
   }
   if (feature.state === "done") {
-    return { text: `[pipeline] ${head} terminé — ${feature.prUrl ? `PR ${feature.prUrl}` : "PR non confirmée"}`, tone: "info" };
+    return {
+      text: `[pipeline] ${head} terminé — ${feature.prUrl ? `PR ${feature.prUrl}` : "PR non confirmée"}`,
+      tone: "info",
+    };
   }
   return null;
 }
-
 
 /**
  * L'alerte d'une ESCALADE de l'arbitre (S-9) : le seul moment où une feature arbitrée
@@ -1326,7 +1337,6 @@ export function buildEscalationAlert(repo: string, feature: LotFeature, escalati
   };
 }
 
-
 // --- relais /audit, refus de file, binaire omp et archive des runs -----
 /**
  * Le relais /audit d'une feature est-il OUVERT (S-2) ? Le fichier de relais de sa
@@ -1344,13 +1354,11 @@ export function auditRelayOpen(stateDir: string, feature: LotFeature, ownerPid: 
 /** Refus de mise en file, mot pour mot (S-5) : il s'affiche tel quel au panneau. */
 export const LOT_PENDING_FULL = "file pleine — attends la transmission des messages en attente";
 
-
 /** `MEM0_PIPELINE_OMP_BIN` : binaire `omp` des runs, sinon `omp` du PATH. */
 export function lotOmpBin(env: Record<string, string | undefined> = process.env): string {
   const raw = (env.MEM0_PIPELINE_OMP_BIN ?? "").trim();
   return raw === "" ? "omp" : raw;
 }
-
 
 /**
  * `MEM0_PIPELINE_ARCHIVE_DIR` (absolu ou `~`) sinon `~/.omp/pipeline-archive` :

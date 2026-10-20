@@ -139,7 +139,7 @@ function framesOf(host: ReturnType<typeof createSessionHost>, id: string): Servi
   const frames: ServiceFrame[] = [];
   const subscription = host.subscribe(id);
   assert.ok(subscription, `la session ${id} est abonnable`);
-  subscription.subscribe(frame => frames.push(frame));
+  subscription.subscribe((frame) => frames.push(frame));
   return frames;
 }
 
@@ -158,7 +158,10 @@ test("service-sessions/AC-1 : une session naît, s'abonne, se libère, et un cwd
   assert.equal(created1.cwd, cwd);
   assert.equal(created1.purpose, "session");
   assert.equal(created1.state, "idle");
-  assert.deepEqual(host.list().map(session => session.id), [created1.id]);
+  assert.deepEqual(
+    host.list().map((session) => session.id),
+    [created1.id],
+  );
   assert.equal(host.view(created1.id)?.dialogs.length, 0);
 
   // Deuxième session sur le même cwd : 409, avec le motif.
@@ -172,10 +175,13 @@ test("service-sessions/AC-1 : une session naît, s'abonne, se libère, et un cwd
     },
   );
   // Un cwd inexistant ou relatif : 400, jamais une session ailleurs.
-  await assert.rejects(() => host.open({ cwd: "relatif", purpose: "session" }), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 400);
-    return true;
-  });
+  await assert.rejects(
+    () => host.open({ cwd: "relatif", purpose: "session" }),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 400);
+      return true;
+    },
+  );
   await assert.rejects(
     () => host.open({ cwd: path.join(cwd, "absent"), purpose: "session" }),
     (err: unknown) => {
@@ -202,10 +208,13 @@ test("service-sessions/AC-1 : une session naît, s'abonne, se libère, et un cwd
 
   await host.close(conduite.id);
   assert.equal(host.view(conduite.id), null, "après DELETE, la session n'existe plus");
-  await assert.rejects(() => host.close(conduite.id), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 404);
-    return true;
-  });
+  await assert.rejects(
+    () => host.close(conduite.id),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 404);
+      return true;
+    },
+  );
   await host.disposeAll();
   assert.deepEqual(host.list(), []);
   assert.equal(created.length, 2);
@@ -223,7 +232,7 @@ test("service-sessions/AC-2 : un tour publie son état et sa fin, et un prompt e
   const fake = created[0]!;
   assert.deepEqual(fake.prompts, ["bonjour"]);
   assert.deepEqual(
-    frames.map(frame => frame.event),
+    frames.map((frame) => frame.event),
     ["state"],
     "le passage à `running` est publié",
   );
@@ -234,7 +243,7 @@ test("service-sessions/AC-2 : un tour publie son état et sa fin, et un prompt e
 
   fake.session.end("completed");
   assert.deepEqual(
-    frames.map(frame => frame.event),
+    frames.map((frame) => frame.event),
     ["state", "state", "prompt_end"],
     "le passage à `running`, le retour au repos, puis la fin du tour",
   );
@@ -247,15 +256,21 @@ test("service-sessions/AC-2 : un tour publie son état et sa fin, et un prompt e
   assert.equal(host.view(session.id)?.state, "idle");
 
   // Un prompt vide est un 400 ; un prompt sur une session inconnue, un 404.
-  await assert.rejects(() => host.prompt(session.id, { text: "   " }), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 400);
-    assert.equal(refusalOf(err).reason, "prompt vide");
-    return true;
-  });
-  await assert.rejects(() => host.prompt("inconnue", { text: "x" }), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 404);
-    return true;
-  });
+  await assert.rejects(
+    () => host.prompt(session.id, { text: "   " }),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 400);
+      assert.equal(refusalOf(err).reason, "prompt vide");
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => host.prompt("inconnue", { text: "x" }),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 404);
+      return true;
+    },
+  );
   await host.disposeAll();
 });
 
@@ -263,7 +278,13 @@ test("service-sessions/AC-3 : un dialogue select puis confirm fait poursuivre le
   const stateDir = mktmp("sessions-state-");
   const cwd = mktmp("sessions-cwd-");
   const { pi, created } = fakePi();
-  const host = createSessionHost({ pi: pi as never, stateDir, selfPath: null, log: () => {}, now: () => 1_700_000_000_123 });
+  const host = createSessionHost({
+    pi: pi as never,
+    stateDir,
+    selfPath: null,
+    log: () => {},
+    now: () => 1_700_000_000_123,
+  });
   const session = await host.open({ cwd, purpose: "session" });
   const fake = created[0]!;
   const frames = framesOf(host, session.id);
@@ -275,7 +296,7 @@ test("service-sessions/AC-3 : un dialogue select puis confirm fait poursuivre le
     "alpha",
     { label: "beta", description: "la seconde" },
   ]);
-  const dialogFrame = frames.find(frame => frame.event === "dialog");
+  const dialogFrame = frames.find((frame) => frame.event === "dialog");
   assert.ok(dialogFrame && dialogFrame.event === "dialog");
   assert.deepEqual(dialogFrame.data, {
     id: dialogFrame.data.id,
@@ -293,25 +314,31 @@ test("service-sessions/AC-3 : un dialogue select puis confirm fait poursuivre le
   assert.equal(host.view(session.id)?.dialogs.length, 0);
 
   // Un dialogue DÉJÀ répondu n'est plus répondable : 404.
-  await assert.rejects(() => host.answer(session.id, dialogFrame.data.id, { value: "beta" }), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 404);
-    return true;
-  });
+  await assert.rejects(
+    () => host.answer(session.id, dialogFrame.data.id, { value: "beta" }),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 404);
+      return true;
+    },
+  );
   // Une réponse hors forme est un 400, et le dialogue reste en vol.
   const confirm: Promise<boolean> = ui.confirm("Livrer ?", "la revue est propre");
-  const confirmFrame = frames.filter(frame => frame.event === "dialog").at(-1);
+  const confirmFrame = frames.filter((frame) => frame.event === "dialog").at(-1);
   assert.ok(confirmFrame && confirmFrame.event === "dialog");
-  await assert.rejects(() => host.answer(session.id, confirmFrame.data.id, { value: "oui" }), (err: unknown) => {
-    assert.equal(refusalOf(err).status, 400);
-    assert.match(refusalOf(err).reason, /confirmed/);
-    return true;
-  });
+  await assert.rejects(
+    () => host.answer(session.id, confirmFrame.data.id, { value: "oui" }),
+    (err: unknown) => {
+      assert.equal(refusalOf(err).status, 400);
+      assert.match(refusalOf(err).reason, /confirmed/);
+      return true;
+    },
+  );
   await host.answer(session.id, confirmFrame.data.id, { confirmed: true });
   assert.equal(await confirm, true);
 
   // Un dialogue annulé par le client rend `{cancelled}` et publie sa trame.
   const third: Promise<string | undefined> = ui.input("Un texte", "placeholder");
-  const thirdFrame = frames.filter(frame => frame.event === "dialog").at(-1);
+  const thirdFrame = frames.filter((frame) => frame.event === "dialog").at(-1);
   assert.ok(thirdFrame && thirdFrame.event === "dialog");
   await host.answer(session.id, thirdFrame.data.id, { cancelled: true });
   assert.equal(await third, undefined);
@@ -345,7 +372,7 @@ test("service-sessions/AC-4 : l'abonnement donne l'instantané (dialogue en vol)
   assert.equal(subscription.snapshot[0]!.event, "model");
   const dialogFrame = subscription.snapshot[1]!;
   assert.equal(dialogFrame.event, "dialog");
-  subscription.subscribe(frame => late.push(frame));
+  subscription.subscribe((frame) => late.push(frame));
 
   const answer: DialogAnswer = { value: "texte" };
   const dialogId = dialogFrame.event === "dialog" ? dialogFrame.data.id : "";
@@ -373,7 +400,7 @@ test("service-sessions : un dialogue porte l'instant de sa création, que l'inst
   const frames = framesOf(host, session.id);
 
   const pending: Promise<string | undefined> = ui.input("Une question");
-  const live = frames.find(frame => frame.event === "dialog");
+  const live = frames.find((frame) => frame.event === "dialog");
   assert.ok(live && live.event === "dialog");
   assert.equal(live.data.at, 1_700_000_000_000, "la trame vivante porte l'instant de création");
 
@@ -381,14 +408,14 @@ test("service-sessions : un dialogue porte l'instant de sa création, que l'inst
   clock = 1_700_000_009_999;
   const subscription = host.subscribe(session.id);
   assert.ok(subscription);
-  const replayed = subscription.snapshot.find(frame => frame.event === "dialog");
+  const replayed = subscription.snapshot.find((frame) => frame.event === "dialog");
   assert.ok(replayed && replayed.event === "dialog");
   assert.deepEqual(replayed.data, live.data);
   assert.equal(host.view(session.id)?.dialogs[0]?.at, 1_700_000_000_000);
 
   // Un second dialogue prend l'instant courant, sous un identifiant distinct.
   const second: Promise<boolean> = ui.confirm("Livrer ?", "maintenant");
-  const next = frames.filter(frame => frame.event === "dialog").at(-1);
+  const next = frames.filter((frame) => frame.event === "dialog").at(-1);
   assert.ok(next && next.event === "dialog");
   assert.equal(next.data.at, 1_700_000_009_999);
   assert.notEqual(next.data.id, live.data.id);

@@ -16,8 +16,6 @@ function answerLabel(source: AskSource | undefined, free: boolean): string {
   return free ? "Réponse de l'utilisateur (texte libre)" : "Réponse de l'utilisateur";
 }
 
-
-
 // --- le run ARMÉ : consommer sa boîte et poser de vraies questions (S-6, S-7) -
 // Un run lancé par le panneau reçoit `--panel-inbox <dossier>` : c'est le seul
 // canal qui atteint une session VIVANTE (aucune API de l'hôte ne voit la session
@@ -36,26 +34,21 @@ export const ASK_DESCRIPTION_MAX = 200;
 
 export const ASK_OPTIONS_MAX = 9;
 
-
 export const ASK_TOOL_DESCRIPTION =
   "Pose UNE question à l'utilisateur avec 1 à 9 options et attends sa réponse. " +
   "La question s'affiche dans le panneau de la pipeline, où l'utilisateur choisit une option " +
   "ou saisit sa propre réponse. Ta question doit être bloquante : pose-la seule, sans continuer le travail.";
 
-
 /** Une question validée, prête à publier (S-7). */
 export type AskQuestion = { id: string; question: string; options: PanelAskOption[] };
 
-
 /** Le verdict d'un appel `ask` : la question nettoyée, ou le résultat d'erreur rendu au modèle. */
 export type AskCheck = { ok: true; ask: AskQuestion } | { ok: false; error: string };
-
 
 /** Le nettoyage d'un texte publié : contrôles et `\r` → espace, puis clip à la borne. */
 export function cleanAskText(text: string, max: number): string {
   return text.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, max);
 }
-
 
 /**
  * La validation d'un appel `ask` (S-7) : PURE, sans exception, et dans l'ordre
@@ -98,7 +91,6 @@ export function checkAsk(input: unknown): AskCheck {
   return { ok: true, ask: { id, question: text, options } };
 }
 
-
 /** La réponse attendue d'une question en vol : une option choisie, ou un texte libre. */
 export type AskAnswer = {
   selected?: string;
@@ -114,7 +106,6 @@ export type AskAnswer = {
   failed?: string;
 };
 
-
 // Le pid du PARENT au moment de l'armement : un run de lot est un `omp -p` lancé
 // par le pilote, donc `process.ppid` EST le pilote. Quand il meurt, l'enfant est
 // reparenté au lanceur de sessions (`ppid === 1`) — et il attendait une réponse
@@ -128,7 +119,6 @@ export type AskAnswer = {
 // lancé par un shell qui se termine.
 let armedParentPid: number | null = null;
 
-
 /** Le motif d'arrêt d'un run armé : le pilote a disparu (seul motif restant). */
 export function runStopReason(watchParent = true): string | null {
   if (watchParent) {
@@ -138,14 +128,12 @@ export function runStopReason(watchParent = true): string | null {
   return null;
 }
 
-
 // La question EN VOL d'une session vit dans `runStateFor(key).askWaiters`, une
 // entrée par identifiant d'appel : un run peut poser deux questions (`concurrency`
 // de notre outil est `exclusive`, l'hôte peut néanmoins les enchaîner), et deux
 // instances de l'extension dans le même process — plugin installé + `-e` —
 // partagent ainsi la même table : la pompe de l'une résout la question posée par
 // l'autre. Deux SESSIONS du service, elles, ne partagent rien (S-3).
-
 
 /** Rejette toutes les questions en vol d'une session : aucune réponse ne viendra plus. */
 export function failInFlightAsks(reason: string, state: ArmedRunState): void {
@@ -154,7 +142,6 @@ export function failInFlightAsks(reason: string, state: ArmedRunState): void {
     settle({ failed: reason });
   }
 }
-
 
 /** Arrête le run armé d'une session : questions rejetées, pompe éteinte. */
 function stopArmedRun(reason: string, state: ArmedRunState): void {
@@ -167,7 +154,6 @@ function stopArmedRun(reason: string, state: ArmedRunState): void {
   state.pumpStop = null;
 }
 
-
 /** Le dossier armé de ce process (`--panel-inbox`), ou `null` : absent, vide ou relatif. */
 export function panelInboxFlagOf(pi: FlagReader): string | null {
   if (typeof pi.getFlag !== "function") return null;
@@ -175,16 +161,12 @@ export function panelInboxFlagOf(pi: FlagReader): string | null {
   return typeof raw === "string" && path.isAbsolute(raw) ? raw : null;
 }
 
-
 /** Le maillon d'un run de conversation (`--pipeline-phase`), ou `null` s'il n'est pas déclaré. */
 export function conversationPhaseOf(pi: FlagReader): PipelinePhase | null {
   if (typeof pi.getFlag !== "function") return null;
   const raw = pi.getFlag("pipeline-phase");
-  return typeof raw === "string" && PIPELINE_PHASES.includes(raw as PipelinePhase)
-    ? (raw as PipelinePhase)
-    : null;
+  return typeof raw === "string" && PIPELINE_PHASES.includes(raw as PipelinePhase) ? (raw as PipelinePhase) : null;
 }
-
 
 /** Une livraison de réponse atterrit-elle sur la question en vol ? Une seule fois, par identifiant. */
 export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask" }>, state: ArmedRunState): void {
@@ -194,7 +176,6 @@ export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask
   const source = delivery.source === undefined ? {} : { source: delivery.source };
   waiter("selected" in delivery ? { selected: delivery.selected, ...source } : { custom: delivery.custom, ...source });
 }
-
 
 /**
  * La pompe de la boîte d'une session : les livraisons dans l'ordre des noms, un
@@ -237,7 +218,6 @@ export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string, watch
   }
 }
 
-
 /** L'armement d'une session : sa boîte, son chien de garde, sa pompe (S-3, S-6). */
 export type ArmInboxOptions = {
   /** Le dossier de la boîte : le drapeau d'un run enfant, ou l'identité d'un maillon. */
@@ -248,7 +228,6 @@ export type ArmInboxOptions = {
    */
   watchParent: boolean;
 };
-
 
 /**
  * Arme la consommation de la boîte d'une session : une minuterie `ctx.setInterval`
@@ -293,7 +272,6 @@ export function armInbox(pi: ExtensionAPI, ctx: PipelineCtx, options: ArmInboxOp
   return true;
 }
 
-
 /** Le détail publié d'une réponse `ask` (S-7) : la question, ses options, ce qui a été répondu. */
 export type AskToolDetails = {
   id: string;
@@ -303,7 +281,6 @@ export type AskToolDetails = {
   custom?: string;
 };
 
-
 /**
  * L'outil `ask` du maillon (S-7) : enregistré TARDIVEMENT (`session_start`), et
  * seulement pour un run armé. Dans une session interactive, l'outil de l'hôte —
@@ -312,7 +289,11 @@ export type AskToolDetails = {
  * Le schéma vient du builder injecté (`pi.arktype`, dialecte omptype) : aucun
  * import de valeur depuis `@oh-my-pi/*`, comme tout le reste du dépôt.
  */
-export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { notify?: (text: string) => void; stateDir: string }): void {
+export function registerAskTool(
+  pi: ExtensionAPI,
+  ctx: PipelineCtx,
+  deps: { notify?: (text: string) => void; stateDir: string },
+): void {
   // Une seule inscription par SESSION : deux instances de l'extension dans le même
   // process (plugin installé + `-e`) écraseraient l'outil l'une de l'autre, et une
   // question posée par l'une ne serait jamais résolue par la pompe de l'autre.
@@ -338,7 +319,13 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
     // défaut) et le maillon, qui n'a personne à qui demander, ne le trouverait pas.
     loadMode: "essential",
     parameters: pi.arktype({ questions: question.array() }),
-    async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, toolCtx?: ExtensionContext) {
+    async execute(
+      toolCallId: string,
+      params: unknown,
+      signal?: AbortSignal,
+      _onUpdate?: unknown,
+      toolCtx?: ExtensionContext,
+    ) {
       const checked = checkAsk(params);
       if (!checked.ok) return { content: [{ type: "text" as const, text: checked.error }], isError: true };
       // La question appartient à la SESSION de l'appel : deux maillons du même
@@ -412,7 +399,10 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
       if (answer.selected !== undefined) {
         const chosen = asked.options.find((candidate) => candidate.label === answer.selected);
         if (!chosen) {
-          return { content: [{ type: "text" as const, text: `Error: unknown option ${answer.selected}` }], isError: true };
+          return {
+            content: [{ type: "text" as const, text: `Error: unknown option ${answer.selected}` }],
+            isError: true,
+          };
         }
         const details: AskToolDetails = {
           id: asked.id,
@@ -422,7 +412,10 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
         };
         return {
           content: [
-            { type: "text" as const, text: `Question : ${asked.question}\n${answerLabel(answer.source, false)} : ${chosen.label}` },
+            {
+              type: "text" as const,
+              text: `Question : ${asked.question}\n${answerLabel(answer.source, false)} : ${chosen.label}`,
+            },
           ],
           details,
         };
@@ -431,7 +424,10 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
       const details: AskToolDetails = { id: asked.id, question: asked.question, options: asked.options, custom };
       return {
         content: [
-          { type: "text" as const, text: `Question : ${asked.question}\n${answerLabel(answer.source, true)} : ${custom}` },
+          {
+            type: "text" as const,
+            text: `Question : ${asked.question}\n${answerLabel(answer.source, true)} : ${custom}`,
+          },
         ],
         details,
       };

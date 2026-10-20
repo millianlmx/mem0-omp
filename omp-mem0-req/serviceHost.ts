@@ -19,7 +19,6 @@ import type { ServiceHandle, ServiceStartResult } from "./service.ts";
 import { pipelineStateDir } from "./store.ts";
 import { markServiceProcess, readServiceRecord, removeService, serviceRunning } from "./serviceState.ts";
 
-
 export type ServiceHostOptions = {
   pi: ExtensionAPI;
   stateDir?: string;
@@ -35,7 +34,6 @@ export type ServiceHostOptions = {
   schedule?: (callback: () => void, ms: number) => () => void;
 };
 
-
 /** Le service assemblé : ce que la commande `/service` démarre et arrête. */
 export interface ServiceHost {
   api: ServiceApi;
@@ -48,14 +46,12 @@ export interface ServiceHost {
   stateDir: string;
 }
 
-
 /** `purpose` d'une session créée par l'API : les deux formes de S-6, jamais `run`. */
 function asPurpose(raw: unknown): "session" | "project" {
   if (raw === undefined || raw === "session") return "session";
   if (raw === "project") return "project";
   throw badRequest(`purpose inconnu : ${String(raw)}`);
 }
-
 
 export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   const stateDir = options.stateDir ?? pipelineStateDir();
@@ -75,26 +71,26 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     runGit: options.runGit,
     runGh: options.runGh,
     runGitNet: options.runGitNet,
-    notify: text => log(`[service] ${text}`),
-    toast: text => log(`[service] ${text}`),
+    notify: (text) => log(`[service] ${text}`),
+    toast: (text) => log(`[service] ${text}`),
     log,
     now: options.now,
     schedule: options.schedule,
     startedAt: (options.now ?? Date.now)(),
     // Le service d'audits est créé juste après : il a besoin du pilote (contrôleurs,
     // commandes), le pilote de son balayage — appelé au plus tôt par `pilot.start()`.
-    audits: { sweep: first => audits.sweep(first) },
+    audits: { sweep: (first) => audits.sweep(first) },
   });
   const audits = createAuditService({ stateDir, host: sessions, pilot, log, now: options.now });
 
   const api: ServiceApi = {
     health: () => pilot.health(),
-    pilot: repo => pilot.pilot(repo),
-    lot: repo => pilot.lot(repo),
+    pilot: (repo) => pilot.pilot(repo),
+    lot: (repo) => pilot.lot(repo),
     command: (repo, body) => pilot.command(repo, body),
     listSessions: () => sessions.list(),
-    createSession: async body => {
-      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("corps attendu : {\"cwd\":\"…\"}");
+    createSession: async (body) => {
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest('corps attendu : {"cwd":"…"}');
       const record = body as { cwd?: unknown; resume?: unknown; purpose?: unknown };
       if (typeof record.cwd !== "string" || record.cwd.trim() === "") throw badRequest("champ « cwd » manquant");
       if (record.resume !== undefined && typeof record.resume !== "string") {
@@ -108,20 +104,20 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       });
       return sessions.describe(hosted);
     },
-    getSession: id => sessions.view(id),
+    getSession: (id) => sessions.view(id),
     promptSession: (id, body) => sessions.prompt(id, body),
-    abortSession: id => sessions.abort(id),
+    abortSession: (id) => sessions.abort(id),
     answerDialog: (id, dialogId, body) => sessions.answer(id, dialogId, body),
-    closeSession: id => sessions.close(id),
+    closeSession: (id) => sessions.close(id),
     startConduite: (repo, body) => pilot.startConduite(repo, body),
-    stopConduite: repo => pilot.stopConduite(repo),
-    subscribeSession: id => sessions.subscribe(id),
-    startAudit: body => audits.start(body),
+    stopConduite: (repo) => pilot.stopConduite(repo),
+    subscribeSession: (id) => sessions.subscribe(id),
+    startAudit: (body) => audits.start(body),
     launchAudit: (id, body) => audits.launch(id, body),
     answerAudit: (id, body) => audits.answer(id, body),
-    stopAudit: id => audits.stop(id),
+    stopAudit: (id) => audits.stop(id),
     setSessionModel: (id, body) => sessions.setSessionModel(id, body),
-    projectModel: repo => sessions.projectModel(repo),
+    projectModel: (repo) => sessions.projectModel(repo),
     setProjectModel: (repo, body) => sessions.setProjectModel(repo, body),
   };
 
@@ -166,7 +162,6 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     },
   };
 }
-
 
 /** Le texte de `/service status` : l'état du fichier, jamais un port en dur (S-1). */
 export function serviceStatusText(stateDir: string = pipelineStateDir()): string {

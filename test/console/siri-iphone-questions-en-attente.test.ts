@@ -15,7 +15,7 @@ const TESTS = "omp-console/ios/OMPConsoleIOSTests/IOSSiriPendingTests.swift";
 const FEATURE = "siri-iphone-questions-en-attente";
 const MANUAL: Record<number, true> = { 8: true };
 
-const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test(`${FEATURE}/AC-16 : chacun des critères 1 à 15, hors AC-8, a un test Swift Testing de l'app iOS qui porte son id`, () => {
   const full = path.join(ROOT, TESTS);
@@ -25,7 +25,7 @@ test(`${FEATURE}/AC-16 : chacun des critères 1 à 15, hors AC-8, a un test Swif
   const faults: string[] = [];
   for (let n = 1; n <= 15; n += 1) {
     if (MANUAL[n]) continue;
-    const marker = new RegExp(`@Test\\("${escape(`${FEATURE}/AC-${n} :`)}`);
+    const marker = new RegExp(`@Test\\("${escapeRegExp(`${FEATURE}/AC-${n} :`)}`);
     if (!marker.test(source)) faults.push(`${TESTS} : AC-${n} n’est porté par aucun @Test`);
   }
   assert.deepEqual(faults, []);

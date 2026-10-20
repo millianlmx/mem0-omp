@@ -140,7 +140,15 @@ function mkKit(options: { throwOnAssistant?: boolean } = {}) {
       super();
       if (options.throwOnAssistant) throw new Error("le composant de l'hôte refuse ce message");
       this.message = message;
-      this.ctorArgs = [message, hideThinkingBlock, onImageUpdate, thinkingRenderers, imageBudget, proseOnlyThinking, linkTargets];
+      this.ctorArgs = [
+        message,
+        hideThinkingBlock,
+        onImageUpdate,
+        thinkingRenderers,
+        imageBudget,
+        proseOnlyThinking,
+        linkTargets,
+      ];
       keep(this);
     }
     setImagesVisible(visible: boolean): void {
@@ -163,7 +171,15 @@ function mkKit(options: { throwOnAssistant?: boolean } = {}) {
     ui: unknown;
     cwd?: string;
     toolCallId?: string;
-    constructor(toolName: string, args: unknown, options: unknown, tool: unknown, ui: unknown, cwd?: string, toolCallId?: string) {
+    constructor(
+      toolName: string,
+      args: unknown,
+      options: unknown,
+      tool: unknown,
+      ui: unknown,
+      cwd?: string,
+      toolCallId?: string,
+    ) {
       super();
       this.toolName = toolName;
       this.args = args;
@@ -354,7 +370,10 @@ function build(
   return buildSessionComponents(entries, { components: kit, ui: UI, cwd: CWD, ...over });
 }
 
-function assistant(calls: Array<{ id: string; name: string; arguments?: Record<string, unknown> }>, texts: string[] = []): Record<string, unknown> {
+function assistant(
+  calls: Array<{ id: string; name: string; arguments?: Record<string, unknown> }>,
+  texts: string[] = [],
+): Record<string, unknown> {
   return {
     role: "assistant",
     content: [
@@ -450,7 +469,9 @@ test("transcript/AC-3 : chaque rôle produit le composant de l'hôte qui lui cor
   assert.deepEqual(bash.callsNamed("setComplete"), [[0, false, { showImages: false }]]);
 
   // Résumé de compaction : le message, tel quel.
-  const summary = kit.comps<FakeComponent>("CompactionSummaryMessageComponent")[0] as FakeComponent & { message: Record<string, unknown> };
+  const summary = kit.comps<FakeComponent>("CompactionSummaryMessageComponent")[0] as FakeComponent & {
+    message: Record<string, unknown>;
+  };
   assert.equal(summary.message.summary, "résumé de compaction");
 });
 
@@ -482,14 +503,20 @@ test("un toolResult met à jour la carte de son appel, sans créer de composant"
 
   // Le résultat déjà consommé ne rejoue pas, et un résultat sans carte connue est ignoré.
   const stray = build(
-    [...withResult, messageEntry("e3", { role: "toolResult", toolCallId: "c1", content: [{ type: "text", text: "encore" }] })],
+    [
+      ...withResult,
+      messageEntry("e3", { role: "toolResult", toolCallId: "c1", content: [{ type: "text", text: "encore" }] }),
+    ],
     kit.kit as unknown as HostComponents,
     { previous: updated },
   );
   assert.equal(stray.components.length, 1);
   assert.equal(card.callsNamed("updateResult").length, 1, "la carte n'était plus en attente");
   const unknown = build(
-    [...withResult, messageEntry("e4", { role: "toolResult", toolCallId: "jamais-vu", content: [{ type: "text", text: "?" }] })],
+    [
+      ...withResult,
+      messageEntry("e4", { role: "toolResult", toolCallId: "jamais-vu", content: [{ type: "text", text: "?" }] }),
+    ],
     kit.kit as unknown as HostComponents,
     { previous: updated },
   );
@@ -544,7 +571,12 @@ test("le texte qui suit un appel d'outil est rendu APRÈS sa carte", () => {
   // Un assistant qui n'a que des appels d'outils ne construit aucune carte vide.
   const bare = mkKit();
   build(
-    [messageEntry("e2", { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "b.ts" } }] })],
+    [
+      messageEntry("e2", {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "b.ts" } }],
+      }),
+    ],
     bare.kit as unknown as HostComponents,
   );
   assert.deepEqual(bare.kinds(), ["ToolExecutionComponent"]);

@@ -97,10 +97,26 @@ test("borne-de-contexte-des-runs/AC-1 : défauts 120000 / 250000, valeurs explic
   assert.equal(LOT_CONTEXT_HARD_DEFAULT, 250_000);
   assert.deepEqual(lotContextThresholds({}), DEFAULTS);
   assert.deepEqual(lotContextThresholds({ [SOFT]: "80000", [HARD]: "150000" }), { soft: 80000, hard: 150000 });
-  assert.deepEqual(lotContextThresholds({ [SOFT]: " 80000 " }), { soft: 80000, hard: 250000 }, "texte rogné, HARD absent : son défaut");
-  assert.deepEqual(lotContextThresholds({ [HARD]: "200000" }), { soft: 120000, hard: 200000 }, "SOFT absent : son défaut");
-  assert.deepEqual(lotContextThresholds({ [SOFT]: "80000.9" }), { soft: 80000, hard: 250000 }, "partie entière retenue");
-  assert.deepEqual(lotContextThresholds({ [SOFT]: "1000000", [HARD]: "2000000" }), { soft: 1_000_000, hard: 2_000_000 }, "aucun plafond haut");
+  assert.deepEqual(
+    lotContextThresholds({ [SOFT]: " 80000 " }),
+    { soft: 80000, hard: 250000 },
+    "texte rogné, HARD absent : son défaut",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ [HARD]: "200000" }),
+    { soft: 120000, hard: 200000 },
+    "SOFT absent : son défaut",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ [SOFT]: "80000.9" }),
+    { soft: 80000, hard: 250000 },
+    "partie entière retenue",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ [SOFT]: "1000000", [HARD]: "2000000" }),
+    { soft: 1_000_000, hard: 2_000_000 },
+    "aucun plafond haut",
+  );
 });
 
 test("borne-de-contexte-des-runs/AC-2 : valeur illisible ou ≤ 0 → défaut de sa variable ; SOFT ≥ HARD → les deux défauts", () => {
@@ -120,14 +136,44 @@ test("borne-de-contexte-des-runs : SOFT par phase — review 90000 par défaut, 
   for (const phase of ["req", "specs", "impl", "release"] as const) {
     assert.deepEqual(lotContextThresholds({}, phase), DEFAULTS, `${phase} : défaut général`);
   }
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "review"), { soft: 70_000, hard: 250_000 });
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "impl"), DEFAULTS, "la variable d'une phase n'en touche pas une autre");
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_IMPL: "150000" }, "impl"), { soft: 150_000, hard: 250_000 });
-  assert.deepEqual(lotContextThresholds({ [SOFT]: "100000" }, "review"), { soft: 100_000, hard: 250_000 }, "la variable générale explicite prime sur le défaut de phase");
-  assert.deepEqual(lotContextThresholds({ [SOFT]: "100000", MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "80000" }, "review"), { soft: 80_000, hard: 250_000 }, "la variable de phase prime sur la générale");
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "abc" }, "review"), { soft: 90_000, hard: 250_000 }, "illisible : rang inférieur");
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "300000" }, "review"), { soft: 90_000, hard: 250_000 }, "SOFT ≥ HARD : les défauts de la phase");
-  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }), DEFAULTS, "sans phase : la variable de phase est ignorée");
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "review"), {
+    soft: 70_000,
+    hard: 250_000,
+  });
+  assert.deepEqual(
+    lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }, "impl"),
+    DEFAULTS,
+    "la variable d'une phase n'en touche pas une autre",
+  );
+  assert.deepEqual(lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_IMPL: "150000" }, "impl"), {
+    soft: 150_000,
+    hard: 250_000,
+  });
+  assert.deepEqual(
+    lotContextThresholds({ [SOFT]: "100000" }, "review"),
+    { soft: 100_000, hard: 250_000 },
+    "la variable générale explicite prime sur le défaut de phase",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ [SOFT]: "100000", MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "80000" }, "review"),
+    { soft: 80_000, hard: 250_000 },
+    "la variable de phase prime sur la générale",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "abc" }, "review"),
+    { soft: 90_000, hard: 250_000 },
+    "illisible : rang inférieur",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "300000" }, "review"),
+    { soft: 90_000, hard: 250_000 },
+    "SOFT ≥ HARD : les défauts de la phase",
+  );
+  assert.deepEqual(
+    lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT_REVIEW: "70000" }),
+    DEFAULTS,
+    "sans phase : la variable de phase est ignorée",
+  );
 });
 
 test("borne-de-contexte-des-runs/AC-14 : un record ancien sans `compactions` est relu à 0 sans bump de version, et un run terminé après 2 compactions archive compactions et pic", async () => {
@@ -135,7 +181,15 @@ test("borne-de-contexte-des-runs/AC-14 : un record ancien sans `compactions` est
   const repoRoot = tmpdir("borne-ac14-repo-");
   seedLot(stateDir, repoRoot, [feature("alpha")]);
   const file = lotPathFor(stateDir, lotRepoKey(repoRoot));
-  const base = { step: "impl", lot: null, fix: false, startedAt: 1, endedAt: 2, peakContext: 182000, sessionFile: null };
+  const base = {
+    step: "impl",
+    lot: null,
+    fix: false,
+    startedAt: 1,
+    endedAt: 2,
+    peakContext: 182000,
+    sessionFile: null,
+  };
   const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { features: Array<Record<string, unknown>> };
   raw.features[0]!.runs = [
     base,
@@ -166,7 +220,16 @@ function recordRoundTripsTwoCompactions(): void {
   const repoRoot = tmpdir("borne-ac14b-repo-");
   const f = feature("alpha");
   const lot = seedLot(stateDir, repoRoot, [f]);
-  const record: LotRunRecord = { step: "impl", lot: "BR-1", fix: false, startedAt: 1, endedAt: 2, peakContext: 130000, compactions: 2, sessionFile: null };
+  const record: LotRunRecord = {
+    step: "impl",
+    lot: "BR-1",
+    fix: false,
+    startedAt: 1,
+    endedAt: 2,
+    peakContext: 130000,
+    compactions: 2,
+    sessionFile: null,
+  };
   appendRunRecord(f, record);
   fs.writeFileSync(lotPathFor(stateDir, lotRepoKey(repoRoot)), JSON.stringify({ ...lot, features: [f] }), "utf8");
   assert.deepEqual(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.runs, [record]);
@@ -266,7 +329,9 @@ function scriptedHost(script: Scripted) {
           script.beforeEmit?.(o.cwd);
           for (const total of script.prompts[rank] ?? []) {
             script.beforeMeasure?.(total);
-            listeners.forEach(listener => listener(usageEvent(total)));
+            listeners.forEach((listener) => {
+              listener(usageEvent(total));
+            });
             await flush(1);
           }
           if (script.hold === true && rank === script.prompts.length - 1) {
@@ -276,7 +341,13 @@ function scriptedHost(script: Scripted) {
             rejectHeld = reject;
             return promise;
           }
-          messages.push({ role: "assistant", provider: "prov", model: "principal", stopReason: "stop", content: [{ type: "text", text: "fait" }] });
+          messages.push({
+            role: "assistant",
+            provider: "prov",
+            model: "principal",
+            stopReason: "stop",
+            content: [{ type: "text", text: "fait" }],
+          });
           return true;
         },
         waitForIdle: async () => {},
@@ -292,7 +363,7 @@ function scriptedHost(script: Scripted) {
           compacts.push({ instructions, options });
           if (script.compact === "fail") throw new Error("résumeur indisponible");
           if (script.compact === "hang") return new Promise<never>(() => {});
-          if (script.compact === "gated") await new Promise<void>(resolve => gates.push(resolve));
+          if (script.compact === "gated") await new Promise<void>((resolve) => gates.push(resolve));
           messages.length = 0;
           return {};
         },
@@ -342,7 +413,7 @@ async function runMaillon(script: Scripted, env: Record<string, string> = ENV, c
   const logs: string[] = [];
   const worktree = tmpdir("bcr-wt-");
   const spec = runSpec(tmpdir("bcr-state-"), worktree);
-  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => clock.now, env });
+  const runner = createMaillonRunner({ host: fake.host, log: (line) => logs.push(line), now: () => clock.now, env });
   const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
   return { fake, logs, result, spec };
 }
@@ -355,7 +426,9 @@ test("borne-de-contexte-des-runs/AC-3 : le franchissement de SOFT ne coupe pas l
   assert.deepEqual(fake.compacts[0], { instructions: undefined, options: { suppressContinuation: true } });
   assert.deepEqual(fake.aborts, [], "le tour en vol n'est jamais interrompu pour compacter");
   assert.ok(
-    logs.includes(`[service] run ${spec.slug}/${spec.phase} : seuil SOFT franchi à 110000, compaction à la fin du tour`),
+    logs.includes(
+      `[service] run ${spec.slug}/${spec.phase} : seuil SOFT franchi à 110000, compaction à la fin du tour`,
+    ),
     `le franchissement est noté : ${JSON.stringify(logs)}`,
   );
   assert.ok(
@@ -380,7 +453,10 @@ test("borne-de-contexte-des-runs/AC-5 : une mesure retombée sous SOFT rend la c
   assert.equal(fake.compacts.length, 1, "une seule compaction : celle de la fin du tour");
   assert.equal(result.compactions, 1);
   assert.equal(result.code, 0);
-  assert.ok(logs.some(line => line.endsWith("contexte compacté à 105000")), "la DERNIÈRE mesure franchissante est citée");
+  assert.ok(
+    logs.some((line) => line.endsWith("contexte compacté à 105000")),
+    "la DERNIÈRE mesure franchissante est citée",
+  );
   assert.equal(fake.received[1], IMPL_REMINDER, "la reprise est la consigne minimale");
 });
 
@@ -391,12 +467,20 @@ test("borne-de-contexte-des-runs/AC-6 : une compaction qui échoue est journalis
     logs.includes(`[service] run ${spec.slug}/${spec.phase} : compaction échouée à 110000 : résumeur indisponible`),
     JSON.stringify(logs),
   );
-  assert.equal(logs.some(line => line.includes("contexte compacté")), false, "aucun succès journalisé");
+  assert.equal(
+    logs.some((line) => line.includes("contexte compacté")),
+    false,
+    "aucun succès journalisé",
+  );
   assert.equal(result.compactions, 0);
   assert.equal(result.code, 0);
   assert.equal(result.killed, false);
   assert.equal(result.contextExceeded, undefined, "pas coupé pour cette erreur");
-  assert.equal(fake.received.length, 1, "le tour est fini et rien n'a été compacté : aucune consigne « contexte compacté » mensongère");
+  assert.equal(
+    fake.received.length,
+    1,
+    "le tour est fini et rien n'a été compacté : aucune consigne « contexte compacté » mensongère",
+  );
 });
 
 test("borne-de-contexte-des-runs/AC-7 : après compaction, la consigne minimale est renvoyée (sans la directive ni le prompt), et le run va à son terme", async () => {
@@ -406,7 +490,7 @@ test("borne-de-contexte-des-runs/AC-7 : après compaction, la consigne minimale 
   assert.equal(fake.received[1], IMPL_REMINDER);
   assert.equal(fake.received[1]!.includes(spec.prompt), false, "le prompt du maillon n'est pas réinjecté");
   // La compaction doublée a vidé la session : seule la consigne de reprise y figure.
-  const userTexts = fake.sessions[0]!.messages.filter(m => m.role === "user").map(m => JSON.stringify(m.content));
+  const userTexts = fake.sessions[0]!.messages.filter((m) => m.role === "user").map((m) => JSON.stringify(m.content));
   assert.equal(userTexts.length, 1);
   assert.ok(userTexts[0]!.includes("[compaction]"));
   assert.equal(result.code, 0);
@@ -432,9 +516,18 @@ test("borne-de-contexte-des-runs : la compaction attend la fin du tour — penda
   const fake = scriptedHost({ prompts: [[110_000, 120_000]], compact: "gated" });
   const worktree = tmpdir("bcr-wt-");
   const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => T0, env: ENV });
-  const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
+  const running = runner({
+    spec: runSpec(tmpdir("bcr-state-"), worktree),
+    cwd: worktree,
+    timeout: 60_000,
+    signal: new AbortController().signal,
+  });
   await until(() => fake.compacts.length === 1);
-  assert.equal(fake.sessions[0]!.messages.some(m => m.role === "assistant"), true, "le tour s'est terminé AVANT la compaction");
+  assert.equal(
+    fake.sessions[0]!.messages.some((m) => m.role === "assistant"),
+    true,
+    "le tour s'est terminé AVANT la compaction",
+  );
   await flush(20);
   assert.equal(fake.received.length, 1, "la reprise attend la fin de la compaction");
   fake.gates[0]!();
@@ -449,7 +542,12 @@ test("borne-de-contexte-des-runs : un run coupé pendant une compaction qui ne r
   const worktree = tmpdir("bcr-wt-");
   const controller = new AbortController();
   const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => T0, env: ENV });
-  const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: controller.signal });
+  const running = runner({
+    spec: runSpec(tmpdir("bcr-state-"), worktree),
+    cwd: worktree,
+    timeout: 60_000,
+    signal: controller.signal,
+  });
   await until(() => fake.compacts.length === 1);
   controller.abort();
   const result = await running;
@@ -462,18 +560,31 @@ test("borne-de-contexte-des-runs : un run coupé pendant une compaction qui ne r
 test("borne-de-contexte-des-runs : le compteur — HARD n'est atteint qu'après une compaction tentée, au plus une fois par palier, 0 n'agit pas", () => {
   const meter = createContextMeter({ soft: 100_000, hard: 250_000 });
   const end = (total: number | null) =>
-    meter.observe(total === null ? { type: "message_end", message: { role: "assistant", content: [] } } : usageEvent(total));
+    meter.observe(
+      total === null ? { type: "message_end", message: { role: "assistant", content: [] } } : usageEvent(total),
+    );
   assert.equal(meter.observe({ type: "agent_end" }), null);
   assert.equal(meter.observe({ type: "message_end", message: { role: "user", usage: { input: 999_999 } } }), null);
   assert.equal(end(null), null, "sans usage : pas une mesure");
   assert.equal(meter.peak(), null);
   assert.deepEqual(end(50_000), { measure: 50_000, verdict: null });
-  assert.deepEqual(end(260_000), { measure: 260_000, verdict: "compact" }, "première mesure ≥ HARD : on compacte d'abord");
+  assert.deepEqual(
+    end(260_000),
+    { measure: 260_000, verdict: "compact" },
+    "première mesure ≥ HARD : on compacte d'abord",
+  );
   assert.deepEqual(end(255_000), { measure: 255_000, verdict: "exceeded" });
   assert.deepEqual(end(256_000), { measure: 256_000, verdict: null }, "une seule fois par palier");
   assert.deepEqual(end(99_999), { measure: 99_999, verdict: null }, "sous SOFT : réarmé");
   assert.deepEqual(end(100_000), { measure: 100_000, verdict: "compact" }, "SOFT atteint = franchi");
-  assert.deepEqual(meter.observe({ type: "message_end", message: { role: "assistant", usage: { input: "x", cacheRead: Number.NaN } } }), { measure: 0, verdict: null }, "champs non numériques comptés 0");
+  assert.deepEqual(
+    meter.observe({
+      type: "message_end",
+      message: { role: "assistant", usage: { input: "x", cacheRead: Number.NaN } },
+    }),
+    { measure: 0, verdict: null },
+    "champs non numériques comptés 0",
+  );
   assert.equal(meter.peak(), 260_000);
   assert.equal(meter.compactions(), 0);
   meter.compacted();
@@ -518,7 +629,12 @@ function publishAsk(stateDir: string, worktree: string): void {
     sessionId: null,
     owner: { pid: process.pid },
     inbox: null,
-    pendingAsk: { toolCallId: "t1", id: "ask-1", question: "Quel format garder ?", options: [{ label: "l'ancien" }, { label: "le nouveau" }] },
+    pendingAsk: {
+      toolCallId: "t1",
+      id: "ask-1",
+      question: "Quel format garder ?",
+      options: [{ label: "l'ancien" }, { label: "le nouveau" }],
+    },
   });
 }
 
@@ -527,18 +643,27 @@ function overrunAt(at: number): { clock: { now: number }; beforeMeasure: (total:
   const clock = { now: T0 };
   return {
     clock,
-    beforeMeasure: total => {
+    beforeMeasure: (total) => {
       if (total === at) clock.now = T0 + CONTEXT_LAST_TURN_MS;
     },
   };
 }
 
 /** Lance la feature `alpha` (maillon /req réel sur l'hôte scripté) et attend qu'elle quitte `running`. */
-async function launchAlpha(script: Scripted, beforeEmit?: (stateDir: string, cwd: string) => void, clock: { now: number } = { now: T0 }) {
+async function launchAlpha(
+  script: Scripted,
+  beforeEmit?: (stateDir: string, cwd: string) => void,
+  clock: { now: number } = { now: T0 },
+) {
   let stateDirRef = "";
-  const fake = scriptedHost({ ...script, beforeEmit: beforeEmit ? cwd => beforeEmit(stateDirRef, cwd) : undefined });
+  const fake = scriptedHost({ ...script, beforeEmit: beforeEmit ? (cwd) => beforeEmit(stateDirRef, cwd) : undefined });
   const logs: string[] = [];
-  const runner = createMaillonRunner({ host: fake.host, log: line => logs.push(line), now: () => clock.now, env: ENV });
+  const runner = createMaillonRunner({
+    host: fake.host,
+    log: (line) => logs.push(line),
+    now: () => clock.now,
+    env: ENV,
+  });
   const m = mount(runner);
   stateDirRef = m.stateDir;
   assert.equal(await m.controller.add({ name: "alpha", description: "Faire A.", deps: [] }), null);
@@ -551,12 +676,30 @@ const REQ_LAST_TURN = saturatedContextPrompt(phaseDeliverable("req"));
 
 test("borne-de-contexte-des-runs/AC-8 : au plafond, un DERNIER tour forcé est injecté dans le tour (sans abort) ; s'il dépasse sa borne de 5 min le run est coupé — `failed`, « contexte dépassé (260000 tokens) »", async () => {
   const o = overrunAt(261_000);
-  const s = await launchAlpha({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure }, undefined, o.clock);
-  assert.deepEqual(s.fake.steers, [REQ_LAST_TURN], "la consigne du dernier tour est injectée une seule fois, au plafond");
-  assert.equal(REQ_LAST_TURN, "[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (`## Besoins` et `## Critères d'acceptation`) avec ce que tu as, puis arrête-toi.");
+  const s = await launchAlpha(
+    { prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure },
+    undefined,
+    o.clock,
+  );
+  assert.deepEqual(
+    s.fake.steers,
+    [REQ_LAST_TURN],
+    "la consigne du dernier tour est injectée une seule fois, au plafond",
+  );
+  assert.equal(
+    REQ_LAST_TURN,
+    "[contexte saturé] Écris MAINTENANT ta section livrable dans le contrat (`## Besoins` et `## Critères d'acceptation`) avec ce que tu as, puis arrête-toi.",
+  );
   assert.equal(s.fake.compacts.length, 0, "aucune compaction n'interrompt le tour");
-  assert.deepEqual(s.fake.aborts, ["contexte dépassé (260000 tokens)"], "la coupure vient du dépassement de la borne du dernier tour");
-  assert.ok(s.logs.includes("[service] run alpha/req : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(s.logs));
+  assert.deepEqual(
+    s.fake.aborts,
+    ["contexte dépassé (260000 tokens)"],
+    "la coupure vient du dépassement de la borne du dernier tour",
+  );
+  assert.ok(
+    s.logs.includes("[service] run alpha/req : contexte saturé à 260000, dernier tour forcé (5 min)"),
+    JSON.stringify(s.logs),
+  );
   assert.equal(s.alpha().state, "failed");
   assert.equal(s.alpha().stopReason, "contexte dépassé (260000 tokens)");
   const [record] = s.alpha().runs!;
@@ -567,9 +710,16 @@ test("borne-de-contexte-des-runs/AC-8 : au plafond, un DERNIER tour forcé est i
 
 test("borne-de-contexte-des-runs/AC-9 : la même coupure avec une question `ask` en vol passe le run en `blocked`, comme l'échéance", async () => {
   const o = overrunAt(261_000);
-  const s = await launchAlpha({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure }, (stateDir, cwd) => publishAsk(stateDir, cwd), o.clock);
+  const s = await launchAlpha(
+    { prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure },
+    (stateDir, cwd) => publishAsk(stateDir, cwd),
+    o.clock,
+  );
   assert.equal(s.alpha().state, "blocked");
-  assert.equal(s.alpha().stopReason, "contexte dépassé (260000 tokens) pendant une question en attente : Quel format garder ?");
+  assert.equal(
+    s.alpha().stopReason,
+    "contexte dépassé (260000 tokens) pendant une question en attente : Quel format garder ?",
+  );
   assert.equal(s.fake.aborts.length, 1);
   assert.equal(s.alpha().runs![0]!.peakContext, 261_000, "le record du run coupé est archivé");
 });
@@ -591,7 +741,12 @@ test("borne-de-contexte-des-runs : la borne du dernier tour est aussi tenue par 
   const fake = scriptedHost({ prompts: [[260_000]], hold: true });
   const worktree = tmpdir("bcr-wt-");
   const runner = createMaillonRunner({ host: fake.host, log: () => {}, now: () => clock.now, env: ENV });
-  const running = runner({ spec: runSpec(tmpdir("bcr-state-"), worktree), cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
+  const running = runner({
+    spec: runSpec(tmpdir("bcr-state-"), worktree),
+    cwd: worktree,
+    timeout: 60_000,
+    signal: new AbortController().signal,
+  });
   await until(() => fake.steers.length === 1);
   clock.now = T0 + CONTEXT_LAST_TURN_MS;
   const result = await running;
@@ -617,7 +772,12 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
   const arbHost = scriptedHost({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o.beforeMeasure });
   const logs: string[] = [];
   const cwd = tmpdir("bcr-wt-");
-  const direct = await createArbiterRunner({ host: arbHost.host, log: line => logs.push(line), now: () => o.clock.now, env: ENV })({
+  const direct = await createArbiterRunner({
+    host: arbHost.host,
+    log: (line) => logs.push(line),
+    now: () => o.clock.now,
+    env: ENV,
+  })({
     stateDir: tmpdir("bcr-state-"),
     pilot: "lot-1",
     cwd,
@@ -629,16 +789,28 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
     signal: new AbortController().signal,
   });
   assert.equal(arbHost.compacts.length, 0);
-  assert.deepEqual(arbHost.steers, [`[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`]);
-  assert.ok(logs.includes("[service] pilote lot-1 : seuil SOFT franchi à 110000, compaction à la fin du tour"), JSON.stringify(logs));
-  assert.ok(logs.includes("[service] pilote lot-1 : contexte saturé à 260000, dernier tour forcé (5 min)"), JSON.stringify(logs));
+  assert.deepEqual(arbHost.steers, [
+    `[contexte saturé] Rends MAINTENANT ${ARBITER_DELIVERABLE}, avec ce que tu as, puis arrête-toi.`,
+  ]);
+  assert.ok(
+    logs.includes("[service] pilote lot-1 : seuil SOFT franchi à 110000, compaction à la fin du tour"),
+    JSON.stringify(logs),
+  );
+  assert.ok(
+    logs.includes("[service] pilote lot-1 : contexte saturé à 260000, dernier tour forcé (5 min)"),
+    JSON.stringify(logs),
+  );
   assert.equal(direct.contextExceeded, 260_000);
   assert.equal(direct.peakContext, 261_000);
   assert.equal(direct.compactions, 0);
   assert.equal(direct.decision, null);
   assert.equal(direct.fresh, true, "première ouverture de la session du lot");
   assert.equal(direct.turn, 1);
-  assert.deepEqual(arbHost.received, ["OUVERTURE\n\nARBITRE-PROMPT"], "le premier tour porte l'ouverture puis l'élément");
+  assert.deepEqual(
+    arbHost.received,
+    ["OUVERTURE\n\nARBITRE-PROMPT"],
+    "le premier tour porte l'ouverture puis l'élément",
+  );
   // La coupure au plafond FERME la session du lot : le tour suivant la rouvrira, graine comprise.
   assert.equal(arbHost.disposed(), 1, "la session coupée est libérée");
   assert.equal(arbHost.aborts.length, 1);
@@ -667,14 +839,32 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
 
   // Au niveau du contrôleur : décision d'escalade, record `arbitre` pic 261000 / 0 compaction.
   const o2 = overrunAt(261_000);
-  const arbitreHost = scriptedHost({ prompts: [[110_000, 260_000, 261_000]], hold: true, beforeMeasure: o2.beforeMeasure });
+  const arbitreHost = scriptedHost({
+    prompts: [[110_000, 260_000, 261_000]],
+    hold: true,
+    beforeMeasure: o2.beforeMeasure,
+  });
   const arbiter = createArbiterRunner({ host: arbitreHost.host, log: () => {}, now: () => o2.clock.now, env: ENV });
   const runner: LotRunner = () => new Promise<LotRunnerResult>(() => {});
   const m = mount(runner, arbiter);
   const parentFile = path.join(tmpdir("bcr-parent-"), "session.jsonl");
   fs.writeFileSync(parentFile, '{"type":"session","id":"parent"}\n');
-  writeBrief(m.stateDir, parentFile, renderBrief({ title: "/audit bcr", purpose: "Exporter.", function: "Exporter les données.", decisions: [], constraints: [], nonGoals: [] }));
-  assert.equal(await m.controller.add({ name: "alpha", description: "Faire A.", deps: [], auditSession: parentFile }), null);
+  writeBrief(
+    m.stateDir,
+    parentFile,
+    renderBrief({
+      title: "/audit bcr",
+      purpose: "Exporter.",
+      function: "Exporter les données.",
+      decisions: [],
+      constraints: [],
+      nonGoals: [],
+    }),
+  );
+  assert.equal(
+    await m.controller.add({ name: "alpha", description: "Faire A.", deps: [], auditSession: parentFile }),
+    null,
+  );
   await m.controller.launch();
   await flush(30);
   const lot = readLot(m.stateDir, m.key)!;
@@ -690,11 +880,15 @@ test("borne-de-contexte-des-runs/AC-11 : l'arbitre reçoit lui aussi un dernier 
   await until(() => m.alpha().escalation !== undefined);
   assert.equal(m.alpha().escalation!.reason, "contexte dépassé (260000 tokens)");
   assert.equal(m.alpha().state, "waiting", "l'élément escalade, la feature reste en attente");
-  const arbitre = m.alpha().runs!.find(run => run.step === "arbitre")!;
+  const arbitre = m.alpha().runs!.find((run) => run.step === "arbitre")!;
   assert.equal(arbitre.peakContext, 261_000);
   assert.equal(arbitre.compactions, 0);
   assert.equal(arbitreHost.compacts.length, 0);
-  assert.equal(arbitreHost.disposed(), 1, "la session du pilote coupée au plafond est libérée : le tour suivant la rouvrira");
+  assert.equal(
+    arbitreHost.disposed(),
+    1,
+    "la session du pilote coupée au plafond est libérée : le tour suivant la rouvrira",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -728,7 +922,7 @@ function parentRig(mode: ParentMode = "ok") {
     compact: async (...args: unknown[]) => {
       spy.compacts.push(args);
       if (mode === "fail") throw new Error("résumeur indisponible");
-      if (mode === "gated") await new Promise<void>(resolve => spy.gates.push(resolve));
+      if (mode === "gated") await new Promise<void>((resolve) => spy.gates.push(resolve));
       return {};
     },
     abort: async () => {
@@ -758,14 +952,24 @@ function parentRig(mode: ParentMode = "ok") {
   const stateDir = tmpdir("bcr-parent-state-");
   const cwd = tmpdir("bcr-parent-cwd-");
   const logs: string[] = [];
-  const host = createSessionHost({ pi: fakePi as never, stateDir, selfPath: null, log: line => logs.push(line), now: () => T0, env: ENV });
-  const emit = (event: Record<string, unknown>) => listeners.forEach(listener => listener(event));
+  const host = createSessionHost({
+    pi: fakePi as never,
+    stateDir,
+    selfPath: null,
+    log: (line) => logs.push(line),
+    now: () => T0,
+    env: ENV,
+  });
+  const emit = (event: Record<string, unknown>) =>
+    listeners.forEach((listener) => {
+      listener(event);
+    });
   const open = async (purpose: "project" | "audit" | "session") => {
     const hosted = await host.open(
       purpose === "audit" ? { cwd, purpose, audit: { auditId: "a1", stateDir } } : { cwd, purpose },
     );
     const frames: ServiceFrame[] = [];
-    host.subscribe(hosted.id)!.subscribe(frame => frames.push(frame));
+    host.subscribe(hosted.id)!.subscribe((frame) => frames.push(frame));
     return { hosted, frames };
   };
   return { host, spy, emit, open, stateDir, cwd, logs };
@@ -780,26 +984,38 @@ test("borne-de-contexte-des-runs/AC-12 : une session parente (project, audit) es
     await flush();
 
     assert.equal(r.spy.compacts.length, 1, `${purpose} : une seule compaction`);
-    assert.deepEqual(r.spy.compacts[0], [undefined, undefined], `${purpose} : session.compact() SANS suppressContinuation`);
+    assert.deepEqual(
+      r.spy.compacts[0],
+      [undefined, undefined],
+      `${purpose} : session.compact() SANS suppressContinuation`,
+    );
     assert.equal(r.spy.aborts, 0, `${purpose} : aucun abort`);
     assert.equal(r.spy.disposes, 0, `${purpose} : aucun dispose`);
     assert.ok(r.host.sessions.has(hosted.id), `${purpose} : la session vit encore`);
 
     // (1) l'entrée durable de la session
     assert.deepEqual(r.spy.entries, [
-      ["pipeline", { kind: "contexte", tokens: 260_000, message: "contexte dépassé (260000 tokens) — session non coupée" }],
+      [
+        "pipeline",
+        { kind: "contexte", tokens: 260_000, message: "contexte dépassé (260000 tokens) — session non coupée" },
+      ],
     ]);
     // (2) la trame notice
     assert.deepEqual(
-      frames.filter(frame => frame.event === "notice"),
-      [{ event: "notice", data: { level: "warning", message: "contexte dépassé (260000 tokens) — session non coupée" } }],
+      frames.filter((frame) => frame.event === "notice"),
+      [
+        {
+          event: "notice",
+          data: { level: "warning", message: "contexte dépassé (260000 tokens) — session non coupée" },
+        },
+      ],
     );
     // (3) le journal de conduite du dépôt
     const journal = fs
       .readFileSync(journalPathFor(r.stateDir, lotRepoKey(r.cwd)), "utf8")
       .split("\n")
-      .filter(line => line !== "")
-      .map(line => JSON.parse(line) as Record<string, unknown>);
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(journal, [
       {
         version: 1,
@@ -813,17 +1029,27 @@ test("borne-de-contexte-des-runs/AC-12 : une session parente (project, audit) es
         context: null,
       },
     ]);
-    assert.deepEqual(journalFor(r.stateDir, lotRepoKey(r.cwd), "alpha"), [], `${purpose} : aucune feature ne lit cette ligne`);
+    assert.deepEqual(
+      journalFor(r.stateDir, lotRepoKey(r.cwd), "alpha"),
+      [],
+      `${purpose} : aucune feature ne lit cette ligne`,
+    );
     // (4) les logs
     const label = `[service] session sess-1 (${purpose})`;
     assert.ok(r.logs.includes(`${label} : contexte compacté à 110000`), JSON.stringify(r.logs));
-    assert.ok(r.logs.includes(`${label} : contexte dépassé (260000 tokens), session non coupée`), JSON.stringify(r.logs));
+    assert.ok(
+      r.logs.includes(`${label} : contexte dépassé (260000 tokens), session non coupée`),
+      JSON.stringify(r.logs),
+    );
 
     // Elle traite encore un prompt suivant.
     await r.host.prompt(hosted.id, { text: "suite" });
     await flush();
     assert.deepEqual(r.spy.prompts, ["suite"]);
-    assert.equal(frames.some(frame => frame.event === "prompt_end" && frame.data.status === "failed"), false);
+    assert.equal(
+      frames.some((frame) => frame.event === "prompt_end" && frame.data.status === "failed"),
+      false,
+    );
     await r.host.disposeAll();
   }
 });
@@ -831,7 +1057,7 @@ test("borne-de-contexte-des-runs/AC-12 : une session parente (project, audit) es
 test("borne-de-contexte-des-runs : une session parente n'émet aucun prompt_end tant qu'une compaction est en vol, sérialise ses compactions et réarme sous SOFT", async () => {
   const r = parentRig("gated");
   const { frames } = await r.open("audit");
-  const ends = () => frames.filter(frame => frame.event === "prompt_end").length;
+  const ends = () => frames.filter((frame) => frame.event === "prompt_end").length;
   r.emit(usageEvent(110_000));
   assert.equal(r.spy.compacts.length, 1, "la première compaction part au verdict");
   r.emit({ type: "agent_end" });
@@ -851,7 +1077,10 @@ test("borne-de-contexte-des-runs : une session parente n'émet aucun prompt_end 
   await until(() => r.host.view("sess-1")!.compactions === 2);
   r.emit({ type: "agent_end" });
   assert.equal(ends(), 1, "le tour relancé par OMP se clôt normalement");
-  assert.deepEqual(frames.find(frame => frame.event === "prompt_end"), { event: "prompt_end", data: { status: "completed" } });
+  assert.deepEqual(
+    frames.find((frame) => frame.event === "prompt_end"),
+    { event: "prompt_end", data: { status: "completed" } },
+  );
   await r.host.disposeAll();
 });
 
@@ -860,7 +1089,10 @@ test("borne-de-contexte-des-runs : une compaction de session parente qui échoue
   await r.open("project");
   r.emit(usageEvent(110_000));
   await flush();
-  assert.ok(r.logs.includes("[service] session sess-1 (project) : compaction échouée à 110000 : résumeur indisponible"), JSON.stringify(r.logs));
+  assert.ok(
+    r.logs.includes("[service] session sess-1 (project) : compaction échouée à 110000 : résumeur indisponible"),
+    JSON.stringify(r.logs),
+  );
   assert.equal(r.host.view("sess-1")!.compactions, 0);
   assert.equal(r.host.view("sess-1")!.contextPeak, 110_000);
   r.emit(usageEvent(130_000));
@@ -883,15 +1115,20 @@ test("borne-de-contexte-des-runs/AC-13 : l'API expose le pic de contexte et le n
     assert.equal(view.contextPeak, 260_000);
     assert.equal(view.compactions, 1);
     // `list()` continue de cacher l'analyse d'audit ; la conduite y figure avec ses compteurs.
-    const listed = r.host.list().map(entry => entry.id);
+    const listed = r.host.list().map((entry) => entry.id);
     assert.equal(listed.includes(hosted.id), purpose === "project");
     if (purpose === "project") {
       assert.equal(r.host.list()[0]!.contextPeak, 260_000);
       assert.equal(r.host.list()[0]!.compactions, 1);
     }
     // Par HTTP, comme l'app la lit.
-    const handle = createServiceRequestHandler({ api: { getSession: (id: string) => r.host.view(id) } as unknown as ServiceApi, token: "t".repeat(32) });
-    const reply = await handle(new Request(`http://127.0.0.1/v1/sessions/${hosted.id}`, { headers: { [SERVICE_TOKEN_HEADER]: "t".repeat(32) } }));
+    const handle = createServiceRequestHandler({
+      api: { getSession: (id: string) => r.host.view(id) } as unknown as ServiceApi,
+      token: "t".repeat(32),
+    });
+    const reply = await handle(
+      new Request(`http://127.0.0.1/v1/sessions/${hosted.id}`, { headers: { [SERVICE_TOKEN_HEADER]: "t".repeat(32) } }),
+    );
     assert.equal(reply.status, 200);
     const body = (await reply.json()) as Record<string, unknown>;
     assert.equal(body.contextPeak, 260_000);
@@ -916,22 +1153,47 @@ test("borne-de-contexte-des-runs/AC-16 : GET /v1/repos/{repo}/lot sert le lot no
   const repoRoot = tmpdir("bcr-lotroute-repo-");
   const emptyRepo = tmpdir("bcr-lotroute-empty-");
   const f = feature("alpha");
-  appendRunRecord(f, { step: "impl", lot: "BR-2", fix: false, startedAt: 1, endedAt: 2, peakContext: 182_000, compactions: 1, sessionFile: null });
+  appendRunRecord(f, {
+    step: "impl",
+    lot: "BR-2",
+    fix: false,
+    startedAt: 1,
+    endedAt: 2,
+    peakContext: 182_000,
+    compactions: 1,
+    sessionFile: null,
+  });
   seedLot(stateDir, repoRoot, [f]);
   const sessions = createSessionHost({ pi: {} as never, stateDir, selfPath: null, log: () => {} });
-  const pilot = createServicePilot({ stateDir, host: sessions, run: () => new Promise<LotRunnerResult>(() => {}), runGit: gitRunner, schedule: () => () => {} });
+  const pilot = createServicePilot({
+    stateDir,
+    host: sessions,
+    run: () => new Promise<LotRunnerResult>(() => {}),
+    runGit: gitRunner,
+    schedule: () => () => {},
+  });
   const token = "t".repeat(32);
-  const handle = createServiceRequestHandler({ api: { lot: (repo: string) => pilot.lot(repo) } as unknown as ServiceApi, token });
+  const handle = createServiceRequestHandler({
+    api: { lot: (repo: string) => pilot.lot(repo) } as unknown as ServiceApi,
+    token,
+  });
   const get = (repo: string, headers: Record<string, string> = { [SERVICE_TOKEN_HEADER]: token }, method = "GET") =>
     handle(new Request(`http://127.0.0.1/v1/repos/${encodeURIComponent(repo)}/lot`, { method, headers }));
 
   const served = await get(repoRoot);
   assert.equal(served.status, 200);
-  const body = (await served.json()) as { repoKey: string; lot: { features: Array<{ runs: Array<Record<string, unknown>> }> } | null };
+  const body = (await served.json()) as {
+    repoKey: string;
+    lot: { features: Array<{ runs: Array<Record<string, unknown>> }> } | null;
+  };
   assert.equal(body.repoKey, lotRepoKey(repoRoot));
   assert.equal(body.lot!.features[0]!.runs[0]!.peakContext, 182_000);
   assert.equal(body.lot!.features[0]!.runs[0]!.compactions, 1);
-  assert.deepEqual(body.lot, JSON.parse(JSON.stringify(readLot(stateDir, lotRepoKey(repoRoot)))), "le lot normalisé tel que le magasin le relit");
+  assert.deepEqual(
+    body.lot,
+    JSON.parse(JSON.stringify(readLot(stateDir, lotRepoKey(repoRoot)))),
+    "le lot normalisé tel que le magasin le relit",
+  );
 
   const none = await get(emptyRepo);
   assert.equal(none.status, 200);
@@ -944,18 +1206,42 @@ test("borne-de-contexte-des-runs/AC-16 : GET /v1/repos/{repo}/lot sert le lot no
   assert.equal(missing.status, 404);
   assert.match(((await missing.json()) as { reason: string }).reason, /^dépôt introuvable : /);
   assert.equal((await get(repoRoot, {})).status, 401, "sans jeton");
-  assert.equal((await get(repoRoot, { [SERVICE_TOKEN_HEADER]: token }, "POST")).status, 404, "la route n'existe qu'en GET");
+  assert.equal(
+    (await get(repoRoot, { [SERVICE_TOKEN_HEADER]: token }, "POST")).status,
+    404,
+    "la route n'existe qu'en GET",
+  );
 });
 
 test("borne-de-contexte-des-runs/AC-15 : la sous-ligne `contexte :` du panneau /pipelines porte le pic ET le nombre de compactions, rien sans compaction", () => {
-  const rec = (step: LotRunRecord["step"], peak: number | null, compactions: number | undefined, over: Partial<LotRunRecord> = {}): LotRunRecord =>
-    ({ step, lot: null, fix: false, startedAt: 1, endedAt: 2, peakContext: peak, sessionFile: null, compactions, ...over }) as LotRunRecord;
+  const rec = (
+    step: LotRunRecord["step"],
+    peak: number | null,
+    compactions: number | undefined,
+    over: Partial<LotRunRecord> = {},
+  ): LotRunRecord =>
+    ({
+      step,
+      lot: null,
+      fix: false,
+      startedAt: 1,
+      endedAt: 2,
+      peakContext: peak,
+      sessionFile: null,
+      compactions,
+      ...over,
+    }) as LotRunRecord;
 
   // Pur : l'exemple exact du contrat, singulier puis pluriel, lot et fix inchangés.
   assert.equal(contextPeakLine([rec("impl", 182_000, 1)]), "contexte : impl 182k ⚠ (1 compaction)");
   assert.equal(contextPeakLine([rec("impl", 182_000, 2)]), "contexte : impl 182k ⚠ (2 compactions)");
   assert.equal(
-    contextPeakLine([rec("impl", 90_000, 0, { lot: "BR-1" }), rec("impl", 131_000, 3, { lot: "BR-2" }), rec("impl", 50_000, 1, { fix: true }), rec("review", null, 1)]),
+    contextPeakLine([
+      rec("impl", 90_000, 0, { lot: "BR-1" }),
+      rec("impl", 131_000, 3, { lot: "BR-2" }),
+      rec("impl", 50_000, 1, { fix: true }),
+      rec("review", null, 1),
+    ]),
     "contexte : impl BR-1 90k, BR-2 131k ⚠ (3 compactions), fix 50k (1 compaction) · review — (1 compaction)",
   );
   // Sans compaction : 0, absent d'un objet non normalisé ou illisible → libellé d'avant, sans erreur.
@@ -972,7 +1258,12 @@ test("borne-de-contexte-des-runs/AC-15 : la sous-ligne `contexte :` du panneau /
     const repoRoot = tmpdir("borne-ac15-repo-");
     seedLot(stateDir, repoRoot, [{ ...feature("alpha"), runs }]);
     const model = readPanelModel({ stateDir, repoRoot, selection: 0, now: 1_700_000_000_000 });
-    return buildPanelRows(model, { width: 200, budget: 40, glyphs: { cursor: ">" } as PanelGlyphs, now: 1_700_000_000_000 });
+    return buildPanelRows(model, {
+      width: 200,
+      budget: 40,
+      glyphs: { cursor: ">" } as PanelGlyphs,
+      now: 1_700_000_000_000,
+    });
   };
   const withCompaction = render([rec("impl", 182_000, 1)]);
   const line = withCompaction.find((row) => row.text.includes("contexte :"));
@@ -986,9 +1277,27 @@ test("borne-de-contexte-des-runs/AC-15 : la sous-ligne `contexte :` du panneau /
   assert.equal(calm!.tone, "dim");
   assert.ok(!without.some((row) => row.text.includes("compaction")), "aucun suffixe sans compaction");
 
-  const legacy = render([({ step: "impl", lot: null, fix: false, startedAt: 1, endedAt: 2, peakContext: 182_000, sessionFile: null }) as LotRunRecord]);
-  assert.equal(legacy.find((row) => row.text.includes("contexte :"))!.text.trim(), "contexte : impl 182k ⚠", "record ancien relu à 0 : libellé sans suffixe");
-  assert.equal(render([]).some((row) => row.text.includes("contexte :")), false, "aucun run : pas de sous-ligne");
+  const legacy = render([
+    {
+      step: "impl",
+      lot: null,
+      fix: false,
+      startedAt: 1,
+      endedAt: 2,
+      peakContext: 182_000,
+      sessionFile: null,
+    } as LotRunRecord,
+  ]);
+  assert.equal(
+    legacy.find((row) => row.text.includes("contexte :"))!.text.trim(),
+    "contexte : impl 182k ⚠",
+    "record ancien relu à 0 : libellé sans suffixe",
+  );
+  assert.equal(
+    render([]).some((row) => row.text.includes("contexte :")),
+    false,
+    "aucun run : pas de sous-ligne",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -996,12 +1305,14 @@ test("borne-de-contexte-des-runs/AC-15 : la sous-ligne `contexte :` du panneau /
 // ---------------------------------------------------------------------------
 
 test("borne-de-contexte-des-runs/AC-17 : les directives imposent la délégation de la lecture du dépôt à des scouts, /specs consigne leurs résumés dans le contrat, et plus aucune ne qualifie la limite de « non bloquant »", () => {
-
   const specs = seeds.SPECS_DIRECTIVE;
   assert.ok(specs.includes("DÉLÈGUE OBLIGATOIREMENT la lecture du dépôt à des sous-agents scout"));
   assert.ok(specs.includes("### Relevé du dépôt"), "les résumés sont consignés dans le contrat");
   assert.ok(specs.includes("## Documentation"));
-  assert.ok(specs.includes("QUE les fichiers que les besoins (B-<n>) nomment"), "lecture directe limitée aux fichiers des besoins");
+  assert.ok(
+    specs.includes("QUE les fichiers que les besoins (B-<n>) nomment"),
+    "lecture directe limitée aux fichiers des besoins",
+  );
   assert.ok(!specs.includes("Délègue la lecture du dépôt"), "l'ancienne formulation facultative a disparu");
 
   assert.ok(seeds.AUDIT_ANALYSIS_STEPS.includes("DÉLÈGUE OBLIGATOIREMENT sa lecture à des sous-agents scout"));
@@ -1018,7 +1329,8 @@ test("borne-de-contexte-des-runs/AC-17 : les directives imposent la délégation
   }
 
   for (const [name, value] of Object.entries(seeds)) {
-    if (typeof value === "string") assert.ok(!value.includes("non bloquant"), `${name} ne parle plus d'objectif non bloquant`);
+    if (typeof value === "string")
+      assert.ok(!value.includes("non bloquant"), `${name} ne parle plus d'objectif non bloquant`);
   }
 });
 
@@ -1030,7 +1342,10 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   const start = lines.findIndex((line) => line.trim() === "### Contexte des runs");
   assert.ok(start >= 0, "la sous-section existe");
   const end = lines.findIndex((line, i) => i > start && line.startsWith("#"));
-  const section = lines.slice(start, end < 0 ? undefined : end).join("\n").replace(/\s+/g, " ");
+  const section = lines
+    .slice(start, end < 0 ? undefined : end)
+    .join("\n")
+    .replace(/\s+/g, " ");
   for (const literal of [
     "`MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`, **`90000` pour `/review`**)",
     "`MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>`",
@@ -1048,7 +1363,9 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   }
 
   // Sous « ## Le service » : la sous-section suit « Repli de modèle et quota » et précède « Pipelines en cours ».
-  const order = ["### Repli de modèle et quota", "### Contexte des runs", "## Pipelines en cours"].map((h) => lines.findIndex((l) => l.trim() === h));
+  const order = ["### Repli de modèle et quota", "### Contexte des runs", "## Pipelines en cours"].map((h) =>
+    lines.findIndex((l) => l.trim() === h),
+  );
   assert.ok(order.every((i) => i >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, "ordre des sections");
 
   // Tableau ## Config et tableau des routes.
@@ -1056,5 +1373,8 @@ test("borne-de-contexte-des-runs/AC-18 : la section « Contexte des runs » du R
   assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_SOFT_<PHASE>` \| — \|/);
   assert.match(readme, /\| `MEM0_PIPELINE_CONTEXT_HARD` \| `250000` \|/);
   assert.match(readme, /\| `GET \/v1\/repos\/\{repo\}\/lot` \|/);
-  assert.ok(readme.includes("`contextPeak` et `compactions`"), "la route de session mentionne contextPeak et compactions");
+  assert.ok(
+    readme.includes("`contextPeak` et `compactions`"),
+    "la route de session mentionne contextPeak et compactions",
+  );
 });

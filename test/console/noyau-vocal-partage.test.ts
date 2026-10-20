@@ -13,13 +13,20 @@ import { ROOT } from "../support/repo.ts";
 import { stripComments } from "../support/swift-source.ts";
 
 const VOICE = "omp-console/Sources/ConsoleCore/Voice";
-const FILES = ["VoiceSpeech", "VoiceFeatureSearch", "VoiceAnswerMatcher", "VoicePendingSummary", "VoiceIssue", "VoiceSpeechText"];
+const FILES = [
+  "VoiceSpeech",
+  "VoiceFeatureSearch",
+  "VoiceAnswerMatcher",
+  "VoicePendingSummary",
+  "VoiceIssue",
+  "VoiceSpeechText",
+];
 const TESTS = "omp-console/Tests/OMPConsoleTests/VoiceSpeechTests.swift";
 
 const FORBIDDEN_IMPORT = /^\s*(?:@\w+\s+)*import\s+(AppIntents|SwiftUI|AppKit|UIKit)\b/m;
 const INTENT_CONFORMANCE = /:\s*[^{]*\b(AppIntent|AppShortcutsProvider)\b/;
 
-const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("noyau-vocal-partage/AC-13 : le noyau vocal vit dans ConsoleCore sans AppIntents, et chacun des critères 1 à 12 a un test Swift qui porte son id", () => {
   const faults: string[] = [];
@@ -44,7 +51,7 @@ test("noyau-vocal-partage/AC-13 : le noyau vocal vit dans ConsoleCore sans AppIn
   } else {
     const source = fs.readFileSync(testsPath, "utf8");
     for (let n = 1; n <= 12; n += 1) {
-      const marker = new RegExp(`@Test\\("${escape(`noyau-vocal-partage/AC-${n} :`)}`, "g");
+      const marker = new RegExp(`@Test\\("${escapeRegExp(`noyau-vocal-partage/AC-${n} :`)}`, "g");
       const count = [...source.matchAll(marker)].length;
       if (count !== 1) faults.push(`${TESTS} : AC-${n} porté par ${count} @Test au lieu d’un`);
     }

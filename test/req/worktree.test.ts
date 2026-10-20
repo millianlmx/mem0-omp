@@ -223,10 +223,7 @@ test("un .git de sous-module n'est pas pris pour un worktree", () => {
   // Et depuis un vrai sous-module, la racine reste celle du sous-module
   const root = mkRepo();
   const sub = mkRepo();
-  const added = git(
-    ["-c", "protocol.file.allow=always", "submodule", "add", sub, "sub"],
-    root,
-  );
+  const added = git(["-c", "protocol.file.allow=always", "submodule", "add", sub, "sub"], root);
   assert.equal(added.code, 0, `submodule add : ${added.stderr}`);
   git(["commit", "-q", "-m", "sub"], root);
   const subRepo = path.join(root, "sub");
@@ -340,7 +337,15 @@ test("worktree/AC-7 : le balayage ne pousse rien et conserve le worktree après 
 
 test("reapDecision : l'ordre des contrôles place le nettoyage avant tout retrait", () => {
   const baseDir = "/base";
-  const base = { path: "/base/repo/x", branch: "feat/x", head: "abc", status: "", remoteRefs: "origin/feat/x abc", baseDir, exists: true };
+  const base = {
+    path: "/base/repo/x",
+    branch: "feat/x",
+    head: "abc",
+    status: "",
+    remoteRefs: "origin/feat/x abc",
+    baseDir,
+    exists: true,
+  };
   const ok = reapDecision({ ...base, currentCwd: "/ailleurs" });
   assert.deepEqual(ok, { remove: true });
 
@@ -382,12 +387,17 @@ test("parseWorktreeList / remoteShas : formats réels de git", () => {
 
   const entries = parseWorktreeList(porcelain);
   assert.equal(entries.length, 3);
-  assert.deepEqual(entries[0], { path: "/Users/m/repo", head: "3edfb8960f0e0f2e1b1a1c1d1e1f202122232425", branch: "main" });
+  assert.deepEqual(entries[0], {
+    path: "/Users/m/repo",
+    head: "3edfb8960f0e0f2e1b1a1c1d1e1f202122232425",
+    branch: "main",
+  });
   assert.equal(entries[1].branch, "feat/a");
   assert.equal(entries[2].branch, undefined, "detached ⇒ pas de branche");
   assert.deepEqual(parseWorktreeList(""), []);
 
-  const refs = "origin/main 3edfb8960f0e0f2e1b1a1c1d1e1f202122232425\norigin/feat/a aaaa111122223333444455556666777788889999\n";
+  const refs =
+    "origin/main 3edfb8960f0e0f2e1b1a1c1d1e1f202122232425\norigin/feat/a aaaa111122223333444455556666777788889999\n";
   assert.deepEqual(remoteShas(refs, "feat/a"), ["aaaa111122223333444455556666777788889999"]);
   assert.deepEqual(remoteShas(refs, "feat/b"), []);
   assert.deepEqual(remoteShas("", "feat/a"), []);

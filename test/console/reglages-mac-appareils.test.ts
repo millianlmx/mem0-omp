@@ -147,9 +147,11 @@ function settingsSceneFaults(sources: Sources): string[] {
   const tab = /\bTab\s*\(\s*([^,)]+)/.exec(viewStruct.body);
   if (!tab) faults.push("aucun Tab( dans ConsoleSettingsView");
   else {
-    if (tab[1].trim() !== "PairingText.devicesTab") faults.push(`l'onglet est libellé ${tab[1].trim()}, attendu PairingText.devicesTab`);
+    if (tab[1].trim() !== "PairingText.devicesTab")
+      faults.push(`l'onglet est libellé ${tab[1].trim()}, attendu PairingText.devicesTab`);
     const tabBody = blockAfter(viewStruct.body.slice(tab.index), /\bTab\s*\([^{]*\{/);
-    if (!tabBody || !/\bDevicesSettingsView\s*\(/.test(tabBody.body)) faults.push("l'onglet n'héberge pas DevicesSettingsView");
+    if (!tabBody || !/\bDevicesSettingsView\s*\(/.test(tabBody.body))
+      faults.push("l'onglet n'héberge pas DevicesSettingsView");
   }
   const label = literal(code(sources, DEVICES_SETTINGS), "devicesTab");
   if (label !== "Appareils") faults.push(`PairingText.devicesTab vaut ${JSON.stringify(label)}, attendu « Appareils »`);
@@ -177,8 +179,16 @@ function singleHostFaults(sources: Sources): string[] {
     for (const site of text.matchAll(HOST_SITE)) {
       const at = site.index;
       const allowed =
-        (file === APP && site[1] === "ConsoleSettingsView" && settingsRange !== null && at >= settingsRange[0] && at < settingsRange[1]) ||
-        (file === SETTINGS_VIEW && site[1] === "DevicesSettingsView" && tabBody !== null && at >= tabBody.start && at < tabBody.end);
+        (file === APP &&
+          site[1] === "ConsoleSettingsView" &&
+          settingsRange !== null &&
+          at >= settingsRange[0] &&
+          at < settingsRange[1]) ||
+        (file === SETTINGS_VIEW &&
+          site[1] === "DevicesSettingsView" &&
+          tabBody !== null &&
+          at >= tabBody.start &&
+          at < tabBody.end);
       if (!allowed) faults.push(`${file} : ${site[1]}( hors de la scène Settings`);
     }
     for (const opener of text.matchAll(SCENE_OPENERS)) {
@@ -186,7 +196,8 @@ function singleHostFaults(sources: Sources): string[] {
       const block = open === -1 ? null : braceBody(text, open);
       if (block && HOSTED.test(block.body)) faults.push(`${file} : ${opener[1]}( héberge le panneau Réglages`);
     }
-    if (/\bopenWindow\b/.test(text) && HOSTED.test(text)) faults.push(`${file} : openWindow à côté du panneau Réglages`);
+    if (/\bopenWindow\b/.test(text) && HOSTED.test(text))
+      faults.push(`${file} : openWindow à côté du panneau Réglages`);
   }
   if (!settings) faults.push("la scène Settings est absente");
   return faults;
@@ -199,16 +210,24 @@ function pairingMenuFaults(sources: Sources): string[] {
   const app = code(sources, APP);
   const scenes = sceneBody(app);
   const commands = scenes ? blockAfter(scenes.body, /\.commands\s*\{/) : null;
-  if (!commands || !/\bRemoteCommands\(\)/.test(commands.body)) faults.push("RemoteCommands() absent des .commands de la scène");
+  if (!commands || !/\bRemoteCommands\(\)/.test(commands.body))
+    faults.push("RemoteCommands() absent des .commands de la scène");
   const remote = blockAfter(app, /struct\s+RemoteCommands\s*:\s*Commands\s*\{/);
   if (!remote) return [...faults, "struct RemoteCommands introuvable"];
-  if (!/CommandGroup\(\s*after:\s*\.appInfo\s*\)/.test(remote.body)) faults.push("RemoteCommands n'est pas dans le menu de l'app (CommandGroup(after: .appInfo))");
+  if (!/CommandGroup\(\s*after:\s*\.appInfo\s*\)/.test(remote.body))
+    faults.push("RemoteCommands n'est pas dans le menu de l'app (CommandGroup(after: .appInfo))");
   const links = count(remote.body, /\bSettingsLink\b/);
   if (links !== 1) faults.push(`${links} SettingsLink dans RemoteCommands, attendu 1`);
   const link = blockAfter(remote.body, /\bSettingsLink\s*\{/);
-  if (!link || link.body.trim() !== "Text(PairingText.menuItem)") faults.push("le SettingsLink n'est pas libellé Text(PairingText.menuItem)");
+  if (link?.body.trim() !== "Text(PairingText.menuItem)")
+    faults.push("le SettingsLink n'est pas libellé Text(PairingText.menuItem)");
   const shortcut = /\.keyboardShortcut\(\s*"a"\s*,\s*modifiers:\s*\[([^\]]*)\]\s*\)/.exec(remote.body);
-  const modifiers = shortcut ? shortcut[1].split(",").map((m) => m.trim()).sort() : [];
+  const modifiers = shortcut
+    ? shortcut[1]
+        .split(",")
+        .map((m) => m.trim())
+        .sort()
+    : [];
   if (modifiers.join(" ") !== ".command .option") faults.push("raccourci ⌥⌘A absent de RemoteCommands");
   for (const forbidden of ["requestPairingSheet", "MainWindow.reveal", "Button("]) {
     if (remote.body.includes(forbidden)) faults.push(`RemoteCommands appelle encore ${forbidden}`);
@@ -252,9 +271,7 @@ test("reglages-mac-appareils/AC-1 : une seule scène Settings héberge ConsoleSe
   );
   assert.ok(settingsSceneFaults(twoTabs).some((f) => f.includes("Tab(")));
   // Une deuxième scène Settings rougit aussi.
-  const twoScenes = planted(sources, APP, (s) =>
-    s.replace(/(\n        Settings \{\n[^}]*\})/, "$1$1"),
-  );
+  const twoScenes = planted(sources, APP, (s) => s.replace(/(\n {8}Settings \{\n[^}]*\})/, "$1$1"));
   assert.ok(settingsSceneFaults(twoScenes).some((f) => f.includes("scène(s) Settings")));
 });
 
@@ -265,13 +282,19 @@ test("reglages-mac-appareils/AC-2 : le panneau Réglages n'a qu'un hôte, la sc�
   // Une fenêtre `Window(` qui héberge le panneau rougit.
   const window = planted(sources, APP, (s) =>
     s.replace(
-      /(\n        Settings \{\n[^}]*\})/,
+      /(\n {8}Settings \{\n[^}]*\})/,
       '$1\n        Window("Appareils", id: "devices") {\n            ConsoleSettingsView(remote: remoteModel)\n        }',
     ),
   );
   const faults = singleHostFaults(window);
-  assert.ok(faults.some((f) => f.includes("Window( héberge")), faults.join(" | "));
-  assert.ok(faults.some((f) => f.includes("hors de la scène Settings")), faults.join(" | "));
+  assert.ok(
+    faults.some((f) => f.includes("Window( héberge")),
+    faults.join(" | "),
+  );
+  assert.ok(
+    faults.some((f) => f.includes("hors de la scène Settings")),
+    faults.join(" | "),
+  );
 });
 
 test("reglages-mac-appareils/AC-10 : « Appairage… » ⌥⌘A est un SettingsLink du menu de l'app, sans feuille ni fenêtre principale ramenée", () => {
@@ -300,8 +323,14 @@ test("reglages-mac-appareils/AC-10 : « Appairage… » ⌥⌘A est un SettingsL
     ),
   );
   const faults = pairingMenuFaults(old);
-  assert.ok(faults.some((f) => f.includes("requestPairingSheet")), faults.join(" | "));
-  assert.ok(faults.some((f) => f.includes("SettingsLink")), faults.join(" | "));
+  assert.ok(
+    faults.some((f) => f.includes("requestPairingSheet")),
+    faults.join(" | "),
+  );
+  assert.ok(
+    faults.some((f) => f.includes("SettingsLink")),
+    faults.join(" | "),
+  );
 });
 
 test("reglages-mac-appareils/AC-11 : plus aucune trace de la feuille modale « Appairage » dans l'app Mac", () => {

@@ -85,7 +85,12 @@ function stubHost(options: { hold?: boolean } = {}) {
   const opens: Array<{ cwd: string; purpose: string; resume: string | null }> = [];
   let disposed = 0;
   const host = {
-    open: async (openOptions: { cwd: string; identity?: Parameters<typeof registerMaillonIdentity>[1]; purpose: string; resume?: string | null }) => {
+    open: async (openOptions: {
+      cwd: string;
+      identity?: Parameters<typeof registerMaillonIdentity>[1];
+      purpose: string;
+      resume?: string | null;
+    }) => {
       const id = `sess-${prompts.length + 1}`;
       opens.push({ cwd: openOptions.cwd, purpose: openOptions.purpose, resume: openOptions.resume ?? null });
       if (openOptions.identity) registerMaillonIdentity(id, openOptions.identity);
@@ -244,7 +249,7 @@ async function eventually(condition: () => boolean, message: string): Promise<vo
   for (let i = 0; i < 2_000; i++) {
     if (condition()) return;
     await Promise.resolve();
-    if (i % 50 === 49) await new Promise<void>(resolve => setImmediate(resolve));
+    if (i % 50 === 49) await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.fail(message);
 }
@@ -270,7 +275,7 @@ test("replace-rpc-mode-by-native-rest-api/AC-1 : les maillons sont exécutés pa
   assert.equal(stub.identities[0]?.slug, "alpha", "le service inscrit l'identité du maillon avant son prompt");
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))?.owner.pid, process.pid, "le lot est conduit par le service");
   const sources = ["runs.ts", "lotController.ts", "extension.ts"]
-    .map(file => fs.readFileSync(path.join(ROOT, "omp-mem0-req", file), "utf8"))
+    .map((file) => fs.readFileSync(path.join(ROOT, "omp-mem0-req", file), "utf8"))
     .join("\n");
   assert.equal(sources.includes("buildLotRunArgv("), false, "aucun argv de maillon n'est construit");
   assert.equal(/pi\.exec\(\s*["'`]omp/.test(sources), false, "aucun `omp` n'est lancé pour un maillon");
@@ -290,7 +295,7 @@ test("replace-rpc-mode-by-native-rest-api/AC-2 : l'app ne lance plus de mode RPC
   };
   const files = walk(sourcesDir);
   assert.ok(files.length > 0);
-  const joined = files.map(file => fs.readFileSync(file, "utf8")).join("\n");
+  const joined = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   for (const token of ["--mode", "rpc-ui", "RpcTransport", "SessionHost", "RpcFrames", "RpcChunkDecoder"]) {
     assert.equal(joined.includes(token), false, `l'app ne doit plus nommer ${token}`);
   }
@@ -317,9 +322,16 @@ test("replace-rpc-mode-by-native-rest-api/AC-2 : l'app ne lance plus de mode RPC
     /func sessions\(\) async throws -> \[ServiceSessionInfo\]/,
     "l'app liste les sessions servies (GET /v1/sessions, rejoindre une conduite vivante)",
   );
-  const sessionModel = fs.readFileSync(path.join(sourcesDir, "OMPConsole", "Service", "ServiceSessionModel.swift"), "utf8");
+  const sessionModel = fs.readFileSync(
+    path.join(sourcesDir, "OMPConsole", "Service", "ServiceSessionModel.swift"),
+    "utf8",
+  );
   assert.match(sessionModel, /liveConduite\(/, "un 409 de conduite se rattache à la session vivante");
-  assert.match(sessionModel, /private func detach\(/, "la fermeture de l'app DÉTACHE la conduite au lieu de la supprimer");
+  assert.match(
+    sessionModel,
+    /private func detach\(/,
+    "la fermeture de l'app DÉTACHE la conduite au lieu de la supprimer",
+  );
   assert.match(sessionModel, /func terminateForQuit\(\) async/, "le chemin de fermeture de l'app reste nommé");
 });
 
@@ -334,7 +346,7 @@ test("replace-rpc-mode-by-native-rest-api/AC-3 : un dialogue de l'extension atte
   const dialogs: Array<{ id: string; options: string[] }> = [];
   const subscription = host.subscribe(hosted.id);
   assert.ok(subscription);
-  subscription.subscribe(frame => {
+  subscription.subscribe((frame) => {
     frames.push(frame.event);
     if (frame.event === "dialog") dialogs.push({ id: frame.data.id, options: frame.data.options });
   });
@@ -383,7 +395,10 @@ test("replace-rpc-mode-by-native-rest-api/AC-4 : le service fait avancer un mail
   // AUCUNE session cliente : ni app, ni terminal. La chaîne avance quand même —
   // le suivant démarre dès que le premier rend la main (le tour est immédiat ici).
   pilot.sweep();
-  await eventually(() => readLot(stateDir, lotRepoKey(repoRoot))?.features[0]?.state !== "pending", "le maillon doit avancer");
+  await eventually(
+    () => readLot(stateDir, lotRepoKey(repoRoot))?.features[0]?.state !== "pending",
+    "le maillon doit avancer",
+  );
   // La référence HEAD d'un run d'impl est relevée avant son lancement : le prompt part un instant après.
   await eventually(() => stub.prompts.length === 1, "le run d'impl doit démarrer");
   assert.equal(stub.prompts.length, 1);
@@ -407,14 +422,14 @@ test("replace-rpc-mode-by-native-rest-api/AC-4 : le service fait avancer un mail
   const subscription = realHost.subscribe(live.id);
   assert.ok(subscription);
   const seen: string[] = [];
-  const unsubscribe = subscription.subscribe(frame => seen.push(frame.event));
+  const unsubscribe = subscription.subscribe((frame) => seen.push(frame.event));
   const ui = captured.ui;
   assert.ok(ui, "le service pose un contexte UI servi par l'API");
   const asked = ui.select("Le plan du projet vous convient-il ?", ["Valider", "Corriger"]);
   assert.deepEqual(seen, ["dialog"], "la question part vers le client qui écoute");
   unsubscribe();
   assert.ok(
-    realHost.list().some(session => session.id === live.id),
+    realHost.list().some((session) => session.id === live.id),
     "sans client, la conduite reste vivante dans le service",
   );
   const pending = realHost.view(live.id)?.dialogs ?? [];
@@ -458,7 +473,15 @@ test("replace-rpc-mode-by-native-rest-api/AC-5 : un lot repris après un arrêt 
         {
           name: "segment 1",
           features: [
-            { slug: "alpha", intention: "démarrer la chaîne", status: "merged", prUrl: null, failure: null, removedReason: null, updatedAt: 1 },
+            {
+              slug: "alpha",
+              intention: "démarrer la chaîne",
+              status: "merged",
+              prUrl: null,
+              failure: null,
+              removedReason: null,
+              updatedAt: 1,
+            },
           ],
         },
       ],
@@ -483,7 +506,7 @@ test("replace-rpc-mode-by-native-rest-api/AC-5 : un lot repris après un arrêt 
   await eventually(() => stub.prompts.length === 1, "la reprise doit relancer le maillon interrompu");
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))?.owner.pid, process.pid, "le nouveau service a repris le lot");
   assert.deepEqual(
-    stub.opens.filter(entry => entry.purpose === "project").map(entry => entry.resume),
+    stub.opens.filter((entry) => entry.purpose === "project").map((entry) => entry.resume),
     [hostSession],
     "la conduite est recréée depuis hostSession, et rien ne la ré-invite",
   );
@@ -493,7 +516,7 @@ test("replace-rpc-mode-by-native-rest-api/AC-5 : un lot repris après un arrêt 
   // `78: EX_CONFIG` (mesuré) et la relance n'aurait jamais lieu.
   const ompAbs = path.join(mktmp("ac5-bin-"), "omp");
   assert.deepEqual(
-    resolveLaunchdOmpBinary({ PATH: path.dirname(ompAbs) }, file => file === ompAbs),
+    resolveLaunchdOmpBinary({ PATH: path.dirname(ompAbs) }, (file) => file === ompAbs),
     { bin: ompAbs, problem: null },
     "le binaire du job launchd est résolu en chemin ABSOLU",
   );
@@ -648,9 +671,12 @@ test("replace-rpc-mode-by-native-rest-api/AC-10 : le panneau commande le service
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const parsed = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
     calls.push({ url, kind: typeof parsed.kind === "string" ? parsed.kind : null });
-    if (url.endsWith("/pilot")) return new Response(JSON.stringify({ repoKey: "k", lotId: null, state: "piloting" }), { status: 200 });
+    if (url.endsWith("/pilot"))
+      return new Response(JSON.stringify({ repoKey: "k", lotId: null, state: "piloting" }), { status: 200 });
     return new Response(
-      JSON.stringify({ ack: { version: 1, id: parsed.id, repo: parsed.repo, kind: parsed.kind, state: "taken", reason: null, at: 1 } }),
+      JSON.stringify({
+        ack: { version: 1, id: parsed.id, repo: parsed.repo, kind: parsed.kind, state: "taken", reason: null, at: 1 },
+      }),
       { status: 200 },
     );
   }) as typeof fetch;
@@ -660,7 +686,10 @@ test("replace-rpc-mode-by-native-rest-api/AC-10 : le panneau commande le service
   assert.equal(await actions.launch(), null);
   assert.equal(await actions.validate("alpha"), null);
   assert.equal(await actions.answer("alpha", "ma réponse"), null);
-  assert.deepEqual(calls.map(call => call.kind), ["start", "verdict", "reply"]);
+  assert.deepEqual(
+    calls.map((call) => call.kind),
+    ["start", "verdict", "reply"],
+  );
   actions.adopt?.();
   assert.match(calls.at(-1)!.url, /\/pilot$/);
   // Et l'en-tête nomme le pilote : le service, jamais la session.
@@ -710,7 +739,7 @@ test("service : le socle du service est complet (port, singleton, plist)", async
     stateDir,
   );
   const lines: string[] = [];
-  const started = await startService({ api: {} as never, stateDir, log: line => lines.push(line) });
+  const started = await startService({ api: {} as never, stateDir, log: (line) => lines.push(line) });
   assert.deepEqual(started, { kind: "already-running", pid: process.pid });
   assert.deepEqual(lines, [`un service tourne déjà (pid ${process.pid})`]);
   assert.equal(readService(stateDir)?.port, 8899, "le port et le jeton du premier sont intacts");

@@ -44,7 +44,6 @@ import { asStringOrNull, readJsonFile, writeJsonAtomic } from "./store.ts";
 import type { PanelPendingAsk } from "./store.ts";
 import type { WorktreeFate } from "./runs.ts";
 
-
 // --- emplacements, noms et bornes --------------------------------------------
 
 /** `<stateDir>/commands` : le canal, à côté du magasin qu'il sert. */
@@ -81,26 +80,21 @@ export const COMMAND_POLL_MS = 250;
 /** Bornes d'une passe : au-delà, le reste attend la passe suivante. */
 export const COMMAND_MAX_PER_PASS = 32;
 
-
 export function commandDir(stateDir: string): string {
   return path.join(stateDir, COMMAND_ROOT);
 }
-
 
 export function commandAckDir(stateDir: string): string {
   return path.join(commandDir(stateDir), COMMAND_ACK_DIR);
 }
 
-
 export function commandFilePath(stateDir: string, name: string): string {
   return path.join(commandDir(stateDir), name);
 }
 
-
 export function commandAckPath(stateDir: string, id: string): string {
   return path.join(commandAckDir(stateDir), `${id}.json`);
 }
-
 
 // --- schéma ------------------------------------------------------------------
 
@@ -127,14 +121,34 @@ export type CommandKind =
  * produit ni second accusé ni second effet (S-9).
  */
 export type PipelineCommand =
-  | { version: 1; id: string; sentAt: number; repo: string; kind: "launch";
-      title: string; description: string; deps?: string[];
-      modelReqSpecs?: string | null; modelImplReview?: string | null;
-      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
-  | { version: 1; id: string; sentAt: number; repo: string; kind: "add";
-      title: string; description: string; deps?: string[];
-      modelReqSpecs?: string | null; modelImplReview?: string | null;
-      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
+  | {
+      version: 1;
+      id: string;
+      sentAt: number;
+      repo: string;
+      kind: "launch";
+      title: string;
+      description: string;
+      deps?: string[];
+      modelReqSpecs?: string | null;
+      modelImplReview?: string | null;
+      fallbackReqSpecs?: string | null;
+      fallbackImplReview?: string | null;
+    }
+  | {
+      version: 1;
+      id: string;
+      sentAt: number;
+      repo: string;
+      kind: "add";
+      title: string;
+      description: string;
+      deps?: string[];
+      modelReqSpecs?: string | null;
+      modelImplReview?: string | null;
+      fallbackReqSpecs?: string | null;
+      fallbackImplReview?: string | null;
+    }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "remove"; slug: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "verdict"; slug: string; verdict: "v" | "y" }
   /**
@@ -142,12 +156,30 @@ export type PipelineCommand =
    * features bloquées par `provider` qu'AUCUNE session ouverte ne porte.
    */
   | { version: 1; id: string; sentAt: number; repo: string; kind: "quota"; provider: string; model: string }
-  | { version: 1; id: string; sentAt: number; repo: string; kind: "answer"; slug: string;
-      toolCallId: string; selected?: string; custom?: string }
+  | {
+      version: 1;
+      id: string;
+      sentAt: number;
+      repo: string;
+      kind: "answer";
+      slug: string;
+      toolCallId: string;
+      selected?: string;
+      custom?: string;
+    }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "reply"; slug: string; text: string }
-  | { version: 1; id: string; sentAt: number; repo: string; kind: "models"; slug: string;
-      modelReqSpecs: string | null; modelImplReview: string | null;
-      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
+  | {
+      version: 1;
+      id: string;
+      sentAt: number;
+      repo: string;
+      kind: "models";
+      slug: string;
+      modelReqSpecs: string | null;
+      modelImplReview: string | null;
+      fallbackReqSpecs?: string | null;
+      fallbackImplReview?: string | null;
+    }
   /** Le geste `R` du panneau (S-9) : rouvre un crédit de correction et relance. */
   | { version: 1; id: string; sentAt: number; repo: string; kind: "relaunch"; slug: string }
   /** Le geste `c` du panneau (S-9) : abandonne une feature, avec le sort du worktree. */
@@ -172,7 +204,6 @@ export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "start" }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "stop" };
 
-
 /**
  * `taken` : l'effet suit. `refused` : le motif est dans `reason`. `already` : un
  * `cancel` reçu pendant une annulation de la MÊME feature — ce n'est pas une erreur
@@ -182,7 +213,6 @@ export type CommandState = "taken" | "refused" | "already";
 
 /** Le motif de l'accusé `already` d'un `cancel` : une annulation de cette feature est déjà en cours. */
 export const CANCEL_ALREADY_REASON = "annulation déjà en cours";
-
 
 /** L'accusé d'une commande : `taken` (l'effet suit), `refused` (le motif est dans `reason`) ou `already` (rien à refaire). */
 export type PipelineCommandAck = {
@@ -194,7 +224,6 @@ export type PipelineCommandAck = {
   reason: string | null;
   at: number;
 };
-
 
 export const COMMAND_KINDS: Record<CommandKind, true> = {
   launch: true,
@@ -213,18 +242,15 @@ export const COMMAND_KINDS: Record<CommandKind, true> = {
   avance: true,
 };
 
-
 /** Une commande connue du vocabulaire, ou `null`. */
 export function isCommandKind(value: unknown): value is CommandKind {
-  return typeof value === "string" && Object.prototype.hasOwnProperty.call(COMMAND_KINDS, value);
+  return typeof value === "string" && Object.hasOwn(COMMAND_KINDS, value);
 }
-
 
 /** Un dépôt est adressé par un chemin ABSOLU : un chemin relatif dépendrait du cwd du déposant. */
 function isAbsolutePath(value: unknown): value is string {
   return typeof value === "string" && value !== "" && path.isAbsolute(value);
 }
-
 
 /** `deps` : absent (`undefined`) ou tableau de chaînes ; toute autre forme rend `null`. */
 function asDeps(raw: unknown): string[] | undefined | null {
@@ -235,7 +261,6 @@ function asDeps(raw: unknown): string[] | undefined | null {
   }
   return raw as string[];
 }
-
 
 /**
  * Les deux clés de modèle OPTIONNELLES d'une commande `launch`/`add` (S-2) : une
@@ -257,7 +282,6 @@ function asOptionalModelSlots(
   return out;
 }
 
-
 /**
  * Les deux clés de REPLI OPTIONNELLES d'une commande `launch`/`add`/`models` (S-1) :
  * une clé ABSENTE n'est pas transmise ; une clé PRÉSENTE est `string` ou `null`, et
@@ -278,12 +302,10 @@ function asOptionalFallbackSlots(
   return out;
 }
 
-
 /** Une chaîne non vide, ou `null` — sans normaliser : le vide est jugé plus loin, par la décision. */
 function asText(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
-
 
 /**
  * Validation STRICTE, champ par champ : toute forme inconnue, mal typée ou hors
@@ -381,7 +403,6 @@ export function asCommand(raw: unknown): PipelineCommand | null {
   return null;
 }
 
-
 /** L'identifiant VALIDE porté par un fichier relu, ou `null` (un accusé se nomme par lui). */
 export function commandIdOf(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -389,16 +410,13 @@ export function commandIdOf(raw: unknown): string | null {
   return typeof id === "string" && COMMAND_ID.test(id) ? id : null;
 }
 
-
 /** Le motif d'un refus de FORMType : `kind` hors vocabulaire d'abord, forme invalide ensuite. */
 export function commandShapeRefusal(raw: unknown): string {
-  const kind = raw && typeof raw === "object" && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>).kind
-    : undefined;
+  const kind =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).kind : undefined;
   if (typeof kind === "string" && !isCommandKind(kind)) return `type de commande inconnu : ${kind}`;
   return COMMAND_FORMAT_REFUSAL;
 }
-
 
 /** Le motif d'un JSON lu mais hors schéma (S-1). */
 export const COMMAND_FORMAT_REFUSAL = "format de commande invalide";
@@ -408,7 +426,6 @@ export const COMMAND_UNREADABLE_REFUSAL = "format de commande illisible";
 
 /** Le motif d'un contenu de feature vide (S-2, S-6). */
 export const COMMAND_EMPTY_FEATURE_REFUSAL = "contenu de feature vide ou illisible";
-
 
 /**
  * L'accusé d'une commande : `id` et `at` viennent de l'appelant (l'identifiant relu
@@ -428,7 +445,6 @@ export function commandAck(
   return { version: 1, id, repo, kind, state, reason, at };
 }
 
-
 /** La forme d'un accusé relu : `null` si le JSON est illisible ou hors schéma. */
 export function asCommandAck(raw: unknown): PipelineCommandAck | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -442,7 +458,6 @@ export function asCommandAck(raw: unknown): PipelineCommandAck | null {
   if (typeof a.at !== "number" || !Number.isFinite(a.at)) return null;
   return { version: 1, id: a.id, repo: a.repo, kind: a.kind, state: a.state, reason: a.reason, at: a.at };
 }
-
 
 // --- dépôt, lecture, accusés --------------------------------------------------
 
@@ -461,10 +476,8 @@ export function writeCommand(stateDir: string, cmd: PipelineCommand): void {
   writeJsonAtomic(file, cmd);
 }
 
-
 /** Un fichier de commande STABLE et relu : `unreadable` distingue l'illisible du hors-schéma. */
 export type CommandCandidate = { file: string; raw: unknown; unreadable: boolean; mtimeMs: number };
-
 
 /**
  * Les candidats d'une passe : les noms au motif de commande, dans l'ordre
@@ -510,7 +523,6 @@ export function readCommands(stateDir: string, now: number, settleMs: number = C
   return out;
 }
 
-
 /**
  * Y a-t-il au moins une commande en attente pour ce dépôt ? C'est le prédicat
  * d'ARMEMENT d'une session ordinaire (S-10) : il IGNORE la fenêtre de
@@ -537,7 +549,6 @@ export function hasPendingCommands(stateDir: string, repoRoot: string): boolean 
   return false;
 }
 
-
 /** Le retrait d'un fichier de commande : un fichier déjà absent est un succès silencieux. */
 export function removeCommandFile(file: string): void {
   try {
@@ -547,17 +558,14 @@ export function removeCommandFile(file: string): void {
   }
 }
 
-
 /** L'accusé d'une commande : `null` s'il est absent — et aussi s'il est ILLISIBLE (S-9). */
 export function readCommandAck(stateDir: string, id: string): PipelineCommandAck | null {
   return asCommandAck(readJsonFile(commandAckPath(stateDir, id)));
 }
 
-
 export function writeCommandAck(stateDir: string, ack: PipelineCommandAck): void {
   writeJsonAtomic(commandAckPath(stateDir, ack.id), ack);
 }
-
 
 /**
  * La purge de fin de lot (AC-12) : les accusés du dépôt sont retirés quand son lot
@@ -591,7 +599,6 @@ export function purgeCommandAcks(stateDir: string, repoRoot: string): number {
   return purged;
 }
 
-
 // --- la décision : pure, sur une lecture fraîche ------------------------------
 
 /**
@@ -615,23 +622,26 @@ export type CommandView = {
   liveRun: boolean;
 };
 
-
 /** Le slug qu'une commande vise dans le lot (`null` pour `launch`/`add`/`stop`). */
 export function commandSlugOf(cmd: PipelineCommand): string | null {
-  return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply" ||
-    cmd.kind === "models" || cmd.kind === "relaunch" || cmd.kind === "cancel" || cmd.kind === "arbitrage" ||
+  return cmd.kind === "remove" ||
+    cmd.kind === "verdict" ||
+    cmd.kind === "answer" ||
+    cmd.kind === "reply" ||
+    cmd.kind === "models" ||
+    cmd.kind === "relaunch" ||
+    cmd.kind === "cancel" ||
+    cmd.kind === "arbitrage" ||
     cmd.kind === "avance"
     ? cmd.slug
     : null;
 }
-
 
 /** Le refus du contenu d'une feature déposée : un titre non normalisable est un contenu vide. */
 function featureContentRefusal(cmd: { title: string; description: string }): string | null {
   if (toSlug(cmd.title) === null || cmd.description.trim() === "") return COMMAND_EMPTY_FEATURE_REFUSAL;
   return null;
 }
-
 
 /** Le refus d'une dépendance : inconnue du lot, ou circulaire (S-2, S-6). */
 function depsRefusal(slug: string, deps: string[], lot: Lot | null): string | null {
@@ -644,7 +654,6 @@ function depsRefusal(slug: string, deps: string[], lot: Lot | null): string | nu
   }
   return null;
 }
-
 
 /**
  * Le refus SYNCHRONE d'un arbitrage (S-5), dans l'ordre : le texte, puis ce qui
@@ -671,7 +680,6 @@ function arbitrageRefusal(text: string, feature: LotFeature, view: CommandView):
   return null;
 }
 
-
 /**
  * Le refus SYNCHRONE d'une avance (S-7), avant tout `gh` ou fetch : pas de worktree, ou un
  * maillon qui tourne dedans — l'avance déplacerait l'arbre sous un run vivant.
@@ -682,10 +690,8 @@ function avanceRefusal(feature: LotFeature, view: CommandView): string | null {
   return null;
 }
 
-
 /** Le refus d'une avance dont un maillon tourne dans le worktree (S-7). */
 const AVANCE_LIVE_REFUSAL = "avance refusée : un maillon tourne dans le worktree";
-
 
 /**
  * Le motif d'un refus, ou `null` quand la commande est à appliquer. PUR et

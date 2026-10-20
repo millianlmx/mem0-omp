@@ -289,7 +289,11 @@ function snapshot(repo: Repo): Snapshot {
       .split("\n")
       .filter((line) => line !== "")
       .sort(),
-    localTags: git(["tag", "--list"], repo.dir).trim().split("\n").filter((tag) => tag !== "").sort(),
+    localTags: git(["tag", "--list"], repo.dir)
+      .trim()
+      .split("\n")
+      .filter((tag) => tag !== "")
+      .sort(),
     journal: fs.readFileSync(repo.journal, "utf8"),
     worktrees: git(["worktree", "list", "--porcelain"], repo.dir)
       .split("\n")
@@ -335,7 +339,10 @@ const COUPLING_STEPS: Step[] = [
     subject: FIX_SUBJECT,
     edits: [
       { file: `${MEMORY.dir}/state.ts`, append: "\n// scénario de test\n" },
-      { file: "test/outillage/couplage-version.test.ts", content: couplingTest(versionIn(ROOT, `${MEMORY.dir}/package.json`)) },
+      {
+        file: "test/outillage/couplage-version.test.ts",
+        content: couplingTest(versionIn(ROOT, `${MEMORY.dir}/package.json`)),
+      },
     ],
   },
 ];
@@ -359,9 +366,8 @@ function releaseStep(): Step {
       catalog.metadata = {
         ...(catalog.metadata ?? {}),
         version:
-          maxVersion(
-            catalog.plugins.map((entry) => entry.version).filter((v): v is string => typeof v === "string"),
-          ) ?? target,
+          maxVersion(catalog.plugins.map((entry) => entry.version).filter((v): v is string => typeof v === "string")) ??
+          target,
       };
       const serialized = `${JSON.stringify(catalog, null, 2)}\n`;
       const fix = git(["rev-parse", "--short", "HEAD"], dir).trim();
@@ -391,7 +397,10 @@ function prepareNonSemver(dir: string): void {
   }
   aligned.metadata = { ...(aligned.metadata ?? {}), version: reqVersion };
   const serialized = `${JSON.stringify(aligned, null, 2)}\n`;
-  fs.writeFileSync(path.join(dir, `${MEMORY.dir}/package.json`), `${JSON.stringify({ ...pkg, version: "1.2" }, null, 2)}\n`);
+  fs.writeFileSync(
+    path.join(dir, `${MEMORY.dir}/package.json`),
+    `${JSON.stringify({ ...pkg, version: "1.2" }, null, 2)}\n`,
+  );
   for (const catalog of CATALOGS) fs.writeFileSync(path.join(dir, catalog), serialized);
 }
 
@@ -500,9 +509,7 @@ test("release-simulation/AC-2 : une PR sans couplage de version sort verte, bump
   // release, et c'est le vrai `check.sh` qui a rendu le verdict.
   assert.ok(output(run).includes("· copie jetable : "), output(run));
   assert.ok(
-    output(run).includes(
-      `· écrit : ${MEMORY.dir}/package.json, ${CATALOGS[0]}, ${CATALOGS[1]}, CHANGELOG.md`,
-    ),
+    output(run).includes(`· écrit : ${MEMORY.dir}/package.json, ${CATALOGS[0]}, ${CATALOGS[1]}, CHANGELOG.md`),
     output(run),
   );
   assert.ok(output(run).includes("✓ release simulée : check.sh vert sur l'arbre écrit"), output(run));
