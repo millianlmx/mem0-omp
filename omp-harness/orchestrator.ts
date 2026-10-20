@@ -27,6 +27,7 @@ import { FAILOVER_PROMPT, STEP_ARTIFACT, nudgePrompt, stepPrompt } from "./promp
 import type { HostToolResult, PromptResult, RunnerProcess } from "./rpc.ts";
 import { RpcRunner, isRateLimit } from "./rpc.ts";
 import { hostToolsFor, runnerArgv, runnerEnv, runnerUnit, writePipelineOverlay } from "./runner.ts";
+import { projectScope } from "./scope.ts";
 import type { Scheduler, Slot } from "./scheduler.ts";
 import type { Verdict } from "./verdict.ts";
 import { mergeDecision, parseVerdict } from "./verdict.ts";
@@ -146,6 +147,15 @@ export class Orchestrator {
         await this.#deps.git.protectRepo(repo.path);
       } catch (err) {
         this.#log(`dépôt ${repo.name} : droits du gitdir non verrouillés — ${String(err)}`);
+      }
+      // La scope mémoire non déclarée est celle que le plugin mémoire du Mac calcule.
+      if (repo.scope === "") {
+        try {
+          repo.scope = await projectScope(this.#deps.git, repo.path, repo.mainBranch);
+        } catch {
+          repo.scope = repo.name;
+        }
+        this.#log(`dépôt ${repo.name} : mémoire du projet « ${repo.scope} »`);
       }
     }
     await this.recover();
@@ -551,8 +561,9 @@ export class Orchestrator {
     live.modelIndex = pick?.index ?? 0;
     live.prepaid = pick !== null;
     const unit = runnerUnit(run.id, stepRow.id);
-    const argv = runnerArgv(config, { unit, cwd: run.worktree as string, overlay: this.#overlay ?? writePipelineOverlay(config.dataDir), model: live.model });
-    const proc = this.#deps.spawn(argv.command, argv.args, { cwd: run.worktree as string, env: runnerEnv(this.#repo(run.repo).scope) });
+    const scope = this.#repo(run.repo).scope;
+    const argv = runnerArgv(config, { unit, cwd: run.worktree as string, overlay: this.#overlay ?? writePipelineOverlay(config.dataDir), model: live.model, scope });
+    const proc = this.#deps.spawn(argv.command, argv.args, { cwd: run.worktree as string, env: runnerEnv(scope, config.oracle) });
     const runner = new RpcRunner(proc, {
       onHostTool: (name, args, signal) => this.#hostTool(live, name, args, signal),
       onFrame: frame => {
@@ -1116,6 +1127,17 @@ export class Orchestrator {
   status(): Record<string, unknown> {
     const counts: Record<string, number> = {};
     for (const run of this.#deps.store.listRuns()) counts[run.state] = (counts[run.state] ?? 0) + 1;
-    return { runs: counts, live: [...this.#live.keys()], scheduler: this.#deps.scheduler.snapshot() };
+    return {
+      runs: counts,
+      live: [...this.#live.keys()],
+      scheduler: this.#deps.scheduler.snapshot(),
+      repos: this.#deps.config.repos.map(repo => ({ name: repo.name, scope: repo.scope })),
+    };
+  }
+
+  /** L'état de la mémoire du projet : configurée, joignable. */
+  async oracleStatus(): Promise<{ configured: boolean; ok: boolean }> {
+    if (!this.#deps.config.oracle) return { configured: false, ok: false };
+    return { configured: true, ok: await this.#deps.oracle.health() };
   }
 }

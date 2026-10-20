@@ -21,6 +21,8 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 export interface Oracle {
   recall(scope: string, query: string, limit?: number): Promise<Memory[]>;
   retain(scope: string, text: string, tags?: string[]): Promise<boolean>;
+  /** Le service répond-il (`GET /health`, `ok: true`) ? */
+  health(): Promise<boolean>;
 }
 
 
@@ -69,6 +71,25 @@ export class HttpOracle implements Oracle {
     }
   }
 
+  async health(): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    try {
+      const response = await this.#fetch(`${this.#config.url.replace(/\/$/, "")}/health`, {
+        method: "GET",
+        headers: this.#config.token ? { "X-Mem0-Token": this.#config.token } : {},
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const body = (await response.json()) as { ok?: unknown };
+      return body?.ok === true;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async recall(scope: string, query: string, limit = 8): Promise<Memory[]> {
     try {
       return memoriesOf(await this.#post("/memory/search", { query, agent_id: scope, limit, threshold: null, filters: null }));
@@ -94,6 +115,7 @@ export class HttpOracle implements Oracle {
 export const NO_ORACLE: Oracle = {
   recall: async () => [],
   retain: async () => false,
+  health: async () => false,
 };
 
 

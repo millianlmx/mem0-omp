@@ -13,14 +13,14 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
     c.runner.isolation = "systemd";
     c.launcher = [];
   });
-  const { command, args } = runnerArgv(config, { unit: "omp-runner-r1-3", cwd: "/w/feat", overlay: "/d/runner-settings.json", model: { provider: "anthropic", model: "fast" } });
+  const { command, args } = runnerArgv(config, { unit: "omp-runner-r1-3", cwd: "/w/feat", overlay: "/d/runner-settings.json", model: { provider: "anthropic", model: "fast" }, scope: "demo-scope" });
   assert.equal(command, "systemd-run");
   const line = args.join(" ");
-  assert.match(line, /^--scope --quiet --collect --unit=omp-runner-r1-3 --slice=omp-harness-runners\.slice -p MemoryMax=1G -- choom -n 300 -- omp /);
+  assert.match(line, /^--scope --quiet --collect --unit=omp-runner-r1-3 --slice=omp-harness-runners\.slice -p MemoryMax=1G --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 -- choom -n 300 -- omp /);
   for (const flag of ["--mode rpc", "--no-ui", "--no-session", "--no-lsp", "--auto-approve", "--profile pipeline", "--config /d/runner-settings.json", "--cwd /w/feat", "--model anthropic/fast"]) {
     assert.ok(line.includes(flag), `${flag} absent`);
   }
-  const bare = runnerArgv(testConfig("/srv/repo"), { unit: "u", cwd: "/w", overlay: "/o", model: null });
+  const bare = runnerArgv(testConfig("/srv/repo"), { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope" });
   assert.equal(bare.command, "omp");
   assert.equal(bare.args.includes("--model"), false);
 });
@@ -37,7 +37,7 @@ test("harness-runner/AC-2 : le profil pipeline éteint LSP, DAP et le noyau Pyth
 
 
 test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais jamais du jeton de l'API ; sa scope mémoire est celle du projet", () => {
-  const env = runnerEnv("demo-scope", { ANTHROPIC_API_KEY: "k", HARNESS_TOKEN: "secret", PATH: "/bin" });
+  const env = runnerEnv("demo-scope", { url: "http://127.0.0.1:8321", token: "m" }, { ANTHROPIC_API_KEY: "k", HARNESS_TOKEN: "secret", PATH: "/bin" });
   assert.equal(env.ANTHROPIC_API_KEY, "k");
   assert.equal("HARNESS_TOKEN" in env, false);
   assert.equal(env.MEM0_PROJECT_ID, "demo-scope");

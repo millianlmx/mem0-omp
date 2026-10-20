@@ -62,6 +62,39 @@ dépendent, et le service du Mac (launchd) reste tel quel.
   vérifié par `/proc/self/fd`. Un lien vers le jeton du service n'est jamais
   ingéré.
 
+## Mémoire du projet
+
+L'oracle **est** la mémoire mem0 du projet, celle que le plugin `omp-mem0-memory` lit
+sur ton Mac.
+
+- **Même scope.** Une scope de dépôt non déclarée est calculée au démarrage à partir
+  des manifestes de `main` (`package.json`, `pyproject.toml`, `Cargo.toml`,
+  `Package.swift`, puis `.xcodeproj`). Le plugin utilise la même table
+  (`omp-mem0-memory/state.ts`). `GET /v1/status` l'affiche par dépôt, avec l'état de
+  l'oracle.
+- **Runners branchés.** Chaque runner charge le plugin (`runner.extensions`) et
+  reçoit `MEM0_PROJECT_ID=<scope>`. Il bénéficie ainsi du rappel automatique à
+  chaque tour et des outils `mem0_*`. Il reçoit aussi `MEM0_AUTOSETUP=0` (aucun
+  brief écrit dans le dépôt, donc rien dans la PR) et `MEM0_NUDGE=0` (pas de tour
+  de relance par étape : le knowledge-updater s'en charge). Derrière le lanceur
+  root, ces trois variables sont les seules permises sur la ligne de commande.
+  L'adresse et le jeton de mem0 viennent de `runner.env`.
+- **mem0-rs sur le VPS.** `install.sh` construit `mem0-rs`, crée le user `omp-mem0`
+  et sa base dans `/var/lib/omp-mem0` (0700), puis démarre
+  `omp-harness-mem0.service`. Ce service est durci, écoute sur `127.0.0.1:8321` et
+  reste hors du budget des runs. Les vecteurs sémantiques et l'extraction viennent
+  du homelab via Tailscale (`OMLX_BASE_URL` dans `/etc/omp-harness/mem0.env`). Un
+  jeton commun est généré pour mem0-rs, le service et les runners. Les jobs heavy
+  ne voient ni la base ni le jeton.
+- **Une seule mémoire pour le Mac et le VPS.** Quatre étapes :
+  1. Copier `mem0-rs.db` du Mac dans `/var/lib/omp-mem0/`, service arrêté. La
+     dimension des vecteurs doit être la même.
+  2. Publier mem0 sur le tailnet : `tailscale serve --bg --https=8443 http://127.0.0.1:8321`.
+  3. Sur le Mac, faire pointer le plugin vers le VPS :
+     `MEM0_HTTP_URL=https://<vps>.<tailnet>.ts.net:8443` et
+     `MEM0_HTTP_TOKEN=<jeton de mem0.env>`.
+  4. Les sessions du Mac, les runners et l'oracle écrivent alors dans la même base.
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health`.

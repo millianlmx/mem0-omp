@@ -51,7 +51,7 @@ const waiting = new Map<string, (text: string) => void>();
 let toolSeq = 0;
 let currentStep = "req";
 
-log({ kind: "argv", argv: process.argv.slice(2), cwd: process.cwd(), env: { MEM0_PROJECT_ID: process.env.MEM0_PROJECT_ID ?? null, HARNESS_TOKEN: process.env.HARNESS_TOKEN ?? null } });
+log({ kind: "argv", argv: process.argv.slice(2), cwd: process.cwd(), env: Object.fromEntries(["MEM0_PROJECT_ID", "MEM0_AUTOSETUP", "MEM0_NUDGE", "MEM0_HTTP_URL", "MEM0_HTTP_TOKEN", "HARNESS_TOKEN"].map(key => [key, process.env[key] ?? null])) });
 
 function callTool(name: string, args: Record<string, unknown>): Promise<string> {
   const id = `fake-tool-${++toolSeq}`;

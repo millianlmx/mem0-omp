@@ -1573,6 +1573,7 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
+| `MEM0_NUDGE` | `1` | `0` coupe la relance d'écriture de fin de session (les runners du harness : la mémoire y est tenue par le service) |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |
 | `OMLX_EMBED_MODEL` | `bge-m3` | modèle d'embedding (dans `.env`) |
 

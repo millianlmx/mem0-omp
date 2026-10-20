@@ -2,8 +2,8 @@
 # Installé par deploy/install.sh en /etc/systemd/system/omp-harness.service.
 [Unit]
 Description=OMP harness — Pipeline Service (API REST + SSE, runners, heavy)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target omp-harness-mem0.service
+Wants=network-online.target omp-harness-mem0.service
 
 [Service]
 Type=simple

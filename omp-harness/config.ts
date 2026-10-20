@@ -26,7 +26,10 @@ export type RepoConfig = {
   name: string;
   /** Le clone que le harness possède : `main` n'y est pas extraite (clone nu ou dédié). */
   path: string;
-  /** La scope mem0 de l'oracle (identité de PROJET, partagée avec le plugin mémoire). */
+  /**
+   * La scope mem0 de l'oracle (identité de PROJET, partagée avec le plugin mémoire).
+   * Vide : lue au démarrage dans les manifestes de `main`, comme le fait le plugin.
+   */
   scope: string;
   mainBranch: string;
   /** Les commandes de test ; `{files}` reçoit les fichiers touchés, cités pour le shell. */
@@ -63,6 +66,11 @@ export type HarnessConfig = {
     profile: string;
     /** Le nombre de relances d'une étape qui a échoué sans verdict. */
     stepRetries: number;
+    /**
+     * Les extensions chargées par chaque runner (`-e`) — d'abord le plugin mémoire
+     * `omp-mem0-memory/extension.ts` : rappel automatique dans la mémoire du projet.
+     */
+    extensions: string[];
   };
   heavy: {
     slots: number;
@@ -140,6 +148,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       isolation: "systemd",
       profile: "pipeline",
       stepRetries: 1,
+      extensions: [],
     },
     heavy: {
       slots: 2,
@@ -230,7 +239,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
     {
       name,
       path: String(raw.path ?? ""),
-      scope: name,
+      scope: "",
       mainBranch: "main",
       tests: { touched: "npm test -- {files}", full: "npm test" },
       merge: "local",

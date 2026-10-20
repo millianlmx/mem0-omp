@@ -52,7 +52,7 @@ test("harness-deploy/AC-2 : un OOM tue un job heavy (800) avant un runner (300),
   assert.equal(directive(service, "ManagedOOMPreference"), "omit");
   const heavy = heavyLine();
   assert.ok(heavy.includes("OOMScoreAdjust=800"));
-  const runner = launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-1", cwd: WT, overlay: "/o.json", model: null }));
+  const runner = launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-1", cwd: WT, overlay: "/o.json", model: null, scope: "mon-produit" }));
   assert.deepEqual(runner.slice(runner.indexOf("choom"), runner.indexOf("choom") + 3), ["choom", "-n", "300"]);
   assert.equal(directive(read("omp-harness-runners.slice"), "ManagedOOMPreference"), "avoid");
   assert.equal(directive(read("omp-harness-heavy.slice"), "ManagedOOMMemoryPressure"), "kill");
@@ -69,7 +69,7 @@ test("harness-deploy/AC-3 : le lanceur root accepte exactement les lignes que le
   for (const expected of ["User=omp-heavy", "PrivateNetwork=yes", "MemoryMax=4G", "CPUQuota=300%", `--working-directory=${WT}`]) assert.ok(out.includes(expected), expected);
   assert.deepEqual(out.slice(-3), ["/bin/bash", "-c", "npm test"]);
 
-  const runner = launcher(launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-2", cwd: WT, overlay: "/o.json", model: { provider: "anthropic", model: "x" } })));
+  const runner = launcher(launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-2", cwd: WT, overlay: "/o.json", model: { provider: "anthropic", model: "x" }, scope: "mon-produit" })));
   assert.equal(runner.code, 0, runner.err);
   const line = runner.out.trimEnd().split("\n");
   assert.ok(line.includes("--uid=omp-runner"), "le runner tourne sous son user, jamais sous root ni sous le service");
@@ -135,7 +135,7 @@ test("harness-deploy/AC-5 : la configuration du lanceur est LUE, jamais exécut�
 
 
 test("harness-deploy/AC-6 : le lanceur épingle omp, impose le bac à sable heavy complet et refuse les chemins ambigus", () => {
-  const runner = launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-4", cwd: WT, overlay: "/o.json", model: null }));
+  const runner = launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-4", cwd: WT, overlay: "/o.json", model: null, scope: "mon-produit" }));
   const at = runner.indexOf(config.ompBin);
   assert.equal(launcher(runner).code, 0);
   assert.equal(launcher([...runner.slice(0, at), "/bin/sh", "-c", "id"]).code, 64, "le runner est OMP, rien d'autre");

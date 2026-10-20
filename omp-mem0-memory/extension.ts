@@ -29,6 +29,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { pinToolResult } from "./attach.ts";
 import { checkBrief } from "./brief.ts";
 import { countToolResult, pickSessionStopNudge } from "./checkpoint.ts";
+import { sessionNudgeEnabled } from "./config.ts";
 import { registerMem0Commands } from "./commands.ts";
 import { phaseStopContext } from "./phases.ts";
 import { handleRecall, registerRecallRenderer } from "./recall.ts";
@@ -107,7 +108,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     //    mémoire (adds === 0) et que la session a produit du potentiellement
     //    durable : fichiers modifiés, ou discussion substantielle sans édition
     //    (needs, specs, archi — sinon le nudge fondé sur `mutations` ne tire pas).
-    if (!st.nudged) {
+    if (!st.nudged && sessionNudgeEnabled()) {
       const msg = pickSessionStopNudge(st);
       if (msg) { st.nudged = true; parts.push(msg); }
     }

@@ -84,7 +84,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     {
       method: "GET",
       pattern: /^\/v1\/status$/,
-      handle: (_m, _req, res) => send(res, 200, orchestrator.status()),
+      handle: async (_m, _req, res) => send(res, 200, { ...orchestrator.status(), oracle: await orchestrator.oracleStatus() }),
     },
     {
       method: "GET",

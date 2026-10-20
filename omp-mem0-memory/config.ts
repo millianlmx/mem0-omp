@@ -83,5 +83,13 @@ export const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast
 
 export const GLOBAL_SCOPE = "_global";
 
+// MEM0_NUDGE=0 coupe la relance d'écriture de fin de session — pour les agents
+// conduits par un orchestrateur (runners du harness) dont un autre composant tient
+// déjà la mémoire à jour : sans elle, chaque étape paierait un tour de plus. Lu à
+// l'APPEL, pas à l'évaluation du module : l'environnement fait foi au moment du stop.
+export function sessionNudgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.MEM0_NUDGE !== "0";
+}
+
 // MEM0_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.
 export const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";

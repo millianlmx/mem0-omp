@@ -39,7 +39,17 @@ export function runnerUnit(runId: string, stepId: number): string {
 }
 
 
-export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: string; overlay: string; model: ModelChoice | null }): { command: string; args: string[] } {
+/**
+ * Ce que le plugin mémoire d'un runner doit savoir : la scope du PROJET (celle du
+ * Mac et de l'oracle), ne jamais écrire dans le dépôt (le brief finirait dans la
+ * PR), et pas de relance de fin de session (le knowledge-updater tient la mémoire).
+ */
+export function runnerMemoryEnv(scope: string): Record<string, string> {
+  return { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
+}
+
+
+export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: string; overlay: string; model: ModelChoice | null; scope: string }): { command: string; args: string[] } {
   const omp = [
     config.ompBin,
     "--mode", "rpc",
@@ -52,6 +62,7 @@ export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: str
     "--config", spec.overlay,
     "--cwd", spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
+    ...config.runner.extensions.flatMap(extension => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   return launch(config, [
@@ -61,6 +72,8 @@ export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: str
     `--unit=${spec.unit}`,
     `--slice=${config.runner.slice}`,
     "-p", `MemoryMax=${config.runner.memoryMax}`,
+    // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
+    ...Object.entries(runnerMemoryEnv(spec.scope)).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
     "choom", "-n", String(config.runner.oomScoreAdjust), "--",
     ...omp,
@@ -68,9 +81,21 @@ export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: str
 }
 
 
-/** L'environnement d'un runner : celui du service (clés des fournisseurs), sans le jeton de l'API. */
-export function runnerEnv(scope: string, base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...base, MEM0_PROJECT_ID: scope, PI_PY: "0" };
+/**
+ * L'environnement d'un runner lancé SANS le lanceur root : celui du service (clés des
+ * fournisseurs), la mémoire du projet (adresse et jeton de l'oracle), jamais le jeton
+ * de l'API. Avec le lanceur, sudo l'ignore : clés et oracle viennent de runner.env.
+ */
+export function runnerEnv(
+  scope: string,
+  oracle: HarnessConfig["oracle"],
+  base: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base, ...runnerMemoryEnv(scope), PI_PY: "0" };
+  if (oracle) {
+    env.MEM0_HTTP_URL = oracle.url;
+    if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;
+  }
   delete env.HARNESS_TOKEN;
   return env;
 }

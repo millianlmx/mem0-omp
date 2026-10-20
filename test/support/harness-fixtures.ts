@@ -93,6 +93,10 @@ export class MemoryOracle implements Oracle {
     this.retained.push({ scope, text, tags });
     return true;
   }
+  healthy = true;
+  async health(): Promise<boolean> {
+    return this.healthy;
+  }
 }
 
 

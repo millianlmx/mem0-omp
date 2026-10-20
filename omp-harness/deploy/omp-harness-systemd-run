@@ -38,7 +38,7 @@ RUNNER_SLICE=omp-harness-runners.slice
 OMP_BIN=/usr/local/bin/omp
 RUNNER_ENV_FILE=/etc/omp-harness/runner.env
 # Ce qu'un job heavy ne doit jamais voir, ajouté par le lanceur lui-même.
-HEAVY_HIDDEN="/var/lib/omp-runner /var/lib/omp-harness/state /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private"
+HEAVY_HIDDEN="/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private"
 
 DRY_RUN=0
 CONF=/etc/omp-harness/launcher.conf
@@ -119,7 +119,8 @@ case "$1" in
     ;;
 
   --scope)
-    # --scope --quiet --collect --unit=omp-runner-ID --slice=… -p MemoryMax=X -- choom -n N -- omp …
+    # --scope --quiet --collect --unit=omp-runner-ID --slice=… -p MemoryMax=X
+    #   [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE=…]… -- choom -n N -- OMP_BIN …
     [ "$#" -ge 12 ] || refuse "ligne de runner trop courte"
     [ "$2" = "--quiet" ] && [ "$3" = "--collect" ] || refuse "options de scope inattendues"
     unit="${4#--unit=}"
@@ -128,16 +129,29 @@ case "$1" in
     [ "$6" = "-p" ] || refuse "propriété attendue"
     memory="${7#MemoryMax=}"
     [ "$7" = "MemoryMax=$memory" ] && [[ "$memory" =~ $size_re ]] || refuse "MemoryMax invalide : $7"
-    [ "$8" = "--" ] && [ "$9" = "choom" ] && [ "${10}" = "-n" ] || refuse "le runner doit passer par choom"
-    [[ "${11}" =~ ^[0-9]+$ ]] && [ "${11}" -le 1000 ] || refuse "score OOM invalide : ${11}"
-    [ "${12}" = "--" ] || refuse "choom -n N -- attendu"
-    oom="${11}"
-    shift 12
+    shift 7
+    # La mémoire du projet du runner : trois variables, liste FERMÉE, valeurs simples.
+    memory_env=()
+    while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
+      assignment="${1#--setenv=}"
+      name="${assignment%%=*}"
+      value="${assignment#*=}"
+      case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE) ;; *) refuse "variable de runner non permise : $name" ;; esac
+      [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
+      memory_env+=("$name=$value")
+      shift
+    done
+    [ "${1:-}" = "--" ] && [ "${2:-}" = "choom" ] && [ "${3:-}" = "-n" ] || refuse "le runner doit passer par choom"
+    [[ "${4:-}" =~ ^[0-9]+$ ]] && [ "$4" -le 1000 ] || refuse "score OOM invalide : ${4:-rien}"
+    [ "${5:-}" = "--" ] || refuse "choom -n N -- attendu"
+    oom="$4"
+    shift 5
     [ "${1:-}" = "$OMP_BIN" ] || refuse "le runner doit être $OMP_BIN (reçu ${1:-rien})"
     home=$(getent passwd "$RUNNER_USER" | cut -d: -f6 || true)
     [ -n "$home" ] || [ "$DRY_RUN" = "1" ] || refuse "user de runner inconnu : $RUNNER_USER"
     export HOME="${home:-/nonexistent}" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER"
-    # Les clés des fournisseurs LLM : lues (jamais sourcées) dans un fichier root, pour le runner seul.
+    # Les clés des fournisseurs LLM et l'adresse de la mémoire : lues (jamais sourcées)
+    # dans un fichier root, pour le runner seul.
     if [ -r "$RUNNER_ENV_FILE" ]; then
       while IFS= read -r line; do
         [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
@@ -145,6 +159,12 @@ case "$1" in
         export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
       done < "$RUNNER_ENV_FILE"
     fi
+    # La scope du run passe APRÈS runner.env : elle vaut pour ce run, pas pour tous.
+    for assignment in "${memory_env[@]}"; do
+      export "${assignment?}"
+      # `if` et non `&&` : sous `set -e`, une boucle dont la dernière commande échoue arrêterait le lanceur.
+      if [ "$DRY_RUN" = "1" ]; then printf 'env:%s\n' "$assignment"; fi
+    done
     run systemd-run --scope --quiet --collect "--unit=$unit" "--slice=$RUNNER_SLICE" -p "MemoryMax=$memory" \
       "--uid=$RUNNER_USER" "--gid=$WORK_GROUP" -- choom -n "$oom" -- "$@"
     ;;
