@@ -295,3 +295,45 @@ test("harness-pipeline/AC-8 : un service redémarré reprend chaque run au derni
     await restarted.stop();
   }
 });
+
+
+test("harness-pipeline/AC-9 : un rebase en conflit devient une fusion de main faite par le service ; le runner résout dans les fichiers, sans git", async () => {
+  const world = fakeWorld({
+    req: [OK.req],
+    specs: [OK.specs],
+    impl: [[{ sleep: 300 }, { write: "README.md", content: "// README.md\nexport CSV\n" }, ...OK.impl]],
+    review: [[{ write: "README.md", content: "// README.md\nexport CSV\nguide v2\n" }, ...OK.review]],
+  });
+  await world.orchestrator.start();
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Export en conflit", request: "Exporter" });
+    await waitFor(() => world.store.getRun(run.id)?.step === "impl", () => stateOf(world, run.id));
+    const moved = commitOnMain(world.repo, "README.md", "// README.md\nguide v2\n");
+    await until(world, run.id, ["merged", "failed", "awaiting_human"]);
+    assert.equal(world.store.getRun(run.id)?.state, "merged", stateOf(world, run.id));
+    assert.ok(world.store.eventsSince(0, run.id).some(e => e.type === "rebase_conflict" && e.payload.strategy === "merge"));
+    const review = world.log().find(e => e.kind === "prompt" && e.step === "review");
+    assert.match(String(review?.message), /marqueurs de conflit : README\.md/);
+    assert.match(String(review?.message), /n'appelle pas git/);
+    assert.equal(git(world.repo, "rev-parse", "main^"), moved);
+    assert.equal(git(world.repo, "show", "main:README.md"), "// README.md\nexport CSV\nguide v2");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+
+test("harness-pipeline/AC-10 : les gestes humains ne s'écrasent pas — annuler pendant un merge est refusé, valider un run annulé aussi", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
+  try {
+    const merging = world.store.createRun({ id: "rm", repo: "demo", slug: "m", title: "M", request: "m", branch: "harness/m", state: "merging" });
+    await assert.rejects(world.orchestrator.cancel(merging.id), /merge en cours/);
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Annulée", request: "x" });
+    await world.orchestrator.cancel(run.id);
+    await assert.rejects(world.orchestrator.validate(run.id, true, ""), /n'attend pas de validation/);
+    await world.orchestrator.tick();
+    assert.equal(world.store.getRun(run.id)?.state, "cancelled", "aucun tick ne relance un run annulé");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});

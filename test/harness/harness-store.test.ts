@@ -95,3 +95,13 @@ test("harness-store/AC-6 : le cache heavy est indexé par clé, et une transacti
   );
   assert.equal(db.getRun("r9"), null);
 });
+
+
+test("harness-store/AC-7 : une mise à jour conditionnelle n'écrase jamais un état changé entre-temps (annulation)", () => {
+  const db = store();
+  db.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "b" });
+  db.updateRun("r1", { state: "cancelled" });
+  assert.equal(db.updateRunIf("r1", ["queued"], { state: "running" }), null);
+  assert.equal(db.getRun("r1")?.state, "cancelled");
+  assert.equal(db.updateRunIf("r1", ["cancelled"], { reason: "vu" })?.reason, "vu");
+});

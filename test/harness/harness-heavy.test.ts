@@ -21,11 +21,11 @@ test("harness-heavy/AC-1 : un job heavy est un service systemd transitoire — M
   });
   // Par défaut, la ligne passe par le lanceur root (sudo), qui la valide.
   const viaLauncher = heavyArgv(config, "/w/feat", "omp-heavy-r1-1", "npm test", heavyEnv(config, "/w/feat"));
-  assert.deepEqual([viaLauncher.command, ...viaLauncher.args.slice(0, 3)], [...DEFAULT_LAUNCHER]);
+  assert.deepEqual([viaLauncher.command, ...viaLauncher.args.slice(0, DEFAULT_LAUNCHER.length - 1)], [...DEFAULT_LAUNCHER]);
   config.launcher = [];
   const { command, args } = heavyArgv(config, "/w/feat", "omp-heavy-r1-1", "npm test", heavyEnv(config, "/w/feat"));
   assert.equal(command, "systemd-run");
-  assert.deepEqual(viaLauncher.args.slice(3), args);
+  assert.deepEqual(viaLauncher.args.slice(DEFAULT_LAUNCHER.length - 1), args);
   for (const expected of [
     "--wait",
     "--pipe",

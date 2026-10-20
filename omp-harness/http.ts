@@ -237,8 +237,14 @@ export function createHandler(options: HttpOptions): http.RequestListener {
 
   return (req, res) => {
     void (async () => {
-      const url = new URL(req.url ?? "/", "http://harness");
       try {
+        // Dans le try : une ligne de requête illisible (`GET http://[x/`) est un 400, jamais un crash.
+        let url: URL;
+        try {
+          url = new URL(req.url ?? "/", "http://harness");
+        } catch {
+          throw new HarnessError(400, "URL illisible");
+        }
         if (req.method === "GET" && url.pathname === "/v1/health") {
           send(res, 200, { ok: true, api: API_VERSION, version: options.version ?? null });
           return;
@@ -271,6 +277,9 @@ export function createHandler(options: HttpOptions): http.RequestListener {
         if (err instanceof HarnessError) send(res, err.status, { error: err.message });
         else send(res, 500, { error: err instanceof Error ? err.message : String(err) });
       }
-    })();
+    })().catch(() => {
+      if (!res.headersSent) send(res, 500, { error: "erreur interne" });
+      else res.end();
+    });
   };
 }

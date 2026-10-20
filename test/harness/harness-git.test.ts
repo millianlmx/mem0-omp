@@ -93,3 +93,43 @@ test("harness-git/AC-5 : le merge squash pose un commit sur main sans checkout, 
   await client.commitAll(other, "wip");
   await assert.rejects(client.squashMerge(repo, "harness/y", "main", git(repo, "rev-parse", "main"), "Y"), /pas rebasée/);
 });
+
+
+test("harness-git/AC-6 : un `.git` de worktree repointé par un runner est ignoré — le service passe par le gitdir du clone, sans hook", async () => {
+  const repo = harnessRepo();
+  const wt = await worktree(repo);
+  // Un gitdir piégé : un hook post-commit qui laisse une trace.
+  const evil = tmpdir("harness-evil-");
+  git(evil, "init", "-q");
+  const trace = path.join(tmpdir("harness-trace-"), "pwned");
+  fs.writeFileSync(path.join(evil, ".git/hooks/post-commit"), `#!/bin/sh\ntouch ${trace}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(evil, ".git")}\n`);
+  // Et un hook dans le vrai clone : forcé à rien lui aussi.
+  fs.writeFileSync(path.join(repo, ".git/hooks/post-commit"), `#!/bin/sh\ntouch ${trace}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(wt, "a.ts"), "a");
+  const sha = await client.commitAll(wt, "wip");
+  assert.equal(git(repo, "rev-parse", "harness/x"), sha, "le commit est sur la vraie branche");
+  assert.equal(fs.existsSync(trace), false, "aucun hook n'a tourné");
+  assert.throws(() => git(evil, "rev-parse", "HEAD"), "le gitdir piégé n'a rien reçu");
+  // Un worktree que le clone ne connaît pas est refusé.
+  await assert.rejects(client.trustWorktree(repo, tmpdir("harness-stranger-")), /inconnu du clone/);
+});
+
+
+test("harness-git/AC-7 : le gitdir du clone perd l'écriture de groupe et la garde (core.sharedRepository=0640)", async () => {
+  const repo = harnessRepo();
+  fs.chmodSync(path.join(repo, ".git/config"), 0o664);
+  await client.protectRepo(repo);
+  assert.equal(git(repo, "config", "core.sharedRepository"), "0640");
+  const writable: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (fs.lstatSync(full).mode & 0o020) writable.push(full);
+      if (entry.isDirectory()) walk(full);
+    }
+  };
+  await worktree(repo, "harness/y");
+  walk(path.join(repo, ".git"));
+  assert.deepEqual(writable, []);
+});

@@ -27,6 +27,7 @@ function fakeProc(): { proc: RunnerProcess; emit: (frame: object) => void; sent:
       return true;
     },
     once: (event, listener) => events.once(event, listener),
+    on: (event, listener) => events.on(event, listener),
   };
   return { proc, emit: frame => stdout.write(`${JSON.stringify(frame)}\n`), sent: () => lines.map(line => JSON.parse(line)), exit: () => events.emit("exit", 1, null) };
 }
@@ -102,4 +103,34 @@ test("harness-rpc/AC-4 : la mort du runner rejette toutes les attentes en vol", 
   await assert.rejects(runner.ready(100), /runner arrêté/);
   assert.equal(runner.alive, false);
   await assert.rejects(runner.setModel("p", "m"), /runner arrêté/);
+});
+
+
+test("harness-rpc/AC-5 : un runner qu'on ne peut pas signaler (lancé par sudo) est arrêté par son unité, et l'arrêt reste borné", async () => {
+  const stdin = new PassThrough();
+  const events = new EventEmitter();
+  let forced = 0;
+  const proc: RunnerProcess = {
+    stdin,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => {
+      events.emit("error", new Error("kill EPERM"));
+      throw new Error("kill EPERM");
+    },
+    once: (event, listener) => events.once(event, listener),
+    on: (event, listener) => events.on(event, listener),
+  };
+  const runner = new RpcRunner(proc, { onHostTool: async () => ({ text: "" }) });
+  await runner.stop(20, async () => {
+    forced++;
+    events.emit("exit", null, "SIGKILL");
+  });
+  assert.equal(forced, 1, "l'arrêt passe par l'unité systemd");
+  assert.equal(runner.alive, false);
+  // Un process qui ne sort jamais : l'arrêt rend quand même la main.
+  const stuck = fakeProc();
+  const hung = new RpcRunner({ ...stuck.proc, kill: () => true }, { onHostTool: async () => ({ text: "" }) });
+  await hung.stop(10);
+  assert.equal(hung.alive, false);
 });

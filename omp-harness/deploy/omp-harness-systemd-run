@@ -1,12 +1,14 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Le lanceur ROOT du harness : la seule porte de `omp-harness` vers systemd.
 #
 # Installé en /usr/local/libexec/omp-harness-systemd-run (root:root 0755) et
-# autorisé par sudoers pour le seul user `omp-harness`. Il n'exécute que les TROIS
+# autorisé par sudoers pour le seul user `omp-harness`, SANS SETENV : sudo remet
+# l'environnement à zéro (ni BASH_ENV, ni LD_*, ni PATH de l'appelant). Il n'exécute que les TROIS
 # lignes que le service construit, après les avoir validées mot à mot :
 #
-#   --scope …  -- choom -n N -- omp …    un runner : scope MemoryMax, relancé sous
-#                                        RUNNER_USER (jamais root, jamais le service)
+#   --scope …  -- choom -n N -- OMP_BIN … un runner : scope MemoryMax, relancé sous
+#                                        RUNNER_USER (jamais root, jamais le service),
+#                                        avec les clés de RUNNER_ENV_FILE (root seul)
 #   --wait --pipe …  -- /bin/bash -c CMD un job heavy : service transitoire forcé
 #                                        User=HEAVY_USER, PrivateNetwork=yes,
 #                                        chemins inscriptibles sous WRITABLE_ROOTS
@@ -20,7 +22,11 @@
 # imprime la ligne finale au lieu de l'exécuter (tests) ; la configuration de
 # remplacement OMP_HARNESS_LAUNCHER_CONF n'est honorée qu'en essai ET hors root.
 set -euo pipefail
+set -f
 umask 0002
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+cd /
 
 WORKTREES_ROOT=/var/lib/omp-harness/worktrees
 WRITABLE_ROOTS="/var/lib/omp-harness/worktrees /var/cache/omp-harness /var/lib/omp-heavy"
@@ -29,6 +35,10 @@ RUNNER_USER=omp-runner
 WORK_GROUP=omp-work
 HEAVY_SLICE=omp-harness-heavy.slice
 RUNNER_SLICE=omp-harness-runners.slice
+OMP_BIN=/usr/local/bin/omp
+RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+# Ce qu'un job heavy ne doit jamais voir, ajouté par le lanceur lui-même.
+HEAVY_HIDDEN="/var/lib/omp-runner /var/lib/omp-harness/state /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private"
 
 DRY_RUN=0
 CONF=/etc/omp-harness/launcher.conf
@@ -47,6 +57,9 @@ if [ -r "$CONF" ]; then
       WORK_GROUP) WORK_GROUP="$value" ;;
       HEAVY_SLICE) HEAVY_SLICE="$value" ;;
       RUNNER_SLICE) RUNNER_SLICE="$value" ;;
+      OMP_BIN) OMP_BIN="$value" ;;
+      RUNNER_ENV_FILE) RUNNER_ENV_FILE="$value" ;;
+      HEAVY_HIDDEN) HEAVY_HIDDEN="$value" ;;
       *) ;;
     esac
   done < <(grep -E '^[A-Z_]+=' "$CONF" | sed 's/"//g')
@@ -92,6 +105,9 @@ run() {
 
 size_re='^[0-9]+[KMGT]?$'
 unit_id_re='^[A-Za-z0-9_-]+$'
+# Un chemin que systemd et bash lisent pareil : absolu, sans espace, guillemet, joker, %, préfixe - ou +.
+path_re='^/[A-Za-z0-9._/-]+$'
+name_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 
 [ "$#" -ge 1 ] || refuse "aucun argument"
 
@@ -115,19 +131,29 @@ case "$1" in
     [ "$8" = "--" ] && [ "$9" = "choom" ] && [ "${10}" = "-n" ] || refuse "le runner doit passer par choom"
     [[ "${11}" =~ ^[0-9]+$ ]] && [ "${11}" -le 1000 ] || refuse "score OOM invalide : ${11}"
     [ "${12}" = "--" ] || refuse "choom -n N -- attendu"
+    oom="${11}"
     shift 12
-    [ "$#" -ge 1 ] || refuse "commande de runner absente"
+    [ "${1:-}" = "$OMP_BIN" ] || refuse "le runner doit être $OMP_BIN (reçu ${1:-rien})"
     home=$(getent passwd "$RUNNER_USER" | cut -d: -f6 || true)
     [ -n "$home" ] || [ "$DRY_RUN" = "1" ] || refuse "user de runner inconnu : $RUNNER_USER"
     export HOME="${home:-/nonexistent}" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER"
+    # Les clés des fournisseurs LLM : lues (jamais sourcées) dans un fichier root, pour le runner seul.
+    if [ -r "$RUNNER_ENV_FILE" ]; then
+      while IFS= read -r line; do
+        [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+        case "${BASH_REMATCH[1]}" in BASH_ENV | ENV | LD_* | PATH | HOME | USER | LOGNAME | SHELL) continue ;; esac
+        export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+      done < "$RUNNER_ENV_FILE"
+    fi
     run systemd-run --scope --quiet --collect "--unit=$unit" "--slice=$RUNNER_SLICE" -p "MemoryMax=$memory" \
-      "--uid=$RUNNER_USER" "--gid=$WORK_GROUP" -- choom -n "${11}" -- "$@"
+      "--uid=$RUNNER_USER" "--gid=$WORK_GROUP" -- choom -n "$oom" -- "$@"
     ;;
 
   --wait)
     # Un job heavy : chaque mot est vérifié jusqu'à `--`, puis exactement /bin/bash -c CMD.
     final=()
     seen_user=0 seen_network=0 seen_memory=0 seen_nnp=0 seen_unit=0 seen_slice=0 seen_cwd=0
+    seen_protect=0 seen_tmp=0 seen_runtime=0
     expected_flags=(--wait --pipe --collect --service-type=exec)
     for flag in "${expected_flags[@]}"; do
       [ "${1:-}" = "$flag" ] || refuse "option attendue : $flag (reçu ${1:-rien})"
@@ -149,7 +175,13 @@ case "$1" in
           final+=("$arg")
           ;;
         --working-directory=*)
-          under "${arg#--working-directory=}" "$WORKTREES_ROOT" || refuse "répertoire hors des worktrees : $arg"
+          # Exactement WORKTREES_ROOT/<dépôt>/<feature> : ni plus haut, ni plus bas.
+          cwd="${arg#--working-directory=}"
+          [[ "$cwd" =~ $path_re ]] || refuse "répertoire illisible : $arg"
+          rel="${cwd#"$WORKTREES_ROOT"/}"
+          [ "$rel" != "$cwd" ] && [ "${rel%%/*}" != "$rel" ] || refuse "répertoire hors des worktrees : $arg"
+          [[ "${rel%%/*}" =~ $name_re ]] && [[ "${rel#*/}" =~ $name_re ]] || refuse "répertoire hors des worktrees : $arg"
+          [ "$(realpath -m -- "$cwd")" = "$cwd" ] || refuse "répertoire non canonique : $arg"
           seen_cwd=1
           final+=("$arg")
           ;;
@@ -169,13 +201,15 @@ case "$1" in
             User) [ "$value" = "$HEAVY_USER" ] || refuse "User doit être $HEAVY_USER (reçu $value)"; seen_user=1 ;;
             PrivateNetwork) [ "$value" = "yes" ] || refuse "PrivateNetwork doit être yes"; seen_network=1 ;;
             OOMScoreAdjust) [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -le 1000 ] || refuse "OOMScoreAdjust doit être entre 0 et 1000" ;;
-            RuntimeMaxSec) [[ "$value" =~ ^[0-9]+$ ]] || refuse "RuntimeMaxSec invalide : $value" ;;
+            RuntimeMaxSec) [[ "$value" =~ ^[1-9][0-9]*$ ]] || refuse "RuntimeMaxSec invalide : $value"; seen_runtime=1 ;;
             NoNewPrivileges) [ "$value" = "yes" ] || refuse "NoNewPrivileges doit être yes"; seen_nnp=1 ;;
-            PrivateTmp) [ "$value" = "yes" ] || refuse "PrivateTmp doit être yes" ;;
-            ProtectSystem) [ "$value" = "strict" ] || refuse "ProtectSystem doit être strict" ;;
+            PrivateTmp) [ "$value" = "yes" ] || refuse "PrivateTmp doit être yes"; seen_tmp=1 ;;
+            ProtectSystem) [ "$value" = "strict" ] || refuse "ProtectSystem doit être strict"; seen_protect=1 ;;
             UMask) [[ "$value" =~ ^0[0-7]{3}$ ]] || refuse "UMask invalide : $value" ;;
             ReadWritePaths)
+              # `set -f` : aucun joker n'est développé ; chaque mot doit être un chemin absolu simple.
               for writable in $value; do
+                [[ "$writable" =~ $path_re ]] || refuse "chemin inscriptible illisible : $writable"
                 # shellcheck disable=SC2086
                 within "$writable" $WRITABLE_ROOTS || refuse "chemin inscriptible hors des racines : $writable"
               done
@@ -188,7 +222,12 @@ case "$1" in
       esac
     done
     [ "$seen_user" = 1 ] && [ "$seen_network" = 1 ] && [ "$seen_memory" = 1 ] && [ "$seen_nnp" = 1 ] || refuse "User, PrivateNetwork, MemoryMax et NoNewPrivileges sont obligatoires"
+    [ "$seen_protect" = 1 ] && [ "$seen_tmp" = 1 ] && [ "$seen_runtime" = 1 ] || refuse "ProtectSystem=strict, PrivateTmp et RuntimeMaxSec sont obligatoires"
     [ "$seen_unit" = 1 ] && [ "$seen_slice" = 1 ] && [ "$seen_cwd" = 1 ] || refuse "--unit, --slice et --working-directory sont obligatoires"
+    # Imposé par le lanceur, jamais par l'appelant : pas de HOME des autres, ni état du service, ni sockets d'hôte.
+    hidden=()
+    for path in $HEAVY_HIDDEN; do hidden+=("-$path"); done
+    final+=(-p "ProtectHome=yes" -p "InaccessiblePaths=${hidden[*]}" -p "PrivateDevices=yes" -p "PrivateIPC=yes")
     [ "${1:-}" = "--" ] && [ "${2:-}" = "/bin/bash" ] && [ "${3:-}" = "-c" ] && [ "$#" -eq 4 ] || refuse "la commande doit être exactement -- /bin/bash -c CMD"
     run systemd-run "${final[@]}" -- /bin/bash -c "$4"
     ;;

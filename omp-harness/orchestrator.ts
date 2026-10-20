@@ -14,9 +14,10 @@ import type { DecisionRow, RunRow, Store, StepRow } from "./db.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
 import type { Git } from "./git.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
+import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import { heavyReport } from "./heavy.ts";
-import type { StepKind, StepOutcome, Transition } from "./machine.ts";
+import type { RunState, StepKind, StepOutcome, Transition } from "./machine.ts";
 import { ACTIVE_STATES, STEP_TIER, afterHumanValidation, isTerminal, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "./machine.ts";
 import type { Oracle } from "./oracle.ts";
 import { humanDecisionMemory, renderMemories } from "./oracle.ts";
@@ -108,6 +109,8 @@ export class Orchestrator {
   readonly #deps: OrchestratorDeps;
   readonly #live = new Map<string, Live>();
   readonly #merging = new Set<string>();
+  /** Les gestes humains d'un même run passent un par un (deux renversements simultanés…). */
+  readonly #gestures = new Map<string, Promise<unknown>>();
   readonly #log: (line: string) => void;
   #overlay: string | null = null;
   #timer: NodeJS.Timeout | null = null;
@@ -138,6 +141,13 @@ export class Orchestrator {
   /** Reprise après redémarrage, puis la boucle de scheduling. */
   async start(): Promise<void> {
     this.#overlay = writePipelineOverlay(this.#deps.config.dataDir);
+    for (const repo of this.#deps.config.repos) {
+      try {
+        await this.#deps.git.protectRepo(repo.path);
+      } catch (err) {
+        this.#log(`dépôt ${repo.name} : droits du gitdir non verrouillés — ${String(err)}`);
+      }
+    }
     await this.recover();
     const tickMs = this.#deps.tickMs ?? 1000;
     this.#timer = setInterval(() => void this.tick(), tickMs);
@@ -152,7 +162,7 @@ export class Orchestrator {
     const lives = [...this.#live.values()];
     for (const live of lives) {
       live.abort.abort();
-      await live.runner?.stop();
+      await this.#stopRunner(live);
     }
     await Promise.allSettled(lives.map(live => live.done));
   }
@@ -170,6 +180,16 @@ export class Orchestrator {
         await exec(stop.command, stop.args, { timeoutMs: 15_000 });
       }
     }
+    // Chaque worktree encore vivant est re-reconnu côté clone (jamais par son `.git`).
+    for (const run of store.listRuns({ state: ["queued", "running", "escalated", "awaiting_human", "merging"] })) {
+      if (!run.worktree) continue;
+      try {
+        await this.#deps.git.trustWorktree(this.#repo(run.repo).path, run.worktree);
+      } catch (err) {
+        const reason = `worktree non reconnu par son clone : ${err instanceof Error ? err.message : String(err)}`;
+        if (store.updateRunIf(run.id, [run.state], { state: "failed", reason })) this.#event("run_state", run.id, { state: "failed", reason });
+      }
+    }
     for (const run of store.listRuns({ state: ["running"] })) {
       if (run.worktree && fs.existsSync(run.worktree)) {
         try {
@@ -178,8 +198,9 @@ export class Orchestrator {
           this.#log(`reprise ${run.id} : retour au checkpoint impossible — ${String(err)}`);
         }
       }
-      store.updateRun(run.id, { state: "queued", reason: "service redémarré — reprise au dernier checkpoint" });
-      this.#event("recovered", run.id, { step: run.step });
+      if (store.updateRunIf(run.id, ["running"], { state: "queued", reason: "service redémarré — reprise au dernier checkpoint" })) {
+        this.#event("recovered", run.id, { step: run.step });
+      }
     }
   }
 
@@ -214,7 +235,7 @@ export class Orchestrator {
         const slot = scheduler.tryAcquire("runner", id);
         if ("refused" in slot) {
           this.#event("admission_refused", id, { reason: slot.refused, detail: slot.detail });
-          return;
+          break;
         }
         this.#launch(id, slot);
       }
@@ -251,7 +272,7 @@ export class Orchestrator {
     const live = this.#live.get(runId);
     if (!live) return;
     live.abort.abort();
-    await live.runner?.stop();
+    await this.#stopRunner(live);
     await live.done;
   }
 
@@ -264,7 +285,10 @@ export class Orchestrator {
       if (run.worktree === null) run = await this.#provision(run);
       // Une revue reprise (escalade, renversement) re-passe par le rebase.
       if (run.step === "review") live.pendingRebase = true;
-      run = store.updateRun(run.id, { state: "running" });
+      // Un geste humain (annulation…) a pu passer pendant le provisionnement : rien ne l'écrase.
+      const started = store.updateRunIf(run.id, ["queued"], { state: "running" });
+      if (!started) return;
+      run = started;
       this.#event("run_state", run.id, { state: "running", step: run.step });
       while (!live.abort.signal.aborted) {
         run = store.getRun(live.runId) as RunRow;
@@ -276,7 +300,7 @@ export class Orchestrator {
           fixCap: this.#deps.config.review.fixCap,
           stepRetries: this.#deps.config.runner.stepRetries,
         });
-        this.#apply(run, transition);
+        if (!this.#apply(run, transition, ["running"])) break;
         if (!transition.keepRunner) await this.#stopRunner(live);
         if (transition.rebase) live.pendingRebase = true;
         if (transition.state !== "running") break;
@@ -285,22 +309,28 @@ export class Orchestrator {
       const run = store.getRun(live.runId);
       if (run && !isTerminal(run.state) && !live.abort.signal.aborted) {
         const reason = err instanceof Error ? err.message : String(err);
-        store.updateRun(live.runId, { state: "failed", reason });
-        this.#event("run_state", live.runId, { state: "failed", reason });
-        this.#log(`run ${live.runId} en échec : ${reason}`);
+        if (store.updateRunIf(live.runId, ["queued", "running"], { state: "failed", reason })) {
+          this.#event("run_state", live.runId, { state: "failed", reason });
+          this.#log(`run ${live.runId} en échec : ${reason}`);
+        }
       }
     }
   }
 
-  #apply(run: RunRow, transition: Transition): RunRow {
+  /** Applique une transition SI le run est encore dans un des états `expected` ; sinon `null`. */
+  #apply(run: RunRow, transition: Transition, expected: readonly RunState[]): RunRow | null {
     const { store } = this.#deps;
-    const updated = store.updateRun(run.id, {
+    const updated = store.updateRunIf(run.id, expected, {
       state: transition.state,
       step: transition.step,
       fixes: transition.fixes,
       attempts: transition.attempts,
       reason: transition.reason,
     });
+    if (!updated) {
+      this.#log(`run ${run.id} : transition vers ${transition.state} écartée (état changé entre-temps)`);
+      return null;
+    }
     this.#event("run_state", run.id, { state: transition.state, step: transition.step, reason: transition.reason });
     if (transition.state === "escalated") {
       const items = store.listEscalations({ runId: run.id, status: "open" });
@@ -345,6 +375,8 @@ export class Orchestrator {
     this.#event("step_started", run.id, { step, stepId: stepRow.id, attempt: run.attempts });
     try {
       this.#materialize(run);
+      // Une fusion de main en cours (rebase en conflit) : ses fichiers encore en conflit partent dans le prompt.
+      if (step === "review" && (await git.mergeInProgress(worktree))) live.conflicts = await git.unmergedFiles(worktree);
       const headBefore = await git.revParse(worktree, "HEAD");
       const dirtyBefore = await git.isDirty(worktree);
       const runner = await this.#ensureRunner(live, run, stepRow);
@@ -399,9 +431,14 @@ export class Orchestrator {
     const worktree = run.worktree as string;
     const step = run.step as StepKind;
     const artifact = STEP_ARTIFACT[step];
-    if (artifact !== null && !fs.existsSync(path.join(worktree, ARTIFACTS_DIR, artifact))) return `\`${ARTIFACTS_DIR}/${artifact}\` n'existe pas`;
-    if (step === "req" && !/^##\s+Besoins/m.test(fs.readFileSync(path.join(worktree, ARTIFACTS_DIR, "req.md"), "utf8"))) return "la section `## Besoins` manque dans req.md";
-    if (step === "specs" && !/^##\s+Crit[eè]res d'acceptation/m.test(fs.readFileSync(path.join(worktree, ARTIFACTS_DIR, "specs.md"), "utf8"))) return "la section `## Critères d'acceptation` manque dans specs.md";
+    const content = artifact === null ? null : readArtifact(expectedDir(worktree, ARTIFACTS_DIR), artifact);
+    if (artifact !== null && content === null) return `\`${ARTIFACTS_DIR}/${artifact}\` n'existe pas (ou n'est pas un fichier régulier)`;
+    if (step === "req" && !/^##\s+Besoins/m.test(content ?? "")) return "la section `## Besoins` manque dans req.md";
+    if (step === "specs" && !/^##\s+Crit[eè]res d'acceptation/m.test(content ?? "")) return "la section `## Critères d'acceptation` manque dans specs.md";
+    if (step === "review" && (await git.mergeInProgress(worktree))) {
+      const unresolved = await this.#unresolvedConflicts(worktree);
+      if (unresolved.length > 0) return `des marqueurs de conflit restent dans ${unresolved.join(", ")}`;
+    }
     if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0) return "aucun fichier du dépôt n'a changé";
     if (step === "fix" && !dirtyBefore && !(await git.isDirty(worktree)) && (await git.revParse(worktree, "HEAD")) === headBefore) return "aucune correction n'a été faite";
     if (step === "review" && live.verdict === null) return "le verdict n'a pas été rendu par `review_verdict`";
@@ -428,7 +465,8 @@ export class Orchestrator {
         this.#event("modules", run.id, { modules });
       }
     }
-    if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
+    if (await git.mergeInProgress(worktree)) await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
+    else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
 
     const escalations = store.listEscalations({ runId: run.id, status: "open", stepId: stepRow.id }).length;
     let outcome: StepOutcome = { kind: "done", escalations };
@@ -456,23 +494,39 @@ export class Orchestrator {
 
   /** Les artefacts du run, écrits dans `.harness/` avant l'étape (le runner lit ceux de N-1). */
   #materialize(run: RunRow): void {
-    const dir = path.join(run.worktree as string, ARTIFACTS_DIR);
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = ensureArtifactsDir(run.worktree as string, ARTIFACTS_DIR);
     for (const artifact of this.#deps.store.listArtifacts(run.id)) {
-      if (artifact.name.startsWith("_")) continue;
-      fs.writeFileSync(path.join(dir, artifact.name), artifact.content);
+      if (artifact.name.startsWith("_") || !/^[\w.-]+\.md$/.test(artifact.name)) continue;
+      writeArtifact(dir, artifact.name, artifact.content);
     }
   }
 
-  /** Les artefacts écrits par le runner, versés dans la base (source de vérité). */
+  /** Les artefacts écrits par le runner, versés dans la base (source de vérité) — liens et fichiers spéciaux ignorés. */
   #ingest(run: RunRow, stepId: number): void {
-    const dir = path.join(run.worktree as string, ARTIFACTS_DIR);
-    if (!fs.existsSync(dir)) return;
-    for (const name of fs.readdirSync(dir)) {
-      if (!name.endsWith(".md") || name.startsWith("_")) continue;
-      const content = fs.readFileSync(path.join(dir, name), "utf8");
+    const dir = expectedDir(run.worktree as string, ARTIFACTS_DIR);
+    let names: string[];
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory()) return;
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!/^[\w.-]+\.md$/.test(name) || name.startsWith("_")) continue;
+      const content = readArtifact(dir, name);
+      if (content === null) continue;
       if (this.#deps.store.getArtifact(run.id, name) !== content) this.#deps.store.putArtifact(run.id, name, content, stepId);
     }
+  }
+
+  /** Les fichiers d'une fusion en cours qui portent encore des marqueurs de conflit. */
+  async #unresolvedConflicts(worktree: string): Promise<string[]> {
+    const files = await this.#deps.git.unmergedFiles(worktree);
+    return files.filter(file => {
+      const content = readArtifact(path.dirname(path.join(fs.realpathSync(worktree), file)), path.basename(file));
+      return content === null || /^(<{7}|>{7}) /m.test(content);
+    });
   }
 
   #decisionLines(runId: string): string[] {
@@ -515,13 +569,26 @@ export class Orchestrator {
     return runner;
   }
 
+  /**
+   * Arrête le runner : stdin fermé, puis signaux, puis `--stop <unité>.scope` par le
+   * lanceur — un runner lancé par sudo n'est pas signalable par le service.
+   */
   async #stopRunner(live: Live): Promise<void> {
     const runner = live.runner;
+    const unit = live.unit;
     live.runner = null;
     live.unit = null;
     live.prepaid = false;
     if (runner) {
-      await runner.stop();
+      const { config, exec } = this.#deps;
+      const force =
+        unit && config.runner.isolation === "systemd"
+          ? async () => {
+              const stop = launch(config, ["--stop", `${unit}.scope`]);
+              await exec(stop.command, stop.args, { timeoutMs: 15_000 });
+            }
+          : undefined;
+      await runner.stop(5000, force);
       this.#event("runner_stopped", live.runId, {});
     }
   }
@@ -657,12 +724,15 @@ export class Orchestrator {
     const worktree = run.worktree as string;
     await this.#fetchMain(repo);
     const main = await git.revParse(repo.path, repo.mainBranch);
-    if (main === run.baseSha) return;
+    if (main === run.baseSha || (await git.mergeInProgress(worktree))) return;
     if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant rebase — ${run.title}`.slice(0, 120));
     const result = await git.rebase(worktree, main);
     if (!result.ok) {
-      live.conflicts = result.conflicts;
-      this.#event("rebase_conflict", run.id, { conflicts: result.conflicts });
+      // Le runner n'écrit pas dans le gitdir : le SERVICE fusionne main (conflits laissés
+      // dans les fichiers), le runner les résout sans git, le service conclut la fusion.
+      await git.mergeNoCommit(worktree, main);
+      live.conflicts = await git.unmergedFiles(worktree);
+      this.#event("rebase_conflict", run.id, { conflicts: result.conflicts, strategy: "merge" });
       return;
     }
     await this.#remapCheckpoints(run.id, worktree, main);
@@ -698,12 +768,15 @@ export class Orchestrator {
   async #merge(runId: string): Promise<void> {
     const { store, git, heavy } = this.#deps;
     this.#merging.add(runId);
+    let mainAtStart: string | null = null;
     try {
       let run = store.getRun(runId) as RunRow;
+      if (run.state !== "merging") return;
       const repo = this.#repo(run.repo);
       const worktree = run.worktree as string;
       await this.#fetchMain(repo);
       const main = await git.revParse(repo.path, repo.mainBranch);
+      mainAtStart = main;
       if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant merge — ${run.title}`.slice(0, 120));
       // Déjà dans main (merge fait, état non écrit avant un arrêt) : rien à refaire.
       if ((await git.run(repo.path, ["rev-parse", `${run.branch}^{tree}`])) === (await git.run(repo.path, ["rev-parse", `${main}^{tree}`])) && main !== run.baseSha) {
@@ -712,11 +785,12 @@ export class Orchestrator {
       }
       if (main !== run.baseSha) {
         const rebased = await git.rebase(worktree, main);
-        if (!rebased.ok) return this.#backToFix(run, `conflit de rebase avant merge : ${rebased.conflicts.join(", ")}`);
+        // Conflit : retour en revue, qui fusionne main et fait résoudre les conflits.
+        if (!rebased.ok) return this.#backTo(run, "review", `conflit avec main avant merge : ${rebased.conflicts.join(", ")}`);
         await this.#remapCheckpoints(run.id, worktree, main);
         run = store.updateRun(run.id, { baseSha: main });
         const result = await heavy.run({ runId: run.id, stepId: null, repo, worktree, scope: "full", files: [] });
-        if (result.outcome !== "pass") return this.#backToFix(run, `suite complète ${result.outcome} après rebase sur main`);
+        if (result.outcome !== "pass") return this.#backTo(run, "fix", `suite complète ${result.outcome} après rebase sur main`);
       }
       const decisions = store.listDecisions({ runId, status: ["auto", "accepted", "reversed"] });
       const message = [
@@ -742,8 +816,16 @@ export class Orchestrator {
       this.#finishMerge(run, await git.revParse(repo.path, repo.mainBranch), repo);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      store.updateRun(runId, { state: "awaiting_human", reason: `merge impossible : ${reason}` });
-      this.#event("run_state", runId, { state: "awaiting_human", reason });
+      // Un autre merge a avancé main pendant celui-ci (CAS de update-ref perdu) : on retente au tick suivant.
+      const run = store.getRun(runId);
+      const nowMain = run ? await git.revParse(this.#repo(run.repo).path, this.#repo(run.repo).mainBranch).catch(() => null) : null;
+      if (mainAtStart !== null && nowMain !== null && nowMain !== mainAtStart) {
+        this.#event("merge_retry", runId, { reason });
+        return;
+      }
+      if (store.updateRunIf(runId, ["merging"], { state: "awaiting_human", reason: `merge impossible : ${reason}` })) {
+        this.#event("run_state", runId, { state: "awaiting_human", reason });
+      }
     } finally {
       this.#merging.delete(runId);
     }
@@ -763,16 +845,24 @@ export class Orchestrator {
     return url;
   }
 
-  #backToFix(run: RunRow, reason: string): void {
-    const { store } = this.#deps;
-    store.putArtifact(run.id, RESUME_ARTIFACT, `Le merge a été arrêté : ${reason}. Corrige, puis la revue reprendra.`, null);
-    store.updateRun(run.id, { state: "queued", step: "fix", fixes: run.fixes + 1, verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null, reason });
-    this.#event("run_state", run.id, { state: "queued", step: "fix", reason });
+  /** Le merge s'arrête : retour en correction ou en revue, borné par le plafond de corrections. */
+  #backTo(run: RunRow, step: "fix" | "review", reason: string): void {
+    const { store, config } = this.#deps;
+    if (run.fixes >= config.review.fixCap) {
+      if (store.updateRunIf(run.id, ["merging"], { state: "awaiting_human", reason: `${reason} — plafond de corrections atteint` })) {
+        this.#event("run_state", run.id, { state: "awaiting_human", reason });
+      }
+      return;
+    }
+    store.putArtifact(run.id, RESUME_ARTIFACT, `Le merge a été arrêté : ${reason}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`, null);
+    const patch = { state: "queued" as const, step, fixes: run.fixes + 1, reason, verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null };
+    if (store.updateRunIf(run.id, ["merging"], patch)) this.#event("run_state", run.id, { state: "queued", step, reason });
   }
 
   /** Fin de run : état, knowledge-updater (oracle), worktree rendu, projet clos si tout est mergé. */
   #finishMerge(run: RunRow, sha: string, repo: RepoConfig): void {
     const { store, git, oracle } = this.#deps;
+    // Le merge est fait dans git : l'état suit, quel que soit l'état lu (une annulation ne défait pas main).
     store.updateRun(run.id, { state: "merged", mergeSha: sha, step: null, reason: "mergé" });
     this.#event("merged", run.id, { sha, prUrl: store.getRun(run.id)?.prUrl ?? null });
     const decisions = store.listDecisions({ runId: run.id, status: ["auto", "accepted", "reversed"] });
@@ -840,6 +930,16 @@ export class Orchestrator {
 
   // -- API : boucle humaine -------------------------------------------------
 
+  #serial<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.#gestures.get(runId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(fn);
+    this.#gestures.set(runId, next);
+    void next.finally(() => {
+      if (this.#gestures.get(runId) === next) this.#gestures.delete(runId);
+    }).catch(() => {});
+    return next;
+  }
+
   #run(runId: string): RunRow {
     const run = this.#deps.store.getRun(runId);
     if (!run) throw new HarnessError(404, `run inconnu : ${runId}`);
@@ -847,9 +947,14 @@ export class Orchestrator {
   }
 
   /** Réponses aux escalades d'un run ; quand toutes sont répondues, le run reprend son étape. */
-  async answerEscalations(runId: string, answers: { id: number; answer: string }[]): Promise<RunRow> {
+  answerEscalations(runId: string, answers: { id: number; answer: string }[]): Promise<RunRow> {
+    return this.#serial(runId, () => this.#answerEscalations(runId, answers));
+  }
+
+  async #answerEscalations(runId: string, answers: { id: number; answer: string }[]): Promise<RunRow> {
     const { store, oracle } = this.#deps;
     const run = this.#run(runId);
+    if (run.state !== "escalated") throw new HarnessError(409, `le run n'attend pas de réponse (état ${run.state})`);
     const open = new Map(store.listEscalations({ runId, status: "open" }).map(item => [item.id, item]));
     for (const { id, answer } of answers) {
       const item = open.get(id);
@@ -864,7 +969,9 @@ export class Orchestrator {
       await oracle.retain(repo.scope, humanDecisionMemory({ feature: run.title, question: item.question, chosen: answer.trim(), reason: answer.trim() }), ["harness", "decision", item.category]);
       this.#event("escalation_answered", runId, { id, answer: answer.trim() });
     }
-    if (run.state !== "escalated" || store.listEscalations({ runId, status: "open" }).length > 0) return this.#run(runId);
+    // Relu APRÈS les écritures de l'oracle : un geste a pu passer entre-temps.
+    const current = this.#run(runId);
+    if (current.state !== "escalated" || store.listEscalations({ runId, status: "open" }).length > 0) return current;
     // Le lot de la reprise : toutes les escalades de la DERNIÈRE étape escaladée.
     const lastEscalated = store.listSteps(runId).filter(step => step.status === "escalated").pop();
     const answered = store.listEscalations({ runId, status: "answered" }).filter(item => item.stepId === lastEscalated?.id);
@@ -874,8 +981,8 @@ export class Orchestrator {
       `L'humain a tranché les escalades de l'étape. Applique ces réponses, puis termine l'étape :\n${answered.map(item => `- ${item.question} → ${item.answer}`).join("\n")}`,
       null,
     );
-    const transition = resumeAfterEscalations({ step: run.step as StepKind, fixes: run.fixes, attempts: 0 });
-    this.#apply(run, transition);
+    const transition = resumeAfterEscalations({ step: current.step as StepKind, fixes: current.fixes, attempts: 0 });
+    this.#apply(current, transition, ["escalated"]);
     void this.tick();
     return this.#run(runId);
   }
@@ -892,9 +999,14 @@ export class Orchestrator {
    * l'humain s'applique, sa raison part dans l'oracle, et le run reprend à l'étape du
    * checkpoint. Un run déjà mergé ouvre un run de suite (le checkpoint n'existe plus).
    */
-  async reverseDecision(runId: string, seq: number, option: string, reason: string): Promise<RunRow> {
+  reverseDecision(runId: string, seq: number, option: string, reason: string): Promise<RunRow> {
+    return this.#serial(runId, () => this.#reverseDecision(runId, seq, option, reason));
+  }
+
+  async #reverseDecision(runId: string, seq: number, option: string, reason: string): Promise<RunRow> {
     const { store, git, oracle } = this.#deps;
     const run = this.#run(runId);
+    if (run.state === "cancelled") throw new HarnessError(409, "run annulé");
     const decision = store.getDecision(runId, seq);
     if (!decision) throw new HarnessError(404, `décision inconnue : ${runId}#${seq}`);
     if (decision.status === "reversed" || decision.status === "superseded") throw new HarnessError(409, `décision #${seq} déjà ${decision.status}`);
@@ -916,6 +1028,7 @@ export class Orchestrator {
 
     await this.#halt(runId);
     const fresh = this.#run(runId);
+    if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled") throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
     const stepKind = store.getStep(decision.stepId)?.kind ?? "impl";
     await git.resetTo(fresh.worktree as string, decision.checkpointSha);
     store.reverseDecision(runId, seq, option.trim(), reason.trim());
@@ -935,32 +1048,49 @@ export class Orchestrator {
     );
     store.updateRun(runId, { verdict: null });
     this.#event("decision_reversed", runId, { seq, option, step: stepKind, checkpoint: sha });
-    this.#apply(fresh, resumeAtCheckpoint({ step: stepKind, fixes: fresh.fixes, attempts: 0 }, stepKind, seq));
+    this.#apply(fresh, resumeAtCheckpoint({ step: stepKind, fixes: fresh.fixes, attempts: 0 }, stepKind, seq), [fresh.state]);
     void this.tick();
     return this.#run(runId);
   }
 
   /** La validation humaine d'un verdict en attente. */
-  async validate(runId: string, approve: boolean, reason: string): Promise<RunRow> {
+  validate(runId: string, approve: boolean, reason: string): Promise<RunRow> {
+    return this.#serial(runId, () => this.#validate(runId, approve, reason));
+  }
+
+  async #validate(runId: string, approve: boolean, reason: string): Promise<RunRow> {
     const { store, oracle } = this.#deps;
     const run = this.#run(runId);
     if (run.state !== "awaiting_human") throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
     if (!approve) {
       if (reason.trim() === "") throw new HarnessError(400, "un refus porte sa raison");
       await oracle.retain(this.#repo(run.repo).scope, `Correction humaine — feature « ${run.title} » : ${reason.trim()}`, ["harness", "correction"]);
-      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé le verdict : ${reason.trim()}`, null);
-      store.updateRun(runId, { verdict: run.verdict ? { ...run.verdict, blockers: [reason.trim()] } : null });
     }
-    this.#apply(run, afterHumanValidation({ step: "review", fixes: run.fixes, attempts: 0 }, approve, reason.trim()));
+    const current = this.#run(runId);
+    if (!this.#apply(current, afterHumanValidation({ step: "review", fixes: current.fixes, attempts: 0 }, approve, reason.trim()), ["awaiting_human"])) {
+      throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
+    }
+    if (!approve) {
+      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé le verdict : ${reason.trim()}`, null);
+      store.updateRun(runId, { verdict: current.verdict ? { ...current.verdict, blockers: [reason.trim()] } : null });
+    }
     void this.tick();
     return this.#run(runId);
   }
 
-  async cancel(runId: string): Promise<RunRow> {
+  cancel(runId: string): Promise<RunRow> {
+    return this.#serial(runId, () => this.#cancel(runId));
+  }
+
+  async #cancel(runId: string): Promise<RunRow> {
     const { store, git } = this.#deps;
     const run = this.#run(runId);
     if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
-    store.updateRun(runId, { state: "cancelled", reason: "annulé par l'humain" });
+    // Un merge en cours touche main et le worktree : on ne l'interrompt pas à mi-chemin.
+    if (run.state === "merging" || this.#merging.has(runId)) throw new HarnessError(409, "merge en cours : impossible d'annuler");
+    if (!store.updateRunIf(runId, ["queued", "running", "escalated", "awaiting_human", "failed"], { state: "cancelled", reason: "annulé par l'humain" })) {
+      throw new HarnessError(409, `le run a changé d'état (${this.#run(runId).state})`);
+    }
     await this.#halt(runId);
     this.#event("run_state", runId, { state: "cancelled" });
     // La branche reste (inspection) ; seul le worktree est rendu.

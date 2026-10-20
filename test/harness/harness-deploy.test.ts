@@ -117,12 +117,46 @@ test("harness-deploy/AC-4 : le lanceur refuse toute ligne qui élargirait les dr
 test("harness-deploy/AC-5 : la configuration du lanceur est LUE, jamais exécutée ; les droits isolent l'état du service", () => {
   const source = fs.readFileSync(LAUNCHER, "utf8");
   assert.doesNotMatch(source, /^\s*(\.|source)\s+"?\$CONF/m, "la conf n'est jamais sourcée");
-  assert.match(read("sudoers"), /^omp-harness ALL=\(root\) NOPASSWD:SETENV: \/usr\/local\/libexec\/omp-harness-systemd-run$/m);
+  assert.match(read("sudoers"), /^omp-harness ALL=\(root\) NOPASSWD: \/usr\/local\/libexec\/omp-harness-systemd-run$/m);
+  assert.doesNotMatch(read("sudoers").replace(/^#.*$/gm, ""), /SETENV|env_keep/, "sudo remet l'environnement à zéro : ni BASH_ENV ni LD_* de l'appelant");
+  assert.equal(DEFAULT_LAUNCHER.includes("-E"), false);
+  assert.match(source, /^#!\/bin\/bash$/m);
+  assert.match(source, /^PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin$/m);
+  assert.match(source, /^set -f$/m);
   assert.equal(read("sudoers").split("\n").filter(line => line.trim() !== "" && !line.startsWith("#")).length, 1, "une seule règle sudo");
   const tmpfiles = read("tmpfiles.conf");
   assert.match(tmpfiles, /^d \/var\/lib\/omp-harness\/state\s+0700 omp-harness omp-harness/m, "la base et le jeton : service seul");
-  assert.match(tmpfiles, /^d \/var\/lib\/omp-harness\/worktrees\s+2770 omp-harness omp-work/m);
+  assert.match(tmpfiles, /^d \/var\/lib\/omp-harness\/worktrees\s+2750 omp-harness omp-work/m, "un runner ne peut ni renommer ni remplacer un worktree");
+  assert.match(tmpfiles, /^d \/var\/lib\/omp-runner\s+0700 /m, "les logins LLM des runners : illisibles par les jobs heavy");
   assert.equal(config.dataDir, "/var/lib/omp-harness/state");
   for (const user of ["omp-harness", "omp-runner", "omp-heavy"]) assert.match(read("sysusers.conf"), new RegExp(`^u ${user} `, "m"));
   assert.match(read("omp-harness.service"), /^UMask=0002$/m);
+});
+
+
+test("harness-deploy/AC-6 : le lanceur épingle omp, impose le bac à sable heavy complet et refuse les chemins ambigus", () => {
+  const runner = launcherArgs(runnerArgv(config, { unit: "omp-runner-r1-4", cwd: WT, overlay: "/o.json", model: null }));
+  const at = runner.indexOf(config.ompBin);
+  assert.equal(launcher(runner).code, 0);
+  assert.equal(launcher([...runner.slice(0, at), "/bin/sh", "-c", "id"]).code, 64, "le runner est OMP, rien d'autre");
+
+  const base = heavyLine();
+  const without = (prop: string) => {
+    const index = base.indexOf(prop);
+    return [...base.slice(0, index - 1), ...base.slice(index + 1)];
+  };
+  for (const prop of ["ProtectSystem=strict", "PrivateTmp=yes", "NoNewPrivileges=yes"]) assert.equal(launcher(without(prop)).code, 64, `${prop} est obligatoire`);
+  assert.equal(launcher(without(base.find(arg => arg.startsWith("RuntimeMaxSec=")) as string)).code, 64);
+  for (const writable of ["/var/cache/omp-harness/*", "var/cache/omp-harness", "-/etc", "/var/cache/omp-harness/%h", "/var/cache/omp-harness \"/etc\""]) {
+    const args = base.map(arg => (arg.startsWith("ReadWritePaths=") ? `ReadWritePaths=${WT} ${writable}` : arg));
+    assert.equal(launcher(args).code, 64, `ReadWritePaths ambigu accepté : ${writable}`);
+  }
+  for (const cwd of ["/var/lib/omp-harness/worktrees/mon-produit", "/var/lib/omp-harness/worktrees/a/b/c", "/var/lib/omp-harness/worktrees/a/./b"]) {
+    assert.equal(launcher(base.map(arg => (arg.startsWith("--working-directory=") ? `--working-directory=${cwd}` : arg))).code, 64, cwd);
+  }
+  // Ajouté par le lanceur lui-même : l'état du service, les logins des runners et les sockets d'hôte sont invisibles.
+  const out = launcher(base).out.split("\n");
+  assert.ok(out.includes("ProtectHome=yes"));
+  const hidden = out.find(line => line.startsWith("InaccessiblePaths=")) ?? "";
+  for (const path of ["-/var/lib/omp-runner", "-/var/lib/omp-harness/state", "-/etc/omp-harness", "-/run/dbus"]) assert.ok(hidden.includes(path), path);
 });

@@ -1,6 +1,13 @@
 // Les gestes git du harness : un worktree par run, tree hash du répertoire de travail,
 // commits WIP de décision (checkpoints), retour à un checkpoint, rebase sur main,
 // merge squash par update-ref (compare-and-swap) et taille du diff.
+//
+// Un worktree est INSCRIPTIBLE par les runners et les jobs heavy : son fichier
+// `.git` peut avoir été repointé vers un gitdir piégé (hooks, fsmonitor, filtres).
+// Le service ne le lit donc jamais : chaque commande dans un worktree passe un
+// `--git-dir` explicite, retrouvé dans le dossier d'administration du CLONE (que le
+// groupe ne peut pas écrire, `core.sharedRepository=0640`), et chaque appel force
+// hooks et fsmonitor à rien.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -12,6 +19,10 @@ export type GitIdentity = { authorName: string; authorEmail: string };
 
 /** Le dossier des artefacts d'étape dans un worktree : exclu de git, ingéré par le service. */
 export const ARTIFACTS_DIR = ".harness";
+
+
+/** Forcé sur chaque appel : aucun programme tiers ne part d'une config ou d'un hook. */
+const HARDENING = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "protocol.ext.allow=never"];
 
 
 export class GitError extends Error {
@@ -26,6 +37,8 @@ export class GitError extends Error {
 export class Git {
   readonly #exec: Exec;
   readonly #identity: GitIdentity;
+  /** Worktree (chemin résolu) → son gitdir, lu côté clone au moment où on le reconnaît. */
+  readonly #worktrees = new Map<string, string>();
 
   constructor(exec: Exec, identity: GitIdentity) {
     this.#exec = exec;
@@ -51,7 +64,57 @@ export class Git {
 
   /** git brut : l'issue telle quelle, sans lever. */
   raw(cwd: string, args: string[], env: Record<string, string> = {}): Promise<ProcResult> {
-    return this.#exec("git", args, { cwd, env: this.#env(env), timeoutMs: 120_000 });
+    const gitDir = this.#worktrees.get(path.resolve(cwd));
+    const located = gitDir ? ["--git-dir", gitDir, "--work-tree", cwd] : [];
+    return this.#exec("git", [...HARDENING, ...located, ...args], { cwd, env: this.#env(env), timeoutMs: 120_000 });
+  }
+
+  /**
+   * Reconnaît `worktree` comme un worktree de `repo` : son gitdir est cherché dans
+   * `<clone>/worktrees/*` (le fichier `gitdir` y pointe sur `<worktree>/.git`), jamais
+   * lu dans le worktree. Un worktree que le clone ne connaît pas est refusé.
+   */
+  async trustWorktree(repo: string, worktree: string): Promise<void> {
+    const admin = path.join(await this.commonDir(repo), "worktrees");
+    const target = path.join(fs.realpathSync(worktree), ".git");
+    for (const id of fs.existsSync(admin) ? fs.readdirSync(admin) : []) {
+      let pointed: string;
+      try {
+        pointed = path.resolve(path.join(admin, id), fs.readFileSync(path.join(admin, id, "gitdir"), "utf8").trim());
+      } catch {
+        continue;
+      }
+      let real = pointed;
+      try {
+        real = path.join(fs.realpathSync(path.dirname(pointed)), ".git");
+      } catch {
+        /* worktree disparu : ce n'est pas le nôtre */
+      }
+      if (real === target) {
+        this.#worktrees.set(path.resolve(worktree), path.join(admin, id));
+        this.#worktrees.set(fs.realpathSync(worktree), path.join(admin, id));
+        return;
+      }
+    }
+    throw new Error(`worktree inconnu du clone ${repo} : ${worktree}`);
+  }
+
+  /**
+   * Le gitdir du clone n'est inscriptible que par le service : `core.sharedRepository`
+   * fixe les droits de ce que git y crée (0640), et l'existant perd l'écriture de groupe.
+   */
+  async protectRepo(repo: string): Promise<void> {
+    await this.run(repo, ["config", "core.sharedRepository", "0640"]);
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        const mode = fs.statSync(full).mode;
+        if (mode & 0o020) fs.chmodSync(full, mode & 0o7757);
+        if (entry.isDirectory()) walk(full);
+      }
+    };
+    walk(await this.commonDir(repo));
   }
 
   /** git qui DOIT réussir : la sortie standard, sans le saut de ligne final. */
@@ -82,16 +145,23 @@ export class Git {
 
   /** Crée le worktree du run sur une branche neuve, partant de `base`. Idempotent. */
   async addWorktree(repo: string, worktree: string, branch: string, base: string): Promise<void> {
-    if (fs.existsSync(path.join(worktree, ".git"))) return;
-    fs.mkdirSync(path.dirname(worktree), { recursive: true });
+    if (fs.existsSync(path.join(worktree, ".git"))) {
+      await this.trustWorktree(repo, worktree);
+      return;
+    }
+    // Le parent n'est pas inscriptible par le groupe : un runner ne peut ni renommer ni remplacer son worktree.
+    fs.mkdirSync(path.dirname(worktree), { recursive: true, mode: 0o2750 });
+    fs.chmodSync(path.dirname(worktree), 0o2750);
     const exists = (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
     const args = exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base];
     await this.run(repo, args);
     await this.excludeArtifacts(repo);
+    await this.trustWorktree(repo, worktree);
   }
 
   async removeWorktree(repo: string, worktree: string, branch: string | null): Promise<void> {
     await this.raw(repo, ["worktree", "remove", "--force", worktree]);
+    this.#worktrees.delete(path.resolve(worktree));
     if (branch) await this.raw(repo, ["branch", "-D", branch]);
   }
 
@@ -138,6 +208,21 @@ export class Git {
     const conflicts = (await this.raw(worktree, ["diff", "--name-only", "--diff-filter=U"])).stdout.split("\n").filter(Boolean);
     await this.raw(worktree, ["rebase", "--abort"]);
     return { ok: false, conflicts };
+  }
+
+  /** Une fusion est-elle en cours (MERGE_HEAD) ? */
+  async mergeInProgress(worktree: string): Promise<boolean> {
+    return (await this.raw(worktree, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])).code === 0;
+  }
+
+  /** Les fichiers encore en conflit dans l'index. */
+  async unmergedFiles(worktree: string): Promise<string[]> {
+    return (await this.run(worktree, ["diff", "--name-only", "--diff-filter=U"])).split("\n").filter(Boolean);
+  }
+
+  /** Fusionne `ref` sans commit : les conflits restent dans les fichiers, à résoudre sans git. */
+  async mergeNoCommit(worktree: string, ref: string): Promise<void> {
+    await this.raw(worktree, ["merge", "-q", "--no-ff", "--no-commit", ref]);
   }
 
   /** Les checkpoints de `base..HEAD`, par numéro de décision (remappage après rebase). */

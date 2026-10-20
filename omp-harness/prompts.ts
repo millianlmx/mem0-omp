@@ -28,7 +28,7 @@ export type PromptContext = {
   resume: string | null;
   /** Les décisions déjà prises dans ce run (elles tiennent, sauf renversement). */
   decisions: string[];
-  /** Un rebase sur main a échoué avant cette revue : ses fichiers en conflit. */
+  /** Le rebase sur main a échoué : le service a fusionné main, ces fichiers sont en conflit. */
   conflicts: string[];
 };
 
@@ -116,8 +116,9 @@ export function stepPrompt(ctx: PromptContext): string {
   if (ctx.conflicts.length > 0) {
     parts.push(
       section(
-        "Rebase en échec",
-        `Le rebase automatique sur main a échoué (conflits : ${ctx.conflicts.join(", ")}). Lance \`git rebase main\`, résous les conflits en gardant l'intention des deux côtés, termine le rebase, puis fais la revue.`,
+        "Conflits avec main",
+        `Le rebase sur main a échoué ; le service a fusionné main dans la branche. Ces fichiers portent des marqueurs de conflit : ${ctx.conflicts.join(", ")}. ` +
+          "Résous-les DANS LES FICHIERS en gardant l'intention des deux côtés (n'appelle pas git : le service conclura la fusion), puis fais la revue.",
       ),
     );
   }

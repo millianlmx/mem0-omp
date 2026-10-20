@@ -93,7 +93,8 @@ export type HarnessConfig = {
 
 
 /** Le lanceur installé par `deploy/install.sh`. */
-export const DEFAULT_LAUNCHER: readonly string[] = ["sudo", "-n", "-E", "/usr/local/libexec/omp-harness-systemd-run"];
+/** Jamais `-E` : sudo remet l'environnement à zéro, le lanceur ajoute lui-même les clés des runners. */
+export const DEFAULT_LAUNCHER: readonly string[] = ["sudo", "-n", "/usr/local/libexec/omp-harness-systemd-run"];
 
 
 /** La ligne d'un `systemd-run` (ou de `--stop <unité>`) derrière le lanceur configuré. */

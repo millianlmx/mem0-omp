@@ -48,6 +48,8 @@ install -d -m 0755 /etc/omp-harness
 [ -e /etc/omp-harness/launcher.conf ] || install -m 0644 "$HERE/launcher.conf" /etc/omp-harness/launcher.conf
 [ -e /etc/omp-harness/config.json ] || install -m 0640 -g omp-harness "$HERE/config.example.json" /etc/omp-harness/config.json
 [ -e /etc/omp-harness/env ] || install -m 0640 -g omp-harness /dev/null /etc/omp-harness/env
+# Les clés des fournisseurs LLM des runners : root seul les lit, le lanceur les passe au runner.
+[ -e /etc/omp-harness/runner.env ] || install -m 0600 -o root -g root /dev/null /etc/omp-harness/runner.env
 
 echo "· git : les worktrees changent de propriétaire entre service, runners et heavy"
 for user in omp-harness omp-runner omp-heavy; do
@@ -87,7 +89,9 @@ cat <<'EOT'
 Étapes restantes :
   1. Connexion des runners aux fournisseurs LLM, dans LEUR profil :
        sudo -u omp-runner -H omp --profile pipeline   (puis /login)
-     ou des clés d'API dans /etc/omp-harness/env (ANTHROPIC_API_KEY=…).
+     ou des clés d'API dans /etc/omp-harness/runner.env (ANTHROPIC_API_KEY=…, root 0600).
+     Chaque dépôt cloné : sudo -u omp-harness git -C <dépôt> config core.sharedRepository 0640
+     (le service le pose aussi au démarrage : les gitdirs restent illisibles en écriture au groupe).
   2. Le jeton de l'API : /var/lib/omp-harness/state/token (créé au premier démarrage).
   3. Publier l'API : tailscale serve --bg --https=443 http://127.0.0.1:8790
      (ou un reverse proxy TLS devant 127.0.0.1:8790).

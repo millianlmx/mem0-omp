@@ -531,6 +531,17 @@ export class Store {
   }
 
   updateRun(id: string, patch: RunPatch): RunRow {
+    const run = this.updateRunIf(id, null, patch);
+    if (!run) throw new Error(`run introuvable : ${id}`);
+    return run;
+  }
+
+  /**
+   * Compare-and-swap : le patch ne s'applique que si l'état courant est dans
+   * `expected` (`null` : sans condition). Rend le run mis à jour, ou `null` si un
+   * autre geste a changé l'état entre-temps (annulation, validation…).
+   */
+  updateRunIf(id: string, expected: readonly RunState[] | null, patch: RunPatch): RunRow | null {
     const sets: string[] = [];
     const params: SqlValue[] = [];
     for (const [key, value] of Object.entries(patch)) {
@@ -541,10 +552,13 @@ export class Store {
     }
     sets.push("updated_at = ?");
     params.push(this.#now(), id);
-    this.#run(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?`, ...params);
-    const run = this.getRun(id);
-    if (!run) throw new Error(`run introuvable : ${id}`);
-    return run;
+    let guard = "";
+    if (expected !== null) {
+      guard = ` AND state IN (${expected.map(() => "?").join(", ")})`;
+      params.push(...expected);
+    }
+    const result = this.#run(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?${guard}`, ...params);
+    return Number(result.changes) === 0 ? null : this.getRun(id);
   }
 
   // -- étapes ---------------------------------------------------------------

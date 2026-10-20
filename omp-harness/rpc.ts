@@ -16,6 +16,8 @@ export type RunnerProcess = {
   stderr: Readable | null;
   kill: (signal?: NodeJS.Signals) => boolean;
   once: (event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void) => unknown;
+  /** Un `kill` refusé (runner lancé par sudo : EPERM) arrive ici, jamais en exception non gérée. */
+  on: (event: "error", listener: (error: Error) => void) => unknown;
 };
 
 export type HostToolResult = { text: string; isError?: boolean; details?: unknown };
@@ -83,6 +85,9 @@ export class RpcRunner {
     });
     proc.stdin?.on("error", () => {
       /* un stdin fermé par un runner mort : la sortie le dit déjà */
+    });
+    proc.on("error", error => {
+      this.#stderr.push(`[harness] ${error.message}\n`);
     });
     this.exited = new Promise(resolve => {
       proc.once("exit", (code, signal) => {
@@ -260,19 +265,41 @@ export class RpcRunner {
     return "";
   }
 
-  /** Arrêt : stdin fermé, puis SIGTERM, puis SIGKILL si le runner traîne. */
-  async stop(graceMs = 5000): Promise<void> {
-    if (!this.#dead) {
+  async #exitWithin(ms: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | null = null;
+    const exited = await Promise.race([
+      this.exited.then(() => true),
+      new Promise<boolean>(resolve => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    return exited;
+  }
+
+  /**
+   * Arrêt BORNÉ : stdin fermé (un runner RPC sort sur EOF), puis SIGTERM, puis
+   * `force` (l'arrêt de son unité par le lanceur), puis SIGKILL. Au pire, le runner
+   * est déclaré mort après quatre délais : jamais d'attente infinie.
+   */
+  async stop(graceMs = 5000, force?: () => Promise<void>): Promise<void> {
+    if (this.#dead) return;
+    const quietly = (fn: () => unknown) => {
       try {
-        this.#proc.stdin?.end();
+        fn();
       } catch {
-        /* déjà fermé */
+        /* déjà fermé, ou signal refusé (EPERM) */
       }
-      this.#proc.kill("SIGTERM");
-      const timer = setTimeout(() => this.#proc.kill("SIGKILL"), graceMs);
-      await this.exited;
-      clearTimeout(timer);
-    }
+    };
+    quietly(() => this.#proc.stdin?.end());
+    if (await this.#exitWithin(graceMs)) return;
+    quietly(() => this.#proc.kill("SIGTERM"));
+    if (await this.#exitWithin(graceMs)) return;
+    if (force) await force().catch(() => {});
+    if (await this.#exitWithin(graceMs)) return;
+    quietly(() => this.#proc.kill("SIGKILL"));
+    if (await this.#exitWithin(graceMs)) return;
+    this.#fail(new RunnerExited("arrêt forcé : le process ne répond plus"));
   }
 }
 

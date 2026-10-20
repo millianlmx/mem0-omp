@@ -84,6 +84,8 @@ const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) ==
 
 if (isMain) {
   const file = argValue(process.argv, "--config") ?? process.env.HARNESS_CONFIG ?? null;
+  // Un rejet oublié est journalisé, jamais fatal : un crash ferait reprendre tous les runs au checkpoint.
+  process.on("unhandledRejection", reason => console.error(`[omp-harness] rejet non géré : ${reason instanceof Error ? reason.stack : String(reason)}`));
   const config = loadConfig(file);
   const harness = await startHarness(config);
   for (const signal of ["SIGTERM", "SIGINT"] as const) {

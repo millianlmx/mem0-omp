@@ -16,7 +16,7 @@ dépendent, et le service du Mac (launchd) reste tel quel.
 | **SQLite** : source de vérité, un seul écrivain | `db.ts` | Runs, étapes, décisions (checkpoints), escalades, artefacts, journal d'événements, cache heavy et tests lancés. Seul le service ouvre la base. Runners et jobs heavy passent par lui. |
 | **Pipeline Service** : machine à états, reprise au checkpoint | `machine.ts`, `orchestrator.ts` | Machine pure. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. |
 | **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable | `scheduler.ts` | Un slot runner par run vivant. Un slot heavy par `run_tests`. Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. |
-| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans l'oracle, puis précisés par la section `## Modules` des specs. Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. Merge squash dès la validation. |
+| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans l'oracle, puis précisés par la section `## Modules` des specs. Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation. |
 | **Runners OMP** : 1 par étape, 1 Go, profil pipeline | `runner.ts`, `rpc.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Le runner de la revue reste vivant pendant review ⇄ fix (cache de prompt). Les autres meurent en fin d'étape ou à l'escalade. |
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision`. Une décision réversible devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. |
 | **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, OOM | `heavy.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
@@ -41,10 +41,26 @@ dépendent, et le service du Mac (launchd) reste tel quel.
   par une injection de prompt ne peut pas s'auto-valider par l'API.
 - **Un lanceur root pour systemd.** Autoriser `systemd-run` au service
   reviendrait à lui donner root (`-p User=root`). Le service passe donc par
-  `deploy/omp-harness-systemd-run`, appelé par sudo. Le lanceur valide chaque mot
-  de la ligne : `User=omp-heavy` et `PrivateNetwork=yes` sont imposés, les chemins
-  doivent rester sous les racines déclarées, le runner est relancé sous
-  `omp-runner`. Il refuse tout le reste (code 64).
+  `deploy/omp-harness-systemd-run`, appelé par `sudo` sans `SETENV` ni `-E`, ce
+  qui remet l'environnement à zéro. Le lanceur valide chaque mot de la ligne :
+  - côté heavy, `User=omp-heavy`, `PrivateNetwork=yes`, `ProtectSystem=strict`,
+    `PrivateTmp` et `RuntimeMaxSec` sont obligatoires ;
+  - les chemins doivent être absolus et rester sous les racines déclarées ;
+  - le lanceur ajoute lui-même `ProtectHome` et masque, par `InaccessiblePaths`,
+    l'état du service, les logins des runners et les sockets de l'hôte ;
+  - côté runner, la commande est épinglée sur `OMP_BIN`, et il est relancé sous
+    `omp-runner` avec les clés de `/etc/omp-harness/runner.env`, que root seul lit.
+
+  Il refuse tout le reste (code 64). Sa configuration est lue ligne à ligne,
+  jamais exécutée.
+- **Git ne fait jamais confiance au worktree.** Un runner peut réécrire le fichier
+  `.git` de son worktree. Le service passe donc un `--git-dir` explicite, retrouvé
+  dans le dossier d'administration du clone, et force `core.hooksPath=/dev/null` et
+  `core.fsmonitor=false`. Le clone est en `core.sharedRepository=0640` : son gitdir
+  n'est inscriptible que par le service.
+- **Artefacts sans lien.** `.harness/*.md` est lu et écrit en `O_NOFOLLOW`, puis
+  vérifié par `/proc/self/fd`. Un lien vers le jeton du service n'est jamais
+  ingéré.
 
 ## API
 

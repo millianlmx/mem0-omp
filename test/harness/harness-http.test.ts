@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
+import * as net from "node:net";
 import type { AddressInfo } from "node:net";
 import { createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
@@ -118,10 +119,30 @@ test("harness-http/AC-4 : les escalades ouvertes sortent batchées par run, et s
     const answered = await call(server.url, "POST", "/v1/runs/r1/escalations", { answers: [{ id: one.id, answer: "a" }, { id: two.id, answer: "b" }] });
     assert.equal(answered.status, 200);
     assert.equal(((await answered.json()) as { run: { state: string } }).run.state, "queued");
-    assert.equal((await call(server.url, "POST", "/v1/runs/r1/escalations", { answers: [{ id: one.id, answer: "a" }] })).status, 404, "déjà répondue");
+    assert.equal((await call(server.url, "POST", "/v1/runs/r1/escalations", { answers: [{ id: one.id, answer: "a" }] })).status, 409, "le run n'attend plus de réponse");
     assert.equal(world.oracle.retained.length, 2, "chaque réponse humaine retourne à l'oracle");
   } finally {
     await server.close();
     await world.orchestrator.stop();
+  }
+});
+
+
+test("harness-http/AC-5 : une ligne de requête illisible rend 400, avant même l'authentification, sans tuer le service", async () => {
+  const world = fakeWorld({});
+  const server = await serve(world);
+  try {
+    const port = Number(new URL(server.url).port);
+    const raw = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => socket.end("GET http://[x/ HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n"));
+      let data = "";
+      socket.on("data", chunk => (data += chunk.toString()));
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+    });
+    assert.match(raw, /^HTTP\/1\.1 400/);
+    assert.equal((await call(server.url, "GET", "/v1/health", undefined, null)).status, 200, "le service répond toujours");
+  } finally {
+    await server.close();
   }
 });
