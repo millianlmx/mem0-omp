@@ -118,6 +118,12 @@ export function nextChainAction(input: {
   question?: string | null;
   reviewRewritten?: boolean;
   /**
+   * Le verdict de la porte d'intégration continue GitHub (S-9) sur l'arbre courant :
+   * absent/null = aucune porte (feature hors VPS ou sans Swift). Une revue propre
+   * ne franchit le jalon qu'au vert ; au rouge elle repart en /impl --fix.
+   */
+  ci?: "pending" | "green" | "red" | null;
+  /**
    * Le worktree a-t-il changé pendant le run ? Seule la phase `impl` le lit.
    * Absent/null : non vérifié (aucune référence HEAD de début de run).
    */
@@ -164,7 +170,12 @@ export function nextChainAction(input: {
       // écrit : le verdict n'est pas lisible, quel que soit le texte laissé par un
       // autre maillon (/impl --fix écrit sous `## Corrections`, jamais là).
       const verdict = effectiveReviewVerdict(contract, input.reviewRewritten !== false);
-      if (verdict === "clean") return { kind: "wait", waitKind: "review" };
+      if (verdict === "clean") {
+        if (input.ci === "red") {
+          return fixes < cap ? { kind: "run", phase: "impl", fix: true } : { kind: "blocked", reason: reviewCapReason(cap) };
+        }
+        return { kind: "wait", waitKind: input.ci === "pending" ? "ci" : "review" };
+      }
       if (verdict === "blockers") {
         if (fixes < cap) return { kind: "run", phase: "impl", fix: true };
         return { kind: "blocked", reason: reviewCapReason(cap) };

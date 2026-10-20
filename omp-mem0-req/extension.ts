@@ -181,9 +181,16 @@ export default function reqExtension(pi: ExtensionAPI) {
   // Toute la git du plugin passe par là : jamais node:child_process dans
   // l'extension, et le runner est injectable dans les tests. `killed` (timeout)
   // devient un échec, comme un code ≠ 0 — aucune porte d'approbation sur pi.exec.
-  const run: GitRunner = async (args, cwd) => {
+  const run: GitRunner = async (args, cwd, _timeoutMs, env) => {
     try {
-      const res = await pi.exec("git", args, { cwd, timeout: GIT_TIMEOUT_MS });
+      // `pi.exec` n'a pas d'option d'environnement : `env VAR=… git …` porte les variables.
+      const res =
+        env === undefined
+          ? await pi.exec("git", args, { cwd, timeout: GIT_TIMEOUT_MS })
+          : await pi.exec("env", [...Object.entries(env).map(([key, value]) => `${key}=${value}`), "git", ...args], {
+              cwd,
+              timeout: GIT_TIMEOUT_MS,
+            });
       return {
         code: res.killed ? 124 : res.code,
         stdout: res.stdout ?? "",

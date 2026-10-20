@@ -19,6 +19,7 @@ import { LOT_OWNER_STALE_MS } from "./lot.ts";
 import type {
   WireArbiterDecision,
   WireArbitration,
+  WireCi,
   WireAuditDecision,
   WireAuditEnvelope,
   WireAuditLaunch,
@@ -356,6 +357,22 @@ function decodeArbitration(raw: unknown): WireArbitration | undefined {
   });
 }
 
+/** `asFeatureCi` (S-9) : sha, arbre, heure et état exigés ; une charge incomplète est lue comme absente. */
+function decodeCi(raw: unknown): WireCi | undefined {
+  if (!isObject(raw)) return undefined;
+  const sha = nonEmpty(raw.sha);
+  const tree = nonEmpty(raw.tree);
+  const pushedAt = num(raw.pushedAt);
+  const state = oneOf(raw.state, ["pending", "green", "red"] as const);
+  if (sha === undefined || tree === undefined || pushedAt === undefined || state === undefined) return undefined;
+  const failures = Array.isArray(raw.failures)
+    ? raw.failures.flatMap((entry): Array<{ name: string; url: string }> =>
+        isObject(entry) && typeof entry.name === "string" && typeof entry.url === "string" ? [{ name: entry.name, url: entry.url }] : [],
+      )
+    : [];
+  return { sha, tree, pushedAt, state, checkedAt: num(raw.checkedAt) ?? null, failures };
+}
+
 const LOT_EDITOR_MAX = 4000;
 const LOT_PENDING_MAX = 9;
 const SLOTS_DEFAULT = 4;
@@ -378,7 +395,7 @@ function decodeFeature(json: unknown): WireLotFeature | undefined {
   if (!("waitKind" in json)) return undefined;
   let waitKind: WireLotFeature["waitKind"];
   if (json.waitKind !== null) {
-    waitKind = oneOf(json.waitKind, ["answer", "specs", "review"] as const);
+    waitKind = oneOf(json.waitKind, ["answer", "specs", "review", "ci"] as const);
     if (waitKind === undefined) return undefined;
   }
   const deps = Array.isArray(json.deps) ? json.deps.filter((d): d is string => typeof d === "string") : [];
@@ -428,6 +445,7 @@ function decodeFeature(json: unknown): WireLotFeature | undefined {
     endedAt: num(json.endedAt),
     escalation: decodeEscalation(json.escalation),
     arbitration: decodeArbitration(json.arbitration),
+    ci: decodeCi(json.ci),
     quotaBlocked: isObject(json.quota) ? (true as const) : undefined,
   });
 }

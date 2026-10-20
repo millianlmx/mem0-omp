@@ -277,6 +277,8 @@ export function buildLotPrompt(input: {
   reviewScope?: ReviewScope;
   /** Les bloquants impliqués par la table AC PAR AC (`reviewImpliedBlockers`), cités par la graine --fix. */
   impliedBlockers?: string[];
+  /** La ligne des bloquants de l'intégration continue GitHub (`ciBlockersLine`, S-9) d'un `--fix` : elle suit le contexte. */
+  ciBlockers?: string;
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const excerpt = (input.excerpt ?? "").trim();
@@ -315,7 +317,8 @@ export function buildLotPrompt(input: {
   }
   const withPilot = input.pilotArbitrage === true ? `${prompt}\n\n${PILOT_ARBITRATION_LINE}` : prompt;
   const withContext = input.context ? `${withPilot}\n\n${input.context}` : withPilot;
-  const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
+  const withCi = input.ciBlockers ? `${withContext}\n\n${input.ciBlockers}` : withContext;
+  const withMilestone = input.milestone ? `${withCi}\n\n${input.milestone}` : withCi;
   // Le recentrage de l'arbitre (relance du plafond) : après le jalon, avant les messages en file.
   const refocus = (input.refocus ?? "").trim();
   const withRefocus = refocus === "" ? withMilestone : `${withMilestone}\n\n[recentrage de l'arbitre]\n${refocus}`;
@@ -384,7 +387,12 @@ export function releaseTarget(raw: unknown): ReleaseTarget {
 }
 
 
-/** Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). */
+/**
+ * Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). `leaseSha` (S-9) :
+ * la branche de travail poussée par la porte d'intégration continue vit déjà sur le
+ * dépôt distant sous ce sha — le push de livraison remplace donc SA pointe, et rien
+ * d'autre (`--force-with-lease=refs/heads/<branche>:<sha>`).
+ */
 export function releaseArgs(input: {
   pushUrl: string;
   branch: string;
@@ -392,11 +400,15 @@ export function releaseArgs(input: {
   title: string;
   bodyFile?: string | null;
   body?: string | null;
+  leaseSha?: string | null;
 }): { push: string[]; pr: string[] } {
   const pr = ["pr", "create", "-B", input.base, "-H", input.branch, "-t", input.title];
   if (input.bodyFile) pr.push("-F", input.bodyFile);
   else pr.push("-b", input.body ?? "");
-  return { push: ["push", "-u", input.pushUrl, input.branch], pr };
+  const push = input.leaseSha
+    ? ["push", "-u", `--force-with-lease=refs/heads/${input.branch}:${input.leaseSha}`, input.pushUrl, input.branch]
+    : ["push", "-u", input.pushUrl, input.branch];
+  return { push, pr };
 }
 
 

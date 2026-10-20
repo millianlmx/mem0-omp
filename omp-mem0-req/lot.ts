@@ -36,7 +36,12 @@ export const LOT_VERSION = 1;
 
 export type LotFeatureState = "pending" | "running" | "waiting" | "blocked" | "failed" | "done" | "cancelled";
 
-export type LotWaitKind = "answer" | "specs" | "review";
+/**
+ * `ci` (S-9) : la revue est propre, mais la porte de l'intégration continue GitHub
+ * (feature d'un dépôt conduit par le VPS qui touche du Swift) n'a pas rendu son
+ * verdict sur la branche de travail. Aucun geste de l'utilisateur ne la franchit.
+ */
+export type LotWaitKind = "answer" | "specs" | "review" | "ci";
 
 /**
  * D'où vient la feature. `session` : sa collecte se déroule dans la session de
@@ -163,6 +168,25 @@ export type FeatureEscalation = {
 };
 
 
+/** Un contrôle GitHub rouge de la porte d'intégration continue : son nom et son lien (`html_url`). */
+export type CiFailure = { name: string; url: string };
+
+/**
+ * L'état de la porte d'intégration continue d'une feature (S-9) : le commit de
+ * travail poussé (`sha`), l'arbre qu'il fige (`tree`), l'heure du push, le dernier
+ * verdict lu (`state`, `checkedAt` : `null` tant qu'aucune lecture) et les
+ * contrôles rouges (`failures`).
+ */
+export type FeatureCi = {
+  sha: string;
+  tree: string;
+  pushedAt: number;
+  state: "pending" | "green" | "red";
+  checkedAt: number | null;
+  failures: CiFailure[];
+};
+
+
 export type LotFeature = {
   slug: string;
   /** L'intention déclarée à l'ajout : elle amorce la collecte. */
@@ -206,6 +230,13 @@ export type LotFeature = {
    * à l'identique.
    */
   autoResumes?: number;
+  /**
+   * La porte de l'intégration continue GitHub (S-9, B-9) : présente seulement sur une
+   * feature d'un dépôt conduit par le VPS qui touche du Swift, et le reste une fois
+   * posée. `sha` est le commit de travail poussé sur `feat/<slug>`, `tree` l'arbre
+   * du worktree qu'il fige (l'arbre COURANT doit lui être égal pour livrer).
+   */
+  ci?: FeatureCi;
   /**
    * sha1 de la section `## Revue` au LANCEMENT du run de revue courant. Une
    * empreinte identique à la fin du run veut dire que ce run n'a rien écrit : son
@@ -383,7 +414,7 @@ export const LOT_FEATURE_STATES: Record<LotFeatureState, true> = {
   cancelled: true,
 };
 
-export const LOT_WAIT_KINDS: Record<LotWaitKind, true> = { answer: true, specs: true, review: true };
+export const LOT_WAIT_KINDS: Record<LotWaitKind, true> = { answer: true, specs: true, review: true, ci: true };
 
 export const LOT_ORIGINS: Record<LotOrigin, true> = { session: true, panneau: true };
 
@@ -445,6 +476,7 @@ export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
   if (waitKind === "answer") return "attend réponse";
   if (waitKind === "specs") return "attend validation";
   if (waitKind === "review") return "attend accord";
+  if (waitKind === "ci") return "attend intégration continue";
   return null;
 }
 
@@ -936,6 +968,25 @@ function asArbiterRelaunches(raw: unknown): ArbiterRelaunches | null {
   return { cap: r.cap, failure: r.failure, last: r.last };
 }
 
+/** La porte d'intégration continue, relue complète ou absente (jamais un rejet de la feature). */
+function asFeatureCi(raw: unknown): FeatureCi | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.sha !== "string" || o.sha === "" || typeof o.tree !== "string" || o.tree === "") return null;
+  if (typeof o.pushedAt !== "number" || !Number.isFinite(o.pushedAt)) return null;
+  if (o.state !== "pending" && o.state !== "green" && o.state !== "red") return null;
+  const checkedAt = typeof o.checkedAt === "number" && Number.isFinite(o.checkedAt) ? o.checkedAt : null;
+  const failures = Array.isArray(o.failures)
+    ? o.failures.flatMap((entry): CiFailure[] => {
+        if (!entry || typeof entry !== "object") return [];
+        const e = entry as Record<string, unknown>;
+        return typeof e.name === "string" && typeof e.url === "string" ? [{ name: e.name, url: e.url }] : [];
+      })
+    : [];
+  return { sha: o.sha, tree: o.tree, pushedAt: o.pushedAt, state: o.state, checkedAt, failures };
+}
+
+
 /** La fin de sortie du dernier échec, relue du disque : deux chaînes, sinon absente. */
 function asFailureOutput(raw: unknown): { stderr: string; stdout: string } | null {
   if (!raw || typeof raw !== "object") return null;
@@ -987,6 +1038,7 @@ export function asLotFeature(raw: unknown): LotFeature | null {
   const escalation = asFeatureEscalation(f.escalation);
   const runs = asRunRecords(f.runs);
   const arbiterRelaunches = asArbiterRelaunches(f.arbiterRelaunches);
+  const featureCi = asFeatureCi(f.ci);
   const failureOutput = asFailureOutput(f.failureOutput);
   return {
     slug: f.slug,
@@ -1058,6 +1110,8 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // Les relances de l'arbitre (cap, failure) et la fin de sortie du dernier échec : relues complètes ou absentes.
     ...(arbiterRelaunches ? { arbiterRelaunches } : {}),
     ...(failureOutput ? { failureOutput } : {}),
+    // La porte d'intégration continue (S-9) : relue complète ou absente.
+    ...(featureCi ? { ci: featureCi } : {}),
     // Les modèles (S-1) : chaque clé n'est écrite que si elle est non vide après
     // `trim()` — toute autre valeur (`""`, `42`, `null`) est lue comme ABSENTE,
     // jamais un rejet. Les valeurs ne sont pas revalidées contre le catalogue : un
@@ -1304,6 +1358,8 @@ export function buildLotAlert(repo: string, feature: LotFeature): LotAlert | nul
         tone: "warning",
       };
     }
+    // L'attente de l'intégration continue (S-9) n'appelle personne : le pilote la lit seul.
+    if (feature.waitKind === "ci") return null;
     const prompt = feature.waitPrompt ? `\n${clipTail(feature.waitPrompt, LOT_ALERT_PROMPT_MAX)}` : "";
     return {
       text: `[pipeline] ${head} attend ta réponse (maillon /${feature.phase}) — /pipelines${prompt}`,

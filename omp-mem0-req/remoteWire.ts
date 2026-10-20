@@ -24,7 +24,7 @@ export type WireLotStatus = "draft" | "running";
 /** `LotFeatureState`. */
 export type WireFeatureState = "pending" | "running" | "waiting" | "blocked" | "failed" | "done" | "cancelled";
 /** `LotWaitKind`. */
-export type WireWaitKind = "answer" | "specs" | "review";
+export type WireWaitKind = "answer" | "specs" | "review" | "ci";
 /** `LotOrigin`. */
 export type WireOrigin = "session" | "panneau";
 /** `HeldLaunchKind`. */
@@ -112,6 +112,16 @@ export type WireArbitration = {
   decidingAt?: number;
 };
 
+/** `FeatureCi` (S-9) : la porte d'intégration continue GitHub ; `checkedAt` toujours émis (`null` avant la première lecture). */
+export type WireCi = {
+  sha: string;
+  tree: string;
+  pushedAt: number;
+  state: "pending" | "green" | "red";
+  checkedAt: number | null;
+  failures: Array<{ name: string; url: string }>;
+};
+
 /** `LotFeature` complet. Les compteurs et horodatages sont toujours émis (0 par défaut). */
 export type WireLotFeature = {
   slug: string;
@@ -154,6 +164,8 @@ export type WireLotFeature = {
   endedAt?: number;
   escalation?: WireEscalation;
   arbitration?: WireArbitration;
+  /** Émis seulement sur une feature qui porte la porte d'intégration continue (S-9). */
+  ci?: WireCi;
   /** Émis seulement quand il vaut `true`. */
   quotaBlocked?: true;
 };
