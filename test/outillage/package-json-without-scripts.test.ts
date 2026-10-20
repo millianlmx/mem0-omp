@@ -173,7 +173,7 @@ test("package-json-without-scripts/AC-8 : le README associe npm run check, npm r
   }
 });
 
-test("package-json-without-scripts/AC-9 : check.sh garde les 12 sections de la base et ne contrôle pas les alias npm", () => {
+test("package-json-without-scripts/AC-9 : check.sh garde les sections de la base (plus `lint` de no-ts-lint-formatter) et ne contrôle pas les alias npm", () => {
   const checkSh = fs.readFileSync(path.join(ROOT, "scripts", "check.sh"), "utf8");
   const line = checkSh.match(/^SECTION_IDS="([^"]*)"$/m);
   assert.ok(line, 'ligne SECTION_IDS="…" introuvable dans scripts/check.sh');
@@ -184,6 +184,7 @@ test("package-json-without-scripts/AC-9 : check.sh garde les 12 sections de la b
     "versions",
     "extension",
     "types",
+    "lint",
     "rust",
     "smoke",
     "tests",

@@ -338,8 +338,13 @@ test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent
     const now = workflowJobs(readFile(file));
     const old = workflowJobs(before.stdout);
     assert.deepEqual([...now.keys()], [...old.keys()], `${file} : jobs`);
+    // Seul écart toléré : la section `lint` ajoutée à macos-tests (1/2) par no-ts-lint-formatter.
     for (const [id, job] of now)
-      assert.deepEqual(jobHeader(job), jobHeader(old.get(id) ?? ""), `${file} › ${id} : en-tête`);
+      assert.deepEqual(
+        jobHeader(job).map((line) => line.replace(",types,lint,", ",types,")),
+        jobHeader(old.get(id) ?? ""),
+        `${file} › ${id} : en-tête`,
+      );
     const block = (yaml: string, key: string) =>
       new RegExp(`^${key}:\\s*\\n((?: {2}.*\\n)+)`, "m").exec(uncommented(yaml))?.[1] ?? null;
     for (const key of ["on", "concurrency", "permissions"]) {
