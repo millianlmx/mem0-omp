@@ -122,8 +122,7 @@ enum IOSMemoryText {
     static let keyboardRecipe = "clavier"
 
     /// Le signal de LECTURE de la recette `clavier`, écrit sur la sortie d'erreur à
-    /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
-    /// littéral dans `scripts/recette/ios-clavier-largeur-recette.sh`).
+    /// chaque lecture du sommaire : une recette compte ⌘R par lui.
     static let keyboardRecipeRead = "memoire-recipe-read"
 
     /// Les recettes de PANNE (ios-redaction-vouvoiement, S-2) : `injoignable` montre la
