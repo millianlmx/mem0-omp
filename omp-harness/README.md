@@ -142,14 +142,26 @@ du vrai git et la vraie base. Les runners y sont un faux `omp` RPC
 
 ## Les apps
 
-Les apps Mac et iOS joignent le serveur directement, par le bouton **Serveur** de
-la section Pipelines. Il faut l'adresse publiée par Tailscale et le jeton de
-`/var/lib/omp-harness/state/token`. Dans la feuille, la boîte de l'humain
-(`GET /v1/inbox`) se tient à jour par le flux SSE. On y trouve :
-- les escalades, répondues d'un geste par feature ;
-- les verdicts, à valider ou à refuser avec une raison ;
-- les décisions prises seules, à accepter ou à renverser ;
-- les features en cours.
+OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain : ses cinq
+sections de Pilotage sont servies par ce serveur, qu'elles joignent directement en
+https (l'adresse publiée par Tailscale et le jeton de
+`/var/lib/omp-harness/state/token`, saisis une fois dans la feuille « Serveur »).
+
+- **Accueil** — la boîte de l'humain (`GET /v1/inbox`) : les escalades, répondues
+  d'un geste par feature ; les specs à valider (la porte des specs : lecture de
+  `specs.md` par `GET /v1/runs/{id}`, puis accord ou refus motivé par
+  `POST /v1/runs/{id}/validate`) ; les verdicts, à valider ou à refuser avec une
+  raison ; les décisions prises seules, à accepter ou à renverser ; les features en
+  cours, que l'on peut annuler ; les audits à trier.
+- **Pipelines**, **Projet**, **Audit** — le catalogue (`GET /v1/status` pour les
+  dépôts déclarés, `GET /v1/projects`, `GET /v1/audits`) et les lancements :
+  `POST /v1/runs`, `POST /v1/projects`, `POST /v1/audits`, puis
+  `POST /v1/audits/{id}/launch` avec les propositions cochées, ou
+  `POST /v1/audits/{id}/cancel`.
+- **Statistiques** — `GET /v1/stats`.
+- **En direct** — les apps suivent `GET /v1/events` depuis le curseur de la boîte
+  et relisent boîte et catalogue à chaque événement ; une coupure garde la dernière
+  boîte, signalée hors ligne.
 
 Le client est partagé (`omp-console/Sources/ConsoleClient/Harness*.swift`) ; voir
-`omp-console/README.md` § Serveur de pipelines.
+`omp-console/README.md` § « Serveur de pipelines ».

@@ -39,10 +39,7 @@ struct IOSHarnessScreen<Content: View>: View {
                     content()
                 }
                 .iosGroupedList()
-                .refreshable {
-                    await server.refresh()
-                    if catalog { await server.refreshCatalog() }
-                }
+                .refreshable { await reload() }
             }
         }
         .navigationTitle(section.title)
@@ -60,8 +57,17 @@ struct IOSHarnessScreen<Content: View>: View {
             if catalog { await server.refreshCatalog() }
         }
         .iosHarnessGestures(server: server, drafts: drafts)
+        // ⌘R relit l'écran comme le geste « tirer pour actualiser ».
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: section, isEnabled: server.isConfigured) {
+            Task { await reload() }
+        })
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)
+    }
+
+    private func reload() async {
+        await server.refresh()
+        if catalog { await server.refreshCatalog() }
     }
 
     private var notConfigured: some View {

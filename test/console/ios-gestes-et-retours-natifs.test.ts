@@ -114,7 +114,11 @@ function pullFaults(files: { harness: string; memory: string; all: Map<string, s
   const harness = stripComments(files.harness);
   const frame = memberBody(harness, "struct IOSHarnessScreen<");
   const pulls = blocksOf(frame, ".refreshable {");
-  if (pulls.length !== 1 || !pulls[0].includes("await server.refresh()")) faults.push(`${HARNESS} : le cadre IOSHarnessScreen sans « .refreshable { await server.refresh() … } »`);
+  // Le geste relit par `reload()`, que ⌘R partage : c'est elle qui relit le serveur.
+  const reload = memberBody(frame, "private func reload()");
+  if (pulls.length !== 1 || !pulls[0].includes("await reload()") || !reload.includes("await server.refresh()")) {
+    faults.push(`${HARNESS} : le cadre IOSHarnessScreen sans « .refreshable { await reload() } » qui relit le serveur`);
+  }
   if (count(harness, ".refreshable") !== 1) faults.push(`${HARNESS} : ${count(harness, ".refreshable")} .refreshable (attendu 1, le cadre commun)`);
 
   const memory = stripComments(files.memory);

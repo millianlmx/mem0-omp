@@ -38,9 +38,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/ios-build.sh               compile et teste l'app iOS, seul chemin du dépôt qui exige Xcode
 ├── scripts/app-icon.sh                dessine l'icône d'OMP Console et réécrit ses fichiers versionnés iOS et Mac
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
-├── scripts/recette/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
-├── scripts/recette/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
-├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
+├── scripts/recette/                  recettes manuelles au simulateur et sur le Mac (jamais lancées par check.sh ni la CI)
+├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, état, mémoire, flux)
 ├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire des 9 routes (prépare la Qdrant d'import, lance, démarre mem0-rs ou son conteneur)
 ├── scripts/mem0-http-contrat/         lanceur, cas, formes et faux serveur OpenAI du contrat
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
@@ -339,10 +338,8 @@ Une **phase** est un rôle nommé qu'on active sur une session (par exemple `rel
   `mem0_add` (`… — RUN: …`) pour la prochaine fin de phase.
 
 La phase `review` est pré-enregistrée dans les valeurs par défaut (avec `release`,
-`version-bump`, `deploy`). Elle s'active par `/set-phase review`. La commande
-`/review` ouvre quant à elle une session de revue indépendante, sans passer par
-le système de phases — mais `review` est aussi disponible comme phase pour les
-déclenchements automatiques en fin de session.
+`version-bump`, `deploy`). Elle s'active par `/set-phase review`. La revue d'une
+feature de pipeline, elle, est l'étape /review que le harness du VPS conduit.
 Le déclenchement est **borné à une fois par session** et protégé contre les relances
 (`stop_hook_active`) : la session se termine normalement. Une relance de ta part (nouveau
 message) n'est pas une fin de phase et ne déclenche rien.

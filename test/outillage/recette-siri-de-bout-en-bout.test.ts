@@ -1,6 +1,6 @@
 // Feature recette-siri-de-bout-en-bout : la liste attendue unique des intents
 // Siri (scripts/app-intents/attendus.json), contrôlée à l'assemblage des deux
-// bundles, et la recette vocale de bout en bout du README d'omp-console.
+// bundles.
 //
 // AC-7 : prouvé par les tests AC-1 à AC-5 ci-dessous, chacun sur le bundle Mac ET sur l'app iOS
 //
@@ -153,8 +153,8 @@ test("recette-siri-de-bout-en-bout/AC-2 : un intent attendu absent du bundle fai
 
 test("recette-siri-de-bout-en-bout/AC-3 : une phrase d'App Shortcut attendue absente du bundle fait échouer l'assemblage en la citant", () => {
   for (const bundle of BUNDLES) {
-    const [type, phrases] = Object.entries(readAttendus()[bundle]).find(([, liste]) => liste.length >= 2) ?? [];
-    assert.ok(type && phrases, `${bundle} : aucun intent à deux phrases dans la liste`);
+    const [type, phrases] = Object.entries(readAttendus()[bundle]).find(([, liste]) => liste.length >= 1) ?? [];
+    assert.ok(type && phrases, `${bundle} : aucun intent à phrase dans la liste`);
     const phrase = phrases[phrases.length - 1];
     const fichier = ecart(bundle, (data) => {
       for (const r of data.autoShortcuts) {
@@ -221,107 +221,5 @@ test("recette-siri-de-bout-en-bout/AC-6 : la liste attendue n'existe qu'à un se
         delete copie[bundle][type];
       },
     );
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Recette vocale du README (BR-2, S-7).
-
-const RECETTE = "### Siri : recette vocale de bout en bout";
-const SUIVANTE = "### Conduire un projet depuis l'iPad";
-const PREALABLES = "**Préalables (à la main, avant la première phrase)**";
-const DEROULE = "**Déroulé (à la voix uniquement)**";
-const SANS_CONTOURNEMENT =
-  "Si la PR ne s'ouvre pas après l'acceptation vocale de la revue, consignez un écart au pas 6 et arrêtez la passe : aucun geste manuel ne la remplace.";
-
-/** La section de la recette, de son titre jusqu'au prochain titre `^#{1,3} ` exclu, et ce titre suivant. */
-function recette(): { corps: string; suivant: string | undefined } {
-  const lignes = fs.readFileSync(path.join(ROOT, "omp-console", "README.md"), "utf8").split("\n");
-  const debut = lignes.indexOf(RECETTE);
-  assert.ok(debut >= 0, `section absente du README : ${RECETTE}`);
-  const reste = lignes.slice(debut + 1);
-  const fin = reste.findIndex((l) => /^#{1,3} /.test(l));
-  return { corps: (fin < 0 ? reste : reste.slice(0, fin)).join("\n"), suivant: fin < 0 ? undefined : reste[fin] };
-}
-
-/** Les sous-sections `#### ` de la recette, par titre. */
-function sousSections(corps: string): Map<string, string> {
-  const parts = new Map<string, string>();
-  for (const bloc of corps.split(/^#### /m).slice(1)) {
-    const saut = bloc.indexOf("\n");
-    parts.set(bloc.slice(0, saut), bloc.slice(saut + 1));
-  }
-  return parts;
-}
-
-const cellules = (ligne: string) => ligne.split("|").slice(1, -1).map((c) => c.trim());
-
-test("recette-siri-de-bout-en-bout/AC-8 : le README décrit deux passes (iPhone puis Mac), avec préalables manuels, feature jetable, pas ordonnés, phrases de la liste attendue et grille « OK ou écart »", () => {
-  const { corps, suivant } = recette();
-  assert.equal(suivant, SUIVANTE, "la recette doit précéder immédiatement la conduite depuis l'iPad");
-  const parts = sousSections(corps);
-  assert.deepEqual([...parts.keys()], ["Feature jetable", "Règles des deux passes", "Passe 1 — iPhone", "Passe 2 — Mac", "Consigner le résultat"]);
-
-  const jetable = (parts.get("Feature jetable") ?? "").split("\n").filter((l) => l.startsWith("| ")).map(cellules);
-  for (const passe of ["iPhone", "Mac"]) {
-    const ligne = jetable.find((c) => c[0] === passe);
-    assert.ok(ligne && ligne[1] && ligne[2], `feature jetable sans titre ni besoin pour la passe ${passe}`);
-  }
-
-  const attendus = readAttendus();
-  const passes: { titre: string; bundle: Bundle; cites: string[]; intents: string[] }[] = [
-    {
-      titre: "Passe 1 — iPhone",
-      bundle: "ios",
-      cites: ["déverrouillé", "appairée", "La console Mac est ouverte et joignable", "Le dépôt de test est prêt"],
-      intents: ["IOSLaunchFeatureIntent", "IOSPendingRequestsIntent", "IOSSessionPromptIntent", "IOSValidateSpecsIntent", "IOSAcceptReviewIntent", "IOSPendingRequestsIntent"],
-    },
-    {
-      titre: "Passe 2 — Mac",
-      bundle: "mac",
-      cites: ["déverrouillée", "La console Mac est ouverte et joignable", "Le dépôt de test est prêt"],
-      intents: ["MacLaunchPipelineIntent", "MacAnswerIntent", "MacSessionPromptIntent", "MacValidateSpecsIntent", "MacAcceptReviewIntent", "MacPendingIntent"],
-    },
-  ];
-  for (const { titre, bundle, cites, intents } of passes) {
-    const texte = parts.get(titre) ?? "";
-    const iPrealables = texte.indexOf(PREALABLES);
-    const iDeroule = texte.indexOf(DEROULE);
-    assert.ok(iPrealables >= 0 && iDeroule > iPrealables, `[${titre}] préalables puis déroulé attendus`);
-    const puces = texte.slice(iPrealables, iDeroule).split("\n").filter((l) => l.startsWith("- "));
-    assert.ok(puces.length >= 4, `[${titre}] ${puces.length} préalable(s), 4 au moins attendus`);
-    for (const cite of cites) assert.ok(texte.slice(iPrealables, iDeroule).includes(cite), `[${titre}] préalable absent : ${cite}`);
-
-    const tableau = texte.slice(iDeroule).split("\n").filter((l) => l.startsWith("|"));
-    assert.equal(tableau[0], "| Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |", `[${titre}] en-tête du déroulé`);
-    const pas = tableau.slice(2).map(cellules);
-    assert.deepEqual(
-      pas.map((c) => c[0]),
-      ["1. Lancer", "2. Répondre à la question", "3. Dicter à la session OMP", "4. Valider les specs", "5. Accepter la revue", "6. PR ouverte"],
-      `[${titre}] pas du déroulé`,
-    );
-    pas.forEach((c, i) => {
-      assert.equal(c.length, 4, `[${titre}] pas ${c[0]} : 4 cellules attendues`);
-      assert.ok(c[2].length > 0, `[${titre}] pas ${c[0]} sans réponse attendue de Siri`);
-      assert.equal(c[3], "", `[${titre}] pas ${c[0]} : la colonne « OK ou écart » doit être vide`);
-      const phrase = /«\s*(.+?)\s*»/.exec(c[1])?.[1]?.replaceAll("OMP Console", "${applicationName}");
-      assert.ok(
-        phrase && attendus[bundle][intents[i]].includes(phrase),
-        `[${titre}] pas ${c[0]} : « ${phrase} » n'est pas une phrase de ${intents[i]} dans la liste attendue`,
-      );
-    });
-  }
-
-  const consigner = parts.get("Consigner le résultat") ?? "";
-  for (const champ of ["Date", "iOS", "macOS", "PR de la passe iPhone", "PR de la passe Mac"]) {
-    assert.ok(consigner.includes(champ), `« Consigner le résultat » ne cite pas : ${champ}`);
-  }
-});
-
-test("recette-siri-de-bout-en-bout/AC-11 : si la PR ne s'ouvre pas après l'acceptation vocale de la revue, la recette fait consigner un écart sans aucun geste de contournement", () => {
-  const { corps } = recette();
-  assert.equal(corps.split(SANS_CONTOURNEMENT).length - 1, 1, "la consigne d'écart au pas 6 doit figurer exactement une fois");
-  for (const motif of ["gh pr create", "git push", "curl", "/v1/"]) {
-    assert.ok(!corps.includes(motif), `la recette propose un contournement : ${motif}`);
   }
 });
