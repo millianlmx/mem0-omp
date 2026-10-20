@@ -46,6 +46,9 @@ export function pluginsInstallRoot(home: string = os.homedir()): string {
  * deux pompes sur la même boîte (une réponse `ask` consommée par la mauvaise est
  * perdue) et deux entrées d'historique par run. `null` ne perd rien : la
  * découverte suffit. Le chemin RÉEL décide (les liens sont résolus des deux côtés).
+ * Même règle pour un plugin LIÉ hors de `<plugins>` (flake NixOS : `omp plugin link`
+ * vers le store) : `realpath(<plugins>/node_modules/omp-mem0-req/extension.ts)` égal à
+ * celui du module en cours ⇒ `null`.
  *
  * Limite connue : `-e` ne fige PAS le code du parent. Le chemin du cache est
  * réécrit par une mise à jour du plugin, sous les pieds d'un pilote déjà lancé :
@@ -60,7 +63,13 @@ export function selfExtensionArg(
   try {
     const file = decodeURIComponent(new URL(metaUrl).pathname);
     if (!path.isAbsolute(file)) return null;
-    if (isUnder(realpathOr(file), realpathOr(pluginsRoot))) return null;
+    const installedRoot = realpathOr(pluginsRoot);
+    if (isUnder(realpathOr(file), installedRoot)) return null;
+    // Plugin LIÉ (`omp plugin link <dossier>`, ex. un dossier du store Nix) : il n'est
+    // pas sous `<plugins>` une fois les liens résolus, mais la découverte le charge
+    // par `<plugins>/node_modules/omp-mem0-req` — même fichier réel que le nôtre.
+    const linked = path.join(pluginsRoot, "node_modules", "omp-mem0-req", "extension.ts");
+    if (fs.existsSync(linked) && realpathOr(linked) === realpathOr(file)) return null;
     return file;
   } catch {
     return null;
