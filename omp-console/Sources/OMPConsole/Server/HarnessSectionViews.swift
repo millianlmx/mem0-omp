@@ -73,6 +73,7 @@ struct HarnessSection<Content: View>: View {
             Image(systemName: "server.rack")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(PipelineServerText.notConfigured)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)

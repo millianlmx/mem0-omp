@@ -25,35 +25,37 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les six tons et l'état (`ConsoleTone`, `ConsoleStatus`) viennent de
   `omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift` : le noyau est
   la seule source des tons, l'app n'en déclare aucun. `[test: toneTintsMatchMacOS]`
-- Tout libellé durable affiché vient du vocabulaire partagé `ConsoleCore`, mot
-  pour mot celui de macOS ; un seul message franchement provisoire vit dans
-  `omp-console/ios/OMPConsoleIOS/IOSText.swift`. `[test: emptyStatesUseSharedWords]`
+- Tout libellé durable affiché vient d'un vocabulaire : celui de `ConsoleCore`
+  (`PipelineServerText`, `MemoryText`…), mot pour mot celui de macOS, ou un
+  `*Text.swift` de l'app ; un seul message franchement provisoire vit dans
+  `omp-console/ios/OMPConsoleIOS/IOSText.swift`. `[garde: design-ios/AC-4]`
+  `[garde: design-ios/AC-5]`
 
 ## Navigation (feature `ios-navigation-onglets-adaptables`)
 
 - Sur iPhone, la racine est une barre d'onglets native (`TabView`, style
-  `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Audit,
+  `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Projet, Audit,
   « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
   `[test: compactTabsAreFourSectionsThenPlus]`
-- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Mémoire,
-  Session OMP et Statistiques ; leur bouton retour ramène à la liste.
-  `[test: plusListsTheFourOtherSections]`
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Statistiques et
+  Mémoire ; leur bouton retour ramène à la liste. `[test: plusListsTheOtherSections]`
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
-  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Session OMP) puis
-  Consultation (Sessions, Mémoire, Statistiques) ; la barre d'onglets du haut
-  n'apparaît que lorsqu'on masque la barre latérale. `[test: groupedSections]`
+  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques —
+  servis par le serveur de pipelines du VPS) puis Consultation (Mémoire, servie par
+  le Mac appairé) ; la barre d'onglets du haut n'apparaît que lorsqu'on masque la
+  barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
-  Projet, Mémoire, Session OMP et Statistiques sous « Plus » (Audit passe dans la
-  barre d'onglets, juste après Sessions, et sa pile repart de la liste), et
-  inversement.
+  Statistiques et Mémoire sous « Plus », et inversement.
   `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Mémoire,
-  Session OMP et Statistiques s'ouvrent déjà poussés dans « Plus ».
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Statistiques et
+  Mémoire s'ouvrent déjà poussées dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
 - Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
   barre de chaque écran : les quatre onglets, la liste « Plus », les écrans
-  qu'elle pousse et les huit sections de l'iPad. `[capture: iphone-*-light]`
+  qu'elle pousse et les six sections de l'iPad. Les écrans de pilotage portent
+  en plus, à gauche, le bouton du serveur de pipelines (`ios.server.open`).
+  `[garde: ios-bouton-connexion-introuvable/AC-5]`
 
 ## Surfaces (S-1)
 
@@ -62,39 +64,36 @@ marqueur `[test: <fonction>]` (une fonction de
   la rangée qui porte sa propre surface, `iosCard()` pour une carte,
   `iosBanner(tone:)` pour un bandeau, `iosPanel()` pour le panneau d'une surface
   hors liste. `[garde: design-ios/AC-1]`
-- Un écran en liste — Accueil, Pipelines en largeur compacte, Sessions, Mémoire
-  (mode Liste), Projet, Statistiques — est une `List` de style `.insetGrouped`,
-  posée par `iosGroupedList()` : fond `systemGroupedBackground` jusqu'aux bords
-  de l'écran, rangées en `secondarySystemGroupedBackground`, en-têtes de section
-  et séparateurs du système, aucun `Divider()` tracé à la main, aucun panneau
-  autour des groupes. `[capture: iphone-*-dark]`
-- Une feuille ouverte depuis ces écrans est un `Form` groupé
-  (`.formStyle(.grouped)`) : sections et en-têtes natifs, sans panneau ni carte
-  imbriqués. `[capture: iphone-pipelines-fiche-*]`
-- Une carte n'existe que là où le contenu est une carte : le bloc « À vous » de
-  l'Accueil et les voies du kanban iPad. C'est la carte élevée,
+- Un écran en liste — Accueil, Pipelines, Projet, Audit, Statistiques, Mémoire
+  (mode Liste) — est une `List` de style `.insetGrouped`, posée par
+  `iosGroupedList()` : fond `systemGroupedBackground` jusqu'aux bords de l'écran,
+  rangées en `secondarySystemGroupedBackground`, en-têtes de section et
+  séparateurs du système, aucun `Divider()` tracé à la main, aucun panneau autour
+  des groupes. Les cinq écrans de pilotage partagent un seul cadre,
+  `IOSHarnessScreen`. `[garde: design-ios/AC-2]` `[capture: iphone-*-dark]`
+- Une carte n'existe que là où le contenu est une carte. C'est la carte élevée,
   `iosCard(raised: true)` : fond `secondarySystemGroupedBackground`, distinct du
-  fond groupé de l'écran (`systemGroupedBackground`) en clair comme en sombre.
-  `[test: raisedCardStandsOutOfTheGroupedBackground]` `[capture: ipad-kanban-dark]`
-- Dans une liste, une carte élevée, un bandeau ou l'état de connexion en bandeau
-  occupent une rangée nue, `iosBareListRow()` : sans fond ni séparateur du
-  système, sans marge latérale, 8 pt entre deux rangées nues consécutives.
-  `[capture: iphone-home-dark]`
-- `iosPanel()` est réservé aux surfaces hors liste : Session OMP, mode Graphe de
-  la Mémoire, feuilles Contrat et Bienvenue, écran générique.
-  `[capture: iphone-session-light]`
+  fond groupé de l'écran (`systemGroupedBackground`) en clair comme en sombre ;
+  les écrans de pilotage n'en posent aucune : leurs éléments sont des rangées.
+  `[test: raisedCardStandsOutOfTheGroupedBackground]`
+- Dans une liste, un bandeau ou l'état de connexion en bandeau occupent une
+  rangée nue, `iosBareListRow()` : sans fond ni séparateur du système, sans marge
+  latérale, 8 pt entre deux rangées nues consécutives. `[capture: iphone-home-dark]`
+- `iosPanel()` est réservé aux surfaces hors liste : le mode Graphe de la
+  Mémoire. `[capture: iphone-memoire-graphe-*]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
   régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
   Dynamic Type. Aucun panneau ne touche un bord de l'écran, et aucun appelant
   n'ajoute la sienne. `[capture: iphone-*-light]`
-- Un seul défilement par écran : la `List` de l'écran (Pipelines compact,
-  Sessions, Mémoire Liste, Projet, Statistiques, Accueil) ; le kanban iPad garde
-  son défilement vertical et horizontal ; le mode Graphe de la Mémoire, hors de
-  tout défilement, garde les gestes de son canevas. `[capture: iphone-kanban-light]`
+- Un seul défilement par écran : la `List` de l'écran ; le mode Graphe de la
+  Mémoire, hors de tout défilement, garde les gestes de son canevas.
+  `[capture: iphone-kanban-light]`
 - Un bandeau est une surface de CONTENU : teinte du ton à 12 % d'opacité, rayon
-  12, jamais un fond rouge plein écran. `[test: errorStateBannersAllEight]`
+  12, jamais un fond rouge plein écran. L'échec du dernier échange avec le serveur
+  de pipelines s'affiche ainsi en tête de liste. `[garde: design-ios/AC-2]`
 - La pastille porte l'identifiant d'accessibilité `ios.status` et combine ses
-  enfants (le mot se lit, la couleur le double). `[garde: design-ios/AC-2]`
+  enfants (le mot se lit, la couleur le double) ; l'état d'une feature en est
+  une. `[garde: design-ios/AC-2]`
 - Aucune couleur hors `ConsoleTone` : pas de teinte maison, pas de thème
   clair/sombre maison (le système s'en charge). `[garde: design-ios/AC-1]`
 
@@ -107,54 +106,49 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  Deux exceptions : le texte d'un souvenir dans la liste de la Mémoire, plafonné
+  Une exception : le texte d'un souvenir dans la liste de la Mémoire, plafonné
   par la fonction nommée `IOSMetrics.memoryRowLines(_:)` (texte intégral dans la
-  feuille), et la PLAGE de hauteur d'un champ de saisie vertical
-  (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
-  tronqué, le champ défile. `[garde: design-ios/AC-7]`
-- Toute durée (`ConsoleFormat.duration`) s'affiche en chiffres à chasse fixe
-  (`.monospacedDigit()`) : Accueil « En cours », carte et fiche Pipelines,
-  valeurs des Statistiques. `[garde: ios-finitions-composants/AC-6]`
+  feuille). `[garde: design-ios/AC-7]`
+- Toute durée (`ConsoleFormat.duration`, `PipelineServerText.duration`) s'affiche
+  en chiffres à chasse fixe (`.monospacedDigit()`) : délai de livraison et
+  médianes par étape des Statistiques. `[garde: ios-finitions-composants/AC-6]`
 
 ## Marges et cibles tactiles
 
 - Marge horizontale de 16 pt en largeur compacte, 24 pt en largeur régulière
   (ou inconnue) : `IOSMetrics.margin(_:)` en est l'unique règle.
   `[test: marginFollowsSizeClass]`
-- Colonne de lecture : sur une fenêtre large, Accueil, Sessions, Mémoire (mode
-  Liste), Projet, Statistiques et Session OMP posent leur contenu dans une
-  colonne de 720 pt marges comprises (`IOSMetrics.readableWidth`, surface de
-  672 pt), centrée, mise à l'échelle par Dynamic Type (`iosReadableWidth()`) ;
-  sous ce plafond, rien ne change. Pipelines et le mode Graphe restent pleine
-  largeur. `[test: readableWidthKeepsTheColumnUnder700]`
+- Colonne de lecture : sur une fenêtre large, chaque écran en liste pose son
+  contenu dans une colonne de 720 pt marges comprises (`IOSMetrics.readableWidth`,
+  surface de 672 pt), centrée, mise à l'échelle par Dynamic Type
+  (`iosReadableWidth()`, posé par `iosGroupedList()`) ; sous ce plafond, rien ne
+  change. Le mode Graphe reste pleine largeur.
+  `[test: readableWidthKeepsTheColumnUnder700]`
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
-  iOS/iPadOS. Un bouton texte sans style (« Tout afficher », « Lire le
-  contrat », « Piloter un projet… ») porte cette cible sur son libellé —
+  iOS/iPadOS. Un bouton texte sans style porte cette cible sur son libellé —
   `.frame(minWidth:minHeight: IOSMetrics.minimumTarget)` puis
   `.contentShape(Rectangle())`, style automatique conservé.
   `[test: minimumTargetIsFortyFour]`
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
-- Clavier de l'iPad : ⌘1…⌘8 ouvrent les sections dans l'ordre affiché par la
-  barre latérale (Accueil, Pipelines, Projet, Audit, Session OMP, Sessions,
-  Mémoire, Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
-  ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
-  Les onze commandes vivent dans la barre des menus de l'iPad (menus
-  Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
-  ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
+- Clavier de l'iPad : ⌘1…⌘6 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Audit, Statistiques, Mémoire), ⌘R
+  relit l'écran courant, ⌘F active la recherche de l'écran qui en a une. Les huit
+  commandes vivent dans la barre des menus de l'iPad (menu Présentation) avec
+  leur libellé français, toutes avec ⌘ seul : ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
   `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
 
 ## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
 
 - Un symbole décoratif, toujours doublé d'un texte visible qui porte le sens
-  (icône de nature d'une carte d'attention, promesse de la Bienvenue, icône de
-  voie), est masqué à VoiceOver par `.accessibilityHidden(true)` sur l'`Image` :
-  aucun élément `Image` lu sous un nom de symbole (« Search Document »). Un
-  symbole porteur de sens sans texte visible porte un libellé français :
-  « Nouvelle feature… » (`NewFeatureText.command`). `[capture: iphone-home-light]`
+  (icône du serveur non relié, symbole d'un état vide), est masqué à VoiceOver
+  par `.accessibilityHidden(true)` sur l'`Image` : aucun élément `Image` lu sous
+  un nom de symbole (« Search Document »). Un symbole porteur de sens sans texte
+  visible porte un libellé français (le bouton du serveur, `Label` de
+  `PipelineServerText.open`). `[capture: iphone-home-light]`
 - L'app est française seulement : `developmentRegion = fr` et
   `knownRegions = (fr, Base)` dans le projet, aucun `.lproj`, `.xcstrings` ni
   `CFBundleLocalizations`. Les libellés fournis par iOS (« Masquer la barre
@@ -209,29 +203,33 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 ## États vide et erreur (S-2, S-3)
 
 - Chaque section affiche son état vide RÉEL, avec le mot partagé du noyau, mot
-  pour mot : aucune donnée inventée, aucun état de chargement. `[test: emptyStatesUseSharedWords]`
-- Le titre d'un écran vient de `ConsoleSection` (ConsoleCore) ; son icône aussi,
-  sauf l'unique surcharge iOS `IOSSection.systemImage(of:)` (Sessions :
-  `clock.arrow.circlepath`, pour la distinguer de Session OMP) — le macOS garde
-  les icônes de `ConsoleSection`. `[test: titlesAndIconsComeFromConsoleCore]`
-- La section Session OMP porte la pastille de l'état partagé « Aucun projet »
-  (`ConsoleStatus`, ton `neutral`). `[test: sessionCarriesSharedStatus]`
-- En état d'erreur, les HUIT sections portent le bandeau `danger` avec le
-  message provisoire de `IOSText`. `[test: errorStateBannersAllEight]`
+  pour mot celui de macOS (`PipelineServerText.nothingPending`, `.noRun`,
+  `.noProject`, `.noAudit`, `.noStats`, `MemoryText.noProjectTitle`) : aucune
+  donnée inventée. `[garde: design-ios/AC-3]`
+- Le titre d'un écran vient de `ConsoleSection` (ConsoleCore), posé par la barre
+  de navigation ; son icône aussi, par `IOSSection.systemImage(of:)`.
+  `[garde: ios-finitions-titres-icones/AC-4]`
+- Sans serveur relié, les écrans de pilotage disent « Aucun serveur relié » et
+  offrent « Relier le serveur… », qui ouvre la feuille du serveur.
+  `[capture: iphone-home-light]`
+- Un échec du serveur de pipelines s'affiche en bandeau en tête de liste, par la
+  phrase de `HarnessFailure.message` (cause, puis remède), jamais le détail brut.
+  `[garde: ios-erreurs-serveur-lisibles/AC-8]`
 - L'état d'erreur vient d'un chemin RÉEL : le crochet de recette
   `-ios.state error` — jamais une capture fabriquée. `[garde: design-ios/AC-4]`
 - Un repli silencieux (section inconnue ⇒ Accueil, sans message) reste
   silencieux ; une valeur inconnue ne devient jamais une erreur.
   `[test: resolveScreenState]`
-- Une section hors périmètre (Terminal, Fichiers) n'a aucun contenu d'écran.
-  `[test: outOfScopeSectionsHaveNoContent]`
 
 ## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
 
-- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion
-  dans les huit sections ; ses mots vivent dans `IOSConnectionStateText` et ses
-  identifiants, tous préfixés `ios.connexion.`, dans
-  `IOSConnectionStateAccessibility`. `[test: connectionIdentifiersAreUniqueAndPrefixed]`
+Seule la Mémoire est servie par le Mac appairé : c'est la seule section qui dit
+l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
+
+- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion ;
+  ses mots vivent dans `IOSConnectionStateText` et ses identifiants, tous
+  préfixés `ios.connexion.`, dans `IOSConnectionStateAccessibility`.
+  `[test: connectionIdentifiersAreUniqueAndPrefixed]`
 - Le statut présenté est une fonction pure de l'état du client
   (`IOSConnectionStatus.resolve`) : une tentative fraîche est « Connexion au
   Mac… » ; dès qu'une tentative a échoué, l'écran dit « Pas de connexion au Mac »
@@ -241,34 +239,15 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   refusé ou révoqué, Mac injoignable, app à mettre à jour, Mac à mettre à jour —
   sans numéro de version, chemin ni adresse. `[test: causesHaveDistinctPhrases]`
   `[test: updatePhrasesNameTheAppWithoutVersionNumbers]`
-- Deux formes : plein écran (`ContentUnavailableView`, bouton « Se connecter »
-  proéminent) quand la section n'a rien chargé ; bandeau `attention` suivi de
-  « Se connecter » au-dessus des données conservées. « Connexion au Mac… » est un
-  indicateur d'attente sans bouton (plein écran, ou bandeau `info`). « Se
-  connecter » ouvre la feuille Connexion de la racine. `[test: resolvePriority]`
-- Pipelines, Sessions et Mémoire (liste et graphe) suivent la même règle : rien
-  de reçu hors connexion ⇒ le composant seul, hors de la liste (et du panneau du
-  graphe) ; données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit
-  au retour du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
+- La Mémoire (liste et graphe) : rien de reçu hors connexion ⇒ le composant seul,
+  hors de la liste (et du panneau du graphe) ; données reçues ⇒ elles restent,
+  sous le bandeau, et la Mémoire relit au retour du Mac.
   `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
-- Projet, Statistiques et Session OMP suivent la même règle, le titre de section
-  étant celui de la barre : rien de reçu hors connexion ⇒ le composant seul, hors
-  de la liste de Projet et de Statistiques ou du panneau de Session OMP ; une
-  conduite, un relevé ou un état de session reçu ⇒ il reste, sous le bandeau, et
-  l'erreur conservée est tue ; les Statistiques relisent au retour du Mac.
-  `[test: projectUnavailableWithoutConduite]`
-  `[test: projectKeepsConduiteOffline]` `[test: statsUnavailableWithoutPayload]`
-  `[test: statsKeepsBoardOffline]` `[test: sessionOmpUnavailableWithoutHosted]`
-  `[test: sessionOmpKeepsHostedOffline]`
-- Les actions qui exigent le Mac (« + » de Pipelines, répondre, valider, reprendre,
-  lancer, arrêter, fusionner, rafraîchir, éditer, écrire dans la Session OMP…)
-  restent visibles mais grisées hors connexion, connexion en cours comprise, et se
-  rouvrent dès la connexion, sans relancer l'app. À l'Accueil, seul « Voir dans
-  Pipelines » reste tapable parmi les gestes d'attente ; les feuilles de dialogue
-  ne s'ouvrent qu'une fois connecté, et une confirmation restée ouverte n'envoie
-  rien. Le champ de recherche de la Mémoire, que `.disabled` ne grise pas en
-  placement `.automatic`, est rendu inerte. `[test: gesturesOnlyWhenConnected]`
-  `[test: attentionNeedsMacExceptOpenInPipelines]` `[test: gesturesReopenOnConnection]`
+- Les gestes qui exigent le Mac (recherche, relecture) restent visibles mais
+  inertes hors connexion, connexion en cours comprise, et se rouvrent dès la
+  connexion, sans relancer l'app. Le champ de recherche de la Mémoire, que
+  `.disabled` ne grise pas en placement `.automatic`, est rendu inerte.
+  `[test: gesturesOnlyWhenConnected]`
 
 ## Dynamic Type maximum (S-7)
 
@@ -301,9 +280,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 ## Preuve visuelle (S-6)
 
-- Cinquante-six captures : 7 écrans × {iPhone portrait, iPad portrait} ×
-  {clair, sombre} à taille de texte par défaut, plus 7 écrans × {iPhone, iPad} ×
-  {clair, sombre} en Dynamic Type maximum. `[garde: design-ios/AC-6]`
+- Quarante-huit captures d'écran : 6 sections × {iPhone portrait, iPad portrait} ×
+  {clair, sombre} à taille de texte par défaut, plus 6 sections × {iPhone, iPad} ×
+  {clair, sombre} en Dynamic Type maximum ; douze de plus pour le mode Graphe de
+  la Mémoire. `[garde: design-ios/AC-6]`
 - Chaque capture est sondée en dimensions (`sips`) : toutes PORTRAIT — une
   capture inattendue ferait échouer le script. `[capture: iphone-*-light]`
 - Les images restent des artefacts de PR : elles vivent sous
@@ -320,225 +300,23 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Aucun changement visible côté coque macOS : mots et apparence identiques,
   `ConsoleCore` modifié par ajout seulement. `[garde: design-ios/AC-10]`
 
-## Pipelines (feature `ios-pipelines`)
+## Pilotage (serveur de pipelines du VPS)
 
-- L'écran Pipelines rend l'ardoise PARTAGÉE de `ConsoleCore` (`KanbanBoard`), la
-  même dérivation que macOS : les voies de `KanbanLane` (dont « Chez l’arbitre »,
-  montrée seulement quand l'arbitre tient une feature), leurs cartes et leurs
-  états viennent du magasin, jamais d'un calcul propre à l'app. La barre porte
-  « Décisions de l’arbitre », une feuille du fil `audits.feed` de la trame `store`.
-  `[garde: design-ios/AC-3]`
-- En largeur COMPACTE (iPhone portrait), chaque voie est une section de la liste
-  groupée de l'écran — son en-tête, puis une rangée par carte ; en largeur
-  RÉGULIÈRE (iPad), les voies sont côte à côte, leurs cartes élevées sur le fond
-  groupé, dans un défilement horizontal posé dans le défilement vertical du
-  kanban — toutes les voies montrées et toutes leurs cartes restent atteignables.
-  `[capture: iphone-kanban-light]`
-- En largeur COMPACTE, une voie sans carte n'est pas montrée — « Pas commencées »
-  comprise — et sans aucune voie à montrer l'écran affiche le mot partagé
-  `KanbanText.noPipeline`. `[test: compactHidesEveryEmptyLane]`
-- En largeur COMPACTE, « Livrées » et « Arrêtées » s'ouvrent repliées à chaque
-  visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
-  valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
-  l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
-- En largeur RÉGULIÈRE (iPad), voies permanentes même vides et voies terminales
-  dépliées ; chaque voie a la même largeur, `IOSMetrics.laneWidth` (280 pt) mise à
-  l'échelle par Dynamic Type et plafonnée à la largeur visible moins la marge de
-  fin ; voies alignées en haut ; le défilement horizontal finit sur une marge
-  `IOSMetrics.margin`. `[test: laneWidthNeverExceedsTheViewport]` `[test: regularKeepsLanesUnchanged]`
-- L'en-tête d'une voie (symbole, titre, compteur) s'empile aux tailles
-  d'accessibilité, sur iPad comme sur iPhone, et son titre n'est jamais tronqué.
-  `[test: laneHeaderStacksAtAccessibilitySizes]`
-- L'écran ne fabrique aucune donnée : Mac non connecté sans instantané, il rend
-  seul le composant d'état de connexion en plein écran ; une ardoise reçue
-  (même vide, mot partagé `KanbanText.noPipeline`) reste affichée hors
-  connexion, sous le bandeau du composant. `[test: unavailableWithoutSnapshot]`
-  `[test: snapshotKeptOffline]`
-- La feuille d'une carte offre les gestes de la carte via la règle d'aiguillage de
-  `KanbanActionPresentation` ; une carte d'historique n'offre aucun geste et le
-  dit. `[test: historyCardOffersNothing]`
-- « Fusionner » demande une confirmation AVANT tout effet et la ligne de PR
-  servie porte le `headOid` exigé par la route de fusion.
-  `[garde: design-ios/AC-8]`
-- La cible tactile minimale des cartes, des options de question et des boutons de
-  geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
-- Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
-  un espace sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
-  d'au moins 44 pt ; une carte sans PR n'a ni ligne ni espace réservé. Une carte
-  est rigide en hauteur : dans la voie la plus haute de l'iPad (« Livrées »), son
-  titre passe à la ligne comme ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
-- Une carte ne montre jamais de marque brute (« Marques : mort ») : ses marques
-  se lisent par la phrase partagée `KanbanText.marksSentence` (« Elle s'est
-  arrêtée de façon inattendue. »…), en `.caption` secondaire, sur autant de
-  lignes qu'il faut ; une carte saine n'a aucune ligne. L'ardoise qui porte une
-  carte au pilote arrêté se capture par `-pipelines.board marques`, sans
-  appairage. `[test: boardRecipeMarquesShowsSentences]`
-- Pipelines se relit quand on tire la liste (iPhone) ou le kanban (iPad) vers le
-  bas : l'ardoise, puis l'état des PR sur GitHub si aucune relecture n'est déjà
-  en cours ; un échec est silencieux. Au clavier de l'iPad, ⌘R « Actualiser »
-  fait la même relecture et n'est actif que connecté. La barre ne porte aucun
-  bouton ↻ ; aucun message : le retour visible est l'indicateur système puis le
-  libellé des cartes. `[test: refreshAvailability]`
-  `[test: pipelinesRefreshRereadsTheBoardThenThePullRequests]`
-- Sur l'ardoise iOS, les clôtures d'étape d'une feature de lot ne font aucune
-  carte à part, et une feature réduite à ses clôtures fait une seule carte
-  « Terminée ». `[test: historyClosuresJoinTheirFeatureOnIOS]`
-- Dans la feuille « Nouvelle feature », le sélecteur de dépôt montre le NOM du
-  dossier (jamais un chemin absolu), complété par les derniers segments du
-  parent pour les seuls homonymes ; la valeur lancée reste la racine complète.
-  `[test: repoChoicesUseFolderNames]`
-- Le dépôt se choisit dans un `Picker` natif, rangée « Dépôt » (le mot n'apparaît
-  qu'une fois) ; sans dépôt choisi, il affiche l'invite « Choisir un dépôt »,
-  inactive dans le menu, et « Lancer » est inactif.
-  `[capture: iphone-nouvelle-feature-vide-light]` `[garde: ios-finitions-composants/AC-8]`
-- Les champs titre et besoin portent les libellés VoiceOver « Titre » et
-  « Besoin », sans libellé visible ajouté.
-  `[capture: iphone-nouvelle-feature-choisi-light]`
-- Le champ besoin montre 3 lignes à vide, grandit jusqu'à 8 lignes puis défile
-  dans le champ, sans second défilement de feuille.
-  `[capture: iphone-nouvelle-feature-rempli-light]`
-- Sous le champ titre, aucune ligne : la feuille ne cite ni branche ni « feat/ ».
-  `[garde: ios-redaction-vouvoiement/AC-3]`
-- Les deux sélecteurs de modèle s'appellent « Modèle cadrage+revue » et « Modèle
-  exécution ». `[garde: ios-redaction-vouvoiement/AC-7]`
-- La feuille se capture par le crochet de recette `-pipelines.recipe`
-  (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
-- La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur
-  autant de lignes qu'il faut ; la barre porte « Pipelines » et « Fermer » (44 pt).
-  `[capture: iphone-pipelines-fiche-*]`
-- « Reprendre » et « Arrêter… » sont des rangées de bouton système ; « Arrêter… »
-  porte le rôle destructif (texte rouge, sans capsule ni contour) et passe par sa
-  confirmation. `[capture: iphone-pipelines-fiche-actions-*]`
-- Le modèle s'affiche par son nom lisible du catalogue servi par le Mac, l'identifiant
-  brut sinon. `[test: modelNameFromCatalog]`
-- Chaque élément de la fiche porte son propre identifiant `pipelines.card.sheet.*`.
-  `[test: sheetIdentifiersAreDistinct]`
-- La question de la fiche est FIGÉE : aucune trame `store` ne la change sous les
-  yeux. La réponse (option ou texte libre) part avec l'identifiant de la question
-  affichée ; si le Mac répond que la question a changé, la fiche reste ouverte sur
-  la nouvelle question et ses options, bandeau « La question a changé sur le
-  Mac… » au-dessus (`pipelines.card.sheet.notice`), texte saisi conservé.
-  `[test: changedQuestionKeepsTextOnPipelines]`
-
-## L'Accueil (S-10, S-11)
-
-- L'écran porte le titre de navigation `ConsoleSection.home.title`, en grand titre
-  par défaut comme les autres sections, dans ses cinq états : aucune bande vide
-  sous la barre, et la barre titrée reste en place, bouton Connexion compris,
-  quand le tableau de bord défile. `[capture: iphone-home-light]`
-- L'Accueil iOS montre un seul de ses cinq états : indisponible (le composant
-  d'état de connexion en plein écran, hors connexion et sans ardoise reçue),
-  « OMP absent sur le Mac », chargement, premiers pas, tableau de bord — dans cet
-  ordre de priorité. Hors connexion, une ardoise déjà reçue reste affichée sous
-  le bandeau du composant. `[test: resolvePriority]`
-- Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
-  la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
-  libellés. `[test: parityFacts]`
-- Le tableau de bord range chaque carte dans UNE section, dans cet ordre :
-  « À vous », « En cours » (seules les pipelines réellement en marche, avec leur
-  durée, sans puce), « À reprendre » (les pipelines en pause, puce « En pause » et
-  « Reprendre »), « Pas commencées » (titre et sous-titre seuls), « Livrées
-  récemment » ; « À reprendre » et « Pas commencées » disparaissent quand elles
-  sont vides. Mêmes listes et mêmes identifiants que le Mac, préfixés `ios.`
-  (`ios.home.paused.<id>`, `ios.home.notStarted.<id>`). `[test: sectionsMatchTheMac]`
-- Une pipeline en échec ou bloquée (feature de lot relançable seulement) est une
-  carte « À vous » « En échec » (`xmark.octagon.fill`) ou « Bloquée »
-  (`exclamationmark.triangle.fill`), qui nomme l'étape où elle s'est arrêtée,
-  sans texte d'erreur brut, et porte « Reprendre » ; elle n'est dans aucune autre
-  section. `[test: failedAndBlockedAreAttentionOnly]`
-- Ce « Reprendre » emprunte la route de reprise de la carte, que le Mac traduit en
-  relance : envoi en cours, puis refus du Mac sur la carte (« La pipeline n'a pas
-  repris. » et sa cause) ; relancée, la carte passe sous « En cours ».
-  `[test: relaunchCardSendsResumeOfItsCard]`
-- L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad)
-  portent le badge du nombre d'attentes (`HomePresentation.attentionCount`), et
-  rien quand il vaut zéro. `[test: badgeCounts]`
-- Chaque onglet de section est UN élément d'accessibilité (`ios.tab.<section>`)
-  dont le libellé est le titre, suivi de « , N en attente » quand le badge est
-  visible — la même valeur alimente le badge et le libellé.
-  `[test: sectionRowLabelFollowsShownBadge]`
-- Le badge ne dépend pas de l'onglet affiché : l'onglet Accueil le montre depuis
-  n'importe quel onglet. Seuls Accueil et Audit en portent : Accueil le nombre
-  d'attentes, Audit le nombre d'audits qui attendent l'utilisateur (propositions
-  à valider ou question en attente, `AuditBoard.awaitingUserCount`), la même
-  valeur sur l'onglet Audit de l'iPhone et la rangée Audit de la barre latérale
-  de l'iPad (`IOSHomeContent.rowBadge`), rien à zéro ; VoiceOver lit « Audit, N
-  en attente ». `[test: homeRowCarriesPositiveCount]`
-  `[test: auditRowCarriesAwaitingAudits]`
-- La bienvenue ne s'affiche qu'à la première ouverture de l'Accueil (préférence
-  `home.welcomeSeen`) ; « Continuer » pousse la Connexion dans la même feuille
-  (« Plus tard » à la place de « Fermer ») sauf pour un appareil appairé.
-  `[test: welcomeDue]` `[test: welcomeContinueShowsConnectionUnlessPaired]`
-- Après la fermeture de la bienvenue, la Connexion ne s'ouvre plus d'elle-même
-  pendant le lancement, sauf jeton refusé. `[test: deferredUnpairedStaysClosed]`
-  `[test: deferredRefusedStillOpens]`
-- Bienvenue au style Apple : grand titre centré, promesses à grande icône,
-  « Continuer » pleine largeur ancré en bas, sans panneau.
-  `[test: welcomeContinueShowsConnectionUnlessPaired]`
-- La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
-  `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
-- La feuille « Répondre » fige la question affichée à son ouverture et y répond
-  avec son identifiant ; si le Mac répond que la question a changé, elle reste
-  ouverte sur la nouvelle question et ses options, bandeau « La question a changé
-  sur le Mac… » au-dessus (`ios.home.answer.notice`), texte saisi conservé.
-  `[test: changedQuestionKeepsTextOnHome]`
-- Si la question n'attend plus de réponse, la feuille (Répondre ou fiche
-  Pipelines) se ferme, puis l'écran présente l'alerte « Réponse non envoyée » /
-  « Cette question n’attend plus de réponse. », « OK » seul, une fois la feuille
-  fermée. `[test: goneQuestionClosesWithMessage]`
-- La feuille Contrat découpe le markdown par les fonctions partagées
-  (`ContractDocument`) et rend chaque section en Markdown, bloc par bloc, par
-  `IOSMarkdownView`, sans sa ligne « ## Titre » (l'en-tête de la feuille suffit) ;
-  une section absente ou vide a son message, sans syntaxe Markdown brute.
-  `[test: contractSectionsDropTheirHeading]`
-- Sa barre dit « Contrat » en ligne ; le nom complet de la feature est en tête du
-  panneau, en en-tête, et passe à la ligne au lieu d'être tronqué.
-  `[test: longRecipeNamesTheWholeFeature]`
-- Une livraison récente ouvre sa PR par son seul bouton « Ouvrir la PR », par
-  `openURL`, seulement quand l'URL est exploitable ; le titre et la puce ne sont
-  pas des cibles. `[test: deliveredLinks]`
-- « Livrées récemment » et la voie « Livrées » portent l'état réel de la PR
-  (« PR ouverte », « PR fusionnée », « PR fermée », « PR créée » tant qu'il est
-  inconnu), les mêmes libellés que le Mac (`ConsoleStatus.of(card:)`) ; une
-  livraison close depuis plus de 7 jours en sort, et les clôtures d'étape d'une
-  feature ne font jamais de carte à part. `[test: deliveredReadsThePullRequestState]`
-- Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
-- Le bandeau de préparation vient du Mac (`components.setupBanner`), jamais
-  inventé ; l'Accueil ne porte AUCUN bouton dessus. `[test: setupBanner]`
-- « OMP absent sur le Mac » n'est conclu que sur réponse du Mac, jamais quand la
-  réponse manque. `[test: macMissingRequiresComponents]`
-- Avant le premier instantané, l'Accueil affiche l'indicateur de chargement natif
-  seul, sans texte — jamais un vide muet. `[test: loadingBeforeFirstSnapshot]`
-  `[garde: ios-redaction-vouvoiement/AC-5]`
-- L'état de l'Accueil suit l'ardoise publiée sans geste de l'utilisateur.
-  `[test: liveUpdates]`
-- Une feature dont les specs attendent une validation porte « Spécifications à
-  valider », en statut comme en attente ; seul le bouton dit « Valider les specs ».
-  `[test: specsAwaitingValidationReadTheSameEverywhere]`
-- Aucun bandeau de notifications, et l'app ne demande jamais l'autorisation
-  d'en afficher. `[test: noNotificationsBanner]`
-- Les cinq états et les trois feuilles se capturent par le crochet de recette
-  `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
-- L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
-  `[capture: iphone-home-dark-ax]`
-- Une rangée « titre | puce | bouton » tient sur une ligne quand tout y tient ;
-  sinon le titre passe sur sa ligne et la puce et le bouton sur la suivante ;
-  s'ils ne tiennent pas ensemble, chacun a sa ligne — quelle que soit la taille
-  de texte, sur iPhone comme sur iPad. `[test: longTitleSplitsAboveItsControls]`
-- Aucune taille de texte n'est plafonnée : rangées, puces et boutons suivent la
-  taille système jusqu'à `accessibility-extra-extra-extra-large` ; seul un mot
-  plus large que la ligne peut être coupé. `[garde: ios-dynamic-type-ax-residuel/AC-2]`
-- Un geste de carte montre son envoi en cours et n'envoie rien de plus jusqu'à la
-  réponse du Mac : bouton désactivé, indicateur devant le libellé, valeur
-  d'accessibilité « Envoi en cours ». `[test: resumeIgnoresSecondTapWhileInFlight]`
-- « Valider les specs » demande une confirmation, « Reprendre » et « Accepter la
-  revue » partent aussitôt. `[test: specsTapAsksConfirmationWithoutSending]`
-- L'échec d'un geste s'affiche sur sa carte, en français, sans détail technique ;
-  le succès n'a pas de message, la carte suit l'ardoise.
-  `[test: failureLandsOnItsCardWithoutRawDetail]`
-- Le nom d'une feature passe par `IOSHomeText.featureName(_:)` : il se replie en
-  entier et la coupure tombe AVANT un tiret, jamais après.
-  `[test: featureNameNeverEndsALineWithAHyphen]`
+- Accueil, Pipelines, Projet, Audit et Statistiques lisent le serveur de pipelines
+  (omp-harness) directement, par `HarnessModel` : un seul modèle pour l'app, tenu
+  à jour par le flux d'événements du serveur, relu en tirant la liste.
+  `[garde: design-ios/AC-1]`
+- L'Accueil est la boîte de l'humain : specs à valider (rendues par
+  `IOSMarkdownView`), verdicts, questions en lot, décisions renversables, audits
+  à trier, puis les features en cours. `[garde: ios-souvenir-markdown-altere/AC-4]`
+- Une feature se lit en une rangée : son titre, puis la pastille de son état et
+  de son étape (`IOSStatusChip`, ton qui double le mot). `[garde: design-ios/AC-2]`
+- Un lancement (feature, projet, audit) choisit son dépôt dans un `Picker`
+  natif, parmi les dépôts que le serveur déclare.
+  `[garde: ios-finitions-composants/AC-8]`
+- Une proposition d'audit retenue porte la coche du symbole système, et le trait
+  « sélectionné » pour VoiceOver ; aucun caractère « ✓ ».
+  `[garde: ios-finitions-composants/AC-2]`
 
 ## Mémoire (feature `ios-memoire`)
 
@@ -565,18 +343,18 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
 - Le texte d'un souvenir s'affiche TEL QU'IL EST STOCKÉ (`Text(verbatim:)`), dans la
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
-  — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
+  — un `*` reste un `*`. Seuls les autres contenus (les specs d'une feature) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
 - Le texte d'un souvenir tient en 3 lignes au plus en largeur compacte et 4 en
   largeur régulière, terminé par « … », quelle que soit la taille de texte ; la
   feuille montre le texte intégral. `[test: memoryRowLinesFollowTheWidth]`
-- Chaque rangée a la même marge verticale que les Sessions ; la date et les
+- Chaque rangée a une marge verticale constante ; la date et les
   étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
   s'empilent (date, puis étiquettes) aux tailles d'accessibilité.
   `[test: memoryRowContextSplitsIntoSegments]`
 - « Sommaire » reste toujours visible ; indisponible (mode Graphe, sommaire déjà
   affiché, recherche en cours), c'est un bouton désactivé du système, sans teinte
-  ni bulle. `[test: summaryAvailability]` `[garde: ios-gestes-et-retours-natifs/AC-13]`
+  ni bulle.  `[garde: ios-gestes-et-retours-natifs/AC-13]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 
@@ -622,208 +400,12 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   puis les titres de souvenir ; un texte sans place est masqué jusqu'au zoom, et une
   capsule sans place devient une pastille. `[test: graphLabelsNeverOverlapAtOpeningScale]`
 
-## La section Statistiques (feature `ios-statistiques`)
-
-- En tête du tableau, deux graphiques Swift Charts en barres horizontales : « Durée
-  par feature » et « Tokens par feature » (envoyés et reçus empilés, avec légende), une
-  barre par feature LISTÉE, dans l'ordre et avec les nombres des sections dessous,
-  qui restent inchangées. `[test: statsChartsFollowTheListedFeatures]`
-- Chaque graphique porte un descripteur d'accessibilité (`AXChartDescriptor`) : titre
-  en français, axes nommés, un point exact par feature — une série pour la durée, deux
-  pour les tokens. `[test: statsChartsDescribeStackedTokens]`
-- Aucun graphique vide : sans feature listée ou aux valeurs toutes nulles, le
-  graphique n'est pas monté ; chargement, bascule et erreur n'en montrent aucun.
-  `[test: statsChartsHideWithoutData]`
-- La hauteur des barres suit Dynamic Type (`@ScaledMetric`), et les graphiques vivent
-  dans `IOSStatsCharts.swift`, montés avant les sections des features.
-  `[garde: ios-statistiques-et-graphe-accessibles/AC-2]`
-- Une section par feature LISTÉE, dans l'ordre du plan : le slug en en-tête, puis une ligne par
-  grandeur (modèle, temps passé, tours, tokens envoyés, tokens reçus). `[test: statsCardsSumTheListedFeatures]`
-- « Tokens envoyés » compte TOUT ce qui part vers le modèle : entrée hors cache + cache lu + cache écrit, sur chaque section et sur la ligne « Total du projet » ; « Tokens reçus » reste la sortie. La fenêtre macOS, elle, garde l'entrée hors cache. `[test: statsSentTokensCountTheCache]`
-- La ligne « Total du projet » somme les features LISTÉES — ni les features
-  masquées, ni un autre projet — et rien d'autre n'y entre. `[test: statsTotalSumsOnlyListedFeatures]`
-- Le sélecteur de projet, la ligne de total et la mention des features masquées
-  sont visibles des deux appareils, aux deux apparences. `[capture: ipad-stats-dark]`
-- Les durées et les totaux se recalculent à l'instant de RENDU
-  (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
-  milliseconde par milliseconde et par run vivant, sans un octet de trafic.
-  `[test: statsDurationsAdvanceWithLiveRuns]`
-- Sept états à part entière, jamais un écran vide : non connecté (le composant
-  d'état de connexion partagé, en plein écran sans relevé, en bandeau au-dessus du
-  dernier relevé conservé), chargement (« Chargement des statistiques… »), erreur
-  (bandeau `danger` + « Réessayer »), aucun projet, bascule vers un autre projet,
-  projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
-  `[test: statsKeepsBoardOffline]`
-- Le sélecteur de projet nomme le projet CHOISI et se tient en tête des états
-  tableau, vide et bascule — pendant la lecture d'un autre projet, il reste
-  au-dessus du chargement ; le premier chargement, le non connecté, l'erreur et
-  « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
-- Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
-  sélecteur est au-dessus de la rangée vide, et choisir un projet qui a des données
-  affiche son tableau. `[test: statsEmptyProjectOffersTheSwitch]`
-- Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
-  de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
-  client n'est pas connecté : aucune minuterie de scrutation.
-  `[test: statsReloadsOnlyWhenConnected]`
-- L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
-  `[capture: iphone-stats-dark-ax]`
-
-## Sessions (S-1…S-11)
-
-- La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
-  son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
-  rendus en en-têtes de section natifs de la liste groupée, y compris pour une
-  session lancée hors coque. `[test: listGroupsByDay]`
-- Un menu de projet restreint la liste AVANT le groupement, donc les
-  en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
-  `[test: projectFilter]`
-- Le fil de la visionneuse vient du modèle de lignes PARTAGÉ
-  (`SessionRowBuilder`) : mêmes lignes que macOS, prouvées sur la fixture
-  `SessionParity`. `[test: parityRows]`
-- Une session illisible ou tronquée affiche son motif (bandeau `danger`
-  au-dessus du fil) ou la note de réécriture — jamais un écran vide muet.
-  `[test: unreadableAndTruncated]`
-- Les bannières de la visionneuse (erreur, session illisible) montrent leur
-  texte entier à toute taille ; le fil prend la place restante.
-  `[test: errorRecipeShowsTheErrorBanner]`
-- L'écran de section est capturé tel quel, sans écran fabriqué.
-  `[capture: iphone-sessions-light]`
-- Les plis d'une ligne (réflexion, appel) sont INDÉPENDANTS, et une ligne de diff
-  porte son ton en plus de sa couleur par `SessionDiffText.toneLabel`.
-  `[test: foldsAndDiffs]`
-- Une question `ask` est mise en évidence et DÉPLIÉE d'emblée ; la visionneuse
-  n'offre AUCUN geste de réponse — lire, plier/déplier, faire défiler seulement.
-  `[test: askHighlighted]`
-- Les arguments d'un appel déplié se lisent en clé/valeur (`IOSToolArgumentsView`,
-  lecture partagée `ToolArguments`), jamais en JSON brut : hiérarchie indentée
-  (retrait `@ScaledMetric`), éléments de liste numérotés dès 1, booléens « oui »/« non »,
-  clés dans l'ordre de l'appel, libellés français pour read, write, edit, bash,
-  grep et glob, valeurs « code » à chasse fixe, le reste en police système.
-  « Aucun argument » / « Arguments illisibles » ; le JSON brut reste replié derrière
-  « Afficher le détail brut ». Une valeur longue montre un EXTRAIT de 4 lignes ou
-  280 caractères suivi de « Afficher plus » : c'est une troncature de CONTENU
-  voulue, faite par le noyau, sans aucun `lineLimit`. `[test: toolArgumentsAreFields]`
-- Un ajout d'un run vivant s'ajoute sans relire la session : une seule lecture
-  initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
-- Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le
-  bouton « Revenir au direct » recolle sans geste. `[test: followPolicy]`
-- Sous l'en-tête : « Chargement de la session… » jusqu'à la fin de la lecture, et
-  pendant une reconstruction, puis le fil, ouvert sur sa FIN, ou l'état vide —
-  jamais une zone muette. `[test: threadShowsLoadingUntilRead]`
-- Une session sans message affiche « Session vide », jamais un chargement sans
-  fin. `[test: emptySessionIsExplicit]`
-- La recette `suivi` fait arriver trois messages : au bas, ils s'affichent sans
-  geste ; remonté, la position ne bouge pas. `[test: followRecipeKeepsFollowPolicy]`
-- L'état du run passe de vivant à terminé sans rouvrir la session, par la
-  fonction partagée `ConsoleStatus.of(run:)`. `[test: runStatusTransition]`
-- Le fil est monté hors de la section Sessions depuis une simple source : le
-  même composant rend le même fil, preuve qu'il est réutilisable.
-  `[test: componentIsReusable]`
-- Aucune taille de police en points ni `lineLimit` numérique dans le fil : les
-  lignes se replient, comme les blocs de code d'`IOSMarkdownView`.
-  `[garde: design-ios/AC-7]`
-- Le libellé d'accessibilité d'une ligne dit ce qu'elle affiche, dans son ordre :
-  feature, état, étape, dépôt, heure — un morceau absent de l'écran est absent du
-  libellé. `[test: sessionRowLabelSaysWhatRowShows]`
-- Le symbole d'étape occupe une colonne de largeur fixe (`IOSMetrics.phaseIconWidth`,
-  mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
-  abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
-- Chaque rangée a une marge verticale `IOSMetrics.rowVerticalPadding` mise à
-  l'échelle (`@ScaledMetric`) et s'empile (icône et textes, puis puce) quand
-  elle ne tient pas sur une ligne. `[test: longTitleSplitsAboveItsControls]`
-- Le filtre de projet est un menu dont le libellé visible est la valeur choisie,
-  entière à toute taille de texte (repliée, jamais tronquée) ; VoiceOver annonce
-  « Projet, <valeur> ». `[test: sessionFilterSaysProjectThenItsValue]`
-
-## Session OMP (feature `ios-session-omp`)
-
-- L'écran porte le titre de navigation `ConsoleSection.session.title` et pose tout
-  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses huit états
-  servis (jamais centré verticalement) — seul le composant d'état de connexion
-  plein écran est hors du panneau ; le seul défilement est celui du fil de
-  conversation. `[capture: iphone-session-light]`
-- L'écran couvre NEUF états : non connecté (le composant d'état de connexion
-  partagé, en plein écran sans état servi, en bandeau au-dessus du dernier état
-  conservé), chargement, aucune session, lancement, arrêt en cours, session vive,
-  arrêtée, interrompue, échec — décidés par la fonction pure
-  `IOSSessionOmpModel.surface(connection:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
-  `[test: sessionOmpKeepsHostedOffline]`
-- L'en-tête porte le nom du dépôt servi (`projectName`) et la pastille du mot
-  d'état (`stateLabel`) ; un état inconnu du client vaut `idle`, jamais une
-  invention. `[test: surfaceFollowsClientAndHosted]`
-- Le lancement n'est offert que hors d'une session en marche (ni en lancement, ni
-  en arrêt) : l'écran n'ouvre la feuille que sous `model.canLaunch`.
-  `[test: launchAvailability]`
-- La relance est réservée à `dead`, l'arrêt à `launching|running` — parité avec
-  les règles du Mac. `[test: relaunchAndStopAvailability]`
-- Le composeur n'est actif qu'en marche, sans dialogue en attente et sur un texte
-  non blanc ; le mot de la cause est affiché tel quel.
-  `[test: composerAvailability]`
-- Un envoi appelle `prompt` une seule fois ; le champ se vide sur succès et reste
-  rempli sur échec, le message servi affiché en bandeau.
-  `[test: sendPromptCallsOnce]`
-- Les quatre formes de dialogue et l'annulation passent par la feuille
-  RÉUTILISÉE de Projet : choix simple, confirmation, réponse libre, édition d'un
-  texte prérempli. `[test: fourDialogForms]`
-- Un choix simple répond `kind:"value"` avec l'option choisie, en un seul appel ;
-  le dialogue quitte la file servie, donc la feuille se referme.
-  `[test: selectDialogAnswersWithValue]`
-- « Annuler » répond `kind:"cancelled"` ; un `hosted` sans dialogue referme la
-  feuille. `[test: cancellationAnswersAndClears]`
-- À l'apparition, l'écran relit l'état servi ; un dialogue posé pendant la
-  déconnexion redevient la tête de la file et donc tranchable.
-  `[test: reconnectRestoresDialogs]`
-- Le fil est le composant RÉUTILISÉ de la section Sessions
-  (`IOSSessionThreadView`), monté sur le fichier servi ; aucun geste d'écriture
-  dans le fil. `[test: componentIsReusable]`
-- Le fil se lit et s'abonne dès que l'écran le monte, et s'arrête quand il
-  disparaît. `[test: hostedThreadStartsWhenSynced]`
-- L'arrêt appelle la route une fois et l'état servi passe à `stopped`.
-  `[test: stopCallsRouteOnce]`
-- Le modèle et le niveau de réflexion actifs sont montrés en permanence dans une
-  carte posée en tête du panneau, sans rien ouvrir : le nom lisible du modèle
-  (repli sur le sélecteur) suivi de « · réflexion <niveau> » — « défaut OMP »
-  sans modèle, le nom seul sans niveau — avec le bouton « Changer »
-  (`.bordered`). Même texte que sur le Mac (`SessionConsoleText.Model`) ; aux
-  tailles d'accessibilité le bouton passe sous le libellé. Un Mac antérieur, qui
-  ne sert ni `model` ni `turnRunning`, n'affiche pas la carte.
-  `[test: modelLabelShowsActiveValue]`
-- La carte suit chaque trame `hosted` : un changement fait depuis le Mac remplace
-  la valeur affichée, sans relancer l'app ni la session.
-  `[test: modelLabelFollowsHostedFrames]`
-- « Changer » ouvre une feuille `NavigationStack` + `Form` en grand format : les
-  modèles du Mac (`GET /v1/models`) en rangées-boutons filtrables avec coche et
-  trait « sélectionné », puis le réglage de niveau. « Appliquer » appelle
-  `POST /v1/session/model` une seule fois ; la feuille se ferme sur succès, et
-  la carte prend la valeur rendue par le Mac. `[test: applyModelCallsRouteOnce]`
-- La liste ne montre que le catalogue authentifié du Mac, filtré sans égard à la
-  casse sur le nom lisible et le sélecteur ; chargement, échec avec « Réessayer »
-  et « aucun résultat » ont chacun leur état. `[test: modelListShowsCatalogOnly]`
-  `[test: modelCatalogFailureIsExposed]`
-- Le niveau de réflexion n'offre que les niveaux du modèle choisi (`off` puis
-  ses efforts) et disparaît sans effort ; changer de modèle garde le niveau s'il
-  est proposé, sinon le plus haut proposé en dessous. `[test: offeredLevelsFollowThinking]`
-- Le sélecteur est indisponible (bouton grisé, aide « Indisponible pendant que
-  OMP répond. ») pendant un tour, au lancement, à l'arrêt, sans projet, hors
-  connexion ou pendant une requête ; il redevient utilisable dès la trame de fin
-  de tour. `[test: modelPickerUnavailableDuringTurn]` `[test: applyModelRefusedDuringTurn]`
-- Sans session, le choix vaut pour le projet du Mac et passe par la même route.
-  `[test: modelAppliesWithoutSession]`
-- Un refus du Mac laisse la feuille ouverte, son message en bandeau danger mot
-  pour mot ; la carte garde le modèle et le niveau réellement actifs.
-  `[test: applyModelRefusalIsExposed]`
-- L'écran de section est capturé tel quel, en clair et en Dynamic Type maximum.
-  `[capture: iphone-session-light]` `[capture: iphone-session-dark-ax]`
-- Aucune taille de police en points, aucun `lineLimit` numérique, aucun
-  `onTapGesture` : les mêmes gardes typographiques que les autres sections.
-  `[garde: design-ios/AC-7]`
-
 ## La feuille Connexion (feature `connexion-ios-feuille-intrusive-et-sans`)
 
 - La feuille ne s'ouvre d'elle-même que sans jeton ou quand le Mac refuse le
   jeton (`ConnectionSheetMode.autoPresents`) : jamais pendant la lecture du
   trousseau, jamais pour un appareil appairé, même si le Mac est injoignable —
-  l'Accueil reste alors dans son état dégradé « Mac injoignable — … ».
+  la Mémoire reste alors dans son état dégradé « Mac injoignable ».
   `[test: pairedConnectedNeverAutoPresents]` `[test: pairedUnreachableStaysClosed]`
 - Le mode de la feuille vient du statut d'appairage, pas de l'état de connexion :
   lecture, non appairé (refusé ou non), connecté, déconnecté.
@@ -852,8 +434,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Pendant l'appairage, « Appairage en cours… » s'affiche sous « Appairer », désactivé
   jusqu'à la réponse ; le champ du code est déclaré code à usage unique
   (`.textContentType(.oneTimeCode)`). `[test: pairingInFlightDisarmsPair]`
-- Un appairage réussi se lit dans `ConnectionPairingOutcome` : `.paired` ferme le
-  flux de bienvenue, un refus garde le message sous le champ.
+- Un appairage réussi se lit dans `ConnectionPairingOutcome` : `.paired` ferme la
+  feuille, un refus garde le message sous le champ.
   `[test: successfulPairingFinishesTheFlow]` `[test: refusedPairingKeepsTheMessage]`
 - « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
@@ -861,94 +443,40 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 ## Les feuilles (feature `feuilles-ios-presentation-et-depots`)
 
-- Sur iPad, une feuille au contenu long (Contrat, feuille de session, fiche d'un
-  souvenir) est une feuille « page » (`iosPageSheet()`), plus de 600 pt de contenu ;
-  « Piloter un projet » et « Lancer une session OMP » gardent la
-  largeur du formulaire (580 pt) et une hauteur qui suit leur contenu
-  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément ; la
-  Bienvenue prend, comme la Connexion, la taille par défaut du formulaire. Sur
-  iPhone, rien ne change : feuille pleine hauteur, même haut, pleine largeur, et
-  aucun `presentationDetents`. Avant la première mesure, la hauteur idéale est
-  absente, jamais nulle : la feuille n'est pas écrasée. `[test: fittedSheetIdealHeight]`
-- Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
-  par son seul nom de dossier, suivi de son parent entre parenthèses seulement
-  s'il a un homonyme (`KanbanLaunchRepos.choices`, vue partagée `IOSRepoRows`) ;
-  aucun chemin, texte de couleur normale (jamais bleu lien). Le dépôt choisi porte
-  une coche SF Symbol masquée à VoiceOver, qui annonce le nom et l'état
-  « sélectionné », jamais « coche » ni « ✓ ». `[test: repoRowLabels]`
-- Un chemin du Mac affiché par l'app iOS s'abrège en `~/…` relativement au
-  dossier personnel que le Mac publie (`components.homeDirectory`), jamais deviné
-  sur l'appareil ; un chemin hors de ce dossier reste absolu, un Mac antérieur
-  laisse les chemins absolus. `[test: threadRowsAbbreviateMacHome]`
-- La feuille Souvenir, la fiche d'une carte et le dialogue d'OMP sont des `Form`
-  groupés (`.formStyle(.grouped)`), une section par bloc, sans panneau, carte,
-  filet ni défilement maison ; la feuille de session pose son seul en-tête en
-  section groupée, à la hauteur mesurée de son contenu, au-dessus du fil partagé
-  inchangé (`IOSSessionThreadView`). « Piloter un projet » et « Nouvelle
-  feature » restent les `Form` qu'ils étaient. `[capture: iphone-pipelines-fiche-*]`
-  `[capture: iphone-nouvelle-feature-*]`
-- Dans « OMP vous demande », l'option choisie porte la coche SF Symbol `checkmark`
-  (accent, masquée à VoiceOver, trait « sélectionné »), jamais le caractère « ✓ ».
-  `[garde: ios-finitions-composants/AC-2]`
-- La réponse libre d'« OMP vous demande » (forme éditeur) est un champ vertical :
-  3 lignes à vide, il grandit jusqu'à 8 lignes puis défile dans le champ
-  (`IOSMetrics.dialogAnswerLines`), sans hauteur en points.
-  `[garde: ios-finitions-composants/AC-5]`
+- La feuille du serveur de pipelines (`IOSServerSheet`) est un `Form` groupé :
+  adresse et jeton, « Relier », « Oublier ce serveur », et l'échec du dernier
+  échange en bandeau, par `HarnessFailure.message`.
+  `[garde: ios-erreurs-serveur-lisibles/AC-8]`
 
 ## Gestes et retours natifs (feature `ios-gestes-et-retours-natifs`)
 
-- « Tirer pour actualiser » remplace tout bouton ↻ de barre : la liste de
-  Pipelines (iPhone, et ses états chargement, magasin absent, vide), son kanban
-  iPad et la Mémoire en mode Liste se relisent quand on tire le contenu vers le
-  bas (`.refreshable`) ; l'indicateur système reste jusqu'à la fin de la
-  relecture. Hors connexion, rien n'est lu. Accueil, Sessions, Projet, Session
-  OMP et Statistiques n'ont pas de tirage (⌘R y reste).
-  `[garde: ios-gestes-et-retours-natifs/AC-2]`
-- Le graphe de la Mémoire ne se tire pas (canevas pan/zoom) : il se relit à
-  chaque passage en mode Graphe ; le graphe, le vide ou l'erreur déjà affichés
-  restent jusqu'à la réponse, sans repasser par le chargement.
-  `[test: graphRereadsOnEveryPassWithoutLoading]`
-- Sur iPad avec clavier, ⌘R « Actualiser » relit l'écran courant ; il figure
-  dans la liste des raccourcis (⌘ maintenu) et reste sans effet sous une
-  feuille. `[test: refreshCommandIsListedAsActualiser]`
+- « Tirer pour actualiser » remplace tout bouton ↻ de barre : les écrans de
+  pilotage et la Mémoire en mode Liste se relisent quand on tire le contenu vers
+  le bas (`.refreshable`) ; l'indicateur système reste jusqu'à la fin de la
+  relecture. `[garde: ios-gestes-et-retours-natifs/AC-2]`
 - La barre de la Mémoire porte trois boutons au plus, dans les deux modes :
   « Sommaire », la bascule Graphe/Liste et l'antenne Connexion ; le champ de
   recherche système n'en est pas un. `[garde: ios-gestes-et-retours-natifs/AC-4]`
-- Un appui long sur une carte Pipelines, une carte ou rangée de l'Accueil, une
-  rangée Sessions ou une rangée Mémoire ouvre un menu contextuel natif qui ne
-  propose que les actions déjà offertes ailleurs pour cet élément dans son état
-  courant (hors connexion ou geste en vol, les commandes disparaissent), plus
-  « Copier » ; « Arrêter… » est destructif, en dernier, et passe par la même
-  confirmation que la fiche. Aucune action par balayage.
-  `[test: contextMenuOffersOnlyCurrentActions]` `[garde: ios-gestes-et-retours-natifs/AC-5]`
-- « Copier » met dans le presse-papiers le lien de la PR s'il existe (http ou
-  https), sinon le texte principal de l'élément ; aucune confirmation visible.
-  `[test: copyCopiesPullRequestLinkElseMainText]`
-- Chaque commande envoyée au Mac joue un retour haptique système à sa RÉPONSE,
-  jamais à l'envoi : succès → `.success`, échec (hors connexion compris) →
-  `.error`. Un seul point de pose (`RootView`) ; aucun réglage d'app, seul le
-  réglage Haptique d'iOS s'applique. `[test: commandOutcomeFollowsTheMacResponse]`
-  `[test: outcomeMapsToSystemFeedback]` `[garde: ios-gestes-et-retours-natifs/AC-8]`
-- Le texte de la visionneuse de session, du contrat et de la fiche d'un
-  souvenir est sélectionnable (sélection système et « Copier ») ; les libellés
-  de boutons ne le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
-- Sur iPad avec pointeur, chaque carte ou rangée touchable montre l'effet de
-  survol système `.highlight`, à la forme d'une carte (`iosHoverEffect()`).
+- Un appui long sur une rangée de feature ou une rangée Mémoire ouvre un menu
+  contextuel natif qui ne propose que les actions déjà offertes pour cet élément
+  dans son état courant ; « Arrêter la feature » est destructif et passe par une
+  confirmation. Aucune action par balayage.
+  `[garde: ios-gestes-et-retours-natifs/AC-5]`
+- Le texte des specs d'une feature et de la fiche d'un souvenir est
+  sélectionnable (sélection système et « Copier ») ; les libellés de boutons ne
+  le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
+- Sur iPad avec pointeur, chaque rangée touchable de la Mémoire montre l'effet de
+  survol système `.highlight` (`iosHoverEffect()`).
   `[garde: ios-gestes-et-retours-natifs/AC-10]`
-- Quand « Réduire les animations » est actif, un défilement automatique se fait
-  d'un saut ; sinon il reste animé (`IOSMotion.scrollAnimation`).
-  `[test: scrollJumpsWhenReduceMotionIsOn]` `[garde: ios-gestes-et-retours-natifs/AC-11]`
 - Un symbole purement décoratif n'est jamais lu par VoiceOver ; l'état qu'il
-  portait passe par le contrôle : « replié »/« déplié » pour les bascules du
-  fil, trait sélectionné pour l'option choisie de « Répondre ».
-  `[garde: ios-gestes-et-retours-natifs/AC-12]`
+  portait passe par le contrôle : trait sélectionné pour une proposition d'audit
+  retenue. `[garde: ios-gestes-et-retours-natifs/AC-12]`
 
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 
 - Un SEUL traducteur, `IOSMacErrorText` (`OMPConsoleIOS/IOSMacErrorText.swift`),
-  range tout échec d'appel au Mac en une cause distinguable ; Mémoire (liste,
-  recherche, graphe), Sessions, Statistiques et Pipelines l'appellent, aucune ne
-  relit le détail brut. Un message = la cause, puis un remède propre à cette cause,
+  range tout échec d'appel au Mac en une cause distinguable ; la Mémoire (liste,
+  recherche, graphe) l'appelle et ne relit jamais le détail brut. Un message = la cause, puis un remède propre à cette cause,
   au vouvoiement, en commençant par ce qui s'est passé puis ce qu'il faut faire ;
   jamais de nom de service ni de commande, jamais d'URL, d'adresse, de JSON, de
   `"detail"` ni de code HTTP. `[test: everyCauseHasItsOwnRemedy]`
@@ -958,7 +486,7 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   « route inconnue » vaut cette cause. `[test: macOutdatedOn404And405]`
 - Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — la
   cause les couvre tous, et la raison système (qui peut nommer l'hôte) n'est jamais
-  affichée. Seule la Mémoire (liste, recherche, graphe) passe par
+  affichée. La Mémoire (liste, recherche, graphe) passe par
   `IOSMacFailure.ofMemoryRead`, qui distingue le délai dépassé (« Délai dépassé : le
   Mac a mis trop de temps à répondre. ») et range tout 404 de ses routes en « app Mac
   trop ancienne ». `[test: refusedConnectionIsMacUnreachable]`
@@ -982,20 +510,14 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   et la recherche ne l'ont pas : un 503 qui cite une réponse 404/405 de mem0-http
   reste « Service indisponible sur le Mac ». `[test: graphKeepsOutdatedDistinction]`
   `[test: memoryNeverClaimsOutdated]`
-- Chaque échec de CHARGEMENT propose « Réessayer » (cible de 44 pt), qui relance le
-  chargement qui a échoué : Mémoire, graphe, Statistiques, visionneuse de session,
-  catalogue des modèles et lecture des PR d'une carte. Un geste d'écriture (arrêt,
-  fusion, réponse) affiche son message sans « Réessayer » : rejouer un POST n'est
-  pas un chargement. `[test: memoryRetryShowsData]` `[test: viewerRetryReadsAgain]`
-  `[test: statsRetryShowsBoard]` `[test: catalogRetryLoadsModels]`
+- Chaque échec de CHARGEMENT de la Mémoire propose « Réessayer » (cible de 44 pt),
+  qui relance le chargement qui a échoué : liste et graphe. `[test: memoryRetryShowsData]`
   `[test: graphRetryShowsGraph]`
-- Chaque section affiche le message du traducteur partagé, prouvé par une doublure
-  du Mac. `[test: memoryShowsTranslatedFailure]` `[test: viewerShowsTranslatedFailure]`
-  `[test: statsShowsTranslatedFailure]` `[test: catalogShowsTranslatedFailure]`
+- La Mémoire affiche le message du traducteur partagé, prouvé par une doublure
+  du Mac. `[test: memoryShowsTranslatedFailure]`
   `[test: graphShowsTranslatedFailure]`
 - Tous les textes visibles de l'app et de ConsoleCore vouvoient, y compris hors
-  `*Text.swift` ; seules les fixtures de conversation et de contrat simulés en sont
-  exemptées. `[garde: ios-redaction-vouvoiement/AC-8]`
+  `*Text.swift`. `[garde: ios-redaction-vouvoiement/AC-8]`
 - Les deux écrans d'erreur de la Mémoire s'obtiennent sans Mac :
   `-memoire.recipe injoignable` (liste) et `-memoire.recipe service-ancien` (graphe).
   `[test: macErrorsSayWhatHappenedThenWhatToDo]`

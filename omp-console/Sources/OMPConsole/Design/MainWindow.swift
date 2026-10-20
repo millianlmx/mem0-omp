@@ -19,12 +19,6 @@ enum MainWindow {
         }
     }
 
-    /// Une feuille est attachée à la fenêtre principale.
-    @MainActor
-    static func hasAttachedSheet() -> Bool {
-        window()?.attachedSheet != nil
-    }
-
     /// La fenêtre principale redevient visible et au premier plan :
     /// `makeKeyAndOrderFront` ramène aussi une fenêtre fermée.
     @MainActor

@@ -990,8 +990,6 @@ func setupTextsAreFrozen() {
     #expect([
         SetupText.title,
         SetupText.body,
-        SetupText.homeMissingTitle,
-        SetupText.homeMissingBody,
         SetupText.retry,
         SetupText.close,
         SetupText.install,

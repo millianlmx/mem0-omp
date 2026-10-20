@@ -169,7 +169,6 @@ enum IOSMemoryAccessibility {
     static let graphRecenter = "ios.memoire.graphe.recenter"
     static let graphTagMenu = "ios.memoire.graphe.etiquette"
     static let graphPartial = "ios.memoire.graphe.partiel"
-    static let graphDetail = "ios.memoire.graphe.fiche"
 
     static func graphTagOption(_ tag: String) -> String { "ios.memoire.graphe.etiquette.\(tag)" }
 

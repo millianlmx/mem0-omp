@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { memberBody, stripComments, stripHashComments, swiftFiles, swiftSources } from "../support/swift-source.ts";
+import { stripComments, stripHashComments, swiftFiles, swiftSources } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
 const TESTS = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOSTests");
@@ -23,9 +23,6 @@ function appSource(name: string): string {
   return fs.readFileSync(path.join(APP, name), "utf8");
 }
 
-/** Le nombre d'occurrences d'un motif littéral. */
-const count = (source: string, needle: string) => source.split(needle).length - 1;
-
 /** Plante une faute : le remplacement DOIT changer le source. */
 function plant(source: string, change: (s: string) => string): string {
   const after = change(source);
@@ -34,122 +31,11 @@ function plant(source: string, change: (s: string) => string): string {
 }
 
 // MARK: - Statistiques (S-2, S-3)
-
-const CHARTS = "IOSStatsCharts.swift";
-const STATS_SCREEN = "IOSStatsScreen.swift";
-const BOARD_HEAD = "private var boardState";
-const CHART_SECTIONS = "IOSStatsChartSections(";
-
-/** Ce que le fichier des graphiques doit porter hors commentaire (S-2). */
-const CHART_TOKENS = [
-  "import Charts",
-  "BarMark(",
-  "StatsPresentation.durationChartTitle",
-  "StatsPresentation.tokensChartTitle",
-  "@ScaledMetric",
-  ".foregroundStyle(by:",
-];
-
-/** AC-2 : deux graphiques Swift Charts, montés en tête du tableau, avant les sections des features. */
-function chartsFaults(charts: string, screen: string): string[] {
-  const faults: string[] = [];
-  const code = stripComments(charts);
-  for (const token of CHART_TOKENS) {
-    if (!code.includes(token)) faults.push(`${CHARTS} : jeton absent « ${token} »`);
-  }
-  const board = memberBody(stripComments(screen), BOARD_HEAD);
-  const mount = board.indexOf(CHART_SECTIONS);
-  const features = board.indexOf("ForEach(payload.features");
-  if (mount < 0) faults.push(`${STATS_SCREEN} : boardState ne monte pas ${CHART_SECTIONS}`);
-  if (features < 0) faults.push(`${STATS_SCREEN} : boardState n'a plus le ForEach des features`);
-  if (mount >= 0 && features >= 0 && mount > features) {
-    faults.push(`${STATS_SCREEN} : les graphiques sont montés après les sections des features`);
-  }
-  return faults;
-}
-
-/** AC-3 : chaque graphique porte son descripteur d'accessibilité. */
-function descriptorFaults(charts: string): string[] {
-  const code = stripComments(charts);
-  return ["duration", "tokens"]
-    .filter((kind) => !code.includes(`.accessibilityChartDescriptor(IOSStatsChartDescriptor(kind: .${kind}`))
-    .map((kind) => `${CHARTS} : le graphique .${kind} n'a pas de .accessibilityChartDescriptor`);
-}
-
-/** AC-4 : les graphiques ne sont montés que dans l'état tableau, jamais dans l'état vide ni ailleurs. */
-function mountFaults(files: Map<string, string>): string[] {
-  const faults: string[] = [];
-  let total = 0;
-  for (const [name, source] of files) {
-    const n = count(stripComments(source), CHART_SECTIONS);
-    total += n;
-    if (n > 0 && name !== STATS_SCREEN) faults.push(`${name} : ${CHART_SECTIONS} monté hors de l'écran Statistiques`);
-  }
-  const screen = stripComments(files.get(STATS_SCREEN) ?? "");
-  const inBoard = count(memberBody(screen, BOARD_HEAD), CHART_SECTIONS);
-  if (inBoard !== 1) faults.push(`${STATS_SCREEN} : boardState monte ${inBoard} fois ${CHART_SECTIONS} (attendu 1)`);
-  const inScreen = count(screen, CHART_SECTIONS);
-  if (inScreen !== inBoard) faults.push(`${STATS_SCREEN} : ${CHART_SECTIONS} monté hors de boardState (${inScreen - inBoard} fois)`);
-  if (total === 0) faults.push(`${CHART_SECTIONS} n'est monté nulle part`);
-  return faults;
-}
-
-test("ios-statistiques-et-graphe-accessibles/AC-2 : deux graphiques Swift Charts « Durée par feature » et « Tokens par feature » en tête du tableau, au-dessus des sections inchangées", () => {
-  const charts = appSource(CHARTS);
-  const screen = appSource(STATS_SCREEN);
-  assert.deepEqual(chartsFaults(charts, screen), []);
-
-  // Faute plantée : les graphiques passent sous les sections des features ⇒ rouge.
-  const after = plant(screen, (s) =>
-    s
-      .replace(/\n\s*IOSStatsChartSections\(payload: payload, elapsedMs: model\.elapsedMs\(at:\)\)/, "")
-      .replace(
-        "cardSection(identifier: StatsAccessibility.total)",
-        "IOSStatsChartSections(payload: payload, elapsedMs: model.elapsedMs(at:))\n            cardSection(identifier: StatsAccessibility.total)",
-      ),
-  );
-  assert.ok(chartsFaults(charts, after).some((f) => f.includes("après les sections")), "des graphiques sous les sections doivent rougir");
-
-  // Faute plantée : la hauteur ne suit plus Dynamic Type ⇒ rouge.
-  const fixed = plant(charts, (s) => s.replaceAll("@ScaledMetric(relativeTo: .body) ", ""));
-  assert.ok(chartsFaults(fixed, screen).some((f) => f.includes("@ScaledMetric")), "une hauteur figée doit rougir");
-
-  // Faute plantée : plus de Swift Charts ⇒ rouge.
-  const noCharts = plant(charts, (s) => s.replace("import Charts", "import SwiftUI"));
-  assert.ok(chartsFaults(noCharts, screen).some((f) => f.includes("import Charts")), "un graphique sans Swift Charts doit rougir");
-});
-
-test("ios-statistiques-et-graphe-accessibles/AC-3 : chaque graphique porte un descripteur d'accessibilité (AXChartDescriptor)", () => {
-  const charts = appSource(CHARTS);
-  assert.deepEqual(descriptorFaults(charts), []);
-
-  // Faute plantée : le descripteur des tokens retiré ⇒ rouge.
-  const bare = plant(charts, (s) => s.replace(/\n\s*\.accessibilityChartDescriptor\(IOSStatsChartDescriptor\(kind: \.tokens[^\n]*/, ""));
-  assert.deepEqual(descriptorFaults(bare), [`${CHARTS} : le graphique .tokens n'a pas de .accessibilityChartDescriptor`]);
-});
-
-test("ios-statistiques-et-graphe-accessibles/AC-4 : aucun graphique hors de l'état tableau, donc jamais un graphique vide", () => {
-  const sources = swiftSources(APP);
-  assert.deepEqual(mountFaults(sources), []);
-
-  // Faute plantée : les graphiques montés dans l'état vide ⇒ rouge.
-  const empty = new Map(sources);
-  empty.set(
-    STATS_SCREEN,
-    plant(sources.get(STATS_SCREEN)!, (s) =>
-      s.replace(
-        /(private var emptyState: some View \{\n\s*VStack\(alignment: \.leading, spacing: 8\) \{)/,
-        "$1\n            IOSStatsChartSections(payload: model.payload!, elapsedMs: model.elapsedMs(at:))",
-      ),
-    ),
-  );
-  assert.ok(mountFaults(empty).some((f) => f.includes("hors de boardState")), "des graphiques dans l'état vide doivent rougir");
-
-  // Faute plantée : les graphiques montés par un autre écran ⇒ rouge.
-  const elsewhere = new Map(sources);
-  elsewhere.set("IOSStatsContent.swift", `${sources.get("IOSStatsContent.swift")}\nlet stray = IOSStatsChartSections(payload: p, elapsedMs: { _ in 0 })\n`);
-  assert.ok(mountFaults(elsewhere).some((f) => f.startsWith("IOSStatsContent.swift")), "des graphiques montés ailleurs doivent rougir");
-});
+//
+// AC-2, AC-3 et AC-4 gardaient les graphiques Swift Charts des Statistiques, que
+// l'app calculait sur le magasin du Mac. Les Statistiques viennent désormais du
+// serveur de pipelines, en liste groupée de valeurs (`IOSHarnessStatsScreen`) :
+// plus aucun graphique, donc plus de descripteur ni de graphique vide à garder.
 
 // MARK: - Graphe de la Mémoire (S-4, S-5, S-6)
 
@@ -323,7 +209,6 @@ test("ios-statistiques-et-graphe-accessibles/AC-11 : la recette avant/après cap
 
 const DESIGN = path.join(ROOT, "omp-console", "ios", "DESIGN.md");
 const GRAPH_SECTION = "## Le mode graphe de la Mémoire (feature `ios-memoire-graphe`)";
-const STATS_SECTION = "## La section Statistiques (feature `ios-statistiques`)";
 
 /** Les marqueurs que chaque section doit porter (S-9), chacun prouvé par un test qui existe. */
 const DESIGN_MARKERS: Record<string, string[]> = {
@@ -333,12 +218,6 @@ const DESIGN_MARKERS: Record<string, string[]> = {
     "[test: voiceOverActivatingAMemoryOpensItsSheet]",
     "[test: voiceOverActivatingATagFiltersAndOffersTheWholeGraph]",
     "[test: graphLabelsNeverOverlapAtOpeningScale]",
-  ],
-  [STATS_SECTION]: [
-    "[test: statsChartsFollowTheListedFeatures]",
-    "[test: statsChartsDescribeStackedTokens]",
-    "[test: statsChartsHideWithoutData]",
-    "[garde: ios-statistiques-et-graphe-accessibles/AC-2]",
   ],
 };
 
@@ -370,12 +249,12 @@ function designFaults(design: string, swiftTests: string, guards: string): strin
   if (/une seule peinture,\s+deux coques/.test(designSection(design, GRAPH_SECTION))) {
     faults.push("DESIGN.md : la puce de palette du graphe décrit encore la teinte HSB partagée");
   }
-  // Une ligne vide sépare la section Statistiques de la suivante.
-  if (!/\n\n## Sessions /.test(design)) faults.push("DESIGN.md : aucune ligne vide avant « ## Sessions »");
+  // Une ligne vide précède chaque titre de section.
+  if (/[^\n]\n## /.test(design)) faults.push("DESIGN.md : un titre de section sans ligne vide avant lui");
   return faults;
 }
 
-test("ios-statistiques-et-graphe-accessibles/AC-12 : DESIGN.md décrit les graphiques, la palette adaptative, VoiceOver et les étiquettes, chaque puce avec son marqueur prouvé", () => {
+test("ios-statistiques-et-graphe-accessibles/AC-12 : DESIGN.md décrit la palette adaptative, VoiceOver et les étiquettes du graphe, chaque puce avec son marqueur prouvé", () => {
   const design = fs.readFileSync(DESIGN, "utf8");
   const swiftTests = swiftFiles(TESTS).map((file) => fs.readFileSync(file, "utf8")).join("\n");
   const guards = fs.readFileSync(import.meta.filename, "utf8");
@@ -386,8 +265,12 @@ test("ios-statistiques-et-graphe-accessibles/AC-12 : DESIGN.md décrit les graph
   assert.deepEqual(designFaults(unmarked, swiftTests, guards), [`DESIGN.md : marqueur absent de « ${GRAPH_SECTION} » : [test: graphLabelsNeverOverlapAtOpeningScale]`]);
 
   // Faute plantée : un marqueur vers un test Swift disparu ⇒ rouge.
-  const orphan = plant(swiftTests, (s) => s.replace("func statsChartsHideWithoutData(", "func statsChartsHidden("));
-  assert.deepEqual(designFaults(design, orphan, guards), ["[test: statsChartsHideWithoutData] : aucun test Swift de ce nom"]);
+  const orphan = plant(swiftTests, (s) => s.replace("func graphLabelsNeverOverlapAtOpeningScale(", "func graphLabelsHidden("));
+  assert.deepEqual(designFaults(design, orphan, guards), ["[test: graphLabelsNeverOverlapAtOpeningScale] : aucun test Swift de ce nom"]);
+
+  // Faute plantée : un titre collé à la puce qui le précède ⇒ rouge.
+  const glued = plant(design, (s) => s.replace("\n\n## Le mode graphe", "\n## Le mode graphe"));
+  assert.ok(designFaults(glued, swiftTests, guards).some((f) => f.includes("ligne vide")), "un titre collé doit rougir");
 
   // Faute plantée : l'ancienne puce de palette HSB revient ⇒ rouge.
   const hsb = plant(design, (s) => s.replace("aucune teinte HSB fixe.", "une seule peinture,\n  deux coques."));

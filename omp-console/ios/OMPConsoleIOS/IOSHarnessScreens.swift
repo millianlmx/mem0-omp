@@ -38,7 +38,7 @@ struct IOSHarnessScreen<Content: View>: View {
                     }
                     content()
                 }
-                .listStyle(.insetGrouped)
+                .iosGroupedList()
                 .refreshable {
                     await server.refresh()
                     if catalog { await server.refreshCatalog() }
@@ -114,9 +114,7 @@ struct IOSHarnessRunRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(run.title)
-            Text(run.statusLine)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            IOSStatusChip(status: ConsoleStatus(text: run.statusLine, tone: Self.tone(of: run.phase)))
             if run.fixes > 0 {
                 Text(PipelineServerText.fixes(run.fixes))
                     .font(.caption)
@@ -129,6 +127,17 @@ struct IOSHarnessRunRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Le ton qui double l'état : l'attente de l'humain se signale, l'échec alarme.
+    static func tone(of phase: HarnessRunState?) -> ConsoleTone {
+        switch phase {
+        case .running, .merging: .info
+        case .escalated, .awaitingHuman: .attention
+        case .merged: .success
+        case .failed: .danger
+        case .queued, .cancelled, nil: .neutral
+        }
     }
 }
 
@@ -266,8 +275,7 @@ struct IOSHarnessInboxSections: View {
             Text(run.title)
                 .font(.headline)
             if let specs = drafts.specs[run.id] {
-                Text(specs)
-                    .font(.callout.monospaced())
+                IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))
                     .textSelection(.enabled)
             } else {
                 Button(PipelineServerText.readSpecs) {
@@ -594,7 +602,10 @@ struct IOSHarnessStatsScreen: View {
                     }
                     LabeledContent(PipelineServerText.mergedWeek, value: String(stats.runs.mergedLast7Days))
                     LabeledContent(PipelineServerText.mergeRate, value: stats.runs.mergeRate.map(PipelineServerText.percent) ?? PipelineServerText.notAvailable)
-                    LabeledContent(PipelineServerText.leadTime, value: stats.runs.medianLeadSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable)
+                    LabeledContent(PipelineServerText.leadTime) {
+                        Text(stats.runs.medianLeadSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable)
+                            .monospacedDigit()
+                    }
                 } header: {
                     Text(PipelineServerText.statsRuns)
                 }
@@ -602,6 +613,7 @@ struct IOSHarnessStatsScreen: View {
                     ForEach(HarnessRun.stepKinds, id: \.self) { kind in
                         if let step = stats.steps[kind] {
                             Text(PipelineServerText.stepLine(label: HarnessRun.label(forStep: kind), count: step.count, failed: step.failed, median: step.medianSec))
+                                .monospacedDigit()
                         }
                     }
                 } header: {

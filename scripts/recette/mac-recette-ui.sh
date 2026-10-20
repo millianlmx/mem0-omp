@@ -2,9 +2,9 @@
 # Recette UI automatisée de l'app Mac (recette-ui-mac-automatisee, S-1 à S-10).
 #
 # Une instance de RECETTE isolée de l'app (copie du bundle rebaptisée
-# `com.omp.console.recette`, magasin, support et préférences jetables, jeu de
-# données fictif fixe) est lancée en arrière-plan pour CHACUNE des 24 surfaces du
-# catalogue (10 sections, 14 feuilles), ramenée à la taille minimale de sa
+# `com.omp.console.recette`, support et préférences jetables, jeu de
+# données fictif fixe) est lancée en arrière-plan pour CHACUNE des 14 surfaces du
+# catalogue (8 sections, 6 feuilles), ramenée à la taille minimale de sa
 # fenêtre, relevée en AX et capturée ; l'analyse signale les éléments hors de la
 # zone visible, les identifiants d'accessibilité dupliqués et les cibles de moins
 # de 20 × 20 pt, puis applique scripts/recette/mac-recette-ui/exceptions.json.
@@ -225,7 +225,7 @@ if ! "${CLI[@]}" catalogue >"$catalogue"; then
   non_executable "le catalogue des surfaces est illisible"
 fi
 
-# ── 7. Parcours des 24 surfaces ───────────────────────────────────────────────
+# ── 7. Parcours des 14 surfaces ───────────────────────────────────────────────
 # En arrière-plan + `wait` : un INT/TERM interrompt l'attente aussitôt.
 "$SONDE" parcours --catalogue "$catalogue" --racine "$R" --port "$port" --sortie "$SORTIE" &
 SONDE_PID=$!

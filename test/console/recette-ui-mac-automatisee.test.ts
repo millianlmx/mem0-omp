@@ -36,7 +36,7 @@ import {
   type SurfaceParcours,
 } from "../../scripts/recette/mac-recette-ui/analyse.ts";
 import { CATALOGUE } from "../../scripts/recette/mac-recette-ui/catalogue.ts";
-import { JETON_SERVICE, RouteurFixture, depotFictif, jeuFictif, type EntreeJeu, type Requete } from "../../scripts/recette/mac-recette-ui/fixture.ts";
+import { RouteurFixture, depotFictif, jeuFictif, type EntreeJeu, type Requete } from "../../scripts/recette/mac-recette-ui/fixture.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const CLI = path.join(ROOT, "scripts", "recette", "mac-recette-ui", "recette.ts");
@@ -217,9 +217,9 @@ test("recette-ui-mac-automatisee/AC-1 : l'isolation est rompue dès qu'un consta
 test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données rendent un rapport.json identique octet pour octet, sans date, pid ni chemin absolu ; le jeu fictif et ses réponses sont les mêmes à chaque passage, datés d'au moins 2 h, sans chemin hors de R", () => {
   const defectueux: Record<string, Releve> = {
     pipelines: releveSain("pipelines", [noeud("AXButton", dans(10, 500, 16, 16), { titre: "Filtrer" })]),
-    "fiche-carte": releveSain("fiche-carte", [
-      noeud("AXGroup", dans(0, 0, 40, 40), { identifiant: "kanban.card" }),
-      noeud("AXGroup", dans(50, 0, 40, 40), { identifiant: "kanban.card" }),
+    "memoire-edition": releveSain("memoire-edition", [
+      noeud("AXGroup", dans(0, 0, 40, 40), { identifiant: "memoire.edit.tag" }),
+      noeud("AXGroup", dans(50, 0, 40, 40), { identifiant: "memoire.edit.tag" }),
     ]),
   };
   const exceptions = exceptionsJson([
@@ -257,32 +257,24 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   // Jeu fictif (S-4) : même entrée, mêmes octets et mêmes réponses ; aucun chemin
   // hors de R ; toute date au moins 2 h avant le début, pour des libellés relatifs
   // stables pendant le passage.
-  const entree: EntreeJeu = {
-    racine: "/tmp/omp-console-recette-ui",
-    depotReel: "/private/tmp/omp-console-recette-ui/depots/atelier",
-    pid: 4242,
-    port: 51234,
-    debut: Date.UTC(2026, 9, 10, 12),
-  };
+  const entree: EntreeJeu = { racine: "/tmp/omp-console-recette-ui", port: 51234, debut: Date.UTC(2026, 9, 10, 12) };
   const jeu = jeuFictif(entree);
   assert.deepEqual(jeuFictif({ ...entree }), jeu);
   const requetes: Requete[] = [
-    { methode: "GET", url: "/health", jetonService: undefined, corps: "" },
-    { methode: "GET", url: "/memory/all?agent_id=atelier", jetonService: undefined, corps: "" },
-    { methode: "GET", url: "/memory/graph", jetonService: undefined, corps: "" },
-    { methode: "POST", url: "/v1/sessions", jetonService: undefined, corps: "{}" },
-    { methode: "POST", url: "/v1/sessions", jetonService: JETON_SERVICE, corps: `{"cwd":"${entree.racine}/depots/atelier","purpose":"session"}` },
-    { methode: "POST", url: `/v1/projects/${encodeURIComponent(`${entree.racine}/depots/atelier`)}/conduite`, jetonService: JETON_SERVICE, corps: '{"name":"atelier"}' },
-    { methode: "GET", url: "/v1/sessions", jetonService: JETON_SERVICE, corps: "" },
-    { methode: "GET", url: "/v1/sessions/recette-conduite/events", jetonService: JETON_SERVICE, corps: "" },
+    { methode: "GET", url: "/health" },
+    { methode: "GET", url: "/memory/all?agent_id=atelier" },
+    { methode: "GET", url: "/memory/graph" },
+    { methode: "GET", url: "/v1/models" },
+    { methode: "POST", url: "/v1/models" },
+    { methode: "GET", url: "/v1/sessions" },
   ];
   const rejouer = () => {
-    const routeur = new RouteurFixture(entree.racine, entree.debut);
+    const routeur = new RouteurFixture(entree.debut);
     return requetes.map((q) => routeur.repondre(q));
   };
   const reponses = rejouer();
   assert.deepEqual(rejouer(), reponses);
-  assert.deepEqual(reponses.map((r) => (r.type === "json" ? r.statut : "flux")), [200, 200, 200, 401, 200, 200, 200, "flux"]);
+  assert.deepEqual(reponses.map((r) => r.statut), [200, 200, 200, 200, 404, 404]);
 
   const textes: string[] = [];
   const nombres: Array<[string, number]> = [];
@@ -292,75 +284,23 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
     else if (typeof v === "string") textes.push(v);
     else if (typeof v === "number") nombres.push([cle, v]);
   };
-  // Seule exception : l'audit `analysing` d'audit-ui-redesign S-14, créé 65 s
-  // avant le début (durée d'analyse crédible), comme `AuditParity.snapshot(nowMs:)`.
-  for (const f of jeu) {
-    if (f.chemin === "magasin/audits/a0d1700000000003.json") continue;
-    if (f.chemin.endsWith(".json")) relever(JSON.parse(f.contenu), "");
-    else if (f.chemin.endsWith(".jsonl")) for (const l of f.contenu.trimEnd().split("\n")) relever(JSON.parse(l), "");
-    else textes.push(f.contenu);
-  }
-  for (const r of reponses) relever(r.type === "json" ? r.corps : r.trame, "");
+  for (const f of jeu) textes.push(f.contenu);
+  for (const r of reponses) relever(r.corps, "");
   relever(depotFictif(), "");
   assert.deepEqual(textes.filter((t) => t.startsWith("/") && !t.startsWith(`${entree.racine}/`)), [], "chemin hors de R");
   assert.ok(!textes.some((t) => t.includes(os.homedir())), "dossier de l'utilisateur dans le jeu");
   const limite = entree.debut - 2 * 3_600_000;
   const datesIso = textes.filter((t) => /^\d{4}-\d{2}-\d{2}T/.test(t)).map((t) => Date.parse(t));
   const datesMs = nombres.filter(([k]) => /At$/.test(k)).map(([, v]) => v);
-  assert.ok(datesIso.length > 0 && datesMs.length > 0, "garde : le jeu porte des dates");
+  assert.ok(datesIso.length > 0, "garde : le jeu porte des dates");
   assert.deepEqual([...datesIso, ...datesMs].filter((d) => d > limite), [], "date à moins de 2 h du début");
 });
 
-test("audit-ui-redesign : jeu fictif de la recette UI Mac (B-12, S-14) — le jeu fictif écrit les cinq audits d'AuditParity au format disque, l'analyse lancée 65 s avant le début, et une feature escaladée de l'audit lancé : badge Audit à 2", () => {
-  const entree: EntreeJeu = {
-    racine: "/tmp/omp-console-recette-ui",
-    depotReel: "/private/tmp/omp-console-recette-ui/depots/atelier",
-    pid: 4242,
-    port: 51234,
-    debut: Date.UTC(2026, 9, 10, 12),
-  };
-  const jeu = jeuFictif(entree);
-  const audits = jeu
-    .filter((f) => f.chemin.startsWith("magasin/audits/"))
-    .map((f) => ({ chemin: f.chemin, a: JSON.parse(f.contenu) as Record<string, unknown> }));
-  // Mêmes ids et statuts que AuditParity.swift ; nom de fichier = id (AuditRecord).
-  assert.deepEqual(
-    audits.map(({ chemin, a }) => [chemin, a.id, a.status]),
-    [
-      ["magasin/audits/a0d1700000000001.json", "a0d1700000000001", "launched"],
-      ["magasin/audits/a0d1700000000002.json", "a0d1700000000002", "proposed"],
-      ["magasin/audits/a0d1700000000003.json", "a0d1700000000003", "analysing"],
-      ["magasin/audits/a0d1700000000004.json", "a0d1700000000004", "stopped"],
-      ["magasin/audits/a0d1700000000005.json", "a0d1700000000005", "failed"],
-    ],
-  );
-  // Champs obligatoires de `AuditRecord(json:)` : sans eux le lecteur écarte l'audit.
-  for (const { a } of audits) {
-    assert.equal(a.version, 1);
-    assert.equal(a.key, `${entree.racine}/magasin/audits/${a.id}`);
-    assert.equal(a.repoRoot, `${entree.racine}/depots/atelier`);
-    assert.ok(typeof a.repoKey === "string" && a.repoKey.length > 0);
-    assert.ok(Array.isArray(a.launches) && "proposal" in a && "failure" in a);
-  }
-  const analyse = audits[2].a;
-  assert.deepEqual([analyse.createdAt, analyse.updatedAt], [entree.debut - 65_000, entree.debut - 65_000]);
-
-  // Badge (AuditBoard.awaitingUserCount(in:)) : `proposed` + audits dont la clé est
-  // l'`auditSession` d'une feature de lot à escalade de sorte connue.
-  const lot = JSON.parse(jeu.find((f) => f.chemin.startsWith("magasin/lots/"))!.contenu) as { features: Array<Record<string, any>> };
-  const cles = new Set(
-    lot.features
-      .filter((f) => typeof f.auditSession === "string" && ["ask", "question", "specs", "review"].includes(String(f.escalation?.key).split(":")[0]))
-      .map((f) => f.auditSession),
-  );
-  assert.equal(audits.filter(({ a }) => a.status === "proposed" || cles.has(a.key)).length, 2);
-});
-
-test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes capturées et relevées, sont couvertes ; un relevé retiré rend sa surface « capture ou relevé manquant »", () => {
-  assert.equal(CATALOGUE.filter((s) => s.type === "section").length, 10);
-  assert.equal(CATALOGUE.filter((s) => s.type === "feuille").length, 14);
-  assert.equal(new Set(CATALOGUE.map((s) => s.id)).size, 24, "ids uniques");
-  assert.equal(new Set(CATALOGUE.map((s) => s.marqueur)).size, 24, "marqueurs uniques");
+test("recette-ui-mac-automatisee/AC-3 : 8 sections et 6 feuilles, toutes capturées et relevées, sont couvertes ; un relevé retiré rend sa surface « capture ou relevé manquant »", () => {
+  assert.equal(CATALOGUE.filter((s) => s.type === "section").length, 8);
+  assert.equal(CATALOGUE.filter((s) => s.type === "feuille").length, 6);
+  assert.equal(new Set(CATALOGUE.map((s) => s.id)).size, 14, "ids uniques");
+  assert.equal(new Set(CATALOGUE.map((s) => s.marqueur)).size, 14, "marqueurs uniques");
 
   // La CLI de la sonde lit le catalogue en JSON.
   const catalogue = spawnSync(process.execPath, ["--experimental-strip-types", CLI, "catalogue"], { encoding: "utf8" });
@@ -377,7 +317,7 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
   const rapportMd = path.join(sortie, "rapport.md");
   assert.equal(
     complet.stdout.trimEnd().split("\n").at(-1),
-    `✓ recette Mac : vert — 24 surfaces couvertes, 0 signalement(s) excepté(s). Rapport : ${rapportMd}`,
+    `✓ recette Mac : vert — 14 surfaces couvertes, 0 signalement(s) excepté(s). Rapport : ${rapportMd}`,
   );
   const vert = JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8"));
   assert.equal(vert.verdict, "vert");
@@ -388,8 +328,8 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
   assert.ok(fs.readFileSync(rapportMd, "utf8").includes("[captures/memoire-lien.png](captures/memoire-lien.png)"));
   assert.deepEqual(fs.readdirSync(sortie).filter((f) => f.includes(".tmp-")), [], "aucun temporaire laissé");
 
-  fs.rmSync(path.join(sortie, "releves", "contrat.json"));
-  fs.writeFileSync(path.join(sortie, "captures", "modeles.png"), "");
+  fs.rmSync(path.join(sortie, "releves", "serveur.json"));
+  fs.writeFileSync(path.join(sortie, "captures", "memoire-creation.png"), "");
   const ampute = lancerAnalyse(sortie, exceptions);
   assert.equal(ampute.status, 1);
   const defauts = JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8"));
@@ -397,17 +337,17 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
   assert.deepEqual(
     defauts.surfaces.filter((s: { statut: string }) => s.statut !== "couverte"),
     [
-      { id: "contrat", type: "feuille", statut: "non-couverte", raison: "capture ou relevé manquant" },
-      { id: "modeles", type: "feuille", statut: "non-couverte", raison: "capture ou relevé manquant" },
+      { id: "serveur", type: "feuille", statut: "non-couverte", raison: "capture ou relevé manquant" },
+      { id: "memoire-creation", type: "feuille", statut: "non-couverte", raison: "capture ou relevé manquant" },
     ],
   );
   assert.match(ampute.stdout, /2 surface\(s\) non couverte\(s\)/);
 
   // Un relevé qui désigne une autre surface que son fichier n'est pas le relevé de celle-ci.
-  fs.writeFileSync(path.join(sortie, "releves", "contrat.json"), JSON.stringify(releveSain("modeles")));
+  fs.writeFileSync(path.join(sortie, "releves", "serveur.json"), JSON.stringify(releveSain("memoire-creation")));
   assert.equal(lancerAnalyse(sortie, exceptions).status, 1);
   assert.equal(
-    JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8")).surfaces.find((s: { id: string }) => s.id === "contrat").raison,
+    JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8")).surfaces.find((s: { id: string }) => s.id === "serveur").raison,
     "capture ou relevé manquant",
   );
 });
@@ -499,9 +439,9 @@ test("recette-ui-mac-automatisee/AC-5 : une cible de exactement 20 × 20 pt n'es
 test("recette-ui-mac-automatisee/AC-6 : une surface que le parcours n'a pas ouverte est nommée non couverte avec sa raison, et le verdict n'est pas vert", () => {
   const entree = passage();
   const parcours = parcoursComplet();
-  const modeles = parcours.surfaces.find((s) => s.id === "modeles");
-  assert.ok(modeles !== undefined);
-  Object.assign(modeles, { statut: "non-couverte", raison: "marqueur models.sheet absent après 20 s", fenetre: null });
+  const creation = parcours.surfaces.find((s) => s.id === "memoire-creation");
+  assert.ok(creation !== undefined);
+  Object.assign(creation, { statut: "non-couverte", raison: "marqueur memoire.create.sheet absent après 20 s", fenetre: null });
   parcours.surfaces = parcours.surfaces.filter((s) => s.id !== "memoire-lien");
   parcours.surfaces.push({ id: "inconnue", statut: "non-couverte", raison: "hors catalogue", fenetre: null });
   entree.parcours = parcours;
@@ -515,18 +455,18 @@ test("recette-ui-mac-automatisee/AC-6 : une surface que le parcours n'a pas ouve
     rapport.surfaces.filter((s) => s.statut !== "couverte").map(({ id, raison }) => ({ id, raison })),
     [
       { id: "terminal", raison: "cadre de la surface illisible" },
-      { id: "modeles", raison: "marqueur models.sheet absent après 20 s" },
+      { id: "memoire-creation", raison: "marqueur memoire.create.sheet absent après 20 s" },
       { id: "memoire-lien", raison: "absente du parcours" },
     ],
   );
-  assert.equal(rapport.surfaces.length, 24, "une surface hors catalogue est ignorée");
+  assert.equal(rapport.surfaces.length, 14, "une surface hors catalogue est ignorée");
 
   const md = rendreRapportMd(rapport);
-  assert.ok(md.includes("| modeles | feuille | non couverte | marqueur models.sheet absent après 20 s | — | — |"));
+  assert.ok(md.includes("| memoire-creation | feuille | non couverte | marqueur memoire.create.sheet absent après 20 s | — | — |"));
   assert.ok(md.includes("| memoire-lien | feuille | non couverte | absente du parcours | — | — |"));
   assert.match(ligneVerdict(rapport, "r.md"), /0 signalement\(s\) non excepté\(s\), 3 surface\(s\) non couverte\(s\),/);
 
-  // Sans parcours du tout : les 24 surfaces sont non couvertes, l'isolation n'est pas prouvée.
+  // Sans parcours du tout : les 14 surfaces sont non couvertes, l'isolation n'est pas prouvée.
   const vide = analyser({ ...passage(), parcours: null });
   assert.equal(vide.verdict, "defauts");
   assert.ok(vide.surfaces.every((s) => s.statut === "non-couverte" && s.raison === "absente du parcours"));
@@ -620,23 +560,23 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
   const petit = noeud("AXButton", dans(10, 500, 16, 16), { identifiant: "barre.aide", titre: "Aide" });
   const remplacer: Record<string, Releve> = {};
   for (const s of CATALOGUE.filter((c) => c.type === "section")) remplacer[s.id] = releveSain(s.id, [petit]);
-  remplacer.contrat = releveSain("contrat", [noeud("AXStaticText", dans(-40, 60, 80, 20), { valeur: "Besoins" })]);
+  remplacer.serveur = releveSain("serveur", [noeud("AXStaticText", dans(-40, 60, 80, 20), { valeur: "Besoins" })]);
 
   const justificationAide = "défaut connu, à corriger hors de cette feature : le bouton Aide de la barre fait 16 × 16 pt";
   const justificationContrat = "faux positif : le titre déborde de 40 pt mais reste lisible dans la capture";
   const exceptions = exceptionsJson([
     { surface: "*", regle: "cible-trop-petite", element: "id:barre.aide", justification: justificationAide },
-    { surface: "contrat", regle: "hors-ecran", element: "chemin:AXStaticText[0]", justification: justificationContrat },
-    { surface: "modeles", regle: "hors-ecran", element: "id:modeles.absent", justification: "faux positif : plus produit" },
+    { surface: "serveur", regle: "hors-ecran", element: "chemin:AXStaticText[0]", justification: justificationContrat },
+    { surface: "memoire-creation", regle: "hors-ecran", element: "id:creation.absent", justification: "faux positif : plus produit" },
   ]);
 
   const rapport = analyser(passage(remplacer, exceptions));
   assert.equal(rapport.verdict, "vert");
   const json = JSON.parse(serialiserRapportJson(rapport));
-  assert.equal(json.signalements.length, 11);
+  assert.equal(json.signalements.length, 9);
   assert.ok(json.signalements.every((s: { exception: string | null }) => s.exception !== null));
   assert.deepEqual(json.signalements.at(-1), {
-    surface: "contrat",
+    surface: "serveur",
     regle: "hors-ecran",
     cle: "chemin:AXStaticText[0]",
     role: "AXStaticText",
@@ -644,19 +584,19 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
     exception: justificationContrat,
   });
   assert.equal(json.signalements[0].exception, justificationAide);
-  assert.deepEqual(json.exceptionsSansObjet, [{ surface: "modeles", regle: "hors-ecran", element: "id:modeles.absent" }]);
+  assert.deepEqual(json.exceptionsSansObjet, [{ surface: "memoire-creation", regle: "hors-ecran", element: "id:creation.absent" }]);
   assert.deepEqual(json.exceptionsInvalides, []);
 
   const md = rendreRapportMd(rapport);
   assert.ok(md.startsWith("# Recette Mac — vert\n"));
   const exceptes = md.slice(md.indexOf("## Signalements exceptés"), md.indexOf("## Exceptions invalides"));
-  assert.ok(exceptes.includes(`| contrat | élément hors de la zone visible | chemin:AXStaticText[0] | AXStaticText | Besoins | x 60, y 110, 80 × 20 | ${justificationContrat} |`));
+  assert.ok(exceptes.includes(`| serveur | élément hors de la zone visible | chemin:AXStaticText[0] | AXStaticText | Besoins | x 60, y 110, 80 × 20 | ${justificationContrat} |`));
   assert.ok(exceptes.includes(`| accueil | cible cliquable de moins de 20 × 20 pt | id:barre.aide | AXButton | Aide | x 110, y 550, 16 × 16 | ${justificationAide} |`));
   assert.ok(md.includes("## Signalements non exceptés\n\nAucun.\n"));
-  assert.ok(md.includes("| modeles | hors-ecran | id:modeles.absent |"));
+  assert.ok(md.includes("| memoire-creation | hors-ecran | id:creation.absent |"));
   assert.equal(
     ligneVerdict(rapport, "r.md"),
-    "✓ recette Mac : vert — 24 surfaces couvertes, 11 signalement(s) excepté(s). Rapport : r.md",
+    "✓ recette Mac : vert — 14 surfaces couvertes, 9 signalement(s) excepté(s). Rapport : r.md",
   );
 
   // Le fichier LIVRÉ (S-10) : lisible, toutes ses entrées valides, chaque

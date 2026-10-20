@@ -10,11 +10,9 @@ import Foundation
 /// Les bornes de l'API (S-7 : 2 Mio par réponse JSON).
 enum RemoteLimits {
     static let responseBody = 2 * 1024 * 1024
-    static let sessionEntries = 2000
     /// La taille par défaut d'une page de mémoire (`GET /v1/memory/page`) : la
     /// liste se lit par tranches, jamais d'un seul bloc.
     static let memoryPageSize = 100
-    static let transcriptLines = 500
     static let memoryLimitMax = 200
     /// La borne d'octets PROPRE au graphe : le graphe d'une portée réelle
     /// (~1 600 souvenirs avec texte et étiquettes) pèse ~3 Mo, au-delà de

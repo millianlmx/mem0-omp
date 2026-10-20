@@ -84,13 +84,12 @@ test("le client CLI est un outil du dépôt, lancé par bun, avec ses trois code
     "le CLI ne porte pas la marque d'URL du dépôt (PUBLISHING.md n'a pas à le déclarer)",
   );
 
-  // Le rendu du flux lit les charges utiles RÉELLES (S-15) : `sessions` porte
-  // `{file, added, issue}` et `hosted` porte `{state, dialogs, added}` — jamais la
-  // clé `runs`, absente de la charge `sessions`.
-  assert.match(source, /record\["added"\]/, "le rendu du flux lit `added`");
-  assert.match(source, /record\["file"\]/, "le rendu `sessions` lit `file`");
-  assert.match(source, /record\["issue"\]/, "le rendu `sessions` lit `issue`");
-  assert.match(source, /record\["dialogs"\]/, "le rendu `hosted` lit `dialogs`");
+  // Le rendu du flux lit les charges utiles RÉELLES (S-15) : `hello` porte
+  // `{protocolVersion}`, `components` porte `{ompInstalled, …}`, `devices` porte
+  // `{devices}`.
+  assert.match(source, /\["protocolVersion"\]/, "le rendu `hello` lit `protocolVersion`");
+  assert.match(source, /record\["ompInstalled"\]/, "le rendu `components` lit `ompInstalled`");
+  assert.match(source, /\["devices"\]/, "le rendu `devices` lit `devices`");
 
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   assert.match(readme, /omp-console-api\.ts/, "le CLI est cité dans l'arborescence de scripts/");

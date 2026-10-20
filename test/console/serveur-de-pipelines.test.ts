@@ -83,6 +83,16 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['"/decisions/\\(seq)/reverse"', String.raw`\/decisions\/(\d+)\/reverse$`],
     ['path: "/validate"', String.raw`\/validate$`],
     ['path: "/cancel"', String.raw`\/cancel$`],
+    ['path: "/v1/status"', String.raw`\/v1\/status$`],
+    ['path: "/v1/projects"', String.raw`\/v1\/projects$`],
+    ['path: "/v1/audits"', String.raw`\/v1\/audits$`],
+    ['path: "/v1/stats"', String.raw`\/v1\/stats$`],
+    ['path: "/v1/runs/\\(id)"', String.raw`\/v1\/runs\/([\w-]+)$`],
+    ['launch("/v1/runs"', String.raw`\/v1\/runs$`],
+    ['launch("/v1/projects"', String.raw`\/v1\/projects$`],
+    ['launch("/v1/audits"', String.raw`\/v1\/audits$`],
+    ['"/v1/audits/\\(id)/launch"', String.raw`\/v1\/audits\/([\w-]+)\/launch$`],
+    ['"/v1/audits/\\(id)/cancel"', String.raw`\/v1\/audits\/([\w-]+)\/cancel$`],
   ];
   for (const [client, server] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
@@ -94,19 +104,37 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
 });
 
 
-test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis Pipelines, sur le même client partagé", () => {
-  const kanban = read("omp-console", "Sources", "OMPConsole", "Kanban", "KanbanView.swift");
-  assert.match(kanban, /ServerSheet\(\)/);
-  assert.match(kanban, /"kanban\.serverButton"/);
-  const pipelines = read("omp-console", "ios", "OMPConsoleIOS", "PipelinesScreen.swift");
-  assert.match(pipelines, /case \.server:\s*\n\s*IOSServerSheet\(\)/);
-  assert.match(pipelines, /"ios\.pipelines\.server"/);
-  for (const sheet of [["Sources", "OMPConsole", "Server", "ServerSheet.swift"], ["ios", "OMPConsoleIOS", "IOSServerSheet.swift"]]) {
-    const source = read("omp-console", ...sheet);
-    assert.match(source, /@StateObject private var server = HarnessModel\.live\(\)/, `${sheet.at(-1)} : le modèle partagé`);
-    assert.match(source, /@StateObject private var drafts = HarnessDrafts\(\)/);
-    assert.match(source, /server\.startLive\(\)/, `${sheet.at(-1)} : la boîte se tient à jour par le flux`);
-    assert.match(source, /\.onDisappear \{ server\.stopLive\(\) \}/, `${sheet.at(-1)} : le flux se ferme avec la feuille`);
+test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis chaque section de pilotage, sur un seul client par app", () => {
+  const shells = [
+    {
+      app: ["Sources", "OMPConsole", "OMPConsoleApp.swift"],
+      root: ["Sources", "OMPConsole", "ConsoleRootView.swift"],
+      frame: ["Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"],
+      sheet: /ServerSheet\(server: server, drafts: drafts\)/,
+      button: /"server\.open"/,
+    },
+    {
+      app: ["ios", "OMPConsoleIOS", "OMPConsoleIOSApp.swift"],
+      root: ["ios", "OMPConsoleIOS", "RootView.swift"],
+      frame: ["ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"],
+      sheet: /IOSServerSheet\(server: server, drafts: drafts\)/,
+      button: /"ios\.server\.open"/,
+    },
+  ];
+  for (const shell of shells) {
+    // Un seul modèle et un seul brouillon par app, posés à la racine de la scène.
+    const app = read("omp-console", ...shell.app);
+    assert.match(app, /@StateObject private var server = HarnessModel\.live\(\)/, `${shell.app.at(-1)} : le modèle partagé`);
+    assert.match(app, /@StateObject private var drafts = HarnessDrafts\(\)/, `${shell.app.at(-1)} : les brouillons partagés`);
+    // La racine ouvre la feuille sur ce modèle, et tient la boîte à jour par le flux.
+    const root = read("omp-console", ...shell.root);
+    assert.match(root, /\.sheet\(isPresented: \$drafts\.serverSheetShown\)/, `${shell.root.at(-1)} : la feuille du serveur`);
+    assert.match(root, shell.sheet, `${shell.root.at(-1)} : la feuille reçoit le modèle partagé`);
+    assert.match(root, /await server\.load\(\)\s*\n\s*server\.startLive\(\)/, `${shell.root.at(-1)} : la boîte se tient à jour par le flux`);
+    // Le cadre commun des sections porte le bouton qui l'ouvre.
+    const frame = read("omp-console", ...shell.frame);
+    assert.match(frame, shell.button, `${shell.frame.at(-1)} : le bouton du serveur`);
+    assert.match(frame, /drafts\.serverSheetShown = true/, `${shell.frame.at(-1)} : le bouton ouvre la feuille`);
   }
   assert.match(read("omp-console", "Package.swift"), /name: "OMPConsole",\s*\n\s*dependencies: \["ConsoleCore", "ConsoleClient"\]/);
 });

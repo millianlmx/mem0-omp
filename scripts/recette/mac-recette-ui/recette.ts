@@ -127,8 +127,7 @@ function creerDepot(racine: string): void {
 
 /**
  * Sous-commande `fixture` : dépôt, écoute, jeu (qui porte le port), puis
- * `fixture.json` en dernier ; sert jusqu'à SIGTERM. Le processus reste vivant :
- * son pid est le propriétaire du lot, du run et du service fictifs.
+ * `fixture.json` en dernier ; sert jusqu'à SIGTERM.
  */
 function fixture(racine: string): void {
   const echec = (etape: string, erreur: unknown): never => {
@@ -144,31 +143,13 @@ function fixture(racine: string): void {
     echec("création du dépôt fictif", erreur);
   }
 
-  const routeur = new RouteurFixture(racine, debut);
+  const routeur = new RouteurFixture(debut);
   const serveur = http.createServer((requete, reponse) => {
-    let corps = "";
-    requete.setEncoding("utf8");
-    requete.on("data", (morceau: string) => {
-      corps += morceau;
-    });
+    requete.resume();
     requete.on("end", () => {
-      const jeton = requete.headers["x-omp-service-token"];
-      const r = routeur.repondre({
-        methode: requete.method ?? "GET",
-        url: requete.url ?? "/",
-        jetonService: typeof jeton === "string" ? jeton : undefined,
-        corps,
-      });
-      if (r.type === "json") {
-        reponse.writeHead(r.statut, { "content-type": "application/json; charset=utf-8" });
-        reponse.end(JSON.stringify(r.corps));
-        return;
-      }
-      reponse.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
-      reponse.write(r.trame);
-      // Le client abandonne une requête muette au bout de 30 s : un `: ping` toutes les 10 s (D-9).
-      const ping = setInterval(() => reponse.write(": ping\n\n"), 10_000);
-      reponse.on("close", () => clearInterval(ping));
+      const r = routeur.repondre({ methode: requete.method ?? "GET", url: requete.url ?? "/" });
+      reponse.writeHead(r.statut, { "content-type": "application/json; charset=utf-8" });
+      reponse.end(JSON.stringify(r.corps));
     });
   });
   serveur.on("error", (erreur) => echec("écoute du serveur", erreur));
@@ -176,14 +157,12 @@ function fixture(racine: string): void {
     const adresse = serveur.address();
     if (adresse === null || typeof adresse === "string") return echec("écoute du serveur", "adresse inconnue");
     try {
-      const depotReel = fs.realpathSync(path.join(racine, "depots", "atelier"));
-      for (const f of jeuFictif({ racine, depotReel, pid: process.pid, port: adresse.port, debut })) {
+      for (const f of jeuFictif({ racine, port: adresse.port, debut })) {
         const cible = path.join(racine, f.chemin);
         fs.mkdirSync(path.dirname(cible), { recursive: true });
         ecrireAtomique(cible, f.contenu);
         fs.chmodSync(cible, f.mode);
       }
-      fs.mkdirSync(path.join(racine, "alertes"), { recursive: true });
       ecrireAtomique(path.join(racine, "fixture.json"), JSON.stringify({ version: 1, pid: process.pid, port: adresse.port }));
     } catch (erreur) {
       echec("écriture du jeu fictif", erreur);

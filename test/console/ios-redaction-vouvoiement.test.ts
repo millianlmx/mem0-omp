@@ -90,10 +90,6 @@ type Exception = { file: string; reason: string } & ({ literal: string } | { con
 
 /** Contenus simulés, pas des textes de l'app : exemptés de la garde (S-7). */
 const EXCEPTIONS: readonly Exception[] = [
-  { file: "omp-console/Sources/ConsoleCore/Session/SessionParity.swift", constant: "payloadJSON", reason: "charge de conversation simulée, figée octet pour octet" },
-  { file: "omp-console/Sources/ConsoleCore/Session/SessionParity.swift", literal: "Bonjour, corrige le fichier src/app.swift", reason: "message simulé de l’utilisateur à l’agent" },
-  { file: "omp-console/Sources/ConsoleCore/Session/SessionParity.swift", literal: "Quel plan préfères-tu ?", reason: "question simulée de l’agent" },
-  { file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift", constant: "longContract", reason: "contrat simulé (3e personne qui a la forme de l’impératif)" },
   { file: "omp-console/Sources/ConsoleCore/Setup/SetupText.swift", literal: "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.", reason: "« OMP Console … puis démarre » : 3e personne qui a la forme de l’impératif (texte figé par omp-console-sans-podman S-5)" },
 ];
 
@@ -131,15 +127,12 @@ const BASE = tutoiementFaults(SOURCES);
 const MAC_ERROR_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift";
 const MEMORY_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMemoryText.swift";
 const VOCABULARY = "omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift";
-const HOME_TEXT = "omp-console/Sources/ConsoleCore/Home/HomeText.swift";
+const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
 const FILES_TEXT = "omp-console/Sources/OMPConsole/Files/FilesText.swift";
-const KANBAN_TEXT = "omp-console/Sources/ConsoleCore/Kanban/KanbanText.swift";
-const HOME_VIEW = "omp-console/ios/OMPConsoleIOS/HomeView.swift";
-const NEW_FEATURE_FILES = [
-  "omp-console/Sources/ConsoleCore/Kanban/NewFeatureText.swift",
-  "omp-console/ios/OMPConsoleIOS/NewFeatureSheetView.swift",
-  "omp-console/Sources/OMPConsole/Launch/NewFeatureSheet.swift",
-] as const;
+/** Le cadre des écrans iOS du serveur de pipelines, Accueil compris. */
+const HARNESS_SCREENS = "omp-console/ios/OMPConsoleIOS/IOSHarnessScreens.swift";
+/** Les formulaires de lancement d'une feature des deux coques. */
+const NEW_FEATURE_FILES = [HARNESS_SCREENS, "omp-console/Sources/OMPConsole/Server/HarnessSectionViews.swift"] as const;
 
 const TUTOIEMENT = "Vérifie que le Mac est allumé, puis réessaie";
 
@@ -262,6 +255,14 @@ test("ios-redaction-vouvoiement/AC-3 : la feuille Nouvelle feature ne cite ni br
   for (const [file, source] of SOURCES) {
     assert.ok(!/\btitleHelp\b/.test(withoutComments(source)), `${file} : titleHelp encore présent hors commentaire`);
   }
+  // Les mots du formulaire : la section « Lancements » de PipelineServerText.
+  const words = SOURCES.get(HOME_TEXT) ?? "";
+  const start = words.indexOf("// MARK: - Lancements");
+  const end = words.indexOf("// MARK: - Projets");
+  assert.ok(start !== -1 && end > start, "section « Lancements » introuvable dans PipelineServerText.swift");
+  const launch = swiftTextUnits(words.slice(start, end)).map((unit) => unit.text);
+  assert.ok(launch.includes("Nouvelle feature"), "le titre « Nouvelle feature » doit être lu");
+  for (const text of launch) assert.ok(!/feat\/|branche/i.test(text), `${HOME_TEXT} : « ${text} » cite une branche`);
   for (const file of NEW_FEATURE_FILES) {
     for (const text of texts(file)) {
       assert.ok(!/feat\/|branche/i.test(text), `${file} : « ${text} » cite une branche`);
@@ -271,27 +272,15 @@ test("ios-redaction-vouvoiement/AC-3 : la feuille Nouvelle feature ne cite ni br
 
 test("ios-redaction-vouvoiement/AC-5 : le chargement de l'Accueil iOS n'affiche que l'indicateur natif, sans texte", () => {
   assertSane();
-  const source = SOURCES.get(HOME_VIEW);
-  assert.ok(source !== undefined, `source non chargée : ${HOME_VIEW}`);
-  const loading = block(withoutComments(source), "private var loadingView");
+  const source = SOURCES.get(HARNESS_SCREENS);
+  assert.ok(source !== undefined, `source non chargée : ${HARNESS_SCREENS}`);
+  // L'Accueil iOS est un écran du serveur : son chargement est celui du cadre commun.
+  assert.ok(source.includes("struct IOSHarnessHomeScreen"), "l'Accueil iOS doit vivre dans le cadre commun");
+  const loading = block(withoutComments(source), "if !server.isLoaded");
   assert.ok(loading.includes("ProgressView()"), "ProgressView() sans argument attendu");
   for (const banned of ["Text(", "Label(", "loadingText"]) {
-    assert.ok(!loading.includes(banned), `loadingView ne doit pas contenir ${banned}`);
+    assert.ok(!loading.includes(banned), `le chargement ne doit pas contenir ${banned}`);
   }
-});
-
-test("ios-redaction-vouvoiement/AC-7 : les groupes de modèles s'écrivent « Modèle cadrage+revue » et « Modèle exécution », jamais req+specs ni impl+review", () => {
-  assertSane();
-  const joined = /req\s*\+\s*\/?specs|impl\s*\+\s*\/?review/i;
-  for (const [file, source] of SOURCES) {
-    if (!inScope(file)) continue;
-    for (const unit of swiftTextUnits(source)) {
-      assert.ok(!joined.test(unit.text), `${file}:${unit.line} « ${unit.raw} » : groupe de modèles en req+specs/impl+review`);
-    }
-  }
-  const kanban = texts(KANBAN_TEXT);
-  assert.ok(kanban.includes("Modèle cadrage+revue"), "« Modèle cadrage+revue » absent de KanbanText.swift");
-  assert.ok(kanban.includes("Modèle exécution"), "« Modèle exécution » absent de KanbanText.swift");
 });
 
 test("ios-redaction-vouvoiement/AC-8 : un texte tutoyé échoue dans l'app iOS et dans ConsoleCore hors *Text.swift, jamais dans la coque macOS", () => {

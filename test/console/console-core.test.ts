@@ -185,92 +185,18 @@ function docOnlyCopy(): string {
 const SWIFT_SOURCES = path.join("Sources", "ConsoleCore");
 const SHELL_SOURCES_REL = path.join("Sources", "OMPConsole");
 
-/** Les symboles déplacés de S-1/S-3 (type, ou fichier pour StoreModels/StoreRuns). */
+/** Les symboles déplacés de S-1/S-3 vers le noyau, que la coque ne redéclare pas. */
 const MOVED: string[] = [
-  "PipelineStore",
-  "StoreModels",
-  "StoreSnapshot",
-  "StoreRuns",
   "ConsoleSection",
   "ConsoleSectionGroup",
   "ConsoleTone",
   "ConsoleStatus",
-  "PhaseText",
   "ConsoleFormat",
-  "HomeText",
-  "KanbanText",
-  "ProjectViewText",
-  "SessionConsoleText",
-  "ConversationText",
   "MemoryText",
-  "StatsPresentation",
-  "ContractText",
   "SetupText",
-  // ios-accueil / BR-1 : le noyau partagé de l'Accueil (S-1).
-  "KanbanColumn",
-  "KanbanMark",
-  "KanbanSourceKind",
-  "KanbanSource",
-  "KanbanCardRun",
-  "KanbanCardAction",
-  "KanbanCard",
-  "KanbanAnomaly",
-  "KanbanBoard",
-  "KanbanBoardState",
-  "KanbanStep",
-  "KanbanRepoKey",
-  "KanbanLane",
-  "KanbanLaneContent",
-  "KanbanCardPresentation",
-  "KanbanAnomalies",
-  "KanbanDedup",
-  "KanbanActionZone",
-  "KanbanActionPresentation",
-  "KanbanLaunchRepos",
-  "ActionsText",
-  "ActionJournalState",
-  "ActionJournalEntry",
-  "HomeState",
-  "HomeDashboard",
-  "HomeAttentionNature",
-  "HomeAttention",
-  "HomeCardAction",
-  // accueil-en-cours-melange-pause-et-compte / BR-2 : comptes de la barre de menus (S-6).
-  "HomeCounts",
-  "HomePresentation",
-  "OmpStatus",
-  "MainSheetPolicy",
-  "ContractMoment",
-  "ContractSection",
-  "ContractContent",
-  "ContractUnreadable",
-  "ContractDocument",
-  "HomeParity",
-  // ios-sessions / BR-1 : le noyau partagé des faits de session (S-1, S-3, S-6, S-8).
-  "ViewerTarget",
-  "SessionDay",
-  "SessionDays",
-  "RunChoice",
-  "RunChoiceState",
-  "FollowPolicy",
-  "SessionViewerState",
-  "ConversationEntry",
-  "TokenUsage",
-  "SessionHeader",
-  "SessionKind",
-  "ToolCall",
-  "UserTurn",
-  "AssistantTurn",
-  "ToolResultTurn",
-  "CompactionMarker",
-  "BranchSummaryMarker",
-  "SkipReason",
-  "SkippedEntry",
-  "SessionConversation",
-  "AskSpan",
-  "DiffLine",
-  "DiffTone",
-  "BodySegment",
+  "JSONValue",
+  // serveur-de-pipelines : le vocabulaire du serveur, partagé par les deux coques.
+  "PipelineServerText",
   // ios-memoire-graphe / BR-1 : le noyau partagé du graphe des souvenirs (S-2).
   "MemoryRow",
   "MemoryGraphEdge",
@@ -288,13 +214,10 @@ const MOVED: string[] = [
   "MemoryGraphLayout",
   "MemoryGraphWire",
   "MemoryGraphParity",
-  // attentes-dispersees-entre-sources / BR-1 : le dialogue du service, un seul type (S-2).
-  "RpcDialogMethod",
-  "RpcDialogRequest",
 ];
 
-/** Les cinq symboles qui RESTENT dans la coque (S-1). */
-const SHELL_ONLY: string[] = ["StoreReader", "StoreWatcher", "StoreHub", "FilesText", "TerminalViewText"];
+/** Les symboles qui RESTENT dans la coque (S-1). */
+const SHELL_ONLY: string[] = ["FilesText", "TerminalViewText", "OmpStatus"];
 
 test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans dépendance vers une autre cible du paquet", () => {
   const pkg = path.join(SHELL, "Package.swift");

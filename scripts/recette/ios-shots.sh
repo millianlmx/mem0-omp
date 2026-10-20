@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Produit les captures de la coque iOS (S-6, BR-4) : d'abord SOIXANTE-QUATRE, huit écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord QUARANTE-HUIT, six écrans en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
-# défaut puis en Dynamic Type maximum ; puis les groupes de recette (Accueil, graphe
-# Mémoire, fiche d'une carte Pipelines).
+# défaut puis en Dynamic Type maximum ; puis le groupe de recette du graphe Mémoire.
 #
 # Les images sont des ARTEFACTS DE PR : elles vivent sous `omp-console/build/`
 # (ignoré par git) et ne sont jamais committées. Le script est reproductible : le
@@ -23,11 +22,11 @@
 # L'app DÉCLARE portrait + paysages : elle reste utilisable en paysage sur un vrai
 # iPad, ce que la recette (`omp-console/ios/DESIGN.md`) fait vérifier à la main.
 #
-# Vérifications DURES avant de rendre 0 : 64 PNG, et les dimensions de CHAQUE
+# Vérifications DURES avant de rendre 0 : 60 PNG, et les dimensions de CHAQUE
 # PNG (`sips`) — toutes PORTRAIT. Une capture inattendue fait sortir 1 avec le
 # fichier fautif.
 #
-# Codes de sortie : 0 les 64 captures produites, 1 échec, 2 « non exécuté »
+# Codes de sortie : 0 les 60 captures produites, 1 échec, 2 « non exécuté »
 # (Xcode inutilisable, ou aucun runtime iOS ≥ 26 à nommer).
 set -uo pipefail
 
@@ -39,10 +38,10 @@ SHOTS="$ROOT/omp-console/build/ios-shots"
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
-# Les huit sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
+# Les six sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
 # jamais un libellé affiché : la liste des sections de l'app est filtrée du type
 # partagé, et ce script de développement se contente des valeurs brutes.
-sections=(home kanban project audit session sessions memory stats)
+sections=(home kanban project audit stats memory)
 
 # Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
 # Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
@@ -206,7 +205,7 @@ shoot() {
   xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
   xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
   for section in "${sections[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" -home.welcomeSeen YES "$@" >/dev/null 2>&1
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" >/dev/null 2>&1
     sleep 2
     shot="$SHOTS/$label-$section-$appearance$suffix.png"
     if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
@@ -217,76 +216,27 @@ shoot() {
   done
 }
 
-# Passage 1 — huit écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
-# à la taille de texte par défaut : 32 captures.
+# Passage 1 — six écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# à la taille de texte par défaut : 24 captures.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
   shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
 done
 
-# Passage 2 — huit écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
-# MAXIMUM : 32 captures `-ax`.
+# Passage 2 — six écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# MAXIMUM : 24 captures `-ax`.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
   shoot ipad "$ipad" "$appearance" "$TEXT_AX" "-ax"
 done
 
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "64" ]; then
-  echo "  ✗ $count captures produites (64 attendues)" >&2
+if [ "$count" != "48" ]; then
+  echo "  ✗ $count captures produites (48 attendues)" >&2
   exit 1
 fi
 
-# Passage 3 — l'ACCUEIL de l'app (ios-accueil) : ses cinq états de recette et ses
-# trois feuilles, sur les deux appareils et les deux apparences, à taille de texte
-# par défaut. Le crochet `-home.recipe` force un état depuis la fixture partagée
-# (`HomeParity`) : chaque capture montre un chemin de code RÉEL, jamais un écran
-# fabriqué. La feuille Bienvenue s'obtient en NE passant PAS `-home.welcomeSeen`
-# (une installation neuve ne l'a jamais vue).
-recipes=(dashboard degraded firstRun loading ompMissing answer contract)
-
-shoot_home() {
-  local label="$1"
-  local udid="$2"
-  local appearance="$3"
-  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
-  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
-  for recipe in "${recipes[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
-      -section home -home.welcomeSeen YES -home.recipe "$recipe" >/dev/null 2>&1
-    sleep 2
-    shot="$SHOTS/$label-home-$recipe-$appearance.png"
-    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
-      echo "  ✗ capture impossible ($shot)" >&2
-      exit 1
-    fi
-    echo "$shot"
-  done
-  # La feuille Bienvenue : première ouverture de l'Accueil, préférence fausse.
-  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section home >/dev/null 2>&1
-  sleep 2
-  shot="$SHOTS/$label-home-welcome-$appearance.png"
-  if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
-    echo "  ✗ capture impossible ($shot)" >&2
-    exit 1
-  fi
-  echo "$shot"
-}
-
-for appearance in light dark; do
-  shoot_home iphone "$iphone" "$appearance"
-  shoot_home ipad "$ipad" "$appearance"
-done
-
-# Le second groupe fait 8 états × {iPhone, iPad} × {clair, sombre} = 32 captures ;
-# le total avec les 64 écrans est 96.
-count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "96" ]; then
-  echo "  ✗ $count captures produites (96 attendues : 64 écrans + 32 Accueil)" >&2
-  exit 1
-fi
-
-# Passage 4 — le MODE GRAPHE de la Mémoire (ios-memoire-graphe) : ses trois états de
+# Passage 3 — le MODE GRAPHE de la Mémoire (ios-memoire-graphe) : ses trois états de
 # recette (`-memoire.recipe`), sur les deux appareils et les deux apparences, à
 # taille de texte par défaut. La charge utile vient de la fixture partagée
 # `MemoryGraphParity` (ConsoleCore) : chaque capture montre un chemin de code RÉEL.
@@ -311,7 +261,7 @@ shoot_memoire() {
     log="$RECIPE_LOGS/$label-$appearance-$recipe.log"
     rm -f "$log"
     xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
-      -section memory -home.welcomeSeen YES -memoire.recipe "$recipe" >/dev/null 2>&1
+      -section memory -memoire.recipe "$recipe" >/dev/null 2>&1
     reached=""
     for _ in $(seq 1 40); do
       if grep -q "memoire-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi
@@ -339,148 +289,14 @@ for appearance in light dark; do
   shoot_memoire ipad "$ipad" "$appearance"
 done
 
-# Le troisième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 64 écrans et les 32 de l'Accueil est 108.
-count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "108" ]; then
-  echo "  ✗ $count captures produites (108 attendues : 64 écrans + 32 Accueil + 12 graphe)" >&2
-  exit 1
-fi
-
-# Passage 5 — les RANGÉES de l'Accueil en Dynamic Type (ios-accueil-dynamic-type-casse) :
-# chaque rangée « titre | puce | bouton » du tableau de bord (index 0..3 dans « En cours »
-# puis « Livrées récemment », fixture `HomeParity`) amenée en haut de l'écran par le
-# crochet `-home.row`, à la taille par défaut, en accessibility-extra-large et à la taille
-# maximale — iPhone seulement, apparence claire. La taille du simulateur est remise à
-# `large` par `reset_simulators` à la sortie.
-home_rows=(0 1 2 3)
-row_sizes=("$TEXT_DEFAULT" accessibility-extra-large "$TEXT_AX")
-
-shoot_rows() {
-  local label="$1"
-  local udid="$2"
-  xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
-  for size in "${row_sizes[@]}"; do
-    xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
-    for row in "${home_rows[@]}"; do
-      xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
-        -section home -home.welcomeSeen YES -home.recipe dashboard -home.row "$row" >/dev/null 2>&1
-      sleep 2
-      shot="$SHOTS/$label-home-row$row-$size.png"
-      if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
-        echo "  ✗ capture impossible ($shot)" >&2
-        exit 1
-      fi
-      echo "$shot"
-    done
-  done
-}
-
-shoot_rows iphone "$iphone"
-
-# Le cinquième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 64
-# écrans, les 32 de l'Accueil et les 12 du graphe est 120.
-count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "120" ]; then
-  echo "  ✗ $count captures produites (120 attendues : 64 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
-  exit 1
-fi
-
-# Passage 6 — la feuille « NOUVELLE FEATURE » (ios-nouvelle-feature-formulaire) : ses trois
-# états de recette (`-pipelines.recipe`), sur les deux appareils et les deux apparences,
-# à taille de texte par défaut. Le lancement ouvre l'écran Pipelines et présente la feuille
-# d'elle-même, dans l'état forcé (dépôts, dépôt choisi, titre, besoin) : tout le reste est le
-# chemin RÉEL de la feuille. Aucun appairage n'est requis.
-nouvelle_feature_recipes=(vide choisi rempli)
-
-shoot_nouvelle_feature() {
-  local label="$1"
-  local udid="$2"
-  local appearance="$3"
-  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
-  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
-  for recipe in "${nouvelle_feature_recipes[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
-      -section kanban -home.welcomeSeen YES -pipelines.recipe "$recipe" >/dev/null 2>&1
-    sleep 2
-    shot="$SHOTS/$label-nouvelle-feature-$recipe-$appearance.png"
-    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
-      echo "  ✗ capture impossible ($shot)" >&2
-      exit 1
-    fi
-    echo "$shot"
-  done
-}
-
-for appearance in light dark; do
-  shoot_nouvelle_feature iphone "$iphone" "$appearance"
-  shoot_nouvelle_feature ipad "$ipad" "$appearance"
-done
-
-# Le sixième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 64 écrans, les 32 de l'Accueil, les 12 du graphe et les 12 rangées
-# est 132.
-count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "132" ]; then
-  echo "  ✗ $count captures produites (132 attendues : 64 écrans + 32 Accueil + 12 graphe + 12 rangées + 12 nouvelle feature)" >&2
-  exit 1
-fi
-
-# Passage 7 — la FICHE d'une carte Pipelines (ios-fiche-carte-pipelines) : le crochet
-# `-pipelines.recipe` ouvre la vraie feuille sur une carte de fixture dérivée de
-# `HomeParity`, sans réseau, en clair, à trois tailles de Dynamic Type sur iPhone
-# (défaut, AX-XL, maximum). Le signal de PRÊT (miroir de PipelinesText.recipeReady)
-# n'est écrit qu'une fois l'état demandé : sans lui, la capture est refusée.
-#   $1 libellé (iphone | ipad)   $2 UDID   $3 recette (fiche | actions | arret)
-#   $4 taille de texte
-shoot_pipelines_fiche() {
-  local label="$1"
-  local udid="$2"
-  local recipe="$3"
-  local size="$4"
-  xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
-  xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
-  log="$RECIPE_LOGS/$label-pipelines-$recipe-$size.log"
-  rm -f "$log"
-  xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
-    -section kanban -home.welcomeSeen YES -pipelines.recipe "$recipe" >/dev/null 2>&1
-  reached=""
-  for _ in $(seq 1 40); do
-    if grep -q "pipelines-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi
-    sleep 0.5
-  done
-  if [ -z "$reached" ]; then
-    echo "  ✗ état de la fiche non atteint, capture refusée ($label $recipe $size)" >&2
-    exit 1
-  fi
-  # Une seconde de réglage : l'animation de la feuille et du dialogue se termine après le signal.
-  sleep 1
-  suffix=""
-  [ "$recipe" = "fiche" ] || suffix="-$recipe"
-  shot="$SHOTS/$label-pipelines-fiche$suffix-$size.png"
-  if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
-    echo "  ✗ capture impossible ($shot)" >&2
-    exit 1
-  fi
-  echo "$shot"
-}
-
-for size in "$TEXT_DEFAULT" accessibility-extra-large "$TEXT_AX"; do
-  shoot_pipelines_fiche iphone "$iphone" fiche "$size"
-  shoot_pipelines_fiche iphone "$iphone" actions "$size"
-done
-shoot_pipelines_fiche iphone "$iphone" arret "$TEXT_DEFAULT"
-shoot_pipelines_fiche ipad "$ipad" fiche "$TEXT_DEFAULT"
+# Le second groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
+# le total avec les 48 écrans est 60.
 reset_simulators
-
-# Le septième groupe fait 8 captures : 3 tailles × {fiche, actions} + l'arrêt sur iPhone,
-# plus la fiche sur iPad.
-fiche_count="$(ls "$SHOTS"/*-pipelines-fiche*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$fiche_count" != "8" ]; then
-  echo "  ✗ $fiche_count captures de la fiche produites (8 attendues)" >&2
+total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$total" != "60" ]; then
+  echo "  ✗ $total captures produites (60 attendues : 48 écrans + 12 graphe)" >&2
   exit 1
 fi
-total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 
 # Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
 # la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).

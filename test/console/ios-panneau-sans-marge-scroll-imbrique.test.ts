@@ -2,9 +2,9 @@
 // un test par critère `ios-panneau-sans-marge-scroll-imbrique/AC-<n>`, et c'est le
 // SEUL fichier qui porte ce slug (invariant `criteria/AC-13`).
 //
-// Preuve VISUELLE d'AC-1 et d'AC-5 : les captures simulateur de
-// `omp-console/build/ios-panneau/` (dont `ipad-sessions-liste.png` : une seule
-// marge de 24 pt autour du panneau sur iPad). Ce fichier éprouve le CÂBLAGE sans
+// Preuve VISUELLE d'AC-1 et d'AC-5 : les captures du graphe Mémoire de
+// `scripts/recette/ios-shots.sh` (une seule marge autour du panneau sur iPad).
+// Ce fichier éprouve le CÂBLAGE sans
 // rendre de SwiftUI : tout ce qui doit ÉCHOUER se plante dans une COPIE JETABLE de
 // la coque iOS.
 import test from "node:test";
@@ -84,14 +84,15 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-1 : le panneau porte une marge e
 test("ios-panneau-sans-marge-scroll-imbrique/AC-5 : aucun appelant n'ajoute de marge après .iosPanel()", () => {
   assert.deepEqual(doubleMarginFaults(ROOT), []);
 
-  // Faute plantée : remettre le padding après `.iosPanel()` dans HomeContractSheet ⇒ rouge.
+  // Faute plantée : remettre le padding après `.iosPanel()` dans le graphe de la Mémoire ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "HomeContractSheet.swift", (s) => s.replace(".iosPanel()\n", `.iosPanel()\n                ${OUTER}\n`));
+  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace("stack.iosPanel()\n", `stack.iosPanel()\n                ${OUTER}\n`));
   const faults = doubleMarginFaults(copy);
-  assert.ok(faults.some((f) => f.includes("HomeContractSheet.swift")), "un double padding doit rougir");
+  assert.ok(faults.some((f) => f.includes("IOSMemoryScreen.swift")), "un double padding doit rougir");
 });
 
-const SCREENS = ["PipelinesScreen.swift", "IOSSessionsScreen.swift", "IOSMemoryScreen.swift"];
+/** Le seul écran qui pose un panneau : la Mémoire, en mode Graphe. */
+const SCREENS = ["IOSMemoryScreen.swift"];
 
 /** AC-3 : aucune hauteur imposée au panneau ni à ses listes — il suit son contenu. */
 function heightFaults(root: string): string[] {

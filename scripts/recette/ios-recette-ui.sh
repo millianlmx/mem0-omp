@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 9 surfaces
+# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 6 surfaces
 # dans 3 configurations sur un simulateur iPhone DÉDIÉ, puis signale trois classes
 # de défauts (cible tactile < 44 pt, identifiant d'accessibilité dupliqué, élément
 # collé au bord de l'écran) et rend un verdict.
@@ -7,7 +7,8 @@
 # Usage :
 #   bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
 #
-#   --sim         UDID d'un simulateur iPhone JAMAIS APPAIRÉ au Mac, dont le nom ne
+#   --sim         UDID d'un simulateur iPhone JAMAIS APPAIRÉ au Mac ni relié au
+#                 serveur de pipelines, dont le nom ne
 #                 contient ni « iPhone » ni « iPad » (ios-shots.sh et ios-build.sh
 #                 d'autres worktrees le prendraient). Il n'est ni créé, ni éteint,
 #                 ni supprimé par la recette.
@@ -19,22 +20,21 @@
 #                 supprimé à la sortie ; rien n'est poussé ni créé). Un conflit .md
 #                 garde la version déjà intégrée ; tout autre conflit sort en 2.
 #
-# Matrice : 9 surfaces (8 sections + la feuille d'une carte Pipelines) × 3
-# configurations (clair/défaut, sombre/défaut, clair/AX-XL) = 27 relevés, dans
+# Matrice : 6 surfaces (les six sections) × 3 configurations (clair/défaut,
+# sombre/défaut, clair/AX-XL) = 18 relevés, dans
 # omp-console/build/ios-recette-ui/<base|integration>/ (ignoré par git, vidé au
-# début du passage) : 27 arbres AX (JSON d'idb), 27 captures PNG, logs/ et
-# rapport.txt. Les écrans sont alimentés par les crochets de recette de l'app
-# (-home.recipe, -audit.recipe, -sessions.recipe, -memoire.recipe, -pipelines.recipe), sans
-# appairage ; Projet, Session OMP, Statistiques et le tableau Pipelines sont
-# relevés dans leur état non appairé. Un relevé n'est accepté que quand deux
+# début du passage) : 18 arbres AX (JSON d'idb), 18 captures PNG, logs/ et
+# rapport.txt. La Mémoire est alimentée par son crochet de recette
+# (-memoire.recipe), sans appairage ; Accueil, Pipelines, Projet, Audit et
+# Statistiques sont relevés serveur non relié. Un relevé n'est accepté que quand deux
 # lectures consécutives de l'arbre sont identiques ET que le marqueur de la
 # surface est vrai (scripts/recette/ios-recette-ui-analyse.py marqueur) : jamais une
-# capture de la liste « Plus », de l'Accueil déconnecté ou d'une autre section.
+# capture de la liste « Plus », d'un écran déconnecté ou d'une autre section.
 #
 # L'analyse est celle de scripts/recette/ios-recette-ui-analyse.py ; le code de sortie de
 # la recette est le sien.
 #
-# Codes de sortie : 0 les 27 relevés faits et aucun signalement hors exceptions,
+# Codes de sortie : 0 les 18 relevés faits et aucun signalement hors exceptions,
 # 1 au moins un signalement (voir rapport.txt), 2 la recette n'a pas pu conclure
 # (prérequis, exceptions invalides, relevé non vérifié, construction ou
 # installation impossible).
@@ -50,26 +50,15 @@ BUNDLE_ID="com.omp.console.ios"
 ANALYSE="$ROOT/scripts/recette/ios-recette-ui-analyse.py"
 USAGE='usage : bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…'
 
-# Les 9 surfaces, dans l'ordre de l'analyseur : clé, section (rawValue de
-# `-section`), arguments de recette en plus, signal attendu sur la sortie d'erreur.
-surface_keys=(home kanban project audit session sessions memory stats kanban-fiche)
+# Les 6 surfaces, dans l'ordre de l'analyseur : la clé est la section (rawValue de
+# `-section`) ; arguments de recette en plus, signal attendu sur la sortie d'erreur.
+surface_keys=(home kanban project audit stats memory)
 
-surface_section() {
-  case "$1" in
-    kanban-fiche) echo kanban ;;
-    *) echo "$1" ;;
-  esac
-}
-
-# Écrit les arguments de recette en plus, un par ligne (rien pour les surfaces
-# relevées dans leur état non appairé).
+# Écrit les arguments de recette en plus, un par ligne (rien pour les écrans du
+# serveur, relevés serveur non relié).
 surface_recipe_args() {
   case "$1" in
-    home) printf '%s\n' -home.recipe dashboard ;;
-    audit) printf '%s\n' -audit.recipe liste ;;
-    sessions) printf '%s\n' -sessions.recipe liste ;;
     memory) printf '%s\n' -memoire.recipe graphe ;;
-    kanban-fiche) printf '%s\n' -pipelines.recipe fiche ;;
     *) ;;
   esac
 }
@@ -77,7 +66,6 @@ surface_recipe_args() {
 surface_signal() {
   case "$1" in
     memory) echo memoire-recipe-ready ;;
-    kanban-fiche) echo pipelines-recipe-ready ;;
     *) echo "" ;;
   esac
 }
@@ -279,8 +267,7 @@ releve() {
   local json="$OUT/$nom.json"
   local png="$OUT/$nom.png"
   local lecture="$OUT/logs/$nom.lecture.json" precedente="$OUT/logs/$nom.precedente.json"
-  local section signal args=()
-  section="$(surface_section "$surface")"
+  local signal args=()
   signal="$(surface_signal "$surface")"
   while IFS= read -r a; do
     [ -n "$a" ] && args+=("$a")
@@ -288,7 +275,7 @@ releve() {
 
   # 1. Lancement ; le journal est sous le dépôt (simctl refuse /tmp).
   xcrun simctl launch --terminate-running-process --stderr="$journal" "$SIM" "$BUNDLE_ID" \
-    -section "$section" -home.welcomeSeen YES ${args[@]+"${args[@]}"} >/dev/null 2>&1 || true
+    -section "$surface" ${args[@]+"${args[@]}"} >/dev/null 2>&1 || true
 
   # 2. Le signal de PRÊT, quand la surface en annonce un : pas de sommeil fixe.
   if [ -n "$signal" ]; then

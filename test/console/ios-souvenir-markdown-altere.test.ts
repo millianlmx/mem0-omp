@@ -161,11 +161,10 @@ function otherMarkdownFaults(root: string): string[] {
   if (!/case let \.paragraph\(text\):\s*Text\(text\)/.test(appFile(root, "IOSMarkdownView.swift"))) {
     faults.push("IOSMarkdownView ne rend plus un paragraphe par Text(text)");
   }
-  for (const caller of ["IOSProjectDialogSheet.swift", "IOSProjectScreen.swift", "IOSSessionRowView.swift"]) {
-    if (!appFile(root, caller).includes("IOSMarkdownView(")) faults.push(`${caller} n'emploie plus IOSMarkdownView(`);
-  }
-  if (!verbatimTests(root).includes('"ios-souvenir-markdown-altere/AC-4')) {
-    faults.push("IOSMemoryVerbatimTests ne porte pas le titre ios-souvenir-markdown-altere/AC-4");
+  // Les specs d'une feature, lues sur le serveur de pipelines, sont un document
+  // Markdown : elles passent par le rendu partagé.
+  if (!appFile(root, "IOSHarnessScreens.swift").includes("IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))")) {
+    faults.push("IOSHarnessScreens.swift ne rend plus les specs par IOSMarkdownView(");
   }
   return faults;
 }
@@ -174,8 +173,8 @@ test("ios-souvenir-markdown-altere/AC-4 : un contenu non-souvenir garde son gras
   assert.deepEqual(otherMarkdownFaults(ROOT), []);
 
   const copy = copyRepo("ios-souvenir-markdown-altere-copie-");
-  const target = appPath(copy, "IOSProjectScreen.swift");
-  const planted = code(target).replace("IOSMarkdownView(blocks: blocks)", 'Text(verbatim: "")');
+  const target = appPath(copy, "IOSHarnessScreens.swift");
+  const planted = code(target).replace("IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))", "Text(verbatim: specs)");
   assert.notEqual(planted, code(target), "la faute n'a pas pu être plantée");
   fs.writeFileSync(target, planted);
   assert.ok(otherMarkdownFaults(copy).length > 0, "un appelant sans IOSMarkdownView doit faire rougir la garde");

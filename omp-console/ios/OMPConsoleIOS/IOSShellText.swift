@@ -35,7 +35,6 @@ enum IOSShellText {
     // --- écrans du serveur de pipelines ----------------------------------------
 
     static let serverSymbol = "server.rack"
-    static let warningSymbol = "exclamationmark.triangle.fill"
     static let weakVerdictSymbol = "eyeglasses"
     static let escalationSymbol = "questionmark.bubble"
     static let specsSymbol = "doc.text.magnifyingglass"

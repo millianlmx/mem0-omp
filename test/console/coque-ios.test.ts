@@ -337,7 +337,7 @@ function navigationFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques des huit écrans et de l'argument de lancement (coque-ios/AC-4). */
+/** Les manques des six écrans et de l'argument de lancement (coque-ios/AC-4). */
 function waitingFaults(root: string): string[] {
   const faults: string[] = [];
   const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
@@ -423,10 +423,18 @@ function tokenFaults(root: string): string[] {
       if (/Terminal|Files/.test(declaration)) faults.push(`${path.relative(root, file)} : déclaration « ${declaration} »`);
     }
   }
-  const app = appSources(root).map((s) => s.code).join("\n");
-  for (const excluded of [".terminal", ".files"]) {
-    const count = app.split(excluded).length - 1;
-    if (count !== 1) faults.push(`${count} occurrence(s) de ${excluded} dans les sources de l'app (1 attendue : le filtre)`);
+  // Terminal et Fichiers ne se nomment qu'au filtre de `IOSSection.all`, et dans le
+  // cas exhaustif de l'aiguillage, qui les range avec la Mémoire (jamais atteints).
+  for (const { file, code: text } of appSources(root)) {
+    const name = path.basename(file);
+    for (const excluded of [".terminal", ".files"]) {
+      const count = text.split(excluded).length - 1;
+      const expected = name === "IOSSection.swift" || name === "IOSSectionView.swift" ? 1 : 0;
+      if (count !== expected) faults.push(`${name} : ${count} occurrence(s) de ${excluded} (${expected} attendue)`);
+    }
+    if (name === "IOSSectionView.swift" && !/case \.memory, \.terminal, \.files:/.test(text)) {
+      faults.push("IOSSectionView.swift : Terminal et Fichiers ne sont pas rangés avec la Mémoire");
+    }
   }
   return faults;
 }
@@ -499,7 +507,7 @@ test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView",
   assert.ok(navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")), "une RootView sans .sidebarAdaptable doit faire rougir la garde");
 });
 
-test("coque-ios/AC-4 : les huit écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
+test("coque-ios/AC-4 : les six écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();

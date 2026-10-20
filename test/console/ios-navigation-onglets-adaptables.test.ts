@@ -33,7 +33,7 @@ function plant(sources: Sources, rel: string, from: string, to: string): Sources
 /** Les tests Swift que la section « Navigation » de DESIGN.md doit citer (S-7). */
 const NAVIGATION_MARKERS = [
   "[test: compactTabsAreFourSectionsThenPlus]",
-  "[test: plusListsTheFourOtherSections]",
+  "[test: plusListsTheOtherSections]",
   "[test: groupedSections]",
   "[test: sizeClassChangeMovesBetweenPlusAndSidebar]",
   "[test: launchRoutesEachSectionOnIPhone]",
@@ -87,8 +87,8 @@ test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'ong
   assert.ok(designFaults(oldBullet).some((f) => f.includes("liste racine")), "une puce sur la liste racine doit faire rougir la garde");
   const stack = plant(sources, DESIGN, "## Les six tons", "- Sur iPhone, la barre latérale se replie en pile. `[capture: iphone-home-light]`\n\n## Les six tons");
   assert.ok(designFaults(stack).some((f) => f.includes("pile")), "une puce sur la pile repliée doit faire rougir la garde");
-  const unmarked = plant(sources, DESIGN, "[test: plusListsTheFourOtherSections]", "[test: groupedSections]");
-  assert.ok(designFaults(unmarked).some((f) => f.includes("plusListsTheFourOtherSections")), "une puce « Plus » sans son test doit faire rougir la garde");
+  const unmarked = plant(sources, DESIGN, "[test: plusListsTheOtherSections]", "[test: groupedSections]");
+  assert.ok(designFaults(unmarked).some((f) => f.includes("plusListsTheOtherSections")), "une puce « Plus » sans son test doit faire rougir la garde");
   const renamed = plant(sources, DESIGN, "## Navigation", "## Parcours");
   assert.ok(designFaults(renamed).some((f) => f.includes("section « ## Navigation »")), "une section Navigation absente doit faire rougir la garde");
 

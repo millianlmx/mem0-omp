@@ -35,7 +35,6 @@ public enum PipelineServerText {
 
     public static let toDecide = "À trancher"
     public static let toDecideHint = "Des décisions irréversibles que les agents n’ont pas prises. La feature reprend quand toutes ont leur réponse."
-    public static let toValidate = "À valider"
     public static let toValidateHint = "Revue terminée : le serveur attend votre accord pour fusionner."
     public static let toReview = "Décisions prises seules"
     public static let toReviewHint = "Chaque choix est un point de reprise. Le renverser fait reprendre la feature à cet endroit."
@@ -137,7 +136,6 @@ public enum PipelineServerText {
     public static let specsToValidate = "Specs à valider"
     public static let specsToValidateHint = "Les specs sont écrites : la feature attend votre accord avant /impl."
     public static let verdictsToValidate = "Verdicts à valider"
-    public static let auditsToSort = "Audits à trier"
 
     /// Les compteurs du résumé de l'accueil.
     public static func countLine(_ count: Int, one: String, many: String) -> String {
@@ -189,7 +187,6 @@ public enum PipelineServerText {
 
     // MARK: - Audits
 
-    public static let auditsTitle = "Audits"
     public static let launchAuditTitle = "Nouvel audit"
     public static let launchAuditHint = "Un agent lit la branche principale sans rien modifier, puis propose des faiblesses à corriger et des features."
     public static let focusLabel = "Périmètre"
@@ -220,7 +217,6 @@ public enum PipelineServerText {
 
     // MARK: - Statistiques
 
-    public static let statsTitle = "Statistiques"
     public static let noStats = "Les statistiques arrivent avec le premier échange du serveur."
     public static let statsRuns = "Features"
     public static let statsSteps = "Étapes"

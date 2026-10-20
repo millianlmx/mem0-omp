@@ -18,8 +18,8 @@ import { stripComments, swiftFiles } from "../support/swift-source.ts";
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
 
-/** Les huit sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
-const SECTIONS = ["home", "kanban", "project", "audit", "session", "sessions", "memory", "stats"];
+/** Les six sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
+const SECTIONS = ["home", "kanban", "project", "audit", "stats", "memory"];
 
 /** Les deux apparences de la matrice de captures. */
 const APPEARANCES = ["light", "dark"];
@@ -162,35 +162,40 @@ function typographyFaults(root: string): string[] {
   return faults;
 }
 
-/** Les mots partagés attendus, section par section (tableau de S-2). */
-type SectionWord = { message: string; constant: string; core: string; detail: string | null };
+/** Les mots partagés attendus, section par section (tableau de S-2) : l'écran qui
+ * rend la section, son fichier, et le mot d'état vide qu'il lit dans le noyau. */
+type SectionWord = { screen: string; file: string; message: string; constant: string; core: string };
 
 const SECTION_WORDS: Record<string, SectionWord> = {
-  home: { message: "Lancez votre première feature", constant: "HomeText.firstRunTitle", core: "Home/HomeText.swift", detail: "HomeText.firstRunBody" },
-  kanban: { message: "Aucune pipeline pour l’instant.", constant: "KanbanText.noPipeline", core: "Kanban/KanbanText.swift", detail: null },
-  project: { message: "Aucun projet piloté.", constant: "ProjectViewText.emptyTitle", core: "Project/ProjectViewText.swift", detail: "ProjectViewText.emptyHelp" },
-  audit: { message: "Aucun audit.", constant: "AuditText.emptyTitle", core: "Audit/AuditText.swift", detail: "AuditText.emptyHelp" },
-  session: { message: "Aucune session", constant: "SessionConsoleText.noProjectTitle", core: "Session/SessionConsoleText.swift", detail: "SessionConsoleText.noProjectBody" },
-  sessions: { message: "Aucune session", constant: "SessionSelectorText.emptyTitle", core: "Viewer/SessionSelectorText.swift", detail: "SessionSelectorText.noRun" },
-  memory: { message: "Aucun projet ouvert", constant: "MemoryText.noProjectTitle", core: "Memory/MemoryText.swift", detail: null },
-  stats: { message: "Aucun projet", constant: "StatsPresentation.noProjectTitle", core: "Stats/StatsPresentation.swift", detail: "StatsPresentation.noProject" },
+  home: { screen: "IOSHarnessHomeScreen", file: "IOSHarnessScreens.swift", message: "Rien n’attend votre décision.", constant: "PipelineServerText.nothingPending", core: "Design/PipelineServerText.swift" },
+  kanban: { screen: "IOSHarnessPipelinesScreen", file: "IOSHarnessScreens.swift", message: "Aucune feature sur ce serveur.", constant: "PipelineServerText.noRun", core: "Design/PipelineServerText.swift" },
+  project: { screen: "IOSHarnessProjectsScreen", file: "IOSHarnessScreens.swift", message: "Aucun projet sur ce serveur.", constant: "PipelineServerText.noProject", core: "Design/PipelineServerText.swift" },
+  audit: { screen: "IOSHarnessAuditsScreen", file: "IOSHarnessScreens.swift", message: "Aucun audit sur ce serveur.", constant: "PipelineServerText.noAudit", core: "Design/PipelineServerText.swift" },
+  stats: { screen: "IOSHarnessStatsScreen", file: "IOSHarnessScreens.swift", message: "Les statistiques arrivent avec le premier échange du serveur.", constant: "PipelineServerText.noStats", core: "Design/PipelineServerText.swift" },
+  memory: { screen: "IOSMemoryScreen", file: "IOSMemoryScreen.swift", message: "Aucun projet ouvert", constant: "MemoryText.noProjectTitle", core: "Memory/MemoryText.swift" },
 };
 
-/** Les manques des huit écrans : contenu, mots partagés, composants employés. */
+/** Le corps d'une déclaration `struct <name>` : jusqu'à la déclaration de premier niveau suivante. */
+function structBody(source: string, name: string): string {
+  const start = source.search(new RegExp(`^struct ${name}\\b`, "m"));
+  if (start === -1) return "";
+  const rest = source.slice(start + 1);
+  const next = rest.search(/^(struct|private struct|enum|extension|final class|\/\/ MARK)\b/m);
+  return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
+}
+
+/** Les manques des six écrans : aiguillage, mots partagés, cadre, composants employés. */
 function screenFaults(root: string): string[] {
   const faults: string[] = [];
-  const content = appFile(root, "IOSSectionContent.swift");
   const view = appFile(root, "IOSSectionView.swift");
-  if (content === "") faults.push("IOSSectionContent.swift absent");
   if (view === "") faults.push("IOSSectionView.swift absent");
 
   for (const section of SECTIONS) {
     const word = SECTION_WORDS[section];
-    if (!content.includes(`case .${section}:`)) faults.push(`IOSSectionContent ne couvre pas .${section}`);
-    if (!content.includes(word.constant)) faults.push(`IOSSectionContent ne cite pas ${word.constant}`);
-    if (word.detail !== null && !content.includes(word.detail)) {
-      faults.push(`IOSSectionContent ne cite pas ${word.detail}`);
+    if (!new RegExp(`case [^:]*\\.${section}\\b[^:]*:\\s*${word.screen}\\(`).test(view)) {
+      faults.push(`IOSSectionView n'aiguille pas .${section} vers ${word.screen}`);
     }
+    if (!appFile(root, word.file).includes(word.constant)) faults.push(`${word.file} ne cite pas ${word.constant}`);
     const core = coreCode(root, word.core);
     const member = word.constant.split(".")[1];
     if (!core.includes(`static let ${member} = "${word.message}"`)) {
@@ -198,26 +203,43 @@ function screenFaults(root: string): string[] {
     }
   }
 
-  // Aucun composant orphelin : l'écran emploie les trois surfaces et la pastille,
-  // les surfaces emploient les métriques, la pastille emploie les tons.
-  const surface = appFile(root, "Design/IOSSurface.swift");
-  const chip = appFile(root, "Design/IOSStatusChip.swift");
-  for (const token of ["iosPanel()", "iosCard()", "iosBanner(tone:", "IOSStatusChip("]) {
-    if (!view.includes(token)) faults.push(`IOSSectionView n'emploie pas ${token}`);
+  // Les cinq écrans de pilotage passent par le MÊME cadre, qui porte le bandeau
+  // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
+  const harness = appFile(root, "IOSHarnessScreens.swift");
+  for (const section of SECTIONS.filter((s) => s !== "memory")) {
+    const screen = SECTION_WORDS[section].screen;
+    const body = structBody(harness, screen);
+    if (body === "") faults.push(`${screen} absent`);
+    else if (!body.includes("IOSHarnessScreen(")) faults.push(`${screen} ne passe pas par le cadre IOSHarnessScreen`);
   }
-  if (!surface.includes("IOSMetrics.margin(")) faults.push("IOSSurface n'emploie pas IOSMetrics");
-  if (!chip.includes("status.tone.tint")) faults.push("IOSStatusChip n'emploie pas les tons");
-
-  // L'état d'erreur est porté par les huit (S-3).
-  if (!content.includes("state.banner") || !content.includes("state.bannerMessage")) {
-    faults.push("IOSSectionContent ne porte pas le bandeau de l'état");
+  const frame = structBody(harness, "IOSHarnessScreen");
+  if (!frame.includes("server.failure") || !frame.includes(".iosBanner(tone:")) {
+    faults.push("le cadre IOSHarnessScreen ne porte pas le bandeau d'échec");
+  }
+  const memory = appFile(root, "IOSMemoryScreen.swift");
+  if (!memory.includes("recipe.banner") || !memory.includes("recipe.bannerMessage")) {
+    faults.push("IOSMemoryScreen ne porte pas le bandeau de l'état");
   }
   const state = appFile(root, "IOSScreenState.swift");
   if (!state.includes("tone: .danger")) faults.push("l'état d'erreur n'a pas le ton danger");
+
+  // Aucun composant orphelin : chaque élément du kit est employé par un écran (hors
+  // `Design/`), les surfaces emploient les métriques, la pastille emploie les tons.
+  const screens = appSources(root)
+    .filter(({ file }) => !file.includes(`${path.sep}Design${path.sep}`))
+    .map(({ code: text }) => text)
+    .join("\n");
+  for (const token of ["iosPanel()", "iosCard()", "iosBanner(tone:", "IOSStatusChip("]) {
+    if (!screens.includes(token)) faults.push(`aucun écran n'emploie ${token}`);
+  }
+  const surface = appFile(root, "Design/IOSSurface.swift");
+  const chip = appFile(root, "Design/IOSStatusChip.swift");
+  if (!surface.includes("IOSMetrics.margin(")) faults.push("IOSSurface n'emploie pas IOSMetrics");
+  if (!chip.includes("status.tone.tint")) faults.push("IOSStatusChip n'emploie pas les tons");
   return faults;
 }
 
-/** Les noms des captures produites (S-6, AC-6) : 64 écrans + 12 graphe + 12 nouvelle feature + 8 fiche de carte. */
+/** Les noms des captures produites (S-6, AC-6) : 48 écrans + 12 graphe. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -236,22 +258,6 @@ function expectedShotNames(): string[] {
       names.push(`${device}-memoire-graphe-fiche-${appearance}.png`);
     }
   }
-  // ios-nouvelle-feature-formulaire : 3 recettes × {iPhone, iPad} × {clair, sombre}.
-  for (const appearance of APPEARANCES) {
-    for (const device of ["iphone", "ipad"]) {
-      for (const recipe of ["vide", "choisi", "rempli"]) {
-        names.push(`${device}-nouvelle-feature-${recipe}-${appearance}.png`);
-      }
-    }
-  }
-  // ios-fiche-carte-pipelines : la fiche d'une carte, en clair — iPhone × 3 tailles de
-  // Dynamic Type × {fiche, actions}, l'arrêt à la taille par défaut, et la fiche sur iPad.
-  for (const size of ["large", "accessibility-extra-large", "accessibility-extra-extra-extra-large"]) {
-    names.push(`iphone-pipelines-fiche-${size}.png`);
-    names.push(`iphone-pipelines-fiche-actions-${size}.png`);
-  }
-  names.push("iphone-pipelines-fiche-arret-large.png");
-  names.push("ipad-pipelines-fiche-large.png");
   return names;
 }
 
@@ -271,7 +277,6 @@ function shotsFaults(root: string): string[] {
     "sips",
     "pixelWidth",
     "pixelHeight",
-    "64",
     "accessibility-extra-extra-extra-large",
     "large",
     "appearance",
@@ -403,37 +408,13 @@ function recipeFaults(root: string): string[] {
 /** Les manques de la coque macOS : mots partagés et noyau sans cadre (S-9, AC-10). */
 function macOSFaults(root: string): string[] {
   const faults: string[] = [];
-  const shellFile = (relPath: string): string => {
-    const file = path.join(root, "omp-console", "Sources", "OMPConsole", relPath);
-    return fs.existsSync(file) ? code(file) : "";
-  };
-
-  const stats = shellFile("Stats/StatsModels.swift");
-  if (!stats.includes("static let noProjectTitle = StatsPresentation.noProjectTitle")) {
-    faults.push("StatsText.noProjectTitle ne lit pas StatsPresentation");
+  const shell = swiftFilesIn(path.join(root, "omp-console", "Sources", "OMPConsole"))
+    .map((file) => code(file))
+    .join("\n");
+  // La coque macOS lit les MÊMES mots d'état vide que l'iPhone, jamais une copie.
+  for (const word of Object.values(SECTION_WORDS)) {
+    if (!shell.includes(word.constant)) faults.push(`la coque macOS ne lit pas ${word.constant}`);
   }
-  if (!stats.includes("static let noProject = StatsPresentation.noProject")) {
-    faults.push("StatsText.noProject ne lit pas StatsPresentation");
-  }
-  // `KanbanModels.swift` vit désormais dans ConsoleCore (feature ios-accueil,
-  // BR-1 : l'ardoise est partagée par les deux coques).
-  const kanban = coreCode(root, "Kanban/KanbanModels.swift");
-  if (!kanban.includes("static let noPipelineText = KanbanText.noPipeline")) {
-    faults.push("KanbanBoardState.noPipelineText ne lit pas KanbanText.noPipeline");
-  }
-  const session = shellFile("Session/SessionConsoleText.swift");
-  if (!session.includes("SessionConsoleText.Status.idleNoProject")) {
-    faults.push("stateTitle(.idle, hasProject: false) n'emploie pas le mot partagé");
-  }
-  const selector = shellFile("Viewer/SessionSelectorView.swift");
-  if (/enum SessionSelectorText/.test(selector)) {
-    faults.push("SessionSelectorText est encore déclaré dans la coque macOS");
-  }
-  const coreSession = coreCode(root, "Session/SessionConsoleText.swift");
-  if (!coreSession.includes('public static let idleNoProject = "Aucun projet"')) {
-    faults.push('ConsoleCore ne déclare pas Status.idleNoProject = "Aucun projet"');
-  }
-
   for (const file of swiftFilesIn(path.join(root, "omp-console", "Sources", "ConsoleCore"))) {
     const text = code(file);
     const found = /^\s*import\s+(SwiftUI|UIKit|AppKit|Cocoa)\b/m.exec(text);
@@ -445,16 +426,16 @@ function macOSFaults(root: string): string[] {
 // ---------------------------------------------------------------------------
 // Les tests, un par critère.
 
-test("design-ios/AC-1 : les huit écrans portent le kit (surfaces, pastille, métriques)", () => {
+test("design-ios/AC-1 : les six écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
+  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("iosPanel()", "padding(0)"));
   assert.ok(screenFaults(copy).some((f) => f.includes("iosPanel()")), "une surface retirée doit faire rougir la garde");
 });
 
-test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent le bandeau d'erreur", () => {
+test("design-ios/AC-2 : aucun composant orphelin — les six sections rendent le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -467,9 +448,9 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Kanban", "KanbanText.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l’instant."', '"Aucune pipeline."'));
-  assert.ok(screenFaults(copy).some((f) => f.includes("KanbanText")), "un mot réécrit doit faire rougir la garde");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Design", "PipelineServerText.swift");
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune feature sur ce serveur."', '"Aucune pipeline."'));
+  assert.ok(screenFaults(copy).some((f) => f.includes("noRun")), "un mot réécrit doit faire rougir la garde");
 });
 
 test("design-ios/AC-4 : le vocabulaire provisoire est clos et le crochet documenté", () => {
@@ -493,7 +474,7 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 96, "la matrice attendue fait 96 noms");
+  assert.equal(expectedShotNames().length, 60, "la matrice attendue fait 60 noms");
 
   const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
@@ -543,7 +524,7 @@ test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore r
   assert.deepEqual(macOSFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Stats", "StatsModels.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("StatsPresentation.noProject", '"Les statistiques viendront."'));
-  assert.ok(macOSFaults(copy).some((f) => f.includes("StatsText.noProject")), "un mot réécrit dans la coque doit faire rougir la garde");
+  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Server", "HarnessSectionViews.swift");
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelineServerText.noStats", '"Les statistiques viendront."'));
+  assert.ok(macOSFaults(copy).some((f) => f.includes("noStats")), "un mot réécrit dans la coque doit faire rougir la garde");
 });

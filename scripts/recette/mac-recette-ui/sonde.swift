@@ -388,7 +388,6 @@ final class Parcours {
         terminerRecette()
         _ = executer("/usr/bin/defaults", ["delete", bundleRecette])
         let ecritures: [[String]] = [
-            ["home.welcomeSeen", "-bool", "true"],
             ["session.projectRoot", "-string", "\(racine)/depots/atelier"],
             ["remote.enabled", "-bool", "false"],
             ["ApplePersistenceIgnoreState", "-bool", "true"],
@@ -413,11 +412,8 @@ final class Parcours {
         let arguments = [
             "-g", "-n", "-F", app,
             "--env", "OMP_CONSOLE_SUPPORT_ROOT=\(racine)/support",
-            "--env", "MEM0_PIPELINE_STATE_DIR=\(racine)/magasin",
-            "--env", "MEM0_CONSOLE_ALERTS_DIR=\(racine)/alertes",
             "--env", "MEM0_HTTP_URL=http://127.0.0.1:\(port)",
             "--env", "OMP_CONSOLE_OMP_BINARY=\(racine)/bin/omp",
-            "--env", "OMP_CONSOLE_GH_BINARY=\(racine)/bin/gh-absent",
             "--args", "-surface.recipe", surface.id, "-setup.recipe", recette,
         ]
         return executer("/usr/bin/open", arguments).code == 0

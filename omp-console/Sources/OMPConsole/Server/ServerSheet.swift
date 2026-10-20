@@ -82,18 +82,3 @@ struct ServerSheet: View {
         .accessibilityIdentifier("server.sheet")
     }
 }
-
-/// La feuille avec son propre modèle, pour une vue qui n'a pas celui de la fenêtre.
-struct StandaloneServerSheet: View {
-    @StateObject private var server = HarnessModel.live()
-    @StateObject private var drafts = HarnessDrafts()
-
-    var body: some View {
-        ServerSheet(server: server, drafts: drafts)
-            .task {
-                await server.load()
-                server.startLive()
-            }
-            .onDisappear { server.stopLive() }
-    }
-}

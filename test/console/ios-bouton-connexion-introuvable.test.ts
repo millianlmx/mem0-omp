@@ -78,7 +78,8 @@ function segments(root: string): {
   const all = source(root, ROOT_VIEW);
   const screen = between(all, "func sectionScreen(", "var plusList");
   const plus = between(all, "var plusList", "func select(");
-  const chain = between(all, "TabView(selection:", ".sheet(isPresented: $showWelcome");
+  // Le `TabView`, puis l'onglet d'une section (`sectionTab`), jusqu'au `body`.
+  const chain = between(all, "TabView(selection:", "var body: some View");
   let item: string | null = null;
   let beforeItem = "";
   const at = all.indexOf(`var ${ITEM}`);

@@ -780,7 +780,7 @@ const DOCS_STEPS: Step[] = [
 const MAJOR_STEPS: Step[] = [
   {
     subject: "feat(req): les specs figées portent leur date",
-    edits: [{ file: `${REQ.dir}/seeds.ts`, append: "\n// scénario\n" }],
+    edits: [{ file: `${REQ.dir}/harness.ts`, append: "\n// scénario\n" }],
   },
   {
     subject: "feat(memory)!: le brief change de format",

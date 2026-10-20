@@ -15,14 +15,6 @@ enum IOSMetrics {
     /// La cible tactile minimale (HIG, D-4) : aucune cible de la coque ne
     /// descend sous 44 pt.
     static let minimumTarget: CGFloat = 44
-    /// La largeur de la colonne de l'icône d'étape d'une ligne Sessions, à la
-    /// taille de référence `.body` : la largeur de la colonne macOS
-    /// (`SessionSelectorView`, 28 pt), et ≥ à la largeur de LAYOUT du symbole
-    /// d'étape le plus large (`hammer`, 25 pt à `.body`, mesuré par idb sur
-    /// iPhone et iPad le 2026-10-09 : le glyphe seul fait 20,7 pt, mais son
-    /// cadre de mise en page est plus large). Mise à l'échelle par
-    /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
-    static let phaseIconWidth: CGFloat = 28
     /// La largeur maximale de la colonne de lecture d'un écran (S-1 de
     /// ipad-clavier-et-largeur-de-lecture), marges extérieures (`regularMargin`,
     /// 24 pt de chaque côté) COMPRISES : la surface visible mesure donc 672 pt à
@@ -30,24 +22,6 @@ enum IOSMetrics {
     /// `IOSReadableWidth` la met à l'échelle par `@ScaledMetric` : aux tailles
     /// d'accessibilité, le plafond grandit avec le texte (aucune largeur figée).
     static let readableWidth: CGFloat = 720
-    /// La largeur de la colonne de l'icône d'une promesse de la bienvenue, à la
-    /// taille de référence `.largeTitle` (la taille du symbole, S-1
-    /// d'ios-onboarding-et-connexion) : les trois symboles (largeurs propres
-    /// différentes) y sont centrés, et les textes commencent au même x. Mise à
-    /// l'échelle par `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
-    static let welcomeIconWidth: CGFloat = 50
-    /// La marge au-dessus du grand titre de la bienvenue, page sans barre.
-    static let welcomeTopPadding: CGFloat = 48
-    /// L'espace entre le grand titre de la bienvenue et ses promesses.
-    static let welcomeTitleSpacing: CGFloat = 40
-    /// L'espace entre deux promesses de la bienvenue.
-    static let welcomeRowSpacing: CGFloat = 28
-    /// La largeur d'une voie de l'écran Pipelines en largeur régulière (iPad), à
-    /// la taille de référence `.body` : la même pour toutes les voies, vides ou
-    /// pleines, jamais tirée de leur contenu. Mise à l'échelle par
-    /// `@ScaledMetric`, elle grandit avec Dynamic Type ; `PipelinesModel.laneWidth`
-    /// la plafonne à la largeur visible.
-    static let laneWidth: CGFloat = 280
     /// La marge verticale d'une rangée de liste (Sessions, Mémoire), à la
     /// taille de référence `.body` : aucun texte de la rangée ne touche le filet
     /// voisin. Mise à l'échelle par `@ScaledMetric`, elle grandit avec
@@ -60,28 +34,6 @@ enum IOSMetrics {
     static let compactMemoryRowLines = 3
     /// La même limite sur une largeur régulière (iPad) ou inconnue.
     static let regularMemoryRowLines = 4
-    /// La hauteur d'un champ de saisie vertical (le besoin d'une feature), en
-    /// LIGNES : 3 à vide, il grandit avec le texte jusqu'à 8, puis défile dans le
-    /// champ. Aucun point : la hauteur suit la taille de police (Dynamic Type).
-    static let needLines: ClosedRange<Int> = 3...8
-    /// La hauteur du champ de réponse libre d'« OMP vous demande » (forme éditeur),
-    /// en LIGNES : 3 à vide, il grandit avec le texte jusqu'à 8, puis défile dans le
-    /// champ. Aucun point : la hauteur suit la taille de police (Dynamic Type).
-    static let dialogAnswerLines: ClosedRange<Int> = 3...8
-    /// L'orientation d'un audit dans sa feuille de lancement, en LIGNES : 3 à vide,
-    /// jusqu'à 8, puis défile (audit-panel-in-omp-console, S-8).
-    static let auditOrientationLines: ClosedRange<Int> = 3...8
-    /// L'orientation d'un audit dans sa rangée de liste : deux lignes au plus.
-    static let auditRowOrientationLines = 2
-    /// Le champ « Autre réponse » d'une question en attente : 1 à vide, jusqu'à 4.
-    static let auditOtherAnswerLines: ClosedRange<Int> = 1...4
-    /// La légende « dépôt · étape · âge » d'une rangée d'audit : une ligne
-    /// (audit-ui-redesign, S-3).
-    static let auditRowCaptionLines = 1
-    /// La pastille de statut d'une rangée d'audit, en points (S-3).
-    static let auditStatusDot: CGFloat = 8
-    /// L'orientation en titre du détail d'un audit, repliée : deux lignes (S-6).
-    static let auditHeaderOrientationLines = 2
 
     /// La marge horizontale d'un écran, selon la largeur disponible.
     static func margin(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {

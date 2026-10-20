@@ -75,80 +75,45 @@ test("mac-finitions-hig/AC-3 : Mémoire — « Liste » et « Sommaire » ont de
   assert.ok(memorySymbolFaults(copy).length > 0, "« Sommaire » en list.bullet doit rougir");
 });
 
-const SESSION_VIEW = "SessionConsoleView.swift";
+const HARNESS_VIEWS = path.join("Server", "HarnessSectionViews.swift");
 
-/** AC-4 : `session.status` sur la seule pilule de la barre, `session.statusNotice` sur l'avis. */
-function sessionStatusFaults(root: string): string[] {
-  const faults: string[] = [];
-  const status = 'accessibilityIdentifier("session.status")';
-  const notice = 'accessibilityIdentifier("session.statusNotice")';
+/** AC-5 : les commandes du serveur vivent dans la barre d'outils de la fenêtre, jamais dans le contenu. */
+function serverToolbarFaults(root: string): string[] {
   const all = sources(root);
-  const statusTotal = [...all.values()].reduce((n, s) => n + s.split(status).length - 1, 0);
-  const noticeTotal = [...all.values()].reduce((n, s) => n + s.split(notice).length - 1, 0);
-  if (statusTotal !== 1) faults.push(`session.status posé ${statusTotal} fois`);
-  if (noticeTotal !== 1) faults.push(`session.statusNotice posé ${noticeTotal} fois`);
-  const toolbar = block(all.get(path.join(MAC_REL, SESSION_VIEW)) ?? "", /var toolbarContent\b/, "\n    }\n");
-  if (!toolbar?.includes(status)) faults.push("session.status absent de SessionConsoleView.toolbarContent");
-  return faults;
-}
-
-test("mac-finitions-hig/AC-4 : Session OMP — `session.status` désigne la seule pilule, l'avis a son propre identifiant", () => {
-  assert.deepEqual(sessionStatusFaults(ROOT), []);
-
-  // Faute plantée : l'avis reprend l'ancien identifiant ⇒ rouge.
-  const copy = copyMac();
-  mutate(copy, SESSION_VIEW, (s) => s.replace('"session.statusNotice"', '"session.status"'));
-  assert.ok(sessionStatusFaults(copy).length > 0, "deux éléments session.status doivent rougir");
-});
-
-const PROJECT_VIEW = path.join("Project", "ProjectConsoleView.swift");
-
-/** AC-5 : les commandes de Projet vivent dans la barre d'outils, plus dans l'en-tête. */
-function projectToolbarFaults(root: string): string[] {
-  const source = sources(root).get(path.join(MAC_REL, PROJECT_VIEW)) ?? "";
+  const source = all.get(path.join(MAC_REL, HARNESS_VIEWS)) ?? "";
   const faults: string[] = [];
-  const header = block(source, /struct ProjectHeaderView\b/, "\n}\n");
-  const toolbar = block(source, /var toolbarContent\b/, "\n    }\n");
-  if (header === undefined) faults.push("ProjectHeaderView introuvable");
-  if (toolbar === undefined) faults.push("ProjectConsoleView.toolbarContent introuvable");
-  const commands = ['"projet.details"', '"projet.close"', '"projet.sessionStatus"'];
-  for (const marker of [...commands, "StatusPill("]) {
-    if (header?.includes(marker)) faults.push(`l'en-tête porte encore ${marker}`);
-  }
-  for (const marker of [...commands, "technicalShown.toggle()", "isStopConfirmationPresented = true"]) {
+  const toolbar = block(source, /\.toolbar \{\n\s*ToolbarItem\(placement: \.primaryAction\)/, "\n        }\n");
+  if (toolbar === undefined) faults.push("HarnessSection : barre d'outils introuvable");
+  const commands = ['"server.refresh"', '"server.open"'];
+  for (const marker of commands) {
     if (toolbar !== undefined && !toolbar.includes(marker)) faults.push(`la barre d'outils ne porte pas ${marker}`);
+    let count = 0;
+    for (const [rel, text] of all) if (rel.startsWith(path.join(MAC_REL, "Server"))) count += text.split(marker).length - 1;
+    if (count !== 1) faults.push(`${marker} apparaît ${count} fois dans les vues du serveur`);
   }
-  if (!/\.toolbar\s*\{\s*toolbarContent\s*\}/.test(source)) faults.push("`.toolbar { toolbarContent }` absent");
   return faults;
 }
 
-test("mac-finitions-hig/AC-5 : Projet — les commandes sont dans la barre d'outils de la fenêtre, plus dans l'en-tête", () => {
-  assert.deepEqual(projectToolbarFaults(ROOT), []);
+test("mac-finitions-hig/AC-5 : Pilotage — les commandes du serveur sont dans la barre d'outils de la fenêtre, jamais dans le contenu", () => {
+  assert.deepEqual(serverToolbarFaults(ROOT), []);
 
-  // Faute plantée : le bouton « Détails techniques » recopié dans l'en-tête ⇒ rouge.
+  // Faute plantée : le bouton « Actualiser » recopié dans le contenu ⇒ rouge.
   const copy = copyMac();
-  mutate(copy, PROJECT_VIEW, (s) =>
+  mutate(copy, HARNESS_VIEWS, (s) =>
     s.replace(
-      '.accessibilityIdentifier("projet.repo")',
-      '.accessibilityIdentifier("projet.repo")\n                    Button { model.technicalShown.toggle() } label: { Text("i") }\n                        .accessibilityIdentifier("projet.details")',
+      '.accessibilityIdentifier("server.configure")',
+      '.accessibilityIdentifier("server.configure")\n            Button("x") {}\n                .accessibilityIdentifier("server.refresh")',
     ),
   );
   assert.ok(
-    projectToolbarFaults(copy).some((f) => f.includes('"projet.details"')),
-    "un bouton projet.details dans l'en-tête doit rougir",
+    serverToolbarFaults(copy).some((f) => f.includes('"server.refresh"')),
+    "un bouton server.refresh dans le contenu doit rougir",
   );
 });
 
-const HOME_VIEW = path.join("Home", "HomeView.swift");
-const WELCOME_SHEET = path.join("Home", "WelcomeSheet.swift");
-
-/** Les cinq porteurs décoratifs de S-6 R1 : fichier, repère, et le conteneur qui porte le modificateur. */
+/** Le porteur décoratif de l'Accueil (S-6 R1) : le symbole de l'appel à relier le serveur. */
 const DECORATIVE: { rel: string; marker: string; container?: string }[] = [
-  { rel: HOME_VIEW, marker: "Image(systemName: style.symbol)", container: "ZStack {" },
-  { rel: HOME_VIEW, marker: "Image(systemName: PhaseText.symbol(card.phase))" },
-  { rel: HOME_VIEW, marker: 'Image(systemName: "arrow.triangle.pull")' },
-  { rel: HOME_VIEW, marker: 'Image(systemName: "bell.slash")' },
-  { rel: WELCOME_SHEET, marker: "Image(systemName: promise.symbol)" },
+  { rel: HARNESS_VIEWS, marker: 'Image(systemName: "server.rack")' },
 ];
 
 /** Les lignes de modificateurs (`.xxx`) qui suivent la ligne de `end` (fin de l'expression porteuse). */
@@ -200,13 +165,13 @@ function decorativeFaults(root: string): string[] {
 test("mac-finitions-hig/AC-7 : Accueil Mac — les symboles décoratifs sont muets pour VoiceOver, leurs textes restent annoncés", () => {
   assert.deepEqual(decorativeFaults(ROOT), []);
 
-  // Faute plantée : le bandeau de notifications perd le modificateur ⇒ rouge.
+  // Faute plantée : le symbole de l'appel à relier perd le modificateur ⇒ rouge.
   const copy = copyMac();
-  mutate(copy, HOME_VIEW, (s) =>
+  mutate(copy, HARNESS_VIEWS, (s) =>
     s.replace(
-      /(Image\(systemName: "bell\.slash"\)\n\s*\.foregroundStyle\(\.secondary\))\n\s*\.accessibilityHidden\(true\)/,
+      /(Image\(systemName: "server\.rack"\)\n\s*\.font\(\.largeTitle\)\n\s*\.foregroundStyle\(\.secondary\))\n\s*\.accessibilityHidden\(true\)/,
       "$1",
     ),
   );
-  assert.deepEqual(decorativeFaults(copy), ['Image(systemName: "bell.slash") sans .accessibilityHidden(true)']);
+  assert.deepEqual(decorativeFaults(copy), ['Image(systemName: "server.rack") sans .accessibilityHidden(true)']);
 });

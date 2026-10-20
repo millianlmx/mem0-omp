@@ -20,7 +20,7 @@ const MACOS = path.join(ROOT, "omp-console", "Sources", "OMPConsole");
 const APP = "OMPConsoleApp.swift";
 const SETTINGS_VIEW = path.join("Settings", "ConsoleSettingsView.swift");
 const DEVICES_SETTINGS = path.join("Remote", "DevicesSettingsView.swift");
-const MAIN_SHEET = path.join("Home", "MainSheet.swift");
+const ROOT_VIEW = "ConsoleRootView.swift";
 
 /** Les sources Swift de l'app Mac, chemin relatif à `Sources/OMPConsole` → texte brut. */
 type Sources = Record<string, string>;
@@ -308,7 +308,9 @@ test("reglages-mac-appareils/AC-11 : plus aucune trace de la feuille modale « A
   const sources = macSources();
   assert.deepEqual(sheetGoneFaults(sources), [], "l'arbre réel doit être sain");
 
-  // Réintroduire `case pairing` dans MainSheet rougit.
-  const back = planted(sources, MAIN_SHEET, (s) => s.replace("    case setup\n", "    case setup\n    case pairing\n"));
-  assert.deepEqual(sheetGoneFaults(back), [`${MAIN_SHEET} contient case pairing`]);
+  // Réintroduire une feuille d'appairage sur la racine de la fenêtre rougit.
+  const back = planted(sources, ROOT_VIEW, (s) =>
+    s.replace(".sheet(isPresented: setupShown) {", ".sheet(isPresented: $remote.pairing.sheet) {"),
+  );
+  assert.deepEqual(sheetGoneFaults(back), [`${ROOT_VIEW} contient pairing.sheet`]);
 });
