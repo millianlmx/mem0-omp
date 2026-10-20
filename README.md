@@ -1669,6 +1669,35 @@ complète tourne déjà sur Ubuntu. Au push vers `main`, macOS relance la suite
 complète. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
 un run déclenché par un push vers `main` n'est jamais annulé.
 
+**Caches de la CI.** Les jobs qui installent ou compilent restaurent un cache
+`actions/cache@v6` avant `check.sh` : `check` et `macos-tests` le cache npm
+`~/.npm` (hôte OMP) et le cache cargo (`~/.cargo/registry/index`,
+`~/.cargo/registry/cache`, `~/.cargo/git/db` et `mem0-stack/mem0-rs/target`) —
+dans `macos-tests`, cargo pour la partie 1/2 et au push vers `main`, plus le
+scratch SwiftPM `omp-console/.build-node` pour la partie 1/2 ; `macos-app-swift`
+le cache cargo (cible release de `swift-app.sh`) et `omp-console/.build-app` ;
+`release-simulation` le cache cargo. L'agrégateur `check (macos-latest)` ne cache
+rien, `macos-app-ios` non plus : mesuré, un DerivedData `omp-console/.build-ios`
+restauré ne fait rien gagner (xcodebuild recompile tout, car les mtimes du checkout
+l'invalident, et le démarrage des tests sur simulateur pèse ~235 s). Chaque clé porte
+la famille, le job, l'entrée de matrice, l'OS, l'architecture, une empreinte de
+la toolchain (version de Node, `rustc -vV`, Swift et Xcode, calculée par l'étape
+« Empreinte des toolchains ») et le contenu : hash de `Cargo.lock` et
+`Cargo.toml`, de `Package.swift`, ou
+la version de l'hôte (`OMP_HOST_VERSION` et `OMP_HOST_TYPES_NODE`, déclarées une
+seule fois dans l'`env:` de `check.yml`). Il n'y a pas de `restore-keys` : une
+clé changée repart de zéro. Seul un job vert sauvegarde, une PR n'écrit que dans
+sa propre portée (elle lit celle de `main`), et aucune commande n'est sautée sur
+un cache chaud — `npm install`, cargo et `swift` sont toujours
+rejoués et ne réutilisent que ce qui est encore à jour, donc le verdict est celui
+d'un run à froid. Côté npm, seul le cache de contenu `~/.npm` est gardé, jamais
+`node_modules` : l'hôte s'installe sans lockfile, et un arbre restauré qui
+satisfait déjà les plages figerait des dépendances transitives qu'un run à froid
+mettrait à jour. Dans `release-simulation`, la copie jetable change de chemin à
+chaque run : l'étape de simulation pose `CARGO_TARGET_DIR` sur
+`${{ runner.temp }}/cargo-target`, cible stable que le cache restaure et que
+`check.sh`, `swift-app.sh` et les tests `test/stack/*` honorent.
+
 Ces jobs pilotent `check.sh` par trois options, que l'on peut aussi passer en
 local — sans option, toutes les sections et toute la suite tournent :
 
