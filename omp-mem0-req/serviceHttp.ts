@@ -3,12 +3,13 @@
 // de tests l'exerce sous `node --test` (Doc-1 §11).
 //
 // Conventions, toutes de S-2 :
-//  - en-tête `X-OMP-Service-Token` obligatoire (401 sinon) ;
+//  - en-tête `X-OMP-Service-Token` obligatoire, comparé en temps constant (401 sinon) ;
 //  - `{repo}` est un chemin absolu percent-encodé, décodé segment par segment
 //    (Bun ne le fait pas) ;
 //  - corps JSON uniquement, borné à 1 Mio (400 au-delà) ;
 //  - un refus MÉTIER passe par l'accusé d'une commande, jamais par un code HTTP ;
 //  - SSE : `event: <nom>\ndata: <json>\n\n`, battement `: ping` toutes les 15 s.
+import { timingSafeEqual } from "node:crypto";
 import { ServiceError, badRequest, notFound, unauthorized } from "./serviceApi.ts";
 import type { ServiceApi, ServiceFrame, SessionSubscription } from "./serviceApi.ts";
 
@@ -214,6 +215,14 @@ function sseResponse(subscription: SessionSubscription, deps: RouterDeps, req: R
 }
 
 
+/** Jeton présenté ≡ jeton configuré non vide, octets comparés en temps constant (S-1). */
+function serviceTokenMatches(presented: string | null, expected: string): boolean {
+  if (expected === "" || presented === null) return false;
+  const a = Buffer.from(presented, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
  * Le gestionnaire de requêtes du service : jeton, routage, corps, erreurs.
  * Ne lève jamais : toute `ServiceError` devient sa réponse, toute autre erreur
@@ -223,8 +232,7 @@ function sseResponse(subscription: SessionSubscription, deps: RouterDeps, req: R
 export function createServiceRequestHandler(deps: RouterDeps) {
   return async function handle(req: Request): Promise<Response> {
     try {
-      const token = req.headers.get(SERVICE_TOKEN_HEADER);
-      if (deps.token === "" || token !== deps.token) throw unauthorized();
+      if (!serviceTokenMatches(req.headers.get(SERVICE_TOKEN_HEADER), deps.token)) throw unauthorized();
       if (deps.stopping?.() === true) {
         return json({ error: "stopping" }, 503);
       }
