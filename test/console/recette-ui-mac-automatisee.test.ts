@@ -36,7 +36,14 @@ import {
   type SurfaceParcours,
 } from "../../scripts/recette/mac-recette-ui/analyse.ts";
 import { CATALOGUE } from "../../scripts/recette/mac-recette-ui/catalogue.ts";
-import { JETON_SERVICE, RouteurFixture, depotFictif, jeuFictif, type EntreeJeu, type Requete } from "../../scripts/recette/mac-recette-ui/fixture.ts";
+import {
+  JETON_SERVICE,
+  RouteurFixture,
+  depotFictif,
+  jeuFictif,
+  type EntreeJeu,
+  type Requete,
+} from "../../scripts/recette/mac-recette-ui/fixture.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const CLI = path.join(ROOT, "scripts", "recette", "mac-recette-ui", "recette.ts");
@@ -80,7 +87,9 @@ function releveSain(id: string, enfants: Noeud[] = []): Releve {
         noeud("AXButton", dans(8, 4, 14, 16), { sousRole: "AXCloseButton" }),
         noeud("AXGroup", dans(0, 52, 800, 480), {
           identifiant: marqueur,
-          enfants: [noeud("AXButton", dans(20, 80, 28, 28), { identifiant: `${id}.ok`, titre: "OK", actions: ["AXPress"] })],
+          enfants: [
+            noeud("AXButton", dans(20, 80, 28, 28), { identifiant: `${id}.ok`, titre: "OK", actions: ["AXPress"] }),
+          ],
         }),
         ...enfants,
       ],
@@ -95,7 +104,11 @@ const CONSTAT: ConstatIsolation = {
 };
 const ISOLATION_INTACTE: Isolation = { avant: CONSTAT, apres: CONSTAT, activations: [] };
 
-function parcoursComplet(isolation: unknown = ISOLATION_INTACTE): { version: 1; isolation: unknown; surfaces: SurfaceParcours[] } {
+function parcoursComplet(isolation: unknown = ISOLATION_INTACTE): {
+  version: 1;
+  isolation: unknown;
+  surfaces: SurfaceParcours[];
+} {
   return {
     version: 1,
     isolation,
@@ -223,7 +236,12 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
     ]),
   };
   const exceptions = exceptionsJson([
-    { surface: "pipelines", regle: "cible-trop-petite", element: "chemin:AXButton[1]", justification: "défaut connu, à corriger hors de cette feature : bouton Filtrer de 16 pt" },
+    {
+      surface: "pipelines",
+      regle: "cible-trop-petite",
+      element: "chemin:AXButton[1]",
+      justification: "défaut connu, à corriger hors de cette feature : bouton Filtrer de 16 pt",
+    },
   ]);
 
   const premier = passage(defectueux, exceptions);
@@ -252,7 +270,10 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   for (const interdite of ["date", "duree", "pid", "chemin", "empreinte", "preferences", "cadre", "fenetre"]) {
     assert.ok(!cles.some((k) => k.toLowerCase().includes(interdite)), `clé « ${interdite} » dans rapport.json`);
   }
-  assert.deepEqual(valeurs.filter((v) => v.startsWith("/") || /\b\d{4}-\d{2}-\d{2}T/.test(v) || /[0-9a-f]{64}/.test(v)), []);
+  assert.deepEqual(
+    valeurs.filter((v) => v.startsWith("/") || /\b\d{4}-\d{2}-\d{2}T/.test(v) || /[0-9a-f]{64}/.test(v)),
+    [],
+  );
 
   // Jeu fictif (S-4) : même entrée, mêmes octets et mêmes réponses ; aucun chemin
   // hors de R ; toute date au moins 2 h avant le début, pour des libellés relatifs
@@ -271,8 +292,18 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
     { methode: "GET", url: "/memory/all?agent_id=atelier", jetonService: undefined, corps: "" },
     { methode: "GET", url: "/memory/graph", jetonService: undefined, corps: "" },
     { methode: "POST", url: "/v1/sessions", jetonService: undefined, corps: "{}" },
-    { methode: "POST", url: "/v1/sessions", jetonService: JETON_SERVICE, corps: `{"cwd":"${entree.racine}/depots/atelier","purpose":"session"}` },
-    { methode: "POST", url: `/v1/projects/${encodeURIComponent(`${entree.racine}/depots/atelier`)}/conduite`, jetonService: JETON_SERVICE, corps: '{"name":"atelier"}' },
+    {
+      methode: "POST",
+      url: "/v1/sessions",
+      jetonService: JETON_SERVICE,
+      corps: `{"cwd":"${entree.racine}/depots/atelier","purpose":"session"}`,
+    },
+    {
+      methode: "POST",
+      url: `/v1/projects/${encodeURIComponent(`${entree.racine}/depots/atelier`)}/conduite`,
+      jetonService: JETON_SERVICE,
+      corps: '{"name":"atelier"}',
+    },
     { methode: "GET", url: "/v1/sessions", jetonService: JETON_SERVICE, corps: "" },
     { methode: "GET", url: "/v1/sessions/recette-conduite/events", jetonService: JETON_SERVICE, corps: "" },
   ];
@@ -282,13 +313,19 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   };
   const reponses = rejouer();
   assert.deepEqual(rejouer(), reponses);
-  assert.deepEqual(reponses.map((r) => (r.type === "json" ? r.statut : "flux")), [200, 200, 200, 401, 200, 200, 200, "flux"]);
+  assert.deepEqual(
+    reponses.map((r) => (r.type === "json" ? r.statut : "flux")),
+    [200, 200, 200, 401, 200, 200, 200, "flux"],
+  );
 
   const textes: string[] = [];
   const nombres: Array<[string, number]> = [];
   const relever = (v: unknown, cle: string): void => {
-    if (Array.isArray(v)) v.forEach((w) => relever(w, cle));
-    else if (typeof v === "object" && v !== null) for (const [k, w] of Object.entries(v)) relever(w, k);
+    if (Array.isArray(v)) {
+      v.forEach((w) => {
+        relever(w, cle);
+      });
+    } else if (typeof v === "object" && v !== null) for (const [k, w] of Object.entries(v)) relever(w, k);
     else if (typeof v === "string") textes.push(v);
     else if (typeof v === "number") nombres.push([cle, v]);
   };
@@ -302,13 +339,21 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   }
   for (const r of reponses) relever(r.type === "json" ? r.corps : r.trame, "");
   relever(depotFictif(), "");
-  assert.deepEqual(textes.filter((t) => t.startsWith("/") && !t.startsWith(`${entree.racine}/`)), [], "chemin hors de R");
+  assert.deepEqual(
+    textes.filter((t) => t.startsWith("/") && !t.startsWith(`${entree.racine}/`)),
+    [],
+    "chemin hors de R",
+  );
   assert.ok(!textes.some((t) => t.includes(os.homedir())), "dossier de l'utilisateur dans le jeu");
   const limite = entree.debut - 2 * 3_600_000;
   const datesIso = textes.filter((t) => /^\d{4}-\d{2}-\d{2}T/.test(t)).map((t) => Date.parse(t));
   const datesMs = nombres.filter(([k]) => /At$/.test(k)).map(([, v]) => v);
   assert.ok(datesIso.length > 0 && datesMs.length > 0, "garde : le jeu porte des dates");
-  assert.deepEqual([...datesIso, ...datesMs].filter((d) => d > limite), [], "date à moins de 2 h du début");
+  assert.deepEqual(
+    [...datesIso, ...datesMs].filter((d) => d > limite),
+    [],
+    "date à moins de 2 h du début",
+  );
 });
 
 test("audit-ui-redesign : jeu fictif de la recette UI Mac (B-12, S-14) — le jeu fictif écrit les cinq audits d'AuditParity au format disque, l'analyse lancée 65 s avant le début, et une feature escaladée de l'audit lancé : badge Audit à 2", () => {
@@ -347,10 +392,16 @@ test("audit-ui-redesign : jeu fictif de la recette UI Mac (B-12, S-14) — le je
 
   // Badge (AuditBoard.awaitingUserCount(in:)) : `proposed` + audits dont la clé est
   // l'`auditSession` d'une feature de lot à escalade de sorte connue.
-  const lot = JSON.parse(jeu.find((f) => f.chemin.startsWith("magasin/lots/"))!.contenu) as { features: Array<Record<string, any>> };
+  const lot = JSON.parse(jeu.find((f) => f.chemin.startsWith("magasin/lots/"))!.contenu) as {
+    features: Array<{ auditSession?: unknown; escalation?: { key?: unknown } }>;
+  };
   const cles = new Set(
     lot.features
-      .filter((f) => typeof f.auditSession === "string" && ["ask", "question", "specs", "review"].includes(String(f.escalation?.key).split(":")[0]))
+      .filter(
+        (f) =>
+          typeof f.auditSession === "string" &&
+          ["ask", "question", "specs", "review"].includes(String(f.escalation?.key).split(":")[0]),
+      )
       .map((f) => f.auditSession),
   );
   assert.equal(audits.filter(({ a }) => a.status === "proposed" || cles.has(a.key)).length, 2);
@@ -370,7 +421,11 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
   const sortie = tmpdir("recette-ui-mac-");
   const exceptions = path.join(sortie, "exceptions.json");
   fs.writeFileSync(exceptions, exceptionsJson([]));
-  ecrirePassage(sortie, parcoursComplet(), CATALOGUE.map((s) => releveSain(s.id)));
+  ecrirePassage(
+    sortie,
+    parcoursComplet(),
+    CATALOGUE.map((s) => releveSain(s.id)),
+  );
 
   const complet = lancerAnalyse(sortie, exceptions);
   assert.equal(complet.status, 0, complet.stderr);
@@ -386,7 +441,11 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
     CATALOGUE.map((s) => ({ id: s.id, type: s.type, statut: "couverte", raison: null })),
   );
   assert.ok(fs.readFileSync(rapportMd, "utf8").includes("[captures/memoire-lien.png](captures/memoire-lien.png)"));
-  assert.deepEqual(fs.readdirSync(sortie).filter((f) => f.includes(".tmp-")), [], "aucun temporaire laissé");
+  assert.deepEqual(
+    fs.readdirSync(sortie).filter((f) => f.includes(".tmp-")),
+    [],
+    "aucun temporaire laissé",
+  );
 
   fs.rmSync(path.join(sortie, "releves", "contrat.json"));
   fs.writeFileSync(path.join(sortie, "captures", "modeles.png"), "");
@@ -407,7 +466,9 @@ test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes captu
   fs.writeFileSync(path.join(sortie, "releves", "contrat.json"), JSON.stringify(releveSain("modeles")));
   assert.equal(lancerAnalyse(sortie, exceptions).status, 1);
   assert.equal(
-    JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8")).surfaces.find((s: { id: string }) => s.id === "contrat").raison,
+    JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8")).surfaces.find(
+      (s: { id: string }) => s.id === "contrat",
+    ).raison,
     "capture ou relevé manquant",
   );
 });
@@ -435,7 +496,9 @@ test("recette-ui-mac-automatisee/AC-4 : un bouton de 18 × 18, un identifiant po
   ];
   const signalements = analyserReleve(releve);
   assert.deepEqual(
-    signalements.map(({ surface, regle, cle }) => ({ surface, regle, cle })).sort((a, b) => (a.regle < b.regle ? -1 : 1)),
+    signalements
+      .map(({ surface, regle, cle }) => ({ surface, regle, cle }))
+      .sort((a, b) => (a.regle < b.regle ? -1 : 1)),
     attendus,
   );
   assert.equal(signalements.find((s) => s.regle === "identifiant-duplique")?.occurrences, 2);
@@ -443,14 +506,11 @@ test("recette-ui-mac-automatisee/AC-4 : un bouton de 18 × 18, un identifiant po
   const rapport = analyser(passage({ projet: releve }));
   assert.equal(rapport.verdict, "defauts");
   assert.deepEqual(designation(rapport), attendus);
-  assert.deepEqual(
-    JSON.parse(serialiserRapportJson(rapport)).signalements,
-    [
-      { ...attendus[0], role: "AXButton", occurrences: 1, exception: null },
-      { ...attendus[1], role: "AXStaticText", occurrences: 1, exception: null },
-      { ...attendus[2], role: "AXGroup", occurrences: 2, exception: null },
-    ],
-  );
+  assert.deepEqual(JSON.parse(serialiserRapportJson(rapport)).signalements, [
+    { ...attendus[0], role: "AXButton", occurrences: 1, exception: null },
+    { ...attendus[1], role: "AXStaticText", occurrences: 1, exception: null },
+    { ...attendus[2], role: "AXGroup", occurrences: 2, exception: null },
+  ]);
 
   const md = rendreRapportMd(rapport);
   assert.ok(md.startsWith("# Recette Mac — défauts trouvés\n"));
@@ -550,8 +610,15 @@ test("recette-ui-mac-automatisee/AC-7 : sur un Space plein écran d'une autre ap
   // compilée vivent sous la copie, jamais sous le dépôt.
   const copie = tmpdir("recette-ui-mac-");
   fs.mkdirSync(path.join(copie, "scripts", "recette"), { recursive: true });
-  fs.copyFileSync(path.join(ROOT, "scripts", "recette", "mac-recette-ui.sh"), path.join(copie, "scripts", "recette", "mac-recette-ui.sh"));
-  fs.cpSync(path.join(ROOT, "scripts", "recette", "mac-recette-ui"), path.join(copie, "scripts", "recette", "mac-recette-ui"), { recursive: true });
+  fs.copyFileSync(
+    path.join(ROOT, "scripts", "recette", "mac-recette-ui.sh"),
+    path.join(copie, "scripts", "recette", "mac-recette-ui.sh"),
+  );
+  fs.cpSync(
+    path.join(ROOT, "scripts", "recette", "mac-recette-ui"),
+    path.join(copie, "scripts", "recette", "mac-recette-ui"),
+    { recursive: true },
+  );
 
   // Doublures en tête de PATH (patron de test/outillage/check.test.ts) : `swiftc` écrit à
   // `-o` une sonde qui répond aux faits du plein écran et journalise toute
@@ -566,7 +633,7 @@ test("recette-ui-mac-automatisee/AC-7 : sur un Space plein écran d'une autre ap
     fs.writeFileSync(path.join(bin, nom), `#!/usr/bin/env bash\n${corps}\n`);
     fs.chmodSync(path.join(bin, nom), 0o755);
   };
-  doublure("uname", 'echo Darwin');
+  doublure("uname", "echo Darwin");
   doublure("swift", `echo "swift $*" >> "${journal}"`);
   doublure(
     "swiftc",
@@ -587,7 +654,10 @@ test("recette-ui-mac-automatisee/AC-7 : sur un Space plein écran d'une autre ap
   const r = spawnSync("bash", [path.join(copie, "scripts", "recette", "mac-recette-ui.sh")], {
     cwd: copie,
     encoding: "utf8",
-    env: { ...process.env, PATH: [bin, path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":") },
+    env: {
+      ...process.env,
+      PATH: [bin, path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+    },
     timeout: 60_000,
   });
   const sortieTexte = `${r.stdout}\n${r.stderr}`;
@@ -611,8 +681,14 @@ test("recette-ui-mac-automatisee/AC-7 : sur un Space plein écran d'une autre ap
   // La sonde a été compilée puis interrogée sur l'écran, et rien d'autre : ni
   // parcours (donc aucune instance de recette), ni construction de l'app.
   const appels = fs.readFileSync(journal, "utf8").trim().split("\n");
-  assert.ok(appels.some((l) => l.startsWith("swiftc ")), appels.join("\n"));
-  assert.deepEqual(appels.filter((l) => l.startsWith("sonde ")), ["sonde etat-ecran"]);
+  assert.ok(
+    appels.some((l) => l.startsWith("swiftc ")),
+    appels.join("\n"),
+  );
+  assert.deepEqual(
+    appels.filter((l) => l.startsWith("sonde ")),
+    ["sonde etat-ecran"],
+  );
   assert.ok(!appels.some((l) => l.startsWith("swift ")), appels.join("\n"));
 });
 
@@ -622,12 +698,18 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
   for (const s of CATALOGUE.filter((c) => c.type === "section")) remplacer[s.id] = releveSain(s.id, [petit]);
   remplacer.contrat = releveSain("contrat", [noeud("AXStaticText", dans(-40, 60, 80, 20), { valeur: "Besoins" })]);
 
-  const justificationAide = "défaut connu, à corriger hors de cette feature : le bouton Aide de la barre fait 16 × 16 pt";
+  const justificationAide =
+    "défaut connu, à corriger hors de cette feature : le bouton Aide de la barre fait 16 × 16 pt";
   const justificationContrat = "faux positif : le titre déborde de 40 pt mais reste lisible dans la capture";
   const exceptions = exceptionsJson([
     { surface: "*", regle: "cible-trop-petite", element: "id:barre.aide", justification: justificationAide },
     { surface: "contrat", regle: "hors-ecran", element: "chemin:AXStaticText[0]", justification: justificationContrat },
-    { surface: "modeles", regle: "hors-ecran", element: "id:modeles.absent", justification: "faux positif : plus produit" },
+    {
+      surface: "modeles",
+      regle: "hors-ecran",
+      element: "id:modeles.absent",
+      justification: "faux positif : plus produit",
+    },
   ]);
 
   const rapport = analyser(passage(remplacer, exceptions));
@@ -644,14 +726,24 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
     exception: justificationContrat,
   });
   assert.equal(json.signalements[0].exception, justificationAide);
-  assert.deepEqual(json.exceptionsSansObjet, [{ surface: "modeles", regle: "hors-ecran", element: "id:modeles.absent" }]);
+  assert.deepEqual(json.exceptionsSansObjet, [
+    { surface: "modeles", regle: "hors-ecran", element: "id:modeles.absent" },
+  ]);
   assert.deepEqual(json.exceptionsInvalides, []);
 
   const md = rendreRapportMd(rapport);
   assert.ok(md.startsWith("# Recette Mac — vert\n"));
   const exceptes = md.slice(md.indexOf("## Signalements exceptés"), md.indexOf("## Exceptions invalides"));
-  assert.ok(exceptes.includes(`| contrat | élément hors de la zone visible | chemin:AXStaticText[0] | AXStaticText | Besoins | x 60, y 110, 80 × 20 | ${justificationContrat} |`));
-  assert.ok(exceptes.includes(`| accueil | cible cliquable de moins de 20 × 20 pt | id:barre.aide | AXButton | Aide | x 110, y 550, 16 × 16 | ${justificationAide} |`));
+  assert.ok(
+    exceptes.includes(
+      `| contrat | élément hors de la zone visible | chemin:AXStaticText[0] | AXStaticText | Besoins | x 60, y 110, 80 × 20 | ${justificationContrat} |`,
+    ),
+  );
+  assert.ok(
+    exceptes.includes(
+      `| accueil | cible cliquable de moins de 20 × 20 pt | id:barre.aide | AXButton | Aide | x 110, y 550, 16 × 16 | ${justificationAide} |`,
+    ),
+  );
   assert.ok(md.includes("## Signalements non exceptés\n\nAucun.\n"));
   assert.ok(md.includes("| modeles | hors-ecran | id:modeles.absent |"));
   assert.equal(
@@ -661,15 +753,23 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
 
   // Le fichier LIVRÉ (S-10) : lisible, toutes ses entrées valides, chaque
   // justification sous l'une des deux formes admises.
-  const livre = lireExceptions(fs.readFileSync(path.join(ROOT, "scripts", "recette", "mac-recette-ui", "exceptions.json"), "utf8"));
+  const livre = lireExceptions(
+    fs.readFileSync(path.join(ROOT, "scripts", "recette", "mac-recette-ui", "exceptions.json"), "utf8"),
+  );
   assert.deepEqual(livre.invalides, []);
   for (const { entree } of livre.valides) {
-    assert.match(entree.justification, /^(faux positif : |défaut connu, à corriger hors de cette feature : )\S/, JSON.stringify(entree));
+    assert.match(
+      entree.justification,
+      /^(faux positif : |défaut connu, à corriger hors de cette feature : )\S/,
+      JSON.stringify(entree),
+    );
   }
 });
 
 test("recette-ui-mac-automatisee/AC-9 : une exception invalide ou un signalement sans exception est désigné au rapport, et le verdict n'est pas vert", () => {
-  const remplacer = { memoire: releveSain("memoire", [noeud("AXButton", dans(10, 500, 16, 16), { identifiant: "graphe.zoom" })]) };
+  const remplacer = {
+    memoire: releveSain("memoire", [noeud("AXButton", dans(10, 500, 16, 16), { identifiant: "graphe.zoom" })]),
+  };
   const cible = { surface: "memoire", regle: "cible-trop-petite", element: "id:graphe.zoom" };
 
   // Exception sans justification : invalide, n'excepte rien.
@@ -686,9 +786,14 @@ test("recette-ui-mac-automatisee/AC-9 : une exception invalide ou un signalement
   assert.equal(restant.verdict, "defauts");
   assert.deepEqual(designation(restant), [{ surface: "memoire", regle: "cible-trop-petite", cle: "id:graphe.zoom" }]);
   assert.equal(restant.signalements[0].exception, null);
-  const nonExceptes = rendreRapportMd(restant).split("## Signalements non exceptés")[1].split("## Signalements exceptés")[0];
+  const nonExceptes = rendreRapportMd(restant)
+    .split("## Signalements non exceptés")[1]
+    .split("## Signalements exceptés")[0];
   assert.ok(nonExceptes.includes("| memoire | cible cliquable de moins de 20 × 20 pt | id:graphe.zoom | AXButton |"));
-  assert.match(ligneVerdict(restant, "r.md"), /— 1 signalement\(s\) non excepté\(s\), 0 surface\(s\) non couverte\(s\), 0 exception\(s\) invalide\(s\)\./);
+  assert.match(
+    ligneVerdict(restant, "r.md"),
+    /— 1 signalement\(s\) non excepté\(s\), 0 surface\(s\) non couverte\(s\), 0 exception\(s\) invalide\(s\)\./,
+  );
 
   // Chaque raison d'invalidité, dans l'ordre de S-8 ; la première trouvée l'emporte.
   const justification = "faux positif : témoin";
@@ -716,7 +821,10 @@ test("recette-ui-mac-automatisee/AC-9 : une exception invalide ou un signalement
     { index: 6, raison: "surface inconnue" },
   ]);
   assert.equal(melange.signalements[0].exception, justification, "l'entrée valide excepte toujours");
-  assert.match(ligneVerdict(melange, "r.md"), /— 0 signalement\(s\) non excepté\(s\), 0 surface\(s\) non couverte\(s\), 6 exception\(s\) invalide\(s\)\./);
+  assert.match(
+    ligneVerdict(melange, "r.md"),
+    /— 0 signalement\(s\) non excepté\(s\), 0 surface\(s\) non couverte\(s\), 6 exception\(s\) invalide\(s\)\./,
+  );
 
   // Fichier illisible : aucune exception appliquée, un défaut global d'index null.
   for (const [texte, raison] of [
@@ -727,7 +835,9 @@ test("recette-ui-mac-automatisee/AC-9 : une exception invalide ou un signalement
   ] as const) {
     const illisible = analyser(passage({}, texte));
     assert.equal(illisible.verdict, "defauts", raison);
-    assert.deepEqual(illisible.exceptionsInvalides, [{ index: null, raison: `fichier d'exceptions illisible : ${raison}` }]);
+    assert.deepEqual(illisible.exceptionsInvalides, [
+      { index: null, raison: `fichier d'exceptions illisible : ${raison}` },
+    ]);
     assert.ok(rendreRapportMd(illisible).includes(`| fichier | fichier d'exceptions illisible : ${raison} |`));
   }
 });

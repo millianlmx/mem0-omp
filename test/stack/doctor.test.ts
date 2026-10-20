@@ -69,4 +69,3 @@ test("doctor/AC-9 : le token du conteneur est envoyé dans l'aller-retour écrit
     await api.close();
   }
 });
-

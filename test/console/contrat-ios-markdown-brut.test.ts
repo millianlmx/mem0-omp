@@ -154,7 +154,8 @@ function headingFaults(root: string): string[] {
   const faults: string[] = [];
   const view = appFile(root, SHEET);
   if (view.includes("MarkdownDocument.blocks(")) faults.push("la feuille appelle MarkdownDocument.blocks( directement");
-  if (!view.includes("IOSHomeContent.contractBlocks(")) faults.push("la feuille n'appelle pas IOSHomeContent.contractBlocks(");
+  if (!view.includes("IOSHomeContent.contractBlocks("))
+    faults.push("la feuille n'appelle pas IOSHomeContent.contractBlocks(");
   if (!appFile(root, "IOSHomeContent.swift").includes(BLOCKS_DECLARATION)) {
     faults.push(`IOSHomeContent ne déclare pas ${BLOCKS_DECLARATION}`);
   }

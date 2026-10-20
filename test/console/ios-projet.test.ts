@@ -88,7 +88,10 @@ test("ios-projet/AC-2 : le volet Document lit PROJECT.md de la coque et rend les
   const view = appFile(ROOT, "IOSMarkdownView.swift");
   assert.match(view, /IOSMarkdownView/, "IOSMarkdownView.swift existe");
   for (const blockCase of [".heading", ".paragraph", ".list", ".quote", ".code", ".table", ".rule"]) {
-    assert.ok(view.includes(`case let ${blockCase}`) || view.includes(`case ${blockCase}`), `IOSMarkdownView rend ${blockCase}`);
+    assert.ok(
+      view.includes(`case let ${blockCase}`) || view.includes(`case ${blockCase}`),
+      `IOSMarkdownView rend ${blockCase}`,
+    );
   }
   assert.match(view, /Grid\b/, "les tableaux passent par Grid");
   assert.match(view, /gridColumnAlignment\(/, "l'alignement de colonne est respecté");
@@ -96,7 +99,10 @@ test("ios-projet/AC-2 : le volet Document lit PROJECT.md de la coque et rend les
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMarkdownView.swift");
   fs.writeFileSync(target, code(target).replaceAll("case let .table(table):", "case let .paragraph(table):"));
-  assert.ok(!appFile(copy, "IOSMarkdownView.swift").includes(".table"), "un cas de tableau retiré doit faire rougir la garde");
+  assert.ok(
+    !appFile(copy, "IOSMarkdownView.swift").includes(".table"),
+    "un cas de tableau retiré doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -122,7 +128,10 @@ test("ios-projet/AC-3 : le volet PR montre les trois statuts requis et ne porte 
   for (const forbidden of ["prMerge", "prMergeConfirm", "prMergeHelp", "prMergeRefused", "prMergeRejected"]) {
     assert.ok(!project.includes(forbidden), `la section Projet ne cite pas ${forbidden}`);
   }
-  assert.ok(!/client\.merge\(|\.merge\(repoKey:/.test(project), "l'app n'appelle jamais la fusion depuis la section Projet");
+  assert.ok(
+    !/client\.merge\(|\.merge\(repoKey:/.test(project),
+    "l'app n'appelle jamais la fusion depuis la section Projet",
+  );
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectPRView.swift");
@@ -145,7 +154,10 @@ test("ios-projet/AC-4 : la feuille editor est préremplie et renvoie le texte é
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSDialogGating.swift");
   fs.writeFileSync(target, code(target).replace("dialog.prefill", '""'));
-  assert.ok(!appFile(copy, "IOSDialogGating.swift").includes("dialog.prefill"), "un prefill ignoré doit faire rougir la garde");
+  assert.ok(
+    !appFile(copy, "IOSDialogGating.swift").includes("dialog.prefill"),
+    "un prefill ignoré doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -167,7 +179,10 @@ test("ios-projet/AC-5 : les quatre formes répondent par le libellé, et la sais
   fs.writeFileSync(sheet, code(sheet).replace("options[selected]", "options[0]"));
   const gatingCopy = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSDialogGating.swift");
   fs.writeFileSync(gatingCopy, code(gatingCopy).replace("options[selectedIndex", "options[0"));
-  assert.ok(!/options\[\s*selected/i.test(appFile(copy, "IOSDialogGating.swift")), "un indice figé doit faire rougir la garde");
+  assert.ok(
+    !/options\[\s*selected/i.test(appFile(copy, "IOSDialogGating.swift")),
+    "un indice figé doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -225,7 +240,10 @@ test("ios-projet/AC-8 : valider arme la conduite sur le dépôt choisi et l'en-t
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, code(target).replace("client.startConduite", "client.closeConduite"));
-  assert.ok(!appCode(copy).includes("client.startConduite(repoKey: repoKey"), "un démarrage non câblé doit faire rougir la garde");
+  assert.ok(
+    !appCode(copy).includes("client.startConduite(repoKey: repoKey"),
+    "un démarrage non câblé doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -240,7 +258,10 @@ test("ios-projet/AC-9 : un second démarrage est refusé avant tout appel, par l
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectModel.swift");
   fs.writeFileSync(target, code(target).replace(/isConduiteLive\b/g, "false"));
-  assert.ok(!appFile(copy, "IOSProjectModel.swift").includes("isConduiteLive"), "un refus non décidé doit faire rougir la garde");
+  assert.ok(
+    !appFile(copy, "IOSProjectModel.swift").includes("isConduiteLive"),
+    "un refus non décidé doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -296,7 +317,10 @@ test("ios-projet/AC-12 : la recette gated de la conduite depuis l'iPad est en pl
 
   // La recette pas à pas, recopiée dans le README.
   const readme = fs.readFileSync(README, "utf8");
-  assert.ok(readme.includes("Conduire un projet depuis l'iPad"), "le README porte la sous-section « Conduire un projet depuis l'iPad »");
+  assert.ok(
+    readme.includes("Conduire un projet depuis l'iPad"),
+    "le README porte la sous-section « Conduire un projet depuis l'iPad »",
+  );
   for (const step of ["Piloter un projet", "Arrêter le pilotage", "Relire les statuts"]) {
     assert.ok(readme.includes(step), `la recette pas à pas cite « ${step} »`);
   }

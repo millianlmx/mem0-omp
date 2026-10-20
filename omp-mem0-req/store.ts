@@ -6,8 +6,6 @@ import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, resolveFeatureRoot } from "./git.ts";
 
-
-
 // ---------------------------------------------------------------------------
 // Registre des pipelines — le magasin d'état partagé par TOUS les processus.
 // ---------------------------------------------------------------------------
@@ -31,10 +29,8 @@ export type PipelineRunState = "running" | "waiting";
 
 export type PipelineFinalState = "done" | "failed";
 
-
 /** Une option d'une question `ask` posée par un maillon (S-7). */
 export type PanelAskOption = { label: string; description?: string };
-
 
 /** La question `ask` EN VOL d'un run : ce que le panneau propose de sélectionner (S-7). */
 export type PanelPendingAsk = {
@@ -43,7 +39,6 @@ export type PanelPendingAsk = {
   question: string;
   options: PanelAskOption[];
 };
-
 
 /** Entrée `running/<id>.json` : une pipeline en cours, écrite par son propriétaire. */
 export type RunningEntry = {
@@ -68,7 +63,6 @@ export type RunningEntry = {
   pendingAsk?: PanelPendingAsk | null;
 };
 
-
 /** Entrée `history/<id>.json` : une pipeline close, écrite une seule fois. */
 export type HistoryEntry = {
   id: string;
@@ -82,9 +76,7 @@ export type HistoryEntry = {
   endedAt: number;
 };
 
-
 export type StoreSnapshot = { running: RunningEntry[]; history: HistoryEntry[]; unreadable: number };
-
 
 /** Le strict nécessaire d'un contexte pour publier/constater : rien d'OMP-specific. */
 export type PipelineCtx = {
@@ -99,10 +91,8 @@ export type PipelineCtx = {
   clearTimer?: (timer: unknown) => void;
 };
 
-
 /** Seuls les fichiers d'id sont lus : temporaires d'écriture, `.DS_Store` ignorés. */
 export const STORE_FILE = /^[0-9a-f]{16}\.json$/;
-
 
 // Bornes d'une passe de lecture : au-delà, le panneau ne sert plus à rien et la
 // lecture synchrone coûterait un rafraîchissement par seconde.
@@ -110,13 +100,10 @@ export const RUNNING_READ_LIMIT = 200;
 
 export const HISTORY_READ_LIMIT = 20;
 
-
 /** Battement du propriétaire : réécrit ses entrées toutes les 2 s (S-3). */
 export const PIPELINE_HEARTBEAT_MS = 2000;
 
-
 export const PIPELINE_PHASES: readonly PipelinePhase[] = ["req", "specs", "impl", "review", "release"];
-
 
 /**
  * Répertoire d'état commun : `MEM0_PIPELINE_STATE_DIR` (absolu ou `~`,
@@ -134,28 +121,27 @@ export function pipelineStateDir(
   return path.join(home, ".omp", "agent", "pipeline");
 }
 
-
 export function pipelineRunningDir(stateDir: string): string {
   return path.join(stateDir, "running");
 }
 
-
 export function pipelineHistoryDir(stateDir: string): string {
   return path.join(stateDir, "history");
 }
-
 
 /** `sha1(path.resolve(cwd)).slice(0,16)` : un fichier par pipeline, un par cwd. */
 export function runningIdFor(cwd: string): string {
   return crypto.createHash("sha1").update(path.resolve(cwd)).digest("hex").slice(0, 16);
 }
 
-
 /** `sha1(realpath(cwd) + ":" + endedAt).slice(0,16)` : une entrée par clôture. */
 export function historyIdFor(cwd: string, endedAt: number): string {
-  return crypto.createHash("sha1").update(`${realpathOr(cwd)}:${endedAt}`).digest("hex").slice(0, 16);
+  return crypto
+    .createHash("sha1")
+    .update(`${realpathOr(cwd)}:${endedAt}`)
+    .digest("hex")
+    .slice(0, 16);
 }
-
 
 /** `<dépôt>/<feature>` dans un worktree de feature, sinon le basename du cwd. */
 export function pipelineLabel(cwd: string): string {
@@ -163,7 +149,6 @@ export function pipelineLabel(cwd: string): string {
   if (root.primary) return `${path.basename(root.primary)}/${path.basename(root.dir)}`;
   return path.basename(root.dir) || path.resolve(root.dir);
 }
-
 
 /**
  * Temps écoulé : `<m>:<ss>` sous une heure, `<h>:<mm>:<ss>` au-delà. Un écart
@@ -176,7 +161,6 @@ export function elapsedLabel(ms: number): string {
   const hours = Math.floor(total / 3600);
   return hours === 0 ? `${minutes}:${seconds}` : `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
 }
-
 
 /**
  * Le pid vit-il ? Seul `ESRCH` veut dire « mort » : `EPERM` (processus d'un autre
@@ -194,7 +178,6 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
-
 export function readJsonFile(file: string): unknown {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -203,11 +186,9 @@ export function readJsonFile(file: string): unknown {
   }
 }
 
-
 export function asStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
-
 
 /**
  * La question publiée d'un run : `undefined` quand la valeur est MAL typée (le
@@ -236,7 +217,6 @@ export function asPendingAsk(raw: unknown): PanelPendingAsk | null | undefined {
   if (options.length === 0) return undefined;
   return { toolCallId: q.toolCallId, id: q.id, question: q.question, options };
 }
-
 
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
 export function asRunningEntry(raw: unknown): RunningEntry | null {
@@ -272,7 +252,6 @@ export function asRunningEntry(raw: unknown): RunningEntry | null {
   };
 }
 
-
 export function asHistoryEntry(raw: unknown): HistoryEntry | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
@@ -294,7 +273,6 @@ export function asHistoryEntry(raw: unknown): HistoryEntry | null {
   };
 }
 
-
 /** Fichiers lisibles d'un répertoire du magasin : absent ou vide ⇒ aucun. */
 export function storeFiles(dir: string): string[] {
   let names: string[];
@@ -309,7 +287,6 @@ export function storeFiles(dir: string): string[] {
   }
   return files;
 }
-
 
 /**
  * Les `keep` fichiers les plus récents d'un répertoire du magasin (mtime
@@ -328,7 +305,6 @@ function newestStoreFiles(dir: string, keep: number): { kept: string[]; rest: st
   dated.sort((a, b) => b.mtime - a.mtime || a.file.localeCompare(b.file));
   return { kept: dated.slice(0, keep).map((d) => d.file), rest: dated.slice(keep).map((d) => d.file) };
 }
-
 
 /** Le nombre d'entrées d'historique conservées sur disque par `pruneHistory` (le défaut du pilote). */
 export const HISTORY_KEEP = 200;
@@ -351,13 +327,11 @@ export function pruneHistory(stateDir: string, keep: number = HISTORY_KEEP): num
   return removed;
 }
 
-
 /** Les droits d'un dossier que le pipeline crée dans le magasin d'état : le propriétaire seul. */
 export const STATE_DIR_MODE = 0o700;
 
 /** Les droits d'un fichier d'état que le pipeline crée dans le magasin : lecture et écriture du propriétaire seul. */
 export const STATE_FILE_MODE = 0o600;
-
 
 /**
  * Crée `dir` et ses ancêtres absents ; CHAQUE dossier créé par cet appel finit
@@ -385,7 +359,6 @@ export function ensureStateDir(dir: string): void {
   }
 }
 
-
 /**
  * Écriture ATOMIQUE d'un fichier d'état : temporaire voisin `${file}.tmp-${pid}`
  * (un périmé du même pid retiré d'abord), CRÉÉ exclusivement en `STATE_FILE_MODE`
@@ -411,12 +384,10 @@ export function writeStateFileAtomic(file: string, data: string | Uint8Array): v
   }
 }
 
-
 /** Écriture ATOMIQUE d'un JSON d'état (cf. `writeStateFileAtomic`) : fichier final en 0600. */
 export function writeJsonAtomic(file: string, payload: unknown): void {
   writeStateFileAtomic(file, `${JSON.stringify(payload, null, 2)}\n`);
 }
-
 
 /** Un chemin du magasin que le balayage n'a pas pu resserrer, avec le code de l'erreur. */
 export type StateTightenFailure = { path: string; code: string };
@@ -424,15 +395,12 @@ export type StateTightenFailure = { path: string; code: string };
 /** Le bilan d'un balayage du magasin : chemins resserrés, chemins en échec. */
 export type StateTightenReport = { tightened: string[]; failures: StateTightenFailure[] };
 
-
 /** `stateDir` est le magasin par défaut (`~/.omp/agent/pipeline`), quelle que soit la façon de l'avoir nommé. */
 export function isDefaultStateDir(stateDir: string): boolean {
   return path.resolve(stateDir) === path.resolve(pipelineStateDir({}));
 }
 
-
 const errnoCode = (err: unknown): string => (err as NodeJS.ErrnoException | null)?.code ?? "ERREUR";
-
 
 /**
  * Retire les droits de groupe et d'autres de tout dossier et fichier régulier
@@ -496,7 +464,6 @@ export function tightenStateStore(stateDir: string, options: { includeRoot: bool
   return report;
 }
 
-
 /** Au plus dix chemins nommés, le reste compté. */
 const TIGHTEN_WARNING_PATHS = 10;
 
@@ -508,10 +475,8 @@ function stateTightenWarning(failures: StateTightenFailure[]): string {
   return lines.join("\n");
 }
 
-
 /** Les magasins déjà balayés par ce process (chemins résolus). */
 const securedStateStores = new Set<string>();
-
 
 /**
  * Migration des magasins existants vers 0700/0600 : au PREMIER accès de ce process
@@ -540,7 +505,6 @@ export function secureStateStore(stateDir: string, warn: (text: string) => void)
   return report;
 }
 
-
 /** Écriture ATOMIQUE d'octets (le contrat d'un worktree) : temporaire voisin, puis `rename` ; le temporaire d'un échec est retiré. */
 export function writeBytesAtomic(file: string, bytes: Uint8Array): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -554,7 +518,6 @@ export function writeBytesAtomic(file: string, bytes: Uint8Array): void {
   }
 }
 
-
 // --- la boîte de réception d'un run : le seul canal vers un run VIVANT (S-6) --
 // Le run reste un process `omp -p` : aucune API de l'hôte n'atteint la session
 // d'un autre process, et un run meurt à la fin de son tour. Le canal est donc un
@@ -566,10 +529,8 @@ export function writeBytesAtomic(file: string, bytes: Uint8Array): void {
 /** Cadence de consommation d'un run armé (S-6) : un `readdir` court, quatre fois par seconde. */
 export const PANEL_INBOX_POLL_MS = 250;
 
-
 /** D'où vient la réponse à un `ask` (S-11) : absente = l'utilisateur, texte historique inchangé. */
 export type AskSource = "contexte" | "arbitrage";
-
 
 /** Une livraison déposée dans la boîte d'un run : un texte, ou la réponse à un `ask` (S-6, S-7). */
 export type PanelDelivery =
@@ -577,14 +538,11 @@ export type PanelDelivery =
   | { version: 1; kind: "ask"; toolCallId: string; selected: string; sentAt: number; source?: AskSource }
   | { version: 1; kind: "ask"; toolCallId: string; custom: string; sentAt: number; source?: AskSource };
 
-
 /** Une livraison relue : `delivery` vaut `null` quand le fichier est illisible ou de forme inconnue. */
 export type PanelDeliveryEntry = { file: string; delivery: PanelDelivery | null };
 
-
 /** `<stateDir>/inbox` : les boîtes des runs, à côté du magasin qu'elles servent. */
 export const INBOX_ROOT = "inbox";
-
 
 /**
  * La boîte d'un NOUVEAU run de ce cwd : `<stateDir>/inbox/<runningIdFor(cwd)>-<n>`,
@@ -599,7 +557,6 @@ export function panelInboxDirFor(stateDir: string, cwd: string): string {
     if (!fs.existsSync(candidate)) return candidate;
   }
 }
-
 
 /**
  * Dépose une livraison : dossier créé au besoin, écriture ATOMIQUE (temporaire
@@ -617,7 +574,6 @@ export function writeDelivery(dir: string, delivery: PanelDelivery): void {
   writeJsonAtomic(file, delivery);
 }
 
-
 // --- le fichier de relais : qui relaie les questions d'une feature relayée ------
 // Une session /audit ou /project ARMÉE écrit ce fichier à chaque balayage
 // (battement) ; le pilote et le panneau le lisent pour savoir si une question ou
@@ -632,19 +588,16 @@ export function writeDelivery(dir: string, delivery: PanelDelivery): void {
  */
 export type AuditRelayRecord = { version: 1; sessionFile: string; pid: number; heartbeatAt: number };
 
-
 /** `<stateDir>/audit` : les fichiers de relais des sessions /audit armées. */
 export function auditRelayDir(stateDir: string): string {
   return path.join(stateDir, "audit");
 }
-
 
 /** `<stateDir>/audit/<sha1(path.resolve(sessionFile)).slice(0,16)>.json`. */
 export function auditRelayPath(stateDir: string, sessionFile: string): string {
   const id = crypto.createHash("sha1").update(path.resolve(sessionFile)).digest("hex").slice(0, 16);
   return path.join(auditRelayDir(stateDir), `${id}.json`);
 }
-
 
 /** Le relais d'une session : `null` s'il est absent, illisible, d'une autre version ou d'une autre session. */
 export function readAuditRelay(stateDir: string, sessionFile: string): AuditRelayRecord | null {
@@ -658,11 +611,9 @@ export function readAuditRelay(stateDir: string, sessionFile: string): AuditRela
   return { version: 1, sessionFile: r.sessionFile, pid: r.pid, heartbeatAt: r.heartbeatAt };
 }
 
-
 export function writeAuditRelay(stateDir: string, record: AuditRelayRecord): void {
   writeJsonAtomic(auditRelayPath(stateDir, record.sessionFile), record);
 }
-
 
 /** Retrait du relais : un fichier déjà absent est un succès silencieux ; ne jette jamais. */
 export function removeAuditRelay(stateDir: string, sessionFile: string): void {
@@ -672,7 +623,6 @@ export function removeAuditRelay(stateDir: string, sessionFile: string): void {
     // absent ou inaccessible : rien à retirer
   }
 }
-
 
 /** La forme d'une livraison relue : `null` si le JSON est illisible ou la forme inconnue. */
 export function asDelivery(raw: unknown): PanelDelivery | null {
@@ -697,7 +647,6 @@ export function asDelivery(raw: unknown): PanelDelivery | null {
     : { version: 1, kind: "ask", toolCallId: d.toolCallId, custom: custom as string, sentAt, ...source };
 }
 
-
 /**
  * Les livraisons d'une boîte, dans l'ordre chronologique (lexicographique). Un
  * dossier absent ou illisible rend `[]`, et un fichier illisible est rendu tel
@@ -719,7 +668,6 @@ export function readDeliveries(dir: string): PanelDeliveryEntry[] {
   return out;
 }
 
-
 /** Consommation : le fichier est supprimé, un fichier déjà absent est un succès silencieux. */
 export function consumeDelivery(file: string): void {
   try {
@@ -728,7 +676,6 @@ export function consumeDelivery(file: string): void {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 }
-
 
 /**
  * Les restes d'une boîte : les textes NON consommés, dans l'ordre des fichiers,
@@ -750,12 +697,10 @@ export function dropInbox(dir: string): string[] {
   return texts;
 }
 
-
 /** La boîte publiée d'une entrée de magasin : `null` quand ce run n'accepte aucune écriture. */
 export function panelInboxDirOf(entry: RunningEntry): string | null {
   return asStringOrNull(entry.inbox);
 }
-
 
 /**
  * Schéma réellement écrit dans `running/<id>.json` : `RunningEntry` plus le
@@ -765,17 +710,14 @@ export function panelInboxDirOf(entry: RunningEntry): string | null {
  */
 export type RunningFile = RunningEntry & { version: 1 };
 
-
 export function writeRunningEntry(stateDir: string, entry: RunningEntry): void {
   const payload: RunningFile = { version: 1, ...entry };
   writeJsonAtomic(path.join(pipelineRunningDir(stateDir), `${entry.id}.json`), payload);
 }
 
-
 export function writeHistoryEntry(stateDir: string, entry: HistoryEntry): void {
   writeJsonAtomic(path.join(pipelineHistoryDir(stateDir), `${entry.id}.json`), { version: 1, ...entry });
 }
-
 
 /** Suppression = `unlink` : un fichier déjà absent est un succès silencieux (S-7). */
 export function deleteHistoryEntry(stateDir: string, id: string): void {
@@ -787,7 +729,6 @@ export function deleteHistoryEntry(stateDir: string, id: string): void {
   }
 }
 
-
 export function deleteRunningEntry(stateDir: string, id: string): void {
   if (!/^[0-9a-f]{16}$/.test(id)) return;
   try {
@@ -796,7 +737,6 @@ export function deleteRunningEntry(stateDir: string, id: string): void {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 }
-
 
 /**
  * Une passe de lecture : les entrées du magasin, triées et bornées. Aucune
@@ -830,7 +770,6 @@ export function readStore(stateDir: string): StoreSnapshot {
     unreadable,
   };
 }
-
 
 /**
  * Réconciliation : toute entrée en cours dont le propriétaire n'existe plus passe
@@ -873,7 +812,6 @@ export function reconcileStore(stateDir: string, snapshot: StoreSnapshot = readS
   const history = [...moved, ...snapshot.history].sort((a, b) => b.endedAt - a.endedAt).slice(0, HISTORY_READ_LIMIT);
   return { running: alive, history, unreadable: snapshot.unreadable };
 }
-
 
 /**
  * L'entrée EN COURS d'un worktree, et seulement si son propriétaire vit encore :

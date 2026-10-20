@@ -13,8 +13,6 @@ import { clip, displayWidth, serviceRow } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { PanelAskOption } from "./store.ts";
 
-
-
 /**
  * Surface de `KeybindingsManager` réellement utilisée par le panneau. Le nom du
  * keybinding est DÉRIVÉ de la signature de l'hôte (jamais réinventé) : un
@@ -24,7 +22,6 @@ export type HostKeybinding = Parameters<KeybindingsManager["matches"]>[1];
 
 export type PanelKeybindings = { matches?: (data: string, keybinding: HostKeybinding) => boolean };
 
-
 export type PanelComponent = {
   render(width: number): string[];
   handleInput(data: string): void;
@@ -32,7 +29,6 @@ export type PanelComponent = {
   refresh(): void;
   dispose(): void;
 };
-
 
 export type PipelinesPanelDeps = {
   stateDir: string;
@@ -100,7 +96,6 @@ export type PipelinesPanelDeps = {
   ) => Promise<string | null>;
 };
 
-
 /**
  * La sélection du panneau, mémorisée par RACINE DE DÉPÔT (S-5) et par CLÉ DE RANG
  * (PANEL-3) : fermer puis rouvrir rend le panneau sur la même ligne, sans commande à
@@ -111,7 +106,6 @@ export type PipelinesPanelDeps = {
  * aucun partage entre process.
  */
 export const panelSelections = new Map<string, string>();
-
 
 /**
  * L'état d'un rang de LOT qui n'accepte aucune écriture (S-10) : la raison exacte,
@@ -135,7 +129,6 @@ export function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
   return lotReplyRefusal(feature.state);
 }
 
-
 /**
  * Où part une livraison de la vue (S-6, S-9) : dans le lot (une réponse qui met
  * en file ou relance un maillon), dans la BOÎTE d'un run vivant (un texte injecté
@@ -146,8 +139,14 @@ export function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
 export type ViewTarget =
   | { kind: "lot"; slug: string }
   | { kind: "inbox"; dir: string }
-  | { kind: "session"; cwd: string; sessionFile: string; label: string; model?: string | null; fallback?: string | null };
-
+  | {
+      kind: "session";
+      cwd: string;
+      sessionFile: string;
+      label: string;
+      model?: string | null;
+      fallback?: string | null;
+    };
 
 /**
  * L'état de la zone de saisie d'une vue (S-3, S-4, S-6, S-7, S-8, S-10) : fermée
@@ -180,9 +179,10 @@ export type ViewInputZone = {
   target: ViewTarget;
 };
 
-
-export type ViewZone = { kind: "closed"; reason: string } | ViewInputZone | { kind: "preview"; input: ViewInputZone; text: string };
-
+export type ViewZone =
+  | { kind: "closed"; reason: string }
+  | ViewInputZone
+  | { kind: "preview"; input: ViewInputZone; text: string };
 
 /** L'état de la zone a-t-il CHANGÉ DE SOURCE ? Le tampon, lui, appartient à l'utilisateur. */
 export function sameZoneSource(a: ViewZone, b: ViewZone): boolean {
@@ -196,7 +196,11 @@ export function sameZoneSource(a: ViewZone, b: ViewZone): boolean {
       a.options.length === b.options.length &&
       a.options.every((option, index) => {
         const other = b.options[index];
-        return other !== undefined && option.label === other.label && (option.description ?? "") === (other.description ?? "");
+        return (
+          other !== undefined &&
+          option.label === other.label &&
+          (option.description ?? "") === (other.description ?? "")
+        );
       });
     return (
       a.slug === b.slug &&
@@ -209,7 +213,6 @@ export function sameZoneSource(a: ViewZone, b: ViewZone): boolean {
   }
   return true; // deux aperçus : rien à rafraîchir, l'aperçu ne se réécrit pas sous les doigts
 }
-
 
 /** Une zone ouverte, dans son état initial : options s'il y en a, éditeur libre sinon. */
 export function inputZone(input: {
@@ -237,7 +240,6 @@ export function inputZone(input: {
   };
 }
 
-
 /** L'aperçu d'une livraison, tel que la zone le rend (S-6, S-7, S-8) — une seule source du texte. */
 export function zonePreview(zone: { input: ViewInputZone; text: string }): { head: string; hint: string } {
   const input = zone.input;
@@ -254,7 +256,6 @@ export function zonePreview(zone: { input: ViewInputZone; text: string }): { hea
   }
   return replyPreview({ slug: input.slug, phase: input.phase, text: zone.text, queue: input.queue });
 }
-
 
 /**
  * Les touches de la vue que les keybindings de l'hôte ne nomment pas (S-6, S-7).
@@ -279,7 +280,6 @@ export const SHIFT_DOWN_KEYS = ["\u001b[1;2B", "\u001b[2B"];
 export const HOME_KEYS = ["\u001b[H", "\u001b[1~", "\u001bOH", "\u001b[7~"];
 
 export const END_KEYS = ["\u001b[F", "\u001b[4~", "\u001bOF", "\u001b[8~"];
-
 
 /**
  * Les rangs de la zone de saisie de la vue, selon son état (S-2, S-4, S-5) : ce
@@ -342,7 +342,6 @@ export function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, innerW: number
   return { rows, focus };
 }
 
-
 /**
  * Le pied de la vue, selon l'état de sa zone (S-7) : il nomme EXACTEMENT les
  * touches actives de l'état courant, et il mentionne `ctrl+o déplier/replier` dans
@@ -359,14 +358,12 @@ export function viewFooter(zone: ViewZone, overflow: boolean): string {
   // globale, la sortie — plus, quand la zone dépasse sa fenêtre, les deux touches
   // qui la font défiler elle (S-2, S-7). Devant une liste d'options, `Échap` REMONTE
   // aux options (VIEW-14) : le pied dit la touche qu'il traite, jamais l'autre.
-  const back = zone.kind === "input" && zone.free && zone.options.length > 0
-    ? "Échap revenir aux options"
-    : "Échap revenir au panneau";
-  return `↑↓/molette défiler · ${expand} · ${back}${
-    overflow ? " · PageUp/PageDown défiler la réponse" : ""
-  }`;
+  const back =
+    zone.kind === "input" && zone.free && zone.options.length > 0
+      ? "Échap revenir aux options"
+      : "Échap revenir au panneau";
+  return `↑↓/molette défiler · ${expand} · ${back}${overflow ? " · PageUp/PageDown défiler la réponse" : ""}`;
 }
-
 
 /**
  * La fenêtre de défilement d'une zone de la vue (S-2) : celle de son éditeur, que
@@ -377,7 +374,6 @@ export function zoneScrollOf(zone: ViewZone): TextWindow | undefined {
   if (zone.kind === "closed") return undefined;
   return zone.kind === "preview" ? zone.input.scroll : zone.scroll;
 }
-
 
 /**
  * La transcription d'une vue ouverte (S-3, S-5, S-8) : ce que le lecteur a chargé,
@@ -418,7 +414,6 @@ export type ViewTranscript = {
   link: string | null;
 };
 
-
 /** L'état de vue du panneau : la liste, ou la transcription d'une session (S-3). */
 export type PanelView =
   | { kind: "list" }
@@ -447,12 +442,10 @@ export type PanelView =
       zone: ViewZone;
     };
 
-
 /** `unref` — un rafraîchissement de panneau ne doit pas retenir le processus. */
 export function unrefTimer(timer: unknown): void {
   if (timer && typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") timer.unref();
 }
-
 
 /** Minuterie de rafraîchissement ; l'arrêt est rendu à l'appelant (`dispose`). */
 export function defaultSchedule(callback: () => void, ms: number): () => void {
@@ -460,7 +453,6 @@ export function defaultSchedule(callback: () => void, ms: number): () => void {
   unrefTimer(timer);
   return () => clearInterval(timer);
 }
-
 
 /**
  * Le rang d'erreur d'un composant qui a jeté au `render` (S-1 « Cas limites ») :
@@ -475,9 +467,9 @@ export function unreadableLine(what: string, error: unknown, width: number): str
   return line + " ".repeat(Math.max(0, room - displayWidth(line)));
 }
 
-
 /** Le nom du composant fautif, pour son rang d'erreur — jamais vide. */
 export function componentLabel(component: unknown, index: number): string {
-  const name = component && typeof component === "object" && "constructor" in component ? component.constructor.name : "";
+  const name =
+    component && typeof component === "object" && "constructor" in component ? component.constructor.name : "";
   return typeof name === "string" && name !== "" ? name : `composant ${index + 1}`;
 }

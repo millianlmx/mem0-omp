@@ -100,7 +100,10 @@ function enumMembers(source: string, name: string): Map<string, string> {
   const span = enumLines(source, name);
   const members = new Map<string, string>();
   if (!span) return members;
-  const body = source.split("\n").slice(span[0] - 1, span[1]).join("\n");
+  const body = source
+    .split("\n")
+    .slice(span[0] - 1, span[1])
+    .join("\n");
   for (const m of body.matchAll(/static\s+let\s+(\w+)\s*=\s*"((?:[^"\\]|\\.)*)"/g)) members.set(m[1], m[2]);
   for (const m of body.matchAll(/static\s+func\s+(\w+)\([^)]*\)\s*->\s*String\s*\{\s*"((?:[^"\\]|\\.)*)"\s*\}/g)) {
     members.set(m[1], m[2]);
@@ -187,11 +190,16 @@ const IOS_PRESERVED: ReadonlyArray<[string, string]> = [
 ];
 
 /** Les écarts d'un enum d'identifiants à sa liste conservée. */
-function preservedFaults(owner: string, members: Map<string, string>, preserved: ReadonlyArray<[string, string]>): string[] {
+function preservedFaults(
+  owner: string,
+  members: Map<string, string>,
+  preserved: ReadonlyArray<[string, string]>,
+): string[] {
   const faults: string[] = [];
   for (const [name, value] of preserved) {
     const actual = members.get(name);
-    if (actual !== value) faults.push(`${owner}.${name} vaut ${actual === undefined ? "(absent)" : `"${actual}"`}, attendu "${value}"`);
+    if (actual !== value)
+      faults.push(`${owner}.${name} vaut ${actual === undefined ? "(absent)" : `"${actual}"`}, attendu "${value}"`);
   }
   return faults;
 }
@@ -219,8 +227,15 @@ function auditVocabularyFaults(root: string): string[] {
   // (d) les identifiants conservés, et `audit.status` supprimé.
   const mac = enumMembers(macEnumSource, "AuditAccessibility");
   faults.push(...preservedFaults("AuditAccessibility", mac, MAC_PRESERVED));
-  if (mac.has("status") || [...mac.values()].includes("audit.status")) faults.push("AuditAccessibility porte encore audit.status");
-  faults.push(...preservedFaults("IOSAuditAccessibility", enumMembers(read(IOS_ENUM_FILE), "IOSAuditAccessibility"), IOS_PRESERVED));
+  if (mac.has("status") || [...mac.values()].includes("audit.status"))
+    faults.push("AuditAccessibility porte encore audit.status");
+  faults.push(
+    ...preservedFaults(
+      "IOSAuditAccessibility",
+      enumMembers(read(IOS_ENUM_FILE), "IOSAuditAccessibility"),
+      IOS_PRESERVED,
+    ),
+  );
   return faults;
 }
 
@@ -246,7 +261,9 @@ const README_TOKENS: ReadonlyArray<[string, RegExp]> = [
 function readmeFaults(root: string): string[] {
   const section = auditSection(fs.readFileSync(path.join(root, README), "utf8"));
   if (!section) return ["README : section « ## Section Audit (pilotage) » absente"];
-  return README_TOKENS.filter(([, pattern]) => !pattern.test(section)).map(([label]) => `README, section Audit : ${label} absent`);
+  return README_TOKENS.filter(([, pattern]) => !pattern.test(section)).map(
+    ([label]) => `README, section Audit : ${label} absent`,
+  );
 }
 
 /** Une copie jetable du dépôt, partagée par les fautes plantées de ce fichier. */
@@ -278,16 +295,21 @@ test("audit-ui-redesign/AC-15 : les vues Audit Mac et iOS ne portent aucun mot h
   // (b) un symbole SF écrit en dur dans une vue iOS (hors `IOSAuditSymbol`).
   plant(root, screen, "systemImage: ConsoleSection.audit.systemImage", 'systemImage: "checklist"');
   // (c) un identifiant écrit en dur.
-  plant(root, detail, ".accessibilityIdentifier(AuditAccessibility.stepper)", '.accessibilityIdentifier(stepperId)');
+  plant(root, detail, ".accessibilityIdentifier(AuditAccessibility.stepper)", ".accessibilityIdentifier(stepperId)");
   // (d) un identifiant conservé renommé, et `audit.status` revenu.
-  plant(root, MAC_ENUM_FILE, 'static let checkedCount = "audit.checkedCount"', 'static let checkedCount = "audit.checked"\n    static let status = "audit.status"');
+  plant(
+    root,
+    MAC_ENUM_FILE,
+    'static let checkedCount = "audit.checkedCount"',
+    'static let checkedCount = "audit.checked"\n    static let status = "audit.status"',
+  );
   plant(root, IOS_ENUM_FILE, 'static let stop = "ios.audit.stop"', 'static let stop = "ios.audit.analysis.stop"');
 
   const faults = auditVocabularyFaults(root);
   const has = (needle: string) => faults.some((f) => f.includes(needle));
-  assert.ok(has('AuditDetailView.swift') && has('"Rien à proposer"'), `(a) : ${faults.join(" | ")}`);
+  assert.ok(has("AuditDetailView.swift") && has('"Rien à proposer"'), `(a) : ${faults.join(" | ")}`);
   assert.ok(!has('"exclamationmark.triangle"'), "un argument systemImage: reste toléré côté Mac");
-  assert.ok(has('IOSAuditScreen.swift') && has('"checklist"'), `(b) : ${faults.join(" | ")}`);
+  assert.ok(has("IOSAuditScreen.swift") && has('"checklist"'), `(b) : ${faults.join(" | ")}`);
   assert.ok(has(".accessibilityIdentifier(stepperId)"), `(c) : ${faults.join(" | ")}`);
   assert.ok(has('AuditAccessibility.checkedCount vaut "audit.checked"'), `(d) Mac : ${faults.join(" | ")}`);
   assert.ok(has("audit.status"), `(d) audit.status : ${faults.join(" | ")}`);
@@ -301,7 +323,10 @@ test("audit-ui-redesign/AC-16 : la section Audit du README décrit la nouvelle p
   const root = copy();
   const section = auditSection(fs.readFileSync(path.join(root, README), "utf8"));
   plant(root, README, section, section.replaceAll("« Terminés »", "« Finis »").replaceAll("frise", "barre"));
-  assert.deepEqual(readmeFaults(root), ["README, section Audit : « Terminés » absent", "README, section Audit : frise absent"]);
+  assert.deepEqual(readmeFaults(root), [
+    "README, section Audit : « Terminés » absent",
+    "README, section Audit : frise absent",
+  ]);
 
   plant(root, README, "## Section Audit (pilotage)", "## Section Audits");
   assert.deepEqual(readmeFaults(root), ["README : section « ## Section Audit (pilotage) » absente"]);

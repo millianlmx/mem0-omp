@@ -205,7 +205,7 @@ export function swiftTextUnits(source: string): TextUnit[] {
     const multi = source.startsWith('"""', i + hashes);
     const quote = multi ? '"""' : '"';
     const close = quote + "#".repeat(hashes);
-    const escape = "\\" + "#".repeat(hashes);
+    const escapeText = `\\${"#".repeat(hashes)}`;
     i += hashes + quote.length;
 
     // Un morceau = une ligne de contenu (une seule pour un littéral simple).
@@ -231,8 +231,8 @@ export function swiftTextUnits(source: string): TextUnit[] {
         i += 1;
         continue;
       }
-      if (source.startsWith(escape, i)) {
-        const after = i + escape.length;
+      if (source.startsWith(escapeText, i)) {
+        const after = i + escapeText.length;
         const c = source[after];
         if (c === "(") {
           current.text += INTERPOLATION_MARK;
@@ -269,7 +269,12 @@ export function swiftTextUnits(source: string): TextUnit[] {
     }
 
     if (!multi) {
-      out.push({ line: lineAt(current.start), raw: source.slice(current.start, current.end), text: current.text, constant });
+      out.push({
+        line: lineAt(current.start),
+        raw: source.slice(current.start, current.end),
+        text: current.text,
+        constant,
+      });
       return;
     }
     // Multiligne : la ligne de l'ouvrant et l'indentation du fermant ne sont pas du contenu.

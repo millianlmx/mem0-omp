@@ -4,7 +4,21 @@ import * as path from "node:path";
 import { auditRepoRootOf, createAuditRelay, registerAuditReportTool } from "./audit.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep, PipelinePhase } from "./contract.ts";
-import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, repoRootOf, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
+import {
+  GIT_TIMEOUT_MS,
+  branchFor,
+  branchTaken,
+  buildSweepMessage,
+  buildWelcome,
+  contractPathFor,
+  createFeatureWorktree,
+  linkGate,
+  repoRootOf,
+  resolveFeatureRoot,
+  sweepFeatureWorktrees,
+  toSlug,
+  worktreesBaseDir,
+} from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
 import { armInbox, conversationPhaseOf, panelInboxFlagOf, registerAskTool } from "./inbox.ts";
 import { createLaunchd, resolveLaunchdOmpBinary } from "./launchd.ts";
@@ -12,7 +26,14 @@ import { lotOmpBin, lotRepoKey, lotRunTimeoutMs, readLot } from "./lot.ts";
 import type { Lot } from "./lot.ts";
 import { createLotController } from "./lotController.ts";
 import type { LotController } from "./lotController.ts";
-import { MODEL_GROUP_LABELS, askFeatureModels, featureFallbackOf, featureModelOf, modelGroupOf, modelPanelChoices } from "./models.ts";
+import {
+  MODEL_GROUP_LABELS,
+  askFeatureModels,
+  featureFallbackOf,
+  featureModelOf,
+  modelGroupOf,
+  modelPanelChoices,
+} from "./models.ts";
 import { pipelinesPanelFactory } from "./panel.ts";
 import { createProjectRelay } from "./projectRelay.ts";
 import { hostComponents } from "./panelHost.ts";
@@ -20,7 +41,19 @@ import { diskProbe, joinEntry } from "./panelSession.ts";
 import { registerPilotTools } from "./pilotTools.ts";
 import type { SessionProbe, SwitchCtx } from "./panelSession.ts";
 import type { PipelinesPanelDeps } from "./panelView.ts";
-import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publishCurrentCwd, releaseSessionState, reportStateWriteFailure, resetStateWriteWarning, runStateOf, sessionFileOf, sessionIdOf } from "./publish.ts";
+import {
+  armPipeline,
+  closePipeline,
+  ensureHeartbeat,
+  isSubagentSession,
+  publishCurrentCwd,
+  releaseSessionState,
+  reportStateWriteFailure,
+  resetStateWriteWarning,
+  runStateOf,
+  sessionFileOf,
+  sessionIdOf,
+} from "./publish.ts";
 import type { PublishDeps } from "./publish.ts";
 import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
 import { createServiceHost } from "./serviceHost.ts";
@@ -29,21 +62,33 @@ import { ARBITER_TOOLS, registerArbiterTool } from "./arbiter.ts";
 import { exhaustedUntil, quotaStopReason, startModelFor } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
 import { serviceVersionDrift } from "./serviceVersion.ts";
-import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefusal, handOverCollecte, lotDriverFor, selfExtensionArg, workerModeOf } from "./runs.ts";
+import {
+  buildConversationRunArgv,
+  conversationOverlayPathFor,
+  conversationRefusal,
+  handOverCollecte,
+  lotDriverFor,
+  selfExtensionArg,
+  workerModeOf,
+} from "./runs.ts";
 import type { ConversationRunTarget, WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
-import { deleteRunningEntry, ensureStateDir, pipelineStateDir, runningIdFor, secureStateStore, writeJsonAtomic } from "./store.ts";
+import {
+  deleteRunningEntry,
+  ensureStateDir,
+  pipelineStateDir,
+  runningIdFor,
+  secureStateStore,
+  writeJsonAtomic,
+} from "./store.ts";
 import type { PipelineCtx } from "./store.ts";
-
-
 
 /** Le strict nécessaire de `ctx.ui` : l'éditeur, qui n'existe qu'en mode interactif. */
 export type EditorUI = {
   getEditorText?: () => string;
   setEditorText?: (text: string) => void;
 };
-
 
 /**
  * Préremplit la zone de saisie avec la commande de la suite. Les quatre
@@ -67,7 +112,6 @@ export function prefillEditor(ctx: { hasUI: boolean; ui?: EditorUI }, step: Next
   ui.setEditorText(step.command);
 }
 
-
 /** Les dépendances d'un lancement de run de conversation : toutes les I/O sont injectées. */
 export type ConversationLaunchDeps = {
   stateDir: string;
@@ -79,7 +123,6 @@ export type ConversationLaunchDeps = {
   exec: (command: string, args: string[], options: { cwd: string; timeout: number }) => Promise<unknown>;
   onRunError: (message: string) => void;
 };
-
 
 /** Éclate les clés pointées d'un réglage à plat en objets imbriqués : la forme d'un overlay `--config`. */
 function nestSettings(flat: Record<string, unknown>): Record<string, unknown> {
@@ -100,7 +143,6 @@ function nestSettings(flat: Record<string, unknown>): Record<string, unknown> {
   }
   return nested;
 }
-
 
 /**
  * Lance le run de conversation d'un rang du panneau (S-9, S-5) et rend `null` une
@@ -148,14 +190,15 @@ export function launchConversationRun(
     void Promise.resolve(
       deps.exec(argv[0] ?? "omp", argv.slice(1), { cwd: target.cwd, timeout: deps.timeoutMs }),
     ).catch((err: unknown) => {
-      deps.onRunError(`[pipeline] run de conversation interrompu : ${err instanceof Error ? err.message : String(err)}`);
+      deps.onRunError(
+        `[pipeline] run de conversation interrompu : ${err instanceof Error ? err.message : String(err)}`,
+      );
     });
   } catch (err) {
     return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
   }
   return null;
 }
-
 
 // ---------------------------------------------------------------------------
 // Extension
@@ -221,7 +264,10 @@ export default function reqExtension(pi: ExtensionAPI) {
   // redraw) est le seul canal de signalement du registre : le panneau, lui, ne
   // parle à l'utilisateur que dans son propre rang de notice.
   const notifyDurable = (text: string) =>
-    pi.sendMessage({ customType: "pipeline", content: text, display: true, attribution: "user" }, { triggerTurn: false });
+    pi.sendMessage(
+      { customType: "pipeline", content: text, display: true, attribution: "user" },
+      { triggerTurn: false },
+    );
 
   const pipelineDeps = (ctx: PipelineCtx): PublishDeps => ({ ctx, notify: notifyDurable, stateDir: storeDir() });
 
@@ -385,7 +431,12 @@ export default function reqExtension(pi: ExtensionAPI) {
    * phase, lu sur la feature du lot dont le worktree est le cwd, appliqué APRÈS un
    * `newSession` réussi et notifié `[<tag>] …` avant l'amorce.
    */
-  const applyPhaseModel = async (ctx: ExtensionContext, phase: PipelinePhase, tag: string, lot: Lot | null): Promise<void> => {
+  const applyPhaseModel = async (
+    ctx: ExtensionContext,
+    phase: PipelinePhase,
+    tag: string,
+    lot: Lot | null,
+  ): Promise<void> => {
     const label = MODEL_GROUP_LABELS[modelGroupOf(phase)];
     const issue = await applyGroupModel(
       ctx,
@@ -411,7 +462,10 @@ export default function reqExtension(pi: ExtensionAPI) {
       const res = await ctx.newSession();
       return res?.cancelled !== true;
     } catch (err) {
-      ctx.ui?.notify?.(`[${tag}] nouvelle session impossible (${(err as Error).message}) — ${what} dans la session courante.`, "warning");
+      ctx.ui?.notify?.(
+        `[${tag}] nouvelle session impossible (${(err as Error).message}) — ${what} dans la session courante.`,
+        "warning",
+      );
       return false;
     }
   };
@@ -631,7 +685,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       ompBin: resolved.bin ?? lotOmpBin(),
       ompBinProblem: resolved.problem,
       stateDir: storeDir(),
-      exec: async argv => {
+      exec: async (argv) => {
         try {
           const res = await pi.exec(argv[0] ?? "launchctl", argv.slice(1), { timeout: 10_000 });
           return { code: res.killed ? 124 : res.code, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
@@ -646,7 +700,10 @@ export default function reqExtension(pi: ExtensionAPI) {
     description:
       "Pilote le service OMP unique : start (démarre et ne rend pas la main), status, stop, install/uninstall (launchd)",
     handler: async (args, ctx) => {
-      const action = String(args ?? "").trim().split(/\s+/)[0] ?? "";
+      const action =
+        String(args ?? "")
+          .trim()
+          .split(/\s+/)[0] ?? "";
       const say = (text: string, tone: "info" | "warning" | "error" = "info") => ctx.ui?.notify?.(text, tone);
       if (action === "" || action === "status") {
         const record = serviceRunning(storeDir());
@@ -708,7 +765,7 @@ export default function reqExtension(pi: ExtensionAPI) {
         runGit: run,
         runGitNet,
         runGh,
-        log: line => {
+        log: (line) => {
           process.stdout.write(`${line}\n`);
         },
       });
@@ -850,7 +907,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       // session interactive non enfant contrôle — jamais attendu, la sonde est
       // bornée et l'ouverture de la session ne l'attend pas.
       void serviceVersionDrift({ stateDir: storeDir() })
-        .then(notice => {
+        .then((notice) => {
           if (notice) ctx.ui?.notify?.(notice, "warning");
         })
         .catch(() => {});
@@ -896,7 +953,9 @@ export default function reqExtension(pi: ExtensionAPI) {
         process.stdout.write(`[service] retour au principal impossible : aucune clé d'API pour ${identity.primary}\n`);
       }
     } catch (err) {
-      process.stdout.write(`[service] retour au principal impossible : ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stdout.write(
+        `[service] retour au principal impossible : ${err instanceof Error ? err.message : String(err)}\n`,
+      );
     }
   });
 
@@ -1116,7 +1175,13 @@ export default function reqExtension(pi: ExtensionAPI) {
       // Le modèle du groupe cadrage+revue, JUSTE après la relocalisation réussie : la
       // session neuve est celle de la collecte. Une issue en échec n'annule rien —
       // la session et l'enrôlement restent (le modèle de la session est conservé).
-      const modelIssue = await applyGroupModel(ctx, "req", modelReqSpecs, fallbackReqSpecs, `groupe ${MODEL_GROUP_LABELS.modelReqSpecs} sur défaut OMP`);
+      const modelIssue = await applyGroupModel(
+        ctx,
+        "req",
+        modelReqSpecs,
+        fallbackReqSpecs,
+        `groupe ${MODEL_GROUP_LABELS.modelReqSpecs} sur défaut OMP`,
+      );
       if (modelIssue.level === "warning") ctx.ui?.notify?.(`[req] ${modelIssue.text}`, "warning");
 
       // La feature entre dans le lot APRÈS la relocalisation réussie : sa collecte
@@ -1333,7 +1398,8 @@ export default function reqExtension(pi: ExtensionAPI) {
     // concerne pas.
     if (
       isServiceProcess() &&
-      (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null || auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
+      (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null ||
+        auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
     ) {
       return { systemPrompt: event.systemPrompt };
     }
@@ -1404,7 +1470,8 @@ export default function reqExtension(pi: ExtensionAPI) {
       // aucune annonce, aucune entrée, aucune bascule vers le lot.
       if (
         isServiceProcess() &&
-        (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null || auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
+        (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null ||
+          auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
       ) {
         return;
       }

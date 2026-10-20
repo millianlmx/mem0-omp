@@ -142,7 +142,10 @@ test("upgrade-procedure-gaps-in-publishing/AC-5 : tester une branche par link pu
 
 test("upgrade-procedure-gaps-in-publishing/AC-6 : le README de la console renvoie à PUBLISHING.md sans procédure de mise à jour", () => {
   const readme = flat(read("omp-console/README.md"));
-  assert.ok(readme.includes("`PUBLISHING.md` § « Mettre à jour »"), "omp-console/README.md ne renvoie pas à PUBLISHING.md § « Mettre à jour »");
+  assert.ok(
+    readme.includes("`PUBLISHING.md` § « Mettre à jour »"),
+    "omp-console/README.md ne renvoie pas à PUBLISHING.md § « Mettre à jour »",
+  );
   const partial = readme.match(/plugin upgrade|marketplace upgrade|plugin link/);
   assert.equal(partial, null, `omp-console/README.md porte encore un geste de mise à jour : ${partial?.[0]}`);
 });

@@ -300,11 +300,14 @@ test("service-commands/AC-9 : chaque action rend son nouvel état, et un identif
 
   // (4) Un corps hors schéma est un 400 (l'API ne devine jamais), et une commande
   // visant un AUTRE dépôt que la route est refusée.
-  await assert.rejects(() => pilot.command(repoRoot, { version: 1, kind: "inconnu" }), (err: unknown) => {
-    assert.ok(err instanceof ServiceError);
-    assert.equal(err.status, 400);
-    return true;
-  });
+  await assert.rejects(
+    () => pilot.command(repoRoot, { version: 1, kind: "inconnu" }),
+    (err: unknown) => {
+      assert.ok(err instanceof ServiceError);
+      assert.equal(err.status, 400);
+      return true;
+    },
+  );
   await assert.rejects(
     () => pilot.command(repoRoot, { version: 1, id: "c-x", sentAt: 1, repo: stateDir, kind: "start" }),
     (err: unknown) => {

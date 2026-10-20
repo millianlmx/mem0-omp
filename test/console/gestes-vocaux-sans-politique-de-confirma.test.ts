@@ -75,7 +75,7 @@ test("gestes-vocaux-sans-politique-de-confirma/AC-9 : les gestes tactiles Mac et
         "struct StopIntent: VoiceGestureIntent {",
         "  static let voiceGesture: VoiceGesture = .stopFeature",
         "  func perform() async throws -> some IntentResult {",
-        "    _ = try await applyVoicePolicy(target: \"login-oauth\", send: {})",
+        '    _ = try await applyVoicePolicy(target: "login-oauth", send: {})',
         "    return .result()",
         "  }",
         "}",

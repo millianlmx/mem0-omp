@@ -8,14 +8,11 @@ export const ARBITER_RELAUNCH_MAX = 2;
 export const LOT_FAILURE_STDERR_MAX = 2000;
 export const LOT_FAILURE_STDOUT_MAX = 4000;
 
-
 /** Plafond des enregistrements de run conservés par feature (S-12). */
 export const LOT_RUNS_MAX = 100;
 
-
 /** Au plus neuf options sélectionnables (S-3) : au-delà, la question reste lisible. */
 export const MAX_REPLY_OPTIONS = 9;
-
 
 // --- plafond, sortie de run, timeouts : bornes et lecture d'environnement -----
 
@@ -32,7 +29,6 @@ export const LOT_OWNER_STALE_MS = 5 * LOT_TICK_MS;
 
 /** Un relais /audit est périmé au même seuil qu'un propriétaire de lot (S-2). */
 export const AUDIT_RELAY_STALE_MS = LOT_OWNER_STALE_MS;
-
 
 export const LOT_RUN_TIMEOUT_MS = 3_600_000;
 
@@ -73,7 +69,6 @@ export const LOT_PENDING_MAX = 9;
 /** Caractères en file par feature (S-5) : la somme des textes en attente. */
 export const LOT_PENDING_TOTAL_MAX = 12_000;
 
-
 /** Entier d'environnement borné, ou le défaut (une variable absente ou vide). */
 export function envInt(raw: string | undefined, fallback: number, min: number, max: number): number {
   const text = (raw ?? "").trim();
@@ -83,18 +78,15 @@ export function envInt(raw: string | undefined, fallback: number, min: number, m
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-
 /** `MEM0_PIPELINE_REVIEW_CAP` : plafond des tours de correction (défaut 3). */
 export function lotReviewCap(env: Record<string, string | undefined> = process.env): number {
   return envInt(env.MEM0_PIPELINE_REVIEW_CAP, PIPELINE_REVIEW_CAP_DEFAULT, 1, 20);
 }
 
-
 /** `MEM0_PIPELINE_ARBITER_JOURNAL` : entrées du journal du lot soumises à l'arbitre (défaut 200). */
 export function lotArbiterJournalMax(env: Record<string, string | undefined> = process.env): number {
   return envInt(env.MEM0_PIPELINE_ARBITER_JOURNAL, 200, 1, 10_000);
 }
-
 
 /** `MEM0_PIPELINE_SLOTS` : runs de features du lot menés en parallèle (défaut 4). */
 export const PIPELINE_SLOTS_DEFAULT = 4;
@@ -104,7 +96,6 @@ export const PIPELINE_SLOTS_DEFAULT = 4;
  * `omp` que rien ne justifie (et que l'utilisateur n'a pas demandée).
  */
 export const PIPELINE_SLOTS_MAX = 32;
-
 
 /**
  * `MEM0_PIPELINE_SLOTS` : le plafond de runs de features du lot menés en
@@ -117,12 +108,10 @@ export function lotSlots(env: Record<string, string | undefined> = process.env):
   return envInt(env.MEM0_PIPELINE_SLOTS, PIPELINE_SLOTS_DEFAULT, 1, PIPELINE_SLOTS_MAX);
 }
 
-
 /** `MEM0_PIPELINE_RUN_TIMEOUT_MS` : budget d'un run (défaut 1 h). */
 export function lotRunTimeoutMs(env: Record<string, string | undefined> = process.env): number {
   return envInt(env.MEM0_PIPELINE_RUN_TIMEOUT_MS, LOT_RUN_TIMEOUT_MS, 10_000, 86_400_000);
 }
-
 
 /** Seuil SOFT par défaut (tokens) : au franchissement, le run hébergé est compacté à la fin du tour. */
 export const LOT_CONTEXT_SOFT_DEFAULT = 120_000;
@@ -163,10 +152,14 @@ export function lotContextSoftDefault(phase?: PipelinePhase): number {
  * nulle ou négative retombe sur la valeur de rang inférieur ; si `soft` atteint ou
  * dépasse `hard`, les deux défauts s'appliquent.
  */
-export function lotContextThresholds(env: Record<string, string | undefined> = process.env, phase?: PipelinePhase): ContextThresholds {
+export function lotContextThresholds(
+  env: Record<string, string | undefined> = process.env,
+  phase?: PipelinePhase,
+): ContextThresholds {
   const softDefault = lotContextSoftDefault(phase);
   const general = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_SOFT, softDefault);
-  const soft = phase === undefined ? general : thresholdFromEnv(env[`MEM0_PIPELINE_CONTEXT_SOFT_${phase.toUpperCase()}`], general);
+  const soft =
+    phase === undefined ? general : thresholdFromEnv(env[`MEM0_PIPELINE_CONTEXT_SOFT_${phase.toUpperCase()}`], general);
   const hard = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_HARD, LOT_CONTEXT_HARD_DEFAULT);
   if (soft >= hard) return { soft: softDefault, hard: LOT_CONTEXT_HARD_DEFAULT };
   return { soft, hard };

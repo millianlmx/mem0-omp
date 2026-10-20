@@ -196,7 +196,13 @@ function writeSession(file: string, cwd: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     JSON.stringify({ type: "title", v: 1, title: "session de test", updatedAt: 1 }),
-    JSON.stringify({ type: "session", version: 3, id: path.basename(file), timestamp: "2026-09-19T00:00:00.000Z", cwd }),
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: path.basename(file),
+      timestamp: "2026-09-19T00:00:00.000Z",
+      cwd,
+    }),
     JSON.stringify({
       type: "message",
       id: "u",
@@ -560,7 +566,11 @@ type ReqCtx = {
  */
 function mkReqCtx(
   cwd: string,
-  options: { answers?: Array<string | undefined>; models?: Array<{ provider: string; id: string }>; hasUI?: boolean } = {},
+  options: {
+    answers?: Array<string | undefined>;
+    models?: Array<{ provider: string; id: string }>;
+    hasUI?: boolean;
+  } = {},
 ): ReqCtx {
   const calls: UiCall[] = [];
   const notices: Array<{ message: string; type?: string }> = [];
@@ -600,7 +610,10 @@ function mkReqCtx(
 // /audit : le relais armé, ses outils et ses dialogues
 // ---------------------------------------------------------------------------
 
-type Tool = { name: string; execute: (...args: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }> };
+type Tool = {
+  name: string;
+  execute: (...args: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+};
 
 function mkAuditPi() {
   const tools = new Map<string, Tool>();
@@ -712,13 +725,11 @@ function mkRepoWithRemote(): { repoRoot: string; bare: string } {
 }
 
 /** Le runner git dont l'URL HTTPS du dépôt désigne le distant nu local. */
-const mappedGit =
-  (bare: string) =>
-  (args: string[], cwd: string) =>
-    gitRunner(
-      args.map((arg) => (arg === REMOTE ? bare : arg)),
-      cwd,
-    );
+const mappedGit = (bare: string) => (args: string[], cwd: string) =>
+  gitRunner(
+    args.map((arg) => (arg === REMOTE ? bare : arg)),
+    cwd,
+  );
 
 type GhResult = { code: number; stdout: string; stderr: string };
 type Gh = (args: string[], cwd: string) => Promise<GhResult>;
@@ -733,7 +744,10 @@ function mkGh(): Gh {
 }
 
 /** Un pilote réel câblé sur des doublures, avec son magasin d'état jetable. */
-function mkProjectCtl(repoRoot: string, options: { runner: (input: RunInput) => Promise<LotRunnerResult>; git: Gh; gh: Gh }) {
+function mkProjectCtl(
+  repoRoot: string,
+  options: { runner: (input: RunInput) => Promise<LotRunnerResult>; git: Gh; gh: Gh },
+) {
   const stateDir = path.join(tmpdir("model-selector-project-state-"), "pipeline");
   const controller = createLotController({
     stateDir,
@@ -773,7 +787,10 @@ function mkProjUi(answers: unknown[]) {
   return { ui, calls };
 }
 
-type ProjTool = { name: string; execute: (...args: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }> };
+type ProjTool = {
+  name: string;
+  execute: (...args: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+};
 
 function mkProjPi() {
   const tools = new Map<string, ProjTool>();
@@ -891,20 +908,18 @@ const PLAN_ONE = {
 // ---------------------------------------------------------------------------
 
 test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaque groupe et l'enregistrent", async () => {
-  {
-    // Les fonctions PURES des libellés : le titre nomme le GROUPE et le slug, les
-    // options gardent « défaut OMP » en tête, et la traduction reste celle d'avant.
-    assert.equal(MODEL_GROUP_LABELS.modelReqSpecs, "cadrage+revue");
-    assert.equal(MODEL_GROUP_LABELS.modelImplReview, "exécution");
-    assert.equal(modelQuestionTitle("alpha", "modelReqSpecs"), "Modèle cadrage+revue — alpha");
-    assert.equal(modelQuestionTitle("alpha", "modelImplReview"), "Modèle exécution — alpha");
-    assert.equal(DEFAULT_MODEL_LABEL, "défaut OMP (aucun modèle)");
-    assert.deepEqual(modelDialogOptions([]), [], "aucun modèle connu : aucune question");
-    assert.equal(modelDialogOptions(KNOWN)[0]!.label, DEFAULT_MODEL_LABEL);
-    assert.deepEqual(modelDialogChoice(undefined), null, "Échap = annulation");
-    assert.deepEqual(modelDialogChoice(DEFAULT_MODEL_LABEL), { model: null });
-    assert.deepEqual(modelPanelChoices([]), [], "aucun modèle connu : aucune étape de panneau");
-  }
+  // Les fonctions PURES des libellés : le titre nomme le GROUPE et le slug, les
+  // options gardent « défaut OMP » en tête, et la traduction reste celle d'avant.
+  assert.equal(MODEL_GROUP_LABELS.modelReqSpecs, "cadrage+revue");
+  assert.equal(MODEL_GROUP_LABELS.modelImplReview, "exécution");
+  assert.equal(modelQuestionTitle("alpha", "modelReqSpecs"), "Modèle cadrage+revue — alpha");
+  assert.equal(modelQuestionTitle("alpha", "modelImplReview"), "Modèle exécution — alpha");
+  assert.equal(DEFAULT_MODEL_LABEL, "défaut OMP (aucun modèle)");
+  assert.deepEqual(modelDialogOptions([]), [], "aucun modèle connu : aucune question");
+  assert.equal(modelDialogOptions(KNOWN)[0]!.label, DEFAULT_MODEL_LABEL);
+  assert.deepEqual(modelDialogChoice(undefined), null, "Échap = annulation");
+  assert.deepEqual(modelDialogChoice(DEFAULT_MODEL_LABEL), { model: null });
+  assert.deepEqual(modelPanelChoices([]), [], "aucun modèle connu : aucune étape de panneau");
 
   {
     // PORTE /req : DEUX dialogues, dans l'ordre cadrage+revue puis exécution, et les
@@ -914,7 +929,10 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     const base = tmpdir("model-selector-ac2-req-wt-");
     await withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, async () => {
       const app = mkReqApp();
-      const { ctx, calls, moved } = mkReqCtx(root, { answers: [MODEL_A, "aucun repli", MODEL_B, "aucun repli"], models: KNOWN });
+      const { ctx, calls, moved } = mkReqCtx(root, {
+        answers: [MODEL_A, "aucun repli", MODEL_B, "aucun repli"],
+        models: KNOWN,
+      });
       await app.commands.get("req")!("deux-groupes", ctx as never);
 
       assert.deepEqual(
@@ -948,7 +966,9 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     const base = tmpdir("model-selector-ac2-cancel-wt-");
     await withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, async () => {
       const app = mkReqApp();
-      for (const answers of [[undefined], [MODEL_A, undefined], [MODEL_A, "aucun repli", MODEL_B, undefined]] as Array<Array<string | undefined>>) {
+      for (const answers of [[undefined], [MODEL_A, undefined], [MODEL_A, "aucun repli", MODEL_B, undefined]] as Array<
+        Array<string | undefined>
+      >) {
         const { ctx, notices, moved } = mkReqCtx(root, { answers, models: KNOWN });
         await app.commands.get("req")!("annule", ctx as never);
         assert.deepEqual(
@@ -1052,7 +1072,10 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
   {
     // PORTE /project : deux questions par slug à la validation du plan ; les clés
     // vivent sur la feature de projet ET passent au lot quand le segment part.
-    const fx = mkProjectFixture({ answers: ["Valider le plan", MODEL_A, "aucun repli", MODEL_B, "aucun repli"], models: KNOWN });
+    const fx = mkProjectFixture({
+      answers: ["Valider le plan", MODEL_A, "aucun repli", MODEL_B, "aucun repli"],
+      models: KNOWN,
+    });
     projectState.cadrage = { sessionFile: fx.sessionFile, fin: true };
     fx.arm();
     const validated = await fx.call("project_plan", PLAN_ONE);
@@ -1293,7 +1316,14 @@ test("model-selector/AC-3 : les runs req/specs/review reçoivent A, les runs imp
       phaseStartedAt: T0,
       endedAt: T0,
     });
-    const seen: Array<{ cwd: string; sessionFile: string; label: string; phase: PipelinePhase; inbox: string; model?: string | null }> = [];
+    const seen: Array<{
+      cwd: string;
+      sessionFile: string;
+      label: string;
+      phase: PipelinePhase;
+      inbox: string;
+      model?: string | null;
+    }> = [];
     const panel = mountPanel(stateDir, {
       repoRoot,
       sessionReply: async (target) => {
@@ -1318,7 +1348,11 @@ test("model-selector/AC-3 : les runs req/specs/review reçoivent A, les runs imp
     assert.equal(featureModelOf(lot, worktree, "specs"), MODEL_A);
     assert.equal(featureModelOf(lot, tmpdir("model-selector-ac3-hors-lot-"), "review"), null);
     assert.equal(featureModelOf(lot, "", "review"), null, "la chaîne vide n'est jamais appariée");
-    assert.equal(featureModelOf(lot, path.join(worktree, "sous-dossier"), "review"), null, "seul le worktree est apparié");
+    assert.equal(
+      featureModelOf(lot, path.join(worktree, "sous-dossier"), "review"),
+      null,
+      "seul le worktree est apparié",
+    );
     assert.equal(featureModelOf(null, worktree, "review"), null, "sans lot, aucun modèle");
   }
 });
@@ -1352,7 +1386,9 @@ test("model-selector/AC-4 : une feature créée avant, avec un modèle unique M,
 
     // Les valeurs non conformes (`"  "`, `42`, `null`) sont lues ABSENTES, jamais un
     // rejet du lot — le patron d'`asLotFeature`.
-    const raw = JSON.parse(fs.readFileSync(lotFile(stateDir, repoRoot), "utf8")) as { features: Array<Record<string, unknown>> };
+    const raw = JSON.parse(fs.readFileSync(lotFile(stateDir, repoRoot), "utf8")) as {
+      features: Array<Record<string, unknown>>;
+    };
     const { model: _legacy, ...base } = raw.features[0]!;
     const malformed = (slug: string, over: Record<string, unknown>) => ({ ...base, slug, ...over });
     raw.features = [
@@ -1427,10 +1463,30 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     // RÉINTRODUIRE une clé absente (`reviewHash: null` par la relecture normale du
     // lot), qui n'est pas un changement de la feature.
     const untouched = [
-      "slug", "name", "branch", "worktree", "deps", "origin", "state", "phase", "waitKind",
-      "waitPrompt", "sessionFile", "pendingTexts", "prUrl", "stopReason", "fixes",
-      "unreadableRuns", "lastVerdict", "lastBlockers", "lastRunSessionFile", "contractHash",
-      "addedAt", "sinceAt", "updatedAt", "endedAt",
+      "slug",
+      "name",
+      "branch",
+      "worktree",
+      "deps",
+      "origin",
+      "state",
+      "phase",
+      "waitKind",
+      "waitPrompt",
+      "sessionFile",
+      "pendingTexts",
+      "prUrl",
+      "stopReason",
+      "fixes",
+      "unreadableRuns",
+      "lastVerdict",
+      "lastBlockers",
+      "lastRunSessionFile",
+      "contractHash",
+      "addedAt",
+      "sinceAt",
+      "updatedAt",
+      "endedAt",
     ];
     for (const key of untouched) assert.deepEqual(after[key], before[key], `${key} inchangé`);
     assert.equal(
@@ -1507,7 +1563,11 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     await flush(6);
 
     assert.equal(phaseOf(runs[1]!), "review");
-    assert.deepEqual(modelArgvOf(runs[1]!), ["--model", MODEL_M], "le run `review` prend la valeur de `modelReqSpecs` en vigueur à son lancement");
+    assert.deepEqual(
+      modelArgvOf(runs[1]!),
+      ["--model", MODEL_M],
+      "le run `review` prend la valeur de `modelReqSpecs` en vigueur à son lancement",
+    );
     gate.shift()!(OK_RUN);
     await flush(6);
   }
@@ -1572,7 +1632,9 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     );
 
     // Une feature TERMINALE est modifiable : aucune condition d'état.
-    seedLot(stateDir, repoRoot, [feature("done", { modelReqSpecs: MODEL_A, state: "done", phase: "review", endedAt: T0 })]);
+    seedLot(stateDir, repoRoot, [
+      feature("done", { modelReqSpecs: MODEL_A, state: "done", phase: "review", endedAt: T0 }),
+    ]);
     deposit(stateDir, {
       version: 1,
       id: "c-models-done",
@@ -1598,13 +1660,21 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     const { runner } = mkRunner();
     const { controller, stateDir } = mkCtl(repoRoot, { runner });
     seedLot(stateDir, repoRoot, [
-      feature("alpha", { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B, worktree: tmpdir("model-selector-ac5-panel-wt-") }),
+      feature("alpha", {
+        modelReqSpecs: MODEL_A,
+        modelImplReview: MODEL_B,
+        worktree: tmpdir("model-selector-ac5-panel-wt-"),
+      }),
     ]);
     const { actions, calls } = countingActions();
     const panel = mountPanel(stateDir, { repoRoot, lot: actions, modelChoices: () => modelChoices(KNOWN) });
     press(panel, ["m"]);
     assert.match(panel.screen(80), /Modèle cadrage\+revue/, "le geste m ouvre l'étape cadrage+revue");
-    assert.match(panel.screen(80), /> anthropic\/claude-opus-4-7/, "le curseur est pré-positionné sur la valeur courante");
+    assert.match(
+      panel.screen(80),
+      /> anthropic\/claude-opus-4-7/,
+      "le curseur est pré-positionné sur la valeur courante",
+    );
     press(panel, ["\r"]); // garde A → repli cadrage+revue
     assert.match(panel.screen(80), /Repli cadrage\+revue/, "le repli suit son principal");
     press(panel, ["\r"]); // aucun repli → étape exécution
@@ -1791,32 +1861,30 @@ test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --mo
 // ---------------------------------------------------------------------------
 
 test("model-selector/AC-7 : le rang du panneau et le document du projet montrent les deux groupes", () => {
-  {
-    // Le LIBELLÉ, au constructeur pur : le segment se place après `slug ← deps` et
-    // avant la file ; un groupe vide s'écrit `défaut OMP` ; une feature sans
-    // aucune clé garde le libellé d'aujourd'hui, à l'octet près.
-    assert.equal(DEFAULT_MODEL_SHORT_LABEL, "défaut OMP");
-    assert.equal(
-      lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
-      `alpha · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
-    );
-    assert.equal(
-      lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A })),
-      `alpha · cadrage+revue ${MODEL_A} · exécution défaut OMP`,
-    );
-    assert.equal(
-      lotFeatureLabel(feature("alpha", { model: MODEL_M })),
-      `alpha · cadrage+revue ${MODEL_M} · exécution ${MODEL_M}`,
-      "une feature ancienne affiche M dans les deux groupes",
-    );
-    assert.equal(lotFeatureLabel(feature("alpha")), "alpha", "sans clé, aucun segment");
-    assert.equal(lotFeatureLabel(feature("alpha", { deps: ["beta"] })), "alpha ← beta");
-    assert.equal(
-      lotFeatureLabel(feature("alpha", { deps: ["beta"], modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
-      `alpha ← beta · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
-      "le segment suit les dépendances et précède la file",
-    );
-  }
+  // Le LIBELLÉ, au constructeur pur : le segment se place après `slug ← deps` et
+  // avant la file ; un groupe vide s'écrit `défaut OMP` ; une feature sans
+  // aucune clé garde le libellé d'aujourd'hui, à l'octet près.
+  assert.equal(DEFAULT_MODEL_SHORT_LABEL, "défaut OMP");
+  assert.equal(
+    lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
+    `alpha · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
+  );
+  assert.equal(
+    lotFeatureLabel(feature("alpha", { modelReqSpecs: MODEL_A })),
+    `alpha · cadrage+revue ${MODEL_A} · exécution défaut OMP`,
+  );
+  assert.equal(
+    lotFeatureLabel(feature("alpha", { model: MODEL_M })),
+    `alpha · cadrage+revue ${MODEL_M} · exécution ${MODEL_M}`,
+    "une feature ancienne affiche M dans les deux groupes",
+  );
+  assert.equal(lotFeatureLabel(feature("alpha")), "alpha", "sans clé, aucun segment");
+  assert.equal(lotFeatureLabel(feature("alpha", { deps: ["beta"] })), "alpha ← beta");
+  assert.equal(
+    lotFeatureLabel(feature("alpha", { deps: ["beta"], modelReqSpecs: MODEL_A, modelImplReview: MODEL_B })),
+    `alpha ← beta · cadrage+revue ${MODEL_A} · exécution ${MODEL_B}`,
+    "le segment suit les dépendances et précède la file",
+  );
 
   {
     // La LISTE MONTÉE : les trois formes du lot sont visibles et distinctes.

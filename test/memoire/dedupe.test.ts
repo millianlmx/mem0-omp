@@ -70,13 +70,17 @@ test("renderDedupePreview: supprimé rendu en entier, gardé tronqué, aucune pa
   assert.ok(out.includes("paire 2/2"));
   assert.ok(out.includes(longDrop), "le texte supprimé doit apparaître intégralement");
   assert.ok(!out.includes(longKeep), "le texte gardé long doit être tronqué");
-  assert.ok(out.includes(longKeep.slice(0, 240) + "…"));
+  assert.ok(out.includes(`${longKeep.slice(0, 240)}…`));
   assert.ok(out.includes("recouvrement 0.50"));
 });
 
 test("renderDedupePreview: 'perte aucune' quand le supprimé n'ajoute aucun vocabulaire", () => {
   const pairs = [
-    { keep: entry("K", "gardé riche", ["alpha", "beta", "gamma"]), drop: entry("D", "pauvre", ["alpha", "beta"]), cov: 0.9 },
+    {
+      keep: entry("K", "gardé riche", ["alpha", "beta", "gamma"]),
+      drop: entry("D", "pauvre", ["alpha", "beta"]),
+      cov: 0.9,
+    },
   ];
   const out = renderDedupePreview(pairs, 0.75);
   assert.match(out, /perte\s+aucune/);

@@ -35,7 +35,13 @@ function writeSession(file: string, cwd: string, messages: string[] = []): void 
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     JSON.stringify({ type: "title", v: 1, title: "session de test", updatedAt: 1 }),
-    JSON.stringify({ type: "session", version: 3, id: path.basename(file), timestamp: "2026-09-19T00:00:00.000Z", cwd }),
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: path.basename(file),
+      timestamp: "2026-09-19T00:00:00.000Z",
+      cwd,
+    }),
     ...messages.map((content, i) => JSON.stringify({ type: "message", id: `m${i}`, role: "user", content })),
   ];
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
@@ -461,9 +467,7 @@ test("joinEntry : une bascule refusée restaure l'état d'avant et le dit dans l
 
   assert.equal(rec.closed(), 1, "le panneau est fermé avant la bascule");
   assert.deepEqual(rec.notices, [], "ce n'est pas une notice de panneau : le panneau est déjà fermé");
-  assert.deepEqual(rec.durable, [
-    `[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${fileB}`,
-  ]);
+  assert.deepEqual(rec.durable, [`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${fileB}`]);
   // Le snapshot est restauré : cwd, bucket et fichier reviennent à l'état d'avant,
   // et l'adoption n'a pas lieu (il n'y a pas eu de bascule).
   assert.equal(nav.calls.at(-1), "restoreState", `l'annulation vient en dernier : ${nav.calls.join(" → ")}`);
@@ -481,9 +485,7 @@ test("joinEntry : une bascule refusée restaure l'état d'avant et le dit dans l
   };
   const rec2 = recorder();
   await joinEntry({ sessionFile: fileB }, rec2.deps(throwing));
-  assert.deepEqual(rec2.durable, [
-    `[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${fileB}`,
-  ]);
+  assert.deepEqual(rec2.durable, [`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${fileB}`]);
   assert.equal(nav.cwd(), a, "l'état est celui d'avant l'appel");
 });
 

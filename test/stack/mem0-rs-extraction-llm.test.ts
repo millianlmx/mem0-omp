@@ -67,7 +67,9 @@ function manque(t: TestContext, prerequis: string, consequence: string, exige: b
 
 const cargoPresent = (): boolean => spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
 
-test("mem0-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contre mem0-rs et échoue quand un cas infer échoue", { timeout: DELAI_LOURD }, async (t) => {
+test("mem0-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contre mem0-rs et échoue quand un cas infer échoue", {
+  timeout: DELAI_LOURD,
+}, async (t) => {
   if (DEPTH !== 0) {
     t.skip(`cargo à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
@@ -84,7 +86,9 @@ test("mem0-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contre 
   const cible = process.env.CARGO_TARGET_DIR || path.join(ROOT, "mem0-stack", "mem0-rs", "target");
   const binaire = path.join(path.resolve(ROOT, cible), "debug", "mem0-rs");
   const enveloppe = path.join(tmpdir("mem0-rs-ac7-"), "mem0-rs-fautif");
-  fs.writeFileSync(enveloppe, `#!/usr/bin/env bash\nOMLX_LLM_MODEL=modele-fautif exec "${binaire}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(enveloppe, `#!/usr/bin/env bash\nOMLX_LLM_MODEL=modele-fautif exec "${binaire}" "$@"\n`, {
+    mode: 0o755,
+  });
 
   const r = await lancer(
     ["scripts/check.sh", "--sections=rust"],
@@ -92,10 +96,15 @@ test("mem0-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contre 
   );
   assert.equal(r.code, 1, r.sortie);
   assert.ok(
-    r.sortie.includes("FAIL  ouvert/infer · mem0-rs-extraction-llm AC-2 · requête chat identique : système, invite, modèle et paramètres"),
+    r.sortie.includes(
+      "FAIL  ouvert/infer · mem0-rs-extraction-llm AC-2 · requête chat identique : système, invite, modèle et paramètres",
+    ),
     r.sortie,
   );
   assert.ok(r.sortie.includes("  ✗ Rust mem0-rs — contrat boîte noire contre mem0-rs en échec"), r.sortie);
-  assert.ok(r.sortie.split("\n").some((ligne) => ligne.startsWith("PASS  ouvert/suppression · ")), r.sortie);
+  assert.ok(
+    r.sortie.split("\n").some((ligne) => ligne.startsWith("PASS  ouvert/suppression · ")),
+    r.sortie,
+  );
   assert.ok(!r.sortie.includes("groupe infer=true désactivé"), r.sortie);
 });

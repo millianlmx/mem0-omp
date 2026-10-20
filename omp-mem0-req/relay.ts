@@ -5,7 +5,16 @@ import * as path from "node:path";
 import { isReviewCapReason } from "./chain.ts";
 import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
-import { LOT_TICK_MS, dependencyStopReason, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, quotaGroupsOf, readLot } from "./lot.ts";
+import {
+  LOT_TICK_MS,
+  dependencyStopReason,
+  lotOwnerAlive,
+  lotRepoKey,
+  parseReplyOptions,
+  questionOf,
+  quotaGroupsOf,
+  readLot,
+} from "./lot.ts";
 import type { FeatureEscalation, Lot, LotFeature, QuotaGroup } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
 import { modelSelector } from "./models.ts";
@@ -15,8 +24,6 @@ import { appendJournal } from "./context.ts";
 import { repoRootOf } from "./git.ts";
 import { liveRunFor, panelInboxDirOf, removeAuditRelay, writeAuditRelay, writeDelivery } from "./store.ts";
 import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
-
-
 
 // ---------------------------------------------------------------------------
 // Le relais — une session interactive qui tranche pour l'utilisateur.
@@ -68,7 +75,6 @@ export type RelayItem = {
   escalation?: FeatureEscalation;
 };
 
-
 /** Le texte d'un groupe de quota relayé (S-5), mot pour mot : une seule escalade par fournisseur. */
 export function quotaRelayMessage(name: string, item: RelayItem): string {
   const group = item.quota as QuotaGroup;
@@ -88,7 +94,9 @@ export function escalationRelayMessage(name: string, item: RelayItem): string {
   const lines = [`[${name}] escalade — ${item.slug} /${item.phase} : ${escalation.question}`];
   if (escalation.options.length > 0) {
     lines.push("Options :");
-    escalation.options.forEach((option, index) => lines.push(`- (${index + 1}) ${option}`));
+    escalation.options.forEach((option, index) => {
+      lines.push(`- (${index + 1}) ${option}`);
+    });
   }
   lines.push(
     `motif de l'arbitre : ${escalation.reason}`,
@@ -96,7 +104,6 @@ export function escalationRelayMessage(name: string, item: RelayItem): string {
   );
   return lines.join("\n");
 }
-
 
 /** L'état d'un relais dans le process : partagé par les instances de l'extension (même patron que `runState`). */
 export type RelayState = {
@@ -121,7 +128,6 @@ export type RelayState = {
   ctx: ExtensionContext | null;
 };
 
-
 export type Relay = {
   markCreated(sessionFile: string): void;
   sync(ctx: ExtensionContext): void;
@@ -129,7 +135,6 @@ export type Relay = {
   scan(): void;
   items(): RelayItem[];
 };
-
 
 export type RelayDeps = {
   pi: ExtensionAPI;
@@ -139,14 +144,12 @@ export type RelayDeps = {
   now?: () => number;
 };
 
-
 export type RelayToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 /** Le résultat d'un outil du relais : un texte, en erreur ou non. */
 export function relayToolText(text: string, isError = false): RelayToolResult {
   return isError ? { content: [{ type: "text", text }], isError: true } : { content: [{ type: "text", text }] };
 }
-
 
 /** Ce que le cœur prête aux outils propres d'un profil (`audit_propose`, `project_plan`…). */
 export type RelayCore = {
@@ -162,14 +165,12 @@ export type RelayCore = {
   needsUi: string;
 };
 
-
 /**
  * L'escalade d'un élément PROPRE au profil (l'échec d'une feature de projet) :
  * la réponse de l'utilisateur (`undefined` = pas de réponse), l'action exécutée
  * APRÈS la revérification de l'élément, et le texte rendu en cas de succès.
  */
 export type RelayEscalation = { answer: string | undefined; act?: () => Promise<string | null>; done?: string };
-
 
 type ToolDoc = { label: string; description: string };
 
@@ -202,7 +203,6 @@ export type RelayProfile = {
   /** À chaque armement, après la remise à zéro de l'état. */
   onArm?(): void;
 };
-
 
 /**
  * Les éléments courants des features relayées à `key`, dans l'ordre du lot, au
@@ -304,7 +304,6 @@ export function relayItemsOf(
   return items;
 }
 
-
 /**
  * Les éléments du LOT relayés à `key` : `relayItemsOf` filtré. Une question ou un
  * jalon n'est relayé que ESCALADÉ (S-10) : sans escalade, l'arbitre le tranche et la
@@ -332,12 +331,10 @@ export function relayedLotItems(
   });
 }
 
-
 const FREE_TEXT = "Autre réponse (texte libre)";
 const LEAVE_BLOCKED = "Laisser bloquées pour l'instant";
 export const ABANDON_FEATURE = "Abandonner la feature (worktree et branche conservés)";
 const gone = (item: string) => `Error: ${item} n'est plus en attente (déjà traité, ou retombé au panneau /pipelines)`;
-
 
 /** La fabrique d'un relais (S-6) : le cœur commun, paramétré par son profil. */
 export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
@@ -568,7 +565,7 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
     const ui = ctx.ui;
     if (typeof ui.askDialog === "function") {
       const result = await ui.askDialog([{ id: item.key, question, options: item.options, multi: false }], { signal });
-      if (!result || result.kind !== "submit") return undefined;
+      if (result?.kind !== "submit") return undefined;
       const first = result.results[0];
       if (!first || first.timedOut === true) return undefined;
       if (typeof first.customInput === "string" && first.customInput.trim() !== "") return first.customInput;
@@ -596,7 +593,13 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
       approval: "read",
       loadMode: "essential",
       parameters: pi.arktype({ item: "string" }),
-      async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+      async execute(
+        _toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        _onUpdate?: unknown,
+        ctx?: ExtensionContext,
+      ) {
         const { item: key } = params as { item: string };
         if (!armedOn(ctx) || ctx === undefined) return relayToolText(notArmed, true);
         if (findItem(key) === undefined) return relayToolText(gone(key), true);
@@ -642,7 +645,9 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
       return relayToolText(`${gone(item.key)} — la réponse de l'utilisateur n'a pas été transmise`, true);
     }
     const key = profile.keyOf();
-    const refusal = await deps.controllerFor(ctx).resolveQuota(group.provider, answer, { kind: "context", key: key ?? "" });
+    const refusal = await deps
+      .controllerFor(ctx)
+      .resolveQuota(group.provider, answer, { kind: "context", key: key ?? "" });
     if (refusal !== null) return relayToolText(`Error: ${refusal}`, true);
     state.relayed.delete(item.key);
     return relayToolText(
@@ -651,7 +656,11 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
   }
 
   /** `<nom>_escalate` à son tour de dialogue (S-5) : l'élément est relu, il a pu être traité entre-temps. */
-  async function escalate(ctx: ExtensionContext, key: string, signal: AbortSignal | undefined): Promise<RelayToolResult> {
+  async function escalate(
+    ctx: ExtensionContext,
+    key: string,
+    signal: AbortSignal | undefined,
+  ): Promise<RelayToolResult> {
     const item = findItem(key);
     if (item === undefined) return relayToolText(gone(key), true);
     if (item.kind === "quota") return escalateQuota(ctx, item, signal);

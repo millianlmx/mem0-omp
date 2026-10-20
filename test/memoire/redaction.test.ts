@@ -28,7 +28,8 @@ const GITHUB_PAT = "jeton github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvw
 // (`xoxb-<sections chiffrées>-<secret>`, `xoxp-111-222-333-<secret>`).
 const SLACK_BOT = ["xoxb", "123456789012", "1234567890123", "abcdefghijklmnopqrstuvwx"].join("-");
 const SLACK_USER = ["xoxp", "111", "222", "333", "a".repeat(32)].join("-");
-const PEM_RSA = "avant\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxYz1234567890abcdefGHIJKLMNOP\n+qrStuvWXyZ0123456789abcdef=\n-----END RSA PRIVATE KEY-----\napres";
+const PEM_RSA =
+  "avant\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxYz1234567890abcdefGHIJKLMNOP\n+qrStuvWXyZ0123456789abcdef=\n-----END RSA PRIVATE KEY-----\napres";
 const URL_PG = "postgres://admin:S3cretP4ss@db.example.com:5432/app";
 
 test("redaction/AC-1 : clé Anthropic sk-ant-api03 masquée, préfixe compris", () => {
@@ -75,7 +76,8 @@ test("redaction/AC-5 : bloc PEM masqué en entier (variantes, multi-blocs, bloc 
   assert.ok(!rsa.includes("-----END"), "le pied ne doit pas subsister");
   assert.ok(!rsa.includes("MIIEowIBAAKCAQEAxYz1234567890abcdefGHIJKLMNOP"), "le corps base64 ne doit pas subsister");
 
-  const openssh = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==\n-----END OPENSSH PRIVATE KEY-----";
+  const openssh =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==\n-----END OPENSSH PRIVATE KEY-----";
   assert.equal(redact(openssh), "[REDACTED]");
 
   const pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBG1234567890abcdef\n-----END PGP PRIVATE KEY BLOCK-----";
@@ -100,10 +102,7 @@ test("redaction/AC-6 : identifiants d'URL masqués, schéma/hôte/port/chemin co
   assert.equal(redact("https://user:p%40ss@host/x"), "https://[REDACTED]@host/x");
   assert.equal(redact("a://u1:p1@h1 b://u2:p2@h2"), "a://[REDACTED]@h1 b://[REDACTED]@h2");
   // Ordre d'application : la famille de clé masque d'abord le suffixe, puis la règle URL le reste du userinfo.
-  assert.equal(
-    redact("https://user:sk-ant-api03-AbCdEf0123456789_-XYZabcDEF@host/x"),
-    "https://[REDACTED]@host/x",
-  );
+  assert.equal(redact("https://user:sk-ant-api03-AbCdEf0123456789_-XYZabcDEF@host/x"), "https://[REDACTED]@host/x");
 });
 
 test("redaction/AC-7 : non-régression des six familles historiques, jeton [REDACTED] stable", () => {
@@ -119,7 +118,16 @@ test("redaction/AC-7 : non-régression des six familles historiques, jeton [REDA
   // Le jeton de masquage est stable : aucun motif ne le reconnaît (exigé par les flux de relecture).
   assert.equal(redact("[REDACTED]"), "[REDACTED]");
   // Idempotence sur la concaténation de toutes les familles : redact(redact(t)) === redact(t).
-  const tout = [ANTHROPIC, OPENAI_PROJ, GITHUB_PAT, SLACK_BOT, SLACK_USER, PEM_RSA, URL_PG, "ghp_ABCDEFGHIJKLMNOPQRSTUVWX"].join("\n");
+  const tout = [
+    ANTHROPIC,
+    OPENAI_PROJ,
+    GITHUB_PAT,
+    SLACK_BOT,
+    SLACK_USER,
+    PEM_RSA,
+    URL_PG,
+    "ghp_ABCDEFGHIJKLMNOPQRSTUVWX",
+  ].join("\n");
   const une = redact(tout);
   assert.equal(redact(une), une, "redact est idempotent");
 });

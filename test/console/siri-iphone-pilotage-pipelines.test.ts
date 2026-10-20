@@ -28,7 +28,7 @@ const SIRI_TEXT = "omp-console/ios/OMPConsoleIOS/IOSSiriText.swift";
 const README = "omp-console/README.md";
 const SECTION = "### Siri : piloter les pipelines";
 
-const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const read = (rel: string): string => {
   const full = path.join(ROOT, rel);
@@ -41,7 +41,7 @@ function untracedCriteria(sources: string[]): string[] {
   const faults: string[] = [];
   for (let n = 1; n <= LAST_AC; n += 1) {
     if (MANUAL[n]) continue;
-    const marker = new RegExp(`@Test\\("${escape(`${FEATURE}/AC-${n} :`)}`);
+    const marker = new RegExp(`@Test\\("${escapeRegExp(`${FEATURE}/AC-${n} :`)}`);
     if (!sources.some((source) => marker.test(source))) {
       faults.push(`AC-${n} n’est porté par aucun @Test de ${TESTS.join(", ")}`);
     }
@@ -119,13 +119,20 @@ test(`${FEATURE}/AC-17 : le README porte la section « Siri : piloter les pipeli
   assert.ok(body !== undefined, `${README} : section « ${SECTION} » absente`);
   const at = readme.indexOf(SECTION);
   assert.ok(
-    readme.indexOf("### Siri : demandes en attente") < at && at < readme.indexOf("### Conduire un projet depuis l'iPad"),
+    readme.indexOf("### Siri : demandes en attente") < at &&
+      at < readme.indexOf("### Conduire un projet depuis l'iPad"),
     "la section suit « Siri : demandes en attente » et précède « Conduire un projet depuis l'iPad »",
   );
-  assert.match(body, new RegExp(escape(`${FEATURE}/AC-17`)), "la recette nomme son critère");
+  assert.match(body, new RegExp(escapeRegExp(`${FEATURE}/AC-17`)), "la recette nomme son critère");
   const steps = body.slice(body.indexOf(`${FEATURE}/AC-17`)).match(/^\d+\. /gm) ?? [];
   assert.ok(steps.length >= 5, `la recette compte ${steps.length} étapes, 5 attendues`);
-  for (const gesture of ["Lancer une feature", "Reprendre une feature", "Arrêter une feature", "Valider les specs", "Accepter la revue"]) {
+  for (const gesture of [
+    "Lancer une feature",
+    "Reprendre une feature",
+    "Arrêter une feature",
+    "Valider les specs",
+    "Accepter la revue",
+  ]) {
     assert.ok(body.includes(gesture), `la section ne cite pas « ${gesture} »`);
   }
   assert.match(body, /toutes les pipelines du dépôt/, "l’arrêt vise tout le dépôt");

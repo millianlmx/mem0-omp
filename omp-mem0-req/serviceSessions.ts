@@ -8,7 +8,16 @@
 import type { AgentSession, ExtensionAPI, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { DialogAnswer, DialogRequest, ServiceFrame, SessionDescription, SessionPurpose, SessionRunState, SessionSubscription, SessionView } from "./serviceApi.ts";
+import type {
+  DialogAnswer,
+  DialogRequest,
+  ServiceFrame,
+  SessionDescription,
+  SessionPurpose,
+  SessionRunState,
+  SessionSubscription,
+  SessionView,
+} from "./serviceApi.ts";
 import { badRequest, conflict, notFound, ServiceError } from "./serviceApi.ts";
 import {
   applySessionModel,
@@ -28,7 +37,6 @@ import { lotContextThresholds, lotRepoKey } from "./lot.ts";
 import type { ContextThresholds } from "./lot.ts";
 import { appendJournal } from "./context.ts";
 import type { ArbiterCapture } from "./arbiter.ts";
-
 
 /**
  * L'identité d'un MAILLON exécuté par le service (S-3) : ce que la branche de
@@ -61,17 +69,14 @@ function identities(): Map<string, MaillonIdentity> {
   return known;
 }
 
-
 export function registerMaillonIdentity(sessionId: string, identity: MaillonIdentity): void {
   identities().set(sessionId, identity);
 }
-
 
 export function maillonIdentityOf(sessionId: string | null | undefined): MaillonIdentity | null {
   if (typeof sessionId !== "string" || sessionId === "") return null;
   return identities().get(sessionId) ?? null;
 }
-
 
 export function forgetMaillonIdentity(sessionId: string | null | undefined): void {
   if (typeof sessionId === "string" && sessionId !== "") identities().delete(sessionId);
@@ -122,7 +127,8 @@ export function createContextMeter(thresholds: ContextThresholds): ContextMeter 
       if (field(message, "role") !== "assistant") return null;
       const usage = field(message, "usage");
       if (usage === null || typeof usage !== "object") return null;
-      const measure = count(field(usage, "input")) + count(field(usage, "cacheRead")) + count(field(usage, "cacheWrite"));
+      const measure =
+        count(field(usage, "input")) + count(field(usage, "cacheRead")) + count(field(usage, "cacheWrite"));
       if (peak === null || measure > peak) peak = measure;
       let verdict: ContextVerdict = null;
       if (measure > 0) {
@@ -151,7 +157,6 @@ export function createContextMeter(thresholds: ContextThresholds): ContextMeter 
   };
 }
 
-
 /** Le registre des captures d'arbitre, par session — même patron que les identités (Doc-1 §8). */
 const ARBITERS_KEY = Symbol.for("omp-mem0-req.arbiterCaptures");
 
@@ -165,11 +170,9 @@ function arbiters(): Map<string, ArbiterCapture> {
   return known;
 }
 
-
 export function registerArbiterCapture(sessionId: string, capture: ArbiterCapture): void {
   arbiters().set(sessionId, capture);
 }
-
 
 /** La capture de la session `sessionId` si c'est une session d'arbitre, sinon `null`. */
 export function arbiterCaptureOf(sessionId: string | null | undefined): ArbiterCapture | null {
@@ -177,11 +180,9 @@ export function arbiterCaptureOf(sessionId: string | null | undefined): ArbiterC
   return arbiters().get(sessionId) ?? null;
 }
 
-
 export function forgetArbiterCapture(sessionId: string | null | undefined): void {
   if (typeof sessionId === "string" && sessionId !== "") arbiters().delete(sessionId);
 }
-
 
 /** L'audit de l'app qu'analyse une session `audit` (S-1) : lu par l'outil `audit_report`. */
 export type AuditSessionBinding = { auditId: string; stateDir: string };
@@ -199,11 +200,9 @@ function auditSessions(): Map<string, AuditSessionBinding> {
   return known;
 }
 
-
 export function registerAuditSession(sessionId: string, binding: AuditSessionBinding): void {
   auditSessions().set(sessionId, binding);
 }
-
 
 /** L'audit de la session `sessionId` si c'est une session d'analyse d'audit, sinon `null`. */
 export function auditSessionOf(sessionId: string | null | undefined): AuditSessionBinding | null {
@@ -211,15 +210,23 @@ export function auditSessionOf(sessionId: string | null | undefined): AuditSessi
   return auditSessions().get(sessionId) ?? null;
 }
 
-
 export function forgetAuditSession(sessionId: string | null | undefined): void {
   if (typeof sessionId === "string" && sessionId !== "") auditSessions().delete(sessionId);
 }
 
-
 /** Les rôles de modèle « chat » d'OMP (Doc-1) : un sous-agent résolu par rôle suit le modèle du run. */
-const MODEL_ROLES = ["default", "smol", "slow", "vision", "plan", "commit", "tiny", "memory", "task", "advisor"] as const;
-
+const MODEL_ROLES = [
+  "default",
+  "smol",
+  "slow",
+  "vision",
+  "plan",
+  "commit",
+  "tiny",
+  "memory",
+  "task",
+  "advisor",
+] as const;
 
 /**
  * Les réglages EN MÉMOIRE d'une session hébergée (S-2) : EXACTEMENT, quand le modèle
@@ -230,7 +237,7 @@ const MODEL_ROLES = ["default", "smol", "slow", "vision", "plan", "commit", "tin
  */
 export function hostedSettingsOverrides(model: string | null, fallback: string | null): Record<string, unknown> {
   const overrides: Record<string, unknown> = {};
-  if (model !== null) overrides.modelRoles = Object.fromEntries(MODEL_ROLES.map(role => [role, model]));
+  if (model !== null) overrides.modelRoles = Object.fromEntries(MODEL_ROLES.map((role) => [role, model]));
   if (fallback !== null) {
     overrides["retry.fallbackChains"] = { default: [fallback] };
     overrides["retry.fallbackRevertPolicy"] = "cooldown-expiry";
@@ -238,14 +245,12 @@ export function hostedSettingsOverrides(model: string | null, fallback: string |
   return overrides;
 }
 
-
 /**
  * Les formes INTERNES d'une session hébergée : l'API n'en expose que deux (S-6).
  * `audit` est la session d'analyse d'un audit de l'app (S-1) : interne, sans
  * unicité, dialogues refusés d'office.
  */
 export type HostedPurpose = SessionPurpose | "run" | "arbiter" | "audit";
-
 
 /** Une session servie : sa boucle, ses dialogues, ses auditeurs de flux. */
 export type HostedSession = {
@@ -320,7 +325,6 @@ export type OpenSessionOptions = {
   audit?: AuditSessionBinding;
 };
 
-
 /** Le registre des sessions du service : ce que le routeur et le pilote appellent. */
 export interface SessionHost {
   open: (options: OpenSessionOptions) => Promise<HostedSession>;
@@ -346,7 +350,6 @@ export interface SessionHost {
   now: () => number;
 }
 
-
 /** Le texte d'un contenu de message assistant, concaténé bloc à bloc. */
 function assistantTextOf(message: unknown): string {
   if (!message || typeof message !== "object") return "";
@@ -363,12 +366,10 @@ function assistantTextOf(message: unknown): string {
   return parts.join("\n");
 }
 
-
 /** `true` si le message est un message ASSISTANT (le tour du modèle). */
 function isAssistantMessage(message: unknown): boolean {
   return Boolean(message) && typeof message === "object" && (message as { role?: unknown }).role === "assistant";
 }
-
 
 /**
  * L'hôte des sessions du service : un registre en mémoire, une fabrique par
@@ -411,7 +412,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
         const request: DialogRequest = { id: `dlg-${dialogSeq}`, ...input, at: now() };
         // Constructeur plutôt que `Promise.withResolvers` : le plugin est compilé
         // en `lib: ES2023` (tsconfig.json), qui ne l'a pas encore.
-        const promise = new Promise<DialogAnswer>(resolve => {
+        const promise = new Promise<DialogAnswer>((resolve) => {
           session.dialogs.set(request.id, { request, settle: resolve });
           // La trame part AVANT toute attente : l'app voit la question sans délai.
           frame(session, { event: "dialog", data: request });
@@ -437,10 +438,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     const record = body as Record<string, unknown>;
     if (record.cancelled === true) return { cancelled: true };
     if (method === "confirm") {
-      if (typeof record.confirmed !== "boolean") throw badRequest("réponse attendue : {\"confirmed\":true|false}");
+      if (typeof record.confirmed !== "boolean") throw badRequest('réponse attendue : {"confirmed":true|false}');
       return { confirmed: record.confirmed };
     }
-    if (typeof record.value !== "string") throw badRequest("réponse attendue : {\"value\":\"…\"}");
+    if (typeof record.value !== "string") throw badRequest('réponse attendue : {"value":"…"}');
     return { value: record.value };
   }
 
@@ -489,7 +490,13 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
 
   function serialised<T>(session: HostedSession, task: () => Promise<T>): Promise<T> {
     const run = (modelQueues.get(session) ?? Promise.resolve()).then(task);
-    modelQueues.set(session, run.then(() => {}, () => {}));
+    modelQueues.set(
+      session,
+      run.then(
+        () => {},
+        () => {},
+      ),
+    );
     return run;
   }
 
@@ -510,7 +517,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     }
     if (wanted.model === null) return;
     try {
-      await applySessionModel(session.session, { model: wanted.model, thinkingLevel: wanted.thinkingLevel }, { running: false });
+      await applySessionModel(
+        session.session,
+        { model: wanted.model, thinkingLevel: wanted.thinkingLevel },
+        { running: false },
+      );
     } catch (err) {
       const cause = err instanceof ServiceError ? err.reason : err instanceof Error ? err.message : String(err);
       unappliedDefaults.set(session.id, R_DEFAULT_NOT_APPLIED(wanted.model, cause));
@@ -537,7 +548,9 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
         meter.compacted();
         log(`${parentLabel(session)} : contexte compacté à ${measure}`);
       } catch (err) {
-        log(`${parentLabel(session)} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `${parentLabel(session)} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     };
     const previous = session.compacting;
@@ -625,7 +638,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     const session = created.session;
     const id = manager.getSessionId();
     let markDisposed: () => void = () => {};
-    const disposed = new Promise<void>(resolve => {
+    const disposed = new Promise<void>((resolve) => {
       markDisposed = resolve;
     });
     const hosted: HostedSession = {
@@ -646,7 +659,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       listeners: new Set(),
       aborting: false,
       transcript: [],
-      meter: purpose === "project" || purpose === "audit" ? createContextMeter(lotContextThresholds(deps.env ?? process.env)) : null,
+      meter:
+        purpose === "project" || purpose === "audit"
+          ? createContextMeter(lotContextThresholds(deps.env ?? process.env))
+          : null,
       compacting: null,
       dispose: async () => {
         cancelDialogs(hosted);
@@ -674,13 +690,13 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     await initializeHostedRunner(session, ui, log, () => {
       void hosted.dispose();
     });
-    session.subscribeRunState(state => {
+    session.subscribeRunState((state) => {
       const next: SessionRunState = state === "running" ? "running" : "idle";
       if (hosted.state === next) return;
       hosted.state = next;
       frame(hosted, { event: "state", data: { state: next } });
     });
-    session.subscribe(event => {
+    session.subscribe((event) => {
       // Le modèle ou le niveau a changé, quel qu'en soit l'auteur (S-1).
       if (event.type === "model_changed" || event.type === "thinking_level_changed") {
         frame(hosted, modelFrame(hosted));
@@ -736,14 +752,14 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       if (!session || !isDescribedSession(session)) return null;
       return {
         ...descriptionOf(session),
-        dialogs: [...session.dialogs.values()].map(pending => pending.request),
+        dialogs: [...session.dialogs.values()].map((pending) => pending.request),
       };
     },
 
     /** Envoie un prompt : mis en file si un tour est déjà en vol (S-6). */
     async prompt(id: string, body: unknown): Promise<{ accepted: true; state: SessionRunState }> {
       const session = require(id);
-      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("corps attendu : {\"text\":\"…\"}");
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest('corps attendu : {"text":"…"}');
       const text = (body as { text?: unknown }).text;
       if (typeof text !== "string") throw badRequest("champ « text » manquant");
       if (text.trim() === "") throw badRequest("prompt vide");
@@ -841,11 +857,15 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
           ...(session.purpose === "session" ? [modelFrame(session)] : []),
           // Le défaut de projet non appliqué à l'ouverture, jusqu'au premier S-2 réussi (S-4).
           ...(unappliedDefaults.has(session.id)
-            ? ([{ event: "notice", data: { level: "warning", message: unappliedDefaults.get(session.id) ?? "" } }] as ServiceFrame[])
+            ? ([
+                { event: "notice", data: { level: "warning", message: unappliedDefaults.get(session.id) ?? "" } },
+              ] as ServiceFrame[])
             : []),
-          ...[...session.dialogs.values()].map(pending => ({ event: "dialog", data: pending.request }) as ServiceFrame),
+          ...[...session.dialogs.values()].map(
+            (pending) => ({ event: "dialog", data: pending.request }) as ServiceFrame,
+          ),
         ],
-        subscribe: listener => {
+        subscribe: (listener) => {
           session.listeners.add(listener);
           return () => session.listeners.delete(listener);
         },

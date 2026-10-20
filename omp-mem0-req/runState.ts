@@ -69,7 +69,6 @@ export type ArmedRunState = {
   watchParent: boolean;
 };
 
-
 const STATE_KEY = Symbol.for("omp-mem0-req.runStates");
 
 /** Le porte-états du process : une entrée par session, plus celle du process. */
@@ -84,7 +83,6 @@ function holder(): StateHolder {
   }
   return known;
 }
-
 
 /** L'état d'une session (clé = fichier de session ou identifiant), ou du process. */
 export function runStateFor(key: string): ArmedRunState {
@@ -109,7 +107,6 @@ export function runStateFor(key: string): ArmedRunState {
   return created;
 }
 
-
 /**
  * Retire l'état d'une session qui se ferme et le rend. L'état du PROCESS (clé
  * vide) survit à ses sessions : il n'est jamais retiré.
@@ -122,14 +119,12 @@ export function forgetRunState(key: string): ArmedRunState | undefined {
   return known;
 }
 
-
 /**
  * L'état du PROCESS : celui d'un run enfant (une session, un process) et celui de
  * tout contexte sans session identifiable. Les tests et les handlers qui n'ont pas
  * de session à portée écrivent ici.
  */
 export const runState: ArmedRunState = runStateFor("");
-
 
 /**
  * Remet à zéro TOUS les états d'exécution — TEST-ONLY : un test qui simule un

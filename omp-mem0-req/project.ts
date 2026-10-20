@@ -10,8 +10,6 @@ import type { ModelSlots } from "./models.ts";
 import type { RelayItem } from "./relay.ts";
 import { readJsonFile, writeJsonAtomic } from "./store.ts";
 
-
-
 // ---------------------------------------------------------------------------
 // Le projet — un plan de segments ordonnés, conduit segment par segment.
 // ---------------------------------------------------------------------------
@@ -89,7 +87,6 @@ export type PlanDraft = {
 
 export type PlanSegment = { name: string; features: { slug: string; intention: string }[] };
 
-
 export const PROJECT_VERSION = 1;
 
 /** La branche orpheline du document du projet (S-5). */
@@ -119,7 +116,6 @@ const FAILURE_KINDS: Record<ProjectFailureKind, true> = { lot: true, launch: tru
 
 const PROJECT_STATUSES: Record<Project["status"], true> = { running: true, stopped: true, done: true };
 
-
 // --- le magasin (S-4) --------------------------------------------------------
 
 /** `<stateDir>/projects/<repoKey>.json` : un projet par dépôt. */
@@ -127,12 +123,10 @@ export function projectPathFor(stateDir: string, repoKey: string): string {
   return path.join(stateDir, "projects", `${repoKey}.json`);
 }
 
-
 /** `<stateDir>/projects/<repoKey>.doc` : le worktree privé du document (hors des worktrees balayés). */
 export function projectDocWorktreePath(stateDir: string, repoKey: string): string {
   return path.join(stateDir, "projects", `${repoKey}.doc`);
 }
-
 
 function asProjectFeature(raw: unknown): ProjectFeature | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -177,7 +171,6 @@ function asProjectFeature(raw: unknown): ProjectFeature | null {
     updatedAt: f.updatedAt,
   };
 }
-
 
 /**
  * Le projet relu, TOLÉRANT (S-4) : absent, illisible, d'une autre version ou avec
@@ -237,24 +230,20 @@ export function asProject(raw: unknown): Project | null {
   };
 }
 
-
 /** Le projet du dépôt, ou `null`. */
 export function readProject(stateDir: string, repoKey: string): Project | null {
   return asProject(readJsonFile(projectPathFor(stateDir, repoKey)));
 }
-
 
 /** Écriture atomique : l'appelant a relu le fichier SANS `await` depuis (un seul écrivain, S-4). */
 export function writeProject(stateDir: string, project: Project): void {
   writeJsonAtomic(projectPathFor(stateDir, project.repoKey), { ...project, version: PROJECT_VERSION });
 }
 
-
 /** « Nouveau projet » (S-1) : le fichier du projet est retiré ; un fichier absent n'est pas une erreur. */
 export function deleteProject(stateDir: string, repoKey: string): void {
   fs.rmSync(projectPathFor(stateDir, repoKey), { force: true });
 }
-
 
 /** Une feature neuve du plan, `planned`, avec ses deux modèles (S-2) — écrits une seule fois, ici. */
 export function newProjectFeature(
@@ -278,7 +267,6 @@ export function newProjectFeature(
   };
 }
 
-
 /** Le projet né d'un plan validé (S-3 §5) : en cours, au premier segment, sans base encore. */
 export function newProject(
   plan: PlanDraft,
@@ -298,7 +286,9 @@ export function newProject(
     status: "running",
     segments: plan.segments.map((segment) => ({
       name: segment.name,
-      features: segment.features.map((feature) => newProjectFeature(feature, models.get(feature.slug) ?? null, input.now, fallbacks.get(feature.slug) ?? null)),
+      features: segment.features.map((feature) =>
+        newProjectFeature(feature, models.get(feature.slug) ?? null, input.now, fallbacks.get(feature.slug) ?? null),
+      ),
     })),
     current: 0,
     base: null,
@@ -308,14 +298,12 @@ export function newProject(
   };
 }
 
-
 // --- le plan : validation, texte éditable (S-3) ------------------------------
 
 /** « Sur une ligne » : retours à la ligne remplacés par une espace, blancs consécutifs réduits à une espace. */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
-
 
 /**
  * Les segments d'un plan (S-3 §4), première erreur rendue, PURE : `min` vaut 1
@@ -362,7 +350,6 @@ export function checkSegments(
   return { ok: true, segments };
 }
 
-
 /**
  * La validation d'un plan `project_plan` (S-3) : PURE, sans exception, première
  * erreur rendue, dans l'ordre du contrat.
@@ -377,10 +364,13 @@ export function checkPlan(input: unknown): { ok: true; plan: PlanDraft } | { ok:
   if (!checked.ok) return checked;
   return {
     ok: true,
-    plan: { purpose: purpose.slice(0, LOT_EDITOR_MAX), function: fn.slice(0, LOT_EDITOR_MAX), segments: checked.segments },
+    plan: {
+      purpose: purpose.slice(0, LOT_EDITOR_MAX),
+      function: fn.slice(0, LOT_EDITOR_MAX),
+      segments: checked.segments,
+    },
   };
 }
-
 
 /**
  * Le texte éditable d'un plan (S-3) : un bloc par segment, séparés par une ligne
@@ -397,7 +387,6 @@ export function renderPlanText(segments: readonly PlanSegment[]): string {
     )
     .join("\n\n");
 }
-
 
 /**
  * Le texte corrigé par l'utilisateur, relu en plan (S-3) : PURE. Une ligne vide
@@ -436,7 +425,6 @@ export function parsePlanText(
   return checkPlan({ purpose, function: fn, segments });
 }
 
-
 /** Le titre de la revue du plan (S-3 §2). */
 export function planDialogTitle(plan: PlanDraft): string {
   const features = plan.segments.reduce((count, segment) => count + segment.features.length, 0);
@@ -446,7 +434,6 @@ export function planDialogTitle(plan: PlanDraft): string {
     renderPlanText(plan.segments)
   );
 }
-
 
 // --- le document PROJECT.md (S-5) --------------------------------------------
 
@@ -458,12 +445,10 @@ export function projectStatusLine(project: Project): string {
   return project.status === "running" ? `en cours — ${where}` : `arrêté — ${where}`;
 }
 
-
 /** Une cellule de table : sur une ligne, `|` échappé. */
 function cell(text: string): string {
   return oneLine(text).replace(/\|/g, "\\|");
 }
-
 
 function featureStateLabel(feature: ProjectFeature): string {
   switch (feature.status) {
@@ -481,7 +466,6 @@ function featureStateLabel(feature: ProjectFeature): string {
       return "retirée";
   }
 }
-
 
 /**
  * Le document du projet (S-5) : PURE et déterministe — aucune date ni heure, le
@@ -548,7 +532,6 @@ export function renderProjectDoc(project: Project, repoName: string): string {
   return `${lines.join("\n")}\n`;
 }
 
-
 // --- l'avancement depuis le lot (S-7) ----------------------------------------
 
 /**
@@ -561,7 +544,6 @@ function arbiterMotive(lf: LotFeature): string {
   if (!escalation.key.startsWith("cap:") && !escalation.key.startsWith("failure:")) return "";
   return ` — motif de l'arbitre : ${escalation.reason}`;
 }
-
 
 /**
  * Les features du segment courant resynchronisées depuis le lot (S-7 §1) : PURE.
@@ -608,7 +590,8 @@ export function syncFromLot(project: Project, lot: Lot | null, now: number): { p
           // de l'utilisateur, groupée par fournisseur (relais ou /pipelines).
           if (lf.quota !== undefined) break;
           if (lf.arbitration !== undefined) break;
-          if (isReviewCapReason(lf.stopReason)) fail("lot", `plafond de revue atteint : ${lf.stopReason}${arbiterMotive(lf)}`);
+          if (isReviewCapReason(lf.stopReason))
+            fail("lot", `plafond de revue atteint : ${lf.stopReason}${arbiterMotive(lf)}`);
           else fail("lot", `pipeline bloquée : ${lf.stopReason ?? "sans motif"}${arbiterMotive(lf)}`);
           break;
         case "cancelled":
@@ -635,14 +618,12 @@ export function syncFromLot(project: Project, lot: Lot | null, now: number): { p
   return { project: next, events };
 }
 
-
 /** Le segment courant est-il ACHEVÉ — chacune de ses features fusionnée ou retirée (S-7 §3) ? */
 export function segmentDone(project: Project): boolean {
   return (project.segments[project.current] as ProjectSegment).features.every(
     (feature) => feature.status === "merged" || feature.status === "removed",
   );
 }
-
 
 /**
  * Les échecs du segment courant, relayés à la session /project (S-6 §3), dans
@@ -671,7 +652,6 @@ export function projectFailureItems(project: Project, lot: Lot | null): RelayIte
   return items;
 }
 
-
 // --- le dépôt distant GitHub (S-1) -------------------------------------------
 
 /** Les formes d'URL d'un dépôt GitHub (hôte exact, insensible à la casse ; GitHub Enterprise exclu). */
@@ -681,7 +661,6 @@ const GITHUB_URLS = [
   /^git:\/\/github\.com\/[^/\s]+\/[^/\s]+?(?:\.git)?$/i,
   /^[^@/:\s]+@github\.com:[^/\s]+\/[^/\s]+?(?:\.git)?$/i,
 ];
-
 
 /**
  * Le dépôt distant GitHub d'une sortie `git remote -v` (S-1) : PURE. `origin`

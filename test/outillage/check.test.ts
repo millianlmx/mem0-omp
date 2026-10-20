@@ -23,7 +23,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
+import { LINT_TOOL_ENV, ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { readAttendus } from "../support/app-intents-doubles.ts";
 import {
@@ -55,6 +55,8 @@ const NESTED_ENV = {
   // La section Rust (cargo, contrat boîte noire contre mem0-rs) démarre de vrais
   // serveurs : aucune copie jetable ne la relance, la racine l'exécute.
   MEM0_OMP_SKIP_RUST: "1",
+  // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
+  ...LINT_TOOL_ENV,
 };
 
 /**
@@ -141,10 +143,7 @@ test("check/AC-10 : un import de valeur depuis @oh-my-pi fait échouer check.sh 
   );
   const clean = runCheck(typed, "extension");
   assert.ok(!output(clean).includes("✗ import de valeur depuis @oh-my-pi/*"), output(clean));
-  assert.ok(
-    output(clean).includes("✓ aucun import de valeur depuis @oh-my-pi/* (2 plugins contrôlés)"),
-    output(clean),
-  );
+  assert.ok(output(clean).includes("✓ aucun import de valeur depuis @oh-my-pi/* (2 plugins contrôlés)"), output(clean));
 });
 
 test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fait échouer check.sh", () => {
@@ -158,9 +157,7 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
   const ghost = runCheck(dir, null);
   assert.notEqual(ghost.status, 0, output(ghost));
   assert.ok(
-    output(ghost).includes(
-      "omp-mem0-req : commande déclarée sans registerCommand : commande-fantome",
-    ),
+    output(ghost).includes("omp-mem0-req : commande déclarée sans registerCommand : commande-fantome"),
     output(ghost),
   );
 
@@ -168,11 +165,8 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
   const orphan = copyRepo();
   const extension = path.join(orphan, "omp-mem0-req/extension.ts");
   const source = fs.readFileSync(extension, "utf8");
-  const renamed = source.replace(
-    /pi\.registerCommand\(\s*"pipelines"/,
-    'pi.registerCommand("panneau-detache"',
-  );
-  assert.notEqual(renamed, source, "registerCommand(\"pipelines\") introuvable dans omp-mem0-req");
+  const renamed = source.replace(/pi\.registerCommand\(\s*"pipelines"/, 'pi.registerCommand("panneau-detache"');
+  assert.notEqual(renamed, source, 'registerCommand("pipelines") introuvable dans omp-mem0-req');
   fs.writeFileSync(extension, renamed);
 
   const missing = runCheck(orphan, "plugins");
@@ -186,12 +180,10 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
 test("check/AC-15 : une version d'entrée ou de metadata divergente fait échouer check.sh", () => {
   // Les versions attendues sont LUES sur l'arbre, jamais écrites en dur : un bump
   // de version ne doit pas transformer ce test en test de régression du chiffre.
-  const pkgVersion = JSON.parse(
-    fs.readFileSync(path.join(ROOT, "omp-mem0-memory", "package.json"), "utf8"),
-  ).version as string;
-  const catalogMeta = JSON.parse(
-    fs.readFileSync(path.join(ROOT, ".omp-plugin", "marketplace.json"), "utf8"),
-  ).metadata.version as string;
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "omp-mem0-memory", "package.json"), "utf8"))
+    .version as string;
+  const catalogMeta = JSON.parse(fs.readFileSync(path.join(ROOT, ".omp-plugin", "marketplace.json"), "utf8")).metadata
+    .version as string;
   const bogus = "9.9.8";
 
   const diverged = copyRepo();
@@ -234,10 +226,7 @@ test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise
   fs.writeFileSync(target, `const x = ;\n${fs.readFileSync(target, "utf8")}`);
   const broken = runCheck(dir, "extension");
   assert.notEqual(broken.status, 0, output(broken));
-  assert.ok(
-    output(broken).includes("omp-mem0-req/extension.ts ne se transpile pas"),
-    output(broken),
-  );
+  assert.ok(output(broken).includes("omp-mem0-req/extension.ts ne se transpile pas"), output(broken));
 
   if (DEPTH === 0) {
     const real = runCheck(ROOT, "extension");
@@ -482,7 +471,9 @@ test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans 
     return;
   }
   assert.ok(
-    out.includes("omp-mem0-req/panelWidth.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read."),
+    out.includes(
+      "omp-mem0-req/panelWidth.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read.",
+    ),
     out,
   );
 });
@@ -494,7 +485,9 @@ test("tsconfig-missing-unused-checks/AC-2 : un paramètre jamais lu dans un plug
     return;
   }
   assert.ok(
-    out.includes("omp-mem0-memory/brief.ts(1,34): error TS6133: 'unusedParamProbe' is declared but its value is never read."),
+    out.includes(
+      "omp-mem0-memory/brief.ts(1,34): error TS6133: 'unusedParamProbe' is declared but its value is never read.",
+    ),
     out,
   );
 });
@@ -515,7 +508,9 @@ test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous 
     return;
   }
   assert.ok(
-    out.includes("test/memoire/dedupe.test.ts(2,9): error TS6133: 'unusedTestLocalProbe' is declared but its value is never read."),
+    out.includes(
+      "test/memoire/dedupe.test.ts(2,9): error TS6133: 'unusedTestLocalProbe' is declared but its value is never read.",
+    ),
     out,
   );
 });
@@ -600,7 +595,10 @@ test("socle-app-swift/AC-6 : hors macOS la section « App Swift » dit « non ex
   assert.equal(run.status, 0, out);
   assert.ok(out.includes("non exécuté"), out);
   assert.ok(!out.includes("✓ App Swift"), out);
-  assert.ok(!fs.existsSync(log), `swift ne doit jamais être appelé : ${fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""}`);
+  assert.ok(
+    !fs.existsSync(log),
+    `swift ne doit jamais être appelé : ${fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""}`,
+  );
 });
 
 test("socle-app-swift/AC-5 : sur macOS la section compile, teste et assemble le bundle .app", () => {
@@ -641,7 +639,11 @@ esac`,
   // Le binaire factice n'est pas un Mach-O : la doublure `otool` rend la commande
   // LC_BUILD_VERSION qu'un vrai binaire porte (vérification de la version minimale
   // du bundle assemblé, omp-console-redesign S-2).
-  stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
+  stub(
+    bin,
+    "otool",
+    "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'",
+  );
   // Le bundle embarque le service mémoire mem0-rs (omp-console-sans-podman S-1) :
   // la doublure cargo pose un exécutable là où le vrai l'écrit, la doublure lipo
   // le déclare arm64 — aucune compilation Rust réelle dans une copie jetable.
@@ -680,7 +682,10 @@ chmod +x "$target/release/mem0-rs"`,
   // de test), puis la lecture du dossier de sortie.
   const logged = fs.readFileSync(log, "utf8").trim().split("\n");
   assert.match(logged[0] ?? "", /^test -c release\b/, logged.join(" | "));
-  assert.ok(logged.some((line) => line.includes("--show-bin-path")), logged.join(" | "));
+  assert.ok(
+    logged.some((line) => line.includes("--show-bin-path")),
+    logged.join(" | "),
+  );
 });
 
 test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes et le README racine y renvoie", () => {
@@ -722,7 +727,8 @@ const CONFORME_MAC = `  ✓ intents Siri conformes à scripts/app-intents/attend
 } phrases)`;
 const NON_CONFORME_MAC = "✗ Metadata.appintents non conforme à scripts/app-intents/attendus.json (bundle Mac)";
 
-const intentAbsent = (type: string) => `  ✗ intent attendu absent du bundle Mac : ${type} introuvable dans extract.actionsdata`;
+const intentAbsent = (type: string) =>
+  `  ✗ intent attendu absent du bundle Mac : ${type} introuvable dans extract.actionsdata`;
 const phraseAbsente = (type: string, phrase: string) =>
   `  ✗ phrase attendue absente du bundle Mac : « ${phrase} » (intent ${type}) introuvable dans extract.actionsdata`;
 
@@ -743,7 +749,9 @@ function ecart(intents: string[], phrases: [type: string, phrase: string][] = []
     .filter((s) => !intents.includes(s.actionIdentifier))
     .map((s) => ({
       ...s,
-      phraseTemplates: s.phraseTemplates.filter((p) => !phrases.some(([t, k]) => t === s.actionIdentifier && k === p.key)),
+      phraseTemplates: s.phraseTemplates.filter(
+        (p) => !phrases.some(([t, k]) => t === s.actionIdentifier && k === p.key),
+      ),
     }))
     .filter((s) => s.phraseTemplates.length > 0);
   const fichier = path.join(tmpdir("actionsdata-"), "extract.actionsdata");
@@ -756,12 +764,7 @@ const phrasesDe = (intents: string[]): [string, string][] =>
   intents.flatMap((type) => (ATTENDUS_MAC[type] ?? []).map((phrase): [string, string] => [type, phrase]));
 
 /** Échec du contrôle : lignes attendues, ligne finale, pas de ✓, bundle retiré, aucune signature. */
-function assertNonConforme(
-  r: AssemblageAppIntents,
-  bundle: string,
-  nom: string,
-  attendus: string[],
-): void {
+function assertNonConforme(r: AssemblageAppIntents, bundle: string, nom: string, attendus: string[]): void {
   assert.equal(r.status, 1, `[${nom}] ${r.sortie}`);
   for (const attendu of [...attendus, NON_CONFORME_MAC]) {
     assert.ok(r.stderr.includes(attendu), `[${nom}] message absent : ${attendu}\n${r.sortie}`);
@@ -794,7 +797,8 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-4 : des métadonnées absentes,
     planterAncienBundle();
     const r = lancer([], { FAUX_APPINTENTS: mode });
     assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
-    for (const attendu of attendus) assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
+    for (const attendu of attendus)
+      assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
     assert.ok(!r.sortie.includes(META_OK), `[${mode}] ✓ des métadonnées affiché malgré l'échec\n${r.sortie}`);
     assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
     assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
@@ -847,7 +851,11 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
 
     const actions = path.join(bundle, META_ACTIONS_REL);
     assert.ok(fs.existsSync(actions), `[${voie}] ${actions} absent`);
-    assert.equal(fs.readFileSync(actions, "utf8"), SONDE_ACTIONSDATA, `[${voie}] extract.actionsdata n'est pas la copie exacte du processeur`);
+    assert.equal(
+      fs.readFileSync(actions, "utf8"),
+      SONDE_ACTIONSDATA,
+      `[${voie}] extract.actionsdata n'est pas la copie exacte du processeur`,
+    );
 
     assert.ok(
       r.lignes.includes(`codesign --force --sign - ${bundle} meta=oui`),
@@ -881,33 +889,51 @@ test("siri sur le Mac : le bundle est signé par l'identité d'équipe du trouss
   const signatureBundle = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${bundle} meta=oui`);
   assert.notEqual(signatureBinaire, -1, `mem0-rs non signé par l'identité : ${equipe.lignes.join(" | ")}`);
   assert.notEqual(signatureBundle, -1, `bundle non signé par l'identité : ${equipe.lignes.join(" | ")}`);
-  assert.ok(signatureBinaire < signatureBundle, `mem0-rs doit être signé avant le bundle : ${equipe.lignes.join(" | ")}`);
   assert.ok(
-    equipe.sortie.includes(`  ✓ signature vérifiée (codesign --verify --strict ; identité « ${identite} », équipe 2MJF39L8VY)`),
+    signatureBinaire < signatureBundle,
+    `mem0-rs doit être signé avant le bundle : ${equipe.lignes.join(" | ")}`,
+  );
+  assert.ok(
+    equipe.sortie.includes(
+      `  ✓ signature vérifiée (codesign --verify --strict ; identité « ${identite} », équipe 2MJF39L8VY)`,
+    ),
     `ligne ✓ de la signature d'équipe absente\n${equipe.sortie}`,
   );
   assert.ok(!equipe.sortie.includes(avertissement), `avertissement ad hoc malgré l'identité\n${equipe.sortie}`);
 
   // OMP_CODESIGN_IDENTITY l'emporte sur le trousseau.
-  const imposee = lancer(["--no-tests"], { FAUX_IDENTITE: identite, OMP_CODESIGN_IDENTITY: "Developer ID Application: Jeanne Test (ABCDE12345)" });
+  const imposee = lancer(["--no-tests"], {
+    FAUX_IDENTITE: identite,
+    OMP_CODESIGN_IDENTITY: "Developer ID Application: Jeanne Test (ABCDE12345)",
+  });
   assert.equal(imposee.status, 0, imposee.sortie);
   assert.ok(
-    imposee.lignes.includes(`codesign --force --sign Developer ID Application: Jeanne Test (ABCDE12345) ${bundle} meta=oui`),
+    imposee.lignes.includes(
+      `codesign --force --sign Developer ID Application: Jeanne Test (ABCDE12345) ${bundle} meta=oui`,
+    ),
     `OMP_CODESIGN_IDENTITY ignorée : ${imposee.lignes.join(" | ")}`,
   );
 
   // Trousseau vide : ad hoc, avec l'avertissement.
   const adHoc = lancer(["--no-tests"]);
   assert.equal(adHoc.status, 0, adHoc.sortie);
-  assert.ok(adHoc.lignes.includes(`codesign --force --sign - ${bundle} meta=oui`), `bundle non signé ad hoc : ${adHoc.lignes.join(" | ")}`);
-  assert.ok(adHoc.sortie.includes("  ✓ signature ad hoc vérifiée (codesign --verify --strict)"), `ligne ✓ ad hoc absente\n${adHoc.sortie}`);
+  assert.ok(
+    adHoc.lignes.includes(`codesign --force --sign - ${bundle} meta=oui`),
+    `bundle non signé ad hoc : ${adHoc.lignes.join(" | ")}`,
+  );
+  assert.ok(
+    adHoc.sortie.includes("  ✓ signature ad hoc vérifiée (codesign --verify --strict)"),
+    `ligne ✓ ad hoc absente\n${adHoc.sortie}`,
+  );
   assert.ok(adHoc.sortie.includes(avertissement), `avertissement ad hoc absent\n${adHoc.sortie}`);
 
   // Identité sans équipe (TeamIdentifier=not set) : échec nommé, code 1.
   const sansEquipe = lancer(["--no-tests"], { FAUX_IDENTITE: identite, FAUX_EQUIPE: "not set" });
   assert.equal(sansEquipe.status, 1, sansEquipe.sortie);
   assert.ok(
-    sansEquipe.sortie.includes(`✗ signature sans identifiant d'équipe (identité « ${identite} », codesign -dv : TeamIdentifier=not set)`),
+    sansEquipe.sortie.includes(
+      `✗ signature sans identifiant d'équipe (identité « ${identite} », codesign -dv : TeamIdentifier=not set)`,
+    ),
     `échec « sans équipe » absent\n${sansEquipe.sortie}`,
   );
 });
@@ -950,7 +976,11 @@ test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingI
 });
 
 /** Les phrases de l'App Shortcut de MacSessionPromptIntent, dans l'ordre de ConsoleShortcuts. */
-const PHRASES_DICTEE = ["Dis à ${applicationName}", "Envoyer un message à ${applicationName}", "Écrire à ${applicationName}"];
+const PHRASES_DICTEE = [
+  "Dis à ${applicationName}",
+  "Envoyer un message à ${applicationName}",
+  "Écrire à ${applicationName}",
+];
 
 test("siri-dictee-session-omp/AC-3 : le bundle livré déclare MacSessionPromptIntent, sinon l'assemblage sort en 1 sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();
@@ -961,7 +991,10 @@ test("siri-dictee-session-omp/AC-3 : le bundle livré déclare MacSessionPromptI
     assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
     assert.ok(r.sortie.includes(CONFORME_MAC), `[${voie}] ligne ✓ du contrôle des intents absente\n${r.sortie}`);
     const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
-    assert.ok(actions.includes('"identifier":"MacSessionPromptIntent"'), `[${voie}] MacSessionPromptIntent absent du bundle : ${actions}`);
+    assert.ok(
+      actions.includes('"identifier":"MacSessionPromptIntent"'),
+      `[${voie}] MacSessionPromptIntent absent du bundle : ${actions}`,
+    );
   }
 
   planterAncienBundle();
@@ -981,15 +1014,29 @@ test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent p
   assert.deepEqual(phrases, PHRASES_DICTEE);
   for (const phrase of phrases) {
     assert.ok(phrase.includes("${applicationName}"), `phrase sans le nom de l'app : ${phrase}`);
-    assert.match(phrase, /^(Dis|Envoyer un message|Écrire) à \$\{applicationName\}$/, `phrase non française : ${phrase}`);
+    assert.match(
+      phrase,
+      /^(Dis|Envoyer un message|Écrire) à \$\{applicationName\}$/,
+      `phrase non française : ${phrase}`,
+    );
   }
 
   planterAncienBundle();
-  const echec = lancer([], { FAUX_ACTIONSDATA: ecart([], [["MacSessionPromptIntent", "Écrire à ${applicationName}"]]) });
-  assertNonConforme(echec, bundle, "phrase de dictée retirée", [phraseAbsente("MacSessionPromptIntent", "Écrire à ${applicationName}")]);
+  const echec = lancer([], {
+    FAUX_ACTIONSDATA: ecart([], [["MacSessionPromptIntent", "Écrire à ${applicationName}"]]),
+  });
+  assertNonConforme(echec, bundle, "phrase de dictée retirée", [
+    phraseAbsente("MacSessionPromptIntent", "Écrire à ${applicationName}"),
+  ]);
 });
 
-const PILOTAGE = ["MacLaunchPipelineIntent", "MacResumeFeatureIntent", "MacStopFeatureIntent", "MacValidateSpecsIntent", "MacAcceptReviewIntent"];
+const PILOTAGE = [
+  "MacLaunchPipelineIntent",
+  "MacResumeFeatureIntent",
+  "MacStopFeatureIntent",
+  "MacValidateSpecsIntent",
+  "MacAcceptReviewIntent",
+];
 
 test("siri-mac-pilotage-pipelines/AC-14 : le bundle livré déclare les cinq intents de pilotage avec une phrase française en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();

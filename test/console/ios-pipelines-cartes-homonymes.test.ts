@@ -75,8 +75,10 @@ function bothFaults(root: string): string[] {
   const label = body(code(root, SCREEN), "cardLabel");
   if (!label) faults.push("cardLabel introuvable dans PipelinesScreen");
   if (!label.includes("PipelinesModel.cardDate(card)")) faults.push("cardLabel n'affiche pas la date de la carte");
-  if (!label.includes("IOSStatusChip(status: ConsoleStatus.of(card: card))")) faults.push("cardLabel n'affiche pas le statut de la carte");
-  if (!declares(root, DATE_TESTS, "homonymousCardsAreDistinguishable")) faults.push("le test homonymousCardsAreDistinguishable n'est plus déclaré");
+  if (!label.includes("IOSStatusChip(status: ConsoleStatus.of(card: card))"))
+    faults.push("cardLabel n'affiche pas le statut de la carte");
+  if (!declares(root, DATE_TESTS, "homonymousCardsAreDistinguishable"))
+    faults.push("le test homonymousCardsAreDistinguishable n'est plus déclaré");
   return faults;
 }
 
@@ -87,7 +89,8 @@ function sameRuleFaults(root: string): string[] {
   if (!/if let \w+ = PipelinesModel\.cardDate\(card\)\s*\{/.test(label)) {
     faults.push("la ligne de date est soumise à une autre condition que la date elle-même");
   }
-  if (!declares(root, DATE_TESTS, "uniqueCardUsesTheSameFormat")) faults.push("le test uniqueCardUsesTheSameFormat n'est plus déclaré");
+  if (!declares(root, DATE_TESTS, "uniqueCardUsesTheSameFormat"))
+    faults.push("le test uniqueCardUsesTheSameFormat n'est plus déclaré");
   return faults;
 }
 
@@ -96,8 +99,10 @@ function minuteFaults(root: string): string[] {
   const faults: string[] = [];
   const format = body(code(root, VOCABULARY), "dateTime");
   if (!format) faults.push("ConsoleFormat.dateTime introuvable");
-  if (!format.includes("time: .shortened")) faults.push("ConsoleFormat.dateTime n'affiche pas l'heure à la minute (time: .shortened)");
-  if (!declares(root, DATE_TESTS, "sameDayHomonymsShowTheirOwnMinute")) faults.push("le test sameDayHomonymsShowTheirOwnMinute n'est plus déclaré");
+  if (!format.includes("time: .shortened"))
+    faults.push("ConsoleFormat.dateTime n'affiche pas l'heure à la minute (time: .shortened)");
+  if (!declares(root, DATE_TESTS, "sameDayHomonymsShowTheirOwnMinute"))
+    faults.push("le test sameDayHomonymsShowTheirOwnMinute n'est plus déclaré");
   return faults;
 }
 
@@ -106,10 +111,12 @@ function missingFaults(root: string): string[] {
   const faults: string[] = [];
   const date = body(code(root, MODEL), "cardDate");
   if (!date) faults.push("PipelinesModel.cardDate introuvable");
-  if (!date.includes("card.endMs ?? card.startMs")) faults.push("cardDate ne prend pas la fin puis le début de la carte");
+  if (!date.includes("card.endMs ?? card.startMs"))
+    faults.push("cardDate ne prend pas la fin puis le début de la carte");
   if (!date.includes("isFinite")) faults.push("cardDate n'écarte pas un instant non fini");
   if (!/>\s*0\b/.test(date)) faults.push("cardDate n'écarte pas un instant nul ou négatif (> 0)");
-  if (!declares(root, DATE_TESTS, "missingInstantIsNotShown")) faults.push("le test missingInstantIsNotShown n'est plus déclaré");
+  if (!declares(root, DATE_TESTS, "missingInstantIsNotShown"))
+    faults.push("le test missingInstantIsNotShown n'est plus déclaré");
   return faults;
 }
 
@@ -117,9 +124,11 @@ function missingFaults(root: string): string[] {
 function statusFaults(root: string): string[] {
   const faults: string[] = [];
   const label = body(code(root, SCREEN), "cardLabel");
-  if (/KanbanCardPresentation\.badge/.test(label)) faults.push("cardLabel emploie le badge macOS, qui masque l'état en « Pas commencées »");
+  if (/KanbanCardPresentation\.badge/.test(label))
+    faults.push("cardLabel emploie le badge macOS, qui masque l'état en « Pas commencées »");
   if (!label.includes("ConsoleStatus.of(card: card)")) faults.push("cardLabel n'emploie pas ConsoleStatus.of(card:)");
-  if (!declares(root, DATE_TESTS, "statusMatchesItsLane")) faults.push("le test statusMatchesItsLane n'est plus déclaré");
+  if (!declares(root, DATE_TESTS, "statusMatchesItsLane"))
+    faults.push("le test statusMatchesItsLane n'est plus déclaré");
   return faults;
 }
 
@@ -127,10 +136,14 @@ function statusFaults(root: string): string[] {
 function regularFaults(root: string): string[] {
   const faults: string[] = [];
   const screen = code(root, SCREEN);
-  if (/sizeClass/.test(body(screen, "cardLabel"))) faults.push("cardLabel dépend de la classe de taille : iPhone et iPad divergeraient");
-  if (!body(screen, "lanes").includes("ForEach(rows)")) faults.push("l'écran ne rend plus les voies de l'ardoise (ForEach(rows))");
-  if (!body(screen, "boardContent").includes("KanbanLaneRows.rows(")) faults.push("boardContent ne dérive plus les voies de l'ardoise (KanbanLaneRows.rows)");
-  if (!body(screen, "boardContent").includes("lanes(rows")) faults.push("boardContent ne rend plus les voies (lanes(rows:))");
+  if (/sizeClass/.test(body(screen, "cardLabel")))
+    faults.push("cardLabel dépend de la classe de taille : iPhone et iPad divergeraient");
+  if (!body(screen, "lanes").includes("ForEach(rows)"))
+    faults.push("l'écran ne rend plus les voies de l'ardoise (ForEach(rows))");
+  if (!body(screen, "boardContent").includes("KanbanLaneRows.rows("))
+    faults.push("boardContent ne dérive plus les voies de l'ardoise (KanbanLaneRows.rows)");
+  if (!body(screen, "boardContent").includes("lanes(rows"))
+    faults.push("boardContent ne rend plus les voies (lanes(rows:))");
   return faults;
 }
 
@@ -142,15 +155,26 @@ test("ios-pipelines-cartes-homonymes/AC-1 : chaque carte affiche sa date et son 
 
   const copy = copyOwned();
   plant(copy, SCREEN, "PipelinesModel.cardDate(card)", "Optional<String>.none");
-  assert.ok(bothFaults(copy).some((f) => f.includes("date")), "une carte sans appel à cardDate doit faire rougir la garde");
+  assert.ok(
+    bothFaults(copy).some((f) => f.includes("date")),
+    "une carte sans appel à cardDate doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines-cartes-homonymes/AC-2 : une carte unique suit la même règle que les homonymes", () => {
   assert.deepEqual(sameRuleFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyOwned();
-  plant(copy, SCREEN, /if let (\w+) = PipelinesModel\.cardDate\(card\)/, "if showsRepo, let $1 = PipelinesModel.cardDate(card)");
-  assert.ok(sameRuleFaults(copy).some((f) => f.includes("autre condition")), "une condition ajoutée doit faire rougir la garde");
+  plant(
+    copy,
+    SCREEN,
+    /if let (\w+) = PipelinesModel\.cardDate\(card\)/,
+    "if showsRepo, let $1 = PipelinesModel.cardDate(card)",
+  );
+  assert.ok(
+    sameRuleFaults(copy).some((f) => f.includes("autre condition")),
+    "une condition ajoutée doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines-cartes-homonymes/AC-3 : l'heure affichée est précise à la minute", () => {
@@ -158,7 +182,10 @@ test("ios-pipelines-cartes-homonymes/AC-3 : l'heure affichée est précise à la
 
   const copy = copyOwned();
   plant(copy, VOCABULARY, "date: .abbreviated, time: .shortened", "date: .abbreviated, time: .omitted");
-  assert.ok(minuteFaults(copy).some((f) => f.includes("minute")), "une date sans heure doit faire rougir la garde");
+  assert.ok(
+    minuteFaults(copy).some((f) => f.includes("minute")),
+    "une date sans heure doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines-cartes-homonymes/AC-4 : un instant absent ou invalide n'affiche aucune date", () => {
@@ -166,7 +193,10 @@ test("ios-pipelines-cartes-homonymes/AC-4 : un instant absent ou invalide n'affi
 
   const copy = copyOwned();
   plant(copy, MODEL, "instant > 0", "true");
-  assert.ok(missingFaults(copy).some((f) => f.includes("nul ou négatif")), "une date 1970 affichable doit faire rougir la garde");
+  assert.ok(
+    missingFaults(copy).some((f) => f.includes("nul ou négatif")),
+    "une date 1970 affichable doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines-cartes-homonymes/AC-5 : le statut affiché est cohérent avec la voie de la carte", () => {
@@ -174,13 +204,24 @@ test("ios-pipelines-cartes-homonymes/AC-5 : le statut affiché est cohérent ave
 
   const copy = copyOwned();
   plant(copy, SCREEN, "ConsoleStatus.of(card: card)", "KanbanCardPresentation.badge(card)");
-  assert.ok(statusFaults(copy).some((f) => f.includes("badge macOS")), "le badge macOS à la place du statut doit faire rougir la garde");
+  assert.ok(
+    statusFaults(copy).some((f) => f.includes("badge macOS")),
+    "le badge macOS à la place du statut doit faire rougir la garde",
+  );
 });
 
 test("ios-pipelines-cartes-homonymes/AC-6 : sur iPad, mêmes voies et même règle, la date en plus", () => {
   assert.deepEqual(regularFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyOwned();
-  plant(copy, SCREEN, /if let (\w+) = PipelinesModel\.cardDate\(card\)/, "if sizeClass == .compact, let $1 = PipelinesModel.cardDate(card)");
-  assert.ok(regularFaults(copy).some((f) => f.includes("classe de taille")), "une date réservée à l'iPhone doit faire rougir la garde");
+  plant(
+    copy,
+    SCREEN,
+    /if let (\w+) = PipelinesModel\.cardDate\(card\)/,
+    "if sizeClass == .compact, let $1 = PipelinesModel.cardDate(card)",
+  );
+  assert.ok(
+    regularFaults(copy).some((f) => f.includes("classe de taille")),
+    "une date réservée à l'iPhone doit faire rougir la garde",
+  );
 });

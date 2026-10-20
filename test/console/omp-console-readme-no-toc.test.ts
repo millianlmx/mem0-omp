@@ -95,9 +95,7 @@ function tocDrift(readme: string): string[] {
   if (level2.length === 0) return ["aucun titre ## hors bloc de code"];
   const { entries, malformed } = tocEntries(readme);
   if (entries.length === 0) {
-    return [
-      `sommaire absent : aucune entrée « - [titre](#ancre) » avant le premier titre « ## ${level2[0].text} »`,
-    ];
+    return [`sommaire absent : aucune entrée « - [titre](#ancre) » avant le premier titre « ## ${level2[0].text} »`];
   }
 
   const faults: string[] = [];
@@ -154,7 +152,11 @@ const level2Headings = (readme: string) => headings(readme).filter(({ level }) =
 
 test("omp-console-readme-no-toc/AC-1 : le sommaire suit l'introduction, sans titre propre, une entrée par titre ## avec l'ancre GitHub", () => {
   assert.equal(githubSlug("Assembler le bundle `.app`"), "assembler-le-bundle-app", "backtick et point retirés");
-  assert.equal(githubSlug("Recette : lire une vraie session"), "recette--lire-une-vraie-session", "deux-points retiré, tirets non fusionnés");
+  assert.equal(
+    githubSlug("Recette : lire une vraie session"),
+    "recette--lire-une-vraie-session",
+    "deux-points retiré, tirets non fusionnés",
+  );
   assert.equal(githubSlug("Lire le magasin d'état"), "lire-le-magasin-détat", "apostrophe retirée, accent gardé");
 
   const all = headings(real);
@@ -171,9 +173,9 @@ test("omp-console-readme-no-toc/AC-1 : le sommaire suit l'introduction, sans tit
     level2.map(({ text, anchor }) => ({ text, anchor })),
     "le sommaire doit lister chaque titre ##, dans l'ordre, avec son ancre GitHub",
   );
-  entries.forEach((entry, index) =>
-    assert.equal(entry.line, entries[0].line + index, `entrée « ${entry.text} » non contiguë au sommaire`),
-  );
+  entries.forEach((entry, index) => {
+    assert.equal(entry.line, entries[0].line + index, `entrée « ${entry.text} » non contiguë au sommaire`);
+  });
 
   const lines = real.split("\n");
   const last = entries[entries.length - 1];
@@ -184,7 +186,10 @@ test("omp-console-readme-no-toc/AC-1 : le sommaire suit l'introduction, sans tit
   const title = all.find(({ level }) => level === 1);
   assert.ok(title && title.line < entries[0].line, "le titre # doit précéder le sommaire");
   const before = lines.slice(title.line, entries[0].line - 1).filter((raw) => raw.trim() !== "");
-  assert.ok(before.some((raw) => !HEADING.test(raw)), "une introduction doit séparer le titre # du sommaire");
+  assert.ok(
+    before.some((raw) => !HEADING.test(raw)),
+    "une introduction doit séparer le titre # du sommaire",
+  );
   assert.ok(!HEADING.test(before[before.length - 1]), "le sommaire ne doit porter aucun titre propre");
 });
 

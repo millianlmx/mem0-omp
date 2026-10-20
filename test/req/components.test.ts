@@ -357,7 +357,10 @@ function assertHostComposition(panel: PanelHarness, model: PanelModel, label: st
   const filled = spacers.filter((s) => (s.setLinesCalls ?? []).some((n) => n > 0));
   assert.equal(filled.length, 1, `${label} : un seul Spacer réglé à n > 0`);
   assert.ok((filled[0]?.lines.length ?? 0) > 0, `${label} : le Spacer occupe des lignes`);
-  assert.ok((filled[0]?.lines ?? []).every((line) => line === ""), `${label} : le remplissage ne peint rien`);
+  assert.ok(
+    (filled[0]?.lines ?? []).every((line) => line === ""),
+    `${label} : le remplissage ne peint rien`,
+  );
 
   return { lines, fresh, texts };
 }
@@ -581,7 +584,6 @@ test("S-1 : un composant qui jette au rendu devient un rang lisible, le panneau 
   const { kit } = fakeKit();
   /** Le `DynamicBorder` d'une AUTRE version : il ne jette qu'au RENDU. */
   class DynamicBorder {
-    constructor(_color?: (text: string) => string) {}
     render(): readonly string[] {
       throw new Error("règle cassée");
     }

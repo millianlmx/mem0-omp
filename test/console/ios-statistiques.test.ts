@@ -52,7 +52,9 @@ function structFields(source: string, name: string): string[] {
   const body = source.slice(start.index + start[0].length);
   const end = body.indexOf("\n}");
   const fields: string[] = [];
-  for (const match of (end === -1 ? body : body.slice(0, end)).matchAll(/^\s*(?:public\s+)?(?:var|let)\s+(\w+)\s*:/gm)) {
+  for (const match of (end === -1 ? body : body.slice(0, end)).matchAll(
+    /^\s*(?:public\s+)?(?:var|let)\s+(\w+)\s*:/gm,
+  )) {
     fields.push(match[1]);
   }
   return fields;
@@ -75,7 +77,17 @@ function mirrorFaults(root: string): string[] {
 
   const expected: Record<string, string[]> = {
     RemoteStatsProject: ["key", "label"],
-    RemoteStatsFeature: ["slug", "input", "output", "cacheRead", "cacheWrite", "turns", "durationMs", "liveRuns", "model"],
+    RemoteStatsFeature: [
+      "slug",
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "turns",
+      "durationMs",
+      "liveRuns",
+      "model",
+    ],
     RemoteStatsPayload: ["projectKey", "project", "projects", "features", "hiddenPlanFeatures"],
   };
   for (const [name, fields] of Object.entries(expected)) {
@@ -100,14 +112,17 @@ function mirrorFaults(root: string): string[] {
   // L'API ne lit plus l'état publié de `StatsModel`.
   const reads = repoCode(root, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
   if (/stats:\s*StatsModel/.test(reads)) faults.push("RemoteReads dépend encore de StatsModel");
-  if (!/func statistics\(project: String\?\)/.test(reads)) faults.push("RemoteReads.statistics n'a pas le paramètre project");
+  if (!/func statistics\(project: String\?\)/.test(reads))
+    faults.push("RemoteReads.statistics n'a pas le paramètre project");
   if (!/SessionMetricsCache/.test(reads)) faults.push("RemoteReads n'emploie pas SessionMetricsCache");
   // La route est INCHANGÉE : 44 entrées (les routes de la session hébergée, dont le changement de modèle, `devices.forget`, le rafraîchissement des faits de PR puis les quatre routes d'audit s'y sont ajoutés), et le paramètre est lu de la requête.
   const router = repoCode(root, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
   const routes = router.split("static let routes: [Route] = [")[1]?.split("]")[0] ?? "";
   const count = (routes.match(/\.of\(/g) ?? []).length;
   if (count !== 44) faults.push(`${count} routes servies (44 attendues)`);
-  if (!/case "stats":\s*\n\s*return try json\(reads\.statistics\(project: request\.query\["project"\]\)\)/.test(router)) {
+  if (
+    !/case "stats":\s*\n\s*return try json\(reads\.statistics\(project: request\.query\["project"\]\)\)/.test(router)
+  ) {
     faults.push("le case « stats » ne lit pas le paramètre project de la requête");
   }
   return faults;
@@ -352,7 +367,10 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
   const replant = shared.fresh();
   const view = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
   fs.writeFileSync(view, code(view).replace(/IOSStatsScreen\(client: client[^)]*\)/, "EmptyView()"));
-  assert.ok(screenFaults(replant).some((f) => f.includes("route pas .stats")), "une section non routée doit faire rougir la garde");
+  assert.ok(
+    screenFaults(replant).some((f) => f.includes("route pas .stats")),
+    "une section non routée doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -362,7 +380,11 @@ test("ios-statistiques/AC-2 : l'API dérive par les fonctions pures de macOS et 
   assert.deepEqual(mirrorFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const reads = repoCode(ROOT, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  assert.match(reads, /statsBoard\(snapshot: snapshot, selectedKey: project, read: cache\.metrics\)/, "la dérivation passe par statsBoard");
+  assert.match(
+    reads,
+    /statsBoard\(snapshot: snapshot, selectedKey: project, read: cache\.metrics\)/,
+    "la dérivation passe par statsBoard",
+  );
   assert.match(reads, /featureTotals\(/, "les totaux passent par featureTotals");
   assert.match(reads, /featureLiveRuns\(/, "les runs vivants passent par featureLiveRuns");
   assert.match(reads, /featureModel\(/, "le modèle passe par featureModel");
@@ -377,9 +399,14 @@ test("ios-statistiques/AC-2 : l'API dérive par les fonctions pures de macOS et 
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replace("statsBoard(snapshot: snapshot, selectedKey: project, read: cache.metrics)", "nil"));
+  fs.writeFileSync(
+    target,
+    code(target).replace("statsBoard(snapshot: snapshot, selectedKey: project, read: cache.metrics)", "nil"),
+  );
   assert.ok(
-    !repoCode(copy, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift")).includes("statsBoard("),
+    !repoCode(copy, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift")).includes(
+      "statsBoard(",
+    ),
     "une dérivation qui ne passe plus par statsBoard doit faire rougir la garde",
   );
 });
@@ -394,7 +421,10 @@ test("ios-statistiques/AC-3 : le total du projet est la somme des features list�
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientPayloads.swift");
-  fs.writeFileSync(target, code(target).replace("features.reduce(into: RemoteStatsTotals.zero)", "RemoteStatsTotals.zero"));
+  fs.writeFileSync(
+    target,
+    code(target).replace("features.reduce(into: RemoteStatsTotals.zero)", "RemoteStatsTotals.zero"),
+  );
   assert.ok(
     !repoCode(copy, path.join("omp-console", "Sources", "ConsoleClient", "ClientPayloads.swift")).includes(
       "features.reduce(into:",
@@ -422,7 +452,10 @@ test("ios-statistiques/AC-4 : la parité macOS est portée par RemoteStatsRouteT
   const copy = shared.fresh();
   const target = path.join(SHELL, "Tests", "OMPConsoleTests", "RemoteStatsRouteTests.swift");
   const replant = path.join(copy, "omp-console", "Tests", "OMPConsoleTests", "RemoteStatsRouteTests.swift");
-  fs.writeFileSync(replant, fs.readFileSync(target, "utf8").replace("featureTotals(expected, nowMs: nowMs)", "StatsTotals.zero"));
+  fs.writeFileSync(
+    replant,
+    fs.readFileSync(target, "utf8").replace("featureTotals(expected, nowMs: nowMs)", "StatsTotals.zero"),
+  );
   assert.ok(
     !fs.readFileSync(replant, "utf8").includes("featureTotals(expected"),
     "une parité sans featureTotals doit faire rougir la garde",
@@ -438,18 +471,25 @@ test("ios-statistiques/AC-5 : le masquage des features sans run lisible est serv
   const reads = repoCode(ROOT, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
   assert.match(reads, /hiddenPlanFeatures: board\.project\.hiddenPlanFeatures/, "le masquage vient du tableau dérivé");
   const content = appFile(ROOT, "IOSStatsContent.swift");
-  assert.match(content, /StatsPresentation\.hidden\(payload\.hiddenPlanFeatures\)/, "la mention vient de la constante partagée");
+  assert.match(
+    content,
+    /StatsPresentation\.hidden\(payload\.hiddenPlanFeatures\)/,
+    "la mention vient de la constante partagée",
+  );
   const screen = appFile(ROOT, "IOSStatsScreen.swift");
   // Elle apparaît AUSSI quand aucune feature n'est listée : l'état vide la porte.
   assert.match(
     screen,
-    /private var emptyState: some View \{[\s\S]*?hiddenMention[\s\S]*?\n    \}/,
+    /private var emptyState: some View \{[\s\S]*?hiddenMention[\s\S]*?\n {4}\}/,
     "la mention est portée par l'état vide",
   );
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replace("hiddenPlanFeatures: board.project.hiddenPlanFeatures", "hiddenPlanFeatures: 0"));
+  fs.writeFileSync(
+    target,
+    code(target).replace("hiddenPlanFeatures: board.project.hiddenPlanFeatures", "hiddenPlanFeatures: 0"),
+  );
   assert.ok(
     !repoCode(copy, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift")).includes(
       "hiddenPlanFeatures: board",
@@ -474,7 +514,10 @@ test("ios-statistiques/AC-6 : les durées avancent à l'horloge de rendu et les 
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsScreen.swift");
-  fs.writeFileSync(target, code(target).replace(".onChange(of: client.sessionUpdates) { model.reload(trigger: .sessionsChanged) }", ""));
+  fs.writeFileSync(
+    target,
+    code(target).replace(".onChange(of: client.sessionUpdates) { model.reload(trigger: .sessionsChanged) }", ""),
+  );
   assert.ok(
     !appFile(copy, "IOSStatsScreen.swift").includes("client.sessionUpdates"),
     "un déclencheur retiré doit faire rougir la garde",
@@ -483,7 +526,10 @@ test("ios-statistiques/AC-6 : les durées avancent à l'horloge de rendu et les 
   const replant = shared.fresh();
   const modelPath = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsModel.swift");
   fs.writeFileSync(modelPath, code(modelPath).replace("guard case .connected = state else { return false }", ""));
-  assert.ok(advanceFaults(replant).some((f) => f.includes("`.connected`")), "un relevé hors connexion doit faire rougir la garde");
+  assert.ok(
+    advanceFaults(replant).some((f) => f.includes("`.connected`")),
+    "un relevé hors connexion doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -495,12 +541,18 @@ test("ios-statistiques/AC-7 : la section n'ouvre que la lecture des statistiques
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsScreen.swift");
   fs.writeFileSync(target, `${code(target)}\nlet fuite = "montant en dollars"\n`);
-  assert.ok(readonlyFaults(copy).some((f) => f.includes("monétaire")), "un montant affiché doit faire rougir la garde");
+  assert.ok(
+    readonlyFaults(copy).some((f) => f.includes("monétaire")),
+    "un montant affiché doit faire rougir la garde",
+  );
 
   const replant = shared.fresh();
   const modelPath = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsModel.swift");
   fs.writeFileSync(modelPath, `${code(modelPath)}\nlet geste = client.stop(cardId: "")\n`);
-  assert.ok(readonlyFaults(replant).some((f) => f.includes("geste")), "un geste de pilotage doit faire rougir la garde");
+  assert.ok(
+    readonlyFaults(replant).some((f) => f.includes("geste")),
+    "un geste de pilotage doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -508,11 +560,20 @@ test("ios-statistiques/AC-7 : la section n'ouvre que la lecture des statistiques
 
 test("ios-statistiques : la recette pas à pas et sa recette de design sont en place", () => {
   assert.deepEqual(docFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.ok(fs.existsSync(path.join(SHELL, "Tests", "OMPConsoleTests", "IOSStatistiquesRecipeTests.swift")), "la recette outillée existe");
+  assert.ok(
+    fs.existsSync(path.join(SHELL, "Tests", "OMPConsoleTests", "IOSStatistiquesRecipeTests.swift")),
+    "la recette outillée existe",
+  );
   assert.ok(fs.existsSync(path.join(IOS_TESTS, "IOSStatsModelTests.swift")), "les preuves du modèle iOS existent");
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "README.md");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("### Statistiques depuis l'iPad", "### Statistiques"));
-  assert.ok(docFaults(copy).some((f) => f.includes("Statistiques depuis l'iPad")), "une recette absente doit faire rougir la garde");
+  fs.writeFileSync(
+    target,
+    fs.readFileSync(target, "utf8").replace("### Statistiques depuis l'iPad", "### Statistiques"),
+  );
+  assert.ok(
+    docFaults(copy).some((f) => f.includes("Statistiques depuis l'iPad")),
+    "une recette absente doit faire rougir la garde",
+  );
 });

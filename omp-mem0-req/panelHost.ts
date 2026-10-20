@@ -2,8 +2,6 @@
 import type { SessionEntryLike } from "./panelSession.ts";
 import { asStringOrNull } from "./store.ts";
 
-
-
 // --- le composant et sa fabrique --------------------------------------------
 
 /** Surface de la TUI réellement utilisée : structurelle, donc testable sans OMP. */
@@ -13,7 +11,6 @@ export type PanelTheme = {
   fg(color: string, text: string): string;
   nav: { cursor: string };
 };
-
 
 // --- les composants de l'hôte : le kit injecté (S-1) -------------------------
 //
@@ -70,9 +67,12 @@ export type HostAssistant = HostExpandable & {
 
 export type HostBash = HostExpandable & {
   appendOutput(chunk: string): void;
-  setComplete(exitCode: number | undefined, cancelled: boolean, options?: { output?: string; showImages?: boolean }): void;
+  setComplete(
+    exitCode: number | undefined,
+    cancelled: boolean,
+    options?: { output?: string; showImages?: boolean },
+  ): void;
 };
-
 
 /**
  * Le sous-ensemble de `pi.pi` que le panneau et la vue utilisent. Chaque entrée a
@@ -113,7 +113,6 @@ export type HostComponents = {
   BranchSummaryMessageComponent: new (message: unknown) => HostExpandable;
 };
 
-
 /**
  * Les noms REQUIS du kit : sans eux, ni le panneau ni la vue ne savent rendre, et
  * il n'existe AUCUN rendu de repli (S-1 cas 3) — un kit incomplet vaut un refus
@@ -134,7 +133,6 @@ export const HOST_COMPONENT_NAMES = [
   "CompactionSummaryMessageComponent",
   "BranchSummaryMessageComponent",
 ] as const;
-
 
 /**
  * Lit le kit sur `pi.pi` (le namespace du module d'entrée de l'hôte, seul chemin
@@ -162,7 +160,6 @@ export function hostComponents(pi: unknown): HostComponents | null {
   return host as unknown as HostComponents;
 }
 
-
 /**
  * Le curseur de sélection du panneau (S-1) : le glyphe du thème ACTIF, ou le
  * curseur ASCII `>` — un thème sans `nav.cursor` (ou d'une autre version) REPLIE,
@@ -174,7 +171,6 @@ export function cursorGlyph(theme: unknown): string {
   const cursor = nav && typeof nav === "object" && "cursor" in nav ? nav.cursor : undefined;
   return typeof cursor === "string" && cursor !== "" ? cursor : ">";
 }
-
 
 // --- l'assembleur entrée → composants de l'hôte (S-3) ------------------------
 //
@@ -203,7 +199,6 @@ export function textOfContent(content: unknown): string {
   return parts.join(" ");
 }
 
-
 /** Le contenu d'un résultat d'outil, sous la forme que `updateResult` attend. */
 export function toolContentOf(content: unknown): HostToolResult["content"] {
   if (typeof content === "string") return [{ type: "text", text: content }];
@@ -223,7 +218,6 @@ export function toolContentOf(content: unknown): HostToolResult["content"] {
   return out;
 }
 
-
 /**
  * La règle de l'hôte (`assistantHasVisibleContent`), réécrite localement : un
  * segment d'assistant qui ne porte ni texte, ni raisonnement, ni image ne mérite
@@ -241,7 +235,6 @@ export function assistantHasVisibleContent(message: Record<string, unknown>): bo
   }
   return false;
 }
-
 
 /**
  * `splitAssistantMessageToolTimeline` de l'hôte, réécrite localement (elle vit
@@ -290,7 +283,6 @@ export function splitAssistantToolTimeline(message: Record<string, unknown>): {
   return { beforeTools: displaySegment(before), afterToolCalls, hasToolCalls: true, lastToolCallId };
 }
 
-
 /**
  * L'état d'un assemblage : l'ordre d'affichage, ce que chaque entrée a produit, ce
  * que la bascule globale atteint, et les cartes d'outils encore en vol. Il se
@@ -311,13 +303,11 @@ export type SessionAssembly = {
   expanded: boolean;
 };
 
-
 /** Le handle d'un composant repliable, suivi à part : `ctrl+o` l'atteindra (S-4). */
 export function trackExpandable(assembly: SessionAssembly, component: HostExpandable): void {
   component.setExpanded(assembly.expanded);
   assembly.expandables.push(component);
 }
-
 
 /** La taille d'une entrée trop volumineuse : en Kio, ou en octets sous le Kio (VIEW-6). */
 export function sizeLabel(bytes: number): string {
@@ -325,12 +315,10 @@ export function sizeLabel(bytes: number): string {
   return safe < 1024 ? `${Math.trunc(safe)} octets` : `${Math.round(safe / 1024)} Kio`;
 }
 
-
 /** La clé d'une entrée dans l'assemblage : son `id` ET son octet (S-8). */
 export function entryKey(entry: SessionEntryLike): string {
   return entry.id !== "" ? `${entry.id}@${entry.at}` : `#${entry.at}`;
 }
-
 
 /** Libère un composant sans laisser son échec interrompre les autres (VIEW-7). */
 export function disposeComponent(component: HostComponent): void {
@@ -340,7 +328,6 @@ export function disposeComponent(component: HostComponent): void {
     /* un composant qui jette à la libération ne retient pas les autres */
   }
 }
-
 
 /**
  * Libère les composants d'un assemblage (VIEW-7). Une carte d'outil SANS résultat
@@ -352,7 +339,6 @@ export function disposeAssembly(assembly: SessionAssembly | null): void {
   if (!assembly) return;
   for (const component of assembly.components) disposeComponent(component);
 }
-
 
 /**
  * Évince de l'assemblage les entrées qui ne sont plus chargées (VIEW-11) : leurs
@@ -380,7 +366,6 @@ export function evictEntries(assembly: SessionAssembly, keys: Iterable<string>):
   for (const component of gone) disposeComponent(component);
 }
 
-
 /** Le groupe de lectures courant, ouvert au premier `read` d'une course (S-3, §6). */
 export function ensureReadGroup(assembly: SessionAssembly, kit: HostComponents): HostToolHandle {
   if (assembly.readGroup) return assembly.readGroup;
@@ -390,7 +375,6 @@ export function ensureReadGroup(assembly: SessionAssembly, kit: HostComponents):
   assembly.readGroup = group;
   return group;
 }
-
 
 /** Une entrée → ses composants, ajoutés à l'assemblage dans l'ordre du fichier. */
 export function appendEntry(
@@ -439,14 +423,24 @@ export function appendEntry(
     const text = textOfContent(message.content).trim();
     if (text === "") return;
     const synthetic = role === "developer" || message.synthetic === true;
-    assembly.components.push(synthetic ? new kit.UserMessageComponent(text, { synthetic: true }) : new kit.UserMessageComponent(text));
+    assembly.components.push(
+      synthetic ? new kit.UserMessageComponent(text, { synthetic: true }) : new kit.UserMessageComponent(text),
+    );
     return;
   }
   if (role === "assistant") {
     const timeline = splitAssistantToolTimeline(message);
     const before = timeline.beforeTools;
     if (assistantHasVisibleContent(before)) {
-      const card = new kit.AssistantMessageComponent(before, false, () => ui.requestRender(), [], undefined, true, undefined);
+      const card = new kit.AssistantMessageComponent(
+        before,
+        false,
+        () => ui.requestRender(),
+        [],
+        undefined,
+        true,
+        undefined,
+      );
       card.setImagesVisible(false);
       card.setToolResultImagesVisible(true);
       trackExpandable(assembly, card);
@@ -487,7 +481,15 @@ export function appendEntry(
         if (id !== "") assembly.toolCards.set(id, card);
       }
       if (after && assistantHasVisibleContent(after)) {
-        const segment = new kit.AssistantMessageComponent(after, false, () => ui.requestRender(), [], undefined, true, undefined);
+        const segment = new kit.AssistantMessageComponent(
+          after,
+          false,
+          () => ui.requestRender(),
+          [],
+          undefined,
+          true,
+          undefined,
+        );
         segment.setImagesVisible(false);
         segment.setToolResultImagesVisible(true);
         trackExpandable(assembly, segment);
@@ -518,9 +520,13 @@ export function appendEntry(
       message.excludeFromContext === true,
     );
     if (typeof message.output === "string" && message.output !== "") component.appendOutput(message.output);
-    component.setComplete(typeof message.exitCode === "number" ? message.exitCode : undefined, message.cancelled === true, {
-      showImages: false,
-    });
+    component.setComplete(
+      typeof message.exitCode === "number" ? message.exitCode : undefined,
+      message.cancelled === true,
+      {
+        showImages: false,
+      },
+    );
     trackExpandable(assembly, component);
     assembly.components.push(component);
     return;
@@ -568,7 +574,6 @@ export function appendEntry(
   // `fileMention` (et tout rôle inconnu) ne rend rien : `buildFileMentionBlock`
   // n'est pas atteignable (`## Documentation` §2) — écart documenté de S-3.
 }
-
 
 /**
  * Les composants des entrées d'une fenêtre, dans l'ordre du fichier (S-3). Avec un
@@ -620,13 +625,11 @@ export function buildSessionComponents(
   return assembly;
 }
 
-
 /** La bascule GLOBALE de dépliage (S-4) : toutes les cartes repliables, d'un coup. */
 export function applyExpanded(assembly: SessionAssembly, expanded: boolean): void {
   assembly.expanded = expanded;
   for (const component of assembly.expandables) component.setExpanded(expanded);
 }
-
 
 /**
  * La surface de TUI que les cartes d'outil reçoivent (`ToolExecutionUi`) : elles ne

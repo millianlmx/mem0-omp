@@ -14,7 +14,6 @@ import type { LotFeatureState } from "./lot.ts";
 import { asLotFeatureState } from "./lot.ts";
 import { PIPELINE_PHASES, readJsonFile, writeJsonAtomic, writeStateFileAtomic } from "./store.ts";
 
-
 export type AuditStatus = "analysing" | "proposed" | "launched" | "stopped" | "failed";
 
 export type AuditProposalElement = { kind: "weakness" | "feature"; slug: string; intention: string; deps: string[] };
@@ -75,7 +74,6 @@ const AUDIT_TRANSITIONS: Record<AuditStatus, readonly AuditStatus[]> = {
   stopped: [],
 };
 
-
 // --- le magasin --------------------------------------------------------------
 
 /** `<stateDir>/audits` : un fichier par audit. */
@@ -83,24 +81,20 @@ export function auditsDirOf(stateDir: string): string {
   return path.join(stateDir, "audits");
 }
 
-
 /** `<stateDir>/audits/<id>.json`. */
 export function auditPathFor(stateDir: string, id: string): string {
   return path.join(auditsDirOf(stateDir), `${id}.json`);
 }
-
 
 /** `<stateDir>/audits/<id>` : la clé de contexte de l'audit, absolue — pas un fichier. */
 export function auditKeyOf(stateDir: string, id: string): string {
   return `${stateDir}/audits/${id}`;
 }
 
-
 /** Un identifiant neuf : 8 octets aléatoires, 16 hexadécimaux. */
 export function newAuditId(): string {
   return crypto.randomBytes(8).toString("hex");
 }
-
 
 function asProposalElement(raw: unknown): AuditProposalElement | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -111,7 +105,6 @@ function asProposalElement(raw: unknown): AuditProposalElement | null {
   return { kind: e.kind, slug: e.slug, intention: e.intention, deps: [...(e.deps as string[])] };
 }
 
-
 function asLaunchOutcome(raw: unknown): AuditLaunchOutcome | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
@@ -120,11 +113,22 @@ function asLaunchOutcome(raw: unknown): AuditLaunchOutcome | null {
   if (o.prUrl !== null && typeof o.prUrl !== "string") return null;
   const state = o.state === null ? null : asLotFeatureState(o.state);
   if (o.state !== null && state === null) return null;
-  const phase = o.phase === null ? null : PIPELINE_PHASES.includes(o.phase as PipelinePhase) ? (o.phase as PipelinePhase) : undefined;
+  const phase =
+    o.phase === null
+      ? null
+      : PIPELINE_PHASES.includes(o.phase as PipelinePhase)
+        ? (o.phase as PipelinePhase)
+        : undefined;
   if (phase === undefined) return null;
-  return { slug: o.slug, launched: o.launched, reason: o.reason as string | null, state, phase, prUrl: o.prUrl as string | null };
+  return {
+    slug: o.slug,
+    launched: o.launched,
+    reason: o.reason as string | null,
+    state,
+    phase,
+    prUrl: o.prUrl as string | null,
+  };
 }
-
 
 /**
  * L'audit relu, TOLÉRANT : d'une autre version ou avec un champ obligatoire
@@ -180,13 +184,11 @@ export function asAudit(raw: unknown): AuditRecord | null {
   };
 }
 
-
 /** L'audit `id`, ou `null` (absent ou illisible). */
 export function readAudit(stateDir: string, id: string): AuditRecord | null {
   if (!/^[0-9a-f]{16}$/.test(id)) return null;
   return asAudit(readJsonFile(auditPathFor(stateDir, id)));
 }
-
 
 /** Tous les audits lisibles du magasin, du plus ancien au plus récent (`createdAt`, puis id). */
 export function listAudits(stateDir: string): AuditRecord[] {
@@ -205,12 +207,10 @@ export function listAudits(stateDir: string): AuditRecord[] {
   return audits.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
-
 /** Écriture atomique : l'appelant a relu le fichier SANS `await` depuis (un seul écrivain, le service). */
 export function writeAudit(stateDir: string, audit: AuditRecord): void {
   writeJsonAtomic(auditPathFor(stateDir, audit.id), { ...audit, version: AUDIT_VERSION });
 }
-
 
 /** `<stateDir>/audits/<id>.report.md` : le rapport de l'analyse, en attente du lancement (`listAudits` ne lit que `*.json`). */
 export function auditReportDraftPathFor(stateDir: string, id: string): string {
@@ -231,14 +231,12 @@ export function readAuditReportDraft(stateDir: string, id: string): string | nul
   }
 }
 
-
 // --- les transitions ---------------------------------------------------------
 
 /** `analysing → proposed | failed | stopped`, `proposed → launched | stopped`, `launched → stopped`, `failed → stopped`. */
 export function canTransition(from: AuditStatus, to: AuditStatus): boolean {
   return AUDIT_TRANSITIONS[from].includes(to);
 }
-
 
 /**
  * L'audit passé à `to` (copie, `updatedAt` = `now`), ou le refus de la
@@ -255,7 +253,6 @@ export function transitionAudit(
   return { ok: true, audit: { ...audit, status: to, updatedAt: now } };
 }
 
-
 // --- le brief d'audit --------------------------------------------------------
 
 /**
@@ -269,7 +266,9 @@ export function renderAuditBrief(
   weaknesses: readonly Pick<AuditProposalElement, "slug" | "intention">[],
 ): string {
   const findings =
-    weaknesses.length === 0 ? "- (aucun)" : weaknesses.map((weakness) => `- ${weakness.slug} — ${weakness.intention}`).join("\n");
+    weaknesses.length === 0
+      ? "- (aucun)"
+      : weaknesses.map((weakness) => `- ${weakness.slug} — ${weakness.intention}`).join("\n");
   return [
     renderBrief({ title: `audit ${path.basename(audit.repoRoot)}`, ...brief }),
     "## Orientation",

@@ -15,10 +15,12 @@ import type { ReviewEvidence } from "./arbiterReview.ts";
 import { ARBITER_DIRECTIVE } from "./seeds.ts";
 
 /** La ligne que le prompt d'un jalon « specs validées » porte (S-10) : ce que l'arbitre doit vérifier. */
-const SPECS_CHECK = "vérification exigée : chaque AC-<n> du contrat est référencé par une spécification S-<n>, et les spécifications sont cohérentes avec le rapport";
+const SPECS_CHECK =
+  "vérification exigée : chaque AC-<n> du contrat est référencé par une spécification S-<n>, et les spécifications sont cohérentes avec le rapport";
 
 /** Ce qu'une approbation de jalon porte, comme une réponse : sans justification vérifiée, le pilote escalade. */
-const MILESTONE_JUSTIFICATION = "approbation justifiée : au moins une `citations` (passage du contrat ou du rapport copié tel quel), `references` (chemin:ligne du worktree) ou `rubriques` vérifiable, sinon l'élément est escaladé";
+const MILESTONE_JUSTIFICATION =
+  "approbation justifiée : au moins une `citations` (passage du contrat ou du rapport copié tel quel), `references` (chemin:ligne du worktree) ou `rubriques` vérifiable, sinon l'élément est escaladé";
 
 /**
  * La ligne que le prompt d'un jalon « revue propre » porte : les critères tirés que
@@ -44,7 +46,6 @@ const QUESTION_SECTIONS: Record<PipelinePhase, readonly string[]> = {
   review: ["Critères d'acceptation", "Revue"],
   release: ["Besoins", "Critères d'acceptation", "Revue"],
 };
-
 
 /** L'échéance d'un run d'arbitre (S-9) : dix minutes. */
 export const ARBITER_DEADLINE_MS = 600_000;
@@ -132,7 +133,13 @@ export type ArbiterGround = {
  * porte pas.
  */
 export type ArbiterEffect =
-  | { kind: "answer"; answer: string; source: "contexte" | "arbitrage"; selected: boolean; justification?: DecisionJustification }
+  | {
+      kind: "answer";
+      answer: string;
+      source: "contexte" | "arbitrage";
+      selected: boolean;
+      justification?: DecisionJustification;
+    }
   | { kind: "approve"; justification?: DecisionJustification }
   | { kind: "escalate"; reason: string }
   | { kind: "relaunch"; refocus: string | null; justification: DecisionJustification }
@@ -141,32 +148,28 @@ export type ArbiterEffect =
 export const ARBITER_RECORDED = "décision enregistrée";
 export const ARBITER_ALREADY = "Error: décision déjà enregistrée";
 
-
 /** La question comparée au journal : espaces repliés, minuscules (S-9 « raccourci journal »). */
 export function normalizeQuestion(text: string): string {
   return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
-
 
 /** Le texte aux espaces repliés (citations et corpus, S-9). */
 export function foldSpaces(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-
 /** Le jalon qu'un élément de type `specs` ou `review` soumet, tel que le journal le nomme (S-7). */
 export function milestoneQuestion(kind: "specs" | "review"): string {
   return kind === "specs" ? "specs validées ?" : "revue propre : livrer ?";
 }
 
-
 /** La question affichée d'un élément : celle de l'étape, le jalon, ou le plafond / l'échec (S-3 §5). */
 export function itemQuestion(item: ArbiterItem): string {
-  if (item.kind === "cap") return "plafond de la boucle revue ⇄ correction atteint : relancer un cycle, répondre au maillon /review ou abandonner ?";
+  if (item.kind === "cap")
+    return "plafond de la boucle revue ⇄ correction atteint : relancer un cycle, répondre au maillon /review ou abandonner ?";
   if (item.kind === "failure") return `échec du run /${item.phase} : relancer ou abandonner ?`;
   return item.question ?? milestoneQuestion(item.kind as "specs" | "review");
 }
-
 
 /** La borne du corpus de l'arbitre (S-4), en caractères (unités de `String.prototype.length`). */
 export const ARBITER_CORPUS_MAX_CHARS = 200_000;
@@ -180,7 +183,6 @@ const NO_NEW_DECISION = "- (aucune décision nouvelle)";
 const REPORT_CUT = "[… fin du rapport coupée]";
 const CONTRACT_CUT = "[… fin du contrat coupée]";
 
-
 /** Le plus petit entier de `[from, to]` pour lequel `ok` vaut vrai (`ok` croît avec l'entier), sinon `to`. */
 function smallestFitting(from: number, to: number, ok: (n: number) => boolean): number {
   let lo = from;
@@ -193,7 +195,6 @@ function smallestFitting(from: number, to: number, ok: (n: number) => boolean): 
   return lo;
 }
 
-
 /** Les sections `## <titre>` du contrat (dernière occurrence, titre compris) qui existent parmi `titles`, dans cet ordre. */
 function keepSections(contract: string, titles: readonly string[]): string {
   const sections: string[] = [];
@@ -203,7 +204,6 @@ function keepSections(contract: string, titles: readonly string[]): string {
   }
   return sections.join("\n\n");
 }
-
 
 /** Le contrat sans AUCUNE occurrence de `## <titre>` (un maillon peut l'avoir dupliquée). */
 function dropSection(contract: string, title: string): string {
@@ -219,7 +219,6 @@ function dropSection(contract: string, title: string): string {
   }
   return kept.join("\n").trim();
 }
-
 
 /**
  * Ce que l'arbitre lit du contrat selon le genre de l'élément : une question, les
@@ -242,7 +241,6 @@ export function arbiterContractExcerpt(contract: string, kind: ArbiterItemKind, 
       return phase === undefined ? contract : keepSections(contract, QUESTION_SECTIONS[phase]);
   }
 }
-
 
 /**
  * Le message d'OUVERTURE de la session du pilote (S-4) : la directive, puis le
@@ -276,7 +274,14 @@ export function buildPilotOpening(input: {
       ARBITER_DIRECTIVE,
       "## Corpus du lot",
       ...(cut.length > 0 ? [`(corpus tronqué à ${maxChars} caractères — sections coupées : ${cut.join(", ")})`] : []),
-      ["### Rapport", report === "" ? NO_REPORT : reportKeep < report.length ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}` : report].join("\n"),
+      [
+        "### Rapport",
+        report === ""
+          ? NO_REPORT
+          : reportKeep < report.length
+            ? `${report.slice(0, reportKeep)}\n${REPORT_CUT}`
+            : report,
+      ].join("\n"),
       ["### Brief", brief === "" ? NO_BRIEF : brief].join("\n"),
       ["### Journal du lot", ...(lotLines.length > 0 ? lotLines : [NO_DECISION])].join("\n"),
     ].join("\n\n");
@@ -288,11 +293,11 @@ export function buildPilotOpening(input: {
     dropped = smallestFitting(1, recentLot.length, (n) => render(n, reportKeep).length <= maxChars);
   }
   if (!fits() && report !== "") {
-    reportKeep = report.length - smallestFitting(1, report.length, (n) => render(dropped, report.length - n).length <= maxChars);
+    reportKeep =
+      report.length - smallestFitting(1, report.length, (n) => render(dropped, report.length - n).length <= maxChars);
   }
   return render(dropped, reportKeep);
 }
-
 
 /**
  * Le CORPUS d'un TOUR (S-4), dans l'ordre : contrat, journal du lot DEPUIS LE
@@ -341,9 +346,18 @@ export function buildArbiterCorpus(input: {
     ];
     return [
       ...(cut.length > 0 ? [`(corpus tronqué à ${maxChars} caractères — sections coupées : ${cut.join(", ")})`] : []),
-      ["### Contrat", contract === "" ? noContract : contractKeep < contract.length ? `${contract.slice(0, contractKeep)}\n${CONTRACT_CUT}` : contract].join("\n"),
+      [
+        "### Contrat",
+        contract === ""
+          ? noContract
+          : contractKeep < contract.length
+            ? `${contract.slice(0, contractKeep)}\n${CONTRACT_CUT}`
+            : contract,
+      ].join("\n"),
       ["### Journal du lot depuis le dernier tour", ...(lotLines.length > 0 ? lotLines : [NO_NEW_DECISION])].join("\n"),
-      [`### Journal de la feature ${input.slug}`, ...(featureLines.length > 0 ? featureLines : [NO_DECISION])].join("\n"),
+      [`### Journal de la feature ${input.slug}`, ...(featureLines.length > 0 ? featureLines : [NO_DECISION])].join(
+        "\n",
+      ),
     ].join("\n\n");
   };
 
@@ -354,11 +368,12 @@ export function buildArbiterCorpus(input: {
     dropped = smallestFitting(1, recentLot.length, (n) => render(n, contractKeep).length <= maxChars);
   }
   if (!fits() && contract !== "") {
-    contractKeep = contract.length - smallestFitting(1, contract.length, (n) => render(dropped, contract.length - n).length <= maxChars);
+    contractKeep =
+      contract.length -
+      smallestFitting(1, contract.length, (n) => render(dropped, contract.length - n).length <= maxChars);
   }
   return render(dropped, contractKeep);
 }
-
 
 /**
  * Le bloc d'un élément de type plafond ou échec (S-2), ou `null` pour les autres genres.
@@ -400,7 +415,6 @@ export function arbiterItemBlock(item: ArbiterItem): string | null {
   return null;
 }
 
-
 /**
  * Le rappel qui clôt chaque tour : le digest des règles de la directive — ce qu'une
  * compaction de la session peut avoir dilué — et l'appel unique.
@@ -417,11 +431,18 @@ export const TURN_REMINDER = [
  * source (ce que l'utilisateur a dû trancher), le nombre de sessions distinctes et
  * de tours. `null` sans aucun arbitrage — la ligne n'est pas affichée.
  */
-export function pilotRecapLine(input: { entries: readonly JournalEntry[]; turns: ReadonlyArray<{ sessionFile: string | null }> }): string | null {
-  const decided = input.entries.filter((entry) => entry.kind === "question" || entry.kind === "jalon" || entry.kind === "plafond" || entry.kind === "echec");
+export function pilotRecapLine(input: {
+  entries: readonly JournalEntry[];
+  turns: ReadonlyArray<{ sessionFile: string | null }>;
+}): string | null {
+  const decided = input.entries.filter(
+    (entry) =>
+      entry.kind === "question" || entry.kind === "jalon" || entry.kind === "plafond" || entry.kind === "echec",
+  );
   if (decided.length === 0 && input.turns.length === 0) return null;
   const by = (source: DecisionSource) => decided.filter((entry) => entry.source === source).length;
-  const sessions = new Set(input.turns.map((turn) => turn.sessionFile).filter((file): file is string => file !== null)).size;
+  const sessions = new Set(input.turns.map((turn) => turn.sessionFile).filter((file): file is string => file !== null))
+    .size;
   return `arbitrage : ${decided.length} décisions (contexte ${by("contexte")}, arbitrage ${by("arbitrage")}, utilisateur ${by("utilisateur")}) — ${sessions} session${sessions > 1 ? "s" : ""} de pilote, ${input.turns.length} tour${input.turns.length > 1 ? "s" : ""}`;
 }
 
@@ -433,7 +454,9 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
   const head = [
     "## Élément à arbitrer",
     `feature : ${item.slug}`,
-    ...(item.worktree !== undefined && item.worktree !== "" ? [`worktree : ${item.worktree} (les \`references\` sont relatives à ce dossier)`] : []),
+    ...(item.worktree !== undefined && item.worktree !== ""
+      ? [`worktree : ${item.worktree} (les \`references\` sont relatives à ce dossier)`]
+      : []),
     `étape : /${item.phase}`,
   ];
   const block = arbiterItemBlock(item);
@@ -441,7 +464,8 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
     head.push(block);
   } else if (item.question !== null) {
     head.push(`type : question`, `question : ${item.question}`);
-    if (item.options.length > 0) head.push("options :", ...item.options.map((label, index) => `${index + 1}. ${label}`));
+    if (item.options.length > 0)
+      head.push("options :", ...item.options.map((label, index) => `${index + 1}. ${label}`));
   } else {
     head.push(`type : jalon « ${item.kind === "specs" ? "specs validées" : "revue propre"} »`);
     if (item.kind === "specs") head.push(SPECS_CHECK);
@@ -452,7 +476,6 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
   return `${head.join("\n")}${evidence}\n\n## Corpus de l'élément\n\n${corpus}\n\n${TURN_REMINDER}`;
 }
 
-
 /**
  * L'outil `arbiter_decide` (S-9) : la décision est vérifiée À L'APPEL par
  * `capture.check` quand le runner l'a posé ; refusée, elle est renvoyée à l'arbitre
@@ -460,12 +483,10 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
  * Une escalade n'est jamais refusée. Après une décision retenue, tout appel est
  * refusé. Partagé par l'extension et par les doublures de test.
  */
-export function recordArbiterDecision(
-  capture: ArbiterCapture,
-  params: unknown,
-): { text: string; isError: boolean } {
+export function recordArbiterDecision(capture: ArbiterCapture, params: unknown): { text: string; isError: boolean } {
   if (capture.decision !== null) return { text: ARBITER_ALREADY, isError: true };
-  const record = params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+  const record =
+    params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
   const decision = record.decision;
   if (
     decision !== "answer" &&
@@ -510,7 +531,6 @@ export function recordArbiterDecision(
   return { text: ARBITER_RECORDED, isError: false };
 }
 
-
 /** Le nombre de lignes d'un texte : une fin de fichier `\n` ne compte pas de ligne vide en plus. */
 function lineCount(text: string): number {
   if (text === "") return 0;
@@ -519,14 +539,11 @@ function lineCount(text: string): number {
   return lines.length;
 }
 
-
 function leavesRoot(relative: string): boolean {
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
-
 const REFERENCE = /^(.+):(\d+)(?:-(\d+))?$/;
-
 
 /**
  * Le motif de rejet d'une référence `chemin:ligne` / `chemin:début-fin` (S-6), ou
@@ -564,12 +581,10 @@ function referenceRejection(raw: string, worktree: string): string | null {
   return null;
 }
 
-
 /** Une rubrique ou un titre, comparés : `#` de tête retirés, espaces repliés, minuscules. */
 function normalizeRubrique(text: string): string {
   return foldSpaces(text.replace(/^\s*#+/, "")).toLowerCase();
 }
-
 
 /** Les titres markdown d'un rapport, normalisés. */
 function reportTitles(report: string | null): Set<string> {
@@ -582,7 +597,6 @@ function reportTitles(report: string | null): Set<string> {
   return titles;
 }
 
-
 type VerifiedJustifications = {
   /** Combien de justifications non vides l'arbitre a fournies. */
   provided: number;
@@ -592,10 +606,10 @@ type VerifiedJustifications = {
   rejected: string[];
 };
 
-
 /** Vérifie CHAQUE citation, référence et rubrique (S-6) ; les rejetées sont écartées, avec leur motif. */
 function verifyJustifications(decision: ArbiterDecision, ground: ArbiterGround): VerifiedJustifications {
-  const kept = (values: readonly string[] | undefined): string[] => (values ?? []).filter((value) => value.trim() !== "");
+  const kept = (values: readonly string[] | undefined): string[] =>
+    (values ?? []).filter((value) => value.trim() !== "");
   const out: VerifiedJustifications = { provided: 0, citations: [], references: [], rubriques: [], rejected: [] };
   const folded = foldSpaces(ground.corpus);
   for (const citation of kept(decision.citations)) {
@@ -622,19 +636,23 @@ function verifyJustifications(decision: ArbiterDecision, ground: ArbiterGround):
   return out;
 }
 
-
 /** `norm` de S-8 : espaces repliés, minuscules, ponctuation finale `[.!?;:,…]` retirée. */
 function normalizeOption(text: string): string {
-  return foldSpaces(text).toLowerCase().replace(/[.!?;:,…]+$/, "").trim();
+  return foldSpaces(text)
+    .toLowerCase()
+    .replace(/[.!?;:,…]+$/, "")
+    .trim();
 }
-
 
 /**
  * L'option qu'une réponse désigne (S-8) : son numéro, son libellé exact, son libellé
  * normalisé — le libellé CANONIQUE est rendu, sélectionné. Sinon la réponse reste
  * libre. Un numéro seul hors plage est refusé (`escalate`).
  */
-function chooseOption(options: readonly string[], answer: string): { answer: string; selected: boolean } | { escalate: string } {
+function chooseOption(
+  options: readonly string[],
+  answer: string,
+): { answer: string; selected: boolean } | { escalate: string } {
   if (options.length === 0) return { answer, selected: false };
   if (/^\d+$/.test(answer)) {
     const number = Number(answer);
@@ -648,7 +666,6 @@ function chooseOption(options: readonly string[], answer: string): { answer: str
   if (loose !== undefined) return { answer: loose, selected: true };
   return { answer, selected: false };
 }
-
 
 /**
  * Pourquoi le pilote refuse d'approuver un jalon (S-9, S-10), ou `null` : « specs
@@ -667,15 +684,14 @@ function approvalRefusal(item: ArbiterItem, ground: ArbiterGround): string | nul
     return uncovered.length === 0 ? null : `critères sans spécification S-n : ${uncovered.join(", ")}`;
   }
   if (ground.review === null) return "recherche des critères impossible : évidence absente";
-  if (ground.review.acFiles === null) return `recherche des critères impossible : ${ground.review.searchError ?? "erreur inconnue"}`;
+  if (ground.review.acFiles === null)
+    return `recherche des critères impossible : ${ground.review.searchError ?? "erreur inconnue"}`;
   if ((ground.review.names ?? []).length === 0) return "diff vide : aucun changement à livrer";
   return null;
 }
 
-
 /** Une attestation « AC-<n> chemin:ligne » (séparateur libre : espace, `:`, `=`, `→`, `->`). */
 const ATTESTATION = /^\s*(AC-\d+)(?![0-9])\s*[:=→⇒>-]*\s*(\S.*?)\s*$/;
-
 
 /**
  * Les attestations des critères tirés (jalon « revue propre ») : pour chaque id de
@@ -686,9 +702,15 @@ const ATTESTATION = /^\s*(AC-\d+)(?![0-9])\s*[:=→⇒>-]*\s*(\S.*?)\s*$/;
  * a désigné un endroit précis du diff pour chaque critère, au lieu d'approuver sur le
  * verdict. Rend les attestations vérifiées, ou le motif du refus.
  */
-function attestationRefusal(review: ReviewEvidence, attestations: readonly string[], worktree: string): { verified: string[] } | { refusal: string } {
+function attestationRefusal(
+  review: ReviewEvidence,
+  attestations: readonly string[],
+  worktree: string,
+): { verified: string[] } | { refusal: string } {
   const names = review.names ?? [];
-  const parsed = attestations.map((raw) => ATTESTATION.exec(raw)).filter((match): match is RegExpExecArray => match !== null);
+  const parsed = attestations
+    .map((raw) => ATTESTATION.exec(raw))
+    .filter((match): match is RegExpExecArray => match !== null);
   const verified: string[] = [];
   const missing: string[] = [];
   for (const id of review.sampledAcIds) {
@@ -708,7 +730,9 @@ function attestationRefusal(review: ReviewEvidence, attestations: readonly strin
         continue;
       }
       if (carriers.length > 0 && !carriers.includes(file)) {
-        notes.push(`« ${reference} » : le diff a un fichier qui porte ${id} (${carriers.join(", ")}), atteste dans l'un d'eux`);
+        notes.push(
+          `« ${reference} » : le diff a un fichier qui porte ${id} (${carriers.join(", ")}), atteste dans l'un d'eux`,
+        );
         continue;
       }
       verified.push(`${id} ${reference}`);
@@ -719,7 +743,6 @@ function attestationRefusal(review: ReviewEvidence, attestations: readonly strin
   }
   return missing.length === 0 ? { verified } : { refusal: `attestation manquante pour ${missing.join(", ")}` };
 }
-
 
 /**
  * La validation DÉTERMINISTE d'une décision (S-6, S-8). Question : `answer` exige une
@@ -739,7 +762,10 @@ export function validateArbiterDecision(
   ground: ArbiterGround,
 ): ArbiterEffect {
   if (decision === null) return { kind: "escalate", reason: "arbitre sans décision" };
-  const invalid = (motif: string): ArbiterEffect => ({ kind: "escalate", reason: `décision d'arbitre invalide : ${motif}` });
+  const invalid = (motif: string): ArbiterEffect => ({
+    kind: "escalate",
+    reason: `décision d'arbitre invalide : ${motif}`,
+  });
   if (decision.decision === "escalate") {
     return { kind: "escalate", reason: decision.reason.trim() || "escalade demandée par l'arbitre" };
   }
@@ -761,14 +787,17 @@ export function validateArbiterDecision(
   };
   if (item.kind === "cap" || item.kind === "failure") {
     const where = item.kind === "cap" ? "au plafond" : "à un échec";
-    if (decision.decision === "answer" || decision.decision === "approve") return invalid(`« ${decision.decision} » ne s'applique pas ${where}`);
-    if (decision.decision === "abandon" && item.kind === "failure") return invalid("« abandon » ne s'applique pas à un échec");
+    if (decision.decision === "answer" || decision.decision === "approve")
+      return invalid(`« ${decision.decision} » ne s'applique pas ${where}`);
+    if (decision.decision === "abandon" && item.kind === "failure")
+      return invalid("« abandon » ne s'applique pas à un échec");
     const refocus = (decision.refocus ?? "").trim();
     if (item.kind === "cap" && decision.decision === "relaunch" && refocus === "") return invalid("recentrage vide");
     if (decision.reason.trim() === "") return invalid("motif d'approbation vide");
     const verified = verifiedOrRefusal();
     if (typeof verified === "string") return invalid(verified);
-    if (decision.decision === "abandon") return { kind: "abandon", reason: decision.reason.trim(), justification: justify(verified) };
+    if (decision.decision === "abandon")
+      return { kind: "abandon", reason: decision.reason.trim(), justification: justify(verified) };
     return { kind: "relaunch", refocus: item.kind === "cap" ? refocus : null, justification: justify(verified) };
   }
   if (decision.decision === "relaunch" || decision.decision === "abandon") {
@@ -777,7 +806,10 @@ export function validateArbiterDecision(
   if (item.question === null) {
     if (decision.decision !== "approve") return invalid("un jalon s'approuve ou s'escalade");
     if (decision.reason.trim() === "") return invalid("motif d'approbation vide");
-    const refused = (motif: string): ArbiterEffect => ({ kind: "escalate", reason: `approbation refusée par le pilote : ${motif}` });
+    const refused = (motif: string): ArbiterEffect => ({
+      kind: "escalate",
+      reason: `approbation refusée par le pilote : ${motif}`,
+    });
     const refusal = approvalRefusal(item, ground);
     if (refusal !== null) return refused(refusal);
     let attested: string[] = [];
@@ -798,15 +830,19 @@ export function validateArbiterDecision(
   if (typeof verified === "string") return invalid(verified);
   const chosen = chooseOption(item.options, answer);
   if ("escalate" in chosen) return invalid(chosen.escalate);
-  return { kind: "answer", answer: chosen.answer, source: decision.source, selected: chosen.selected, justification: justify(verified) };
+  return {
+    kind: "answer",
+    answer: chosen.answer,
+    source: decision.source,
+    selected: chosen.selected,
+    justification: justify(verified),
+  };
 }
-
 
 /** La source qu'un effet porte au journal et au message reçu par l'étape. */
 export function effectSource(effect: ArbiterEffect): DecisionSource {
   return effect.kind === "answer" ? effect.source : "arbitrage";
 }
-
 
 /** Inscrit l'outil `arbiter_decide` dans UNE session d'arbitre (S-9) : jamais ailleurs. */
 export function registerArbiterTool(pi: ExtensionAPI, capture: ArbiterCapture): void {

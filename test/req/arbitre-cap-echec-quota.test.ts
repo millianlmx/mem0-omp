@@ -108,7 +108,8 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
 
 const CONTRACT_CLOSED = "## Besoins\n\nB-1 : faire.\n\n## Critères d'acceptation\n\nAC-1 (B-1) : Given, When, Then.\n";
 const CONTRACT_SPECS = `${CONTRACT_CLOSED}\n## Spécifications\n\nS-1 (AC-1) : comportement.\n`;
-const withVerdict = (body: string): string => `${CONTRACT_SPECS}\n## Revue\n\n- STATUT : APPROUVÉ\n- BLOQUANTS : ${body}\n`;
+const withVerdict = (body: string): string =>
+  `${CONTRACT_SPECS}\n## Revue\n\n- STATUT : APPROUVÉ\n- BLOQUANTS : ${body}\n`;
 /** Un contrat au plafond : un bloquant précis dans `## Revue`, ce qui a été tenté dans `## Corrections`. */
 const CONTRACT_CAP = `${withVerdict("\n1. le test de bord manque")}\n## Corrections\n\n- tour 3 : le test nominal ne couvre pas le bord\n`;
 const CAP_REASON = reviewCapReason(3);
@@ -226,11 +227,29 @@ function mkWorld(options: { arbiter?: ArbiterScript | null; onNow?: () => void }
     ]);
     return worktree;
   };
-  return { controller, stateDir, repoRoot, repoKey, runs, gates, prompts, control, clock, read, alpha, relayed, seedCap, seedFailed };
+  return {
+    controller,
+    stateDir,
+    repoRoot,
+    repoKey,
+    runs,
+    gates,
+    prompts,
+    control,
+    clock,
+    read,
+    alpha,
+    relayed,
+    seedCap,
+    seedFailed,
+  };
 }
 
 /** Le point de vue de /project sur le lot du disque : `syncFromLot` puis `projectFailureItems` (fonctions pures). */
-function projectSide(world: { read: () => Lot; repoRoot: string }, slugs: string[] = ["alpha"]): { project: Project; items: RelayItem[]; events: string[] } {
+function projectSide(
+  world: { read: () => Lot; repoRoot: string },
+  slugs: string[] = ["alpha"],
+): { project: Project; items: RelayItem[]; events: string[] } {
   const lot = world.read();
   const project: Project = {
     version: 1,
@@ -243,7 +262,15 @@ function projectSide(world: { read: () => Lot; repoRoot: string }, slugs: string
     segments: [
       {
         name: "segment-1",
-        features: slugs.map((slug) => ({ slug, intention: `Intention ${slug}.`, status: "launched" as const, prUrl: null, failure: null, removedReason: null, updatedAt: T0 })),
+        features: slugs.map((slug) => ({
+          slug,
+          intention: `Intention ${slug}.`,
+          status: "launched" as const,
+          prUrl: null,
+          failure: null,
+          removedReason: null,
+          updatedAt: T0,
+        })),
       },
     ],
     current: 0,
@@ -279,7 +306,17 @@ test("arbitre-cap-echec-quota/AC-1 : un plafond arbitré en « relancer » lance
   // L'arbitre a lu le plafond : la revue, les corrections, les décisions possibles.
   assert.equal(world.prompts.length, 1);
   const arbiterPrompt = world.prompts[0]!;
-  for (const piece of ["type : plafond de la boucle revue ⇄ correction", `motif : ${CAP_REASON}`, "## Revue (bloquants)", "le test de bord manque", "## Corrections", "le test nominal ne couvre pas le bord", "- relaunch :", "- abandon :", "- escalate :"]) {
+  for (const piece of [
+    "type : plafond de la boucle revue ⇄ correction",
+    `motif : ${CAP_REASON}`,
+    "## Revue (bloquants)",
+    "le test de bord manque",
+    "## Corrections",
+    "le test nominal ne couvre pas le bord",
+    "- relaunch :",
+    "- abandon :",
+    "- escalate :",
+  ]) {
     assert.ok(arbiterPrompt.includes(piece), piece);
   }
 
@@ -295,22 +332,61 @@ test("arbitre-cap-echec-quota/AC-1 : un plafond arbitré en « relancer » lance
   assert.equal(after.escalation, undefined);
 
   // La validation du plafond (S-2) : chaque refus est une escalade au préfixe habituel.
-  const cap: ArbiterItem = { kind: "cap", slug: "alpha", phase: "review", question: null, options: [], stopReason: CAP_REASON };
-  const ground: ArbiterGround = { corpus: "1. le test de bord manque", report: null, worktree: tmpdir("cef-ground-"), contract: null, review: null };
+  const cap: ArbiterItem = {
+    kind: "cap",
+    slug: "alpha",
+    phase: "review",
+    question: null,
+    options: [],
+    stopReason: CAP_REASON,
+  };
+  const ground: ArbiterGround = {
+    corpus: "1. le test de bord manque",
+    report: null,
+    worktree: tmpdir("cef-ground-"),
+    contract: null,
+    review: null,
+  };
   const invalid = (reason: string) => ({ kind: "escalate", reason: `décision d'arbitre invalide : ${reason}` });
-  assert.deepEqual(validateArbiterDecision(cap, { ...relaunchDecision("  "), refocus: "  " }, ground), invalid("recentrage vide"));
-  assert.deepEqual(validateArbiterDecision(cap, { decision: "relaunch", refocus: "R", reason: "ok" }, ground), invalid("aucune justification"));
-  assert.deepEqual(validateArbiterDecision(cap, { ...relaunchDecision("R"), citations: ["inventée"] }, ground), invalid("aucune justification vérifiée — citation absente du corpus « inventée »"));
-  assert.deepEqual(validateArbiterDecision(cap, { ...relaunchDecision("R"), reason: " " }, ground), invalid("motif d'approbation vide"));
-  assert.deepEqual(validateArbiterDecision(cap, { decision: "answer", answer: "x", source: "contexte", reason: "r" }, ground), invalid("« answer » ne s'applique pas au plafond"));
-  assert.deepEqual(validateArbiterDecision(cap, { decision: "approve", reason: "r" }, ground), invalid("« approve » ne s'applique pas au plafond"));
+  assert.deepEqual(
+    validateArbiterDecision(cap, { ...relaunchDecision("  "), refocus: "  " }, ground),
+    invalid("recentrage vide"),
+  );
+  assert.deepEqual(
+    validateArbiterDecision(cap, { decision: "relaunch", refocus: "R", reason: "ok" }, ground),
+    invalid("aucune justification"),
+  );
+  assert.deepEqual(
+    validateArbiterDecision(cap, { ...relaunchDecision("R"), citations: ["inventée"] }, ground),
+    invalid("aucune justification vérifiée — citation absente du corpus « inventée »"),
+  );
+  assert.deepEqual(
+    validateArbiterDecision(cap, { ...relaunchDecision("R"), reason: " " }, ground),
+    invalid("motif d'approbation vide"),
+  );
+  assert.deepEqual(
+    validateArbiterDecision(cap, { decision: "answer", answer: "x", source: "contexte", reason: "r" }, ground),
+    invalid("« answer » ne s'applique pas au plafond"),
+  );
+  assert.deepEqual(
+    validateArbiterDecision(cap, { decision: "approve", reason: "r" }, ground),
+    invalid("« approve » ne s'applique pas au plafond"),
+  );
   const question: ArbiterItem = { kind: "question", slug: "alpha", phase: "req", question: "Q ?", options: [] };
-  assert.deepEqual(validateArbiterDecision(question, relaunchDecision("R"), ground), invalid("« relaunch » ne s'applique qu'au plafond ou à un échec"));
+  assert.deepEqual(
+    validateArbiterDecision(question, relaunchDecision("R"), ground),
+    invalid("« relaunch » ne s'applique qu'au plafond ou à un échec"),
+  );
   const valid = validateArbiterDecision(cap, relaunchDecision("  R  "), ground);
   assert.deepEqual(valid, {
     kind: "relaunch",
     refocus: "R",
-    justification: { reason: "le bloquant est précis et n'a pas été traité", citations: ["le test de bord manque"], references: [], rubriques: [] },
+    justification: {
+      reason: "le bloquant est précis et n'a pas été traité",
+      citations: ["le test de bord manque"],
+      references: [],
+      rubriques: [],
+    },
   });
 });
 
@@ -330,19 +406,27 @@ test("arbitre-cap-echec-quota/AC-2 : le plafond d'une feature arbitrée n'est ja
       const found = lot === null ? undefined : lotFeature(lot, "alpha");
       if (lot !== null && found?.state === "blocked") {
         probing = false;
-        firstOnDisk = { items: relayedLotItems(lot, CTX, () => null, { cap: true, failure: true }), arbitration: found.arbitration };
+        firstOnDisk = {
+          items: relayedLotItems(lot, CTX, () => null, { cap: true, failure: true }),
+          arbitration: found.arbitration,
+        };
       }
     },
   });
   // Une vraie boucle : chaque revue réécrit SA section (verdict lisible), chaque correction rend OK.
   const worktree = tmpdir("cef-wt-");
   writeContract(worktree, withVerdict("\n1. le test de bord manque"));
-  seedLot(world.stateDir, world.repoRoot, [feature("alpha", { worktree, state: "running", phase: "review", auditSession: CTX, contractHash: WORKED })]);
+  seedLot(world.stateDir, world.repoRoot, [
+    feature("alpha", { worktree, state: "running", phase: "review", auditSession: CTX, contractHash: WORKED }),
+  ]);
   let reviews = 0;
   world.control.respond = (input) => {
     if (input.spec.phase === "review") {
       reviews += 1;
-      writeContract(worktree, `${withVerdict(`\n1. le test de bord manque (revue ${reviews})`)}\n## Corrections\n\n- tour ${reviews} : essai\n`);
+      writeContract(
+        worktree,
+        `${withVerdict(`\n1. le test de bord manque (revue ${reviews})`)}\n## Corrections\n\n- tour ${reviews} : essai\n`,
+      );
     }
     return OK;
   };
@@ -353,12 +437,24 @@ test("arbitre-cap-echec-quota/AC-2 : le plafond d'une feature arbitrée n'est ja
   assert.equal(reviews, 3);
   assert.ok(firstOnDisk, "l'état écrit par la fin de run a été observé");
   const first = firstOnDisk as { items: RelayItem[]; arbitration: LotFeature["arbitration"] };
-  assert.equal(first.items.some((item) => item.kind === "cap"), false, "juste après la fin du run : aucun relais direct");
-  assert.match(first.arbitration?.key ?? "", /^cap:alpha:/, "la marque est posée dans la sauvegarde même qui bloque la feature");
+  assert.equal(
+    first.items.some((item) => item.kind === "cap"),
+    false,
+    "juste après la fin du run : aucun relais direct",
+  );
+  assert.match(
+    first.arbitration?.key ?? "",
+    /^cap:alpha:/,
+    "la marque est posée dans la sauvegarde même qui bloque la feature",
+  );
 
   // Pendant l'arbitrage en vol.
   assert.equal(world.alpha().arbitration !== undefined, true);
-  assert.equal(world.relayed().some((item) => item.kind === "cap"), false, "pendant l'arbitrage");
+  assert.equal(
+    world.relayed().some((item) => item.kind === "cap"),
+    false,
+    "pendant l'arbitrage",
+  );
   const duringView = projectSide(world);
   assert.deepEqual(duringView.items, [], "côté /project : aucun élément pendant l'arbitrage");
   assert.deepEqual(duringView.events, [], "côté /project : aucun échec ni transition pendant l'arbitrage");
@@ -370,7 +466,11 @@ test("arbitre-cap-echec-quota/AC-2 : le plafond d'une feature arbitrée n'est ja
   gate.resolve(relaunchDecision("lever le bloquant 1 ; déjà tenté : trois corrections"));
   await until(() => world.runs.length === runsBefore + 1, "la relance part");
   assert.equal(world.alpha().state, "running");
-  assert.equal(world.relayed().some((item) => item.kind === "cap"), false, "après la relance");
+  assert.equal(
+    world.relayed().some((item) => item.kind === "cap"),
+    false,
+    "après la relance",
+  );
   assert.deepEqual(projectSide(world).items, [], "côté /project : rien après la relance");
 });
 
@@ -389,7 +489,11 @@ test("arbitre-cap-echec-quota/AC-3 : un plafond arbitré en « abandonner » ann
   assert.equal(fs.existsSync(worktree), true, "le worktree existe toujours");
   assert.equal(fs.existsSync(path.join(worktree, ".omp", "pipeline", "contract.md")), true);
   assert.equal(after.arbiterRelaunches, undefined, "un abandon n'est pas une relance");
-  assert.equal(world.relayed().some((item) => item.kind === "cap"), false, "après l'abandon : plus d'élément cap");
+  assert.equal(
+    world.relayed().some((item) => item.kind === "cap"),
+    false,
+    "après l'abandon : plus d'élément cap",
+  );
 
   // Côté /project : l'abandon de l'arbitre porte son motif dans l'échec de projet.
   const view = projectSide(world);
@@ -397,7 +501,9 @@ test("arbitre-cap-echec-quota/AC-3 : un plafond arbitré en « abandonner » ann
   assert.equal(view.items[0]!.stopReason, `pipeline abandonnée : abandonnée par l'arbitre : ${M}`);
 
   // Un motif long est tronqué à la tête, avec « … », comme `failureReason`.
-  const long = mkWorld({ arbiter: () => ({ decision: "abandon", citations: ["le test de bord manque"], reason: "x".repeat(500) }) });
+  const long = mkWorld({
+    arbiter: () => ({ decision: "abandon", citations: ["le test de bord manque"], reason: "x".repeat(500) }),
+  });
   long.seedCap();
   await long.controller.tick();
   await until(() => long.alpha().state === "cancelled", "l'abandon au motif long");
@@ -417,7 +523,10 @@ test("arbitre-cap-echec-quota/AC-4 : un plafond que l'arbitre escalade est relay
   assert.equal(after.escalation!.kind, "plafond");
   assert.equal(after.escalation!.reason, reason);
   assert.equal(after.escalation!.phase, "review");
-  assert.equal(after.escalation!.question, "plafond de la boucle revue ⇄ correction atteint : relancer un cycle, répondre au maillon /review ou abandonner ?");
+  assert.equal(
+    after.escalation!.question,
+    "plafond de la boucle revue ⇄ correction atteint : relancer un cycle, répondre au maillon /review ou abandonner ?",
+  );
   assert.deepEqual(after.escalation!.options, []);
   assert.equal(after.arbitration, undefined, "la marque est remplacée par l'escalade dans la même sauvegarde");
   const items = world.relayed();
@@ -432,27 +541,51 @@ test("arbitre-cap-echec-quota/AC-4 : un plafond que l'arbitre escalade est relay
   // Côté /project : le plafond escaladé devient l'échec de projet habituel, avec le motif de l'arbitre en plus.
   const capView = projectSide(world);
   assert.equal(capView.items.length, 1);
-  assert.equal(capView.items[0]!.stopReason, `plafond de revue atteint : ${CAP_REASON} — motif de l'arbitre : ${reason}`);
+  assert.equal(
+    capView.items[0]!.stopReason,
+    `plafond de revue atteint : ${CAP_REASON} — motif de l'arbitre : ${reason}`,
+  );
 
   // Le relais du plafond est la seule voie : une escalade n'est relue qu'avec sa propre clé.
   const lot = world.read();
   lotFeature(lot, "alpha")!.escalation!.key = "cap:alpha:autre";
-  assert.equal(relayedLotItems(lot, CTX, () => null, { cap: true, failure: true })[0]!.escalation, undefined, "une escalade d'une autre clé n'est pas celle de l'élément");
+  assert.equal(
+    relayedLotItems(lot, CTX, () => null, { cap: true, failure: true })[0]!.escalation,
+    undefined,
+    "une escalade d'une autre clé n'est pas celle de l'élément",
+  );
 
   // Un échec ne s'abandonne pas : l'abandon d'un élément `failure` est refusé par la validation.
-  const failure: ArbiterItem = { kind: "failure", slug: "alpha", phase: "impl", question: null, options: [], stopReason: "boom" };
-  const ground: ArbiterGround = { corpus: "boom", report: null, worktree: tmpdir("cef-ground-"), contract: null, review: null };
-  assert.deepEqual(validateArbiterDecision(failure, { decision: "abandon", citations: ["boom"], reason: "r" }, ground), {
-    kind: "escalate",
-    reason: "décision d'arbitre invalide : « abandon » ne s'applique pas à un échec",
-  });
+  const failure: ArbiterItem = {
+    kind: "failure",
+    slug: "alpha",
+    phase: "impl",
+    question: null,
+    options: [],
+    stopReason: "boom",
+  };
+  const ground: ArbiterGround = {
+    corpus: "boom",
+    report: null,
+    worktree: tmpdir("cef-ground-"),
+    contract: null,
+    review: null,
+  };
+  assert.deepEqual(
+    validateArbiterDecision(failure, { decision: "abandon", citations: ["boom"], reason: "r" }, ground),
+    {
+      kind: "escalate",
+      reason: "décision d'arbitre invalide : « abandon » ne s'applique pas à un échec",
+    },
+  );
 });
 
 test("arbitre-cap-echec-quota/AC-5 : le recentrage de l'arbitre n'atteint que le run qu'il a lancé — une relance de l'utilisateur part sans lui", async () => {
   const R = "RECENTRAGE-UNIQUE : lever le bloquant 1";
   const world = mkWorld({
     // Un seul arbitrage utile : tout autre élément (l'échec du run) est escaladé.
-    arbiter: (prompt) => (prompt.includes("type : plafond") ? relaunchDecision(R) : { decision: "escalate", reason: "hors sujet" }),
+    arbiter: (prompt) =>
+      prompt.includes("type : plafond") ? relaunchDecision(R) : { decision: "escalate", reason: "hors sujet" },
   });
   world.seedCap();
   await world.controller.tick();
@@ -471,7 +604,10 @@ test("arbitre-cap-echec-quota/AC-5 : le recentrage de l'arbitre n'atteint que le
   assert.ok(prompt.includes("[impl --fix]"), "c'est bien un run --fix");
   assert.equal(prompt.includes(R), false, "pas de recentrage");
   assert.equal(prompt.includes("[recentrage de l'arbitre]"), false);
-  assert.ok(prompt.startsWith("[reprise] Le maillon est relancé par l'utilisateur"), "l'en-tête de la reprise ne nomme pas l'arbitre");
+  assert.ok(
+    prompt.startsWith("[reprise] Le maillon est relancé par l'utilisateur"),
+    "l'en-tête de la reprise ne nomme pas l'arbitre",
+  );
   assert.equal(prompt.includes("relancé par l'arbitre : reprends"), false);
 });
 
@@ -489,7 +625,11 @@ test("arbitre-cap-echec-quota/AC-6 : à 2 relances cap, un nouveau plafond est e
   assert.equal(world.runs.length, 0, "aucun run");
   assert.deepEqual(after.arbiterRelaunches, { cap: 2, failure: 0, last: "cap" }, "le compteur reste à 2");
   assert.equal(world.relayed().length, 1);
-  assert.equal(world.relayed()[0]!.escalation?.reason.includes("(2/2)"), true, "relayé à la parente avec le motif de borne");
+  assert.equal(
+    world.relayed()[0]!.escalation?.reason.includes("(2/2)"),
+    true,
+    "relayé à la parente avec le motif de borne",
+  );
 
   // La borne est PAR motif : le plafond à 1 relance cap et 2 relances failure est encore arbitré.
   const other = mkWorld({ arbiter: () => relaunchDecision("R : un autre cycle") });
@@ -514,16 +654,26 @@ test("arbitre-cap-echec-quota/AC-12 : une relance du plafond et un abandon appli
   assert.equal(line.kind, "plafond");
   assert.equal(line.question, "plafond de la boucle revue ⇄ correction atteint — relancer, abandonner ou escalader ?");
   assert.equal(line.answer, "relancé par l'arbitre (1/2)");
-  assert.equal(line.answer.includes(R), false, "le recentrage n'entre pas dans le journal : il fuirait dans le prompt des runs suivants");
+  assert.equal(
+    line.answer.includes(R),
+    false,
+    "le recentrage n'entre pas dans le journal : il fuirait dans le prompt des runs suivants",
+  );
   assert.equal(line.context, CTX);
   assert.ok(line.justification!.reason.trim() !== "", "justification non vide");
   assert.deepEqual(line.justification!.citations, ["le test de bord manque"]);
   // Le compteur est relu du DISQUE à l'identique.
-  assert.deepEqual(readLot(relaunched.stateDir, relaunched.repoKey)!.features[0]!.arbiterRelaunches, { cap: 1, failure: 0, last: "cap" });
+  assert.deepEqual(readLot(relaunched.stateDir, relaunched.repoKey)!.features[0]!.arbiterRelaunches, {
+    cap: 1,
+    failure: 0,
+    last: "cap",
+  });
   assert.deepEqual(relaunched.alpha().arbiterRelaunches, { cap: 1, failure: 0, last: "cap" });
 
   const M = "hors périmètre";
-  const abandoned = mkWorld({ arbiter: () => ({ decision: "abandon", citations: ["le test de bord manque"], reason: M }) });
+  const abandoned = mkWorld({
+    arbiter: () => ({ decision: "abandon", citations: ["le test de bord manque"], reason: M }),
+  });
   abandoned.seedCap();
   await abandoned.controller.tick();
   await until(() => abandoned.alpha().state === "cancelled", "l'abandon est appliqué");
@@ -585,7 +735,11 @@ test("arbitre-cap-echec-quota/AC-13 : R, une réponse et une escalade laissent l
     runGh: async (args) => {
       ghCalls.push(args);
       if (args[0] === "repo" && args[1] === "view") {
-        return { code: 0, stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }),
+          stderr: "",
+        };
       }
       if (args[0] === "pr" && args[1] === "create") return { code: 0, stdout: `${GH}/o/r/pull/7\n`, stderr: "" };
       return { code: 1, stdout: "", stderr: "non simulé" };
@@ -602,7 +756,14 @@ test("arbitre-cap-echec-quota/AC-13 : R, une réponse et une escalade laissent l
   const worktree = tmpdir("cef-wt-");
   writeContract(worktree, clean);
   seedLot(delivered.stateDir, delivered.repoRoot, [
-    feature("alpha", { worktree, state: "waiting", phase: "review", waitKind: "review", contractHash: WORKED, arbiterRelaunches: counters }),
+    feature("alpha", {
+      worktree,
+      state: "waiting",
+      phase: "review",
+      waitKind: "review",
+      contractHash: WORKED,
+      arbiterRelaunches: counters,
+    }),
   ]);
   assert.deepEqual(delivered.alpha().arbiterRelaunches, counters, "avant la livraison");
   assert.equal(await controller.accept("alpha"), null);
@@ -635,7 +796,11 @@ test("arbitre-cap-echec-quota/AC-7 : un échec arbitré en « relancer » transm
   world = mkWorld({
     arbiter: () => {
       outputAtArbitration = world.alpha().failureOutput;
-      return { decision: "relaunch", citations: ["permission refusée sur le dépôt"], reason: "un échec ponctuel : la même commande est relancée" };
+      return {
+        decision: "relaunch",
+        citations: ["permission refusée sur le dépôt"],
+        reason: "un échec ponctuel : la même commande est relancée",
+      };
     },
   });
   // Un premier run d'impl (lancé par R sur un échec antérieur, sans tick : l'arbitre n'a encore rien à juger).
@@ -653,7 +818,15 @@ test("arbitre-cap-echec-quota/AC-7 : un échec arbitré en « relancer » transm
   // La fin de sortie a été conservée (bornée, rognée) AVANT l'arbitrage, et l'arbitre la lit avec la raison d'arrêt.
   assert.deepEqual(outputAtArbitration, { stderr: S, stdout: `une longue sortie\n${O}` });
   const prompt = world.prompts[0]!;
-  for (const piece of ["type : échec du run", `raison d'arrêt : ${S}`, "stderr (fin) :", "stdout (fin) :", O, "- relaunch :", "- escalate :"]) {
+  for (const piece of [
+    "type : échec du run",
+    `raison d'arrêt : ${S}`,
+    "stderr (fin) :",
+    "stdout (fin) :",
+    O,
+    "- relaunch :",
+    "- escalate :",
+  ]) {
     assert.ok(prompt.includes(piece), piece);
   }
   assert.equal(prompt.includes("- abandon :"), false, "un échec ne s'abandonne pas");
@@ -689,7 +862,9 @@ test("arbitre-cap-echec-quota/AC-7 : un échec arbitré en « relancer » transm
   const long = mkWorld({ arbiter: () => ({ decision: "escalate", reason: "hors de portée" }) });
   const wt = tmpdir("cef-wt-");
   writeContract(wt, CONTRACT_SPECS);
-  seedLot(long.stateDir, long.repoRoot, [feature("alpha", { worktree: wt, state: "running", phase: "impl", auditSession: CTX, contractHash: WORKED })]);
+  seedLot(long.stateDir, long.repoRoot, [
+    feature("alpha", { worktree: wt, state: "running", phase: "impl", auditSession: CTX, contractHash: WORKED }),
+  ]);
   await long.controller.tick();
   await until(() => long.runs.length === 1, "le run part");
   long.gates.shift()!({ code: 1, killed: false, stdout: `${"a".repeat(5000)}FIN`, stderr: `${"b".repeat(3000)}FIN` });
@@ -710,7 +885,11 @@ test("arbitre-cap-echec-quota/AC-8 : un échec que l'arbitre escalade est relay�
 
   // Pendant l'arbitrage : marque posée, aucun relais direct.
   assert.match(world.alpha().arbitration?.key ?? "", /^failure:alpha:/);
-  assert.equal(world.relayed().some((item) => item.kind === "failure"), false, "pendant l'arbitrage");
+  assert.equal(
+    world.relayed().some((item) => item.kind === "failure"),
+    false,
+    "pendant l'arbitrage",
+  );
   const duringView = projectSide(world);
   assert.deepEqual(duringView.items, [], "côté /project : aucun élément pendant l'arbitrage");
   assert.deepEqual(duringView.events, [], "côté /project : aucune transition pendant l'arbitrage");
@@ -757,7 +936,9 @@ test("arbitre-cap-echec-quota/AC-8 : un échec que l'arbitre escalade est relay�
 });
 
 test("arbitre-cap-echec-quota/AC-9 : à 2 relances failure un nouvel échec est escaladé sans session d'arbitre ; le compteur cap est indépendant", async () => {
-  const world = mkWorld({ arbiter: (prompt) => (prompt.includes("type : plafond") ? relaunchDecision("R : un autre cycle") : relaunchFailure) });
+  const world = mkWorld({
+    arbiter: (prompt) => (prompt.includes("type : plafond") ? relaunchDecision("R : un autre cycle") : relaunchFailure),
+  });
   world.seedFailed({ arbiterRelaunches: { cap: 0, failure: ARBITER_RELAUNCH_MAX, last: "failure" } });
   await world.controller.tick();
   await until(() => world.alpha().escalation !== undefined, "l'échec est escaladé");
@@ -799,7 +980,14 @@ function seedQuota(world: World, untils: { alpha: number; bravo: number }): void
     rows.map(({ slug, model, until: deadline }) => {
       const worktree = tmpdir("cef-wt-");
       writeContract(worktree, CONTRACT_SPECS);
-      markExhausted(world.stateDir, { model, provider: "prov", until: deadline, announced: true, at: T0, reason: "429" });
+      markExhausted(world.stateDir, {
+        model,
+        provider: "prov",
+        until: deadline,
+        announced: true,
+        at: T0,
+        reason: "429",
+      });
       return feature(slug, {
         worktree,
         state: "blocked",
@@ -874,7 +1062,10 @@ test("arbitre-cap-echec-quota/AC-11 : à l'échéance, chaque feature bloquée p
     "clés de modèle et de repli inchangées",
   );
 
-  for (const [slug, model] of [["alpha", "prov/impl-a"], ["bravo", "prov/impl-b"]] as const) {
+  for (const [slug, model] of [
+    ["alpha", "prov/impl-a"],
+    ["bravo", "prov/impl-b"],
+  ] as const) {
     const f = lotFeature(world.read(), slug)!;
     assert.equal(f.arbiterRelaunches, undefined, "aucun compteur de relance par l'arbitre");
     assert.equal(f.quota, undefined, "le blocage est levé");
@@ -891,7 +1082,14 @@ test("arbitre-cap-echec-quota/AC-11 : à l'échéance, chaque feature bloquée p
   // Un registre prolongé par un nouveau coup : la feature attend la fin du registre.
   const late = mkWorld({ arbiter: () => relaunchFailure });
   seedQuota(late, { alpha: QUOTA_UNTIL, bravo: QUOTA_UNTIL });
-  markExhausted(late.stateDir, { model: "prov/impl-a", provider: "prov", until: QUOTA_UNTIL + 7_200_000, announced: true, at: QUOTA_UNTIL, reason: "429" });
+  markExhausted(late.stateDir, {
+    model: "prov/impl-a",
+    provider: "prov",
+    until: QUOTA_UNTIL + 7_200_000,
+    announced: true,
+    at: QUOTA_UNTIL,
+    reason: "429",
+  });
   late.clock.now = QUOTA_UNTIL + 1;
   await late.controller.tick();
   await until(() => late.runs.length === 1, "seule bravo repart");
@@ -906,8 +1104,18 @@ test("arbitre-cap-echec-quota/AC-14 : le rang du panneau d'une feature relancée
   seedLot(stateDir, repoRoot, [
     feature("relance-cap", { state: "running", phase: "impl", arbiterRelaunches: { cap: 1, failure: 0, last: "cap" } }),
     feature("jamais", { state: "running", phase: "impl" }),
-    feature("relance-echec", { state: "failed", phase: "impl", stopReason: FAIL_REASON, arbiterRelaunches: { cap: 2, failure: 1, last: "failure" } }),
-    feature("bloquee", { state: "blocked", phase: "review", stopReason: CAP_REASON, arbiterRelaunches: { cap: 2, failure: 0, last: "cap" } }),
+    feature("relance-echec", {
+      state: "failed",
+      phase: "impl",
+      stopReason: FAIL_REASON,
+      arbiterRelaunches: { cap: 2, failure: 1, last: "failure" },
+    }),
+    feature("bloquee", {
+      state: "blocked",
+      phase: "review",
+      stopReason: CAP_REASON,
+      arbiterRelaunches: { cap: 2, failure: 0, last: "cap" },
+    }),
     feature("annulee", { state: "cancelled", phase: "review", arbiterRelaunches: { cap: 1, failure: 1, last: "cap" } }),
     feature("livree", { state: "done", phase: "review", endedAt: T0, prUrl: `${GH}/o/r/pull/9` }),
   ]);
@@ -922,7 +1130,12 @@ test("arbitre-cap-echec-quota/AC-14 : le rang du panneau d'une feature relancée
   };
   const label = (k: number) => `relancé par l'arbitre (${k}/${ARBITER_RELAUNCH_MAX})`;
 
-  const withRelaunch: Array<[string, number]> = [["relance-cap", 1], ["relance-echec", 1], ["bloquee", 2], ["annulee", 1]];
+  const withRelaunch: Array<[string, number]> = [
+    ["relance-cap", 1],
+    ["relance-echec", 1],
+    ["bloquee", 2],
+    ["annulee", 1],
+  ];
   for (const [slug, k] of withRelaunch) {
     const lines = entryOf(slug).filter((row) => row.text.includes("relancé par l'arbitre"));
     assert.equal(lines.length, 1, `${slug} : une seule sous-ligne`);
@@ -933,12 +1146,19 @@ test("arbitre-cap-echec-quota/AC-14 : le rang du panneau d'une feature relancée
 
   for (const slug of ["jamais", "livree"]) {
     assert.ok(entryOf(slug).length > 0, `${slug} : son rang est rendu`);
-    assert.equal(entryOf(slug).some((row) => row.text.includes("relancé par l'arbitre")), false, `${slug} : aucun libellé`);
+    assert.equal(
+      entryOf(slug).some((row) => row.text.includes("relancé par l'arbitre")),
+      false,
+      `${slug} : aucun libellé`,
+    );
   }
 
   // La fonction pure : null sans champ, k lu sur le motif `last`.
   assert.equal(arbiterRelaunchRow(feature("x")), null);
-  assert.equal(arbiterRelaunchRow(feature("x", { arbiterRelaunches: { cap: 2, failure: 1, last: "failure" } })), label(1));
+  assert.equal(
+    arbiterRelaunchRow(feature("x", { arbiterRelaunches: { cap: 2, failure: 1, last: "failure" } })),
+    label(1),
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -949,7 +1169,15 @@ test("arbitre-cap-echec-quota/AC-15 : sans arbitre, le plafond, l'échec et le q
   const world = mkWorld({ arbiter: null });
   const rows: Array<[string, Partial<LotFeature>]> = [
     ["alpha", { state: "blocked", phase: "review", stopReason: CAP_REASON, fixes: 3 }],
-    ["bravo", { state: "failed", phase: "impl", stopReason: FAIL_REASON, failureOutput: { stderr: FAIL_REASON, stdout: FAIL_STDOUT } }],
+    [
+      "bravo",
+      {
+        state: "failed",
+        phase: "impl",
+        stopReason: FAIL_REASON,
+        failureOutput: { stderr: FAIL_REASON, stdout: FAIL_STDOUT },
+      },
+    ],
     [
       "charlie",
       {
@@ -970,7 +1198,9 @@ test("arbitre-cap-echec-quota/AC-15 : sans arbitre, le plafond, l'échec et le q
       return feature(slug, { worktree, auditSession: CTX, contractHash: WORKED, endedAt: T0, ...over });
     }),
   );
-  const before = world.read().features.map((f) => ({ slug: f.slug, state: f.state, stopReason: f.stopReason, ...modelKeysOf(f) }));
+  const before = world
+    .read()
+    .features.map((f) => ({ slug: f.slug, state: f.state, stopReason: f.stopReason, ...modelKeysOf(f) }));
 
   // Plusieurs passes, l'horloge dépassant l'échéance du quota : rien ne repart tout seul.
   world.clock.now = QUOTA_UNTIL + 1;
@@ -1002,23 +1232,44 @@ test("arbitre-cap-echec-quota/AC-15 : sans arbitre, le plafond, l'échec et le q
     assert.equal(feature.escalation, undefined, `${feature.slug} : aucune escalade`);
     assert.equal(feature.arbiterRelaunches, undefined, `${feature.slug} : aucun compteur`);
   }
-  assert.deepEqual(journalFor(world.stateDir, world.repoKey, "charlie"), [], "aucune relance de quota, donc aucun journal");
+  assert.deepEqual(
+    journalFor(world.stateDir, world.repoKey, "charlie"),
+    [],
+    "aucune relance de quota, donc aucun journal",
+  );
 
   // Côté /project : la feature en échec comme celle au plafond deviennent un échec de projet, sans motif d'arbitre.
   const view = projectSide(world, ["alpha", "bravo"]);
   assert.equal(view.items.length, 2);
-  assert.deepEqual(view.items.map((item) => item.kind), ["failure", "failure"]);
+  assert.deepEqual(
+    view.items.map((item) => item.kind),
+    ["failure", "failure"],
+  );
   const reasons = view.items.map((item) => item.stopReason ?? "");
-  assert.ok(reasons.some((reason) => reason.startsWith("pipeline en erreur : ")), reasons.join(" | "));
-  assert.ok(reasons.some((reason) => reason.startsWith("plafond de revue atteint")), reasons.join(" | "));
-  for (const reason of reasons) assert.equal(reason.includes("motif de l'arbitre"), false, "pas d'arbitre, pas de motif");
+  assert.ok(
+    reasons.some((reason) => reason.startsWith("pipeline en erreur : ")),
+    reasons.join(" | "),
+  );
+  assert.ok(
+    reasons.some((reason) => reason.startsWith("plafond de revue atteint")),
+    reasons.join(" | "),
+  );
+  for (const reason of reasons)
+    assert.equal(reason.includes("motif de l'arbitre"), false, "pas d'arbitre, pas de motif");
 });
 
 test("arbitre-cap-echec-quota/AC-16 : arbitre indisponible (groupe épuisé, ou run sans décision), le plafond et l'échec sont relayés avec leur escalade, sans run ni compteur", async () => {
   // (a) Le groupe de l'arbitre (cadrage+revue, quelle que soit la phase) est épuisé, sans repli : aucune session d'arbitre.
   const dry = mkWorld({ arbiter: () => assert.fail("pas d'arbitre sur un modèle épuisé") });
   dry.seedCap({ modelReqSpecs: "prov/req" });
-  markExhausted(dry.stateDir, { model: "prov/req", provider: "prov", until: T0 + 3_600_000, announced: true, at: T0, reason: "429" });
+  markExhausted(dry.stateDir, {
+    model: "prov/req",
+    provider: "prov",
+    until: T0 + 3_600_000,
+    announced: true,
+    at: T0,
+    reason: "429",
+  });
   await dry.controller.tick();
   await until(() => dry.alpha().escalation !== undefined, "le plafond est escaladé");
   const capEscalation = dry.alpha().escalation!;

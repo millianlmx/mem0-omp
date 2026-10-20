@@ -11,15 +11,10 @@ import { readService, serviceBaseUrl } from "./serviceState.ts";
 import type { ServiceRecord } from "./serviceState.ts";
 import { pipelineStateDir } from "./store.ts";
 
-
 /** Le refus d'un geste quand le service n'est pas joignable, mot pour mot (S-11). */
 export const SERVICE_DOWN_REFUSAL = "service OMP arrêté — les pipelines n'avancent plus (/service status)";
 
-
-export type ServicePostResult =
-  | { ok: true; ack: PipelineCommandAck }
-  | { ok: false; reason: string };
-
+export type ServicePostResult = { ok: true; ack: PipelineCommandAck } | { ok: false; reason: string };
 
 export type ServiceClientDeps = {
   stateDir?: string;
@@ -29,12 +24,10 @@ export type ServiceClientDeps = {
   now?: () => number;
 };
 
-
 /** Un identifiant de commande neuf : le motif du canal, jamais un séparateur de chemin. */
 function commandId(prefix: string, at: number, seq: number): string {
   return `${prefix}-${at.toString(36)}-${seq.toString(36)}`;
 }
-
 
 /**
  * Le client du service : lecture de `service.json`, POST des commandes, réveil
@@ -49,7 +42,10 @@ export function createServiceClient(deps: ServiceClientDeps = {}) {
 
   const record = (): ServiceRecord | null => readService(stateDir);
 
-  async function post(path: string, body: unknown): Promise<{ ok: true; payload: unknown } | { ok: false; reason: string }> {
+  async function post(
+    path: string,
+    body: unknown,
+  ): Promise<{ ok: true; payload: unknown } | { ok: false; reason: string }> {
     const service = record();
     if (service === null) return { ok: false, reason: SERVICE_DOWN_REFUSAL };
     if (typeof doFetch !== "function") return { ok: false, reason: "service OMP injoignable (fetch absent)" };
@@ -97,12 +93,14 @@ export function createServiceClient(deps: ServiceClientDeps = {}) {
     },
 
     /** L'identifiant neuf d'une commande : `panel-…` pour le panneau, `pilot-…` pour les outils de pilotage. */
-    nextId: (prefix = "panel"): string => commandId(prefix, now(), (seq += 1)),
+    nextId: (prefix = "panel"): string => {
+      seq += 1;
+      return commandId(prefix, now(), seq);
+    },
   };
 }
 
 export type ServiceClient = ReturnType<typeof createServiceClient>;
-
 
 /** Le corps d'une commande, sans l'enveloppe que le client pose lui-même. */
 type CommandBody = PipelineCommand extends infer C
@@ -110,7 +108,6 @@ type CommandBody = PipelineCommand extends infer C
     ? Omit<C, "version" | "id" | "sentAt" | "repo">
     : never
   : never;
-
 
 export type ServiceLotActionsDeps = {
   repoRoot: string;
@@ -176,14 +173,14 @@ export function createServiceLotActions(deps: ServiceLotActionsDeps): LotPanelAc
     // session ouverte ne porte — exactement le rang de /pipelines (S-5).
     resolveQuota: (provider, model) => send({ kind: "quota", provider, model }),
     launch: () => send({ kind: "start" }),
-    remove: slug => send({ kind: "remove", slug }),
+    remove: (slug) => send({ kind: "remove", slug }),
     // Une réponse à une question en vol part dans la boîte du run par le canal
     // (`answer`) ; un texte à un maillon terminé part en `reply` (S-9).
     answer: (slug, text) => send({ kind: "reply", slug, text }),
     reply: () => ({ kind: "closed", reason: "la réponse passe par le service OMP — rouvre le rang pour écrire" }),
-    validate: slug => send({ kind: "verdict", slug, verdict: "v" }),
-    accept: slug => send({ kind: "verdict", slug, verdict: "y" }),
-    relaunch: slug => send({ kind: "relaunch", slug }),
+    validate: (slug) => send({ kind: "verdict", slug, verdict: "v" }),
+    accept: (slug) => send({ kind: "verdict", slug, verdict: "y" }),
+    relaunch: (slug) => send({ kind: "relaunch", slug }),
     cancel: (slug, fate: WorktreeFate) => send({ kind: "cancel", slug, fate }),
   };
 }

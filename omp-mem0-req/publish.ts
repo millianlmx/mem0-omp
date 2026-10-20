@@ -5,10 +5,28 @@ import type { PipelinePhase } from "./contract.ts";
 import { armPhase, stateOfCwd, states } from "./state.ts";
 import { forgetRunState, runStateFor } from "./runState.ts";
 import type { ArmedRunState } from "./runState.ts";
-import { PIPELINE_HEARTBEAT_MS, asRunningEntry, asStringOrNull, deleteRunningEntry, historyIdFor, pipelineLabel, pipelineRunningDir, pipelineStateDir, readJsonFile, runningIdFor, writeHistoryEntry, writeRunningEntry } from "./store.ts";
-import type { HistoryEntry, PanelAskOption, PipelineCtx, PipelineFinalState, PipelineRunState, RunningEntry } from "./store.ts";
-
-
+import {
+  PIPELINE_HEARTBEAT_MS,
+  asRunningEntry,
+  asStringOrNull,
+  deleteRunningEntry,
+  historyIdFor,
+  pipelineLabel,
+  pipelineRunningDir,
+  pipelineStateDir,
+  readJsonFile,
+  runningIdFor,
+  writeHistoryEntry,
+  writeRunningEntry,
+} from "./store.ts";
+import type {
+  HistoryEntry,
+  PanelAskOption,
+  PipelineCtx,
+  PipelineFinalState,
+  PipelineRunState,
+  RunningEntry,
+} from "./store.ts";
 
 // --- côté propriétaire : armement, battement, publication -------------------
 
@@ -20,7 +38,6 @@ export type PublishDeps = {
   stateDir?: string;
 };
 
-
 // Compteurs d'activité par identifiant d'appel d'outil : ils vivent dans l'état
 // de la SESSION (`runStateOf`), pas dans le process — le service héberge plusieurs
 // sessions, et un `ask` en vol dans l'une ne doit pas faire dire « attend » à
@@ -31,14 +48,12 @@ export function runStateOf(ctx: PipelineCtx | undefined): ArmedRunState {
   return runStateFor(stateKeyOf(ctx));
 }
 
-
 /** La clé d'état d'un contexte : son fichier de session, sinon son identifiant. */
 function stateKeyOf(ctx: PipelineCtx | undefined): string {
   const file = sessionFileOf(ctx);
   if (file !== null && file !== "") return file;
   return sessionIdOf(ctx) ?? "";
 }
-
 
 // Dernier contexte vu PAR SESSION : source de `isIdle` (délégué au runner, donc
 // vivant) et de la session publiée. Le battement n'en a pas d'autre, et une
@@ -47,12 +62,10 @@ const liveCtxs = new Map<string, PipelineCtx>();
 
 export let stateWriteWarned = false;
 
-
 // La boîte armée, la question en vol ET le battement de ce process vivent dans
 // `runState` (partagé par `globalThis`, cf. `runState.ts`) : un process qui charge
 // l'extension deux fois n'a qu'une seule pompe, une seule question publiée et une
 // seule minuterie de battement.
-
 
 // Le verdict « session de sous-agent » par fichier de session : le lire à chaque
 // publication ferait un `open` par événement d'outil, alors que l'en-tête d'un
@@ -63,7 +76,6 @@ const subagentVerdicts = new Map<string, boolean>();
 
 /** Assez pour la ligne 1 (créneau de titre, 256 o) et l'en-tête de session. */
 const SESSION_HEADER_READ_BYTES = 8192;
-
 
 /** `true`/`false` : verdict ; `null` : fichier absent ou illisible (on ne conclut pas). */
 function headerHasParentSession(file: string): boolean | null {
@@ -105,7 +117,6 @@ function headerHasParentSession(file: string): boolean | null {
   }
 }
 
-
 /**
  * Le fichier de session appartient-il à un SOUS-AGENT (`task`) ? Un sous-agent
  * rebinde la fabrique de l'extension dans le MÊME process et reçoit son propre
@@ -127,7 +138,6 @@ export function isSubagentSession(file: string | null): boolean {
   return verdict;
 }
 
-
 export function armedCwds(): string[] {
   const out: string[] = [];
   for (const [cwd, st] of states) {
@@ -135,7 +145,6 @@ export function armedCwds(): string[] {
   }
   return out;
 }
-
 
 /**
  * Une écriture impossible (disque plein, permissions) ne casse JAMAIS un tour :
@@ -148,7 +157,6 @@ export function reportStateWriteFailure(deps: PublishDeps, error: unknown): void
   const reason = error instanceof Error ? error.message : String(error);
   deps.notify?.(`[pipeline] état des pipelines non écrit : ${reason}`);
 }
-
 
 /** La session de ce contexte conduit-elle bien ce cwd ? Sinon le fichier est nul. */
 export function sessionMatches(ctx: PipelineCtx | undefined, cwd: string): boolean {
@@ -164,7 +172,6 @@ export function sessionMatches(ctx: PipelineCtx | undefined, cwd: string): boole
   }
 }
 
-
 export function sessionFileOf(ctx: PipelineCtx | undefined): string | null {
   try {
     return asStringOrNull(ctx?.sessionManager?.getSessionFile?.());
@@ -173,7 +180,6 @@ export function sessionFileOf(ctx: PipelineCtx | undefined): string | null {
   }
 }
 
-
 export function sessionIdOf(ctx: PipelineCtx | undefined): string | null {
   try {
     return asStringOrNull(ctx?.sessionManager?.getSessionId?.());
@@ -181,7 +187,6 @@ export function sessionIdOf(ctx: PipelineCtx | undefined): string | null {
     return null;
   }
 }
-
 
 /**
  * État publié d'une pipeline : `waiting` si une question `ask` est en vol, si une
@@ -200,7 +205,6 @@ export function currentRunState(ctx: PipelineCtx | undefined, cwd: string): Pipe
   }
   return "running";
 }
-
 
 /**
  * Publie (ou republie) l'entrée en cours d'un cwd ARMÉ : phase courante, horodatage
@@ -261,7 +265,6 @@ export function publishRunning(deps: PublishDeps, cwd: string): void {
   }
 }
 
-
 /**
  * Deux entrées publiées disent-elles la même chose ? Tout compte sauf `updatedAt`
  * (l'horodatage du battement) : le propriétaire, la session, la boîte et la
@@ -294,7 +297,6 @@ function samePublished(onDisk: RunningEntry | null, next: RunningEntry): boolean
   });
 }
 
-
 /** Republie l'entrée du cwd courant, s'il est armé : le chemin des six événements. */
 export function publishCurrentCwd(deps: PublishDeps): void {
   // Une publication est un effet de bord : elle ne doit jamais faire échouer le
@@ -312,7 +314,6 @@ export function publishCurrentCwd(deps: PublishDeps): void {
     reportStateWriteFailure(deps, err);
   }
 }
-
 
 /**
  * Un seul intervalle de battement par processus : réarmer REMPLACE le précédent.
@@ -343,7 +344,6 @@ export function ensureHeartbeat(ctx: PipelineCtx | undefined, deps: Omit<Publish
   };
 }
 
-
 /**
  * Oublie une session qui se ferme : son battement et sa pompe s'arrêtent, et ni
  * `liveCtxs` ni l'état d'exécution partagé (`globalThis`) ne retiennent plus son
@@ -363,12 +363,10 @@ export function releaseSessionState(ctx: PipelineCtx | undefined): void {
   }
 }
 
-
 /** Repart à zéro à chaque session : « signalée au plus une fois par session ». */
 export function resetStateWriteWarning(): void {
   stateWriteWarned = false;
 }
-
 
 /**
  * Arme un maillon ET le publie : l'entrée apparaît dès la commande, avant toute
@@ -396,7 +394,6 @@ export function armPipeline(deps: PublishDeps, cwd: string | undefined, phase: P
   ensureHeartbeat(deps.ctx, { notify: deps.notify, stateDir: deps.stateDir });
   publishRunning(deps, cwd);
 }
-
 
 /**
  * Clôt une pipeline : l'historique est écrit PUIS le fichier en cours supprimé,

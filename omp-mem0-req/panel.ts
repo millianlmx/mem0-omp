@@ -3,31 +3,134 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { realpathOr } from "./git.ts";
 import { appendJournal } from "./context.ts";
-import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotRepoKey, lotStateCancellable, lotStateTerminal, milestoneGestureRefusal, rowReply } from "./lot.ts";
+import {
+  LOT_EDITOR_MAX,
+  isRelayRefusal,
+  lotCancelRefusal,
+  lotRepoKey,
+  lotStateCancellable,
+  lotStateTerminal,
+  milestoneGestureRefusal,
+  rowReply,
+} from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, MODEL_STEPS, featureFallbackForPhase, featureFallbackOf, featureModelOf, featureModelSlots, filterModelChoices, stepChoices } from "./models.ts";
+import {
+  DEFAULT_MODEL_CHOICE,
+  MODEL_STEPS,
+  featureFallbackForPhase,
+  featureFallbackOf,
+  featureModelOf,
+  featureModelSlots,
+  filterModelChoices,
+  stepChoices,
+} from "./models.ts";
 import type { ModelChoice, ModelStep, ModelStepDraft } from "./models.ts";
 import { exhaustedUntil } from "./quota.ts";
-import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
+import {
+  applyExpanded,
+  buildSessionComponents,
+  cursorGlyph,
+  disposeAssembly,
+  entryKey,
+  evictEntries,
+  toolUi,
+} from "./panelHost.ts";
 import type { HostComponent, PanelTheme, PanelTui, SessionAssembly } from "./panelHost.ts";
-import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, isQuotaRow, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, quotaRowCount, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
-import type { LotPanelMode, PanelGesture, PanelGlyphs, PanelModel, PanelRow, PanelRowRef, QuotaRow, SgrMouseEvent } from "./panelRows.ts";
+import {
+  PANEL_REFRESH_MS,
+  buildPanelRows,
+  clampSelection,
+  hasLiveWriter,
+  isLotFeature,
+  isQuotaRow,
+  liveWriterPid,
+  lotModeRows,
+  lotModeText,
+  moveSelection,
+  noSessionNotice,
+  panelBudget,
+  panelHeight,
+  panelIndexForKey,
+  panelRowAt,
+  panelRowCount,
+  panelSelectionKey,
+  parseSgrMouse,
+  quotaRowCount,
+  readPanelModel,
+  rowCwd,
+  rowLabel,
+  rowPhase,
+  rowSessionFile,
+  rowStateLabel,
+  staleGestureNotice,
+} from "./panelRows.ts";
+import type {
+  LotPanelMode,
+  PanelGesture,
+  PanelGlyphs,
+  PanelModel,
+  PanelRow,
+  PanelRowRef,
+  QuotaRow,
+  SgrMouseEvent,
+} from "./panelRows.ts";
 
 /** Un rang qui a une session à montrer : tout rang sauf un groupe de quota (S-5). */
 type ViewRow = Exclude<PanelRowRef, QuotaRow>;
 import { SESSION_VIEW_MAX_ENTRIES, extendSessionTail, readSessionTail } from "./panelSession.ts";
 import type { SessionEntryLike, SessionTail } from "./panelSession.ts";
-import { END_KEYS, EXPAND_KEY, FAST_SCROLL_LINES, HOME_KEYS, SHIFT_DOWN_KEYS, SHIFT_UP_KEYS, WHEEL_SCROLL_LINES, componentLabel, defaultSchedule, inputZone, panelSelections, readOnlyReason, sameZoneSource, unreadableLine, viewFooter, viewZoneRows, zoneScrollOf } from "./panelView.ts";
-import type { HostKeybinding, PanelComponent, PanelKeybindings, PanelView, PipelinesPanelDeps, ViewInputZone, ViewTranscript, ViewZone } from "./panelView.ts";
-import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, ROW_PADDING_X, VIEW_ZONE_MAX_LINES, WINDOW_FOLLOW, serviceRow, textWindow } from "./panelWidth.ts";
+import {
+  END_KEYS,
+  EXPAND_KEY,
+  FAST_SCROLL_LINES,
+  HOME_KEYS,
+  SHIFT_DOWN_KEYS,
+  SHIFT_UP_KEYS,
+  WHEEL_SCROLL_LINES,
+  componentLabel,
+  defaultSchedule,
+  inputZone,
+  panelSelections,
+  readOnlyReason,
+  sameZoneSource,
+  unreadableLine,
+  viewFooter,
+  viewZoneRows,
+  zoneScrollOf,
+} from "./panelView.ts";
+import type {
+  HostKeybinding,
+  PanelComponent,
+  PanelKeybindings,
+  PanelView,
+  PipelinesPanelDeps,
+  ViewInputZone,
+  ViewTranscript,
+  ViewZone,
+} from "./panelView.ts";
+import {
+  LIST_MODE_MAX_LINES,
+  PANEL_NOTICE_MAX_LINES,
+  ROW_PADDING_X,
+  VIEW_ZONE_MAX_LINES,
+  WINDOW_FOLLOW,
+  serviceRow,
+  textWindow,
+} from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { WorktreeFate } from "./runs.ts";
 import { SERVICE_DOWN_REFUSAL } from "./serviceClient.ts";
-import { asStringOrNull, deleteHistoryEntry, dropInbox, panelInboxDirFor, panelInboxDirOf, pidAlive, writeDelivery } from "./store.ts";
+import {
+  asStringOrNull,
+  deleteHistoryEntry,
+  dropInbox,
+  panelInboxDirFor,
+  panelInboxDirOf,
+  pidAlive,
+  writeDelivery,
+} from "./store.ts";
 import type { PanelDelivery } from "./store.ts";
-
-
 
 /**
  * Fabrique du composant, au contrat `Component` de la TUI : `render(width)` rend
@@ -89,7 +192,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const drafts = new Map<string, string>();
     /** La clé d'un brouillon : le slug de la feature, sinon son fichier de session, sinon son libellé. */
     const draftKey = (row: PanelRowRef): string =>
-      isQuotaRow(row) ? `quota:${row.provider}` : isLotFeature(row) ? row.slug : (rowSessionFile(model, row) ?? row.label);
+      isQuotaRow(row)
+        ? `quota:${row.provider}`
+        : isLotFeature(row)
+          ? row.slug
+          : (rowSessionFile(model, row) ?? row.label);
     /**
      * La largeur du DERNIER rendu : les touches qui fenêtrent un texte (S-2,
      * `PageUp`/`PageDown` du champ comme de la zone) mesurent le même repli que le
@@ -125,7 +232,6 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       const key = panelSelectionKey(model);
       if (key !== null) panelSelections.set(selectionKey, key);
     };
-
 
     /**
      * Les boîtes où CE panneau a déposé une livraison (S-9), par DOSSIER et par CLÉ
@@ -193,7 +299,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (entry.owner.pid === process.pid || !pidAlive(entry.owner.pid)) continue;
         if (realpathOr(entry.cwd) === real) return "un maillon du lot travaille dans ce worktree";
       }
-      const feature = features().find((candidate) => candidate.worktree !== "" && realpathOr(candidate.worktree) === real);
+      const feature = features().find(
+        (candidate) => candidate.worktree !== "" && realpathOr(candidate.worktree) === real,
+      );
       if (feature && !lotStateTerminal(feature.state)) return "un maillon du lot travaille dans ce worktree";
       return null;
     };
@@ -331,10 +439,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
               countsWidth: 0,
               followBottom: true,
               offsetLines: 0,
-              link:
-                file === null
-                  ? null
-                  : `nouveau maillon /${rowPhase(model, row)} — session ${path.basename(file)}`,
+              link: file === null ? null : `nouveau maillon /${rowPhase(model, row)} — session ${path.basename(file)}`,
             },
           };
           changed = true;
@@ -599,7 +704,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (row.owner.pid === process.pid) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
       const dir = panelInboxDirOf(row);
-      if (dir === null) return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
+      if (dir === null)
+        return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
       const ask = row.pendingAsk ?? null;
       if (ask) {
         // Une question déjà répondue ne se rouvre pas (VIEW-10) : la zone dit qu'une
@@ -714,7 +820,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const act = (run: () => Promise<string | null>, keep?: LotPanelMode) => {
       const settle = (reason: string | null) => {
         if (reason === null) {
-          if (keep) setMode({ kind: "browse" }); // un succès ferme la saisie
+          if (keep)
+            setMode({ kind: "browse" }); // un succès ferme la saisie
           else {
             notice = null;
             redraw();
@@ -896,7 +1003,13 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      */
     const loadOlder = (
       transcript: ViewTranscript,
-    ): { entries: SessionEntryLike[]; tail: SessionTail | null; truncated: boolean; more: boolean; added: number } | null => {
+    ): {
+      entries: SessionEntryLike[];
+      tail: SessionTail | null;
+      truncated: boolean;
+      more: boolean;
+      added: number;
+    } | null => {
       const current = view;
       if (current.kind !== "session") return null;
       if (!transcript.more || transcript.tail === null || transcript.sessionFile === null) return null;
@@ -1075,11 +1188,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // répondue, et un second `Entrée` ou un Échap + Entrée ne doit pas renvoyer la
       // même option — le maillon n'a pas encore republié `pendingAsk`. Un refus
       // d'écriture, lui, repose la zone d'origine, tampon compris (`actView`).
-      setZone(
-        input.toolCallId === null
-          ? { ...input, buffer: "" }
-          : { kind: "closed", reason: ASK_ANSWERED_REASON },
-      );
+      setZone(input.toolCallId === null ? { ...input, buffer: "" } : { kind: "closed", reason: ASK_ANSWERED_REASON });
       /** Une livraison RÉUSSIE oublie le brouillon du rang (S-7). */
       const sent = () => {
         if (row) drafts.delete(draftKey(row));
@@ -1153,7 +1262,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // La boîte surveillée retient à quel RANG elle appartient (VIEW-3) : un reste
         // non consommé revient au brouillon de ce rang, jamais à celui qu'on regarde.
         // Une feature de LOT est exclue : son pilote récupère la boîte lui-même.
-        if (!(row !== undefined && isLotFeature(row))) watchedBoxes.set(target.dir, row !== undefined ? draftKey(row) : target.dir);
+        if (!(row !== undefined && isLotFeature(row)))
+          watchedBoxes.set(target.dir, row !== undefined ? draftKey(row) : target.dir);
         return;
       }
       const actions = deps.lot;
@@ -1713,7 +1823,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         return true;
       }
       if (mode.kind === "cancel") {
-        const fate: WorktreeFate | null = data === "1" ? "keep" : data === "2" ? "archive" : data === "3" ? "delete" : null;
+        const fate: WorktreeFate | null =
+          data === "1" ? "keep" : data === "2" ? "archive" : data === "3" ? "delete" : null;
         if (!fate) return true; // toute autre touche est ignorée : 1, 2, 3 ou Échap
         // Le devenir choisi, puis l'aperçu qui dit ce qui va se passer (S-8).
         setMode({
@@ -2023,7 +2134,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           showNotice(refusal);
           return;
         }
-        if (!feature || feature.state !== "waiting" || feature.waitKind !== "specs") {
+        if (feature?.state !== "waiting" || feature.waitKind !== "specs") {
           showNotice("rien à valider : la feature n'est pas au jalon des specs");
           return;
         }
@@ -2038,7 +2149,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           showNotice(refusal);
           return;
         }
-        if (!feature || feature.state !== "waiting" || feature.waitKind !== "review") {
+        if (feature?.state !== "waiting" || feature.waitKind !== "review") {
           showNotice("rien à accepter : la revue n'est pas propre");
           return;
         }
@@ -2115,9 +2226,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       ensureCounts(transcript, width);
       const total = transcriptRows();
       const max = Math.max(0, total - room);
-      const start = transcript.followBottom
-        ? max
-        : Math.min(Math.max(transcript.offsetLines, 0), max);
+      const start = transcript.followBottom ? max : Math.min(Math.max(transcript.offsetLines, 0), max);
       const lines: string[] = [];
       let at = 0;
       for (let i = 0; i < components.length && lines.length < room; i += 1) {
@@ -2262,7 +2371,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         ...serviceRow(title.join(" · "), "accent", innerW),
       ];
       const footer =
-        gesture === null ? viewFooter(view.zone, zone.rows.length > zoneWindow.length) : (gesture.help.join(" · "));
+        gesture === null ? viewFooter(view.zone, zone.rows.length > zoneWindow.length) : gesture.help.join(" · ");
       const tail: PanelRow[] = [
         ...noticeRows,
         ...zoneWindow,

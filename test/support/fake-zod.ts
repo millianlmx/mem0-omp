@@ -13,6 +13,11 @@ export type FakeSchema = { [method: string]: (...args: unknown[]) => FakeSchema 
  * descripteur chaînable (`.describe/.optional/.default/.int/.min/.max`).
  */
 export function fakeSchema(): FakeSchema {
-  const builder = new Proxy({} as FakeSchema, { get: () => (..._args: unknown[]) => builder });
+  const builder = new Proxy({} as FakeSchema, {
+    get:
+      () =>
+      (..._args: unknown[]) =>
+        builder,
+  });
   return builder;
 }

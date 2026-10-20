@@ -8,6 +8,8 @@ mem0-stack/migration/
 node_modules/
 # scripts/typecheck.sh : TypeScript épinglé (typescript/, par --prepare) et lien vers les types de l'hôte (node_modules)
 .typecheck/
+# Biome épinglé de scripts/lint.sh (installé par `bash scripts/lint.sh --prepare`)
+.lint/
 *.log
 .DS_Store
 

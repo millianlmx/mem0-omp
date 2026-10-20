@@ -47,7 +47,8 @@ function typedGestureFaults(root: string): string[] {
   const source = stripComments(readIfExists(path.join(root, ACTIONS)));
   if (source === "") return [`${ACTIONS} introuvable`];
   for (const [name, pattern] of HTTP_TOKENS) {
-    if (pattern.test(source)) faults.push(`RemoteActions mentionne ${name} : un geste ne prend ni ne rend de corps HTTP`);
+    if (pattern.test(source))
+      faults.push(`RemoteActions mentionne ${name} : un geste ne prend ni ne rend de corps HTTP`);
   }
   for (const gesture of GESTURES) {
     // Chaque déclaration du geste, jusqu'à l'accolade ouvrante de son corps.
@@ -75,7 +76,7 @@ test("validations-de-geste-enfermees-dans-le-h/AC-7 : chaque geste de RemoteActi
   const lastBrace = original.lastIndexOf("}");
   fs.writeFileSync(
     actions,
-    original.slice(0, lastBrace) + "    func answer(cardId: String, body: Data) async throws {}\n}\n",
+    `${original.slice(0, lastBrace)}    func answer(cardId: String, body: Data) async throws {}\n}\n`,
   );
   const faults = typedGestureFaults(copy);
   assert.ok(

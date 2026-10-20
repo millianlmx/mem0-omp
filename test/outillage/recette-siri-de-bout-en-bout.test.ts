@@ -121,9 +121,19 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     const voie = args.length === 0 ? "complet" : "--no-tests";
     const r = mac.lancer(args);
     assert.equal(r.status, 0, `[Mac ${voie}] ${r.sortie}`);
-    assert.ok(r.sortie.includes(ligneConforme("mac")), `[Mac ${voie}] ligne ✓ absente : ${ligneConforme("mac")}\n${r.sortie}`);
-    assert.equal(fs.readFileSync(path.join(mac.bundle, META_ACTIONS_REL), "utf8"), actionsData("mac"), `[Mac ${voie}] extract.actionsdata du bundle`);
-    assert.ok(r.lignes.includes(`codesign --force --sign - ${mac.bundle} meta=oui`), `[Mac ${voie}] bundle non signé\n${r.lignes.join("\n")}`);
+    assert.ok(
+      r.sortie.includes(ligneConforme("mac")),
+      `[Mac ${voie}] ligne ✓ absente : ${ligneConforme("mac")}\n${r.sortie}`,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(mac.bundle, META_ACTIONS_REL), "utf8"),
+      actionsData("mac"),
+      `[Mac ${voie}] extract.actionsdata du bundle`,
+    );
+    assert.ok(
+      r.lignes.includes(`codesign --force --sign - ${mac.bundle} meta=oui`),
+      `[Mac ${voie}] bundle non signé\n${r.lignes.join("\n")}`,
+    );
   }
 
   const ios = montageIosBuild();
@@ -132,7 +142,10 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     const r = ios.run(args);
     const sortie = `${r.stdout}${r.stderr}`;
     assert.equal(r.status, 0, `[iOS ${voie}] ${sortie}`);
-    assert.ok(r.stdout.includes(ligneConforme("ios")), `[iOS ${voie}] ligne ✓ absente : ${ligneConforme("ios")}\n${sortie}`);
+    assert.ok(
+      r.stdout.includes(ligneConforme("ios")),
+      `[iOS ${voie}] ligne ✓ absente : ${ligneConforme("ios")}\n${sortie}`,
+    );
     if (voie === "complet") {
       assert.ok(sortie.includes("tests non exécutés : aucun simulateur iOS 26 disponible"), `[iOS complet] ${sortie}`);
     }
@@ -185,7 +198,10 @@ test("recette-siri-de-bout-en-bout/AC-5 : une phrase du bundle sans ${applicatio
     const [premier] = Object.keys(readAttendus()[bundle]);
     const fichier = ecart(bundle, (data) => ajouterPhrase(data, premier, phrase));
     const stderr = prouverEchec(bundle, { FAUX_ACTIONSDATA: fichier }, [phraseSansNom(bundle, premier, phrase)]);
-    assert.ok(!stderr.includes(phraseNonListee(bundle, premier, phrase)), `[${LIBELLE[bundle]}] E-P2 émis pour une phrase sans nom\n${stderr}`);
+    assert.ok(
+      !stderr.includes(phraseNonListee(bundle, premier, phrase)),
+      `[${LIBELLE[bundle]}] E-P2 émis pour une phrase sans nom\n${stderr}`,
+    );
   }
 });
 
@@ -199,14 +215,18 @@ test("recette-siri-de-bout-en-bout/AC-6 : la liste attendue n'existe qu'à un se
     ...fs.readdirSync(support).map((nom) => path.join("test", "support", nom)),
   ];
   for (const script of ["scripts/swift-app.sh", "scripts/ios-build.sh"]) {
-    assert.ok(fs.readFileSync(path.join(ROOT, script), "utf8").includes("scripts/app-intents/controle.py"), `${script} n'invoque pas le comparateur`);
+    assert.ok(
+      fs.readFileSync(path.join(ROOT, script), "utf8").includes("scripts/app-intents/controle.py"),
+      `${script} n'invoque pas le comparateur`,
+    );
   }
   const types = BUNDLES.flatMap((b) => Object.keys(attendus[b]));
   const phrases = BUNDLES.flatMap((b) => Object.values(attendus[b]).flat());
   const fautes: string[] = [];
   for (const rel of fichiers) {
     const texte = fs.readFileSync(path.join(ROOT, rel), "utf8");
-    for (const type of types) if (new RegExp(`\\b${type}\\b(?!\\.swift)`).test(texte)) fautes.push(`${rel} nomme ${type}`);
+    for (const type of types)
+      if (new RegExp(`\\b${type}\\b(?!\\.swift)`).test(texte)) fautes.push(`${rel} nomme ${type}`);
     for (const phrase of phrases) if (texte.includes(phrase)) fautes.push(`${rel} cite « ${phrase} »`);
   }
   assert.deepEqual(fautes, []);
@@ -254,18 +274,28 @@ function sousSections(corps: string): Map<string, string> {
   return parts;
 }
 
-const cellules = (ligne: string) => ligne.split("|").slice(1, -1).map((c) => c.trim());
+const cellules = (ligne: string) =>
+  ligne
+    .split("|")
+    .slice(1, -1)
+    .map((c) => c.trim());
 
 test("recette-siri-de-bout-en-bout/AC-8 : le README décrit deux passes (iPhone puis Mac), avec préalables manuels, feature jetable, pas ordonnés, phrases de la liste attendue et grille « OK ou écart »", () => {
   const { corps, suivant } = recette();
   assert.equal(suivant, SUIVANTE, "la recette doit précéder immédiatement la conduite depuis l'iPad");
   const parts = sousSections(corps);
-  assert.deepEqual([...parts.keys()], ["Feature jetable", "Règles des deux passes", "Passe 1 — iPhone", "Passe 2 — Mac", "Consigner le résultat"]);
+  assert.deepEqual(
+    [...parts.keys()],
+    ["Feature jetable", "Règles des deux passes", "Passe 1 — iPhone", "Passe 2 — Mac", "Consigner le résultat"],
+  );
 
-  const jetable = (parts.get("Feature jetable") ?? "").split("\n").filter((l) => l.startsWith("| ")).map(cellules);
+  const jetable = (parts.get("Feature jetable") ?? "")
+    .split("\n")
+    .filter((l) => l.startsWith("| "))
+    .map(cellules);
   for (const passe of ["iPhone", "Mac"]) {
     const ligne = jetable.find((c) => c[0] === passe);
-    assert.ok(ligne && ligne[1] && ligne[2], `feature jetable sans titre ni besoin pour la passe ${passe}`);
+    assert.ok(ligne?.[1] && ligne[2], `feature jetable sans titre ni besoin pour la passe ${passe}`);
   }
 
   const attendus = readAttendus();
@@ -274,13 +304,27 @@ test("recette-siri-de-bout-en-bout/AC-8 : le README décrit deux passes (iPhone 
       titre: "Passe 1 — iPhone",
       bundle: "ios",
       cites: ["déverrouillé", "appairée", "La console Mac est ouverte et joignable", "Le dépôt de test est prêt"],
-      intents: ["IOSLaunchFeatureIntent", "IOSPendingRequestsIntent", "IOSSessionPromptIntent", "IOSValidateSpecsIntent", "IOSAcceptReviewIntent", "IOSPendingRequestsIntent"],
+      intents: [
+        "IOSLaunchFeatureIntent",
+        "IOSPendingRequestsIntent",
+        "IOSSessionPromptIntent",
+        "IOSValidateSpecsIntent",
+        "IOSAcceptReviewIntent",
+        "IOSPendingRequestsIntent",
+      ],
     },
     {
       titre: "Passe 2 — Mac",
       bundle: "mac",
       cites: ["déverrouillée", "La console Mac est ouverte et joignable", "Le dépôt de test est prêt"],
-      intents: ["MacLaunchPipelineIntent", "MacAnswerIntent", "MacSessionPromptIntent", "MacValidateSpecsIntent", "MacAcceptReviewIntent", "MacPendingIntent"],
+      intents: [
+        "MacLaunchPipelineIntent",
+        "MacAnswerIntent",
+        "MacSessionPromptIntent",
+        "MacValidateSpecsIntent",
+        "MacAcceptReviewIntent",
+        "MacPendingIntent",
+      ],
     },
   ];
   for (const { titre, bundle, cites, intents } of passes) {
@@ -288,16 +332,34 @@ test("recette-siri-de-bout-en-bout/AC-8 : le README décrit deux passes (iPhone 
     const iPrealables = texte.indexOf(PREALABLES);
     const iDeroule = texte.indexOf(DEROULE);
     assert.ok(iPrealables >= 0 && iDeroule > iPrealables, `[${titre}] préalables puis déroulé attendus`);
-    const puces = texte.slice(iPrealables, iDeroule).split("\n").filter((l) => l.startsWith("- "));
+    const puces = texte
+      .slice(iPrealables, iDeroule)
+      .split("\n")
+      .filter((l) => l.startsWith("- "));
     assert.ok(puces.length >= 4, `[${titre}] ${puces.length} préalable(s), 4 au moins attendus`);
-    for (const cite of cites) assert.ok(texte.slice(iPrealables, iDeroule).includes(cite), `[${titre}] préalable absent : ${cite}`);
+    for (const cite of cites)
+      assert.ok(texte.slice(iPrealables, iDeroule).includes(cite), `[${titre}] préalable absent : ${cite}`);
 
-    const tableau = texte.slice(iDeroule).split("\n").filter((l) => l.startsWith("|"));
-    assert.equal(tableau[0], "| Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |", `[${titre}] en-tête du déroulé`);
+    const tableau = texte
+      .slice(iDeroule)
+      .split("\n")
+      .filter((l) => l.startsWith("|"));
+    assert.equal(
+      tableau[0],
+      "| Pas | Phrase à dire | Réponse attendue de Siri | OK ou écart |",
+      `[${titre}] en-tête du déroulé`,
+    );
     const pas = tableau.slice(2).map(cellules);
     assert.deepEqual(
       pas.map((c) => c[0]),
-      ["1. Lancer", "2. Répondre à la question", "3. Dicter à la session OMP", "4. Valider les specs", "5. Accepter la revue", "6. PR ouverte"],
+      [
+        "1. Lancer",
+        "2. Répondre à la question",
+        "3. Dicter à la session OMP",
+        "4. Valider les specs",
+        "5. Accepter la revue",
+        "6. PR ouverte",
+      ],
       `[${titre}] pas du déroulé`,
     );
     pas.forEach((c, i) => {
@@ -320,7 +382,11 @@ test("recette-siri-de-bout-en-bout/AC-8 : le README décrit deux passes (iPhone 
 
 test("recette-siri-de-bout-en-bout/AC-11 : si la PR ne s'ouvre pas après l'acceptation vocale de la revue, la recette fait consigner un écart sans aucun geste de contournement", () => {
   const { corps } = recette();
-  assert.equal(corps.split(SANS_CONTOURNEMENT).length - 1, 1, "la consigne d'écart au pas 6 doit figurer exactement une fois");
+  assert.equal(
+    corps.split(SANS_CONTOURNEMENT).length - 1,
+    1,
+    "la consigne d'écart au pas 6 doit figurer exactement une fois",
+  );
   for (const motif of ["gh pr create", "git push", "curl", "/v1/"]) {
     assert.ok(!corps.includes(motif), `la recette propose un contournement : ${motif}`);
   }

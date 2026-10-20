@@ -64,7 +64,7 @@ function scan(source: string): { code: string; literals: string[] } {
     const multi = source.startsWith('"""', i + hashes);
     const quote = multi ? '"""' : '"';
     const close = quote + "#".repeat(hashes);
-    const escape = "\\" + "#".repeat(hashes);
+    const escapeText = `\\${"#".repeat(hashes)}`;
     code += source.slice(i, i + hashes + quote.length);
     i += hashes + quote.length;
     let literal = "";
@@ -74,8 +74,8 @@ function scan(source: string): { code: string; literals: string[] } {
         i += close.length;
         break;
       }
-      if (source.startsWith(escape, i)) {
-        const after = i + escape.length;
+      if (source.startsWith(escapeText, i)) {
+        const after = i + escapeText.length;
         if (source[after] === "(") {
           // Interpolation : du code jusqu'à la parenthèse fermante équilibrée.
           literals.push(literal);
@@ -178,7 +178,7 @@ function withoutCalls(code: string, name: string): string {
   let cursor = 0;
   for (const call of calls(code, name)) {
     if (call.start < cursor) continue;
-    out += code.slice(cursor, call.start) + " ";
+    out += `${code.slice(cursor, call.start)} `;
     cursor = call.end;
   }
   return out + code.slice(cursor);
@@ -234,7 +234,9 @@ function inspectorFaults(root: string): string[] {
     if (/\bfieldPid\b/.test(code)) faults.push(`${file} : emploie « fieldPid »`);
   }
   const coreDir = path.join(root, "omp-console/Sources/ConsoleCore");
-  const core = (fs.existsSync(coreDir) ? swiftFiles(coreDir) : []).map((file) => path.relative(root, file).split(path.sep).join("/"));
+  const core = (fs.existsSync(coreDir) ? swiftFiles(coreDir) : []).map((file) =>
+    path.relative(root, file).split(path.sep).join("/"),
+  );
   if (core.length === 0) faults.push("omp-console/Sources/ConsoleCore : aucune source");
   for (const file of core) {
     if (/\b(?:let|var|func)\s+fieldPid\b/.test(codeOf(root, file) ?? "")) {

@@ -3,8 +3,6 @@ import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import type { RunningEntry } from "./store.ts";
 
-
-
 // ---------------------------------------------------------------------------
 // State — CWD-keyed, PAS session-keyed
 // ---------------------------------------------------------------------------
@@ -27,9 +25,7 @@ export type ReqState = {
   entry?: RunningEntry;
 };
 
-
 export const states = new Map<string, ReqState>();
-
 
 export function stateOfCwd(cwd: string | undefined): ReqState {
   const key = cwd ? path.resolve(cwd) : "session";
@@ -40,7 +36,6 @@ export function stateOfCwd(cwd: string | undefined): ReqState {
   }
   return st;
 }
-
 
 /**
  * Arme un maillon : à sa prochaine retombée terminale, la suite sera annoncée.

@@ -166,9 +166,13 @@ export function montageAppIntents(): {
   }
   fs.cpSync(path.join(ROOT, "scripts", "app-intents"), path.join(copie, "scripts", "app-intents"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
-  fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), {
-    recursive: true,
-  });
+  fs.cpSync(
+    path.join(ROOT, "omp-console", "Sources", "OMPConsole"),
+    path.join(copie, "omp-console", "Sources", "OMPConsole"),
+    {
+      recursive: true,
+    },
+  );
 
   const bin = path.join(tmpdir("app-intents-outils-"), "bin");
   fs.mkdirSync(bin);
@@ -216,7 +220,11 @@ printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
 chmod +x "$target/release/mem0-rs"`,
   );
   writeDouble(bin, "lipo", "printf 'arm64\\n'");
-  writeDouble(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
+  writeDouble(
+    bin,
+    "otool",
+    "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'",
+  );
   // codesign : journalise son argv et dit si, AU MOMENT de l'appel, la cible porte
   // déjà Metadata.appintents (preuve de la recopie avant la signature). `-dv`
   // (lecture de la signature) n'est pas journalisé et rend le TeamIdentifier que
@@ -247,7 +255,17 @@ fi`,
   writeXcodeDoubles(bin);
 
   const base: NodeJS.ProcessEnv = { ...process.env };
-  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "FAUX_IDENTITE", "FAUX_EQUIPE", "FAUX_SWIFT_TEST", "OMP_CODESIGN_IDENTITY", "DEVELOPER_DIR"]) {
+  for (const cle of [
+    "CARGO_TARGET_DIR",
+    "FAUX_XCODE",
+    "FAUX_APPINTENTS",
+    "FAUX_ACTIONSDATA",
+    "FAUX_IDENTITE",
+    "FAUX_EQUIPE",
+    "FAUX_SWIFT_TEST",
+    "OMP_CODESIGN_IDENTITY",
+    "DEVELOPER_DIR",
+  ]) {
     delete base[cle];
   }
   const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");

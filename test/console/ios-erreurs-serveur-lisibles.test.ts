@@ -69,7 +69,8 @@ function singleTranslatorFaults(root: string): string[] {
   const faults: string[] = [];
 
   const translator = source(path.join(dir, "IOSMacErrorText.swift"));
-  if (!/\benum\s+IOSMacErrorText\b/.test(translator)) faults.push("IOSMacErrorText.swift ne déclare pas IOSMacErrorText");
+  if (!/\benum\s+IOSMacErrorText\b/.test(translator))
+    faults.push("IOSMacErrorText.swift ne déclare pas IOSMacErrorText");
 
   for (const name of TRANSLATING_FILES) {
     if (!source(path.join(dir, name)).includes("IOSMacErrorText.message(for:")) {
@@ -96,7 +97,10 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, a
   // La garde est vivante : réintroduire `api.message` dans IOSStatsText la fait rougir.
   const copy = copyRepo("ios-erreurs-serveur-lisibles-copie-");
   const stats = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSStatsText.swift");
-  fs.appendFileSync(stats, "\nextension IOSStatsText { static func raw(_ api: ConsoleAPIError) -> String? { api.message } }\n");
+  fs.appendFileSync(
+    stats,
+    "\nextension IOSStatsText { static func raw(_ api: ConsoleAPIError) -> String? { api.message } }\n",
+  );
   assert.ok(
     singleTranslatorFaults(copy).some((fault) => fault.includes("IOSStatsText.swift") && fault.includes("api.message")),
     "api.message planté dans IOSStatsText doit faire rougir la garde",
@@ -105,7 +109,10 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, a
   // Retirer l'appel au traducteur d'une section la fait aussi rougir.
   const copy2 = copyRepo("ios-erreurs-serveur-lisibles-copie-");
   const thread = path.join(copy2, "omp-console", "ios", "OMPConsoleIOS", "IOSSessionThreadModel.swift");
-  fs.writeFileSync(thread, fs.readFileSync(thread, "utf8").replaceAll("IOSMacErrorText.message(for:", "Fake.message(for:"));
+  fs.writeFileSync(
+    thread,
+    fs.readFileSync(thread, "utf8").replaceAll("IOSMacErrorText.message(for:", "Fake.message(for:"),
+  );
   assert.ok(
     singleTranslatorFaults(copy2).some((fault) => fault.includes("IOSSessionThreadModel.swift ne passe pas")),
     "une section qui ne passe plus par le traducteur doit faire rougir la garde",

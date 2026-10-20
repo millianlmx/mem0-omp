@@ -68,7 +68,10 @@ test("buildSpecsSeed : lit le contrat, y écrit specs ET lots, ambiguïtés tech
   assert.match(out, /ambiguïtés TECHNIQUES/); // ne re-questionne pas l'intention métier
   assert.match(out, /N'écris PAS les specs en mémoire mem0/);
   assert.match(out, /## Documentation/); // rassemble la doc externe pour /impl
-  assert.match(out, /DOCUMENTE-toi SEULEMENT si une spec mobilise une API, bibliothèque, framework, format ou protocole EXTERNE absent du dépôt/);
+  assert.match(
+    out,
+    /DOCUMENTE-toi SEULEMENT si une spec mobilise une API, bibliothèque, framework, format ou protocole EXTERNE absent du dépôt/,
+  );
 });
 
 test("buildSpecsSeed : les lots portent le « comment » typé (ui / archi)", () => {
@@ -266,13 +269,24 @@ test("buildNextStepNotice : annonce la commande à l'octet près, fin de cycle c
 
 test("reviewVerdict : le champ BLOQUANTS est lu, les échappatoires « aucun » comprises", () => {
   assert.equal(reviewVerdict("## Besoins\n\nB-1 : …\n"), "unreadable", "section absente");
-  assert.equal(reviewVerdict("## Revue\n\n- STATUT : APPROUVÉ\n- DÉCISION FINALE : approuvé\n"), "unreadable", "champ absent");
-  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- RECOMMANDATIONS : aucune\n- DÉCISION FINALE : approuvé\n"), "clean");
+  assert.equal(
+    reviewVerdict("## Revue\n\n- STATUT : APPROUVÉ\n- DÉCISION FINALE : approuvé\n"),
+    "unreadable",
+    "champ absent",
+  );
+  assert.equal(
+    reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- RECOMMANDATIONS : aucune\n- DÉCISION FINALE : approuvé\n"),
+    "clean",
+  );
   assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : néant\n"), "clean");
   assert.equal(reviewVerdict("## Revue\n\n- **BLOQUANTS** : `0`\n"), "clean");
   assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : —\n"), "clean");
   assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : (aucun)\n"), "clean");
-  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS :\n  1. Le test AC-3 manque.\n"), "blockers", "numéroté multiligne");
+  assert.equal(
+    reviewVerdict("## Revue\n\n- BLOQUANTS :\n  1. Le test AC-3 manque.\n"),
+    "blockers",
+    "numéroté multiligne",
+  );
   assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : 1) Le test AC-3 manque.\n"), "blockers", "numéroté même ligne");
 });
 
@@ -283,7 +297,10 @@ test("reviewVerdict : le corps du champ s'arrête au libellé suivant et au titr
     "clean",
   );
   // Une section suivante a ses propres champs : ils ne comptent pas pour `## Revue`.
-  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n\n## Annexe\n\n- BLOQUANTS :\n  1. Hors périmètre.\n"), "clean");
+  assert.equal(
+    reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n\n## Annexe\n\n- BLOQUANTS :\n  1. Hors périmètre.\n"),
+    "clean",
+  );
   // Le champ DÉCISION FINALE n'est PAS lu : un « non » n'est pas un bloquant.
   assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- DÉCISION FINALE : non\n"), "clean");
 });

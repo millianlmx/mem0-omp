@@ -55,10 +55,10 @@ function sessionAnchorFaults(root: string): string[] {
   const faults: string[] = [];
   const screen = code(sessionFile(root));
   if (screen === "") return ["IOSSessionOmpScreen.swift est introuvable"];
-  if (
-    !/\.iosPanel\(\)\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity, alignment: \.top\)/.test(screen)
-  ) {
-    faults.push("`.iosPanel()` n'est pas suivi de `.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)`");
+  if (!/\.iosPanel\(\)\s*\.frame\(maxWidth: \.infinity, maxHeight: \.infinity, alignment: \.top\)/.test(screen)) {
+    faults.push(
+      "`.iosPanel()` n'est pas suivi de `.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)`",
+    );
   }
   if (screen.includes("ScrollView(")) faults.push("IOSSessionOmpScreen porte une `ScrollView(` (défilement imbriqué)");
   return faults;
@@ -107,7 +107,10 @@ test("ios-session-omp-et-accueil-sans-titre/AC-5 : Session OMP est ancré en hau
   const centeredFile = sessionFile(centered);
   const source = fs.readFileSync(centeredFile, "utf8");
   assert.ok(source.includes("alignment: .top)"), "précondition de la copie");
-  fs.writeFileSync(centeredFile, source.replace("maxHeight: .infinity, alignment: .top)", "maxHeight: .infinity, alignment: .center)"));
+  fs.writeFileSync(
+    centeredFile,
+    source.replace("maxHeight: .infinity, alignment: .top)", "maxHeight: .infinity, alignment: .center)"),
+  );
   assert.ok(
     sessionAnchorFaults(centered).some((f) => f.includes("alignment: .top")),
     "un ancrage centré doit faire rougir la garde",

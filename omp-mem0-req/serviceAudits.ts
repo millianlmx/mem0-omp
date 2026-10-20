@@ -9,7 +9,17 @@
 // l'arbitre (S-2, AC-5).
 import * as crypto from "node:crypto";
 import { auditRepoRootOf, enrolElements } from "./audit.ts";
-import { AUDIT_BRIEF_SECTIONS, AUDIT_VERSION, auditKeyOf, listAudits, newAuditId, readAudit, readAuditReportDraft, transitionAudit, writeAudit } from "./auditRecord.ts";
+import {
+  AUDIT_BRIEF_SECTIONS,
+  AUDIT_VERSION,
+  auditKeyOf,
+  listAudits,
+  newAuditId,
+  readAudit,
+  readAuditReportDraft,
+  transitionAudit,
+  writeAudit,
+} from "./auditRecord.ts";
 import type { AuditLaunchOutcome, AuditRecord, AuditStatus } from "./auditRecord.ts";
 import type { PipelineCommand } from "./commands.ts";
 import { briefRubricsMissing, writeBrief, writeReport } from "./context.ts";
@@ -18,11 +28,16 @@ import { lotFeature, lotRepoKey, readLot } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import { buildAppAuditSeed } from "./seeds.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
-import type { AuditAnswerResult, AuditLaunchResult, AuditStartResult, AuditStopResult, ServiceFrame } from "./serviceApi.ts";
+import type {
+  AuditAnswerResult,
+  AuditLaunchResult,
+  AuditStartResult,
+  AuditStopResult,
+  ServiceFrame,
+} from "./serviceApi.ts";
 import type { ServicePilot } from "./servicePilot.ts";
 import { requireRepo } from "./servicePilot.ts";
 import type { HostedSession, SessionHost } from "./serviceSessions.ts";
-
 
 /** Borne de l'orientation, une fois rognée (S-1). */
 export const AUDIT_ORIENTATION_MAX = 2000;
@@ -35,7 +50,6 @@ export const AUDIT_FAILURE_RESTART = "l'analyse a été interrompue par l'arrêt
 export function auditFailureOfError(message: string | null): string {
   return `l'analyse a échoué : ${message ?? "cause inconnue"}`;
 }
-
 
 export type AuditServiceDeps = {
   stateDir: string;
@@ -63,12 +77,10 @@ export interface AuditService {
   sweep: (first: boolean) => void;
 }
 
-
 /** Un corps JSON objet, sinon `{}` : un champ absent est refusé par son propre motif. */
 function fieldsOf(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
 }
-
 
 /** La sorte d'une escalade : le préfixe de sa clé avant le premier `:` (S-3). */
 function escalationKindOf(key: string): "ask" | "question" | "specs" | "review" | null {
@@ -77,13 +89,11 @@ function escalationKindOf(key: string): "ask" | "question" | "specs" | "review" 
   return kind === "ask" || kind === "question" || kind === "specs" || kind === "review" ? kind : null;
 }
 
-
 /** Le dernier état connu d'une feature, recopié dans `launches` (S-2 « suivi »). */
 function progressOf(feature: LotFeature | undefined): Pick<AuditLaunchOutcome, "state" | "phase" | "prUrl"> {
   if (feature === undefined) return { state: null, phase: null, prUrl: null };
   return { state: feature.state, phase: feature.phase, prUrl: feature.prUrl };
 }
-
 
 export function createAuditService(deps: AuditServiceDeps): AuditService {
   const log = deps.log ?? (() => {});
@@ -144,7 +154,9 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
     try {
       await entry.hosted.dispose();
     } catch (err) {
-      log(`[service] libération de l'analyse ${auditId} en échec : ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `[service] libération de l'analyse ${auditId} en échec : ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -154,12 +166,13 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
     const lot = readLot(stateDir, audit.repoKey);
     if (lot === null) return;
     let changed = false;
-    const launches = audit.launches.map(entry => {
+    const launches = audit.launches.map((entry) => {
       if (!entry.launched) return entry;
       const feature = lotFeature(lot, entry.slug);
       if (feature === undefined || feature.auditSession !== audit.key) return entry;
       const progress = progressOf(feature);
-      if (progress.state === entry.state && progress.phase === entry.phase && progress.prUrl === entry.prUrl) return entry;
+      if (progress.state === entry.state && progress.phase === entry.phase && progress.prUrl === entry.prUrl)
+        return entry;
       changed = true;
       return { ...entry, ...progress };
     });
@@ -217,7 +230,11 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
           const status = frame.data.status;
           void endAnalysis(
             id,
-            status === "completed" ? AUDIT_FAILURE_COMPLETED : status === "aborted" ? AUDIT_FAILURE_ABORTED : auditFailureOfError(lastError),
+            status === "completed"
+              ? AUDIT_FAILURE_COMPLETED
+              : status === "aborted"
+                ? AUDIT_FAILURE_ABORTED
+                : auditFailureOfError(lastError),
           );
         }) ?? (() => {});
       live.set(id, { hosted, off });
@@ -240,13 +257,13 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
       }
       const fields = fieldsOf(body);
       const raw = fields.selected;
-      if (!Array.isArray(raw) || raw.some(entry => typeof entry !== "string")) {
+      if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
         throw badRequest("champ « selected » : liste de noms attendue");
       }
       const selected = [...new Set(raw as string[])];
       if (selected.length === 0) throw badRequest("sélection vide : cochez au moins une proposition");
       const elements = audit.proposal?.elements ?? [];
-      const unknown = selected.find(slug => !elements.some(element => element.slug === slug));
+      const unknown = selected.find((slug) => !elements.some((element) => element.slug === slug));
       if (unknown !== undefined) throw badRequest(`proposition inconnue : ${unknown}`);
       if (typeof fields.brief !== "string") throw badRequest("champ « brief » manquant");
       const brief = fields.brief;
@@ -259,21 +276,26 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
         if (report !== null) writeReport(stateDir, audit.key, report);
         const controller = deps.pilot.controllerFor(audit.repoRoot);
         const outcomes = await enrolElements({
-          add: feature => controller.add(feature),
+          add: (feature) => controller.add(feature),
           lotOf: () => readLot(stateDir, audit.repoKey),
           contextKey: audit.key,
           elements: elements
-            .filter(element => selected.includes(element.slug))
-            .map(element => ({ slug: element.slug, intention: element.intention, deps: element.deps })),
+            .filter((element) => selected.includes(element.slug))
+            .map((element) => ({ slug: element.slug, intention: element.intention, deps: element.deps })),
         });
         const lot = readLot(stateDir, audit.repoKey);
-        const launches: AuditLaunchOutcome[] = outcomes.map(outcome =>
+        const launches: AuditLaunchOutcome[] = outcomes.map((outcome) =>
           outcome.launched
-            ? { slug: outcome.slug, launched: true, reason: null, ...progressOf(lot === null ? undefined : lotFeature(lot, outcome.slug)) }
+            ? {
+                slug: outcome.slug,
+                launched: true,
+                reason: null,
+                ...progressOf(lot === null ? undefined : lotFeature(lot, outcome.slug)),
+              }
             : { slug: outcome.slug, launched: false, reason: outcome.reason, state: null, phase: null, prUrl: null },
         );
         const current = readAudit(stateDir, id) ?? audit;
-        if (current.status === "proposed" && launches.some(entry => entry.launched)) {
+        if (current.status === "proposed" && launches.some((entry) => entry.launched)) {
           moveAudit(current, "launched", { launches });
         } else {
           writeAudit(stateDir, { ...current, launches, updatedAt: now() });
@@ -319,7 +341,8 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
             : { kind: "reply", slug: feature.slug, text: answer };
       } else {
         const decision = fields.decision;
-        if (decision !== "approve" && decision !== "abandon") throw badRequest("décision attendue : approve ou abandon");
+        if (decision !== "approve" && decision !== "abandon")
+          throw badRequest("décision attendue : approve ou abandon");
         command =
           decision === "abandon"
             ? { kind: "cancel", slug: feature.slug, fate: "keep" }

@@ -13,7 +13,6 @@ import { timingSafeEqual } from "node:crypto";
 import { ServiceError, badRequest, notFound, unauthorized } from "./serviceApi.ts";
 import type { ServiceApi, ServiceFrame, SessionSubscription } from "./serviceApi.ts";
 
-
 export const SERVICE_TOKEN_HEADER = "x-omp-service-token";
 
 /** Borne du corps d'une requête : au-delà, 400 — jamais un fichier avalé (S-2). */
@@ -21,7 +20,6 @@ export const SERVICE_BODY_MAX = 1024 * 1024;
 
 /** Cadence du battement SSE (S-2) : la connexion se sait vivante toutes les 15 s. */
 export const SSE_PING_MS = 15_000;
-
 
 export type RouterDeps = {
   api: ServiceApi;
@@ -42,7 +40,6 @@ export type RouterDeps = {
   onLongLived?: (req: Request) => void;
 };
 
-
 /** La réponse d'erreur de S-2, mot pour mot dans ses clés. */
 function errorResponse(err: ServiceError): Response {
   const body: Record<string, unknown> = { error: err.code };
@@ -50,14 +47,12 @@ function errorResponse(err: ServiceError): Response {
   return json(body, err.status);
 }
 
-
 export function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
-
 
 /**
  * Le corps JSON d'une requête, borné. Un `Content-Length` annoncé au-delà de la
@@ -79,7 +74,6 @@ async function readJsonBody(req: Request, label: string): Promise<unknown> {
   }
 }
 
-
 /** Un segment décodé : `%2F` redevient `/` (S-2) ; un décodage invalide est un 400. */
 function decodeSegment(segment: string): string {
   try {
@@ -88,7 +82,6 @@ function decodeSegment(segment: string): string {
     throw badRequest("segment d'URL illisible");
   }
 }
-
 
 type Matched =
   | { kind: "health" }
@@ -108,7 +101,6 @@ type Matched =
   | { kind: "audit"; id: string }
   | { kind: "sessionModel"; id: string }
   | { kind: "projectModel"; repo: string };
-
 
 /**
  * Table des routes de S-2 : méthode + segments décodés. Rend `null` pour un
@@ -164,7 +156,6 @@ function match(method: string, segments: string[]): Matched | null {
   return null;
 }
 
-
 /**
  * Le flux SSE d'une session : l'instantané, puis les trames, puis un battement.
  * La fermeture de la connexion par le client ne fait que désabonner — la session
@@ -214,7 +205,6 @@ function sseResponse(subscription: SessionSubscription, deps: RouterDeps, req: R
   });
 }
 
-
 /** Jeton présenté ≡ jeton configuré non vide, octets comparés en temps constant (S-1). */
 function serviceTokenMatches(presented: string | null, expected: string): boolean {
   if (expected === "" || presented === null) return false;
@@ -239,7 +229,7 @@ export function createServiceRequestHandler(deps: RouterDeps) {
       const url = new URL(req.url);
       const segments = url.pathname
         .split("/")
-        .filter(part => part !== "")
+        .filter((part) => part !== "")
         .slice(1) // le préfixe `v1` : l'API n'existe qu'en version 1
         .map(decodeSegment);
       const route = match(req.method.toUpperCase(), segments);

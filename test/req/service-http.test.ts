@@ -15,16 +15,40 @@ const TOKEN = "a".repeat(32);
 function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
   return {
     health: () => ({ version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0, pluginVersion: null }),
-    pilot: async repo => ({ repoKey: `key:${repo}`, lotId: null, state: "piloting" }),
-    lot: repo => ({ repoKey: `key:${repo}`, lot: null }),
+    pilot: async (repo) => ({ repoKey: `key:${repo}`, lotId: null, state: "piloting" }),
+    lot: (repo) => ({ repoKey: `key:${repo}`, lot: null }),
     command: async (_repo, body) => ({
       command: body as never,
       ack: { version: 1, id: "c1", repo: "/repo", kind: "start", state: "taken", reason: null, at: 1 },
     }),
     listSessions: () => [],
-    createSession: async () => ({ id: "s1", cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null }),
-    getSession: id => (id === "s1" ? { id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null, dialogs: [] } : null),
-    promptSession: async id => {
+    createSession: async () => ({
+      id: "s1",
+      cwd: "/repo",
+      purpose: "session",
+      state: "idle",
+      sessionFile: null,
+      contextPeak: null,
+      compactions: 0,
+      model: null,
+      thinkingLevel: null,
+    }),
+    getSession: (id) =>
+      id === "s1"
+        ? {
+            id,
+            cwd: "/repo",
+            purpose: "session",
+            state: "idle",
+            sessionFile: null,
+            contextPeak: null,
+            compactions: 0,
+            model: null,
+            thinkingLevel: null,
+            dialogs: [],
+          }
+        : null,
+    promptSession: async (id) => {
       if (id !== "s1") {
         const { notFound } = await import("../../omp-mem0-req/serviceApi.ts");
         throw notFound(`session inconnue : ${id}`);
@@ -41,7 +65,17 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
     launchAudit: async () => ({ launches: [] }),
     answerAudit: async () => ({ accepted: true }),
     stopAudit: async () => ({ cancelled: [], kept: [], refused: [] }),
-    setSessionModel: async id => ({ id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null }),
+    setSessionModel: async (id) => ({
+      id,
+      cwd: "/repo",
+      purpose: "session",
+      state: "idle",
+      sessionFile: null,
+      contextPeak: null,
+      compactions: 0,
+      model: null,
+      thinkingLevel: null,
+    }),
     projectModel: async () => ({ model: null, thinkingLevel: null }),
     setProjectModel: async () => ({ model: null, thinkingLevel: null }),
     ...over,
@@ -117,7 +151,14 @@ test("service-http/AC-1 : une requête sans jeton ou avec un jeton faux rend 401
     // Le jeton EXACT passe, et l'API rend sa charge utile.
     const ok = await call(server.origin, "/v1/health");
     assert.equal(ok.status, 200);
-    assert.deepEqual(await ok.json(), { version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0, pluginVersion: null });
+    assert.deepEqual(await ok.json(), {
+      version: 1,
+      pid: process.pid,
+      startedAt: 1,
+      sessions: 0,
+      lots: 0,
+      pluginVersion: null,
+    });
   } finally {
     await server.close();
   }
@@ -128,7 +169,7 @@ test("service-http/AC-2 : une route inconnue rend 404, un corps invalide 400, un
   try {
     const unknown = await call(server.origin, "/v1/inconnu");
     assert.equal(unknown.status, 404);
-    assert.match((await unknown.json() as { reason: string }).reason, /route inconnue/);
+    assert.match(((await unknown.json()) as { reason: string }).reason, /route inconnue/);
 
     // Bonne route, mauvaise méthode : inconnue aussi.
     assert.equal((await call(server.origin, "/v1/health", { method: "POST" })).status, 404);
@@ -139,12 +180,12 @@ test("service-http/AC-2 : une route inconnue rend 404, un corps invalide 400, un
 
     const tooBig = await call(server.origin, "/v1/sessions", { method: "POST", body: "x".repeat(1024 * 1024 + 1) });
     assert.equal(tooBig.status, 400);
-    assert.match((await tooBig.json() as { reason: string }).reason, /corps trop gros/);
+    assert.match(((await tooBig.json()) as { reason: string }).reason, /corps trop gros/);
 
     // Un refus MÉTIER n'est jamais un code d'erreur : il est dans l'accusé (S-2).
     const refused = await call(server.origin, "/v1/repos/%2Frepo/commands", { method: "POST", body: "{}" });
     assert.equal(refused.status, 200);
-    assert.equal((await refused.json() as { ack: { state: string } }).ack.state, "taken");
+    assert.equal(((await refused.json()) as { ack: { state: string } }).ack.state, "taken");
   } finally {
     await server.close();
   }
@@ -155,7 +196,7 @@ test("service-http/AC-3 : le chemin d'un dépôt est décodé segment par segmen
   const server = await serve(
     createServiceRequestHandler({
       api: fakeApi({
-        pilot: async repo => {
+        pilot: async (repo) => {
           seen.push(repo);
           return { repoKey: "k", lotId: null, state: "piloting" };
         },
@@ -184,7 +225,7 @@ test("service-http/AC-4 : le flux SSE pousse ses trames, puis un battement, et d
   };
   const server = await serve(
     createServiceRequestHandler({
-      api: fakeApi({ subscribeSession: id => (id === "s1" ? subscription : null) }),
+      api: fakeApi({ subscribeSession: (id) => (id === "s1" ? subscription : null) }),
       token: TOKEN,
       pingMs: 40,
     }),
@@ -193,7 +234,7 @@ test("service-http/AC-4 : le flux SSE pousse ses trames, puis un battement, et d
   // sur le flux lui-même (l'annulation du corps), sans dépendre du délai de
   // fermeture d'une socket gardée vivante par HTTP/1.1.
   const direct = createServiceRequestHandler({
-    api: fakeApi({ subscribeSession: id => (id === "s1" ? subscription : null) }),
+    api: fakeApi({ subscribeSession: (id) => (id === "s1" ? subscription : null) }),
     token: TOKEN,
   });
   const response = await direct(
@@ -213,7 +254,7 @@ test("service-http/AC-4 : le flux SSE pousse ses trames, puis un battement, et d
     assert.match(first.headers.get("content-type") ?? "", /text\/event-stream/);
     const second = await call(server.origin, "/v1/sessions/s1/events");
     assert.equal(second.status, 200);
-    const readers = [first, second].map(response => (response.body as ReadableStream<Uint8Array>).getReader());
+    const readers = [first, second].map((response) => (response.body as ReadableStream<Uint8Array>).getReader());
     const decoder = new TextDecoder();
     // Un battement (`pingMs` 40 ms dans ce test) peut DEVENIR la première trame
     // reçue : sous charge, il précède l'évènement poussé. La lecture découpe donc
@@ -271,8 +312,14 @@ test("service-http/AC-5 : une session inconnue rend 404, et le refus d'arrêt 50
   try {
     assert.equal((await call(server.origin, "/v1/sessions/inconnue")).status, 404);
     assert.equal((await call(server.origin, "/v1/sessions/inconnue/events")).status, 404);
-    assert.equal((await call(server.origin, "/v1/sessions/inconnue/prompt", { method: "POST", body: '{"text":"x"}' })).status, 404);
-    assert.equal((await call(server.origin, "/v1/sessions/s1/dialogs/dlg-x", { method: "POST", body: '{"value":"x"}' })).status, 200);
+    assert.equal(
+      (await call(server.origin, "/v1/sessions/inconnue/prompt", { method: "POST", body: '{"text":"x"}' })).status,
+      404,
+    );
+    assert.equal(
+      (await call(server.origin, "/v1/sessions/s1/dialogs/dlg-x", { method: "POST", body: '{"value":"x"}' })).status,
+      200,
+    );
 
     stopping = true;
     const stopped = await call(server.origin, "/v1/health");

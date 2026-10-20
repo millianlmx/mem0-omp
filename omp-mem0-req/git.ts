@@ -5,8 +5,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { CONTRACT_PATH } from "./contract.ts";
 
-
-
 // ---------------------------------------------------------------------------
 // Worktree de feature — une feature = un worktree, sur sa branche.
 // ---------------------------------------------------------------------------
@@ -23,11 +21,9 @@ export type GitResult = { code: number; stdout: string; stderr: string };
 
 export type GitRunner = (args: string[], cwd: string) => Promise<GitResult>;
 
-
 // Même budget par opération que la convention du dépôt (omp-mem0-memory) : une
 // commande git locale qui dépasse 10 s est un blocage, pas une lenteur.
 export const GIT_TIMEOUT_MS = 10_000;
-
 
 // realpath avec repli : une comparaison de préfixes doit porter sur des chemins
 // réels (/tmp → /private/tmp sous macOS), mais un chemin absent n'est pas une
@@ -40,20 +36,17 @@ export function realpathOr(p: string): string {
   }
 }
 
-
 // Strictement sous : `<base>` lui-même n'est pas un candidat.
 export function isUnder(child: string, parent: string): boolean {
   if (child === parent) return false;
   return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 }
 
-
 /** Contenu d'un `.git` FICHIER de worktree lié : « gitdir: X » → X, sinon null. */
 export function gitfileTarget(contents: string): string | null {
   const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(contents);
-  return m && m[1] ? m[1] : null;
+  return m?.[1] ? m[1] : null;
 }
-
 
 /**
  * « …/.git/worktrees/<nom> » → dépôt principal, sinon null. Un `.git` de
@@ -67,7 +60,6 @@ export function primaryRootOf(gitdir: string): string | null {
   const primary = m[1].replace(/\/+$/, "");
   return primary || null;
 }
-
 
 /**
  * Racine de feature vue depuis `cwd`. `primary` est défini ssi `cwd` est dans un
@@ -99,13 +91,11 @@ export function resolveFeatureRoot(cwd: string): { dir: string; primary?: string
   return { dir: start };
 }
 
-
 /** La racine du dépôt vue depuis `cwd` : le dépôt principal si `cwd` est un worktree. */
 export function repoRootOf(cwd: string): string {
   const root = resolveFeatureRoot(cwd);
   return root.primary ?? root.dir;
 }
-
 
 /** Normalisation d'un nom de feature en slug : [a-z0-9-], 40 caractères max. */
 export function toSlug(raw: string): string | null {
@@ -118,11 +108,9 @@ export function toSlug(raw: string): string | null {
   return slug || null;
 }
 
-
 export function branchFor(slug: string): string {
   return `feat/${slug}`;
 }
-
 
 /**
  * Base des worktrees de feature : `MEM0_PIPELINE_WORKTREES_DIR` (absolu ou `~`,
@@ -140,7 +128,6 @@ export function worktreesBaseDir(
   return path.join(home, ".omp", "pipeline-worktrees");
 }
 
-
 /**
  * `<base>/<repo>-<hash7>/<slug>` : le nom de dossier nomme le dépôt (assaini), le
  * hash de son chemin réel le désambiguïse (deux `mem0-omp` clonés ne partagent pas
@@ -153,17 +140,14 @@ export function worktreePathFor(base: string, primaryRoot: string, slug: string)
   return path.join(base, `${repo}-${hash7}`, slug);
 }
 
-
 /** `<cwd>/.omp/pipeline/contract.md` — le contrat est relatif au cwd de la session. */
 export function contractPathFor(cwd: string): string {
   return path.join(path.resolve(cwd), CONTRACT_PATH);
 }
 
-
 export const LINK_GATE_REFUSAL =
   "cette session n'est pas dans le worktree d'une feature — ouvre la session depuis le worktree " +
   "de la feature, ou lance /req depuis le dépôt principal.";
-
 
 /**
  * Garde d'entrée de /specs, /impl et /review : la session doit être dans le
@@ -177,16 +161,13 @@ export function linkGate(cwd: string): { ok: true } | { ok: false; reason: strin
   return { ok: false, reason: LINK_GATE_REFUSAL };
 }
 
-
 /** `feat/<branche>` prise en local ou connue d'un remote — aucune création alors. */
 export async function branchTaken(run: GitRunner, primaryRoot: string, branch: string): Promise<boolean> {
   const local = await run(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], primaryRoot);
   if (local.code === 0) return true;
   const remote = await run(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/remotes/"], primaryRoot);
   if (remote.code !== 0) return false;
-  return remote.stdout
-    .split("\n")
-    .some((line) => line.trim().endsWith(`/${branch}`));
+  return remote.stdout.split("\n").some((line) => line.trim().endsWith(`/${branch}`));
 }
 
 /** Verdict de la vérification « le run a-t-il changé le worktree ? ». */
@@ -199,7 +180,6 @@ export type WorktreeCheck = { kind: "changed" } | { kind: "unchanged" } | { kind
  */
 export type RunCommits = "committed" | "none" | "dirty" | "unknown";
 
-
 /** Dernière ligne non vide de stderr (trim), à défaut `code <n>` — local : runs.ts importe déjà git.ts. */
 function gitDetail(res: GitResult): string {
   const lines = res.stderr
@@ -208,7 +188,6 @@ function gitDetail(res: GitResult): string {
     .filter((l) => l !== "");
   return lines.length > 0 ? (lines[lines.length - 1] as string) : `code ${res.code}`;
 }
-
 
 /** SHA de HEAD du worktree, ou `null` (hors dépôt, branche à naître, git muet). Ne lève jamais. */
 export async function worktreeHead(run: GitRunner, worktree: string): Promise<string | null> {
@@ -220,7 +199,6 @@ export async function worktreeHead(run: GitRunner, worktree: string): Promise<st
     return null;
   }
 }
-
 
 /**
  * Le worktree a-t-il changé depuis `head` ? Un porcelain non vide OU un HEAD
@@ -267,7 +245,6 @@ export async function runCommits(run: GitRunner, worktree: string, head: string)
   }
 }
 
-
 /**
  * Crée le worktree de la feature depuis le dépôt principal. Aucun `--force`,
  * aucun commit, aucune commande distante : `git worktree add -b feat/<slug> <chemin>
@@ -303,7 +280,6 @@ export async function createFeatureWorktree(input: {
   return { ok: true, path: realpathOr(target), branch };
 }
 
-
 // Accueil posté après la relocalisation. Il contient « fin » (« Dites « fin » … ») :
 // il se poste en message d'AFFICHAGE (pi.sendMessage, triggerTurn:false), jamais via
 // sendUserMessage — un tour démarré là ferait détecter le mot « fin » par
@@ -321,7 +297,6 @@ export function buildWelcome(feature: { slug: string; branch: string; path: stri
   );
 }
 
-
 // ---------------------------------------------------------------------------
 // Balayage des worktrees de feature — le push de l'utilisateur vaut clôture.
 // ---------------------------------------------------------------------------
@@ -332,7 +307,6 @@ export function buildWelcome(feature: { slug: string; branch: string; path: stri
 // Sous-commandes git que la pipeline s'autorise. Ni push, ni fetch, ni pull : le
 // dépôt distant n'est jamais touché.
 export const PIPELINE_GIT_SUBCOMMANDS: readonly string[] = ["rev-parse", "worktree", "status", "for-each-ref"];
-
 
 /** Sortie de `git worktree list --porcelain` → une entrée par worktree, dans l'ordre. */
 export function parseWorktreeList(porcelain: string): Array<{ path: string; head: string; branch?: string }> {
@@ -364,7 +338,6 @@ export function parseWorktreeList(porcelain: string): Array<{ path: string; head
   return out;
 }
 
-
 /** Shas des refs distantes portant exactement `<branche>` (`origin/feat/x`, …). */
 export function remoteShas(refsOutput: string, branch: string): string[] {
   const shas: string[] = [];
@@ -374,7 +347,6 @@ export function remoteShas(refsOutput: string, branch: string): string[] {
   }
   return shas;
 }
-
 
 /**
  * Verdict pour un candidat, dans cet ordre : hors base → session courante →
@@ -408,7 +380,6 @@ export function reapDecision(input: {
   }
   return { remove: true };
 }
-
 
 /**
  * Balayage d'une passe. Rien n'est sondé si `<base>` n'existe pas, et rien n'est
@@ -476,7 +447,6 @@ export async function sweepFeatureWorktrees(input: {
   }
   return { removed, kept };
 }
-
 
 /** Une ligne par entrée, `""` s'il n'y a rien à signaler. */
 export function buildSweepMessage(result: {

@@ -76,7 +76,14 @@ const COMPONENT_FILES = [
 const SECTION_TYPES = ["IOSSessionsScreen", "IOSSessionsModel", "IOSSectionView", "IOSSectionContent"];
 
 /** Les types DÉPLACÉS dans ConsoleCore par BR-1 (un seul noyau pour deux coques). */
-const SHARED_TYPES = ["SessionList", "SessionDays", "SessionRowBuilder", "FollowPolicy", "SessionDiffText", "SessionParity"];
+const SHARED_TYPES = [
+  "SessionList",
+  "SessionDays",
+  "SessionRowBuilder",
+  "FollowPolicy",
+  "SessionDiffText",
+  "SessionParity",
+];
 
 /** Un appel d'écriture sur la session : aucune route de la coque (S-5). */
 const WRITE_CALL = /\.(answer|reply|text|verdict|resume|stop|prompt|merge)\(/;
@@ -102,7 +109,9 @@ function kernelFaults(root: string): string[] {
 /** Le routage de la section `.sessions` vers son écran réel (S-1). Vide quand tout est là. */
 function routeFaults(root: string): string[] {
   const faults: string[] = [];
-  const view = stripComments(readIfExists(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift")));
+  const view = stripComments(
+    readIfExists(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift")),
+  );
   if (!/section\s*==\s*\.sessions/.test(view)) faults.push("IOSSectionView ne teste pas `section == .sessions`");
   if (!view.includes("IOSSessionsScreen(")) faults.push("IOSSectionView ne monte pas IOSSessionsScreen");
   return faults;
@@ -120,7 +129,15 @@ function recipeFaults(root: string): string[] {
   if (!app.includes("IOSSessionsRecipe.resolve(")) faults.push("l'app ne lit pas IOSSessionsRecipe.resolve");
   if (!app.includes('"-sessions.recipe"')) faults.push('le drapeau "-sessions.recipe" est absent des sources iOS');
   const readme = fs.readFileSync(path.join(root, "omp-console", "README.md"), "utf8");
-  for (const token of ["-sessions.recipe", "liste", "vide", "visionneuse", "illisible", "en-direct", "omp-console/ios/DESIGN.md"]) {
+  for (const token of [
+    "-sessions.recipe",
+    "liste",
+    "vide",
+    "visionneuse",
+    "illisible",
+    "en-direct",
+    "omp-console/ios/DESIGN.md",
+  ]) {
     if (!readme.includes(token)) faults.push(`README console : « ${token} » absent`);
   }
   return faults;
@@ -165,7 +182,9 @@ function componentFaults(root: string): string[] {
 /** Les manques de la fixture de parité (S-11). Vide quand tout est là. */
 function parityFaults(root: string): string[] {
   const faults: string[] = [];
-  const parity = stripComments(readIfExists(path.join(root, "omp-console", "Sources", "ConsoleCore", "Session", "SessionParity.swift")));
+  const parity = stripComments(
+    readIfExists(path.join(root, "omp-console", "Sources", "ConsoleCore", "Session", "SessionParity.swift")),
+  );
   if (parity === "") return ["ConsoleCore/Session/SessionParity.swift absent"];
   if (!/public\s+static\s+let\s+lines\b/.test(parity)) faults.push("SessionParity ne déclare pas `lines`");
   if (!/public\s+static\s+let\s+payloadJSON\b/.test(parity)) faults.push("SessionParity ne déclare pas `payloadJSON`");
@@ -250,7 +269,10 @@ test("ios-sessions/AC-11 : SessionParity porte les deux membres de la fixture pa
 
   const copy = copyRepo("ios-sessions-copie-");
   const parity = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Session", "SessionParity.swift");
-  fs.writeFileSync(parity, fs.readFileSync(parity, "utf8").replace("public static let payloadJSON", "public static let payload"));
+  fs.writeFileSync(
+    parity,
+    fs.readFileSync(parity, "utf8").replace("public static let payloadJSON", "public static let payload"),
+  );
   assert.ok(
     parityFaults(copy).some((f) => f.includes("payloadJSON")),
     "un membre de la fixture disparu doit faire rougir la garde",

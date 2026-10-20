@@ -149,7 +149,11 @@ function fakeHostKit(): Record<string, unknown> {
     DynamicBorder: FakeBorder,
     Container: FakeContainer,
     Spacer: FakeSpacer,
-    theme: { fg: (_tone: string, text: string) => text, bg: (_tone: string, text: string) => text, nav: { cursor: ">" } },
+    theme: {
+      fg: (_tone: string, text: string) => text,
+      bg: (_tone: string, text: string) => text,
+      nav: { cursor: ">" },
+    },
     UserMessageComponent: FakeMessage,
     AssistantMessageComponent: FakeMessage,
     ToolExecutionComponent: FakeMessage,
@@ -484,12 +488,7 @@ function forgetLot(): void {
 }
 
 /** Arme un maillon par son handler, puis simule la retombée terminale du fil principal. */
-async function settleLink(
-  app: FakeApp,
-  command: string,
-  cwd: string,
-  stopCtx: never,
-): Promise<Displayed[]> {
+async function settleLink(app: FakeApp, command: string, cwd: string, stopCtx: never): Promise<Displayed[]> {
   forgetLot();
   await app.handlers.get(command)!("", mkCtx(cwd).ctx as never);
   const before = announcements(app).length;

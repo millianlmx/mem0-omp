@@ -39,6 +39,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois par swift-app.sh
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ par le tsc épinglé de .typecheck/ (--prepare l'installe)
+├── scripts/lint.sh                    lint et format (Biome épinglé) de omp-mem0-req/ et test/, sans réseau
+├── biome.jsonc                        configuration Biome : format, règles coupées et leur convention
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
@@ -1656,7 +1658,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 12
+Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 13
 sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
 jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
 (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
@@ -1712,7 +1714,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 
 | Option | Effet |
 |---|---|
-| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
+| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `lint`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 | `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
@@ -1731,6 +1733,19 @@ release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
 `./scripts/check.sh` — sans rien pousser, sans tag et sans PR. Son statut,
 `release-simulation`, est requis : une PR dont la release simulée échouerait ne
 peut pas être fusionnée.
+
+La section `── Lint TypeScript` (id `lint`, juste après `types`) passe
+`scripts/lint.sh` : Biome, épinglé dans le script, vérifie à la fois les règles
+de lint et le format du TypeScript de `omp-mem0-req/` et `test/`, sans jamais
+toucher au réseau. Prérequis, une fois par clone ou par worktree et avec le
+réseau : `bash scripts/lint.sh --prepare`, qui installe la version épinglée dans
+`.lint/` (ignoré par git). Un outil absent ou d'une autre version rougit la
+section avec cette commande — elle n'est jamais sautée. `MEM0_OMP_LINT_DIR`
+désigne une installation préparée ailleurs : les `check.sh` imbriqués des tests
+et la copie de `scripts/release-simulation.sh` réutilisent ainsi celle de la
+racine. Chaque job CI qui lance `check.sh` prépare l'outil juste avant. Pour
+corriger en local ce que la section signale :
+`.lint/node_modules/.bin/biome check --write omp-mem0-req test`.
 
 La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
 (`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du
@@ -1817,7 +1832,7 @@ MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" bash scripts/m
 `--start-rs` démarre le binaire sur une base SQLite neuve du répertoire de travail
 de la phase ; binaire absent → `non exécuté : binaire mem0-rs absent (<chemin>)`, code 2.
 
-La section `── Rust mem0-rs` (id `rust`, juste après `types`) éprouve la crate
+La section `── Rust mem0-rs` (id `rust`, juste après `lint`) éprouve la crate
 `mem0-stack/mem0-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
 avertissement toléré), `cargo test`, `cargo build`, puis ce même contrat contre le
 binaire construit, groupe infer=true compris. Les trois étapes cargo tournent même si

@@ -54,7 +54,6 @@ import { sessionFileIn } from "../support/req-fixtures.ts";
 process.env.MEM0_PIPELINE_STATE_DIR = tmpdir("apoc-default-state-");
 process.env.MEM0_PIPELINE_WORKTREES_DIR = tmpdir("apoc-default-wt-");
 
-
 const BRIEF = {
   purpose: "Rendre l'app utilisable au lecteur d'écran.",
   function: "Console de pilotage des pipelines.",
@@ -80,7 +79,6 @@ function record(status: AuditStatus): AuditRecord {
   };
 }
 
-
 test("renderAuditBrief : gabarit titré « audit <dépôt> », puis Orientation et Constats", () => {
   const text = renderAuditBrief(record("analysing"), BRIEF, [
     { slug: "libelles-manquants", intention: "Les boutons n'ont pas de libellé." },
@@ -97,13 +95,11 @@ test("renderAuditBrief : gabarit titré « audit <dépôt> », puis Orientation 
   assert.equal(briefRubricsMissing(text, AUDIT_BRIEF_SECTIONS), null);
 });
 
-
 test("renderAuditBrief : sans faiblesse, la rubrique Constats vaut « - (aucun) »", () => {
   const text = renderAuditBrief(record("analysing"), BRIEF, []);
   assert.ok(text.endsWith("## Constats\n- (aucun)\n"), text);
   assert.equal(briefRubricsMissing(text, AUDIT_BRIEF_SECTIONS), null);
 });
-
 
 test("briefRubricsMissing : sans `sections`, les cinq rubriques du gabarit ; un brief d'audit exige aussi Orientation et Constats", () => {
   const plain = "## But\nx\n## Fonction\nx\n## Décisions\n- x\n## Contraintes\n- x\n## Non-objectifs\n- x\n";
@@ -113,7 +109,6 @@ test("briefRubricsMissing : sans `sections`, les cinq rubriques du gabarit ; un 
   assert.equal(briefRubricsMissing(plain, AUDIT_BRIEF_SECTIONS), "Orientation");
   assert.equal(briefRubricsMissing(`${plain}## Orientation\nx\n`, AUDIT_BRIEF_SECTIONS), "Constats");
 });
-
 
 test("garde des transitions d'audit : seules les transitions du glossaire passent", () => {
   const allowed: [AuditStatus, AuditStatus][] = [
@@ -142,7 +137,6 @@ test("garde des transitions d'audit : seules les transitions du glossaire passen
   assert.equal(back.ok, false);
 });
 
-
 // ---------------------------------------------------------------------------
 // Le service : doublures de session, d'arbitre et de runs, routeur réel
 // ---------------------------------------------------------------------------
@@ -152,13 +146,26 @@ const T0 = 1_700_000_000_000;
 const FACT = "Le format de sortie est JSON.";
 const GH = `https://${["github", "com"].join(".")}`;
 
-type Reply = { status: number; body: Record<string, any> };
-type ToolDef = { name: string; execute: (id: string, params: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }> };
+/** Les champs lus par ces tests dans les réponses des routes d'audit et de session (chaque route en porte une partie). */
+type ReplyBody = {
+  id: string;
+  status: string;
+  reason: string;
+  purpose: string;
+  contextPeak: number | null;
+  compactions: number;
+  launches: Array<{ slug: string; launched: boolean; reason: string | null }>;
+};
+type Reply = { status: number; body: ReplyBody };
+type ToolDef = {
+  name: string;
+  execute: (id: string, params: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
+};
 type Runner = (input: { spec: LotRunSpec; signal?: AbortSignal }) => Promise<LotRunnerResult>;
 type Script = (prompt: string, call: number) => Record<string, unknown> | null;
 
 async function flush(times = 8): Promise<void> {
-  for (let i = 0; i < times; i++) await new Promise<void>(resolve => setImmediate(resolve));
+  for (let i = 0; i < times; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 async function until(predicate: () => boolean, message: string, tries = 600): Promise<void> {
@@ -197,7 +204,13 @@ function fakePi(options: { failPrompt?: string }) {
       createAgentSession: async (o: { sessionManager: unknown }) => {
         const runState = new Set<(state: "running" | "idle") => void>();
         const events = new Set<(event: unknown) => void>();
-        const fake: FakeSession = { session: { isStreaming: false }, prompts: [], aborts: [], toolUi: null, end: () => {} };
+        const fake: FakeSession = {
+          session: { isStreaming: false },
+          prompts: [],
+          aborts: [],
+          toolUi: null,
+          end: () => {},
+        };
         const session = {
           isStreaming: false,
           extensionRunner: null,
@@ -267,7 +280,13 @@ function arbiterHost(script: Script) {
           messages.push({ role: "user", content: [{ type: "text", text }] });
           const params = script(text, prompts.length);
           if (params !== null && o.arbiter) recordArbiterDecision(o.arbiter as never, params);
-          messages.push({ role: "assistant", provider: "prov", model: "principal", stopReason: "stop", content: [{ type: "text", text: "décidé" }] });
+          messages.push({
+            role: "assistant",
+            provider: "prov",
+            model: "principal",
+            stopReason: "stop",
+            content: [{ type: "text", text: "décidé" }],
+          });
           return true;
         },
         waitForIdle: async () => {},
@@ -307,7 +326,7 @@ function abortableRunner() {
   const specs: LotRunSpec[] = [];
   const runner: Runner = async ({ spec, signal }) => {
     specs.push(spec);
-    return new Promise<LotRunnerResult>(resolve => {
+    return new Promise<LotRunnerResult>((resolve) => {
       signal?.addEventListener("abort", () => resolve({ code: 1, killed: true, stdout: "", stderr: "annulé" }));
     });
   };
@@ -317,10 +336,17 @@ function abortableRunner() {
 /** La proposition d'`audit_report` : faiblesses, features, et un brief dont la Fonction vaut `fn`. */
 function proposal(weaknesses: string[], features: string[], fn = FACT) {
   return {
-    weaknesses: weaknesses.map(name => ({ name, intention: `Corriger ${name}.` })),
-    features: features.map(name => ({ name, intention: `Construire ${name}.` })),
-    brief: { purpose: "Exporter les données.", function: fn, decisions: ["Pas de base distante."], constraints: [], nonGoals: [] },
-    rapport: "## Faiblesses\n\n1. constat — fichiers et symboles cités\n\n## Features proposées\n\n1. feature — intention",
+    weaknesses: weaknesses.map((name) => ({ name, intention: `Corriger ${name}.` })),
+    features: features.map((name) => ({ name, intention: `Construire ${name}.` })),
+    brief: {
+      purpose: "Exporter les données.",
+      function: fn,
+      decisions: ["Pas de base distante."],
+      constraints: [],
+      nonGoals: [],
+    },
+    rapport:
+      "## Faiblesses\n\n1. constat — fichiers et symboles cités\n\n## Features proposées\n\n1. feature — intention",
   };
 }
 
@@ -333,7 +359,7 @@ async function report(stateDir: string, auditId: string, params: unknown): Promi
   };
   registerAuditReportTool(pi as never, { auditId, stateDir });
   const result = await tools[0]!.execute("call-report", params);
-  return { text: result.content.map(part => part.text).join(""), isError: result.isError === true };
+  return { text: result.content.map((part) => part.text).join(""), isError: result.isError === true };
 }
 
 /** L'extension réelle, chargée sur une API de doublure : ses crochets et ses outils. */
@@ -386,26 +412,48 @@ function extensionApp() {
  * doublure), pilote réel (runs et arbitre de doublure), service d'audits réel,
  * et le routeur HTTP réel appelé sans socket.
  */
-function rig(options: { script?: Script; runner?: Runner; runGit?: typeof gitRunner; runGh?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>; failPrompt?: string } = {}) {
+function rig(
+  options: {
+    script?: Script;
+    runner?: Runner;
+    runGit?: typeof gitRunner;
+    runGh?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    failPrompt?: string;
+  } = {},
+) {
   const clock = { now: T0 };
   const stateDir = path.join(tmpdir("apoc-state-"), "pipeline");
   const logs: string[] = [];
   const fake = fakePi({ failPrompt: options.failPrompt });
-  const sessions = createSessionHost({ pi: fake.pi as never, stateDir, selfPath: null, log: line => logs.push(line), now: () => clock.now });
+  const sessions = createSessionHost({
+    pi: fake.pi as never,
+    stateDir,
+    selfPath: null,
+    log: (line) => logs.push(line),
+    now: () => clock.now,
+  });
   const pending = pendingRunner();
   const arb = arbiterHost(options.script ?? (() => null));
   const pilot = createServicePilot({
     stateDir,
     host: sessions,
     run: options.runner ?? pending.runner,
-    ...(options.script ? { arbiter: createArbiterRunner({ host: arb.host, log: () => {}, now: () => clock.now }) } : {}),
+    ...(options.script
+      ? { arbiter: createArbiterRunner({ host: arb.host, log: () => {}, now: () => clock.now }) }
+      : {}),
     runGit: options.runGit ?? gitRunner,
     runGh: options.runGh,
     now: () => clock.now,
     schedule: () => () => {},
-    audits: { sweep: first => audits.sweep(first) },
+    audits: { sweep: (first) => audits.sweep(first) },
   });
-  const audits = createAuditService({ stateDir, host: sessions, pilot, log: line => logs.push(line), now: () => clock.now });
+  const audits = createAuditService({
+    stateDir,
+    host: sessions,
+    pilot,
+    log: (line) => logs.push(line),
+    now: () => clock.now,
+  });
   const api = {
     listSessions: () => sessions.list(),
     getSession: (id: string) => sessions.view(id),
@@ -423,7 +471,7 @@ function rig(options: { script?: Script; runner?: Runner; runGit?: typeof gitRun
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }),
     );
-    return { status: response.status, body: (await response.json()) as Record<string, any> };
+    return { status: response.status, body: (await response.json()) as ReplyBody };
   };
   const start = async (repo: string, orientation: string): Promise<string> => {
     const res = await call("POST", "/audits", { repo, orientation });
@@ -431,13 +479,13 @@ function rig(options: { script?: Script; runner?: Runner; runGit?: typeof gitRun
     return res.body.id as string;
   };
   const hostedOf = (auditId: string): HostedSession => {
-    const found = [...sessions.sessions.values()].find(hosted => auditSessionOf(hosted.id)?.auditId === auditId);
+    const found = [...sessions.sessions.values()].find((hosted) => auditSessionOf(hosted.id)?.auditId === auditId);
     assert.ok(found, `la session d'analyse de ${auditId} vit`);
     return found;
   };
   const fakeOf = (auditId: string): FakeSession => {
     const hosted = hostedOf(auditId);
-    const found = fake.created.find(candidate => candidate.session === (hosted.session as unknown));
+    const found = fake.created.find((candidate) => candidate.session === (hosted.session as unknown));
     assert.ok(found);
     return found;
   };
@@ -468,8 +516,14 @@ function rig(options: { script?: Script; runner?: Runner; runGit?: typeof gitRun
     writeLot(stateDir, current);
   };
   /** Parque une feature à une question ou un jalon, comme la fin d'un run. */
-  const park = (repo: string, slug: string, waitKind: "answer" | "specs" | "review", phase: "req" | "specs" | "impl" | "review", waitPrompt: string | null) =>
-    edit(repo, slug, target => {
+  const park = (
+    repo: string,
+    slug: string,
+    waitKind: "answer" | "specs" | "review",
+    phase: "req" | "specs" | "impl" | "review",
+    waitPrompt: string | null,
+  ) =>
+    edit(repo, slug, (target) => {
       target.state = "waiting";
       target.waitKind = waitKind;
       target.phase = phase;
@@ -478,16 +532,52 @@ function rig(options: { script?: Script; runner?: Runner; runGit?: typeof gitRun
       target.lastRunSessionFile = "/x/run-session.jsonl";
     });
   const tick = (repo: string) => pilot.controllerFor(repo).tick();
-  return { clock, stateDir, logs, fake, sessions, pilot, audits, arb, specs: pending.specs, call, start, hostedOf, fakeOf, audit, propose, launch, lot, feature, edit, park, tick };
+  return {
+    clock,
+    stateDir,
+    logs,
+    fake,
+    sessions,
+    pilot,
+    audits,
+    arb,
+    specs: pending.specs,
+    call,
+    start,
+    hostedOf,
+    fakeOf,
+    audit,
+    propose,
+    launch,
+    lot,
+    feature,
+    edit,
+    park,
+    tick,
+  };
 }
 
-const answerFromBrief = (answer: string) => ({ decision: "answer", answer, source: "arbitrage", citations: [FACT], reason: "déduit de la fonction du brief" });
+const answerFromBrief = (answer: string) => ({
+  decision: "answer",
+  answer,
+  source: "arbitrage",
+  citations: [FACT],
+  reason: "déduit de la fonction du brief",
+});
 const ESCALATE = { decision: "escalate", reason: "le brief ne le dit pas" };
 
 function escalation(key: string, over: Partial<FeatureEscalation> = {}): FeatureEscalation {
-  return { key, kind: "question", phase: "req", question: "Quel format ?", options: [], reason: "le brief ne le dit pas", at: T0, ...over };
+  return {
+    key,
+    kind: "question",
+    phase: "req",
+    question: "Quel format ?",
+    options: [],
+    reason: "le brief ne le dit pas",
+    at: T0,
+    ...over,
+  };
 }
-
 
 test("audit-panel-in-omp-console/AC-1 : l'orientation saisie est écrite dans l'audit, amorce l'analyse et figure dans la rubrique Orientation du brief présenté", async () => {
   const r = rig();
@@ -519,8 +609,13 @@ test("audit-panel-in-omp-console/AC-1 : l'orientation saisie est écrite dans l'
   const app = extensionApp();
   const before = new Set(app.tools.keys());
   await app.startHosted(audit.repoRoot, hosted.id);
-  assert.deepEqual([...app.tools.keys()].filter(name => !before.has(name)), ["audit_report"]);
-  const result = await app.tools.get("audit_report")!.execute("call-1", proposal(["libelles-manquants"], ["etiquettes-voiceover", "rotor"]));
+  assert.deepEqual(
+    [...app.tools.keys()].filter((name) => !before.has(name)),
+    ["audit_report"],
+  );
+  const result = await app.tools
+    .get("audit_report")!
+    .execute("call-1", proposal(["libelles-manquants"], ["etiquettes-voiceover", "rotor"]));
   assert.equal(result.isError, undefined);
   assert.equal(
     result.content[0]!.text,
@@ -539,11 +634,14 @@ test("audit-panel-in-omp-console/AC-1 : l'orientation saisie est écrite dans l'
   assert.equal(auditSessionOf(hosted.id), null);
 });
 
-
 test("audit-panel-in-omp-console/AC-2 : 5 propositions, 2 cochées et le brief validé — exactement ces 2 features sont lancées, portant la clé de l'audit", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
-  const audit = await r.propose(repo, "accessibilité VoiceOver", proposal(["fuite-memoire", "contraste"], ["export-csv", "rotor", "etiquettes"]));
+  const audit = await r.propose(
+    repo,
+    "accessibilité VoiceOver",
+    proposal(["fuite-memoire", "contraste"], ["export-csv", "rotor", "etiquettes"]),
+  );
   assert.equal(audit.proposal!.elements.length, 5);
   const brief = `${audit.proposal!.briefDraft}\nRelu et amendé par l'utilisateur.\n`;
   const res = await r.launch(audit.id, ["export-csv", "fuite-memoire"], brief);
@@ -551,14 +649,18 @@ test("audit-panel-in-omp-console/AC-2 : 5 propositions, 2 cochées et le brief v
 
   // Une issue par slug coché, dans l'ordre de lancement, toutes lancées.
   assert.deepEqual(
-    res.body.launches.map((entry: { slug: string; launched: boolean; reason: string | null }) => [entry.slug, entry.launched, entry.reason]),
+    res.body.launches.map((entry: { slug: string; launched: boolean; reason: string | null }) => [
+      entry.slug,
+      entry.launched,
+      entry.reason,
+    ]),
     [
       ["fuite-memoire", true, null],
       ["export-csv", true, null],
     ],
   );
   const features = r.lot(repo)!.features;
-  assert.deepEqual(features.map(entry => entry.slug).sort(), ["export-csv", "fuite-memoire"]);
+  assert.deepEqual(features.map((entry) => entry.slug).sort(), ["export-csv", "fuite-memoire"]);
   for (const entry of features) assert.equal(entry.auditSession, audit.key);
   for (const slug of ["contraste", "rotor", "etiquettes"]) {
     assert.equal(lotFeature(r.lot(repo)!, slug), undefined, `${slug} n'est pas lancée`);
@@ -567,20 +669,20 @@ test("audit-panel-in-omp-console/AC-2 : 5 propositions, 2 cochées et le brief v
   assert.equal(readBrief(r.stateDir, audit.key), brief);
   const launched = r.audit(audit.id);
   assert.equal(launched.status, "launched");
-  assert.deepEqual(launched.launches.map(entry => entry.slug), ["fuite-memoire", "export-csv"]);
+  assert.deepEqual(
+    launched.launches.map((entry) => entry.slug),
+    ["fuite-memoire", "export-csv"],
+  );
 });
-
 
 test("audit-panel-in-omp-console/AC-3 : sans validation du brief, aucune pipeline n'est lancée — ni sans appel, ni sur un refus", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
   const audit = await r.propose(repo, "accessibilité VoiceOver", proposal(["contraste"], ["rotor", "etiquettes"]));
-  {
-    // Aucun appel de la route : aucun lot, aucun brief.
-    r.pilot.sweep();
-    assert.equal(r.lot(repo), null);
-    assert.equal(readBrief(r.stateDir, audit.key), null);
-  }
+  // Aucun appel de la route : aucun lot, aucun brief.
+  r.pilot.sweep();
+  assert.equal(r.lot(repo), null);
+  assert.equal(readBrief(r.stateDir, audit.key), null);
   {
     // Sélection vide : refusée, rien n'est ajouté.
     const res = await r.launch(audit.id, []);
@@ -599,7 +701,6 @@ test("audit-panel-in-omp-console/AC-3 : sans validation du brief, aucune pipelin
   assert.deepEqual(r.audit(audit.id).launches, []);
   assert.deepEqual(r.specs, [], "aucun run n'est parti");
 });
-
 
 test("audit-panel-in-omp-console/AC-4 : la question /req d'une feature de l'audit est tranchée par l'arbitre depuis le brief validé, la pipeline poursuit, la décision est au journal de l'audit", async () => {
   const r = rig({ script: () => answerFromBrief("JSON") });
@@ -621,11 +722,16 @@ test("audit-panel-in-omp-console/AC-4 : la question /req d'une feature de l'audi
   assert.ok(r.specs[1]!.prompt.includes("JSON"), r.specs[1]!.prompt);
   assert.equal(r.feature(repo, "alpha").escalation, undefined);
   assert.deepEqual(
-    journalFor(r.stateDir, audit.repoKey, "alpha").map(entry => [entry.slug, entry.question, entry.answer, entry.source, entry.context]),
+    journalFor(r.stateDir, audit.repoKey, "alpha").map((entry) => [
+      entry.slug,
+      entry.question,
+      entry.answer,
+      entry.source,
+      entry.context,
+    ]),
     [["alpha", "Quel format de sortie ?", "JSON", "arbitrage", audit.key]],
   );
 });
-
 
 test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchit les jalons specs puis revue par l'arbitre et finit sur une PR ouverte, sans fusion", async () => {
   const clock = { now: T0 };
@@ -664,19 +770,28 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   // Le jalon specs est approuvé sur une citation du contrat ; le jalon « revue propre »
   // sur la référence, dans un fichier du diff, de l'assertion qui porte AC-1.
   const r = rig({
-    script: prompt =>
+    script: (prompt) =>
       prompt.includes("type : jalon « revue propre »")
-        ? { decision: "approve", reason: "AC-1 est porté par preuve.txt", references: ["preuve.txt:1"], attestations: ["AC-1 preuve.txt:1"] }
+        ? {
+            decision: "approve",
+            reason: "AC-1 est porté par preuve.txt",
+            references: ["preuve.txt:1"],
+            attestations: ["AC-1 preuve.txt:1"],
+          }
         : { decision: "approve", reason: "le contrat couvre le besoin", citations: ["AC-1 (B-1) : un critère."] },
     runner,
     runGit: async (args, cwd) => {
       gitCalls.push(args);
       return args[0] === "push" ? { code: 0, stdout: "", stderr: "" } : gitRunner(args, cwd);
     },
-    runGh: async args => {
+    runGh: async (args) => {
       ghCalls.push(args);
       if (args[0] === "repo" && args[1] === "view") {
-        return { code: 0, stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify({ url: `${GH}/o/r`, defaultBranchRef: { name: "main" } }),
+          stderr: "",
+        };
       }
       if (args[0] === "pr" && args[1] === "create") return { code: 0, stdout: `${GH}/o/r/pull/7\n`, stderr: "" };
       return { code: 1, stdout: "", stderr: "non simulé" };
@@ -691,7 +806,11 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   }
 
   const done = r.feature(repo, "alpha");
-  assert.equal(done.state, "done", JSON.stringify({ phases, state: done.state, stop: done.stopReason, escalation: done.escalation }));
+  assert.equal(
+    done.state,
+    "done",
+    JSON.stringify({ phases, state: done.state, stop: done.stopReason, escalation: done.escalation }),
+  );
   assert.equal(done.prUrl, `${GH}/o/r/pull/7`);
   assert.equal(done.auditSession, audit.key);
   assert.deepEqual(phases, ["req", "specs", "impl", "review", "release"]);
@@ -700,24 +819,36 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
   assert.equal(r.arb.opens.length, 1, "une seule session de pilote pour le lot");
   assert.equal(r.arb.prompts.length, 2, "un tour par jalon");
   assert.deepEqual(
-    journalFor(r.stateDir, audit.repoKey, "alpha").map(entry => [entry.kind, entry.answer, entry.source, entry.context]),
+    journalFor(r.stateDir, audit.repoKey, "alpha").map((entry) => [
+      entry.kind,
+      entry.answer,
+      entry.source,
+      entry.context,
+    ]),
     [
       ["jalon", "validé", "arbitrage", audit.key],
       ["jalon", "accepté", "arbitrage", audit.key],
     ],
   );
   // La PR est ouverte, jamais fusionnée.
-  assert.ok(ghCalls.some(args => args[0] === "pr" && args[1] === "create"));
-  assert.equal(ghCalls.some(args => args.includes("merge")), false, JSON.stringify(ghCalls));
-  assert.equal(gitCalls.some(args => args[0] === "merge"), false, JSON.stringify(gitCalls));
+  assert.ok(ghCalls.some((args) => args[0] === "pr" && args[1] === "create"));
+  assert.equal(
+    ghCalls.some((args) => args.includes("merge")),
+    false,
+    JSON.stringify(ghCalls),
+  );
+  assert.equal(
+    gitCalls.some((args) => args[0] === "merge"),
+    false,
+    JSON.stringify(gitCalls),
+  );
   // Le suivi recopie l'issue dans l'audit.
   r.pilot.sweep();
   assert.deepEqual(
-    r.audit(audit.id).launches.map(entry => [entry.slug, entry.state, entry.prUrl]),
+    r.audit(audit.id).launches.map((entry) => [entry.slug, entry.state, entry.prUrl]),
     [["alpha", "done", `${GH}/o/r/pull/7`]],
   );
 });
-
 
 test("audit-panel-in-omp-console/AC-6 : une question escaladée se répond par la route, la commande `reply` débloque la pipeline, et une seconde réponse rend 409", async () => {
   const r = rig({ script: () => ESCALATE });
@@ -742,15 +873,17 @@ test("audit-panel-in-omp-console/AC-6 : une question escaladée se répond par l
   assert.ok(r.specs[1]!.prompt.includes("events"), r.specs[1]!.prompt);
   assert.equal(r.feature(repo, "alpha").escalation, undefined, "l'escalade tombe avec la réponse");
   assert.deepEqual(
-    journalFor(r.stateDir, audit.repoKey, "alpha").map(entry => [entry.question, entry.answer, entry.source]),
+    journalFor(r.stateDir, audit.repoKey, "alpha").map((entry) => [entry.question, entry.answer, entry.source]),
     [["Quel nom de table ?", "events", "utilisateur"]],
   );
 
   const again = await r.call("POST", `/audits/${audit.id}/escalations`, { slug: "alpha", key, answer: "autre" });
-  assert.deepEqual([again.status, again.body], [409, { error: "conflict", reason: "question déjà répondue ou périmée" }]);
+  assert.deepEqual(
+    [again.status, again.body],
+    [409, { error: "conflict", reason: "question déjà répondue ou périmée" }],
+  );
   assert.equal(r.specs.length, 2);
 });
-
 
 test("audit-panel-in-omp-console/AC-10 : deux audits du même dépôt ont clés et sessions distinctes, le relais /audit armé le reste, et chaque question est tranchée avec le contexte de SON audit", async () => {
   {
@@ -784,7 +917,11 @@ test("audit-panel-in-omp-console/AC-10 : deux audits du même dépôt ont clés 
     const r = rig({ script: (_prompt, call) => (call === 3 ? ESCALATE : answerFromBrief("JSON")) });
     const repo = emptyGitRepo("apoc-repo-");
     const a = await r.propose(repo, "export des données", proposal(["fuite-a"], ["alpha"]));
-    const b = await r.propose(repo, "performances au lancement", proposal(["fuite-b"], ["bravo"], "Une console de pilotage."));
+    const b = await r.propose(
+      repo,
+      "performances au lancement",
+      proposal(["fuite-b"], ["bravo"], "Une console de pilotage."),
+    );
     assert.equal((await r.launch(a.id, ["alpha"])).status, 200);
     assert.equal((await r.launch(b.id, ["bravo"])).status, 200);
 
@@ -792,14 +929,17 @@ test("audit-panel-in-omp-console/AC-10 : deux audits du même dépôt ont clés 
     await r.tick(repo);
     await until(() => journalFor(r.stateDir, a.repoKey, "alpha").length === 1, "la question de A est tranchée");
     assert.deepEqual(
-      journalFor(r.stateDir, a.repoKey, "alpha").map(entry => [entry.answer, entry.source, entry.context]),
+      journalFor(r.stateDir, a.repoKey, "alpha").map((entry) => [entry.answer, entry.source, entry.context]),
       [["JSON", "arbitrage", a.key]],
     );
     assert.ok(r.arb.prompts[0]!.includes("export des données") && r.arb.prompts[0]!.includes(FACT));
 
     r.park(repo, "bravo", "answer", "req", "Quel format de sortie ?");
     await r.tick(repo);
-    await until(() => r.feature(repo, "bravo").escalation !== undefined, "la même réponse, absente du brief de B, est escaladée");
+    await until(
+      () => r.feature(repo, "bravo").escalation !== undefined,
+      "la même réponse, absente du brief de B, est escaladée",
+    );
     assert.ok(r.arb.prompts[1]!.includes("performances au lancement"));
     assert.equal(r.arb.prompts[1]!.includes(FACT), false, "le contexte de A n'entre pas dans l'arbitrage de B");
     assert.deepEqual(journalFor(r.stateDir, b.repoKey, "bravo"), []);
@@ -815,13 +955,12 @@ test("audit-panel-in-omp-console/AC-10 : deux audits du même dépôt ont clés 
   }
 });
 
-
 test("audit-panel-in-omp-console/AC-11 : arrêter A annule ses 2 pipelines en cours, garde sa PR ouverte, et laisse B continuer", async () => {
   const abortable = abortableRunner();
   const ghCalls: string[][] = [];
   const r = rig({
     runner: abortable.runner,
-    runGh: async args => {
+    runGh: async (args) => {
       ghCalls.push(args);
       return { code: 1, stdout: "", stderr: "non simulé" };
     },
@@ -833,7 +972,7 @@ test("audit-panel-in-omp-console/AC-11 : arrêter A annule ses 2 pipelines en co
   assert.equal((await r.launch(b.id, ["b-un"])).status, 200);
   await until(() => abortable.specs.length === 4, "les quatre runs sont partis");
   // La première feature de A a livré sa PR.
-  r.edit(repo, "a-livree", target => {
+  r.edit(repo, "a-livree", (target) => {
     target.state = "done";
     target.prUrl = `${GH}/o/r/pull/1`;
   });
@@ -855,11 +994,14 @@ test("audit-panel-in-omp-console/AC-11 : arrêter A annule ses 2 pipelines en co
   for (const slug of ["a-deux", "a-trois"]) {
     const worktree = r.feature(repo, slug).worktree;
     assert.ok(worktree !== "" && fs.existsSync(worktree), `${slug} : dossier conservé`);
-    const branch = spawnSync("git", ["rev-parse", "--verify", `feat/${slug}`], { cwd: repo, env: GIT_ENV, encoding: "utf8" });
+    const branch = spawnSync("git", ["rev-parse", "--verify", `feat/${slug}`], {
+      cwd: repo,
+      env: GIT_ENV,
+      encoding: "utf8",
+    });
     assert.equal(branch.status, 0, `${slug} : branche conservée`);
   }
 });
-
 
 test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un arrêt reçu pendant un lancement en vol attend sa fin et annule TOUTES les pipelines de l'audit", async () => {
   const r = rig({ runner: abortableRunner().runner });
@@ -867,11 +1009,11 @@ test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un arr
   const a = await r.propose(repo, "accessibilité VoiceOver", proposal(["fuite-a"], ["a-un", "a-deux", "a-trois"]));
   // Le second ajout du lancement reste suspendu jusqu'à `release` : l'arrêt tombe entre deux `controller.add`.
   let release!: () => void;
-  const gate = new Promise<void>(resolve => (release = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
   let adds = 0;
   const pilot = r.pilot as { controllerFor: typeof r.pilot.controllerFor };
   const controllerFor = pilot.controllerFor.bind(r.pilot);
-  pilot.controllerFor = repoRoot => {
+  pilot.controllerFor = (repoRoot) => {
     const controller = controllerFor(repoRoot);
     return new Proxy(controller, {
       get(target, key) {
@@ -909,7 +1051,6 @@ test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un arr
   assert.deepEqual([again.status, again.body.reason], [409, "audit déjà arrêté"]);
 });
 
-
 test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un lancement reçu pendant un arrêt en vol est refusé en 409, sans rien ajouter au lot", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
@@ -917,7 +1058,7 @@ test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un lan
   r.hostedOf(a.id);
   // L'abort de l'analyse vivante reste suspendu : l'arrêt est en vol.
   let release!: () => void;
-  const gate = new Promise<void>(resolve => (release = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
   let aborts = 0;
   const host = r.sessions as { abort: typeof r.sessions.abort };
   const abort = host.abort.bind(r.sessions);
@@ -939,18 +1080,21 @@ test("audit-panel-in-omp-console : concurrence de l'arrêt (B-9, S-4) — un lan
   assert.equal(r.audit(a.id).status, "stopped");
 });
 
-
 test("POST /v1/audits : chaque refus 400, 404 et 409, dans l'ordre, sans rien écrire ni ouvrir", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
   const plain = tmpdir("apoc-plain-");
   const worktree = path.join(tmpdir("apoc-wt-"), "feature");
-  const added = spawnSync("git", ["worktree", "add", "-q", "-b", "feat/x", worktree], { cwd: repo, env: GIT_ENV, encoding: "utf8" });
+  const added = spawnSync("git", ["worktree", "add", "-q", "-b", "feat/x", worktree], {
+    cwd: repo,
+    env: GIT_ENV,
+    encoding: "utf8",
+  });
   assert.equal(added.status, 0, added.stderr);
   const cases: Array<[unknown, number, string | RegExp]> = [
     [{}, 400, "champ « repo » manquant"],
     [{ orientation: "" }, 400, "champ « repo » manquant"],
-    [{ repo: "" , orientation: "x" }, 400, "champ « repo » manquant"],
+    [{ repo: "", orientation: "x" }, 400, "champ « repo » manquant"],
     [{ repo }, 400, "champ « orientation » manquant"],
     [{ repo, orientation: 3 }, 400, "champ « orientation » manquant"],
     [{ repo, orientation: " \n " }, 400, "orientation vide"],
@@ -958,7 +1102,11 @@ test("POST /v1/audits : chaque refus 400, 404 et 409, dans l'ordre, sans rien é
     [{ repo: "relatif/depot", orientation: "x" }, 404, "chemin de dépôt non absolu : relatif/depot"],
     [{ repo: path.join(plain, "absent"), orientation: "x" }, 404, `dépôt introuvable : ${path.join(plain, "absent")}`],
     [{ repo: plain, orientation: "x" }, 409, `[audit] ${plain} n'est pas un dépôt git`],
-    [{ repo: worktree, orientation: "x" }, 409, /^\[audit\] déjà dans le worktree d'une feature \(.+\) — \/audit s'ouvre depuis le dépôt principal \(.+\)$/],
+    [
+      { repo: worktree, orientation: "x" },
+      409,
+      /^\[audit\] déjà dans le worktree d'une feature \(.+\) — \/audit s'ouvre depuis le dépôt principal \(.+\)$/,
+    ],
   ];
   for (const [body, status, reason] of cases) {
     const res = await r.call("POST", "/audits", body);
@@ -971,7 +1119,6 @@ test("POST /v1/audits : chaque refus 400, 404 et 409, dans l'ordre, sans rien é
   // La borne est incluse : 2000 caractères passent.
   assert.equal((await r.call("POST", "/audits", { repo, orientation: "é".repeat(2000) })).status, 200);
 });
-
 
 test("POST /v1/audits/{id}/launch : les sept refus dans l'ordre, sans rien lancer, et un second lancement est refusé", async () => {
   const r = rig();
@@ -1008,7 +1155,6 @@ test("POST /v1/audits/{id}/launch : les sept refus dans l'ordre, sans rien lance
   assert.equal(lotFeature(r.lot(repo)!, "contraste"), undefined);
 });
 
-
 test("lancement : un ajout refusé par le pilote laisse l'audit `proposed`, son motif écrit dans `launches`", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
@@ -1019,12 +1165,11 @@ test("lancement : un ajout refusé par le pilote laisse l'audit `proposed`, son 
   assert.equal(res.status, 200);
   assert.equal(res.body.launches.length, 1);
   assert.equal(res.body.launches[0].launched, false);
-  assert.match(res.body.launches[0].reason, /^lancement refusé : /);
+  assert.match(res.body.launches[0].reason ?? "", /^lancement refusé : /);
   const after = r.audit(audit.id);
   assert.equal(after.status, "proposed");
   assert.deepEqual(after.launches, res.body.launches);
 });
-
 
 test("POST /v1/audits/{id}/escalations : refus dans l'ordre, traduction en commande, et un accusé refusé rend 409 avec son motif", async () => {
   // L'abandon annule la feature : son run doit mourir à l'abort, comme un vrai run.
@@ -1040,14 +1185,19 @@ test("POST /v1/audits/{id}/escalations : refus dans l'ordre, traduction en comma
     if (typeof reason === "string") assert.equal(res.body.reason, reason);
     else assert.match(res.body.reason, reason);
   };
-  const seed = (value: FeatureEscalation) => r.edit(repo, "alpha", target => {
-    target.escalation = value;
-  });
+  const seed = (value: FeatureEscalation) =>
+    r.edit(repo, "alpha", (target) => {
+      target.escalation = value;
+    });
 
   await expect({ slug: "alpha", key: "question:alpha:1", answer: "x" }, 409, "question déjà répondue ou périmée");
   const unknown = await r.call("POST", "/audits/0123456789abcdef/escalations", { slug: "alpha" });
   assert.deepEqual([unknown.status, unknown.body.reason], [404, "audit inconnu : 0123456789abcdef"]);
-  await expect({ slug: "inconnue", key: "question:inconnue:1", answer: "x" }, 404, "feature inconnue dans cet audit : inconnue");
+  await expect(
+    { slug: "inconnue", key: "question:inconnue:1", answer: "x" },
+    404,
+    "feature inconnue dans cet audit : inconnue",
+  );
   await expect({}, 404, "feature inconnue dans cet audit : undefined");
 
   // `question` : réponse exigée, pas de décision ; une feature qui n'attend plus refuse `reply`.
@@ -1055,7 +1205,11 @@ test("POST /v1/audits/{id}/escalations : refus dans l'ordre, traduction en comma
   await expect({ slug: "alpha", key: "question:alpha:2", answer: "x" }, 409, "question déjà répondue ou périmée");
   await expect({ slug: "alpha", key: "question:alpha:1" }, 400, "réponse vide");
   await expect({ slug: "alpha", key: "question:alpha:1", answer: "  " }, 400, "réponse vide");
-  await expect({ slug: "alpha", key: "question:alpha:1", answer: "x", decision: "approve" }, 400, "une question attend une réponse, pas une décision");
+  await expect(
+    { slug: "alpha", key: "question:alpha:1", answer: "x", decision: "approve" },
+    400,
+    "une question attend une réponse, pas une décision",
+  );
   seed(escalation("question:alpha:1"));
   const replied = await post({ slug: "alpha", key: "question:alpha:1", answer: "x" });
   assert.equal(replied.status, 409);
@@ -1082,7 +1236,6 @@ test("POST /v1/audits/{id}/escalations : refus dans l'ordre, traduction en comma
   assert.equal(r.feature(repo, "alpha").state, "cancelled");
 });
 
-
 test("DELETE /v1/audits/{id} : l'analyse vivante est coupée, puis 404 audit inconnu et 409 audit déjà arrêté", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
@@ -1098,12 +1251,14 @@ test("DELETE /v1/audits/{id} : l'analyse vivante est coupée, puis 404 audit inc
   const again = await r.call("DELETE", `/audits/${id}`);
   assert.deepEqual([again.status, again.body], [409, { error: "conflict", reason: "audit déjà arrêté" }]);
   const unknown = await r.call("DELETE", "/audits/0123456789abcdef");
-  assert.deepEqual([unknown.status, unknown.body], [404, { error: "not_found", reason: "audit inconnu : 0123456789abcdef" }]);
+  assert.deepEqual(
+    [unknown.status, unknown.body],
+    [404, { error: "not_found", reason: "audit inconnu : 0123456789abcdef" }],
+  );
   // Les autres méthodes et formes de chemin ne sont pas des routes d'audit.
   assert.equal((await r.call("GET", `/audits/${id}`)).status, 404);
   assert.equal((await r.call("POST", `/audits/${id}/inconnu`, {})).status, 404);
 });
-
 
 test("audit_report : refusé hors analyse, audit proposé ou absent", async () => {
   const r = rig();
@@ -1120,7 +1275,6 @@ test("audit_report : refusé hors analyse, audit proposé ou absent", async () =
     isError: true,
   });
 });
-
 
 test("fin d'analyse sans proposition : terminée, interrompue, en échec ou morte, l'audit passe `failed` avec son motif et la session est libérée", async () => {
   const repo = emptyGitRepo("apoc-repo-");
@@ -1161,7 +1315,6 @@ test("fin d'analyse sans proposition : terminée, interrompue, en échec ou mort
   }
 });
 
-
 test("redémarrage du service : au PREMIER balayage seulement, une analyse en cours passe `failed`, les autres statuts restent", () => {
   const r = rig();
   const repo = fs.realpathSync(emptyGitRepo("apoc-repo-"));
@@ -1198,7 +1351,6 @@ test("redémarrage du service : au PREMIER balayage seulement, une analyse en co
   assert.equal(r.audit("a000000000000004").status, "analysing");
 });
 
-
 test("suivi des lancements : state, phase et prUrl recopiés au balayage, rien n'est écrit sans changement, et l'audit arrêté reste suivi", async () => {
   const r = rig({ runner: abortableRunner().runner });
   const repo = emptyGitRepo("apoc-repo-");
@@ -1206,7 +1358,7 @@ test("suivi des lancements : state, phase et prUrl recopiés au balayage, rien n
   assert.equal((await r.launch(audit.id, ["rotor"])).status, 200);
   const file = auditPathFor(r.stateDir, audit.id);
   r.pilot.sweep();
-  r.edit(repo, "rotor", target => {
+  r.edit(repo, "rotor", (target) => {
     target.state = "waiting";
     target.waitKind = "specs";
     target.phase = "specs";
@@ -1215,7 +1367,7 @@ test("suivi des lancements : state, phase et prUrl recopiés au balayage, rien n
   r.pilot.sweep();
   const followed = r.audit(audit.id);
   assert.deepEqual(
-    followed.launches.map(entry => [entry.slug, entry.state, entry.phase, entry.prUrl]),
+    followed.launches.map((entry) => [entry.slug, entry.state, entry.phase, entry.prUrl]),
     [["rotor", "waiting", "specs", null]],
   );
   assert.equal(followed.updatedAt, T0 + 1_000);
@@ -1226,10 +1378,12 @@ test("suivi des lancements : state, phase et prUrl recopiés au balayage, rien n
 
   assert.equal((await r.call("DELETE", `/audits/${audit.id}`)).status, 200);
   r.pilot.sweep();
-  assert.deepEqual(r.audit(audit.id).launches.map(entry => entry.state), ["cancelled"]);
+  assert.deepEqual(
+    r.audit(audit.id).launches.map((entry) => entry.state),
+    ["cancelled"],
+  );
   assert.equal(r.audit(audit.id).status, "stopped");
 });
-
 
 test("session d'analyse : invisible de GET /v1/sessions, servie par GET /v1/sessions/{id} (purpose audit, mesure de contexte), et ses dialogues sont refusés d'office sans trame", async () => {
   const r = rig();
@@ -1245,14 +1399,17 @@ test("session d'analyse : invisible de GET /v1/sessions, servie par GET /v1/sess
   );
 
   const frames: string[] = [];
-  r.sessions.subscribe(hosted.id)!.subscribe(frame => frames.push(frame.event));
+  r.sessions.subscribe(hosted.id)!.subscribe((frame) => frames.push(frame.event));
   const ui = r.fakeOf(id).toolUi;
   assert.ok(ui, "le service pose son contexte UI");
   assert.equal(await ui.select("Quel dépôt ?", ["a", "b"]), undefined);
   assert.equal(await ui.confirm("Continuer ?", "La suite."), false);
   assert.equal(await ui.input("Nom ?"), undefined);
   assert.equal(await ui.editor("Brief", "texte"), undefined);
-  assert.deepEqual(frames.filter(event => event === "dialog" || event === "dialog_cancelled"), []);
+  assert.deepEqual(
+    frames.filter((event) => event === "dialog" || event === "dialog_cancelled"),
+    [],
+  );
   assert.deepEqual(hosted.dialogs.size, 0);
   for (const title of ["Quel dépôt ?", "Continuer ?", "Nom ?", "Brief"]) {
     assert.ok(r.logs.includes(`[service] dialogue refusé (session d'audit) : ${title}`), title);

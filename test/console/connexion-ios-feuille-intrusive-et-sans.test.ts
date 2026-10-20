@@ -17,7 +17,14 @@ import { ROOT } from "../support/repo.ts";
 const DEVICES_SETTINGS = path.join(ROOT, "omp-console", "Sources", "OMPConsole", "Remote", "DevicesSettingsView.swift");
 const CONNECTION_TEXT = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS", "ConnectionText.swift");
 const CONSOLE_API = path.join(ROOT, "omp-console", "Sources", "ConsoleCore", "Design", "ConsoleAPI.swift");
-const PAIRING_CODE_FORMAT = path.join(ROOT, "omp-console", "Sources", "ConsoleCore", "Design", "PairingCodeFormat.swift");
+const PAIRING_CODE_FORMAT = path.join(
+  ROOT,
+  "omp-console",
+  "Sources",
+  "ConsoleCore",
+  "Design",
+  "PairingCodeFormat.swift",
+);
 
 /** La valeur littérale de `static let <name> = "…"` dans le PREMIER enum qui la déclare. */
 function literal(source: string, name: string): string | null {
@@ -56,14 +63,17 @@ function malformedFaults(connectionText: string, consoleAPI: string, pairingCode
   const faults: string[] = [];
   if (message.includes("A–Z, 0–9")) faults.push("codeMalformed annonce encore « A–Z, 0–9 »");
   if (message.includes("I, L, O")) faults.push("codeMalformed refuse encore « I, L, O », lus comme chiffres");
-  const excluded = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].filter((letter) => !alphabet.includes(letter) && !read.includes(letter));
+  const excluded = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].filter(
+    (letter) => !alphabet.includes(letter) && !read.includes(letter),
+  );
   if (excluded.length === 0) {
     if (message.includes("sauf ")) faults.push("codeMalformed exclut une lettre alors qu'aucune n'est refusée");
     return faults;
   }
-  const named = excluded.length === 1
-    ? `sauf ${excluded[0]}`
-    : `sauf ${excluded.slice(0, -1).join(", ")} et ${excluded[excluded.length - 1]}`;
+  const named =
+    excluded.length === 1
+      ? `sauf ${excluded[0]}`
+      : `sauf ${excluded.slice(0, -1).join(", ")} et ${excluded[excluded.length - 1]}`;
   if (!message.includes(named)) faults.push(`codeMalformed ne dit pas « ${named} »`);
   return faults;
 }
@@ -89,9 +99,15 @@ test("connexion-ios-feuille-intrusive-et-sans/AC-13 : le message de format nomme
   // L'ancien message rougit, l'avant-dernier aussi (il refuse I, L, O), et les
   // lettres exclues sont calculées, jamais recopiées : un alphabet élargi à U ou
   // un sosie retiré font rougir le message actuel.
-  const old = connectionText.replace(/static let codeMalformed = "[^"]*"/, 'static let codeMalformed = "Le code doit faire 8 caractères (A–Z, 0–9)."');
+  const old = connectionText.replace(
+    /static let codeMalformed = "[^"]*"/,
+    'static let codeMalformed = "Le code doit faire 8 caractères (A–Z, 0–9)."',
+  );
   assert.ok(malformedFaults(old, consoleAPI, pairingCodeFormat).some((f) => f.includes("A–Z, 0–9")));
-  const strict = connectionText.replace(/static let codeMalformed = "[^"]*"/, 'static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."');
+  const strict = connectionText.replace(
+    /static let codeMalformed = "[^"]*"/,
+    'static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."',
+  );
   assert.ok(malformedFaults(strict, consoleAPI, pairingCodeFormat).some((f) => f.includes("I, L, O")));
   const widened = consoleAPI.replace('"0123456789ABCDEFGHJKMNPQRSTVWXYZ"', '"0123456789ABCDEFGHJKMNPQRSTUVWXYZ"');
   assert.notEqual(widened, consoleAPI, "la faute plantée doit s'appliquer");

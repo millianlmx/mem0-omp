@@ -90,7 +90,11 @@ function routeFaults(root: string): string[] {
   if (!/client\.setHostedModel\(model:\s*selector,\s*thinkingLevel:\s*thinkingLevel\)/.test(model)) {
     faults.push("IOSSessionOmpModel.applyModel n'appelle pas client.setHostedModel");
   }
-  if (!/func canChangeModel\(connection:\s*IOSConnectionStatus,\s*hosted:\s*RemoteHostedEvent\?,\s*busy:\s*Bool\)/.test(model)) {
+  if (
+    !/func canChangeModel\(connection:\s*IOSConnectionStatus,\s*hosted:\s*RemoteHostedEvent\?,\s*busy:\s*Bool\)/.test(
+      model,
+    )
+  ) {
     faults.push("IOSSessionOmpModel ne porte pas la décision pure canChangeModel(connection:hosted:busy:)");
   }
   return faults;
@@ -149,10 +153,17 @@ function layoutFaults(root: string): string[] {
   for (const file of [APP_FILES.sheet, APP_FILES.screen]) {
     const source = code(root, file);
     if (source.includes("ScrollView(")) faults.push(`${path.basename(file)} contient ScrollView(`);
-    if (/\.font\(\s*\.system\(\s*size:/.test(source)) faults.push(`${path.basename(file)} fixe une taille de police en points`);
+    if (/\.font\(\s*\.system\(\s*size:/.test(source))
+      faults.push(`${path.basename(file)} fixe une taille de police en points`);
   }
   const sheet = code(root, APP_FILES.sheet);
-  for (const needle of ["NavigationStack", "Form", ".searchable(", ".presentationDetents([.large])", "IOSSheetIconButton("]) {
+  for (const needle of [
+    "NavigationStack",
+    "Form",
+    ".searchable(",
+    ".presentationDetents([.large])",
+    "IOSSheetIconButton(",
+  ]) {
     if (!sheet.includes(needle)) faults.push(`IOSSessionModelSheet ne porte pas ${needle}`);
   }
   if (!/ViewThatFits/.test(code(root, APP_FILES.screen))) {
@@ -182,12 +193,21 @@ test("model-selector-in-embedded-omp-session iOS : la route du geste existe des 
   const copy = shared.fresh();
   const catalog = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientRoute.swift");
   fs.writeFileSync(catalog, fs.readFileSync(catalog, "utf8").replaceAll('"hosted.model"', '"hosted.autre"'));
-  assert.ok(routeFaults(copy).some((f) => f.includes("ClientRoute")), "une route retirée doit faire rougir la garde");
+  assert.ok(
+    routeFaults(copy).some((f) => f.includes("ClientRoute")),
+    "une route retirée doit faire rougir la garde",
+  );
 
   const copy2 = shared.fresh();
   const model = path.join(copy2, APP_FILES.model);
-  fs.writeFileSync(model, fs.readFileSync(model, "utf8").replace("try await client.setHostedModel(", "try await client.autreGeste("));
-  assert.ok(routeFaults(copy2).some((f) => f.includes("applyModel")), "un geste qui n'appelle plus la route doit faire rougir la garde");
+  fs.writeFileSync(
+    model,
+    fs.readFileSync(model, "utf8").replace("try await client.setHostedModel(", "try await client.autreGeste("),
+  );
+  assert.ok(
+    routeFaults(copy2).some((f) => f.includes("applyModel")),
+    "un geste qui n'appelle plus la route doit faire rougir la garde",
+  );
 });
 
 test("model-selector-in-embedded-omp-session iOS : les ids d'accessibilité sont déclarés, préfixés et posés", () => {
@@ -195,13 +215,25 @@ test("model-selector-in-embedded-omp-session iOS : les ids d'accessibilité sont
 
   const copy = shared.fresh();
   const text = path.join(copy, APP_FILES.text);
-  fs.writeFileSync(text, fs.readFileSync(text, "utf8").replace('"ios.sessionomp.model.thinking"', '"ios.autre.thinking"'));
-  assert.ok(idFaults(copy).some((f) => f.includes("model.thinking")), "un id perdu doit faire rougir la garde");
+  fs.writeFileSync(
+    text,
+    fs.readFileSync(text, "utf8").replace('"ios.sessionomp.model.thinking"', '"ios.autre.thinking"'),
+  );
+  assert.ok(
+    idFaults(copy).some((f) => f.includes("model.thinking")),
+    "un id perdu doit faire rougir la garde",
+  );
 
   const copy2 = shared.fresh();
   const sheet = path.join(copy2, APP_FILES.sheet);
-  fs.writeFileSync(sheet, fs.readFileSync(sheet, "utf8").replaceAll("SessionOmpAccessibility.modelRow(", "SessionOmpAccessibility.autre("));
-  assert.ok(idFaults(copy2).some((f) => f.includes("modelRow")), "des rangées sans id doivent faire rougir la garde");
+  fs.writeFileSync(
+    sheet,
+    fs.readFileSync(sheet, "utf8").replaceAll("SessionOmpAccessibility.modelRow(", "SessionOmpAccessibility.autre("),
+  );
+  assert.ok(
+    idFaults(copy2).some((f) => f.includes("modelRow")),
+    "des rangées sans id doivent faire rougir la garde",
+  );
 });
 
 test("model-selector-in-embedded-omp-session iOS : aucun littéral alphabétique hors des fichiers de vocabulaire", () => {
@@ -210,7 +242,10 @@ test("model-selector-in-embedded-omp-session iOS : aucun littéral alphabétique
   const copy = shared.fresh();
   const sheet = path.join(copy, APP_FILES.sheet);
   fs.writeFileSync(sheet, fs.readFileSync(sheet, "utf8").replace("Text(verbatim: selector)", 'Text("Bonjour")'));
-  assert.ok(literalFaults(copy).some((f) => f.includes("Bonjour")), "un libellé en dur doit faire rougir la garde");
+  assert.ok(
+    literalFaults(copy).some((f) => f.includes("Bonjour")),
+    "un libellé en dur doit faire rougir la garde",
+  );
 });
 
 test("model-selector-in-embedded-omp-session iOS : feuille en NavigationStack + Form, aucune ScrollView ni taille en points", () => {
@@ -219,7 +254,10 @@ test("model-selector-in-embedded-omp-session iOS : feuille en NavigationStack + 
   const copy = shared.fresh();
   const screen = path.join(copy, APP_FILES.screen);
   fs.writeFileSync(screen, `${fs.readFileSync(screen, "utf8")}\nlet defile = ScrollView(.vertical) { }\n`);
-  assert.ok(layoutFaults(copy).some((f) => f.includes("ScrollView(")), "une ScrollView doit faire rougir la garde");
+  assert.ok(
+    layoutFaults(copy).some((f) => f.includes("ScrollView(")),
+    "une ScrollView doit faire rougir la garde",
+  );
 });
 
 test("model-selector-in-embedded-omp-session iOS : chaque critère de l'iPhone a son test Swift nommé", () => {
@@ -231,5 +269,8 @@ test("model-selector-in-embedded-omp-session iOS : chaque critère de l'iPhone a
     tests,
     fs.readFileSync(tests, "utf8").replace('@Test("model-selector-in-embedded-omp-session/AC-12 :', '@Test("autre :'),
   );
-  assert.ok(proofFaults(copy).some((f) => f.includes("AC-12")), "un test retiré doit faire rougir la garde");
+  assert.ok(
+    proofFaults(copy).some((f) => f.includes("AC-12")),
+    "un test retiré doit faire rougir la garde",
+  );
 });

@@ -2,42 +2,194 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewScopeFor, reviewSectionHash } from "./chain.ts";
+import {
+  REQUIRED_CONTRACT_SECTIONS,
+  contractHashOf,
+  effectiveReviewVerdict,
+  isReviewCapReason,
+  lostSections,
+  nextChainAction,
+  readContractText,
+  reconcileInterrupted,
+  reviewScopeFor,
+  reviewSectionHash,
+} from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { PILOT_ARBITRATION_TITLE, appendPilotArbitrage, contractAcIds, contractHasSection, contractLots, contractSection, lotContractExcerpt, reviewBlockerList, reviewBlockers, reviewImpliedBlockers, reviewVerdict } from "./contract.ts";
+import {
+  PILOT_ARBITRATION_TITLE,
+  appendPilotArbitrage,
+  contractAcIds,
+  contractHasSection,
+  contractLots,
+  contractSection,
+  lotContractExcerpt,
+  reviewBlockerList,
+  reviewBlockers,
+  reviewImpliedBlockers,
+  reviewVerdict,
+} from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { entriesOfText } from "./panelSession.ts";
 import { pilotMessagesOf } from "./pilotTools.ts";
 import type { ReviewScope } from "./seeds.ts";
-import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, runCommits, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
+import {
+  branchFor,
+  branchTaken,
+  contractPathFor,
+  createFeatureWorktree,
+  realpathOr,
+  runCommits,
+  toSlug,
+  worktreeHead,
+  worktreePathFor,
+  worktreeProduced,
+  worktreesBaseDir,
+} from "./git.ts";
 import type { GitResult, GitRunner, RunCommits, WorktreeCheck } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILURE_STDOUT_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
-import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
-import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, buildEscalationAlert, runHardDeadlineMinutes } from "./lot.ts";
-import { CANCEL_ALREADY_REASON, COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import {
+  LOT_ALERT_PROMPT_MAX,
+  LOT_EDITOR_MAX,
+  LOT_FAILURE_STDERR_MAX,
+  LOT_FAILURE_STDOUT_MAX,
+  LOT_NONE_REFUSAL,
+  LOT_PENDING_FULL,
+  LOT_PENDING_MAX,
+  LOT_PENDING_TOTAL_MAX,
+  LOT_REASON_MAX,
+  LOT_RUN_DEADLINE_MARGIN_MS,
+  LOT_TICK_MS,
+  LOT_VERSION,
+  LOT_WAIT_PROMPT_MAX,
+  appendRunRecord,
+  auditRelayOpen,
+  buildLotAlert,
+  buildLotRecap,
+  dependencyBlock,
+  dependencyStopReason,
+  freeSlots,
+  hasFreeSlot,
+  isLotBaseSha,
+  lotArchiveBaseDir,
+  lotBranchTakenRefusal,
+  lotCancelRefusal,
+  lotCyclicDepRefusal,
+  lotFeature,
+  lotFeatureMissingRefusal,
+  lotOwnerAlive,
+  lotRemoveDependentRefusal,
+  lotRemoveStartedRefusal,
+  lotRepoKey,
+  lotReplaceable,
+  lotReviewCap,
+  lotRunTimeoutMs,
+  lotSlots,
+  lotSlugPresentRefusal,
+  lotStateCancellable,
+  lotStateLabel,
+  lotStateTerminal,
+  lotTotals,
+  lotUnknownDepRefusal,
+  readLot,
+  quotaGroupsOf,
+  rowReply,
+  runnable,
+  trailingQuestion,
+  writeLot,
+} from "./lot.ts";
+import type {
+  ArbiterRelaunchMotive,
+  HeldLaunch,
+  Lot,
+  LotFeature,
+  LotFeatureState,
+  RowLiveWriter,
+  RowReply,
+} from "./lot.ts";
+import {
+  ARBITER_RELAUNCH_MAX,
+  ARBITRATION_REFUSAL,
+  blockedQuotaOf,
+  buildEscalationAlert,
+  runHardDeadlineMinutes,
+} from "./lot.ts";
+import {
+  CANCEL_ALREADY_REASON,
+  COMMAND_MAX_PER_PASS,
+  COMMAND_POLL_MS,
+  COMMAND_UNREADABLE_REFUSAL,
+  asCommand,
+  commandAck,
+  commandIdOf,
+  commandRefusal,
+  commandShapeRefusal,
+  commandSlugOf,
+  purgeCommandAcks,
+  readCommandAck,
+  readCommands,
+  removeCommandFile,
+  writeCommandAck,
+} from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
-import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
+import {
+  ARBITER_MODEL_GROUP,
+  fallbackEqualsPrimaryRefusal,
+  fallbackSlotsField,
+  featureFallbackForGroup,
+  featureFallbackForPhase,
+  featureModelForGroup,
+  featureModelForPhase,
+  modelGroupOf,
+  modelSlotsField,
+} from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
 import { questionOf, lotArbiterJournalMax } from "./lot.ts";
 import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
 import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
-import { ARBITER_DEADLINE_MS, arbiterItemBlock, buildArbiterCorpus, buildArbiterPrompt, buildPilotOpening, itemQuestion, normalizeQuestion, pilotRecapLine, validateArbiterDecision } from "./arbiter.ts";
+import {
+  ARBITER_DEADLINE_MS,
+  arbiterItemBlock,
+  buildArbiterCorpus,
+  buildArbiterPrompt,
+  buildPilotOpening,
+  itemQuestion,
+  normalizeQuestion,
+  pilotRecapLine,
+  validateArbiterDecision,
+} from "./arbiter.ts";
 import type { ArbiterDecision, ArbiterEffect, ArbiterGround, ArbiterItem } from "./arbiter.ts";
 import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence, renderReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
 import type { RelayItem } from "./relay.ts";
-import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, milestoneLine, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
+import {
+  applyWorktreeFate,
+  buildLotPrompt,
+  lastLine,
+  latestSessionFile,
+  milestoneLine,
+  parsePrUrl,
+  prUrlOfView,
+  releaseArgs,
+  releaseTarget,
+} from "./runs.ts";
 import type { LotPromptKind, WorktreeFate } from "./runs.ts";
 import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason, startModelFor } from "./quota.ts";
 import type { ModelStart, QuotaHit } from "./quota.ts";
 import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
-import { dropInbox, ensureStateDir, liveRunFor, panelInboxDirFor, panelInboxDirOf, pruneHistory, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
+import {
+  dropInbox,
+  ensureStateDir,
+  liveRunFor,
+  panelInboxDirFor,
+  panelInboxDirOf,
+  pruneHistory,
+  readStore,
+  writeBytesAtomic,
+  writeDelivery,
+} from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry, StoreSnapshot } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
-
-
 
 // --- le pilote : une passe = lire, décider, lancer (S-2, S-4, S-11) ----------
 
@@ -64,10 +216,8 @@ export type AddFeatureInput = {
   base?: string;
 };
 
-
 /** Le refus d'une réponse à un `ask` (S-7) : la question se répond dans SA vue. */
 const ASK_REPLY_REFUSAL = "le maillon attend une réponse à sa question : choisis une option dans sa conversation";
-
 
 /**
  * Les features qu'une décision de quota vise (S-5) : celles d'une session
@@ -75,7 +225,6 @@ const ASK_REPLY_REFUSAL = "le maillon attend une réponse à sa question : chois
  * ouverte ne porte (`unrelayed`, le rang de /pipelines), ou toutes.
  */
 export type QuotaScope = { kind: "context"; key: string } | { kind: "unrelayed" } | { kind: "all" };
-
 
 /** Ce que le panneau demande au pilote : chaque refus rend son motif, jamais une exception. */
 export type LotPanelActions = {
@@ -116,15 +265,20 @@ export type LotPanelActions = {
   ): Promise<string | null>;
   /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
   reply(slug: string): RowReply;
-  validate(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
-  accept(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
+  validate(
+    slug: string,
+    options?: { source?: DecisionSource; justification?: DecisionJustification },
+  ): Promise<string | null>;
+  accept(
+    slug: string,
+    options?: { source?: DecisionSource; justification?: DecisionJustification },
+  ): Promise<string | null>;
   relaunch(slug: string, options?: RelaunchOptions): Promise<string | null>;
   cancel(slug: string, fate: WorktreeFate, options?: { reason?: string }): Promise<string | null>;
 };
 
 /** Ce que la relance d'une feature peut recevoir : l'arbitre (source, motif, recentrage) — rien pour R. */
 export type RelaunchOptions = { source?: "arbitrage"; motive?: ArbiterRelaunchMotive; refocus?: string };
-
 
 export type LotControllerDeps = {
   stateDir: string;
@@ -169,7 +323,6 @@ export type LotControllerDeps = {
   pilotRole?: "service" | "session";
 };
 
-
 export type LotController = LotPanelActions & {
   read(): Lot | null;
   start(): void;
@@ -209,7 +362,6 @@ export type LotController = LotPanelActions & {
   }): string | null;
 };
 
-
 /**
  * Un lancement décidé : la forme RETENUE (S-3) plus la feature visée. Une seule
  * forme de lancement pour tous les chemins — un geste retenu rejoue exactement ce
@@ -219,7 +371,6 @@ export type PlannedLaunch = HeldLaunch & { slug: string };
 
 /** Borne du résumé du run précédent injecté au lot d'impl suivant (`[résumé du run précédent]`). */
 export const LOT_PREVIOUS_SUMMARY_MAX = 2_000;
-
 
 /**
  * Le pilote d'un dépôt. Il lit le lot, décide (`nextChainAction`), lance des runs
@@ -460,7 +611,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     // L'arbitre est câblé chez le pilote (le service), ou chez le service à qui cette
     // écriture laisse le lot : la Console sait qu'une feature avec contexte lui revient d'abord.
-    if (deps.arbiter !== undefined || (pilotRole !== "service" && service !== null && service.pid !== process.pid)) lot.arbiter = true;
+    if (deps.arbiter !== undefined || (pilotRole !== "service" && service !== null && service.pid !== process.pid))
+      lot.arbiter = true;
     else delete lot.arbiter;
     try {
       writeLot(stateDir, lot);
@@ -567,7 +719,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     } catch {
       return undefined;
     }
-    const assistants = pilotMessagesOf(entriesOfText(text, 0)).filter((m) => m.role === "assistant" && m.text.trim() !== "");
+    const assistants = pilotMessagesOf(entriesOfText(text, 0)).filter(
+      (m) => m.role === "assistant" && m.text.trim() !== "",
+    );
     const last = assistants[assistants.length - 1];
     if (last === undefined) return undefined;
     return clipTail(last.text.trim(), LOT_PREVIOUS_SUMMARY_MAX);
@@ -660,12 +814,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // marque ni escalade, donc le relais ne voit jamais l'élément avant la décision.
     const arbitrable = settledItemKind(feature);
     if (arbitrable !== null && ARBITRABLE.has(arbitrable) && arbitratedFeature(feature)) {
-      feature.arbitration = { key: `${arbitrable}:${feature.slug}:${feature.sinceAt}`, startedAt: now(), status: "queued" };
+      feature.arbitration = {
+        key: `${arbitrable}:${feature.slug}:${feature.sinceAt}`,
+        startedAt: now(),
+        status: "queued",
+      };
       delete feature.escalation;
     }
     emit(lot, feature, before);
   }
-
 
   /**
    * Le corps d'ARMEMENT d'un lancement, partagé par les trois chemins qui mettent
@@ -795,18 +952,28 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const implLots = feature.implLots;
     const implRank = feature.implLot;
     const lotOfRun =
-      launch.phase === "impl" && !launch.fix && implLots !== undefined && implRank !== undefined && implLots[implRank] !== undefined
+      launch.phase === "impl" &&
+      !launch.fix &&
+      implLots !== undefined &&
+      implRank !== undefined &&
+      implLots[implRank] !== undefined
         ? { id: implLots[implRank] as string, index: implRank, ids: implLots }
         : undefined;
     runKinds.set(feature.slug, { lot: lotOfRun?.id ?? null, fix: launch.fix });
     const contractText = readContractText(feature.worktree);
     // L'extrait du contrat utile au maillon : le contrat entier était relu
     // plusieurs fois par session et pesait 40 % des octets lus en /impl.
-    const excerpt = lotContractExcerpt(contractText, { phase: launch.phase, fix: launch.fix, lotId: lotOfRun?.id ?? null });
+    const excerpt = lotContractExcerpt(contractText, {
+      phase: launch.phase,
+      fix: launch.fix,
+      lotId: lotOfRun?.id ?? null,
+    });
     // Le lot BR-k (k > 0) part d'une session NEUVE : le dernier message du run
     // précédent lui dit où le lot d'avant s'est arrêté.
     const previousSummary =
-      lotOfRun !== undefined && lotOfRun.index > 0 ? previousRunSummary(feature.lastRunSessionFile ?? feature.sessionFile) : undefined;
+      lotOfRun !== undefined && lotOfRun.index > 0
+        ? previousRunSummary(feature.lastRunSessionFile ?? feature.sessionFile)
+        : undefined;
     // Une revue après corrections est INCRÉMENTALE (bornée aux bloquants levés) tant
     // qu'un crédit reste ; la dernière avant le plafond est complète.
     const reviewScope: ReviewScope | undefined =
@@ -834,7 +1001,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
       ...(impliedBlockers === undefined ? {} : { impliedBlockers }),
       // Le contexte de conduite (S-8) : seulement pour une feature lancée par /project ou /audit.
       ...(feature.auditSession !== undefined
-        ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession, phase: launch.phase }) }
+        ? {
+            context: contextBlock({
+              stateDir,
+              repoKey,
+              slug: feature.slug,
+              contextKey: feature.auditSession,
+              phase: launch.phase,
+            }),
+          }
         : {}),
       ...(contractHasSection(contractText, PILOT_ARBITRATION_TITLE) ? { pilotArbitrage: true } : {}),
     });
@@ -965,7 +1140,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const spawnMeasured = async (): Promise<LotRunnerResult> => {
       const head = await worktreeHead(deps.runGit, feature.worktree);
       const result = await spawn().catch(crashed);
-      if (launch.phase === "impl" && head !== null && result.code === 0 && !result.killed && result.quota === undefined) {
+      if (
+        launch.phase === "impl" &&
+        head !== null &&
+        result.code === 0 &&
+        !result.killed &&
+        result.quota === undefined
+      ) {
         check = await worktreeProduced(deps.runGit, feature.worktree, head);
       }
       commits = head === null ? "unknown" : await runCommits(deps.runGit, feature.worktree, head);
@@ -1041,7 +1222,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (!lot) return;
     if (lot.owner.pid !== process.pid) return; // un autre pilote a repris : ne rien écrire
     const feature = lotFeature(lot, slug);
-    if (!feature || feature.state !== "running" || feature.phase !== phase) return;
+    if (feature?.state !== "running" || feature.phase !== phase) return;
     queueLeftovers(feature, leftovers);
     const runKind = runKinds.get(slug);
     runKinds.delete(slug);
@@ -1077,7 +1258,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       let after: { launches: PlannedLaunch[]; release: boolean } = { launches: [], release: false };
       if (pending) {
         const reason = `${exceeded} pendant une question en attente : ${pending.question}`;
-        settle(lot, feature, "blocked", reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason);
+        settle(
+          lot,
+          feature,
+          "blocked",
+          reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason,
+        );
       } else if (committed) {
         after = committedFailure(lot, feature, exceeded);
       } else {
@@ -1109,7 +1295,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const ask = result.killed && !expired ? publishedAsk(feature.worktree) : null;
     if (ask) {
       const reason = `délai dépassé pendant une question en attente : ${ask.question}`;
-      settle(lot, feature, "blocked", reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason);
+      settle(
+        lot,
+        feature,
+        "blocked",
+        reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason,
+      );
       if (save(lot) !== null) watched.delete(slug);
       void Promise.resolve().then(() => tick().catch(() => undefined));
       return;
@@ -1177,7 +1368,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
     ) {
       const lost = lostSections(feature.launchSections, contract);
       if (lost.length > 0) {
-        settle(lot, feature, "blocked", `contrat endommagé par /${feature.phase} — section(s) disparue(s) : ${lost.map((t) => `## ${t}`).join(", ")}`);
+        settle(
+          lot,
+          feature,
+          "blocked",
+          `contrat endommagé par /${feature.phase} — section(s) disparue(s) : ${lost.map((t) => `## ${t}`).join(", ")}`,
+        );
         return out;
       }
     }
@@ -1240,7 +1436,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (action.kind === "wait") {
       feature.state = "waiting";
       feature.waitKind = action.waitKind;
-      feature.waitPrompt = action.waitKind === "answer" ? clipTail(result.stdout.trim(), LOT_WAIT_PROMPT_MAX) || null : null;
+      feature.waitPrompt =
+        action.waitKind === "answer" ? clipTail(result.stdout.trim(), LOT_WAIT_PROMPT_MAX) || null : null;
       feature.stopReason = null;
       feature.endedAt = null;
       touch(feature, now());
@@ -1248,7 +1445,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // aucun lecteur (Console, relais) ne voit l'attente avant que l'arbitre l'ait
       // vue. La passe qui suit la remplace par la marque de son arbitrage.
       if (arbitratedFeature(feature)) {
-        feature.arbitration = { key: `${action.waitKind === "answer" ? "question" : action.waitKind}:${feature.slug}:${feature.sinceAt}`, startedAt: now(), status: "queued" };
+        feature.arbitration = {
+          key: `${action.waitKind === "answer" ? "question" : action.waitKind}:${feature.slug}:${feature.sinceAt}`,
+          startedAt: now(),
+          status: "queued",
+        };
         delete feature.escalation;
       }
       emit(lot, feature, before);
@@ -1275,7 +1476,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * et la relance part sur le lot suivant. Dernier lot : la fin vaut un succès, la
    * chaîne décide (en principe la revue), jamais « /impl n'a rien produit ».
    */
-  function committedFailure(lot: Lot, feature: LotFeature, reason: string): { launches: PlannedLaunch[]; release: boolean } {
+  function committedFailure(
+    lot: Lot,
+    feature: LotFeature,
+    reason: string,
+  ): { launches: PlannedLaunch[]; release: boolean } {
     const lots = feature.implLots ?? [];
     const rank = feature.implLot ?? 0;
     if (rank + 1 >= lots.length) {
@@ -1284,7 +1489,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     feature.implLot = rank + 1;
     feature.sessionFile = null;
     settle(lot, feature, "failed", reason);
-    notify(`[pipeline] ${repo}/${feature.slug} : lot ${lots[rank]} commité avant l'échec — la relance part sur ${lots[rank + 1]}`);
+    notify(
+      `[pipeline] ${repo}/${feature.slug} : lot ${lots[rank]} commité avant l'échec — la relance part sur ${lots[rank + 1]}`,
+    );
     return { launches: [], release: false };
   }
 
@@ -1306,7 +1513,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // (S-1). `emit` avant la garde aurait annoncé un état que personne n'écrit.
       if (!fresh || fresh.owner.pid !== process.pid) return;
       const target = lotFeature(fresh, feature.slug);
-      if (!target || target.state !== "running") return;
+      if (target?.state !== "running") return;
       const before = target.state;
       target.state = state;
       target.prUrl = prUrl;
@@ -1463,7 +1670,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * demandé pendant une passe n'est jamais perdu, il attend la fin de celle-ci.
    */
   function tick(): Promise<void> {
-    const next = tickQueue.then(() => pass(), () => pass());
+    const next = tickQueue.then(
+      () => pass(),
+      () => pass(),
+    );
     tickQueue = next.catch(() => undefined);
     return next;
   }
@@ -1577,7 +1787,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * effacée et l'élément ré-arbitré ; une escalade dont l'élément n'est plus
    * courant tombe. Pose `feature.arbitration` — écrit avec la passe.
    */
-  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem; pilot: string }> } {
+  function planArbitrations(lot: Lot): {
+    changed: boolean;
+    planned: Array<{ slug: string; item: RelayItem; pilot: string }>;
+  } {
     const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem; pilot: string }> };
     if (deps.arbiter === undefined) return out;
     const items = currentItems(lot).filter((item) => ARBITRABLE.has(item.kind));
@@ -1619,7 +1832,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         corrections: contract === null ? null : contractSection(contract, "Corrections"),
       };
     }
-    if (item.kind === "failure") return { ...base, stopReason: item.stopReason, output: feature?.failureOutput ?? null };
+    if (item.kind === "failure")
+      return { ...base, stopReason: item.stopReason, output: feature?.failureOutput ?? null };
     return base;
   }
 
@@ -1675,7 +1889,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const features = lot.features.filter((candidate) => candidate.auditSession === context);
     const chosen = features.find((candidate) => featureModelForGroup(candidate, ARBITER_MODEL_GROUP) !== null);
     if (chosen === undefined) return { model: null, fallback: null };
-    return { model: featureModelForGroup(chosen, ARBITER_MODEL_GROUP), fallback: featureFallbackForGroup(chosen, ARBITER_MODEL_GROUP) };
+    return {
+      model: featureModelForGroup(chosen, ARBITER_MODEL_GROUP),
+      fallback: featureFallbackForGroup(chosen, ARBITER_MODEL_GROUP),
+    };
   }
 
   /** Efface la marque d'arbitrage de l'élément (la décision est appliquée, ou jetée). */
@@ -1717,7 +1934,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const wanted = normalizeQuestion(arbiterItem.question);
       const known = entries.find((entry) => entry.kind === "question" && normalizeQuestion(entry.question) === wanted);
       if (known) {
-        return { kind: "answer", answer: known.answer, source: "contexte", selected: arbiterItem.options.includes(known.answer) };
+        return {
+          kind: "answer",
+          answer: known.answer,
+          source: "contexte",
+          selected: arbiterItem.options.includes(known.answer),
+        };
       }
     }
     const { model: pilotModel, fallback } = pilotModelOf(lot, feature.auditSession);
@@ -1762,7 +1984,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // la citer) et l'ouverture de la session, lue à l'appel (elle naît pendant le tour).
     const evidence = review === null ? null : renderReviewEvidence(review);
     const groundOf = (): ArbiterGround => ({
-      corpus: [itemBlock, corpus, evidence, pilots.get(key)?.opening ?? ""].filter((part): part is string => part !== null && part !== "").join("\n\n"),
+      corpus: [itemBlock, corpus, evidence, pilots.get(key)?.opening ?? ""]
+        .filter((part): part is string => part !== null && part !== "")
+        .join("\n\n"),
       report,
       worktree: feature.worktree,
       contract,
@@ -1802,7 +2026,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const opened = pilots.get(key);
     if (opened !== undefined) {
       const compactions = result.compactions ?? opened.compactions;
-      pilots.set(key, { opening: opened.opening, cursor: compactions > opened.compactions ? 0 : lotEntries.length, compactions });
+      pilots.set(key, {
+        opening: opened.opening,
+        cursor: compactions > opened.compactions ? 0 : lotEntries.length,
+        compactions,
+      });
     }
     // Le tour du pilote est enregistré à sa fin, décision ou non (S-12).
     {
@@ -1863,7 +2091,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
           // Le recentrage n'entre PAS dans le journal : `journalLine` le rendrait dans le prompt de tout run suivant.
           journalDecision(feature, "review", "plafond", CAP_JOURNAL_QUESTION, label, "arbitrage", effect.justification);
         } else {
-          journalDecision(feature, item.phase, "echec", `échec du run /${item.phase} — relancer ou escalader ?`, label, "arbitrage", effect.justification);
+          journalDecision(
+            feature,
+            item.phase,
+            "echec",
+            `échec du run /${item.phase} — relancer ou escalader ?`,
+            label,
+            "arbitrage",
+            effect.justification,
+          );
         }
       }
     } else if (effect.kind === "abandon") {
@@ -1872,13 +2108,27 @@ export function createLotController(deps: LotControllerDeps): LotController {
         reason: text.length > LOT_REASON_MAX ? `${text.slice(0, LOT_REASON_MAX - 1)}…` : text,
       });
       if (refusal === null) {
-        journalDecision(feature, "review", "plafond", CAP_JOURNAL_QUESTION, `abandonné : ${effect.reason}`, "arbitrage", effect.justification);
+        journalDecision(
+          feature,
+          "review",
+          "plafond",
+          CAP_JOURNAL_QUESTION,
+          `abandonné : ${effect.reason}`,
+          "arbitrage",
+          effect.justification,
+        );
       }
     } else if (effect.kind === "approve") {
       refusal =
         item.kind === "specs"
-          ? await controller.validate(slug, { source: "arbitrage", ...(withJustification !== undefined ? { justification: withJustification } : {}) })
-          : await controller.accept(slug, { source: "arbitrage", ...(withJustification !== undefined ? { justification: withJustification } : {}) });
+          ? await controller.validate(slug, {
+              source: "arbitrage",
+              ...(withJustification !== undefined ? { justification: withJustification } : {}),
+            })
+          : await controller.accept(slug, {
+              source: "arbitrage",
+              ...(withJustification !== undefined ? { justification: withJustification } : {}),
+            });
     } else if (item.kind === "ask") {
       refusal = deliverAskAnswer(
         {
@@ -1951,13 +2201,19 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * jusqu'à la branche de sa première dépendance terminée. Rend ce que la phase B
    * consigne — chemin, branche, motif d'échec — sans toucher au lot.
    */
-  async function prepareWorktree(lot: Lot, feature: LotFeature): Promise<{ path?: string; branch?: string; error?: string }> {
+  async function prepareWorktree(
+    lot: Lot,
+    feature: LotFeature,
+  ): Promise<{ path?: string; branch?: string; error?: string }> {
     // L'arbre est déjà là mais la branche `feat/<slug>` n'existe pas : ce n'est
     // pas le worktree de cette feature, et git refuserait de le recréer — le
     // diagnostic est nommé plutôt que rendu par le message brut de git (S-2).
     const target = worktreePathFor(worktreesBase, deps.repoRoot, feature.slug);
     if (fs.existsSync(target)) {
-      const branch = await deps.runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${feature.branch}`], deps.repoRoot);
+      const branch = await deps.runGit(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${feature.branch}`],
+        deps.repoRoot,
+      );
       if (branch.code !== 0) return { error: "worktree sans branche" };
     }
     const made = await createFeatureWorktree({
@@ -1986,7 +2242,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
         if (merged.code !== 0) {
           // L'arbre ET sa branche existent : le chemin est consigné pour qu'il
           // ne reste pas orphelin, et l'échec est nommé (S-2).
-          return { path: made.path, branch: made.branch, error: `base ${base} non fusionnable : ${lastLine(merged.stderr) || `code ${merged.code}`}` };
+          return {
+            path: made.path,
+            branch: made.branch,
+            error: `base ${base} non fusionnable : ${lastLine(merged.stderr) || `code ${merged.code}`}`,
+          };
         }
       }
     }
@@ -2072,7 +2332,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // portée de `cancel` (une feature terminale) comme de `remove` (une feature
       // démarrée). Rien n'est donc appliqué, et l'arbre sans propriétaire est
       // retiré — la branche, elle, reste (même règle que les trois devenirs S-9).
-      if (!feature || feature.state !== "pending") {
+      if (feature?.state !== "pending") {
         if (item.result.path !== undefined) orphans.push(item.result.path);
         continue;
       }
@@ -2111,8 +2371,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // fermeture du relais (S-3).
       // Une question de feature AVEC contexte est tranchée par l'arbitre (S-9) : elle ne
       // prévient l'utilisateur que quand elle lui est escaladée.
-      const arbitrated = deps.arbiter !== undefined && feature.auditSession !== undefined && feature.escalation === undefined;
-      if (ask && !arbitrated && alertedAsk.get(feature.slug) !== ask.toolCallId && !auditRelayOpen(stateDir, feature, lot.owner.pid, now())) {
+      const arbitrated =
+        deps.arbiter !== undefined && feature.auditSession !== undefined && feature.escalation === undefined;
+      if (
+        ask &&
+        !arbitrated &&
+        alertedAsk.get(feature.slug) !== ask.toolCallId &&
+        !auditRelayOpen(stateDir, feature, lot.owner.pid, now())
+      ) {
         alertedAsk.set(feature.slug, ask.toolCallId);
         const text =
           `[pipeline] ${repo}/${feature.slug} attend ta réponse (maillon /${feature.phase}) — /pipelines\n` +
@@ -2209,7 +2475,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
         launches.push(...routed.launches);
         if (routed.release) releases.push(feature);
       } else {
-        settle(lot, feature, "failed", wasInterrupted ? "exécution interrompue (run arrêté)" : "exécution interrompue (pilote disparu)");
+        settle(
+          lot,
+          feature,
+          "failed",
+          wasInterrupted ? "exécution interrompue (run arrêté)" : "exécution interrompue (pilote disparu)",
+        );
       }
       changed = true;
     }
@@ -2306,7 +2577,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** Le pompage demandé : une passe à la fois, aucune perdue (patron de `tick`). */
   function pumpCommands(): Promise<void> {
-    const next = pumpQueue.then(() => pumpPass(), () => pumpPass());
+    const next = pumpQueue.then(
+      () => pumpPass(),
+      () => pumpPass(),
+    );
     pumpQueue = next.catch(() => undefined);
     return next;
   }
@@ -2477,7 +2751,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const tip = await deps.runGit(["rev-parse", "--verify", `${avanceRefOf(feature.slug)}^{commit}`], cwd);
     const head = await deps.runGit(["rev-parse", "HEAD"], cwd);
     if (tip.code !== 0 || head.code !== 0) {
-      notify(`[pipeline] commande avance : avance impossible : ${lastLine(tip.code !== 0 ? tip.stderr : head.stderr) || "rev-parse"}`);
+      notify(
+        `[pipeline] commande avance : avance impossible : ${lastLine(tip.code !== 0 ? tip.stderr : head.stderr) || "rev-parse"}`,
+      );
       return;
     }
     const from = head.stdout.trim();
@@ -2516,7 +2792,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * d'origine et ne journalise rien. L'arbitrage n'annule jamais : une feature devenue
    * vivante entre l'accusé et l'effet est refusée avant toute écriture.
    */
-  async function applyArbitrage(cmd: Extract<PipelineCommand, { kind: "arbitrage" }>, actions: LotController): Promise<void> {
+  async function applyArbitrage(
+    cmd: Extract<PipelineCommand, { kind: "arbitrage" }>,
+    actions: LotController,
+  ): Promise<void> {
     const late = commandRefusal(cmd, commandViewOf(cmd, false));
     if (late !== null) {
       notify(`[pipeline] commande arbitrage : ${late}`);
@@ -2533,10 +2812,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
       original = null;
     }
     try {
-      const augmented = appendPilotArbitrage(original === null ? null : original.toString("utf8"), cmd.text, new Date(now()));
+      const augmented = appendPilotArbitrage(
+        original === null ? null : original.toString("utf8"),
+        cmd.text,
+        new Date(now()),
+      );
       writeBytesAtomic(file, Buffer.from(augmented, "utf8"));
     } catch (err) {
-      notify(`[pipeline] commande arbitrage : écriture du contrat impossible : ${err instanceof Error ? err.message : String(err)}`);
+      notify(
+        `[pipeline] commande arbitrage : écriture du contrat impossible : ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
     let refusal: string | null;
@@ -2607,7 +2892,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       feature,
       feature.phase,
       "question",
-      asked && asked.toolCallId === cmd.toolCallId ? asked.question : (questionOf(feature.waitPrompt) ?? "(question sans texte)"),
+      asked && asked.toolCallId === cmd.toolCallId
+        ? asked.question
+        : (questionOf(feature.waitPrompt) ?? "(question sans texte)"),
       cmd.selected ?? cmd.custom ?? "",
       source,
       justification,
@@ -3291,7 +3578,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const knownFeature = known ? lotFeature(known, slug) : undefined;
       if (known && knownFeature) {
         const live = liveWriterOf(known, knownFeature);
-        const direct = rowReply(knownFeature, { ...live, ...(fromRelay ? { auditRelay: false } : {}), viaArbiter: source !== "utilisateur" });
+        const direct = rowReply(knownFeature, {
+          ...live,
+          ...(fromRelay ? { auditRelay: false } : {}),
+          viaArbiter: source !== "utilisateur",
+        });
         if (direct.kind === "closed") return direct.reason;
         if (direct.kind === "ask") return ASK_REPLY_REFUSAL;
         if (direct.kind === "steer") return deliverSteer(direct.inbox, trimmed);
@@ -3304,7 +3595,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const { lot, feature } = opened;
       if (!feature) return lotFeatureMissingRefusal(slug);
       const live = liveWriterOf(lot, feature);
-      const reply = rowReply(feature, { ...live, ...(fromRelay ? { auditRelay: false } : {}), viaArbiter: source !== "utilisateur" });
+      const reply = rowReply(feature, {
+        ...live,
+        ...(fromRelay ? { auditRelay: false } : {}),
+        viaArbiter: source !== "utilisateur",
+      });
       if (reply.kind === "closed") return reply.reason;
       if (reply.kind === "ask") return ASK_REPLY_REFUSAL;
       if (reply.kind === "steer") return deliverSteer(reply.inbox, trimmed);
@@ -3333,7 +3628,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
       });
       // Le journal (S-7) : une réponse À UNE QUESTION, une fois appliquée.
       if (started === null && asked !== null) {
-        journalDecision(feature, feature.phase, "question", questionOf(asked) ?? asked, trimmed, source, options?.justification);
+        journalDecision(
+          feature,
+          feature.phase,
+          "question",
+          questionOf(asked) ?? asked,
+          trimmed,
+          source,
+          options?.justification,
+        );
       }
       return started;
     },
@@ -3373,8 +3676,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
         delete feature.implLots;
         delete feature.implLot;
       }
-      const started = await startPlanned(lot, feature, { slug, phase: "impl", fix: false, kind: "phase", resume: false });
-      if (started === null) journalDecision(feature, "specs", "jalon", "specs validées ?", "validé", source, options?.justification);
+      const started = await startPlanned(lot, feature, {
+        slug,
+        phase: "impl",
+        fix: false,
+        kind: "phase",
+        resume: false,
+      });
+      if (started === null)
+        journalDecision(feature, "specs", "jalon", "specs validées ?", "validé", source, options?.justification);
       else {
         delete feature.milestoneSource;
         delete feature.implLots;
@@ -3395,8 +3705,23 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (source === "utilisateur" && feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
       feature.milestoneSource = source;
       delete feature.escalation;
-      const started = await startPlanned(lot, feature, { slug, phase: "release", fix: false, kind: "phase", resume: false });
-      if (started === null) journalDecision(feature, "review", "jalon", "revue propre : livrer ?", "accepté", source, options?.justification);
+      const started = await startPlanned(lot, feature, {
+        slug,
+        phase: "release",
+        fix: false,
+        kind: "phase",
+        resume: false,
+      });
+      if (started === null)
+        journalDecision(
+          feature,
+          "review",
+          "jalon",
+          "revue propre : livrer ?",
+          "accepté",
+          source,
+          options?.justification,
+        );
       else delete feature.milestoneSource;
       return started;
     },
@@ -3415,7 +3740,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const slugs = quotaGroupsOf(lot, inScope).find((group) => group.provider === provider)?.slugs ?? [];
       if (slugs.length === 0) return `aucune feature bloquée par le quota ${provider}`;
       const hit = exhaustedUntil(stateDir, model, at);
-      if (hit !== null) return `${model} est épuisé ${quotaDeadlineLabel(hit.until, hit.announced)} — choisis un autre modèle`;
+      if (hit !== null)
+        return `${model} est épuisé ${quotaDeadlineLabel(hit.until, hit.announced)} — choisis un autre modèle`;
       // Le repli du groupe du run bloqué devient M ; le principal ne change JAMAIS,
       // et un M qui EST le principal du groupe laisse la feature telle quelle.
       for (const slug of slugs) {
@@ -3430,7 +3756,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
         for (const slug of slugs) {
           const feature = lotFeature(lot, slug) as LotFeature;
           const quota = feature.quota as NonNullable<LotFeature["quota"]>;
-          journalDecision(feature, quota.phase, "quota", `quota ${provider} épuisé — relancer avec quel repli ?`, model);
+          journalDecision(
+            feature,
+            quota.phase,
+            "quota",
+            `quota ${provider} épuisé — relancer avec quel repli ?`,
+            model,
+          );
         }
       }
       if (written !== null) return written;

@@ -10,8 +10,6 @@ import type { PipelinePhase } from "./contract.ts";
 import { realpathOr } from "./git.ts";
 import type { Lot, LotFeature } from "./lot.ts";
 
-
-
 // --- la valeur et ses choix (S-1) --------------------------------------------
 
 /**
@@ -39,12 +37,10 @@ export const DEFAULT_MODEL_CHOICE: ModelChoice = { value: "", label: DEFAULT_MOD
 /** Ce que dit l'option par défaut dans un dialogue de l'hôte (S-2). */
 export const DEFAULT_MODEL_DESCRIPTION = "aucun --model sur les runs de cette feature";
 
-
 /** Le sélecteur canonique d'un modèle — exactement la valeur passée à `--model`. */
 export function modelSelector(model: ModelRow): string {
   return `${model.provider}/${model.id}`;
 }
-
 
 /**
  * Les choix d'une liste de modèles connus : « défaut OMP » en TÊTE, puis les
@@ -61,7 +57,6 @@ export function modelChoices(models: readonly ModelRow[]): ModelChoice[] {
   return [DEFAULT_MODEL_CHOICE, ...listed];
 }
 
-
 /**
  * Le filtre de l'étape du panneau (S-4) : le libellé CONTIENT `query`, sans tenir
  * compte de la casse. L'entrée « défaut OMP » n'est jamais filtrée — elle reste la
@@ -71,8 +66,6 @@ export function filterModelChoices(choices: readonly ModelChoice[], query: strin
   const needle = query.toLowerCase();
   return choices.filter((choice) => choice.value === "" || choice.label.toLowerCase().includes(needle));
 }
-
-
 
 // --- les deux groupes de phase (S-1) -----------------------------------------
 
@@ -155,10 +148,10 @@ export function featureModelSlots(feature: ModelSlotsCarrier): ModelSlots | null
  * telle quelle. Une entrée blanche EFFACE donc la clé — c'est ce qui rend le défaut
  * OMP représentable à l'écriture.
  */
-export function modelSlotsField(input: {
-  modelReqSpecs?: string | null;
-  modelImplReview?: string | null;
-}): { modelReqSpecs?: string; modelImplReview?: string } {
+export function modelSlotsField(input: { modelReqSpecs?: string | null; modelImplReview?: string | null }): {
+  modelReqSpecs?: string;
+  modelImplReview?: string;
+} {
   const out: { modelReqSpecs?: string; modelImplReview?: string } = {};
   if (typeof input.modelReqSpecs === "string" && input.modelReqSpecs.trim() !== "") {
     out.modelReqSpecs = input.modelReqSpecs;
@@ -168,7 +161,6 @@ export function modelSlotsField(input: {
   }
   return out;
 }
-
 
 // --- le repli de chaque groupe (S-1) -----------------------------------------
 
@@ -195,10 +187,10 @@ export function featureFallbackForPhase(feature: FallbackSlotsCarrier, phase: Pi
  * Les champs de repli à ÉCRIRE dans le lot (S-1) : une clé n'existe que pour une
  * valeur exploitable (non vide après `trim()`), jamais `""` ni `null`.
  */
-export function fallbackSlotsField(input: {
-  fallbackReqSpecs?: string | null;
-  fallbackImplReview?: string | null;
-}): { fallbackReqSpecs?: string; fallbackImplReview?: string } {
+export function fallbackSlotsField(input: { fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }): {
+  fallbackReqSpecs?: string;
+  fallbackImplReview?: string;
+} {
   const out: { fallbackReqSpecs?: string; fallbackImplReview?: string } = {};
   if (typeof input.fallbackReqSpecs === "string" && input.fallbackReqSpecs.trim() !== "") {
     out.fallbackReqSpecs = input.fallbackReqSpecs;
@@ -222,7 +214,6 @@ export function fallbackEqualsPrimaryRefusal(
   if (typeof fallback !== "string" || fallback.trim() === "") return null;
   return primary === fallback ? `repli identique au modèle principal (${MODEL_GROUP_LABELS[group]})` : null;
 }
-
 
 /**
  * Le modèle de la feature du lot dont le `worktree` est le même répertoire que
@@ -258,12 +249,10 @@ export function featureFallbackOf(lot: Lot | null, cwd: string, phase: PipelineP
   return null;
 }
 
-
 // --- les portes à dialogue (S-2) ---------------------------------------------
 
 /** Une option de dialogue de l'hôte : le sélecteur en libellé, la description du défaut. */
 export type ModelSelectItem = { label: string; description?: string };
-
 
 /**
  * Les options du dialogue de l'hôte, ou `[]` quand aucun modèle n'est connu — auquel
@@ -277,7 +266,6 @@ export function modelDialogOptions(models: readonly ModelRow[]): ModelSelectItem
   }));
 }
 
-
 /**
  * Le titre du dialogue d'un groupe de modèle — le même dans toutes les portes, à
  * ceci près que le groupe et le slug le nomment (S-2).
@@ -285,7 +273,6 @@ export function modelDialogOptions(models: readonly ModelRow[]): ModelSelectItem
 export function modelQuestionTitle(slug: string, group: ModelGroupKey): string {
   return `Modèle ${MODEL_GROUP_LABELS[group]} — ${slug}`;
 }
-
 
 /**
  * La traduction du libellé rendu par un dialogue : `null` = l'utilisateur a annulé
@@ -297,7 +284,6 @@ export function modelDialogChoice(label: string | undefined): { model: string | 
   return { model: label === DEFAULT_MODEL_LABEL ? null : label };
 }
 
-
 /**
  * Les choix de l'ÉTAPE du panneau (S-4) : `[]` quand aucun modèle n'est connu —
  * l'étape n'existe alors pas, et le flux d'ajout reste celui d'aujourd'hui.
@@ -306,36 +292,32 @@ export function modelPanelChoices(models: readonly ModelRow[]): ModelChoice[] {
   return models.length === 0 ? [] : modelChoices(models);
 }
 
-
 /** Le libellé de l'option « aucun repli » — mot pour mot dans toutes les portes (S-1). */
 export const NO_FALLBACK_LABEL = "aucun repli";
 
 /** Ce que dit l'option « aucun repli » dans un dialogue de l'hôte (S-1). */
 export const NO_FALLBACK_DESCRIPTION = "si le modèle principal est épuisé, la feature passe en « bloquée : quota »";
 
-
 /** Le titre du dialogue de repli d'un groupe — le même dans toutes les portes (S-1). */
 export function fallbackQuestionTitle(slug: string, group: ModelGroupKey): string {
   return `Repli ${MODEL_GROUP_LABELS[group]} — ${slug}`;
 }
-
 
 /**
  * Les options du dialogue de repli (S-1) : « aucun repli » d'abord, puis chaque
  * sélecteur du catalogue SAUF le principal choisi juste avant. « défaut OMP » n'est
  * jamais une option de repli. Catalogue vide : `[]` — aucun dialogue.
  */
-export function fallbackDialogOptions(
-  models: readonly ModelRow[],
-  principal: string | null,
-): ModelSelectItem[] {
+export function fallbackDialogOptions(models: readonly ModelRow[], principal: string | null): ModelSelectItem[] {
   if (models.length === 0) return [];
   return [
     { label: NO_FALLBACK_LABEL, description: NO_FALLBACK_DESCRIPTION },
-    ...models.map(modelSelector).filter(selector => selector !== principal).map(label => ({ label })),
+    ...models
+      .map(modelSelector)
+      .filter((selector) => selector !== principal)
+      .map((label) => ({ label })),
   ];
 }
-
 
 /**
  * La traduction du libellé d'un dialogue de repli (S-1) : `null` = annulation
@@ -346,14 +328,12 @@ export function fallbackDialogChoice(label: string | undefined): { fallback: str
   return { fallback: label === NO_FALLBACK_LABEL ? null : label };
 }
 
-
 /** La porte `ctx.ui.select` de l'hôte, réduite à ce que les dialogues de modèle utilisent. */
 export type ModelSelectFn = (
   title: string,
   options: ModelSelectItem[],
   opts?: { signal?: AbortSignal },
 ) => Promise<string | undefined>;
-
 
 /**
  * Les QUATRE dialogues de création d'une feature (S-1), dans l'ordre : principal
@@ -389,7 +369,6 @@ export async function askFeatureModels(
   return { models: picked, fallbacks };
 }
 
-
 // --- les quatre étapes de liste du panneau (S-1) -----------------------------
 
 /**
@@ -420,7 +399,7 @@ export const NO_FALLBACK_CHOICE: ModelChoice = { value: "", label: NO_FALLBACK_L
  * SANS « défaut OMP » et sans le principal choisi juste avant.
  */
 export function fallbackChoices(catalogue: readonly ModelChoice[], principal: string | null): ModelChoice[] {
-  return [NO_FALLBACK_CHOICE, ...catalogue.filter(choice => choice.value !== "" && choice.value !== principal)];
+  return [NO_FALLBACK_CHOICE, ...catalogue.filter((choice) => choice.value !== "" && choice.value !== principal)];
 }
 
 /** La liste AFFICHABLE d'une étape : le catalogue tel quel (principal), ou la liste de repli du brouillon. */

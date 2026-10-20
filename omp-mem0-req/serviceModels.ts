@@ -13,10 +13,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { badRequest, conflict, ServiceError } from "./serviceApi.ts";
 
-
 /** Les niveaux de réflexion de l'API (Vocabulaire des specs) : `auto` n'est jamais proposé. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"] as const;
-
 
 /** Le modèle d'une session et son niveau, tels que l'API les rend. */
 export type ModelState = { model: string | null; thinkingLevel: string | null };
@@ -27,7 +25,6 @@ export type ProjectModelDefault = ModelState;
 /** Un choix demandé : `thinkingLevel` `null` = aucun niveau (le choix d'OMP). */
 export type ModelRequest = { model: string; thinkingLevel: string | null };
 
-
 // --- raisons de refus (texte exact des specs) --------------------------------
 
 /** Une cause rapportée par OMP ou par une raison du service peut finir par un point : la phrase n'en porte qu'un. */
@@ -35,7 +32,8 @@ const stripEnd = (cause: string): string => cause.replace(/[.\s]+$/, "");
 
 export const R_BUSY = "Changement impossible pendant que OMP répond : attendez la fin du tour.";
 export const R_PURPOSE = "Seule la session de la section « Session OMP » change de modèle par cette route.";
-export const R_UNAVAILABLE = (selector: string): string => `Modèle inutilisable : OMP n'a pas d'authentification pour ${selector}.`;
+export const R_UNAVAILABLE = (selector: string): string =>
+  `Modèle inutilisable : OMP n'a pas d'authentification pour ${selector}.`;
 export const R_LEVEL = (selector: string, level: string): string =>
   `Le modèle ${selector} ne prend pas en charge le niveau de réflexion « ${level} ».`;
 export const R_SAVE = (cause: string): string =>
@@ -45,7 +43,6 @@ export const R_DEFAULT_NOT_APPLIED = (selector: string, cause: string): string =
 /** L'écriture du défaut SANS session (`POST /v1/projects/{repo}/model`) : R_SAVE parlerait d'une session. */
 export const R_WRITE = (cause: string): string => `Défaut du projet non enregistré : ${stripEnd(cause)}.`;
 export const R_UNREADABLE = (cause: string): string => `Défaut du projet illisible : ${stripEnd(cause)}.`;
-
 
 // --- vocabulaire --------------------------------------------------------------
 
@@ -96,7 +93,7 @@ export function formatModelDefault(model: string, level: string | null): string 
 /** Le corps `{model, thinkingLevel?}` de S-2 et S-3, validé dans sa FORME (400 sinon). */
 export function parseModelRequest(body: unknown): ModelRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw badRequest("corps attendu : {\"model\":\"fournisseur/modèle\",\"thinkingLevel\":\"…\"}");
+    throw badRequest('corps attendu : {"model":"fournisseur/modèle","thinkingLevel":"…"}');
   }
   const record = body as { model?: unknown; thinkingLevel?: unknown };
   if (typeof record.model !== "string" || record.model.trim() === "" || !record.model.includes("/")) {
@@ -108,7 +105,6 @@ export function parseModelRequest(body: unknown): ModelRequest {
   }
   return { model: record.model, thinkingLevel: level ?? null };
 }
-
 
 // --- le défaut OMP du projet (S-3) --------------------------------------------
 
@@ -151,7 +147,6 @@ export function createProjectModelStore(pi: ExtensionAPI): ProjectModelStore {
   return store;
 }
 
-
 // --- l'application d'un choix à une session (S-2, S-4) -------------------------
 
 /** La surface d'une session OMP que l'application d'un choix touche. */
@@ -164,9 +159,13 @@ export type ModelSession = Pick<AgentSession, "isStreaming" | "getAvailableModel
  * (400). Puis `setModel` (sans `persist`) et ENSUITE `setThinkingLevel` : `setModel`
  * ré-applique le niveau par défaut du modèle, le choix de l'utilisateur doit le suivre.
  */
-export async function applySessionModel(session: ModelSession, request: ModelRequest, options: { running: boolean }): Promise<void> {
+export async function applySessionModel(
+  session: ModelSession,
+  request: ModelRequest,
+  options: { running: boolean },
+): Promise<void> {
   if (options.running || session.isStreaming) throw conflict(R_BUSY);
-  const model = session.getAvailableModels().find(candidate => selectorOf(candidate) === request.model);
+  const model = session.getAvailableModels().find((candidate) => selectorOf(candidate) === request.model);
   if (!model) throw conflict(R_UNAVAILABLE(request.model));
   if (request.thinkingLevel !== null && !offeredLevels(model as ModelLike).includes(request.thinkingLevel)) {
     throw new ServiceError(400, "bad_request", R_LEVEL(request.model, request.thinkingLevel));
@@ -175,16 +174,20 @@ export async function applySessionModel(session: ModelSession, request: ModelReq
     await session.setModel(model);
   } catch (err) {
     const cause = causeOf(err);
-    throw conflict(cause.includes("No API key") ? R_UNAVAILABLE(request.model) : `Changement refusé par OMP : ${cause}`);
+    throw conflict(
+      cause.includes("No API key") ? R_UNAVAILABLE(request.model) : `Changement refusé par OMP : ${cause}`,
+    );
   }
   if (request.thinkingLevel !== null) {
     session.setThinkingLevel(request.thinkingLevel as Parameters<AgentSession["setThinkingLevel"]>[0]);
   }
 }
 
-
 /** Le modèle et le niveau ACTIFS d'une session (S-1) : `null` quand OMP n'en a pas. */
-export function modelStateOf(session: { model?: ModelLike | null; configuredThinkingLevel?: () => string | null | undefined }): ModelState {
+export function modelStateOf(session: {
+  model?: ModelLike | null;
+  configuredThinkingLevel?: () => string | null | undefined;
+}): ModelState {
   const model = session.model;
   const level = typeof session.configuredThinkingLevel === "function" ? session.configuredThinkingLevel() : null;
   return { model: model ? selectorOf(model) : null, thinkingLevel: typeof level === "string" ? level : null };

@@ -1,7 +1,11 @@
 // Amorces et directives des maillons.
-import { CONTRACT_PATH, DOCUMENTATION_EXCERPT_MAX, contractEditRule, contractReadRule, MAILLON_DONE_RULE } from "./contract.ts";
-
-
+import {
+  CONTRACT_PATH,
+  DOCUMENTATION_EXCERPT_MAX,
+  contractEditRule,
+  contractReadRule,
+  MAILLON_DONE_RULE,
+} from "./contract.ts";
 
 // ---------------------------------------------------------------------------
 // /req — directive injectée en mode collecte. Clarifie l'INTENTION seulement :
@@ -42,7 +46,6 @@ Règles :
 
 8. N'écris PAS les besoins ni les critères en mémoire mem0 : ce sont des artefacts transitoires de cette feature, ils vivent dans le contrat, pas dans la mémoire durable.`;
 
-
 // ---------------------------------------------------------------------------
 // /specs — fige les ambiguïtés techniques contre le dépôt réel, écrit les specs
 // (tracées vers les critères d'acceptation) puis les LOTS : les briefs typés qui
@@ -78,8 +81,8 @@ Si type = archi :
 - CONFIG / ENV / SECRETS, et compatibilité ascendante (migration des données existantes).`;
 
 /** Consigne de borne de contexte, partagée par les directives des maillons (cf. `lotContextThresholds`, `createRunCompaction`). */
-export const CONTEXT_BOUND_LINE = "Au-delà de MEM0_PIPELINE_CONTEXT_SOFT_<PHASE> tokens de contexte (sinon MEM0_PIPELINE_CONTEXT_SOFT ; 90 000 par défaut en /review, 120 000 ailleurs), le service compacte ta session à la fin du tour et te rappelle le livrable attendu ; à MEM0_PIPELINE_CONTEXT_HARD (250 000 par défaut), il te demande d'écrire ta section livrable immédiatement et ne coupe le run que si ce dernier tour dépasse 5 minutes.";
-
+export const CONTEXT_BOUND_LINE =
+  "Au-delà de MEM0_PIPELINE_CONTEXT_SOFT_<PHASE> tokens de contexte (sinon MEM0_PIPELINE_CONTEXT_SOFT ; 90 000 par défaut en /review, 120 000 ailleurs), le service compacte ta session à la fin du tour et te rappelle le livrable attendu ; à MEM0_PIPELINE_CONTEXT_HARD (250 000 par défaut), il te demande d'écrire ta section livrable immédiatement et ne coupe le run que si ce dernier tour dépasse 5 minutes.";
 
 export const SPECS_DIRECTIVE = `Tu es un rédacteur de spécifications. Ton livrable : des specs qu'un agent d'implémentation exécute d'un seul passage, sans avoir à te reposer une question, PLUS les lots (briefs) qui disent comment les construire. L'ambiguïté est l'ennemi : une spec qui laisse un choix ouvert n'est pas finie.
 
@@ -106,7 +109,6 @@ Ce qu'est une BONNE spec (rubric — chaque spec les respecte toutes) :
 
 Une spec qui ne permet pas d'écrire le test d'acceptation avant le code n'est pas assez précise : reprends-la.`;
 
-
 /**
  * Amorce de la session de spécification. Fonction pure. Besoins ET critères d'acceptation
  * ne sont PAS portés ici : ils vivent dans le contrat (écrit par /req). `extra` = contexte
@@ -125,7 +127,6 @@ export function buildSpecsSeed(extra: string): string {
   );
 }
 
-
 // ---------------------------------------------------------------------------
 // /audit — analyse le dépôt en lecture seule, propose faiblesses et features,
 // lance les pipelines des éléments que l'utilisateur coche, puis relaie leurs
@@ -136,14 +137,12 @@ export function buildSpecsSeed(extra: string): string {
 export const AUDIT_ANALYSIS_STEPS = `1. Analyse le dépôt en LECTURE SEULE : DÉLÈGUE OBLIGATOIREMENT sa lecture à des sous-agents scout (outil task, agent scout) — architecture, dette, tests, sécurité, documentation, conventions — et ne garde dans ta session que leurs rapports ; tu ne lis toi-même (read, grep, glob, lsp, mem0_search) que les fichiers qu'un rapport désigne comme à vérifier. N'écris, ne modifie et ne commite AUCUN fichier, et interdis-le à tes sous-agents.
 2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` — de 1 à 20 faiblesses numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <constat, avec le fichier ou le module concerné, et ce que la corriger veut dire>\` —, puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi. Chaque faiblesse et chaque feature est un élément que l'utilisateur pourra lancer : son nom est unique dans toute la proposition. Quand un élément ne peut être construit qu'après la livraison d'un autre élément de la proposition, termine sa ligne par \`(après <nom>, <nom>)\`.`;
 
-
 export const AUDIT_DIRECTIVE = `Tu es l'auditeur de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
 ${AUDIT_ANALYSIS_STEPS}
 3. Appelle ENSUITE l'outil \`audit_propose\` avec exactement ces éléments : \`weaknesses\` et \`features\`, chaque élément sous la forme \`{ name, intention, deps }\` — mêmes noms, mêmes textes (l'intention d'une faiblesse est son constat), \`deps\` = les noms des éléments dont il dépend (liste vide sinon) — \`brief\` : \`{ purpose, function, decisions, constraints, nonGoals }\`, le brief durable de l'audit tiré du cadrage (but, fonction, décisions déjà prises, contraintes, non-objectifs ; les trois listes sont des phrases courtes, vides si rien n'a été dit) — et \`rapport\` : le texte COMPLET de ton analyse de l'étape 2 (sections \`## Faiblesses\` et \`## Features proposées\` comprises), avec les fichiers, symboles et chemins cités ; l'outil refuse un \`rapport\` absent ou vide, et l'arbitre le relira pour trancher. L'utilisateur valide ce brief dans un éditeur, et chaque étape des pipelines le relira avant de poser une question. C'est l'outil qui montre à l'utilisateur la liste à cocher, lui fait valider l'intention et choisir le modèle de chaque élément coché, puis lance leurs pipelines : ne pose jamais ces choix toi-même. Si l'utilisateur te demande plus tard d'autres lancements de cette analyse, rappelle \`audit_propose\` avec la MÊME proposition et le brief à jour (il est réécrit après validation, avec le rapport) : les éléments déjà lancés n'y sont plus cochables.
 4. Tu deviens le relais de chaque pipeline lancée, mais tu ne réponds JAMAIS à sa place : un arbitre éphémère tranche chaque question d'un maillon (/req, /specs, /impl, /review) et chaque jalon d'après le rapport, le brief, le contrat, le journal du lot et le dépôt (lecture seule), sans que tu aies à intervenir. Tu ne reçois un message \`[audit]\` que pour ce qu'il n'a pas pu trancher — une escalade (question, options numérotées, motif de l'arbitre), un plafond de la boucle revue ⇄ correction ou un quota épuisé — avec un identifiant d'élément. Plusieurs messages peuvent arriver en même temps : traite-les un par un, dans leur ordre d'arrivée, CHAQUE élément par exactement UN appel de \`audit_escalate\` qui porte son identifiant : l'outil ouvre le dialogue de l'utilisateur et transmet sa réponse mot pour mot. Il n'existe aucun outil pour répondre, valider ou accepter à sa place : la décision est TOUJOURS celle de l'utilisateur.
    Avant un \`audit_escalate\`, écris en une phrase de quoi il s'agit. N'utilise jamais l'outil \`ask\` pour relayer une question : seul \`audit_escalate\` transmet la réponse de l'utilisateur mot pour mot.
 5. N'annonce aucune commande et ne lance aucun maillon de toi-même : la chaîne est pilotée par le lot.`;
-
 
 /** Amorce de la session /audit. Fonction pure : `extra` = contexte ajouté sur la ligne de commande. */
 export function buildAuditSeed(repoDir: string, extra: string): string {
@@ -153,7 +152,6 @@ export function buildAuditSeed(repoDir: string, extra: string): string {
     AUDIT_DIRECTIVE
   );
 }
-
 
 /**
  * Amorce de la session d'analyse d'un audit lancé depuis la section Audit d'OMP
@@ -190,7 +188,6 @@ export const PROJECT_DIRECTIVE = `Tu conduis le projet de ce dépôt. Procédure
 4. ÉVOLUTION DU PLAN — quand l'utilisateur demande d'ajouter, retirer ou modifier une feature, ou quand tu proposes toi-même un changement, appelle \`project_amend\` avec la liste COMPLÈTE des segments pas encore démarrés : l'outil fait valider la modification par l'utilisateur, et rien n'est appliqué sans cette validation. Si la modification change une décision, une contrainte ou un non-objectif du brief, passe aussi \`decisions\`, \`constraints\` ou \`nonGoals\` (la liste COMPLÈTE de la rubrique, qui remplace l'ancienne) ; \`purpose\` et \`function\` mettent à jour le but et la fonction.
 5. Tu ne fusionnes JAMAIS une PR, tu ne lances aucun maillon de toi-même et tu n'annonces aucune commande : un segment démarre seul quand toutes les PR du segment précédent ont été fusionnées par l'utilisateur.`;
 
-
 /** Amorce du cadrage /project. Fonction pure : `extra` = contexte ajouté sur la ligne de commande. */
 export function buildProjectSeed(repoDir: string, extra: string): string {
   return (
@@ -199,7 +196,6 @@ export function buildProjectSeed(repoDir: string, extra: string): string {
     PROJECT_DIRECTIVE
   );
 }
-
 
 /**
  * Amorce de la REPRISE d'un projet dont le plan est validé (S-4) : le document du
@@ -213,7 +209,6 @@ export function buildProjectResumeSeed(repoDir: string, extra: string, doc: stri
     PROJECT_DIRECTIVE
   );
 }
-
 
 // ---------------------------------------------------------------------------
 // /impl — implémente d'un trait les specs ET les lots figés dans le contrat, et
@@ -237,7 +232,6 @@ Quand le prompt nomme un lot (BR-<n>), implémente CE lot seulement — ses spec
 
 Le livrable n'est pas « du code qui compile » mais « chaque critère d'acceptation vérifié par un test traçable ».`;
 
-
 export const IMPL_FIX_DIRECTIVE = `Tu es un agent d'implémentation en mode CORRECTION. Une revue a bloqué l'implémentation ; ton contrat : lever les points bloquants qu'elle a consignés, sans élargir le périmètre.
 
 Procédure OBLIGATOIRE, dans l'ordre :
@@ -248,7 +242,6 @@ Procédure OBLIGATOIRE, dans l'ordre :
 5. À la fin : consigne tes levées dans une section \`## Corrections\` du contrat (édite ce titre, crée-le s'il n'existe pas) — n'écris JAMAIS dans \`## Revue\`, qui est le verdict de /review et n'appartient qu'à lui : c'est /review qui le réécrit, et une levée écrite là ferait passer pour revu un code qui ne l'est pas. Récapitule bloquant par bloquant (levé + preuve), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES.
 
 Le livrable : chaque BLOQUANT de la revue est levé et re-prouvé. ${MAILLON_DONE_RULE}`;
-
 
 /**
  * Amorce de la session d'implémentation. Fonction pure. Les specs vivent dans le
@@ -271,7 +264,6 @@ export function buildImplSeed(focus: string, fix = false, options: { impliedBloc
       `figées dans le contrat ${CONTRACT_PATH}, sans les redéfinir.\n\n`;
   return header + (f ? `Périmètre : ${f}\n\n` : "") + (fix ? IMPL_FIX_DIRECTIVE : IMPL_DIRECTIVE);
 }
-
 
 // ---------------------------------------------------------------------------
 // /review — révise le git diff contre le contrat, CRITÈRE PAR CRITÈRE : tous les
@@ -307,10 +299,8 @@ Format du verdict (dans le contrat ET dans ta réponse) :
 
 ${MAILLON_DONE_RULE}`;
 
-
 /** Le périmètre d'une revue INCRÉMENTALE (après un --fix, `reviewScopeFor`) : les bloquants que la correction devait lever. */
 export type ReviewScope = { kind: "incremental"; blockers: string[] };
-
 
 /**
  * Amorce de la session de revue. Fonction pure. Besoins, critères, specs et lots
@@ -340,7 +330,6 @@ export function buildReviewSeed(focus: string, options: { incremental?: ReviewSc
     REVIEW_DIRECTIVE
   );
 }
-
 
 // ---------------------------------------------------------------------------
 // L'ARBITRE (S-9) : une session éphémère par élément, qui tranche sur pièces.

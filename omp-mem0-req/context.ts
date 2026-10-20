@@ -8,7 +8,6 @@ import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { ensureStateDir, STATE_FILE_MODE, writeStateFileAtomic } from "./store.ts";
 
-
 /** D'où vient une décision : le contexte (brief, journal), l'arbitre, l'utilisateur. */
 export type DecisionSource = "contexte" | "arbitrage" | "utilisateur";
 
@@ -62,7 +61,6 @@ const NO_BRIEF = "(aucun brief validé)";
 const NO_DECISION = "(aucune décision consignée)";
 const NONE_ITEM = "- (aucune)";
 
-
 // --- le brief (S-6) ----------------------------------------------------------
 
 /** `sha1(path.resolve(contextKey)).slice(0,16)` : la règle du battement de relais (store.ts). */
@@ -70,17 +68,14 @@ export function contextIdOf(contextKey: string): string {
   return crypto.createHash("sha1").update(path.resolve(contextKey)).digest("hex").slice(0, 16);
 }
 
-
 export function briefPathFor(stateDir: string, contextKey: string): string {
   return path.join(stateDir, "briefs", `${contextIdOf(contextKey)}.md`);
 }
-
 
 function renderList(items: readonly string[]): string {
   const kept = items.map((item) => item.trim()).filter((item) => item !== "");
   return kept.length === 0 ? NONE_ITEM : kept.map((item) => `- ${item}`).join("\n");
 }
-
 
 /** Le gabarit du brief (S-6) : titre puis les cinq rubriques, dans l'ordre. */
 export function renderBrief(fields: BriefFields): string {
@@ -105,7 +100,6 @@ export function renderBrief(fields: BriefFields): string {
   ].join("\n");
 }
 
-
 /** Le corps d'une rubrique `## <name>` (jusqu'à la rubrique `## ` suivante), `null` si elle manque. */
 function rubricBody(text: string, name: string): string | null {
   const lines = text.split("\n");
@@ -119,7 +113,6 @@ function rubricBody(text: string, name: string): string | null {
   return body.join("\n").trim();
 }
 
-
 /**
  * La première rubrique absente d'un brief, `null` s'il est complet (S-6 « brief
  * incomplet »). `sections` : les rubriques exigées (celles d'un brief d'audit de
@@ -132,7 +125,6 @@ export function briefRubricsMissing(text: string, sections: readonly string[] = 
   return null;
 }
 
-
 function parseList(body: string | null): string[] {
   if (body === null) return [];
   return body
@@ -140,7 +132,6 @@ function parseList(body: string | null): string[] {
     .map((line) => line.replace(/^\s*[-*]\s+/, "").trim())
     .filter((line) => line !== "" && line !== "(aucune)");
 }
-
 
 /** Les rubriques d'un brief relu (pour un amendement). Une rubrique absente vaut vide. */
 export function parseBrief(text: string, fallbackTitle: string): BriefFields {
@@ -155,11 +146,12 @@ export function parseBrief(text: string, fallbackTitle: string): BriefFields {
   };
 }
 
-
 /** Les rubriques-listes FACULTATIVES de `project_amend` : seules celles qui sont présentes. */
 export function checkBriefPatch(
   record: Record<string, unknown>,
-): { ok: true; patch: Partial<Pick<BriefInput, "decisions" | "constraints" | "nonGoals">> } | { ok: false; error: string } {
+):
+  | { ok: true; patch: Partial<Pick<BriefInput, "decisions" | "constraints" | "nonGoals">> }
+  | { ok: false; error: string } {
   const patch: Partial<Pick<BriefInput, "decisions" | "constraints" | "nonGoals">> = {};
   for (const key of ["decisions", "constraints", "nonGoals"] as const) {
     if (record[key] === undefined) continue;
@@ -169,7 +161,6 @@ export function checkBriefPatch(
   }
   return { ok: true, patch };
 }
-
 
 /** Les cinq rubriques d'un brief hors titre : ce que `project_plan` et `audit_propose` transportent. */
 export type BriefInput = Omit<BriefFields, "title">;
@@ -242,12 +233,10 @@ export async function editBrief(
   }
 }
 
-
 /** Écrit le texte EXACT validé par l'utilisateur, atomiquement (temporaire puis `rename`). */
 export function writeBrief(stateDir: string, contextKey: string, text: string): void {
   writeStateFileAtomic(briefPathFor(stateDir, contextKey), text);
 }
-
 
 /** Le brief d'un contexte, relu depuis le fichier à chaque usage ; `null` s'il est absent ou illisible. */
 export function readBrief(stateDir: string, contextKey: string): string | null {
@@ -257,7 +246,6 @@ export function readBrief(stateDir: string, contextKey: string): string | null {
     return null;
   }
 }
-
 
 /** Le fichier du rapport d'un contexte : à côté du brief, même clé (`contextIdOf`). */
 export function reportPathFor(stateDir: string, contextKey: string): string {
@@ -278,13 +266,11 @@ export function readReport(stateDir: string, contextKey: string): string | null 
   }
 }
 
-
 // --- le journal (S-7) --------------------------------------------------------
 
 export function journalPathFor(stateDir: string, repoKey: string): string {
   return path.join(stateDir, "journal", `${repoKey}.jsonl`);
 }
-
 
 /**
  * Ajoute UNE ligne complète au journal du dépôt, fichier en 0600 (ramené à 0600
@@ -311,20 +297,28 @@ export function appendJournal(
   }
 }
 
-
 const PHASES: ReadonlySet<string> = new Set(["req", "specs", "impl", "review", "release", "project", "audit"]);
-const KINDS: ReadonlySet<string> = new Set(["question", "jalon", "quota", "contexte", "plafond", "echec", "arbitrage", "avance"]);
+const KINDS: ReadonlySet<string> = new Set([
+  "question",
+  "jalon",
+  "quota",
+  "contexte",
+  "plafond",
+  "echec",
+  "arbitrage",
+  "avance",
+]);
 const SOURCES: ReadonlySet<string> = new Set(["contexte", "arbitrage", "utilisateur"]);
-
 
 function asJustification(raw: unknown): DecisionJustification | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
-  const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
-  if (typeof r.reason !== "string" || !strings(r.citations) || !strings(r.references) || !strings(r.rubriques)) return null;
+  const strings = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (typeof r.reason !== "string" || !strings(r.citations) || !strings(r.references) || !strings(r.rubriques))
+    return null;
   return { reason: r.reason, citations: [...r.citations], references: [...r.references], rubriques: [...r.rubriques] };
 }
-
 
 function asEntry(raw: unknown): JournalEntry | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -349,7 +343,6 @@ function asEntry(raw: unknown): JournalEntry | null {
   };
 }
 
-
 /** Les entrées lisibles du journal du dépôt, dans l'ordre d'écriture ; les lignes illisibles sont ignorées. */
 function readJournal(stateDir: string, repoKey: string, keep: (entry: JournalEntry) => boolean): JournalEntry[] {
   let text: string;
@@ -371,12 +364,10 @@ function readJournal(stateDir: string, repoKey: string, keep: (entry: JournalEnt
   return out;
 }
 
-
 /** Les entrées d'une feature, dans l'ordre d'écriture ; les lignes illisibles sont ignorées. */
 export function journalFor(stateDir: string, repoKey: string, slug: string): JournalEntry[] {
   return readJournal(stateDir, repoKey, (entry) => entry.slug === slug);
 }
-
 
 /**
  * Les entrées de TOUT un contexte (toutes les features d'un même audit ou projet),
@@ -386,7 +377,6 @@ export function journalOfContext(stateDir: string, repoKey: string, context: str
   return readJournal(stateDir, repoKey, (entry) => entry.context === context);
 }
 
-
 // --- le bloc de contexte d'une étape (S-8) -----------------------------------
 
 /** Une entrée du journal au format de S-8 : `- [/<phase>] Q : <question> → R : <réponse> (source : <source>)`. */
@@ -394,16 +384,13 @@ export function journalLine(e: JournalEntry): string {
   return `- [/${e.phase}] Q : ${e.question} → R : ${e.answer} (source : ${e.source})`;
 }
 
-
 /** Une entrée du journal du LOT : comme `journalLine`, avec la feature qui l'a écrite. */
 export function lotJournalLine(e: JournalEntry): string {
   return `- [${e.slug} /${e.phase}] Q : ${e.question} → R : ${e.answer} (source : ${e.source})`;
 }
 
-
 /** Borne du brief injecté dans un prompt (`contextBlock`) : au-delà, la tête de chaque rubrique, au prorata. */
 export const BRIEF_CONTEXT_MAX = 8_000;
-
 
 /**
  * Le brief tel qu'un prompt le reçoit : intégral sous `BRIEF_CONTEXT_MAX`, sinon
@@ -438,24 +425,30 @@ function boundedBrief(text: string): string {
   return [head, ...cut].join("\n\n");
 }
 
-
 /**
  * Le bloc exact injecté dans le prompt de tout run d'une feature AVEC contexte.
  * `phase` restreint le journal aux décisions de CE maillon et aux jalons : un
  * run /impl n'a que faire des questions de /req (mesuré : le journal entier
  * revenait dans chaque run, jusqu'à 50 lignes).
  */
-export function contextBlock(input: { stateDir: string; repoKey: string; slug: string; contextKey: string; phase?: JournalPhase }): string {
+export function contextBlock(input: {
+  stateDir: string;
+  repoKey: string;
+  slug: string;
+  contextKey: string;
+  phase?: JournalPhase;
+}): string {
   const brief = readBrief(input.stateDir, input.contextKey);
   const all = journalFor(input.stateDir, input.repoKey, input.slug);
   const entries = input.phase === undefined ? all : all.filter((e) => e.phase === input.phase || e.kind === "jalon");
   const elsewhere = all.length - entries.length;
   const omitted = Math.max(0, entries.length - JOURNAL_CONTEXT_MAX);
-  const lines = entries
-    .slice(omitted)
-    .map(journalLine);
+  const lines = entries.slice(omitted).map(journalLine);
   if (omitted > 0) lines.unshift(`- (${omitted} décisions plus anciennes omises)`);
-  if (elsewhere > 0) lines.unshift(`- (${elsewhere} décision${elsewhere > 1 ? "s" : ""} d'autres maillons omise${elsewhere > 1 ? "s" : ""})`);
+  if (elsewhere > 0)
+    lines.unshift(
+      `- (${elsewhere} décision${elsewhere > 1 ? "s" : ""} d'autres maillons omise${elsewhere > 1 ? "s" : ""})`,
+    );
   if (lines.length === 0) lines.push(`- ${NO_DECISION}`);
   return [
     "[contexte de conduite] Brief et décisions déjà prises pour cette feature : appuie-toi dessus avant de poser une question.",

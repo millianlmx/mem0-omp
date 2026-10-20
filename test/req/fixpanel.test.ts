@@ -141,7 +141,13 @@ function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: strin
   return entry;
 }
 
-function historyEntry(stateDir: string, cwd: string, label: string, endedAt: number, over: Partial<HistoryEntry> = {}): HistoryEntry {
+function historyEntry(
+  stateDir: string,
+  cwd: string,
+  label: string,
+  endedAt: number,
+  over: Partial<HistoryEntry> = {},
+): HistoryEntry {
   const entry: HistoryEntry = {
     id: historyIdFor(cwd, endedAt),
     cwd: path.resolve(cwd),
@@ -263,7 +269,12 @@ function miniKit(): PipelinesPanelDeps["components"] {
 }
 
 type PanelHarness = {
-  component: { render(width: number): string[]; handleInput(data: string): void; refresh?: () => void; dispose(): void };
+  component: {
+    render(width: number): string[];
+    handleInput(data: string): void;
+    refresh?: () => void;
+    dispose(): void;
+  };
   screen: (width?: number) => string;
 };
 
@@ -392,13 +403,23 @@ test("fixpanel/AC-1 : la hauteur ne dépasse jamais le budget, pour toute sélec
         `le panneau tient dans ${budget} rangs à ${width} colonnes (sélection ${selection} : ${rows.length})`,
       );
       // Le budget est une hauteur de TERMINAL : un rang replié en occupe plusieurs.
-      const height = rows.reduce((total, row) => total + Math.max(1, wrapVisible(row.text, Math.max(1, width - 2)).length), 0);
+      const height = rows.reduce(
+        (total, row) => total + Math.max(1, wrapVisible(row.text, Math.max(1, width - 2)).length),
+        0,
+      );
       assert.ok(
         height <= budget,
         `aucune ligne de terminal ne dépasse ${budget} à ${width} colonnes (sélection ${selection} : ${height})`,
       );
-      assert.equal(rows[rows.length - 1]?.rule, "frame", `le cadre se referme sur sa règle (${width}x${budget}, sel ${selection})`);
-      assert.ok(text(rows).includes("Échap fermer"), `le pied survit à toute sélection (${width}x${budget}, sel ${selection})`);
+      assert.equal(
+        rows[rows.length - 1]?.rule,
+        "frame",
+        `le cadre se referme sur sa règle (${width}x${budget}, sel ${selection})`,
+      );
+      assert.ok(
+        text(rows).includes("Échap fermer"),
+        `le pied survit à toute sélection (${width}x${budget}, sel ${selection})`,
+      );
     }
   }
 
@@ -486,7 +507,12 @@ test("fixpanel/AC-3 : la sélection garde son identité quand la liste se réord
   const runKey = panelSelectionKey(runs);
   assert.ok(runKey?.startsWith("run:"), `la clé d'un run est son id (${runKey})`);
   const runId = (panelRowAt(runs, 1) as RunningEntry).id;
-  liveEntry(stateDir, { cwd: (panelRowAt(runs, 1) as RunningEntry).cwd, label: "autre/run", phase: "specs", phaseStartedAt: NOW + 10_000 });
+  liveEntry(stateDir, {
+    cwd: (panelRowAt(runs, 1) as RunningEntry).cwd,
+    label: "autre/run",
+    phase: "specs",
+    phaseStartedAt: NOW + 10_000,
+  });
   const movedRuns = readPanelModel({ stateDir, repoRoot, selection: runs.selection, now: NOW });
   const at = panelIndexForKey(movedRuns, runKey, runs.selection);
   assert.equal((panelRowAt(movedRuns, at) as RunningEntry).id, runId, "la clé suit le run qui a changé de maillon");
@@ -505,7 +531,14 @@ test("fixpanel/AC-4 : l'en-tête du lot nomme son pilote dans les trois cas", ()
   const repoRoot = tmpdir("fixpanel-ac4-repo-");
   const rowsFor = (over: Partial<Lot>, selection = 0) => {
     seedLot(stateDir, repoRoot, [feature("alpha", { state: "pending" })], over);
-    return text(buildPanelRows(readPanelModel({ stateDir, repoRoot, selection, now: NOW }), { width: 80, budget: 24, glyphs: GLYPHS, now: NOW }));
+    return text(
+      buildPanelRows(readPanelModel({ stateDir, repoRoot, selection, now: NOW }), {
+        width: 80,
+        budget: 24,
+        glyphs: GLYPHS,
+        now: NOW,
+      }),
+    );
   };
 
   // 1. Cette session conduit : le pied annonce les gestes, le titre le dit.
@@ -542,10 +575,13 @@ test("fixpanel/AC-4 : l'en-tête du lot nomme son pilote dans les trois cas", ()
     owner: { pid: 999_999_999, sessionFile: null, sessionId: null },
   });
   const served = text(
-    buildPanelRows(
-      readPanelModel({ stateDir, repoRoot, selection: 0, now: NOW, servicePid: process.pid }),
-      { width: 80, budget: 24, glyphs: GLYPHS, now: NOW, servicePid: process.pid },
-    ),
+    buildPanelRows(readPanelModel({ stateDir, repoRoot, selection: 0, now: NOW, servicePid: process.pid }), {
+      width: 80,
+      budget: 24,
+      glyphs: GLYPHS,
+      now: NOW,
+      servicePid: process.pid,
+    }),
   );
   assert.match(served, /pilote : le service \(en\s+adoption\)/, "le service est le pilote attendu");
   assert.match(served, /a ajouter · l lancer · Entrée session/, "ses gestes restent annoncés");
@@ -561,7 +597,13 @@ test("fixpanel/AC-5 : le tour de correction, le verdict bloquant et l'URL de PR 
   seedLot(stateDir, repoRoot, [
     feature("corrige", { state: "running", phase: "impl", fixes: 2 }),
     feature("relu", { state: "running", phase: "review", unreadableRuns: 1 }),
-    feature("bloquants", { state: "waiting", phase: "impl", waitKind: "specs", lastVerdict: "blockers", lastBlockers: 2 }),
+    feature("bloquants", {
+      state: "waiting",
+      phase: "impl",
+      waitKind: "specs",
+      lastVerdict: "blockers",
+      lastBlockers: 2,
+    }),
     feature("livre", { state: "done", phase: "release", prUrl: "https://example.test/pull/42" }),
     feature("vierge", { state: "running", phase: "impl" }),
   ]);
@@ -585,7 +627,11 @@ test("fixpanel/AC-5 : le tour de correction, le verdict bloquant et l'URL de PR 
   assert.equal(rows.filter((row) => row.text.startsWith("dernière revue")).length, 1, "un seul rang de verdict");
   // La revueLoopLabel ne s'invente pas pour un état clos.
   const lot = readPanelModel({ stateDir, repoRoot, now: NOW }).lot as Lot;
-  assert.equal(reviewLoopLabel(lot, lot.features[3] as LotFeature), null, "une feature livrée n'a plus de tour courant");
+  assert.equal(
+    reviewLoopLabel(lot, lot.features[3] as LotFeature),
+    null,
+    "une feature livrée n'a plus de tour courant",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -656,7 +702,10 @@ test("fixpanel/AC-7 : `o` n'est pas annoncé sur un run vivant, et `l` pas sans 
   };
   // Le run vivant d'un AUTRE process écrit cette session : `o` refuserait.
   const vivante = rowsFor(0);
-  assert.ok(!vivante.includes("o rejoindre"), `aucune bascule morte sur un run vivant : ${vivante.split("\n").slice(-4).join(" | ")}`);
+  assert.ok(
+    !vivante.includes("o rejoindre"),
+    `aucune bascule morte sur un run vivant : ${vivante.split("\n").slice(-4).join(" | ")}`,
+  );
   // Une feature qui n'a pas de run peut, elle, être rejointe — mais elle n'a pas
   // encore de session, donc rien ne s'annonce non plus.
   const libre = rowsFor(1);
@@ -703,10 +752,21 @@ test("fixpanel/AC-8 : `x` refuse sans aperçu une feature démarrée, `c` accept
   // la sortie qui manquait au plafond de la boucle.
   panel.component.handleInput("c");
   const choix = panel.screen();
-  assert.match(choix, /Annuler beta \? worktree : 1 gardé · 2 archivé · 3 supprimé/, "le devenir du worktree se choisit");
-  assert.ok(!choix.includes("annulation impossible"), `une feature bloquée s'abandonne : ${choix.split("\n").slice(-4).join(" | ")}`);
+  assert.match(
+    choix,
+    /Annuler beta \? worktree : 1 gardé · 2 archivé · 3 supprimé/,
+    "le devenir du worktree se choisit",
+  );
+  assert.ok(
+    !choix.includes("annulation impossible"),
+    `une feature bloquée s'abandonne : ${choix.split("\n").slice(-4).join(" | ")}`,
+  );
   panel.component.handleInput("1");
-  assert.match(panel.screen(), /Annuler beta \? · bloqué → annulé · worktree gardé/, "l'aperçu annonce ce qui va se passer");
+  assert.match(
+    panel.screen(),
+    /Annuler beta \? · bloqué → annulé · worktree gardé/,
+    "l'aperçu annonce ce qui va se passer",
+  );
   panel.component.handleInput("\r");
   assert.deepEqual(calls, ["cancel:beta:keep"], "l'abandon part une fois, avec le devenir choisi");
   panel.component.dispose();
@@ -725,7 +785,13 @@ test("fixpanel/AC-9 : un aperçu périmé est refermé avec une notice", () => {
 
   panel.component.handleInput("v");
   assert.match(panel.screen(), /Valider les specs de alpha \?/, "l'aperçu s'ouvre sur la condition qui tient");
-  assert.equal(staleGestureNotice({ kind: "validate", slug: "alpha" }, readPanelModel({ stateDir, repoRoot, now: NOW }).lot ?? null), null);
+  assert.equal(
+    staleGestureNotice(
+      { kind: "validate", slug: "alpha" },
+      readPanelModel({ stateDir, repoRoot, now: NOW }).lot ?? null,
+    ),
+    null,
+  );
 
   // La feature change d'état SOUS l'aperçu (le pilote a avancé, ou l'annulation
   // est passée) : la condition du geste ne tient plus.
@@ -734,14 +800,23 @@ test("fixpanel/AC-9 : un aperçu périmé est refermé avec une notice", () => {
   writeLot(stateDir, lot);
   panel.component.refresh?.();
   const drawn = panel.screen();
-  assert.ok(!drawn.includes("Valider les specs de alpha ?"), `l'aperçu périmé est refermé : ${drawn.split("\n").slice(-4).join(" | ")}`);
+  assert.ok(
+    !drawn.includes("Valider les specs de alpha ?"),
+    `l'aperçu périmé est refermé : ${drawn.split("\n").slice(-4).join(" | ")}`,
+  );
   assert.match(drawn, /alpha a changé d'état \(annulé\) — aperçu fermé/, "et il dit pourquoi");
 
   // La règle pure, dans les deux sens : un geste dont la condition tient reste
   // valable, et `Échap` d'un aperçu n'est jamais une invalidation.
   const fresh = readPanelModel({ stateDir, repoRoot, now: NOW }).lot ?? null;
-  assert.equal(staleGestureNotice({ kind: "validate", slug: "alpha" }, fresh), "alpha a changé d'état (annulé) — aperçu fermé");
-  assert.equal(staleGestureNotice({ kind: "remove", slug: "inconnue" }, fresh), "inconnue a quitté le lot — aperçu fermé");
+  assert.equal(
+    staleGestureNotice({ kind: "validate", slug: "alpha" }, fresh),
+    "alpha a changé d'état (annulé) — aperçu fermé",
+  );
+  assert.equal(
+    staleGestureNotice({ kind: "remove", slug: "inconnue" }, fresh),
+    "inconnue a quitté le lot — aperçu fermé",
+  );
   assert.equal(staleGestureNotice({ kind: "launch" }, null), "lot indisponible — aperçu fermé");
   panel.component.dispose();
 });
@@ -773,14 +848,23 @@ test("fixpanel/AC-10 : le marqueur de troncature est placé du côté des lignes
   const above = tail.findIndex((line) => line.startsWith("… "));
   const lastFeature = tail.findIndex((line) => line.includes("g11 "));
   assert.match(tail[above] as string, /au-dessus dans le lot$/, "le marqueur dit de quel côté sont les lignes");
-  assert.ok(above >= 0 && above < lastFeature, `le marqueur est AU-DESSUS des lignes qu'il cache : ${tail.join(" | ")}`);
+  assert.ok(
+    above >= 0 && above < lastFeature,
+    `le marqueur est AU-DESSUS des lignes qu'il cache : ${tail.join(" | ")}`,
+  );
   assert.ok(!tail.some((line) => /de plus dans le lot$/.test(line)), "aucun marqueur du mauvais côté");
 
   // Sélection au MILIEU, avec les deux côtés masqués : les deux marqueurs, chacun
   // de son côté.
   const middle = lines(6);
-  assert.ok(middle.some((line) => /au-dessus dans le lot$/.test(line)), "le côté haut est annoncé");
-  assert.ok(middle.some((line) => /de plus dans le lot$/.test(line)), "le côté bas est annoncé");
+  assert.ok(
+    middle.some((line) => /au-dessus dans le lot$/.test(line)),
+    "le côté haut est annoncé",
+  );
+  assert.ok(
+    middle.some((line) => /de plus dans le lot$/.test(line)),
+    "le côté bas est annoncé",
+  );
   const up = middle.findIndex((line) => /au-dessus dans le lot$/.test(line));
   const down = middle.findIndex((line) => /de plus dans le lot$/.test(line));
   assert.ok(up < down, "chaque marqueur est du côté des lignes qu'il cache");
@@ -805,7 +889,11 @@ test("fixpanel/AC-11 : Échap dans l'ajout revient au champ précédent, tampon 
   assert.match(panel.screen(), /Description : une intention▏/, "le second champ reçoit la description");
   panel.component.handleInput("\r");
   for (const char of "beta") panel.component.handleInput(char);
-  assert.match(panel.screen(), /Dépendances \(slugs séparés par des virgules\) : beta▏/, "le troisième champ reçoit les dépendances");
+  assert.match(
+    panel.screen(),
+    /Dépendances \(slugs séparés par des virgules\) : beta▏/,
+    "le troisième champ reçoit les dépendances",
+  );
 
   // Échap au champ des DÉPENDANCES : on revient à la description, son tampon
   // intact — perdre les trois champs tapés ferait tout retaper pour rien.

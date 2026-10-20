@@ -230,7 +230,10 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
 /** Pose l'escalade que le verdict `escalate` d'un arbitre laisserait sur chaque élément courant de la clé de relais. */
 function escalateAll(stateDir: string, repoRoot: string, key: string): void {
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
-  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false, failure: false });
+  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), {
+    cap: false,
+    failure: false,
+  });
   for (const item of items) {
     if (item.kind === "cap" || item.kind === "quota" || item.kind === "failure") continue;
     const milestone = item.kind === "specs" || item.kind === "review";
@@ -238,7 +241,11 @@ function escalateAll(stateDir: string, repoRoot: string, key: string): void {
       key: item.key,
       kind: milestone ? "jalon" : "question",
       phase: item.phase,
-      question: milestone ? (item.kind === "specs" ? "specs validées ?" : "revue propre : livrer ?") : (item.question ?? ""),
+      question: milestone
+        ? item.kind === "specs"
+          ? "specs validées ?"
+          : "revue propre : livrer ?"
+        : (item.question ?? ""),
       options: item.options.map((option) => option.label),
       reason: "ni le brief ni le journal ne tranchent",
       at: T0,
@@ -342,7 +349,14 @@ function resetAll(): void {
   projectState.target = null;
 }
 
-type UiCall = { kind: string; title: string; items?: unknown; options?: unknown; prefill?: string; questions?: unknown };
+type UiCall = {
+  kind: string;
+  title: string;
+  items?: unknown;
+  options?: unknown;
+  prefill?: string;
+  questions?: unknown;
+};
 
 /**
  * Les dialogues de l'hôte : chaque appel est journalisé et consomme la réponse
@@ -371,7 +385,10 @@ type ToolResult = { content: { text: string }[]; isError?: boolean };
 
 type Tool = { name: string; execute: (...args: unknown[]) => Promise<ToolResult> };
 
-type Injected = { message: { customType: string; content: string; display: boolean; attribution: string }; options: unknown };
+type Injected = {
+  message: { customType: string; content: string; display: boolean; attribution: string };
+  options: unknown;
+};
 
 function mkPi() {
   const tools = new Map<string, Tool>();
@@ -395,7 +412,8 @@ function mkPi() {
 const textOf = (result: { content: { text: string }[] }) => result.content.map((c) => c.text).join("\n");
 
 /** La clé d'élément d'un message `[project]`. */
-const keyOf = (content: string) => /Élément : (\S+)/.exec(content)?.[1] ?? /avec l'élément (\S+)\.$/.exec(content)?.[1] ?? "";
+const keyOf = (content: string) =>
+  /Élément : (\S+)/.exec(content)?.[1] ?? /avec l'élément (\S+)\.$/.exec(content)?.[1] ?? "";
 
 /** Une feature de projet écrite à la main. */
 function pf(slug: string, over: Partial<ProjectFeature> = {}): ProjectFeature {
@@ -463,7 +481,12 @@ type Fixture = {
 };
 
 function mkProject(
-  options: { script?: (run: Run) => LotRunnerResult | null; answers?: unknown[]; askDialog?: boolean; models?: ModelRow[] } = {},
+  options: {
+    script?: (run: Run) => LotRunnerResult | null;
+    answers?: unknown[];
+    askDialog?: boolean;
+    models?: ModelRow[];
+  } = {},
 ): Fixture {
   resetAll();
   const { repoRoot, bare } = mkRepoWithRemote();
@@ -745,10 +768,7 @@ test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt 
     assert.ok(seed.includes("Contexte ajouté : priorité à la robustesse\n\n"));
     assert.ok(seed.endsWith(PROJECT_DIRECTIVE), "la directive exacte termine l'amorce");
     assert.deepEqual(projectState.cadrage, { sessionFile: cadrage, fin: false });
-    assert.deepEqual(
-      [...app.tools.keys()].sort(),
-      ["project_amend", "project_escalate", "project_plan"],
-    );
+    assert.deepEqual([...app.tools.keys()].sort(), ["project_amend", "project_escalate", "project_plan"]);
     const plan = app.tools.get("project_plan")!;
 
     // (c) Sans « fin » : le contrôle de complétude, et rien d'autre tant qu'il n'est pas clos.
@@ -760,7 +780,11 @@ test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt 
     );
     assert.equal(calls.length, 1, "un seul dialogue ouvert");
     assert.equal(calls[0]!.title, "Le cadrage du projet est-il complet ?");
-    assert.deepEqual(calls[0]!.items, ["Tout est bon, c'est complet.", "Il reste des choses à ajouter.", "Un besoin a changé."]);
+    assert.deepEqual(calls[0]!.items, [
+      "Tout est bon, c'est complet.",
+      "Il reste des choses à ajouter.",
+      "Un besoin a changé.",
+    ]);
     assert.equal(readProject(stateDir, lotRepoKey(repoRoot)), null, "aucun projet écrit");
     assert.equal(readLot(stateDir, lotRepoKey(repoRoot)), null, "aucun lot");
     assert.ok(!app.execs.some((exec) => exec.command !== "git" && exec.command !== "gh"), "aucun run");
@@ -783,7 +807,10 @@ test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt 
     assert.equal(projectState.cadrage.fin, false, "une notice n'est pas une entrée de l'utilisateur");
     const again = await plan.execute("c3", PLAN, undefined, undefined, ctx);
     assert.equal(calls[2]!.title, "Le cadrage du projet est-il complet ?");
-    assert.equal(textOf(again), "Cadrage non clos (« sans réponse ») : continue le cadrage avec l'utilisateur, puis rappelle project_plan.");
+    assert.equal(
+      textOf(again),
+      "Cadrage non clos (« sans réponse ») : continue le cadrage avec l'utilisateur, puis rappelle project_plan.",
+    );
     assert.equal(readProject(stateDir, lotRepoKey(repoRoot)), null, "toujours aucun projet");
   });
 });
@@ -794,10 +821,18 @@ test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt 
 
 test("project/AC-2 : aucune pipeline avant la validation explicite, et la correction de l'utilisateur est le plan validé", async () => {
   // L'aller-retour texte ⇄ plan qu'emprunte la correction.
-  const roundTrip = parsePlanText(renderPlanText([{ name: "Socle", features: [{ slug: "a", intention: "Faire A." }] }]), "But.", "Fonction.");
+  const roundTrip = parsePlanText(
+    renderPlanText([{ name: "Socle", features: [{ slug: "a", intention: "Faire A." }] }]),
+    "But.",
+    "Fonction.",
+  );
   assert.deepEqual(roundTrip, {
     ok: true,
-    plan: { purpose: "But.", function: "Fonction.", segments: [{ name: "Socle", features: [{ slug: "a", intention: "Faire A." }] }] },
+    plan: {
+      purpose: "But.",
+      function: "Fonction.",
+      segments: [{ name: "Socle", features: [{ slug: "a", intention: "Faire A." }] }],
+    },
   });
 
   const corrected = "## Socle\n- a — Intention A corrigée.\n- d — Intention D.\n\n## Suite\n- b — Intention B.\n";
@@ -817,9 +852,21 @@ test("project/AC-2 : aucune pipeline avant la validation explicite, et la correc
   const result = await fx.call("project_plan", PLAN);
   assert.equal(result.isError, undefined, textOf(result));
 
-  assert.deepEqual(beforeValidation, [{ runs: 0, lot: false, project: false }], "rien n'existe avant « Valider le plan »");
+  assert.deepEqual(
+    beforeValidation,
+    [{ runs: 0, lot: false, project: false }],
+    "rien n'existe avant « Valider le plan »",
+  );
   assert.equal(fx.calls[1]!.kind, "editor");
-  assert.equal(fx.calls[1]!.prefill, renderPlanText(PLAN.segments.map((s) => ({ name: s.name, features: s.features.map((f) => ({ slug: f.name, intention: f.intention })) }))));
+  assert.equal(
+    fx.calls[1]!.prefill,
+    renderPlanText(
+      PLAN.segments.map((s) => ({
+        name: s.name,
+        features: s.features.map((f) => ({ slug: f.name, intention: f.intention })),
+      })),
+    ),
+  );
   assert.ok(fx.calls[2]!.title.includes("- d — Intention D."), "la revue se rouvre sur le plan corrigé");
   const project = fx.project();
   assert.deepEqual(slugsOf(project), [["a", "d"], ["b"]], "le plan validé est le plan corrigé");
@@ -832,7 +879,12 @@ test("project/AC-2 : aucune pipeline avant la validation explicite, et la correc
     ["a", "d"],
     "seules les features du segment 1 corrigé démarrent",
   );
-  assert.ok(textOf(result).startsWith("Plan validé : 2 segment(s), 3 feature(s) — document PROJECT.md sur la branche omp-project.\nSegment 1 « Socle » : 2/2 pipeline(s) lancée(s).\n- a : lancée (branche feat/a)\n- d : lancée (branche feat/d)"), textOf(result));
+  assert.ok(
+    textOf(result).startsWith(
+      "Plan validé : 2 segment(s), 3 feature(s) — document PROJECT.md sur la branche omp-project.\nSegment 1 « Socle » : 2/2 pipeline(s) lancée(s).\n- a : lancée (branche feat/a)\n- d : lancée (branche feat/d)",
+    ),
+    textOf(result),
+  );
 
   // « Abandonner » : rien n'est écrit ni lancé.
   const abandon = mkProject({ answers: ["Abandonner"] });
@@ -845,14 +897,19 @@ test("project/AC-2 : aucune pipeline avant la validation explicite, et la correc
   assert.equal(fs.existsSync(projectPathFor(abandon.ctl.stateDir, lotRepoKey(abandon.repoRoot))), false);
 
   // Un texte illisible rouvre l'éditeur avec l'erreur ; corrigé, la revue se rouvre sur lui.
-  const fix = mkProject({ answers: ["Corriger le plan", "n'importe quoi", "## Unique\n- e — Intention E.", "Abandonner"] });
+  const fix = mkProject({
+    answers: ["Corriger le plan", "n'importe quoi", "## Unique\n- e — Intention E.", "Abandonner"],
+  });
   armCadrage(fix);
   await fix.call("project_plan", PLAN);
   assert.deepEqual(
     fix.calls.map((call) => call.kind),
     ["select", "editor", "editor", "select"],
   );
-  assert.ok(fix.calls[2]!.title.startsWith("Plan illisible — ligne 1 illisible : « n'importe quoi »"), fix.calls[2]!.title);
+  assert.ok(
+    fix.calls[2]!.title.startsWith("Plan illisible — ligne 1 illisible : « n'importe quoi »"),
+    fix.calls[2]!.title,
+  );
   assert.equal(fix.calls[2]!.prefill, "n'importe quoi", "l'éditeur se rouvre sur le texte saisi");
   assert.ok(fix.calls[3]!.title.startsWith("Plan du projet — 1 segment(s), 1 feature(s)"), fix.calls[3]!.title);
   assert.ok(fix.calls[3]!.title.endsWith("## Unique\n- e — Intention E."));
@@ -878,8 +935,15 @@ test("project/AC-3 : PROJECT.md (branche omp-project) porte le plan dans l'ordre
     const s2 = doc.indexOf("### Segment 2 — Suite");
     assert.ok(s1 !== -1 && s2 > s1, "les segments dans l'ordre");
     const order = ["`a`", "`b`", "`c`"].map((slug) => doc.indexOf(slug));
-    assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > (order[i - 1] as number))), "les features dans l'ordre du plan");
-    assert.equal(git(gitDir, ["ls-tree", "-r", "--name-only", "omp-project"]), "PROJECT.md", "le seul fichier de la branche");
+    assert.ok(
+      order.every((at, i) => at > 0 && (i === 0 || at > (order[i - 1] as number))),
+      "les features dans l'ordre du plan",
+    );
+    assert.equal(
+      git(gitDir, ["ls-tree", "-r", "--name-only", "omp-project"]),
+      "PROJECT.md",
+      "le seul fichier de la branche",
+    );
   }
   assert.match(docOf(fx.repoRoot), /\| 1 \| `a` \| lancée \|/);
   assert.match(docOf(fx.repoRoot), /\| 2 \| `b` \| lancée \|/);
@@ -904,7 +968,10 @@ test("project/AC-3 : PROJECT.md (branche omp-project) porte le plan dans l'ordre
     fx.prs.set(prUrl, "MERGED");
     fx.clock.now += 60_000;
   }, /\| 1 \| `a` \| fusionnée \|/);
-  await transition(() => mutateLot("b", { state: "failed", stopReason: "boom" }), /\| 2 \| `b` \| en échec — pipeline en erreur : boom \|/);
+  await transition(
+    () => mutateLot("b", { state: "failed", stopReason: "boom" }),
+    /\| 2 \| `b` \| en échec — pipeline en erreur : boom \|/,
+  );
   assert.equal(git(fx.bare, ["rev-parse", "main"]), mainBefore, "main du distant est inchangée");
 });
 
@@ -914,7 +981,13 @@ test("project/AC-3 : PROJECT.md (branche omp-project) porte le plan dans l'ordre
 
 test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteignent la PR, jalons décidés par l'utilisateur après escalade", async () => {
   const fx = mkProject({
-    answers: ["Valider le plan", "Valider les specs", "Valider les specs", "Accepter la revue et livrer (PR)", "Accepter la revue et livrer (PR)"],
+    answers: [
+      "Valider le plan",
+      "Valider les specs",
+      "Valider les specs",
+      "Accepter la revue et livrer (PR)",
+      "Accepter la revue et livrer (PR)",
+    ],
     script: (run) => {
       switch (run.phase) {
         case "req":
@@ -940,7 +1013,10 @@ test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteig
   const uiAfterPlan = fx.calls.length;
 
   // Les deux /req sont EN VOL en même temps : aucun n'a fini quand le second démarre.
-  assert.deepEqual(fx.runs.map((run) => [path.basename(run.cwd), run.phase]).sort(), [["a", "req"], ["b", "req"]]);
+  assert.deepEqual(fx.runs.map((run) => [path.basename(run.cwd), run.phase]).sort(), [
+    ["a", "req"],
+    ["b", "req"],
+  ]);
   for (const run of [...fx.runs]) {
     writeContract(run.cwd, CONTRACT_CLOSED);
     run.finish(OK);
@@ -977,11 +1053,17 @@ test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteig
       ["b", "pr", fx.featureOf("b")!.prUrl],
     ],
   );
-  assert.ok(project.segments[0]!.features.every((f) => f.prUrl?.startsWith(`${GH}/o/r/pull/`)), "une PR par feature");
+  assert.ok(
+    project.segments[0]!.features.every((f) => f.prUrl?.startsWith(`${GH}/o/r/pull/`)),
+    "une PR par feature",
+  );
   assert.equal(fx.ghCalls.filter((args) => args[0] === "pr" && args[1] === "create").length, 2, "deux PR ouvertes");
   assert.ok(!fx.ghCalls.some((args) => args.includes("merge")), "aucune fusion");
   assert.equal(fx.calls.length, uiAfterPlan + 4, "un dialogue par jalon, présenté à l'utilisateur");
-  assert.ok(!fx.ctl.notices.some((n) => n.includes("attend")), `les jalons relayés ne sont pas annoncés au panneau : ${fx.ctl.notices.join(" | ")}`);
+  assert.ok(
+    !fx.ctl.notices.some((n) => n.includes("attend")),
+    `les jalons relayés ne sont pas annoncés au panneau : ${fx.ctl.notices.join(" | ")}`,
+  );
 });
 
 test("project/AC-5 : une question que le projet ne tranche pas est remontée à l'utilisateur, et la pipeline attend sa réponse", async () => {
@@ -1037,7 +1119,10 @@ test("project/AC-5 : une question que le projet ne tranche pas est remontée à 
   const second = fx.messages.at(-1)!.message.content;
   assert.equal(keyOf(second), "ask:a:call-2");
   const free = await fx.call("project_escalate", { item: "ask:a:call-2" });
-  assert.equal(textOf(free), "Réponse de l'utilisateur transmise mot pour mot à /specs — feature a : Garde les deux formats, JSON d'abord.");
+  assert.equal(
+    textOf(free),
+    "Réponse de l'utilisateur transmise mot pour mot à /specs — feature a : Garde les deux formats, JSON d'abord.",
+  );
   assert.deepEqual(
     readDeliveries(inbox2).map((entry) => ({ ...entry.delivery, sentAt: 0 })),
     [{ version: 1, kind: "ask", toolCallId: "call-2", custom: "Garde les deux formats, JSON d'abord.", sentAt: 0 }],
@@ -1045,7 +1130,11 @@ test("project/AC-5 : une question que le projet ne tranche pas est remontée à 
 
   // Le panneau : la feature du projet est relayée, et son pied le dit.
   const lot = fx.lot()!;
-  assert.equal(auditRelayOpen(fx.ctl.stateDir, lot.features[0]!, lot.owner.pid, fx.clock.now), true, "le relais du projet est ouvert");
+  assert.equal(
+    auditRelayOpen(fx.ctl.stateDir, lot.features[0]!, lot.owner.pid, fx.clock.now),
+    true,
+    "le relais du projet est ouvert",
+  );
   assert.ok(lotFooterActions(lot.features, 0, null, { a: true }).startsWith("relayé à /project"));
 });
 
@@ -1074,7 +1163,10 @@ test("project/AC-6 : le segment suivant attend la fusion des DEUX PR, puis part 
   await fx.relay.tick();
 
   let project = fx.project()!;
-  assert.deepEqual(project.segments[0]!.features.map((f) => f.status), ["merged", "pr"]);
+  assert.deepEqual(
+    project.segments[0]!.features.map((f) => f.status),
+    ["merged", "pr"],
+  );
   assert.equal(project.current, 0, "le segment 2 ne démarre pas");
   assert.equal(project.segments[1]!.features[0]!.status, "planned");
   assert.equal(fx.featureOf("c"), undefined, "aucun ajout au lot");
@@ -1095,9 +1187,16 @@ test("project/AC-6 : le segment suivant attend la fusion des DEUX PR, puis part 
   assert.equal(c.relayKind, "project");
   assert.ok(fs.existsSync(c.worktree), "le worktree est créé par le vrai pilote");
   for (const sha of [shaA, shaB]) {
-    assert.equal(gitIn(fx.repoRoot, ["merge-base", "--is-ancestor", sha, "feat/c"]).status, 0, `feat/c contient ${sha}`);
+    assert.equal(
+      gitIn(fx.repoRoot, ["merge-base", "--is-ancestor", sha, "feat/c"]).status,
+      0,
+      `feat/c contient ${sha}`,
+    );
   }
-  assert.ok(fx.notices.some((n) => n === "[project] segment 2/2 « Suite » lancé : 1 pipeline(s) — c"), fx.notices.join(" | "));
+  assert.ok(
+    fx.notices.some((n) => n === "[project] segment 2/2 « Suite » lancé : 1 pipeline(s) — c"),
+    fx.notices.join(" | "),
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1142,11 +1241,16 @@ async function failedSegment(answer: string) {
   assert.equal(fx.featureOf("a")?.state, "failed");
   await fx.relay.tick();
   fx.relay.scan();
-  const failure = fx.messages.map((m) => m.message.content).find((c) => c.startsWith("[project] Échec — feature a (segment 1 « Socle »)"));
+  const failure = fx.messages
+    .map((m) => m.message.content)
+    .find((c) => c.startsWith("[project] Échec — feature a (segment 1 « Socle »)"));
   assert.ok(failure, fx.messages.map((m) => m.message.content).join("\n---\n"));
   assert.ok(failure.includes("pipeline en erreur : boom"), failure);
   const current = fx.project()!;
-  assert.deepEqual(current.segments[0]!.features.map((f) => f.status), ["failed", "merged"]);
+  assert.deepEqual(
+    current.segments[0]!.features.map((f) => f.status),
+    ["failed", "merged"],
+  );
   assert.equal(current.current, 0, "aucun segment suivant ne démarre");
   assert.equal(current.segments[1]!.features[0]!.status, "planned");
   assert.equal(fx.featureOf("c"), undefined);
@@ -1159,7 +1263,10 @@ test("project/AC-7 : sur échec, l'utilisateur choisit relancer, retirer ou arr�
     const { fx, key, aRuns } = await failedSegment("Relancer la feature");
     const result = await fx.call("project_escalate", { item: key });
     assert.equal(textOf(result), "Feature a relancée à la demande de l'utilisateur.");
-    assert.equal(fx.calls[0]!.title, "Échec de la feature a (segment 1 « Socle ») : pipeline en erreur : boom\nAucun segment suivant ne démarre avant ta décision.");
+    assert.equal(
+      fx.calls[0]!.title,
+      "Échec de la feature a (segment 1 « Socle ») : pipeline en erreur : boom\nAucun segment suivant ne démarre avant ta décision.",
+    );
     assert.deepEqual(fx.calls[0]!.items, ["Relancer la feature", "Retirer la feature du plan", "Arrêter le projet"]);
     await waitFor(() => aRuns() === 2);
     assert.equal(aRuns(), 2, "un nouveau run de a a démarré");
@@ -1170,7 +1277,10 @@ test("project/AC-7 : sur échec, l'utilisateur choisit relancer, retirer ou arr�
   {
     const { fx, key } = await failedSegment("Retirer la feature du plan");
     const result = await fx.call("project_escalate", { item: key });
-    assert.equal(textOf(result), "Feature a retirée du plan à la demande de l'utilisateur — le segment 1 peut s'achever sans elle.");
+    assert.equal(
+      textOf(result),
+      "Feature a retirée du plan à la demande de l'utilisateur — le segment 1 peut s'achever sans elle.",
+    );
     const removed = fx.project()!.segments[0]!.features[0]!;
     assert.equal(removed.status, "removed");
     assert.equal(removed.removedReason, "retirée par l'utilisateur après échec : pipeline en erreur : boom");
@@ -1179,7 +1289,10 @@ test("project/AC-7 : sur échec, l'utilisateur choisit relancer, retirer ou arr�
     assert.equal(fx.project()!.current, 1, "le segment 1 s'achève sans a");
     assert.ok(fx.featureOf("c"), "le segment 2 démarre");
     await settleDoc();
-    assert.match(docOf(fx.repoRoot), /## Features retirées\n\n\| Feature \| Segment \| Motif \|\n\|---\|---\|---\|\n\| `a` \| 1 \| retirée par l'utilisateur après échec : pipeline en erreur : boom \|/);
+    assert.match(
+      docOf(fx.repoRoot),
+      /## Features retirées\n\n\| Feature \| Segment \| Motif \|\n\|---\|---\|---\|\n\| `a` \| 1 \| retirée par l'utilisateur après échec : pipeline en erreur : boom \|/,
+    );
   }
   // Arrêter : plus aucune pipeline n'est lancée, et le relais se désarme.
   {
@@ -1248,7 +1361,12 @@ test("project/AC-8 : une modification validée est exécutée par le segment sui
     const fx = await setup([() => dialog.promise]);
     const pending = fx.call("project_amend", amendment);
     await waitFor(() => fx.calls.length === 1);
-    assert.ok(fx.calls[0]!.title.startsWith("Modification du plan — segments après le segment 1 « Socle »\nAvant :\n## Suite\n- b — Intention B.\n- c — Intention c.\nAprès :\n## Suite\n- b — Intention B modifiée.\n- d — Intention D."), fx.calls[0]!.title);
+    assert.ok(
+      fx.calls[0]!.title.startsWith(
+        "Modification du plan — segments après le segment 1 « Socle »\nAvant :\n## Suite\n- b — Intention B.\n- c — Intention c.\nAprès :\n## Suite\n- b — Intention B modifiée.\n- d — Intention D.",
+      ),
+      fx.calls[0]!.title,
+    );
     assert.equal(projectState.amending, true);
     fx.clock.now += 60_000;
     await fx.relay.tick();
@@ -1260,7 +1378,11 @@ test("project/AC-8 : une modification validée est exécutée par le segment sui
     assert.equal(projectState.amending, false);
     await fx.relay.tick();
     const lot = fx.lot()!;
-    assert.deepEqual(lot.features.map((f) => f.slug), ["b", "d"], "le segment 2 exécute le plan modifié, jamais c");
+    assert.deepEqual(
+      lot.features.map((f) => f.slug),
+      ["b", "d"],
+      "le segment 2 exécute le plan modifié, jamais c",
+    );
     assert.equal(lot.features[0]!.name, "Intention B modifiée.");
     await settleDoc();
     const doc = docOf(fx.repoRoot);
@@ -1278,7 +1400,10 @@ test("project/AC-8 : une modification validée est exécutée par le segment sui
     assert.deepEqual(fs.readFileSync(file), before, "le projet relu est identique octet pour octet");
     fx.clock.now += 60_000;
     await fx.relay.tick();
-    assert.deepEqual(fx.lot()!.features.map((f) => f.slug), ["b", "c"]);
+    assert.deepEqual(
+      fx.lot()!.features.map((f) => f.slug),
+      ["b", "c"],
+    );
   }
 });
 
@@ -1299,7 +1424,9 @@ test("project/AC-9 : /project relancé retrouve le plan et l'avancement, sans ca
     ["Socle", [pf("a", { status: "merged", prUrl: `${GH}/o/r/pull/1` }), pf("b", { status: "pr", prUrl: prB })]],
     ["Suite", [pf("c")]],
   ]);
-  seedLot(stateDir, repoRoot, [feature("b", { state: "done", prUrl: prB, auditSession: project.relayKey, relayKind: "project" })]);
+  seedLot(stateDir, repoRoot, [
+    feature("b", { state: "done", prUrl: prB, auditSession: project.relayKey, relayKind: "project" }),
+  ]);
   const lotBefore = fs.readFileSync(path.join(stateDir, "lots", `${lotRepoKey(repoRoot)}.json`), "utf8");
   const { ui, calls } = mkUi([]);
   const { ctx, sessions } = appCtx(repoRoot, current, ui, resumed);
@@ -1316,10 +1443,21 @@ test("project/AC-9 : /project relancé retrouve le plan et l'avancement, sans ca
     const after = readProject(stateDir, lotRepoKey(repoRoot))!;
     assert.equal(after.hostSession, resumed, "la session de reprise conduit le projet");
     assert.deepEqual(slugsOf(after), [["a", "b"], ["c"]], "le plan est retrouvé");
-    assert.deepEqual(after.segments.flatMap((s) => s.features.map((f) => f.status)), ["merged", "pr", "planned"], "l'avancement est retrouvé");
+    assert.deepEqual(
+      after.segments.flatMap((s) => s.features.map((f) => f.status)),
+      ["merged", "pr", "planned"],
+      "l'avancement est retrouvé",
+    );
     assert.equal(app.seeds.length, 1);
     const seed = app.seeds[0]!;
-    assert.equal(seed, buildProjectResumeSeed(repoRoot, "", renderProjectDoc({ ...project, hostSession: resumed }, path.basename(project.repoRoot))));
+    assert.equal(
+      seed,
+      buildProjectResumeSeed(
+        repoRoot,
+        "",
+        renderProjectDoc({ ...project, hostSession: resumed }, path.basename(project.repoRoot)),
+      ),
+    );
     assert.ok(seed.startsWith("[project] Reprise du projet"));
     for (const expected of ["`a`", "`b`", "`c`", "fusionnée"]) assert.ok(seed.includes(expected), expected);
     assert.deepEqual(calls, [], "aucun dialogue de cadrage ni de plan");

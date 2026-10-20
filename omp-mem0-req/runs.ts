@@ -17,20 +17,16 @@ import type { ReviewScope } from "./seeds.ts";
 import { serviceRunning } from "./serviceState.ts";
 import { PIPELINE_PHASES, pidAlive, readStore } from "./store.ts";
 
-
-
 // --- les prompts d'un maillon, et le run de conversation ---------------------
 // L'argv d'un maillon n'existe plus : le service exécute les maillons en process
 // et reçoit une spécification (`serviceRuns.LotRunSpec`, S-3, S-12 §1). Il ne
 // reste ici que ce qui décrit un RUN DE CONVERSATION — le seul process `omp` que
 // le plugin lance encore, pour une session hors lot d'un autre process.
 
-
 /** Le répertoire d'installation des plugins OMP : `~/.omp/plugins`. */
 export function pluginsInstallRoot(home: string = os.homedir()): string {
   return path.join(home, ".omp", "plugins");
 }
-
 
 /**
  * Le chemin de CETTE extension, pour qu'un run enfant charge le MÊME code que son
@@ -67,9 +63,7 @@ export function selfExtensionArg(
   }
 }
 
-
 export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
-
 
 /** Ce qu'un run de conversation reprend (S-9) : un rang du panneau, sa session, sa boîte. */
 export type ConversationRunTarget = {
@@ -91,7 +85,6 @@ export type ConversationRunTarget = {
   fallback?: string | null;
 };
 
-
 /**
  * L'overlay `--config` d'un repli : un fichier PAR repli distinct, sous
  * `<stateDir>/conversation-overlays/`. Même chemin pour un même repli — l'écriture
@@ -102,7 +95,6 @@ export function conversationOverlayPathFor(stateDir: string, fallback: string): 
   const digest = crypto.createHash("sha1").update(fallback).digest("hex").slice(0, 16);
   return path.join(stateDir, "conversation-overlays", `${digest}.json`);
 }
-
 
 /**
  * L'argv exact d'un run de conversation (S-9) : `--resume` continue LE MÊME
@@ -147,7 +139,6 @@ export function buildConversationRunArgv(spec: {
   return argv;
 }
 
-
 /**
  * Les deux pré-contrôles d'un run de conversation (S-9), décidés SANS rien lancer :
  * un cwd disparu ou une session introuvable serait un run qui échoue après coup,
@@ -159,7 +150,6 @@ export function conversationRefusal(target: ConversationRunTarget, probe: Sessio
   return null;
 }
 
-
 /**
  * Le préambule de tout run de lot. Trois règles non négociables : la question
  * bloquante passe par l'outil `ask` quand le run en dispose (un run lancé par le
@@ -170,7 +160,6 @@ export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, san
 - L'outil \`ask\` EST disponible dans ce run : pose-lui tes questions bloquantes, UNE à la fois, avec 1 à 9 options ; la question s'affiche dans le panneau de la pipeline et l'utilisateur y répond, dans le tour en cours. Si l'outil refuse (plusieurs questions, multi-sélection) ou si tu préfères le texte, termine ton tour par tes questions numérotées et actionnables : elles s'affichent aussi dans le panneau, et la réponse te reviendra au tour suivant. Quand une question propose des choix, écris-les une par ligne sous la forme \`- (1) <libellé du choix>\` : c'est cette forme, et elle seule, que le panneau rend sélectionnable.
 - N'annonce aucune commande et n'enchaîne aucun maillon de toi-même : la chaîne est pilotée par le lot.
 - Le contrat de cette feature vit dans .omp/pipeline/contract.md, relatif à ton répertoire de travail.`;
-
 
 /** La graine d'un maillon : les quatre existantes, plus la livraison. La collecte `req` n'en a pas : elle passe par le genre `collecte` de `buildLotPrompt`. */
 export function phaseSeed(input: {
@@ -185,7 +174,11 @@ export function phaseSeed(input: {
     case "specs":
       return buildSpecsSeed(input.focus);
     case "impl":
-      return buildImplSeed(input.focus, input.fix, input.impliedBlockers === undefined ? {} : { impliedBlockers: input.impliedBlockers });
+      return buildImplSeed(
+        input.focus,
+        input.fix,
+        input.impliedBlockers === undefined ? {} : { impliedBlockers: input.impliedBlockers },
+      );
     case "review":
       return buildReviewSeed(input.focus, input.reviewScope === undefined ? {} : { incremental: input.reviewScope });
     case "release":
@@ -193,10 +186,8 @@ export function phaseSeed(input: {
   }
 }
 
-
 /** Borne du résumé du run précédent injecté dans un prompt de lot (`buildLotPrompt.previousSummary`). */
 export const PREVIOUS_SUMMARY_MAX = 2_000;
-
 
 /** La première ligne d'un prompt de réponse, selon la source (S-11). */
 const ANSWER_PREFIX: Record<DecisionSource, string> = {
@@ -205,12 +196,13 @@ const ANSWER_PREFIX: Record<DecisionSource, string> = {
   arbitrage: "[réponse de l'arbitre]",
 };
 
-
 /** La ligne de jalon (S-11) : le jalon franchi et qui l'a décidé. */
-export function milestoneLine(milestone: "specs validées" | "revue propre", source: "arbitrage" | "utilisateur"): string {
+export function milestoneLine(
+  milestone: "specs validées" | "revue propre",
+  source: "arbitrage" | "utilisateur",
+): string {
   return `[jalon « ${milestone} » — décision de ${source === "arbitrage" ? "l'arbitre" : "l'utilisateur"}]`;
 }
-
 
 /** La ligne exacte d'un run d'impl par lot (S-13). */
 export function lotPromptLine(lot: { id: string; index: number; ids: string[] }): string {
@@ -273,7 +265,8 @@ export function buildLotPrompt(input: {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const excerpt = (input.excerpt ?? "").trim();
   const summaryRaw = (input.previousSummary ?? "").trim();
-  const summary = summaryRaw.length > PREVIOUS_SUMMARY_MAX ? `${summaryRaw.slice(0, PREVIOUS_SUMMARY_MAX - 1)}…` : summaryRaw;
+  const summary =
+    summaryRaw.length > PREVIOUS_SUMMARY_MAX ? `${summaryRaw.slice(0, PREVIOUS_SUMMARY_MAX - 1)}…` : summaryRaw;
   const handed =
     (excerpt === "" ? "" : `[extrait du contrat]\n${excerpt}\n\n`) +
     (summary === "" ? "" : `[résumé du run précédent]\n${summary}\n\n`);
@@ -315,7 +308,6 @@ export function buildLotPrompt(input: {
   return `${withRefocus}\n\n${blocks.join("\n\n")}`;
 }
 
-
 /**
  * Dernière ligne non vide d'un texte : la plus informative d'un échec de
  * commande, et la raison consignée dans le lot.
@@ -327,7 +319,6 @@ export function lastLine(text: string): string {
     .filter((line) => line !== "");
   return lines.length > 0 ? (lines[lines.length - 1] as string) : "";
 }
-
 
 // --- la livraison : un run d'agent, puis deux commandes mécaniques (S-6/BR-7) -
 
@@ -348,16 +339,11 @@ Procédure OBLIGATOIRE, dans l'ordre :
 5. NE POUSSE PAS et N'OUVRE PAS de PR : le pilotage du lot s'en charge (\`git push\` vers l'URL HTTPS, puis \`gh pr create\`). N'appelle ni l'un ni l'autre.
 6. Termine par exactement une ligne : \`commit <sha> — <sujet du commit>\`.`;
 
-
 export function buildReleaseSeed(feature: { slug: string; branch: string }): string {
-  return (
-    `[release] Livraison de la feature « ${feature.slug} » (branche ${feature.branch}).\n\n` + RELEASE_DIRECTIVE
-  );
+  return `[release] Livraison de la feature « ${feature.slug} » (branche ${feature.branch}).\n\n${RELEASE_DIRECTIVE}`;
 }
 
-
 export type ReleaseTarget = { pushUrl: string | null; base: string | null };
-
 
 /** `gh repo view --json url,defaultBranchRef` → URL HTTPS de push et base de PR. */
 export function releaseTarget(raw: unknown): ReleaseTarget {
@@ -372,7 +358,6 @@ export function releaseTarget(raw: unknown): ReleaseTarget {
       : null;
   return { pushUrl: url, base };
 }
-
 
 /** Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). */
 export function releaseArgs(input: {
@@ -389,16 +374,14 @@ export function releaseArgs(input: {
   return { push: ["push", "-u", input.pushUrl, input.branch], pr };
 }
 
-
 /** L'URL de PR imprimée par `gh pr create` sur stdout (`## Documentation` §4). */
 export function parsePrUrl(stdout: string): string | null {
   for (const line of stdout.split("\n")) {
     const m = /^(https:\/\/\S*\/pull\/\d+)$/.exec(line.trim());
-    if (m && m[1]) return m[1];
+    if (m?.[1]) return m[1];
   }
   return null;
 }
-
 
 /**
  * L'URL de la PR d'une branche, lue dans la charge de `gh pr view <branche> --json
@@ -417,13 +400,11 @@ export function prUrlOfView(stdout: string): string | null {
   return typeof url === "string" ? parsePrUrl(url) : null;
 }
 
-
 // --- annulation : le devenir du worktree (S-9) -------------------------------
 
 export type WorktreeFate = "keep" | "archive" | "delete";
 
 export type FateResult = { ok: true; message: string } | { ok: false; message: string };
-
 
 /** Chemins ignorés par git (lignes `!! …`) d'un `git status --porcelain --ignored`. */
 export function ignoredPaths(statusOutput: string): string[] {
@@ -435,7 +416,6 @@ export function ignoredPaths(statusOutput: string): string[] {
   }
   return out;
 }
-
 
 /**
  * Applique le devenir choisi pour le worktree d'une feature annulée (AC-14) :
@@ -497,13 +477,11 @@ export async function applyWorktreeFate(input: {
   };
 }
 
-
 // --- mode worker : l'enfant ne décide de rien (S-13) -------------------------
 
 export type WorkerMode = { lotId: string; slug: string; phase: PipelinePhase; stateDir: string | null };
 
 export type FlagReader = { getFlag?: (name: string) => boolean | string | undefined };
-
 
 /**
  * Les quatre drapeaux d'un run de lot, relus par l'enfant au démarrage. `null`
@@ -565,7 +543,6 @@ export function latestSessionFile(
   return candidates[0]?.file ?? null;
 }
 
-
 /**
  * Le lot qui pilote encore `cwd` (`null` sinon) : c'est lui qui interdit aux
  * commandes manuelles de réécrire le contrat d'une feature (S-14).
@@ -583,7 +560,6 @@ export function lotDriverFor(stateDir: string, repoRoot: string, cwd: string): L
   if (lotStateTerminal(feature.state)) return null;
   return pidAlive(lot.owner.pid) ? lot : null;
 }
-
 
 /**
  * Bascule la collecte d'une feature de lot vers le pilote (S-14) : la feature

@@ -20,10 +20,8 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 import type { DialogAnswer, DialogRequest } from "./serviceApi.ts";
 
-
 /** L'ouverture d'un dialogue : la requête sans son identifiant ni son instant, posés par le canal. */
 export type DialogOpen = Omit<DialogRequest, "id" | "at">;
-
 
 /**
  * Le canal de dialogues d'une session : c'est LUI qui tient les identifiants, les
@@ -35,7 +33,6 @@ export type DialogChannel = {
   notice: (level: "info" | "warning" | "error", message: string) => void;
 };
 
-
 /** Le libellé et la description d'une option de sélection, séparés (Doc-4 §3). */
 function splitSelectItem(item: ExtensionUISelectItem): { label: string; description: string | null } {
   if (typeof item === "string") return { label: item, description: null };
@@ -43,12 +40,10 @@ function splitSelectItem(item: ExtensionUISelectItem): { label: string; descript
   return { label: item.label, description };
 }
 
-
 /** La réponse d'un dialogue ramenée à la forme de chaque méthode d'UI. */
-function valueOf(answer: DialogAnswer): string | undefined {
+function dialogValue(answer: DialogAnswer): string | undefined {
   return "value" in answer ? answer.value : undefined;
 }
-
 
 /**
  * Le contexte UI d'une session servie : chaque dialogue devient une trame `dialog`
@@ -71,10 +66,10 @@ export function createServiceUIContext(channel: DialogChannel, log: (line: strin
       const answer = await channel.request({
         method: "select",
         title,
-        options: items.map(item => item.label),
-        optionDescriptions: items.map(item => item.description),
+        options: items.map((item) => item.label),
+        optionDescriptions: items.map((item) => item.description),
       });
-      return valueOf(answer);
+      return dialogValue(answer);
     },
     confirm: async (title: string, message: string) => {
       const answer = await channel.request({
@@ -87,7 +82,7 @@ export function createServiceUIContext(channel: DialogChannel, log: (line: strin
       return "confirmed" in answer ? answer.confirmed : false;
     },
     input: async (title: string, placeholder?: string) =>
-      valueOf(
+      dialogValue(
         await channel.request({
           method: "input",
           title,
@@ -114,8 +109,13 @@ export function createServiceUIContext(channel: DialogChannel, log: (line: strin
     setEditorText: () => noop("setEditorText"),
     pasteToEditor: () => noop("pasteToEditor"),
     getEditorText: () => "",
-    editor: async (title: string, prefill?: string, _dialogOptions?: unknown, editorOptions?: { promptStyle?: boolean }) =>
-      valueOf(
+    editor: async (
+      title: string,
+      prefill?: string,
+      _dialogOptions?: unknown,
+      editorOptions?: { promptStyle?: boolean },
+    ) =>
+      dialogValue(
         await channel.request({
           method: "editor",
           title,
@@ -139,18 +139,19 @@ export function createServiceUIContext(channel: DialogChannel, log: (line: strin
   return context as unknown as ExtensionUIContext;
 }
 
-
 /**
  * Le `compact` d'une session : l'union `string | CompactOptions` de l'API
  * d'extension se scinde en deux arguments positionnels côté session — la même
  * scission que `runExtensionCompact` de l'hôte (Doc-1 §5).
  */
-export async function runCompact(session: AgentSession, instructions: string | CompactOptions | undefined): Promise<void> {
+export async function runCompact(
+  session: AgentSession,
+  instructions: string | CompactOptions | undefined,
+): Promise<void> {
   const text = typeof instructions === "string" ? instructions : undefined;
   const options = instructions !== null && typeof instructions === "object" ? instructions : undefined;
   await session.compact(text, options);
 }
-
 
 /**
  * Les trois objets d'actions du runner, recopiés de la référence de l'hôte
@@ -175,12 +176,12 @@ export async function initializeHostedRunner(
   }
   const actions: ExtensionActions = {
     sendMessage: (message, sendOptions) => {
-      void Promise.resolve(session.sendCustomMessage(message, sendOptions)).catch(err => {
+      void Promise.resolve(session.sendCustomMessage(message, sendOptions)).catch((err) => {
         report(`[service] envoi d'extension refusé : ${err instanceof Error ? err.message : String(err)}`);
       });
     },
     sendUserMessage: (content, sendOptions) => {
-      void Promise.resolve(session.sendUserMessage(content, sendOptions)).catch(err => {
+      void Promise.resolve(session.sendUserMessage(content, sendOptions)).catch((err) => {
         report(`[service] envoi utilisateur refusé : ${err instanceof Error ? err.message : String(err)}`);
       });
     },
@@ -192,9 +193,9 @@ export async function initializeHostedRunner(
     },
     getActiveTools: () => session.getEnabledToolNames(),
     getAllTools: () => session.getAllToolInfos(),
-    setActiveTools: toolNames => session.setActiveToolsByName(toolNames),
+    setActiveTools: (toolNames) => session.setActiveToolsByName(toolNames),
     getCommands: () => [],
-    setModel: async model => {
+    setModel: async (model) => {
       // Même règle que la référence de l'hôte (`runExtensionSetModel`) : sans clé
       // d'API pour ce modèle, le changement est REFUSÉ, jamais appliqué à moitié.
       const key = await session.modelRegistry.getApiKey(model);
@@ -203,11 +204,11 @@ export async function initializeHostedRunner(
       return true;
     },
     getThinkingLevel: () => session.thinkingLevel,
-    setThinkingLevel: level => session.setThinkingLevel(level),
+    setThinkingLevel: (level) => session.setThinkingLevel(level),
     getServiceTiers: () => session.serviceTierByFamily,
     setServiceTier: (family, tier) => session.setServiceTierFamily(family, tier),
     getSessionName: () => session.sessionManager.getSessionName(),
-    setSessionName: async name => {
+    setSessionName: async (name) => {
       await session.sessionManager.setSessionName(name, "user");
     },
   };
@@ -219,18 +220,18 @@ export async function initializeHostedRunner(
     shutdown: () => onShutdown(),
     getContextUsage: () => session.getContextUsage(),
     getSystemPrompt: () => session.systemPrompt,
-    runEphemeralTurn: args => session.runEphemeralTurn(args),
-    compact: instructions => runCompact(session, instructions),
+    runEphemeralTurn: (args) => session.runEphemeralTurn(args),
+    compact: (instructions) => runCompact(session, instructions),
   };
   const commandActions: ExtensionCommandContextActions = {
     getContextUsage: () => session.getContextUsage(),
     waitForIdle: () => session.agent.waitForIdle(),
-    newSession: async newOptions => {
+    newSession: async (newOptions) => {
       const success = await session.newSession({ parentSession: newOptions?.parentSession });
       if (success && newOptions?.setup) await newOptions.setup(session.sessionManager);
       return { cancelled: !success };
     },
-    branch: async entryId => {
+    branch: async (entryId) => {
       const result = await session.branch(entryId);
       return { cancelled: result.cancelled };
     },
@@ -238,17 +239,17 @@ export async function initializeHostedRunner(
       const result = await session.navigateTree(targetId, { summarize: navOptions?.summarize });
       return { cancelled: result.cancelled };
     },
-    switchSession: async sessionPath => {
+    switchSession: async (sessionPath) => {
       const success = await session.switchSession(sessionPath);
       return { cancelled: !success };
     },
     reload: async () => {
       await session.reload();
     },
-    compact: instructions => runCompact(session, instructions),
+    compact: (instructions) => runCompact(session, instructions),
   };
   runner.initialize(actions, contextActions, commandActions, ui, "print");
-  runner.onError(error => {
+  runner.onError((error) => {
     report(`[service] erreur d'extension : ${error instanceof Error ? error.message : String(error)}`);
   });
   // L'hôte n'émet `session_start` que par son `initializeExtensions` (Doc-1 §5) :

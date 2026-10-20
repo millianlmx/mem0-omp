@@ -1,8 +1,6 @@
 // Panneau : largeur visible, repli, fenêtres de texte.
 import type { PanelRow, PanelTone } from "./panelRows.ts";
 
-
-
 // --- largeur d'affichage et repli : les primitives du cadre (S-9) -----------
 //
 // Le cadre se cale en COLONNES VISIBLES, jamais en unités de code : un libellé
@@ -31,7 +29,6 @@ export const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x20000, 0x3fffd],
 ];
 
-
 /** Marques combinantes, format, ZWJ, sélecteurs de variante : 0 colonne. */
 export const ZERO_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x0300, 0x036f],
@@ -42,14 +39,12 @@ export const ZERO_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0xfeff, 0xfeff],
 ];
 
-
 export function inRanges(cp: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
   for (const [from, to] of ranges) {
     if (cp >= from && cp <= to) return true;
   }
   return false;
 }
-
 
 /** Une séquence CSI (`ESC [ … m` et consorts) : 0 colonne. */
 export const ANSI_AT = /^\u001b\[[0-9;?]*[A-Za-z]/;
@@ -58,7 +53,6 @@ export const ANSI_GLOBAL = /\u001b\[[0-9;?]*[A-Za-z]/g;
 
 /** Tabulations et contrôles : rendus comme un espace, donc mesurés comme lui. */
 export const CONTROL_GLOBAL = /[\u0000-\u001f\u007f]/g;
-
 
 /** L'atome qui commence à `index` : une séquence ANSI (0) ou un point de code. */
 export function scanAtom(text: string, index: number, out: { next: number; width: number }): void {
@@ -78,7 +72,6 @@ export function scanAtom(text: string, index: number, out: { next: number; width
   else out.width = 1;
 }
 
-
 /**
  * Texte mesurable et rendable : séquences ANSI RETIRÉES (0 colonne, et rien
  * d'un fichier externe n'atteint le terminal), puis contrôles → espaces.
@@ -86,7 +79,6 @@ export function scanAtom(text: string, index: number, out: { next: number; width
 export function sanitizeForWidth(text: string): string {
   return text.replace(ANSI_GLOBAL, "").replace(CONTROL_GLOBAL, " ");
 }
-
 
 /** Table locale de largeur : le chemin de `node --test`, et le repli de Bun. */
 export function localWidth(text: string): number {
@@ -101,13 +93,11 @@ export function localWidth(text: string): number {
   return width;
 }
 
-
 /** `Bun.stringWidth` s'il existe — lu une fois : OMP tourne sous Bun, pas les tests. */
 export const BUN_STRING_WIDTH: ((text: string) => number) | null = (() => {
   const bun = (globalThis as { Bun?: { stringWidth?: (text: string) => number } }).Bun;
   return typeof bun?.stringWidth === "function" ? bun.stringWidth.bind(bun) : null;
 })();
-
 
 /**
  * Largeur d'AFFICHAGE d'un texte, en colonnes de terminal (S-9) : ANSI = 0,
@@ -138,7 +128,6 @@ export function displayWidth(text: string): number {
   return localWidth(sanitized);
 }
 
-
 /** Le plus long préfixe de `text` tenant dans `max` colonnes visibles. */
 export function takeByWidth(text: string, max: number): string {
   const out = { next: 0, width: 0 };
@@ -152,7 +141,6 @@ export function takeByWidth(text: string, max: number): string {
   }
   return text.slice(0, index);
 }
-
 
 /** Le plus long suffixe de `text` tenant dans `max` colonnes visibles. */
 export function takeTailByWidth(text: string, max: number): string {
@@ -174,7 +162,6 @@ export function takeTailByWidth(text: string, max: number): string {
   }
   return text.slice(starts[at] ?? text.length);
 }
-
 
 /**
  * Replie un texte : chaque ligne rendue a une largeur d'affichage ≤ `width`.
@@ -215,7 +202,6 @@ export function wrapVisible(text: string, width: number): string[] {
   return rows;
 }
 
-
 /**
  * L'index de coupe d'une ligne trop longue : à la dernière espace qui tient, sinon
  * dur. Rend toujours > 0 (un caractère plus large que la ligne est rendu seul).
@@ -239,14 +225,11 @@ export function breakIndex(text: string, limit: number): number {
   return lastSpace > 0 ? lastSpace : index;
 }
 
-
 /** Le nombre de lignes qu'un rang de la LISTE peut occuper avant le repli (S-1). */
 export const PANEL_WRAP_MAX_LINES = 3;
 
-
 /** La fenêtre d'une notice (S-2) : borne de sécurité du budget, jamais atteinte. */
 export const PANEL_NOTICE_MAX_LINES = 4;
-
 
 /**
  * La fenêtre de la ZONE DE SAISIE de la vue (S-2, S-4) : au plus dix lignes, et
@@ -258,12 +241,10 @@ export function VIEW_ZONE_MAX_LINES(height: number): number {
   return Math.max(3, Math.min(10, Math.floor(height) - 7));
 }
 
-
 /** La fenêtre de la région de SAISIE de la liste (S-2), même règle que la zone. */
 export function LIST_MODE_MAX_LINES(height: number): number {
   return Math.max(3, Math.min(6, Math.floor(height) - 16));
 }
-
 
 /**
  * L'ancre de FIN d'une fenêtre de texte (S-2, S-4) : la vue colle à la dernière ligne
@@ -272,7 +253,6 @@ export function LIST_MODE_MAX_LINES(height: number): number {
  */
 export const WINDOW_FOLLOW: TextWindow = { follow: true, offset: 0 };
 
-
 /**
  * L'état de défilement d'une fenêtre de TEXTE (S-2) : le couple `{follow, offset}`
  * de la transcription (S-5), appliqué aux fenêtres bornées — `follow` colle la
@@ -280,7 +260,6 @@ export const WINDOW_FOLLOW: TextWindow = { follow: true, offset: 0 };
  * première ligne affichée quand l'utilisateur a remonté.
  */
 export type TextWindow = { follow: boolean; offset: number };
-
 
 /**
  * La fenêtre d'une liste de rangs (S-2, S-4) : au plus `max` lignes CONSÉCUTIVES,
@@ -298,14 +277,12 @@ export function textWindow(rows: PanelRow[], max: number, focus: number, scroll?
   return rows.slice(start, start + max);
 }
 
-
 export function clip(s: string, n: number): string {
   if (n <= 0) return "";
   if (displayWidth(s) <= n) return s;
   if (n === 1) return takeByWidth(s, 1);
   return `${takeByWidth(s, n - 1)}…`;
 }
-
 
 /**
  * Les `n` DERNIÈRES colonnes (S-4) : dans la sortie d'un maillon, ce qui compte
@@ -319,7 +296,6 @@ export function clipTail(s: string, n: number): string {
   return `…${takeTailByWidth(s, n - 1)}`;
 }
 
-
 /**
  * La fenêtre d'une section tronquée : celle qui CONTIENT le rang sélectionné, au
  * plus près (S-4). `sel` est l'index de la sélection DANS la section (`-1` quand
@@ -331,12 +307,10 @@ export function windowStart(sel: number, shown: number, count: number): number {
   return Math.min(Math.max(sel - shown + 1, 0), Math.max(0, count - shown));
 }
 
-
 /** L'index de la sélection DANS une section, ou `-1` si elle porte sur une autre. */
 export function sectionSelection(selection: number, offset: number, count: number): number {
   return selection >= 0 && selection < count ? selection + offset : -1;
 }
-
 
 /**
  * Les rangs du panneau et de la vue sont rendus par un `Text` de l'hôte, qui
@@ -344,7 +318,6 @@ export function sectionSelection(selection: number, offset: number, count: numbe
  * celle sur laquelle se mesurent les garde-fous de largeur — en découle.
  */
 export const ROW_PADDING_X = 1;
-
 
 /**
  * Un rang de SERVICE (S-1, S-2) : titre, titre de section, en-tête, notice, rang de
@@ -362,8 +335,7 @@ export function serviceRow(
   max = Number.POSITIVE_INFINITY,
 ): PanelRow[] {
   const lines = innerW > 0 ? wrapVisible(text, innerW) : [""];
-  const kept =
-    lines.length <= max ? lines : [...lines.slice(0, max - 1), clip(lines.slice(max - 1).join(" "), innerW)];
+  const kept = lines.length <= max ? lines : [...lines.slice(0, max - 1), clip(lines.slice(max - 1).join(" "), innerW)];
   return kept.map((line) => {
     const row: PanelRow = { text: line, tone };
     if (marks?.target !== undefined) row.target = marks.target;

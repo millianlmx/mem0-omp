@@ -62,7 +62,12 @@ function mkRepo(prefix: string): string {
 }
 
 /** Une feature du lot, prête à être lancée. */
-function feature(slug: string, worktree: string, state: "pending" | "running" = "pending", phase: PipelinePhase = "req") {
+function feature(
+  slug: string,
+  worktree: string,
+  state: "pending" | "running" = "pending",
+  phase: PipelinePhase = "req",
+) {
   return {
     slug,
     name: slug,
@@ -109,7 +114,7 @@ function seedLot(
     owner: { pid: 0, sessionFile: null, sessionId: null, heartbeatAt: 0 },
     createdAt: 1,
     launchedAt: status === "running" ? 1 : null,
-    features: features.map(entry => ({ ...entry, launched: status === "running" || undefined })),
+    features: features.map((entry) => ({ ...entry, launched: status === "running" || undefined })),
   });
 }
 
@@ -119,7 +124,12 @@ function gatedRunner() {
   const gates: Array<(result: { code: number; killed: boolean; stdout: string; stderr: string }) => void> = [];
   const runner = async (input: { spec: LotRunSpec }) => {
     specs.push(input.spec);
-    const { promise, resolve } = Promise.withResolvers<{ code: number; killed: boolean; stdout: string; stderr: string }>();
+    const { promise, resolve } = Promise.withResolvers<{
+      code: number;
+      killed: boolean;
+      stdout: string;
+      stderr: string;
+    }>();
     gates.push(resolve);
     return promise;
   };
@@ -141,7 +151,7 @@ function fakeHost() {
         cwd: options.cwd,
         purpose: options.purpose,
         dispose: async () => {
-          const at = sessions.findIndex(candidate => candidate.id === `sess-${seq}`);
+          const at = sessions.findIndex((candidate) => candidate.id === `sess-${seq}`);
           if (at >= 0) sessions.splice(at, 1);
         },
       };
@@ -176,7 +186,8 @@ function fakeHost() {
     answer: async () => {},
     close: async () => {},
     subscribe: () => null,
-    conduiteFor: (repoRoot: string) => sessions.find(entry => entry.purpose === "project" && entry.cwd === repoRoot) ?? null,
+    conduiteFor: (repoRoot: string) =>
+      sessions.find((entry) => entry.purpose === "project" && entry.cwd === repoRoot) ?? null,
     disposeAll: async () => {
       sessions.length = 0;
     },
@@ -204,7 +215,15 @@ function seedProject(stateDir: string, repoRoot: string, over: Record<string, un
         {
           name: "segment 1",
           features: [
-            { slug: "alpha", intention: "démarrer la chaîne", status: "merged", prUrl: null, failure: null, removedReason: null, updatedAt: 1 },
+            {
+              slug: "alpha",
+              intention: "démarrer la chaîne",
+              status: "merged",
+              prUrl: null,
+              failure: null,
+              removedReason: null,
+              updatedAt: 1,
+            },
           ],
         },
       ],
@@ -343,7 +362,7 @@ test("service-pilot/AC-6 : deux dépôts progressent en même temps, sans séria
   pilot.sweep();
   // Les DEUX runs sont en vol EN MÊME TEMPS : aucune file entre dépôts (S-4).
   await AssertEventually(() => gated.specs.length === 2, "les deux dépôts démarrent leurs maillons");
-  const slugs = gated.specs.map(spec => spec.slug).sort();
+  const slugs = gated.specs.map((spec) => spec.slug).sort();
   assert.deepEqual(slugs, ["alpha", "beta"]);
   assert.equal(gated.gates.length, 2, "les deux runs vivent simultanément");
   assert.equal(pilot.health().lots, 2, "chaque dépôt garde son lot");
@@ -381,7 +400,7 @@ test("service-pilot/AC-7 : après un arrêt du service, la conduite reprend depu
   await AssertEventually(() => host.sessions.length === 1, "la conduite est recréée après l'arrêt");
   assert.equal(host.sessions[0]!.purpose, "project");
   assert.deepEqual(
-    host.opens.filter(entry => entry.purpose === "project").map(entry => entry.resume),
+    host.opens.filter((entry) => entry.purpose === "project").map((entry) => entry.resume),
     [hostSession],
     "la session de conduite est rouverte depuis son fichier",
   );
@@ -439,7 +458,7 @@ async function AssertEventually(condition: () => boolean, message: string): Prom
   for (let i = 0; i < 2_000; i++) {
     if (condition()) return;
     await Promise.resolve();
-    if (i % 50 === 49) await new Promise<void>(resolve => setImmediate(resolve));
+    if (i % 50 === 49) await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.fail(message);
 }

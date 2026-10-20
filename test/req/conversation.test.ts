@@ -135,7 +135,13 @@ function toolResultEntry(name: string, text: string, id = "r"): unknown {
     id,
     parentId: null,
     timestamp: "2026-09-19T00:00:03.000Z",
-    message: { role: "toolResult", toolCallId: "c0", toolName: name, content: [{ type: "text", text }], isError: false },
+    message: {
+      role: "toolResult",
+      toolCallId: "c0",
+      toolName: name,
+      content: [{ type: "text", text }],
+      isError: false,
+    },
   };
 }
 
@@ -379,7 +385,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   let nudge: {
     name: string;
     /** L'ordre de l'hôte : (toolCallId, params, signal, onUpdate, ctx). */
-    run: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+    run: (
+      toolCallId: string,
+      params: unknown,
+      signal?: AbortSignal,
+      onUpdate?: unknown,
+      ctx?: unknown,
+    ) => Promise<AskResult>;
   } | null = null;
   const pi = {
     registerCommand() {},
@@ -399,7 +411,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     }),
     registerTool(definition: {
       name: string;
-      execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+      execute: (
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<AskResult>;
     }) {
       toolNames.push(definition.name);
       if (definition.name === "ask") nudge = { name: definition.name, run: definition.execute };
@@ -515,7 +533,11 @@ test("conversation/AC-5 : un message rejoint le tour en cours du maillon, sans n
     const inbox = panelInboxDirFor(stateDir, worktree);
     const app = mkApp({ "panel-inbox": inbox, "pipeline-state-dir": stateDir });
     const busy = childCtx(worktree, () => false);
-    assert.equal(armInbox(app.pi as never, busy as never, { inbox, watchParent: true }), true, "un run armé consomme sa boîte");
+    assert.equal(
+      armInbox(app.pi as never, busy as never, { inbox, watchParent: true }),
+      true,
+      "un run armé consomme sa boîte",
+    );
     writeDelivery(inbox, { version: 1, kind: "text", text: "va plutôt par là", sentAt: 1 });
     pumpInbox(app.pi as never, busy as never, inbox, true);
     assert.deepEqual(app.sent, [{ text: "va plutôt par là", deliverAs: "steer" }]);
@@ -614,7 +636,12 @@ test("conversation/AC-7 : répondre à la question fait cesser « attend », et 
     phase: "impl",
     state: "waiting",
     inbox,
-    pendingAsk: { toolCallId: "call-9", id: "q", question: "On garde ?", options: [{ label: "oui" }, { label: "non" }] },
+    pendingAsk: {
+      toolCallId: "call-9",
+      id: "q",
+      question: "On garde ?",
+      options: [{ label: "oui" }, { label: "non" }],
+    },
   });
 
   const panel = mountPanel(stateDir, { repoRoot, lot: controller });
@@ -623,7 +650,7 @@ test("conversation/AC-7 : répondre à la question fait cesser « attend », et 
   panel.component.handleInput("1");
   panel.component.handleInput("\r");
   await flush();
-  assert.equal(deliveryOf(inbox)["selected"], "oui", "l'option est livrée au maillon");
+  assert.equal(deliveryOf(inbox).selected, "oui", "l'option est livrée au maillon");
 
   // L'enfant a résolu la question dans le tour : l'entrée publiée n'attend plus,
   // et le rang cesse de dire « attend » — sans qu'aucun run n'ait été lancé.
@@ -730,8 +757,14 @@ test("conversation/AC-9 : une session terminée hors lot se reprend par un nouve
       sessionHeader: () => null,
       isDirectory: () => true,
     };
-    assert.equal(conversationRefusal(target, { ...probe, isDirectory: () => false }), "écriture impossible : le répertoire de travail du rang n'existe plus");
-    assert.equal(conversationRefusal(target, { ...probe, isSessionFile: () => false }), "écriture impossible : la session du rang est introuvable");
+    assert.equal(
+      conversationRefusal(target, { ...probe, isDirectory: () => false }),
+      "écriture impossible : le répertoire de travail du rang n'existe plus",
+    );
+    assert.equal(
+      conversationRefusal(target, { ...probe, isSessionFile: () => false }),
+      "écriture impossible : la session du rang est introuvable",
+    );
     assert.equal(conversationRefusal(target, probe), null);
     assert.deepEqual(
       buildConversationRunArgv({
@@ -770,7 +803,10 @@ test("conversation/AC-9 : une session terminée hors lot se reprend par un nouve
     const worktree = tmpdir("conversation-ac9-wt-");
     const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "session close");
     closedEntry(stateDir, { cwd: worktree, sessionFile: session, phase: "impl", label: "depot/alpha", updatedAt: 2 });
-    const seen: Array<{ target: { cwd: string; sessionFile: string; label: string; phase: string; inbox: string }; text: string }> = [];
+    const seen: Array<{
+      target: { cwd: string; sessionFile: string; label: string; phase: string; inbox: string };
+      text: string;
+    }> = [];
     const expectedInbox = panelInboxDirFor(stateDir, worktree);
     const panel = mountPanel(stateDir, {
       repoRoot: tmpdir("conversation-ac9-repo-"),
@@ -899,7 +935,12 @@ test("S-9 : répondre à un ask ne touche ni le magasin, ni les sessions, ni la 
     phase: "impl",
     state: "waiting",
     inbox,
-    pendingAsk: { toolCallId: "call-1", id: "q", question: "On garde ?", options: [askOption("oui"), askOption("non")] },
+    pendingAsk: {
+      toolCallId: "call-1",
+      id: "q",
+      question: "On garde ?",
+      options: [askOption("oui"), askOption("non")],
+    },
   });
   // Le panneau relit le magasin au battement : la publication du maillon se voit
   // ici par un rafraîchissement explicite (l'ordonnanceur du harnais est inerte).
@@ -921,13 +962,16 @@ test("S-9 : répondre à un ask ne touche ni le magasin, ni les sessions, ni la 
   // (a) Une livraison `ask` apparaît dans la boîte du maillon VIVANT…
   const delivered = readDeliveries(inbox);
   assert.equal(delivered.length, 1, "une seule livraison, et dans la boîte du run");
-  assert.deepEqual({ ...(delivered[0]!.delivery as object), sentAt: 0 }, {
-    version: 1,
-    kind: "ask",
-    toolCallId: "call-1",
-    selected: "oui",
-    sentAt: 0,
-  });
+  assert.deepEqual(
+    { ...(delivered[0]!.delivery as object), sentAt: 0 },
+    {
+      version: 1,
+      kind: "ask",
+      toolCallId: "call-1",
+      selected: "oui",
+      sentAt: 0,
+    },
+  );
   // …et le maillon la consomme : la boîte se vide.
   for (const entry of readDeliveries(inbox)) consumeDelivery(entry.file);
   assert.equal(readDeliveries(inbox).length, 0, "la livraison est consommée par le maillon");
@@ -955,7 +999,12 @@ test("S-10 : deux réponses de suite puis un message reprennent la MÊME session
     phase: "impl",
     state: "waiting",
     inbox,
-    pendingAsk: { toolCallId: "call-1", id: "q1", question: "On garde ?", options: [askOption("oui"), askOption("non")] },
+    pendingAsk: {
+      toolCallId: "call-1",
+      id: "q1",
+      question: "On garde ?",
+      options: [askOption("oui"), askOption("non")],
+    },
   });
   panel.component.refresh();
 
@@ -974,7 +1023,12 @@ test("S-10 : deux réponses de suite puis un message reprennent la MÊME session
     phase: "impl",
     state: "waiting",
     inbox,
-    pendingAsk: { toolCallId: "call-2", id: "q2", question: "Et là ?", options: [askOption("plutôt ça"), askOption("plutôt ci")] },
+    pendingAsk: {
+      toolCallId: "call-2",
+      id: "q2",
+      question: "Et là ?",
+      options: [askOption("plutôt ça"), askOption("plutôt ci")],
+    },
   });
   panel.component.refresh();
   assert.match(panel.screen(120), /Et là \?/, "la question suivante du MÊME maillon est proposée");
@@ -1144,7 +1198,12 @@ test("l'outil ask valide son appel et refuse ce qui n'est pas une question uniqu
   assert.equal(refusal({}), "Error: questions must not be empty");
   assert.equal(refusal({ questions: [] }), "Error: questions must not be empty");
   assert.equal(
-    refusal({ questions: [{ id: "a", question: "?", options: [askOption("x")] }, { id: "b", question: "?", options: [askOption("y")] }] }),
+    refusal({
+      questions: [
+        { id: "a", question: "?", options: [askOption("x")] },
+        { id: "b", question: "?", options: [askOption("y")] },
+      ],
+    }),
     "Error: ask one question at a time",
   );
   assert.equal(
@@ -1153,10 +1212,15 @@ test("l'outil ask valide son appel et refuse ce qui n'est pas une question uniqu
   );
   assert.equal(refusal({ questions: [{ id: "a", question: "?", options: [] }] }), "Error: ask needs 1 to 9 options");
   assert.equal(
-    refusal({ questions: [{ id: "a", question: "?", options: Array.from({ length: 10 }, (_, i) => askOption(`o${i}`)) }] }),
+    refusal({
+      questions: [{ id: "a", question: "?", options: Array.from({ length: 10 }, (_, i) => askOption(`o${i}`)) }],
+    }),
     "Error: ask needs 1 to 9 options",
   );
-  assert.equal(refusal({ questions: [{ id: "  ", question: "?", options: [askOption("x")] }] }), "Error: question id must not be empty");
+  assert.equal(
+    refusal({ questions: [{ id: "  ", question: "?", options: [askOption("x")] }] }),
+    "Error: question id must not be empty",
+  );
   assert.equal(
     refusal({ questions: [{ id: "a", question: "?", options: [askOption("x"), askOption("  ")] }] }),
     "Error: option 2 has no label",
@@ -1227,7 +1291,11 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
   assert.equal(published()?.state, "running", "l'appel terminé, le maillon travaille de nouveau");
 
   // Une sélection inconnue est rendue au modèle : le run continue, sans choix inventé.
-  const unknown = app.ask("call-2", { questions: [{ id: "q", question: "?", options: [askOption("a"), askOption("b")] }] }, ctx);
+  const unknown = app.ask(
+    "call-2",
+    { questions: [{ id: "q", question: "?", options: [askOption("a"), askOption("b")] }] },
+    ctx,
+  );
   await flush(2);
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-2", selected: "z", sentAt: 2 });
   pumpInbox(app as never, ctx as never, inbox, true);
@@ -1261,7 +1329,10 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
 
   // Une session NON armée n'enregistre rien : l'outil `ask` de l'hôte garde la main.
   const plain = mkApp({});
-  await plain.hooks.get("session_start")!(undefined as never, childCtx(tmpdir("conversation-plain-"), () => true) as never);
+  await plain.hooks.get("session_start")!(
+    undefined as never,
+    childCtx(tmpdir("conversation-plain-"), () => true) as never,
+  );
   assert.deepEqual(plain.toolNames, []);
 });
 
@@ -1306,10 +1377,7 @@ test("S-1 : aucune ligne de la vue ne dépasse la largeur, repli compris", () =>
     for (const expanded of [false, true]) {
       panel.component.handleInput("\u000f"); // ctrl+o : la bascule globale de dépliage
       for (const line of panel.component.render(width)) {
-        assert.ok(
-          displayWidth(line) <= width,
-          `largeur ${width}, dépliées ${expanded} : ${JSON.stringify(line)}`,
-        );
+        assert.ok(displayWidth(line) <= width, `largeur ${width}, dépliées ${expanded} : ${JSON.stringify(line)}`);
       }
     }
   }
@@ -1460,10 +1528,19 @@ test("conversation-ask/AC-3 : tous les autres gestes gardent leur aperçu", asyn
       assert.notEqual(preview.head, "", `le geste ${gesture.kind} a un aperçu`);
       assert.match(preview.hint, /^Entrée /, `le geste ${gesture.kind} annonce sa touche`);
     }
-    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: true }).hint, /Entrée mettre en file/);
+    assert.match(
+      replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: true }).hint,
+      /Entrée mettre en file/,
+    );
     assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false }).hint, /Entrée envoyer/);
-    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "steer" }).hint, /Entrée envoyer · Échap revenir/);
-    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "ask" }).hint, /Entrée envoyer · Échap revenir/);
+    assert.match(
+      replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "steer" }).hint,
+      /Entrée envoyer · Échap revenir/,
+    );
+    assert.match(
+      replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "ask" }).hint,
+      /Entrée envoyer · Échap revenir/,
+    );
   }
 
   {
@@ -1476,13 +1553,25 @@ test("conversation-ask/AC-3 : tous les autres gestes gardent leur aperçu", asyn
     const panel = mountPanel(stateDir, { repoRoot, lot: controller });
     panel.component.handleInput("x");
     assert.match(panel.screen(120), /Retirer alpha du lot \?/, "l'aperçu du retrait est peint");
-    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["alpha", "beta"], "l'aperçu n'a rien retiré");
+    assert.deepEqual(
+      lotFile()!.features.map((f) => f.slug),
+      ["alpha", "beta"],
+      "l'aperçu n'a rien retiré",
+    );
     panel.component.handleInput("\u001b");
-    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["alpha", "beta"], "Échap n'agit pas");
+    assert.deepEqual(
+      lotFile()!.features.map((f) => f.slug),
+      ["alpha", "beta"],
+      "Échap n'agit pas",
+    );
     panel.component.handleInput("x");
     panel.component.handleInput("\r");
     await flush(4);
-    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["beta"], "le second Entrée, lui, retire");
+    assert.deepEqual(
+      lotFile()!.features.map((f) => f.slug),
+      ["beta"],
+      "le second Entrée, lui, retire",
+    );
     panel.component.dispose();
   }
 
@@ -1509,7 +1598,7 @@ test("conversation-ask/AC-3 : tous les autres gestes gardent leur aperçu", asyn
     assert.deepEqual(readDeliveries(inbox), [], "rien n'est livré avant la confirmation");
     panel.component.handleInput("\r");
     await flush();
-    assert.equal(deliveryOf(inbox)["text"], "continue", "le second Entrée livre le texte");
+    assert.equal(deliveryOf(inbox).text, "continue", "le second Entrée livre le texte");
     panel.component.dispose();
   }
 
@@ -1562,10 +1651,7 @@ test("conversation-ask/AC-10 : la description d'une option est lisible dans la v
       toolCallId: "call-10",
       id: "auth",
       question: "Quelle authentification ?",
-      options: [
-        { label: "JWT", description: "un jeton signé, sans état côté serveur" },
-        { label: "cookie" },
-      ],
+      options: [{ label: "JWT", description: "un jeton signé, sans état côté serveur" }, { label: "cookie" }],
     },
   });
   const panel = mountPanel(stateDir, { repoRoot: tmpdir("conversation-ask-ac10-repo-") });
@@ -1655,8 +1741,20 @@ test("conversation-ask/AC-13 : le titre d'une vue qui écrit ne dit jamais « le
   const openSession = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), openWt, "tour du maillon");
   const closedSession = oneLineSession(path.join(stateDir, "sessions", "beta.jsonl"), closedWt, "collecte");
   seedLot(stateDir, repoRoot, [
-    feature("alpha", { origin: "session", state: "running", phase: "impl", worktree: openWt, sessionFile: openSession }),
-    feature("beta", { origin: "session", state: "running", phase: "req", worktree: closedWt, sessionFile: closedSession }),
+    feature("alpha", {
+      origin: "session",
+      state: "running",
+      phase: "impl",
+      worktree: openWt,
+      sessionFile: openSession,
+    }),
+    feature("beta", {
+      origin: "session",
+      state: "running",
+      phase: "req",
+      worktree: closedWt,
+      sessionFile: closedSession,
+    }),
   ]);
   liveEntry(stateDir, {
     cwd: openWt,
@@ -1682,7 +1780,11 @@ test("conversation-ask/AC-13 : le titre d'une vue qui écrit ne dit jamais « le
   panel.component.handleInput("\r");
   const open = panel.screen(120);
   assert.match(open, /run en cours/, "le titre annonce le run vivant");
-  assert.doesNotMatch(open, /lecture seule/, "le titre d'une vue qui accepte une écriture ne dit pas « lecture seule »");
+  assert.doesNotMatch(
+    open,
+    /lecture seule/,
+    "le titre d'une vue qui accepte une écriture ne dit pas « lecture seule »",
+  );
   assert.match(open, /Réponse : ▏/, "et la zone écrit");
   panel.component.handleInput("\u001b");
 

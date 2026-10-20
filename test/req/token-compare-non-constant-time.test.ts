@@ -40,8 +40,8 @@ async function send(handle: Handle, header: string | null): Promise<Reply> {
 const REFUSED: Record<string, (string | null)[]> = {
   "AC-2": [null],
   "AC-3": [T.slice(0, 31), "a"],
-  "AC-4": [T + "a", T + "b".repeat(32)],
-  "AC-5": ["b".repeat(32), T.slice(0, 31) + "b", "é".repeat(32)],
+  "AC-4": [`${T}a`, T + "b".repeat(32)],
+  "AC-5": ["b".repeat(32), `${T.slice(0, 31)}b`, "é".repeat(32)],
 };
 
 async function assertRefused(ac: string): Promise<Reply[]> {

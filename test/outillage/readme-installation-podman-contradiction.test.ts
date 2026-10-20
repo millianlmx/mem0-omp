@@ -180,12 +180,9 @@ test("readme-installation-podman-contradiction/AC-8 : voie manuelle remise avant
   const im = headingIndex("manuelle");
   const ip = headingIndex("plugins");
 
-  const swapped = [
-    ...lines.slice(0, ia),
-    ...lines.slice(im, ip),
-    ...lines.slice(ia, im),
-    ...lines.slice(ip),
-  ].join("\n");
+  const swapped = [...lines.slice(0, ia), ...lines.slice(im, ip), ...lines.slice(ia, im), ...lines.slice(ip)].join(
+    "\n",
+  );
   assert.notEqual(swapped, readme);
   const swappedViolations = installationViolations(swapped);
   assert.ok(

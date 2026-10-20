@@ -70,7 +70,15 @@ import {
 } from "../../omp-mem0-req/extension.ts";
 import { emptyGitRepo, gitRunner } from "../support/git.ts";
 import { tmpdir } from "../support/repo.ts";
-import { THEME, assistantEntry, fakeKit, liveEntry, seedLot, userEntry, writeSession } from "../support/req-fixtures.ts";
+import {
+  THEME,
+  assistantEntry,
+  fakeKit,
+  liveEntry,
+  seedLot,
+  userEntry,
+  writeSession,
+} from "../support/req-fixtures.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures : répertoires, dépôt git, lot, fichiers de session
@@ -129,7 +137,13 @@ function toolResultEntry(name: string, text: string): unknown {
     id: "r",
     parentId: null,
     timestamp: "2026-09-19T00:00:03.000Z",
-    message: { role: "toolResult", toolCallId: "c0", toolName: name, content: [{ type: "text", text }], isError: false },
+    message: {
+      role: "toolResult",
+      toolCallId: "c0",
+      toolName: name,
+      content: [{ type: "text", text }],
+      isError: false,
+    },
   };
 }
 
@@ -343,7 +357,9 @@ test("panneau/AC-1 : la transcription se lit en direct, en entier, et ses états
       { type: "custom_message", id: "cm", parentId: null, timestamp: "t", customType: "pipeline", content: "notice" },
       { type: "title", id: "t2", parentId: null, timestamp: "t" },
     ]);
-    seedLot(stateDir, repoRoot, [feature("alpha", { state: "running", phase: "impl", worktree, sessionFile: session })]);
+    seedLot(stateDir, repoRoot, [
+      feature("alpha", { state: "running", phase: "impl", worktree, sessionFile: session }),
+    ]);
     const panel = mountPanel(stateDir, { repoRoot });
     panel.component.handleInput("\r");
     const screen = panel.screen(64);
@@ -364,7 +380,9 @@ test("panneau/AC-1 : la transcription se lit en direct, en entier, et ses états
     const worktree = tmpdir("panneau-ac1b-wt-");
     const session = path.join(stateDir, "sessions", "alpha.jsonl");
     writeSession(session, worktree, [userEntry("le maillon travaille")]);
-    seedLot(stateDir, repoRoot, [feature("alpha", { state: "running", phase: "impl", worktree, sessionFile: session })]);
+    seedLot(stateDir, repoRoot, [
+      feature("alpha", { state: "running", phase: "impl", worktree, sessionFile: session }),
+    ]);
     const panel = mountPanel(stateDir, { repoRoot });
     panel.component.handleInput("\r");
     assert.doesNotMatch(panel.screen(64), /la suite arrive/);
@@ -394,9 +412,7 @@ test("panneau/AC-1 : la transcription se lit en direct, en entier, et ses états
     assert.match(absentPanel.screen(200), new RegExp(`aucune entrée lisible — ${missing}`));
 
     const blankRepo = tmpdir("panneau-ac1c-blank-");
-    seedLot(stateDir, blankRepo, [
-      feature("beta", { state: "done", phase: "review", worktree, sessionFile: empty }),
-    ]);
+    seedLot(stateDir, blankRepo, [feature("beta", { state: "done", phase: "review", worktree, sessionFile: empty })]);
     const blankPanel = mountPanel(stateDir, { repoRoot: blankRepo });
     blankPanel.component.handleInput("\r");
     assert.match(blankPanel.screen(200), /aucune entrée à afficher/);
@@ -413,9 +429,7 @@ test("panneau/AC-1 : la transcription se lit en direct, en entier, et ses états
     assert.equal(read.truncated, true, "un fichier plus long que la fenêtre est annoncé tronqué");
     assert.ok(read.entries.length <= SESSION_VIEW_MAX_ENTRIES, "les entrées chargées sont bornées");
     const manyRepo = tmpdir("panneau-ac1c-many-");
-    seedLot(stateDir, manyRepo, [
-      feature("many", { state: "running", phase: "impl", worktree, sessionFile: many }),
-    ]);
+    seedLot(stateDir, manyRepo, [feature("many", { state: "running", phase: "impl", worktree, sessionFile: many })]);
     const manyPanel = mountPanel(stateDir, { repoRoot: manyRepo });
     manyPanel.component.handleInput("\r");
     assert.match(manyPanel.screen(200), /… début tronqué/, "et la vue le dit");
@@ -443,7 +457,11 @@ test("panneau/AC-2 : consulter une vue ne touche ni le run, ni la session, ni le
   await controller.launch();
   const alpha = readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!;
   writeContract(alpha.worktree, CONTRACT_CLOSED);
-  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), alpha.worktree, "le maillon travaille");
+  const session = oneLineSession(
+    path.join(stateDir, "sessions", "alpha.jsonl"),
+    alpha.worktree,
+    "le maillon travaille",
+  );
   liveEntry(stateDir, {
     cwd: alpha.worktree,
     label: "repo/alpha",
@@ -693,7 +711,11 @@ test("panneau/AC-5 : un message part en file, sans toucher au run en vol", async
     await controller.launch();
     const alpha = readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!;
     writeContract(alpha.worktree, CONTRACT_CLOSED);
-    const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), alpha.worktree, "le maillon travaille");
+    const session = oneLineSession(
+      path.join(stateDir, "sessions", "alpha.jsonl"),
+      alpha.worktree,
+      "le maillon travaille",
+    );
     liveEntry(stateDir, { cwd: alpha.worktree, phase: "req", state: "running", sessionFile: session });
     const sessionBefore = fs.readFileSync(session, "utf8");
     const panel = mountPanel(stateDir, { repoRoot, lot: controller });
@@ -832,7 +854,11 @@ test("panneau/AC-5 : un message part en file, sans toucher au run en vol", async
       messages: ["premier", "second"],
     });
     assert.ok(two.indexOf("premier") < two.indexOf("second"), "les messages partent dans l'ordre");
-    assert.equal(two.split("[message de l'utilisateur, envoyé depuis /pipelines]").length - 1, 2, "un bloc par message");
+    assert.equal(
+      two.split("[message de l'utilisateur, envoyé depuis /pipelines]").length - 1,
+      2,
+      "un bloc par message",
+    );
     assert.equal(buildLotPrompt({ kind: "phase", phase: "impl", slug: "alpha", focus: "", messages: [] }), base);
     assert.equal(buildLotPrompt({ kind: "phase", phase: "impl", slug: "alpha", focus: "", messages: ["  "] }), base);
   }
@@ -1142,7 +1168,11 @@ test("panneau/AC-8 : tout geste qui change l'état du lot s'annonce avant d'agir
     }
     assert.deepEqual(calls, []);
     panel.component.handleInput("\u001b");
-    assert.match(panel.screen(80), /Dépendances \(slugs séparés par des virgules\) : ▏/, "Échap rend le champ de saisie");
+    assert.match(
+      panel.screen(80),
+      /Dépendances \(slugs séparés par des virgules\) : ▏/,
+      "Échap rend le champ de saisie",
+    );
     panel.component.handleInput("\r");
     assert.match(panel.screen(80), /Créer zeta \?/);
     panel.component.handleInput("\r");
@@ -1203,32 +1233,27 @@ test("panneau/AC-8 : tout geste qui change l'état du lot s'annonce avant d'agir
 // ---------------------------------------------------------------------------
 
 test("panneau/AC-9 : aucune ligne ne déborde — les lignes longues se replient", () => {
-  {
-    // La largeur d'AFFICHAGE : ANSI = 0, combinantes = 0, Large/Fullwidth = 2.
-    assert.equal(displayWidth(""), 0);
-    assert.equal(displayWidth("abc"), 3);
-    assert.equal(displayWidth("éàœ"), 3, "le latin accentué est Narrow : une colonne");
-    assert.equal(displayWidth("日本語"), 6, "les idéogrammes sont Large : deux colonnes");
-    assert.equal(displayWidth("a\u0301"), 1, "une marque combinante n'occupe aucune colonne");
-    assert.equal(displayWidth("\u001b[31mred\u001b[0m"), 3, "une séquence ANSI n'occupe aucune colonne");
-    assert.equal(displayWidth("a\tb"), 3, "une tabulation est rendue comme un espace");
-    assert.equal(displayWidth("👍"), 2, "un emoji compte deux colonnes, une fois");
-    assert.equal(displayWidth("a\u200bb"), 2, "un ZWJ ne compte pas");
-  }
-
-  {
-    // Le repli : aux espaces, coup dur, lignes vides préservées.
-    assert.deepEqual(wrapVisible("abc def", 7), ["abc def"], "un texte qui tient ne bouge pas");
-    assert.deepEqual(wrapVisible("abc def", 3), ["abc", "def"], "la coupure se fait à l'espace");
-    assert.deepEqual(wrapVisible("abcdef", 3), ["abc", "def"], "un mot plus long est coupé dur");
-    assert.deepEqual(wrapVisible("aaa   bbb", 4), ["aaa", "bbb"], "les espaces de tête absorbés");
-    assert.deepEqual(wrapVisible("a\n\nb", 10), ["a", "", "b"], "une ligne vide du source reste vide");
-    assert.deepEqual(wrapVisible("日本語", 2), ["日", "本", "語"], "le repli se fait en colonnes");
-    assert.deepEqual(wrapVisible("a\tb", 10), ["a b"], "la tabulation devient un espace");
-    assert.deepEqual(wrapVisible("abc", 0), [], "aucune place : aucun rang");
-    for (const line of wrapVisible("un texte assez long pour dépasser", 7)) {
-      assert.ok(displayWidth(line) <= 7, `chaque ligne tient dans la largeur : ${JSON.stringify(line)}`);
-    }
+  // La largeur d'AFFICHAGE : ANSI = 0, combinantes = 0, Large/Fullwidth = 2.
+  assert.equal(displayWidth(""), 0);
+  assert.equal(displayWidth("abc"), 3);
+  assert.equal(displayWidth("éàœ"), 3, "le latin accentué est Narrow : une colonne");
+  assert.equal(displayWidth("日本語"), 6, "les idéogrammes sont Large : deux colonnes");
+  assert.equal(displayWidth("a\u0301"), 1, "une marque combinante n'occupe aucune colonne");
+  assert.equal(displayWidth("\u001b[31mred\u001b[0m"), 3, "une séquence ANSI n'occupe aucune colonne");
+  assert.equal(displayWidth("a\tb"), 3, "une tabulation est rendue comme un espace");
+  assert.equal(displayWidth("👍"), 2, "un emoji compte deux colonnes, une fois");
+  assert.equal(displayWidth("a\u200bb"), 2, "un ZWJ ne compte pas");
+  // Le repli : aux espaces, coup dur, lignes vides préservées.
+  assert.deepEqual(wrapVisible("abc def", 7), ["abc def"], "un texte qui tient ne bouge pas");
+  assert.deepEqual(wrapVisible("abc def", 3), ["abc", "def"], "la coupure se fait à l'espace");
+  assert.deepEqual(wrapVisible("abcdef", 3), ["abc", "def"], "un mot plus long est coupé dur");
+  assert.deepEqual(wrapVisible("aaa   bbb", 4), ["aaa", "bbb"], "les espaces de tête absorbés");
+  assert.deepEqual(wrapVisible("a\n\nb", 10), ["a", "", "b"], "une ligne vide du source reste vide");
+  assert.deepEqual(wrapVisible("日本語", 2), ["日", "本", "語"], "le repli se fait en colonnes");
+  assert.deepEqual(wrapVisible("a\tb", 10), ["a b"], "la tabulation devient un espace");
+  assert.deepEqual(wrapVisible("abc", 0), [], "aucune place : aucun rang");
+  for (const line of wrapVisible("un texte assez long pour dépasser", 7)) {
+    assert.ok(displayWidth(line) <= 7, `chaque ligne tient dans la largeur : ${JSON.stringify(line)}`);
   }
 
   {
@@ -1313,10 +1338,7 @@ test("panneau/AC-9 : aucune ligne ne déborde — les lignes longues se replient
     // pas ensemble (S-10) : le libellé, puis l'état et le temps — jamais coupés en
     // deux, et portant la même cible de clic et le même ton.
     assert.equal(mine.length, 2, "un libellé plus large que la ligne fait deux rangs");
-    assert.ok(
-      mine[0]!.text.includes(slug),
-      "le libellé ENTIER est passé au composant, jamais coupé en amont",
-    );
+    assert.ok(mine[0]!.text.includes(slug), "le libellé ENTIER est passé au composant, jamais coupé en amont");
     assert.match(mine[1]!.text, /\/impl · en cours · 0:00/, "l'état et le temps sont entiers, sur leur rang");
     assert.equal(mine[0]!.tone, "success", "le rang garde son ton");
     assert.equal(mine[1]!.tone, "success", "et son second rang aussi");
@@ -1328,61 +1350,59 @@ test("panneau/AC-9 : aucune ligne ne déborde — les lignes longues se replient
 // ---------------------------------------------------------------------------
 
 test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de saisie", async () => {
-  {
-    // La règle de cible, appliquée par le pilote comme par l'affichage.
-    assert.deepEqual(
-      rowReply(feature("a", { state: "waiting", phase: "req", waitKind: "answer", waitPrompt: "- (1) oui" })),
-      { kind: "reply", phase: "req", question: null, options: ["oui"] },
-    );
-    assert.deepEqual(
-      rowReply(
-        feature("a", {
-          state: "waiting",
-          phase: "req",
-          waitKind: "answer",
-          waitPrompt: "Que fais-je ?\n- (1) oui\n- (2) non",
-        }),
-      ),
-      { kind: "reply", phase: "req", question: "Que fais-je ?", options: ["oui", "non"] },
-      "la question est le prompt SANS son bloc d'options (il est rendu juste après)",
-    );
-    assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" })), { kind: "queue", phase: "impl" });
-    // Un run ARMÉ (il a publié sa boîte) reçoit le message DANS son tour, et une
-    // question `ask` en vol fait de la zone une liste d'options (S-6, S-7).
-    assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" }), { inbox: "/tmp/box-1" }), {
-      kind: "steer",
-      phase: "impl",
-      inbox: "/tmp/box-1",
-    });
-    assert.deepEqual(
-      rowReply(feature("a", { state: "running", phase: "impl" }), {
-        inbox: "/tmp/box-1",
-        pendingAsk: { toolCallId: "call-1", id: "q1", question: "JWT ou cookie ?", options: [{ label: "JWT" }] },
+  // La règle de cible, appliquée par le pilote comme par l'affichage.
+  assert.deepEqual(
+    rowReply(feature("a", { state: "waiting", phase: "req", waitKind: "answer", waitPrompt: "- (1) oui" })),
+    { kind: "reply", phase: "req", question: null, options: ["oui"] },
+  );
+  assert.deepEqual(
+    rowReply(
+      feature("a", {
+        state: "waiting",
+        phase: "req",
+        waitKind: "answer",
+        waitPrompt: "Que fais-je ?\n- (1) oui\n- (2) non",
       }),
-      {
-        kind: "ask",
-        phase: "impl",
-        question: "JWT ou cookie ?",
-        // Les options publiées passent TELLES QUELLES (S-5) : la description est
-        // rendue par la zone, et la livraison n'envoie que le libellé.
-        options: [{ label: "JWT" }],
-        toolCallId: "call-1",
-        inbox: "/tmp/box-1",
-      },
-    );
-    assert.deepEqual(rowReply(feature("a", { origin: "session", state: "running", phase: "req" })), {
-      kind: "closed",
-      reason: "la collecte se déroule dans ta session — réponds-y directement",
-    });
-    assert.deepEqual(rowReply(feature("a", { state: "done", phase: "review" })), {
-      kind: "closed",
-      reason: "rien à répondre : la feature est terminée",
-    });
-    // Une feature BLOQUÉE se relance par une réponse : sa zone est un éditeur
-    // libre, et la réponse repart dans un run qui reprend son contexte (S-8 §2).
-    assert.deepEqual(rowReply(feature("a", { state: "blocked", phase: "impl" })), { kind: "text", phase: "impl" });
-    assert.equal(rowReply(feature("a", { state: "pending" })).kind, "closed");
-  }
+    ),
+    { kind: "reply", phase: "req", question: "Que fais-je ?", options: ["oui", "non"] },
+    "la question est le prompt SANS son bloc d'options (il est rendu juste après)",
+  );
+  assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" })), { kind: "queue", phase: "impl" });
+  // Un run ARMÉ (il a publié sa boîte) reçoit le message DANS son tour, et une
+  // question `ask` en vol fait de la zone une liste d'options (S-6, S-7).
+  assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" }), { inbox: "/tmp/box-1" }), {
+    kind: "steer",
+    phase: "impl",
+    inbox: "/tmp/box-1",
+  });
+  assert.deepEqual(
+    rowReply(feature("a", { state: "running", phase: "impl" }), {
+      inbox: "/tmp/box-1",
+      pendingAsk: { toolCallId: "call-1", id: "q1", question: "JWT ou cookie ?", options: [{ label: "JWT" }] },
+    }),
+    {
+      kind: "ask",
+      phase: "impl",
+      question: "JWT ou cookie ?",
+      // Les options publiées passent TELLES QUELLES (S-5) : la description est
+      // rendue par la zone, et la livraison n'envoie que le libellé.
+      options: [{ label: "JWT" }],
+      toolCallId: "call-1",
+      inbox: "/tmp/box-1",
+    },
+  );
+  assert.deepEqual(rowReply(feature("a", { origin: "session", state: "running", phase: "req" })), {
+    kind: "closed",
+    reason: "la collecte se déroule dans ta session — réponds-y directement",
+  });
+  assert.deepEqual(rowReply(feature("a", { state: "done", phase: "review" })), {
+    kind: "closed",
+    reason: "rien à répondre : la feature est terminée",
+  });
+  // Une feature BLOQUÉE se relance par une réponse : sa zone est un éditeur
+  // libre, et la réponse repart dans un run qui reprend son contexte (S-8 §2).
+  assert.deepEqual(rowReply(feature("a", { state: "blocked", phase: "impl" })), { kind: "text", phase: "impl" });
+  assert.equal(rowReply(feature("a", { state: "pending" })).kind, "closed");
 
   {
     // Chaque état de la table de S-10 : la raison écrite, aucun champ, aucune
@@ -1399,7 +1419,10 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
         over: { state: "failed", phase: "impl", stopReason: "x" },
         reason: "lecture seule — rien à répondre : la feature a échoué",
       },
-      { over: { state: "cancelled", phase: "impl" }, reason: "lecture seule — rien à répondre : la feature est annulée" },
+      {
+        over: { state: "cancelled", phase: "impl" },
+        reason: "lecture seule — rien à répondre : la feature est annulée",
+      },
       // Une feature BLOQUÉE n'est plus en lecture seule : sa réponse la relance
       // (S-8 §2), et c'est un autre cas qui le prouve.
       { over: { state: "pending" }, reason: "lecture seule — rien à répondre : la feature n'a pas encore démarré" },
@@ -1429,7 +1452,11 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
       const panel = mountPanel(stateDir, { repoRoot: caseRepo, lot: actions });
       panel.component.handleInput("j");
       panel.component.handleInput("\r");
-      assert.match(panel.screen(120), new RegExp(item.reason.replace(/[()]/g, "\\$&")), `${slug} : la raison est écrite`);
+      assert.match(
+        panel.screen(120),
+        new RegExp(item.reason.replace(/[()]/g, "\\$&")),
+        `${slug} : la raison est écrite`,
+      );
       assert.doesNotMatch(panel.screen(120), /Réponse : /, `${slug} : aucun champ de saisie`);
       for (const char of "bonjour") panel.component.handleInput(char);
       panel.component.handleInput("\r");
@@ -1483,10 +1510,12 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
     const repoRoot = tmpdir("panneau-ac10c-repo-");
     const worktree = tmpdir("panneau-ac10c-wt-");
     const session = path.join(stateDir, "sessions", "alpha.jsonl");
-    writeSession(session, worktree, Array.from({ length: 30 }, (_, i) => userEntry(`tour ${i}`, `u${i}`)));
-    seedLot(stateDir, repoRoot, [
-      feature("alpha", { state: "done", phase: "review", worktree, sessionFile: session }),
-    ]);
+    writeSession(
+      session,
+      worktree,
+      Array.from({ length: 30 }, (_, i) => userEntry(`tour ${i}`, `u${i}`)),
+    );
+    seedLot(stateDir, repoRoot, [feature("alpha", { state: "done", phase: "review", worktree, sessionFile: session })]);
     const panel = mountPanel(stateDir, { repoRoot });
     panel.component.handleInput("\r");
     assert.doesNotMatch(panel.screen(80), /tour 0 /, "la vue est ancrée sur la fin");
@@ -1582,9 +1611,18 @@ test("panneau-ask/AC-5 : tout texte long revient à la ligne au lieu d'être cou
   });
   const notice = rows.filter((row) => row.tone === "warning");
   assert.ok(notice.length > 1, "la notice occupe plusieurs rangs");
-  assert.ok(!notice.map((row) => row.text).join("\n").includes("…"), "la notice n'est jamais coupée");
+  assert.ok(
+    !notice
+      .map((row) => row.text)
+      .join("\n")
+      .includes("…"),
+    "la notice n'est jamais coupée",
+  );
   for (const word of words) {
-    assert.ok(notice.some((row) => row.text.includes(word)), `le mot « ${word} » de la notice est rendu`);
+    assert.ok(
+      notice.some((row) => row.text.includes(word)),
+      `le mot « ${word} » de la notice est rendu`,
+    );
   }
 
   // La QUESTION d'un `ask` et la RÉPONSE de l'éditeur libre : même règle.
@@ -1714,10 +1752,7 @@ test("panneau-ask/AC-7 : chaque ligne rendue occupe toute la largeur disponible"
   // deux largeurs — coupé dur au milieu d'un mot quand il le faut, jamais tronqué.
   for (const width of [64, 120]) {
     const screen = panel.screen(width);
-    assert.ok(
-      screen.replace(/[ \n]+/g, "").includes(slug),
-      `le libellé entier est rendu à ${width} colonnes`,
-    );
+    assert.ok(screen.replace(/[ \n]+/g, "").includes(slug), `le libellé entier est rendu à ${width} colonnes`);
     assert.ok(!screen.includes("…"), `aucun contenu n'est tronqué à ${width} colonnes`);
   }
   // À 120 colonnes, le libellé et sa colonne de droite tiennent ensemble sur un
@@ -1853,7 +1888,13 @@ test("panneau-ask/AC-16 : Échap rend la liste sans détruire le brouillon", asy
   const worktree = tmpdir("panneau-ask-ac16-wt-");
   const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
   seedLot(stateDir, repoRoot, [
-    feature("alpha", { state: "blocked", phase: "impl", stopReason: "revue bloquante", worktree, sessionFile: session }),
+    feature("alpha", {
+      state: "blocked",
+      phase: "impl",
+      stopReason: "revue bloquante",
+      worktree,
+      sessionFile: session,
+    }),
   ]);
   const panel = mountPanel(stateDir, { repoRoot });
   panel.component.handleInput("\r");
@@ -1967,7 +2008,11 @@ test("panneau-ask/AC-19 : la raison d'arrêt d'une feature échouée est portée
     now: 0,
   });
   const text = rows.map((row) => row.text).join("\n");
-  assert.match(text, /arrêt : run tué par le délai de 3600s/, "le motif de l'échec est écrit, pas seulement « échoué »");
+  assert.match(
+    text,
+    /arrêt : run tué par le délai de 3600s/,
+    "le motif de l'échec est écrit, pas seulement « échoué »",
+  );
   assert.match(text, /arrêt : revue bloquante/, "et celui du blocage");
   assert.equal(text.split("arrêt :").length - 1, 2, "un `stopReason` nul n'ajoute aucun rang");
 

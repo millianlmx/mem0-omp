@@ -83,7 +83,8 @@ function fakeBun(options: { busyPorts?: number[]; port?: number } = {}) {
         throw err;
       }
       handlers.push(opts.fetch);
-      const port = opts.port === 0 ? (next += 1) : opts.port;
+      if (opts.port === 0) next += 1;
+      const port = opts.port === 0 ? next : opts.port;
       return {
         port,
         stop: (force?: boolean) => {
@@ -114,9 +115,17 @@ test("service/AC-1 : service.json est écrit atomiquement, en 0600, et relu tel 
   const written = record(stateDir, { port: 9123 });
   writeService(written, stateDir);
   assert.equal(fs.existsSync(serviceFilePath(stateDir)), true);
-  assert.equal(fs.statSync(serviceFilePath(stateDir)).mode & 0o777, 0o600, "le jeton ne se lit que par son propriétaire");
+  assert.equal(
+    fs.statSync(serviceFilePath(stateDir)).mode & 0o777,
+    0o600,
+    "le jeton ne se lit que par son propriétaire",
+  );
   assert.deepEqual(readService(stateDir, { alive: () => true }), written);
-  assert.equal(fs.readdirSync(stateDir).some((name) => name.includes(".tmp-")), false, "aucun temporaire laissé");
+  assert.equal(
+    fs.readdirSync(stateDir).some((name) => name.includes(".tmp-")),
+    false,
+    "aucun temporaire laissé",
+  );
 });
 
 test("service/AC-2 : un enregistrement illisible, d'une autre version ou d'un pid mort est ignoré", () => {
@@ -186,7 +195,11 @@ test("service/AC-5 : un port occupé donne un port éphémère, et c'est le FICH
       "le port demandé d'abord, le port éphémère ensuite",
     );
     assert.equal(started.handle.port, 43_001, "le port réellement écouté");
-    assert.deepEqual(fake.calls.map((call) => call.hostname), ["127.0.0.1", "127.0.0.1"], "jamais 0.0.0.0 (S-12 §3)");
+    assert.deepEqual(
+      fake.calls.map((call) => call.hostname),
+      ["127.0.0.1", "127.0.0.1"],
+      "jamais 0.0.0.0 (S-12 §3)",
+    );
     const onDisk = readService(stateDir, { alive: () => true });
     assert.equal(onDisk?.port, 43_001, "les clients lisent le port dans service.json, jamais un port en dur");
     assert.equal(onDisk?.pid, process.pid);
@@ -261,7 +274,8 @@ test("service/AC-7 : install/uninstall/status pilotent launchctl et lisent servi
   const loaded = { value: false };
   const exec = async (argv: string[]) => {
     calls.push(argv);
-    if (argv[1] === "print") return { code: loaded.value ? 0 : 113, stdout: "", stderr: loaded.value ? "" : "Could not find" };
+    if (argv[1] === "print")
+      return { code: loaded.value ? 0 : 113, stdout: "", stderr: loaded.value ? "" : "Could not find" };
     if (argv[1] === "bootstrap") {
       loaded.value = true;
       return { code: 0, stdout: "", stderr: "" };
@@ -329,7 +343,7 @@ test("service/AC-9 : le binaire `omp` du job launchd est résolu en CHEMIN ABSOL
   //     PATH de l'installation et sort ABSOLU.
   const ompAbs = path.join(home, ".bun", "bin", "omp");
   assert.deepEqual(
-    resolveLaunchdOmpBinary({ PATH: path.dirname(ompAbs) }, file => file === ompAbs),
+    resolveLaunchdOmpBinary({ PATH: path.dirname(ompAbs) }, (file) => file === ompAbs),
     { bin: ompAbs, problem: null },
   );
   // Un `omp` introuvable est NOMMÉ — jamais rendu tel quel dans un plist.
@@ -339,20 +353,17 @@ test("service/AC-9 : le binaire `omp` du job launchd est résolu en CHEMIN ABSOL
   // Le drapeau garde la priorité comme NOM à chercher : une valeur relative ne
   // sort JAMAIS telle quelle — elle est résolue, ou refusée.
   assert.equal(
-    resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "omp", PATH: "/usr/bin" }, file => file === "/usr/bin/omp").bin,
+    resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "omp", PATH: "/usr/bin" }, (file) => file === "/usr/bin/omp").bin,
     "/usr/bin/omp",
     "un drapeau relatif est résolu sur le PATH, jamais recopié dans le plist",
   );
-  assert.equal(
-    resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "omp", PATH: "/usr/bin" }, () => false).bin,
-    null,
-  );
+  assert.equal(resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "omp", PATH: "/usr/bin" }, () => false).bin, null);
   // Un drapeau qui porte un CHEMIN mais relatif (« bin/omp ») est refusé.
   const relative = resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "bin/omp", PATH: "/usr/bin" }, () => true);
   assert.equal(relative.bin, null);
   assert.match(String(relative.problem), /n'est pas un chemin absolu/);
   assert.equal(
-    resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "/abs/omp" }, file => file === "/abs/omp").bin,
+    resolveLaunchdOmpBinary({ MEM0_PIPELINE_OMP_BIN: "/abs/omp" }, (file) => file === "/abs/omp").bin,
     "/abs/omp",
   );
 

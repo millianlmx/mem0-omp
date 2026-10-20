@@ -211,9 +211,7 @@ test("fixchain/AC-1 : une revue qui n'écrit pas sa section est illisible, jamai
   writeContract(worktree, withVerdict("aucun"));
   const { runner, runs, gate } = mkRunner({ mode: "gate" });
   const { controller, stateDir } = mkCtl(repoRoot, runner);
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
 
   await controller.tick();
   await flush();
@@ -236,22 +234,36 @@ test("fixchain/AC-1 : une revue qui n'écrit pas sa section est illisible, jamai
 
 test("fixchain/AC-20 : une revue illisible sous le plafond reprend sa session avec la consigne de réécriture ; au plafond elle bloque", () => {
   const illisible = `${CONTRACT_SPECS}\n## Revue\n\n- STATUT : APPROUVÉ\n`;
-  assert.deepEqual(nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 1, cap: 3 }), {
-    kind: "run",
-    phase: "review",
-    fix: false,
-    resume: true,
-    refocus: REVIEW_UNREADABLE_REFOCUS,
-  });
   assert.deepEqual(
-    nextChainAction({ phase: "review", outcome: "ok", contract: withVerdict("aucun"), fixes: 0, unreadableRuns: 0, cap: 3, reviewRewritten: false }),
+    nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 1, cap: 3 }),
+    {
+      kind: "run",
+      phase: "review",
+      fix: false,
+      resume: true,
+      refocus: REVIEW_UNREADABLE_REFOCUS,
+    },
+  );
+  assert.deepEqual(
+    nextChainAction({
+      phase: "review",
+      outcome: "ok",
+      contract: withVerdict("aucun"),
+      fixes: 0,
+      unreadableRuns: 0,
+      cap: 3,
+      reviewRewritten: false,
+    }),
     { kind: "run", phase: "review", fix: false, resume: true, refocus: REVIEW_UNREADABLE_REFOCUS },
     "une section non réécrite est illisible : même reprise",
   );
-  assert.deepEqual(nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 3, cap: 3 }), {
-    kind: "blocked",
-    reason: "verdict de revue illisible après 3 passes",
-  });
+  assert.deepEqual(
+    nextChainAction({ phase: "review", outcome: "ok", contract: illisible, fixes: 0, unreadableRuns: 3, cap: 3 }),
+    {
+      kind: "blocked",
+      reason: "verdict de revue illisible après 3 passes",
+    },
+  );
   assert.match(REVIEW_UNREADABLE_REFOCUS, /- BLOQUANTS : aucun/);
   assert.match(REVIEW_UNREADABLE_REFOCUS, /AC PAR AC/);
 });
@@ -265,9 +277,7 @@ test("fixchain/AC-2 : une revue qui écrit « Aucun bloquant. » est propre", as
   writeContract(worktree, CONTRACT_SPECS);
   const { runner, runs, gate } = mkRunner({ mode: "gate" });
   const { controller, stateDir } = mkCtl(repoRoot, runner);
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
 
   await controller.tick();
   await flush();
@@ -635,9 +645,7 @@ test("fixchain/AC-10 : une question en vol est annoncée une fois et suspend le 
     now: () => clock,
     runTimeoutMs: 60_000,
   });
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
 
   await controller.tick();
   await flush();
@@ -687,9 +695,7 @@ test("fixchain/AC-11 : un run tué sur une question en vol devient répondable, 
   writeContract(worktree, CONTRACT_SPECS);
   const { runner, runs, gate } = mkRunner({ mode: "gate" });
   const { controller, stateDir } = mkCtl(repoRoot, runner);
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
 
   await controller.tick();
   await flush();
@@ -720,9 +726,7 @@ test("fixchain/AC-12 : une revue qui AJOUTE sa section est lue, pas l'ancienne",
   writeContract(worktree, withVerdict("\n1. un bloquant périmé"));
   const { runner, runs, gate } = mkRunner({ mode: "gate" });
   const { controller, stateDir } = mkCtl(repoRoot, runner);
-  seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED }),
-  ]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, state: "running", phase: "impl", contractHash: WORKED })]);
 
   await controller.tick();
   await flush();
@@ -858,10 +862,7 @@ test("fixchain/AC-16 : un /req dans un lot au brouillon ne démarre que SON pipe
   // La feature de session, sa collecte close (basculée au maillon specs).
   const worktree = tmpdir("fixchain-session-");
   writeContract(worktree, CONTRACT_SPECS);
-  assert.equal(
-    controller.enrol({ slug: "solo", name: "solo", branch: "feat/solo", worktree }),
-    null,
-  );
+  assert.equal(controller.enrol({ slug: "solo", name: "solo", branch: "feat/solo", worktree }), null);
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.status, "draft", "`enrol` n'ouvre pas le lot non plus");
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   lot.features[2]!.phase = "specs";
@@ -935,11 +936,7 @@ test("fixchain/AC-17 : une autre session répond dans la boîte d'un run vivant,
   assert.equal(delivery.text, "continue avec l'option B");
 
   // Ce qui ÉCRIT le lot reste refusé : la file, la relance, les jalons.
-  assert.equal(
-    await controller.answer("alpha", "x"),
-    null,
-    "une seconde livraison est encore directe (le run vit)",
-  );
+  assert.equal(await controller.answer("alpha", "x"), null, "une seconde livraison est encore directe (le run vit)");
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   lot.features[0]!.state = "running";
   writeLot(stateDir, lot);
@@ -1124,7 +1121,9 @@ test("chaine-fin-de-run/AC-9 : un commit créé (porcelain vide, HEAD avancé) s
 });
 
 test("chaine-fin-de-run/AC-10 : n'avoir écrit que le contrat (ignoré par git) ne prouve aucun travail", async () => {
-  const { after, phases } = await implRunEndingWith((wt) => writeContract(wt, `${CONTRACT_SPECS}\n## Corrections\n\n- fait.\n`));
+  const { after, phases } = await implRunEndingWith((wt) =>
+    writeContract(wt, `${CONTRACT_SPECS}\n## Corrections\n\n- fait.\n`),
+  );
   assert.equal(after.state, "blocked");
   assert.equal(after.stopReason, "/impl n'a rien produit");
   assert.deepEqual(phases, ["impl"]);

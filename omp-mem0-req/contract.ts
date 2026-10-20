@@ -1,6 +1,5 @@
 // Contrat de feature : sections, verdict de revue, suite du pipeline.
 
-
 // Contrat unique de la feature active, relatif à la racine du dépôt (même
 // convention que .omp/mem0-brief.md). Une seule feature active à la fois : un
 // nouveau cycle /req réécrit le contrat.
@@ -25,7 +24,6 @@
 // run de revue, et une section inchangée vaut « illisible ».
 export const CONTRACT_PATH = ".omp/pipeline/contract.md";
 
-
 // ---------------------------------------------------------------------------
 // Fin de maillon — la suite du pipeline est ANNONCÉE dans le transcript.
 // ---------------------------------------------------------------------------
@@ -46,7 +44,6 @@ export type PipelinePhase = "req" | "specs" | "impl" | "review" | "release";
 
 export type NextStep = { kind: "command"; command: string } | { kind: "cycle-end" };
 
-
 // Ligne normalisée des règles de lecture du verdict : /review écrit en Markdown,
 // donc les marques de mise en forme (gras, italique, code, dièses) sautent, puis
 // la puce et les espaces de bord. Sans ça, `- **BLOQUANTS** : aucun` serait
@@ -58,16 +55,13 @@ export function normalizeLine(line: string): string {
     .replace(/\s+$/, "");
 }
 
-
 /** Le contrat porte-t-il la section `## <titre>` ? (`titre` sans les dièses) */
 export function contractHasSection(contract: string, title: string): boolean {
   return contract.split("\n").some((line) => line.trim() === `## ${title}`);
 }
 
-
 /** Le titre de la section que l'arbitrage d'un pilote ajoute au contrat (S-5). */
 export const PILOT_ARBITRATION_TITLE = "Arbitrages du pilote";
-
 
 /**
  * Le contrat augmenté d'un arbitrage de pilote (S-5) : la section
@@ -110,7 +104,6 @@ export function appendPilotArbitrage(contract: string | null, text: string, at: 
   return `${before}### Arbitrage du ${stamp}\n\n${text.trim()}\n\n${out.slice(offset)}`;
 }
 
-
 /**
  * Corps d'une section `## <titre>` : de son titre à la prochaine section `## `.
  * La DERNIÈRE occurrence fait foi : un maillon qui AJOUTE une section au lieu de
@@ -136,7 +129,6 @@ export function contractSection(contract: string, title: string): string | null 
   return body.join("\n");
 }
 
-
 const LOT_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(BR-\d+)(?:\s*—|\s+[–-](?=\s))\s*type\s*:/;
 
 /**
@@ -156,7 +148,6 @@ export function contractLots(contract: string): string[] {
   return ids;
 }
 
-
 const AC_HEAD = /^\s*(?:[-*]\s+)?(?:\*\*)?\s*(AC-\d+)(?![0-9])/;
 
 /**
@@ -173,7 +164,6 @@ export function contractAcIds(contract: string): string[] {
   }
   return ids;
 }
-
 
 /**
  * La tête d'une spécification : `S-<n>` est la forme demandée, mais `/specs` écrit
@@ -197,18 +187,22 @@ export function uncoveredAcIds(contract: string): string[] {
   });
 }
 
-
 // Libellés du verdict de /review (REVIEW_DIRECTIVE), dans l'ordre où ils sont
 // écrits : ils bornent le corps du champ BLOQUANTS — le champ suivant n'est pas un
 // bloquant, et une recommandation n'en est jamais un.
-export const REVIEW_LABELS = ["STATUT", "AC PAR AC", "SPEC PAR SPEC", "BLOQUANTS", "RECOMMANDATIONS", "DÉCISION FINALE"];
-
+export const REVIEW_LABELS = [
+  "STATUT",
+  "AC PAR AC",
+  "SPEC PAR SPEC",
+  "BLOQUANTS",
+  "RECOMMANDATIONS",
+  "DÉCISION FINALE",
+];
 
 export function isReviewLabel(line: string): boolean {
   const n = normalizeLine(line).toUpperCase();
   return REVIEW_LABELS.some((label) => n.startsWith(label));
 }
-
 
 // « Aucun bloquant » s'écrit de plusieurs façons selon la plume de l'agent : les
 // reconnaître toutes évite de renvoyer l'utilisateur en /impl --fix pour rien.
@@ -225,14 +219,12 @@ export const VACUOUS: Record<string, true> = {
   "(aucun)": true,
 };
 
-
 // Un jeton vacuous SUIVI de la chose absente, et rien d'autre. C'est ce qui
 // sépare « Aucun bloquant. » (propre) de « Aucune spec n'est couverte »
 // (bloquant) : la première s'arrête là, la seconde continue sur une phrase. Le
 // quantifié est donc borné à un vocabulaire de constat, jamais à une proposition.
 const VACUOUS_HEAD =
   /^(aucun|aucune|néant|none|0|n\/a)\b\s*(\([^)]*\))?\s*(bloquants?|points?(\s+bloquants?)?|probl[èe]mes?|r[ée]serves?|remarques?|[ée]carts?)?\s*(identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?)?\s*[.!:;,—–-]*\s*$/i;
-
 
 // Constat d'absence qui NOMME le bloquant, puis CONTINUE : après `;`, `,`, `—`,
 // `(` ou une conjonction (`Aucun bloquant ; voir recommandations`, `Aucun
@@ -242,7 +234,6 @@ const VACUOUS_HEAD =
 // d'un texte (`0 ; manque le test AC-2`) reste un bloquant.
 const AMBIGUOUS_ABSENCE =
   /^(?:aucun|aucune|néant|none|0|n\/a)\s+(?:points?\s+)?bloquants?(?:\s+(?:identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?))?\s*(?:[;,—–(]|\b(?:mais|sauf|hormis|except[ée]|à part)\b)/i;
-
 
 /**
  * Une ligne de champ qui ne consigne RIEN. Trois formes : vide, jeton seul
@@ -258,7 +249,6 @@ export function isVacuous(line: string): boolean {
   return VACUOUS_HEAD.test(n);
 }
 
-
 /**
  * Une ligne de champ AMBIGUË : un constat d'absence suivi d'un texte, ou une ligne
  * numérotée barrée (`1. ~~…~~` : le numéro dit « à traiter », le barré dit
@@ -270,7 +260,6 @@ export function isAmbiguous(line: string): boolean {
   if (/^\d+[.)]\s+~~.*~~$/.test(n)) return true;
   return AMBIGUOUS_ABSENCE.test(n);
 }
-
 
 /**
  * Le corps du champ `<label>` d'une `## Revue`, ou `null` si le champ est absent.
@@ -293,7 +282,6 @@ function reviewField(section: string, label: string): string[] | null {
   return body;
 }
 
-
 export type AcStatus = "pass" | "fail" | "missing" | "unknown";
 
 export type AcTableRow = { id: string; status: AcStatus };
@@ -302,14 +290,12 @@ export type AcTableRow = { id: string; status: AcStatus };
 // de la directive, ses variantes ASCII, et la barre d'un tableau Markdown.
 const AC_ROW_SEP = /\s*(?:→|⇒|->|=>|\|)\s*|\s+[:：]\s+/;
 
-
 // Un statut se lit en TÊTE d'une cellule (« pass (C-3 non prouvé sur iPad) » est un
 // succès commenté, pas une absence de test) ; une cellule sans tête de statut est un
 // commentaire, on remonte à la précédente.
 const AC_LEAD_FAIL = /^(?:fail(?:ed|s|ing)?|échec|echec|échoue|ko|rouge|red)\b/;
 const AC_LEAD_MISSING = /^(?:aucun test|sans test|pas de test|non test|non prouv|manquant|absent|missing|introuvable)/;
 const AC_LEAD_PASS = /^(?:pass(?:ed|es|e)?|ok|vert|green|succ[èe]s|r[ée]ussi)\b/;
-
 
 /** Le statut d'un AC : la dernière cellule de sa ligne qui COMMENCE par un statut ; sinon inconnu. */
 function acStatusOf(cells: string[]): AcStatus {
@@ -321,7 +307,6 @@ function acStatusOf(cells: string[]): AcStatus {
   }
   return "unknown";
 }
-
 
 /**
  * La table `AC PAR AC` de la DERNIÈRE `## Revue` : une ligne par `AC-<n>` en tête
@@ -336,15 +321,19 @@ export function reviewAcTable(contract: string): AcTableRow[] {
   if (body === null) return [];
   const rows = new Map<string, AcStatus>();
   for (const raw of body) {
-    const line = normalizeLine(raw).replace(/^\|\s*/, "").trim();
+    const line = normalizeLine(raw)
+      .replace(/^\|\s*/, "")
+      .trim();
     const m = /^(AC-\d+)(?![0-9])\s*[:：]?\s*(.*)$/.exec(line);
     if (m === null) continue;
-    const cells = (m[2] as string).split(AC_ROW_SEP).map((cell) => cell.trim()).filter((cell) => cell !== "");
+    const cells = (m[2] as string)
+      .split(AC_ROW_SEP)
+      .map((cell) => cell.trim())
+      .filter((cell) => cell !== "");
     rows.set(m[1] as string, acStatusOf(cells));
   }
   return [...rows].map(([id, status]) => ({ id, status }));
 }
-
 
 /**
  * Les bloquants que la table `AC PAR AC` IMPLIQUE, même quand le champ
@@ -367,7 +356,6 @@ export function reviewImpliedBlockers(contract: string): string[] {
   return out;
 }
 
-
 /**
  * Lecture unique du verdict : le champ `BLOQUANTS` (explicites, ambigus) croisé
  * avec la table `AC PAR AC` (impliqués). Une ligne ambiguë rend le verdict
@@ -380,13 +368,14 @@ function readReview(contract: string): { verdict: "blockers" | "clean" | "unread
   if (section === null) return { verdict: "unreadable", blockers: [] };
   const body = reviewField(section, "BLOQUANTS");
   if (body === null) return { verdict: "unreadable", blockers: [] };
-  const explicit = body.filter((line) => !isVacuous(line) && !isAmbiguous(line)).map((line) => normalizeLine(line).trim());
+  const explicit = body
+    .filter((line) => !isVacuous(line) && !isAmbiguous(line))
+    .map((line) => normalizeLine(line).trim());
   const implied = reviewImpliedBlockers(contract);
   if (explicit.length > 0) return { verdict: "blockers", blockers: [...explicit, ...implied] };
   if (body.some(isAmbiguous)) return { verdict: "unreadable", blockers: [] };
   return implied.length > 0 ? { verdict: "blockers", blockers: implied } : { verdict: "clean", blockers: [] };
 }
-
 
 /**
  * Les libellés des bloquants de la dernière `## Revue`, tels que la revue
@@ -396,7 +385,6 @@ function readReview(contract: string): { verdict: "blockers" | "clean" | "unread
 export function reviewBlockerList(contract: string): string[] {
   return readReview(contract).blockers;
 }
-
 
 /**
  * Verdict du maillon /review, lu dans `## Revue`. `"unreadable"` couvre les cas
@@ -410,7 +398,6 @@ export function reviewVerdict(contract: string): "blockers" | "clean" | "unreada
   return readReview(contract).verdict;
 }
 
-
 /**
  * Le nombre de bloquants de la dernière `## Revue` : toute ligne non vacuous du
  * champ `BLOQUANTS` (numérotée, en puce ou phrase libre) PLUS chaque bloquant
@@ -421,7 +408,6 @@ export function reviewVerdict(contract: string): "blockers" | "clean" | "unreada
 export function reviewBlockers(contract: string): number {
   return readReview(contract).blockers.length;
 }
-
 
 /**
  * Suite d'un maillon terminé. Pure : aucun accès disque, aucun état. Un maillon
@@ -451,7 +437,6 @@ export function nextStepFor(phase: PipelinePhase, contract: string): NextStep {
   }
 }
 
-
 /**
  * Message d'affichage annonçant la suite. Aucune notice du plugin ne doit
  * contenir « fin » comme mot isolé : elles retraversent before_agent_start, où un
@@ -460,13 +445,11 @@ export function nextStepFor(phase: PipelinePhase, contract: string): NextStep {
 export function buildNextStepNotice(phase: PipelinePhase, step: NextStep): string {
   if (step.kind === "cycle-end") {
     return (
-      "[pipeline] Phase /review terminée — cycle terminé : aucun BLOQUANT consigné dans " +
-      "## Revue, rien à corriger."
+      "[pipeline] Phase /review terminée — cycle terminé : aucun BLOQUANT consigné dans " + "## Revue, rien à corriger."
     );
   }
   return `[pipeline] Phase /${phase} terminée — commande suivante : ${step.command}`;
 }
-
 
 // « fin » comme MOT ISOLÉ (Unicode-aware), jamais la sous-chaîne : « définir »,
 // « enfin », « affiner », « finir » ne clôturent pas. Une lettre adjacente
@@ -474,7 +457,6 @@ export function buildNextStepNotice(phase: PipelinePhase, step: NextStep): strin
 export function saysFin(prompt: string): boolean {
   return /(^|[^\p{L}])fin([^\p{L}]|$)/iu.test(prompt);
 }
-
 
 // Les notices du plugin ([req] … et [pipeline] …) retraversent before_agent_start
 // comme n'importe quel message. Elles ne sont PAS des entrées utilisateur : les
@@ -487,7 +469,6 @@ export function isPipelineNotice(prompt: string): boolean {
   const p = prompt.trimStart();
   return p.startsWith("[req]") || p.startsWith("[pipeline]");
 }
-
 
 /**
  * Consigne d'ÉDITION de section pour un maillon qui écrit le contrat : remplacer
@@ -506,7 +487,6 @@ export function contractEditRule(targets: readonly string[]): string {
   );
 }
 
-
 /**
  * Consigne de LECTURE du contrat d'un maillon : une seule lecture, et aucune quand
  * le prompt porte déjà l'extrait utile (`lotContractExcerpt`, bloc `[extrait du
@@ -519,10 +499,8 @@ export function contractReadRule(what: string): string {
   );
 }
 
-
 /** Borne de la section `## Documentation` dans un extrait (et consigne de /specs). */
 export const DOCUMENTATION_EXCERPT_MAX = 15_000;
-
 
 /** Les blocs d'une section, découpés sur une tête d'id (`S-<n>`, `BR-<n>`) : `[id, bloc]`. */
 function idBlocks(body: string, head: RegExp): Array<[string, string]> {
@@ -534,7 +512,6 @@ function idBlocks(body: string, head: RegExp): Array<[string, string]> {
   }
   return blocks;
 }
-
 
 /**
  * L'extrait du contrat qu'un run reçoit dans son prompt, à la place d'une lecture
@@ -592,7 +569,10 @@ export function lotContractExcerpt(
       section("Besoins");
       section("Critères d'acceptation");
       documentation();
-      const lot = target.lotId === null ? undefined : idBlocks(contractSection(contract, "Lots") ?? "", LOT_HEAD).find(([id]) => id === target.lotId);
+      const lot =
+        target.lotId === null
+          ? undefined
+          : idBlocks(contractSection(contract, "Lots") ?? "", LOT_HEAD).find(([id]) => id === target.lotId);
       if (lot === undefined) {
         section("Spécifications");
         section("Lots");
@@ -606,14 +586,16 @@ export function lotContractExcerpt(
         kept = specs.filter(([, block]) => acs.some((ac) => cites(block, ac)));
       }
       if (kept.length === 0) section("Spécifications");
-      else parts.push(`## Spécifications (extrait : ${kept.map(([id]) => id).join(", ")})\n${kept.map(([, block]) => block.trim()).join("\n\n")}`);
+      else
+        parts.push(
+          `## Spécifications (extrait : ${kept.map(([id]) => id).join(", ")})\n${kept.map(([, block]) => block.trim()).join("\n\n")}`,
+        );
       parts.push(`## Lots (extrait : ${lot[0]})\n${lot[1].trim()}`);
       break;
     }
   }
   return parts.length === 0 ? null : parts.join("\n\n");
 }
-
 
 /**
  * Clôture neutre d'un maillon : l'agent dit que son maillon est terminé sans
@@ -623,7 +605,6 @@ export function lotContractExcerpt(
 export const MAILLON_DONE_RULE =
   "Quand ton livrable est consigné, termine ta réponse par la phrase « ce maillon est terminé » : " +
   "n'annonce et ne prescris aucune commande de pipeline, la suite est annoncée hors de cette session.";
-
 
 /**
  * Message de clôture, envoyé quand l'utilisateur dit « fin ». Il fige : l'agent

@@ -91,7 +91,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   const sent: Array<{ text: string; deliverAs?: string }> = [];
   const live: Record<string, string> = { ...flagValues };
   let askTool:
-    | ((toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>)
+    | ((
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<AskResult>)
     | null = null;
   const pi = {
     registerCommand() {},
@@ -104,7 +110,13 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     arktype: (definition: unknown) => ({ definition, array: () => ({ definition: [definition] }) }),
     registerTool(definition: {
       name: string;
-      execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+      execute: (
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<AskResult>;
     }) {
       toolNames.push(definition.name);
       if (definition.name === "ask") askTool = definition.execute;
@@ -153,7 +165,13 @@ function resetArmedRun(): void {
 function writeSessionFile(file: string, cwd: string): string {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const title = { type: "title", v: 1, title: "", updatedAt: "2026-09-23T00:00:00.000Z", pad: " ".repeat(40) };
-  const header = { type: "session", version: 3, id: path.basename(file, ".jsonl"), timestamp: "2026-09-23T00:00:00.000Z", cwd };
+  const header = {
+    type: "session",
+    version: 3,
+    id: path.basename(file, ".jsonl"),
+    timestamp: "2026-09-23T00:00:00.000Z",
+    cwd,
+  };
   fs.writeFileSync(file, `${JSON.stringify(title)}\n${JSON.stringify(header)}\n`, "utf8");
   return file;
 }
@@ -342,7 +360,10 @@ function ackNames(stateDir: string): string[] {
 
 function commandNames(stateDir: string): string[] {
   try {
-    return fs.readdirSync(commandDir(stateDir)).filter((name) => name.endsWith(".json")).sort();
+    return fs
+      .readdirSync(commandDir(stateDir))
+      .filter((name) => name.endsWith(".json"))
+      .sort();
   } catch {
     return [];
   }
@@ -360,7 +381,11 @@ const stateOf = (stateDir: string, repo: string, slug: string): string => {
 
 const QUESTION = {
   questions: [
-    { id: "q", question: "Quel moteur ?", options: [{ label: "Postgres", description: "le solide" }, { label: "SQLite" }] },
+    {
+      id: "q",
+      question: "Quel moteur ?",
+      options: [{ label: "Postgres", description: "le solide" }, { label: "SQLite" }],
+    },
   ],
 };
 
@@ -451,7 +476,11 @@ test("reponses-et-jalons/AC-5 : une commande verdict `v` littérale fait avancer
   assert.equal(ack?.kind, "verdict");
   assert.equal(ack?.reason, null);
   assert.equal(stateOf(stateDir, repo, "alpha"), "running:", "la feature a avancé d'état");
-  assert.deepEqual(runs.map((run) => run.phase), ["impl"], "le maillon suivant démarre");
+  assert.deepEqual(
+    runs.map((run) => run.phase),
+    ["impl"],
+    "le maillon suivant démarre",
+  );
   assert.deepEqual(commandNames(stateDir), [], "la commande prise en charge est retirée");
 });
 
@@ -469,7 +498,11 @@ test("reponses-et-jalons/AC-6 : une commande verdict `y` littérale fait avancer
 
   assert.equal(readCommandAck(stateDir, "console-y")?.state, "taken");
   assert.equal(stateOf(stateDir, repo, "beta"), "running:");
-  assert.deepEqual(runs.map((run) => run.phase), ["release"], "la chaîne avance après l'accord");
+  assert.deepEqual(
+    runs.map((run) => run.phase),
+    ["release"],
+    "la chaîne avance après l'accord",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -499,7 +532,11 @@ test("reponses-et-jalons/AC-7 : une commande launch littérale crée le lot et l
   assert.equal(lot.features.length, 1);
   assert.equal(lot.features[0]!.slug, "reponses-et-jalons", "le slug est dérivé par le dépôt");
   assert.equal(lot.features[0]!.name, "répondre et agir depuis l'app");
-  assert.deepEqual(runs.map((run) => run.phase), ["req"], "le maillon /req démarre");
+  assert.deepEqual(
+    runs.map((run) => run.phase),
+    ["req"],
+    "le maillon /req démarre",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -538,9 +575,7 @@ test("reponses-et-jalons/AC-9 : un verdict sans objet est refusé, le lot reste 
   const worktree = fs.realpathSync(tmpdir("reponses-wt-"));
   const { runner, runs } = mkRunner(() => null);
   const { controller, stateDir } = mkCtl(repo, { runner });
-  seedLot(stateDir, repo, [
-    feature("alpha", { state: "waiting", waitKind: "answer", phase: "impl", worktree }),
-  ]);
+  seedLot(stateDir, repo, [feature("alpha", { state: "waiting", waitKind: "answer", phase: "impl", worktree })]);
   const lotFile = path.join(stateDir, "lots", `${lotRepoKey(repo)}.json`);
   const before = fs.readFileSync(lotFile);
 

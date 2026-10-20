@@ -32,7 +32,10 @@ function copyRepo(): string {
 /** Le TypeScript 5.9.3 préparé dans ROOT, source de la doublure `npm install`. */
 function pinnedSource(): string {
   const pkg = path.join(ROOT, TS_DIR, "node_modules", "typescript");
-  assert.ok(fs.existsSync(path.join(pkg, "package.json")), `TypeScript épinglé absent de ROOT/${TS_DIR} — lance ${PREPARE}`);
+  assert.ok(
+    fs.existsSync(path.join(pkg, "package.json")),
+    `TypeScript épinglé absent de ROOT/${TS_DIR} — lance ${PREPARE}`,
+  );
   return fs.realpathSync(pkg);
 }
 
@@ -72,7 +75,9 @@ esac
 `,
     { mode: 0o755 },
   );
-  fs.writeFileSync(path.join(bin, "npx"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$NPX_LOG"\nexit 97\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "npx"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$NPX_LOG"\nexit 97\n`, {
+    mode: 0o755,
+  });
   return {
     env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, NPM_LOG: npmLog, NPX_LOG: npxLog, ...extra },
     npmLog,
@@ -80,7 +85,11 @@ esac
   };
 }
 
-const lines = (file: string) => fs.readFileSync(file, "utf8").split("\n").filter((line) => line !== "");
+const lines = (file: string) =>
+  fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "");
 
 function run(cwd: string, args: string[], env: NodeJS.ProcessEnv) {
   return spawnSync("bash", args, { cwd, encoding: "utf8", env, timeout: 900_000 });
@@ -222,7 +231,10 @@ test("typecheck-fetches-tsc-from-network/AC-2 : une erreur de type dans une copi
   assert.ok(out.includes("✗ type-check : "), out);
   assert.match(out, /typecheck-ac2-faute\.ts\(1,14\): error TS2322/);
   assert.ok(!out.includes(TYPES_PASS), out);
-  assert.deepEqual(lines(doubles.npmLog).filter((line) => /^(exec|install)\b/.test(line)), []);
+  assert.deepEqual(
+    lines(doubles.npmLog).filter((line) => /^(exec|install)\b/.test(line)),
+    [],
+  );
   assert.deepEqual(lines(doubles.npxLog), []);
 });
 
@@ -259,7 +271,10 @@ function releaseSimulationLinksPinned(): void {
   const probe = (withTypescript: boolean) => {
     const repo = emptyGitRepo("typecheck-tsc-simu-");
     fs.mkdirSync(path.join(repo, "scripts"));
-    fs.copyFileSync(path.join(ROOT, "scripts", "release-simulation.sh"), path.join(repo, "scripts", "release-simulation.sh"));
+    fs.copyFileSync(
+      path.join(ROOT, "scripts", "release-simulation.sh"),
+      path.join(repo, "scripts", "release-simulation.sh"),
+    );
     fs.writeFileSync(
       path.join(repo, "scripts", "release.ts"),
       'import * as fs from "node:fs";\n' +
@@ -284,7 +299,9 @@ function releaseSimulationLinksPinned(): void {
 /** Les étapes (sans commentaires) du job `job` de `.github/workflows/<file>`, chacune en un bloc de lignes. */
 function workflowSteps(file: string, job: string): string[][] {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", file), "utf8");
-  const body = (text.split(/^jobs:\s*$/m)[1] ?? "").split(/^(?= {2}[A-Za-z0-9_-]+:$)/m).find((c) => c.startsWith(`  ${job}:\n`));
+  const body = (text.split(/^jobs:\s*$/m)[1] ?? "")
+    .split(/^(?= {2}[A-Za-z0-9_-]+:$)/m)
+    .find((c) => c.startsWith(`  ${job}:\n`));
   assert.ok(body, `job ${job} introuvable dans ${file}`);
   const steps = (body.split(/^ {4}steps:$/m)[1] ?? "").split(/^(?= {6}- )/m).slice(1);
   return steps.map((step) => step.split("\n").filter((line) => line.trim() !== "" && !line.trim().startsWith("#")));
@@ -298,8 +315,18 @@ function workflowsPreparePinned(): void {
   const cases: { file: string; job: string; runs: string; after: "host" | "before-run" }[] = [
     { file: "check.yml", job: "check", runs: "        run: ./scripts/check.sh", after: "host" },
     { file: "check.yml", job: "macos-tests", runs: "        run: ./scripts/check.sh --sections=", after: "host" },
-    { file: "release.yml", job: "release", runs: "          node --experimental-strip-types scripts/release.ts \\", after: "before-run" },
-    { file: "release-simulation.yml", job: "release-simulation", runs: "        run: bash scripts/release-simulation.sh", after: "before-run" },
+    {
+      file: "release.yml",
+      job: "release",
+      runs: "          node --experimental-strip-types scripts/release.ts \\",
+      after: "before-run",
+    },
+    {
+      file: "release-simulation.yml",
+      job: "release-simulation",
+      runs: "        run: bash scripts/release-simulation.sh",
+      after: "before-run",
+    },
   ];
   for (const { file, job, runs, after } of cases) {
     const steps = workflowSteps(file, job);
@@ -316,13 +343,27 @@ function workflowsPreparePinned(): void {
   }
   // Les jobs macOS qui ne lancent pas `types` n'installent rien.
   for (const job of ["macos-app-swift", "macos-app-ios", "check-macos"]) {
-    assert.ok(!workflowSteps("check.yml", job).flat().some((line) => line.includes(PREPARE)), job);
+    assert.ok(
+      !workflowSteps("check.yml", job)
+        .flat()
+        .some((line) => line.includes(PREPARE)),
+      job,
+    );
   }
 }
 
 // Un seul test porte l'id (invariant criteria/AC-13) : ses trois volets en sous-tests.
 test("typecheck-fetches-tsc-from-network/AC-6 : en CI, check.sh type-checke avec le tsc épinglé de .typecheck/ — workflows, copies partagées et worktree de simulation", async (t) => {
-  await t.test("la CI installe le TypeScript épinglé, sans condition, avant chaque check.sh qui lance la section types", workflowsPreparePinned);
-  await t.test("sharedRepo().fresh() garde et recrée le lien vers le TypeScript de ROOT sans jamais toucher la cible", sharedRepoKeepsPinnedLink);
-  await t.test("le worktree de release-simulation.sh relie le TypeScript de sa source, et rien quand elle n'en a pas", releaseSimulationLinksPinned);
+  await t.test(
+    "la CI installe le TypeScript épinglé, sans condition, avant chaque check.sh qui lance la section types",
+    workflowsPreparePinned,
+  );
+  await t.test(
+    "sharedRepo().fresh() garde et recrée le lien vers le TypeScript de ROOT sans jamais toucher la cible",
+    sharedRepoKeepsPinnedLink,
+  );
+  await t.test(
+    "le worktree de release-simulation.sh relie le TypeScript de sa source, et rien quand elle n'en a pas",
+    releaseSimulationLinksPinned,
+  );
 });

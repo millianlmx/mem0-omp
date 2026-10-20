@@ -51,11 +51,23 @@ test("service-e2e/AC-2 : l'app ne lance plus jamais le mode RPC, et ses trois su
   // « Session OMP » (sessions + prompt + dialogues + flux), la conduite de projet
   // (`/conduite`), et le pilotage d'un dépôt (`/pilot` + `/commands`).
   const sources = filesUnder(APP_SOURCES, [".swift"])
-    .map(file => fs.readFileSync(file, "utf8"))
+    .map((file) => fs.readFileSync(file, "utf8"))
     .join("\n");
   // Les routes de S-2, dans la forme où l'app les compose (des segments) et dans
   // celle du contrat (le chemin complet) : les deux doivent s'y trouver.
-  for (const segment of ['"sessions"', '"prompt"', '"dialogs"', '"events"', '"conduite"', '"pilot"', '"commands"', '"abort"', '"audits"', '"launch"', '"escalations"']) {
+  for (const segment of [
+    '"sessions"',
+    '"prompt"',
+    '"dialogs"',
+    '"events"',
+    '"conduite"',
+    '"pilot"',
+    '"commands"',
+    '"abort"',
+    '"audits"',
+    '"launch"',
+    '"escalations"',
+  ]) {
     assert.ok(sources.includes(segment), `l'app appelle le segment ${segment}`);
   }
   assert.ok(sources.includes("/v1"), "l'API est versionnée : le chemin porte /v1");
@@ -105,6 +117,6 @@ test("service-e2e/AC-18 : le service est un seul process déclaré par un drapea
   const catalog = JSON.parse(fs.readFileSync(path.join(ROOT, ".omp-plugin", "marketplace.json"), "utf8")) as {
     plugins: Array<{ name: string; commands?: string[] }>;
   };
-  const req = catalog.plugins.find(plugin => plugin.name === "omp-mem0-req");
+  const req = catalog.plugins.find((plugin) => plugin.name === "omp-mem0-req");
   assert.ok(req?.commands?.includes("service"), "la commande /service est déclarée au catalogue");
 });

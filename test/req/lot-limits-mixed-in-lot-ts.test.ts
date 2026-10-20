@@ -101,8 +101,15 @@ test("lot-limits-mixed-in-lot-ts/AC-2 : lotLimits.ts n'importe que le type Pipel
   );
   assert.equal(run.status, 0, `chargement seul de lotLimits.ts en échec : ${run.stderr}`);
   const { seen, keys } = JSON.parse(run.stdout) as { seen: string[]; keys: string[] };
-  assert.ok(seen.some((url) => url.endsWith("/omp-mem0-req/lotLimits.ts")), `lotLimits.ts non résolu : ${run.stderr}`);
-  assert.deepEqual(seen.filter((url) => url.endsWith("/omp-mem0-req/lot.ts")), [], `lot.ts chargé : ${run.stderr}`);
+  assert.ok(
+    seen.some((url) => url.endsWith("/omp-mem0-req/lotLimits.ts")),
+    `lotLimits.ts non résolu : ${run.stderr}`,
+  );
+  assert.deepEqual(
+    seen.filter((url) => url.endsWith("/omp-mem0-req/lot.ts")),
+    [],
+    `lot.ts chargé : ${run.stderr}`,
+  );
   assert.deepEqual(keys, [...VALEURS_EXPORTÉES].sort(), `exports inattendus : ${run.stderr}`);
 });
 
@@ -185,7 +192,11 @@ test("lot-limits-mixed-in-lot-ts/AC-9 : lotContextThresholds lit SOFT, SOFT_REVI
 
 test("lot-limits-mixed-in-lot-ts/AC-10 : une valeur de seuil invalide retombe sur le défaut de sa variable", () => {
   for (const raw of ["0", "-5", "abc"]) {
-    assert.deepEqual(limits.lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT: raw }), { soft: 120000, hard: 250000 }, `SOFT=${raw}`);
+    assert.deepEqual(
+      limits.lotContextThresholds({ MEM0_PIPELINE_CONTEXT_SOFT: raw }),
+      { soft: 120000, hard: 250000 },
+      `SOFT=${raw}`,
+    );
   }
   assert.deepEqual(limits.lotContextThresholds({ MEM0_PIPELINE_CONTEXT_HARD: "0" }), { soft: 120000, hard: 250000 });
 });

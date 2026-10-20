@@ -79,7 +79,12 @@ function fakeHost(options: { hold?: boolean } = {}) {
   let disposed = 0;
 
   const sessionHost = {
-    open: async (openOptions: { cwd: string; identity?: Parameters<typeof registerMaillonIdentity>[1]; model?: string | null; fallback?: string | null }) => {
+    open: async (openOptions: {
+      cwd: string;
+      identity?: Parameters<typeof registerMaillonIdentity>[1];
+      model?: string | null;
+      fallback?: string | null;
+    }) => {
       const arrived = Promise.withResolvers<void>();
       const maillon: FakeMaillon = {
         id: `maillon-${maillons.length + 1}`,
@@ -278,7 +283,7 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
   assert.equal(armInbox(pi as never, ctx, { inbox: spec.inbox, watchParent: false }), true);
   armPipeline({ ctx, stateDir }, worktree, "impl");
 
-  const entry = readStore(stateDir).running.find(candidate => candidate.cwd === worktree);
+  const entry = readStore(stateDir).running.find((candidate) => candidate.cwd === worktree);
   assert.ok(entry, "l'entrée du run est publiée pendant le tour");
   assert.equal(entry!.owner.pid, process.pid, "le propriétaire est le process du service, VIVANT");
   assert.equal(entry!.phase, "impl");
@@ -289,9 +294,17 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
   // Le tour rend la main par le runneur : le résultat est celui de la chaîne
   // (`code 0`, `stdout` = textes assistant) et l'entrée du run disparaît (S-8).
   const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
-  assert.deepEqual(result, { code: 0, killed: false, stdout: "le maillon a travaillé", stderr: "", peakContext: null, compactions: 0, model: null });
+  assert.deepEqual(result, {
+    code: 0,
+    killed: false,
+    stdout: "le maillon a travaillé",
+    stderr: "",
+    peakContext: null,
+    compactions: 0,
+    model: null,
+  });
   assert.equal(
-    readStore(stateDir).running.some(candidate => candidate.cwd === worktree),
+    readStore(stateDir).running.some((candidate) => candidate.cwd === worktree),
     false,
     "aucune entrée « en cours » ne survit à la fin du maillon",
   );
@@ -321,10 +334,12 @@ test("service-runs/AC-11 : le budget coupé rend `killed` + code 124, jamais un 
   // Le budget est écoulé PENDANT le tour : le pilote coupe par le signal, comme
   // il le fait à l'échéance — le résultat reste celui d'un run tué (S-3).
   const running = runner({ spec, cwd: worktree, timeout: 1_000, signal: abort.signal });
-  const maillon = host.maillons[0] ?? (await (async () => {
-    await Promise.resolve();
-    return host.maillons[0]!;
-  })());
+  const maillon =
+    host.maillons[0] ??
+    (await (async () => {
+      await Promise.resolve();
+      return host.maillons[0]!;
+    })());
   await maillon.arrived;
   abort.abort();
   const result = await running;
