@@ -85,7 +85,28 @@ l'app ne modifie pas.
 
 ## Installation
 
-**1. Le service** — obligatoire, le plugin ne le déploie pas :
+Trois voies, de la plus intégrée à la plus légère. Aucune n'impose de conteneur :
+le plugin mémoire n'a besoin que d'un service qui réponde à `MEM0_HTTP_URL`
+(`http://localhost:8321` par défaut), et sans service il se dégrade sans bloquer.
+
+Publication et mise à jour du dépôt : voir [PUBLISHING.md](PUBLISHING.md).
+
+### 1. L'app OMP Console
+
+Sur un Mac Apple Silicon, l'app OMP Console fournit le service mémoire sans rien
+à taper : elle installe elle-même son `omp` et démarre au premier lancement son
+`mem0-rs` natif, embarqué dans son bundle (agent launchd `com.omp.console.mem0-rs`,
+`127.0.0.1:8321`). L'assembler, l'ouvrir et la préparer :
+[omp-console/README.md](omp-console/README.md).
+
+L'app n'installe pas les plugins, et ses sessions passent par le service du plugin
+`omp-mem0-req` : installe-les ensuite par la voie 3, « Les plugins seuls ». Le
+service mémoire de l'app répond déjà à l'adresse par défaut du plugin mémoire.
+
+### 2. À la main, avec la pile conteneur
+
+Sans l'app — autre machine, autre système : le service mémoire tourne dans un
+conteneur que tu démarres toi-même ; les plugins ne le déploient pas.
 
 ```bash
 git clone https://github.com/millianlmx/mem0-omp
@@ -103,7 +124,11 @@ Une pile mem0-http existante se migre AVANT de démarrer la nouvelle : import
 d'abord, arrêt de l'ancienne ensuite. La procédure et son retour arrière sont dans
 [mem0-stack/README.md](mem0-stack/README.md#migrer-une-pile-mem0-http-existante).
 
-**2. Les plugins**, depuis une session OMP :
+Installe ensuite les plugins par la voie 3.
+
+### 3. Les plugins seuls
+
+Depuis une session OMP :
 
 ```
 /marketplace add millianlmx/mem0-omp
@@ -127,10 +152,13 @@ Sans marketplace, `omp-mem0-memory/install.sh` dépose l'extension dans
 Une seule fois, globalement. Il n'y a **rien à faire par projet** : le brief se pose
 au premier démarrage dans chaque dépôt.
 
-Sans le service, le plugin se charge et se dégrade proprement — recall vide,
-écritures en warning, `/mem0-status` en rouge. Aucune session n'est bloquée.
+Le plugin mémoire parle au service de `MEM0_HTTP_URL` (voir « Config ») :
 
-Publication et mise à jour du dépôt : voir [PUBLISHING.md](PUBLISHING.md).
+- **Service déjà joignable** — celui de l'app OMP Console (voie 1), une pile
+  démarrée à la main (voie 2) ou tout autre service à cette adresse : rien de plus
+  à faire, `/mem0-status` le vérifie.
+- **Aucun service** — le plugin se charge et se dégrade proprement : recall vide,
+  écritures en warning, `/mem0-status` en rouge. Aucune session n'est bloquée.
 
 ## Le brief
 
