@@ -414,7 +414,7 @@ struct ServerSheet: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(run.title)
-                Text([PipelineServerText.state(run.state), run.stepLabel].compactMap { $0 }.joined(separator: " · "))
+                Text(run.statusLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if run.fixes > 0 {

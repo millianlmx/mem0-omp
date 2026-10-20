@@ -425,7 +425,7 @@ struct IOSServerSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(run.title)
                 .font(.callout)
-            Text([PipelineServerText.state(run.state), run.stepLabel].compactMap { $0 }.joined(separator: " · "))
+            Text(run.statusLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if run.fixes > 0 {

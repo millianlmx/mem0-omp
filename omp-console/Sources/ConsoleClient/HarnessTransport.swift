@@ -146,8 +146,8 @@ public struct URLSessionHarnessTransport: HarnessTransport {
     }
 
     private static func request(_ call: HarnessCall, server: HarnessServer, stream: Bool) throws -> URLRequest {
-        guard let url = url(call.path, server: server) else { throw HarnessFailure.invalidAddress }
-        var request = URLRequest(url: url)
+        guard let target = Self.url(call.path, server: server) else { throw HarnessFailure.invalidAddress }
+        var request = URLRequest(url: target)
         request.httpMethod = call.method
         request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")

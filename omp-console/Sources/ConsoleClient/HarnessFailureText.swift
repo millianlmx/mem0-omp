@@ -18,6 +18,12 @@ extension HarnessFailure {
 }
 
 extension HarnessRun {
+    /// L'état, puis l'étape s'il y en a une : « En cours · /review ».
+    public var statusLine: String {
+        guard let step = stepLabel else { return PipelineServerText.state(state) }
+        return PipelineServerText.state(state) + " · " + step
+    }
+
     /// L'étape en cours, sous son nom de commande, ou `nil` hors étape.
     public var stepLabel: String? {
         switch step {

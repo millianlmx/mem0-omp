@@ -86,7 +86,7 @@ public final class HarnessModel: ObservableObject {
         guard server == nil, let stored = preferences.string(forKey: Self.addressKey),
               let normalized = Self.normalizedAddress(stored), let url = URL(string: normalized)
         else { return }
-        guard let token = (try? await tokens.token(for: Self.tokenAccount)) ?? nil, !token.isEmpty else { return }
+        guard let token = try? await tokens.token(for: Self.tokenAccount), !token.isEmpty else { return }
         server = HarnessServer(baseURL: url, token: token)
         address = normalized
         await refresh()
@@ -150,11 +150,13 @@ public final class HarnessModel: ObservableObject {
     }
 
     /// Ouvre le flux d'événements : chaque événement relit la boîte (regroupés), une
-    /// coupure est reprise après `retryDelay`. Idempotent.
+    /// coupure est reprise après `retryDelay`. Idempotent ; sans serveur configuré,
+    /// rien ne part (l'appel qui suit une configuration réussie l'ouvrira).
     public func startLive() {
-        guard liveTask == nil else { return }
+        guard liveTask == nil, server != nil else { return }
         liveTask = Task { [weak self] in
-            await self?.liveLoop()
+            guard let self else { return }
+            await self.liveLoop()
         }
     }
 
@@ -167,6 +169,8 @@ public final class HarnessModel: ObservableObject {
     }
 
     private func liveLoop() async {
+        // Une boucle finie (serveur oublié) libère sa place : un `startLive` suivant repart.
+        defer { if !Task.isCancelled { liveTask = nil } }
         while !Task.isCancelled {
             guard let server else { return }
             let cursor = inbox?.cursor ?? 0

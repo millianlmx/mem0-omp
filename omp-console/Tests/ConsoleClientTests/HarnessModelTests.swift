@@ -26,7 +26,7 @@ final class ScriptedHarnessTransport: HarnessTransport, @unchecked Sendable {
     var calls: [HarnessCall] { lock.withLock { recorded } }
 
     func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
-        let handler = lock.withLock { () -> @Sendable (HarnessCall) -> HarnessReply in
+        let handler: @Sendable (HarnessCall) -> HarnessReply = lock.withLock {
             recorded.append(call)
             return self.handler
         }
@@ -212,6 +212,20 @@ struct HarnessModelTests {
         #expect(await eventually { transport.calls.filter { $0.path == "/v1/inbox" }.count > before })
         model.stopLive()
         #expect(model.isLive == false)
+    }
+
+    @Test("le flux ouvert avant la configuration démarre dès qu'un serveur est relié")
+    func liveStartsAfterSetup() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { _ in ok(inboxJSON) }
+        let model = makeModel(transport)
+        await model.load()
+        model.startLive()
+        #expect(transport.calls.isEmpty, "sans serveur, aucun flux ne part")
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        model.startLive()
+        #expect(await eventually { transport.calls.contains { $0.path.hasPrefix("/v1/events") } })
+        model.stopLive()
     }
 
     @Test("le lecteur du flux ne rend que les événements complets, battements exclus")
