@@ -2,7 +2,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { windowStart } from "./panelWidth.ts";
 import { asStringOrNull } from "./store.ts";
 
 

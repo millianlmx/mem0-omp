@@ -506,7 +506,7 @@ test("release-simulation/AC-2 : une PR sans couplage de version sort verte, bump
 test("release-simulation/AC-1 : une PR qui fige une version en dur fait échouer la simulation en nommant le test", (t) => {
   const built = scenario(SCENARIOS?.coupled, t);
   if (built === null) return;
-  const { repo, check, run } = built;
+  const { check, run } = built;
 
   // Le couplage est INVISIBLE sur la tête de la PR : c'est la release qui le fait
   // tomber, donc aucun gate antérieur ne l'aurait vu.
@@ -546,7 +546,7 @@ test("release-simulation/AC-4 : la PR de release (arbre déjà bumpé) sort vert
 test("release-simulation/AC-5 : un échec avant check.sh sort en échec, et check.sh n'est jamais lancé", (t) => {
   const built = scenario(SCENARIOS?.nonSemver, t);
   if (built === null) return;
-  const { repo, run } = built;
+  const { run } = built;
 
   // L'arbre non semver est PUBLIABLE (versions alignées, metadata valide) : seul
   // le bump de la release est impossible, et `check.sh` n'est jamais atteint.
@@ -624,7 +624,7 @@ test("release-simulation/AC-3 : rien n'est écrit, poussé, tagué ni ouvert hor
   if (coupled === null) return;
 
   for (const built of [green, coupled]) {
-    const { repo, before, after, run } = built;
+    const { before, after, run } = built;
     assert.match(
       before.status + after.status,
       /^$/,

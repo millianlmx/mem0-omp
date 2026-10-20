@@ -575,7 +575,7 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(analyser(sansApp).stderr.trim(), "relevé invalide : home-clair-defaut.json");
 
   const racine = analyser(
-    releves({ marqueur: (s, a, t) => (s === "project" && a === "sombre" ? [{ type: "StaticText", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 100, 44) }] : undefined) }),
+    releves({ marqueur: (s, a) => (s === "project" && a === "sombre" ? [{ type: "StaticText", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 100, 44) }] : undefined) }),
   );
   assert.equal(racine.status, 2);
   assert.equal(racine.stderr.trim(), "surface non vérifiée : project sombre defaut (marqueur absent)");

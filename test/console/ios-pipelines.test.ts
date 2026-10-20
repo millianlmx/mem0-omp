@@ -20,10 +20,6 @@ import { readIfExists, stripFullLineComments } from "../support/swift-source.ts"
 
 const SHELL = path.join(ROOT, "omp-console");
 const IOS_APP = path.join(SHELL, "ios", "OMPConsoleIOS");
-const IOS_TESTS = path.join(SHELL, "ios", "OMPConsoleIOSTests");
-const CORE = path.join(SHELL, "Sources", "ConsoleCore");
-const SHELL_SRC = path.join(SHELL, "Sources", "OMPConsole");
-const CLIENT = path.join(SHELL, "Sources", "ConsoleClient");
 const CONTRACT = path.join(ROOT, ".omp", "pipeline", "contract.md");
 
 /** Le source débarrassé de ses commentaires `/* … *\/` et de ses lignes `//` (vide s'il est absent). */
@@ -32,9 +28,6 @@ function code(file: string): string {
 }
 
 const app = (name: string) => code(path.join(IOS_APP, name));
-const core = (rel: string) => code(path.join(CORE, rel));
-const shell = (rel: string) => code(path.join(SHELL_SRC, rel));
-const client = (name: string) => code(path.join(CLIENT, name));
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
 const shared = sharedRepo("ios-pipelines-copie-");

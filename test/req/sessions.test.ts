@@ -118,20 +118,6 @@ const CONTRACT_CLOSED = "## Besoins\n\nB-1 : faire.\n\n## Critères d'acceptatio
 // Fichiers de session RÉELS (format JSONL d'OMP)
 // ---------------------------------------------------------------------------
 
-function toolResultEntry(name: string, text: string): unknown {
-  return {
-    type: "message",
-    id: "r",
-    parentId: null,
-    timestamp: "2026-09-19T00:00:03.000Z",
-    message: { role: "toolResult", toolCallId: "c0", toolName: name, content: [{ type: "text", text }], isError: false },
-  };
-}
-
-function customMessageEntry(customType: string, content: string): unknown {
-  return { type: "custom_message", id: "cm", parentId: null, timestamp: "t", customType, content, display: true };
-}
-
 /** Le nom de fichier d'une session : ce que l'en-tête de la vue doit porter. */
 function sessionName(file: string): string {
   return path.basename(file);

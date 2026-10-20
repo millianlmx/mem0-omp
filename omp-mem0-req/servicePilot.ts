@@ -20,7 +20,6 @@ import type { SessionHost } from "./serviceSessions.ts";
 import type { ArbiterRunner, LotRunner } from "./serviceRuns.ts";
 import type { AuditService } from "./serviceAudits.ts";
 import { SERVICE_VERSION } from "./serviceState.ts";
-import { pipelineStateDir } from "./store.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 

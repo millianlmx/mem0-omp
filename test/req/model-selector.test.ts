@@ -65,7 +65,6 @@ import reqExtension, {
   type LotRunnerResult,
   type LotRunSpec,
   type ModelRow,
-  type PanelGlyphs,
   type PipelineCommand,
   type PipelinePhase,
   type PipelinesPanelDeps,
@@ -307,9 +306,6 @@ function runOf(runs: RecordedRun[], slug: string): RecordedRun | undefined {
 
 const phaseOf = (run: RecordedRun): string => run.spec.phase;
 
-/** Aucun drapeau de raisonnement n'est jamais transmis (S-1, B-2). */
-const THINKING_FLAGS = ["--thinking", "--reasoning", "--effort", "--smol", "--slow", "--plan"];
-
 async function flush(times = 8): Promise<void> {
   for (let i = 0; i < times; i++) {
     const { promise, resolve } = Promise.withResolvers<void>();
@@ -360,8 +356,6 @@ const THEME = {
   bg: (_tone: string, text: string) => text,
   nav: { cursor: ">" },
 };
-
-const GLYPHS: PanelGlyphs = { cursor: ">" };
 
 const KEYS = {
   matches: (data: string, action: string) =>

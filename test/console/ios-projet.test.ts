@@ -22,7 +22,6 @@ import { readIfExists, stripFullLineComments, swiftFiles } from "../support/swif
 const shared = sharedRepo("ios-projet-copie-");
 const SHELL = path.join(ROOT, "omp-console");
 const IOS_APP = path.join(SHELL, "ios", "OMPConsoleIOS");
-const IOS_TESTS = path.join(SHELL, "ios", "OMPConsoleIOSTests");
 const SWIFT_TESTS = path.join(SHELL, "Tests", "OMPConsoleTests");
 const CONTRACT = path.join(ROOT, ".omp", "pipeline", "contract.md");
 const README = path.join(SHELL, "README.md");
