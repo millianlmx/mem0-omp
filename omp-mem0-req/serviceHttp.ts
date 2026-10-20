@@ -9,8 +9,9 @@
 //  - corps JSON uniquement, borné à 1 Mio (400 au-delà) ;
 //  - un refus MÉTIER passe par l'accusé d'une commande, jamais par un code HTTP ;
 //  - SSE : `event: <nom>\ndata: <json>\n\n`, battement `: ping` toutes les 15 s.
-import { ServiceError, badRequest, notFound, unauthorized } from "./serviceApi.ts";
+import { ServiceError, badRequest, notFound, unauthorized, unavailable } from "./serviceApi.ts";
 import type { ServiceApi, ServiceFrame, SessionSubscription } from "./serviceApi.ts";
+import type { DeviceRegistry } from "./remoteDevices.ts";
 
 
 export const SERVICE_TOKEN_HEADER = "x-omp-service-token";
@@ -39,6 +40,12 @@ export type RouterDeps = {
    * connexion en cours de streaming (Doc-2 §3-4).
    */
   onLongLived?: (req: Request) => void;
+  /**
+   * Le registre des appareils du protocole distant (S-2) : présent seulement sur le
+   * VPS. Il porte les routes d'appairage de la boucle locale — générer un code,
+   * lister, révoquer — que l'administration du VPS appelle ; sans lui, elles sont inconnues.
+   */
+  devices?: DeviceRegistry;
 };
 
 
@@ -91,6 +98,10 @@ function decodeSegment(segment: string): string {
 
 type Matched =
   | { kind: "health" }
+  | { kind: "adopt" }
+  | { kind: "handover"; repo: string }
+  | { kind: "handoverCommit"; repo: string; id: string }
+  | { kind: "handoverCancel"; repo: string; id: string }
   | { kind: "pilot"; repo: string }
   | { kind: "lot"; repo: string }
   | { kind: "command"; repo: string }
@@ -106,7 +117,10 @@ type Matched =
   | { kind: "auditEscalation"; id: string }
   | { kind: "audit"; id: string }
   | { kind: "sessionModel"; id: string }
-  | { kind: "projectModel"; repo: string };
+  | { kind: "projectModel"; repo: string }
+  | { kind: "pairingCode" }
+  | { kind: "devices" }
+  | { kind: "device"; id: string };
 
 
 /**
@@ -116,7 +130,24 @@ type Matched =
  */
 function match(method: string, segments: string[]): Matched | null {
   const [head, one, two, three, four] = segments;
+  if (head === "pairing" && segments.length === 2 && one === "code") return method === "POST" ? { kind: "pairingCode" } : null;
+  if (head === "devices") {
+    if (segments.length === 1) return method === "GET" ? { kind: "devices" } : null;
+    if (segments.length === 2 && one !== undefined) return method === "DELETE" ? { kind: "device", id: one } : null;
+    return null;
+  }
   if (head === "health" && segments.length === 1 && method === "GET") return { kind: "health" };
+  if (head === "repos" && segments.length === 2 && one === "adopt") return method === "POST" ? { kind: "adopt" } : null;
+  if (head === "repos" && one !== undefined && two === "handover") {
+    if (segments.length === 3) return method === "POST" ? { kind: "handover", repo: one } : null;
+    if (segments.length === 4 && three !== undefined) {
+      return method === "DELETE" ? { kind: "handoverCancel", repo: one, id: three } : null;
+    }
+    if (segments.length === 5 && three !== undefined && four === "commit") {
+      return method === "POST" ? { kind: "handoverCommit", repo: one, id: three } : null;
+    }
+    return null;
+  }
   if (head === "repos" && segments.length === 3 && one !== undefined && two !== undefined) {
     if (two === "pilot" && method === "POST") return { kind: "pilot", repo: one };
     if (two === "lot" && method === "GET") return { kind: "lot", repo: one };
@@ -214,6 +245,13 @@ function sseResponse(subscription: SessionSubscription, deps: RouterDeps, req: R
 }
 
 
+/** Le registre des appareils, ou 404 : sur le Mac, ces routes n'existent pas. */
+function requireDevices(deps: RouterDeps): DeviceRegistry {
+  if (deps.devices === undefined) throw notFound("route inconnue");
+  return deps.devices;
+}
+
+
 /**
  * Le gestionnaire de requêtes du service : jeton, routage, corps, erreurs.
  * Ne lève jamais : toute `ServiceError` devient sa réponse, toute autre erreur
@@ -283,11 +321,30 @@ export function createServiceRequestHandler(deps: RouterDeps) {
           return json(await deps.api.answerAudit(route.id, await readJsonBody(req, "réponse")));
         case "audit":
           return json(await deps.api.stopAudit(route.id));
+        case "adopt":
+          return json(await deps.api.adoptRepo(await readJsonBody(req, "bascule")));
+        case "handover":
+          return json(await deps.api.handover(route.repo, await readJsonBody(req, "bascule")));
+        case "handoverCommit":
+          return json(await deps.api.commitHandover(route.repo, route.id, await readJsonBody(req, "bascule")));
+        case "handoverCancel":
+          return json(await deps.api.cancelHandover(route.repo, route.id));
         case "sessionModel":
           return json(await deps.api.setSessionModel(route.id, await readJsonBody(req, "modèle")));
         case "projectModel":
           if (req.method.toUpperCase() === "GET") return json(await deps.api.projectModel(route.repo));
           return json(await deps.api.setProjectModel(route.repo, await readJsonBody(req, "modèle")));
+        case "pairingCode": {
+          const devices = requireDevices(deps);
+          const reason = devices.unavailableReason;
+          if (reason !== null) throw unavailable(reason);
+          return json(devices.generateCode());
+        }
+        case "devices":
+          return json({ devices: requireDevices(deps).list() });
+        case "device":
+          if (!requireDevices(deps).revoke(route.id)) throw notFound(`appareil inconnu : ${route.id}`);
+          return json({ revoked: true });
       }
     } catch (err) {
       if (err instanceof ServiceError) return errorResponse(err);

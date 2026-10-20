@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "aucun dialogue en attente"
+    }
+  },
+  "status" : 409
+}

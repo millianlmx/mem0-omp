@@ -1,7 +1,67 @@
 // Config du dispositif : URL et jeton mem0, budgets, seuils de rappel, d'agrafage et de recherche.
-export const MEM0_HTTP_URL = process.env.MEM0_HTTP_URL || "http://localhost:8321";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-export const MEM0_HTTP_TOKEN = process.env.MEM0_HTTP_TOKEN || "";
+/** Le fichier qui pointe ce poste sur la mémoire hébergée du VPS (S-7), dans le dossier agent. */
+export const MEM0_REMOTE_FILE = "mem0-remote.json";
+
+export type Mem0Endpoint = {
+  /** Base de toutes les routes, sans barre finale. */
+  url: string;
+  /** En-tête d'authentification : `Authorization: Bearer` (VPS) ou `X-Mem0-Token` (mem0 local), ou aucun. */
+  authHeaders: Record<string, string>;
+  /** Le fichier existait mais était inutilisable : sa raison, pour un avertissement unique. */
+  warning: string | null;
+};
+
+/** Lit `mem0-remote.json` ; lève une `Error` dont le message est la raison d'ignorer le fichier (l'erreur de lecture, ENOENT compris, est relayée telle quelle). */
+function readRemoteFile(file: string): { url: string; token: string } {
+  const text = readFileSync(file, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("JSON invalide");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("objet JSON attendu");
+  const { version, url, token } = parsed as Record<string, unknown>;
+  if (version !== 1) throw new Error("version 1 attendue");
+  if (typeof url !== "string" || !/^https?:\/\//u.test(url) || !URL.canParse(url)) throw new Error("url http(s) attendue");
+  if (typeof token !== "string" || token === "") throw new Error("token absent");
+  return { url: url.replace(/\/+$/u, ""), token };
+}
+
+/**
+ * Où parle ce poste : l'environnement prime (`MEM0_HTTP_URL` non vide) ; sinon
+ * `<PI_CODING_AGENT_DIR ou ~/.omp/agent>/mem0-remote.json` s'il existe ; sinon mem0 local.
+ * Pure : l'avertissement est rendu, jamais émis ici.
+ */
+export function resolveMem0Endpoint(env: Record<string, string | undefined>, home = homedir()): Mem0Endpoint {
+  const envToken = env.MEM0_HTTP_TOKEN || "";
+  const envHeaders: Record<string, string> = envToken ? { "X-Mem0-Token": envToken } : {};
+  if (env.MEM0_HTTP_URL) return { url: env.MEM0_HTTP_URL, authHeaders: envHeaders, warning: null };
+  const file = join(env.PI_CODING_AGENT_DIR || join(home, ".omp", "agent"), MEM0_REMOTE_FILE);
+  try {
+    const remote = readRemoteFile(file);
+    return { url: remote.url, authHeaders: { Authorization: `Bearer ${remote.token}` }, warning: null };
+  } catch (err) {
+    const absent = (err as NodeJS.ErrnoException).code === "ENOENT";
+    return {
+      url: "http://localhost:8321",
+      authHeaders: envHeaders,
+      warning: absent ? null : `${MEM0_REMOTE_FILE} illisible : ${(err as Error).message}`,
+    };
+  }
+}
+
+const endpoint = resolveMem0Endpoint(process.env);
+// Avertissement unique (le module est évalué une fois par processus), muet sous MEM0_QUIET.
+if (endpoint.warning !== null && process.env.MEM0_QUIET !== "1") console.warn(`[mem0] ${endpoint.warning}`);
+
+export const MEM0_HTTP_URL = endpoint.url;
+
+export const MEM0_AUTH_HEADERS = endpoint.authHeaders;
 
 // Budgets par opération. `add` avec infer=true déclenche DEUX passes LLM côté
 // serveur (extraction de faits + fusion avec l'existant) : sur qwen3-8b en local

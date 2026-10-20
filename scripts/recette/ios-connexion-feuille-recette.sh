@@ -176,7 +176,7 @@ fi
 # port ne le pose pas) ; sans jeton, la réponse est 401, ce qui suffit.
 MAC="--source absent"
 if [ -n "$SOURCE" ]; then
-  headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 2' http://127.0.0.1:8787/v1/version 2>/dev/null)"
+  headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 3' http://127.0.0.1:8787/v1/version 2>/dev/null)"
   if grep -qi '^X-Console-Protocol-Version:' <<<"$headers"; then
     MAC="ok"
   else

@@ -15,6 +15,7 @@ import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILU
 import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, buildEscalationAlert, runHardDeadlineMinutes } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import { handoverRefusalFor } from "./handover.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
@@ -36,6 +37,11 @@ import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./se
 import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, pruneHistory, readStore, writeBytesAtomic, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry, StoreSnapshot } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
+import { CI_DELIVERY_REFUSAL, CI_NO_CHECK_MS, CI_NO_VERDICT_MS, CI_NO_VERDICT_REASON, CI_POLL_MS, ciBlockersLine, ciNoCheckReason, ciPushRefusal, fetchCiReading, pathTouchesSwift, pushWorkBranch, touchedPaths, worktreeTree } from "./ciGate.ts";
+import { reviewCapReason } from "./chain.ts";
+import type { CiPushDeps } from "./ciGate.ts";
+import type { FeatureCi } from "./lot.ts";
+import type { MachineKind } from "./serviceState.ts";
 
 
 
@@ -167,6 +173,19 @@ export type LotControllerDeps = {
    * propriété quand un service le pilote — et ne pilote plus rien elle-même.
    */
   pilotRole?: "service" | "session";
+  /**
+   * Ce contrôleur vit dans le process du SERVICE (S-4, BR-3) : il y reprend seul
+   * les maillons interrompus par son arrêt (`autoResumes`) au lieu de les juger sur
+   * l'empreinte du contrat, et une entrée `running/` portant SON pid sans maillon en
+   * vol est une entrée morte (pid réattribué après un redémarrage). Absent = pilote
+   * de session : la réconciliation par empreinte reste la sienne.
+   */
+  inService?: boolean;
+  /**
+   * La machine qui héberge ce pilote (S-9) : `vps` active la porte d'intégration
+   * continue GitHub des features qui touchent du Swift. Absent = `mac` : aucune porte.
+   */
+  machine?: MachineKind;
 };
 
 
@@ -217,6 +236,9 @@ export type LotController = LotPanelActions & {
  */
 export type PlannedLaunch = HeldLaunch & { slug: string };
 
+/** Reprises automatiques consécutives d'un maillon avant `failed` (S-4) : la 4e interruption de suite arrête la feature. */
+export const SERVICE_AUTO_RESUME_MAX = 3;
+
 /** Borne du résumé du run précédent injecté au lot d'impl suivant (`[résumé du run précédent]`). */
 export const LOT_PREVIOUS_SUMMARY_MAX = 2_000;
 
@@ -261,9 +283,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
   const pilotRole = deps.pilotRole ?? "session";
+  const inService = deps.inService === true;
   const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
   const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
   const inFlight = new Map<string, AbortController>();
+  /**
+   * Le worktree (chemin réel) du DERNIER run lancé par ce contrôleur, par feature :
+   * dans le service, une entrée `running/` à son pid n'est vivante que si le run de
+   * ce worktree est en vol (`inFlight`, l'autorité) — sinon son pid a été réattribué.
+   */
+  const runWorktrees = new Map<string, string>();
   /** Le lot d'impl et le `--fix` du run EN VOL de chaque feature, relus par `finishRun` pour son enregistrement (S-12). */
   const runKinds = new Map<string, { lot: string | null; fix: boolean }>();
   /**
@@ -522,7 +551,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** L'entrée du run VIVANT de ce worktree, ou `null` (S-1, S-6) — jamais pour un worktree vide. */
   function liveEntryOf(worktree: string): RunningEntry | null {
-    return worktree === "" ? null : liveRunFor(stateDir, worktree, storeSnapshot());
+    if (worktree === "") return null;
+    const snapshot = storeSnapshot();
+    if (!inService) return liveRunFor(stateDir, worktree, snapshot);
+    const real = realpathOr(worktree);
+    const slug = runWorktrees.get(real);
+    const here = slug !== undefined && inFlight.has(slug);
+    return liveRunFor(stateDir, worktree, {
+      ...snapshot,
+      running: snapshot.running.filter((entry) => entry.owner.pid !== process.pid || here),
+    });
   }
 
   /**
@@ -683,6 +721,42 @@ export function createLotController(deps: LotControllerDeps): LotController {
     touch(feature, now());
   }
 
+  /**
+   * La REPRISE d'un maillon interrompu par l'arrêt du SERVICE (S-4, B-4) : la feature
+   * est `running` sans run en vol dans ce process, donc son run est mort avec le
+   * précédent. Le maillon repart dans la MÊME phase et dans sa session (`sessionFile`,
+   * sinon `lastRunSessionFile`) ; sans session il repart neuf. L'armement (`arm`) n'est
+   * PAS appliqué : une reprise n'est ni une correction ni une revue de plus, donc
+   * `fixes`, `reviewRuns` et `unreadableRuns` ne bougent pas. Le plafond borne les
+   * interruptions CONSÉCUTIVES (`autoResumes`, remis à zéro par toute fin de run).
+   * Rend le lancement à faire APRÈS la sauvegarde, ou `null` quand la feature a été arrêtée.
+   */
+  function resumeInterrupted(lot: Lot, feature: LotFeature): PlannedLaunch | null {
+    if (!fs.existsSync(feature.worktree)) {
+      settle(lot, feature, "failed", "dossier de feature introuvable");
+      return null;
+    }
+    const resumes = feature.autoResumes ?? 0;
+    if (resumes >= SERVICE_AUTO_RESUME_MAX) {
+      settle(lot, feature, "failed", `exécution interrompue ${SERVICE_AUTO_RESUME_MAX} fois de suite (service relancé)`);
+      return null;
+    }
+    feature.autoResumes = resumes + 1;
+    const session = feature.sessionFile ?? feature.lastRunSessionFile ?? null;
+    if (session !== null) feature.sessionFile = session;
+    feature.updatedAt = now();
+    notify(`[pipeline] ${repo}/${feature.slug} : maillon /${feature.phase} repris après le redémarrage du service (${feature.autoResumes}/${SERVICE_AUTO_RESUME_MAX})`);
+    // Une reprise de `impl` après un tour de correction reste un `--fix` : `fixes` > 0
+    // en phase impl ne vient que d'un `arm` de `--fix` (R remet le compteur à zéro).
+    const fix = feature.phase === "impl" && feature.fixes > 0;
+    if (session === null) {
+      return { slug: feature.slug, phase: feature.phase, fix, kind: feature.phase === "req" ? "collecte" : "phase", resume: false };
+    }
+    // La collecte `req` reprend en `collecte` (comme `relaunch`) : le prompt `[req]` garde
+    // le slug hors de la détection du mot « fin ».
+    return { slug: feature.slug, phase: feature.phase, fix, kind: feature.phase === "req" ? "collecte" : "resume", resume: true };
+  }
+
   function freshLot(): Lot {
     const at = now();
     return {
@@ -802,6 +876,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // Un `--fix` reçoit aussi les bloquants IMPLIQUÉS par la table AC PAR AC : un
     // « fail » sans numéro dans BLOQUANTS n'en est pas moins à lever.
     const impliedBlockers = launch.fix ? reviewImpliedBlockers(contractText) : undefined;
+    // Un `--fix` renvoyé par la porte d'intégration continue (S-9) cite ses contrôles rouges.
+    const ciBlockers =
+      launch.fix && feature.ci?.state === "red" && feature.ci.failures.length > 0
+        ? ciBlockersLine(feature.ci.sha, feature.ci.failures)
+        : undefined;
     const prompt = buildLotPrompt({
       ...(lotOfRun === undefined ? {} : { lot: lotOfRun }),
       kind: launch.kind,
@@ -818,6 +897,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       ...(previousSummary === undefined ? {} : { previousSummary }),
       ...(reviewScope === undefined ? {} : { reviewScope }),
       ...(impliedBlockers === undefined ? {} : { impliedBlockers }),
+      ...(ciBlockers === undefined ? {} : { ciBlockers }),
       // Le contexte de conduite (S-8) : seulement pour une feature lancée par /project ou /audit.
       ...(feature.auditSession !== undefined
         ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession, phase: launch.phase }) }
@@ -866,6 +946,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     };
     const abort = new AbortController();
     inFlight.set(feature.slug, abort);
+    runWorktrees.set(realpathOr(feature.worktree), feature.slug);
     watched.set(feature.slug, "inflight");
     workBudget.set(feature.slug, { spent: 0, since: at });
     // Le hash du contrat est figé AVANT le lancement, et ÉCRIT avant lui (S-1) :
@@ -949,7 +1030,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
         stdout: "",
         stderr: err instanceof Error ? err.message : String(err),
       }))
-      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt, check));
+      .then((result: LotRunnerResult) =>
+        // La porte d'intégration continue (S-9) : le commit de travail part AVANT la chaîne.
+        // Hors VPS, aucun saut de microtâche de plus entre la fin du run et son traitement.
+        ciGateOn && (launch.phase === "impl" || launch.phase === "review")
+          ? ciStepAfter(feature.slug, launch.phase, result, check).then((step) => finishRun(feature.slug, launch.phase, result, startedAt, check, step))
+          : finishRun(feature.slug, launch.phase, result, startedAt, check),
+      );
   }
 
   /**
@@ -985,6 +1072,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     result: LotRunnerResult,
     startedAt: number,
     check: WorktreeCheck | null,
+    ciStep: CiStep = null,
   ): void {
     inFlight.delete(slug);
     workBudget.delete(slug);
@@ -1006,6 +1094,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const feature = lotFeature(lot, slug);
     if (!feature || feature.state !== "running" || feature.phase !== phase) return;
     queueLeftovers(feature, leftovers);
+    // Toute fin de run (normale ou non) remet à zéro la série de reprises du service (S-4).
+    delete feature.autoResumes;
     const runKind = runKinds.get(slug);
     runKinds.delete(slug);
     // La session du run est retenue quel que soit son SORT (S-8 §1) : un run tué ou
@@ -1067,6 +1157,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
       void Promise.resolve().then(() => tick().catch(() => undefined));
       return;
     }
+    // La porte d'intégration continue (S-9) : un push refusé arrête la feature AVANT la revue ;
+    // sinon la porte neuve (ou renouvelée) est posée avant que la chaîne la lise.
+    if (ciStep !== null && "blocked" in ciStep) {
+      settle(lot, feature, "blocked", ciStep.blocked);
+      if (save(lot) !== null) watched.delete(slug);
+      void Promise.resolve().then(() => tick().catch(() => undefined));
+      return;
+    }
+    if (ciStep !== null) feature.ci = ciStep.ci;
     const outcome: ChainOutcome = !expired && result.code === 0 && !result.killed ? "ok" : "error";
     const routed = route(lot, feature, {
       outcome,
@@ -1143,10 +1242,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
       feature.phase !== "review" || (currentReview !== null && currentReview !== (feature.reviewHash ?? null));
     // Ce que le pilote PUBLIE du verdict (S-…), pour le panneau : le même verdict
     // que celui sur lequel la chaîne décide, jamais un second calcul divergent.
+    let ciRed = false;
     if (feature.phase === "review") {
       const verdict = effectiveReviewVerdict(contract, reviewRewritten);
       feature.lastVerdict = verdict;
       feature.lastBlockers = verdict === "blockers" ? reviewBlockers(contract) : 0;
+      // Une revue propre sur une porte rouge repart en correction (S-9) : ses bloquants sont les contrôles rouges.
+      ciRed = verdict === "clean" && feature.ci?.state === "red";
       // Un verdict LISIBLE remet le budget de l'illisible à zéro (S-5) : c'est ce
       // qui empêche une seule revue illisible de bloquer après des corrections.
       if (verdict !== "unreadable") feature.unreadableRuns = 0;
@@ -1164,7 +1266,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       question: trailingQuestion(result.stdout),
       reviewRewritten,
       worktree: result.worktree ?? null,
+      ci: feature.phase === "review" ? (feature.ci?.state ?? null) : null,
     });
+    if (ciRed && action.kind === "run" && feature.ci !== undefined) feature.lastBlockers = feature.ci.failures.length;
     if (action.kind === "run") {
       // Le maillon suivant du MÊME run : le créneau est déjà tenu, donc aucun
       // plafond ne s'applique ici — seul l'armement est partagé.
@@ -1201,7 +1305,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // Une feature ARBITRÉE reçoit sa marque DANS cette sauvegarde, comme au plafond :
       // aucun lecteur (Console, relais) ne voit l'attente avant que l'arbitre l'ait
       // vue. La passe qui suit la remplace par la marque de son arbitrage.
-      if (arbitratedFeature(feature)) {
+      if (action.waitKind !== "ci" && arbitratedFeature(feature)) {
         feature.arbitration = { key: `${action.waitKind === "answer" ? "question" : action.waitKind}:${feature.slug}:${feature.sinceAt}`, startedAt: now(), status: "queued" };
         delete feature.escalation;
       }
@@ -1233,6 +1337,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * annulée ou relancée pendant l'attente, elle ne touche plus à rien.
    */
   async function finishRelease(feature: LotFeature): Promise<void> {
+    // Le sha de la pointe distante après CE push : la livraison remplace la branche de travail
+    // de la porte (S-9), donc une relance de la livraison doit viser la nouvelle pointe.
+    let pushedTip: string | null = null;
     const commit = (state: "blocked" | "done", prUrl: string | null, reason: string | null) => {
       const fresh = read();
       // Le lot peut avoir changé de main pendant les attentes (git, gh) : la
@@ -1244,6 +1351,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const before = target.state;
       target.state = state;
       target.prUrl = prUrl;
+      if (pushedTip !== null && target.ci !== undefined) target.ci = { ...target.ci, sha: pushedTip };
       if (state === "done") delete target.arbiterRelaunches;
       target.stopReason = reason;
       target.waitKind = null;
@@ -1297,11 +1405,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
       title,
       bodyFile: fs.existsSync(bodyFile) ? bodyFile : null,
       body: lastLine(body.stdout),
+      leaseSha: feature.ci?.sha ?? null,
     });
     const push = await deps.runGit(args.push, feature.worktree);
     if (push.code !== 0) {
       fail(`push refusé : ${lastLine(push.stderr) || `code ${push.code}`}`);
       return;
+    }
+    if (feature.ci !== undefined) {
+      const tip = await deps.runGit(["rev-parse", "HEAD"], feature.worktree);
+      if (tip.code === 0 && tip.stdout.trim() !== "") pushedTip = tip.stdout.trim();
     }
     const pr = await gh(args.pr, feature.worktree);
     let url = parsePrUrl(pr.stdout);
@@ -1317,6 +1430,190 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
     }
     commit("done", url, null);
+  }
+
+  // --- la porte de l'intégration continue GitHub (S-9, B-9) ------------------
+
+  /** La porte n'existe que sur le VPS : une feature d'un dépôt conduit par le Mac n'en porte jamais. */
+  const ciGateOn = deps.machine === "vps";
+
+  /** Les features dont une lecture du verdict est en vol : une seule à la fois par feature. */
+  const ciPolling = new Set<string>();
+
+  /** Ce que la porte décide à la fin d'un maillon : la porte neuve, un blocage, ou rien. */
+  type CiStep = { ci: FeatureCi } | { blocked: string } | null;
+
+  const ciPushDeps = (): CiPushDeps => ({ run: deps.runGit, net: deps.runGitNet ?? deps.runGit, gh: deps.runGh, now });
+
+  /**
+   * La porte à la fin d'un maillon d'impl ou de revue d'une feature du VPS. Fin d'un
+   * /impl réussi qui a produit du travail : une feature qui touche du Swift (ou qui
+   * porte déjà la porte) voit son arbre figé dans un commit de travail poussé sur
+   * `feat/<slug>`. Fin d'une revue : seul un arbre qui a bougé depuis le dernier push
+   * repart (la porte doit couvrir l'arbre COURANT). Ne lève jamais.
+   */
+  async function ciStepAfter(slug: string, phase: PipelinePhase, result: LotRunnerResult, check: WorktreeCheck | null): Promise<CiStep> {
+    try {
+      const lot = read();
+      const feature = lot === null ? undefined : lotFeature(lot, slug);
+      if (feature === undefined || feature.worktree === "") return null;
+      if (result.code !== 0 || result.killed || result.quota !== undefined) return null;
+      if (phase === "impl") {
+        // Un /impl sans travail, ou qui pose une question, ne part pas : la chaîne le traite.
+        if (check !== null && check.kind !== "changed") return null;
+        if (trailingQuestion(result.stdout) !== null) return null;
+        if (feature.ci === undefined) {
+          const paths = await touchedPaths(deps.runGit, { worktree: feature.worktree, branch: feature.branch, base: feature.base ?? null });
+          if (typeof paths === "string") return { blocked: `préparation de la branche de travail impossible : ${paths}` };
+          if (!paths.some(pathTouchesSwift)) return null;
+        }
+      } else if (feature.ci === undefined) {
+        return null;
+      }
+      // Le numéro du /impl : les maillons d'impl déjà consignés, plus celui qui finit (pas encore consigné).
+      const implRuns = (feature.runs ?? []).filter((record) => record.step === "impl").length;
+      const pushed = await pushWorkBranch(ciPushDeps(), {
+        worktree: feature.worktree,
+        branch: feature.branch,
+        slug,
+        n: Math.max(1, implRuns + (phase === "impl" ? 1 : 0)),
+        sameTreeAs: feature.ci?.tree ?? null,
+      });
+      return "unchanged" in pushed ? null : pushed;
+    } catch (err) {
+      return { blocked: ciPushRefusal(err instanceof Error ? err.message : String(err)) };
+    }
+  }
+
+  /**
+   * Le refus de livrer (`verdict` `y`) : la porte doit être VERTE sur l'arbre COURANT du
+   * worktree. `null` pour une feature sans porte.
+   */
+  async function ciDeliveryRefusal(feature: LotFeature): Promise<string | null> {
+    const ci = feature.ci;
+    if (ci === undefined) return null;
+    if (ci.state !== "green") return CI_DELIVERY_REFUSAL;
+    const tree = await worktreeTree(deps.runGit, feature.worktree);
+    return "tree" in tree && tree.tree === ci.tree ? null : CI_DELIVERY_REFUSAL;
+  }
+
+  /** Les features dont le verdict est à relire : porte en attente, depuis au moins 60 s (ou jamais lue). */
+  function dueCiFeatures(lot: Lot): string[] {
+    if (!ciGateOn || deps.runGh === undefined) return [];
+    const at = now();
+    return lot.features
+      .filter(
+        (feature) =>
+          feature.ci?.state === "pending" &&
+          ((feature.state === "waiting" && feature.waitKind === "ci") || (feature.state === "running" && feature.phase === "review")) &&
+          !ciPolling.has(feature.slug) &&
+          (feature.ci.checkedAt === null || at - feature.ci.checkedAt >= CI_POLL_MS),
+      )
+      .map((feature) => feature.slug);
+  }
+
+  /**
+   * Une lecture du verdict de la porte d'une feature (S-9). En attente de la porte, un
+   * arbre qui a bougé repart d'abord ; sinon `gh api …/check-runs` est lu et la porte
+   * passe au vert (jalon de revue), au rouge (/impl --fix) ou reste en attente — au
+   * bout de 15 min sans aucun contrôle, ou de 120 min sans verdict, elle bloque. Ne lève jamais.
+   */
+  async function pollCi(slug: string): Promise<void> {
+    ciPolling.add(slug);
+    try {
+      const gh = deps.runGh;
+      const lot = read();
+      const feature = lot === null ? undefined : lotFeature(lot, slug);
+      const ci = feature?.ci;
+      if (!gh || feature === undefined || ci === undefined || ci.state !== "pending") return;
+      if (feature.state === "waiting" && feature.waitKind === "ci") {
+        const pushed = await pushWorkBranch(ciPushDeps(), {
+          worktree: feature.worktree,
+          branch: feature.branch,
+          slug,
+          n: Math.max(1, (feature.runs ?? []).filter((record) => record.step === "impl").length),
+          sameTreeAs: ci.tree,
+        });
+        if (!("unchanged" in pushed)) {
+          applyCiReading(slug, ci.sha, "blocked" in pushed ? { blocked: pushed.blocked } : { replace: pushed.ci });
+          return;
+        }
+      }
+      const reading = await fetchCiReading(gh, feature.worktree, ci.sha);
+      applyCiReading(slug, ci.sha, reading);
+    } catch (err) {
+      applyCiReading(slug, null, { blocked: ciPushRefusal(err instanceof Error ? err.message : String(err)) });
+    } finally {
+      ciPolling.delete(slug);
+    }
+  }
+
+  /**
+   * Applique une lecture de la porte sur une lecture FRAÎCHE du lot (la lecture a attendu
+   * `gh`) : seulement si CE pilote conduit encore le lot et si la porte est toujours celle
+   * du sha lu. Une erreur de lecture laisse la porte en attente (nouvel essai dans 60 s).
+   */
+  function applyCiReading(
+    slug: string,
+    polledSha: string | null,
+    outcome: { blocked: string } | { replace: FeatureCi } | { error: string } | { state: FeatureCi["state"]; failures: FeatureCi["failures"]; total: number },
+  ): void {
+    const fresh = read();
+    if (!fresh || fresh.owner.pid !== process.pid) return;
+    const feature = lotFeature(fresh, slug);
+    if (!feature || feature.ci === undefined || (polledSha !== null && feature.ci.sha !== polledSha)) return;
+    const waitingOnCi = feature.state === "waiting" && feature.waitKind === "ci";
+    if (!waitingOnCi && !(feature.state === "running" && feature.phase === "review")) return;
+    const at = now();
+    if ("blocked" in outcome) {
+      if (waitingOnCi) settle(fresh, feature, "blocked", outcome.blocked);
+      save(fresh);
+      return;
+    }
+    if ("replace" in outcome) {
+      feature.ci = outcome.replace;
+      save(fresh);
+      return;
+    }
+    const ci = feature.ci;
+    const state = "error" in outcome ? "pending" : outcome.state;
+    feature.ci = { ...ci, state, failures: "error" in outcome ? ci.failures : outcome.failures, checkedAt: at };
+    // Une revue en vol garde la main : la chaîne lira la porte à sa fin (route).
+    if (!waitingOnCi) {
+      save(fresh);
+      return;
+    }
+    if (state === "green") {
+      // Jalon de revue : la même attente qu'une revue propre sans porte (alerte comprise).
+      feature.waitKind = "review";
+      feature.waitPrompt = null;
+      touch(feature, at);
+      if (arbitratedFeature(feature)) {
+        feature.arbitration = { key: `review:${feature.slug}:${feature.sinceAt}`, startedAt: at, status: "queued" };
+        delete feature.escalation;
+      }
+      emit(fresh, feature, "running");
+      save(fresh);
+      return;
+    }
+    if (state === "red") {
+      if (feature.fixes >= fresh.reviewCap) {
+        settle(fresh, feature, "blocked", reviewCapReason(fresh.reviewCap));
+        save(fresh);
+        return;
+      }
+      feature.lastBlockers = feature.ci.failures.length;
+      // `startPlanned` arme la correction (compte dans `fixes`), la retient faute de créneau libre, écrit le lot.
+      startPlanned(fresh, feature, { slug, phase: "impl", fix: true, kind: "phase", resume: false });
+      return;
+    }
+    const waited = at - ci.pushedAt;
+    if (!("error" in outcome) && outcome.total === 0 && waited >= CI_NO_CHECK_MS) {
+      settle(fresh, feature, "blocked", ciNoCheckReason(feature.branch, ci.sha));
+    } else if (waited >= CI_NO_VERDICT_MS) {
+      settle(fresh, feature, "blocked", CI_NO_VERDICT_REASON);
+    }
+    save(fresh);
   }
 
   /** Le worktree d'une feature, créé au moment où elle démarre (S-2). */
@@ -1947,10 +2244,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // arbres d'une même passe se préparent EN PARALLÈLE : en série, chaque `git`
       // ajoutait son délai à l'attente de toutes les décisions.
       const slots = freeSlots(initial);
+      const away = handoverRefusalFor(stateDir, deps.repoRoot) !== null;
       const candidates: LotFeature[] = [];
       for (const feature of initial.features) {
         if (candidates.length >= slots) break;
         if (feature.state !== "pending" || feature.worktree !== "" || !runnable(initial, feature)) continue;
+        // Un dépôt confié à l'autre machine ne démarre plus aucune feature jamais démarrée (S-5).
+        if (away) continue;
         // Une feature que `l` n'a pas lancée n'a pas de worktree à créer : elle
         // attend le lancement du lot (S-3, CHAIN-11).
         if (feature.launched === false) continue;
@@ -1995,7 +2295,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       changed = true;
     }
 
+    // Un dépôt CONFIÉ pendant la création d'un worktree (phase A) : la feature part
+    // sur l'autre machine, aucun arbre ne lui est attribué ici (S-5, invariant de la bascule).
+    const awayNow = handoverRefusalFor(stateDir, deps.repoRoot) !== null;
     for (const item of created) {
+      if (awayNow) {
+        if (item.result.path !== undefined) orphans.push(item.result.path);
+        continue;
+      }
       const feature = lotFeature(lot, item.slug);
       // L'ACTION DE L'UTILISATEUR PRIME (S-1, AC-14) : pendant la création du
       // worktree (phase A, la seule qui attend), la feature a pu être annulée —
@@ -2117,6 +2424,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
         changed = true;
         continue;
       }
+      // Dans le SERVICE (S-4), un run interrompu par son arrêt n'est plus jugé sur
+      // le contrat : le maillon est REPRIS dans la même phase (`resumeInterrupted`).
+      if (inService) {
+        const resumed = resumeInterrupted(lot, feature);
+        if (resumed !== null) launches.push(resumed);
+        changed = true;
+        continue;
+      }
       const verdict = reconcileInterrupted({
         contractHashAtStart: feature.contractHash,
         currentContractHash: contractHashOf(feature.worktree),
@@ -2208,6 +2523,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature) startRun(lot, feature, launch);
     }
     for (const feature of releases) void finishRelease(feature);
+    // La lecture du verdict des portes d'intégration continue en attente (S-9) : toutes les 60 s.
+    for (const slug of dueCiFeatures(lot)) void pollCi(slug);
     for (const planned of arbitrations.planned) arbitrate(planned.slug, planned.item, planned.pilot);
     for (const feature of dueQuota) void relaunchDueQuota(feature);
     // Dernier acte de la passe, APRÈS l'écriture : un `await` (`git`) qui ne décide
@@ -2273,6 +2590,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       pendingAsk: entry?.pendingAsk ?? null,
       askAnswered: cmd.kind === "answer" && slug !== null && answeredAsks.has(askKey(slug, cmd.toolCallId)),
       liveRun: feature !== undefined && (entry !== null || inFlight.has(feature.slug)),
+      handover: cmd.kind === "launch" || cmd.kind === "add" ? handoverRefusalFor(stateDir, deps.repoRoot) : null,
     };
   }
 
@@ -2285,6 +2603,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
    */
   async function commandPreflight(cmd: PipelineCommand): Promise<string | null> {
     if (cmd.kind === "avance") return avancePreflight(cmd);
+    if (cmd.kind === "verdict" && cmd.verdict === "y") {
+      const lot = read();
+      const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
+      // La porte d'intégration continue (S-9) : pas de livraison tant qu'elle n'est pas verte sur l'arbre courant.
+      return feature === undefined ? null : ciDeliveryRefusal(feature);
+    }
     if (cmd.kind !== "arbitrage") return null;
     const lot = read();
     const feature = lot === null ? undefined : lotFeature(lot, cmd.slug);
@@ -3003,6 +3327,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     },
 
     async add(input) {
+      // Un dépôt confié à l'autre machine (S-5) n'accueille plus de feature ici : la
+      // refuser tout de suite, pour tous les chemins (commande, panneau, audit, projet).
+      const away = handoverRefusalFor(stateDir, deps.repoRoot);
+      if (away !== null) return away;
       const slug = toSlug(input.name);
       if (!slug) {
         return `nom invalide : « ${input.name} » — lettres minuscules, chiffres et tirets (ex. isolation-worktree)`;
@@ -3281,6 +3609,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
       if (!feature) return lotFeatureMissingRefusal(slug);
+      // La porte d'intégration continue (S-9) passe AVANT le jalon : tant qu'elle n'est pas
+      // verte sur l'arbre courant, rien ne se livre.
+      if (feature.state === "waiting" && (feature.waitKind === "review" || feature.waitKind === "ci")) {
+        const gate = await ciDeliveryRefusal(feature);
+        if (gate !== null) return gate;
+      }
       if (feature.state !== "waiting" || feature.waitKind !== "review") {
         return "rien à accepter : la revue n'est pas propre";
       }

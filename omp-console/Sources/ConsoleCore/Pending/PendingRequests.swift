@@ -151,6 +151,9 @@ public enum PendingRequests {
             let featureAt = feature?.sinceAt ?? card.startMs
             let request: (id: String, nature: PendingNature, at: Double, question: String, options: [PanelAskOption], reply: PendingReply)
             switch kind {
+            case .ci:
+                // L'attente de l'intégration continue n'est jamais une demande.
+                return nil
             case .answer:
                 if let ask = card.action?.run?.pendingAsk {
                     let runId = card.action?.run?.id

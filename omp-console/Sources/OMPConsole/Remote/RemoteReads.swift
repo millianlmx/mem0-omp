@@ -17,6 +17,8 @@ final class RemoteReads {
     /// Le cache de lecteurs des statistiques (D-4) : possédé par l'API, il ne
     /// consomme que les octets AJOUTÉS depuis le relevé précédent.
     private let cache = SessionMetricsCache()
+    /// La machine annoncée par `GET /v1/version` : ce Mac.
+    let machine: ConsoleMachine
     let service: any MemoryServing
     let memoryConfig: MemoryServiceConfig
     let memoryLinks: URL
@@ -32,6 +34,7 @@ final class RemoteReads {
     let componentsProvider: @MainActor () -> RemoteComponentsPayload
 
     init(
+        machine: ConsoleMachine = .thisMac(),
         hub: StoreHub,
         registry: DeviceRegistry,
         service: any MemoryServing,
@@ -45,6 +48,7 @@ final class RemoteReads {
             RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
         }
     ) {
+        self.machine = machine
         self.hub = hub
         self.registry = registry
         self.service = service
@@ -60,7 +64,7 @@ final class RemoteReads {
     // MARK: - Socle
 
     func version() -> RemoteVersionPayload {
-        RemoteVersionPayload(protocolVersion: ConsoleAPI.protocolVersion)
+        RemoteVersionPayload(protocolVersion: ConsoleAPI.protocolVersion, machine: machine)
     }
 
     func store() -> RemoteStorePayload {

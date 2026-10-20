@@ -105,7 +105,7 @@ function toolbarRefreshFaults(name: string, source: string): string[] {
     .map(() => `${name} : un bouton ↻ (arrow.clockwise) dans une ToolbarItem`);
 }
 
-const PIPELINES_PULL = ".refreshable { await PipelinesModel.refresh(client) }";
+const PIPELINES_PULL = ".refreshable { await PipelinesModel.refresh(clients) }";
 const MEMORY_PULL = ".refreshable { await model.refresh() }";
 
 /**
@@ -215,8 +215,9 @@ function feedbackFaults(all: Map<string, string>): string[] {
   }
   if (hosts.length !== 1 || hosts[0] !== "RootView.swift") faults.push(`.sensoryFeedback( posé par [${hosts.join(", ")}] (attendu : RootView.swift seul)`);
   const root = stripComments(all.get("RootView.swift") ?? "");
-  if (!/\.sensoryFeedback\(trigger: client\.commandOutcome\)\s*\{\s*_, outcome in\s*IOSCommandFeedback\.feedback\(for: outcome\)/.test(root)) {
-    faults.push("RootView.swift : .sensoryFeedback ne suit pas client.commandOutcome par IOSCommandFeedback.feedback(for:)");
+  // Deux clients (Mac et VPS) : UNE valeur observée, `IOSCommandOutcomes`, qui porte l'issue de chacun.
+  if (!/\.sensoryFeedback\(trigger: IOSCommandOutcomes\(clients\)\)\s*\{\s*old, new in\s*IOSCommandFeedback\.feedback\(from: old, to: new\)/.test(root)) {
+    faults.push("RootView.swift : .sensoryFeedback ne suit pas IOSCommandOutcomes(clients) par IOSCommandFeedback.feedback(from:to:)");
   }
   return faults;
 }

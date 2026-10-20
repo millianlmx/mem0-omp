@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "Fusion refusée : les trois statuts requis ne sont pas verts (PR #46)."
+    }
+  },
+  "status" : 409
+}

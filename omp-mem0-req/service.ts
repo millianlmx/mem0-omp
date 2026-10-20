@@ -5,9 +5,25 @@
 // sous `node --test`, donc `Bun` n'est jamais REQUIS à l'import — il est lu
 // paresseusement, derrière une déclaration locale (aucun type `Bun` n'existe,
 // `tsconfig.json` ne déclare que `node`).
-import { SERVICE_VERSION, newServiceToken, servicePort, serviceFilePath, removeService, serviceRunning, writeService } from "./serviceState.ts";
+import {
+  SERVICE_VERSION,
+  newServiceToken,
+  pipelineMachine,
+  pipelineMachineName,
+  remoteApiHost,
+  remoteApiPort,
+  servicePort,
+  serviceFilePath,
+  removeService,
+  serviceRunning,
+  writeService,
+} from "./serviceState.ts";
 import type { ServiceRecord } from "./serviceState.ts";
 import { createServiceRequestHandler } from "./serviceHttp.ts";
+import { createRemoteRequestHandler } from "./remoteApi.ts";
+import { createRemoteRoutes } from "./remoteRoutes.ts";
+import type { RemoteRoutes } from "./remoteRoutes.ts";
+import { DeviceRegistry, devicesFilePath } from "./remoteDevices.ts";
 import type { ServiceApi } from "./serviceApi.ts";
 import { pipelineStateDir } from "./store.ts";
 
@@ -16,6 +32,8 @@ import { pipelineStateDir } from "./store.ts";
 export type ServiceHandle = {
   /** Le port RÉELLEMENT écouté : celui du fichier, jamais le port demandé. */
   port: number;
+  /** Le port du protocole distant (VPS), ou `null` quand le service n'en sert pas (S-2). */
+  remotePort: number | null;
   pid: number;
   token: string;
   /** Arrêt propre : plus de nouvelles requêtes, flux coupés, `service.json` retiré. */
@@ -32,6 +50,8 @@ type BunServerLike = {
   port: number;
   stop: (force?: boolean) => Promise<void> | void;
   timeout?: (request: Request, seconds: number) => void;
+  /** L'adresse du pair d'une requête : le protocole distant refuse hors tailnet (S-2). */
+  requestIP?: (request: Request) => { address: string; family?: string; port: number } | null;
   unref?: () => void;
   ref?: () => void;
 };
@@ -40,7 +60,7 @@ type BunLike = {
   serve: (options: {
     hostname: string;
     port: number;
-    fetch: (request: Request) => Response | Promise<Response>;
+    fetch: (request: Request, server: BunServerLike) => Response | Promise<Response>;
     idleTimeout?: number;
   }) => BunServerLike;
   sleepSync?: (ms: number) => void;
@@ -92,8 +112,13 @@ export async function startService(deps: StartServiceDeps): Promise<ServiceStart
     return { kind: "already-running", pid: running.pid };
   }
   const bun = bunRuntime();
+  const env = deps.env ?? process.env;
   const token = newServiceToken();
   let stopping = false;
+  // Le protocole distant n'existe que sur le VPS (S-2) : le Mac garde son serveur Swift.
+  const vps = pipelineMachine(env) === "vps";
+  const devices = vps ? new DeviceRegistry({ file: devicesFilePath(stateDir), now: deps.now }) : null;
+  devices?.load();
   const handler = createServiceRequestHandler({
     api: deps.api,
     token,
@@ -105,17 +130,50 @@ export async function startService(deps: StartServiceDeps): Promise<ServiceStart
         /* hôte sans `timeout` : le flux reste borné par la durée de la session */
       }
     },
+    devices: devices ?? undefined,
   });
   let server: BunServerLike | null = null;
   const listen = (port: number): BunServerLike =>
     bun.serve({ hostname: "127.0.0.1", port, fetch: handler, idleTimeout: 0 });
-  const requested = deps.port ?? servicePort(deps.env ?? process.env);
+  const requested = deps.port ?? servicePort(env);
   try {
     server = listen(requested);
   } catch (err) {
     if (requested === 0) throw err;
     log(`port ${requested} indisponible (${err instanceof Error ? err.message : String(err)}) — port éphémère`);
     server = listen(0);
+  }
+  // Le second écouteur : le protocole distant, sur l'adresse Tailscale. Une adresse
+  // non liable est une PANNE (Tailscale pas encore prêt) : le service s'arrête, le
+  // superviseur le relance — il ne reste jamais à moitié servi (S-2, cas limites).
+  let remote: BunServerLike | null = null;
+  let remoteRoutes: RemoteRoutes | null = null;
+  const remoteHost = vps ? remoteApiHost(env) : null;
+  if (vps && devices !== null && remoteHost === null) {
+    log("[service] protocole distant désactivé : MEM0_REMOTE_API_HOST absent");
+  }
+  if (devices !== null && remoteHost !== null) {
+    const machine = { kind: "vps" as const, name: pipelineMachineName(env) };
+    remoteRoutes = createRemoteRoutes({ api: deps.api, stateDir, machine, devices, env, now: deps.now });
+    const remoteHandler = createRemoteRequestHandler({ devices, machine, routes: remoteRoutes.routes });
+    const remotePort = remoteApiPort(env);
+    try {
+      remote = bun.serve({
+        hostname: remoteHost,
+        port: remotePort,
+        fetch: (req, srv) => remoteHandler(req, srv.requestIP?.(req)?.address ?? null),
+        // Les flux SSE (`GET /v1/stream`) vivent des heures : Bun coupe sinon une connexion
+        // muette au bout de 10 s, avant même le premier battement de 15 s.
+        idleTimeout: 0,
+      });
+    } catch (err) {
+      remoteRoutes.close();
+      await server.stop(true);
+      throw new Error(
+        `protocole distant : ${remoteHost}:${remotePort} non liable (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    log(`[service] protocole distant en écoute sur ${remoteHost}:${remote.port}`);
   }
   const record: ServiceRecord = {
     version: SERVICE_VERSION,
@@ -132,13 +190,16 @@ export async function startService(deps: StartServiceDeps): Promise<ServiceStart
     kind: "started",
     handle: {
       port: server.port,
+      remotePort: remote?.port ?? null,
       pid: process.pid,
       token,
       stop: async () => {
         if (stopping) return;
         stopping = true;
         await deps.onStop?.();
+        remoteRoutes?.close();
         try {
+          await remote?.stop(true);
           await server?.stop(true);
         } catch {
           /* serveur déjà fermé */

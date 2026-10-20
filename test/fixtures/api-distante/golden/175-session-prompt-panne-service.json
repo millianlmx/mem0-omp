@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "unavailable",
+      "message" : "la session a cessé de répondre"
+    }
+  },
+  "status" : 503
+}

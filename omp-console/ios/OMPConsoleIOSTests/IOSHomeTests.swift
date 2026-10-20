@@ -37,7 +37,7 @@ struct IOSHomeTests {
     private static let endpoint = ClientEndpoint.manual(host: "127.0.0.1", port: 8787)
     private static let ompAvailable = OmpStatus.available(URL(fileURLWithPath: "/usr/local/bin/omp"))
 
-    /// Les huit états de `ClientState` (S-10).
+    /// Les neuf états de `ClientState` (S-10).
     private static let clientStates: [ClientState] = [
         .unpaired,
         .searching,
@@ -47,6 +47,7 @@ struct IOSHomeTests {
         .macAbsent(endpoint: endpoint),
         .revoked,
         .incompatibleProtocol(local: 1, remote: 2),
+        .wrongMachine(expected: .vps, actual: .mac),
     ]
 
     private static let boards: [KanbanBoardState] = [
@@ -64,6 +65,7 @@ struct IOSHomeTests {
         .connected, .connecting,
         .disconnected(.unpaired), .disconnected(.refused), .disconnected(.unreachable),
         .disconnected(.updateApp), .disconnected(.updateMac),
+        .disconnected(.wrongMachine(expected: .vps, actual: .mac)),
     ]
 
     @Test("etats-non-connecte-heterogenes-ios/AC-1 : hors .connected et sans ardoise, l'Accueil est indisponible ; avec ardoise, il garde ses données")

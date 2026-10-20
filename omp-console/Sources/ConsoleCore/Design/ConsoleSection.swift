@@ -17,6 +17,7 @@
 public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case home
     case kanban
+    case repos
     case project
     case audit
     case session
@@ -33,6 +34,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         switch self {
         case .home: "Accueil"
         case .kanban: "Pipelines"
+        case .repos: "Dépôts"
         case .project: "Projet"
         case .audit: "Audit"
         case .session: "Session OMP"
@@ -49,6 +51,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         switch self {
         case .home: "house"
         case .kanban: "square.grid.2x2"
+        case .repos: "server.rack"
         case .project: "target"
         case .audit: "checklist"
         case .session: "bubble.left.and.bubble.right"
@@ -63,7 +66,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
     /// Le groupe de la barre latérale.
     public var group: ConsoleSectionGroup {
         switch self {
-        case .home, .kanban, .project, .audit, .session, .terminal: .pilotage
+        case .home, .kanban, .repos, .project, .audit, .session, .terminal: .pilotage
         case .sessions, .files, .memory, .stats: .consultation
         }
     }

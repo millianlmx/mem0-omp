@@ -6,7 +6,10 @@ import SwiftUI
 /// réels de l'ardoise), deux modèles, un titre, un besoin. Les mots sont ceux de
 /// macOS ; l'app n'invente aucune option.
 struct NewFeatureSheetView: View {
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients (S-6 de orchestrator-living-in-a-vps) : avec un VPS configuré, la
+    /// feuille propose les dépôts unifiés dont la machine conductrice est joignable et
+    /// envoie la feature À CETTE machine.
+    @ObservedObject var clients: MachineClients
     /// Les dépôts forcés par la recette `-pipelines.recipe` ; `nil` hors recette
     /// (les dépôts viennent alors de l'ardoise).
     private let recipeRepos: [String]?
@@ -23,8 +26,8 @@ struct NewFeatureSheetView: View {
     @State private var error: String?
     @State private var busy = false
 
-    init(client: ConsoleClientModel, recipe: IOSPipelinesRecipe? = nil) {
-        self.client = client
+    init(clients: MachineClients, recipe: IOSPipelinesRecipe? = nil) {
+        self.clients = clients
         recipeRepos = recipe?.repos
         underRecipe = recipe != nil
         _repo = State(initialValue: recipe?.repo ?? "")
@@ -33,11 +36,30 @@ struct NewFeatureSheetView: View {
     }
 
     private var cards: [KanbanCard] {
-        PipelinesModel.boardState(of: client, nowMs: Date().timeIntervalSince1970 * 1000)?.kanbanBoard?.cards ?? []
+        PipelinesModel.unifiedBoard(of: clients, nowMs: Date().timeIntervalSince1970 * 1000).state?.kanbanBoard?.cards ?? []
+    }
+
+    /// Les dépôts unifiés qu'on peut lancer : la machine conductrice répond. `nil` hors VPS
+    /// configuré (la liste est alors celle de l'ardoise, comme avant) et sous la recette.
+    private var launchLines: [UnifiedRepo]? {
+        guard clients.vpsConfigured, recipeRepos == nil else { return nil }
+        return clients.repos.lines.filter { $0.launchTarget != nil }
+    }
+
+    /// La machine et la ligne du dépôt choisi (dépôts unifiés seulement).
+    private var chosenTarget: (machine: RepoMachine, row: RepoRow)? {
+        launchLines?.first { $0.id == repo }?.launchTarget
+    }
+
+    /// Le client qui lancera la feature : celui de la machine du dépôt choisi, sinon celui
+    /// de la machine qui répond aux écrans.
+    private var client: ConsoleClientModel {
+        chosenTarget.map { clients.client(for: $0.machine) } ?? clients.activeClient
     }
 
     private var repos: [String] {
-        recipeRepos ?? KanbanLaunchRepos.options(cards: cards, projectRoot: nil)
+        if let launchLines { return launchLines.map(\.id) }
+        return recipeRepos ?? KanbanLaunchRepos.options(cards: cards, projectRoot: nil)
     }
 
     private var choices: [String] {
@@ -86,6 +108,8 @@ struct NewFeatureSheetView: View {
         }
         .accessibilityIdentifier(PipelinesText.newFeatureSheetId)
         .task { await loadCatalog() }
+        // Le catalogue des modèles est celui de la machine qui lancera la feature.
+        .onChange(of: chosenTarget?.machine) { Task { await loadCatalog() } }
     }
 
     /// La rangée « Dépôt » : un `Picker` natif (S-8 de ios-finitions-composants).
@@ -102,8 +126,17 @@ struct NewFeatureSheetView: View {
             } else {
                 Picker(NewFeatureText.repo, selection: $repo) {
                     Text(NewFeatureText.repoPrompt).tag("").selectionDisabled()
-                    ForEach(KanbanLaunchRepos.choices(repos)) { choice in
-                        Text(verbatim: choice.label).tag(choice.root)
+                    if let launchLines {
+                        // VPS configuré : les dépôts unifiés, marqués de leur machine conductrice.
+                        ForEach(launchLines) { line in
+                            if let machine = line.launchTarget?.machine {
+                                Text(verbatim: ReposText.accessibility(line.name, machine: machine)).tag(line.id)
+                            }
+                        }
+                    } else {
+                        ForEach(KanbanLaunchRepos.choices(repos)) { choice in
+                            Text(verbatim: choice.label).tag(choice.root)
+                        }
                     }
                 }
                 .accessibilityIdentifier(PipelinesAccessibility.repoField)
@@ -169,7 +202,8 @@ struct NewFeatureSheetView: View {
     private func submit() {
         busy = true
         error = nil
-        let repoRoot = repo
+        let repoRoot = chosenTarget?.row.repoRoot ?? repo
+        let client = self.client
         let featureTitle = title
         let description = need
         let req = reqSpecs == ModelCatalog.defaultChoice ? nil : reqSpecs

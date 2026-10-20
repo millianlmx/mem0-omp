@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "en-tête X-Console-Protocol-Version absent ou multiple"
+    }
+  },
+  "status" : 400
+}

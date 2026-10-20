@@ -1,0 +1,40 @@
+{
+  "body" : {
+    "candidates" : 5,
+    "rows" : [
+      {
+        "agentId" : "alpha",
+        "id" : "m-alpha-1",
+        "score" : 0.91000000000000003,
+        "tags" : [
+          "ops",
+          "deploy"
+        ],
+        "text" : "Le déploiement passe par launchd.",
+        "updatedAt" : "2026-10-03T10:00:00Z"
+      },
+      {
+        "agentId" : "alpha",
+        "id" : "7",
+        "score" : 0.69999999999999996,
+        "tags" : [
+          "divers"
+        ],
+        "text" : "Identifiant numérique.",
+        "updatedAt" : "2026-09-29T10:00:00Z"
+      },
+      {
+        "agentId" : "alpha",
+        "id" : "m-alpha-2",
+        "score" : 0.62,
+        "tags" : [
+          "secu"
+        ],
+        "text" : "Les clés d’API vivent dans le trousseau.",
+        "updatedAt" : "2026-10-02T10:00:00Z"
+      }
+    ],
+    "scored" : 4
+  },
+  "status" : 200
+}

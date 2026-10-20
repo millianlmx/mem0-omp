@@ -21,7 +21,7 @@ struct IOSTabRoute: Equatable {
 enum IOSTabs {
     /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste
     /// (audit-ui-redesign, S-5 : Mémoire à l'ancienne place d'Audit).
-    static let plusSections: [ConsoleSection] = [.project, .memory, .session, .stats]
+    static let plusSections: [ConsoleSection] = [.repos, .project, .memory, .session, .stats]
 
     /// Les sections DÉCLARÉES dans le groupe, dans l'ordre de déclaration du
     /// `TabView` (audit-ui-redesign, S-5). En régulier : l'ordre de la barre

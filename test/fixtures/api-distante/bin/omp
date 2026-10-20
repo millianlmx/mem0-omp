@@ -1,0 +1,17 @@
+#!/bin/sh
+# Doublure de `omp` pour la preuve de parité : `omp models --json`.
+# Un fichier `omp.mode` voisin portant « fail » fait échouer la commande.
+dir=${0%/*}
+if [ "$1" = "models" ] && [ "$2" = "--json" ]; then
+  if [ -f "$dir/omp.mode" ]; then
+    read -r mode < "$dir/omp.mode"
+    if [ "$mode" = "fail" ]; then
+      printf '%s\n' "omp: catalogue indisponible" >&2
+      exit 3
+    fi
+  fi
+  printf '%s\n' '{"models":[{"selector":"anthropic/claude-sonnet-5","name":"Claude Sonnet 5","thinking":["low","medium","high"]},{"selector":"opencode-go/deepseek-v4.1-flash","name":"DeepSeek V4.1 Flash","thinking":null},{"selector":"anthropic/claude-sonnet-5","name":"Doublon ignoré"}]}'
+  exit 0
+fi
+printf '%s\n' "omp: commande non scriptée" >&2
+exit 64

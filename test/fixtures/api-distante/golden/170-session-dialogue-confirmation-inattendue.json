@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "ce dialogue n'attend pas de confirmation"
+    }
+  },
+  "status" : 400
+}

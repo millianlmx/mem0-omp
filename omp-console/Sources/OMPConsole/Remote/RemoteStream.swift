@@ -32,6 +32,8 @@ enum SSE {
 
 struct RemoteHelloEvent: Encodable, Equatable {
     var protocolVersion: Int
+    /// La machine qui répond (protocole 3).
+    var machine: ConsoleMachine
 }
 
 struct RemoteSessionsEvent: Encodable, Equatable {
@@ -100,6 +102,8 @@ final class RemoteStreamHub {
     private let session: SessionConsoleModel
     private let project: ProjectConsoleModel
     private let clock: RemoteClock
+    /// La machine annoncée par la trame `hello` : ce Mac.
+    private let machine: ConsoleMachine
     /// L'état des composants et de la préparation (S-4), fourni par la racine.
     private let components: @MainActor () -> RemoteComponentsPayload
     /// Le journal des gestes (S-5), fourni par le modèle d'actions.
@@ -121,6 +125,7 @@ final class RemoteStreamHub {
     private var started = false
 
     init(
+        machine: ConsoleMachine = .thisMac(),
         storeHub: StoreHub,
         registry: DeviceRegistry,
         session: SessionConsoleModel,
@@ -137,6 +142,7 @@ final class RemoteStreamHub {
         },
         pullRequestStatesChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) {
+        self.machine = machine
         self.storeHub = storeHub
         self.registry = registry
         self.session = session
@@ -167,7 +173,7 @@ final class RemoteStreamHub {
         // déclarée au registre qu'APRÈS ces trois trames : `markConnected` publie
         // `devices` par `registry.changeHandler`, donc la trame `devices` vient en
         // dernier (S-13, S-6).
-        deliver(subscriber, SSE.frame("hello", RemoteHelloEvent(protocolVersion: ConsoleAPI.protocolVersion)))
+        deliver(subscriber, SSE.frame("hello", RemoteHelloEvent(protocolVersion: ConsoleAPI.protocolVersion, machine: machine)))
         deliver(subscriber, SSE.frame("store", storeHub.current()))
         deliver(subscriber, SSE.frame("conduite", RemoteActions.conduitePayload(project)))
         registry.markConnected(subscriber.deviceId, true)

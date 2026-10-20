@@ -1,0 +1,23 @@
+{
+  "body" : {
+    "links" : [
+
+    ],
+    "nodes" : [
+      {
+        "id" : "memory:m-beta-1",
+        "label" : "Mémoire du dépôt beta",
+        "scope" : "beta",
+        "tags" : [
+          "ops",
+          "deploy"
+        ],
+        "text" : "Mémoire du dépôt beta."
+      }
+    ],
+    "scope" : "beta",
+    "total" : 1,
+    "truncated" : false
+  },
+  "status" : 200
+}

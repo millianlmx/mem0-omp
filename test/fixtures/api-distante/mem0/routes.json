@@ -1,0 +1,54 @@
+{
+  "token": "jeton-mem0",
+  "all": {
+    "alpha": {
+      "file": "all-alpha.json"
+    },
+    "beta": {
+      "file": "all-beta.json"
+    },
+    "scope-500": {
+      "status": 500,
+      "text": "boom"
+    },
+    "scope-401": {
+      "status": 401,
+      "text": "refusé"
+    },
+    "scope-down": {
+      "drop": true
+    }
+  },
+  "search": {
+    "deploiement": {
+      "file": "search-deploiement.json"
+    },
+    "rien": {
+      "file": "search-vide.json"
+    },
+    "requete-500": {
+      "status": 500,
+      "text": "recherche en panne"
+    }
+  },
+  "graph": [
+    {
+      "file": "graph.json"
+    },
+    {
+      "status": 404,
+      "text": "Not Found"
+    },
+    {
+      "status": 405,
+      "text": "Method Not Allowed"
+    },
+    {
+      "status": 500,
+      "text": "graphe en panne"
+    },
+    {
+      "file": "graph.json"
+    }
+  ]
+}

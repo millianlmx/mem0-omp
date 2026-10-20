@@ -1,0 +1,750 @@
+{
+  "body" : [
+    {
+      "data" : {
+        "machine" : "$MACHINE",
+        "protocolVersion" : 3
+      },
+      "event" : "hello"
+    },
+    {
+      "data" : {
+        "audit" : {
+          "availability" : "present",
+          "discardedEntries" : [
+
+          ],
+          "relays" : [
+            {
+              "heartbeatAt" : 1699999100000,
+              "id" : "a1d17000000000a1",
+              "isStale" : true,
+              "pid" : 2000000000,
+              "sessionFile" : "$ROOT\/sessions\/session-host.jsonl"
+            }
+          ]
+        },
+        "audits" : {
+          "availability" : "present",
+          "decisions" : [
+            {
+              "answer" : "30 s.",
+              "at" : 1699999997000,
+              "auditId" : "a0d1700000000001",
+              "kind" : "question",
+              "phase" : "impl",
+              "question" : "Délai de reprise ?",
+              "slug" : "en-cours",
+              "source" : "arbitrage"
+            }
+          ],
+          "discardedEntries" : [
+
+          ],
+          "feed" : [
+            {
+              "answer" : "30 s.",
+              "at" : 1699999997000,
+              "kind" : "question",
+              "offset" : 368,
+              "phase" : "impl",
+              "question" : "Délai de reprise ?",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "slug" : "en-cours",
+              "source" : "arbitrage"
+            },
+            {
+              "answer" : "JSON, d’après le brief.",
+              "at" : 1699999996000,
+              "kind" : "question",
+              "offset" : 184,
+              "phase" : "impl",
+              "question" : "Quel format ?",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "slug" : "en-cours",
+              "source" : "contexte"
+            },
+            {
+              "answer" : "main",
+              "at" : 1699999995000,
+              "kind" : "question",
+              "offset" : 0,
+              "phase" : "req",
+              "question" : "Quelle branche ?",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "slug" : "question-en-vol",
+              "source" : "arbitrage"
+            }
+          ],
+          "records" : [
+            {
+              "createdAt" : 1699999200000,
+              "id" : "a0d1700000000001",
+              "key" : "$ROOT\/state\/audits\/a0d1700000000001",
+              "launches" : [
+                {
+                  "launched" : true,
+                  "phase" : "req",
+                  "slug" : "reprise-pipeline",
+                  "state" : "running"
+                }
+              ],
+              "orientation" : "fiabilité des pipelines",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "repoRoot" : "$ROOT\/repos\/alpha",
+              "status" : "launched",
+              "updatedAt" : 1699999300000
+            },
+            {
+              "createdAt" : 1699999200000,
+              "id" : "a0d1700000000002",
+              "key" : "$ROOT\/state\/audits\/a0d1700000000002",
+              "launches" : [
+
+              ],
+              "orientation" : "performances",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "repoRoot" : "$ROOT\/repos\/alpha",
+              "status" : "stopped",
+              "updatedAt" : 1699999300000
+            }
+          ]
+        },
+        "history" : {
+          "availability" : "present",
+          "discardedEntries" : [
+
+          ],
+          "entries" : [
+            {
+              "cwd" : "$ROOT\/worktrees\/alpha\/echec-relance-ok",
+              "endedAt" : 1699997000000,
+              "finalState" : "failed",
+              "id" : "0000000000000b02",
+              "label" : "alpha\/echec-relance-ok",
+              "phase" : "impl",
+              "phaseStartedAt" : 1699996000000
+            },
+            {
+              "cwd" : "$ROOT\/worktrees\/alpha\/socle-livre",
+              "endedAt" : 1699997000000,
+              "finalState" : "done",
+              "id" : "0000000000000b01",
+              "label" : "alpha\/socle-livre",
+              "phase" : "review",
+              "phaseStartedAt" : 1699996000000,
+              "sessionFile" : "$ROOT\/sessions\/session-hist.jsonl",
+              "sessionId" : "session-hist"
+            }
+          ]
+        },
+        "inbox" : {
+          "availability" : "present",
+          "boxes" : [
+            {
+              "deliveries" : [
+                {
+                  "file" : "$ROOT\/state\/inbox\/0000000000000a02-0\/0001699999999000-$SALT.json",
+                  "payload" : {
+                    "text" : "consigne déjà livrée"
+                  }
+                }
+              ],
+              "name" : "0000000000000a02-0",
+              "path" : "$ROOT\/state\/inbox\/0000000000000a02-0"
+            }
+          ],
+          "discardedEntries" : [
+
+          ]
+        },
+        "lots" : {
+          "availability" : "present",
+          "discardedEntries" : [
+
+          ],
+          "lots" : [
+            {
+              "createdAt" : 1699913600000,
+              "features" : [
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/socle-livre",
+                  "deps" : [
+
+                  ],
+                  "endedAt" : 1699998200000,
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "model" : "opencode-go\/deepseek-v4.1-flash",
+                  "name" : "socle-livre",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "release",
+                  "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/11",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "socle-livre",
+                  "state" : "done",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/alpha\/socle-livre"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/en-cours",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "modelImplReview" : "anthropic\/claude-sonnet-5",
+                  "modelReqSpecs" : "anthropic\/claude-sonnet-5",
+                  "name" : "en-cours",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "impl",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "en-cours",
+                  "state" : "running",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/alpha\/en-cours"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/question-en-vol",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "question-en-vol",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "req",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "question-en-vol",
+                  "state" : "waiting",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "waitKind" : "answer",
+                  "worktree" : "$ROOT\/worktrees\/alpha\/question-en-vol"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/reponse-texte",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "reponse-texte",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "req",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "reponse-texte",
+                  "state" : "waiting",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "waitPrompt" : "Que faire ensuite ?",
+                  "worktree" : "$ROOT\/worktrees\/alpha\/reponse-texte"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/specs-a-valider",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "specs-a-valider",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "specs",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "specs-a-valider",
+                  "state" : "waiting",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "waitKind" : "specs",
+                  "worktree" : "$ROOT\/worktrees\/alpha\/specs-a-valider"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/specs-sans-fichier",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "specs-sans-fichier",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "specs",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "specs-sans-fichier",
+                  "state" : "waiting",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "waitKind" : "specs",
+                  "worktree" : "$ROOT\/worktrees\/alpha\/specs-sans-fichier"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/revue-a-valider",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "revue-a-valider",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "review",
+                  "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/12",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "revue-a-valider",
+                  "state" : "waiting",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "waitKind" : "review",
+                  "worktree" : "$ROOT\/worktrees\/alpha\/revue-a-valider"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/echec-relance-ok",
+                  "deps" : [
+
+                  ],
+                  "endedAt" : 1699999400000,
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "echec-relance-ok",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "impl",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "echec-relance-ok",
+                  "state" : "failed",
+                  "stopReason" : "tests rouges",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/alpha\/echec-relance-ok"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/echec-relance-refusee",
+                  "deps" : [
+
+                  ],
+                  "endedAt" : 1699999500000,
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "echec-relance-refusee",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "impl",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "echec-relance-refusee",
+                  "state" : "failed",
+                  "stopReason" : "build cassé",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/alpha\/echec-relance-refusee"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/bloquee",
+                  "deps" : [
+                    "echec-relance-ok"
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "bloquee",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "impl",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "bloquee",
+                  "state" : "blocked",
+                  "stopReason" : "dépend de : echec-relance-ok",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/alpha\/bloquee"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/en-attente",
+                  "deps" : [
+                    "en-cours"
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "en-attente",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "req",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "en-attente",
+                  "state" : "pending",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : ""
+                }
+              ],
+              "id" : "a1a0000000000001",
+              "isStale" : true,
+              "launchedAt" : 1699993000000,
+              "owner" : {
+                "pid" : 2000000000
+              },
+              "repoRoot" : "$ROOT\/repos\/alpha",
+              "reviewCap" : 3,
+              "slotCap" : 4,
+              "status" : "running"
+            },
+            {
+              "createdAt" : 1699913600000,
+              "features" : [
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/beta-livree",
+                  "deps" : [
+
+                  ],
+                  "endedAt" : 1699999100000,
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "beta-livree",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "release",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "beta-livree",
+                  "state" : "done",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : "$ROOT\/worktrees\/beta\/beta-livree"
+                },
+                {
+                  "addedAt" : 1699992800000,
+                  "branch" : "feat\/beta-a-venir",
+                  "deps" : [
+
+                  ],
+                  "fixes" : 0,
+                  "lastBlockers" : 0,
+                  "name" : "beta-a-venir",
+                  "origin" : "session",
+                  "pendingTexts" : [
+
+                  ],
+                  "phase" : "req",
+                  "reviewRuns" : 0,
+                  "sinceAt" : 1699996400000,
+                  "slug" : "beta-a-venir",
+                  "state" : "pending",
+                  "unreadableRuns" : 0,
+                  "updatedAt" : 1699999940000,
+                  "worktree" : ""
+                }
+              ],
+              "id" : "b1b0000000000002",
+              "isStale" : true,
+              "launchedAt" : 1699993000000,
+              "owner" : {
+                "pid" : 2000000000
+              },
+              "repoRoot" : "$ROOT\/repos\/beta",
+              "reviewCap" : 3,
+              "slotCap" : 4,
+              "status" : "running"
+            }
+          ]
+        },
+        "projects" : {
+          "availability" : "present",
+          "discardedEntries" : [
+
+          ],
+          "projects" : [
+            {
+              "createdAt" : 1699910000000,
+              "current" : 1,
+              "function" : "Sert de magasin pour la preuve de parité des 44 routes.",
+              "hostSession" : "$ROOT\/sessions\/session-host.jsonl",
+              "purpose" : "Le dépôt de démonstration de la parité.",
+              "relayKey" : "$ROOT\/state\/projects\/$KEY(repos\/alpha)@1699990000000",
+              "repoKey" : "$KEY(repos\/alpha)",
+              "repoRoot" : "$ROOT\/repos\/alpha",
+              "segments" : [
+                {
+                  "features" : [
+                    {
+                      "intention" : "Intention de socle-livre.",
+                      "model" : "opencode-go\/deepseek-v4.1-flash",
+                      "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/11",
+                      "slug" : "socle-livre",
+                      "status" : "merged",
+                      "updatedAt" : 1699999880000
+                    }
+                  ],
+                  "name" : "Fondations"
+                },
+                {
+                  "features" : [
+                    {
+                      "intention" : "Intention de en-cours.",
+                      "slug" : "en-cours",
+                      "status" : "launched",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "intention" : "Intention de pr-suivie.",
+                      "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/45",
+                      "slug" : "pr-suivie",
+                      "status" : "pr",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "intention" : "Intention de pr-en-echec.",
+                      "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/99",
+                      "slug" : "pr-en-echec",
+                      "status" : "pr",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "intention" : "Intention de pr-rouge.",
+                      "prUrl" : "https:\/\/github.com\/proprietaire\/depot\/pull\/46",
+                      "slug" : "pr-rouge",
+                      "status" : "pr",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "intention" : "Intention de idee-future.",
+                      "slug" : "idee-future",
+                      "status" : "planned",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "intention" : "Intention de abandonnee.",
+                      "removedReason" : "plus utile",
+                      "slug" : "abandonnee",
+                      "status" : "removed",
+                      "updatedAt" : 1699999880000
+                    }
+                  ],
+                  "name" : "Le réel"
+                }
+              ],
+              "status" : "running",
+              "updatedAt" : 1699999900000
+            },
+            {
+              "createdAt" : 1699910000000,
+              "current" : 0,
+              "function" : "Exerce les cartes `project:` et les documents absents.",
+              "purpose" : "Un dépôt sans lot, projet seul.",
+              "relayKey" : "$ROOT\/state\/projects\/$KEY(repos\/gamma)@1699990000000",
+              "repoKey" : "$KEY(repos\/gamma)",
+              "repoRoot" : "$ROOT\/repos\/gamma",
+              "segments" : [
+                {
+                  "features" : [
+                    {
+                      "intention" : "Intention de exploration.",
+                      "slug" : "exploration",
+                      "status" : "planned",
+                      "updatedAt" : 1699999880000
+                    },
+                    {
+                      "failure" : {
+                        "at" : 1699999800000,
+                        "kind" : "lot",
+                        "reason" : "le lot a échoué"
+                      },
+                      "intention" : "Intention de echec-lot.",
+                      "slug" : "echec-lot",
+                      "status" : "failed",
+                      "updatedAt" : 1699999880000
+                    }
+                  ],
+                  "name" : "Exploration"
+                }
+              ],
+              "status" : "running",
+              "updatedAt" : 1699999900000
+            }
+          ]
+        },
+        "root" : "present",
+        "running" : {
+          "availability" : "present",
+          "discardedEntries" : [
+
+          ],
+          "entries" : [
+            {
+              "cwd" : "$ROOT\/repos\/gamma",
+              "id" : "0000000000000a03",
+              "isStale" : true,
+              "label" : "gamma\/exploration",
+              "ownerPid" : 2000000000,
+              "phase" : "req",
+              "phaseStartedAt" : 1699999700000,
+              "state" : "running",
+              "updatedAt" : 1699999970000
+            },
+            {
+              "cwd" : "$ROOT\/worktrees\/alpha\/en-cours",
+              "id" : "0000000000000a01",
+              "isStale" : true,
+              "label" : "alpha\/en-cours",
+              "ownerPid" : 2000000000,
+              "phase" : "impl",
+              "phaseStartedAt" : 1699999700000,
+              "sessionFile" : "$ROOT\/sessions\/session-a.jsonl",
+              "sessionId" : "session-a",
+              "state" : "running",
+              "updatedAt" : 1699999970000
+            },
+            {
+              "cwd" : "$ROOT\/worktrees\/alpha\/question-en-vol",
+              "id" : "0000000000000a02",
+              "inbox" : "$ROOT\/state\/inbox\/0000000000000a02-0",
+              "isStale" : true,
+              "label" : "alpha\/question-en-vol",
+              "ownerPid" : 2000000000,
+              "pendingAsk" : {
+                "id" : "ask-1",
+                "options" : [
+                  {
+                    "description" : "la branche par défaut",
+                    "label" : "main"
+                  },
+                  {
+                    "label" : "feat\/x"
+                  }
+                ],
+                "question" : "Quelle branche ?",
+                "toolCallId" : "call-q1"
+              },
+              "phase" : "req",
+              "phaseStartedAt" : 1699999700000,
+              "sessionFile" : "$ROOT\/sessions\/session-b.jsonl",
+              "sessionId" : "session-b",
+              "state" : "waiting",
+              "updatedAt" : 1699999970000
+            }
+          ]
+        }
+      },
+      "event" : "store"
+    },
+    {
+      "data" : {
+        "dialogs" : [
+
+        ],
+        "state" : "none",
+        "status" : {
+          "text" : "Prête",
+          "tone" : "neutral"
+        }
+      },
+      "event" : "conduite"
+    },
+    {
+      "data" : {
+        "devices" : [
+          {
+            "connected" : true,
+            "id" : "$UUID",
+            "lastSeenAtMs" : 1700000000000,
+            "name" : "Téléphone",
+            "pairedAtMs" : 1700000000000
+          }
+        ]
+      },
+      "event" : "devices"
+    },
+    {
+      "data" : {
+        "homeDirectory" : "$MACHINE",
+        "ompInstalled" : true,
+        "ompPath" : "$MACHINE"
+      },
+      "event" : "components"
+    },
+    {
+      "data" : {
+        "entries" : [
+
+        ]
+      },
+      "event" : "journal"
+    },
+    {
+      "data" : {
+        "facts" : [
+          {
+            "state" : "OPEN",
+            "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/11"
+          },
+          {
+            "state" : "OPEN",
+            "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/45"
+          },
+          {
+            "state" : "OPEN",
+            "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/46"
+          },
+          {
+            "state" : "OPEN",
+            "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/99"
+          }
+        ],
+        "refreshing" : false
+      },
+      "event" : "pull-request-states"
+    }
+  ],
+  "status" : 200
+}

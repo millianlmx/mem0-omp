@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "« Conduite de parité » est déjà piloté ($ROOT\/repos\/alpha). Arrêtez le pilotage en cours avant d’en démarrer un autre."
+    }
+  },
+  "status" : 409
+}

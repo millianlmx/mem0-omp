@@ -44,6 +44,14 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
     setSessionModel: async id => ({ id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, model: null, thinkingLevel: null }),
     projectModel: async () => ({ model: null, thinkingLevel: null }),
     setProjectModel: async () => ({ model: null, thinkingLevel: null }),
+    handover: async () => {
+      throw new Error("handover n'est pas exercé par ce test");
+    },
+    commitHandover: async () => ({ removed: [] }),
+    cancelHandover: async () => ({ cancelled: true }),
+    adoptRepo: async () => {
+      throw new Error("adoptRepo n'est pas exercé par ce test");
+    },
     ...over,
   };
 }

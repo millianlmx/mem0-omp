@@ -46,6 +46,9 @@ export function pluginsInstallRoot(home: string = os.homedir()): string {
  * deux pompes sur la même boîte (une réponse `ask` consommée par la mauvaise est
  * perdue) et deux entrées d'historique par run. `null` ne perd rien : la
  * découverte suffit. Le chemin RÉEL décide (les liens sont résolus des deux côtés).
+ * Même règle pour un plugin LIÉ hors de `<plugins>` (flake NixOS : `omp plugin link`
+ * vers le store) : `realpath(<plugins>/node_modules/omp-mem0-req/extension.ts)` égal à
+ * celui du module en cours ⇒ `null`.
  *
  * Limite connue : `-e` ne fige PAS le code du parent. Le chemin du cache est
  * réécrit par une mise à jour du plugin, sous les pieds d'un pilote déjà lancé :
@@ -60,7 +63,13 @@ export function selfExtensionArg(
   try {
     const file = decodeURIComponent(new URL(metaUrl).pathname);
     if (!path.isAbsolute(file)) return null;
-    if (isUnder(realpathOr(file), realpathOr(pluginsRoot))) return null;
+    const installedRoot = realpathOr(pluginsRoot);
+    if (isUnder(realpathOr(file), installedRoot)) return null;
+    // Plugin LIÉ (`omp plugin link <dossier>`, ex. un dossier du store Nix) : il n'est
+    // pas sous `<plugins>` une fois les liens résolus, mais la découverte le charge
+    // par `<plugins>/node_modules/omp-mem0-req` — même fichier réel que le nôtre.
+    const linked = path.join(pluginsRoot, "node_modules", "omp-mem0-req", "extension.ts");
+    if (fs.existsSync(linked) && realpathOr(linked) === realpathOr(file)) return null;
     return file;
   } catch {
     return null;
@@ -68,7 +77,15 @@ export function selfExtensionArg(
 }
 
 
-export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
+/**
+ * `resume` : la reprise AUTOMATIQUE d'un maillon interrompu par l'arrêt du service
+ * (S-4) — jamais une décision de l'utilisateur ni de l'arbitre, d'où sa ligne propre.
+ */
+export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch" | "resume";
+
+/** La première ligne du prompt d'une reprise automatique (S-4) : mot pour mot. */
+export const SERVICE_RESUME_LINE =
+  "[reprise] Le service OMP a redémarré pendant ce maillon : reprends où tu t’es arrêté, sans élargir le périmètre.";
 
 
 /** Ce qu'un run de conversation reprend (S-9) : un rang du panneau, sa session, sa boîte. */
@@ -269,6 +286,8 @@ export function buildLotPrompt(input: {
   reviewScope?: ReviewScope;
   /** Les bloquants impliqués par la table AC PAR AC (`reviewImpliedBlockers`), cités par la graine --fix. */
   impliedBlockers?: string[];
+  /** La ligne des bloquants de l'intégration continue GitHub (`ciBlockersLine`, S-9) d'un `--fix` : elle suit le contexte. */
+  ciBlockers?: string;
 }): string {
   const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const excerpt = (input.excerpt ?? "").trim();
@@ -301,11 +320,14 @@ export function buildLotPrompt(input: {
       input.kind === "relaunch"
         ? `[reprise] Le maillon est relancé par ${by} : reprends où tu t'es arrêté, ` +
           `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`
-        : `${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`;
+        : input.kind === "resume"
+          ? `${SERVICE_RESUME_LINE}\n\n${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`
+          : `${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`;
   }
   const withPilot = input.pilotArbitrage === true ? `${prompt}\n\n${PILOT_ARBITRATION_LINE}` : prompt;
   const withContext = input.context ? `${withPilot}\n\n${input.context}` : withPilot;
-  const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
+  const withCi = input.ciBlockers ? `${withContext}\n\n${input.ciBlockers}` : withContext;
+  const withMilestone = input.milestone ? `${withCi}\n\n${input.milestone}` : withCi;
   // Le recentrage de l'arbitre (relance du plafond) : après le jalon, avant les messages en file.
   const refocus = (input.refocus ?? "").trim();
   const withRefocus = refocus === "" ? withMilestone : `${withMilestone}\n\n[recentrage de l'arbitre]\n${refocus}`;
@@ -374,7 +396,12 @@ export function releaseTarget(raw: unknown): ReleaseTarget {
 }
 
 
-/** Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). */
+/**
+ * Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). `leaseSha` (S-9) :
+ * la branche de travail poussée par la porte d'intégration continue vit déjà sur le
+ * dépôt distant sous ce sha — le push de livraison remplace donc SA pointe, et rien
+ * d'autre (`--force-with-lease=refs/heads/<branche>:<sha>`).
+ */
 export function releaseArgs(input: {
   pushUrl: string;
   branch: string;
@@ -382,11 +409,15 @@ export function releaseArgs(input: {
   title: string;
   bodyFile?: string | null;
   body?: string | null;
+  leaseSha?: string | null;
 }): { push: string[]; pr: string[] } {
   const pr = ["pr", "create", "-B", input.base, "-H", input.branch, "-t", input.title];
   if (input.bodyFile) pr.push("-F", input.bodyFile);
   else pr.push("-b", input.body ?? "");
-  return { push: ["push", "-u", input.pushUrl, input.branch], pr };
+  const push = input.leaseSha
+    ? ["push", "-u", `--force-with-lease=refs/heads/${input.branch}:${input.leaseSha}`, input.pushUrl, input.branch]
+    : ["push", "-u", input.pushUrl, input.branch];
+  return { push, pr };
 }
 
 

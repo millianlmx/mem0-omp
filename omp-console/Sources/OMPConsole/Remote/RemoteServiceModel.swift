@@ -191,9 +191,12 @@ final class RemoteServiceModel: ObservableObject {
         address = listener.address
     }
 
-    /// La configuration de la pile mémoire : l'environnement d'abord, puis le
-    /// `.env` de la pile de l'app pour le jeton.
+    /// La configuration de la pile mémoire : `mem0-remote.json` quand la mémoire vit
+    /// sur le VPS, sinon l'environnement, puis le `.env` de la pile de l'app pour le jeton.
     static func memoryConfig(environment: [String: String], stackEnv: URL) -> MemoryServiceConfig {
+        // Mémoire hébergée sur le VPS (S-7) : les routes mémoire de l'API du Mac
+        // parlent au VPS avec le même Bearer que l'écran Mémoire.
+        if let hosted = MemoryServiceConfig.hosted(environment: environment) { return hosted }
         var config = MemoryServiceConfig.fromEnvironment(environment)
         if config.token.isEmpty, let stack = StackEnvStore.load(at: stackEnv), !stack.mem0HttpToken.isEmpty {
             config.token = stack.mem0HttpToken

@@ -61,7 +61,7 @@ function boardFaults(root: string): string[] {
     faults.push("la carte ne montre pas le lien PR de l'ardoise (S-2)");
   }
   const shellView = code(path.join(root, "omp-console/ios/OMPConsoleIOS/IOSSectionView.swift"));
-  if (!shellView.includes("PipelinesScreen(client:")) faults.push("IOSSectionView ne délègue pas .kanban à PipelinesScreen");
+  if (!shellView.includes("PipelinesScreen(clients:")) faults.push("IOSSectionView ne délègue pas .kanban à PipelinesScreen");
   return faults;
 }
 
@@ -209,7 +209,7 @@ test("ios-pipelines/AC-1 : l'ardoise de l'app est la dérivation PARTAGÉE, la m
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/IOSSectionView.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelinesScreen(client:", "Placeholder("));
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelinesScreen(clients:", "Placeholder("));
   assert.ok(boardFaults(copy).some((f) => f.includes("PipelinesScreen")), "un écran non branché doit faire rougir la garde");
 
   const copy2 = shared.fresh();

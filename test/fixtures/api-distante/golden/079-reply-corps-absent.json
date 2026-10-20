@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "corps JSON absent"
+    }
+  },
+  "status" : 400
+}

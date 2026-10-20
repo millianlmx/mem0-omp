@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "not_found",
+      "message" : "projet inconnu"
+    }
+  },
+  "status" : 404
+}

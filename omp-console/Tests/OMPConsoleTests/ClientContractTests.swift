@@ -35,8 +35,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 44)
-        #expect(ClientRoute.all.count == 44)
+        #expect(served.count == 48)
+        #expect(ClientRoute.all.count == 48)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -125,7 +125,7 @@ struct ClientContractTests {
             host: OMPConsole.RemotePullRequestStatesPayload.self
         ))
         #expect(try contractSameShape(
-            #"{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}"#,
+            #"{"repoKey":"k","repoRoot":"/tmp/r","name":"r","identity":"github.com/o/r","handover":{"id":"h1","to":"vps","state":"frozen"}}"#,
             client: ConsoleClient.RemoteRepoRow.self,
             host: OMPConsole.RemoteRepoRow.self
         ))
@@ -133,6 +133,16 @@ struct ClientContractTests {
             #"{"rows":[{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}]}"#,
             client: ConsoleClient.RemoteReposPayload.self,
             host: OMPConsole.RemoteReposPayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"removed":["a","b"]}"#,
+            client: ConsoleClient.RemoteHandoverCommittedPayload.self,
+            host: OMPConsole.RemoteHandoverCommittedPayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"cancelled":true}"#,
+            client: ConsoleClient.RemoteHandoverCancelledPayload.self,
+            host: OMPConsole.RemoteHandoverCancelledPayload.self
         ))
         #expect(try contractSameShape(
             #"{"state":"live","repoKey":"k","name":"P","repoRoot":"/tmp/r","status":{"text":"Active","tone":"success"},"dialogs":[]}"#,

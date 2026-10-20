@@ -1,0 +1,5 @@
+{"type":"session","id":"session-b","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/srv/parite/question-en-vol","version":3}
+{"type":"message","id":"f1","parentId":null,"timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Prépare le périmètre."}]}}
+{"type":"message","id":"f2","parentId":"f1","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"anthropic/claude-sonnet-5","usage":{"input":500,"output":80,"cacheRead":3,"cacheWrite":1,"totalTokens":584,"cost":{"input":0.1,"output":0.2,"cacheRead":0.01,"cacheWrite":0.02,"total":0.33}},"content":[{"type":"toolCall","id":"call-q1","name":"ask","arguments":{"question":"Quelle branche ?","options":[{"label":"main"},{"label":"feat/x"}]}}]}}
+{ ligne illisible
+{"type":"mystère","id":"f3"}

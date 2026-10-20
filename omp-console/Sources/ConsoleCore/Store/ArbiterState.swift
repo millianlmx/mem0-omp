@@ -55,7 +55,8 @@ public enum ArbiterState: Sendable, Equatable {
         if pendingAsk { return true }
         switch feature.state {
         case .waiting:
-            return feature.waitKind != nil
+            // L'attente de l'intégration continue GitHub n'est jamais une question à l'utilisateur.
+            return feature.waitKind != nil && feature.waitKind != .ci
         case .failed:
             return true
         case .blocked:

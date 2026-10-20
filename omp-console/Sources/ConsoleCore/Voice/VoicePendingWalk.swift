@@ -206,7 +206,7 @@ public enum VoicePendingWalk {
         switch milestone {
         case .specs: return .validateSpecs
         case .review: return .acceptReview
-        case .answer: return nil
+        case .answer, .ci: return nil
         }
     }
 

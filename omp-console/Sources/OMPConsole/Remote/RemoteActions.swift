@@ -18,6 +18,8 @@ final class RemoteActions {
     private let hub: StoreHub
     private let environment: [String: String]
     private let clock: RemoteClock
+    /// Le client du service local pour les gestes de bascule, qui n'ont pas de modèle.
+    private let makeServiceClient: ServiceSessionModel.ClientFactory
 
     init(
         kanban: KanbanModel,
@@ -27,7 +29,8 @@ final class RemoteActions {
         audit: AuditConsoleModel,
         hub: StoreHub,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        clock: RemoteClock = .live
+        clock: RemoteClock = .live,
+        makeServiceClient: @escaping ServiceSessionModel.ClientFactory = { ServiceClient(endpoint: try ServiceLocator.locate()) }
     ) {
         self.kanban = kanban
         self.actions = actions
@@ -37,6 +40,7 @@ final class RemoteActions {
         self.hub = hub
         self.environment = environment
         self.clock = clock
+        self.makeServiceClient = makeServiceClient
     }
 
     // MARK: - Cartes
@@ -276,13 +280,65 @@ final class RemoteActions {
     /// dédupliqués par chemin puis triés. La clé est celle du pilote
     /// (`KanbanRepoKey`, seule implémentation), jamais recalculée.
     func knownRepos() -> [RemoteRepoRow] {
-        KnownProjects.roots(in: hub.current()).map { path in
+        KnownProjects.roots(in: hub.current(), stateDir: hub.stateDir).map { path in
             RemoteRepoRow(
                 repoKey: KanbanRepoKey.key(forRoot: path),
                 repoRoot: path,
                 name: (path as NSString).lastPathComponent
             )
         }
+    }
+
+    /// `GET /v1/repos` : les dépôts connus avec leur identité GitHub (`origin`, sinon
+    /// le dépôt adopté par une bascule) et leur bascule (S-5).
+    func repoRows() async -> [RemoteRepoRow] {
+        let adopted = RepoDirectory.adopted(stateDir: hub.stateDir)
+        let handovers = RepoDirectory.handovers(stateDir: hub.stateDir)
+        var rows: [RemoteRepoRow] = []
+        for var row in knownRepos() {
+            row.identity = await RepoDirectory.originIdentity(root: row.repoRoot, environment: environment)
+                ?? adopted.first { realpathOr($0.repoRoot) == row.repoRoot }?.identity
+            row.handover = handovers[row.repoKey]
+            rows.append(row)
+        }
+        return rows
+    }
+
+    // MARK: - Bascule d'un dépôt (S-5)
+
+    /// Les quatre gestes relaient au service local, qui porte les règles et les
+    /// motifs (le VPS les sert en direct, par le même service) : un refus du service
+    /// se recopie avec son code et son motif.
+    private func handoverRoot(_ repoKey: String) throws(GestureRefusal) -> String {
+        guard let repo = knownRepos().first(where: { $0.repoKey == repoKey }) else { throw .unknownRepository }
+        return repo.repoRoot
+    }
+
+    /// 1) gèle le dépôt et rend les features pas encore démarrées.
+    func handover(repoKey: String, to: String) async throws(GestureRefusal) -> HandoverCharge {
+        let root = try handoverRoot(repoKey)
+        let makeClient = self.makeServiceClient
+        return try await Self.auditGesture { try await makeClient().handover(repo: root, to: to) }
+    }
+
+    /// 3) retire les features parties et clôt la bascule.
+    func commitHandover(repoKey: String, id: String, slugs: [String]) async throws(GestureRefusal) -> [String] {
+        let root = try handoverRoot(repoKey)
+        let makeClient = self.makeServiceClient
+        return try await Self.auditGesture { try await makeClient().commitHandover(repo: root, id: id, slugs: slugs) }
+    }
+
+    /// Échec en 2 : rouvre le dépôt.
+    func cancelHandover(repoKey: String, id: String) async throws(GestureRefusal) {
+        let root = try handoverRoot(repoKey)
+        let makeClient = self.makeServiceClient
+        try await Self.auditGesture { try await makeClient().cancelHandover(repo: root, id: id) }
+    }
+
+    /// 2) reconnaît le dépôt de cette identité et y lance les features reçues.
+    func adopt(identity: String, features: [JSONValue]) async throws(GestureRefusal) -> HandoverAdoption {
+        let makeClient = self.makeServiceClient
+        return try await Self.auditGesture { try await makeClient().adopt(identity: identity, features: features) }
     }
 
     /// L'état réduit de la conduite (S-11, S-9) : même source que l'en-tête macOS,

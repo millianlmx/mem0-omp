@@ -160,7 +160,7 @@ function cardFaults(sources: Sources): string[] {
     faults.push("PipelinesCardRecipe.card doit être nil pour `ardoise` (aucune fiche ne s'ouvre)");
   }
   const screen = get(sources, PIPELINES);
-  if (!screen.includes("board: cardRecipe?.forcedBoard ?? PipelinesModel.boardState(of: client, nowMs: Self.nowMs)")) {
+  if (!screen.includes("board: cardRecipe?.forcedBoard ?? unified.state")) {
     faults.push("PipelinesScreen.screenState n'utilise pas l'ardoise de fixture du crochet `ardoise`");
   }
   if (!/if cardRecipe\.forcedBoard != nil \{[^}]*cardRecipe\.announce\(\)/.test(screen)) {

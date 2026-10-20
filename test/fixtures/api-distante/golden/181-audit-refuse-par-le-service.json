@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "bad_request",
+      "message" : "orientation refusée par le service"
+    }
+  },
+  "status" : 400
+}

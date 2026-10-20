@@ -1,0 +1,83 @@
+{
+  "body" : {
+    "rows" : [
+      {
+        "checks" : [
+          {
+            "link" : "https:\/\/example.test\/run\/1",
+            "required" : "check (ubuntu-latest)",
+            "state" : "green"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/2",
+            "required" : "check (macos-latest)",
+            "state" : "green"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/3",
+            "required" : "release-simulation",
+            "state" : "green"
+          }
+        ],
+        "freshness" : "fresh",
+        "headOid" : "0123456789abcdef0123456789abcdef01234567",
+        "number" : 45,
+        "slug" : "pr-suivie",
+        "title" : "Ma PR de parité",
+        "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/45"
+      },
+      {
+        "checks" : [
+          {
+            "link" : "https:\/\/example.test\/run\/1",
+            "required" : "check (ubuntu-latest)",
+            "state" : "green"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/2",
+            "required" : "check (macos-latest)",
+            "state" : "green"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/3",
+            "required" : "release-simulation",
+            "state" : "green"
+          }
+        ],
+        "freshness" : "fresh",
+        "headOid" : "0123456789abcdef0123456789abcdef01234567",
+        "number" : 99,
+        "slug" : "pr-en-echec",
+        "title" : "Ma PR de parité",
+        "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/99"
+      },
+      {
+        "checks" : [
+          {
+            "link" : "https:\/\/example.test\/run\/1",
+            "required" : "check (ubuntu-latest)",
+            "state" : "green"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/2",
+            "required" : "check (macos-latest)",
+            "state" : "pending"
+          },
+          {
+            "link" : "https:\/\/example.test\/run\/3",
+            "required" : "release-simulation",
+            "state" : "red"
+          }
+        ],
+        "freshness" : "fresh",
+        "headOid" : "0123456789abcdef0123456789abcdef01234567",
+        "number" : 46,
+        "slug" : "pr-rouge",
+        "title" : "Ma PR de parité",
+        "url" : "https:\/\/github.com\/proprietaire\/depot\/pull\/46"
+      }
+    ],
+    "stale" : false
+  },
+  "status" : 200
+}

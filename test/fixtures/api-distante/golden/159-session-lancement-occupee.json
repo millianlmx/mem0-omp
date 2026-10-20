@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "Une session est déjà en marche."
+    }
+  },
+  "status" : 409
+}

@@ -135,3 +135,28 @@ enum PipelinesAccessibility {
     static let modelRetry = "pipelines.newFeature.modelRetry"
     static let modelFailure = "pipelines.newFeature.modelFailure"
 }
+
+/// Le vocabulaire propre à l'app de la section « Dépôts » et du sélecteur de
+/// machine (S-6, S-10 de orchestrator-living-in-a-vps). Les phrases durables
+/// (états d'une ligne, « Confier au … », confirmation) viennent de `ReposText`
+/// (ConsoleCore) ; ne restent ici que les identifiants d'accessibilité.
+enum IOSReposText {
+    static let screen = "ios.depots.ecran"
+    static let list = "ios.depots.liste"
+    static let loading = "ios.depots.chargement"
+    static let empty = "ios.depots.vide"
+    static let message = "ios.depots.message"
+    static let vpsMissing = "ios.depots.vps"
+    static let connect = "ios.depots.connexion"
+    static let machinePicker = "ios.machine.selecteur"
+
+    static func row(_ id: String) -> String { "ios.depots.ligne.\(id)" }
+    static func badge(_ id: String, machine: String) -> String { "ios.depots.badge.\(id).\(machine)" }
+    static func handover(_ id: String, to machine: String) -> String { "ios.depots.confier.\(id).\(machine)" }
+    static func cancel(_ id: String) -> String { "ios.depots.annuler.\(id)" }
+    static func retry(_ id: String) -> String { "ios.depots.reessayer.\(id)" }
+    static func status(_ id: String) -> String { "ios.depots.etat.\(id)" }
+    static func reason(_ id: String, to machine: String) -> String { "ios.depots.motif.\(id).\(machine)" }
+    static func banner(_ machine: String) -> String { "ios.bandeau.\(machine)" }
+    static func cardBadge(_ cardId: String) -> String { "ios.badge.carte.\(cardId)" }
+}

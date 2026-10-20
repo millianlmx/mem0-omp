@@ -25,6 +25,9 @@ mem0-omp/                              ← racine du dépôt = marketplace
 ├── scripts/release.ts                 ← PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          ← refuse un bump de version manuel dans une PR
 ├── scripts/release-simulation.sh      ← simule la release d'une PR sur une copie jetable
+├── scripts/mem0-vers-vps.sh           ← migre la mémoire du Mac vers le VPS NixOS
+├── scripts/recette/vps-recette.sh     ← recette réelle du VPS NixOS (MEM0_VPS_REEL=1)
+├── flake.nix, flake.lock, nix/        ← le flake : module NixOS, paquets, test NixOS en VM
 ├── .github/workflows/check.yml        ← la CI des PR
 ├── .github/workflows/release-simulation.yml  ← répète la release sur le commit de fusion de la PR
 └── .github/workflows/release.yml      ← le job de release au merge sur main
@@ -217,6 +220,31 @@ exact plutôt que sur une branche :
 ```json
 "source": { "source": "github", "repo": "<ton-handle>/mem0-omp", "sha": "a1b2c3d4" }
 ```
+
+## Héberger sur un VPS NixOS
+
+Le flake (`flake.nix`, `flake.lock`, `nix/`) n'est pas un artefact publié : il se
+consomme depuis le dépôt (`inputs.mem0-omp.url = "github:millianlmx/mem0-omp"`). Pas
+d'étape de release à lui ajouter : la version des plugins vient du job de release
+(commits conventionnels), le flake pointe un commit.
+
+**Mettre à jour un VPS** = deux commandes, sur la machine qui tient sa configuration :
+
+```bash
+nix flake update                         # avance mem0-omp (et omp, nixpkgs) dans flake.lock
+nixos-rebuild switch --flake .#<hôte>
+```
+
+Le `switch` redémarre `omp-pipeline` et `omp-mem0` sur les nouveaux paquets ; l'état
+(`stateDir` : lots, dépôts clonés, base mem0) n'est jamais touché. Pour ne bouger que
+ce dépôt : `nix flake update mem0-omp`. `flake.lock` de CE dépôt se régénère par
+`nix flake lock` quand les entrées changent ; ne l'éditez pas à la main.
+
+Preuves : `checks.x86_64-linux.vps` (KVM requis, `nix flake check` ou
+`MEM0_OMP_REQUIRE_NIX=1 node --test --experimental-strip-types test/vps/orchestrator-living-in-a-vps.test.ts`)
+et la recette réelle `MEM0_VPS_REEL=1 bash scripts/recette/vps-recette.sh <étape>`.
+La CI GitHub lance `check.yml` aussi sur les branches `feat/**` poussées par le VPS
+(porte de l'intégration continue, README § Héberger l'orchestrateur sur un VPS NixOS).
 
 ## Release automatique
 

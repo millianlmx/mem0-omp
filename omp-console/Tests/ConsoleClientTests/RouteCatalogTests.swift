@@ -1,4 +1,4 @@
-// Le catalogue des routes (S-1) : 44 entrées, chacune unique, normalisée comme la
+// Le catalogue des routes (S-1) : 48 entrées, chacune unique, normalisée comme la
 // table de la coque.
 
 @testable import ConsoleClient
@@ -8,11 +8,11 @@ import Testing
 @Suite("Catalogue des routes")
 @MainActor
 struct RouteCatalogTests {
-    @Test("le catalogue porte 44 routes uniques")
+    @Test("le catalogue porte 48 routes uniques")
     func catalogSize() {
-        #expect(ClientRoute.all.count == 44)
+        #expect(ClientRoute.all.count == 48)
         let keys = ClientRoute.all.map { "\($0.method) \($0.normalized.path)" }
-        #expect(Set(keys).count == 44, "deux routes identiques dans le catalogue")
+        #expect(Set(keys).count == 48, "deux routes identiques dans le catalogue")
     }
 
     @Test("chaque méthode typée a sa route dans le catalogue")
@@ -34,6 +34,8 @@ struct RouteCatalogTests {
             "POST /v1/pull-request-states/refresh",
             "POST /v1/audits", "POST /v1/audits/{id}/launch", "POST /v1/audits/{id}/escalations",
             "DELETE /v1/audits/{id}",
+            "POST /v1/repos/adopt", "POST /v1/repos/{repoKey}/handover",
+            "POST /v1/repos/{repoKey}/handover/{id}/commit", "DELETE /v1/repos/{repoKey}/handover/{id}",
         ]
         let actual = Set(ClientRoute.all.map { "\($0.method) \($0.path)" })
         #expect(actual == expected)

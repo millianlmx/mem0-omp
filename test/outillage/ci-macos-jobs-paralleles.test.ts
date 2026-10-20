@@ -520,8 +520,8 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
 
 const WORKFLOW_CONCURRENCY = [
   "concurrency:",
-  "  group: ${{ github.event_name == 'pull_request' && format('check-pr-{0}', github.event.pull_request.number) || format('check-run-{0}', github.run_id) }}",
-  "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+  "  group: ${{ github.event_name == 'pull_request' && format('check-pr-{0}', github.event.pull_request.number) || startsWith(github.ref, 'refs/heads/feat/') && format('check-branch-{0}', github.ref) || format('check-run-{0}', github.run_id) }}",
+  "  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/feat/') }}",
 ];
 
 /** Le bloc `concurrency` au niveau du workflow (entre `on:` et `jobs:`), sans commentaires. */
@@ -541,7 +541,7 @@ test("ci-macos-jobs-paralleles/AC-9 : un nouveau commit sur une PR annule le run
   assert.deepEqual(block, WORKFLOW_CONCURRENCY);
   // Même PR ⇒ même groupe `check-pr-<n>`, et l'annulation du run en cours.
   assert.ok(block[1]?.includes("format('check-pr-{0}', github.event.pull_request.number)"));
-  assert.ok(block[2]?.endsWith("${{ github.event_name == 'pull_request' }}"));
+  assert.ok(block[2]?.includes("github.event_name == 'pull_request'"));
 });
 
 test("ci-macos-jobs-paralleles/AC-10 : un push vers main n'annule jamais un run check", () => {

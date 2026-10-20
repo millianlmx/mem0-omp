@@ -1,0 +1,382 @@
+{
+  "_doc": "Le service SCRIPTÉ des deux côtés de la preuve de parité : une table de règles HTTP (méthode, chemin à jokers `*` = un segment, `when` = champs égaux du corps JSON, première règle gagnante), plus des flux SSE par session. Swift : transport scripté ; TypeScript : ServiceApi qui rejoue les mêmes règles. `$ROOT` est substitué. `emit` : à la réception de la requête, les trames sont poussées sur le flux OUVERT de la session (un dialogue qui naît EN COURS de session, jamais à l'ouverture).",
+  "rules": [
+    {
+      "method": "POST",
+      "path": "/v1/repos/*/pilot",
+      "json": {
+        "repoKey": "0000000000000000",
+        "lotId": null,
+        "state": "piloting"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/repos/*/commands",
+      "when": {
+        "slug": "echec-relance-refusee"
+      },
+      "json": {
+        "ack": {
+          "version": 1,
+          "id": "0001700000000000-0000",
+          "repo": "",
+          "kind": null,
+          "state": "refused",
+          "reason": "le lot est verrouillé par un autre pilote",
+          "at": 1700000000000
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/repos/*/commands",
+      "json": {
+        "ack": {
+          "version": 1,
+          "id": "0001700000000000-0000",
+          "repo": "",
+          "kind": null,
+          "state": "taken",
+          "reason": null,
+          "at": 1700000000000
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions",
+      "json": {
+        "id": "sess-hosted-1",
+        "cwd": "$ROOT/repos/alpha",
+        "purpose": "session",
+        "state": "idle",
+        "sessionFile": "$ROOT/sessions/session-host.jsonl",
+        "contextPeak": null,
+        "compactions": 0,
+        "model": "anthropic/claude-sonnet-5",
+        "thinkingLevel": "medium"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/sess-hosted-1",
+      "json": {
+        "id": "sess-hosted-1",
+        "cwd": "$ROOT/repos/alpha",
+        "purpose": "session",
+        "state": "idle",
+        "sessionFile": "$ROOT/sessions/session-host.jsonl",
+        "contextPeak": null,
+        "compactions": 0,
+        "model": "anthropic/claude-sonnet-5",
+        "thinkingLevel": "medium"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/prompt",
+      "when": {
+        "text": "ouvre un dialogue"
+      },
+      "json": {
+        "accepted": true,
+        "state": "running"
+      },
+      "emit": {
+        "stream": "/v1/sessions/sess-hosted-1/events",
+        "frames": [
+          {
+            "event": "dialog",
+            "data": {
+              "id": "dlg-h1",
+              "method": "select",
+              "title": "Choisir la branche",
+              "options": [
+                "main",
+                "feat/x"
+              ],
+              "optionDescriptions": [
+                null,
+                "la branche de travail"
+              ],
+              "at": 1700000000000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/prompt",
+      "when": {
+        "text": "panne du service"
+      },
+      "status": 500,
+      "json": {
+        "error": "internal",
+        "reason": "la session a cessé de répondre"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/prompt",
+      "json": {
+        "accepted": true,
+        "state": "running"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/abort",
+      "json": {
+        "state": "idle"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/sess-hosted-1",
+      "json": {
+        "closed": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/dialogs/*",
+      "json": {
+        "accepted": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/model",
+      "when": {
+        "model": "modele/refuse"
+      },
+      "status": 409,
+      "json": {
+        "error": "conflict",
+        "reason": "modèle indisponible sur ce poste"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-hosted-1/model",
+      "json": {
+        "id": "sess-hosted-1",
+        "cwd": "$ROOT/repos/alpha",
+        "purpose": "session",
+        "state": "idle",
+        "sessionFile": "$ROOT/sessions/session-host.jsonl",
+        "contextPeak": null,
+        "compactions": 0,
+        "model": "anthropic/claude-sonnet-5",
+        "thinkingLevel": "high"
+      }
+    },
+    {
+      "stream": "/v1/sessions/sess-hosted-1/events",
+      "frames": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/*/conduite",
+      "json": {
+        "sessionId": "sess-conduite-1",
+        "state": "running"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/*/conduite",
+      "json": {
+        "closed": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/sess-conduite-1",
+      "json": {
+        "id": "sess-conduite-1",
+        "cwd": "$ROOT/repos/alpha",
+        "purpose": "project",
+        "state": "running",
+        "sessionFile": "$ROOT/sessions/session-host.jsonl",
+        "contextPeak": null,
+        "compactions": 0,
+        "model": "anthropic/claude-sonnet-5",
+        "thinkingLevel": "medium"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/sess-conduite-1/dialogs/*",
+      "json": {
+        "accepted": true
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/sess-conduite-1",
+      "json": {
+        "closed": true
+      }
+    },
+    {
+      "stream": "/v1/sessions/sess-conduite-1/events",
+      "frames": [
+        {
+          "event": "dialog",
+          "data": {
+            "id": "dlg-c1",
+            "method": "confirm",
+            "title": "Fusionner la PR ?",
+            "message": "La PR est verte.",
+            "options": [],
+            "optionDescriptions": [],
+            "at": 1700000000000
+          }
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/*/model",
+      "json": {
+        "model": null,
+        "thinkingLevel": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/*/model",
+      "json": {
+        "model": "anthropic/claude-sonnet-5",
+        "thinkingLevel": "high"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits",
+      "when": {
+        "orientation": "refus-du-service"
+      },
+      "status": 400,
+      "json": {
+        "error": "bad_request",
+        "reason": "orientation refusée par le service"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits",
+      "json": {
+        "id": "a0d1700000000010",
+        "status": "analysing"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000099/launch",
+      "status": 404,
+      "json": {
+        "error": "not_found",
+        "reason": "audit inconnu"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000003/launch",
+      "status": 409,
+      "json": {
+        "error": "conflict",
+        "reason": "audit déjà lancé"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000004/launch",
+      "status": 400,
+      "json": {
+        "error": "bad_request",
+        "reason": "brief vide"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000010/launch",
+      "json": {
+        "launches": [
+          {
+            "slug": "relecture-complete",
+            "launched": true,
+            "reason": null,
+            "state": null,
+            "phase": null,
+            "prUrl": null
+          },
+          {
+            "slug": "index-sessions",
+            "launched": false,
+            "reason": "dépôt occupé",
+            "state": null,
+            "phase": null,
+            "prUrl": null
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000003/escalations",
+      "status": 409,
+      "json": {
+        "error": "conflict",
+        "reason": "déjà répondue ou périmée"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000099/escalations",
+      "status": 404,
+      "json": {
+        "error": "not_found",
+        "reason": "audit inconnu"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audits/a0d1700000000010/escalations",
+      "json": {
+        "accepted": true
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/audits/a0d1700000000099",
+      "status": 404,
+      "json": {
+        "error": "not_found",
+        "reason": "audit inconnu"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/audits/a0d1700000000010",
+      "json": {
+        "cancelled": [
+          "reprise-pipeline"
+        ],
+        "kept": [
+          "rapport-erreurs"
+        ],
+        "refused": [
+          {
+            "slug": "journal-erreurs",
+            "reason": "déjà livrée"
+          }
+        ]
+      }
+    }
+  ]
+}

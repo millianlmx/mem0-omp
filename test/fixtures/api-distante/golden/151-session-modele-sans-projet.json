@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "Choisissez d’abord un dossier de projet sur le Mac."
+    }
+  },
+  "status" : 409
+}

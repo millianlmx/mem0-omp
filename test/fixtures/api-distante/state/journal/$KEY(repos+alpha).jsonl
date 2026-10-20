@@ -1,0 +1,4 @@
+{"version":1,"at":1699999995000,"slug":"question-en-vol","phase":"req","kind":"question","question":"Quelle branche ?","answer":"main","source":"arbitrage","context":null}
+pas du JSON
+{"version":1,"at":1699999996000,"slug":"en-cours","phase":"impl","kind":"question","question":"Quel format ?","answer":"JSON, d’après le brief.","source":"contexte","context":null}
+{"version":1,"at":1699999997000,"slug":"en-cours","phase":"impl","kind":"question","question":"Délai de reprise ?","answer":"30 s.","source":"arbitrage","context":"$ROOT/state/audits/a0d1700000000001"}

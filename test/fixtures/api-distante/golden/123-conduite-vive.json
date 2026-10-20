@@ -1,0 +1,29 @@
+{
+  "body" : {
+    "dialogs" : [
+      {
+        "at" : 1700000000000,
+        "id" : "dlg-c1",
+        "message" : "La PR est verte.",
+        "method" : "confirm",
+        "optionDescriptions" : [
+
+        ],
+        "options" : [
+
+        ],
+        "promptStyle" : false,
+        "title" : "Fusionner la PR ?"
+      }
+    ],
+    "name" : "Conduite de parité",
+    "repoKey" : "$KEY(repos\/alpha)",
+    "repoRoot" : "$ROOT\/repos\/alpha",
+    "state" : "live",
+    "status" : {
+      "text" : "Active",
+      "tone" : "success"
+    }
+  },
+  "status" : 200
+}

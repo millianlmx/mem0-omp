@@ -1,0 +1,39 @@
+#!/bin/sh
+# Doublure de `gh` pour la preuve de parité. L'adresse de PR est le DERNIER argument.
+for last in "$@"; do :; done
+case "$1 $2" in
+  "pr view")
+    case "$4" in
+      "state,mergedAt,closedAt")
+        printf '%s\n' '{"state":"OPEN","mergedAt":null,"closedAt":null}'
+        ;;
+      *)
+        printf '%s\n' '{"title":"Ma PR de parité","headRefOid":"0123456789abcdef0123456789abcdef01234567","body":"Le corps de la PR"}'
+        ;;
+    esac
+    exit 0
+    ;;
+  "pr checks")
+    case "$last" in
+      */pull/46)
+        printf '%s\n' '[{"name":"check (ubuntu-latest)","bucket":"pass","link":"https://example.test/run/1"},{"name":"check (macos-latest)","bucket":"pending","link":"https://example.test/run/2"},{"name":"release-simulation","bucket":"fail","link":"https://example.test/run/3"},{"name":"hors-requis","bucket":"pass","link":null}]'
+        ;;
+      *)
+        printf '%s\n' '[{"name":"check (ubuntu-latest)","bucket":"pass","link":"https://example.test/run/1"},{"name":"check (macos-latest)","bucket":"pass","link":"https://example.test/run/2"},{"name":"release-simulation","bucket":"pass","link":"https://example.test/run/3"},{"name":"hors-requis","bucket":"fail","link":null}]'
+        ;;
+    esac
+    exit 0
+    ;;
+  "pr merge")
+    case "$last" in
+      */pull/99)
+        printf '%s\n' "Pull request is not mergeable" >&2
+        exit 1
+        ;;
+    esac
+    printf '%s\n' "squashed"
+    exit 0
+    ;;
+esac
+printf '%s\n' "gh: commande non scriptée" >&2
+exit 64

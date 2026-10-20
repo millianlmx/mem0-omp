@@ -28,6 +28,17 @@ enum RemoteLimits {
 
 struct RemoteVersionPayload: Codable, Equatable {
     var protocolVersion: Int
+    /// La machine qui répond (protocole 3) : le Mac, ici.
+    var machine: ConsoleMachine
+}
+
+extension ConsoleMachine {
+    /// Ce Mac, désigné par le nom de l'ordinateur (Réglages Système › Partage),
+    /// à défaut par son nom d'hôte.
+    static func thisMac() -> ConsoleMachine {
+        let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        return ConsoleMachine(kind: ConsoleMachine.macKind, name: name)
+    }
 }
 
 struct RemoteStorePayload: Codable {
@@ -212,16 +223,24 @@ struct RemoteDevicesPayload: Codable, Equatable {
     var devices: [RemoteDeviceRow]
 }
 
-/// Un dépôt connu de la coque (S-8) : sa clé (que le client ne calcule jamais),
-/// son chemin réel et son nom.
-struct RemoteRepoRow: Codable, Equatable, Sendable {
-    let repoKey: String
-    let repoRoot: String
-    let name: String
-}
+/// Un dépôt connu de la coque (S-8, S-5 de orchestrator-living-in-a-vps) : sa clé
+/// (que le client ne calcule jamais), son chemin réel, son nom, son identité
+/// GitHub et sa bascule quand il y en a. La forme vit dans ConsoleCore : le client
+/// la décode, la coque la sert.
+typealias RemoteRepoRow = RepoRow
 
 struct RemoteReposPayload: Codable, Equatable, Sendable {
     let rows: [RemoteRepoRow]
+}
+
+/// `POST /v1/repos/:repoKey/handover/:id/commit` : les features retirées du lot de la source.
+struct RemoteHandoverCommittedPayload: Codable, Equatable, Sendable {
+    let removed: [String]
+}
+
+/// `DELETE /v1/repos/:repoKey/handover/:id`.
+struct RemoteHandoverCancelledPayload: Codable, Equatable, Sendable {
+    let cancelled: Bool
 }
 
 /// L'état RÉEL des composants de la coque (S-4) : `ompPath` porte le chemin du

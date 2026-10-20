@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "cette carte n'attend pas de réponse"
+    }
+  },
+  "status" : 409
+}

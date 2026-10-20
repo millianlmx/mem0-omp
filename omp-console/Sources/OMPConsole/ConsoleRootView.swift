@@ -78,6 +78,8 @@ struct ConsoleRootView: View {
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
     /// (S-2 de mac-etats-vides-sans-issue), à l'échelle de l'app.
     let projectChooser: ProjectChooserModel
+    /// Les deux machines, Mac et VPS (S-6 de orchestrator-living-in-a-vps), à l'échelle de l'app.
+    @ObservedObject var hub: MachineHub
     /// Le crochet de recette `-surface.recipe` (S-5 de recette-ui-mac-automatisee),
     /// `nil` hors recette : appliqué une seule fois, au premier affichage.
     let surfaceRecipe: SurfaceRecipe?
@@ -183,7 +185,8 @@ struct ConsoleRootView: View {
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel,
-                projectChooser: projectChooser
+                projectChooser: projectChooser,
+                hub: hub
             )
             // Le titre de la fenêtre EST la section courante (HIG Toolbars : ne
             // pas titrer une fenêtre du nom de l'app). Aucune vue de section ne
@@ -227,9 +230,9 @@ struct ConsoleRootView: View {
             case .welcome:
                 WelcomeSheet(home: home)
             case .newFeature:
-                NewFeatureSheet(actions: actions, kanban: kanban, home: home, console: model)
+                NewFeatureSheet(actions: actions, kanban: kanban, home: home, console: model, hub: hub)
             case .answer(let cardID):
-                if let card = kanban.state.card(cardID) {
+                if let card = kanban.board.card(cardID) {
                     AnswerSheet(card: card, home: home, actions: actions)
                 }
             case .contract(let sheet):
@@ -240,6 +243,8 @@ struct ConsoleRootView: View {
         // une fois, par la racine, et n'est plus lié à l'apparition d'une section.
         .onAppear {
             kanban.start()
+            // Le client du VPS relit son trousseau et se connecte s'il est appairé.
+            hub.start()
             // Le badge d'Audit lit l'ardoise sans ouvrir la section (idempotent :
             // l'apparition d'`AuditView` ne rouvre pas l'abonnement).
             auditModel.start()

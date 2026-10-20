@@ -33,6 +33,14 @@ enum PipelinesSheet: Identifiable {
     }
 }
 
+/// L'ardoise que l'écran Pipelines affiche : l'état, les machines injoignables (un
+/// bandeau chacune) et le drapeau des badges de machine.
+struct PipelinesBoard: Equatable {
+    var state: KanbanBoardState?
+    var unreachable: [RepoMachine]
+    var showsBadges: Bool
+}
+
 /// La logique PURE de l'écran Pipelines (S-3, S-4) : aucune donnée n'est
 /// inventée, aucune n'est mise en cache. L'écran dérive tout de l'instantané du
 /// client (`ConsoleClientModel.snapshot`), alimenté par la trame `store`.
@@ -52,6 +60,42 @@ enum PipelinesModel {
             isAlive: .transported(snapshot),
             prFacts: client.pullRequestFacts
         )
+    }
+
+    /// L'ardoise unifiée des deux machines (S-6 de orchestrator-living-in-a-vps) : l'état
+    /// dérivé de chaque machine JOIGNABLE, les cartes du VPS portant l'identifiant
+    /// `vps:<id>`. Sans VPS configuré : l'ardoise du Mac, telle quelle, sans badge ni
+    /// bandeau (rendu inchangé). `state` vaut `nil` tant qu'aucun instantané n'est arrivé.
+    static func unifiedBoard(of clients: MachineClients, nowMs: Double) -> PipelinesBoard {
+        guard clients.vpsConfigured else {
+            return PipelinesBoard(state: boardState(of: clients.mac, nowMs: nowMs), unreachable: [], showsBadges: false)
+        }
+        func entry(_ machine: RepoMachine) -> MachineBoard {
+            switch clients.availability(of: machine) {
+            case .notConfigured: return .notConfigured
+            case .unreachable: return .unreachable
+            case .reachable:
+                return .state(boardState(of: clients.client(for: machine), nowMs: nowMs) ?? .loading)
+            }
+        }
+        let merged = UnifiedBoard.merge(mac: entry(.mac), vps: entry(.vps))
+        return PipelinesBoard(
+            state: merged.state == .loading ? nil : merged.state,
+            unreachable: merged.unreachable,
+            showsBadges: merged.showsBadges
+        )
+    }
+
+    /// La carte `cardId` (identifiant unifié) de l'ardoise courante.
+    static func card(_ cardId: String, of clients: MachineClients, nowMs: Double) -> KanbanCard? {
+        unifiedBoard(of: clients, nowMs: nowMs).state?.card(cardId)
+    }
+
+    /// La relecture des DEUX machines configurées et connectées (tirage et ⌘R).
+    static func refresh(_ clients: MachineClients) async {
+        for machine in RepoMachine.allCases where clients.availability(of: machine) == .reachable {
+            await refresh(clients.client(for: machine))
+        }
     }
 
     /// ⌘R « Actualiser » n'est actif que connecté au Mac (ios-gestes-et-retours-natifs,

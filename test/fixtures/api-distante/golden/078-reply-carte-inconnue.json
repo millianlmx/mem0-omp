@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "not_found",
+      "message" : "carte inconnue"
+    }
+  },
+  "status" : 404
+}

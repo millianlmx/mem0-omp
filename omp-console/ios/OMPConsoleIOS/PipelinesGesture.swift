@@ -20,7 +20,7 @@ extension LotWaitKind {
         switch self {
         case .specs: return PipelinesVerdict.specs.rawValue
         case .review: return PipelinesVerdict.review.rawValue
-        case .answer: return nil
+        case .answer, .ci: return nil
         }
     }
 }

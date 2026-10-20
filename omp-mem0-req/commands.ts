@@ -23,6 +23,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchFor, realpathOr, toSlug } from "./git.ts";
+import { CI_DELIVERY_REFUSAL } from "./ciGate.ts";
 import {
   ARBITRATION_REFUSAL,
   LOT_NONE_REFUSAL,
@@ -605,6 +606,8 @@ export type CommandView = {
   askAnswered: boolean;
   /** Un maillon tourne-t-il pour la feature visée : entrée vivante du worktree ou run en vol du pilote ? */
   liveRun: boolean;
+  /** Le motif d'un `launch`/`add` refusé parce que le dépôt est confié à l'autre machine (S-5) ; absent/`null` sinon. */
+  handover?: string | null;
 };
 
 
@@ -697,6 +700,8 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     return null;
   }
   if (cmd.kind === "launch" || cmd.kind === "add") {
+    // Un dépôt confié à l'autre machine (S-5) : le motif d'abord, quel que soit le contenu.
+    if (view.handover) return view.handover;
     const empty = featureContentRefusal(cmd);
     if (empty !== null) return empty;
     // Le contenu a été jugé : le slug existe (le type ne le sait pas, `toSlug` si).
@@ -722,6 +727,8 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
   if (cmd.kind === "verdict" && feature) {
     const gesture = milestoneGestureRefusal(feature, view.relayed.has(cmd.slug));
     if (gesture !== null) return gesture;
+    // La porte d'intégration continue GitHub (S-9) n'a pas rendu son verdict : le motif est le sien.
+    if (cmd.verdict === "y" && feature.state === "waiting" && feature.waitKind === "ci") return CI_DELIVERY_REFUSAL;
     const expected: LotWaitKind = cmd.verdict === "v" ? "specs" : "review";
     if (feature.state !== "waiting" || feature.waitKind !== expected) {
       return `sans objet : la feature n'attend pas le jalon ${cmd.verdict}`;

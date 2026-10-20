@@ -1,0 +1,70 @@
+{
+  "body" : {
+    "runs" : [
+      {
+        "cwd" : "$ROOT\/worktrees\/alpha\/en-cours",
+        "label" : "alpha\/en-cours",
+        "live" : {
+          "cwd" : "$ROOT\/worktrees\/alpha\/en-cours",
+          "id" : "0000000000000a01",
+          "isStale" : true,
+          "label" : "alpha\/en-cours",
+          "ownerPid" : 2000000000,
+          "phase" : "impl",
+          "phaseStartedAt" : 1699999700000,
+          "sessionFile" : "$ROOT\/sessions\/session-a.jsonl",
+          "sessionId" : "session-a",
+          "state" : "running",
+          "updatedAt" : 1699999970000
+        },
+        "phase" : "impl",
+        "phaseStartedAt" : 1699999700000,
+        "sessionFile" : "$ROOT\/sessions\/session-a.jsonl"
+      },
+      {
+        "cwd" : "$ROOT\/worktrees\/alpha\/question-en-vol",
+        "label" : "alpha\/question-en-vol",
+        "live" : {
+          "cwd" : "$ROOT\/worktrees\/alpha\/question-en-vol",
+          "id" : "0000000000000a02",
+          "inbox" : "$ROOT\/state\/inbox\/0000000000000a02-0",
+          "isStale" : true,
+          "label" : "alpha\/question-en-vol",
+          "ownerPid" : 2000000000,
+          "pendingAsk" : {
+            "id" : "ask-1",
+            "options" : [
+              {
+                "description" : "la branche par défaut",
+                "label" : "main"
+              },
+              {
+                "label" : "feat\/x"
+              }
+            ],
+            "question" : "Quelle branche ?",
+            "toolCallId" : "call-q1"
+          },
+          "phase" : "req",
+          "phaseStartedAt" : 1699999700000,
+          "sessionFile" : "$ROOT\/sessions\/session-b.jsonl",
+          "sessionId" : "session-b",
+          "state" : "waiting",
+          "updatedAt" : 1699999970000
+        },
+        "phase" : "req",
+        "phaseStartedAt" : 1699999700000,
+        "sessionFile" : "$ROOT\/sessions\/session-b.jsonl"
+      },
+      {
+        "cwd" : "$ROOT\/worktrees\/alpha\/socle-livre",
+        "finalState" : "done",
+        "label" : "alpha\/socle-livre",
+        "phase" : "review",
+        "phaseStartedAt" : 1699996000000,
+        "sessionFile" : "$ROOT\/sessions\/session-hist.jsonl"
+      }
+    ]
+  },
+  "status" : 200
+}

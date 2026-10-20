@@ -1,0 +1,16 @@
+{
+  "body" : {
+    "launches" : [
+      {
+        "launched" : true,
+        "slug" : "relecture-complete"
+      },
+      {
+        "launched" : false,
+        "reason" : "dépôt occupé",
+        "slug" : "index-sessions"
+      }
+    ]
+  },
+  "status" : 200
+}

@@ -40,6 +40,8 @@ private func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) as
 /// de l'appareil.
 public struct KeychainTokenStore: TokenStore {
     public static let defaultService = "com.omp.console.ios.remote-api"
+    /// Le compte du slot `vps` : jamais confondu avec celui du Mac.
+    public static let vpsService = "com.omp.console.ios.remote-api.vps"
 
     public let service: String
 

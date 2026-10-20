@@ -49,7 +49,7 @@ struct IOSConnectionStateView: View {
 
     private func offlineScreen(_ cause: IOSDisconnectCause) -> some View {
         ContentUnavailableView {
-            Label(IOSConnectionStateText.title, systemImage: "wifi.slash")
+            Label(IOSConnectionStateText.title(for: cause), systemImage: "wifi.slash")
                 .accessibilityIdentifier(IOSConnectionStateAccessibility.title)
         } description: {
             Text(IOSConnectionStateText.cause(cause))
@@ -69,7 +69,7 @@ struct IOSConnectionStateView: View {
     private func offlineBanner(_ cause: IOSDisconnectCause) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
-                Label(IOSConnectionStateText.title, systemImage: "wifi.slash")
+                Label(IOSConnectionStateText.title(for: cause), systemImage: "wifi.slash")
                     .font(.headline)
                 Text(IOSConnectionStateText.cause(cause))
                     .font(.callout)

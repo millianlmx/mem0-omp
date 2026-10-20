@@ -8,6 +8,10 @@
 import ConsoleCore
 
 extension MemoryText {
+    /// La mémoire n'est plus locale : `mem0-remote.json` la place sur le VPS (S-7 de
+    /// orchestrator-living-in-a-vps).
+    static let hostedOnVps = "Mémoire hébergée sur le VPS"
+
     /// La ligne de contexte d'un souvenir, dans la liste comme dans le détail :
     /// date relative à `nowMs`, puis étiquettes — chaque segment absent de l'entrée
     /// est omis, jamais remplacé. La portée, identique pour toute la liste, n'y

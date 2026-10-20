@@ -1,0 +1,95 @@
+{
+  "body" : {
+    "entries" : [
+      {
+        "index" : 1,
+        "kind" : "user",
+        "offset" : 116,
+        "text" : "Implémente la route des statistiques.",
+        "timestampMs" : 1767225600000
+      },
+      {
+        "index" : 2,
+        "kind" : "assistant",
+        "model" : "anthropic\/claude-sonnet-5",
+        "offset" : 302,
+        "text" : "je lis le fichier",
+        "thinking" : "je lis d’abord le fichier",
+        "timestampMs" : 1767225600000,
+        "toolCalls" : [
+          {
+            "arguments" : {
+              "offset" : 2,
+              "path" : "src\/stats.ts"
+            },
+            "argumentsText" : "{\"path\":\"src\/stats.ts\",\"offset\":2}",
+            "id" : "call-1",
+            "name" : "read"
+          }
+        ],
+        "usage" : {
+          "cacheRead" : 3,
+          "cacheWrite" : 1,
+          "cost" : 0.33000000000000002,
+          "input" : 1200,
+          "output" : 300,
+          "totalTokens" : 1504
+        }
+      },
+      {
+        "callId" : "call-1",
+        "diff" : " 1|a\n-2|b\n+2|c",
+        "index" : 3,
+        "isError" : false,
+        "kind" : "toolResult",
+        "name" : "read",
+        "offset" : 830,
+        "text" : "export const stats = 1;",
+        "timestampMs" : 1767225600000
+      },
+      {
+        "index" : 4,
+        "kind" : "assistant",
+        "model" : "anthropic\/claude-sonnet-5",
+        "offset" : 1101,
+        "text" : "c’est fait",
+        "timestampMs" : 1767225600000,
+        "usage" : {
+          "cacheRead" : 3,
+          "cacheWrite" : 1,
+          "cost" : 0.33000000000000002,
+          "input" : 800,
+          "output" : 150,
+          "totalTokens" : 954
+        }
+      },
+      {
+        "index" : 5,
+        "kind" : "compaction",
+        "offset" : 1466,
+        "text" : "contexte compacté",
+        "timestampMs" : 1767225600000,
+        "tokensBefore" : 4200
+      },
+      {
+        "index" : 6,
+        "kind" : "user",
+        "offset" : 1628,
+        "text" : "Merci, passe à la revue.",
+        "timestampMs" : 1767225600000
+      }
+    ],
+    "header" : {
+      "cwd" : "\/srv\/parite\/en-cours",
+      "id" : "session-a",
+      "timestamp" : "2026-01-01T00:00:00.000Z",
+      "version" : 3
+    },
+    "kind" : "topLevel",
+    "skipped" : [
+
+    ],
+    "truncated" : false
+  },
+  "status" : 200
+}

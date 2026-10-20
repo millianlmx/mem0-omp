@@ -29,6 +29,7 @@ struct KanbanCardView: View {
                 Text(KanbanCardPresentation.title(card))
                     .font(.headline)
                     .lineLimit(2)
+                CardMachineBadge(cardId: card.id)
                 Spacer(minLength: 4)
                 if let badge = KanbanCardPresentation.badge(card) {
                     StatusBadge(status: badge)

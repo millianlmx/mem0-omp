@@ -1,4 +1,4 @@
-// Le catalogue des routes du client (S-1) : l'image EXACTE des 44 routes servies
+// Le catalogue des routes du client (S-1) : l'image EXACTE des 48 routes servies
 // par la coque (`RemoteRouter.routes`), méthode et chemin mis à part. Un test
 // confronte les deux — c'est le seul garde-fou contre une route oubliée.
 
@@ -30,7 +30,7 @@ public struct ClientRoute: Equatable, Sendable {
 }
 
 public extension ClientRoute {
-    /// La liste UNIQUE des routes du client : 44 entrées, ni plus ni moins.
+    /// La liste UNIQUE des routes du client : 48 entrées, ni plus ni moins.
     static let all: [ClientRoute] = [
         ClientRoute(name: "version", method: "GET", path: "/v1/version"),
         ClientRoute(name: "store", method: "GET", path: "/v1/store"),
@@ -38,6 +38,10 @@ public extension ClientRoute {
         ClientRoute(name: "session.file", method: "GET", path: "/v1/sessions/{id}"),
         ClientRoute(name: "projects", method: "GET", path: "/v1/projects"),
         ClientRoute(name: "repos", method: "GET", path: "/v1/repos"),
+        ClientRoute(name: "repos.adopt", method: "POST", path: "/v1/repos/adopt"),
+        ClientRoute(name: "repos.handover", method: "POST", path: "/v1/repos/{repoKey}/handover"),
+        ClientRoute(name: "repos.handover.commit", method: "POST", path: "/v1/repos/{repoKey}/handover/{id}/commit"),
+        ClientRoute(name: "repos.handover.cancel", method: "DELETE", path: "/v1/repos/{repoKey}/handover/{id}"),
         ClientRoute(name: "documents", method: "GET", path: "/v1/projects/{repoKey}/documents"),
         ClientRoute(name: "stats", method: "GET", path: "/v1/stats"),
         ClientRoute(name: "devices", method: "GET", path: "/v1/devices"),

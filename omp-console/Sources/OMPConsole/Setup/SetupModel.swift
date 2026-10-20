@@ -156,13 +156,29 @@ final class SetupModel: ObservableObject {
             switchOver: { report, progress in
                 try await legacy.switchOver(forced: true, report: report, progress: progress)
             },
-            ensureAgent: { progress in try await agent.ensureRunning(progress: progress) },
+            ensureAgent: ensureAgentStep(agent: agent, hosted: {
+                MemoryServiceConfig.hosted(environment: ProcessInfo.processInfo.environment) != nil
+            }),
             probeOMLX: {
                 let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
                 return await OMLXProbe.status(config: config, session: session)
             },
             autoPrepare: autoPrepare
         )
+    }
+
+    /// L'étape « mémoire » de la préparation : l'agent mem0-rs local, ou — quand
+    /// `mem0-remote.json` place la mémoire sur le VPS (S-7 de orchestrator-living-in-a-vps)
+    /// — AUCUN démarrage et le déchargement de l'agent local, absent toléré. Lue à
+    /// chaque préparation : le fichier peut apparaître entre deux lancements.
+    static func ensureAgentStep(agent: MemoryAgent, hosted: @escaping @Sendable () -> Bool) -> EnsureAgent {
+        { progress in
+            if hosted() {
+                try await agent.unloadIfLoaded()
+            } else {
+                try await agent.ensureRunning(progress: progress)
+            }
+        }
     }
 
     /// La chaîne complète, de `.idle` à `.ready`, `.failed` ou `.awaitingSwitch`.

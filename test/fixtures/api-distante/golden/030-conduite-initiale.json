@@ -1,0 +1,13 @@
+{
+  "body" : {
+    "dialogs" : [
+
+    ],
+    "state" : "none",
+    "status" : {
+      "text" : "Prête",
+      "tone" : "neutral"
+    }
+  },
+  "status" : 200
+}

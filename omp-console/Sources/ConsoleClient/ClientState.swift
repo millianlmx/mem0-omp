@@ -4,6 +4,7 @@
 // `Equatable` : deux états de mêmes faits sont égaux (les tests de table de
 // priorité comparent l'état rendu, jamais un libellé).
 
+import ConsoleCore
 import Foundation
 
 /// L'état observable du client distant.
@@ -26,13 +27,16 @@ public enum ClientState: Equatable, Sendable {
     case revoked
     /// La version d'API du Mac n'est pas celle de l'app : aucun échange autorisé.
     case incompatibleProtocol(local: Int, remote: Int?)
+    /// L'adresse saisie est celle de l'autre machine (le serveur annonce un autre
+    /// `machine.kind` que celui du slot) : aucun geste n'est émis.
+    case wrongMachine(expected: RepoMachine, actual: RepoMachine)
 
     /// L'endpoint nommé par l'état, quand il en porte un.
     public var endpoint: ClientEndpoint? {
         switch self {
         case .connecting(let endpoint), .connected(let endpoint), .macAbsent(let endpoint):
             return endpoint
-        case .unpaired, .searching, .noNetwork, .revoked, .incompatibleProtocol:
+        case .unpaired, .searching, .noNetwork, .revoked, .incompatibleProtocol, .wrongMachine:
             return nil
         }
     }

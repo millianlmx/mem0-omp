@@ -1,5 +1,5 @@
 // Client HTTP mem0 : requêtes bornées, lecture des lignes renvoyées, sélection de pertinence.
-import { MEM0_HTTP_TOKEN, MEM0_HTTP_URL, TIMEOUT } from "./config.ts";
+import { MEM0_AUTH_HEADERS, MEM0_HTTP_URL, TIMEOUT } from "./config.ts";
 
 // ---------------------------------------------------------------------------
 // Client HTTP
@@ -14,7 +14,7 @@ export async function mem0Fetch(route: string, init: RequestInit = {}, budgetMs 
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(MEM0_HTTP_TOKEN ? { "X-Mem0-Token": MEM0_HTTP_TOKEN } : {}),
+        ...MEM0_AUTH_HEADERS,
         ...(init.headers || {}),
       },
     });

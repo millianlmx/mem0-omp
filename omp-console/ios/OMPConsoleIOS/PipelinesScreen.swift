@@ -6,7 +6,9 @@ import SwiftUI
 /// cartes de l'ardoise partagée, dérivée de l'instantané du client. Aucune donnée
 /// n'est inventée ni mise en cache ; la trame `store` met tout à jour.
 struct PipelinesScreen: View {
-    @ObservedObject var client: ConsoleClientModel
+    /// Les deux clients (S-10 de orchestrator-living-in-a-vps) : l'ardoise réunit les cartes
+    /// des deux machines, chaque geste part vers la machine de sa carte.
+    @ObservedObject var clients: MachineClients
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
     /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` : la feuille
@@ -93,15 +95,15 @@ struct PipelinesScreen: View {
             switch target {
             case .card(let cardId):
                 PipelinesCardSheet(
-                    client: client,
+                    clients: clients,
                     cardId: cardId,
                     recipe: cardRecipe,
                     onQuestionGone: { answerGonePending = true }
                 )
             case .newFeature:
-                NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
+                NewFeatureSheetView(clients: clients, recipe: newFeatureRecipe)
             case .decisions:
-                PipelinesDecisionsSheet(client: client)
+                PipelinesDecisionsSheet(client: clients.activeClient)
             }
         }
         // « Arrêter… » du menu contextuel : la confirmation de la fiche, mot pour mot.
@@ -114,7 +116,10 @@ struct PipelinesScreen: View {
             Button(KanbanText.stopConfirm, role: .destructive) {
                 // Confirmation ouverte avant la coupure : rien ne part hors connexion.
                 guard connection.gesturesEnabled else { return }
-                sendFromMenu(card, failureTitle: IOSMenuText.stopFailed) { _ = try await client.stop(cardId: card.id) }
+                sendFromMenu(card, failureTitle: IOSMenuText.stopFailed) {
+                    let target = clients.target(forCardId: card.id)
+                    _ = try await target.client.stop(cardId: target.cardId)
+                }
             }
             Button(KanbanText.cancel, role: .cancel) {}
         } message: { _ in
@@ -145,7 +150,7 @@ struct PipelinesScreen: View {
         // ⌘R « Actualiser » (barre des menus iPad) : la même relecture que le
         // tirage de la liste ; la commande de scène porte le raccourci.
         .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: .kanban, isEnabled: canRefresh) {
-            Task { await PipelinesModel.refresh(client) }
+            Task { await PipelinesModel.refresh(clients) }
         })
         .onAppear { consumeNewFeatureRequest() }
         .onChange(of: newFeatureRequested) { consumeNewFeatureRequest() }
@@ -179,21 +184,27 @@ struct PipelinesScreen: View {
     /// `-pipelines.board`, la fixture tient lieu de Mac : l'écran est connecté (S-4).
     private var connection: IOSConnectionStatus {
         if newFeatureRecipe != nil || cardRecipe != nil || boardRecipe != nil { return .connected }
-        return IOSConnectionStatus.of(client)
+        return IOSConnectionStatus.of(clients)
+    }
+
+    /// L'ardoise unifiée : celle du Mac seule, sans badge, tant qu'aucun VPS n'est configuré.
+    private var unified: PipelinesBoard {
+        PipelinesModel.unifiedBoard(of: clients, nowMs: Self.nowMs)
     }
 
     private var screenState: PipelinesScreenState {
         if let boardRecipe { return boardRecipe.screenState }
         return PipelinesModel.screen(
             connection: connection,
-            board: cardRecipe?.forcedBoard ?? PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
+            board: cardRecipe?.forcedBoard ?? unified.state
         )
     }
 
     // MARK: - Actualiser (ios-gestes-et-retours-natifs, S-2)
 
     private var canRefresh: Bool {
-        PipelinesModel.canRefresh(connection: client.state)
+        guard clients.vpsConfigured else { return PipelinesModel.canRefresh(connection: clients.mac.state) }
+        return RepoMachine.allCases.contains { clients.availability(of: $0) == .reachable }
     }
 
     // MARK: - Contenu
@@ -208,6 +219,10 @@ struct PipelinesScreen: View {
                 connectionBanner
                     .iosBareListRow()
             }
+            if !IOSReposContent.boardBanners(clients).isEmpty {
+                IOSMachineBanners(machines: IOSReposContent.boardBanners(clients))
+                    .iosBareListRow()
+            }
             if let banner = recipe.banner, let message = recipe.bannerMessage {
                 recipeBanner(message, tone: banner.tone)
                     .iosBareListRow()
@@ -217,7 +232,7 @@ struct PipelinesScreen: View {
         .iosGroupedList()
         // Tirer pour actualiser : l'indicateur système reste jusqu'à la fin de
         // la relecture (S-2).
-        .refreshable { await PipelinesModel.refresh(client) }
+        .refreshable { await PipelinesModel.refresh(clients) }
     }
 
     /// Le bandeau de connexion, quand l'ardoise conservée est affichée hors connexion.
@@ -300,6 +315,9 @@ struct PipelinesScreen: View {
                 if connection != .connected {
                     connectionBanner
                 }
+                if !IOSReposContent.boardBanners(clients).isEmpty {
+                    IOSMachineBanners(machines: IOSReposContent.boardBanners(clients))
+                }
                 if let banner = recipe.banner, let message = recipe.bannerMessage {
                     recipeBanner(message, tone: banner.tone)
                 }
@@ -330,7 +348,7 @@ struct PipelinesScreen: View {
             .padding(endMargin)
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .refreshable { await PipelinesModel.refresh(client) }
+        .refreshable { await PipelinesModel.refresh(clients) }
     }
 
     /// L'en-tête d'une voie : bouton repliable de 44 pt pour une voie terminale,
@@ -449,16 +467,24 @@ struct PipelinesScreen: View {
         switch action {
         case .validateSpecs:
             sendFromMenu(card, failureTitle: IOSHomeText.specsFailed) {
-                _ = try await client.verdict(cardId: card.id, verdict: PipelinesVerdict.specs.rawValue)
+                let target = clients.target(forCardId: card.id)
+                _ = try await target.client.verdict(cardId: target.cardId, verdict: PipelinesVerdict.specs.rawValue)
             }
         case .acceptReview:
             sendFromMenu(card, failureTitle: IOSHomeText.reviewFailed) {
-                _ = try await client.verdict(cardId: card.id, verdict: PipelinesVerdict.review.rawValue)
+                let target = clients.target(forCardId: card.id)
+                _ = try await target.client.verdict(cardId: target.cardId, verdict: PipelinesVerdict.review.rawValue)
             }
         case .resume:
-            sendFromMenu(card, failureTitle: IOSHomeText.resumeFailed) { _ = try await client.resume(cardId: card.id) }
+            sendFromMenu(card, failureTitle: IOSHomeText.resumeFailed) {
+                let target = clients.target(forCardId: card.id)
+                _ = try await target.client.resume(cardId: target.cardId)
+            }
         case .launch:
-            sendFromMenu(card, failureTitle: IOSMenuText.launchFailed) { _ = try await client.resume(cardId: card.id) }
+            sendFromMenu(card, failureTitle: IOSMenuText.launchFailed) {
+                let target = clients.target(forCardId: card.id)
+                _ = try await target.client.resume(cardId: target.cardId)
+            }
         case .openPR(let url):
             openURL(url)
         case .copy(let copied):
@@ -497,6 +523,7 @@ struct PipelinesScreen: View {
             Text(KanbanCardPresentation.title(card))
                 .font(.headline)
                 .multilineTextAlignment(.leading)
+            IOSCardMachineBadge(cardId: card.id, shows: clients.vpsConfigured)
             if showsRepo, !card.repo.isEmpty {
                 Text(card.repo)
                     .font(.caption)

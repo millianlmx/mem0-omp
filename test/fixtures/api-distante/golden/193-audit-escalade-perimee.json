@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "déjà répondue ou périmée"
+    }
+  },
+  "status" : 409
+}

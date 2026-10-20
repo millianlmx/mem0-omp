@@ -1,0 +1,9 @@
+{
+  "body" : {
+    "error" : {
+      "code" : "conflict",
+      "message" : "le lot est verrouillé par un autre pilote"
+    }
+  },
+  "status" : 409
+}

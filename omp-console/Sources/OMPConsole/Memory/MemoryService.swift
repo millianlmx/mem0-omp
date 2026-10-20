@@ -15,8 +15,9 @@ import Foundation
 // MARK: - Configuration
 
 /// L'adresse et le jeton du service (S-7), lus dans l'environnement du process —
-/// jamais dans un fichier, jamais dans une préférence. Une variable posée mais VIDE
-/// est traitée comme absente (le `||` du plugin, config.ts:2,4).
+/// jamais dans une préférence. Une variable posée mais VIDE est traitée comme
+/// absente (le `||` du plugin, config.ts:2,4). Seule exception : `mem0-remote.json`
+/// (`hosted(environment:)`), quand la mémoire vit sur le VPS.
 struct MemoryServiceConfig: Equatable, Sendable {
     var baseURL: URL
     var token: String
@@ -24,6 +25,10 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// été lu (`AppPaths.installationToken`) — un service qui ne le rend pas n'est
     /// alors jamais accepté comme « sa » pile.
     var installationToken: String = ""
+    /// Vrai quand la mémoire est hébergée sur le VPS : `token` est alors un jeton
+    /// d'appareil, envoyé en `Authorization: Bearer`, et `/health` n'exige pas le
+    /// jeton d'installation de la pile locale.
+    var hosted: Bool = false
 
     /// Littéral prouvé valide : le seul force-unwrap du module, et il ne porte
     /// aucune donnée réseau.
@@ -43,13 +48,47 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// d'installation lu sur le disque (S-4). Un jeton absent (pile jamais
     /// préparée) laisse le champ vide : aucune réponse ne sera acceptée avant que
     /// la pile ne porte le sien.
+    ///
+    /// Mémoire HÉBERGÉE sur le VPS (S-7 de orchestrator-living-in-a-vps) : sans
+    /// `MEM0_HTTP_URL`, un `mem0-remote.json` valide l'emporte (`hosted`).
     static func resolved(
         environment: [String: String],
         paths: AppPaths
     ) -> MemoryServiceConfig {
+        if let hosted = hosted(environment: environment) { return hosted }
         var config = fromEnvironment(environment)
         config.installationToken = InstallationTokenStore.load(at: paths.installationToken) ?? ""
         return config
+    }
+
+    /// Le contenu de `mem0-remote.json` : `{version:1, url, token}`.
+    private struct HostedFile: Decodable {
+        let version: Int
+        let url: String
+        let token: String
+    }
+
+    /// `<PI_CODING_AGENT_DIR ou ~/.omp/agent>/mem0-remote.json`.
+    static func hostedFileURL(environment: [String: String]) -> URL {
+        let configured = environment["PI_CODING_AGENT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        let directory = configured ?? home + "/.omp/agent"
+        return URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent("mem0-remote.json")
+    }
+
+    /// La mémoire hébergée sur le VPS : `nil` quand `MEM0_HTTP_URL` est posée (l'environnement
+    /// prime), quand le fichier est absent, ou invalide (version autre que 1, URL ou
+    /// jeton absents ou illisibles). La lecture vit ICI et non dans `fromEnvironment`,
+    /// qui reste une fonction pure de l'environnement.
+    static func hosted(environment: [String: String]) -> MemoryServiceConfig? {
+        if environment["MEM0_HTTP_URL"].flatMap({ $0.isEmpty ? nil : $0 }) != nil { return nil }
+        guard let data = try? Data(contentsOf: hostedFileURL(environment: environment)),
+              let file = try? JSONDecoder().decode(HostedFile.self, from: data),
+              file.version == 1, !file.token.isEmpty,
+              let url = URL(string: file.url), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", url.host?.isEmpty == false
+        else { return nil }
+        return MemoryServiceConfig(baseURL: url, token: file.token, hosted: true)
     }
 }
 
@@ -372,6 +411,11 @@ struct HTTPMemoryService: MemoryServing {
             }
             let returned = object?["installation"] as? String
             let expected = config.installationToken
+            // Mémoire hébergée : le VPS ne porte pas le jeton d'installation de la
+            // pile locale, et le Bearer prouve déjà l'accès (aucun contrôle d'appartenance).
+            if config.hosted {
+                return MemoryHealth(isAvailable: true, errorMessage: nil)
+            }
             if !expected.isEmpty, returned == expected {
                 return MemoryHealth(isAvailable: true, errorMessage: nil)
             }
@@ -475,7 +519,11 @@ struct HTTPMemoryService: MemoryServing {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         if !config.token.isEmpty {
-            request.setValue(config.token, forHTTPHeaderField: "X-Mem0-Token")
+            if config.hosted {
+                request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+            } else {
+                request.setValue(config.token, forHTTPHeaderField: "X-Mem0-Token")
+            }
         }
 
         let data: Data

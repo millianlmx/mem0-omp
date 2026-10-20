@@ -1,0 +1,3 @@
+{"type":"session","id":"session-host","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/srv/parite/alpha","version":3}
+{"type":"message","id":"s1","parentId":null,"timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Où en est le lot ?"}]}}
+{"type":"message","id":"s2","parentId":"s1","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"anthropic/claude-sonnet-5","usage":{"input":100,"output":20,"cacheRead":3,"cacheWrite":1,"totalTokens":124,"cost":{"input":0.1,"output":0.2,"cacheRead":0.01,"cacheWrite":0.02,"total":0.33}},"content":[{"type":"text","text":"Le lot avance."}]}}

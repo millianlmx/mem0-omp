@@ -1,0 +1,16 @@
+{
+  "body" : {
+    "dialogs" : [
+
+    ],
+    "projectName" : "alpha",
+    "state" : "stopped",
+    "stateLabel" : "Session arrêtée",
+    "transcript" : [
+
+    ],
+    "truncated" : false,
+    "turnRunning" : false
+  },
+  "status" : 200
+}

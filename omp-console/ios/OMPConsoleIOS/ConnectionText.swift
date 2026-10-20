@@ -13,6 +13,7 @@
 // balaie les sources de l'app et refuse tout littéral de section entre guillemets.
 
 import ConsoleClient
+import ConsoleCore
 
 /// Les mots de la feuille de connexion (S-11).
 enum ConnectionText {
@@ -53,7 +54,9 @@ enum ConnectionText {
     }
 
     /// Le libellé de la zone d'état, composé depuis l'état publié du modèle.
-    static func state(_ state: ClientState) -> String {
+    /// `machine` est la machine du slot : les états du slot VPS se disent « VPS »
+    /// (S-10 de orchestrator-living-in-a-vps).
+    static func state(_ state: ClientState, machine: RepoMachine = .mac) -> String {
         switch state {
         case .unpaired:
             return unpaired
@@ -66,11 +69,15 @@ enum ConnectionText {
         case .noNetwork:
             return noNetwork
         case .macAbsent(let endpoint):
-            return macAbsent(endpoint: endpoint.display)
+            return machine == .vps ? ReposText.vpsUnreachable(address: endpoint.display) : macAbsent(endpoint: endpoint.display)
         case .revoked:
             return revoked
         case .incompatibleProtocol(let local, let remote):
-            return incompatibleProtocol(local: local, remote: remote)
+            return machine == .vps
+                ? ReposText.incompatibleVersion(app: local, vps: remote)
+                : incompatibleProtocol(local: local, remote: remote)
+        case .wrongMachine(let expected, let actual):
+            return ReposText.wrongMachine(expected: expected, actual: actual)
         }
     }
 
@@ -85,7 +92,7 @@ enum ConnectionText {
 
     /// Le libellé de la zone d'état DE LA FEUILLE : jamais d'adresse, pour que
     /// l'adresse ne s'y lise qu'une fois (`connection.endpoint`).
-    static func sheetState(_ state: ClientState) -> String {
+    static func sheetState(_ state: ClientState, machine: RepoMachine = .mac) -> String {
         switch state {
         case .unpaired, .revoked:
             return unpaired
@@ -98,9 +105,13 @@ enum ConnectionText {
         case .noNetwork:
             return noNetwork
         case .macAbsent:
-            return macAbsentState
+            return machine == .vps ? ReposText.vpsUnreachable : macAbsentState
         case .incompatibleProtocol(let local, let remote):
-            return incompatibleProtocol(local: local, remote: remote)
+            return machine == .vps
+                ? ReposText.incompatibleVersion(app: local, vps: remote)
+                : incompatibleProtocol(local: local, remote: remote)
+        case .wrongMachine(let expected, let actual):
+            return ReposText.wrongMachine(expected: expected, actual: actual)
         }
     }
 
@@ -154,28 +165,68 @@ enum ConnectionText {
     static let retry = "Réessayer"
 
     /// Le message d'un échec d'appairage publié par le modèle.
-    static func pairingFailure(_ failure: ClientPairingFailure) -> String {
+    static func pairingFailure(_ failure: ClientPairingFailure, machine: RepoMachine = .mac) -> String {
         switch failure {
         case .malformedCode:
             return codeMalformed
         case .refused:
-            return codeRefused
-        case .unavailable:
-            return codeUnavailable
-        case .transport:
-            return codeUnavailable
+            return machine == .vps ? codeRefusedVps : codeRefused
+        case .unavailable, .transport:
+            return machine == .vps ? codeUnavailableVps : codeUnavailable
         case .incompatibleProtocol(let local, let remote):
-            return incompatibleProtocol(local: local, remote: remote)
+            return machine == .vps
+                ? ReposText.incompatibleVersion(app: local, vps: remote)
+                : incompatibleProtocol(local: local, remote: remote)
         }
     }
 
     /// Le message d'un échec d'appairage LANCÉ par le modèle : `pair` ne lève que
     /// l'absence d'endpoint et le verrou de version (le refus, lui, est publié).
-    static func pairError(_ error: Error) -> String {
+    static func pairError(_ error: Error, machine: RepoMachine = .mac) -> String {
         if let error = error as? ClientError, case .incompatibleProtocol(let local, let remote) = error {
-            return incompatibleProtocol(local: local, remote: remote)
+            return machine == .vps
+                ? ReposText.incompatibleVersion(app: local, vps: remote)
+                : incompatibleProtocol(local: local, remote: remote)
         }
-        return codeUnavailable
+        return machine == .vps ? codeUnavailableVps : codeUnavailable
+    }
+
+    // MARK: - Le slot VPS (S-10 de orchestrator-living-in-a-vps)
+
+    static let codeRefusedVps = "Code refusé — demandez un code frais au VPS."
+    static let codeUnavailableVps = "Le VPS n’a pas confirmé l’appairage — réessayez."
+    static let refusedMessageVps = "Le VPS ne reconnaît plus cet appareil. Saisissez un nouveau code d’appairage."
+    static let codeHelpVps = "Sur le VPS\u{00A0}: commande «\u{00A0}sudo omp-orchestrator pair\u{00A0}»."
+
+    /// L'en-tête de la zone d'état : le titre de la machine quand la feuille en montre deux.
+    static func sectionHeader(_ machine: RepoMachine) -> String {
+        machine == .vps ? ReposText.vpsSectionTitle : ReposText.macSectionTitle
+    }
+
+    /// Le texte d'amorce du champ d'adresse.
+    static func addressPlaceholder(_ machine: RepoMachine) -> String {
+        machine == .vps ? ReposText.vpsAddressLabel : addressField
+    }
+
+    /// Le libellé d'accessibilité du champ d'adresse.
+    static func addressLabel(_ machine: RepoMachine) -> String {
+        machine == .vps ? ReposText.vpsAddressLabel : addressTitle
+    }
+
+    static func codeHelpText(_ machine: RepoMachine) -> String {
+        machine == .vps ? codeHelpVps : codeHelp
+    }
+
+    static func refusedText(_ machine: RepoMachine) -> String {
+        machine == .vps ? refusedMessageVps : refusedMessage
+    }
+
+    static func forgetLabel(_ machine: RepoMachine) -> String {
+        machine == .vps ? ReposText.forgetVps : forget
+    }
+
+    static func forgetDialogTitle(_ machine: RepoMachine) -> String {
+        machine == .vps ? "\(ReposText.forgetVps)\u{00A0}?" : forgetTitle
     }
 
     // MARK: - Oublier ce Mac

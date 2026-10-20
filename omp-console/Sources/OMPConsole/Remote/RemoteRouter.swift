@@ -101,6 +101,10 @@ final class RemoteRouter {
         .of("POST", "v1/pull-request-states/refresh", "prStates.refresh"),
         .of("POST", "v1/audits", "audit.start"),
         .of("POST", "v1/audits/:id/launch", "audit.launch"),
+        .of("POST", "v1/repos/adopt", "repos.adopt"),
+        .of("POST", "v1/repos/:repoKey/handover", "repos.handover"),
+        .of("POST", "v1/repos/:repoKey/handover/:id/commit", "repos.handover.commit"),
+        .of("DELETE", "v1/repos/:repoKey/handover/:id", "repos.handover.cancel"),
         .of("POST", "v1/audits/:id/escalations", "audit.answer"),
         .of("DELETE", "v1/audits/:id", "audit.stop"),
     ]
@@ -188,7 +192,7 @@ final class RemoteRouter {
         case "models":
             return try json(await reads.models())
         case "repos":
-            return try json(RemoteReposPayload(rows: actions.knownRepos()))
+            return try json(RemoteReposPayload(rows: await actions.repoRows()))
         case "conduite.get":
             return try json(actions.conduite())
         case "components":
@@ -337,6 +341,33 @@ final class RemoteRouter {
             return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "audit.stop":
             return try json(try await actions.stopAudit(id: parameters["id"] ?? ""))
+
+        // --- bascule d'un dépôt (S-5) : relayée au service local ---------------
+        case "repos.handover":
+            let body = try Self.objectBody(request)
+            guard let to = body["to"]?.stringValue else { throw GestureRefusal.serviceBadRequest("machine cible invalide") }
+            return try json(try await actions.handover(repoKey: parameters["repoKey"] ?? "", to: to))
+        case "repos.handover.commit":
+            let body = try Self.objectBody(request)
+            guard let slugs = body["slugs"]?.arrayValue?.map(\.stringValue), !slugs.contains(nil) else {
+                throw GestureRefusal.serviceBadRequest(#"corps attendu : {"slugs":["…"]}"#)
+            }
+            return try json(RemoteHandoverCommittedPayload(removed: try await actions.commitHandover(
+                repoKey: parameters["repoKey"] ?? "",
+                id: parameters["id"] ?? "",
+                slugs: slugs.compactMap { $0 }
+            )))
+        case "repos.handover.cancel":
+            try await actions.cancelHandover(repoKey: parameters["repoKey"] ?? "", id: parameters["id"] ?? "")
+            return try json(RemoteHandoverCancelledPayload(cancelled: true))
+        case "repos.adopt":
+            let body = try Self.objectBody(request)
+            guard let identity = body["identity"]?.stringValue, let features = body["features"]?.arrayValue else {
+                throw GestureRefusal.serviceBadRequest(
+                    #"corps attendu : {"identity":"github.com/<owner>/<name>","features":[…]}"#
+                )
+            }
+            return try json(try await actions.adopt(identity: identity, features: features))
         default:
             return respond(.notFound("route inconnue"))
         }
@@ -415,6 +446,13 @@ final class RemoteRouter {
         ))
     }
 
+    /// Le corps d'une route de bascule : absent ou illisible ⇒ 400 ; un corps qui n'est
+    /// pas un objet vaut un objet vide, et la route le refuse avec le motif de sa forme.
+    private static func objectBody(_ request: HTTPRequest) throws -> [String: JSONValue] {
+        guard !request.body.isEmpty else { throw ConsoleAPIError.badRequest("corps JSON absent") }
+        guard let value = JSONValue.parse(request.body) else { throw ConsoleAPIError.badRequest("corps JSON illisible") }
+        return value.objectValue ?? [:]
+    }
     // MARK: - Réponses
 
     private func respond(_ error: ConsoleAPIError) -> RemoteHandlerOutcome {

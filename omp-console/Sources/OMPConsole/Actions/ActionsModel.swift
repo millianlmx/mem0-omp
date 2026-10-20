@@ -61,6 +61,9 @@ final class ActionsModel: ObservableObject {
     private let salt: @Sendable () -> String
     /// Le chargement du catalogue de modèles (S-5) ; injectable pour les tests.
     private let loadModels: @Sendable () async -> Result<ModelCatalogListing, ModelCatalogError>
+    /// Le relais des gestes vers le VPS (S-6 de orchestrator-living-in-a-vps), posé par
+    /// `MachineHub` : nul sans VPS configuré, et alors aucun geste ne le traverse.
+    weak var relay: (any RemoteGestureRelay)?
 
     /// La dernière émission de commande en vol : un test l'attend au lieu de
     /// deviner quand la tâche a fini.
@@ -138,6 +141,10 @@ final class ActionsModel: ObservableObject {
         // L'arbitre tient l'élément (`ArbiterState`) : aucun geste de réponse.
         guard !action.arbiter.isArbitrating else { return }
         guard !Self.isBlank(replyText), let slug = action.slug, let repoRoot = action.repoRoot else { return }
+        if relayed(action, label: ActionsText.answerLabel, target: slug, .reply(replyText)) != nil {
+            replyText = ""
+            return
+        }
         let sentAt = clock.nowMs()
         let salt = salt()
         let command = OutgoingCommand.reply(
@@ -160,6 +167,7 @@ final class ActionsModel: ObservableObject {
     @discardableResult
     func resume(_ action: KanbanCardAction) -> String? {
         guard let repoRoot = action.repoRoot else { return nil }
+        if let id = relayed(action, label: ActionsText.resumeLabel, target: Self.repoName(repoRoot), .resume) { return id }
         let at = clock.nowMs()
         let id = "resume-\(sentAtMillis(at))-\(salt())"
         let target = Self.repoName(repoRoot)
@@ -192,6 +200,7 @@ final class ActionsModel: ObservableObject {
         guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating,
               action.featureState == .failed || action.featureState == .blocked
         else { return nil }
+        if let id = relayed(action, label: ActionsText.resumeLabel, target: slug, .resume) { return id }
         let sentAt = clock.nowMs()
         let salt = salt()
         let command = OutgoingCommand.relaunch(
@@ -215,6 +224,8 @@ final class ActionsModel: ObservableObject {
     /// l'arbitre tient la question (`ArbiterState`).
     func answer(_ action: KanbanCardAction, selected: String) {
         guard !action.arbiter.isArbitrating else { return }
+        if let toolCallId = action.run?.pendingAsk?.toolCallId,
+           relayed(action, label: ActionsText.answerLabel, target: action.run?.label ?? "", .answerSelected(toolCallId: toolCallId, label: selected)) != nil { return }
         guard let run = action.run, let inbox = run.inbox,
               let toolCallId = run.pendingAsk?.toolCallId else { return }
         emitDelivery(
@@ -228,6 +239,8 @@ final class ActionsModel: ObservableObject {
     /// Dépose la réponse à une question en vol (texte libre).
     func answer(_ action: KanbanCardAction, custom text: String) {
         guard !Self.isBlank(text), !action.arbiter.isArbitrating else { return }
+        if let toolCallId = action.run?.pendingAsk?.toolCallId,
+           relayed(action, label: ActionsText.answerLabel, target: action.run?.label ?? "", .answerCustom(toolCallId: toolCallId, text: text)) != nil { return }
         guard let run = action.run, let inbox = run.inbox,
               let toolCallId = run.pendingAsk?.toolCallId else { return }
         emitDelivery(
@@ -241,6 +254,7 @@ final class ActionsModel: ObservableObject {
     /// Dépose un texte libre sur un run vivant sans question en vol.
     func sendText(_ action: KanbanCardAction, text: String) {
         guard !Self.isBlank(text) else { return }
+        if relayed(action, label: ActionsText.textLabel, target: action.run?.label ?? action.slug ?? "", .text(text)) != nil { return }
         guard let run = action.run, let inbox = run.inbox else { return }
         emitDelivery(
             inbox: inbox,
@@ -256,6 +270,7 @@ final class ActionsModel: ObservableObject {
     /// l'arbitre tient le jalon.
     func validate(_ action: KanbanCardAction) {
         guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating else { return }
+        if relayed(action, label: ActionsText.specsLabel, target: slug, .verdict("specs")) != nil { return }
         emitVerdict(slug: slug, repoRoot: repoRoot, verdict: .specs, kindLabel: ActionsText.specsLabel)
     }
 
@@ -263,12 +278,14 @@ final class ActionsModel: ObservableObject {
     /// l'arbitre tient le jalon.
     func accept(_ action: KanbanCardAction) {
         guard let slug = action.slug, let repoRoot = action.repoRoot, !action.arbiter.isArbitrating else { return }
+        if relayed(action, label: ActionsText.reviewLabel, target: slug, .verdict("review")) != nil { return }
         emitVerdict(slug: slug, repoRoot: repoRoot, verdict: .review, kindLabel: ActionsText.reviewLabel)
     }
 
     /// Émet `{kind:"stop"}` — adressé au DÉPÔT.
     func stopLot(_ action: KanbanCardAction) {
         guard action.slug != nil, let repoRoot = action.repoRoot else { return }
+        if relayed(action, label: ActionsText.stopLabel, target: action.slug ?? "", .stop) != nil { return }
         let sentAt = clock.nowMs()
         let salt = salt()
         let command = OutgoingCommand.stop(
@@ -315,6 +332,52 @@ final class ActionsModel: ObservableObject {
         launchDescription = ""
         launchModelReqSpecs = nil
         launchModelImplReview = nil
+    }
+
+    /// Lance une feature sur le VPS (feuille « Nouvelle feature », dépôt conduit par le
+    /// VPS) : `POST /v1/features` part à CETTE machine, avec la racine du dépôt SUR le VPS.
+    func launchRemote(
+        title: String,
+        description: String,
+        repoRoot: String,
+        modelReqSpecs: String? = nil,
+        modelImplReview: String? = nil
+    ) {
+        guard !Self.isBlank(title), !Self.isBlank(description), let relay else { return }
+        let sentAt = clock.nowMs()
+        let id = "remote-\(sentAtMillis(sentAt))-\(salt())"
+        append(ActionJournalEntry(
+            id: id, kindLabel: ActionsText.launchLabel, targetLabel: title, state: .awaitingAck, at: sentAt
+        ))
+        let models = (Self.normalizedModel(modelReqSpecs), Self.normalizedModel(modelImplReview))
+        commandTask = Task { @MainActor [weak self] in
+            let reason = await relay.launch(
+                repoRoot: repoRoot, title: title, description: description,
+                modelReqSpecs: models.0, modelImplReview: models.1
+            )
+            self?.settle(id: id, with: reason.map { .failed(reason: $0) } ?? .taken)
+        }
+        launchFormShown = false
+        launchTitle = ""
+        launchDescription = ""
+        launchModelReqSpecs = nil
+        launchModelImplReview = nil
+    }
+
+    /// Un geste d'une carte du VPS (`action.cardId` posé par l'ardoise unifiée) : il part
+    /// à cette machine avec l'identifiant de carte de CETTE machine, jamais au service
+    /// local. Rend l'identifiant de l'entrée du journal, `nil` pour une carte du Mac.
+    @discardableResult
+    private func relayed(_ action: KanbanCardAction, label: String, target: String, _ gesture: RemoteCardGesture) -> String? {
+        guard let cardId = action.cardId, let relay else { return nil }
+        let sentAt = clock.nowMs()
+        let id = "remote-\(sentAtMillis(sentAt))-\(salt())"
+        append(ActionJournalEntry(id: id, kindLabel: label, targetLabel: target, state: .awaitingAck, at: sentAt))
+        commandTask = Task { @MainActor [weak self] in
+            let reason = await relay.send(gesture, cardId: cardId)
+            self?.settle(id: id, with: reason.map { .failed(reason: $0) } ?? .taken)
+        }
+        return id
     }
 
     // --- modèles (S-5) -------------------------------------------------------

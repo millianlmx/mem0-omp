@@ -6,12 +6,13 @@ import Testing
 /// Les preuves Swift des huit écrans de la coque iOS (S-2, S-3, BR-3) : chaque
 /// état vide rend le mot PARTAGÉ de `ConsoleCore`, mot pour mot celui de la coque
 /// macOS, et l'état d'erreur pose un bandeau `danger` sur les huit.
-@Suite("design-ios — les huit écrans et leurs états")
+@Suite("design-ios — les neuf écrans et leurs états")
 struct IOSSectionContentTests {
     /// Le tableau de S-2, section par section.
     private static let expected: [(section: ConsoleSection, message: String, detail: String?)] = [
         (.home, HomeText.firstRunTitle, HomeText.firstRunBody),
         (.kanban, KanbanText.noPipeline, nil),
+        (.repos, ReposText.empty, nil),
         (.project, ProjectViewText.emptyTitle, ProjectViewText.emptyHelp),
         (.audit, AuditText.emptyTitle, AuditText.emptyHelp),
         (.session, SessionConsoleText.noProjectTitle, SessionConsoleText.noProjectBody),
@@ -67,7 +68,7 @@ struct IOSSectionContentTests {
         }
     }
 
-    @Test("design-ios/AC-4 : les huit sections rendent le bandeau danger en état d'erreur")
+    @Test("design-ios/AC-4 : les neuf sections rendent le bandeau danger en état d'erreur")
     func errorStateBannersAllEight() {
         for section in IOSSection.all {
             let content = IOSSectionContent.of(section, state: .error(IOSText.recipeError))

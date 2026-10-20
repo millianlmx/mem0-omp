@@ -40,7 +40,9 @@ struct SessionsView: ConsoleSectionView {
 struct SessionConsoleSectionView: ConsoleSectionView {
     static let section = ConsoleSection.session
     @ObservedObject var model: SessionConsoleModel
-    var body: some View { SessionConsoleView(model: model) }
+    /// Les deux machines : le sélecteur « Mac | VPS » et la session hébergée sur le VPS (S-8).
+    @ObservedObject var hub: MachineHub
+    var body: some View { SessionMachineView(model: model, hub: hub) }
 }
 
 struct TerminalSectionView: ConsoleSectionView {
@@ -101,6 +103,8 @@ struct SectionDetail: View {
     /// (S-2 de mac-etats-vides-sans-issue) : il écrit le projet choisi de l'app
     /// sans jamais toucher à `section`.
     let projectChooser: ProjectChooserModel
+    /// Les deux machines (S-6 de orchestrator-living-in-a-vps) : la section « Dépôts ».
+    @ObservedObject var hub: MachineHub
 
     var body: some View {
         // Ancrée en HAUT : une section dont le contenu ne remplit pas la hauteur
@@ -109,13 +113,25 @@ struct SectionDetail: View {
         content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// L'Accueil et Pipelines montrent l'ardoise des deux machines quand un VPS est
+    /// configuré : badges sur les cartes, bandeau d'une machine injoignable. Sans VPS
+    /// configuré (`kanban.unified` nul) : ni badge ni bandeau, rendu inchangé.
+    private func pilotage<Content: View>(@ViewBuilder _ view: () -> Content) -> some View {
+        view()
+            .safeAreaInset(edge: .top, spacing: 0) {
+                MachineBanners(unreachable: kanban.unified?.unreachable ?? [])
+            }
+            .environment(\.showsMachineBadges, kanban.unified?.showsBadges ?? false)
+    }
+
     @ViewBuilder
     private var content: some View {
         switch section {
-        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup)
-        case .kanban: KanbanView(model: kanban, actions: actions, contract: contract)
+        case .home: pilotage { HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract, setup: setup) }
+        case .kanban: pilotage { KanbanView(model: kanban, actions: actions, contract: contract) }
+        case .repos: ReposView(hub: hub)
         case .sessions: SessionsView(console: console)
-        case .session: SessionConsoleSectionView(model: sessionModel)
+        case .session: SessionConsoleSectionView(model: sessionModel, hub: hub)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)

@@ -1,0 +1,17 @@
+{
+  "body" : {
+    "cancelled" : [
+      "reprise-pipeline"
+    ],
+    "kept" : [
+      "rapport-erreurs"
+    ],
+    "refused" : [
+      {
+        "reason" : "déjà livrée",
+        "slug" : "journal-erreurs"
+      }
+    ]
+  },
+  "status" : 200
+}
