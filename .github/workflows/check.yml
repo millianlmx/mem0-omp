@@ -74,8 +74,9 @@ jobs:
         run: ./scripts/check.sh
 
   # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
-  # un seul job, il durait ≈ 36 min, au-delà du `mergeTimeout` de 1200 s de
-  # scripts/release.ts. Aucun de ces jobs n'a de `needs` ni de `if:` — ils démarrent
+  # un seul job, il durait ≈ 36 min, au-delà des 2100 s d'attente de fusion que
+  # release.yml accorde à scripts/release.ts (`--merge-timeout 2100`). Aucun de
+  # ces jobs n'a de `needs` ni de `if:` — ils démarrent
   # ensemble, et un job sauté rapporterait « Success » sans rien prouver. L'union de
   # leurs `--sections` couvre les 12 sections de check.sh : rien de ce que le job
   # macOS vérifiait ne disparaît.

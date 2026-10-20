@@ -1011,6 +1011,29 @@ test("release/AC-2 : la publication n'utilise que le jeton dédié, et reprend u
   assert.equal(remoteSha(repo, `refs/tags/${target}`), remoteSha(repo, "main"), "le tag du bump pointe sur la fusion");
 });
 
+test("release-job-timeout-too-short/AC-2 : l'attente de fusion passée à release.ts finit avant le plafond du job release", () => {
+  // Phase d'ouverture de la PR observée sur le run 38978741364 : démarrage
+  // 22:57, PR ouverte 23:15. Le budget de fusion court APRÈS cette phase.
+  const PHASE_OUVERTURE_S = 1080;
+  const yaml = fs.readFileSync(path.join(ROOT, WORKFLOW), "utf8");
+
+  const step = "Décider, écrire, prouver et publier";
+  const merge = /--merge-timeout (\d+)/.exec(workflowStepScript(yaml, step));
+  assert.ok(
+    merge,
+    `--merge-timeout absent de l'étape « ${step} » de ${WORKFLOW} : le défaut de 1200 s ne serait plus aligné sur le plafond du job`,
+  );
+  const ceiling = /^ {4}timeout-minutes: (\d+)$/m.exec(yaml);
+  assert.ok(ceiling, `timeout-minutes absent du job release de ${WORKFLOW}`);
+
+  const N = Number(merge[1]);
+  const T = Number(ceiling[1]);
+  assert.ok(
+    N + PHASE_OUVERTURE_S < T * 60,
+    `budget de fusion ${N} s + phase d'ouverture ${PHASE_OUVERTURE_S} s ≥ plafond du job ${T * 60} s : le job serait tué (cancelled) avant l'échec propre de release.ts`,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Le bout en bout
 // ---------------------------------------------------------------------------
