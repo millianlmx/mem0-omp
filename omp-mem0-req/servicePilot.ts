@@ -143,6 +143,8 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       repoRoot: root,
       run: deps.run,
       arbiter: deps.arbiter,
+      // Le service reprend seul ses maillons interrompus (S-4, B-4).
+      inService: true,
       runGit: deps.runGit,
       runGh: deps.runGh,
       runGitNet: deps.runGitNet,

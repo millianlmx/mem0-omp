@@ -407,6 +407,7 @@ function decodeFeature(json: unknown): WireLotFeature | undefined {
     fixes: count(json.fixes),
     reviewRuns: count(json.reviewRuns),
     unreadableRuns: count(json.unreadableRuns),
+    autoResumes: count(json.autoResumes) > 0 ? count(json.autoResumes) : undefined,
     reviewHash: nonEmpty(json.reviewHash),
     // Un verdict hors vocabulaire est lu comme ABSENT.
     lastVerdict: oneOf(json.lastVerdict, ["blockers", "clean", "unreadable"] as const),

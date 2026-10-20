@@ -131,6 +131,8 @@ export type WireLotFeature = {
   fixes: number;
   reviewRuns: number;
   unreadableRuns: number;
+  /** Émis seulement quand il est > 0. */
+  autoResumes?: number;
   reviewHash?: string;
   lastVerdict?: WireVerdict;
   lastBlockers: number;

@@ -68,7 +68,15 @@ export function selfExtensionArg(
 }
 
 
-export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
+/**
+ * `resume` : la reprise AUTOMATIQUE d'un maillon interrompu par l'arrêt du service
+ * (S-4) — jamais une décision de l'utilisateur ni de l'arbitre, d'où sa ligne propre.
+ */
+export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch" | "resume";
+
+/** La première ligne du prompt d'une reprise automatique (S-4) : mot pour mot. */
+export const SERVICE_RESUME_LINE =
+  "[reprise] Le service OMP a redémarré pendant ce maillon : reprends où tu t’es arrêté, sans élargir le périmètre.";
 
 
 /** Ce qu'un run de conversation reprend (S-9) : un rang du panneau, sa session, sa boîte. */
@@ -301,7 +309,9 @@ export function buildLotPrompt(input: {
       input.kind === "relaunch"
         ? `[reprise] Le maillon est relancé par ${by} : reprends où tu t'es arrêté, ` +
           `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`
-        : `${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`;
+        : input.kind === "resume"
+          ? `${SERVICE_RESUME_LINE}\n\n${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`
+          : `${seed}\n\n${lotLine}${handed}${LOT_WORKER_DIRECTIVE}`;
   }
   const withPilot = input.pilotArbitrage === true ? `${prompt}\n\n${PILOT_ARBITRATION_LINE}` : prompt;
   const withContext = input.context ? `${withPilot}\n\n${input.context}` : withPilot;

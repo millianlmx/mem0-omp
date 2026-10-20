@@ -580,8 +580,11 @@ public struct LotFeature: Sendable, Equatable, Codable {
     /// blocage se règle par le groupe du fournisseur, jamais par l'arbitre.
     /// Écrit seulement quand il vaut `true`.
     public var quotaBlocked: Bool?
+    /// Reprises automatiques consécutives du maillon par le service du VPS
+    /// (`autoResumes` du lot). Écrit seulement quand il est supérieur à zéro.
+    public var autoResumes: Int?
 
-    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil, quotaBlocked: Bool? = nil) {
+    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil, quotaBlocked: Bool? = nil, autoResumes: Int? = nil) {
         self.slug = slug
         self.name = name
         self.branch = branch
@@ -619,6 +622,7 @@ public struct LotFeature: Sendable, Equatable, Codable {
         self.escalation = escalation
         self.arbitration = arbitration
         self.quotaBlocked = quotaBlocked
+        self.autoResumes = autoResumes
     }
 }
 
@@ -692,7 +696,8 @@ extension LotFeature {
             endedAt: asNumber(f["endedAt"]),
             escalation: asFeatureEscalation(f["escalation"]),
             arbitration: asFeatureArbitration(f["arbitration"]),
-            quotaBlocked: asObject(f["quota"]) != nil ? true : nil
+            quotaBlocked: asObject(f["quota"]) != nil ? true : nil,
+            autoResumes: asCount(f["autoResumes"]) > 0 ? asCount(f["autoResumes"]) : nil
         )
     }
 }

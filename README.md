@@ -405,6 +405,18 @@ c'est lui qui exécute les maillons — plus aucun `omp -p` par maillon.
   dans **`<état>/service.log`** (StandardOutPath/StandardErrorPath), à côté de
   `service.json`.
 
+À son retour (après un `kill -9`, un plantage ou un redémarrage de la machine), le service
+**reprend seul chaque maillon interrompu** : même phase, même session (`sessionFile`, sinon
+`lastRunSessionFile` ; sans session le maillon repart neuf), avec le prompt `[reprise] Le
+service OMP a redémarré pendant ce maillon : reprends où tu t’es arrêté, sans élargir le
+périmètre.` La feature reste `running`, et `fixes`, `reviewRuns` et `unreadableRuns` ne
+bougent pas. `autoResumes` compte les reprises consécutives du maillon (remis à zéro à
+toute fin de maillon) : à la 4e interruption de suite, la feature passe `failed`
+(`exécution interrompue 3 fois de suite (service relancé)`, relançable par `R`). Un
+worktree disparu la passe `failed` (`dossier de feature introuvable`). Cette règle est celle
+du service seul : une session terminale qui reprend un lot continue de juger un run
+interrompu sur l'empreinte du contrat.
+
 Sans service, les pipelines **n'avancent plus** — aucune session terminale ne reprend
 un lot — et le panneau le dit (`pilote absent — les pipelines n'avancent plus`).
 

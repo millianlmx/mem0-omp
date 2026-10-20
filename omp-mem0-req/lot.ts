@@ -199,6 +199,14 @@ export type LotFeature = {
    */
   unreadableRuns?: number;
   /**
+   * Reprises automatiques CONSÉCUTIVES du maillon courant par le service (S-4,
+   * BR-3) : +1 à chaque reprise d'un run interrompu par l'arrêt du service, remis
+   * à zéro à toute fin normale de maillon. Absent = 0 ; écrit seulement quand il
+   * est > 0 (comme `arbiterRelaunches`), pour que les lots d'avant se relisent
+   * à l'identique.
+   */
+  autoResumes?: number;
+  /**
    * sha1 de la section `## Revue` au LANCEMENT du run de revue courant. Une
    * empreinte identique à la fin du run veut dire que ce run n'a rien écrit : son
    * verdict est illisible, jamais `clean` (le texte lu viendrait d'un autre maillon).
@@ -998,6 +1006,7 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     stopReason: asStringOrNull(f.stopReason),
     fixes: Math.max(0, Math.trunc(num(f.fixes, 0))),
     unreadableRuns: Math.max(0, Math.trunc(num(f.unreadableRuns, 0))),
+    ...(Math.trunc(num(f.autoResumes, 0)) > 0 ? { autoResumes: Math.trunc(num(f.autoResumes, 0)) } : {}),
     reviewHash: asStringOrNull(f.reviewHash),
     // Un verdict hors vocabulaire est lu comme ABSENT plutôt que de faire rejeter
     // le lot : ce champ ne sert qu'à l'affichage du panneau, et un lot amputé

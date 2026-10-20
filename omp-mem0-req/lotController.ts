@@ -167,6 +167,14 @@ export type LotControllerDeps = {
    * propriété quand un service le pilote — et ne pilote plus rien elle-même.
    */
   pilotRole?: "service" | "session";
+  /**
+   * Ce contrôleur vit dans le process du SERVICE (S-4, BR-3) : il y reprend seul
+   * les maillons interrompus par son arrêt (`autoResumes`) au lieu de les juger sur
+   * l'empreinte du contrat, et une entrée `running/` portant SON pid sans maillon en
+   * vol est une entrée morte (pid réattribué après un redémarrage). Absent = pilote
+   * de session : la réconciliation par empreinte reste la sienne.
+   */
+  inService?: boolean;
 };
 
 
@@ -217,6 +225,9 @@ export type LotController = LotPanelActions & {
  */
 export type PlannedLaunch = HeldLaunch & { slug: string };
 
+/** Reprises automatiques consécutives d'un maillon avant `failed` (S-4) : la 4e interruption de suite arrête la feature. */
+export const SERVICE_AUTO_RESUME_MAX = 3;
+
 /** Borne du résumé du run précédent injecté au lot d'impl suivant (`[résumé du run précédent]`). */
 export const LOT_PREVIOUS_SUMMARY_MAX = 2_000;
 
@@ -261,9 +272,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
   const pilotRole = deps.pilotRole ?? "session";
+  const inService = deps.inService === true;
   const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
   const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
   const inFlight = new Map<string, AbortController>();
+  /**
+   * Le worktree (chemin réel) du DERNIER run lancé par ce contrôleur, par feature :
+   * dans le service, une entrée `running/` à son pid n'est vivante que si le run de
+   * ce worktree est en vol (`inFlight`, l'autorité) — sinon son pid a été réattribué.
+   */
+  const runWorktrees = new Map<string, string>();
   /** Le lot d'impl et le `--fix` du run EN VOL de chaque feature, relus par `finishRun` pour son enregistrement (S-12). */
   const runKinds = new Map<string, { lot: string | null; fix: boolean }>();
   /**
@@ -522,7 +540,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** L'entrée du run VIVANT de ce worktree, ou `null` (S-1, S-6) — jamais pour un worktree vide. */
   function liveEntryOf(worktree: string): RunningEntry | null {
-    return worktree === "" ? null : liveRunFor(stateDir, worktree, storeSnapshot());
+    if (worktree === "") return null;
+    const snapshot = storeSnapshot();
+    if (!inService) return liveRunFor(stateDir, worktree, snapshot);
+    const real = realpathOr(worktree);
+    const slug = runWorktrees.get(real);
+    const here = slug !== undefined && inFlight.has(slug);
+    return liveRunFor(stateDir, worktree, {
+      ...snapshot,
+      running: snapshot.running.filter((entry) => entry.owner.pid !== process.pid || here),
+    });
   }
 
   /**
@@ -681,6 +708,42 @@ export function createLotController(deps: LotControllerDeps): LotController {
     feature.fixes += launch.fix ? 1 : 0;
     feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (launch.phase === "review" ? 1 : 0);
     touch(feature, now());
+  }
+
+  /**
+   * La REPRISE d'un maillon interrompu par l'arrêt du SERVICE (S-4, B-4) : la feature
+   * est `running` sans run en vol dans ce process, donc son run est mort avec le
+   * précédent. Le maillon repart dans la MÊME phase et dans sa session (`sessionFile`,
+   * sinon `lastRunSessionFile`) ; sans session il repart neuf. L'armement (`arm`) n'est
+   * PAS appliqué : une reprise n'est ni une correction ni une revue de plus, donc
+   * `fixes`, `reviewRuns` et `unreadableRuns` ne bougent pas. Le plafond borne les
+   * interruptions CONSÉCUTIVES (`autoResumes`, remis à zéro par toute fin de run).
+   * Rend le lancement à faire APRÈS la sauvegarde, ou `null` quand la feature a été arrêtée.
+   */
+  function resumeInterrupted(lot: Lot, feature: LotFeature): PlannedLaunch | null {
+    if (!fs.existsSync(feature.worktree)) {
+      settle(lot, feature, "failed", "dossier de feature introuvable");
+      return null;
+    }
+    const resumes = feature.autoResumes ?? 0;
+    if (resumes >= SERVICE_AUTO_RESUME_MAX) {
+      settle(lot, feature, "failed", `exécution interrompue ${SERVICE_AUTO_RESUME_MAX} fois de suite (service relancé)`);
+      return null;
+    }
+    feature.autoResumes = resumes + 1;
+    const session = feature.sessionFile ?? feature.lastRunSessionFile;
+    if (session !== null) feature.sessionFile = session;
+    feature.updatedAt = now();
+    notify(`[pipeline] ${repo}/${feature.slug} : maillon /${feature.phase} repris après le redémarrage du service (${feature.autoResumes}/${SERVICE_AUTO_RESUME_MAX})`);
+    // Une reprise de `impl` après un tour de correction reste un `--fix` : `fixes` > 0
+    // en phase impl ne vient que d'un `arm` de `--fix` (R remet le compteur à zéro).
+    const fix = feature.phase === "impl" && feature.fixes > 0;
+    if (session === null) {
+      return { slug: feature.slug, phase: feature.phase, fix, kind: feature.phase === "req" ? "collecte" : "phase", resume: false };
+    }
+    // La collecte `req` reprend en `collecte` (comme `relaunch`) : le prompt `[req]` garde
+    // le slug hors de la détection du mot « fin ».
+    return { slug: feature.slug, phase: feature.phase, fix, kind: feature.phase === "req" ? "collecte" : "resume", resume: true };
   }
 
   function freshLot(): Lot {
@@ -866,6 +929,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     };
     const abort = new AbortController();
     inFlight.set(feature.slug, abort);
+    runWorktrees.set(realpathOr(feature.worktree), feature.slug);
     watched.set(feature.slug, "inflight");
     workBudget.set(feature.slug, { spent: 0, since: at });
     // Le hash du contrat est figé AVANT le lancement, et ÉCRIT avant lui (S-1) :
@@ -1006,6 +1070,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const feature = lotFeature(lot, slug);
     if (!feature || feature.state !== "running" || feature.phase !== phase) return;
     queueLeftovers(feature, leftovers);
+    // Toute fin de run (normale ou non) remet à zéro la série de reprises du service (S-4).
+    delete feature.autoResumes;
     const runKind = runKinds.get(slug);
     runKinds.delete(slug);
     // La session du run est retenue quel que soit son SORT (S-8 §1) : un run tué ou
@@ -2114,6 +2180,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
           kind: feature.phase === "req" ? "collecte" : "phase",
           resume: false,
         });
+        changed = true;
+        continue;
+      }
+      // Dans le SERVICE (S-4), un run interrompu par son arrêt n'est plus jugé sur
+      // le contrat : le maillon est REPRIS dans la même phase (`resumeInterrupted`).
+      if (inService) {
+        const resumed = resumeInterrupted(lot, feature);
+        if (resumed !== null) launches.push(resumed);
         changed = true;
         continue;
       }
