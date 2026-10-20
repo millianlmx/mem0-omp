@@ -133,8 +133,16 @@ Les tests (`test/harness/`) font tourner le service complet avec de vrais proces
 du vrai git et la vraie base. Les runners y sont un faux `omp` RPC
 (`test/support/fake-omp-rpc.ts`).
 
-## Ce qui reste à brancher
+## Les apps
 
-Les apps macOS et iOS parlent encore au service local du plugin `omp-mem0-req`.
-Leur passage sur cette API (escalades batchées, relecture des décisions, verdicts)
-est la prochaine étape côté Swift.
+Les apps Mac et iOS joignent le serveur directement, par le bouton **Serveur** de
+la section Pipelines. Il faut l'adresse publiée par Tailscale et le jeton de
+`/var/lib/omp-harness/state/token`. Dans la feuille, la boîte de l'humain
+(`GET /v1/inbox`) se tient à jour par le flux SSE. On y trouve :
+- les escalades, répondues d'un geste par feature ;
+- les verdicts, à valider ou à refuser avec une raison ;
+- les décisions prises seules, à accepter ou à renverser ;
+- les features en cours.
+
+Le client est partagé (`omp-console/Sources/ConsoleClient/Harness*.swift`) ; voir
+`omp-console/README.md` § Serveur de pipelines.

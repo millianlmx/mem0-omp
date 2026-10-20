@@ -72,6 +72,24 @@ function sseFrame(event: EventRow): string {
 }
 
 
+/** Le contenu de `GET /v1/inbox`. */
+export function inboxOf(store: Orchestrator["store"]): Record<string, unknown> {
+  const runs = store.listRuns();
+  const byRun = new Map<string, unknown[]>();
+  for (const item of store.listEscalations({ status: "open" })) byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
+  const decisions = store.listDecisions({ status: ["auto"] });
+  const referenced = new Set([...byRun.keys(), ...decisions.map(decision => decision.runId)]);
+  const terminal = new Set(["merged", "failed", "cancelled"]);
+  return {
+    batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })),
+    awaiting: runs.filter(run => run.state === "awaiting_human"),
+    decisions,
+    runs: runs.filter(run => !terminal.has(run.state) || referenced.has(run.id)),
+    cursor: store.lastEventId(),
+  };
+}
+
+
 export type HttpOptions = { orchestrator: Orchestrator; token: string; version?: string };
 
 
@@ -169,6 +187,14 @@ export function createHandler(options: HttpOptions): http.RequestListener {
         for (const item of store.listEscalations({ status })) byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
         send(res, 200, { batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })) });
       },
+    },
+    {
+      // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
+      // verdicts à valider, décisions prises seules, features en cours, et le
+      // curseur du journal à partir duquel s'abonner au flux.
+      method: "GET",
+      pattern: /^\/v1\/inbox$/,
+      handle: (_m, _req, res) => send(res, 200, inboxOf(store)),
     },
     {
       // La relecture du matin : les décisions prises seules, pas encore relues.

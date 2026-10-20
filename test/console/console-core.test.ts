@@ -313,11 +313,13 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   // L'ensemble des dépendances du manifeste, cible par cible. `ConsoleClient` a
   // rejoint `OMPConsoleTests` avec la feature `client-distant-ios` : son test
   // canonique AC-13 confronte le catalogue client à `RemoteRouter.routes`, ce qui
-  // exige les DEUX modules dans la même cible de tests.
+  // exige les DEUX modules dans la même cible de tests. `ConsoleClient` a rejoint
+  // `OMPConsole` avec le serveur de pipelines du VPS : la coque Mac et l'app iOS
+  // partagent le même client (`HarnessModel`), au lieu de deux copies.
   const EXPECTED_DEPENDENCIES: Record<string, string[]> = {
     ConsoleCore: [],
     ConsoleClient: ["ConsoleCore"],
-    OMPConsole: ["ConsoleCore"],
+    OMPConsole: ["ConsoleCore", "ConsoleClient"],
     OMPConsoleTests: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
     ConsoleClientTests: ["ConsoleClient", "ConsoleCore"],
   };

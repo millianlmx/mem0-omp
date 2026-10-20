@@ -4,7 +4,8 @@
 // d'outils : « Rafraîchir » (relit l'état des PR sur GitHub, ⌘R), « Activité »
 // (journal des gestes), « Décisions de l’arbitre » (journal des décisions de
 // tous les lots) et « n problèmes » (anomalies du magasin), ces trois derniers
-// chacun dans une bulle. Le lancement d'une feature passe par la feuille « Nouvelle
+// chacun dans une bulle — plus « Serveur », la feuille du serveur de pipelines
+// du VPS (`ServerSheet`). Le lancement d'une feature passe par la feuille « Nouvelle
 // feature » (barre d'outils, ⌘N) ; l'abonnement au magasin est tenu par la
 // racine de la fenêtre, que l'Accueil lit aussi.
 //
@@ -64,6 +65,9 @@ struct KanbanView: ConsoleSectionView {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar { toolbarContent }
+        .sheet(isPresented: Binding(get: { model.serverShown }, set: { model.serverShown = $0 })) {
+            ServerSheet()
+        }
         // Quitter la section replie de nouveau Livrées et Arrêtées (S-2) ; une
         // feuille ouverte par-dessus n'est pas un départ.
         .onDisappear { model.resetLaneFolding() }
@@ -133,6 +137,17 @@ struct KanbanView: ConsoleSectionView {
             )) {
                 KanbanDecisionsView(decisions: model.decisions, repos: model.decisionRepos)
             }
+        }
+        // « Serveur » : la boîte du serveur de pipelines du VPS (escalades, verdicts,
+        // décisions prises seules), dans sa propre feuille.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.serverShown = true
+            } label: {
+                Label(PipelineServerText.open, systemImage: "server.rack")
+            }
+            .help(PipelineServerText.title)
+            .accessibilityIdentifier("kanban.serverButton")
         }
         if let anomalies = model.state.kanbanBoard?.anomalies, !anomalies.isEmpty {
             ToolbarItem(placement: .primaryAction) {

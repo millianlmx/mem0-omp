@@ -23,12 +23,15 @@ enum PipelinesSheet: Identifiable {
     case newFeature
     /// « Décisions de l’arbitre » : le fil des décisions de tous les lots.
     case decisions
+    /// « Serveur de pipelines » : la boîte du serveur du VPS, jointe sans le Mac.
+    case server
 
     var id: String {
         switch self {
         case .card(let cardId): return PipelinesText.cardSheetId(cardId)
         case .newFeature: return PipelinesText.newFeatureSheetId
         case .decisions: return PipelinesText.decisionsSheetId
+        case .server: return "ios.server.sheet"
         }
     }
 }

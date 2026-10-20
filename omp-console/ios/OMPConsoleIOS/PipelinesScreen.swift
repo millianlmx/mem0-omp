@@ -76,6 +76,14 @@ struct PipelinesScreen: View {
                 }
                 .accessibilityIdentifier(PipelinesText.decisionsButtonId)
             }
+            // « Serveur » : le serveur de pipelines du VPS, joint directement (Tailscale) —
+            // ouvert même hors connexion au Mac, il ne dépend pas de lui.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { sheet = .server } label: {
+                    Label(PipelineServerText.open, systemImage: "server.rack")
+                }
+                .accessibilityIdentifier("ios.pipelines.server")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
@@ -102,6 +110,8 @@ struct PipelinesScreen: View {
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             case .decisions:
                 PipelinesDecisionsSheet(client: client)
+            case .server:
+                IOSServerSheet()
             }
         }
         // « Arrêter… » du menu contextuel : la confirmation de la fiche, mot pour mot.

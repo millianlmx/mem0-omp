@@ -146,3 +146,34 @@ test("harness-http/AC-5 : une ligne de requête illisible rend 400, avant même 
     await server.close();
   }
 });
+
+
+test("harness-http/AC-6 : la boîte de l'humain arrive d'un seul appel — escalades batchées, verdicts, décisions, features en cours, curseur du flux", async () => {
+  const world = fakeWorld({});
+  const server = await serve(world);
+  try {
+    world.store.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "b", state: "escalated", step: "impl" });
+    world.store.createRun({ id: "r2", repo: "demo", slug: "b", title: "B", request: "b", branch: "c", state: "awaiting_human", step: null });
+    world.store.createRun({ id: "r3", repo: "demo", slug: "c", title: "C", request: "c", branch: "d", state: "merged", step: null });
+    const step = world.store.startStep("r1", "impl", 0, null, null);
+    world.store.addEscalation({ runId: "r1", stepId: step.id, category: "schema", question: "Colonne ?", options: ["a", "b"], context: "" });
+    const merged = world.store.startStep("r3", "impl", 0, null, null);
+    world.store.addDecision({ runId: "r3", stepId: merged.id, question: "Séparateur ?", options: [",", ";"], chosen: ",", rationale: "rfc", category: "reversible", checkpointSha: null });
+    const last = world.store.appendEvent("x", null);
+    const inbox = (await (await call(server.url, "GET", "/v1/inbox")).json()) as {
+      batches: { run: { id: string }; items: unknown[] }[];
+      awaiting: { id: string }[];
+      decisions: { runId: string }[];
+      runs: { id: string }[];
+      cursor: number;
+    };
+    assert.deepEqual(inbox.batches.map(b => [b.run.id, b.items.length]), [["r1", 1]]);
+    assert.deepEqual(inbox.awaiting.map(r => r.id), ["r2"]);
+    assert.deepEqual(inbox.decisions.map(d => d.runId), ["r3"]);
+    assert.deepEqual(inbox.runs.map(r => r.id).sort(), ["r1", "r2", "r3"], "un run terminé n'y figure que s'il porte une décision à relire");
+    assert.equal(inbox.cursor, last.id);
+  } finally {
+    await server.close();
+    await world.orchestrator.stop();
+  }
+});

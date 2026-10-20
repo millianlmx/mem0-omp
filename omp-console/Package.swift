@@ -43,9 +43,13 @@ let package = Package(
         .target(name: "ConsoleClient", dependencies: ["ConsoleCore"], path: "Sources/ConsoleClient"),
         // Cible exécutable : le fichier d'entrée ne s'appelle PAS main.swift,
         // sinon `@main` est refusé.
+        // ConsoleClient : le client du serveur de pipelines (`HarnessModel`), partagé
+        // avec l'app iOS. Seuls les fichiers qui l'importent le voient ; les types
+        // homonymes de la coque (`URLSessionTransport`) restent prioritaires dans
+        // leur module.
         .executableTarget(
             name: "OMPConsole",
-            dependencies: ["ConsoleCore"],
+            dependencies: ["ConsoleCore", "ConsoleClient"],
             path: "Sources/OMPConsole"
         ),
         // Tests en Swift Testing, jamais XCTest : sous les Command Line Tools

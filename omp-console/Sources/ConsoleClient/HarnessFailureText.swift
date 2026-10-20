@@ -1,0 +1,32 @@
+// La phrase d'un échec du serveur de pipelines, et le nom d'une étape : les mots viennent du noyau partagé
+// (`PipelineServerText`), la correspondance vit ici, une seule fois pour les deux apps.
+
+import ConsoleCore
+
+extension HarnessFailure {
+    /// La cause, puis le remède, au vouvoiement.
+    public var message: String {
+        switch self {
+        case .invalidAddress: PipelineServerText.invalidAddress
+        case .unauthorized: PipelineServerText.unauthorized
+        case .unreachable: PipelineServerText.unreachable
+        case .timedOut: PipelineServerText.timedOut
+        case .rejected(let motive): PipelineServerText.rejected(motive)
+        case .unreadable: PipelineServerText.unreadable
+        }
+    }
+}
+
+extension HarnessRun {
+    /// L'étape en cours, sous son nom de commande, ou `nil` hors étape.
+    public var stepLabel: String? {
+        switch step {
+        case "req": PipelineServerText.stepReq
+        case "specs": PipelineServerText.stepSpecs
+        case "impl": PipelineServerText.stepImpl
+        case "review": PipelineServerText.stepReview
+        case "fix": PipelineServerText.stepFix
+        default: nil
+        }
+    }
+}

@@ -36,6 +36,8 @@ final class KanbanModel: ObservableObject {
     @Published var technicalExpanded = false
     /// La bulle « Décisions de l’arbitre » de la barre d'outils.
     @Published var decisionsShown = false
+    /// La feuille « Serveur de pipelines » (le harness du VPS) de la barre d'outils.
+    @Published var serverShown = false
     /// Le fil des décisions de TOUS les lots (`AuditsEnvelope.feed`), la plus
     /// récente d'abord, et le nom de dépôt de chaque clé de journal.
     @Published private(set) var decisions: [ArbiterDecision] = []

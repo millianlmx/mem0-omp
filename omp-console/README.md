@@ -34,6 +34,7 @@ Cible minimale : macOS 26.
 - [Lire le magasin d'état](#lire-le-magasin-détat)
 - [Section Kanban](#section-kanban)
 - [Agir depuis Pipelines](#agir-depuis-pipelines)
+- [Serveur de pipelines](#serveur-de-pipelines)
 - [Lire les fichiers et les diffs d'une cible](#lire-les-fichiers-et-les-diffs-dune-cible)
 - [Visionneuse de session](#visionneuse-de-session)
 - [Recette : lire une vraie session](#recette--lire-une-vraie-session)
@@ -310,13 +311,15 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
 
 - **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
   adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
-  dépend de `ConsoleCore`.
+  dépend de `ConsoleCore` et de `ConsoleClient` (le client du serveur de
+  pipelines, partagé avec l'app iOS).
 - **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
   `OMPConsole`, de `ConsoleCore` et de `ConsoleClient` (son test de contrat
   confronte le catalogue du client aux routes servies).
 - **ConsoleClient** — la **cible partagée macOS/iOS du client distant** : le
   client typé du contrat d'API, la découverte Bonjour, le transport HTTP, le flux
-  SSE, le trousseau et le modèle observable unique. Dépendance unique :
+  SSE, le trousseau et le modèle observable unique — plus le client du serveur de
+  pipelines du VPS (`Harness*.swift`). Dépendance unique :
   `ConsoleCore` ; ni AppKit ni UIKit.
 - **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
   cliente (doublures de transport, de trousseau et de découverte : aucun Mac
@@ -915,6 +918,35 @@ plus des clics et des frappes réels par `CGEvent`).
 
 Le magasin jetable est **obligatoire** : la recette ne touche jamais
 `~/.omp/agent/pipeline` de la machine.
+
+## Serveur de pipelines
+
+Le bouton **Serveur** de la barre d'outils de Pipelines ouvre la feuille du
+serveur de pipelines du VPS (`omp-harness`, voir `omp-harness/README.md`), sur le
+Mac (`Sources/OMPConsole/Server/ServerSheet.swift`) comme sur l'iPhone et l'iPad
+(`ios/OMPConsoleIOS/IOSServerSheet.swift`).
+
+- **Connexion directe.** La feuille joint le serveur en https (Tailscale ou un
+  reverse proxy TLS), sans passer par le Mac. Il faut deux choses : l'adresse,
+  gardée dans les préférences, et le jeton du serveur
+  (`/var/lib/omp-harness/state/token`), gardé dans le trousseau
+  (`com.omp.console.harness`). Elles ne sont enregistrées qu'après une boîte
+  effectivement lue.
+- **La boîte de l'humain** (`GET /v1/inbox`), en quatre parties :
+  - **À trancher** : les escalades d'une feature, répondues en un seul geste ;
+  - **À valider** : verdict, risque, bloquants, points non vérifiés ; un verdict
+    faible demande de lire les différences ;
+  - **Décisions prises seules** : accepter, ou renverser avec une option et une
+    raison, qui rejoint la mémoire du projet ;
+  - **Features en cours**.
+- **Mise à jour en direct.** La feuille suit le flux SSE à partir du curseur de la
+  boîte, et chaque événement relit la boîte. Une coupure garde la dernière boîte
+  reçue, signalée « Hors ligne ».
+- **Code partagé.** Le modèle (`HarnessModel`), les brouillons
+  (`HarnessDrafts`) et le contrat (`HarnessWire`) vivent dans `ConsoleClient`.
+  Les mots vivent dans `ConsoleCore` (`PipelineServerText`). La garde
+  `test/console/serveur-de-pipelines.test.ts` confronte chaque champ décodé au
+  JSON réel du serveur et chaque route appelée à son routeur.
 
 ## Lire les fichiers et les diffs d'une cible
 

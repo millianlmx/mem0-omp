@@ -761,6 +761,11 @@ export class Store {
     return this.#all("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?", afterId, limit).map(eventOf);
   }
 
+  /** Le dernier identifiant du journal (0 s'il est vide) : le curseur d'un abonnement qui ne veut que la suite. */
+  lastEventId(): number {
+    return num(this.#get("SELECT COALESCE(MAX(id), 0) AS id FROM events") as Row, "id");
+  }
+
   onEvent(listener: (event: EventRow) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
