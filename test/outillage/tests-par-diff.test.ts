@@ -54,9 +54,15 @@ function makeRepo(): string {
     ].join("\n"),
   );
   // Un test macOS (préfixe `ios-`) sans import : retenu seulement si omp-console/ bouge.
-  fs.writeFileSync(path.join(dir, "test", "a", "ios-ecran.test.ts"), 'import test from "node:test";\ntest("ios/AC-9 : écran", () => {});\n');
+  fs.writeFileSync(
+    path.join(dir, "test", "a", "ios-ecran.test.ts"),
+    'import test from "node:test";\ntest("ios/AC-9 : écran", () => {});\n',
+  );
   // Un test de feature dont le slug figure dans le contrat.
-  fs.writeFileSync(path.join(dir, "test", "req", "ma-feature.test.ts"), 'import test from "node:test";\ntest("ma-feature/AC-1 : contrat", () => {});\n');
+  fs.writeFileSync(
+    path.join(dir, "test", "req", "ma-feature.test.ts"),
+    'import test from "node:test";\ntest("ma-feature/AC-1 : contrat", () => {});\n',
+  );
   // Un test d'outillage : il relance check.sh entier, jamais dans `changed`. Le
   // tableau d'arguments à un seul élément (`scripts/check.sh` sans option) est
   // construit à l'exécution, sinon CE fichier serait lui-même classé outillage.
@@ -77,7 +83,12 @@ function git(cwd: string, args: string[]): string {
 }
 
 function run(cwd: string, script: string, args: string[]) {
-  const res = spawnSync("bash", [`scripts/${script}`, ...args], { cwd, env: childEnv(GIT_ENV), encoding: "utf8", timeout: 120_000 });
+  const res = spawnSync("bash", [`scripts/${script}`, ...args], {
+    cwd,
+    env: childEnv(GIT_ENV),
+    encoding: "utf8",
+    timeout: 120_000,
+  });
   return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 }
 
@@ -98,7 +109,10 @@ test(`${SLUG}/AC-1 : --scope=changed retient le test qui nomme le module modifi�
 
   // Un fichier de test du diff est retenu pour lui-même, même sans module modifié.
   fs.appendFileSync(path.join(dir, "test", "a", "other.test.ts"), "// touché\n");
-  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), ["test/a/chain.test.ts", "test/a/other.test.ts"]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), [
+    "test/a/chain.test.ts",
+    "test/a/other.test.ts",
+  ]);
 });
 
 test(`${SLUG}/AC-2 : un diff vide ou une base inconnue replie sur la liste complète hors outillage, avec un message`, () => {
@@ -106,7 +120,12 @@ test(`${SLUG}/AC-2 : un diff vide ou une base inconnue replie sur la liste compl
 
   const empty = run(dir, "test-files.sh", ["--scope=changed"]);
   assert.equal(empty.status, 0, empty.stderr);
-  assert.deepEqual(lines(empty.stdout), ["test/a/chain.test.ts", "test/a/ios-ecran.test.ts", "test/a/other.test.ts", "test/req/ma-feature.test.ts"]);
+  assert.deepEqual(lines(empty.stdout), [
+    "test/a/chain.test.ts",
+    "test/a/ios-ecran.test.ts",
+    "test/a/other.test.ts",
+    "test/req/ma-feature.test.ts",
+  ]);
   assert.match(empty.stderr, /diff vide/);
 
   const unknown = run(dir, "test-files.sh", ["--scope=changed=revision-inconnue"]);

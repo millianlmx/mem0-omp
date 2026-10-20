@@ -36,8 +36,7 @@ function hostRoot(): string | null {
     path.join(process.env.BUN_INSTALL ?? path.join(home, ".bun"), "install", "global", "node_modules"),
   ].filter((dir) => dir !== "");
   return (
-    candidates.find((dir) => fs.existsSync(path.join(dir, "@oh-my-pi", "pi-coding-agent", "src", "index.ts"))) ??
-    null
+    candidates.find((dir) => fs.existsSync(path.join(dir, "@oh-my-pi", "pi-coding-agent", "src", "index.ts"))) ?? null
   );
 }
 
@@ -48,7 +47,12 @@ const HOST = hostRoot();
 function prereq(t: { skip: (reason: string) => void }): boolean {
   const missing = !HAS_BUN ? "bun" : HOST === null ? "hôte OMP" : "";
   if (missing === "") return true;
-  prerequisAbsent(t, missing, "harnais « plugins réels » non vérifié", REQUIRE_SMOKE ? "MEM0_OMP_REQUIRE_SMOKE=1" : null);
+  prerequisAbsent(
+    t,
+    missing,
+    "harnais « plugins réels » non vérifié",
+    REQUIRE_SMOKE ? "MEM0_OMP_REQUIRE_SMOKE=1" : null,
+  );
   return false;
 }
 
@@ -89,7 +93,13 @@ async function mutate(prefix: string, apply: (dir: string) => void): Promise<Out
   const run = await harness(dir);
   const check = await spawnAsync("bash", ["scripts/check.sh", "--sections=smoke"], {
     cwd: dir,
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", MEM0_OMP_SKIP_RUST: "1" },
+    env: {
+      ...process.env,
+      MEM0_CHECK_DEPTH: String(DEPTH + 1),
+      MEM0_OMP_SKIP_SWIFT_APP: "1",
+      MEM0_OMP_SKIP_IOS: "1",
+      MEM0_OMP_SKIP_RUST: "1",
+    },
     timeout: 900_000,
   });
   return {
@@ -104,7 +114,9 @@ async function mutate(prefix: string, apply: (dir: string) => void): Promise<Out
 const OUTCOMES: Record<"commande" | "chargement" | "saine", Promise<Outcome>> | null =
   DEPTH === 0
     ? {
-        commande: mutate("smoke-commande-", (dir) => renameCommand(dir, "omp-mem0-memory", "mem0-status", "mem0-statut")),
+        commande: mutate("smoke-commande-", (dir) =>
+          renameCommand(dir, "omp-mem0-memory", "mem0-status", "mem0-statut"),
+        ),
         chargement: mutate("smoke-chargement-", (dir) => {
           const file = path.join(dir, "omp-mem0-memory/extension.ts");
           fs.writeFileSync(file, `throw new Error("panne de chargement simulée");\n${fs.readFileSync(file, "utf8")}`);
@@ -139,9 +151,7 @@ function workflowContexts(): string[] {
   const id = /^ {2}([A-Za-z0-9_-]+):$/m.exec(jobs);
   const matrix = /os:\s*\[([^\]]*)\]/.exec(jobs);
   assert.ok(id && matrix, `job ou matrice introuvable dans check.yml :\n${jobs}`);
-  const contexts = (matrix[1] ?? "")
-    .split(",")
-    .map((system) => `${id[1]} (${system.trim()})`);
+  const contexts = (matrix[1] ?? "").split(",").map((system) => `${id[1]} (${system.trim()})`);
   // `name:` au niveau d'un job (4 espaces) ; les noms d'étape sont `- name:`.
   const named = [...jobs.matchAll(/^ {4}name:\s*(check \(.*\))\s*$/gm)].map((match) => match[1] as string);
 
@@ -164,20 +174,14 @@ test("smoke/AC-1 : un plugin qui ne se charge pas ou ne répond pas fait échoue
   assert.notEqual(renamed.harness.code, 0, renamed.harness.out);
   assert.match(renamed.harness.out, /✗ commandes absentes du runtime : mem0-status/, renamed.harness.out);
   assert.notEqual(renamed.check.code, 0, renamed.check.out);
-  assert.ok(
-    renamed.check.out.includes("✗ plugins réels — relance : bun scripts/plugin-smoke.ts"),
-    renamed.check.out,
-  );
+  assert.ok(renamed.check.out.includes("✗ plugins réels — relance : bun scripts/plugin-smoke.ts"), renamed.check.out);
 
   // (2) Un chargement qui échoue.
   const broken = await OUTCOMES.chargement;
   assert.notEqual(broken.harness.code, 0, broken.harness.out);
   assert.match(broken.harness.out, /✗ erreurs de chargement : .*panne de chargement simulée/, broken.harness.out);
   assert.notEqual(broken.check.code, 0, broken.check.out);
-  assert.ok(
-    broken.check.out.includes("✗ plugins réels — relance : bun scripts/plugin-smoke.ts"),
-    broken.check.out,
-  );
+  assert.ok(broken.check.out.includes("✗ plugins réels — relance : bun scripts/plugin-smoke.ts"), broken.check.out);
 
   // (3) Le job rouge BLOQUE le merge : `main` exige exactement les contextes de
   // statut que les workflows produisent — un OS renommé dans la matrice, ou le job

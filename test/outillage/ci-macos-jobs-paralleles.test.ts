@@ -23,13 +23,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
+import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const NESTED = "copie jetable — l'arbre réel est éprouvé au premier niveau";
 
-/** Les 12 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
+/** Les 13 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
 const HEADERS = [
   "── Catalogue marketplace",
   "── Noms",
@@ -37,6 +37,7 @@ const HEADERS = [
   "── Versions",
   "── Extension",
   "── Types",
+  "── Lint TypeScript",
   "── Rust mem0-rs",
   "── Plugins réels (OMP)",
   "── Tests",
@@ -66,7 +67,7 @@ const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? 
  * Environnement des enfants : sans les marqueurs de travailleur de `node:test`
  * (sinon le `node --test` de `── Tests` sort 0 sans rien exécuter, voir
  * test/outillage/release-simulation.test.ts), profondeur incrémentée, compilations Swift
- * et iOS neutralisées.
+ * et iOS neutralisées, Biome épinglé de la racine (une copie n'emporte pas `.lint/`).
  */
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -75,6 +76,7 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
     MEM0_OMP_SKIP_RUST: "1",
+    ...LINT_TOOL_ENV,
     ...extra,
   };
   delete env.NODE_TEST_CONTEXT;
@@ -96,11 +98,11 @@ function testFiles(cwd: string, args: string[] = []) {
 }
 
 const lines = (text: string) => text.split("\n").filter((line) => line !== "");
-// Seuls les 12 en-têtes de section comptent : le harnais de `── Plugins réels`
+// Seuls les 13 en-têtes de section comptent : le harnais de `── Plugins réels`
 // imprime ses propres lignes `── <plugin>`.
 const headersOf = (text: string) => text.split("\n").filter((line) => HEADERS.includes(line));
 
-/** Les 12 identifiants de section de check.sh (S-1). */
+/** Les 13 identifiants de section de check.sh (S-1). */
 const SECTION_IDS = [
   "catalogue",
   "noms",
@@ -108,6 +110,7 @@ const SECTION_IDS = [
   "versions",
   "extension",
   "types",
+  "lint",
   "rust",
   "smoke",
   "tests",
@@ -150,17 +153,21 @@ function statusContexts(jobs: Map<string, string>): string[] {
   return contexts;
 }
 
-/** Fichier de test fixture : chaque test nommé note son nom dans `$CI_MACOS_MARKER`. */
+/**
+ * Fichier de test fixture : chaque test nommé note son nom dans `$CI_MACOS_MARKER`.
+ * La source sort déjà au format de Biome : AC-12 la soumet à la section `lint`.
+ */
 function fixture(names: string[], comment = ""): string {
   return [
-    comment === "" ? "" : `// ${comment}`,
+    ...(comment === "" ? [] : [`// ${comment}`]),
     'import test from "node:test";',
     'import * as fs from "node:fs";',
-    ...names.map(
-      (name) =>
-        "test(" + JSON.stringify(name) + ", () => { fs.appendFileSync(process.env.CI_MACOS_MARKER ?? \"/dev/null\", " +
-        JSON.stringify(`${name}\n`) + "); });",
-    ),
+    ...names.flatMap((name) => [
+      "",
+      `test(${JSON.stringify(name)}, () => {`,
+      `  fs.appendFileSync(process.env.CI_MACOS_MARKER ?? "/dev/null", ${JSON.stringify(`${name}\n`)});`,
+      "});",
+    ]),
     "",
   ].join("\n");
 }
@@ -182,7 +189,7 @@ function lightCopy(tests: Record<string, string>): string {
   return dir;
 }
 
-test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sections et toute la suite node", (t) => {
+test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sections et toute la suite node", (t) => {
   if (DEPTH > 0) {
     t.skip(NESTED);
     return;
@@ -196,7 +203,12 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sect
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
       const segments = rel.split(path.sep);
-      if (segments.some((s) => [".git", "node_modules", ".typecheck", "qdrant_storage", "build", "target"].includes(s))) return false;
+      if (
+        segments.some((s) =>
+          [".git", "node_modules", ".typecheck", ".lint", "qdrant_storage", "build", "target"].includes(s),
+        )
+      )
+        return false;
       if (segments.some((s) => s.startsWith(".build"))) return false;
       return segments[0] !== "test" || segments.length === 1;
     },
@@ -218,19 +230,23 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sect
   assert.deepEqual(lines(fs.readFileSync(marker, "utf8")).sort(), ["fixture/a", "fixture/b"]);
 });
 
-test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 12 sections", () => {
+test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 13 sections", () => {
   const only = runCheck(ROOT, ["--sections=noms,catalogue"]);
   assert.equal(only.status, 0, output(only));
   // Ordre du script, pas celui de la liste.
   assert.deepEqual(headersOf(output(only)), ["── Catalogue marketplace", "── Noms"], output(only));
   assert.ok(only.stdout.includes("Dépôt prêt à publier."), output(only));
 
-  const ids = "catalogue, noms, plugins, versions, extension, types, rust, smoke, tests, noyau, app-swift, app-ios";
+  const ids =
+    "catalogue, noms, plugins, versions, extension, types, lint, rust, smoke, tests, noyau, app-swift, app-ios";
   const cases: Array<[string[], string]> = [
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
     [["--sections=noms,,catalogue"], `✗ section inconnue : «  » (attendu : ${ids})`],
-    [["--bogus"], "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)"],
+    [
+      ["--bogus"],
+      "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)",
+    ],
     [["--tests-scope=linux"], "✗ --tests-scope : valeur inconnue « linux » (attendu : macos)"],
     [["--tests-part=3/3"], "✗ --tests-part : valeur inconnue « 3/3 » (attendu : 1/2, 2/2)"],
     [["--sections=noms", "--sections=catalogue"], "✗ option répétée : --sections"],
@@ -242,7 +258,7 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     assert.equal(bad.stdout, "", `${args.join(" ")} : aucune section ne doit s'exécuter`);
   }
 
-  // Volet CI : l'union des --sections des jobs macOS couvre les 12 sections.
+  // Volet CI : l'union des --sections des jobs macOS couvre les 13 sections.
   const jobs = workflowJobs(readWorkflow());
   const covered: string[] = [];
   for (const id of MACOS_JOBS) {
@@ -297,13 +313,18 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
 
   // Ce que le job macOS lance : --tests-scope=macos, puis les deux parts.
   const dir = lightCopy({
-    "outillage/check.test.ts": fixture(["socle-app-swift/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"], "lance swift"),
+    "outillage/check.test.ts": fixture(
+      ["socle-app-swift/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"],
+      "lance swift",
+    ),
     "console/ios-zz.test.ts": fixture(["ios-zz/fixture-d"]),
     "req/plain.test.ts": fixture(["plain/fixture-e"]),
   });
   const ran = (part: string) => {
     const marker = path.join(tmpdir("ci-macos-marqueur-"), "ran");
-    const run = runCheck(dir, ["--tests-part=" + part, "--sections=tests", "--tests-scope=macos"], { CI_MACOS_MARKER: marker });
+    const run = runCheck(dir, [`--tests-part=${part}`, "--sections=tests", "--tests-scope=macos"], {
+      CI_MACOS_MARKER: marker,
+    });
     assert.equal(run.status, 0, output(run));
     assert.deepEqual(headersOf(output(run)), ["── Tests"], output(run));
     return { out: output(run), names: fs.existsSync(marker) ? lines(fs.readFileSync(marker, "utf8")) : [] };
@@ -315,7 +336,10 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
   assert.deepEqual(first.names.sort(), ["socle-app-swift/fixture-a", "socle-app-swift/fixture-c"]);
 
   const second = ran("2/2");
-  assert.ok(second.out.includes("  · 2 fichier(s) de test : test/console/ios-zz.test.ts test/outillage/check.test.ts\n"), second.out);
+  assert.ok(
+    second.out.includes("  · 2 fichier(s) de test : test/console/ios-zz.test.ts test/outillage/check.test.ts\n"),
+    second.out,
+  );
   assert.ok(second.out.includes("  · filtre de noms : --test-skip-pattern=^socle-app-swift/\n"), second.out);
   assert.deepEqual(second.names.sort(), ["check/fixture-b", "ios-zz/fixture-d"]);
 
@@ -330,7 +354,9 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
   const empty = runCheck(dir, ["--sections=tests", "--tests-scope=macos", "--tests-part=1/2"]);
   assert.equal(empty.status, 1, output(empty));
   assert.ok(
-    output(empty).includes("  ✗ tests unitaires — aucun fichier de test retenu (--tests-scope=macos, --tests-part=1/2)\n"),
+    output(empty).includes(
+      "  ✗ tests unitaires — aucun fichier de test retenu (--tests-scope=macos, --tests-part=1/2)\n",
+    ),
     output(empty),
   );
   assert.ok(!output(empty).includes("fichier(s) de test :"), output(empty));
@@ -394,8 +420,16 @@ test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests
   const onMacos = [...jobs].filter(([, job]) => jobKey(job, "runs-on") === "macos-latest").map(([id]) => id);
   assert.deepEqual(onMacos, MACOS_JOBS, "exactement trois définitions de jobs macOS (4 runners avec la matrice)");
   for (const [id, job] of jobs) {
-    assert.equal(jobKey(job, "needs"), id === "check-macos" ? "[macos-app-swift, macos-app-ios, macos-tests]" : null, id);
-    assert.equal(jobKey(job, "if"), id === "check-macos" ? "${{ always() }}" : null, `${id} : aucun if: de job hors agrégateur`);
+    assert.equal(
+      jobKey(job, "needs"),
+      id === "check-macos" ? "[macos-app-swift, macos-app-ios, macos-tests]" : null,
+      id,
+    );
+    assert.equal(
+      jobKey(job, "if"),
+      id === "check-macos" ? "${{ always() }}" : null,
+      `${id} : aucun if: de job hors agrégateur`,
+    );
   }
 
   const tests = jobs.get("macos-tests") ?? "";
@@ -417,7 +451,11 @@ test("ci-macos-jobs-paralleles/AC-2 : check.yml et release-simulation.yml produi
   const simulation = fs.readFileSync(path.join(ROOT, ".github/workflows/release-simulation.yml"), "utf8");
   const produced = [...statusContexts(workflowJobs(readWorkflow())), ...statusContexts(workflowJobs(simulation))];
   for (const context of ["check (ubuntu-latest)", "check (macos-latest)", "release-simulation"]) {
-    assert.equal(produced.filter((c) => c === context).length, 1, `${context} doit être produit par un seul job : ${produced.join(", ")}`);
+    assert.equal(
+      produced.filter((c) => c === context).length,
+      1,
+      `${context} doit être produit par un seul job : ${produced.join(", ")}`,
+    );
   }
 });
 
@@ -461,7 +499,10 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
 });
 
 /** L'étape de la Qdrant source des tests d'import mem0-rs, ajoutée au job check après f3fbfe6. */
-const QDRANT_STEP = ["      - name: Préparer la Qdrant source des tests d'import mem0-rs", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
+const QDRANT_STEP = [
+  "      - name: Préparer la Qdrant source des tests d'import mem0-rs",
+  "        run: bash scripts/mem0-http-contrat.sh --prepare",
+];
 /** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle de la Qdrant source. */
 const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
 /** L'étape d'empreinte des toolchains (ci-without-cache S-1), juste après setup-node : elle nourrit les clés de cache. */
@@ -497,7 +538,8 @@ const CARGO_CACHE_STEP = [
 ];
 /** L'installation de l'hôte : la version, littérale dans f3fbfe6, vient de l'`env:` du workflow (ci-without-cache S-1). */
 const HOST_INSTALL = {
-  f3fbfe6: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
+  f3fbfe6:
+    '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
   now: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"',
 };
 
@@ -510,9 +552,14 @@ function withoutBlock(steps: string[], block: string[]): string[] {
   return [...steps.slice(0, at), ...steps.slice(at + block.length)];
 }
 /** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), ajoutée au job check après f3fbfe6. */
-const TYPESCRIPT_STEP = ["      - name: Installer le TypeScript épinglé du type-check", "        run: bash scripts/typecheck.sh --prepare"];
+const TYPESCRIPT_STEP = [
+  "      - name: Installer le TypeScript épinglé du type-check",
+  "        run: bash scripts/typecheck.sh --prepare",
+];
 /** Le lancement de check.sh du job check, en mode strict (silent-prerequisite-skips S-6) ; f3fbfe6 le lançait sans option. */
 const STRICT_RUN = "        run: ./scripts/check.sh --strict";
+/** L'étape du linter épinglé (no-ts-lint-formatter S-6), juste avant celle de la Qdrant source. */
+const LINT_STEP = ["      - name: Préparer le linter épinglé (Biome)", "        run: bash scripts/lint.sh --prepare"];
 
 /** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
 function withoutStep(steps: string[], first: string, count: number): string[] {
@@ -521,14 +568,18 @@ function withoutStep(steps: string[], first: string, count: number): string[] {
   return [...steps.slice(0, at), ...steps.slice(at + count)];
 }
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, l'empreinte, les caches et la version de l'hôte de ci-without-cache, et le mode strict", (t) => {
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, l'empreinte, les caches et la version de l'hôte de ci-without-cache, celle du linter épinglé, et le mode strict", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
   const check = jobs.get("check") ?? "";
   assert.equal(jobKey(check, "runs-on"), "${{ matrix.os }}");
   assert.equal(jobKey(check, "name"), null);
-  assert.equal(stepsOf(check).filter((line) => line === STRICT_RUN).length, 1, "check.sh --strict, une seule fois, sur ubuntu");
+  assert.equal(
+    stepsOf(check).filter((line) => line === STRICT_RUN).length,
+    1,
+    "check.sh --strict, une seule fois, sur ubuntu",
+  );
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
   // (a) Plus aucune trace du banc Python de mem0-http.
   const steps = stepsOf(check);
@@ -554,9 +605,15 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   const caches = [...FINGERPRINT_STEP, ...NPM_CACHE_STEP, ...CARGO_CACHE_STEP];
   assert.deepEqual(steps.slice(fingerprint, fingerprint + caches.length), caches, check);
   assert.equal(steps.filter((line) => line === HOST_INSTALL.now).length, 1, check);
-  const current = withoutBlock(withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP), CARGO_CACHE_STEP).map(
-    (line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line),
-  );
+  const current = withoutBlock(
+    withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP),
+    CARGO_CACHE_STEP,
+  ).map((line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line));
+  // (b'') L'étape du linter épinglé : une seule fois, ses deux lignes consécutives,
+  // immédiatement avant l'étape de la Qdrant source.
+  assert.equal(steps.filter((line) => LINT_STEP.includes(line)).length, 2, check);
+  assert.equal(steps[at - 2], LINT_STEP[0], check);
+  assert.equal(steps[at - 1], LINT_STEP[1], check);
 
   if (DEPTH > 0) {
     t.skip(NESTED);
@@ -564,7 +621,9 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   }
   const before = spawnSync("git", ["show", `f3fbfe6:${WORKFLOW_FILE}`], { cwd: ROOT, encoding: "utf8" });
   assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
-  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
+  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter(
+    (line) => !line.includes("MEM0_OMP_REQUIRE_IOS"),
+  );
   assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
   // (c) f3fbfe6 moins le banc Python retiré : l'étape `image_python` (2 lignes),
   // `setup-python` (3 lignes), la préparation du test d'API (2 lignes) et
@@ -581,6 +640,7 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
           !QDRANT_STEP.includes(line) &&
           !RUST_STEP.includes(line) &&
           !TYPESCRIPT_STEP.includes(line) &&
+          !LINT_STEP.includes(line) &&
           !line.includes("MEM0_OMP_REQUIRE_RUST"),
       )
       .map((line) => (line === STRICT_RUN ? "        run: ./scripts/check.sh" : line)),

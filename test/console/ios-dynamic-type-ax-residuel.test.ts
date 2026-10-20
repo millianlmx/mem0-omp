@@ -35,7 +35,10 @@ function capFaults(sources: Map<string, string>): string[] {
 
 test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans l'app iOS", () => {
   const sources = swiftSources(APP);
-  assert.ok(sources.has("IOSHarnessScreens.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")), "les sources de l'app doivent être lues, sous-dossiers compris");
+  assert.ok(
+    sources.has("IOSHarnessScreens.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")),
+    "les sources de l'app doivent être lues, sous-dossiers compris",
+  );
   assert.deepEqual(capFaults(sources), [], "l'arbre réel doit être sain");
 
   const planted = (name: string, change: (source: string) => string) => {
@@ -49,19 +52,28 @@ test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans 
   };
   const anchor = "        .accessibilityElement(children: .combine)";
   assert.ok(
-    planted("IOSHarnessScreens.swift", (s) => s.replace(anchor, `        .dynamicTypeSize(...DynamicTypeSize.accessibility3)\n${anchor}`)).length > 0,
+    planted("IOSHarnessScreens.swift", (s) =>
+      s.replace(anchor, `        .dynamicTypeSize(...DynamicTypeSize.accessibility3)\n${anchor}`),
+    ).length > 0,
     "un plafond `...accessibility3` doit faire rougir la garde",
   );
   assert.ok(
-    planted("IOSHarnessScreens.swift", (s) => s.replace(anchor, `        .dynamicTypeSize(.large ..< .accessibility4)\n${anchor}`)).length > 0,
+    planted("IOSHarnessScreens.swift", (s) =>
+      s.replace(anchor, `        .dynamicTypeSize(.large ..< .accessibility4)\n${anchor}`),
+    ).length > 0,
     "un plafond `..<` doit faire rougir la garde",
   );
   assert.ok(
-    planted("Design/IOSMetrics.swift", (s) => `${s}\nextension IOSMetrics { static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3 }\n`).length > 0,
+    planted(
+      "Design/IOSMetrics.swift",
+      (s) => `${s}\nextension IOSMetrics { static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3 }\n`,
+    ).length > 0,
     "la constante rowButtonMaximumSize doit faire rougir la garde",
   );
   assert.deepEqual(
-    planted("IOSHarnessScreens.swift", (s) => s.replace(anchor, `        .dynamicTypeSize(.accessibility2)\n${anchor}`)),
+    planted("IOSHarnessScreens.swift", (s) =>
+      s.replace(anchor, `        .dynamicTypeSize(.accessibility2)\n${anchor}`),
+    ),
     [],
     "une taille fixe sans borne n'est pas un plafond",
   );
@@ -94,10 +106,18 @@ test("ios-dynamic-type-ax-residuel/AC-14 : DESIGN.md ne décrit plus aucun plafo
 
   const anchor = "aux tailles d'accessibilité.\n  `[test: memoryRowContextSplitsIntoSegments]`";
   assert.ok(design.includes(anchor), "l'ancre de plantation (puce Mémoire) doit exister");
-  const planted = design.replace(anchor, "aux tailles d'accessibilité, bornés à `accessibility3`.\n  `[test: memoryRowContextSplitsIntoSegments]`");
+  const planted = design.replace(
+    anchor,
+    "aux tailles d'accessibilité, bornés à `accessibility3`.\n  `[test: memoryRowContextSplitsIntoSegments]`",
+  );
   assert.ok(designCapFaults(planted).length > 0, "« bornés à `accessibility3` » doit faire rougir la garde");
   assert.ok(
-    designCapFaults(design.replace(anchor, "aux tailles d'accessibilité, texte bornée à `.accessibility4`.\n  `[test: memoryRowContextSplitsIntoSegments]`")).length > 0,
+    designCapFaults(
+      design.replace(
+        anchor,
+        "aux tailles d'accessibilité, texte bornée à `.accessibility4`.\n  `[test: memoryRowContextSplitsIntoSegments]`",
+      ),
+    ).length > 0,
     "« bornée à `.accessibility4` » doit faire rougir la garde",
   );
   assert.deepEqual(
@@ -156,24 +176,45 @@ test("ios-dynamic-type-ax-residuel/AC-13 : la recette avant/après tourne sur de
   };
   // Témoin négatif de S-9 : le Simulateur ouvert au premier plan ⇒ rouge.
   assert.ok(
-    plant((s) => s.replace("trap cleanup EXIT", 'trap cleanup EXIT\nopen -a Simulator --args -CurrentDeviceUDID "$iphone"')).some((f) => f.includes("open -a")),
+    plant((s) =>
+      s.replace("trap cleanup EXIT", 'trap cleanup EXIT\nopen -a Simulator --args -CurrentDeviceUDID "$iphone"'),
+    ).some((f) => f.includes("open -a")),
     "« open -a » doit faire rougir la garde",
   );
   // Une intrusion citée en commentaire reste refusée (le mot ne doit même pas y figurer).
-  assert.ok(plant((s) => s.replace("trap cleanup EXIT", "# gh pr merge --squash\ntrap cleanup EXIT")).length > 0, "« gh pr merge » en commentaire doit rougir");
+  assert.ok(
+    plant((s) => s.replace("trap cleanup EXIT", "# gh pr merge --squash\ntrap cleanup EXIT")).length > 0,
+    "« gh pr merge » en commentaire doit rougir",
+  );
   // Simulateurs conservés ⇒ rouge.
-  assert.ok(plant((s) => s.replaceAll("simctl delete", "simctl shutdown")).some((f) => f.includes("simctl delete")), "des simulateurs conservés doivent rougir");
+  assert.ok(
+    plant((s) => s.replaceAll("simctl delete", "simctl shutdown")).some((f) => f.includes("simctl delete")),
+    "des simulateurs conservés doivent rougir",
+  );
   // AX-XXXL retiré de la matrice ⇒ rouge.
   assert.ok(
-    plant((s) => s.replaceAll("accessibility-extra-extra-extra-large", "accessibility-extra-large")).some((f) => f.includes("accessibility-extra-extra-extra-large")),
+    plant((s) => s.replaceAll("accessibility-extra-extra-extra-large", "accessibility-extra-large")).some((f) =>
+      f.includes("accessibility-extra-extra-extra-large"),
+    ),
     "une matrice sans AX-XXXL doit rougir",
   );
   // Un contrôle automatique présent seulement en commentaire ⇒ rouge.
-  assert.ok(plant((s) => s.replaceAll('"AC-11"', '"AC-12"')).some((f) => f.includes("AC-11")), "un contrôle AC-11 retiré doit rougir");
-  // Simulator.app cité en commentaire reste admis ; hors commentaire, il rougit.
-  assert.deepEqual(plant((s) => s.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")), []);
   assert.ok(
-    plant((s) => s.replace("trap cleanup EXIT", 'trap cleanup EXIT\nopen "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"')).some((f) => f.includes("Simulator.app")),
+    plant((s) => s.replaceAll('"AC-11"', '"AC-12"')).some((f) => f.includes("AC-11")),
+    "un contrôle AC-11 retiré doit rougir",
+  );
+  // Simulator.app cité en commentaire reste admis ; hors commentaire, il rougit.
+  assert.deepEqual(
+    plant((s) => s.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")),
+    [],
+  );
+  assert.ok(
+    plant((s) =>
+      s.replace(
+        "trap cleanup EXIT",
+        'trap cleanup EXIT\nopen "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
+      ),
+    ).some((f) => f.includes("Simulator.app")),
     "Simulator.app hors commentaire doit rougir",
   );
 });

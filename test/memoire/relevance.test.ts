@@ -58,7 +58,12 @@ function stubService(project: unknown[], global: unknown[]) {
     calls.push(body);
     return jsonResponse({ results: body.agent_id === "_global" ? global : project });
   }) as typeof fetch;
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -84,8 +89,12 @@ function mkApp(): App {
     zod: { z: fakeSchema() },
     setLabel: (_label: string) => {},
     registerMessageRenderer: (_type: string, _render: unknown) => {},
-    on: (name: string, handler: Hook) => { hooks.set(name, handler); },
-    registerTool: (def: { name: string; execute: ToolExecute }) => { tools.set(def.name, def.execute); },
+    on: (name: string, handler: Hook) => {
+      hooks.set(name, handler);
+    },
+    registerTool: (def: { name: string; execute: ToolExecute }) => {
+      tools.set(def.name, def.execute);
+    },
     registerCommand: (_name: string, _def: unknown) => {},
   };
   mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
@@ -140,7 +149,11 @@ test("relevance/AC-1 : un prompt hors-sujet n'injecte aucun souvenir (plancher 0
     [scored("f9921087", 0.478), scored("260026b3", 0.444), scored("a59bfaa7", 0.444)],
   );
   try {
-    const message = await recall(mkApp(), mkCwd(), "quelle est la couleur du bouton de connexion dans l'application mobile ?");
+    const message = await recall(
+      mkApp(),
+      mkCwd(),
+      "quelle est la couleur du bouton de connexion dans l'application mobile ?",
+    );
 
     assert.deepEqual(injectedIds(message.content), [], "aucune ligne de souvenir injectée");
     assert.equal(message.details.status, "empty");
@@ -157,11 +170,15 @@ test("relevance/AC-1 : un prompt hors-sujet n'injecte aucun souvenir (plancher 0
 
 test("relevance/AC-2 : une parenté ambiguë (jusqu'à 0.534, sous le plancher) n'injecte rien", async () => {
   const svc = stubService(
-    [scored("235717ed", 0.501), scored("dc393290", 0.486), scored("97053023", 0.480)],
+    [scored("235717ed", 0.501), scored("dc393290", 0.486), scored("97053023", 0.48)],
     [scored("4b7866e3", 0.534), scored("7cce9bdc", 0.522)],
   );
   try {
-    const message = await recall(mkApp(), mkCwd(), "fais-moi un résumé de ce qu'on a fait dans cette session jusqu'ici");
+    const message = await recall(
+      mkApp(),
+      mkCwd(),
+      "fais-moi un résumé de ce qu'on a fait dans cette session jusqu'ici",
+    );
 
     assert.deepEqual(injectedIds(message.content), [], "aucune ligne de souvenir injectée");
     assert.equal(message.details.status, "empty");
@@ -173,12 +190,13 @@ test("relevance/AC-2 : une parenté ambiguë (jusqu'à 0.534, sous le plancher) 
 });
 
 test("service sans score sémantique → statut unavailable, message de reconstruction", async () => {
-  const svc = stubService(
-    [unscored("235717ed"), unscored("dc393290")],
-    [unscored("4b7866e3"), unscored("7cce9bdc")],
-  );
+  const svc = stubService([unscored("235717ed"), unscored("dc393290")], [unscored("4b7866e3"), unscored("7cce9bdc")]);
   try {
-    const message = await recall(mkApp(), mkCwd(), "fais-moi un résumé de ce qu'on a fait dans cette session jusqu'ici");
+    const message = await recall(
+      mkApp(),
+      mkCwd(),
+      "fais-moi un résumé de ce qu'on a fait dans cette session jusqu'ici",
+    );
 
     assert.equal(message.details.status, "unavailable");
     assert.ok(
@@ -206,7 +224,7 @@ test("relevance/AC-3 : un prompt en rapport injecte les souvenirs pertinents, tr
     // doit rétablir l'ordre sémantique.
     [
       scored("10d5610b", 0.559),
-      scored("e70a14da", 0.570),
+      scored("e70a14da", 0.57),
       scored("b37e22f2", 0.579),
       scored("23ff9d75", 0.607),
       scored("99b48e7d", 0.676),
@@ -249,7 +267,7 @@ test("relevance/AC-4 : un souvenir d'un autre dépôt n'est pas injecté, les so
       scored("25cee5ca", 0.628),
       scored("4f41b0d5", 0.604),
       scored("27f32f01", 0.576),
-      scored("b37e22f2", 0.570),
+      scored("b37e22f2", 0.57),
       scored("1c42ab29", 0.563),
     ],
     [scored("a59bfaa7", 0.432), scored("2519b6e6", 0.426), scored("7d3c74b3", 0.315)],
@@ -300,10 +318,7 @@ test("relevance/AC-5 : une recherche hors-sujet ne retourne aucun résultat", as
 });
 
 test("relevance/AC-6 : une recherche qui correspond à des souvenirs réels les retourne", async () => {
-  const svc = stubService(
-    [scored("4f41b0d5", 0.619), scored("1978ef06", 0.550), scored("d319c0c3", 0.525)],
-    [],
-  );
+  const svc = stubService([scored("4f41b0d5", 0.619), scored("1978ef06", 0.55), scored("d319c0c3", 0.525)], []);
   try {
     const { text, details } = await search(mkApp(), mkCwd(), "explique la déduplication à l'écriture dans mem0_add");
 
@@ -337,8 +352,15 @@ test("selectRelevant : trie par cosinus décroissant et n'entame pas les lignes 
   ];
   const out = selectRelevant(rows, 0.55, 5);
 
-  assert.deepEqual(out.kept.map((row) => (row as { id: string }).id), ["b", "a"]);
+  assert.deepEqual(
+    out.kept.map((row) => (row as { id: string }).id),
+    ["b", "a"],
+  );
   assert.equal(out.candidates, 2);
   assert.equal(out.scored, 2);
-  assert.deepEqual(rows.map((row) => row.id), ["a", "b"], "l'entrée n'est pas réordonnée en place");
+  assert.deepEqual(
+    rows.map((row) => row.id),
+    ["a", "b"],
+    "l'entrée n'est pas réordonnée en place",
+  );
 });

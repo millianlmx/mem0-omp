@@ -121,9 +121,19 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     const voie = args.length === 0 ? "complet" : "--no-tests";
     const r = mac.lancer(args);
     assert.equal(r.status, 0, `[Mac ${voie}] ${r.sortie}`);
-    assert.ok(r.sortie.includes(ligneConforme("mac")), `[Mac ${voie}] ligne ✓ absente : ${ligneConforme("mac")}\n${r.sortie}`);
-    assert.equal(fs.readFileSync(path.join(mac.bundle, META_ACTIONS_REL), "utf8"), actionsData("mac"), `[Mac ${voie}] extract.actionsdata du bundle`);
-    assert.ok(r.lignes.includes(`codesign --force --sign - ${mac.bundle} meta=oui`), `[Mac ${voie}] bundle non signé\n${r.lignes.join("\n")}`);
+    assert.ok(
+      r.sortie.includes(ligneConforme("mac")),
+      `[Mac ${voie}] ligne ✓ absente : ${ligneConforme("mac")}\n${r.sortie}`,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(mac.bundle, META_ACTIONS_REL), "utf8"),
+      actionsData("mac"),
+      `[Mac ${voie}] extract.actionsdata du bundle`,
+    );
+    assert.ok(
+      r.lignes.includes(`codesign --force --sign - ${mac.bundle} meta=oui`),
+      `[Mac ${voie}] bundle non signé\n${r.lignes.join("\n")}`,
+    );
   }
 
   const ios = montageIosBuild();
@@ -132,7 +142,10 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     const r = ios.run(args);
     const sortie = `${r.stdout}${r.stderr}`;
     assert.equal(r.status, 0, `[iOS ${voie}] ${sortie}`);
-    assert.ok(r.stdout.includes(ligneConforme("ios")), `[iOS ${voie}] ligne ✓ absente : ${ligneConforme("ios")}\n${sortie}`);
+    assert.ok(
+      r.stdout.includes(ligneConforme("ios")),
+      `[iOS ${voie}] ligne ✓ absente : ${ligneConforme("ios")}\n${sortie}`,
+    );
     if (voie === "complet") {
       assert.ok(sortie.includes("tests non exécutés : aucun simulateur iOS 26 disponible"), `[iOS complet] ${sortie}`);
     }
@@ -185,7 +198,10 @@ test("recette-siri-de-bout-en-bout/AC-5 : une phrase du bundle sans ${applicatio
     const [premier] = Object.keys(readAttendus()[bundle]);
     const fichier = ecart(bundle, (data) => ajouterPhrase(data, premier, phrase));
     const stderr = prouverEchec(bundle, { FAUX_ACTIONSDATA: fichier }, [phraseSansNom(bundle, premier, phrase)]);
-    assert.ok(!stderr.includes(phraseNonListee(bundle, premier, phrase)), `[${LIBELLE[bundle]}] E-P2 émis pour une phrase sans nom\n${stderr}`);
+    assert.ok(
+      !stderr.includes(phraseNonListee(bundle, premier, phrase)),
+      `[${LIBELLE[bundle]}] E-P2 émis pour une phrase sans nom\n${stderr}`,
+    );
   }
 });
 
@@ -199,14 +215,18 @@ test("recette-siri-de-bout-en-bout/AC-6 : la liste attendue n'existe qu'à un se
     ...fs.readdirSync(support).map((nom) => path.join("test", "support", nom)),
   ];
   for (const script of ["scripts/swift-app.sh", "scripts/ios-build.sh"]) {
-    assert.ok(fs.readFileSync(path.join(ROOT, script), "utf8").includes("scripts/app-intents/controle.py"), `${script} n'invoque pas le comparateur`);
+    assert.ok(
+      fs.readFileSync(path.join(ROOT, script), "utf8").includes("scripts/app-intents/controle.py"),
+      `${script} n'invoque pas le comparateur`,
+    );
   }
   const types = BUNDLES.flatMap((b) => Object.keys(attendus[b]));
   const phrases = BUNDLES.flatMap((b) => Object.values(attendus[b]).flat());
   const fautes: string[] = [];
   for (const rel of fichiers) {
     const texte = fs.readFileSync(path.join(ROOT, rel), "utf8");
-    for (const type of types) if (new RegExp(`\\b${type}\\b(?!\\.swift)`).test(texte)) fautes.push(`${rel} nomme ${type}`);
+    for (const type of types)
+      if (new RegExp(`\\b${type}\\b(?!\\.swift)`).test(texte)) fautes.push(`${rel} nomme ${type}`);
     for (const phrase of phrases) if (texte.includes(phrase)) fautes.push(`${rel} cite « ${phrase} »`);
   }
   assert.deepEqual(fautes, []);

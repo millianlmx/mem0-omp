@@ -42,16 +42,25 @@ function plant(source: string, change: (s: string) => string): string {
 const GRAPH_VIEW = "IOSMemoryGraphView.swift";
 
 /** AC-5 : le canevas expose un élément par nœud affiché, activable, avec les titres liés. */
-const VOICEOVER_TOKENS = [".accessibilityChildren", "accessibilityElements(size:", ".accessibilityAction", ".accessibilityCustomContent("];
+const VOICEOVER_TOKENS = [
+  ".accessibilityChildren",
+  "accessibilityElements(size:",
+  ".accessibilityAction",
+  ".accessibilityCustomContent(",
+];
 
 function voiceOverFaults(view: string): string[] {
   const code = stripComments(view);
-  return VOICEOVER_TOKENS.filter((token) => !code.includes(token)).map((token) => `${GRAPH_VIEW} : jeton absent « ${token} »`);
+  return VOICEOVER_TOKENS.filter((token) => !code.includes(token)).map(
+    (token) => `${GRAPH_VIEW} : jeton absent « ${token} »`,
+  );
 }
 
 /** AC-9 : le canevas peint la scène DÉCOLLÉE, jamais les textes bruts. */
 function declutterFaults(view: string): string[] {
-  return stripComments(view).includes("IOSMemoryGraphLabels.declutter(") ? [] : [`${GRAPH_VIEW} : le dessin n'appelle plus IOSMemoryGraphLabels.declutter(`];
+  return stripComments(view).includes("IOSMemoryGraphLabels.declutter(")
+    ? []
+    : [`${GRAPH_VIEW} : le dessin n'appelle plus IOSMemoryGraphLabels.declutter(`];
 }
 
 test("ios-statistiques-et-graphe-accessibles/AC-5 : le graphe expose à VoiceOver un élément par souvenir et par nœud-étiquette, et non plus un seul élément pour tout le canevas", () => {
@@ -59,12 +68,17 @@ test("ios-statistiques-et-graphe-accessibles/AC-5 : le graphe expose à VoiceOve
   assert.deepEqual(voiceOverFaults(view), []);
 
   // Faute plantée : le canevas redevient un élément unique ⇒ rouge.
-  const opaque = plant(view, (s) => s.replace(".accessibilityChildren {", ".accessibilityElement(children: .ignore).background {"));
+  const opaque = plant(view, (s) =>
+    s.replace(".accessibilityChildren {", ".accessibilityElement(children: .ignore).background {"),
+  );
   assert.deepEqual(voiceOverFaults(opaque), [`${GRAPH_VIEW} : jeton absent « .accessibilityChildren »`]);
 
   // Faute plantée : les titres liés ne sont plus offerts ⇒ rouge.
   const mute = plant(view, (s) => s.replace("base.accessibilityCustomContent(", "base.accessibilityHint("));
-  assert.ok(voiceOverFaults(mute).some((f) => f.includes("accessibilityCustomContent")), "des titres liés absents doivent rougir");
+  assert.ok(
+    voiceOverFaults(mute).some((f) => f.includes("accessibilityCustomContent")),
+    "des titres liés absents doivent rougir",
+  );
 });
 
 test("ios-statistiques-et-graphe-accessibles/AC-9 : les étiquettes du graphe sont décollées avant d'être peintes", () => {
@@ -91,11 +105,15 @@ function paletteFaults(files: Map<string, string>): string[] {
     }
   }
   const palette = stripComments(files.get(PALETTE) ?? "");
-  const values = [...palette.matchAll(/static let \w+: (?:UIColor|\[UIColor\]) = (\[[^\]]*\]|[^\n]+)/g)].map((m) => m[1]);
-  if (values.length < 4) faults.push(`${PALETTE} : ${values.length} couleur(s) déclarée(s), attendu les trois séries et les portées`);
+  const values = [...palette.matchAll(/static let \w+: (?:UIColor|\[UIColor\]) = (\[[^\]]*\]|[^\n]+)/g)].map(
+    (m) => m[1],
+  );
+  if (values.length < 4)
+    faults.push(`${PALETTE} : ${values.length} couleur(s) déclarée(s), attendu les trois séries et les portées`);
   for (const value of values) {
     const members = [...value.matchAll(/\.(\w+)/g)].map((m) => m[1]);
-    if (members.length === 0 || value.includes("(")) faults.push(`${PALETTE} : couleur non système « ${value.trim()} »`);
+    if (members.length === 0 || value.includes("("))
+      faults.push(`${PALETTE} : couleur non système « ${value.trim()} »`);
     for (const member of members) {
       if (!/^system[A-Z]/.test(member)) faults.push(`${PALETTE} : couleur non système « .${member} »`);
     }
@@ -112,18 +130,38 @@ test("ios-statistiques-et-graphe-accessibles/AC-10 : aucune teinte HSB fixe dans
 
   // Faute plantée : `Color(hue:` réintroduit dans le canevas ⇒ rouge.
   const hsb = new Map(sources);
-  hsb.set(GRAPH_VIEW, plant(sources.get(GRAPH_VIEW)!, (s) => s.replace("Color(uiColor: IOSDataPalette.scope(hue: hue))", "Color(hue: hue, saturation: 0.8, brightness: 0.7)")));
-  assert.ok(paletteFaults(hsb).some((f) => f.includes("« Color(hue: »")), "un Color(hue: doit rougir");
+  hsb.set(
+    GRAPH_VIEW,
+    plant(sources.get(GRAPH_VIEW)!, (s) =>
+      s.replace("Color(uiColor: IOSDataPalette.scope(hue: hue))", "Color(hue: hue, saturation: 0.8, brightness: 0.7)"),
+    ),
+  );
+  assert.ok(
+    paletteFaults(hsb).some((f) => f.includes("« Color(hue: »")),
+    "un Color(hue: doit rougir",
+  );
 
   // Faute plantée : une couleur fixe dans la palette ⇒ rouge.
   const fixed = new Map(sources);
-  fixed.set(PALETTE, plant(sources.get(PALETTE)!, (s) => s.replace("= .systemBlue", "= UIColor(red: 0, green: 0.4, blue: 1, alpha: 1)")));
-  assert.ok(paletteFaults(fixed).some((f) => f.includes("couleur non système")), "une couleur RVB fixe doit rougir");
+  fixed.set(
+    PALETTE,
+    plant(sources.get(PALETTE)!, (s) => s.replace("= .systemBlue", "= UIColor(red: 0, green: 0.4, blue: 1, alpha: 1)")),
+  );
+  assert.ok(
+    paletteFaults(fixed).some((f) => f.includes("couleur non système")),
+    "une couleur RVB fixe doit rougir",
+  );
 
   // Faute plantée : une couleur non système parmi les portées ⇒ rouge.
   const plain = new Map(sources);
-  plain.set(PALETTE, plant(sources.get(PALETTE)!, (s) => s.replace(".systemBrown]", ".brown]")));
-  assert.ok(paletteFaults(plain).some((f) => f.includes("« .brown »")), "une couleur non adaptative doit rougir");
+  plain.set(
+    PALETTE,
+    plant(sources.get(PALETTE)!, (s) => s.replace(".systemBrown]", ".brown]")),
+  );
+  assert.ok(
+    paletteFaults(plain).some((f) => f.includes("« .brown »")),
+    "une couleur non adaptative doit rougir",
+  );
 });
 
 // MARK: - Recette de captures (S-8)
@@ -181,28 +219,51 @@ test("ios-statistiques-et-graphe-accessibles/AC-11 : la recette avant/après cap
 
   // Faute plantée : la recette ne supprime plus ses simulateurs ⇒ rouge.
   const kept = plant(script, (s) => s.replaceAll("simctl delete", "simctl shutdown"));
-  assert.ok(recipeScriptFaults(kept).some((f) => f.includes("simctl delete")), "des simulateurs conservés doivent rougir");
+  assert.ok(
+    recipeScriptFaults(kept).some((f) => f.includes("simctl delete")),
+    "des simulateurs conservés doivent rougir",
+  );
 
   // Faute plantée : la construction n'est plus signée ⇒ rouge.
   const unsigned = plant(script, (s) => s.replaceAll("CODE_SIGN_IDENTITY=-", ""));
-  assert.ok(recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")), "une app non signée doit rougir");
+  assert.ok(
+    recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")),
+    "une app non signée doit rougir",
+  );
 
   // Faute plantée : le contraste accru sort de la matrice ⇒ rouge.
   const noContrast = plant(script, (s) => s.replaceAll("increase_contrast", "appearance"));
-  assert.ok(recipeScriptFaults(noContrast).some((f) => f.includes("increase_contrast")), "une matrice sans contraste accru doit rougir");
+  assert.ok(
+    recipeScriptFaults(noContrast).some((f) => f.includes("increase_contrast")),
+    "une matrice sans contraste accru doit rougir",
+  );
 
   // Faute plantée : le graphe zoomé sort de la matrice ⇒ rouge.
-  const noZoom = plant(script, (s) => s.replace('("-section", "memory", "-memoire.recipe", "zoom")', '("-section", "memory")'));
-  assert.ok(recipeScriptFaults(noZoom).some((f) => f.includes("zoom")), "un lancement absent doit rougir");
+  const noZoom = plant(script, (s) =>
+    s.replace('("-section", "memory", "-memoire.recipe", "zoom")', '("-section", "memory")'),
+  );
+  assert.ok(
+    recipeScriptFaults(noZoom).some((f) => f.includes("zoom")),
+    "un lancement absent doit rougir",
+  );
 
   // Faute plantée : le Simulateur ouvert au premier plan, l'app Mac relancée, la PR fusionnée ⇒ rouge.
-  for (const intrusion of ['open -a Simulator --args -CurrentDeviceUDID "$udid"', 'open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"', "osascript -e 'quit app \"OMP Console\"'", "bash scripts/run-console.sh", "gh pr merge --squash"]) {
+  for (const intrusion of [
+    'open -a Simulator --args -CurrentDeviceUDID "$udid"',
+    'open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
+    "osascript -e 'quit app \"OMP Console\"'",
+    "bash scripts/run-console.sh",
+    "gh pr merge --squash",
+  ]) {
     const intrusive = plant(script, (s) => s.replace("trap cleanup EXIT", `trap cleanup EXIT\n${intrusion}`));
     assert.ok(recipeScriptFaults(intrusive).length > 0, `« ${intrusion} » doit rougir`);
   }
 
   // Simulator.app cité en commentaire reste admis (le script explique ce qu'il ne fait pas).
-  assert.deepEqual(recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")), []);
+  assert.deepEqual(
+    recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")),
+    [],
+  );
 });
 
 // MARK: - DESIGN.md (S-9)
@@ -241,7 +302,8 @@ function designFaults(design: string, swiftTests: string, guards: string): strin
     for (const marker of markers) {
       if (!section.includes(marker)) faults.push(`DESIGN.md : marqueur absent de « ${heading} » : ${marker}`);
       const [, kind, value] = marker.match(/^\[(test|garde): (.+)\]$/)!;
-      if (kind === "test" && !new RegExp(`func ${value}\\(`).test(swiftTests)) faults.push(`${marker} : aucun test Swift de ce nom`);
+      if (kind === "test" && !new RegExp(`func ${value}\\(`).test(swiftTests))
+        faults.push(`${marker} : aucun test Swift de ce nom`);
       if (kind === "garde" && !guards.includes(`test("${value} `)) faults.push(`${marker} : aucune garde de ce titre`);
     }
   }
@@ -256,23 +318,37 @@ function designFaults(design: string, swiftTests: string, guards: string): strin
 
 test("ios-statistiques-et-graphe-accessibles/AC-12 : DESIGN.md décrit la palette adaptative, VoiceOver et les étiquettes du graphe, chaque puce avec son marqueur prouvé", () => {
   const design = fs.readFileSync(DESIGN, "utf8");
-  const swiftTests = swiftFiles(TESTS).map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const swiftTests = swiftFiles(TESTS)
+    .map((file) => fs.readFileSync(file, "utf8"))
+    .join("\n");
   const guards = fs.readFileSync(import.meta.filename, "utf8");
   assert.deepEqual(designFaults(design, swiftTests, guards), []);
 
   // Faute plantée : un marqueur retiré ⇒ rouge.
   const unmarked = plant(design, (s) => s.replace(" `[test: graphLabelsNeverOverlapAtOpeningScale]`", ""));
-  assert.deepEqual(designFaults(unmarked, swiftTests, guards), [`DESIGN.md : marqueur absent de « ${GRAPH_SECTION} » : [test: graphLabelsNeverOverlapAtOpeningScale]`]);
+  assert.deepEqual(designFaults(unmarked, swiftTests, guards), [
+    `DESIGN.md : marqueur absent de « ${GRAPH_SECTION} » : [test: graphLabelsNeverOverlapAtOpeningScale]`,
+  ]);
 
   // Faute plantée : un marqueur vers un test Swift disparu ⇒ rouge.
-  const orphan = plant(swiftTests, (s) => s.replace("func graphLabelsNeverOverlapAtOpeningScale(", "func graphLabelsHidden("));
-  assert.deepEqual(designFaults(design, orphan, guards), ["[test: graphLabelsNeverOverlapAtOpeningScale] : aucun test Swift de ce nom"]);
+  const orphan = plant(swiftTests, (s) =>
+    s.replace("func graphLabelsNeverOverlapAtOpeningScale(", "func graphLabelsHidden("),
+  );
+  assert.deepEqual(designFaults(design, orphan, guards), [
+    "[test: graphLabelsNeverOverlapAtOpeningScale] : aucun test Swift de ce nom",
+  ]);
 
   // Faute plantée : un titre collé à la puce qui le précède ⇒ rouge.
   const glued = plant(design, (s) => s.replace("\n\n## Le mode graphe", "\n## Le mode graphe"));
-  assert.ok(designFaults(glued, swiftTests, guards).some((f) => f.includes("ligne vide")), "un titre collé doit rougir");
+  assert.ok(
+    designFaults(glued, swiftTests, guards).some((f) => f.includes("ligne vide")),
+    "un titre collé doit rougir",
+  );
 
   // Faute plantée : l'ancienne puce de palette HSB revient ⇒ rouge.
   const hsb = plant(design, (s) => s.replace("aucune teinte HSB fixe.", "une seule peinture,\n  deux coques."));
-  assert.ok(designFaults(hsb, swiftTests, guards).some((f) => f.includes("teinte HSB partagée")), "l'ancienne puce de palette doit rougir");
+  assert.ok(
+    designFaults(hsb, swiftTests, guards).some((f) => f.includes("teinte HSB partagée")),
+    "l'ancienne puce de palette doit rougir",
+  );
 });

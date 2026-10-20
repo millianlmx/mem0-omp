@@ -19,7 +19,8 @@ const MAC_REL = path.join("omp-console", "Sources", "OMPConsole");
 /** Chaque `.swift` de la coque Mac sous `root`, sans commentaires, par chemin relatif à `root`. */
 function sources(root: string): Map<string, string> {
   const files = new Map<string, string>();
-  for (const [rel, source] of swiftSources(path.join(root, MAC_REL), root)) files.set(rel, stripFullLineComments(source));
+  for (const [rel, source] of swiftSources(path.join(root, MAC_REL), root))
+    files.set(rel, stripFullLineComments(source));
   return files;
 }
 
@@ -58,9 +59,12 @@ const MEMORY_VIEW = path.join("Memory", "MemoryView.swift");
 function memorySymbolFaults(root: string): string[] {
   const source = sources(root).get(path.join(MAC_REL, MEMORY_VIEW)) ?? "";
   const summary = /Label\(\s*MemoryText\.summaryButton\s*,\s*systemImage:\s*"([^"]+)"/.exec(source)?.[1];
-  const list = /graph\.shown\s*\?\s*MemoryText\.listButton[\s\S]*?systemImage:\s*graph\.shown\s*\?\s*"([^"]+)"/.exec(source)?.[1];
+  const list = /graph\.shown\s*\?\s*MemoryText\.listButton[\s\S]*?systemImage:\s*graph\.shown\s*\?\s*"([^"]+)"/.exec(
+    source,
+  )?.[1];
   const faults: string[] = [];
-  if (summary !== "rectangle.stack") faults.push(`« Sommaire » porte ${summary ?? "aucun symbole"}, attendu rectangle.stack`);
+  if (summary !== "rectangle.stack")
+    faults.push(`« Sommaire » porte ${summary ?? "aucun symbole"}, attendu rectangle.stack`);
   if (list === undefined) faults.push("symbole de « Liste » introuvable");
   else if (list === summary) faults.push(`« Liste » et « Sommaire » partagent ${list}`);
   return faults;
@@ -88,7 +92,8 @@ function serverToolbarFaults(root: string): string[] {
   for (const marker of commands) {
     if (toolbar !== undefined && !toolbar.includes(marker)) faults.push(`la barre d'outils ne porte pas ${marker}`);
     let count = 0;
-    for (const [rel, text] of all) if (rel.startsWith(path.join(MAC_REL, "Server"))) count += text.split(marker).length - 1;
+    for (const [rel, text] of all)
+      if (rel.startsWith(path.join(MAC_REL, "Server"))) count += text.split(marker).length - 1;
     if (count !== 1) faults.push(`${marker} apparaît ${count} fois dans les vues du serveur`);
   }
   return faults;

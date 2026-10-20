@@ -20,8 +20,17 @@ import { tmpdir } from "../support/repo.ts";
 const TOKEN = "k".repeat(64);
 
 type Handler = (args: unknown, ctx: unknown) => Promise<void>;
-type Tool = { name: string; approval?: unknown; execute: (id: string, params: unknown, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }> };
-
+type Tool = {
+  name: string;
+  approval?: unknown;
+  execute: (
+    id: string,
+    params: unknown,
+    signal: undefined,
+    onUpdate: undefined,
+    ctx: unknown,
+  ) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+};
 
 function plugin() {
   const commands = new Map<string, Handler>();
@@ -37,25 +46,29 @@ function plugin() {
   return { commands, tools, sent };
 }
 
-
 function ctxIn(cwd: string, input: string | undefined = undefined) {
   const notes: string[] = [];
-  return { notes, ctx: { cwd, hasUI: true, ui: { notify: (message: string, level = "info") => notes.push(`${level}: ${message}`), input: async () => input } } };
-}
-
-
-async function serve(world: FakeWorld): Promise<{ url: string; close: () => Promise<void> }> {
-  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token: TOKEN }));
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   return {
-    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>(resolve => server.close(() => resolve()));
+    notes,
+    ctx: {
+      cwd,
+      hasUI: true,
+      ui: { notify: (message: string, level = "info") => notes.push(`${level}: ${message}`), input: async () => input },
     },
   };
 }
 
+async function serve(world: FakeWorld): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token: TOKEN }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
 /** Le plugin pointé sur `url` (environnement du process : le plugin le lit à chaque appel). */
 function pointAt(url: string | null): void {
@@ -66,7 +79,6 @@ function pointAt(url: string | null): void {
   process.env.HARNESS_REPO = "demo";
 }
 
-
 test("client-harness/AC-1 : la cible vient de l'environnement ou de ~/.omp/harness.json ; le dépôt est un nom déclaré, à défaut le dossier racine", () => {
   const home = tmpdir("client-harness-home-");
   const repo = tmpdir("client-harness-repo-");
@@ -74,9 +86,16 @@ test("client-harness/AC-1 : la cible vient de l'environnement ou de ~/.omp/harne
   fs.mkdirSync(path.join(repo, "src"));
   const missing = resolveTarget(repo, {}, home);
   assert.ok("refusal" in missing && /harness non configuré/.test(missing.refusal));
-  assert.deepEqual(resolveTarget(path.join(repo, "src"), { HARNESS_URL: "https://vps/", HARNESS_TOKEN: "t" }, home), { url: "https://vps", token: "t", repo: path.basename(repo) });
+  assert.deepEqual(resolveTarget(path.join(repo, "src"), { HARNESS_URL: "https://vps/", HARNESS_TOKEN: "t" }, home), {
+    url: "https://vps",
+    token: "t",
+    repo: path.basename(repo),
+  });
   fs.mkdirSync(path.join(home, ".omp"));
-  fs.writeFileSync(path.join(home, ".omp", "harness.json"), JSON.stringify({ url: "https://vps", token: "f", repos: { [repo]: "demo" } }));
+  fs.writeFileSync(
+    path.join(home, ".omp", "harness.json"),
+    JSON.stringify({ url: "https://vps", token: "f", repos: { [repo]: "demo" } }),
+  );
   assert.deepEqual(resolveTarget(repo, {}, home), { url: "https://vps", token: "f", repo: "demo" });
   const outside = resolveTarget(tmpdir("client-harness-nogit-"), {}, home);
   assert.ok("refusal" in outside && /HARNESS_REPO/.test(outside.refusal));
@@ -84,7 +103,6 @@ test("client-harness/AC-1 : la cible vient de l'environnement ou de ~/.omp/harne
   assert.equal(parsePicks("4", 3), null);
   assert.equal(parsePicks("", 3), null);
 });
-
 
 test("client-harness/AC-2 : /req et /project amorcent le dialogue dans la session ; sans harness configuré, ils refusent sans rien amorcer", async () => {
   const { commands, sent } = plugin();
@@ -102,7 +120,6 @@ test("client-harness/AC-2 : /req et /project amorcent le dialogue dans la sessio
   pointAt(null);
 });
 
-
 test("client-harness/AC-3 : harness_launch crée la feature avec ses besoins (elle part de /specs) ; harness_project crée le projet ; les deux demandent l'accord", async () => {
   const world = fakeWorld({ specs: [[{ sleep: 60_000 }]], req: [[{ sleep: 60_000 }]] });
   const server = await serve(world);
@@ -112,14 +129,36 @@ test("client-harness/AC-3 : harness_launch crée la feature avec ses besoins (el
     assert.deepEqual(tools.get("harness_launch")?.approval, LAUNCH_APPROVAL);
     assert.deepEqual(tools.get("harness_project")?.approval, LAUNCH_APPROVAL);
     const { ctx } = ctxIn(world.repo);
-    const refused = await tools.get("harness_launch")?.execute("t", { title: "Export", request: "exporter", req: "pas de section" }, undefined, undefined, ctx);
+    const refused = await tools
+      .get("harness_launch")
+      ?.execute("t", { title: "Export", request: "exporter", req: "pas de section" }, undefined, undefined, ctx);
     assert.equal(refused?.isError, true);
     assert.match(refused?.content[0]?.text ?? "", /## Besoins/);
-    const launched = await tools.get("harness_launch")?.execute("t", { title: "Export", request: "exporter", req: "## Besoins\nB-1 : exporter\n" }, undefined, undefined, ctx);
+    const launched = await tools
+      .get("harness_launch")
+      ?.execute(
+        "t",
+        { title: "Export", request: "exporter", req: "## Besoins\nB-1 : exporter\n" },
+        undefined,
+        undefined,
+        ctx,
+      );
     assert.match(launched?.content[0]?.text ?? "", /Feature créée sur le harness/);
     const [run] = world.store.listRuns();
     assert.deepEqual([run?.title, run?.step], ["Export", "specs"]);
-    const project = await tools.get("harness_project")?.execute("t", { title: "Refonte", features: [{ title: "API", request: "routes", modules: ["src/api"] }, { title: "Base", request: "schéma", modules: ["src/db"] }] }, undefined, undefined, ctx);
+    const project = await tools.get("harness_project")?.execute(
+      "t",
+      {
+        title: "Refonte",
+        features: [
+          { title: "API", request: "routes", modules: ["src/api"] },
+          { title: "Base", request: "schéma", modules: ["src/db"] },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
     assert.match(project?.content[0]?.text ?? "", /2 feature\(s\) en file/);
     assert.equal(world.store.listProjects().length, 1);
   } finally {
@@ -129,10 +168,15 @@ test("client-harness/AC-3 : harness_launch crée la feature avec ses besoins (el
   }
 });
 
-
 test("client-harness/AC-4 : /audit lance l'audit sur le serveur, /audit liste montre ses propositions, /audit lancer les part en projet ; /pipelines résume la boîte", async () => {
   const proposals = [
-    { title: "Tester le schéma", request: "Ajouter les tests du schéma", modules: ["src/db"], kind: "faiblesse", rationale: "aucun test" },
+    {
+      title: "Tester le schéma",
+      request: "Ajouter les tests du schéma",
+      modules: ["src/db"],
+      kind: "faiblesse",
+      rationale: "aucun test",
+    },
     { title: "Export", request: "Exporter en CSV", modules: ["src/api"], kind: "feature", rationale: "demandé" },
   ];
   const world = fakeWorld({ audit: [[{ tool: "audit_propose", args: { proposals } }]], req: [[{ sleep: 60_000 }]] });
@@ -146,11 +190,17 @@ test("client-harness/AC-4 : /audit lance l'audit sur le serveur, /audit liste mo
     assert.match(first.notes.join("\n"), /audit a\w+ lancé sur le harness/);
     const [audit] = world.store.listAudits();
     assert.equal(audit?.focus, "src/db");
-    await waitFor(() => world.store.getAudit(audit?.id ?? "")?.state === "proposed", () => JSON.stringify(world.store.getAudit(audit?.id ?? "")));
+    await waitFor(
+      () => world.store.getAudit(audit?.id ?? "")?.state === "proposed",
+      () => JSON.stringify(world.store.getAudit(audit?.id ?? "")),
+    );
 
     const listed = ctxIn(world.repo);
     await commands.get("audit")?.("liste", listed.ctx);
-    assert.match(listed.notes.join("\n"), /1\. \[faiblesse\] Tester le schéma — aucun test\n2\. \[feature\] Export — demandé/);
+    assert.match(
+      listed.notes.join("\n"),
+      /1\. \[faiblesse\] Tester le schéma — aucun test\n2\. \[feature\] Export — demandé/,
+    );
 
     const summary = ctxIn(world.repo);
     await commands.get("pipelines")?.("", summary.ctx);
@@ -162,7 +212,10 @@ test("client-harness/AC-4 : /audit lance l'audit sur le serveur, /audit liste mo
     const picked = ctxIn(world.repo, "2");
     await commands.get("audit")?.(`lancer ${audit?.id}`, picked.ctx);
     assert.match(picked.notes.join("\n"), /1 proposition\(s\) lancée\(s\)/);
-    assert.deepEqual(world.store.listRuns().map(run => run.title), ["Export"]);
+    assert.deepEqual(
+      world.store.listRuns().map((run) => run.title),
+      ["Export"],
+    );
 
     const gone = ctxIn(world.repo);
     await commands.get("audit")?.("lancer inconnu 1", gone.ctx);

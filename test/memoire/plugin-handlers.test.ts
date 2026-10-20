@@ -150,9 +150,7 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       return errorResponse(500, `Memory with id ${id} not found`);
     }
     for (const scope of [service.project, service.global]) {
-      const at = scope.findIndex(
-        (m) => typeof m === "object" && m !== null && "id" in m && String(m.id) === id,
-      );
+      const at = scope.findIndex((m) => typeof m === "object" && m !== null && "id" in m && String(m.id) === id);
       if (at >= 0) {
         scope.splice(at, 1);
         return jsonResponse({ ok: true });
@@ -211,19 +209,25 @@ function mkApp(): App {
     zod: { z: fakeSchema() },
     setLabel: (_label: string) => {},
     registerMessageRenderer: (_type: string, _render: unknown) => {},
-    on: (name: string, handler: Hook) => { hooks.set(name, handler); },
+    on: (name: string, handler: Hook) => {
+      hooks.set(name, handler);
+    },
     registerTool: (def: ToolDef & { execute: ToolExecute }) => {
       // La description est conservée en plus du corps : c'est elle qui part sur
       // le fil (`loadMode: "essential"`) et qui dit au modèle QUAND écrire quoi.
       defs.set(def.name, def);
       tools.set(def.name, def.execute);
     },
-    registerCommand: (name: string, def: { handler: Handler }) => { commands.set(name, def.handler); },
+    registerCommand: (name: string, def: { handler: Handler }) => {
+      commands.set(name, def.handler);
+    },
     // Le plugin mémoire ne poste aucun message d'affichage (son rappel est rendu
     // par l'hôte depuis la valeur de retour de `before_agent_start`) : la surface
     // existe pour que l'extension puisse le faire, elle n'est pas exercée.
     sendMessage: (_payload: unknown) => {},
-    sendUserMessage: (text: string) => { sent.push(text); },
+    sendUserMessage: (text: string) => {
+      sent.push(text);
+    },
   };
 
   mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
@@ -242,7 +246,9 @@ function mkCtx(cwd: string, options: CtxOptions = {}) {
   const notices: Notice[] = [];
   const confirms: Array<{ title: string; message: string }> = [];
   const ui = {
-    notify: (message: string, type?: string) => { notices.push({ message, type }); },
+    notify: (message: string, type?: string) => {
+      notices.push({ message, type });
+    },
     input: async (_label: string, _placeholder?: string) => "",
     // Sans cette touche, `ctx.ui.confirm` lève dans /mem0-init : le message exact
     // de la garde anti-doublon (le total réel) resterait inobservable.
@@ -282,10 +288,9 @@ function phasesOnDisk(): Record<string, { brief: string }> {
 
 /** Récupère le rappel d'un tour : sa valeur de retour porte le message injecté. */
 async function recallOf(app: App, ctx: unknown, prompt: string): Promise<string> {
-  const res = (await app.hooks.get("before_agent_start")!(
-    { prompt, systemPrompt: [] } as never,
-    ctx as never,
-  )) as { message?: { content: string } };
+  const res = (await app.hooks.get("before_agent_start")!({ prompt, systemPrompt: [] } as never, ctx as never)) as {
+    message?: { content: string };
+  };
   return res.message?.content ?? "";
 }
 
@@ -324,7 +329,7 @@ test("plugin-handlers/AC-12 : session_start provisionne le brief du dépôt temp
 // `plugin-handlers/AC-5` — la recommandation du brief est ce que l'agent lit
 // avant son premier `mem0_add` : elle doit annoncer le stockage tel quel d'une
 // procédure, sans quoi elle promet une réécriture que le serveur ne fait plus.
-test("plugin-handlers/AC-5 : le brief provisionné annonce kind:\"procedure\" comme un stockage conservé tel quel", async () => {
+test('plugin-handlers/AC-5 : le brief provisionné annonce kind:"procedure" comme un stockage conservé tel quel', async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -340,7 +345,7 @@ test("plugin-handlers/AC-5 : le brief provisionné annonce kind:\"procedure\" co
 test("session_compact, auto_compaction_end et session_branch autorisent la réinjection des souvenirs", async () => {
   resetService();
   service.search = [scored("m-1", 0.91), scored("m-2", 0.83)];
-  service.globalSearch = [scored("g-1", 0.80)];
+  service.globalSearch = [scored("g-1", 0.8)];
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx } = mkCtx(repo);
@@ -350,7 +355,11 @@ test("session_compact, auto_compaction_end et session_branch autorisent la réin
     await app.hooks.get(hookName)!({} as never, ctx as never);
 
     const first = await recallOf(app, ctx, prompt);
-    assert.deepEqual(injectedIds(first), ["m-1", "m-2"], `${hookName} : les deux souvenirs doivent partir au premier tour`);
+    assert.deepEqual(
+      injectedIds(first),
+      ["m-1", "m-2"],
+      `${hookName} : les deux souvenirs doivent partir au premier tour`,
+    );
     assert.match(first, /Préférences transverses :\n\n- souvenir g-1/, `${hookName} : la préférence transverse suit`);
     const second = injectedIds(await recallOf(app, ctx, prompt));
     assert.deepEqual(second, ["m-1"], `${hookName} : m-2 est déjà dans le contexte, il ne se répète pas`);
@@ -367,7 +376,11 @@ test("tool_result pose le bloc [mem0] Déjà en mémoire EN TÊTE et conserve le
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx } = mkCtx(repo);
   service.project = [
-    { id: "pin-1", memory: "Les keybindings du panneau des pipelines sont alignés sur alt+w.", updated_at: "2026-09-20" },
+    {
+      id: "pin-1",
+      memory: "Les keybindings du panneau des pipelines sont alignés sur alt+w.",
+      updated_at: "2026-09-20",
+    },
   ];
 
   // `prompt` court : le tour ne déclenche aucun rappel, mais charge le cache local
@@ -450,7 +463,7 @@ test("un ctx dégradé (sans setInterval ni sessionManager) ne fait échouer auc
 // Tools d'écriture
 // ---------------------------------------------------------------------------
 
-test("plugin-handlers/AC-3 : mem0_add accepte kind:\"procedure\" et l'écrit par POST /memory/add_procedure", async () => {
+test('plugin-handlers/AC-3 : mem0_add accepte kind:"procedure" et l\'écrit par POST /memory/add_procedure', async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -470,8 +483,8 @@ test("plugin-handlers/AC-3 : mem0_add accepte kind:\"procedure\" et l'écrit par
   const posts = callsTo("/memory/add");
   assert.equal(posts.length, 1, "un seul POST vers /memory/add");
   assert.match(posts[0]!.url, /\/memory\/add$/);
-  assert.equal(posts[0]!.body?.["agent_id"], "plugin-handlers-fixture");
-  assert.equal(posts[0]!.body?.["text"], "Le rappel est muet sous le plancher de pertinence.");
+  assert.equal(posts[0]!.body?.agent_id, "plugin-handlers-fixture");
+  assert.equal(posts[0]!.body?.text, "Le rappel est muet sous le plancher de pertinence.");
   // Une écriture périme le cache : l'effet observable est la relecture au tour suivant.
   await app.hooks.get("before_agent_start")!({ prompt: "ok", systemPrompt: [] } as never, ctx as never);
   assert.equal(callsTo("/memory/all", "GET").length, 2, "le tour suivant doit relire la mémoire");
@@ -486,8 +499,8 @@ test("plugin-handlers/AC-3 : mem0_add accepte kind:\"procedure\" et l'écrit par
   );
   const procedures = callsTo("/memory/add_procedure");
   assert.equal(procedures.length, 1);
-  assert.equal(procedures[0]!.body?.["agent_id"], "plugin-handlers-fixture");
-  assert.equal(procedures[0]!.body?.["steps"], "Déployer : 1. tester 2. construire");
+  assert.equal(procedures[0]!.body?.agent_id, "plugin-handlers-fixture");
+  assert.equal(procedures[0]!.body?.steps, "Déployer : 1. tester 2. construire");
   assert.equal(callsTo("/memory/add").length, 0, "une procédure ne part pas par /memory/add");
   assert.match(res.content[0]!.text, /Procédure enregistrée dans "plugin-handlers-fixture"/);
 });
@@ -622,7 +635,12 @@ test("mem0-brief rend l'état ref=/agents= et --update récrit le brief", async 
   const provision = "(created|present|outdated|skipped|failed)";
 
   await brief("", ctx);
-  assert.match(notices.at(-1)!.message, new RegExp(`^\\[mem0\\] brief ${BRIEF_VERSION} · .*plugin-handlers-repo-.* · \\.omp/mem0-brief\\.md=${provision} · AGENTS\\.md=${provision}`));
+  assert.match(
+    notices.at(-1)!.message,
+    new RegExp(
+      `^\\[mem0\\] brief ${BRIEF_VERSION} · .*plugin-handlers-repo-.* · \\.omp/mem0-brief\\.md=${provision} · AGENTS\\.md=${provision}`,
+    ),
+  );
   assert.equal(fs.existsSync(ref), true);
 
   // Un brief dont le marqueur de version a disparu : `--update` le réécrit.
@@ -667,7 +685,14 @@ test("mem0-dedupe simule par défaut (aucun DELETE) et supprime seulement en --a
 
 /** Ligne servie par `GET /memory/all`, avec la métadonnée qui décide du type. */
 function memoryRow(id: string, memory: string, metadata: unknown = null) {
-  return { id, memory, metadata, hash: `h-${id}`, updated_at: "2026-09-27T00:00:00Z", agent_id: "plugin-handlers-fixture" };
+  return {
+    id,
+    memory,
+    metadata,
+    hash: `h-${id}`,
+    updated_at: "2026-09-27T00:00:00Z",
+    agent_id: "plugin-handlers-fixture",
+  };
 }
 
 const PROCEDURE = { memory_type: "procedural_memory" };
@@ -717,7 +742,10 @@ test("purge/AC-2 : une scope sans procédural annonce qu'il n'y a rien à purger
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx, notices } = mkCtx(repo);
   const purge = app.commands.get("mem0-purge-procedures")!;
-  service.project = [memoryRow("f-1", "fait sans métadonnée"), memoryRow("f-2", "fait typé autrement", { memory_type: "fact" })];
+  service.project = [
+    memoryRow("f-1", "fait sans métadonnée"),
+    memoryRow("f-2", "fait typé autrement", { memory_type: "fact" }),
+  ];
 
   await purge("", ctx);
   const simulated = notices.at(-1)!;
@@ -734,7 +762,11 @@ test("purge/AC-2 : une scope sans procédural annonce qu'il n'y a rien à purger
   await purge("--apply", ctx);
   assert.match(notices.at(-1)!.message, /aucun souvenir procédural — rien à purger \(0 souvenir\(s\) dans la scope\)/);
   assert.equal(callsTo("/memory/f-1", "DELETE").length, 0);
-  assert.equal(service.calls.filter((c) => c.method !== "GET").length, 0, "aucune écriture, ni en simulation ni en --apply");
+  assert.equal(
+    service.calls.filter((c) => c.method !== "GET").length,
+    0,
+    "aucune écriture, ni en simulation ni en --apply",
+  );
 });
 
 test("purge/AC-3 : --apply supprime chaque procédural visé et cite les ids supprimés", async () => {
@@ -768,8 +800,15 @@ test("purge/AC-4 : la purge ne touche aucun non-procédural de la scope", async 
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx } = mkCtx(repo);
-  const facts = [memoryRow("f-1", "fait sans métadonnée", null), memoryRow("f-2", "fait typé autrement", { memory_type: "fact" })];
-  service.project = [memoryRow("p-1", "procédure une", PROCEDURE), ...facts, memoryRow("p-2", "procédure deux", PROCEDURE)];
+  const facts = [
+    memoryRow("f-1", "fait sans métadonnée", null),
+    memoryRow("f-2", "fait typé autrement", { memory_type: "fact" }),
+  ];
+  service.project = [
+    memoryRow("p-1", "procédure une", PROCEDURE),
+    ...facts,
+    memoryRow("p-2", "procédure deux", PROCEDURE),
+  ];
   const total = service.project.length;
 
   await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
@@ -777,7 +816,10 @@ test("purge/AC-4 : la purge ne touche aucun non-procédural de la scope", async 
   for (const call of service.calls.filter((c) => c.method !== "GET")) {
     const touched = `${call.url} ${JSON.stringify(call.body ?? "")}`;
     assert.ok(!touched.includes("f-1") && !touched.includes("f-2"), `aucune écriture ne vise un fait : ${touched}`);
-    assert.ok(!touched.includes("fait sans métadonnée") && !touched.includes("fait typé autrement"), `aucune écriture ne porte un texte de fait : ${touched}`);
+    assert.ok(
+      !touched.includes("fait sans métadonnée") && !touched.includes("fait typé autrement"),
+      `aucune écriture ne porte un texte de fait : ${touched}`,
+    );
   }
   // Relu après suppression : mêmes lignes, mêmes ids, mêmes textes, même ordre.
   assert.deepEqual<unknown[]>(service.project, facts);
@@ -791,7 +833,10 @@ test("purge/AC-5 : la purge ne vise que la scope du projet, jamais la mémoire t
   const { ctx, notices } = mkCtx(repo);
   const transverse = memoryRow("p-global", "procédure transverse", PROCEDURE);
   service.global = [transverse];
-  service.project = [memoryRow("p-projet", "procédure du projet", PROCEDURE), memoryRow("f-projet", "fait du projet", null)];
+  service.project = [
+    memoryRow("p-projet", "procédure du projet", PROCEDURE),
+    memoryRow("f-projet", "fait du projet", null),
+  ];
 
   await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
 
@@ -818,7 +863,10 @@ test("mem0-purge-procedures isole un échec unitaire et ne le compte pas comme s
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx, notices } = mkCtx(repo);
-  service.project = [memoryRow("p-absent", "procédure périmée", PROCEDURE), memoryRow("p-present", "procédure vivante", PROCEDURE)];
+  service.project = [
+    memoryRow("p-absent", "procédure périmée", PROCEDURE),
+    memoryRow("p-present", "procédure vivante", PROCEDURE),
+  ];
   // La ligne est servie mais le DELETE échoue : c'est l'id disparu entre la lecture et la boucle.
   service.failDelete = ["p-absent"];
 

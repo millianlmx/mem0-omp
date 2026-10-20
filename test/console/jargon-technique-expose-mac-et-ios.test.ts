@@ -57,7 +57,7 @@ function scan(source: string): { code: string; literals: string[] } {
     const multi = source.startsWith('"""', i + hashes);
     const quote = multi ? '"""' : '"';
     const close = quote + "#".repeat(hashes);
-    const escape = "\\" + "#".repeat(hashes);
+    const escaped = `\\${"#".repeat(hashes)}`;
     code += source.slice(i, i + hashes + quote.length);
     i += hashes + quote.length;
     let literal = "";
@@ -67,8 +67,8 @@ function scan(source: string): { code: string; literals: string[] } {
         i += close.length;
         break;
       }
-      if (source.startsWith(escape, i)) {
-        const after = i + escape.length;
+      if (source.startsWith(escaped, i)) {
+        const after = i + escaped.length;
         if (source[after] === "(") {
           // Interpolation : du code jusqu'à la parenthèse fermante équilibrée.
           literals.push(literal);

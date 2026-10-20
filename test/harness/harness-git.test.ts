@@ -12,13 +12,11 @@ import { tmpdir } from "../support/repo.ts";
 
 const client = new Git(execProcess, { authorName: "Harness", authorEmail: "h@example.com" });
 
-
 async function worktree(repo: string, branch = "harness/x"): Promise<string> {
   const dir = path.join(tmpdir("harness-wt-"), "wt");
   await client.addWorktree(repo, dir, branch, git(repo, "rev-parse", "main"));
   return dir;
 }
-
 
 test("harness-git/AC-1 : le worktree d'un run naît sur sa branche, et `.harness/` est exclu de git pour tous les worktrees", async () => {
   const repo = harnessRepo();
@@ -29,7 +27,6 @@ test("harness-git/AC-1 : le worktree d'un run naît sur sa branche, et `.harness
   assert.equal(await client.isDirty(wt), false);
   await client.addWorktree(repo, wt, "harness/x", "main");
 });
-
 
 test("harness-git/AC-2 : le tree hash couvre le non commité et le non suivi, ignore `.harness/`, et ne touche pas l'index", async () => {
   const repo = harnessRepo();
@@ -45,7 +42,6 @@ test("harness-git/AC-2 : le tree hash couvre le non commité et le non suivi, ig
   assert.equal(git(wt, "diff", "--cached", "--name-only"), "", "l'index du worktree est intact");
 });
 
-
 test("harness-git/AC-3 : les checkpoints de décision se retrouvent par leur trailer après un rebase", async () => {
   const repo = harnessRepo();
   const wt = await worktree(repo);
@@ -59,7 +55,6 @@ test("harness-git/AC-3 : les checkpoints de décision se retrouvent par leur tra
   assert.match(git(wt, "log", "-1", "--format=%s", map.get(1) as string), /^decision: q → c/);
 });
 
-
 test("harness-git/AC-4 : un rebase en conflit est abandonné et rend ses fichiers", async () => {
   const repo = harnessRepo();
   const wt = await worktree(repo);
@@ -70,7 +65,6 @@ test("harness-git/AC-4 : un rebase en conflit est abandonné et rend ses fichier
   assert.deepEqual(result, { ok: false, conflicts: ["README.md"] });
   assert.equal(fs.readFileSync(path.join(wt, "README.md"), "utf8"), "branche\n", "le worktree est revenu à son état");
 });
-
 
 test("harness-git/AC-5 : le merge squash pose un commit sur main sans checkout, et refuse une branche non rebasée ou un main qui a bougé", async () => {
   const repo = harnessRepo();
@@ -91,9 +85,11 @@ test("harness-git/AC-5 : le merge squash pose un commit sur main sans checkout, 
   await client.addWorktree(repo, other, "harness/y", main);
   fs.writeFileSync(path.join(other, "c.ts"), "c");
   await client.commitAll(other, "wip");
-  await assert.rejects(client.squashMerge(repo, "harness/y", "main", git(repo, "rev-parse", "main"), "Y"), /pas rebasée/);
+  await assert.rejects(
+    client.squashMerge(repo, "harness/y", "main", git(repo, "rev-parse", "main"), "Y"),
+    /pas rebasée/,
+  );
 });
-
 
 test("harness-git/AC-6 : un `.git` de worktree repointé par un runner est ignoré — le service passe par le gitdir du clone, sans hook", async () => {
   const repo = harnessRepo();
@@ -114,7 +110,6 @@ test("harness-git/AC-6 : un `.git` de worktree repointé par un runner est ignor
   // Un worktree que le clone ne connaît pas est refusé.
   await assert.rejects(client.trustWorktree(repo, tmpdir("harness-stranger-")), /inconnu du clone/);
 });
-
 
 test("harness-git/AC-7 : le gitdir du clone perd l'écriture de groupe et la garde (core.sharedRepository=0640)", async () => {
   const repo = harnessRepo();

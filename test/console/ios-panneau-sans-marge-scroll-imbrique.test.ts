@@ -78,7 +78,10 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-1 : le panneau porte une marge e
   // Faute plantée : retirer la marge extérieure ⇒ rouge (l'intérieure ne suffit pas).
   const copy = copyIOS();
   mutate(copy, "Design/IOSSurface.swift", (s) => s.replace(`            ${OUTER}\n`, ""));
-  assert.ok(marginFaults(copy).some((f) => f.includes("marge extérieure")), "sans marge extérieure, la garde doit rougir");
+  assert.ok(
+    marginFaults(copy).some((f) => f.includes("marge extérieure")),
+    "sans marge extérieure, la garde doit rougir",
+  );
 });
 
 test("ios-panneau-sans-marge-scroll-imbrique/AC-5 : aucun appelant n'ajoute de marge après .iosPanel()", () => {
@@ -86,9 +89,14 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-5 : aucun appelant n'ajoute de m
 
   // Faute plantée : remettre le padding après `.iosPanel()` dans le graphe de la Mémoire ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace("stack.iosPanel()\n", `stack.iosPanel()\n                ${OUTER}\n`));
+  mutate(copy, "IOSMemoryScreen.swift", (s) =>
+    s.replace("stack.iosPanel()\n", `stack.iosPanel()\n                ${OUTER}\n`),
+  );
   const faults = doubleMarginFaults(copy);
-  assert.ok(faults.some((f) => f.includes("IOSMemoryScreen.swift")), "un double padding doit rougir");
+  assert.ok(
+    faults.some((f) => f.includes("IOSMemoryScreen.swift")),
+    "un double padding doit rougir",
+  );
 });
 
 /** Le seul écran qui pose un panneau : la Mémoire, en mode Graphe. */
@@ -98,7 +106,8 @@ const SCREENS = ["IOSMemoryScreen.swift"];
 function heightFaults(root: string): string[] {
   const faults: string[] = [];
   for (const rel of [...SCREENS, "Design/IOSSurface.swift"]) {
-    if (/maxHeight:\s*\.infinity/.test(code(root, rel))) faults.push(`${rel} : maxHeight: .infinity impose une hauteur`);
+    if (/maxHeight:\s*\.infinity/.test(code(root, rel)))
+      faults.push(`${rel} : maxHeight: .infinity impose une hauteur`);
   }
   return faults;
 }
@@ -106,7 +115,8 @@ function heightFaults(root: string): string[] {
 /** AC-4 : le graphe reste hors de tout défilement, et garde ses gestes. */
 function graphFaults(root: string): string[] {
   const faults: string[] = [];
-  if (code(root, "IOSMemoryGraphView.swift").includes("ScrollView")) faults.push("IOSMemoryGraphView contient un ScrollView");
+  if (code(root, "IOSMemoryGraphView.swift").includes("ScrollView"))
+    faults.push("IOSMemoryGraphView contient un ScrollView");
   const canvas = code(root, "IOSMemoryGraphView.swift");
   if (!canvas.includes("MagnifyGesture()")) faults.push("le canevas a perdu MagnifyGesture()");
   if (!canvas.includes("DragGesture(")) faults.push("le canevas a perdu DragGesture(");
@@ -133,8 +143,13 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-3 : le panneau n'a aucune hauteu
 
   // Faute plantée : `maxHeight: .infinity` sur la liste de la Mémoire ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace(".iosGroupedList()", ".iosGroupedList().frame(maxHeight: .infinity)"));
-  assert.ok(heightFaults(copy).some((f) => f.includes("IOSMemoryScreen")), "une hauteur imposée doit rougir");
+  mutate(copy, "IOSMemoryScreen.swift", (s) =>
+    s.replace(".iosGroupedList()", ".iosGroupedList().frame(maxHeight: .infinity)"),
+  );
+  assert.ok(
+    heightFaults(copy).some((f) => f.includes("IOSMemoryScreen")),
+    "une hauteur imposée doit rougir",
+  );
 });
 
 test("ios-panneau-sans-marge-scroll-imbrique/AC-4 : le graphe reste hors défilement et garde ses gestes", () => {
@@ -142,6 +157,14 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-4 : le graphe reste hors défile
 
   // Faute plantée : envelopper la branche graphe dans un `ScrollView(.vertical)` ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace("if graph.shown {\n            stack.iosPanel()", "if graph.shown {\n            ScrollView(.vertical) { stack.iosPanel() }"));
-  assert.ok(graphFaults(copy).some((f) => f.includes("branche graphe")), "un ScrollView autour du graphe doit rougir");
+  mutate(copy, "IOSMemoryScreen.swift", (s) =>
+    s.replace(
+      "if graph.shown {\n            stack.iosPanel()",
+      "if graph.shown {\n            ScrollView(.vertical) { stack.iosPanel() }",
+    ),
+  );
+  assert.ok(
+    graphFaults(copy).some((f) => f.includes("branche graphe")),
+    "un ScrollView autour du graphe doit rougir",
+  );
 });

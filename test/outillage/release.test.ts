@@ -50,7 +50,7 @@ import {
   type VersionEntry,
 } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
-import { ROOT, copyRepo, tmpdir } from "../support/repo.ts";
+import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
@@ -408,7 +408,10 @@ test("plan : rattrapage + bump, ordres de publication et de journal, gardes d'id
   assert.equal(bump?.commit, null, "le commit de fusion n'est connu qu'après la fusion");
   assert.equal(bump?.previousTag, versionTag(MEMORY.name, "0.3.0"));
   assert.equal(bump?.date, "2026-09-27");
-  assert.deepEqual(bumped.journal.map((release) => release.version), ["0.4.0", "0.3.0", "0.2.0", "0.18.0"]);
+  assert.deepEqual(
+    bumped.journal.map((release) => release.version),
+    ["0.4.0", "0.3.0", "0.2.0", "0.18.0"],
+  );
   assert.deepEqual(bumped.unchanged, [REQ.name], "req n'a aucun commit depuis sa version courante");
 
   // Garde 1 : l'événement est déjà publié — plus de bump, mais le rattrapage reste.
@@ -511,7 +514,7 @@ function writeFakeGh(bin: string): void {
     '      if [ "$prev" = "--head" ]; then printf \'%s\' "$arg" > "$GH_STATE/head"; fi',
     '      prev="$arg"',
     "    done",
-    '    printf \'1\' > "$GH_STATE/number"',
+    "    printf '1' > \"$GH_STATE/number\"",
     '    printf \'https://%s/%s/pull/1\\n\' "$GH_HOST" "$GH_REPO"',
     "    ;;",
     '  "pr view")',
@@ -543,7 +546,7 @@ function writeFakeGh(bin: string): void {
     '    merged="$(git "${remote[@]}" commit-tree "$tree" -p "$parent" -m "$subject" -m "$body")"',
     '    git "${remote[@]}" update-ref refs/heads/main "$merged"',
     '    printf \'%s\' "$merged" > "$GH_STATE/merge-sha"',
-    '    printf \'merged %s\\n\' "$merged"',
+    "    printf 'merged %s\\n' \"$merged\"",
     "    ;;",
     '  "release create")',
     '    tag="${3:-}"',
@@ -556,7 +559,7 @@ function writeFakeGh(bin: string): void {
     "    # `--verify-tag` : le tag doit DEJA exister sur le remote, sinon `gh` en",
     "    # creerait un depuis la branche par defaut.",
     '    if ! git "${remote[@]}" rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then',
-    '      printf \'tag %s absent du remote (--verify-tag)\\n\' "$tag" >&2',
+    "      printf 'tag %s absent du remote (--verify-tag)\\n' \"$tag\" >&2",
     "      exit 1",
     "    fi",
     '    printf \'https://%s/%s/releases/tag/%s\\n\' "$GH_HOST" "$GH_REPO" "$tag"',
@@ -702,6 +705,8 @@ function runEngine(
     MEM0_OMP_SKIP_IOS: "1",
     // La section Rust (cargo, contrat contre mem0-rs) n'a rien à faire ici.
     MEM0_OMP_SKIP_RUST: "1",
+    // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
+    ...LINT_TOOL_ENV,
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;
@@ -746,7 +751,11 @@ function releaseCalls(journal: string) {
 }
 
 function remoteTags(remote: string): string[] {
-  return remoteGit(remote, ["tag", "-l"]).trim().split("\n").filter((tag) => tag !== "").sort();
+  return remoteGit(remote, ["tag", "-l"])
+    .trim()
+    .split("\n")
+    .filter((tag) => tag !== "")
+    .sort();
 }
 
 function remoteHeads(remote: string): string[] {
@@ -810,11 +819,15 @@ function buildBacklogSteps(): Step[] {
   return [
     {
       subject: "chore(memory): prepare une version jamais publiee",
-      edits: [{ file: `${MEMORY.dir}/package.json`, content: `${JSON.stringify({ ...pkg, version: first }, null, 2)}\n` }],
+      edits: [
+        { file: `${MEMORY.dir}/package.json`, content: `${JSON.stringify({ ...pkg, version: first }, null, 2)}\n` },
+      ],
     },
     {
       subject: "chore(memory): prepare une seconde version jamais publiee",
-      edits: [{ file: `${MEMORY.dir}/package.json`, content: `${JSON.stringify({ ...pkg, version: second }, null, 2)}\n` }],
+      edits: [
+        { file: `${MEMORY.dir}/package.json`, content: `${JSON.stringify({ ...pkg, version: second }, null, 2)}\n` },
+      ],
     },
     { subject: "docs: aligne le catalogue", edits: [{ file: CATALOGS[0], content: serialized }] },
     { subject: "docs: aligne le catalogue claude", edits: [{ file: CATALOGS[1], content: serialized }] },
@@ -993,14 +1006,20 @@ test("release/AC-2 : la publication n'utilise que le jeton dédié, et reprend u
   assert.equal(held.main, repo.after, "aucun commit avant la fusion");
   const baseTags = PLUGINS.map((plugin) => versionTag(plugin.name, VERSIONS[plugin.name]?.pkg ?? "")).sort();
   assert.deepEqual(held.tags, baseTags, "aucun tag nouveau : les tags viennent APRÈS la fusion");
-  assert.ok(!held.tags.includes(versionTag(MEMORY.name, VERSIONS[MEMORY.name]?.patch ?? "")), "le bump n'est pas tagué");
+  assert.ok(
+    !held.tags.includes(versionTag(MEMORY.name, VERSIONS[MEMORY.name]?.patch ?? "")),
+    "le bump n'est pas tagué",
+  );
   assert.ok(held.heads.includes(`refs/heads/release/${repo.after}`), "la branche de release est poussée");
 
   assert.equal(second.status, 0, output(second));
   assert.ok(output(second).includes(`· PR de release réutilisée : https://${HOST}/${REPO}/pull/1`), output(second));
   const calls = readCalls(repo.journal);
   assert.equal(calls.filter((call) => call.args.startsWith("pr create")).length, 1, "une seule PR ouverte");
-  assert.ok(calls.some((call) => call.args.startsWith("pr merge")), "la fusion a lieu au second run");
+  assert.ok(
+    calls.some((call) => call.args.startsWith("pr merge")),
+    "la fusion a lieu au second run",
+  );
   assert.deepEqual(
     remoteGit(repo.remote, ["log", "-1", "--format=%P", "main"]).trim().split(" "),
     [repo.after],
@@ -1084,9 +1103,14 @@ test("release/AC-1 : le commit de release atteint main par une PR auto-mergée, 
     "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
   );
   const tagRef = `refs/tags/${versionTag(MEMORY.name, target)}`;
-  assert.equal(remoteGit(repo.remote, ["for-each-ref", "--format=%(taggername)", tagRef]).trim(), "github-actions[bot]");
+  assert.equal(
+    remoteGit(repo.remote, ["for-each-ref", "--format=%(taggername)", tagRef]).trim(),
+    "github-actions[bot]",
+  );
   assert.ok(
-    remoteGit(repo.remote, ["for-each-ref", "--format=%(taggeremail)", tagRef]).includes("41898282+github-actions[bot]"),
+    remoteGit(repo.remote, ["for-each-ref", "--format=%(taggeremail)", tagRef]).includes(
+      "41898282+github-actions[bot]",
+    ),
     remoteGit(repo.remote, ["for-each-ref", "--format=%(taggeremail)", tagRef]),
   );
   assert.equal(
@@ -1119,7 +1143,11 @@ test("release/AC-3 : la version publiée est exactement celle calculée par le j
     assert.equal(entryVersionOf(repo.dir, catalog, REQ.name), req?.entry, catalog);
   }
   const metadata = maxVersion([target, req?.entry ?? "0.0.0"]);
-  assert.equal(readJson<Catalog>(repo.dir, CATALOGS[0]).metadata?.version, metadata, "metadata.version nomme une version publiée");
+  assert.equal(
+    readJson<Catalog>(repo.dir, CATALOGS[0]).metadata?.version,
+    metadata,
+    "metadata.version nomme une version publiée",
+  );
   assert.equal(remoteGit(repo.remote, ["show", `main:${MEMORY.dir}/package.json`]).includes(target), true);
 });
 
@@ -1146,11 +1174,16 @@ test("release/AC-4 : chaque publication écrit une entrée datée dans CHANGELOG
   const call = releaseCalls(repo.journal).find((entry) => entry.tag === versionTag(MEMORY.name, target));
   assert.ok(call, `aucune release pour ${target} : ${repo.journal}`);
   assert.ok(
-    call.args.startsWith(`release create ${versionTag(MEMORY.name, target)} --verify-tag --title ${MEMORY.name} ${target}`),
+    call.args.startsWith(
+      `release create ${versionTag(MEMORY.name, target)} --verify-tag --title ${MEMORY.name} ${target}`,
+    ),
     call.args,
   );
   assert.ok(call.notes.includes(`## ${MEMORY.name} ${target}`), call.notes);
-  assert.ok(call.notes.includes(`Changements depuis ${versionTag(MEMORY.name, VERSIONS[MEMORY.name]?.pkg ?? "")} :`), call.notes);
+  assert.ok(
+    call.notes.includes(`Changements depuis ${versionTag(MEMORY.name, VERSIONS[MEMORY.name]?.pkg ?? "")} :`),
+    call.notes,
+  );
   assert.ok(call.notes.includes(`- ${commit.subject} (${commit.sha})`), call.notes);
 });
 
@@ -1229,7 +1262,10 @@ test("release/AC-5 : le rattrapage publie chaque version jamais publiée — tag
     assert.ok(call.args.includes("--verify-tag"), call.args);
     assert.equal(remoteSha(repo, `refs/tags/${tag}`), remoteGit(repo.remote, ["rev-parse", entry.commit]).trim(), tag);
   }
-  assert.equal(remoteGit(repo.remote, ["log", "-1", "--format=%s", "main"]).trim(), "chore(release): journal des versions");
+  assert.equal(
+    remoteGit(repo.remote, ["log", "-1", "--format=%s", "main"]).trim(),
+    "chore(release): journal des versions",
+  );
 
   // Une entrée de journal par version : les bumps d'abord (aucun), puis par plugin
   // le rattrapage de la plus récente à la plus ancienne.
@@ -1377,10 +1413,7 @@ test("le remote du harnais refuse tout push sur refs/heads/main (rôle GH006)", 
 
   const refused = spawnSync("git", ["push", "origin", "main"], { cwd: work, env: GIT_ENV, encoding: "utf8" });
   assert.notEqual(refused.status, 0, "un push sur main doit être refusé");
-  assert.ok(
-    output(refused).includes("GH006: Protected branch update failed for refs/heads/main."),
-    output(refused),
-  );
+  assert.ok(output(refused).includes("GH006: Protected branch update failed for refs/heads/main."), output(refused));
   assert.deepEqual(
     remoteGit(remote, ["for-each-ref", "--format=%(refname)", "refs/heads"]).trim(),
     "",

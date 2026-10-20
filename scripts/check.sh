@@ -34,7 +34,7 @@ pass() { echo "  ✓ $1"; }
 #                             copie imbriquée, l'opt-in, et MEM0_OMP_SKIP_* qui
 #                             garde la priorité. Comme les autres options, il ne
 #                             passe pas aux check.sh relancés dans les copies.
-SECTION_IDS="catalogue noms plugins versions extension types rust smoke tests noyau app-swift app-ios"
+SECTION_IDS="catalogue noms plugins versions extension types lint rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^socle-app-swift/'
 sections=""
 sections_set=0
@@ -379,6 +379,27 @@ if [ -f scripts/typecheck.sh ]; then
 else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
+fi
+
+if section_on lint; then
+echo "── Lint TypeScript"
+
+# Lint + format du TypeScript de omp-mem0-req/ et test/ par le Biome épinglé de
+# scripts/lint.sh (périmètre et règles : biome.jsonc). Jamais sautée : un outil
+# absent ou d'une autre version (code 3) est un échec qui nomme la commande
+# d'installation. Aucun réseau ici — seul `lint.sh --prepare` télécharge.
+lint_out="$(bash scripts/lint.sh 2>&1)"
+lint_status=$?
+[ -n "$lint_out" ] && printf '%s\n' "$lint_out"
+case "$lint_status" in
+  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, test/)" ;;
+  3) fail "linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)" ;;
+  *)
+    lint_paths="$(printf '%s\n' "$lint_out" | grep -oE '^[^[:space:]:]+\.(ts|jsonc)' | awk '!seen[$0]++' | tr '\n' ' ')"
+    lint_paths="${lint_paths% }"
+    fail "lint/format : ${lint_paths:-sortie non nulle sans fichier désigné} (relance : bash scripts/lint.sh)"
+    ;;
+esac
 fi
 
 if section_on rust; then

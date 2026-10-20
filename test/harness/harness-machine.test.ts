@@ -1,11 +1,17 @@
 // Feature harness-machine : la machine à états pure req → specs → impl → review ⇄ fix.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { STEP_TIER, afterHumanValidation, afterSpecsValidation, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "../../omp-harness/machine.ts";
+import {
+  STEP_TIER,
+  afterHumanValidation,
+  afterSpecsValidation,
+  nextAfter,
+  resumeAfterEscalations,
+  resumeAtCheckpoint,
+} from "../../omp-harness/machine.ts";
 
 const limits = { fixCap: 2, stepRetries: 1, specsGate: false };
 const done = { kind: "done" as const, escalations: 0 };
-
 
 test("harness-machine/AC-1 : la chaîne avance req → specs → impl → review, avec un rebase dû à l'entrée en revue", () => {
   assert.equal(nextAfter({ step: "req", fixes: 0, attempts: 0 }, done, limits).step, "specs");
@@ -13,7 +19,6 @@ test("harness-machine/AC-1 : la chaîne avance req → specs → impl → review
   const review = nextAfter({ step: "impl", fixes: 0, attempts: 0 }, done, limits);
   assert.deepEqual([review.state, review.step, review.rebase, review.keepRunner], ["running", "review", true, false]);
 });
-
 
 test("harness-machine/AC-2 : des bloquants envoient en correction dans le MÊME runner jusqu'au plafond, puis à l'humain", () => {
   const fix = nextAfter({ step: "review", fixes: 0, attempts: 0 }, { ...done, blockers: 2 }, limits);
@@ -25,31 +30,54 @@ test("harness-machine/AC-2 : des bloquants envoient en correction dans le MÊME 
   assert.equal(capped.keepRunner, false);
 });
 
-
 test("harness-machine/AC-3 : revue propre → auto-merge si la règle le dit, sinon validation humaine avec ses raisons", () => {
-  assert.equal(nextAfter({ step: "review", fixes: 0, attempts: 0 }, { ...done, merge: { auto: true } }, limits).state, "merging");
-  const human = nextAfter({ step: "review", fixes: 0, attempts: 0 }, { ...done, merge: { auto: false, reasons: ["risque high"], readCode: false } }, limits);
+  assert.equal(
+    nextAfter({ step: "review", fixes: 0, attempts: 0 }, { ...done, merge: { auto: true } }, limits).state,
+    "merging",
+  );
+  const human = nextAfter(
+    { step: "review", fixes: 0, attempts: 0 },
+    { ...done, merge: { auto: false, reasons: ["risque high"], readCode: false } },
+    limits,
+  );
   assert.equal(human.state, "awaiting_human");
   assert.match(human.reason, /risque high/);
 });
 
-
 test("harness-machine/AC-4 : des escalades ouvertes en fin d'étape arrêtent le run, quelle que soit l'étape", () => {
   for (const step of ["req", "specs", "impl", "review", "fix"] as const) {
-    const t = nextAfter({ step, fixes: 0, attempts: 0 }, { kind: "done", escalations: 2, blockers: 0, merge: { auto: true } }, limits);
+    const t = nextAfter(
+      { step, fixes: 0, attempts: 0 },
+      { kind: "done", escalations: 2, blockers: 0, merge: { auto: true } },
+      limits,
+    );
     assert.deepEqual([t.state, t.step, t.keepRunner], ["escalated", step, false]);
   }
-  assert.deepEqual([resumeAfterEscalations({ step: "impl", fixes: 0, attempts: 0 }).state, resumeAtCheckpoint({ step: "review", fixes: 1, attempts: 0 }, "specs", 3).step], ["queued", "specs"]);
+  assert.deepEqual(
+    [
+      resumeAfterEscalations({ step: "impl", fixes: 0, attempts: 0 }).state,
+      resumeAtCheckpoint({ step: "review", fixes: 1, attempts: 0 }, "specs", 3).step,
+    ],
+    ["queued", "specs"],
+  );
 });
-
 
 test("harness-machine/AC-5 : un échec relançable est relancé une fois, puis le run échoue", () => {
-  const retry = nextAfter({ step: "impl", fixes: 0, attempts: 0 }, { kind: "failed", reason: "runner mort", retryable: true }, limits);
+  const retry = nextAfter(
+    { step: "impl", fixes: 0, attempts: 0 },
+    { kind: "failed", reason: "runner mort", retryable: true },
+    limits,
+  );
   assert.deepEqual([retry.state, retry.step, retry.attempts], ["running", "impl", 1]);
-  assert.equal(nextAfter({ step: "impl", fixes: 0, attempts: 1 }, { kind: "failed", reason: "x", retryable: true }, limits).state, "failed");
-  assert.equal(nextAfter({ step: "impl", fixes: 0, attempts: 0 }, { kind: "failed", reason: "x", retryable: false }, limits).state, "failed");
+  assert.equal(
+    nextAfter({ step: "impl", fixes: 0, attempts: 1 }, { kind: "failed", reason: "x", retryable: true }, limits).state,
+    "failed",
+  );
+  assert.equal(
+    nextAfter({ step: "impl", fixes: 0, attempts: 0 }, { kind: "failed", reason: "x", retryable: false }, limits).state,
+    "failed",
+  );
 });
-
 
 test("harness-machine/AC-6 : modèle rapide pour /req et /specs, lourd pour /impl, /review et la correction ; un refus humain repart en correction", () => {
   assert.deepEqual(STEP_TIER, { req: "fast", specs: "fast", impl: "heavy", review: "heavy", fix: "heavy" });
@@ -58,14 +86,20 @@ test("harness-machine/AC-6 : modèle rapide pour /req et /specs, lourd pour /imp
   assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "fix", 4]);
 });
 
-
 test("harness-machine/AC-7 : avec la porte des specs, /specs terminé attend l'humain ; accord → /impl, refus → /specs refait", () => {
   const gated = nextAfter({ step: "specs", fixes: 0, attempts: 0 }, done, { ...limits, specsGate: true });
   assert.deepEqual([gated.state, gated.step, gated.keepRunner], ["awaiting_human", "specs", false]);
   // Une escalade passe avant la porte : l'humain tranche d'abord, l'étape reprend.
-  assert.equal(nextAfter({ step: "specs", fixes: 0, attempts: 0 }, { ...done, escalations: 1 }, { ...limits, specsGate: true }).state, "escalated");
+  assert.equal(
+    nextAfter({ step: "specs", fixes: 0, attempts: 0 }, { ...done, escalations: 1 }, { ...limits, specsGate: true })
+      .state,
+    "escalated",
+  );
   const cursor = { step: "specs" as const, fixes: 0, attempts: 0 };
-  assert.deepEqual([afterSpecsValidation(cursor, true, "").state, afterSpecsValidation(cursor, true, "").step], ["queued", "impl"]);
+  assert.deepEqual(
+    [afterSpecsValidation(cursor, true, "").state, afterSpecsValidation(cursor, true, "").step],
+    ["queued", "impl"],
+  );
   const refused = afterSpecsValidation(cursor, false, "AC-2 invérifiable");
   assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "specs", 0]);
   assert.match(refused.reason, /AC-2 invérifiable/);

@@ -90,7 +90,13 @@ type Exception = { file: string; reason: string } & ({ literal: string } | { con
 
 /** Contenus simulés, pas des textes de l'app : exemptés de la garde (S-7). */
 const EXCEPTIONS: readonly Exception[] = [
-  { file: "omp-console/Sources/ConsoleCore/Setup/SetupText.swift", literal: "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.", reason: "« OMP Console … puis démarre » : 3e personne qui a la forme de l’impératif (texte figé par omp-console-sans-podman S-5)" },
+  {
+    file: "omp-console/Sources/ConsoleCore/Setup/SetupText.swift",
+    literal:
+      "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.",
+    reason:
+      "« OMP Console … puis démarre » : 3e personne qui a la forme de l’impératif (texte figé par omp-console-sans-podman S-5)",
+  },
 ];
 
 /** Toutes les fautes de tutoiement des fichiers jugés et des exceptions ; triées, sans doublon. */
@@ -101,7 +107,9 @@ function tutoiementFaults(sources: Map<string, string>, exceptions: readonly Exc
     if (!inScope(file)) continue;
     for (const unit of swiftTextUnits(source)) {
       const exempt = exceptions.filter(
-        (e) => e.file === file && (("literal" in e && e.literal === unit.raw) || ("constant" in e && e.constant === unit.constant)),
+        (e) =>
+          e.file === file &&
+          (("literal" in e && e.literal === unit.raw) || ("constant" in e && e.constant === unit.constant)),
       );
       if (exempt.length > 0) {
         for (const e of exempt) used.add(e);
@@ -194,9 +202,10 @@ function withoutComments(source: string): string {
       while (source[i + hashes] === "#") hashes += 1;
       const quote = source.startsWith('"""', i + hashes) ? '"""' : '"';
       const close = quote + "#".repeat(hashes);
-      const escape = "\\" + "#".repeat(hashes);
+      const escaped = `\\${"#".repeat(hashes)}`;
       let j = i + hashes + quote.length;
-      while (j < source.length && !source.startsWith(close, j)) j += source.startsWith(escape, j) ? escape.length + 1 : 1;
+      while (j < source.length && !source.startsWith(close, j))
+        j += source.startsWith(escaped, j) ? escaped.length + 1 : 1;
       const end = Math.min(source.length, j + close.length);
       out += source.slice(i, end);
       i = end;
@@ -242,12 +251,27 @@ function conservedTerms(): string[] {
 test("ios-redaction-vouvoiement/AC-1 : aucun texte visible d'iOS ni de ConsoleCore ne tutoie ; les remèdes Mac injoignable et service mémoire vouvoient", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.ok(scoped.some((file) => file.startsWith("omp-console/Sources/ConsoleCore/")), "ConsoleCore doit être lu");
-  assert.ok(scoped.some((file) => file.startsWith("omp-console/ios/OMPConsoleIOS/")), "l'app iOS doit être lue");
+  assert.ok(
+    scoped.some((file) => file.startsWith("omp-console/Sources/ConsoleCore/")),
+    "ConsoleCore doit être lu",
+  );
+  assert.ok(
+    scoped.some((file) => file.startsWith("omp-console/ios/OMPConsoleIOS/")),
+    "l'app iOS doit être lue",
+  );
   const macErrors = texts(MAC_ERROR_TEXT);
-  assert.ok(macErrors.some((text) => text.includes("Vérifiez que le Mac est allumé")), "remède Mac injoignable au vouvoiement");
-  assert.ok(macErrors.some((text) => text.includes("puis réessayez")), "« puis réessayez » dans les remèdes");
-  assert.ok(texts(MEMORY_TEXT).some((text) => text.includes("Mettez à jour OMP Console sur le Mac")), "remède du service mémoire au vouvoiement");
+  assert.ok(
+    macErrors.some((text) => text.includes("Vérifiez que le Mac est allumé")),
+    "remède Mac injoignable au vouvoiement",
+  );
+  assert.ok(
+    macErrors.some((text) => text.includes("puis réessayez")),
+    "« puis réessayez » dans les remèdes",
+  );
+  assert.ok(
+    texts(MEMORY_TEXT).some((text) => text.includes("Mettez à jour OMP Console sur le Mac")),
+    "remède du service mémoire au vouvoiement",
+  );
 });
 
 test("ios-redaction-vouvoiement/AC-3 : la feuille Nouvelle feature ne cite ni branche ni feat/", () => {
@@ -290,7 +314,11 @@ test("ios-redaction-vouvoiement/AC-8 : un texte tutoyé échoue dans l'app iOS e
       `${file}:${plantLine(file)} « ${TUTOIEMENT} » : tutoiement (vérifie, réessaie)`,
     ]);
   }
-  assert.deepEqual(tutoiementFaults(plant(SOURCES, FILES_TEXT, swiftLiteral(TUTOIEMENT))), BASE, "la coque macOS n'est pas jugée");
+  assert.deepEqual(
+    tutoiementFaults(plant(SOURCES, FILES_TEXT, swiftLiteral(TUTOIEMENT))),
+    BASE,
+    "la coque macOS n'est pas jugée",
+  );
 });
 
 test("ios-redaction-vouvoiement/AC-9 : la garde passe sur l'arbre réel, le vouvoiement et les termes conservés du glossaire", () => {
@@ -302,12 +330,23 @@ test("ios-redaction-vouvoiement/AC-9 : la garde passe sur l'arbre réel, le vouv
     "OMP implémente, relit et ouvre la PR.",
   ];
   for (const text of polite) {
-    assert.deepEqual(tutoiementFaults(plant(SOURCES, HOME_TEXT, swiftLiteral(text))), [], `faux positif sur « ${text} »`);
+    assert.deepEqual(
+      tutoiementFaults(plant(SOURCES, HOME_TEXT, swiftLiteral(text))),
+      [],
+      `faux positif sur « ${text} »`,
+    );
   }
   const terms = conservedTerms();
   assert.ok(terms.includes("pipeline") && terms.includes("/specs"), `termes conservés mal lus : ${terms.join(", ")}`);
   const glossary = terms.join(", ");
-  assert.deepEqual(tutoiementFaults(plant(SOURCES, HOME_TEXT, swiftLiteral(glossary))), [], `faux positif sur les termes conservés « ${glossary} »`);
-  const orphan: readonly Exception[] = [...EXCEPTIONS, { file: HOME_TEXT, literal: "absent", reason: "exception fictive" }];
+  assert.deepEqual(
+    tutoiementFaults(plant(SOURCES, HOME_TEXT, swiftLiteral(glossary))),
+    [],
+    `faux positif sur les termes conservés « ${glossary} »`,
+  );
+  const orphan: readonly Exception[] = [
+    ...EXCEPTIONS,
+    { file: HOME_TEXT, literal: "absent", reason: "exception fictive" },
+  ];
   assert.deepEqual(tutoiementFaults(SOURCES, orphan), [`${HOME_TEXT} : exception orpheline absent`]);
 });

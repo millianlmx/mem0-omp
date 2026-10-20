@@ -55,9 +55,7 @@ function verbatimTests(root: string): string {
 /** Les jetons interdits présents dans le code de la section Mémoire. */
 function forbiddenFaults(root: string): string[] {
   const memory = memoryAppCode(root);
-  return FORBIDDEN.filter((token) => memory.includes(token)).map(
-    (token) => `la section Mémoire iOS contient ${token}`,
-  );
+  return FORBIDDEN.filter((token) => memory.includes(token)).map((token) => `la section Mémoire iOS contient ${token}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +172,10 @@ test("ios-souvenir-markdown-altere/AC-4 : un contenu non-souvenir garde son gras
 
   const copy = copyRepo("ios-souvenir-markdown-altere-copie-");
   const target = appPath(copy, "IOSHarnessScreens.swift");
-  const planted = code(target).replace("IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))", "Text(verbatim: specs)");
+  const planted = code(target).replace(
+    "IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))",
+    "Text(verbatim: specs)",
+  );
   assert.notEqual(planted, code(target), "la faute n'a pas pu être plantée");
   fs.writeFileSync(target, planted);
   assert.ok(otherMarkdownFaults(copy).length > 0, "un appelant sans IOSMarkdownView doit faire rougir la garde");

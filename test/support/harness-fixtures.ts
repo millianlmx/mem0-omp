@@ -23,13 +23,11 @@ import { tmpdir } from "./repo.ts";
 
 export const FAKE_RUNNER = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-omp-rpc.ts");
 
-
 export function git(cwd: string, ...args: string[]): string {
   const result = spawnSync("git", args, { cwd, env: GIT_ENV, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} : ${result.stderr}`);
   return result.stdout.trim();
 }
-
 
 /** Un clone de travail du harness : `main` avec un fichier par module, HEAD détachée (main jamais extraite). */
 export function harnessRepo(prefix = "harness-repo-"): string {
@@ -45,7 +43,6 @@ export function harnessRepo(prefix = "harness-repo-"): string {
   return root;
 }
 
-
 /** Un commit sur `main` du clone, sans l'extraire (un autre développeur a mergé). */
 export function commitOnMain(repo: string, file: string, content: string): string {
   const scratch = tmpdir("harness-main-");
@@ -58,7 +55,6 @@ export function commitOnMain(repo: string, file: string, content: string): strin
   git(repo, "worktree", "remove", "--force", scratch);
   return sha;
 }
-
 
 export function testConfig(repo: string, patch: (config: HarnessConfig) => void = () => {}): HarnessConfig {
   const base = tmpdir("harness-data-");
@@ -81,7 +77,6 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   return config;
 }
 
-
 /** Un oracle en mémoire : il rend `memories` et garde ce qu'on lui écrit. */
 export class MemoryOracle implements Oracle {
   readonly retained: { scope: string; text: string; tags: string[] }[] = [];
@@ -101,7 +96,6 @@ export class MemoryOracle implements Oracle {
   }
 }
 
-
 export type FakeWorld = {
   config: HarnessConfig;
   store: Store;
@@ -115,9 +109,16 @@ export type FakeWorld = {
   spawned: { command: string; args: string[] }[];
 };
 
-
 /** Un harness complet dont les runners sont le faux `omp` piloté par `scenario`. */
-export function fakeWorld(scenario: Record<string, unknown>, options: { repo?: string; patch?: (config: HarnessConfig) => void; exec?: Exec; memAvailableMiB?: () => number | null } = {}): FakeWorld {
+export function fakeWorld(
+  scenario: Record<string, unknown>,
+  options: {
+    repo?: string;
+    patch?: (config: HarnessConfig) => void;
+    exec?: Exec;
+    memAvailableMiB?: () => number | null;
+  } = {},
+): FakeWorld {
   const repo = options.repo ?? harnessRepo();
   const config = testConfig(repo, options.patch);
   const dir = tmpdir("harness-fake-");
@@ -144,13 +145,23 @@ export function fakeWorld(scenario: Record<string, unknown>, options: { repo?: s
     admission: config.admission,
     providers: config.providers,
     memAvailableMiB: options.memAvailableMiB ?? (() => null),
-    sleep: ms => new Promise(resolve => setTimeout(resolve, Math.min(ms, 20))),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20))),
   });
   const exec = options.exec ?? execProcess;
   const gitClient = new Git(execProcess, config.git);
   const heavy = new HeavyRunner({ config, store, scheduler, git: gitClient, exec });
   const oracle = new MemoryOracle();
-  const deps: OrchestratorDeps = { config, store, scheduler, git: gitClient, heavy, oracle, spawn: spawnFake, exec, tickMs: 25 };
+  const deps: OrchestratorDeps = {
+    config,
+    store,
+    scheduler,
+    git: gitClient,
+    heavy,
+    oracle,
+    spawn: spawnFake,
+    exec,
+    tickMs: 25,
+  };
   const orchestrator = new Orchestrator(deps);
   return {
     deps,
@@ -166,28 +177,32 @@ export function fakeWorld(scenario: Record<string, unknown>, options: { repo?: s
         .readFileSync(logFile, "utf8")
         .split("\n")
         .filter(Boolean)
-        .map(line => JSON.parse(line) as Record<string, unknown>),
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
   };
 }
-
 
 /** Attend que `predicate` soit vrai (sondage), ou échoue avec `describe()`. */
 export async function waitFor(predicate: () => boolean, describe: () => string, timeoutMs = 20_000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) throw new Error(`délai dépassé : ${describe()}`);
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
-
 /** Les actions standard d'une étape réussie, réutilisées par les scénarios. */
 export const OK = {
-  req: [{ write: ".harness/req.md", content: "## Besoins\nB-1 : exporter les données\n## Hors périmètre\n## Contraintes\n" }],
+  req: [
+    {
+      write: ".harness/req.md",
+      content: "## Besoins\nB-1 : exporter les données\n## Hors périmètre\n## Contraintes\n",
+    },
+  ],
   specs: [
     {
       write: ".harness/specs.md",
-      content: "## Spécifications\nexport CSV\n## Critères d'acceptation\nAC-1 : export\n## Modules\n- src/api\n## Découpage\naucun\n",
+      content:
+        "## Spécifications\nexport CSV\n## Critères d'acceptation\nAC-1 : export\n## Modules\n- src/api\n## Découpage\naucun\n",
     },
   ],
   impl: [
@@ -197,6 +212,17 @@ export const OK = {
   ],
   review: [
     { tool: "run_tests", args: { scope: "full" } },
-    { tool: "review_verdict", args: { risk: "low", summary: "export CSV simple", blockers: [], risks: [], files: ["src/api/export.ts"], unverified: [], confidence: "strong" } },
+    {
+      tool: "review_verdict",
+      args: {
+        risk: "low",
+        summary: "export CSV simple",
+        blockers: [],
+        risks: [],
+        files: ["src/api/export.ts"],
+        unverified: [],
+        confidence: "strong",
+      },
+    },
   ],
 };

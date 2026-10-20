@@ -41,7 +41,7 @@ function swiftLiterals(src: string): string[] {
     const multi = src.startsWith('"""', j);
     const open = multi ? 3 : 1;
     const close = (multi ? '"""' : '"') + "#".repeat(hashes);
-    const escape = "\\" + "#".repeat(hashes);
+    const escapeText = `\\${"#".repeat(hashes)}`;
     j += open;
     let text = "";
     while (j < src.length) {
@@ -49,8 +49,8 @@ function swiftLiterals(src: string): string[] {
         literals.push(text);
         return j + close.length;
       }
-      if (src.startsWith(escape, j)) {
-        const after = j + escape.length;
+      if (src.startsWith(escapeText, j)) {
+        const after = j + escapeText.length;
         if (src[after] === "(") {
           j = readCode(after + 1, ")");
           continue;

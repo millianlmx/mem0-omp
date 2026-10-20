@@ -14,8 +14,7 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 const GUARD = "scripts/no-manual-bump.sh";
-const SUFFIX =
-  "le bump appartient au job de release : retire ce changement de la PR (PUBLISHING.md, § Mettre à jour)";
+const SUFFIX = "le bump appartient au job de release : retire ce changement de la PR (PUBLISHING.md, § Mettre à jour)";
 
 type Catalog = {
   metadata?: { version?: string; [key: string]: unknown };
@@ -28,8 +27,8 @@ function readJson<T>(dir: string, rel: string): T {
 }
 
 /** Les plugins LOCAUX du catalogue : les porteurs de version du dépôt. */
-const PLUGINS = readJson<Catalog>(ROOT, CATALOGS[0]).plugins
-  .filter((entry) => typeof entry.source === "string" && entry.source.startsWith("./"))
+const PLUGINS = readJson<Catalog>(ROOT, CATALOGS[0])
+  .plugins.filter((entry) => typeof entry.source === "string" && entry.source.startsWith("./"))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 function git(args: string[], cwd: string): string {
@@ -124,7 +123,9 @@ test("catalogue : une entrée et `metadata.version` montées à la main sont nom
   assert.equal(run.status, 1, output(run));
   for (const catalog of CATALOGS) {
     assert.ok(
-      output(run).includes(`  ✗ ${catalog} : version de ${memory.name} modifiée à la main (${before} → ${after}) — ${SUFFIX}`),
+      output(run).includes(
+        `  ✗ ${catalog} : version de ${memory.name} modifiée à la main (${before} → ${after}) — ${SUFFIX}`,
+      ),
       output(run),
     );
     assert.ok(
@@ -201,10 +202,7 @@ test("base absente ou introuvable : sortie non nulle, diagnostic nommé", () => 
 
   const unknown = runGuard(dir, ["--base", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"]);
   assert.notEqual(unknown.status, 0, output(unknown));
-  assert.ok(
-    output(unknown).includes("✗ base introuvable : deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
-    output(unknown),
-  );
+  assert.ok(output(unknown).includes("✗ base introuvable : deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"), output(unknown));
 
   const bogus = runGuard(dir, ["--inconnue", "x"]);
   assert.notEqual(bogus.status, 0, output(bogus));

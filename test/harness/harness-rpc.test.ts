@@ -7,9 +7,13 @@ import { PassThrough } from "node:stream";
 import { RpcRunner, isRateLimit } from "../../omp-harness/rpc.ts";
 import type { RunnerProcess } from "../../omp-harness/rpc.ts";
 
-
 /** Un process factice : on écrit ses trames stdout, on lit ce que le runner lui envoie. */
-function fakeProc(): { proc: RunnerProcess; emit: (frame: object) => void; sent: () => Record<string, unknown>[]; exit: () => void } {
+function fakeProc(): {
+  proc: RunnerProcess;
+  emit: (frame: object) => void;
+  sent: () => Record<string, unknown>[];
+  exit: () => void;
+} {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -29,11 +33,15 @@ function fakeProc(): { proc: RunnerProcess; emit: (frame: object) => void; sent:
     once: (event, listener) => events.once(event, listener),
     on: (event, listener) => events.on(event, listener),
   };
-  return { proc, emit: frame => stdout.write(`${JSON.stringify(frame)}\n`), sent: () => lines.map(line => JSON.parse(line)), exit: () => events.emit("exit", 1, null) };
+  return {
+    proc,
+    emit: (frame) => stdout.write(`${JSON.stringify(frame)}\n`),
+    sent: () => lines.map((line) => JSON.parse(line)),
+    exit: () => events.emit("exit", 1, null),
+  };
 }
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
-
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 test("harness-rpc/AC-1 : ready attendu, commandes corrélées par id, prompt résolu au prompt_result (pas à l'accusé)", async () => {
   const { proc, emit, sent } = fakeProc();
@@ -46,7 +54,7 @@ test("harness-rpc/AC-1 : ready attendu, commandes corrélées par id, prompt ré
   emit({ id: setId, type: "response", command: "set_host_tools", success: true, data: { toolNames: [] } });
   assert.deepEqual(await tools, { toolNames: [] });
   let settled = false;
-  const prompt = runner.prompt("bonjour").then(result => {
+  const prompt = runner.prompt("bonjour").then((result) => {
     settled = true;
     return result;
   });
@@ -57,13 +65,15 @@ test("harness-rpc/AC-1 : ready attendu, commandes corrélées par id, prompt ré
   await tick();
   assert.equal(settled, false, "l'accusé ne termine pas le prompt");
   // Une ligne non JSON (bruit) est ignorée, une trame coupée en deux se recolle.
-  proc.stdout?.emit("data", "bruit\n{\"type\":\"prompt_res");
-  proc.stdout?.emit("data", `ult","id":"${promptId}","status":"error","error":{"message":"429 rate limit","httpStatus":429}}\n`);
+  proc.stdout?.emit("data", 'bruit\n{"type":"prompt_res');
+  proc.stdout?.emit(
+    "data",
+    `ult","id":"${promptId}","status":"error","error":{"message":"429 rate limit","httpStatus":429}}\n`,
+  );
   const result = await prompt;
   assert.equal(result.status, "error");
   assert.equal(isRateLimit(result.error), true);
 });
-
 
 test("harness-rpc/AC-2 : un host_tool_call est exécuté par le service et répondu par host_tool_result", async () => {
   const { proc, emit, sent } = fakeProc();
@@ -76,13 +86,16 @@ test("harness-rpc/AC-2 : un host_tool_call est exécuté par le service et répo
   });
   emit({ type: "host_tool_call", id: "c1", toolCallId: "t1", toolName: "run_tests", arguments: { scope: "touched" } });
   emit({ type: "host_tool_call", id: "c2", toolCallId: "t2", toolName: "boom", arguments: {} });
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(calls, ['run_tests:{"scope":"touched"}', "boom:{}"]);
-  const results = sent().filter(frame => frame.type === "host_tool_result");
-  assert.deepEqual(results[0], { type: "host_tool_result", id: "c1", result: { content: [{ type: "text", text: "VERT" }], details: { outcome: "pass" } } });
+  const results = sent().filter((frame) => frame.type === "host_tool_result");
+  assert.deepEqual(results[0], {
+    type: "host_tool_result",
+    id: "c1",
+    result: { content: [{ type: "text", text: "VERT" }], details: { outcome: "pass" } },
+  });
   assert.equal(results[1]?.isError, true);
 });
-
 
 test("harness-rpc/AC-3 : un dialogue bloquant est annulé (aucun humain dans un runner) ; un dialogue informatif est ignoré", async () => {
   const { proc, emit, sent } = fakeProc();
@@ -92,7 +105,6 @@ test("harness-rpc/AC-3 : un dialogue bloquant est annulé (aucun humain dans un 
   await tick();
   assert.deepEqual(sent(), [{ type: "extension_ui_response", id: "u1", cancelled: true }]);
 });
-
 
 test("harness-rpc/AC-4 : la mort du runner rejette toutes les attentes en vol", async () => {
   const { proc, exit } = fakeProc();
@@ -104,7 +116,6 @@ test("harness-rpc/AC-4 : la mort du runner rejette toutes les attentes en vol", 
   assert.equal(runner.alive, false);
   await assert.rejects(runner.setModel("p", "m"), /runner arrêté/);
 });
-
 
 test("harness-rpc/AC-5 : un runner qu'on ne peut pas signaler (lancé par sudo) est arrêté par son unité, et l'arrêt reste borné", async () => {
   const stdin = new PassThrough();

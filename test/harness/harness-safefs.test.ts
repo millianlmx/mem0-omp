@@ -7,7 +7,6 @@ import * as path from "node:path";
 import { ensureArtifactsDir, readArtifact, writeArtifact } from "../../omp-harness/safefs.ts";
 import { tmpdir } from "../support/repo.ts";
 
-
 test("harness-safefs/AC-1 : un artefact qui est un lien (vers le jeton du service) n'est jamais lu", () => {
   const worktree = tmpdir("harness-safefs-");
   const secret = path.join(tmpdir("harness-secret-"), "token");
@@ -21,7 +20,6 @@ test("harness-safefs/AC-1 : un artefact qui est un lien (vers le jeton du servic
   assert.equal(readArtifact(dir, "dossier.md"), null);
 });
 
-
 test("harness-safefs/AC-2 : écrire un artefact remplace un lien au lieu d'écrire à travers lui", () => {
   const worktree = tmpdir("harness-safefs-");
   const victim = path.join(tmpdir("harness-victim-"), "config");
@@ -32,7 +30,6 @@ test("harness-safefs/AC-2 : écrire un artefact remplace un lien au lieu d'écri
   assert.equal(fs.readFileSync(victim, "utf8"), "intact");
   assert.equal(fs.lstatSync(path.join(dir, "specs.md")).isFile(), true);
 });
-
 
 test("harness-safefs/AC-3 : un dossier `.harness` remplacé par un lien est recréé en vrai dossier, la cible intacte", () => {
   const worktree = tmpdir("harness-safefs-");

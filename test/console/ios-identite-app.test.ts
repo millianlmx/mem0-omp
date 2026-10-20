@@ -128,7 +128,9 @@ function parseJSON(files: Files, rel: string, faults: string[]): unknown {
 /** AC-3 : l'AppIcon déclare les trois variantes, chacune pourvue d'un PNG 1024² du type imposé. */
 function appIconFaults(files: Files = new Map()): string[] {
   const faults: string[] = [];
-  const root = parseJSON(files, CATALOG_CONTENTS, faults) as { info?: { author?: unknown; version?: unknown } } | undefined;
+  const root = parseJSON(files, CATALOG_CONTENTS, faults) as
+    | { info?: { author?: unknown; version?: unknown } }
+    | undefined;
   if (root !== undefined && (root.info?.author !== "xcode" || root.info?.version !== 1)) {
     faults.push(`${CATALOG_CONTENTS} : info ≠ {author: xcode, version: 1}`);
   }
@@ -158,7 +160,9 @@ function appIconFaults(files: Files = new Map()): string[] {
       faults.push(`${APPICON_CONTENTS} : variante ${label} ≠ universal / ios / 1024x1024`);
     }
     if (image.filename !== variant.filename) {
-      faults.push(`${APPICON_CONTENTS} : variante ${label} pointe ${String(image.filename)}, ${variant.filename} attendu`);
+      faults.push(
+        `${APPICON_CONTENTS} : variante ${label} pointe ${String(image.filename)}, ${variant.filename} attendu`,
+      );
       continue;
     }
     const rel = path.join(APPICON, variant.filename);
@@ -176,7 +180,9 @@ function appIconFaults(files: Files = new Map()): string[] {
       faults.push(`${rel} : ${header.width} × ${header.height}, 1024 × 1024 attendu`);
     }
     if (header.depth !== 8 || header.colorType !== variant.colorType) {
-      faults.push(`${rel} : PNG ${header.depth} bits type ${header.colorType}, 8 bits type ${variant.colorType} attendu`);
+      faults.push(
+        `${rel} : PNG ${header.depth} bits type ${header.colorType}, 8 bits type ${variant.colorType} attendu`,
+      );
     }
   }
   return faults;
@@ -238,7 +244,9 @@ function accentColorFaults(files: Files = new Map()): string[] {
       }
       const { idiom, color } = matching[0];
       if (color?.reference !== undefined) {
-        faults.push(`${ACCENT_CONTENTS} : variante ${variant.label} par référence ${String(color.reference)}, valeurs sRGB explicites attendues`);
+        faults.push(
+          `${ACCENT_CONTENTS} : variante ${variant.label} par référence ${String(color.reference)}, valeurs sRGB explicites attendues`,
+        );
         continue;
       }
       const components = color?.components ?? {};
@@ -263,15 +271,21 @@ function accentColorFaults(files: Files = new Map()): string[] {
     const total = pbxproj.match(new RegExp(`\\b${key}\\b`, "g"))?.length ?? 0;
     const line = `${key} = ${value};`;
     const inApp = appConfigurations.filter((block) => block.settings.split("\n").some((row) => row.trim() === line));
-    const names = inApp.map((block) => block.name).sort().join(" + ");
+    const names = inApp
+      .map((block) => block.name)
+      .sort()
+      .join(" + ");
     if (total !== 2 || names !== "Debug + Release") {
-      faults.push(`${PBXPROJ} : ${key} présent ${total} fois (${names || "aucune configuration app"}), attendu = ${value} dans Debug et Release de com.omp.console.ios seulement`);
+      faults.push(
+        `${PBXPROJ} : ${key} présent ${total} fois (${names || "aucune configuration app"}), attendu = ${value} dans Debug et Release de com.omp.console.ios seulement`,
+      );
     }
   }
   return faults;
 }
 
-const NETWORK_MESSAGE = "OMP Console se connecte à votre Mac sur le réseau local pour afficher et piloter vos pipelines.";
+const NETWORK_MESSAGE =
+  "OMP Console se connecte à votre Mac sur le réseau local pour afficher et piloter vos pipelines.";
 const NETWORK_PREFIX = "OMP Console se connecte à votre Mac";
 
 /** AC-7 : le message de l'alerte « Réseau local » parle à l'utilisateur, au vouvoiement, sans vocabulaire interne. */
@@ -282,18 +296,22 @@ function networkMessageFaults(files: Files = new Map()): string[] {
   const message = plist.match(/<key>NSLocalNetworkUsageDescription<\/key>\s*<string>([^<]*)<\/string>/)?.[1];
   if (message === undefined) return [`${IOS_PLIST} : NSLocalNetworkUsageDescription absent`];
   if (message !== NETWORK_MESSAGE) faults.push(`${IOS_PLIST} : message ≠ « ${NETWORK_MESSAGE} »`);
-  if (!message.startsWith(NETWORK_PREFIX)) faults.push(`${IOS_PLIST} : le message ne commence pas par « ${NETWORK_PREFIX} »`);
+  if (!message.startsWith(NETWORK_PREFIX))
+    faults.push(`${IOS_PLIST} : le message ne commence pas par « ${NETWORK_PREFIX} »`);
   for (const word of ["coque", "macos"]) {
     if (message.toLowerCase().includes(word)) faults.push(`${IOS_PLIST} : le message contient « ${word} »`);
   }
-  if (!/\bvotre\b/.test(message) || !/\bvos\b/.test(message)) faults.push(`${IOS_PLIST} : le message ne vouvoie pas (« votre », « vos »)`);
+  if (!/\bvotre\b/.test(message) || !/\bvos\b/.test(message))
+    faults.push(`${IOS_PLIST} : le message ne vouvoie pas (« votre », « vos »)`);
   if (message.includes("'")) faults.push(`${IOS_PLIST} : apostrophe droite dans le message`);
   const services = plist.match(/<key>NSBonjourServices<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1];
   const names = [...(services ?? "").matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1]);
   if (names.join(",") !== "_ompconsole._tcp") faults.push(`${IOS_PLIST} : NSBonjourServices ≠ [_ompconsole._tcp]`);
-  if (!/<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/.test(plist)) faults.push(`${IOS_PLIST} : NSAllowsArbitraryLoads ≠ true`);
+  if (!/<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/.test(plist))
+    faults.push(`${IOS_PLIST} : NSAllowsArbitraryLoads ≠ true`);
   // Présent, il fait ignorer NSAllowsArbitraryLoads : l'adresse Tailscale (100.64/10) échouerait en -1022.
-  if (plist.includes("<key>NSAllowsLocalNetworking</key>")) faults.push(`${IOS_PLIST} : NSAllowsLocalNetworking présent`);
+  if (plist.includes("<key>NSAllowsLocalNetworking</key>"))
+    faults.push(`${IOS_PLIST} : NSAllowsLocalNetworking présent`);
   return faults;
 }
 
@@ -323,7 +341,8 @@ function launchScreenFaults(files: Files = new Map(), tree: string[] = iosTree()
     const extra = [...new Set([...pbxproj.matchAll(/\bINFOPLIST_KEY_UILaunch\w*/g)].map((match) => match[0]))]
       .filter((key) => key !== "INFOPLIST_KEY_UILaunchScreen_Generation")
       .sort();
-    for (const key of extra) faults.push(`${PBXPROJ} : ${key} interdit (seul INFOPLIST_KEY_UILaunchScreen_Generation est admis)`);
+    for (const key of extra)
+      faults.push(`${PBXPROJ} : ${key} interdit (seul INFOPLIST_KEY_UILaunchScreen_Generation est admis)`);
     const generating = buildConfigurations(pbxproj)
       .filter((block) => block.settings.includes(APP_BUNDLE_LINE))
       .filter((block) => block.settings.split("\n").some((row) => row.trim() === LAUNCH_GENERATION_LINE))
@@ -331,7 +350,9 @@ function launchScreenFaults(files: Files = new Map(), tree: string[] = iosTree()
       .sort()
       .join(" + ");
     if (generating !== "Debug + Release") {
-      faults.push(`${PBXPROJ} : ${LAUNCH_GENERATION_LINE} dans ${generating || "aucune configuration app"}, attendu dans Debug et Release de com.omp.console.ios`);
+      faults.push(
+        `${PBXPROJ} : ${LAUNCH_GENERATION_LINE} dans ${generating || "aucune configuration app"}, attendu dans Debug et Release de com.omp.console.ios`,
+      );
     }
   }
 
@@ -389,7 +410,8 @@ function designIdentityFaults(files: Files = new Map()): string[] {
   if (start === -1) return [`${DESIGN} : section « ${IDENTITY_HEADING} » absente`];
   const faults: string[] = [];
   const previous = lines.slice(0, start).findLast((line) => line.startsWith("## "));
-  if (previous !== PREVIOUS_HEADING) faults.push(`${DESIGN} : la section suit « ${previous ?? "rien"} », attendu « ${PREVIOUS_HEADING} »`);
+  if (previous !== PREVIOUS_HEADING)
+    faults.push(`${DESIGN} : la section suit « ${previous ?? "rien"} », attendu « ${PREVIOUS_HEADING} »`);
 
   const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
   const section = lines.slice(start + 1, end === -1 ? lines.length : end);
@@ -401,7 +423,8 @@ function designIdentityFaults(files: Files = new Map()): string[] {
   IDENTITY_MARKERS.forEach((name, index) => {
     const marker = `\`[test: ${name}]\``;
     const last = blocks[index]?.at(-1)?.trimEnd();
-    if (last === undefined || !last.endsWith(marker)) faults.push(`${DESIGN} : la puce ${index + 1} ne finit pas par ${marker}`);
+    if (last === undefined || !last.endsWith(marker))
+      faults.push(`${DESIGN} : la puce ${index + 1} ne finit pas par ${marker}`);
     if (!new RegExp(`func ${name}\\s*\\(`).test(swift)) faults.push(`${IDENTITY_TESTS} : aucune fonction ${name}`);
   });
   for (const [, kind, value] of section.join("\n").matchAll(/\[(capture|garde): ([^\]]+)\]/g)) {
@@ -410,7 +433,8 @@ function designIdentityFaults(files: Files = new Map()): string[] {
 
   const before = lines.slice(0, start).join("\n");
   for (const name of KEPT_MARKERS) {
-    if (!before.includes(`[test: ${name}]`)) faults.push(`${DESIGN} : la puce [test: ${name}] a quitté la section précédente`);
+    if (!before.includes(`[test: ${name}]`))
+      faults.push(`${DESIGN} : la puce [test: ${name}] a quitté la section précédente`);
   }
   return faults;
 }
@@ -450,9 +474,7 @@ test("ios-identite-app/AC-3 : l'AppIcon déclare les variantes claire, sombre et
   const tinted = path.join(APPICON, "AppIcon-tinted.png");
   const rgbTinted = Buffer.from(fs.readFileSync(path.join(ROOT, tinted)));
   rgbTinted[25] = 2;
-  assert.deepEqual(appIconFaults(planted(tinted, rgbTinted)), [
-    `${tinted} : PNG 8 bits type 2, 8 bits type 0 attendu`,
-  ]);
+  assert.deepEqual(appIconFaults(planted(tinted, rgbTinted)), [`${tinted} : PNG 8 bits type 2, 8 bits type 0 attendu`]);
 });
 
 test("ios-identite-app/AC-4 : l'AccentColor du catalogue vaut le bleu système (quatre valeurs sRGB, aucune référence), compilée par la seule cible app", () => {
@@ -474,8 +496,8 @@ test("ios-identite-app/AC-4 : l'AccentColor du catalogue vaut le bleu système (
   // La clé d'accent posée aussi dans la cible de tests.
   const pbxproj = fs.readFileSync(path.join(ROOT, PBXPROJ), "utf8");
   const leaked = pbxproj.replace(
-    "BUNDLE_LOADER = \"$(TEST_HOST)\";",
-    "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;\n\t\t\t\tBUNDLE_LOADER = \"$(TEST_HOST)\";",
+    'BUNDLE_LOADER = "$(TEST_HOST)";',
+    'ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;\n\t\t\t\tBUNDLE_LOADER = "$(TEST_HOST)";',
   );
   assert.notEqual(leaked, pbxproj, "la faute plantée doit toucher la cible de tests");
   assert.deepEqual(accentColorFaults(planted(PBXPROJ, leaked)), [
@@ -516,7 +538,10 @@ test("ios-identite-app/AC-8 : l'écran de lancement reste celui que génère Xco
 
   // Un storyboard de lancement déclaré dans le plist source et posé dans l'arbre.
   const plist = fs.readFileSync(path.join(ROOT, IOS_PLIST), "utf8");
-  const storyboard = plist.replace("<dict>", "<dict>\n\t<key>UILaunchStoryboardName</key>\n\t<string>LaunchScreen</string>");
+  const storyboard = plist.replace(
+    "<dict>",
+    "<dict>\n\t<key>UILaunchStoryboardName</key>\n\t<string>LaunchScreen</string>",
+  );
   assert.notEqual(storyboard, plist, "la faute plantée doit toucher le plist source");
   const launchFile = path.join(IOS_DIR, "OMPConsoleIOS", "LaunchScreen.storyboard");
   assert.deepEqual(launchScreenFaults(planted(IOS_PLIST, storyboard), [...iosTree(), launchFile]), [
@@ -538,7 +563,12 @@ test("ios-identite-app/AC-10 : DESIGN.md décrit l'icône, l'accent, le message 
 
   // La section déplacée ailleurs, avec une capture neuve.
   const block = design.slice(design.indexOf(IDENTITY_HEADING), design.indexOf("## Les six tons"));
-  const moved = design.replace(block, "").replace("## États vide et erreur", `${block.replace("(TN3179)", "(TN3179) `[capture: iphone-home-light]`")}## États vide et erreur`);
+  const moved = design
+    .replace(block, "")
+    .replace(
+      "## États vide et erreur",
+      `${block.replace("(TN3179)", "(TN3179) `[capture: iphone-home-light]`")}## États vide et erreur`,
+    );
   assert.deepEqual(designIdentityFaults(planted(DESIGN, moved)), [
     `${DESIGN} : la section suit « ## Les six tons », attendu « ${PREVIOUS_HEADING} »`,
     `${DESIGN} : marqueur [capture: iphone-home-light] interdit dans la section (aucune capture ni garde neuve)`,

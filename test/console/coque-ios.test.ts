@@ -209,7 +209,8 @@ type RawTarget = { id: string; groups: string[] };
 /** Les cibles déclarées par un `project.pbxproj` : id et groupes synchronisés. */
 function nativeTargets(pbxproj: string): RawTarget[] {
   const out: RawTarget[] = [];
-  const blocks = pbxproj.split("/* Begin PBXNativeTarget section */")[1]?.split("/* End PBXNativeTarget section */")[0] ?? "";
+  const blocks =
+    pbxproj.split("/* Begin PBXNativeTarget section */")[1]?.split("/* End PBXNativeTarget section */")[0] ?? "";
   const pattern = /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{([\s\S]*?)\n\t\t\};/g;
   for (const match of blocks.matchAll(pattern)) {
     const body = match[2];
@@ -232,9 +233,13 @@ function pbxprojFaults(root: string): string[] {
   const version = Number(/objectVersion\s*=\s*(\d+)\s*;/.exec(text)?.[1] ?? "0");
   if (version < 77) faults.push(`objectVersion ${version} < 77 (dossiers synchronisés)`);
 
-  const syncSection = text.split("/* Begin PBXFileSystemSynchronizedRootGroup section */")[1]?.split("/* End PBXFileSystemSynchronizedRootGroup section */")[0] ?? "";
+  const syncSection =
+    text
+      .split("/* Begin PBXFileSystemSynchronizedRootGroup section */")[1]
+      ?.split("/* End PBXFileSystemSynchronizedRootGroup section */")[0] ?? "";
   const groupIds = new Map<string, string>();
-  const groupPattern = /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{\s*isa = PBXFileSystemSynchronizedRootGroup;[\s\S]*?path = ([A-Za-z0-9_]+);/g;
+  const groupPattern =
+    /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{\s*isa = PBXFileSystemSynchronizedRootGroup;[\s\S]*?path = ([A-Za-z0-9_]+);/g;
   for (const match of syncSection.matchAll(groupPattern)) groupIds.set(match[1], match[2]);
   for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests"]) {
     if (![...groupIds.values()].includes(expected)) faults.push(`groupe synchronisé ${expected} absent`);
@@ -247,8 +252,10 @@ function pbxprojFaults(root: string): string[] {
     if (owner === undefined) faults.push(`groupe synchronisé ${name} rattaché à aucune cible`);
   }
 
-  const references = text.split("/* Begin PBXFileReference section */")[1]?.split("/* End PBXFileReference section */")[0] ?? "";
-  if (/path = [^;]*\.swift;/.test(references)) faults.push("un PBXFileReference pointe un .swift (le dossier doit être synchronisé)");
+  const references =
+    text.split("/* Begin PBXFileReference section */")[1]?.split("/* End PBXFileReference section */")[0] ?? "";
+  if (/path = [^;]*\.swift;/.test(references))
+    faults.push("un PBXFileReference pointe un .swift (le dossier doit être synchronisé)");
 
   for (const section of ["PBXSourcesBuildPhase"]) {
     const body = text.split(`/* Begin ${section} section */`)[1]?.split(`/* End ${section} section */`)[0] ?? "";
@@ -259,11 +266,13 @@ function pbxprojFaults(root: string): string[] {
     }
   }
 
-  if (!/XCLocalSwiftPackageReference;[\s\S]*?relativePath = \.\.;/.test(text)) faults.push("XCLocalSwiftPackageReference relativePath = .. absent");
+  if (!/XCLocalSwiftPackageReference;[\s\S]*?relativePath = \.\.;/.test(text))
+    faults.push("XCLocalSwiftPackageReference relativePath = .. absent");
   const packageRef = text.split("/* Begin PBXProject section */")[1]?.split("/* End PBXProject section */")[0] ?? "";
   if (!/packageReferences\s*=\s*\([\s\S]*?[0-9A-F]{24}/.test(packageRef)) faults.push("packageReferences vide");
 
-  if (!/XCSwiftPackageProductDependency;[\s\S]*?productName = ConsoleCore;/.test(text)) faults.push("XCSwiftPackageProductDependency ConsoleCore absent");
+  if (!/XCSwiftPackageProductDependency;[\s\S]*?productName = ConsoleCore;/.test(text))
+    faults.push("XCSwiftPackageProductDependency ConsoleCore absent");
   for (const target of targets) {
     const body = text.slice(text.indexOf(`\n\t\t${target.id} /*`));
     const dependencies = /packageProductDependencies\s*=\s*\(([\s\S]*?)\);/.exec(body)?.[1] ?? "";
@@ -275,7 +284,10 @@ function pbxprojFaults(root: string): string[] {
     [/TARGETED_DEVICE_FAMILY = "1,2";/, 'TARGETED_DEVICE_FAMILY = "1,2"'],
     [/SDKROOT = iphoneos;/, "SDKROOT = iphoneos"],
     [/PRODUCT_BUNDLE_IDENTIFIER = com\.omp\.console\.ios;/, "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios"],
-    [/PRODUCT_BUNDLE_IDENTIFIER = com\.omp\.console\.ios\.tests;/, "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests"],
+    [
+      /PRODUCT_BUNDLE_IDENTIFIER = com\.omp\.console\.ios\.tests;/,
+      "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests",
+    ],
     [/GENERATE_INFOPLIST_FILE = YES;/, "GENERATE_INFOPLIST_FILE = YES"],
     [/INFOPLIST_KEY_UILaunchScreen_Generation = YES;/, "INFOPLIST_KEY_UILaunchScreen_Generation = YES"],
   ];
@@ -283,7 +295,15 @@ function pbxprojFaults(root: string): string[] {
     if (!pattern.test(text)) faults.push(`${label} absent`);
   }
 
-  const scheme = path.join(root, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "xcshareddata", "xcschemes", "OMPConsoleIOS.xcscheme");
+  const scheme = path.join(
+    root,
+    "omp-console",
+    "ios",
+    "OMPConsoleIOS.xcodeproj",
+    "xcshareddata",
+    "xcschemes",
+    "OMPConsoleIOS.xcscheme",
+  );
   if (!fs.existsSync(scheme)) faults.push("schéma partagé absent");
   else if (!/TestableReference/.test(fs.readFileSync(scheme, "utf8"))) faults.push("schéma sans TestAction testable");
 
@@ -362,7 +382,9 @@ function waitingFaults(root: string): string[] {
     faults.push(`le libellé d'attente retiré apparaît ${occurrences} fois sous omp-console/ (0 attendue)`);
   }
 
-  const app = appSources(root).map((s) => s.code).join("\n");
+  const app = appSources(root)
+    .map((s) => s.code)
+    .join("\n");
   if (!app.includes("ProcessInfo")) faults.push("ProcessInfo (argument de lancement) absent");
   if (app.includes("UserDefaults")) faults.push("UserDefaults présent (magasin local interdit)");
   return faults;
@@ -421,7 +443,8 @@ function tokenFaults(root: string): string[] {
     }
     const declarations = text.match(/\b(?:struct|enum|class|actor|protocol)\s+(\w+)/g) ?? [];
     for (const declaration of declarations) {
-      if (/Terminal|Files/.test(declaration)) faults.push(`${path.relative(root, file)} : déclaration « ${declaration} »`);
+      if (/Terminal|Files/.test(declaration))
+        faults.push(`${path.relative(root, file)} : déclaration « ${declaration} »`);
     }
   }
   // Terminal et Fichiers ne se nomment qu'au filtre de `IOSSection.all`, et dans le
@@ -461,7 +484,10 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("objectVersion = 77;", "objectVersion = 70;"));
-  assert.ok(pbxprojFaults(copy).some((f) => f.includes("objectVersion")), "objectVersion 70 doit faire rougir la garde");
+  assert.ok(
+    pbxprojFaults(copy).some((f) => f.includes("objectVersion")),
+    "objectVersion 70 doit faire rougir la garde",
+  );
 
   // Preuve réelle (S-1) : un .swift neuf dans le dossier de l'app est compilé
   // sans qu'aucune ligne du .xcodeproj n'ait changé.
@@ -475,8 +501,15 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
   const built = shared.fresh();
   const marker = path.join(built, "omp-console", "ios", "OMPConsoleIOS", "NouvelleSection.swift");
   fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .home\n");
-  const before = fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8");
-  const run = spawnSync("bash", ["scripts/ios-build.sh", "--no-tests"], { cwd: built, encoding: "utf8", timeout: 900_000 });
+  const before = fs.readFileSync(
+    path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"),
+    "utf8",
+  );
+  const run = spawnSync("bash", ["scripts/ios-build.sh", "--no-tests"], {
+    cwd: built,
+    encoding: "utf8",
+    timeout: 900_000,
+  });
   assert.equal(run.status, 0, output(run));
   assert.equal(
     fs.readFileSync(path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"), "utf8"),
@@ -495,22 +528,34 @@ test("coque-ios/AC-2 : les sources de l'app ne recopient ni liste, ni libellé, 
   );
   const faults = sectionFaults(copy);
   assert.ok(faults.length > 0, "une seconde liste doit faire rougir la garde");
-  assert.ok(faults.some((f) => f.includes("SecondeListe.swift")), `la garde doit nommer le fichier fautif : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("SecondeListe.swift")),
+    `la garde doit nommer le fichier fautif : ${faults.join(" | ")}`,
+  );
 });
 
 test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView", () => {
   assert.deepEqual(navigationFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const split = shared.fresh();
-  fs.writeFileSync(path.join(split, "omp-console", "ios", "OMPConsoleIOS", "Partage.swift"), "struct Partage: View { var body: some View { NavigationSplitView { } detail: { } } }\n");
-  assert.ok(navigationFaults(split).some((f) => f.includes("NavigationSplitView")), "un NavigationSplitView doit faire rougir la garde");
+  fs.writeFileSync(
+    path.join(split, "omp-console", "ios", "OMPConsoleIOS", "Partage.swift"),
+    "struct Partage: View { var body: some View { NavigationSplitView { } detail: { } } }\n",
+  );
+  assert.ok(
+    navigationFaults(split).some((f) => f.includes("NavigationSplitView")),
+    "un NavigationSplitView doit faire rougir la garde",
+  );
 
   const plain = shared.fresh();
   const rootFile = path.join(plain, "omp-console", "ios", "OMPConsoleIOS", "RootView.swift");
   const rootCode = fs.readFileSync(rootFile, "utf8");
   assert.ok(rootCode.includes(".tabViewStyle(.sidebarAdaptable)"), "la faute doit s'appliquer à la vraie RootView");
   fs.writeFileSync(rootFile, rootCode.replace(".tabViewStyle(.sidebarAdaptable)", ".tabViewStyle(.automatic)"));
-  assert.ok(navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")), "une RootView sans .sidebarAdaptable doit faire rougir la garde");
+  assert.ok(
+    navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")),
+    "une RootView sans .sidebarAdaptable doit faire rougir la garde",
+  );
 });
 
 test("coque-ios/AC-4 : les six écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
@@ -531,7 +576,10 @@ test("coque-ios/AC-4 : les six écrans réels remplacent l'écran d'attente et l
     path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "Double.swift"),
     `let double = "${RETIRED_WAITING}"\n`,
   );
-  assert.ok(waitingFaults(replant).some((f) => f.includes("retiré")), "le libellé retiré doit faire rougir la garde");
+  assert.ok(
+    waitingFaults(replant).some((f) => f.includes("retiré")),
+    "le libellé retiré doit faire rougir la garde",
+  );
 });
 
 test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans rougir, et durcit en CI", (t) => {
@@ -566,7 +614,10 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   assert.ok(idleOut.includes("── App iOS"), idleOut);
   assert.ok(idleOut.includes("non exécuté"), idleOut);
   assert.ok(!idleOut.includes("✓ App iOS"), `aucune ✓ ne doit être affichée : ${idleOut}`);
-  assert.ok(!fs.existsSync(log) || fs.readFileSync(log, "utf8") === "", "xcodebuild ne doit jamais être appelé hors macOS");
+  assert.ok(
+    !fs.existsSync(log) || fs.readFileSync(log, "utf8") === "",
+    "xcodebuild ne doit jamais être appelé hors macOS",
+  );
 
   // La même absence, durcie par la variable de la CI macOS : c'est un échec.
   const strict = runCheck(shared.fresh(), "app-ios", {
@@ -580,12 +631,18 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
 
 test("coque-ios/AC-6 : le script de captures réalise les cinq gestes et écrit un chemin ignoré par git", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.ok(fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8").includes("omp-console/build/"), "omp-console/build/ doit être ignoré par git");
+  assert.ok(
+    fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8").includes("omp-console/build/"),
+    "omp-console/build/ doit être ignoré par git",
+  );
 
   const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("bootstatus", "attente"));
-  assert.ok(shotsFaults(copy).some((f) => f.includes("bootstatus")), "un geste manquant doit faire rougir la garde");
+  assert.ok(
+    shotsFaults(copy).some((f) => f.includes("bootstatus")),
+    "un geste manquant doit faire rougir la garde",
+  );
 });
 
 test("coque-ios/AC-7 : la documentation donne le simulateur et la procédure d'appareil réel", () => {
@@ -594,7 +651,10 @@ test("coque-ios/AC-7 : la documentation donne le simulateur et la procédure d'a
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "README.md");
   fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("## Coque iOS", "## Coque"));
-  assert.ok(docFaults(copy).some((f) => f.includes("## Coque iOS")), "une section absente doit faire rougir la garde");
+  assert.ok(
+    docFaults(copy).some((f) => f.includes("## Coque iOS")),
+    "une section absente doit faire rougir la garde",
+  );
 });
 
 test("coque-ios/AC-8 : aucun réseau, aucun magasin, aucun badge, ni Terminal ni Fichiers", () => {
@@ -603,9 +663,12 @@ test("coque-ios/AC-8 : aucun réseau, aucun magasin, aucun badge, ni Terminal ni
   const copy = shared.fresh();
   fs.writeFileSync(
     path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Reseau.swift"),
-    'import Foundation\nlet session = URLSession.shared\n',
+    "import Foundation\nlet session = URLSession.shared\n",
   );
   const faults = tokenFaults(copy);
   assert.ok(faults.length > 0, "un appel réseau doit faire rougir la garde");
-  assert.ok(faults.some((f) => f.includes("URLSession")), `la garde doit nommer le jeton : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("URLSession")),
+    `la garde doit nommer le jeton : ${faults.join(" | ")}`,
+  );
 });

@@ -1,0 +1,37 @@
+{
+  // Biome (version épinglée dans scripts/lint.sh) : lint + format du TypeScript de omp-mem0-req/ et test/ seulement.
+  "root": true,
+  "vcs": { "enabled": false },
+  "files": { "includes": ["omp-mem0-req/**/*.ts", "test/**/*.ts"] },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120, "lineEnding": "lf" },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "arrowParentheses": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        // Convention du dépôt : `!` après un accès indexé ou un `.find()` (≈ 1600 sites), car tsconfig.json est
+        // `strict` SANS `noUncheckedIndexedAccess`. Le correctif proposé (`?.`) remplacerait un TypeError par un
+        // `undefined` silencieux : il changerait le comportement.
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        // Les tests cherchent volontairement des littéraux `${…}` de sources Swift et de sorties App Shortcut
+        // (test/outillage/check.test.ts:691, test/console/ios-memoire-graphe.test.ts:270).
+        "noTemplateCurlyInString": "off",
+        // Le panneau retire volontairement séquences ANSI et caractères de contrôle par regex
+        // (omp-mem0-req/panelWidth.ts ANSI_AT/ANSI_GLOBAL/CONTROL_GLOBAL, panel.ts, panelRows.ts SGR_MOUSE, inbox.ts).
+        "noControlCharactersInRegex": "off"
+      }
+    }
+  },
+  // Le tri des imports n'est ni du lint ni du format (hors B-1) : l'ordre des imports reste celui écrit à la main.
+  "assist": { "enabled": false }
+}

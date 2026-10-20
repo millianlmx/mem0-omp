@@ -56,7 +56,8 @@ function singleTranslatorFaults(root: string): string[] {
   const faults: string[] = [];
 
   const translator = source(path.join(dir, "IOSMacErrorText.swift"));
-  if (!/\benum\s+IOSMacErrorText\b/.test(translator)) faults.push("IOSMacErrorText.swift ne déclare pas IOSMacErrorText");
+  if (!/\benum\s+IOSMacErrorText\b/.test(translator))
+    faults.push("IOSMacErrorText.swift ne déclare pas IOSMacErrorText");
 
   for (const name of TRANSLATING_FILES) {
     if (!source(path.join(dir, name)).includes("IOSMacErrorText.message(for:")) {
@@ -70,7 +71,8 @@ function singleTranslatorFaults(root: string): string[] {
   }
 
   const files = sectionFiles(dir);
-  if (files.length < TRANSLATING_FILES.length + SERVER_FILES.length) faults.push(`${files.length} écrans lus : le scan ne trouve pas les sections`);
+  if (files.length < TRANSLATING_FILES.length + SERVER_FILES.length)
+    faults.push(`${files.length} écrans lus : le scan ne trouve pas les sections`);
   for (const name of files) {
     const text = source(path.join(dir, name));
     for (const raw of RAW_DETAILS) {
@@ -86,16 +88,24 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, a
   // La garde est vivante : réintroduire `api.message` dans IOSMemoryText la fait rougir.
   const copy = copyRepo("ios-erreurs-serveur-lisibles-copie-");
   const memory = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryText.swift");
-  fs.appendFileSync(memory, "\nextension IOSMemoryText { static func raw(_ api: ConsoleAPIError) -> String? { api.message } }\n");
+  fs.appendFileSync(
+    memory,
+    "\nextension IOSMemoryText { static func raw(_ api: ConsoleAPIError) -> String? { api.message } }\n",
+  );
   assert.ok(
-    singleTranslatorFaults(copy).some((fault) => fault.includes("IOSMemoryText.swift") && fault.includes("api.message")),
+    singleTranslatorFaults(copy).some(
+      (fault) => fault.includes("IOSMemoryText.swift") && fault.includes("api.message"),
+    ),
     "api.message planté dans IOSMemoryText doit faire rougir la garde",
   );
 
   // Retirer l'appel au traducteur d'une section la fait aussi rougir.
   const copy2 = copyRepo("ios-erreurs-serveur-lisibles-copie-");
   const screen = path.join(copy2, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
-  fs.writeFileSync(screen, fs.readFileSync(screen, "utf8").replaceAll("IOSMacErrorText.message(for:", "Fake.message(for:"));
+  fs.writeFileSync(
+    screen,
+    fs.readFileSync(screen, "utf8").replaceAll("IOSMacErrorText.message(for:", "Fake.message(for:"),
+  );
   assert.ok(
     singleTranslatorFaults(copy2).some((fault) => fault.includes("IOSMemoryScreen.swift ne passe pas")),
     "une section qui ne passe plus par le traducteur doit faire rougir la garde",
@@ -104,8 +114,17 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, a
   // Et un écran du serveur qui affiche la description brute d'une erreur.
   const copy3 = copyRepo("ios-erreurs-serveur-lisibles-copie-");
   const harness = path.join(copy3, "omp-console", "ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
-  fs.writeFileSync(harness, fs.readFileSync(harness, "utf8").replace("Text(failure.message)", "Text(failure.localizedDescription)"));
+  fs.writeFileSync(
+    harness,
+    fs.readFileSync(harness, "utf8").replace("Text(failure.message)", "Text(failure.localizedDescription)"),
+  );
   const faults3 = singleTranslatorFaults(copy3);
-  assert.ok(faults3.some((fault) => fault.includes("IOSHarnessScreens.swift ne passe pas")), "un écran du serveur sans traducteur doit rougir");
-  assert.ok(faults3.some((fault) => fault.includes("localizedDescription")), "une description brute doit rougir");
+  assert.ok(
+    faults3.some((fault) => fault.includes("IOSHarnessScreens.swift ne passe pas")),
+    "un écran du serveur sans traducteur doit rougir",
+  );
+  assert.ok(
+    faults3.some((fault) => fault.includes("localizedDescription")),
+    "une description brute doit rougir",
+  );
 });

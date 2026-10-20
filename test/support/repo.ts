@@ -45,16 +45,27 @@ export function tmpdir(prefix: string): string {
 }
 
 /** Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
- * racine de types jetable, le stockage vectoriel local et les artefacts de
- * build. Les scratchs SwiftPM (`.build`, `.build-<quoi>`) sont reconnus par
- * PRÉFIXE : un scratch inconnu pèse des centaines de Mo. */
+ * racine de types jetable, le Biome préparé, le stockage vectoriel local et les
+ * artefacts de build. Les scratchs SwiftPM (`.build`, `.build-<quoi>`) sont
+ * reconnus par PRÉFIXE : un scratch inconnu pèse des centaines de Mo. */
 const EXCLUDED_SEGMENTS: Record<string, true> = {
   ".git": true,
   node_modules: true,
   ".typecheck": true,
+  ".lint": true,
   qdrant_storage: true,
   build: true,
   target: true,
+};
+
+/**
+ * Le Biome épinglé des `check.sh` imbriqués (section `lint`) : celui que
+ * `bash scripts/lint.sh --prepare` a posé dans `<ROOT>/.lint`, ou le dossier que
+ * l'appelant désigne déjà. Les copies jetables n'emportent pas `.lint/` ; à
+ * étaler dans l'env de tout lancement qui exécute un check.sh complet.
+ */
+export const LINT_TOOL_ENV: Record<string, string> = {
+  MEM0_OMP_LINT_DIR: process.env.MEM0_OMP_LINT_DIR || path.join(ROOT, ".lint"),
 };
 
 export type CopyOptions = {

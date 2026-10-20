@@ -105,7 +105,12 @@ function detailCloseFaults(root: string): string[] {
 }
 
 /** Une faute plantée dans `rel` de la copie jetable, puis retirée : la garde doit rougir. */
-function plant(copy: string, rel: string[], mutate: (text: string) => string, run: (root: string) => string[]): string[] {
+function plant(
+  copy: string,
+  rel: string[],
+  mutate: (text: string) => string,
+  run: (root: string) => string[],
+): string[] {
   const file = path.join(copy, ...rel);
   const original = fs.readFileSync(file, "utf8");
   const mutated = mutate(original);
@@ -135,7 +140,10 @@ test("ios-finitions-titres-icones/AC-1 : chaque écran n'a que le titre de navig
     (text) => text.replace("List {\n", "List {\n                    Text(section.title)\n"),
     titleFaults,
   );
-  assert.ok(faults.some((f) => f.includes("Text(section.title)")), `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("Text(section.title)")),
+    `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-4 : l'icône iOS d'une section passe par IOSSection.systemImage(of:)", () => {
@@ -147,7 +155,10 @@ test("ios-finitions-titres-icones/AC-4 : l'icône iOS d'une section passe par IO
     (text) => text.replaceAll("IOSSection.systemImage(of: section)", "section.systemImage"),
     sectionIconFaults,
   );
-  assert.ok(root.some((f) => f.includes("RootView.swift")), `une icône du noyau dans la barre latérale doit faire rougir la garde : ${root.join(" | ")}`);
+  assert.ok(
+    root.some((f) => f.includes("RootView.swift")),
+    `une icône du noyau dans la barre latérale doit faire rougir la garde : ${root.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-5 : « Sommaire » et « Liste » portent deux symboles distincts", () => {
@@ -158,7 +169,10 @@ test("ios-finitions-titres-icones/AC-5 : « Sommaire » et « Liste » portent d
     (text) => text.replace("IOSMemoryText.summarySymbol", "IOSMemoryText.listSymbol"),
     memoryIconFaults,
   );
-  assert.ok(faults.some((f) => f.includes("summarySymbol")), `Sommaire sans son symbole doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("summarySymbol")),
+    `Sommaire sans son symbole doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });
 
 test("ios-finitions-titres-icones/AC-7 : la fiche d'un souvenir a son bouton « Fermer » de 44 pt", () => {
@@ -169,5 +183,8 @@ test("ios-finitions-titres-icones/AC-7 : la fiche d'un souvenir a son bouton « 
     (text) => text.replace(/^.*\.accessibilityIdentifier\(IOSMemoryAccessibility\.close\)\n/m, ""),
     detailCloseFaults,
   );
-  assert.ok(faults.some((f) => f.includes("IOSMemoryAccessibility.close")), `un bouton sans identifiant doit faire rougir la garde : ${faults.join(" | ")}`);
+  assert.ok(
+    faults.some((f) => f.includes("IOSMemoryAccessibility.close")),
+    `un bouton sans identifiant doit faire rougir la garde : ${faults.join(" | ")}`,
+  );
 });

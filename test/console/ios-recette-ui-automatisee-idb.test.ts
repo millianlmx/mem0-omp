@@ -144,10 +144,10 @@ function releves(perso: Personnalisation = {}): string {
       const nom = `${surface}-${apparence}-${taille}`;
       const base = perso.marqueur?.(surface, apparence, taille) ?? marqueurPropre(surface);
       const arbre = [application(), ...base, ...(perso.elements?.(surface, apparence, taille) ?? [])];
-      fs.writeFileSync(path.join(dossier, nom + ".json"), JSON.stringify(arbre));
+      fs.writeFileSync(path.join(dossier, `${nom}.json`), JSON.stringify(arbre));
       const bandes = perso.bandes?.(surface, apparence, taille) ?? [];
-      if (bandes.length === 0) fs.copyFileSync(pngUni(apparence), path.join(dossier, nom + ".png"));
-      else peindre(path.join(dossier, nom + ".png"), apparence, bandes);
+      if (bandes.length === 0) fs.copyFileSync(pngUni(apparence), path.join(dossier, `${nom}.png`));
+      else peindre(path.join(dossier, `${nom}.png`), apparence, bandes);
     }
   }
   for (const f of perso.sans ?? []) fs.rmSync(path.join(dossier, f));
@@ -286,7 +286,10 @@ test("ios-recette-ui-automatisee-idb/AC-4 : deux éléments portant le même ide
   assert.equal(p.status, 1);
   assert.equal(p.lignes.length, 2);
   for (const l of p.lignes) {
-    assert.ok(l.startsWith(`SIGNALÉ\t${CTX("memory")}\tregle=id-duplique\tsource=ax\telement=id:ios.memoire.row.m1\t`), l);
+    assert.ok(
+      l.startsWith(`SIGNALÉ\t${CTX("memory")}\tregle=id-duplique\tsource=ax\telement=id:ios.memoire.row.m1\t`),
+      l,
+    );
   }
   assert.ok(p.lignes[0].endsWith("cadre=20.0,180.0,300.0x44.0"));
   assert.ok(p.lignes[1].endsWith("cadre=20.0,240.0,300.0x44.0"));
@@ -413,7 +416,14 @@ test("ordre du rapport : surfaces, puis configurations, puis règles, puis ordre
     }),
   );
   assert.deepEqual(
-    p.lignes.map((l) => l.split("\t").slice(1, 7).map((c) => c.split("=")[1]).join("|").replace(/\|(ax)\|/, "|$1|")),
+    p.lignes.map((l) =>
+      l
+        .split("\t")
+        .slice(1, 7)
+        .map((c) => c.split("=")[1])
+        .join("|")
+        .replace(/\|(ax)\|/, "|$1|"),
+    ),
     [
       "home|clair|defaut|cible-44|ax|id:home.clair",
       "home|sombre|defaut|cible-44|ax|id:zz.court",
@@ -501,12 +511,16 @@ test("exceptions : justification vide ou absente, clé inconnue, source capture 
 test("exceptions : fichier absent, JSON invalide et valeur non tableau font sortir en 2 avec le chemin", () => {
   for (const contenu of ["{pas du json", "{}"]) {
     const f = ecrireExceptions(contenu);
-    const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", f, "--valider-seulement"], { encoding: "utf8" });
+    const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", f, "--valider-seulement"], {
+      encoding: "utf8",
+    });
     assert.equal(r.status, 2);
     assert.ok(r.stderr.startsWith(`exceptions invalides : ${f} : `), r.stderr);
   }
   const absent = path.join(TMP, "nexiste-pas.json");
-  const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", absent, "--valider-seulement"], { encoding: "utf8" });
+  const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", absent, "--valider-seulement"], {
+    encoding: "utf8",
+  });
   assert.equal(r.status, 2);
   assert.ok(r.stderr.startsWith(`exceptions invalides : ${absent} : `), r.stderr);
 });
@@ -541,9 +555,13 @@ test("exceptions protégées : une par famille d'audit sort en 2 avec le message
 });
 
 test("la liste d'exceptions versionnée est valide", () => {
-  const r = spawnSync("python3", [ANALYSEUR, "analyser", "--exceptions", EXCEPTIONS_VERSIONNEES, "--valider-seulement"], {
-    encoding: "utf8",
-  });
+  const r = spawnSync(
+    "python3",
+    [ANALYSEUR, "analyser", "--exceptions", EXCEPTIONS_VERSIONNEES, "--valider-seulement"],
+    {
+      encoding: "utf8",
+    },
+  );
   assert.equal(r.status, 0, r.stderr);
 });
 
@@ -561,20 +579,36 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(illisible.stderr.trim(), "relevé invalide : stats-clair-ax-xl.json");
 
   const sansApp = releves();
-  fs.writeFileSync(path.join(sansApp, "home-clair-defaut.json"), JSON.stringify([{ type: "Button", frame: cadre(0, 0, 10, 10) }]));
+  fs.writeFileSync(
+    path.join(sansApp, "home-clair-defaut.json"),
+    JSON.stringify([{ type: "Button", frame: cadre(0, 0, 10, 10) }]),
+  );
   assert.equal(analyser(sansApp).stderr.trim(), "relevé invalide : home-clair-defaut.json");
 
   const racine = analyser(
-    releves({ marqueur: (s, a) => (s === "project" && a === "sombre" ? [{ type: "StaticText", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 100, 44) }] : undefined) }),
+    releves({
+      marqueur: (s, a) =>
+        s === "project" && a === "sombre"
+          ? [{ type: "StaticText", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 100, 44) }]
+          : undefined,
+    }),
   );
   assert.equal(racine.status, 2);
   assert.equal(racine.stderr.trim(), "surface non vérifiée : project sombre defaut (marqueur absent)");
 
   const relie = analyser(
-    releves({ marqueur: (s) => (s === "kanban" ? [{ type: "StaticText", AXUniqueId: "ios.screen.kanban", frame: cadre(20, 100, 100, 44) }] : undefined) }),
+    releves({
+      marqueur: (s) =>
+        s === "kanban"
+          ? [{ type: "StaticText", AXUniqueId: "ios.screen.kanban", frame: cadre(20, 100, 100, 44) }]
+          : undefined,
+    }),
   );
   assert.equal(relie.status, 2);
-  assert.equal(relie.stderr.trim(), "simulateur relié : la recette exige un simulateur jamais relié au serveur de pipelines");
+  assert.equal(
+    relie.stderr.trim(),
+    "simulateur relié : la recette exige un simulateur jamais relié au serveur de pipelines",
+  );
   assert.equal(relie.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
 });
 
@@ -590,16 +624,46 @@ test("marqueur : vrai sur la surface annoncée, faux sur la liste « Plus » ou 
   for (const s of SURFACES) assert.equal(sonde(s, []), 1, `${s} vide`);
   const plus: Element = { type: "Button", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 300, 60) };
   assert.equal(sonde("home", [...marqueurPropre("home"), plus]), 1);
-  for (const id of ["ios.connexion.horsLigne.ecran", "ios.connexion.enCours.ecran", "ios.connexion.cause", "ios.connexion.attente"]) {
-    assert.equal(sonde("home", [...marqueurPropre("home"), { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) }]), 1, id);
+  for (const id of [
+    "ios.connexion.horsLigne.ecran",
+    "ios.connexion.enCours.ecran",
+    "ios.connexion.cause",
+    "ios.connexion.attente",
+  ]) {
+    assert.equal(
+      sonde("home", [
+        ...marqueurPropre("home"),
+        { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) },
+      ]),
+      1,
+      id,
+    );
   }
   const bandeau: Element = { type: "StaticText", AXUniqueId: "ios.connexion.message", frame: cadre(20, 100, 300, 60) };
-  assert.equal(sonde("home", [...marqueurPropre("home"), bandeau]), 0, "un bandeau au-dessus des données n'exclut pas la surface");
+  assert.equal(
+    sonde("home", [...marqueurPropre("home"), bandeau]),
+    0,
+    "un bandeau au-dessus des données n'exclut pas la surface",
+  );
   assert.equal(sonde("kanban", marqueurPropre("home")), 1, "l'écran d'une autre section");
-  assert.equal(sonde("project", [{ type: "StaticText", AXLabel: "Projet", frame: cadre(20, 100, 100, 44) }]), 1, "libellé sans type Heading");
-  assert.equal(sonde("project", [{ type: "StaticText", AXUniqueId: "ios.screen.project", frame: cadre(20, 100, 100, 44) }]), 0);
-  assert.equal(sonde("project", [{ type: "Other", AXUniqueId: "Projet", frame: cadre(0, 50, 402, 44) }]), 0, "la barre de navigation");
-  assert.equal(sonde("stats", [{ type: "StaticText", AXUniqueId: "ios.screen.stats", frame: cadre(20, 100, 100, 44) }]), 0);
+  assert.equal(
+    sonde("project", [{ type: "StaticText", AXLabel: "Projet", frame: cadre(20, 100, 100, 44) }]),
+    1,
+    "libellé sans type Heading",
+  );
+  assert.equal(
+    sonde("project", [{ type: "StaticText", AXUniqueId: "ios.screen.project", frame: cadre(20, 100, 100, 44) }]),
+    0,
+  );
+  assert.equal(
+    sonde("project", [{ type: "Other", AXUniqueId: "Projet", frame: cadre(0, 50, 402, 44) }]),
+    0,
+    "la barre de navigation",
+  );
+  assert.equal(
+    sonde("stats", [{ type: "StaticText", AXUniqueId: "ios.screen.stats", frame: cadre(20, 100, 100, 44) }]),
+    0,
+  );
   const inconnue = spawnSync("python3", [ANALYSEUR, "marqueur", "autre", "x.json"], { encoding: "utf8" });
   assert.equal(inconnue.status, 2);
 });

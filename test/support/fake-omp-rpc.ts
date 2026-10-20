@@ -18,7 +18,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 
-type Action = { write?: string; content?: string; tool?: string; args?: Record<string, unknown>; error?: Record<string, unknown>; sleep?: number };
+type Action = {
+  write?: string;
+  content?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  sleep?: number;
+};
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
 const stateDir = process.env.FAKE_STATE as string;
@@ -51,11 +58,20 @@ const waiting = new Map<string, (text: string) => void>();
 let toolSeq = 0;
 let currentStep = "req";
 
-log({ kind: "argv", argv: process.argv.slice(2), cwd: process.cwd(), env: Object.fromEntries(["MEM0_PROJECT_ID", "MEM0_AUTOSETUP", "MEM0_NUDGE", "MEM0_HTTP_URL", "MEM0_HTTP_TOKEN", "HARNESS_TOKEN"].map(key => [key, process.env[key] ?? null])) });
+log({
+  kind: "argv",
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  env: Object.fromEntries(
+    ["MEM0_PROJECT_ID", "MEM0_AUTOSETUP", "MEM0_NUDGE", "MEM0_HTTP_URL", "MEM0_HTTP_TOKEN", "HARNESS_TOKEN"].map(
+      (key) => [key, process.env[key] ?? null],
+    ),
+  ),
+});
 
 function callTool(name: string, args: Record<string, unknown>): Promise<string> {
   const id = `fake-tool-${++toolSeq}`;
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     waiting.set(id, resolve);
     out({ type: "host_tool_call", id, toolCallId: id, toolName: name, arguments: args });
   });
@@ -68,7 +84,7 @@ async function runPrompt(id: string, message: string): Promise<void> {
   const actions = occurrence(nudge ? `${currentStep}-nudge` : currentStep);
   log({ kind: "prompt", step: currentStep, nudge, message });
   for (const action of actions) {
-    if (action.sleep) await new Promise(resolve => setTimeout(resolve, action.sleep));
+    if (action.sleep) await new Promise((resolve) => setTimeout(resolve, action.sleep));
     if (action.write) {
       fs.mkdirSync(path.dirname(action.write), { recursive: true });
       fs.writeFileSync(action.write, action.content ?? "");
@@ -78,29 +94,42 @@ async function runPrompt(id: string, message: string): Promise<void> {
       log({ kind: "tool", step: currentStep, tool: action.tool, result });
     }
     if (action.error) {
-      out({ type: "prompt_result", id, agentInvoked: true, status: "error", error: action.error, sessionSettled: true });
+      out({
+        type: "prompt_result",
+        id,
+        agentInvoked: true,
+        status: "error",
+        error: action.error,
+        sessionSettled: true,
+      });
       return;
     }
   }
   out({ type: "prompt_result", id, agentInvoked: true, status: "completed", sessionSettled: true });
 }
 
-out({ type: "ready", protocolVersion: 1, supportedProtocolVersions: [1, 2], maxFrameBytes: 1 << 20, maxReassembledFrameBytes: 1 << 24 });
+out({
+  type: "ready",
+  protocolVersion: 1,
+  supportedProtocolVersions: [1, 2],
+  maxFrameBytes: 1 << 20,
+  maxReassembledFrameBytes: 1 << 24,
+});
 
 const lines = readline.createInterface({ input: process.stdin });
-lines.on("line", line => {
+lines.on("line", (line) => {
   if (line.trim() === "") return;
   const frame = JSON.parse(line) as Record<string, unknown>;
   const id = typeof frame.id === "string" ? frame.id : "";
   switch (frame.type) {
     case "host_tool_result": {
       const result = frame.result as { content: { text: string }[] };
-      waiting.get(id)?.(result.content.map(part => part.text).join("\n"));
+      waiting.get(id)?.(result.content.map((part) => part.text).join("\n"));
       waiting.delete(id);
       return;
     }
     case "set_host_tools":
-      log({ kind: "command", type: frame.type, tools: (frame.tools as { name: string }[]).map(tool => tool.name) });
+      log({ kind: "command", type: frame.type, tools: (frame.tools as { name: string }[]).map((tool) => tool.name) });
       out({ id, type: "response", command: "set_host_tools", success: true, data: { toolNames: [] } });
       return;
     case "set_model":
