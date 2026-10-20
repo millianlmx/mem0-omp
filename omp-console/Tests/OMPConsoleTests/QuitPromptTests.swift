@@ -9,7 +9,7 @@ import Testing
 func quitPromptTerminalAlone() throws {
     let prompt = try #require(QuitPrompt.make([.terminalCommand(name: "sleep")]))
     #expect(prompt.title == "Quitter arrêtera des activités en cours.")
-    #expect(prompt.message == "La commande « sleep » du Terminal s’arrêtera.")
+    #expect(prompt.message == "La commande « sleep » du Terminal s’arrêtera.")
 }
 
 @Test("mac-quitter-sans-confirmation/AC-8 : sans activité, aucune alerte")

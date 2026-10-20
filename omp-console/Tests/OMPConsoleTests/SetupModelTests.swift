@@ -1009,8 +1009,6 @@ func setupTextsAreFrozen() {
     ] == [
         "Préparation d’OMP Console",
         "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.",
-        "OMP n’est pas installé",
-        "Installez OMP depuis la feuille de préparation : les fonctions qui en dépendent se débloquent à la fin de l’installation.",
         "Réessayer",
         "Fermer",
         "Installer",

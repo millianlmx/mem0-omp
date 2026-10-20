@@ -96,7 +96,7 @@ struct QuitFlowTests {
         #expect(harness.quit.request() == .cancelled)
         #expect(harness.prompts.count == 1)
         #expect(harness.prompts.first?.title == QuitText.title)
-        #expect(harness.prompts.first?.message == "La commande « sleep » du Terminal s’arrêtera.")
+        #expect(harness.prompts.first?.message == "La commande « sleep » du Terminal s’arrêtera.")
         // Rien d'autre : ni accroche, ni feuille fermée, ni terminaison.
         try? await Task.sleep(for: .milliseconds(100))
         #expect(harness.log == ["alerte"])

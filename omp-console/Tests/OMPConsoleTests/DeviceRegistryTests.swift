@@ -27,13 +27,13 @@ struct DeviceRegistryTests {
         let bytes = try await openConsoleStream(session, base: stack.base, token: token)
         var iterator = bytes.lines.makeAsyncIterator()
 
-        // Les deux premières trames : `hello` puis l'instantané du magasin.
+        // Les deux premières trames : `hello` puis les appareils appairés.
         var frames: [String] = []
         while let line = try await iterator.next() {
             if line.hasPrefix("event: ") { frames.append(line) }
             if frames.count >= 2 { break }
         }
-        #expect(frames == ["event: hello", "event: store"])
+        #expect(frames == ["event: hello", "event: devices"])
 
         // Révocation pendant que le flux est ouvert.
         await stack.registry.revoke(id: deviceId)
@@ -209,7 +209,7 @@ struct DeviceRegistryTests {
             if line.hasPrefix("event: ") { frames.append(line) }
             if frames.count >= 2 { break }
         }
-        #expect(frames == ["event: hello", "event: store"])
+        #expect(frames == ["event: hello", "event: devices"])
 
         _ = try await keyedPair(stack, deviceKey: "cle-tab-a")
         let started = Date()
