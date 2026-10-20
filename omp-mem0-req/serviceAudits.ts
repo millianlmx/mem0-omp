@@ -360,7 +360,7 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
           }
           if (feature.state === "cancelled") continue;
           const ack = await sendCommand(audit, { kind: "cancel", slug: feature.slug, fate: "keep" });
-          if (ack.state === "taken") result.cancelled.push(feature.slug);
+          if (ack.state !== "refused") result.cancelled.push(feature.slug);
           else result.refused.push({ slug: feature.slug, reason: ack.reason ?? "commande refusée" });
         }
         // 4. L'audit arrêté, relu : la fin d'analyse ou le lancement attendu a pu l'écrire.

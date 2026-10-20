@@ -29,3 +29,12 @@ func journalLineIsFrozen() {
     #expect(ActionsText.journalLine(for: entry(.failed(reason: "échec x"), kind: ActionsText.launchLabel, target: "T"))
         == "\(ActionsText.launchLabel) · T · échec : échec x")
 }
+
+@Test("pilote-fins-de-run-ignorees-et-rang-impl/AC-5 : `already` se lit « annulation déjà en cours » dans le journal et le bandeau")
+func alreadyStateIsFrozen() {
+    #expect(ActionsText.stateText(.already) == "annulation déjà en cours")
+    #expect(ActionsText.journalLine(for: entry(.already, kind: ActionsText.stopLabel, target: "alpha"))
+        == "arrêt · alpha · annulation déjà en cours")
+    #expect(HomeText.launchBanner(title: "Titre", state: .already)
+        == "Annulation de «\u{00A0}Titre\u{00A0}» déjà en cours.")
+}

@@ -9,12 +9,12 @@ import type { PipelinePhase } from "./contract.ts";
 import { entriesOfText } from "./panelSession.ts";
 import { pilotMessagesOf } from "./pilotTools.ts";
 import type { ReviewScope } from "./seeds.ts";
-import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
-import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
+import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, runCommits, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
+import type { GitResult, GitRunner, RunCommits, WorktreeCheck } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_FAILURE_STDERR_MAX, LOT_FAILURE_STDOUT_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { ArbiterRelaunchMotive, HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { ARBITER_RELAUNCH_MAX, ARBITRATION_REFUSAL, blockedQuotaOf, buildEscalationAlert, runHardDeadlineMinutes } from "./lot.ts";
-import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import { CANCEL_ALREADY_REASON, COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
@@ -294,6 +294,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * sort, et une feature que l'utilisateur annule ne doit pas finir « échouée ».
    */
   const cancelling = new Set<string>();
+  /**
+   * Les runs INTERROMPUS par `abortAll` (la commande `stop`, la fermeture de la
+   * session, l'arrêt du service) qui n'ont pas encore rendu la main. La feature
+   * reste `running` : ni `cancelling` (réservé à l'annulation d'une feature), ni
+   * `inFlight` (le run n'est plus suivi). La passe saute une telle feature.
+   */
+  const abandoned = new Set<string>();
+  /**
+   * Les runs abandonnés QUI ONT RENDU la main, avec leur mesure de commits (null :
+   * non mesurée) : la réconciliation les consomme pour juger la feature et dater
+   * son motif. Jamais persisté — un redémarrage du service les perd, et la feature
+   * garde alors le motif « pilote disparu ».
+   */
+  const interrupted = new Map<string, RunCommits | null>();
   /**
    * Les features dont la relance à l'échéance de leur quota est EN COURS dans ce process (S-9) :
    * plusieurs passes consécutives ne lancent jamais deux fois la même feature.
@@ -867,6 +881,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const abort = new AbortController();
     inFlight.set(feature.slug, abort);
     watched.set(feature.slug, "inflight");
+    interrupted.delete(feature.slug);
     workBudget.set(feature.slug, { spent: 0, since: at });
     // Le hash du contrat est figé AVANT le lancement, et ÉCRIT avant lui (S-1) :
     // c'est le seul indice dont disposera un pilote qui reprend un run interrompu
@@ -904,10 +919,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return;
     }
     const startedAt = now();
-    // La référence HEAD d'un run d'impl (S-2) : relevée APRÈS la sauvegarde du lot
-    // et AVANT le lancement, gardée en mémoire seulement — un run repris par la
-    // réconciliation n'en a donc pas, et sa chaîne reste celle d'avant. Une
-    // exception (capture ou `deps.run`, synchrone ou non) garde son sort : code 127.
+    // La référence HEAD d'un run d'impl ou de release (S-2, S-3) : relevée APRÈS la
+    // sauvegarde du lot et AVANT le lancement, gardée en mémoire seulement — un run
+    // repris par la réconciliation n'en a donc pas, et sa chaîne reste celle d'avant.
+    // Une exception (capture ou `deps.run`, synchrone ou non) garde son sort : code 127.
     // Les autres phases gardent EXACTEMENT leur chaîne d'avant : aucun saut de
     // microtâche de plus entre la fin d'un run et son traitement.
     let check: WorktreeCheck | null = null;
@@ -931,25 +946,34 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return Promise.reject(err);
       }
     };
-    // La vérification du worktree : seulement un run d'impl rendu en succès, ni
-    // tué, ni en quota, et dont on a la référence. Elle a lieu pendant que la
-    // feature est encore `inFlight` : la passe ne la relance pas.
-    const spawnImpl = async (): Promise<LotRunnerResult> => {
+    // Un run qui REJETTE (spawn refusé, exception) rend le code 127 : l'échec
+    // appartient à cette feature, jamais à la passe.
+    const crashed = (err: unknown): LotRunnerResult => ({
+      code: 127,
+      killed: false,
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+    });
+    // Les phases impl ET release (S-3) relèvent HEAD avant le run et mesurent ses
+    // commits à SA FIN, quel que soit son résultat (succès, tué, erreur, rejet) :
+    // la mesure précède le traitement de la fin, donc la phase B de la passe, qui
+    // est synchrone, n'a aucun git à attendre. Elle se fait pendant que la feature
+    // est encore `inFlight` : la passe ne la relance pas.
+    let commits: RunCommits | null = null;
+    // La vérification du worktree (impl seulement) : un run rendu en succès, ni
+    // tué, ni en quota, et dont on a la référence.
+    const spawnMeasured = async (): Promise<LotRunnerResult> => {
       const head = await worktreeHead(deps.runGit, feature.worktree);
-      const result = await spawn();
-      if (head !== null && result.code === 0 && !result.killed && result.quota === undefined) {
+      const result = await spawn().catch(crashed);
+      if (launch.phase === "impl" && head !== null && result.code === 0 && !result.killed && result.quota === undefined) {
         check = await worktreeProduced(deps.runGit, feature.worktree, head);
       }
+      commits = head === null ? "unknown" : await runCommits(deps.runGit, feature.worktree, head);
       return result;
     };
-    void (launch.phase === "impl" ? spawnImpl() : spawn())
-      .catch((err: unknown) => ({
-        code: 127,
-        killed: false,
-        stdout: "",
-        stderr: err instanceof Error ? err.message : String(err),
-      }))
-      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt, check));
+    void (launch.phase === "impl" || launch.phase === "release" ? spawnMeasured() : spawn())
+      .catch(crashed)
+      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt, check, commits));
   }
 
   /**
@@ -985,10 +1009,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     result: LotRunnerResult,
     startedAt: number,
     check: WorktreeCheck | null,
+    commits: RunCommits | null,
   ): void {
     inFlight.delete(slug);
     workBudget.delete(slug);
-    watched.set(slug, "settled");
     // Le budget de travail de CE run est consommé : le marqueur dit que le
     // dépassement vient de nous, pas du runner (qui rapporterait autre chose).
     const expired = expiredRuns.delete(slug);
@@ -997,9 +1021,22 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // dossier, lui, est retiré dans TOUS les cas — un run tué ou repris par un
     // autre pilote ne laisse pas de boîte derrière lui.
     const leftovers = takeInbox(slug);
+    // Un run ABANDONNÉ par `stop` rend la main (S-1) : rien n'est écrit, la feature
+    // reste `running` et ne porte AUCUNE marque `settled` — la passe la réconcilie
+    // par le hash du contrat. La mesure de commits du run attend cette passe.
+    if (abandoned.delete(slug)) {
+      watched.delete(slug);
+      interrupted.set(slug, commits);
+      return;
+    }
     // Une annulation en cours décide SEULE du sort de sa feature (S-9) : le run
-    // qu'elle vient de tuer ne la marque pas `failed`.
-    if (cancelling.has(slug)) return;
+    // qu'elle vient de tuer ne la marque pas `failed`, et ne la marque pas
+    // `settled` non plus.
+    if (cancelling.has(slug)) {
+      watched.delete(slug);
+      return;
+    }
+    watched.set(slug, "settled");
     const lot = read();
     if (!lot) return;
     if (lot.owner.pid !== process.pid) return; // un autre pilote a repris : ne rien écrire
@@ -1027,6 +1064,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       compactions: result.compactions ?? 0,
       sessionFile: session ?? null,
     });
+    // Un lot d'impl COMMITÉ (S-4) ne se refait pas, quelle que soit la cause de
+    // l'échec : le rang avance, ou la chaîne passe en revue si c'était le dernier.
+    const committed = phase === "impl" && feature.implLots !== undefined && commits === "committed";
     // Un run coupé au plafond de contexte APRÈS une compaction (S-4) ne passe pas
     // par la chaîne : `failed`, ou `blocked` quand une question attendait (comme
     // l'échéance), et la session du run reste reprenable.
@@ -1034,13 +1074,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const exceeded = `contexte dépassé (${result.contextExceeded} tokens)`;
       // Le runner a relevé la question AVANT de clore son entrée : le magasin n'a plus rien à lire ici.
       const pending = publishedAsk(feature.worktree) ?? result.pendingAsk ?? null;
+      let after: { launches: PlannedLaunch[]; release: boolean } = { launches: [], release: false };
       if (pending) {
         const reason = `${exceeded} pendant une question en attente : ${pending.question}`;
         settle(lot, feature, "blocked", reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason);
+      } else if (committed) {
+        after = committedFailure(lot, feature, exceeded);
       } else {
         settle(lot, feature, "failed", exceeded);
       }
       if (save(lot) !== null) watched.delete(slug);
+      else {
+        for (const launch of after.launches) startRun(lot, feature, launch);
+        if (after.release) void finishRelease(feature);
+      }
       void Promise.resolve().then(() => tick().catch(() => undefined));
       return;
     }
@@ -1068,12 +1115,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return;
     }
     const outcome: ChainOutcome = !expired && result.code === 0 && !result.killed ? "ok" : "error";
-    const routed = route(lot, feature, {
-      outcome,
-      stdout: result.stdout,
-      reason: expired ? `délai dépassé (${Math.round(runTimeout / 60_000)} min)` : failureReason(result),
-      worktree: check,
-    });
+    const reason = expired ? `délai dépassé (${Math.round(runTimeout / 60_000)} min)` : failureReason(result);
+    const routed =
+      outcome === "error" && committed
+        ? committedFailure(lot, feature, reason)
+        : route(lot, feature, { outcome, stdout: result.stdout, reason, worktree: check });
     // Le modèle qui a RENDU le verdict (après replis) : publié avec lui, pour que
     // « revue propre » dise par qui — un repli faible approuve plus volontiers.
     if (phase === "review") {
@@ -1220,6 +1266,26 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // deux commandes mécaniques restent à passer (elles sont asynchrones).
     out.release = true;
     return out;
+  }
+
+  /**
+   * La fin SANS SUCCÈS d'un lot d'impl que le run a COMMITÉ (S-4) : ce lot est fait,
+   * il ne se refait pas. Lot non dernier : le rang avance et la session est
+   * abandonnée (`lastRunSessionFile` reste), la feature passe `failed` pour sa cause
+   * et la relance part sur le lot suivant. Dernier lot : la fin vaut un succès, la
+   * chaîne décide (en principe la revue), jamais « /impl n'a rien produit ».
+   */
+  function committedFailure(lot: Lot, feature: LotFeature, reason: string): { launches: PlannedLaunch[]; release: boolean } {
+    const lots = feature.implLots ?? [];
+    const rank = feature.implLot ?? 0;
+    if (rank + 1 >= lots.length) {
+      return route(lot, feature, { outcome: "ok", stdout: "", reason: "", worktree: { kind: "changed" } });
+    }
+    feature.implLot = rank + 1;
+    feature.sessionFile = null;
+    settle(lot, feature, "failed", reason);
+    notify(`[pipeline] ${repo}/${feature.slug} : lot ${lots[rank]} commité avant l'échec — la relance part sur ${lots[rank + 1]}`);
+    return { launches: [], release: false };
   }
 
   /**
@@ -2100,6 +2166,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature.worktree === "") continue;
       // Le run de ce worktree vit ENCORE (étape 0) : rien à décider.
       if (liveSlugs.has(feature.slug)) continue;
+      // Un run ABANDONNÉ par `stop` n'a pas encore rendu la main, ou une annulation de
+      // cette feature est en cours : ni réconciliation ni lancement (S-1 §6) — `cancel`
+      // décide seule du sort de sa feature.
+      if (abandoned.has(feature.slug) || cancelling.has(feature.slug)) continue;
       // La fin de ce run a déjà été traitée par ce pilote : la chaîne a décidé.
       if (watched.get(feature.slug) === "settled") continue;
       // Aucun hash : aucun pilote n'a lancé de run pour cette feature — c'est le
@@ -2117,16 +2187,29 @@ export function createLotController(deps: LotControllerDeps): LotController {
         changed = true;
         continue;
       }
+      // Le run abandonné par `stop` a rendu la main sans que rien ne soit écrit : la
+      // marque et sa mesure de commits sont consommées ICI, par le jugement (S-1 §5).
+      const wasInterrupted = interrupted.has(feature.slug);
+      const commits = interrupted.get(feature.slug) ?? null;
+      interrupted.delete(feature.slug);
       const verdict = reconcileInterrupted({
         contractHashAtStart: feature.contractHash,
         currentContractHash: contractHashOf(feature.worktree),
       });
-      if (verdict === "continue") {
-        const routed = route(lot, feature, { outcome: "ok", stdout: "", reason: "" });
+      // Contrat inchangé : un run de livraison ou un lot d'impl COMMITÉ avant l'arrêt
+      // ne se refait pas (S-4, S-5). Une mesure `dirty`, `none` ou `unknown` garde la règle S-1.
+      const committedPhase = verdict === "continue" || commits !== "committed" ? null : feature.phase;
+      let routed: { launches: PlannedLaunch[]; release: boolean } | null = null;
+      if (verdict === "continue" || committedPhase === "release") {
+        routed = route(lot, feature, { outcome: "ok", stdout: "", reason: "" });
+      } else if (committedPhase === "impl" && feature.implLots !== undefined) {
+        routed = committedFailure(lot, feature, "exécution interrompue (run arrêté)");
+      }
+      if (routed !== null) {
         launches.push(...routed.launches);
         if (routed.release) releases.push(feature);
       } else {
-        settle(lot, feature, "failed", "exécution interrompue (pilote disparu)");
+        settle(lot, feature, "failed", wasInterrupted ? "exécution interrompue (run arrêté)" : "exécution interrompue (pilote disparu)");
       }
       changed = true;
     }
@@ -2632,9 +2715,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return;
       }
       case "stop": {
-        // L'état « cohérent » de l'arrêt (S-3) : les runs en vol sont interrompus
-        // sans être attendus, et les features restent `running` avec leur hash de
-        // contrat — un pilote ultérieur les réconcilie.
+        // L'arrêt (S-3) : les runs en vol sont interrompus sans être attendus et
+        // deviennent « abandonnés ». Les features restent `running` avec leur hash
+        // de contrat ; la passe suivante réconcilie chacune dès que son run rend la
+        // main (S-1).
         actions.abortAll("commande d'arrêt");
         stop();
         return;
@@ -2669,13 +2753,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
     }
     const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow)) ?? (await commandPreflight(cmd));
-    const ack = commandAck(cmd, cmd.id, reason === null ? "taken" : "refused", reason, now());
+    // L'état est décidé APRÈS le dernier `await` de la décision et l'effet suit sans
+    // `await` : `cancelling` est lu puis posé dans le même tour (S-2).
+    const accepted = reason === null ? acceptedDecision(cmd) : { state: "refused" as CommandState, reason };
+    const ack = commandAck(cmd, cmd.id, accepted.state, accepted.reason, now());
     try {
       writeCommandAck(stateDir, ack);
     } catch {
       return commandAck(cmd, cmd.id, "refused", "écriture de l'accusé impossible", now());
     }
-    if (reason !== null) return ack;
+    if (accepted.state !== "taken") return ack;
     try {
       await applyCommand(cmd);
     } catch {
@@ -2683,6 +2770,17 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     await tick();
     return ack;
+  }
+
+  /**
+   * L'accusé d'une commande SANS refus : `already` pour un `cancel` reçu pendant
+   * l'annulation de la même feature (rien n'est refait), `taken` sinon (S-2). Lu
+   * APRÈS le dernier `await` de la décision, et l'effet suit sans `await` : deux
+   * `cancel` concurrents donnent un `taken` et un `already`.
+   */
+  function acceptedDecision(cmd: PipelineCommand): { state: CommandState; reason: string | null } {
+    if (cmd.kind === "cancel" && cancelling.has(cmd.slug)) return { state: "already", reason: CANCEL_ALREADY_REASON };
+    return { state: "taken", reason: null };
   }
 
   /**
@@ -2755,7 +2853,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
         handled += 1;
         continue;
       }
-      if (!writeAck(cmd, cmd.id, "taken", null)) continue;
+      // Après le dernier `await` de la décision, l'effet SANS `await` (S-2).
+      const accepted = acceptedDecision(cmd);
+      if (!writeAck(cmd, cmd.id, accepted.state, accepted.reason)) continue;
+      if (accepted.state === "already") {
+        removeCommandFile(candidate.file);
+        handled += 1;
+        continue;
+      }
       try {
         await applyCommand(cmd);
       } catch {
@@ -2926,15 +3031,17 @@ export function createLotController(deps: LotControllerDeps): LotController {
      * plus personne ne pilotait, et la session suivante les jugeait « pilote
      * disparu » pendant qu'ils travaillaient encore.
      *
-     * Les features restent `running` : la fin de ces runs n'est PAS un échec de
-     * leur maillon (elles sont marquées `cancelling`, donc `finishRun` ne les
-     * touche pas), et la session qui reprend le lot les réconcilie par le hash de
-     * leur contrat (S-1). Rendu immédiat, jamais d'exception.
+     * Les features restent `running` et rien n'est écrit dans le lot : chaque run
+     * interrompu devient « abandonné » (`abandoned`) — PAS `cancelling`, qui ne
+     * désigne que l'annulation d'une feature. La fin d'un run abandonné est
+     * ignorée par `finishRun` ; la passe réconcilie ensuite la feature par le hash
+     * de son contrat (S-1), et `cancel` ne la trouve jamais `failed`. Rendu
+     * immédiat, jamais d'exception.
      */
     abortAll(reason) {
       const running = [...inFlight.keys()];
       for (const [slug, abort] of inFlight) {
-        cancelling.add(slug);
+        abandoned.add(slug);
         try {
           abort.abort();
         } catch {
@@ -3426,9 +3533,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
     async cancel(slug, fate, options) {
       // Deux annulations de la MÊME feature ne s'empilent pas (S-9) : la seconde
       // écrirait « annulation impossible : la feature est annulée » après le succès
-      // de la première, ou retirerait deux fois le même worktree. La première rend
-      // sa propre notice, donc la seconde est un succès silencieux.
-      if (cancelling.has(slug)) return null;
+      // de la première, ou retirerait deux fois le même worktree. Rendue par la
+      // commande `cancel`, cette réponse devient l'accusé `already` (S-2) ; appelée
+      // en direct, elle n'a aucun effet et le dit — jamais un `null` silencieux.
+      if (cancelling.has(slug)) return CANCEL_ALREADY_REASON;
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { feature } = opened;
@@ -3444,12 +3552,15 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // qu'un pipeline fautif ne freine pas les autres.
       cancelling.add(slug);
       try {
+        // Un run en vol est tué ; un run ABANDONNÉ par `stop` (`abandoned`) est déjà
+        // interrompu, mais son retour reste attendu — le même délai de 10 s les borne.
         const abort = inFlight.get(slug);
-        if (abort) {
-          abort.abort();
+        abort?.abort();
+        if (abort || abandoned.has(slug)) {
           const deadline = Date.now() + 10_000;
-          while (inFlight.has(slug) && Date.now() < deadline) await sleep(50);
+          while ((inFlight.has(slug) || abandoned.has(slug)) && Date.now() < deadline) await sleep(50);
           inFlight.delete(slug);
+          abandoned.delete(slug);
         }
         // Le chemin du worktree vient du DISQUE, pas d'un lot lu avant l'attente.
         const known = read();
@@ -3509,6 +3620,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return save(lot);
       } finally {
         cancelling.delete(slug);
+        interrupted.delete(slug);
       }
     },
   };

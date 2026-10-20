@@ -441,7 +441,7 @@ session — le dépôt principal, même depuis le worktree d'une feature.
 | Outil | Paramètres | Approbation | Rend |
 |---|---|---|---|
 | `pipeline_state` | aucun | lecture, sans prompt | JSON `{repoRoot, lots[]}` : chaque feature avec `state`, `phase`, `sinceAt`, `waitKind`, `prUrl`, `base`, `worktree`, `branch`, `running`, et ses **questions en vol** avec leur texte et leurs options **en entier**, sans troncature (une question `ask` d'un run vivant, ou la dernière question en texte d'une feature qui attend une réponse) ; une réponse déjà acheminée n'y figure plus. Un dépôt sans lot rend `lots: []`, sans erreur |
-| `pipeline_command` | `kind` + les champs de ce kind (`slug`, `text`, `toolCallId`, `selected`/`custom`, `fate`…) | **écriture, prompt à chaque appel** | l'accusé du service tel quel (`taken` ou `refused` + `reason`) ; un refus ou un service absent est une erreur d'outil |
+| `pipeline_command` | `kind` + les champs de ce kind (`slug`, `text`, `toolCallId`, `selected`/`custom`, `fate`…) | **écriture, prompt à chaque appel** | l'accusé du service tel quel (`taken`, `already` ou `refused` + `reason`) ; un refus ou un service absent est une erreur d'outil, `already` n'en est pas une |
 | `pipeline_session_tail` | `slug`, `n` (1 à 1000) | lecture, sans prompt | JSON des `n` derniers messages du dernier run de la feature, du plus ancien au plus récent : rôle, texte, appels d'outil avec leurs **arguments complets** (jamais tronqués) |
 | `pipeline_advance` | `slug` | **écriture, prompt à chaque appel** | l'accusé du kind `avance` (voir « Le canal de commande ») |
 
@@ -862,8 +862,10 @@ que d'afficher un écran à moitié peint.
 - **Le canal de commande** : `<état>/commands/` reçoit des commandes d'un client
   extérieur (un fichier JSON par commande, écrit dans un temporaire puis renommé), et
   le pilote propriétaire du dépôt visé les prend en charge en écrivant son accusé dans
-  `<état>/commands/acks/<id>.json` — `prise en charge` avant d'agir, ou `refusée` avec
-  son motif. Les commandes sont `launch` (créer le lot et lancer une feature), `add` et
+  `<état>/commands/acks/<id>.json` — `prise en charge` (`taken`) avant d'agir, `refusée`
+  (`refused`) avec son motif, ou `annulation déjà en cours` (`already`, pour un `cancel`
+  reçu pendant l'annulation de la même feature : ce n'est pas une erreur, et rien n'est
+  refait). Les commandes sont `launch` (créer le lot et lancer une feature), `add` et
   `remove` (modifier la liste à chaud), `models` (modèles et replis d'une feature : une clé de
   repli absente laisse le repli inchangé, `null` le retire), `quota` (choisir le repli d'un
   fournisseur épuisé : `{provider, model}`), `verdict` (`v` ou `y`, comme les touches du
@@ -873,8 +875,11 @@ que d'afficher un écran à moitié peint.
   `annulé` ; refus `relance possible sur une feature bloquée, échouée ou annulée` sinon),
   `cancel` `{slug, fate}` (abandonner une feature ; `fate` = `keep`, `archive` ou `delete`
   pour le sort du worktree), `start` (ouvrir le lot brouillon → en marche et lancer ses
-  features en attente), `arbitrage`, `avance` et `stop` (interrompre le pilote). Un même
-  identifiant rejoué ne produit ni second accusé ni second effet.
+  features en attente), `arbitrage`, `avance` et `stop` (interrompre les runs en vol : les
+  features restent `running`, et la passe suivante réconcilie chacune dès que son run
+  interrompu a rendu la main — la chaîne continue si le contrat a changé, sinon la feature
+  passe `échoué` avec `exécution interrompue (run arrêté)`, relançable par `relaunch`). Un
+  même identifiant rejoué ne produit ni second accusé ni second effet.
   - **`arbitrage` `{slug, text}`** : en **un seul geste journalisé au lot**, ajoute au
     contrat de la feature (`.omp/pipeline/contract.md` de son worktree) un paragraphe
     `### Arbitrage du <date UTC>` sous la section `## Arbitrages du pilote` (créée au
@@ -1023,7 +1028,7 @@ s'affiche tel quel au lieu d'être avalé.
   chaîne passe à `/review`
   comme avant. Une question, une réponse, une relance ou une reprise après quota d'un
   lot reprennent **la session de ce lot**. Un contrat réécrit pendant l'impl ne change
-  pas la découpe en cours. Avec moins de deux lots : un seul run, comme avant. Les
+  pas la découpe en cours. **Un lot commité n'est jamais refait** : quand le run d'un lot finit sans succès (délai, contexte saturé, `stop`, crash ou erreur), le pilote compare HEAD à celui relevé au départ du run ; si des commits existent ET que l'arbre est propre, le rang avance — la feature passe `failed` pour sa cause, et `relaunch` comme l'arbitre repartent sur le lot suivant, dans une session neuve (le pilote notifie `lot <id> commité avant l'échec`) ; si c'était le dernier lot, la chaîne passe à `/review`. Un arbre sale ou aucun commit : le rang ne bouge pas et le même lot est refait ; un redémarrage du service perd la mesure, donc ne fait jamais avancer le rang. Avec moins de deux lots : un seul run, comme avant. Les
   directives `/specs`, `/impl` et `/review` demandent en plus de déléguer la lecture du
   dépôt à des sous-agents, sous la borne de contexte décrite à « Contexte des runs »
   (compaction au seuil, échec du run au plafond). La boucle de correction

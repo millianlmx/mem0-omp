@@ -219,6 +219,25 @@ func commandRefusalIsVerbatim() async throws {
 }
 
 @MainActor
+@Test("pilote-fins-de-run-ignorees-et-rang-impl/AC-5 : l'accusé `already` est un succès : l'entrée passe à `.already`, sans motif")
+func commandAlreadyIsASuccess() async throws {
+    let fixture = StoreFixture()
+    let model = makeModel(fixture, post: { repo, body in
+        ServiceCommandAck(
+            id: body["id"] as? String ?? "x", repo: repo, kind: "cancel",
+            state: .already, reason: nil, at: t0
+        )
+    })
+
+    model.validate(cardAction(repoRoot: fixture.root, inbox: nil))
+    await model.commandTask?.value
+
+    #expect(model.journal.first?.state == .already)
+    #expect(ActionsText.journalLine(for: try #require(model.journal.first))
+        == "\(ActionsText.specsLabel) · alpha · \(ActionsText.already)")
+}
+
+@MainActor
 @Test("reponses-et-jalons/AC-10 : sans accusé l'entrée reste envoyée, sans prise en charge")
 func awaitingWithoutAckStays() async throws {
     let fixture = StoreFixture()

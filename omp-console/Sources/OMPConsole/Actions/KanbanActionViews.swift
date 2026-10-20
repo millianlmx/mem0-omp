@@ -354,7 +354,7 @@ struct KanbanJournalView: View {
         switch state {
         case .awaitingAck:
             Image(systemName: "clock").foregroundStyle(.secondary)
-        case .taken, .delivered:
+        case .taken, .already, .delivered:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .unacknowledged:
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)

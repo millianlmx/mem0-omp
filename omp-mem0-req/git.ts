@@ -185,6 +185,13 @@ export async function branchTaken(run: GitRunner, primaryRoot: string, branch: s
 /** Verdict de la vérification « le run a-t-il changé le worktree ? ». */
 export type WorktreeCheck = { kind: "changed" } | { kind: "unchanged" } | { kind: "unknown"; detail: string };
 
+/**
+ * Ce qu'un run d'impl ou de release a laissé dans le worktree depuis le HEAD relevé
+ * à son départ : `committed` (HEAD a avancé, arbre propre), `none` (aucun commit),
+ * `dirty` (arbre sale), `unknown` (git muet ou HEAD non relevé).
+ */
+export type RunCommits = "committed" | "none" | "dirty" | "unknown";
+
 
 /** Dernière ligne non vide de stderr (trim), à défaut `code <n>` — local : runs.ts importe déjà git.ts. */
 function gitDetail(res: GitResult): string {
@@ -227,6 +234,29 @@ export async function worktreeProduced(run: GitRunner, worktree: string, head: s
     return sha !== head ? { kind: "changed" } : { kind: "unchanged" };
   } catch (err) {
     return { kind: "unknown", detail: `git : ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * Ce qu'un run d'impl ou de release a laissé depuis `head` (HEAD relevé à son
+ * départ) : `dirty` si l'arbre est sale, `committed` si `head` est un ancêtre
+ * strict du HEAD actuel, `none` sinon (aucun commit, histoire réécrite),
+ * `unknown` si git ne répond pas. Ne lève jamais.
+ */
+export async function runCommits(run: GitRunner, worktree: string, head: string): Promise<RunCommits> {
+  try {
+    const status = await run(["status", "--porcelain", "--untracked-files=normal"], worktree);
+    if (status.code !== 0) return "unknown";
+    if (status.stdout.trim() !== "") return "dirty";
+    const now = await run(["rev-parse", "--verify", "HEAD"], worktree);
+    const sha = now.stdout.trim();
+    if (now.code !== 0 || sha === "") return "unknown";
+    if (sha === head) return "none";
+    const anc = await run(["merge-base", "--is-ancestor", head, sha], worktree);
+    if (anc.code === 0) return "committed";
+    return anc.code === 1 ? "none" : "unknown";
+  } catch {
+    return "unknown";
   }
 }
 

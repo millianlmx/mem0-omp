@@ -82,7 +82,7 @@ final class RemoteActions {
             switch entry.state {
             case .awaitingAck:
                 continue
-            case .taken, .delivered:
+            case .taken, .already, .delivered:
                 return
             case .refused(let reason):
                 throw .commandRefused(reason)

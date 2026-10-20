@@ -173,10 +173,18 @@ export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "stop" };
 
 
-export type CommandState = "taken" | "refused";
+/**
+ * `taken` : l'effet suit. `refused` : le motif est dans `reason`. `already` : un
+ * `cancel` reçu pendant une annulation de la MÊME feature — ce n'est pas une erreur
+ * et rien n'est refait (`CANCEL_ALREADY_REASON`).
+ */
+export type CommandState = "taken" | "refused" | "already";
+
+/** Le motif de l'accusé `already` d'un `cancel` : une annulation de cette feature est déjà en cours. */
+export const CANCEL_ALREADY_REASON = "annulation déjà en cours";
 
 
-/** L'accusé d'une commande : `taken` (l'effet suit) ou `refused` (le motif est dans `reason`). */
+/** L'accusé d'une commande : `taken` (l'effet suit), `refused` (le motif est dans `reason`) ou `already` (rien à refaire). */
 export type PipelineCommandAck = {
   version: 1;
   id: string;
@@ -429,7 +437,7 @@ export function asCommandAck(raw: unknown): PipelineCommandAck | null {
   if (typeof a.id !== "string" || !COMMAND_ID.test(a.id)) return null;
   if (typeof a.repo !== "string") return null;
   if (a.kind !== null && typeof a.kind !== "string") return null;
-  if (a.state !== "taken" && a.state !== "refused") return null;
+  if (a.state !== "taken" && a.state !== "refused" && a.state !== "already") return null;
   if (a.reason !== null && typeof a.reason !== "string") return null;
   if (typeof a.at !== "number" || !Number.isFinite(a.at)) return null;
   return { version: 1, id: a.id, repo: a.repo, kind: a.kind, state: a.state, reason: a.reason, at: a.at };
