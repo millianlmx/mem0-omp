@@ -352,11 +352,16 @@ export function pruneHistory(stateDir: string, keep: number = HISTORY_KEEP): num
 }
 
 
-/** Écriture ATOMIQUE : temporaire dans le même répertoire, puis `rename`. */
-export function writeJsonAtomic(file: string, payload: unknown): void {
+/**
+ * Écriture ATOMIQUE : temporaire dans le même répertoire, puis `rename`. Le
+ * temporaire (un éventuel périmé du même pid retiré d'abord) est CRÉÉ
+ * exclusivement avec `mode` (soumis à l'umask) ; le fichier final en hérite.
+ */
+export function writeJsonAtomic(file: string, payload: unknown, mode: number = 0o666): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  fs.rmSync(tmp, { force: true });
+  fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode, flag: "wx" });
   fs.renameSync(tmp, file);
 }
 

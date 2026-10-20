@@ -172,13 +172,7 @@ export function readService(
 
 /** Écrit l'enregistrement (0600) : temporaire dans le même dossier, puis `rename`. */
 export function writeService(record: ServiceRecord, stateDir: string = record.stateDir): void {
-  const file = serviceFilePath(stateDir);
-  writeJsonAtomic(file, record);
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    /* un système de fichiers sans permissions POSIX : le fichier reste lisible */
-  }
+  writeJsonAtomic(serviceFilePath(stateDir), record, 0o600);
 }
 
 
