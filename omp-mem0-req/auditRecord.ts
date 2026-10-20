@@ -12,7 +12,7 @@ import { BRIEF_SECTIONS, renderBrief } from "./context.ts";
 import type { PipelinePhase } from "./contract.ts";
 import type { LotFeatureState } from "./lot.ts";
 import { asLotFeatureState } from "./lot.ts";
-import { PIPELINE_PHASES, readJsonFile, writeJsonAtomic } from "./store.ts";
+import { PIPELINE_PHASES, readJsonFile, writeJsonAtomic, writeStateFileAtomic } from "./store.ts";
 
 
 export type AuditStatus = "analysing" | "proposed" | "launched" | "stopped" | "failed";
@@ -219,11 +219,7 @@ export function auditReportDraftPathFor(stateDir: string, id: string): string {
 
 /** Écrit le brouillon du rapport TEL QUEL, atomiquement ; lève si l'écriture échoue. */
 export function writeAuditReportDraft(stateDir: string, id: string, text: string): void {
-  const file = auditReportDraftPathFor(stateDir, id);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, text, "utf8");
-  fs.renameSync(tmp, file);
+  writeStateFileAtomic(auditReportDraftPathFor(stateDir, id), text);
 }
 
 /** Le brouillon du rapport de l'audit `id` ; `null` s'il est absent ou illisible. */

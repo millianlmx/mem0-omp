@@ -32,7 +32,7 @@ import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefus
 import type { ConversationRunTarget, WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
-import { deleteRunningEntry, pipelineStateDir, runningIdFor, writeJsonAtomic } from "./store.ts";
+import { deleteRunningEntry, ensureStateDir, pipelineStateDir, runningIdFor, secureStateStore, writeJsonAtomic } from "./store.ts";
 import type { PipelineCtx } from "./store.ts";
 
 
@@ -139,7 +139,7 @@ export function launchConversationRun(
     configOverlay,
   });
   try {
-    fs.mkdirSync(target.inbox, { recursive: true });
+    ensureStateDir(target.inbox);
   } catch (err) {
     return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
   }
@@ -761,6 +761,9 @@ export default function reqExtension(pi: ExtensionAPI) {
     // et rien de ce qui suit ne le concerne.
     if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
     liveCtxRef = ctx;
+    // Migration des magasins d'avant le 0700/0600 : au premier accès de ce process,
+    // l'existant perd ses droits de groupe et d'autres — avant toute écriture.
+    secureStateStore(storeDir(), notifyDurable);
     // --- une session HÉBERGÉE par le service (S-3, S-6, S-7) -----------------
     if (isServiceProcess()) {
       // ARBITRE (S-9) : un seul outil, `arbiter_decide` — ni publication, ni boîte, ni relais.
