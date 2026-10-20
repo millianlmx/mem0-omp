@@ -25,7 +25,6 @@ struct ClientHarness {
         pacerLimit: Int = Int.max,
         deviceName: String = "iPhone",
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
-        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
         searchPacer: any ClientPacer = RecordingPacer(),
         readinessPacer: any ClientPacer = RecordingPacer(),
         retryPacer: (any ClientPacer)? = nil,
@@ -45,7 +44,6 @@ struct ClientHarness {
             pathSource: path,
             deviceName: deviceName,
             localProtocolVersion: localProtocolVersion,
-            nowMs: nowMs,
             searchPacer: searchPacer,
             readinessPacer: readinessPacer
         )

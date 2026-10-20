@@ -68,7 +68,6 @@ private func makeModel(
         pathSource: ScriptedPathSource(),
         deviceName: "iPhone",
         localProtocolVersion: 1,
-        nowMs: { Date().timeIntervalSince1970 * 1000 },
         // Le délai de recherche ne s'écoule pas pendant le test : l'état reste
         // `.searching` tant qu'aucun Mac n'est annoncé.
         searchPacer: LiveClientPacer()
