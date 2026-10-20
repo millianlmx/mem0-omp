@@ -732,7 +732,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return null;
     }
     feature.autoResumes = resumes + 1;
-    const session = feature.sessionFile ?? feature.lastRunSessionFile;
+    const session = feature.sessionFile ?? feature.lastRunSessionFile ?? null;
     if (session !== null) feature.sessionFile = session;
     feature.updatedAt = now();
     notify(`[pipeline] ${repo}/${feature.slug} : maillon /${feature.phase} repris après le redémarrage du service (${feature.autoResumes}/${SERVICE_AUTO_RESUME_MAX})`);

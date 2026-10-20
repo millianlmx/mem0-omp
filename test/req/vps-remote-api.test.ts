@@ -10,7 +10,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -24,6 +23,7 @@ import { DeviceRegistry, PairingState, devicesFilePath, groupPairingCode, normal
 import { createServiceRequestHandler } from "../../omp-mem0-req/serviceHttp.ts";
 import { startService } from "../../omp-mem0-req/service.ts";
 import { pipelineMachine, pipelineMachineName, remoteApiHost, remoteApiPort } from "../../omp-mem0-req/serviceState.ts";
+import { serveWeb } from "../support/serve-web.ts";
 
 const SERVICE_TOKEN = "0123456789abcdef0123456789abcdef";
 const CROCKFORD = /^[0-9A-HJKMNP-TV-Z]{8}$/u;
@@ -75,38 +75,6 @@ function vpsStack(options: { stateDir?: string; clock?: Clock } = {}) {
     return (await response.json()) as { deviceId: string; token: string; protocolVersion: number };
   };
   return { stateDir, time, devices, remote, loopback, local, ask, newCode, pair };
-}
-
-/** Une requête Node → la fonction web standard, avec l'adresse du pair lue sur la socket. */
-function serveWeb(handler: (req: Request, source: string | null) => Promise<Response>): Promise<{ url: string; close: () => Promise<void> }> {
-  const server = http.createServer(async (incoming, outgoing) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of incoming) chunks.push(chunk as Buffer);
-    const headers = new Headers();
-    for (let i = 0; i < incoming.rawHeaders.length; i += 2) headers.append(incoming.rawHeaders[i] ?? "", incoming.rawHeaders[i + 1] ?? "");
-    const method = incoming.method ?? "GET";
-    const request = new Request(`http://${incoming.headers.host}${incoming.url}`, {
-      method,
-      headers,
-      body: method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks),
-    });
-    const response = await handler(request, incoming.socket.remoteAddress ?? null);
-    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-    outgoing.end(Buffer.from(await response.arrayBuffer()));
-  });
-  return new Promise(resolve => {
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      assert.ok(address !== null && typeof address === "object");
-      resolve({
-        url: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise<void>(done => {
-          server.closeAllConnections();
-          server.close(() => done());
-        }),
-      });
-    });
-  });
 }
 
 

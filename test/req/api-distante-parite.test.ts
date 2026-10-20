@@ -426,6 +426,14 @@ class RuleService implements ServiceApi {
   projectModel = async (repo: string) => this.request("GET", ["projects", repo, "model"]) as never;
 
   setProjectModel = async (repo: string, body: unknown) => this.request("POST", ["projects", repo, "model"], body) as never;
+
+  handover = async (repo: string, body: unknown) => this.request("POST", ["repos", repo, "handover"], body) as never;
+
+  commitHandover = async (repo: string, id: string, body: unknown) => this.request("POST", ["repos", repo, "handover", id, "commit"], body) as never;
+
+  cancelHandover = async (repo: string, id: string) => this.request("DELETE", ["repos", repo, "handover", id]) as never;
+
+  adoptRepo = async (body: unknown) => this.request("POST", ["repos", "adopt"], body) as never;
 }
 
 // ── le mem0 factice (sert `mem0/`) ─────────────────────────────────────────────────────────

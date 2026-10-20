@@ -9,6 +9,7 @@ import { auditRoutes } from "./remoteAudits.ts";
 import { cardRoutes } from "./remoteActions.ts";
 import { hostedRoutes, conduiteFeed, hostedFeed } from "./remoteHosted.ts";
 import { GestureJournal } from "./remoteJournal.ts";
+import { mem0ProxyRoutes } from "./remoteMem0Proxy.ts";
 import { memoryRoutes } from "./remoteMemory.ts";
 import { PullRequestStates, pullRequestRoutes } from "./remotePullRequests.ts";
 import { readRoutes } from "./remoteReads.ts";
@@ -73,6 +74,7 @@ export function createRemoteRoutes(options: RemoteRoutesOptions): RemoteRoutes {
     ...memoryRoutes(ctx),
     ...hostedRoutes(ctx),
     ...auditRoutes(ctx),
+    ...mem0ProxyRoutes(ctx),
     ...pullRequestRoutes(ctx),
   ];
   return {

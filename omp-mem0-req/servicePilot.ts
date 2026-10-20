@@ -38,7 +38,7 @@ export type PilotDeps = {
   runGitNet?: GitRunner;
   notify?: (text: string) => void;
   toast?: (text: string, tone: "info" | "warning" | "error") => void;
-  audits?: Pick<AuditService, "sweep">;
+  log?: (line: string) => void;
   /** L'environnement du service (`MEM0_PIPELINE_MACHINE`, `MEM0_PIPELINE_REPOS_DIR`…) ; défaut : celui du process. */
   env?: Record<string, string | undefined>;
   now?: () => number;
