@@ -24,7 +24,16 @@ pass() { echo "  ✓ $1"; }
 #                             2/2 = tout l'ensemble filtré par --test-skip-pattern.
 #                             Les tests qui portent ce motif ne vivent que dans
 #                             test/outillage/check.test.ts (criteria/AC-13 : un slug, un
-#                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois.
+#                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois ;
+#   --strict                  un prérequis installable absent est un ÉCHEC nommé, plus
+#                             un saut : test de test/ sauté par `prerequisAbsent`
+#                             (test/support/prerequis.ts, message « prérequis
+#                             absent : … »), node absent, et toute absence que
+#                             MEM0_OMP_REQUIRE_SMOKE/RUST/IOS=1 durcirait. Restent
+#                             des sauts : la plateforme (Swift/iOS hors macOS), la
+#                             copie imbriquée, l'opt-in, et MEM0_OMP_SKIP_* qui
+#                             garde la priorité. Comme les autres options, il ne
+#                             passe pas aux check.sh relancés dans les copies.
 SECTION_IDS="catalogue noms plugins versions extension types rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^socle-app-swift/'
 sections=""
@@ -33,6 +42,7 @@ tests_scope=""
 tests_scope_set=0
 tests_part=""
 tests_part_set=0
+strict=0
 usage_error() { echo "✗ $1" >&2; exit 1; }
 for arg in "$@"; do
   case "$arg" in
@@ -51,8 +61,12 @@ for arg in "$@"; do
       tests_part_set=1
       tests_part="${arg#--tests-part=}"
       ;;
+    --strict)
+      [ "$strict" -eq 1 ] && usage_error "option répétée : --strict"
+      strict=1
+      ;;
     *)
-      usage_error "option inconnue : $arg (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2)"
+      usage_error "option inconnue : $arg (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)"
       ;;
   esac
 done
@@ -83,6 +97,18 @@ section_on() {
     *",$1,"*) return 0 ;;
   esac
   return 1
+}
+
+# Vrai si l'absence d'un prérequis du domaine <X> (SMOKE, RUST, IOS) est un
+# échec : MEM0_OMP_REQUIRE_<X>=1 (posée par la CI) ou --strict. Pose
+# `strict_note` : vide sous la variable, dont les messages historiques restent
+# inchangés, ` (--strict)` quand seul le mode strict durcit.
+required() {
+  local var="MEM0_OMP_REQUIRE_$1"
+  strict_note=""
+  [ "${!var:-}" = "1" ] && return 0
+  strict_note=" (--strict)"
+  [ "$strict" -eq 1 ]
 }
 
 
@@ -364,21 +390,21 @@ echo "── Rust mem0-rs"
 # imprimée qu'en cas d'échec ; le contrat n'exige que le binaire, et sa sortie
 # est recopiée telle quelle.
 # cargo ou clippy absent ⇒ saut annoncé sans ✓ — SAUF si MEM0_OMP_REQUIRE_RUST=1
-# (posée par la CI) : là, c'est un échec. Les copies jetables des harnais posent
-# MEM0_OMP_SKIP_RUST=1 pour ne rien compiler.
+# (posée par la CI) ou --strict : là, c'est un échec. Les copies jetables des
+# harnais posent MEM0_OMP_SKIP_RUST=1 pour ne rien compiler, ce qui prime.
 rust_manifest=(--manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)
 rust_contrat_start="bash scripts/mem0-http-contrat.sh --start-rs"
 if [ -n "${MEM0_OMP_SKIP_RUST:-}" ]; then
   echo "  · ignorée (MEM0_OMP_SKIP_RUST=1)"
 elif ! command -v cargo >/dev/null 2>&1; then
-  if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
-    fail "Rust mem0-rs — cargo absent (MEM0_OMP_REQUIRE_RUST=1)"
+  if required RUST; then
+    fail "Rust mem0-rs — cargo absent${strict_note:- (MEM0_OMP_REQUIRE_RUST=1)}"
   else
     echo "  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)"
   fi
 elif ! cargo clippy --version >/dev/null 2>&1; then
-  if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
-    fail "Rust mem0-rs — cargo clippy absent (MEM0_OMP_REQUIRE_RUST=1)"
+  if required RUST; then
+    fail "Rust mem0-rs — cargo clippy absent${strict_note:- (MEM0_OMP_REQUIRE_RUST=1)}"
   else
     echo "  · cargo clippy absent, sections Rust non exécutées (rustup component add clippy)"
   fi
@@ -406,8 +432,8 @@ else
         ;;
       2)
         rs_reason="$(printf '%s\n' "$rs_out" | head -n 1)"
-        if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
-          fail "Rust mem0-rs — contrat boîte noire contre mem0-rs ${rs_reason}"
+        if required RUST; then
+          fail "Rust mem0-rs — contrat boîte noire contre mem0-rs ${rs_reason}${strict_note}"
         else
           echo "  · ${rs_reason}"
         fi
@@ -434,8 +460,8 @@ echo "── Plugins réels (OMP)"
 # s'enregistre pas au runtime.
 #
 # Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
-# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) : là, un
-# prérequis manquant est un échec, jamais un skip silencieux.
+# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) ou
+# --strict : là, un prérequis manquant est un échec, jamais un skip silencieux.
 smoke_host=""
 for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
   if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
@@ -450,8 +476,8 @@ elif [ -z "$smoke_host" ]; then
   smoke_reason="hôte OMP introuvable"
 fi
 if [ -n "$smoke_reason" ]; then
-  if [ "${MEM0_OMP_REQUIRE_SMOKE:-}" = "1" ]; then
-    fail "plugins réels : $smoke_reason"
+  if required SMOKE; then
+    fail "plugins réels : $smoke_reason$strict_note"
   else
     echo "  · $smoke_reason, plugins réels non vérifiés"
   fi
@@ -469,6 +495,14 @@ fi
 
 if section_on tests; then
 echo "── Tests"
+
+# Un ✗ par saut « prérequis absent » relevé en --strict (voir `tests_missing`).
+strict_skips() {
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] && fail "$line"
+  done <<<"$tests_missing"
+}
 
 # La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
 # pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
@@ -519,6 +553,25 @@ if command -v node >/dev/null 2>&1; then
     # tableau vide sous `set -u` est une erreur en bash 3.2 (celui des Mac).
     node --test --test-reporter=tap --experimental-strip-types ${tests_filter[@]+"${tests_filter[@]}"} "${test_files[@]}" >"$tests_log" 2>&1
     tests_status=$?
+    # --strict : chaque saut « prérequis absent » (forme unique, posée par
+    # `prerequisAbsent` de test/support/prerequis.ts) devient un échec qui nomme
+    # le test et la pièce manquante, que node ait rendu 0 ou non. La directive est
+    # le PREMIER ` # SKIP ` de la ligne : le reporter TAP échappe un `#` du titre
+    # en `\#`. Tout autre saut (plateforme, copie imbriquée, opt-in) reste un saut.
+    tests_missing=""
+    if [ "$strict" -eq 1 ]; then
+      tests_missing="$(awk '
+        /^[ \t]*ok [0-9]+ - / {
+          at = index($0, " # SKIP ")
+          if (at == 0) next
+          reason = substr($0, at + 8)
+          if (index(reason, "prérequis absent : ") != 1) next
+          head = $0
+          sub(/^[ \t]*ok [0-9]+ - /, "", head)
+          start = length($0) - length(head) + 1
+          print "test sauté en mode strict : « " substr($0, start, at - start) " » — " reason
+        }' "$tests_log")"
+    fi
     if [ "$tests_status" -eq 0 ]; then
       # Un filtre de noms qui ne retient rien sort 0 SANS `# tests 0` : node
       # rapporte alors chaque FICHIER comme un test (`ok 1 - test/outillage/check.test.ts`,
@@ -538,7 +591,11 @@ if command -v node >/dev/null 2>&1; then
         # Les sauts sont imprimés même en vert : un test d'AC qui se saute (prérequis
         # absent, profondeur) n'a rien prouvé, et seul ce compteur le montre.
         grep -E '^# skipped' "$tests_log"
-        pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+        if [ -n "$tests_missing" ]; then
+          strict_skips
+        else
+          pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+        fi
       fi
     else
       printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
@@ -556,10 +613,13 @@ if command -v node >/dev/null 2>&1; then
         tail -n 30 "$tests_log"
       fi
       grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
+      strict_skips
       fail "tests unitaires — relance : node --test --experimental-strip-types 'test/**/*.test.ts'"
     fi
     rm -f "$tests_log"
   fi
+elif [ "$strict" -eq 1 ]; then
+  fail "tests unitaires — node absent (--strict)"
 else
   echo "  · node absent, tests non exécutés"
 fi
@@ -695,7 +755,9 @@ echo "── App iOS"
 # compilation iOS complète. Une valeur vide vaut absence.
 #
 # `MEM0_OMP_REQUIRE_IOS=1` (posée par la CI macOS) fait échouer un « non exécuté » :
-# en CI, Xcode manquant est un échec, jamais un skip silencieux.
+# en CI, Xcode manquant est un échec, jamais un skip silencieux. `--strict` en fait
+# autant SOUS macOS seulement : ailleurs, le code 2 dit « plateforme non
+# supportée », pas « prérequis absent », et reste un saut annoncé.
 if [ -f scripts/ios-build.sh ]; then
   if [ -n "${MEM0_OMP_SKIP_IOS:-}" ]; then
     echo "  · ignorée (MEM0_OMP_SKIP_IOS=1)"
@@ -713,8 +775,8 @@ if [ -f scripts/ios-build.sh ]; then
         fi
         ;;
       2)
-        if [ "${MEM0_OMP_REQUIRE_IOS:-}" = "1" ]; then
-          fail "App iOS — Xcode inutilisable (relance : DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/ios-build.sh)"
+        if required IOS && { [ -z "$strict_note" ] || [ "$(uname -s)" = "Darwin" ]; }; then
+          fail "App iOS — Xcode inutilisable$strict_note (relance : DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/ios-build.sh)"
         fi
         ;;
       *)

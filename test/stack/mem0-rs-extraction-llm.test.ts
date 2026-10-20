@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = suite lancée à la main ou par check.sh racine. */
@@ -60,9 +61,8 @@ function lancer(args: string[], env: Record<string, string>, cwd = ROOT): Promis
 }
 
 /** Pièce manquante : échec sous le REQUIRE donné (CI), saut annoncé sinon. */
-function manque(t: TestContext, raison: string, exige: boolean): void {
-  if (exige) assert.fail(raison);
-  t.skip(raison);
+function manque(t: TestContext, prerequis: string, consequence: string, exige: boolean): void {
+  prerequisAbsent(t, prerequis, consequence, exige ? "MEM0_OMP_REQUIRE_RUST=1" : null);
 }
 
 const cargoPresent = (): boolean => spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
@@ -73,7 +73,7 @@ test("mem0-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contre 
     return;
   }
   if (!cargoPresent()) {
-    manque(t, "cargo absent : section rust non exécutée", process.env.MEM0_OMP_REQUIRE_RUST === "1");
+    manque(t, "cargo", "section rust non exécutée", process.env.MEM0_OMP_REQUIRE_RUST === "1");
     return;
   }
 

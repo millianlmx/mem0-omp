@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, copyRepo } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 
@@ -45,10 +46,9 @@ const HOST = hostRoot();
 
 /** Sans Bun ou sans hôte, on l'annonce — sauf en CI, où l'absence est un échec. */
 function prereq(t: { skip: (reason: string) => void }): boolean {
-  const reason = !HAS_BUN ? "bun absent" : HOST === null ? "hôte OMP introuvable" : "";
-  if (reason === "") return true;
-  if (REQUIRE_SMOKE) assert.fail(`${reason} — MEM0_OMP_REQUIRE_SMOKE=1 : prérequis manquant`);
-  t.skip(`${reason} — harnais « plugins réels » non vérifié`);
+  const missing = !HAS_BUN ? "bun" : HOST === null ? "hôte OMP" : "";
+  if (missing === "") return true;
+  prerequisAbsent(t, missing, "harnais « plugins réels » non vérifié", REQUIRE_SMOKE ? "MEM0_OMP_REQUIRE_SMOKE=1" : null);
   return false;
 }
 
