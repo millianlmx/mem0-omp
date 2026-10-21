@@ -62,7 +62,7 @@ struct IOSKeyboardTests {
         #expect(IOSMemoryGraphRecipe.resolve(["-memoire.recipe", "liste"]) == .liste)
 
         let reader = IOSMemoryRecipeReader()
-        #expect(IOSMemoryModel.gesturesEnabled(reader.state))
+        #expect(IOSMemoryModel.gesturesEnabled(reader.isConfigured))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
         guard case let .summary(_, total, rows, more) = model.state(connection: .connected) else {
