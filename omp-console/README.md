@@ -64,8 +64,8 @@ Cible minimale : macOS 26.
   `xcodebuild` ne sert pas à construire : contre `Package.swift`, il construit le
   produit exécutable comme un « tool », sans extraire aucune métadonnée App Intents.
 - **Le serveur de pipelines du VPS** pour les sections de Pilotage : son adresse
-  https et son jeton se saisissent dans la feuille « Serveur » (voir « Serveur de
-  pipelines »). Sans serveur relié, ces sections le disent et proposent « Relier le
+  code d'appairage (`harness.sh pair`), ou son adresse https et son jeton, se
+  collent dans la feuille « Serveur » (voir « Serveur de pipelines »). Sans serveur relié, ces sections le disent et proposent « Relier le
   serveur… » ; Terminal, Fichiers et Mémoire n'en ont pas besoin.
 - **Rien d'autre à installer** : ni `omp`, ni Docker, ni podman, ni conteneur —
   l'app installe son `omp` et démarre son service mémoire au premier lancement
@@ -253,7 +253,12 @@ exécuter une étape elle-même.
   gardée dans les préférences (`harness.address`), et le jeton du serveur
   (`/var/lib/omp-harness/state/token`), gardé dans le trousseau
   (`com.omp.console.harness`). Elles ne sont enregistrées qu'après une boîte
-  effectivement lue ; « Oublier ce serveur » les efface de l'appareil.
+  effectivement lue ; « Oublier ce serveur » les efface de l'appareil. Le code
+  d'appairage `omp1:…` (`harness.sh pair`), collé dans le champ de l'adresse, porte
+  les deux ; sur le Mac, il est aussi écrit dans `~/.omp/harness.json` et
+  `~/.omp/mem0.json`, que lisent les plugins d'omp et la section Mémoire (après une
+  relance). Sans serveur enregistré, l'app Mac prend celui de `~/.omp/harness.json`
+  (posé par `/pair` dans omp).
 - **Un seul client.** Un `HarnessModel` et un `HarnessDrafts` pour toute la
   fenêtre : les cinq sections partagent la même boîte, le même catalogue et les
   mêmes brouillons de lancement. Sans serveur relié, chacune montre le même appel à

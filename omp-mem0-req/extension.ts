@@ -6,7 +6,16 @@
 // lance l'audit sur le serveur et y choisit les propositions ; /pipelines résume la
 // boîte de l'humain. Les gestes de la boucle humaine se font dans OMP Console.
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { HarnessCallError, harnessCall, inboxSummary, parsePicks, proposalList, resolveTarget } from "./harness.ts";
+import {
+  HarnessCallError,
+  decodePairing,
+  harnessCall,
+  inboxSummary,
+  parsePicks,
+  proposalList,
+  resolveTarget,
+  writePairing,
+} from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
 
 type Ctx = {
@@ -228,6 +237,38 @@ export default function reqExtension(pi: ExtensionAPI) {
           "info",
         );
       });
+    },
+  });
+
+  pi.registerCommand("pair", {
+    description:
+      "Relie cette machine au harness : colle le code d'appairage que donne `harness.sh pair` sur le serveur",
+    handler: async (args: unknown, ctx: Ctx) => {
+      const pairing = decodePairing(String(args ?? ""));
+      if (!pairing) {
+        ctx.ui?.notify?.(
+          "[pair] code illisible : copie la ligne `omp1:…` qu'affiche `harness.sh pair` sur le serveur.",
+          "error",
+        );
+        return;
+      }
+      try {
+        const inbox = await harnessCall<Inbox>(
+          { url: pairing.url, token: pairing.token, repo: "" },
+          "GET",
+          "/v1/inbox",
+        );
+        const written = writePairing(pairing);
+        ctx.ui?.notify?.(
+          `[pair] relié à ${pairing.url} (${inbox.runs.length} feature(s) sur le serveur) — ${written.join(", ")} écrit(s). Relance omp et OMP Console pour qu'ils le prennent.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui?.notify?.(
+          `[pair] ${pairing.url} ne répond pas avec ce jeton : ${(err as Error).message}. Rien n'a été écrit.`,
+          "error",
+        );
+      }
     },
   });
 

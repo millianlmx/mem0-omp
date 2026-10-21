@@ -180,7 +180,8 @@ test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille d
     const app = read("omp-console", ...shell.app);
     assert.match(
       app,
-      /@StateObject private var server = HarnessModel\.live\(\)/,
+      // Le Mac y ajoute le serveur de `~/.omp/harness.json` et l'écriture d'un appairage.
+      /@StateObject private var server = HarnessModel\.live(\(\)|\(\n\s+fallback: )/,
       `${shell.app.at(-1)} : le modèle partagé`,
     );
     assert.match(

@@ -26,7 +26,11 @@ struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
     /// Le serveur de pipelines du VPS : UN modèle et UN jeu de brouillons pour la
     /// fenêtre, partagés par les cinq sections de pilotage.
-    @StateObject private var server = HarnessModel.live()
+    /// Un code d'appairage collé ici relie aussi omp et la mémoire de ce Mac (`~/.omp`).
+    @StateObject private var server = HarnessModel.live(
+        fallback: { HarnessPairing.sharedSettings(home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) },
+        onPaired: { try? $0.writeShared(home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) }
+    )
     @StateObject private var drafts = HarnessDrafts()
     @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()

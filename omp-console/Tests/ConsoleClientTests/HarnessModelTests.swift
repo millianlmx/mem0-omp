@@ -169,6 +169,91 @@ struct HarnessModelTests {
         #expect(model.failure == .invalidAddress)
     }
 
+    @Test("un code d'appairage (harness.sh pair, /pair) se décode comme le plugin l'écrit ; un texte quelconque n'en est pas un")
+    func decodesPairingCode() {
+        let full = "omp1:aHR0cHM6Ly92cHMudGFpbG5ldC50cy5uZXQKYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQpodHRwczovL3Zwcy50YWlsbmV0LnRzLm5ldDo4NDQzCmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI"
+        #expect(HarnessPairing.decode(full) == HarnessPairing(
+            address: "https://vps.tailnet.ts.net",
+            token: String(repeating: "a", count: 64),
+            memoryAddress: "https://vps.tailnet.ts.net:8443",
+            memoryToken: String(repeating: "b", count: 64)
+        ))
+        // Sans mémoire partagée : les deux dernières lignes sont vides.
+        let local = HarnessPairing.decode("  omp1:aHR0cDovLzEyNy4wLjAuMTo4NzkwCmpldG9uCgo \n")
+        #expect(local?.address == "http://127.0.0.1:8790")
+        #expect(local?.token == "jeton")
+        #expect(local?.memoryAddress == "")
+        #expect(HarnessPairing.decode("https://vps.example") == nil)
+        #expect(HarnessPairing.decode("omp1:pas-du-base64!") == nil)
+    }
+
+    @Test("coller le code d'appairage dans l'adresse configure le serveur, sans saisir de jeton")
+    func configuresFromPairingCode() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { _ in ok(inboxJSON) }
+        let tokens = InMemoryTokenStore()
+        let model = makeModel(transport, tokens: tokens)
+        #expect(await model.configure(address: "omp1:aHR0cDovLzEyNy4wLjAuMTo4NzkwCmpldG9uCgo", token: ""))
+        #expect(model.address == "http://127.0.0.1:8790")
+        #expect(await tokens.knownTokens[HarnessModel.tokenAccount] == "jeton")
+    }
+
+    @Test("sans serveur enregistré, l'app prend celui de la machine (~/.omp/harness.json)")
+    func loadsSharedSettings() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("harness-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".omp"), withIntermediateDirectories: true)
+        try Data(#"{ "url": "https://vps.tailnet.ts.net/", "token": "jeton", "repos": {} }"#.utf8)
+            .write(to: home.appendingPathComponent(".omp/harness.json"))
+        let shared = try #require(HarnessPairing.sharedSettings(home: home))
+        #expect(shared.address == "https://vps.tailnet.ts.net")
+        #expect(shared.token == "jeton")
+
+        let transport = ScriptedHarnessTransport()
+        transport.respond { _ in ok(inboxJSON) }
+        let model = HarnessModel(
+            transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+            retryDelay: .seconds(3600), refreshDelay: .milliseconds(1),
+            fallback: { HarnessPairing.sharedSettings(home: home) }
+        )
+        await model.load()
+        #expect(model.isConfigured)
+        #expect(model.address == "https://vps.tailnet.ts.net")
+        #expect(model.inbox?.cursor == 42)
+    }
+
+    @Test("un code accepté est écrit pour omp et la mémoire, en gardant les dépôts reliés ; une adresse seule n'écrit rien")
+    func writesAcceptedPairing() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("harness-pair-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".omp"), withIntermediateDirectories: true)
+        try Data(#"{ "url": "http://ancien", "token": "x", "repos": { "/code/produit": "produit" } }"#.utf8)
+            .write(to: home.appendingPathComponent(".omp/harness.json"))
+        let transport = ScriptedHarnessTransport()
+        transport.respond { _ in ok(inboxJSON) }
+        let model = HarnessModel(
+            transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+            retryDelay: .seconds(3600), refreshDelay: .milliseconds(1),
+            onPaired: { try? $0.writeShared(home: home) }
+        )
+        #expect(await model.configure(address: "https://autre.example", token: "jeton"))
+        #expect(HarnessPairing.sharedSettings(home: home)?.address == "http://ancien")
+
+        let pairing = HarnessPairing(
+            address: "https://vps.tailnet.ts.net", token: "jeton",
+            memoryAddress: "https://vps.tailnet.ts.net:8443", memoryToken: "memoire"
+        )
+        try pairing.writeShared(home: home)
+        let harnessObject = try JSONSerialization.jsonObject(with: Data(contentsOf: home.appendingPathComponent(".omp/harness.json")))
+        let harness = try #require(harnessObject as? [String: Any])
+        #expect(harness["url"] as? String == "https://vps.tailnet.ts.net")
+        #expect((harness["repos"] as? [String: String]) == ["/code/produit": "produit"])
+        let memoryObject = try JSONSerialization.jsonObject(with: Data(contentsOf: home.appendingPathComponent(".omp/mem0.json")))
+        let memory = try #require(memoryObject as? [String: String])
+        #expect(memory == ["url": "https://vps.tailnet.ts.net:8443", "token": "memoire"])
+
+        #expect(await model.configure(address: "omp1:aHR0cDovLzEyNy4wLjAuMTo4NzkwCmpldG9uCgo", token: ""))
+        #expect(HarnessPairing.sharedSettings(home: home)?.address == "http://127.0.0.1:8790")
+    }
+
     @Test("un modèle neuf retrouve le serveur enregistré ; l'oublier efface adresse et jeton")
     func loadsAndForgets() async {
         let transport = ScriptedHarnessTransport()

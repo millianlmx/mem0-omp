@@ -37,13 +37,5 @@
   "providers": { "anthropic": { "capacity": 20, "refillPerMinute": 20 } },
   "review": { "fixCap": 3, "maxDiffLines": 300 },
   "oracle": { "url": "http://mem0:8321", "token": null },
-  "repos": [
-    {
-      "name": "mon-produit",
-      "path": "@ROOT@/repos/mon-produit",
-      "tests": { "touched": "npm test -- {files}", "full": "npm test" },
-      "merge": "local",
-      "remote": "origin"
-    }
-  ]
+  "repos": []
 }

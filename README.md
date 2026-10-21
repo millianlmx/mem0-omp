@@ -66,46 +66,45 @@ Une feature suit toujours le même chemin :
 
 Il te faut :
 
-- **Un VPS Linux**, x86_64 ou arm64, avec Docker ou podman (ou systemd : Debian 12+,
-  Ubuntu 24.04+, NixOS). Par défaut le serveur réserve 16 Go de mémoire : prévois 32 Go, ou réduis
-  `runner.slots` et `heavy.slots`.
+- **Un VPS Linux**, x86_64 ou arm64, avec Docker ou podman. Par défaut le serveur
+  réserve 16 Go de mémoire : prévois 32 Go, ou réduis `runner.slots` et `heavy.slots`.
 - **Tailscale** sur le VPS, le Mac et l'iPhone, dans le même tailnet.
-- **Un compte LLM** pour les agents du serveur : une clé d'API (Anthropic par
-  exemple) ou un `/login` d'OMP.
-- **Un serveur d'embeddings compatible OpenAI**, joignable en permanence par le VPS :
-  oMLX sur un homelab, ou un fournisseur. La mémoire en a besoin.
+- **Une clé d'API LLM** pour les agents du serveur (Anthropic par défaut), ou un
+  compte OMP.
 - **Un Mac Apple Silicon** sous macOS 26, avec Xcode et Rust pour assembler l'app.
 - **Tes dépôts** sur GitHub, ou sur tout serveur git joignable en SSH.
 
-Compte une heure, dans l'ordre : le serveur, le Mac, l'iPhone, puis la
-vérification. Les mises à jour suivent [PUBLISHING.md](PUBLISHING.md) § « Mettre à
-jour » pour les plugins, et `omp-harness/README.md` § « Mettre à jour » pour le
-serveur.
+Trois gestes : `up` sur le VPS, `add` par dépôt, puis le code d'appairage collé sur
+le Mac. Les mises à jour suivent [PUBLISHING.md](PUBLISHING.md) § « Mettre à jour »
+pour les plugins ; pour le serveur, `git pull` puis `harness.sh up`.
 
 ### 1. Le serveur
 
-Le plus simple : en conteneurs, avec Docker ou podman, sur n'importe quel VPS (ou sur
-ton Mac). Depuis un clone de ce dépôt :
+Sur le VPS :
 
 ```bash
 git clone https://github.com/millianlmx/mem0-omp && cd mem0-omp
 bash omp-harness/deploy/container/harness.sh up
 ```
 
-Le script construit les images, démarre le service et sa mémoire, puis affiche les
-gestes qui restent : la clé de déploiement à ajouter sur ton dépôt, son clone, la
-configuration, les comptes LLM, le serveur d'embeddings et la vérification. Sans
-moteur de conteneurs, `sudo bash omp-harness/deploy/install.sh` installe la même
-chose avec systemd (Debian, Ubuntu), et NixOS a un module déclaratif. Tout est
-détaillé dans [omp-harness/README.md](omp-harness/README.md) § « Installer le
-serveur ».
+`up` demande la clé d'API, construit les images, démarre le service, sa mémoire et
+ses embeddings, les publie en HTTPS sur ton tailnet, puis affiche un **code
+d'appairage** `omp1:…`. Le relancer met à jour sans rien perdre ; `harness.sh pair`
+réaffiche le code.
 
-Une fois le service démarré, publie l'API sur ton tailnet et note son jeton
-(`harness.sh token`, ou `sudo cat /var/lib/omp-harness/state/token` avec systemd) :
+Puis, pour chaque dépôt :
 
 ```bash
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8790
+bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.git
 ```
+
+`add` clone le dépôt et devine ses commandes de test. S'il n'a pas le droit d'y
+écrire, il affiche la clé à poser en clé de déploiement, avec le lien GitHub où la
+coller, et attend que ce soit fait.
+
+Sans moteur de conteneurs, `sudo bash omp-harness/deploy/install.sh` installe le
+serveur avec systemd (Debian, Ubuntu), et NixOS a un module déclaratif :
+[omp-harness/README.md](omp-harness/README.md) § « Installer le serveur ».
 
 ### 2. Le Mac : l'app OMP Console
 
@@ -117,17 +116,17 @@ open "omp-console/build/OMP Console.app"
 ```
 
 Au premier lancement, elle installe son omp (18.6.0, la même version que le
-serveur) et démarre son service mémoire local, sans rien d'autre à installer. Puis
-le bouton **Serveur** de la barre d'outils demande l'adresse
-`https://<vps>.<tailnet>.ts.net` et le jeton noté à l'étape 1. Le détail de l'app :
-[omp-console/README.md](omp-console/README.md).
+serveur). Le bouton **Serveur** de la barre d'outils attend le code d'appairage :
+colle-le. L'app relie alors aussi omp et la mémoire de ce Mac à ceux du serveur
+(`~/.omp/harness.json`, `~/.omp/mem0.json`) ; relance-la pour que sa section
+**Mémoire** suive. Le détail de l'app : [omp-console/README.md](omp-console/README.md).
 
 L'app n'installe pas les plugins : c'est l'étape 3, « Les plugins seuls ».
 
 ### Sans l'app : la pile conteneur
 
-Pour une autre machine que ton Mac (Linux, Mac Intel), le service mémoire tourne
-dans un conteneur que tu démarres toi-même :
+Pour une autre machine que ton Mac (Linux, Mac Intel), sans serveur à relier, le
+service mémoire tourne dans un conteneur que tu démarres toi-même :
 
 ```bash
 git clone https://github.com/millianlmx/mem0-omp
@@ -160,45 +159,31 @@ En ligne de commande : `omp plugin marketplace add millianlmx/mem0-omp`, puis
 Sans marketplace, `omp-mem0-memory/install.sh` dépose l'extension mémoire dans
 `~/.omp/agent/extensions/`.
 
-Il n'y a **rien à faire par projet** : le plugin mémoire pose son brief au premier
-démarrage dans chaque dépôt. Il parle au service de `MEM0_HTTP_URL` :
+Si tu as collé le code dans l'app, omp est déjà relié. Sinon, une fois, avec le code
+de l'étape 1 :
 
-- **Service déjà joignable** (l'app, la pile conteneur, ou la mémoire du serveur,
-  voir l'étape 4) : rien de plus, `/mem0-status` le confirme.
+```
+/pair omp1:…
+```
+
+`/pair` vérifie le code auprès du serveur, puis écrit `~/.omp/harness.json` (les
+pipelines) et `~/.omp/mem0.json` (la mémoire du serveur, partagée avec ses agents).
+L'app lit les mêmes fichiers. Relance omp.
+
+Il n'y a **rien à faire par projet** : le plugin mémoire pose son brief au premier
+démarrage dans chaque dépôt, et un dossier vise le dépôt du serveur de même nom
+(sinon, `"repos": { "/Users/toi/code/produit": "mon-produit" }` dans
+`~/.omp/harness.json`). Côté mémoire :
+
+- **Service déjà joignable** (après `/pair`, l'app ou la pile conteneur) : rien de
+  plus, `/mem0-status` le confirme.
 - **Aucun service** : le plugin se dégrade proprement. Le rappel est vide, les
   écritures sont refusées avec un avertissement, aucune session n'est bloquée.
 
-### 4. Relier le Mac au serveur
+### 4. Reprendre la mémoire du Mac
 
-**Les pipelines.** `/req`, `/project` et `/audit` envoient le travail au serveur.
-Crée `~/.omp/harness.json` :
-
-```json
-{ "url": "https://vps.tailnet.ts.net", "token": "<le jeton de l'étape 1>",
-  "repos": { "/Users/toi/code/mon-produit": "mon-produit" } }
-```
-
-`repos` associe un dossier du Mac au nom du dépôt déclaré sur le serveur. Sans
-entrée, c'est le nom du dossier qui sert.
-
-**Une seule mémoire.** Sans ce geste, ton Mac et le serveur ont chacun leur mémoire,
-et les agents du serveur ignorent ce que tu as appris en session. Publie celle du
-serveur sur le tailnet :
-
-```bash
-sudo tailscale serve --bg --https=8443 http://127.0.0.1:8321
-grep MEM0_HTTP_TOKEN ~/.omp-harness-secrets/mem0.env   # avec systemd : sudo grep … /etc/omp-harness/mem0.env
-```
-
-Puis, sur le Mac, crée `~/.omp/mem0.json`. Le plugin mémoire et l'app le lisent
-tous les deux, et `MEM0_HTTP_URL` l'emporte s'il est posé :
-
-```json
-{ "url": "https://vps.tailnet.ts.net:8443", "token": "<le jeton ci-dessus>" }
-```
-
-Tu as déjà des souvenirs sur le Mac ? Copie sa base sur le serveur avant d'y écrire
-quoi que ce soit (même modèle d'embedding des deux côtés, `EMBEDDING_DIMS`) :
+Seulement si tu as déjà des souvenirs sur le Mac. Copie sa base sur le serveur avant
+d'y écrire quoi que ce soit (même modèle d'embedding des deux côtés, `EMBEDDING_DIMS`) :
 
 ```bash
 sqlite3 ~/Library/Application\ Support/com.omp.console/mem0-rs/mem0-rs.db ".backup /tmp/mem0-rs.db"
@@ -208,15 +193,12 @@ scp /tmp/mem0-rs.db <vps>:/tmp/
 Puis, sur le VPS : `omp-harness/README.md` § « La mémoire du projet », « Reprendre
 la mémoire du Mac ».
 
-Relance l'app : sa section **Mémoire** montre alors la mémoire du serveur, et
-`/mem0-status` dans une session affiche la même adresse.
-
 ### 5. L'iPhone
 
 L'app iOS se construit avec Xcode sur ton iPhone branché au Mac (Mode développeur,
 ton compte de signature) : [omp-console/README.md](omp-console/README.md) § « Coque
 iOS », puis « Installer sur un appareil réel ». Le code est dans `omp-console/ios/`.
-Au lancement, **Serveur** demande la même adresse et le même jeton que sur le Mac.
+Au lancement, **Serveur** attend le même code d'appairage que sur le Mac.
 
 ### 6. Vérifier
 

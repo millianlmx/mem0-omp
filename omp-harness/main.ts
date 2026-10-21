@@ -2,6 +2,8 @@
 //
 //   node --experimental-strip-types omp-harness/main.ts --config /etc/omp-harness/config.json
 //   … --check : vérifie l'installation (omp, lanceur, modèles, oracle, dépôts) et sort.
+//   … --add-repo <url> [--name <nom>] : clone le dépôt, éprouve l'écriture, devine ses
+//     tests et le déclare dans le fichier de configuration (codes : repos.ts).
 //
 // Le jeton d'API vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en 0600
 // au premier démarrage). SIGTERM arrête proprement : plus de requêtes, runners
@@ -20,6 +22,7 @@ import { HeavyRunner } from "./heavy.ts";
 import { createHandler } from "./http.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
+import { addRepo } from "./repos.ts";
 import type { SpawnRunner } from "./orchestrator.ts";
 import { execProcess } from "./proc.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -91,6 +94,13 @@ if (isMain) {
   // Un rejet oublié est journalisé, jamais fatal : un crash ferait reprendre tous les runs au checkpoint.
   process.on("unhandledRejection", reason => console.error(`[omp-harness] rejet non géré : ${reason instanceof Error ? reason.stack : String(reason)}`));
   const config = loadConfig(file);
+  const added = argValue(process.argv, "--add-repo");
+  if (added !== null) {
+    if (file === null) throw new Error("--add-repo exige --config");
+    const result = await addRepo(file, config, new Git(execProcess, config.git), added, argValue(process.argv, "--name") ?? undefined);
+    console.log(`${result.code === 0 ? "✓" : "✗"} ${result.message}`);
+    process.exit(result.code);
+  }
   if (process.argv.includes("--check")) {
     if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN) config.oracle.token = process.env.MEM0_HTTP_TOKEN;
     const oracle = config.oracle ? new HttpOracle(config.oracle) : null;

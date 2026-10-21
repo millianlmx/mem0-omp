@@ -63,7 +63,8 @@
         "req",
         "project",
         "audit",
-        "pipelines"
+        "pipelines",
+        "pair"
       ]
     }
   ]

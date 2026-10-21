@@ -24,26 +24,44 @@ ou une machine podman en mode rootful.
 
 ```bash
 bash omp-harness/deploy/container/harness.sh up
+bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.git
 ```
 
-Lancé depuis un clone de ce dépôt, `up` construit les images, crée la racine
-(`~/.omp-harness`) et les secrets (`~/.omp-harness-secrets`, jamais montés dans le
-service), une clé SSH et la configuration, puis démarre le service et sa mémoire.
-Relancé, il met à jour et redémarre. La suite :
+`up`, lancé depuis un clone de ce dépôt :
 
-```bash
-bash omp-harness/deploy/container/harness.sh key      # à poser en clé de déploiement, AVEC écriture
-bash omp-harness/deploy/container/harness.sh clone git@github.com:<toi>/<dépôt>.git
-$EDITOR ~/.omp-harness/config.json                    # tes dépôts et modèles (voir « Configuration »)
-$EDITOR ~/.omp-harness-secrets/runner.env             # ANTHROPIC_API_KEY=…, ou : harness.sh login
-$EDITOR ~/.omp-harness-secrets/mem0.env               # OMLX_BASE_URL : ton serveur d'embeddings
-bash omp-harness/deploy/container/harness.sh restart
-bash omp-harness/deploy/container/harness.sh check
-```
+1. crée la racine (`~/.omp-harness`) et les secrets (`~/.omp-harness-secrets`, jamais
+   montés dans le service), une clé SSH et la configuration ;
+2. demande la clé d'API des agents (`ANTHROPIC_API_KEY` dans l'environnement évite
+   la question ; Entrée sans clé, puis `harness.sh login`, pour un compte OMP) ;
+3. construit les images, démarre le service, sa mémoire et un Ollama pour les
+   embeddings, qui télécharge `bge-m3` ;
+4. publie le service (443) et la mémoire (8443) en HTTPS sur ton tailnet, si
+   Tailscale est là (`tailscale serve`, avec sudo au besoin) ;
+5. sous podman rootless, installe une unité systemd utilisateur qui redémarre la pile
+   au boot (Docker le fait seul) ;
+6. affiche le **code d'appairage** : `/pair <code>` dans omp, ou la feuille
+   **Serveur** de l'app.
 
-Sur un VPS, publie ensuite l'API sur ton tailnet
-(`sudo tailscale serve --bg --https=443 http://127.0.0.1:8790`) ; le jeton est
-donné par `harness.sh token`.
+Relancé, `up` met à jour et redémarre sans toucher aux secrets ni à la
+configuration. `harness.sh pair` réaffiche le code.
+
+`add` clone le dépôt en nu, éprouve l'écriture sur son distant (un essai à blanc),
+devine ses commandes de test d'après ses manifestes (`package.json`, `Cargo.toml`,
+`go.mod`, `pyproject.toml`) et le déclare dans `~/.omp-harness/config.json`. Si la clé
+du service n'a pas accès, il l'affiche avec le lien GitHub où la poser (case « Allow
+write access ») et réessaie quand tu valides. Une URL `https://github.com/…` est
+convertie en SSH. Les commandes devinées, les modèles et le reste se règlent ensuite
+dans `config.json` (voir « Configuration »), puis `harness.sh restart`.
+
+| Variable de `up` | Effet |
+|---|---|
+| `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `mem0.env`) |
+| `OMP_HARNESS_TAILSCALE=0` | Ne publie rien : le service reste sur `127.0.0.1` |
+| `OMP_HARNESS_ENGINE` | `docker` ou `podman` (défaut : podman s'il est installé) |
+| `OMP_HARNESS_PORT` | Le port local du service (8790) |
+
+`harness.sh check` vérifie tout sans rien modifier ; `logs`, `restart` et `down` font
+ce qu'ils disent.
 
 **Comment c'est isolé.** Le service tourne dans son conteneur et lance chaque agent
 et chaque job de tests en **conteneur frère**, par le socket du moteur :
@@ -61,10 +79,11 @@ ailleurs. Le service a accès au socket du moteur : avec Docker « rootful », c
 accès root à la machine. Préfère podman rootless sur un VPS partagé. Un dépôt peut
 avoir sa propre image de tests (`repos[].testImage`, par exemple une image Rust).
 
-**Le Mac.** `harness.sh up` y monte la même pile. Ses agents utilisent les mêmes
-modèles cloud ; seule la mémoire calcule ses vecteurs avec l'oMLX du Mac
-(`host.docker.internal` ou `host.containers.internal` dans `mem0.env`). Sur le Mac,
-la mémoire de la pile est publiée sur le port 8322, car l'app tient déjà le 8321.
+**Le Mac.** `harness.sh up` y monte la même pile ; la mémoire y est publiée sur le
+port 8322, car l'app tient déjà le 8321. Pour calculer les vecteurs avec l'oMLX du Mac
+plutôt qu'avec l'Ollama intégré :
+`OMLX_BASE_URL=http://host.containers.internal:8000/v1 bash omp-harness/deploy/container/harness.sh up`
+(`host.docker.internal` avec Docker).
 
 **Changer de backend.** Sur la machine où tu travailles :
 
@@ -171,8 +190,9 @@ sudo cat /var/lib/omp-harness/state/token
 `omp-harness-check` ne modifie rien. Chaque ligne dit ✓, ou ✗ avec le geste qui
 corrige : omp, lanceur, modèles, mémoire, jeton, puis pour chaque dépôt le clone, la
 lecture du distant et l'écriture (un `push --dry-run`, qui s'authentifie sans rien
-pousser). L'adresse `https://<vps>.<tailnet>.ts.net` et le jeton servent ensuite au
-Mac et à l'iPhone (README racine, étapes 2 à 5).
+pousser). L'adresse `https://<vps>.<tailnet>.ts.net` et le jeton se saisissent dans
+la feuille « Serveur » de l'app, sur le Mac et l'iPhone ; omp les lit dans
+`~/.omp/harness.json` (`{ "url": "https://<vps>.<tailnet>.ts.net", "token": "…" }`).
 
 #### NixOS
 
@@ -318,7 +338,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 ## La mémoire du projet
 
 L'oracle du serveur **est** la mémoire mem0 du projet, la même que celle des
-sessions du Mac quand tu la partages (README racine, étape 4).
+sessions du Mac une fois appairé (`/pair`, README racine § « Installation »).
 
 - **Même portée.** Une portée non déclarée est calculée à partir des manifestes de
   `main` (`package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis

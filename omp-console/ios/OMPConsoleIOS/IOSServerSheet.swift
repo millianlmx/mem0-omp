@@ -53,7 +53,7 @@ struct IOSServerSheet: View {
                                 }
                             }
                         }
-                        .disabled(server.isLoading || drafts.address.isEmpty || drafts.token.isEmpty)
+                        .disabled(server.isLoading || drafts.address.isEmpty || (drafts.token.isEmpty && HarnessPairing.decode(drafts.address) == nil))
                         .accessibilityIdentifier("ios.server.save")
                     }
                 }

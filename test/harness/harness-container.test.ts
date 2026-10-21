@@ -252,6 +252,13 @@ test("harness-container/AC-5 : le déploiement tient la même promesse — omp �
   assert.equal(spawnSync("bash", ["-n", script]).status, 0);
   const usage = spawnSync("bash", [script], { encoding: "utf8", env: { ...process.env, OMP_HARNESS_ENGINE: "sh" } });
   assert.equal(usage.status, 64);
-  for (const command of ["up", "key", "clone", "login", "check", "token"])
+  for (const command of ["up", "add", "pair", "check", "login", "key", "token"])
     assert.match(usage.stdout, new RegExp(`harness\\.sh ${command}\\b`));
+
+  // Sans serveur d'embeddings donné, un Ollama épinglé, démarré par son profil seulement.
+  assert.match(
+    read("compose.yaml"),
+    /embeddings:\n {4}image: docker\.io\/ollama\/ollama:\d+\.\d+\.\d+\n(.*\n)*? {4}profiles: \["embeddings"\]/,
+  );
+  assert.match(read("harness.sh"), /OMLX_BASE_URL:-http:\/\/embeddings:11434\/v1/);
 });

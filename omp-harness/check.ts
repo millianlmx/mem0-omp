@@ -122,7 +122,9 @@ async function checkOracle(config: HarnessConfig, health: () => Promise<boolean>
     status: "fail",
     label: "mémoire (oracle)",
     detail: `${config.oracle.url}/health ne répond pas ok`,
-    fix: "`systemctl status omp-harness-mem0` ; OMLX_BASE_URL dans /etc/omp-harness/mem0.env doit joindre le homelab.",
+    fix: config.runner.isolation === "container"
+      ? "`harness.sh logs` ; OMLX_BASE_URL dans ~/.omp-harness-secrets/mem0.env doit joindre le serveur d'embeddings."
+      : "`systemctl status omp-harness-mem0` ; OMLX_BASE_URL dans /etc/omp-harness/mem0.env doit joindre le homelab.",
   };
 }
 
@@ -134,7 +136,7 @@ function checkToken(config: HarnessConfig, env: Record<string, string | undefine
 }
 
 
-async function checkRepo(repo: RepoConfig, deps: CheckDeps): Promise<CheckLine[]> {
+async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean): Promise<CheckLine[]> {
   const { git, exec } = deps;
   const label = (what: string) => `dépôt ${repo.name} — ${what}`;
   const main = await git.raw(repo.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${repo.mainBranch}^{commit}`]).catch(() => null);
@@ -144,7 +146,7 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps): Promise<CheckLine[]
         status: "fail",
         label: label("clone"),
         detail: `${repo.path} : pas de branche ${repo.mainBranch}`,
-        fix: `sudo -u omp-harness git clone --bare <url> ${repo.path}`,
+        fix: contained ? `harness.sh add <url> ${repo.name}` : `sudo -u omp-harness git clone --bare <url> ${repo.path}`,
       },
     ];
   }
@@ -154,7 +156,8 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps): Promise<CheckLine[]
   } else {
     const read = await git.raw(repo.path, ["ls-remote", "--heads", repo.remote, repo.mainBranch]);
     const home = (deps.env ?? process.env).HOME ?? os.homedir();
-    const keyFix = `Ajoute ${path.join(home, ".ssh", "id_ed25519.pub")} comme clé de déploiement AVEC écriture sur le dépôt.`;
+    const key = contained ? "la clé de `harness.sh key`" : path.join(home, ".ssh", "id_ed25519.pub");
+    const keyFix = `Ajoute ${key} comme clé de déploiement AVEC écriture sur le dépôt.`;
     if (read.code !== 0) {
       lines.push({ status: "fail", label: label(`lecture de ${repo.remote}`), detail: firstLine(read.stderr) || `code ${read.code}`, fix: keyFix });
     } else {
@@ -188,9 +191,10 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
   if (launcher) lines.push(launcher);
   lines.push(checkModels(config), await checkOracle(config, deps.oracleHealth), checkToken(config, deps.env ?? process.env));
   if (config.repos.length === 0) {
-    lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix: "Ajoute une entrée à `repos` dans la configuration du harness." });
+    const fix = contained ? "`harness.sh add git@github.com:<toi>/<dépôt>.git`" : "Ajoute une entrée à `repos` dans la configuration du harness.";
+    lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix });
   }
-  for (const repo of config.repos) lines.push(...(await checkRepo(repo, deps)));
+  for (const repo of config.repos) lines.push(...(await checkRepo(repo, deps, contained)));
   return lines;
 }
 

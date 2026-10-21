@@ -55,6 +55,59 @@ export function resolveTarget(
   return { url, token, repo };
 }
 
+/**
+ * Le code d'appairage que donne `harness.sh pair` : `omp1:` puis, en base64url, quatre
+ * lignes — l'adresse du harness, son jeton, l'adresse de la mémoire partagée et son
+ * jeton (ces deux dernières vides quand le serveur n'en publie pas).
+ */
+export type Pairing = { url: string; token: string; mem0Url: string; mem0Token: string };
+
+export function decodePairing(code: string): Pairing | null {
+  const match = /^omp1:([A-Za-z0-9_-]+=*)$/.exec(code.trim());
+  if (!match) return null;
+  const [url = "", token = "", mem0Url = "", mem0Token = ""] = Buffer.from(match[1] as string, "base64url")
+    .toString("utf8")
+    .split("\n");
+  if (!/^https?:\/\/\S+$/.test(url) || !/^\S+$/.test(token)) return null;
+  if (mem0Url !== "" && !/^https?:\/\/\S+$/.test(mem0Url)) return null;
+  return { url: url.replace(/\/+$/, ""), token, mem0Url: mem0Url.replace(/\/+$/, ""), mem0Token };
+}
+
+export function encodePairing(pairing: Pairing): string {
+  return `omp1:${Buffer.from([pairing.url, pairing.token, pairing.mem0Url, pairing.mem0Token].join("\n")).toString("base64url")}`;
+}
+
+/**
+ * Écrit l'appairage là où le lisent le plugin, le plugin mémoire et l'app OMP Console :
+ * `~/.omp/harness.json` (ses correspondances `repos` sont gardées) et
+ * `~/.omp/mem0.json`, en 0600.
+ */
+export function writePairing(pairing: Pairing, home = os.homedir()): string[] {
+  const dir = path.join(home, ".omp");
+  fs.mkdirSync(dir, { recursive: true });
+  let previous: HarnessFile = {};
+  try {
+    previous = JSON.parse(fs.readFileSync(harnessFile(home), "utf8")) as HarnessFile;
+  } catch {
+    /* premier appairage */
+  }
+  const written = [harnessFile(home)];
+  fs.writeFileSync(
+    written[0] as string,
+    `${JSON.stringify({ ...previous, url: pairing.url, token: pairing.token }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  if (pairing.mem0Url !== "") {
+    const memory = path.join(dir, "mem0.json");
+    fs.writeFileSync(memory, `${JSON.stringify({ url: pairing.mem0Url, token: pairing.mem0Token }, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    written.push(memory);
+  }
+  for (const file of written) fs.chmodSync(file, 0o600);
+  return written;
+}
+
 export class HarnessCallError extends Error {}
 
 /** Un appel REST ; une réponse non 2xx lève avec le message d'erreur du serveur. */

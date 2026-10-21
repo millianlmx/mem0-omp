@@ -52,6 +52,15 @@ services:
       retries: 5
       start_period: 10s
 
+  # Les embeddings de la mémoire quand `harness.sh up` n'en a pas reçu d'autres
+  # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne.
+  embeddings:
+    image: docker.io/ollama/ollama:0.12.6
+    restart: unless-stopped
+    profiles: ["embeddings"]
+    volumes:
+      - ${OMP_HARNESS_ROOT}/ollama:/root/.ollama
+
   # L'image des runners : construite avec les autres (`--profile images build`),
   # jamais démarrée comme service.
   runner-image:

@@ -46,6 +46,10 @@ public final class HarnessModel: ObservableObject {
     private let tokens: any TokenStore
     private let retryDelay: Duration
     private let refreshDelay: Duration
+    /// Le serveur de la machine quand rien n'est enregistré (Mac : `~/.omp/harness.json`).
+    private let fallback: @Sendable () -> (address: String, token: String)?
+    /// Un code d'appairage accepté (Mac : écrit pour les plugins d'omp et la mémoire).
+    private let onPaired: @Sendable (HarnessPairing) -> Void
     private var server: HarnessServer?
     private var liveTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -57,21 +61,32 @@ public final class HarnessModel: ObservableObject {
         preferences: any ClientPreferences,
         tokens: any TokenStore,
         retryDelay: Duration = .seconds(5),
-        refreshDelay: Duration = .milliseconds(300)
+        refreshDelay: Duration = .milliseconds(300),
+        fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
+        onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in }
     ) {
         self.transport = transport
         self.preferences = preferences
         self.tokens = tokens
         self.retryDelay = retryDelay
         self.refreshDelay = refreshDelay
+        self.fallback = fallback
+        self.onPaired = onPaired
     }
 
-    /// La production : `URLSession`, `UserDefaults`, le trousseau.
-    public static func live() -> HarnessModel {
+    /// La production : `URLSession`, `UserDefaults`, le trousseau ; `fallback` donne le
+    /// serveur de la machine quand l'app n'en a pas enregistré, `onPaired` reçoit un
+    /// code d'appairage accepté.
+    public static func live(
+        fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
+        onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in }
+    ) -> HarnessModel {
         HarnessModel(
             transport: URLSessionHarnessTransport(),
             preferences: UserDefaultsClientPreferences(),
-            tokens: KeychainTokenStore(service: keychainService)
+            tokens: KeychainTokenStore(service: keychainService),
+            fallback: fallback,
+            onPaired: onPaired
         )
     }
 
@@ -92,22 +107,33 @@ public final class HarnessModel: ObservableObject {
         return text
     }
 
-    /// Lit l'adresse et le jeton enregistrés, puis la boîte. Sans configuration, rien.
+    /// Lit l'adresse et le jeton enregistrés, sinon ceux de la machine (`fallback`),
+    /// puis la boîte. Sans rien, rien.
     public func load() async {
         defer { isLoaded = true }
-        guard server == nil, let stored = preferences.string(forKey: Self.addressKey),
-              let normalized = Self.normalizedAddress(stored), let url = URL(string: normalized)
-        else { return }
-        guard let token = try? await tokens.token(for: Self.tokenAccount), !token.isEmpty else { return }
-        server = HarnessServer(baseURL: url, token: token)
-        address = normalized
+        guard server == nil else { return }
+        if let stored = preferences.string(forKey: Self.addressKey),
+           let normalized = Self.normalizedAddress(stored), let url = URL(string: normalized),
+           let token = try? await tokens.token(for: Self.tokenAccount), !token.isEmpty {
+            server = HarnessServer(baseURL: url, token: token)
+            address = normalized
+        } else if let shared = fallback(), let url = URL(string: shared.address) {
+            server = HarnessServer(baseURL: url, token: shared.token)
+            address = shared.address
+        } else {
+            return
+        }
         await refresh()
     }
 
     /// Configure un serveur : l'adresse et le jeton ne sont enregistrés qu'après une
     /// boîte effectivement lue (une faute de frappe ne s'enregistre pas).
+    /// Un code d'appairage (`omp1:…`) collé dans l'adresse porte l'adresse et le jeton.
     @discardableResult
-    public func configure(address raw: String, token rawToken: String) async -> Bool {
+    public func configure(address rawAddress: String, token tokenInput: String) async -> Bool {
+        let pairing = HarnessPairing.decode(rawAddress)
+        let raw = pairing?.address ?? rawAddress
+        let rawToken = pairing?.token ?? tokenInput
         guard let normalized = Self.normalizedAddress(raw), let url = URL(string: normalized) else {
             failure = .invalidAddress
             return false
@@ -128,6 +154,7 @@ public final class HarnessModel: ObservableObject {
             address = normalized
             inbox = fetched
             failure = nil
+            if let pairing { onPaired(pairing) }
             return true
         } catch {
             failure = Self.failure(of: error)
