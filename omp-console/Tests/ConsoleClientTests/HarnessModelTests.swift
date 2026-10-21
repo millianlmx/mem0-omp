@@ -79,6 +79,17 @@ private func makeModel(_ transport: ScriptedHarnessTransport, preferences: InMem
 
 private func ok(_ json: String) -> HarnessReply { HarnessReply(status: 200, body: Data(json.utf8)) }
 
+/// Attend qu'une condition du fil principal devienne vraie, au plus `timeout` secondes.
+@MainActor
+func eventually(timeout: Double = 3, _ condition: @MainActor () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return condition()
+}
+
 /// Le catalogue tel que le serveur l'écrit (`/v1/status`, `/v1/projects`,
 /// `/v1/audits`, `/v1/stats`) : clés en plus, valeurs `null`.
 private let statusJSON = #"{"runs":{"merged":2},"live":[],"scheduler":{},"repos":[{"name":"demo","scope":"src"}],"oracle":{"configured":false,"ok":false}}"#
