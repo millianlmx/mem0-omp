@@ -86,6 +86,9 @@ final class MemoryModel: ObservableObject {
 
     /// L'URL RÉELLEMENT sondée pour oMLX — c'est elle que le bandeau nomme.
     let omlxProbeURL: URL
+    /// La mémoire d'un serveur (`MemoryServiceConfig.isRemote`) : ses vecteurs sont
+    /// calculés là-bas, l'oMLX de ce Mac ne la concerne pas.
+    private let remote: Bool
 
     init(
         service: (any MemoryServing)? = nil,
@@ -104,6 +107,7 @@ final class MemoryModel: ObservableObject {
         let config = MemoryServiceConfig.resolved(environment: environment, paths: paths)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
+        self.remote = config.isRemote
         self.portOwner = portOwner ?? { address in
             await StackOwnership.foreignOwnership(
                 address: address,
@@ -295,7 +299,7 @@ final class MemoryModel: ObservableObject {
         // sonde n'aurait aucun sens. Elle est placée après la lecture de la liste
         // pour que le prérequis ne bloque jamais la section ; son état est publié
         // comme les autres, jamais levé.
-        if serviceAvailable {
+        if serviceAvailable, !remote {
             omlx = await OMLXProbe.status(config: stackConfig, session: omlxSession)
         }
         prepared = true

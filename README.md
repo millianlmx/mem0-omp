@@ -181,16 +181,18 @@ entrée, c'est le nom du dossier qui sert.
 
 **Une seule mémoire.** Sans ce geste, ton Mac et le serveur ont chacun leur mémoire,
 et les agents du serveur ignorent ce que tu as appris en session. Publie celle du
-serveur sur le tailnet, puis fais-y pointer le plugin du Mac :
+serveur sur le tailnet :
 
 ```bash
-# sur le VPS
 sudo tailscale serve --bg --https=8443 http://127.0.0.1:8321
 sudo grep MEM0_HTTP_TOKEN /etc/omp-harness/mem0.env
+```
 
-# sur le Mac, dans ~/.zshenv (lu par toutes les sessions, y compris celles de l'app)
-export MEM0_HTTP_URL=https://<vps>.<tailnet>.ts.net:8443
-export MEM0_HTTP_TOKEN=<le jeton ci-dessus>
+Puis, sur le Mac, crée `~/.omp/mem0.json`. Le plugin mémoire et l'app le lisent
+tous les deux, et `MEM0_HTTP_URL` l'emporte s'il est posé :
+
+```json
+{ "url": "https://vps.tailnet.ts.net:8443", "token": "<le jeton ci-dessus>" }
 ```
 
 Tu as déjà des souvenirs sur le Mac ? Copie sa base avant d'écrire quoi que ce soit
@@ -208,9 +210,8 @@ sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/mem0-rs.db /var/lib/omp-mem0/m
 sudo systemctl start omp-harness-mem0
 ```
 
-Limite connue : la section **Mémoire** de l'app ne lit que le service local du Mac.
-Avec la mémoire partagée, consulte-la par `/mem0-status` et `mem0_search` dans une
-session.
+Relance l'app : sa section **Mémoire** montre alors la mémoire du serveur, et
+`/mem0-status` dans une session affiche la même adresse.
 
 ### 5. L'iPhone
 
@@ -301,8 +302,8 @@ Les commandes :
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `MEM0_HTTP_URL` | `http://localhost:8321` | l'adresse du service mémoire |
-| `MEM0_HTTP_TOKEN` | vide | envoyé en `X-Mem0-Token` quand le service en exige un |
+| `MEM0_HTTP_URL` | `~/.omp/mem0.json`, sinon `http://localhost:8321` | l'adresse du service mémoire |
+| `MEM0_HTTP_TOKEN` | celui de `~/.omp/mem0.json`, sinon vide | envoyé en `X-Mem0-Token` quand le service en exige un |
 | `MEM0_PROJECT_ID` | — | force le nom du projet |
 | `MEM0_AUTOSETUP` | `1` | `0` : le plugin n'écrit jamais dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` : souvenirs injectés sans être affichés |

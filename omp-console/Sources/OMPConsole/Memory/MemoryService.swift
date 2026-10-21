@@ -14,9 +14,10 @@ import Foundation
 
 // MARK: - Configuration
 
-/// L'adresse et le jeton du service (S-7), lus dans l'environnement du process —
-/// jamais dans un fichier, jamais dans une préférence. Une variable posée mais VIDE
-/// est traitée comme absente (le `||` du plugin, config.ts:2,4).
+/// L'adresse et le jeton du service (S-7) : l'environnement du process, sinon
+/// `~/.omp/mem0.json` (le fichier que lit aussi le plugin mémoire), sinon le service
+/// de l'app. Une variable posée mais VIDE est traitée comme absente (le `||` du
+/// plugin, config.ts).
 struct MemoryServiceConfig: Equatable, Sendable {
     var baseURL: URL
     var token: String
@@ -32,11 +33,22 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// Sans `MEM0_HTTP_URL`, la base vise le port de l'agent mem0-rs de l'app
     /// (`MemoryAgent.port(environment:)`, 8321 hors recette — S-8).
     static func fromEnvironment(_ environment: [String: String]) -> MemoryServiceConfig {
-        let raw = environment["MEM0_HTTP_URL"].flatMap { $0.isEmpty ? nil : $0 }
+        let value: (String) -> String? = { key in environment[key].flatMap { $0.isEmpty ? nil : $0 } }
         let agentBase = URL(string: "http://localhost:\(MemoryAgent.port(environment: environment))") ?? defaultBaseURL
+        // Le jeton du fichier ne vaut que pour l'adresse du fichier : une adresse de
+        // l'environnement ne reçoit jamais le jeton d'un autre service.
+        let file = value("MEM0_HTTP_URL") == nil ? MemorySettingsFile.load(environment: environment) : nil
+        let raw = value("MEM0_HTTP_URL") ?? file?.url
         let baseURL = raw.flatMap { URL(string: $0) } ?? agentBase
-        let token = environment["MEM0_HTTP_TOKEN"].flatMap { $0.isEmpty ? nil : $0 } ?? ""
+        let token = value("MEM0_HTTP_TOKEN") ?? file?.token ?? ""
         return MemoryServiceConfig(baseURL: baseURL, token: token)
+    }
+
+    /// Vrai pour une adresse hors de ce Mac : la mémoire d'un serveur, choisie
+    /// explicitement et authentifiée par son jeton.
+    var isRemote: Bool {
+        guard let host = baseURL.host else { return false }
+        return !StackOwnership.isLocalHost(host)
     }
 
     /// La configuration EFFECTIVE du client : l'environnement, PLUS le jeton
@@ -90,6 +102,29 @@ enum MemoryWritePath: Equatable, Sendable {
         case .add: "POST"
         case .memory: "PUT"
         }
+    }
+}
+
+/// `~/.omp/mem0.json` — `{ "url": …, "token": … }` : la mémoire partagée avec le
+/// serveur de pipelines. Une app lancée par le Finder ne voit pas le profil du
+/// shell ; ce fichier, lu aussi par le plugin mémoire, donne la même adresse aux
+/// sessions et à l'app.
+enum MemorySettingsFile {
+    static func url(environment: [String: String]) -> URL? {
+        guard let home = environment["HOME"], !home.isEmpty else { return nil }
+        return URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".omp/mem0.json")
+    }
+
+    /// L'adresse et le jeton du fichier ; `nil` s'il manque, est illisible ou ne
+    /// porte pas d'adresse.
+    static func load(environment: [String: String]) -> (url: String, token: String?)? {
+        guard let file = url(environment: environment),
+              let data = try? Data(contentsOf: file),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let address = object["url"] as? String, !address.isEmpty
+        else { return nil }
+        let token = (object["token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return (address, token)
     }
 }
 
@@ -359,7 +394,8 @@ struct HTTPMemoryService: MemoryServing {
     /// La sonde `/health` ne lève JAMAIS : l'état est une valeur, pas une erreur
     /// (S-6.1). Elle est aussi la sonde IDENTITAIRE (S-4) : un `200 ok` n'est
     /// accepté que s'il porte le jeton d'installation de l'app ; un `200 ok` sans
-    /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ».
+    /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ». Une
+    /// adresse distante (`isRemote`) en est dispensée.
     func health() async -> MemoryHealth {
         do {
             let json = try await send(url(for: .health), method: MemoryRoute.health.method, body: nil, timeout: Self.otherTimeout)
@@ -369,6 +405,11 @@ struct HTTPMemoryService: MemoryServing {
             // (un service muet n'est pas un autre service prouvé).
             guard ok else {
                 return MemoryHealth(isAvailable: false, errorMessage: MemoryText.unreadableResponse)
+            }
+            // La sonde identitaire garde le port LOCAL de l'app ; une adresse distante
+            // est un choix explicite de l'utilisateur, authentifié par son jeton.
+            if config.isRemote {
+                return MemoryHealth(isAvailable: true, errorMessage: nil)
             }
             let returned = object?["installation"] as? String
             let expected = config.installationToken

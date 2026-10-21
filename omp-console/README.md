@@ -1185,9 +1185,13 @@ graphe, qui couvre alors toutes les portées), `POST /memory/search` (avec
 **mot pour mot**, aucun appel LLM), `PUT /memory/{id}` (le texte est écrit tel quel,
 `tags` remplace les étiquettes) et `DELETE /memory/{id}`.
 
-**Le service.** L'adresse vient de `MEM0_HTTP_URL` (`http://localhost:8321` par
-défaut), le jeton de `MEM0_HTTP_TOKEN` (vide par défaut, envoyé en en-tête
-`X-Mem0-Token` seulement s'il est non vide). Le bundle porte
+**Le service.** L'adresse vient de `MEM0_HTTP_URL`, sinon de `~/.omp/mem0.json`
+(`{ "url", "token" }`, le fichier que lit aussi le plugin mémoire), sinon du service
+de l'app (`http://localhost:8321`). Le jeton vient de `MEM0_HTTP_TOKEN`, sinon du
+fichier quand l'adresse en vient aussi (vide par défaut, envoyé en en-tête
+`X-Mem0-Token` seulement s'il est non vide). Une adresse hors de ce Mac (la mémoire
+partagée du serveur de pipelines) est acceptée sans le jeton d'installation, et la
+sonde oMLX de ce Mac ne s'y applique pas : ses vecteurs sont calculés sur le serveur. Le bundle porte
 `NSAppTransportSecurity` → `NSAllowsLocalNetworking` : sous macOS 14, ATS refuse par
 défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vide**
 est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour
