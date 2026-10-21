@@ -4,6 +4,8 @@
 //   … --check : vérifie l'installation (omp, lanceur, modèles, oracle, dépôts) et sort.
 //   … --add-repo <url> [--name <nom>] : clone le dépôt, éprouve l'écriture, devine ses
 //     tests et le déclare dans le fichier de configuration (codes : repos.ts).
+//   … --models <omlx/<modèle>|anthropic> [--omlx-url <url>] [--omlx-context <n>] : les
+//     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
 //
 // Le jeton d'API vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en 0600
 // au premier démarrage). SIGTERM arrête proprement : plus de requêtes, runners
@@ -22,6 +24,7 @@ import { HeavyRunner } from "./heavy.ts";
 import { createHandler } from "./http.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
+import { setModels } from "./local-model.ts";
 import { addRepo } from "./repos.ts";
 import type { SpawnRunner } from "./orchestrator.ts";
 import { execProcess } from "./proc.ts";
@@ -100,6 +103,14 @@ if (isMain) {
     const result = await addRepo(file, config, new Git(execProcess, config.git), added, argValue(process.argv, "--name") ?? undefined);
     console.log(`${result.code === 0 ? "✓" : "✗"} ${result.message}`);
     process.exit(result.code);
+  }
+  const models = argValue(process.argv, "--models");
+  if (models !== null) {
+    if (file === null) throw new Error("--models exige --config");
+    const url = argValue(process.argv, "--omlx-url");
+    const context = Number(argValue(process.argv, "--omlx-context") ?? "") || undefined;
+    console.log(`✓ ${setModels(file, config, models, url ? { baseUrl: url, contextWindow: context } : undefined)}`);
+    process.exit(0);
   }
   if (process.argv.includes("--check")) {
     if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN) config.oracle.token = process.env.MEM0_HTTP_TOKEN;

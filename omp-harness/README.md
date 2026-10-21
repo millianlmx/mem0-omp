@@ -55,7 +55,8 @@ dans `config.json` (voir « Configuration »), puis `harness.sh restart`.
 
 | Variable de `up` | Effet |
 |---|---|
-| `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `mem0.env`) |
+| `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `mem0.env`) ; avec `--omlx`, celui des agents aussi |
+| `OMLX_API_TOKEN`, `OMLX_CONTEXT_WINDOW` | Avec `--omlx` : la clé d'oMLX, et la fenêtre de contexte du modèle (131072) |
 | `OMP_HARNESS_TAILSCALE=0` | Ne publie rien : le service reste sur `127.0.0.1` |
 | `OMP_HARNESS_ENGINE` | `docker` ou `podman` (défaut : podman s'il est installé) |
 | `OMP_HARNESS_PORT` | Le port local du service (8790) |
@@ -79,11 +80,35 @@ ailleurs. Le service a accès au socket du moteur : avec Docker « rootful », c
 accès root à la machine. Préfère podman rootless sur un VPS partagé. Un dépôt peut
 avoir sa propre image de tests (`repos[].testImage`, par exemple une image Rust).
 
-**Le Mac.** `harness.sh up` y monte la même pile ; la mémoire y est publiée sur le
-port 8322, car l'app tient déjà le 8321. Pour calculer les vecteurs avec l'oMLX du Mac
-plutôt qu'avec l'Ollama intégré :
-`OMLX_BASE_URL=http://host.containers.internal:8000/v1 bash omp-harness/deploy/container/harness.sh up`
-(`host.docker.internal` avec Docker).
+**Le Mac, tout en local.** `harness.sh up` y monte la même pile ; la mémoire y est
+publiée sur le port 8322, car l'app tient déjà le 8321. Avec oMLX lancé en natif
+(port 8000), qui sert un modèle de code et `bge-m3` :
+
+```bash
+bash omp-harness/deploy/container/harness.sh up --omlx <modèle>
+```
+
+`<modèle>` est l'identifiant que liste `curl -s 127.0.0.1:8000/v1/models`. `up` vérifie
+d'abord qu'oMLX le sert, puis :
+
+- met toutes les étapes sur `omlx/<modèle>` (`models.heavy`, les autres tiers vides),
+  avec deux agents et un job de tests à la fois au plus (`runner.slots`, `heavy.slots`) ;
+- déclare oMLX dans le `models.yml` des agents
+  (`~/.omp-harness/runner-home/.omp/profiles/pipeline/agent/`), joint par
+  `host.docker.internal` (Docker) ou `host.containers.internal` (podman) ;
+- donne à la mémoire les embeddings et le modèle d'oMLX (`mem0.env`) ;
+- ne demande aucune clé d'API ;
+- écrit `~/.omp/agent/models.yml` pour l'omp du Mac s'il n'existe pas (sinon, dit quoi
+  y ajouter) : choisis ensuite `omlx/<modèle>` avec `/model`.
+
+Le mode est gardé : un `up` sans option le conserve, `up --anthropic` remet les agents
+chez Anthropic. `OMLX_API_TOKEN` passe la clé d'oMLX s'il en exige une, et
+`OMLX_CONTEXT_WINDOW` la fenêtre du modèle (131072 par défaut).
+
+La VM de Docker Desktop ou de podman doit avoir 8 Go (`up` le signale) ; le modèle
+compte en plus, hors VM. Hors ligne, les features avancent et fusionnent dans le clone
+du Mac : le push vers le distant échoue (événement `push_failed`) et part avec le
+merge suivant fait en ligne.
 
 **Changer de backend.** Sur la machine où tu travailles :
 

@@ -70,7 +70,8 @@ Il te faut :
   réserve 16 Go de mémoire : prévois 32 Go, ou réduis `runner.slots` et `heavy.slots`.
 - **Tailscale** sur le VPS, le Mac et l'iPhone, dans le même tailnet.
 - **Une clé d'API LLM** pour les agents du serveur (Anthropic par défaut), ou un
-  compte OMP.
+  compte OMP. Ou rien de tout ça : sur un Mac, le serveur tourne aussi tout en local
+  avec oMLX (« Tout en local sur le Mac », plus bas).
 - **Un Mac Apple Silicon** sous macOS 26, avec Xcode et Rust pour assembler l'app.
 - **Tes dépôts** sur GitHub, ou sur tout serveur git joignable en SSH.
 
@@ -105,6 +106,31 @@ coller, et attend que ce soit fait.
 Sans moteur de conteneurs, `sudo bash omp-harness/deploy/install.sh` installe le
 serveur avec systemd (Debian, Ubuntu), et NixOS a un module déclaratif :
 [omp-harness/README.md](omp-harness/README.md) § « Installer le serveur ».
+
+#### Tout en local sur le Mac
+
+Le même serveur tourne sur ton Mac, ses agents et sa mémoire sur oMLX en natif : sans
+internet ni clé d'API, en avion compris. Il faut Docker Desktop (ou podman) et oMLX
+lancé (port 8000), qui sert un modèle de code et `bge-m3`. Dans le clone :
+
+```bash
+bash omp-harness/deploy/container/harness.sh up --omlx <modèle>
+```
+
+`<modèle>` est l'identifiant que liste oMLX (`curl -s 127.0.0.1:8000/v1/models`). `up`
+vérifie qu'oMLX le sert, met toutes les étapes dessus, donne à la mémoire les
+embeddings d'oMLX et déclare oMLX à l'omp du Mac : choisis-le avec `/model`.
+
+- **La mémoire du Mac.** La VM de Docker ou de podman doit avoir 8 Go (`up` le
+  signale), et le modèle compte en plus. Sur 128 Go, un modèle de code d'environ
+  100 milliards de paramètres en 4 bits laisse la place.
+- **Passer du VPS au Mac.** Colle le code d'appairage du Mac (`harness.sh pair`) dans
+  l'app ou avec `/pair` ; pour revenir, celui du VPS. Les deux mémoires restent
+  séparées.
+- **Hors ligne.** Les features avancent et fusionnent dans le clone du Mac ; le push
+  vers GitHub part avec le premier merge fait en ligne.
+
+Le détail : [omp-harness/README.md](omp-harness/README.md) § « En conteneurs ».
 
 ### 2. Le Mac : l'app OMP Console
 
