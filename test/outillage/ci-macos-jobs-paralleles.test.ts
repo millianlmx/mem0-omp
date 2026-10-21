@@ -23,6 +23,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prerequisAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -620,6 +621,17 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
     return;
   }
   const before = spawnSync("git", ["show", `f3fbfe6:${WORKFLOW_FILE}`], { cwd: ROOT, encoding: "utf8" });
+  // Un clone superficiel (`--depth`) n'a pas f3fbfe6 : c'est un prérequis absent,
+  // que --strict change en échec nommé — la CI clone l'historique complet.
+  const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: ROOT, encoding: "utf8" });
+  if (before.status !== 0 && shallow.stdout.trim() === "true") {
+    prerequisAbsent(
+      t,
+      "historique git complet (clone superficiel)",
+      "le job check n'est pas comparé à f3fbfe6 ; `git fetch --unshallow` le permet",
+    );
+    return;
+  }
   assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
   let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter(
     (line) => !line.includes("MEM0_OMP_REQUIRE_IOS"),
