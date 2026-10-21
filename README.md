@@ -66,8 +66,8 @@ Une feature suit toujours le même chemin :
 
 Il te faut :
 
-- **Un VPS Linux avec systemd** (Debian 12+, Ubuntu 24.04+ ou NixOS), x86_64 ou
-  arm64. Par défaut le serveur réserve 16 Go de mémoire : prévois 32 Go, ou réduis
+- **Un VPS Linux**, x86_64 ou arm64, avec Docker ou podman (ou systemd : Debian 12+,
+  Ubuntu 24.04+, NixOS). Par défaut le serveur réserve 16 Go de mémoire : prévois 32 Go, ou réduis
   `runner.slots` et `heavy.slots`.
 - **Tailscale** sur le VPS, le Mac et l'iPhone, dans le même tailnet.
 - **Un compte LLM** pour les agents du serveur : une clé d'API (Anthropic par
@@ -84,25 +84,27 @@ serveur.
 
 ### 1. Le serveur
 
-Sur Debian ou Ubuntu, depuis un clone de ce dépôt :
+Le plus simple : en conteneurs, avec Docker ou podman, sur n'importe quel VPS (ou sur
+ton Mac). Depuis un clone de ce dépôt :
 
 ```bash
 git clone https://github.com/millianlmx/mem0-omp && cd mem0-omp
-sudo bash omp-harness/deploy/install.sh
+bash omp-harness/deploy/container/harness.sh up
 ```
 
-Le script pose omp, le service, la mémoire et une clé SSH, puis affiche les six
+Le script construit les images, démarre le service et sa mémoire, puis affiche les
 gestes qui restent : la clé de déploiement à ajouter sur ton dépôt, son clone, la
-configuration, les comptes LLM, le serveur d'embeddings et la vérification. NixOS a
-un module déclaratif. Tout est détaillé dans
-[omp-harness/README.md](omp-harness/README.md) § « Installer le serveur ».
+configuration, les comptes LLM, le serveur d'embeddings et la vérification. Sans
+moteur de conteneurs, `sudo bash omp-harness/deploy/install.sh` installe la même
+chose avec systemd (Debian, Ubuntu), et NixOS a un module déclaratif. Tout est
+détaillé dans [omp-harness/README.md](omp-harness/README.md) § « Installer le
+serveur ».
 
-Une fois le service démarré (étape 8 de ce guide), publie l'API sur ton tailnet et
-note son jeton :
+Une fois le service démarré, publie l'API sur ton tailnet et note son jeton
+(`harness.sh token`, ou `sudo cat /var/lib/omp-harness/state/token` avec systemd) :
 
 ```bash
 sudo tailscale serve --bg --https=443 http://127.0.0.1:8790
-sudo cat /var/lib/omp-harness/state/token
 ```
 
 ### 2. Le Mac : l'app OMP Console
@@ -185,7 +187,7 @@ serveur sur le tailnet :
 
 ```bash
 sudo tailscale serve --bg --https=8443 http://127.0.0.1:8321
-sudo grep MEM0_HTTP_TOKEN /etc/omp-harness/mem0.env
+grep MEM0_HTTP_TOKEN ~/.omp-harness-secrets/mem0.env   # avec systemd : sudo grep … /etc/omp-harness/mem0.env
 ```
 
 Puis, sur le Mac, crée `~/.omp/mem0.json`. Le plugin mémoire et l'app le lisent
@@ -195,20 +197,16 @@ tous les deux, et `MEM0_HTTP_URL` l'emporte s'il est posé :
 { "url": "https://vps.tailnet.ts.net:8443", "token": "<le jeton ci-dessus>" }
 ```
 
-Tu as déjà des souvenirs sur le Mac ? Copie sa base avant d'écrire quoi que ce soit
-sur le serveur. Les deux doivent utiliser le même modèle d'embedding
-(`EMBEDDING_DIMS`) :
+Tu as déjà des souvenirs sur le Mac ? Copie sa base sur le serveur avant d'y écrire
+quoi que ce soit (même modèle d'embedding des deux côtés, `EMBEDDING_DIMS`) :
 
 ```bash
-# sur le Mac
 sqlite3 ~/Library/Application\ Support/com.omp.console/mem0-rs/mem0-rs.db ".backup /tmp/mem0-rs.db"
 scp /tmp/mem0-rs.db <vps>:/tmp/
-# sur le VPS
-sudo systemctl stop omp-harness-mem0
-sudo rm -f /var/lib/omp-mem0/mem0-rs.db-wal /var/lib/omp-mem0/mem0-rs.db-shm
-sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/mem0-rs.db /var/lib/omp-mem0/mem0-rs.db
-sudo systemctl start omp-harness-mem0
 ```
+
+Puis, sur le VPS : `omp-harness/README.md` § « La mémoire du projet », « Reprendre
+la mémoire du Mac ».
 
 Relance l'app : sa section **Mémoire** montre alors la mémoire du serveur, et
 `/mem0-status` dans une session affiche la même adresse.
@@ -223,7 +221,8 @@ Au lancement, **Serveur** demande la même adresse et le même jeton que sur le 
 ### 6. Vérifier
 
 ```bash
-sudo omp-harness-check        # sur le VPS
+bash omp-harness/deploy/container/harness.sh check   # sur le VPS, en conteneurs
+sudo omp-harness-check                               # ou avec systemd
 ```
 
 Chaque ligne dit ✓, ou ✗ avec le geste qui corrige : omp, modèles, mémoire, chaque
@@ -247,6 +246,11 @@ Puis sur le Mac, dans un de tes dépôts :
 | `/project [description]` | Découpe un projet en features autonomes. Celles qui touchent des modules différents tournent en parallèle, chacune mergée dès sa validation. |
 | `/audit [focus]` | Un agent lit la branche principale sans rien modifier, puis propose des faiblesses à corriger et des features. `/audit liste` les montre, `/audit lancer <id> 1,3` lance celles retenues. |
 | `/pipelines` | La boîte de l'humain : questions en attente, specs et verdicts à valider, décisions à relire, features en cours. |
+
+**Changer de backend.** La même pile tourne sur le VPS et sur ton Mac. Sur le Mac,
+`harness.sh up` puis `harness.sh connect` font viser la pile locale par les plugins et
+l'app (pipelines et mémoire) ; `harness.sh disconnect` les ramène au VPS. Détails :
+`omp-harness/README.md` § « En conteneurs ».
 
 OMP te demande ton accord avant chaque envoi au serveur, même en mode yolo. Tout le
 reste se fait dans l'app, sur le Mac ou l'iPhone :
@@ -316,8 +320,9 @@ La configuration du serveur (dépôts, modèles, plafonds) est décrite dans
 
 ## Dépannage
 
-- **Sur le VPS, commence toujours par `sudo omp-harness-check`.** Puis
-  `journalctl -u omp-harness -e` et `journalctl -u omp-harness-mem0 -e`.
+- **Sur le VPS, commence toujours par la vérification** : `harness.sh check` en
+  conteneurs (puis `harness.sh logs`), `sudo omp-harness-check` avec systemd (puis
+  `journalctl -u omp-harness -e` et `journalctl -u omp-harness-mem0 -e`).
 - **Un merge n'arrive pas sur GitHub** : l'événement `push_failed` du run en donne la
   raison. Le plus souvent, la clé de déploiement est en lecture seule.
 - **`/req` dit « harness non configuré »** : `~/.omp/harness.json` manque, ou
@@ -340,7 +345,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── omp-mem0-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
 ├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines)
 ├── omp-harness/                       le serveur de pipelines du VPS
-│   └── deploy/                        install.sh, unités systemd, lanceur root, module NixOS
+│   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
 ├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS
 ├── mem0-stack/                        la pile conteneur du service mémoire

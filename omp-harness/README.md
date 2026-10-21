@@ -8,12 +8,83 @@ garde pour toi. Les plugins et l'app OMP Console en sont les clients.
 
 ## Installer le serveur
 
+Deux façons, mêmes garanties : chaque agent et chaque job de tests est isolé, plafonné
+en mémoire, et les tests tournent sans réseau ni clé.
+
+- **En conteneurs** (Docker ou podman) : le même déploiement sur n'importe quel VPS
+  et sur ton Mac, ce qui permet de changer de backend en une commande.
+- **Avec systemd** (Debian, Ubuntu, NixOS) : installé dans le système, sans moteur de
+  conteneurs.
+
+### En conteneurs (Docker ou podman)
+
+Il ne faut que le moteur et git. Sous Linux : Docker Engine, ou podman rootless
+(recommandé : son socket ne donne pas root). Sur un Mac : Docker Desktop ou OrbStack,
+ou une machine podman en mode rootful.
+
+```bash
+bash omp-harness/deploy/container/harness.sh up
+```
+
+Lancé depuis un clone de ce dépôt, `up` construit les images, crée la racine
+(`~/.omp-harness`) et les secrets (`~/.omp-harness-secrets`, jamais montés dans le
+service), une clé SSH et la configuration, puis démarre le service et sa mémoire.
+Relancé, il met à jour et redémarre. La suite :
+
+```bash
+bash omp-harness/deploy/container/harness.sh key      # à poser en clé de déploiement, AVEC écriture
+bash omp-harness/deploy/container/harness.sh clone git@github.com:<toi>/<dépôt>.git
+$EDITOR ~/.omp-harness/config.json                    # tes dépôts et modèles (voir « Configuration »)
+$EDITOR ~/.omp-harness-secrets/runner.env             # ANTHROPIC_API_KEY=…, ou : harness.sh login
+$EDITOR ~/.omp-harness-secrets/mem0.env               # OMLX_BASE_URL : ton serveur d'embeddings
+bash omp-harness/deploy/container/harness.sh restart
+bash omp-harness/deploy/container/harness.sh check
+```
+
+Sur un VPS, publie ensuite l'API sur ton tailnet
+(`sudo tailscale serve --bg --https=443 http://127.0.0.1:8790`) ; le jeton est
+donné par `harness.sh token`.
+
+**Comment c'est isolé.** Le service tourne dans son conteneur et lance chaque agent
+et chaque job de tests en **conteneur frère**, par le socket du moteur :
+
+| | Agent (`omp-harness-runner`) | Job de tests (image du dépôt, `node:22` par défaut) |
+|---|---|---|
+| Mémoire | `--memory 1G`, sans swap | `--memory 4G`, sans swap, `--cpus 3` |
+| OOM | `--oom-score-adj 300` | `--oom-score-adj 800` : tué avant un agent |
+| Réseau | celui du compose (mémoire, fournisseurs LLM) | aucun (`--network none`) |
+| Montages | son worktree, le clone en lecture, son HOME, ses clés | son worktree, le clone en lecture |
+| Droits | `--cap-drop ALL`, `no-new-privileges` | `--cap-drop ALL`, `no-new-privileges` |
+
+Les clés LLM ne vivent que dans `runner.env`, monté dans les agents et nulle part
+ailleurs. Le service a accès au socket du moteur : avec Docker « rootful », c'est un
+accès root à la machine. Préfère podman rootless sur un VPS partagé. Un dépôt peut
+avoir sa propre image de tests (`repos[].testImage`, par exemple une image Rust).
+
+**Le Mac.** `harness.sh up` y monte la même pile. Ses agents utilisent les mêmes
+modèles cloud ; seule la mémoire calcule ses vecteurs avec l'oMLX du Mac
+(`host.docker.internal` ou `host.containers.internal` dans `mem0.env`). Sur le Mac,
+la mémoire de la pile est publiée sur le port 8322, car l'app tient déjà le 8321.
+
+**Changer de backend.** Sur la machine où tu travailles :
+
+```bash
+bash omp-harness/deploy/container/harness.sh connect      # plugins et app visent la pile de cette machine
+bash omp-harness/deploy/container/harness.sh disconnect   # retour au réglage précédent (le VPS)
+```
+
+`connect` réécrit `~/.omp/harness.json` et `~/.omp/mem0.json` en gardant tes
+correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance omp et
+l'app ensuite.
+
+### Avec systemd
+
 Trois users se partagent la machine : `omp-harness` (le service, sa base, son
 jeton), `omp-runner` (les agents et leurs comptes LLM) et `omp-heavy` (les tests,
 sans réseau ni clé). Une quatrième, `omp-mem0`, tient la mémoire du projet
 (`mem0-rs`, sur `127.0.0.1:8321`).
 
-### Debian ou Ubuntu
+#### Debian ou Ubuntu
 
 **1. Les prérequis.** Node ≥ 22.6, git, curl, ssh-keygen, sudo, systemd ≥ 250, et
 Rust ≥ 1.89 pour compiler `mem0-rs` :
@@ -103,7 +174,7 @@ lecture du distant et l'écriture (un `push --dry-run`, qui s'authentifie sans r
 pousser). L'adresse `https://<vps>.<tailnet>.ts.net` et le jeton servent ensuite au
 Mac et à l'iPhone (README racine, étapes 2 à 5).
 
-### NixOS
+#### NixOS
 
 `install.sh` écrit dans `/etc` et `/usr/local`, que NixOS gère lui-même. Le module
 `deploy/nixos/module.nix` déclare la même chose : users, dossiers et droits, sudoers
@@ -179,6 +250,7 @@ Les runs en cours reprennent à leur dernier point de reprise après le redémar
   recompiler `mem0-rs`, refais les deux commandes `cargo build` et `install` de
   l'étape 2.
 - **NixOS** : `nix flake update mem0-omp`, puis `sudo nixos-rebuild switch`.
+- **En conteneurs** : `git pull`, puis `bash omp-harness/deploy/container/harness.sh up`.
 
 ### Développer sans systemd
 
@@ -203,6 +275,13 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
 | `repos[].mainBranch` | `main` | la branche principale |
 | `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
+| `repos[].testImage` | `container.testImage` | l'image des tests de ce dépôt, en conteneurs |
+| `runner.isolation`, `heavy.isolation` | `systemd` | `systemd`, `container` (Docker ou podman) ou `none` (développement) |
+| `container.command` | `["docker"]` | le CLI du moteur ; il parle aussi à l'API de podman |
+| `container.runnerImage` | `omp-harness-runner:local` | l'image des agents : omp épinglé, git, le plugin mémoire |
+| `container.testImage` | `docker.io/library/node:22-bookworm` | l'image des tests par défaut |
+| `container.network` | `null` | le réseau des agents (celui du compose, qui porte la mémoire) |
+| `container.runnerEnvFile`, `container.runnerHome` | `null` | les clés des agents et leur HOME, chemins de l'hôte |
 | `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur un 429 ; vide, elle prend celle du niveau au-dessus |
 | `stepTiers` | `req`, `specs`, `review` : `heavy` ; `impl`, `fix` : `standard` | le niveau de chaque étape ; la dernière correction avant le plafond passe toujours en `heavy` |
 | `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur |
@@ -250,10 +329,27 @@ sessions du Mac quand tu la partages (README racine, étape 4).
   dépôt, donc rien dans la PR) et `MEM0_NUDGE=0`. Le service écrit lui-même en
   mémoire les besoins, chaque feature mergée et chaque correction humaine **avec sa
   raison**.
-- **Isolée.** `mem0-rs` tourne sous `omp-mem0`, base en `/var/lib/omp-mem0` (0700),
-  hors du budget des runs. Un jeton commun le relie au service et aux agents ; les
-  jobs de tests ne voient ni la base ni le jeton. Injoignable, la mémoire dégrade
-  sans bloquer.
+- **Isolée.** `mem0-rs` tourne dans son conteneur (base en `~/.omp-harness/mem0`), ou
+  sous `omp-mem0` avec systemd (base en `/var/lib/omp-mem0`, 0700), hors du budget
+  des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
+  voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
+
+**Reprendre la mémoire du Mac**, une fois la copie `/tmp/mem0-rs.db` posée sur le VPS
+(README racine, étape 4) :
+
+```bash
+# en conteneurs (docker, ou podman)
+docker compose -p omp-harness stop mem0
+rm -f ~/.omp-harness/mem0/mem0-rs.db-wal ~/.omp-harness/mem0/mem0-rs.db-shm
+cp /tmp/mem0-rs.db ~/.omp-harness/mem0/mem0-rs.db
+docker compose -p omp-harness start mem0
+
+# avec systemd
+sudo systemctl stop omp-harness-mem0
+sudo rm -f /var/lib/omp-mem0/mem0-rs.db-wal /var/lib/omp-mem0/mem0-rs.db-shm
+sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/mem0-rs.db /var/lib/omp-mem0/mem0-rs.db
+sudo systemctl start omp-harness-mem0
+```
 
 ## API
 

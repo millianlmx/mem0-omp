@@ -1,0 +1,14 @@
+#!/bin/sh
+# L'entrée des runners : les clés des fournisseurs et le jeton de la mémoire viennent
+# du fichier monté (jamais de la ligne de commande, que `ps` montrerait), puis omp.
+set -eu
+# Un uid choisi au lancement, inconnu de l'image : déclaré, avec le HOME des runners.
+if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
+  echo "runner:x:$(id -u):$(id -g):runner:${HOME:-/home/runner}:/bin/sh" >> /etc/passwd
+fi
+if [ -r /run/secrets/runner.env ]; then
+  set -a
+  . /run/secrets/runner.env
+  set +a
+fi
+exec "$@"

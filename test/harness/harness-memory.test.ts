@@ -108,6 +108,7 @@ test("harness-memory/AC-3 : derrière le lanceur root, la scope passe par trois 
     overlay: "/o.json",
     model: null,
     scope: "mon-produit",
+    repo: "/var/lib/omp-harness/repos/mon-produit",
   });
   const args = line.args.slice(DEFAULT_LAUNCHER.length - 1);
   const launcher = (argv: string[]) =>

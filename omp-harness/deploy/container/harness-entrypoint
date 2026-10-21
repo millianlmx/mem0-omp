@@ -1,0 +1,13 @@
+#!/bin/sh
+# L'entrée du service : il tourne sous un uid choisi au lancement (le tien avec
+# Docker sous Linux), que l'image ne connaît pas. ssh refuse un uid sans entrée dans
+# /etc/passwd et cherche sa clé dans le HOME de cette entrée, pas dans $HOME : on la
+# pose, et GIT_SSH_COMMAND nomme la clé et les hôtes connus du service.
+set -eu
+if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
+  echo "omp-harness:x:$(id -u):$(id -g):omp-harness:${HOME:-/tmp}:/bin/sh" >> /etc/passwd
+fi
+if [ -n "${HOME:-}" ]; then
+  export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -F $HOME/.ssh/config -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+fi
+exec "$@"

@@ -1,6 +1,8 @@
 // Garde du bloc « ## Installation » de README.md : trois voies dans l'ordre app
 // OMP Console < pile conteneur à la main < plugins seuls, aucune commande podman
-// ou docker hors de la voie manuelle, et la pile jamais redite « obligatoire ».
+// ou docker dans la voie de l'app ni dans celle des plugins (ni l'une ni l'autre
+// n'exige de moteur de conteneurs ; le serveur, lui, peut en utiliser un), et la
+// pile jamais redite « obligatoire ».
 // Seul le bloc est lu : `podman` et « obligatoire » restent permis ailleurs dans
 // le README. La garde est éprouvée par des copies mutées construites depuis le
 // README réel, jamais depuis un texte en dur.
@@ -79,10 +81,10 @@ function installationViolations(readme: string): string[] {
   }
 
   for (const segment of segments) {
-    if (segment.kind === "manuelle") continue;
+    if (segment.kind !== "app" && segment.kind !== "plugins") continue;
     for (const line of segment.text.split("\n")) {
       for (const match of line.matchAll(/\b(podman|docker)\b/gi)) {
-        violations.push(`${match[1].toLowerCase()} hors de la voie manuelle : ${line.trim()}`);
+        violations.push(`${match[1].toLowerCase()} dans la voie ${segment.kind} : ${line.trim()}`);
       }
     }
   }
@@ -201,13 +203,13 @@ test("readme-installation-podman-contradiction/AC-8 : voie manuelle remise avant
 test("readme-installation-podman-contradiction/AC-9 : podman ou docker compose dans la voie app ou plugins seuls : la garde rougit", () => {
   const inApp = installationViolations(insertAfter(headingIndex("app"), "podman compose up -d"));
   assert.ok(
-    inApp.some((violation) => /^podman hors de la voie manuelle/.test(violation)),
+    inApp.some((violation) => /^podman dans la voie app/.test(violation)),
     `violations : ${JSON.stringify(inApp)}`,
   );
 
   const inPlugins = installationViolations(insertAfter(headingIndex("plugins"), "docker compose up -d"));
   assert.ok(
-    inPlugins.some((violation) => /^docker hors de la voie manuelle/.test(violation)),
+    inPlugins.some((violation) => /^docker dans la voie plugins/.test(violation)),
     `violations : ${JSON.stringify(inPlugins)}`,
   );
 });

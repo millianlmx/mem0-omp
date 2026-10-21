@@ -47,7 +47,9 @@ export class Git {
 
   #env(extra: Record<string, string> = {}): Record<string, string> {
     const env: Record<string, string> = {};
-    for (const key of ["PATH", "HOME", "LANG", "TMPDIR"]) {
+    // GIT_SSH_COMMAND vient de l'environnement du SERVICE (l'image en conteneurs) :
+    // jamais d'un dépôt, dont la config reste neutralisée par HARDENING.
+    for (const key of ["PATH", "HOME", "LANG", "TMPDIR", "GIT_SSH_COMMAND"]) {
       const value = process.env[key];
       if (value !== undefined) env[key] = value;
     }

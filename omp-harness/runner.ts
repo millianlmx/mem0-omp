@@ -6,6 +6,10 @@
 // MemoryMax=1G dans la tranche des runners. Une scope ne porte pas `OOMScoreAdjust=`
 // (propriété d'exécution) : `choom -n 300` le pose sur le process lui-même — relever
 // son propre score n'exige aucun privilège.
+//
+// En isolation `container`, c'est un conteneur frère (`run -i`, stdio gardés), aux
+// mêmes plafonds, qui ne monte que son worktree, le clone en lecture, son HOME et
+// ses clés.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { launch } from "./config.ts";
@@ -40,18 +44,37 @@ export function runnerUnit(runId: string, stepId: number): string {
 }
 
 
+/** Une commande du moteur de conteneurs (`docker …` ou `podman …`). */
+export function engine(config: HarnessConfig, args: string[]): { command: string; args: string[] } {
+  const [command, ...prefix] = config.container.command;
+  return { command: command as string, args: [...prefix, ...args] };
+}
+
+
+/** L'utilisateur des conteneurs : celui de la configuration, sinon celui du service. */
+export function containerUser(config: HarnessConfig): string {
+  return config.container.user ?? `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
+}
+
+
+/** Arrête de force l'unité d'un runner ou d'un job : la scope systemd, ou le conteneur. */
+export async function forceStop(config: HarnessConfig, exec: Exec, unit: string, isolation = config.runner.isolation): Promise<void> {
+  if (isolation === "systemd") {
+    const stop = launch(config, ["--stop", `${unit}.scope`]);
+    await exec(stop.command, stop.args, { timeoutMs: 15_000 });
+  } else if (isolation === "container") {
+    const stop = engine(config, ["rm", "--force", unit]);
+    await exec(stop.command, stop.args, { timeoutMs: 30_000 });
+  }
+}
+
+
 /**
- * Arrête un runner : stdin fermé, puis signaux, puis `--stop <unité>.scope` par le
- * lanceur — un runner lancé par sudo n'est pas signalable par le service.
+ * Arrête un runner : stdin fermé, puis signaux, puis l'arrêt forcé de son unité — un
+ * runner lancé par sudo, ou dans un conteneur, n'est pas signalable par le service.
  */
 export async function stopRunner(config: HarnessConfig, exec: Exec, runner: RpcRunner, unit: string | null): Promise<void> {
-  const force =
-    unit && config.runner.isolation === "systemd"
-      ? async () => {
-          const stop = launch(config, ["--stop", `${unit}.scope`]);
-          await exec(stop.command, stop.args, { timeoutMs: 15_000 });
-        }
-      : undefined;
+  const force = unit && config.runner.isolation !== "none" ? () => forceStop(config, exec, unit) : undefined;
   await runner.stop(5000, force);
 }
 
@@ -66,7 +89,49 @@ export function runnerMemoryEnv(scope: string): Record<string, string> {
 }
 
 
-export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: string; overlay: string; model: ModelChoice | null; scope: string }): { command: string; args: string[] } {
+export type RunnerSpec = {
+  unit: string;
+  cwd: string;
+  overlay: string;
+  model: ModelChoice | null;
+  scope: string;
+  /** Le clone du dépôt (le gitdir du worktree y vit) : monté en lecture, requis en isolation `container`. */
+  repo?: string;
+  /** L'adresse de la mémoire vue du runner. */
+  oracleUrl?: string | null;
+};
+
+
+/** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
+function containerRunnerArgv(config: HarnessConfig, spec: RunnerSpec, omp: string[]): { command: string; args: string[] } {
+  if (!spec.repo) throw new Error("isolation container : le clone du dépôt du runner est requis");
+  const box = config.container;
+  const env = { HOME: "/home/runner", PI_PY: "0", ...runnerMemoryEnv(spec.scope), ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}) };
+  return engine(config, [
+    "run", "--rm", "-i", "--init",
+    `--name=${spec.unit}`,
+    "--label=omp-harness=runner",
+    `--memory=${config.runner.memoryMax}`,
+    `--memory-swap=${config.runner.memoryMax}`,
+    `--oom-score-adj=${config.runner.oomScoreAdjust}`,
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    `--user=${containerUser(config)}`,
+    ...(box.network ? [`--network=${box.network}`] : []),
+    `--workdir=${spec.cwd}`,
+    "--volume", `${spec.cwd}:${spec.cwd}`,
+    "--volume", `${spec.repo}:${spec.repo}:ro`,
+    "--volume", `${spec.overlay}:${spec.overlay}:ro`,
+    ...(box.runnerHome ? ["--volume", `${box.runnerHome}:/home/runner`] : []),
+    ...(box.runnerEnvFile ? ["--volume", `${box.runnerEnvFile}:/run/secrets/runner.env:ro`] : []),
+    ...Object.entries(env).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
+    box.runnerImage,
+    ...omp,
+  ]);
+}
+
+
+export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: string; args: string[] } {
   const omp = [
     config.ompBin,
     "--mode", "rpc",
@@ -82,6 +147,7 @@ export function runnerArgv(config: HarnessConfig, spec: { unit: string; cwd: str
     ...config.runner.extensions.flatMap(extension => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
+  if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
   return launch(config, [
     "--scope",
     "--quiet",

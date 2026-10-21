@@ -1,0 +1,67 @@
+# Le harness en conteneurs : le service et sa mémoire. Les runners et les jobs de
+# tests ne sont PAS des services : le service les lance à la demande, en conteneurs
+# frères, par le socket du moteur. Se pilote par harness.sh, qui écrit les
+# variables ci-dessous dans ${OMP_HARNESS_ROOT}/compose.env.
+#
+# Les chemins sous OMP_HARNESS_ROOT sont montés au MÊME endroit dans le service :
+# un conteneur frère monte un worktree par son chemin sur l'hôte.
+name: omp-harness
+
+services:
+  harness:
+    build:
+      context: ../../..
+      dockerfile: omp-harness/deploy/container/Dockerfile.harness
+    image: omp-harness:local
+    user: "${OMP_HARNESS_USER}"
+    group_add: ["${OMP_HARNESS_ENGINE_GID:-0}"]
+    restart: unless-stopped
+    depends_on: [mem0]
+    ports:
+      # Publié sur la boucle locale seulement ; Tailscale (ou un proxy TLS) l'ouvre.
+      - "127.0.0.1:${OMP_HARNESS_PORT:-8790}:8790"
+    environment:
+      HOME: ${OMP_HARNESS_ROOT}/home
+    env_file:
+      # Le jeton de la mémoire, rien d'autre : les clés LLM ne sont jamais montées ici.
+      - ${OMP_HARNESS_SECRETS}/harness.env
+    volumes:
+      - ${OMP_HARNESS_ROOT}:${OMP_HARNESS_ROOT}
+      - ${OMP_HARNESS_ROOT}/config.json:/etc/omp-harness/config.json:ro
+      - ${OMP_HARNESS_SOCKET}:/var/run/docker.sock
+
+  mem0:
+    build: ../../../mem0-stack/mem0-rs
+    image: mem0-rs:local
+    restart: unless-stopped
+    env_file:
+      - ${OMP_HARNESS_SECRETS}/mem0.env
+    extra_hosts:
+      # L'hôte (oMLX natif sur le Mac, ou un relais local) sous ses deux noms usuels.
+      - "host.docker.internal:host-gateway"
+      - "host.containers.internal:host-gateway"
+    ports:
+      # Pour la mémoire partagée avec le Mac (tailscale serve --https=8443).
+      - "127.0.0.1:${OMP_HARNESS_MEM0_PORT:-8321}:8321"
+    volumes:
+      - ${OMP_HARNESS_ROOT}/mem0:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # L'image des runners : construite avec les autres (`--profile images build`),
+  # jamais démarrée comme service.
+  runner-image:
+    build:
+      context: ../../..
+      dockerfile: omp-harness/deploy/container/Dockerfile.runner
+    image: omp-harness-runner:local
+    profiles: ["images"]
+
+networks:
+  default:
+    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `mem0`.
+    name: omp-harness

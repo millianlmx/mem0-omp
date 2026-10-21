@@ -25,11 +25,18 @@ func sharedMemorySettingsFile() throws {
     #expect(fromFile.baseURL.absoluteString == "https://vps.tailnet.ts.net:8443")
     #expect(fromFile.token == "jeton-vps")
     #expect(fromFile.isRemote)
+    #expect(fromFile.chosen && !fromFile.verifiesIdentity)
+
+    // Une pile en conteneurs sur ce Mac, choisie dans le fichier : locale, mais choisie.
+    let localStack = try home(settings: ["url": "http://127.0.0.1:8322", "token": "jeton-pile"])
+    let stack = MemoryServiceConfig.fromEnvironment(["HOME": localStack])
+    #expect(!stack.isRemote && stack.chosen && !stack.verifiesIdentity)
 
     let fromEnv = MemoryServiceConfig.fromEnvironment(["HOME": shared, "MEM0_HTTP_URL": "http://127.0.0.1:9000"])
     #expect(fromEnv.baseURL.absoluteString == "http://127.0.0.1:9000")
     #expect(fromEnv.token.isEmpty, "le jeton du serveur ne part pas vers une autre adresse")
     #expect(!fromEnv.isRemote)
+    #expect(fromEnv.verifiesIdentity, "une adresse locale de l'environnement reste sondée")
 
     let tokenFromEnv = MemoryServiceConfig.fromEnvironment(["HOME": shared, "MEM0_HTTP_TOKEN": "autre"])
     #expect(tokenFromEnv.baseURL.absoluteString == "https://vps.tailnet.ts.net:8443")
@@ -44,7 +51,7 @@ func sharedMemorySettingsFile() throws {
     }
 }
 
-@Test("memoire-partagee/AC-2 : une mémoire distante répond « disponible » sans jeton d'installation ; une adresse locale reste soumise à la sonde identitaire")
+@Test("memoire-partagee/AC-2 : une mémoire distante ou choisie répond « disponible » sans jeton d'installation ; une adresse locale de l'environnement reste soumise à la sonde identitaire")
 func remoteMemoryIsAcceptedWithoutInstallationToken() async {
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0"])))
@@ -58,6 +65,14 @@ func remoteMemoryIsAcceptedWithoutInstallationToken() async {
     let local = await stubbedHTTPMemoryService(installationToken: "jeton", baseURL: "http://127.0.0.1:8321").health()
     #expect(!local.isAvailable)
     #expect(local.isForeign, "un service local sans notre jeton reste étranger")
+
+    // Une adresse locale choisie dans ~/.omp/mem0.json : acceptée sans le jeton d'installation.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
+    var chosen = MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8322")!, token: "t", installationToken: "jeton")
+    chosen.chosen = true
+    let stack = await HTTPMemoryService(config: chosen, session: StubURLProtocol.session()).health()
+    #expect(stack.isAvailable)
 
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": false])))

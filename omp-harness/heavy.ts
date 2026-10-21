@@ -10,10 +10,15 @@
 // Le schéma dit `systemd-run --scope` ; une scope ne porte ni `User=` ni
 // `PrivateNetwork=` (propriétés d'exécution). Le job est donc un SERVICE transitoire
 // (`--wait --pipe`) : mêmes limites cgroup, plus l'isolation demandée.
+//
+// En isolation `container`, le job est un conteneur frère de l'image de tests du
+// dépôt : `--network=none`, mêmes plafonds, aucun secret monté, worktree en écriture
+// et clone en lecture seulement.
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { launch } from "./config.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
+import { containerUser, engine, forceStop } from "./runner.ts";
 import type { Store } from "./db.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -92,9 +97,46 @@ export function cacheKey(tree: string, command: string, env: Record<string, stri
 }
 
 
-/** La ligne de commande d'un job : unité systemd transitoire, ou `bash -c` nu (isolation `none`). */
-export function heavyArgv(config: HarnessConfig, worktree: string, unit: string, command: string, env: Record<string, string>): { command: string; args: string[] } {
+/** `300%` → `3` : le quota CPU de systemd en nombre de cœurs du moteur. */
+export function cpusOf(quota: string): string {
+  return String(Number.parseInt(quota, 10) / 100);
+}
+
+
+/** Le job en conteneur frère : sans réseau ni secret, worktree en écriture, clone en lecture. */
+function containerHeavyArgv(config: HarnessConfig, repo: RepoConfig, worktree: string, unit: string, command: string, env: Record<string, string>): { command: string; args: string[] } {
+  const heavy = config.heavy;
+  const writable = [worktree, ...(heavy.cargoTargetRoot ? [heavy.cargoTargetRoot] : []), ...heavy.readWritePaths];
+  return engine(config, [
+    "run", "--rm", "--init",
+    `--name=${unit}`,
+    "--label=omp-harness=heavy",
+    "--network=none",
+    `--memory=${heavy.memoryMax}`,
+    `--memory-swap=${heavy.memoryMax}`,
+    `--cpus=${cpusOf(heavy.cpuQuota)}`,
+    `--oom-score-adj=${heavy.oomScoreAdjust}`,
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    `--user=${containerUser(config)}`,
+    "--tmpfs=/tmp",
+    `--workdir=${worktree}`,
+    ...[...new Set(writable)].flatMap(dir => ["--volume", `${dir}:${dir}`]),
+    ...(writable.includes(repo.path) ? [] : ["--volume", `${repo.path}:${repo.path}:ro`]),
+    ...Object.entries({ HOME: "/tmp", ...env }).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
+    repo.testImage ?? config.container.testImage,
+    "bash", "-c", command,
+  ]);
+}
+
+
+/** La ligne de commande d'un job : unité systemd transitoire, conteneur frère, ou `bash -c` nu (isolation `none`). */
+export function heavyArgv(config: HarnessConfig, worktree: string, unit: string, command: string, env: Record<string, string>, repo?: RepoConfig): { command: string; args: string[] } {
   if (config.heavy.isolation === "none") return { command: "bash", args: ["-c", command] };
+  if (config.heavy.isolation === "container") {
+    if (!repo) throw new Error("isolation container : le dépôt du job est requis (image de tests, clone)");
+    return containerHeavyArgv(config, repo, worktree, unit, command, env);
+  }
   const heavy = config.heavy;
   const writable = [worktree, ...(heavy.cargoTargetRoot ? [heavy.cargoTargetRoot] : []), ...heavy.readWritePaths];
   const args = [
@@ -141,6 +183,17 @@ export function classify(result: ProcResult): HeavyOutcome {
   if (result.code === 0) return "pass";
   if (result.code === 127 && result.stdout === "") return "error";
   return "fail";
+}
+
+
+/** L'environnement du CLI qui lance le job : de quoi joindre le moteur, rien d'autre. */
+function clientEnv(): Record<string, string> {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+  for (const key of ["HOME", "DOCKER_HOST", "CONTAINER_HOST", "XDG_RUNTIME_DIR"]) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
 }
 
 
@@ -195,18 +248,21 @@ export class HeavyRunner {
       attempts++;
       const slot = await scheduler.acquire("heavy", `${job.runId}:${job.scope}`, signal);
       const unit = `omp-heavy-${job.runId}-${++this.#seq}`;
-      const argv = heavyArgv(config, job.worktree, unit, command, env);
+      const argv = heavyArgv(config, job.worktree, unit, command, env, job.repo);
       store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt: attempts, unit });
       const started = now();
       let result: ProcResult;
       try {
         result = await exec(argv.command, argv.args, {
           cwd: job.worktree,
-          env: config.heavy.isolation === "none" ? env : { PATH: process.env.PATH ?? "/usr/bin:/bin" },
-          timeoutMs: (config.heavy.timeoutSec + 30) * 1000,
+          env: config.heavy.isolation === "none" ? env : clientEnv(),
+          // systemd borne le job lui-même (RuntimeMaxSec) ; un conteneur, c'est le délai du client.
+          timeoutMs: (config.heavy.timeoutSec + (config.heavy.isolation === "container" ? 0 : 30)) * 1000,
           maxBytes: OUTPUT_TAIL,
         });
       } finally {
+        // Un client tué au délai laisse son conteneur vivant : il part avec le slot.
+        if (config.heavy.isolation === "container") await forceStop(config, exec, unit, "container").catch(() => {});
         slot.release();
       }
       const outcome = classify(result);

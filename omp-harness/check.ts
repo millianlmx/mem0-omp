@@ -4,11 +4,14 @@
 // n'est modifié : ni la base, ni les dépôts (l'écriture sur le distant est éprouvée
 // par un `push --dry-run`, qui s'authentifie sans rien pousser).
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { modelChain } from "./config.ts";
 import type { Git } from "./git.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { Exec } from "./proc.ts";
+import { engine } from "./runner.ts";
 
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -31,14 +34,56 @@ function firstLine(text: string): string {
 
 
 async function checkOmp(config: HarnessConfig, exec: Exec): Promise<CheckLine> {
-  const result = await exec(config.ompBin, ["--version"], { timeoutMs: 30_000 }).catch(() => null);
-  if (result && result.code === 0) return { status: "ok", label: "omp", detail: `${firstLine(result.stdout)} (${config.ompBin})` };
+  // En conteneur, omp vit dans l'image des runners : c'est elle qu'on interroge.
+  const line =
+    config.runner.isolation === "container"
+      ? engine(config, ["run", "--rm", `--entrypoint=${config.ompBin}`, config.container.runnerImage, "--version"])
+      : { command: config.ompBin, args: ["--version"] };
+  const where = config.runner.isolation === "container" ? `${config.container.runnerImage}:${config.ompBin}` : config.ompBin;
+  const result = await exec(line.command, line.args, { timeoutMs: 120_000 }).catch(() => null);
+  if (result && result.code === 0) return { status: "ok", label: "omp", detail: `${firstLine(result.stdout)} (${where})` };
+  if (config.runner.isolation === "container") {
+    return {
+      status: "fail",
+      label: "omp",
+      detail: `${where} ne répond pas à --version`,
+      fix: "Construis les images : `bash omp-harness/deploy/container/harness.sh up`.",
+    };
+  }
   return {
     status: "fail",
     label: "omp",
     detail: `${config.ompBin} ne répond pas à --version`,
     fix: "Debian : relance `sudo bash omp-harness/deploy/install.sh` (il pose omp). NixOS : `services.omp-harness.ompPackage`.",
   };
+}
+
+
+async function checkEngine(config: HarnessConfig, exec: Exec): Promise<CheckLine[]> {
+  const version = engine(config, ["version", "--format", "{{.Server.Version}}"]);
+  const reached = await exec(version.command, version.args, { timeoutMs: 30_000 }).catch(() => null);
+  if (!reached || reached.code !== 0) {
+    return [
+      {
+        status: "fail",
+        label: "moteur de conteneurs",
+        detail: `${config.container.command.join(" ")} ne joint pas son moteur${reached ? ` : ${firstLine(reached.stderr)}` : ""}`,
+        fix: "Le socket du moteur doit être monté dans le service (compose.yaml) ; DOCKER_HOST le désigne s'il n'est pas à sa place.",
+      },
+    ];
+  }
+  const lines: CheckLine[] = [{ status: "ok", label: "moteur de conteneurs", detail: `${config.container.command.join(" ")} ${firstLine(reached.stdout)}` }];
+  const images = [config.container.runnerImage, config.container.testImage, ...config.repos.flatMap(repo => (repo.testImage ? [repo.testImage] : []))];
+  for (const image of [...new Set(images)]) {
+    const inspect = engine(config, ["image", "inspect", "--format", "{{.Id}}", image]);
+    const found = await exec(inspect.command, inspect.args, { timeoutMs: 30_000 }).catch(() => null);
+    lines.push(
+      found && found.code === 0
+        ? { status: "ok", label: `image ${image}`, detail: "présente" }
+        : { status: "fail", label: `image ${image}`, detail: "absente", fix: `Tire-la (\`${config.container.command.join(" ")} pull ${image}\`), ou construis les images locales : \`harness.sh up\`.` },
+    );
+  }
+  return lines;
 }
 
 
@@ -65,7 +110,7 @@ function checkModels(config: HarnessConfig): CheckLine {
     status: "warn",
     label: "modèles",
     detail: `aucun modèle pour ${bare.map(step => `/${step}`).join(", ")} : omp y prendra son modèle par défaut`,
-    fix: "Renseigne `models.standard` et `models.heavy` dans /etc/omp-harness/config.json.",
+    fix: "Renseigne `models.standard` et `models.heavy` dans la configuration du harness.",
   };
 }
 
@@ -108,7 +153,8 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps): Promise<CheckLine[]
     lines.push({ status: "warn", label: label("distant"), detail: "`remote: null` : les merges restent sur ce VPS" });
   } else {
     const read = await git.raw(repo.path, ["ls-remote", "--heads", repo.remote, repo.mainBranch]);
-    const keyFix = "Ajoute /var/lib/omp-harness/.ssh/id_ed25519.pub comme clé de déploiement AVEC écriture sur le dépôt.";
+    const home = (deps.env ?? process.env).HOME ?? os.homedir();
+    const keyFix = `Ajoute ${path.join(home, ".ssh", "id_ed25519.pub")} comme clé de déploiement AVEC écriture sur le dépôt.`;
     if (read.code !== 0) {
       lines.push({ status: "fail", label: label(`lecture de ${repo.remote}`), detail: firstLine(read.stderr) || `code ${read.code}`, fix: keyFix });
     } else {
@@ -135,12 +181,14 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps): Promise<CheckLine[]
 
 /** Toutes les vérifications, dans l'ordre où un humain les corrige. */
 export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise<CheckLine[]> {
-  const lines: CheckLine[] = [await checkOmp(config, deps.exec)];
+  const contained = config.runner.isolation === "container" || config.heavy.isolation === "container";
+  const lines: CheckLine[] = contained ? await checkEngine(config, deps.exec) : [];
+  lines.push(await checkOmp(config, deps.exec));
   const launcher = checkLauncher(config);
   if (launcher) lines.push(launcher);
   lines.push(checkModels(config), await checkOracle(config, deps.oracleHealth), checkToken(config, deps.env ?? process.env));
   if (config.repos.length === 0) {
-    lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix: "Ajoute une entrée à `repos` dans /etc/omp-harness/config.json." });
+    lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix: "Ajoute une entrée à `repos` dans la configuration du harness." });
   }
   for (const repo of config.repos) lines.push(...(await checkRepo(repo, deps)));
   return lines;

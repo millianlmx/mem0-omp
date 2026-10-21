@@ -35,8 +35,12 @@ export type ModelChoice = { provider: string; model: string };
 /** Le seau à jetons d'un fournisseur : `capacity` requêtes d'avance, `refillPerMinute` par minute. */
 export type ProviderLimit = { capacity: number; refillPerMinute: number };
 
-/** L'isolation d'un process : `systemd` sur le VPS, `none` en développement et en test. */
-export type Isolation = "systemd" | "none";
+/**
+ * L'isolation d'un process : `systemd` (VPS installé par install.sh ou le module
+ * NixOS), `container` (un conteneur Docker ou podman par runner et par job, le
+ * déploiement par compose), `none` en développement et en test.
+ */
+export type Isolation = "systemd" | "container" | "none";
 
 export type RepoConfig = {
   /** Le nom par lequel l'API désigne le dépôt — jamais un chemin fourni par le client. */
@@ -55,6 +59,8 @@ export type RepoConfig = {
   merge: "local" | "gh";
   /** Le remote poussé après un merge local, ou `null` (aucun push). */
   remote: string | null;
+  /** L'image des tests de ce dépôt en isolation `container` ; `null` : `container.testImage`. */
+  testImage: string | null;
 };
 
 export type HarnessConfig = {
@@ -108,6 +114,28 @@ export type HarnessConfig = {
     readWritePaths: string[];
     /** Le bash qui lance la commande d'un job : `/bin/bash`, ou son chemin du store sous NixOS. */
     shell: string;
+  };
+  /**
+   * L'isolation `container` : chaque runner et chaque job de tests est un conteneur
+   * frère, lancé par le CLI du moteur (Docker, ou podman et son API compatible). Les
+   * chemins des worktrees, des clones et de l'état sont ceux de l'HÔTE : le service
+   * les voit au même endroit (montage identique), le moteur les monte tels quels.
+   */
+  container: {
+    /** Le CLI du moteur : `["docker"]` ou `["podman"]`. */
+    command: string[];
+    /** L'image des runners : omp épinglé, git, le plugin mémoire. */
+    runnerImage: string;
+    /** L'image des tests par défaut ; un dépôt la remplace par `testImage`. */
+    testImage: string;
+    /** Le réseau des runners (celui du compose, qui porte la mémoire) ; les tests n'en ont aucun. */
+    network: string | null;
+    /** Le fichier de l'hôte monté dans chaque runner (clés LLM, jeton mem0), lu par son entrée. */
+    runnerEnvFile: string | null;
+    /** Le dossier de l'hôte monté en HOME des runners (connexion OMP, profil). */
+    runnerHome: string | null;
+    /** `uid:gid` des conteneurs ; `null` : celui du service. */
+    user: string | null;
   };
   /** Admission sur `MemAvailable` : un process ne démarre que s'il laisse `reserveMiB` libres. */
   admission: { reserveMiB: number; runnerMiB: number; heavyMiB: number };
@@ -195,6 +223,15 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       readWritePaths: [],
       shell: "/bin/bash",
     },
+    container: {
+      command: ["docker"],
+      runnerImage: "omp-harness-runner:local",
+      testImage: "docker.io/library/node:22-bookworm",
+      network: null,
+      runnerEnvFile: null,
+      runnerHome: null,
+      user: null,
+    },
     admission: { reserveMiB: 2048, runnerMiB: 1024, heavyMiB: 4096 },
     models: { fast: [], standard: [], heavy: [] },
     stepTiers: { ...DEFAULT_STEP_TIERS },
@@ -246,7 +283,11 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!/^\d+%$/.test(config.heavy.cpuQuota)) fail("heavy.cpuQuota doit être un pourcentage (300%)");
   if (typeof config.heavy.shell !== "string" || !path.isAbsolute(config.heavy.shell)) fail("heavy.shell doit être un chemin absolu");
   for (const isolation of [config.runner.isolation, config.heavy.isolation]) {
-    if (isolation !== "systemd" && isolation !== "none") fail(`isolation inconnue : ${String(isolation)}`);
+    if (isolation !== "systemd" && isolation !== "container" && isolation !== "none") fail(`isolation inconnue : ${String(isolation)}`);
+  }
+  if (!Array.isArray(config.container.command) || config.container.command.length === 0) fail("container.command : le CLI du moteur, par exemple [\"docker\"]");
+  for (const [key, value] of [["runnerEnvFile", config.container.runnerEnvFile], ["runnerHome", config.container.runnerHome]] as const) {
+    if (value !== null && !path.isAbsolute(value)) fail(`container.${key} doit être un chemin absolu de l'hôte`);
   }
   for (const key of Object.keys(config.models)) if (!(TIERS as readonly string[]).includes(key)) fail(`models.${key} : tier inconnu (${TIERS.join(" | ")})`);
   for (const tier of TIERS) config.models[tier] = checkModels(tier, config.models[tier]);
@@ -281,6 +322,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       tests: { touched: "npm test -- {files}", full: "npm test" },
       merge: "local",
       remote: null,
+      testImage: null,
     },
     raw,
   );

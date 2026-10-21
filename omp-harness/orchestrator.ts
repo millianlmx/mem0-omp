@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Auditor } from "./audits.ts";
 import type { HarnessConfig, ModelChoice, RepoConfig, Tier } from "./config.ts";
-import { launch, modelChain, repoByName } from "./config.ts";
+import { modelChain, repoByName } from "./config.ts";
 import type { DecisionRow, RunRow, Store, StepRow } from "./db.ts";
 import { checkpointMessage, dependentsOf, planDecision } from "./decisions.ts";
 import type { Git } from "./git.ts";
@@ -27,7 +27,7 @@ import type { Exec } from "./proc.ts";
 import { FAILOVER_PROMPT, STEP_ARTIFACT, nudgePrompt, stepPrompt } from "./prompts.ts";
 import type { HostToolResult, PromptResult, RunnerProcess } from "./rpc.ts";
 import { RpcRunner, isRateLimit } from "./rpc.ts";
-import { hostToolsFor, runnerArgv, runnerEnv, runnerUnit, stopRunner, writePipelineOverlay } from "./runner.ts";
+import { forceStop, hostToolsFor, runnerArgv, runnerEnv, runnerUnit, stopRunner, writePipelineOverlay } from "./runner.ts";
 import { projectScope } from "./scope.ts";
 import type { Scheduler, Slot } from "./scheduler.ts";
 import type { Verdict } from "./verdict.ts";
@@ -199,10 +199,7 @@ export class Orchestrator {
   async recover(): Promise<void> {
     const { store, config, exec } = this.#deps;
     for (const step of store.interruptRunningSteps()) {
-      if (step.unit && config.runner.isolation === "systemd") {
-        const stop = launch(config, ["--stop", `${step.unit}.scope`]);
-        await exec(stop.command, stop.args, { timeoutMs: 15_000 });
-      }
+      if (step.unit) await forceStop(config, exec, step.unit);
     }
     // Chaque worktree encore vivant est re-reconnu côté clone (jamais par son `.git`).
     for (const run of store.listRuns({ state: ["queued", "running", "escalated", "awaiting_human", "merging"] })) {
@@ -603,7 +600,15 @@ export class Orchestrator {
     live.prepaid = pick !== null;
     const unit = runnerUnit(run.id, stepRow.id);
     const scope = this.#repo(run.repo).scope;
-    const argv = runnerArgv(config, { unit, cwd: run.worktree as string, overlay: this.#overlay ?? writePipelineOverlay(config.dataDir), model: live.model, scope });
+    const argv = runnerArgv(config, {
+      unit,
+      cwd: run.worktree as string,
+      overlay: this.#overlay ?? writePipelineOverlay(config.dataDir),
+      model: live.model,
+      scope,
+      repo: this.#repo(run.repo).path,
+      oracleUrl: config.oracle?.url ?? null,
+    });
     const proc = this.#deps.spawn(argv.command, argv.args, { cwd: run.worktree as string, env: runnerEnv(scope, config.oracle) });
     const runner = new RpcRunner(proc, {
       onHostTool: (name, args, signal) => this.#hostTool(live, name, args, signal),

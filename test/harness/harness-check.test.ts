@@ -29,7 +29,12 @@ function cloneWithRemote(): { clone: string; remote: string } {
 }
 
 function deps(config: ReturnType<typeof testConfig>, healthy = true) {
-  return { exec: execProcess, git: new Git(execProcess, config.git), oracleHealth: async () => healthy, env: {} };
+  return {
+    exec: execProcess,
+    git: new Git(execProcess, config.git),
+    oracleHealth: async () => healthy,
+    env: { HOME: "/var/lib/omp-harness" },
+  };
 }
 
 test("harness-check/AC-1 : une installation complète passe — omp, modèles, oracle, clone et écriture sur le distant — sans rien pousser", async () => {

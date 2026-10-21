@@ -24,6 +24,7 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
     overlay: "/d/runner-settings.json",
     model: { provider: "anthropic", model: "fast" },
     scope: "demo-scope",
+    repo: "/var/lib/omp-harness/repos/mon-produit",
   });
   assert.equal(command, "systemd-run");
   const line = args.join(" ");
@@ -50,6 +51,7 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
     overlay: "/o",
     model: null,
     scope: "demo-scope",
+    repo: "/var/lib/omp-harness/repos/mon-produit",
   });
   assert.equal(bare.command, "omp");
   assert.equal(bare.args.includes("--model"), false);

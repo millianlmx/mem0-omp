@@ -4,7 +4,6 @@
 // comme un /project.
 import * as path from "node:path";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
-import { launch } from "./config.ts";
 import type { AuditProposal, AuditRow, Store } from "./db.ts";
 import type { Git } from "./git.ts";
 import type { Oracle } from "./oracle.ts";
@@ -13,7 +12,7 @@ import type { Exec } from "./proc.ts";
 import { auditPrompt } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { RpcRunner } from "./rpc.ts";
-import { hostToolsFor, runnerArgv, runnerEnv, runnerUnit, stopRunner } from "./runner.ts";
+import { forceStop, hostToolsFor, runnerArgv, runnerEnv, runnerUnit, stopRunner } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { SpawnRunner } from "./orchestrator.ts";
 // Cycle d'import sans risque : HarnessError ne sert qu'à l'appel, jamais au chargement.
@@ -128,7 +127,15 @@ export class Auditor {
     await git.addWorktree(repo.path, worktree, null, await git.revParse(repo.path, repo.mainBranch));
     const pick = await scheduler.waitModel("heavy", config.models.heavy, 0, live.abort.signal);
     const unit = runnerUnit(audit.id, 0);
-    const argv = runnerArgv(config, { unit, cwd: worktree, overlay: this.#deps.overlay(), model: pick?.choice ?? null, scope: repo.scope });
+    const argv = runnerArgv(config, {
+      unit,
+      cwd: worktree,
+      overlay: this.#deps.overlay(),
+      model: pick?.choice ?? null,
+      scope: repo.scope,
+      repo: repo.path,
+      oracleUrl: config.oracle?.url ?? null,
+    });
     const proc = this.#deps.spawn(argv.command, argv.args, { cwd: worktree, env: runnerEnv(repo.scope, config.oracle) });
     live.runner = new RpcRunner(proc, { onHostTool: (name, args) => this.#hostTool(audit, live, name, args) });
     live.unit = unit;
@@ -211,10 +218,7 @@ export class Auditor {
   async recover(): Promise<void> {
     const { store, config, exec } = this.#deps;
     for (const audit of store.listAudits(["analysing"])) {
-      if (config.runner.isolation === "systemd") {
-        const stop = launch(config, ["--stop", `${runnerUnit(audit.id, 0)}.scope`]);
-        await exec(stop.command, stop.args, { timeoutMs: 15_000 });
-      }
+      await forceStop(config, exec, runnerUnit(audit.id, 0));
       const worktree = path.join(config.worktreesDir, audit.repo, `_audit-${audit.id}`);
       await this.#deps.git.removeWorktree(this.#deps.repo(audit.repo).path, worktree, null).catch(() => {});
       const requeued = store.updateAuditIf(audit.id, ["analysing"], { state: "queued", reason: "service redémarré — audit relancé" });

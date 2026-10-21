@@ -1,0 +1,6 @@
+#!/bin/sh
+# Vérifie l'installation du harness depuis son conteneur : moteur, images, omp,
+# modèles, mémoire, jeton, dépôts et accès en écriture. Ne modifie rien.
+#
+#   bash omp-harness/deploy/container/harness.sh check
+exec node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /opt/omp-harness/omp-harness/main.ts --config /etc/omp-harness/config.json --check

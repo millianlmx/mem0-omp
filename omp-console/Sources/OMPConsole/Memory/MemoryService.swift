@@ -41,8 +41,19 @@ struct MemoryServiceConfig: Equatable, Sendable {
         let raw = value("MEM0_HTTP_URL") ?? file?.url
         let baseURL = raw.flatMap { URL(string: $0) } ?? agentBase
         let token = value("MEM0_HTTP_TOKEN") ?? file?.token ?? ""
-        return MemoryServiceConfig(baseURL: baseURL, token: token)
+        var config = MemoryServiceConfig(baseURL: baseURL, token: token)
+        config.chosen = file != nil && raw == file?.url
+        return config
     }
+
+    /// L'adresse vient de `~/.omp/mem0.json` : la mémoire que l'utilisateur a choisie
+    /// (celle d'un serveur, ou une pile en conteneurs sur ce Mac), jamais un port de
+    /// l'app tenu par un autre.
+    var chosen: Bool = false
+
+    /// La sonde identitaire (jeton d'installation) ne garde que le service de l'app :
+    /// une adresse distante ou choisie en est dispensée.
+    var verifiesIdentity: Bool { !isRemote && !chosen }
 
     /// Vrai pour une adresse hors de ce Mac : la mémoire d'un serveur, choisie
     /// explicitement et authentifiée par son jeton.
@@ -395,7 +406,7 @@ struct HTTPMemoryService: MemoryServing {
     /// (S-6.1). Elle est aussi la sonde IDENTITAIRE (S-4) : un `200 ok` n'est
     /// accepté que s'il porte le jeton d'installation de l'app ; un `200 ok` sans
     /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ». Une
-    /// adresse distante (`isRemote`) en est dispensée.
+    /// adresse distante ou choisie (`verifiesIdentity` faux) en est dispensée.
     func health() async -> MemoryHealth {
         do {
             let json = try await send(url(for: .health), method: MemoryRoute.health.method, body: nil, timeout: Self.otherTimeout)
@@ -408,7 +419,7 @@ struct HTTPMemoryService: MemoryServing {
             }
             // La sonde identitaire garde le port LOCAL de l'app ; une adresse distante
             // est un choix explicite de l'utilisateur, authentifié par son jeton.
-            if config.isRemote {
+            if !config.verifiesIdentity {
                 return MemoryHealth(isAvailable: true, errorMessage: nil)
             }
             let returned = object?["installation"] as? String
