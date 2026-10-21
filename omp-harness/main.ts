@@ -1,6 +1,7 @@
 // L'entrée du Pipeline Service : un process, une base, une API.
 //
 //   node --experimental-strip-types omp-harness/main.ts --config /etc/omp-harness/config.json
+//   … --check : vérifie l'installation (omp, lanceur, modèles, oracle, dépôts) et sort.
 //
 // Le jeton d'API vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en 0600
 // au premier démarrage). SIGTERM arrête proprement : plus de requêtes, runners
@@ -10,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
+import { renderChecks, runChecks } from "./check.ts";
 import { loadConfig } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
 import { Store } from "./db.ts";
@@ -89,6 +91,13 @@ if (isMain) {
   // Un rejet oublié est journalisé, jamais fatal : un crash ferait reprendre tous les runs au checkpoint.
   process.on("unhandledRejection", reason => console.error(`[omp-harness] rejet non géré : ${reason instanceof Error ? reason.stack : String(reason)}`));
   const config = loadConfig(file);
+  if (process.argv.includes("--check")) {
+    if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN) config.oracle.token = process.env.MEM0_HTTP_TOKEN;
+    const oracle = config.oracle ? new HttpOracle(config.oracle) : null;
+    const lines = await runChecks(config, { exec: execProcess, git: new Git(execProcess, config.git), oracleHealth: () => oracle?.health() ?? Promise.resolve(false) });
+    console.log(renderChecks(lines));
+    process.exit(lines.some(line => line.status === "fail") ? 1 : 0);
+  }
   const harness = await startHarness(config);
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {

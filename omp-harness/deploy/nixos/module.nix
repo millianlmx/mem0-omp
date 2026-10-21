@@ -3,7 +3,7 @@
 #   imports = [ /chemin/du/clone/omp-harness/deploy/nixos/module.nix ];
 #   services.omp-harness = {
 #     enable = true;
-#     ompBin = "/run/current-system/sw/bin/omp";
+#     ompPackage = inputs.omp.packages.${pkgs.system}.omp;   # github:can1357/oh-my-pi/v18.6.0
 #     settings.repos = [ { name = "mon-produit"; path = "/var/lib/omp-harness/repos/mon-produit"; … } ];
 #   };
 #
@@ -85,15 +85,28 @@ let
     HEAVY_SHELL=${shell}
   '';
 
+  # `sudo omp-harness-check` : l'installation vérifiée, en omp-harness, avec l'environnement du service.
+  check = pkgs.writeShellScriptBin "omp-harness-check" ''
+    exec /run/wrappers/bin/sudo -u omp-harness -H ${pkgs.bash}/bin/sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; PATH=${lib.makeBinPath [ pkgs.git pkgs.openssh pkgs.gh ]}:$PATH exec ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json --check'
+  '';
+
   homes = { omp-harness = "/var/lib/omp-harness"; omp-runner = "/var/lib/omp-runner"; omp-heavy = "/var/lib/omp-heavy"; };
 in
 {
   options.services.omp-harness = {
     enable = lib.mkEnableOption "le harness de pipelines OMP (omp-harness)";
 
+    ompPackage = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      example = lib.literalExpression "inputs.omp.packages.\${pkgs.system}.omp";
+      description = "Le paquet omp (flake github:can1357/oh-my-pi/v18.6.0, la version de l'app Mac) ; donne `ompBin`.";
+    };
+
     ompBin = lib.mkOption {
       type = lib.types.str;
-      example = "/run/current-system/sw/bin/omp";
+      default = lib.optionalString (cfg.ompPackage != null) "${cfg.ompPackage}/bin/omp";
+      defaultText = lib.literalExpression "\"\${ompPackage}/bin/omp\"";
       description = "Le binaire `omp` des runners : chemin absolu, épinglé par le lanceur root.";
     };
 
@@ -142,6 +155,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      { assertion = lib.hasPrefix "/" cfg.ompBin; message = "services.omp-harness : renseigne ompPackage (ou ompBin, chemin absolu)."; }
+    ];
+
     users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-mem0 = { }; };
     users.users = {
       omp-harness = { isSystemUser = true; group = "omp-harness"; extraGroups = [ "omp-work" ]; home = homes.omp-harness; description = "OMP harness - service"; };
@@ -173,7 +190,7 @@ in
 
     environment.etc."omp-harness/launcher.conf".text = launcherConf;
     environment.etc."omp-harness/config.json" = { source = harnessConfig; mode = "0640"; group = "omp-harness"; };
-    environment.systemPackages = [ cfg.nodejs pkgs.git pkgs.util-linux ];
+    environment.systemPackages = [ cfg.nodejs pkgs.git pkgs.util-linux check ] ++ lib.optional (cfg.ompPackage != null) cfg.ompPackage;
 
     systemd.slices = {
       omp-harness = { description = "OMP harness — budget mémoire total"; sliceConfig = { MemoryMax = "16G"; MemoryHigh = "15G"; }; };
@@ -192,7 +209,7 @@ in
       description = "OMP harness — secrets de /etc/omp-harness";
       wantedBy = [ "multi-user.target" ];
       before = [ "omp-harness.service" "omp-harness-mem0.service" ];
-      path = [ pkgs.coreutils ];
+      path = [ pkgs.coreutils pkgs.openssh pkgs.util-linux ];
       serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
       script = ''
         set -eu
@@ -205,6 +222,15 @@ in
           printf 'MEM0_HTTP_TOKEN=%s\n# OMLX_API_TOKEN=\n' "$token" > mem0.env
           printf 'MEM0_HTTP_TOKEN=%s\n' "$token" >> env
           printf 'MEM0_HTTP_URL=http://127.0.0.1:8321\nMEM0_HTTP_TOKEN=%s\n' "$token" >> runner.env
+        fi
+        # La clé SSH du service : il pousse les merges sur le distant (clé de déploiement AVEC écriture).
+        if [ ! -e /var/lib/omp-harness/.ssh/id_ed25519 ]; then
+          install -d -m 0700 -o omp-harness -g omp-harness /var/lib/omp-harness/.ssh
+          runuser -u omp-harness -- ssh-keygen -q -t ed25519 -N "" -C "omp-harness@${config.networking.hostName}" -f /var/lib/omp-harness/.ssh/id_ed25519
+          # Premier contact : la clé d'hôte est retenue ; une clé qui change ensuite est refusée.
+          printf 'Host *\n  StrictHostKeyChecking accept-new\n' > /var/lib/omp-harness/.ssh/config
+          chown omp-harness:omp-harness /var/lib/omp-harness/.ssh/config
+          chmod 0600 /var/lib/omp-harness/.ssh/config
         fi
       '';
     };
@@ -244,7 +270,7 @@ in
       requires = [ "omp-harness-secrets.service" ];
       wantedBy = [ "multi-user.target" ];
       restartTriggers = [ harnessConfig launcherConf ];
-      path = [ pkgs.git pkgs.openssh ];
+      path = [ pkgs.git pkgs.openssh pkgs.gh ];
       serviceConfig = {
         Type = "simple";
         User = "omp-harness";

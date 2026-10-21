@@ -31,3 +31,4 @@ Une pull request ordinaire ne monte jamais une version : le job `check` de la CI
 - [README.md § « Tests et scripts »](README.md) : scripts et tests du dépôt.
 - [README.md § « CI et release »](README.md) : workflows CI et release.
 - [PUBLISHING.md](PUBLISHING.md) : publication et mise à jour.
+- [DEVELOPPEMENT.md](DEVELOPPEMENT.md) : le détail des tests, de la CI, de la release et du contrat du service mémoire.

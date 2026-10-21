@@ -1,0 +1,6 @@
+#!/bin/sh
+# Vérifie l'installation du harness (omp, lanceur, modèles, mémoire, dépôts et accès
+# en écriture), en omp-harness et avec l'environnement du service. Ne modifie rien.
+#
+#   sudo omp-harness-check
+exec sudo -u omp-harness -H sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; exec /usr/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning /opt/omp-harness/omp-harness/main.ts --config /etc/omp-harness/config.json --check'

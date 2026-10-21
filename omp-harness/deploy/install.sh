@@ -14,12 +14,28 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 DEST=/opt/omp-harness
 
-for tool in node git systemd-run systemctl choom sudo visudo; do
+for tool in node git curl sha256sum ssh-keygen systemd-run systemctl choom sudo visudo; do
   command -v "$tool" >/dev/null || { echo "✗ $tool est requis" >&2; exit 1; }
 done
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=6)?0:1)' \
   || { echo "✗ Node ≥ 22.6 requis (node:sqlite, --experimental-strip-types)" >&2; exit 1; }
-command -v omp >/dev/null || echo "· omp introuvable dans le PATH : renseigne ompBin dans /etc/omp-harness/config.json"
+
+# omp, à la version de l'app Mac (omp-console/Sources/OMPConsole/Setup/ComponentManifest.swift),
+# vérifié contre une empreinte épinglée ici — jamais contre celle que publie le serveur.
+OMP_VERSION=18.6.0
+case "$(uname -m)" in
+  x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256=844c640c620ec4c152abe4b3736049f963205da50e9e77bd9bdf2a981a6ead55 ;;
+  aarch64 | arm64) OMP_ASSET=omp-linux-arm64; OMP_SHA256=542083fe42a6169565861a4ee9118fbed64d09c93468b6907e6016cc76ef00d1 ;;
+  *) echo "✗ architecture non prise en charge par omp : $(uname -m)" >&2; exit 1 ;;
+esac
+if [ "$(/usr/local/bin/omp --version 2>/dev/null || true)" != "omp/$OMP_VERSION" ]; then
+  echo "· omp $OMP_VERSION → /usr/local/bin/omp"
+  tmp="$(mktemp)"
+  curl -fsSL "https://github.com/can1357/oh-my-pi/releases/download/v$OMP_VERSION/$OMP_ASSET" -o "$tmp"
+  echo "$OMP_SHA256  $tmp" | sha256sum -c --quiet - || { rm -f "$tmp"; echo "✗ empreinte d'omp inattendue" >&2; exit 1; }
+  install -m 0755 "$tmp" /usr/local/bin/omp
+  rm -f "$tmp"
+fi
 
 echo "· users et groupe (sysusers)"
 install -m 0644 "$HERE/sysusers.conf" /etc/sysusers.d/omp-harness.conf
@@ -82,6 +98,17 @@ for user in omp-harness omp-runner omp-heavy; do
   fi
 done
 
+echo "· clé SSH du service : il pousse les merges sur le distant"
+if [ ! -e /var/lib/omp-harness/.ssh/id_ed25519 ]; then
+  install -d -m 0700 -o omp-harness -g omp-harness /var/lib/omp-harness/.ssh
+  sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C "omp-harness@$(hostname)" -f /var/lib/omp-harness/.ssh/id_ed25519
+  # Premier contact : la clé d'hôte est retenue ; une clé qui change ensuite est refusée.
+  printf 'Host *\n  StrictHostKeyChecking accept-new\n' > /var/lib/omp-harness/.ssh/config
+  chown omp-harness:omp-harness /var/lib/omp-harness/.ssh/config
+  chmod 0600 /var/lib/omp-harness/.ssh/config
+fi
+install -m 0755 "$HERE/omp-harness-check" /usr/local/bin/omp-harness-check
+
 echo "· tranches, service, zram, oomd"
 install -m 0644 "$HERE/omp-harness.slice" "$HERE/omp-harness-runners.slice" "$HERE/omp-harness-heavy.slice" \
   "$HERE/omp-harness.service" "$HERE/omp-harness-mem0.service" /etc/systemd/system/
@@ -102,26 +129,17 @@ systemctl start dev-zram0.swap 2>/dev/null || true
 
 if grep -q '"repos": \[\s*\]' /etc/omp-harness/config.json || grep -q '"mon-produit"' /etc/omp-harness/config.json; then
   echo
-  echo "→ Édite /etc/omp-harness/config.json (dépôts, modèles), clone chaque dépôt dans /var/lib/omp-harness/repos/<nom>"
-  echo "  (sudo -u omp-harness git clone --bare … ), puis : systemctl enable --now omp-harness"
+  echo "Installé. La suite (omp-harness/README.md § Installer le serveur) :"
+  echo "  1. Clé de déploiement AVEC écriture, sur chaque dépôt :"
+  echo "       $(cat /var/lib/omp-harness/.ssh/id_ed25519.pub)"
+  echo "  2. sudo -u omp-harness git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>"
+  echo "  3. sudoedit /etc/omp-harness/config.json : repos, models"
+  echo "  4. Comptes LLM : ANTHROPIC_API_KEY=… dans /etc/omp-harness/runner.env, ou sudo -u omp-runner -H omp --profile pipeline (/login)"
+  echo "  5. OMLX_BASE_URL dans /etc/omp-harness/mem0.env, puis systemctl restart omp-harness-mem0"
+  echo "  6. sudo omp-harness-check, puis systemctl enable --now omp-harness"
 else
   systemctl enable omp-harness.service
   systemctl restart omp-harness.service
+  echo
+  echo "Mis à jour et redémarré. Vérifie : sudo omp-harness-check"
 fi
-
-cat <<'EOT'
-
-Étapes restantes :
-  1. Connexion des runners aux fournisseurs LLM, dans LEUR profil :
-       sudo -u omp-runner -H omp --profile pipeline   (puis /login)
-     ou des clés d'API dans /etc/omp-harness/runner.env (ANTHROPIC_API_KEY=…, root 0600).
-     Chaque dépôt cloné : sudo -u omp-harness git -C <dépôt> config core.sharedRepository 0640
-     (le service le pose aussi au démarrage : les gitdirs restent illisibles en écriture au groupe).
-  2. Le jeton de l'API : /var/lib/omp-harness/state/token (créé au premier démarrage).
-  3. Publier l'API : tailscale serve --bg --https=443 http://127.0.0.1:8790
-     (ou un reverse proxy TLS devant 127.0.0.1:8790).
-  4. Une seule mémoire pour le Mac et le VPS (voir omp-harness/README.md § Mémoire du projet) :
-     copier la base du Mac dans /var/lib/omp-mem0/mem0-rs.db (service arrêté), puis
-     tailscale serve --bg --https=8443 http://127.0.0.1:8321 et, sur le Mac,
-     MEM0_HTTP_URL=https://<vps>.<tailnet>.ts.net:8443 et MEM0_HTTP_TOKEN=<le jeton de mem0.env>.
-EOT

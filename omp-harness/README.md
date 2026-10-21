@@ -1,14 +1,284 @@
-# omp-harness — le Pipeline Service sur VPS
+# omp-harness — le serveur de pipelines
 
-Un process Node, une base SQLite, une API REST + SSE. Le service conduit chaque
-feature de bout en bout (/req → /specs → /impl → /review ⇄ fix → merge) avec des
-runners OMP enfants. Il décide seul de ce qui est réversible. Il batche ce qui ne
-l'est pas pour l'humain du matin.
+Un process Node, une base SQLite, une API REST + SSE, sur un VPS. Le serveur mène
+chaque feature de bout en bout (`/specs → /impl → /review ⇄ correction → merge`) avec
+un agent OMP par étape. Ce qui est réversible, il le décide seul et en garde un point
+de reprise. Ce qui ne l'est pas (schéma de données, API publique, suppression), il le
+garde pour toi. Les plugins et l'app OMP Console en sont les clients.
 
-Il est indépendant des deux plugins. Ni `omp-mem0-req` ni la coque macOS n'en
-dépendent, et le service du Mac (launchd) reste tel quel.
+## Installer le serveur
 
-## L'architecture, case par case
+Trois users se partagent la machine : `omp-harness` (le service, sa base, son
+jeton), `omp-runner` (les agents et leurs comptes LLM) et `omp-heavy` (les tests,
+sans réseau ni clé). Une quatrième, `omp-mem0`, tient la mémoire du projet
+(`mem0-rs`, sur `127.0.0.1:8321`).
+
+### Debian ou Ubuntu
+
+**1. Les prérequis.** Node ≥ 22.6, git, curl, ssh-keygen, sudo, systemd ≥ 250, et
+Rust ≥ 1.89 pour compiler `mem0-rs` :
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+sudo apt install -y nodejs git curl openssh-client sudo systemd-oomd systemd-zram-generator
+curl --proto '=https' -sSf https://sh.rustup.rs | sh -s -- -y && . ~/.cargo/env
+```
+
+Les tests de tes dépôts tournent sous `omp-heavy`, avec le PATH du système : leurs
+outils (npm, cargo, pytest…) doivent être installés pour tout le système, pas
+seulement dans ton compte. Si tes dépôts sont en Rust, installe aussi `sccache`, ou
+retire `RUSTC_WRAPPER` de `heavy.env` dans la configuration.
+
+**2. L'installation**, depuis un clone de ce dépôt :
+
+```bash
+cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml
+sudo install -m 0755 mem0-stack/mem0-rs/target/release/mem0-rs /usr/local/bin/mem0-rs
+sudo bash omp-harness/deploy/install.sh
+```
+
+Le script pose omp 18.6.0 (`/usr/local/bin/omp`, la version de l'app Mac, vérifiée
+par son empreinte), le service et ses unités systemd, le lanceur root, la mémoire,
+`omp-harness-check`, et une clé SSH pour le service. Il ne remplace jamais une
+configuration déjà posée : relancé, il met à jour le code et redémarre le service.
+
+**3. La clé de déploiement.** Le service pousse ses merges sur ton dépôt avec sa
+propre clé. Ajoute-la au dépôt **avec l'écriture** (GitHub : Settings ▸ Deploy keys ▸
+Add deploy key ▸ Allow write access) :
+
+```bash
+sudo cat /var/lib/omp-harness/.ssh/id_ed25519.pub
+```
+
+En mode `"merge": "gh"` (une PR par feature, fusionnée par `gh`), installe aussi
+`gh` et connecte-le : `sudo -u omp-harness -H gh auth login`.
+
+**4. Le clone.** Un clone nu par dépôt, au nom de `omp-harness` :
+
+```bash
+sudo -u omp-harness git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>
+```
+
+**5. La configuration.** `sudoedit /etc/omp-harness/config.json` : remplace le dépôt
+d'exemple par les tiens, et garde ou change les modèles (voir « Configuration ») :
+
+```json
+"repos": [
+  {
+    "name": "mon-produit",
+    "path": "/var/lib/omp-harness/repos/mon-produit",
+    "tests": { "touched": "npm test -- {files}", "full": "npm test" },
+    "merge": "local",
+    "remote": "origin"
+  }
+]
+```
+
+**6. Les comptes LLM des agents.** Une clé d'API dans `/etc/omp-harness/runner.env`
+(root seul la lit, le lanceur la passe aux agents) :
+
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-…' | sudo tee -a /etc/omp-harness/runner.env >/dev/null
+```
+
+Ou un compte OMP : `sudo -u omp-runner -H omp --profile pipeline`, puis `/login`.
+
+**7. La mémoire.** `mem0-rs` calcule ses vecteurs avec un serveur compatible OpenAI,
+qui doit rester joignable par le VPS. Dans `/etc/omp-harness/mem0.env`, renseigne
+`OMLX_BASE_URL` (et `OMLX_API_TOKEN` s'il en faut un), et `EMBEDDING_DIMS` s'il
+diffère de 1024 (bge-m3). Puis `sudo systemctl restart omp-harness-mem0`.
+
+**8. Vérifier, démarrer, publier.**
+
+```bash
+sudo omp-harness-check
+sudo systemctl enable --now omp-harness
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8790
+sudo cat /var/lib/omp-harness/state/token
+```
+
+`omp-harness-check` ne modifie rien. Chaque ligne dit ✓, ou ✗ avec le geste qui
+corrige : omp, lanceur, modèles, mémoire, jeton, puis pour chaque dépôt le clone, la
+lecture du distant et l'écriture (un `push --dry-run`, qui s'authentifie sans rien
+pousser). L'adresse `https://<vps>.<tailnet>.ts.net` et le jeton servent ensuite au
+Mac et à l'iPhone (README racine, étapes 2 à 5).
+
+### NixOS
+
+`install.sh` écrit dans `/etc` et `/usr/local`, que NixOS gère lui-même. Le module
+`deploy/nixos/module.nix` déclare la même chose : users, dossiers et droits, sudoers
+du lanceur, tranches, services, oomd, zram, la clé SSH du service et
+`omp-harness-check`. omp vient de son propre flake, épinglé sur la version de l'app
+Mac :
+
+```nix
+# flake.nix du VPS
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    omp.url = "github:can1357/oh-my-pi/v18.6.0";
+    mem0-omp = { url = "github:millianlmx/mem0-omp"; flake = false; };
+  };
+  outputs = { nixpkgs, omp, mem0-omp, ... }: {
+    nixosConfigurations.vps = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ./configuration.nix
+        "${mem0-omp}/omp-harness/deploy/nixos/module.nix"
+        ({ pkgs, ... }: {
+          services.omp-harness = {
+            enable = true;
+            ompPackage = omp.packages.${pkgs.system}.omp;
+            heavyPackages = [ pkgs.nodejs_22 ];      # les outils des tests de tes dépôts
+            mem0.environment.OMLX_BASE_URL = "http://homelab:8000/v1";
+            settings = {                            # fusionné sur les défauts, sans secret
+              models.standard = [ { provider = "anthropic"; model = "claude-sonnet-5-5"; } ];
+              models.heavy = [ { provider = "anthropic"; model = "claude-opus-5-5"; } ];
+              repos = [ {
+                name = "mon-produit";
+                path = "/var/lib/omp-harness/repos/mon-produit";
+                tests = { touched = "npm test -- {files}"; full = "npm test"; };
+                merge = "local";
+                remote = "origin";
+              } ];
+            };
+          };
+        })
+      ];
+    };
+  };
+}
+```
+
+Sans flakes, importe le module depuis un clone et prends omp par
+`(builtins.getFlake "github:can1357/oh-my-pi/v18.6.0").packages.${pkgs.system}.omp`
+(flakes activées dans `nix.settings.experimental-features`). La première
+construction d'omp peut prendre du temps.
+
+Puis `sudo nixos-rebuild switch`, et les gestes qui ne se déclarent pas, dans le
+même ordre que sur Debian (étapes 3, 4, 6 et 8) :
+
+```bash
+sudo cat /var/lib/omp-harness/.ssh/id_ed25519.pub          # clé de déploiement, avec l'écriture
+sudo -u omp-harness git clone --bare git@github.com:<toi>/mon-produit.git /var/lib/omp-harness/repos/mon-produit
+echo 'ANTHROPIC_API_KEY=sk-ant-…' | sudo tee -a /etc/omp-harness/runner.env >/dev/null
+sudo omp-harness-check
+sudo systemctl restart omp-harness
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8790
+```
+
+`omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
+(root seul, jamais dans le store) avec le jeton de la mémoire ; un `OMLX_API_TOKEN`
+s'ajoute à la main dans `mem0.env`.
+
+### Mettre à jour
+
+Les runs en cours reprennent à leur dernier point de reprise après le redémarrage.
+
+- **Debian** : `git pull`, puis `sudo bash omp-harness/deploy/install.sh`. Pour
+  recompiler `mem0-rs`, refais les deux commandes `cargo build` et `install` de
+  l'étape 2.
+- **NixOS** : `nix flake update mem0-omp`, puis `sudo nixos-rebuild switch`.
+
+### Développer sans systemd
+
+Passe `runner.isolation` et `heavy.isolation` à `none` et `launcher` à `[]`, puis :
+`node --experimental-strip-types omp-harness/main.ts --config ma-config.json`. Les
+tests (`test/harness/`) font tourner le service complet avec de vrais process, du
+vrai git et la vraie base ; les agents y sont un faux `omp` RPC
+(`test/support/fake-omp-rpc.ts`).
+
+## Configuration
+
+`/etc/omp-harness/config.json` ne fait que surcharger les défauts
+(`deploy/config.example.json` en montre un jeu complet). Les clés utiles :
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `repos[].name` | — | le nom par lequel les clients désignent le dépôt (jamais un chemin) |
+| `repos[].path` | — | le clone nu du service |
+| `repos[].tests.touched` | `npm test -- {files}` | les tests des fichiers touchés ; `{files}` reçoit la liste |
+| `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
+| `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR fusionnée par `gh` |
+| `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
+| `repos[].mainBranch` | `main` | la branche principale |
+| `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
+| `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur un 429 ; vide, elle prend celle du niveau au-dessus |
+| `stepTiers` | `req`, `specs`, `review` : `heavy` ; `impl`, `fix` : `standard` | le niveau de chaque étape ; la dernière correction avant le plafond passe toujours en `heavy` |
+| `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur |
+| `review.specsGate` | `true` | la feature attend ta validation entre `/specs` et `/impl` |
+| `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
+| `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
+| `runner.slots`, `heavy.slots` | `5`, `2` | agents et jobs de tests simultanés |
+| `runner.memoryMax`, `heavy.memoryMax` | `1G`, `4G` | le plafond mémoire de chacun |
+| `heavy.timeoutSec` | `1800` | la durée maximale d'un job de tests |
+| `heavy.env` | `{}` | l'environnement des tests, et rien d'autre |
+| `oracle` | `{ "url": "http://127.0.0.1:8321" }` (posé par l'installation) | la mémoire du projet ; `null` la coupe |
+| `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
+
+## Une feature, pas à pas
+
+- **Décisions.** Ce que les specs, la mémoire ou le code ne tranchent pas, l'agent
+  le tranche par l'option la plus réversible, avec l'outil `decision`. Le service en
+  fait un commit `decision: … → …` (point de reprise). Une décision cite celles dont
+  elle découle (`dependsOn`).
+- **Escalades.** Schéma de données, API publique, suppression : l'agent ne
+  l'applique pas, contourne et termine le reste. Les questions partent ensemble en
+  fin d'étape, et l'étape reprend quand tu as tout répondu.
+- **Renverser une décision.** Ta raison rejoint la mémoire. Si rien n'en découle,
+  rien n'est annulé : l'étape en cours (ou une correction après la revue) applique
+  ta nouvelle option sur le code actuel. Si des décisions en découlent, le service
+  revient au point de reprise : seules celles-là tombent, les autres sont
+  réappliquées. Après un merge, un run de suite s'ouvre.
+- **Revue.** L'agent de revue lance la suite complète et rend un verdict structuré
+  (`review_verdict`). Bas risque, suite verte sur l'arbre exact et diff court :
+  auto-merge. Sinon, tu valides ; tu lis le code si le verdict est faible.
+- **Merge.** Rebase sur `main`, squash, puis push sur le distant. Un push refusé
+  laisse un événement `push_failed` avec la raison.
+
+## La mémoire du projet
+
+L'oracle du serveur **est** la mémoire mem0 du projet, la même que celle des
+sessions du Mac quand tu la partages (README racine, étape 4).
+
+- **Même portée.** Une portée non déclarée est calculée à partir des manifestes de
+  `main` (`package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis
+  `.xcodeproj`), avec la même table que le plugin (`omp-mem0-memory/state.ts`).
+  `GET /v1/status` l'affiche par dépôt.
+- **Agents branchés.** Chaque agent charge le plugin mémoire (`runner.extensions`)
+  avec `MEM0_PROJECT_ID=<portée>`, `MEM0_AUTOSETUP=0` (rien n'est écrit dans le
+  dépôt, donc rien dans la PR) et `MEM0_NUDGE=0`. Le service écrit lui-même en
+  mémoire les besoins, chaque feature mergée et chaque correction humaine **avec sa
+  raison**.
+- **Isolée.** `mem0-rs` tourne sous `omp-mem0`, base en `/var/lib/omp-mem0` (0700),
+  hors du budget des runs. Un jeton commun le relie au service et aux agents ; les
+  jobs de tests ne voient ni la base ni le jeton. Injoignable, la mémoire dégrade
+  sans bloquer.
+
+## API
+
+`Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health`.
+
+| Route | Effet |
+|---|---|
+| `GET /v1/status` | Compteurs par état, runs vivants, slots, `MemAvailable`, jetons par fournisseur. |
+| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?}` | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
+| `GET /v1/runs/{id}` | Run, étapes, décisions, escalades, tests, artefacts. |
+| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
+| `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |
+| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
+| `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
+| `POST /v1/runs/{id}/cancel` | Annuler (la branche reste). |
+| `GET /v1/escalations` | Escalades ouvertes, **batchées par run** (écran iOS). |
+| `GET /v1/decisions?status=auto` | La relecture du matin. |
+| `GET /v1/inbox` | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
+| `GET /v1/projects` · `POST /v1/projects` `{repo, title, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | /project. La liste porte le décompte des runs de chaque projet par état. |
+| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | /audit : `queued` → `analysing` → `proposed`. |
+| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | Lancer les propositions retenues en projet, ou annuler. |
+| `GET /v1/stats` | Les statistiques du harness, avec l'état du scheduler. |
+| `GET /v1/events?run=…` | SSE. `id:` = curseur du journal. Événements : `run_created`, `run_state`, `step_started`, `step_done`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merged`, `progress`… |
+
+## Architecture
 
 | Case du schéma | Où | Ce qui le garantit |
 |---|---|---|
@@ -30,7 +300,7 @@ dépendent, et le service du Mac (launchd) reste tel quel.
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
 | **Boucle humaine** | `orchestrator.ts`, `http.ts` | Relire, accepter, renverser une décision. La raison part dans l'oracle. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service fait un retour dur au checkpoint N : seules ces dépendantes tombent, les indépendantes sont réappliquées. Un run déjà mergé ouvre un run de suite. |
 
-## Écarts assumés au schéma
+## Sécurité et écarts assumés au schéma
 
 - **Heavy en service transitoire, pas en `--scope`.** Une scope ne porte ni
   `User=` ni `PrivateNetwork=`. Le job part donc en `systemd-run --wait --pipe` :
@@ -65,148 +335,13 @@ dépendent, et le service du Mac (launchd) reste tel quel.
   vérifié par `/proc/self/fd`. Un lien vers le jeton du service n'est jamais
   ingéré.
 
-## Mémoire du projet
-
-L'oracle **est** la mémoire mem0 du projet, celle que le plugin `omp-mem0-memory` lit
-sur ton Mac.
-
-- **Même scope.** Une scope de dépôt non déclarée est calculée au démarrage à partir
-  des manifestes de `main` (`package.json`, `pyproject.toml`, `Cargo.toml`,
-  `Package.swift`, puis `.xcodeproj`). Le plugin utilise la même table
-  (`omp-mem0-memory/state.ts`). `GET /v1/status` l'affiche par dépôt, avec l'état de
-  l'oracle.
-- **Runners branchés.** Chaque runner charge le plugin (`runner.extensions`) et
-  reçoit `MEM0_PROJECT_ID=<scope>`. Il bénéficie ainsi du rappel automatique à
-  chaque tour et des outils `mem0_*`. Il reçoit aussi `MEM0_AUTOSETUP=0` (aucun
-  brief écrit dans le dépôt, donc rien dans la PR) et `MEM0_NUDGE=0` (pas de tour
-  de relance par étape : le knowledge-updater s'en charge). Derrière le lanceur
-  root, ces trois variables sont les seules permises sur la ligne de commande.
-  L'adresse et le jeton de mem0 viennent de `runner.env`.
-- **mem0-rs sur le VPS.** `install.sh` construit `mem0-rs`, crée le user `omp-mem0`
-  et sa base dans `/var/lib/omp-mem0` (0700), puis démarre
-  `omp-harness-mem0.service`. Ce service est durci, écoute sur `127.0.0.1:8321` et
-  reste hors du budget des runs. Les vecteurs sémantiques et l'extraction viennent
-  du homelab via Tailscale (`OMLX_BASE_URL` dans `/etc/omp-harness/mem0.env`). Un
-  jeton commun est généré pour mem0-rs, le service et les runners. Les jobs heavy
-  ne voient ni la base ni le jeton.
-- **Une seule mémoire pour le Mac et le VPS.** Quatre étapes :
-  1. Copier `mem0-rs.db` du Mac dans `/var/lib/omp-mem0/`, service arrêté. La
-     dimension des vecteurs doit être la même.
-  2. Publier mem0 sur le tailnet : `tailscale serve --bg --https=8443 http://127.0.0.1:8321`.
-  3. Sur le Mac, faire pointer le plugin vers le VPS :
-     `MEM0_HTTP_URL=https://<vps>.<tailnet>.ts.net:8443` et
-     `MEM0_HTTP_TOKEN=<jeton de mem0.env>`.
-  4. Les sessions du Mac, les runners et l'oracle écrivent alors dans la même base.
-
-## API
-
-`Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health`.
-
-| Route | Effet |
-|---|---|
-| `GET /v1/status` | Compteurs par état, runs vivants, slots, `MemAvailable`, jetons par fournisseur. |
-| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?}` | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
-| `GET /v1/runs/{id}` | Run, étapes, décisions, escalades, tests, artefacts. |
-| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
-| `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |
-| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
-| `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
-| `POST /v1/runs/{id}/cancel` | Annuler (la branche reste). |
-| `GET /v1/escalations` | Escalades ouvertes, **batchées par run** (écran iOS). |
-| `GET /v1/decisions?status=auto` | La relecture du matin. |
-| `GET /v1/inbox` | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
-| `GET /v1/projects` · `POST /v1/projects` `{repo, title, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | /project. La liste porte le décompte des runs de chaque projet par état. |
-| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | /audit : `queued` → `analysing` → `proposed`. |
-| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | Lancer les propositions retenues en projet, ou annuler. |
-| `GET /v1/stats` | Les statistiques du harness, avec l'état du scheduler. |
-| `GET /v1/events?run=…` | SSE. `id:` = curseur du journal. Événements : `run_created`, `run_state`, `step_started`, `step_done`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merged`, `progress`… |
-
-## Installation (VPS Debian ou Ubuntu, systemd ≥ 250)
-
-```bash
-sudo bash omp-harness/deploy/install.sh
-sudoedit /etc/omp-harness/config.json        # dépôts, modèles, fournisseurs, oracle
-sudo -u omp-harness git clone --bare <url> /var/lib/omp-harness/repos/<nom>
-sudo -u omp-runner -H omp --profile pipeline # /login : les comptes LLM des runners
-sudo systemctl enable --now omp-harness
-tailscale serve --bg --https=443 http://127.0.0.1:8790
-```
-
-### Sur NixOS
-
-`install.sh` écrit dans `/etc` et `/usr/local`, que NixOS gère lui-même. Le module
-`deploy/nixos/module.nix` déclare la même chose : users, dossiers et droits, sudoers du
-lanceur root, tranches, services, oomd, zram. Les chemins viennent du store : node,
-le bash des jobs heavy (`heavy.shell`), le lanceur et `mem0-rs`, compilé depuis
-`mem0-stack/mem0-rs` (rustc ≥ 1.89).
-
-```nix
-# configuration.nix — clone du dépôt dans /etc/nixos/mem0-omp (ou input de flake, flake = false)
-{ pkgs, ... }: {
-  imports = [ ./mem0-omp/omp-harness/deploy/nixos/module.nix ];
-  services.omp-harness = {
-    enable = true;
-    ompBin = "/run/current-system/sw/bin/omp";      # chemin absolu d'omp, épinglé par le lanceur
-    heavyPackages = [ pkgs.nodejs_22 ];             # les outils des tests de tes dépôts
-    mem0.environment.OMLX_BASE_URL = "http://homelab:8000/v1";
-    settings = {                                    # fusionné sur les défauts, sans secret
-      models.standard = [ { provider = "anthropic"; model = "claude-sonnet-5-5"; } ];
-      models.heavy = [ { provider = "anthropic"; model = "claude-opus-5-5"; } ];
-      providers.anthropic = { capacity = 20; refillPerMinute = 20; };
-      repos = [ {
-        name = "mon-produit";
-        path = "/var/lib/omp-harness/repos/mon-produit";
-        tests = { touched = "npm test -- {files}"; full = "npm test"; };
-        merge = "local";
-      } ];
-    };
-  };
-}
-```
-
-Puis `sudo nixos-rebuild switch`, et les gestes qui ne se déclarent pas :
-
-```bash
-sudo -u omp-harness git clone --bare <url> /var/lib/omp-harness/repos/mon-produit
-sudo -u omp-runner -H omp --profile pipeline      # /login, ou ANTHROPIC_API_KEY=… dans /etc/omp-harness/runner.env
-sudo systemctl restart omp-harness
-tailscale serve --bg --https=443 http://127.0.0.1:8790
-```
-
-`omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
-(root seul, jamais dans le store) avec le jeton partagé de mem0 ; `OMLX_API_TOKEN` s'y
-ajoute à la main.
-
-Pour développer sans systemd, passe `runner.isolation` et `heavy.isolation` à
-`none` et `launcher` à `[]`, puis :
-`node --experimental-strip-types omp-harness/main.ts --config ma-config.json`.
-
-Les tests (`test/harness/`) font tourner le service complet avec de vrais process,
-du vrai git et la vraie base. Les runners y sont un faux `omp` RPC
-(`test/support/fake-omp-rpc.ts`).
-
 ## Les apps
 
-OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain : ses cinq
-sections de Pilotage sont servies par ce serveur, qu'elles joignent directement en
-https (l'adresse publiée par Tailscale et le jeton de
-`/var/lib/omp-harness/state/token`, saisis une fois dans la feuille « Serveur »).
-
-- **Accueil** — la boîte de l'humain (`GET /v1/inbox`) : les escalades, répondues
-  d'un geste par feature ; les specs à valider (la porte des specs : lecture de
-  `specs.md` par `GET /v1/runs/{id}`, puis accord ou refus motivé par
-  `POST /v1/runs/{id}/validate`) ; les verdicts, à valider ou à refuser avec une
-  raison ; les décisions prises seules, à accepter ou à renverser ; les features en
-  cours, que l'on peut annuler ; les audits à trier.
-- **Pipelines**, **Projet**, **Audit** — le catalogue (`GET /v1/status` pour les
-  dépôts déclarés, `GET /v1/projects`, `GET /v1/audits`) et les lancements :
-  `POST /v1/runs`, `POST /v1/projects`, `POST /v1/audits`, puis
-  `POST /v1/audits/{id}/launch` avec les propositions cochées, ou
-  `POST /v1/audits/{id}/cancel`.
-- **Statistiques** — `GET /v1/stats`.
-- **En direct** — les apps suivent `GET /v1/events` depuis le curseur de la boîte
-  et relisent boîte et catalogue à chaque événement ; une coupure garde la dernière
-  boîte, signalée hors ligne.
-
-Le client est partagé (`omp-console/Sources/ConsoleClient/Harness*.swift`) ; voir
-`omp-console/README.md` § « Serveur de pipelines ».
+OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain. Ses cinq
+sections de Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques) joignent ce
+serveur en https, avec l'adresse publiée par Tailscale et le jeton de
+`/var/lib/omp-harness/state/token`, saisis une fois dans la feuille « Serveur ». Elles
+suivent `GET /v1/events` et relisent la boîte à chaque événement ; une coupure garde
+la dernière boîte, signalée hors ligne. Le client est partagé
+(`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`
+§ « Serveur de pipelines ».

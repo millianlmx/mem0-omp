@@ -109,3 +109,21 @@ test("harness-nixos/AC-2 : le module NixOS pose les mêmes dossiers, droits, cl�
   assert.match(MODULE, /od -An -N32 -tx1 \/dev\/urandom/, "le jeton mem0 naît sur la machine, jamais dans le store");
   assert.match(MODULE, /patchShebangs \$out\/bin/);
 });
+
+test("harness-nixos/AC-3 : le module prend omp en paquet, pose la clé SSH du service, et livre `omp-harness-check`", () => {
+  assert.match(MODULE, /ompPackage = lib\.mkOption \{\n\s+type = lib\.types\.nullOr lib\.types\.package;/);
+  assert.match(MODULE, /default = lib\.optionalString \(cfg\.ompPackage != null\) "\$\{cfg\.ompPackage\}\/bin\/omp";/);
+  assert.match(
+    MODULE,
+    /assertion = lib\.hasPrefix "\/" cfg\.ompBin;/,
+    "sans omp, l'évaluation s'arrête avec un message",
+  );
+  assert.match(
+    MODULE,
+    /runuser -u omp-harness -- ssh-keygen -q -t ed25519 -N "" .* -f \/var\/lib\/omp-harness\/\.ssh\/id_ed25519/,
+  );
+  assert.match(MODULE, /StrictHostKeyChecking accept-new/);
+  assert.match(MODULE, /writeShellScriptBin "omp-harness-check"/);
+  assert.match(MODULE, /main\.ts --config \/etc\/omp-harness\/config\.json --check'/);
+  assert.match(MODULE, /path = \[ pkgs\.git pkgs\.openssh pkgs\.gh \];/, "merge: gh marche aussi sur NixOS");
+});

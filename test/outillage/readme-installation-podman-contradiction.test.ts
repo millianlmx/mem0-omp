@@ -30,7 +30,7 @@ function installationBlock(readme: string): string | null {
 function voieKind(heading: string): VoieKind {
   if (heading.includes("OMP Console")) return "app";
   if (heading.includes("pile conteneur")) return "manuelle";
-  if (heading.includes("plugins seuls")) return "plugins";
+  if (heading.includes("Les plugins seuls")) return "plugins";
   return "autre";
 }
 
@@ -132,7 +132,7 @@ test("readme-installation-podman-contradiction/AC-1 : trois voies dans l'ordre a
 test("readme-installation-podman-contradiction/AC-2 : la voie app ne porte aucune commande de service et renvoie à omp-console/README.md", () => {
   const app = voie("app").text;
   assert.doesNotMatch(app, /podman|docker|compose|doctor\.sh|\.env\b/i);
-  for (const needle of ["omp-console/README.md", "n'installe pas les plugins", "voie 3"]) {
+  for (const needle of ["omp-console/README.md", "n'installe pas les plugins", "« Les plugins seuls »"]) {
     assert.ok(app.includes(needle), `voie app sans « ${needle} »`);
   }
 });
