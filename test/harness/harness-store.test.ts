@@ -15,13 +15,13 @@ test("harness-store/AC-1 : la base se crée migrée, en WAL, et une réouverture
   const dir = tmpdir("harness-store-");
   const file = path.join(dir, "h.sqlite");
   const first = new Store(file);
-  assert.equal(first.schemaVersion, 2);
+  assert.equal(first.schemaVersion, 3);
   first.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "harness/a" });
   assert.equal((first.db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
   first.close();
   const again = new Store(file);
   assert.equal(again.getRun("r1")?.title, "A");
-  assert.equal(again.schemaVersion, 2);
+  assert.equal(again.schemaVersion, 3);
   again.close();
 });
 
@@ -58,11 +58,11 @@ test("harness-store/AC-2 : un run naît en file à /req ; ses champs JSON (modul
   );
 });
 
-test("harness-store/AC-3 : les décisions sont numérotées par run ; en renverser une rend caduques les suivantes", () => {
+test("harness-store/AC-3 : les décisions sont numérotées par run et gardent leurs dépendances ; en renverser une ne rend caduques que celles qu'on désigne", () => {
   const db = store();
   db.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "b" });
   const step = db.startStep("r1", "impl", 0, null, null);
-  const decide = (question: string) =>
+  const decide = (question: string, dependsOn: number[] = []) =>
     db.addDecision({
       runId: "r1",
       stepId: step.id,
@@ -72,13 +72,15 @@ test("harness-store/AC-3 : les décisions sont numérotées par run ; en renvers
       rationale: "r",
       category: "reversible",
       checkpointSha: null,
+      dependsOn,
     });
-  assert.deepEqual([decide("q1").seq, decide("q2").seq, decide("q3").seq], [1, 2, 3]);
+  assert.deepEqual([decide("q1").seq, decide("q2").seq, decide("q3", [2]).seq, decide("q4").seq], [1, 2, 3, 4]);
+  assert.deepEqual(db.getDecision("r1", 3)?.dependsOn, [2]);
   db.acceptDecision("r1", 1);
-  db.reverseDecision("r1", 2, "y", "raison");
+  db.reverseDecision("r1", 2, "y", "raison", [3]);
   assert.deepEqual(
     db.listDecisions({ runId: "r1" }).map((d) => d.status),
-    ["accepted", "reversed", "superseded"],
+    ["accepted", "reversed", "superseded", "auto"],
   );
   assert.equal(db.getDecision("r1", 2)?.reversalReason, "raison");
 });

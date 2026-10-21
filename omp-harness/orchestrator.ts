@@ -9,17 +9,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Auditor } from "./audits.ts";
-import type { HarnessConfig, ModelChoice, RepoConfig } from "./config.ts";
-import { launch, repoByName } from "./config.ts";
+import type { HarnessConfig, ModelChoice, RepoConfig, Tier } from "./config.ts";
+import { launch, modelChain, repoByName } from "./config.ts";
 import type { DecisionRow, RunRow, Store, StepRow } from "./db.ts";
-import { checkpointMessage, planDecision } from "./decisions.ts";
+import { checkpointMessage, dependentsOf, planDecision } from "./decisions.ts";
 import type { Git } from "./git.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
 import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import { heavyReport } from "./heavy.ts";
 import type { RunState, StepKind, StepOutcome, Transition } from "./machine.ts";
-import { ACTIVE_STATES, STEP_TIER, afterHumanValidation, afterSpecsValidation, isTerminal, nextAfter, resumeAfterEscalations, resumeAtCheckpoint } from "./machine.ts";
+import { ACTIVE_STATES, afterHumanValidation, afterSpecsValidation, isTerminal, nextAfter, resumeAfterEscalations, resumeAtCheckpoint, reworkAfterReversal, stepTier } from "./machine.ts";
 import type { Oracle } from "./oracle.ts";
 import { humanDecisionMemory, renderMemories } from "./oracle.ts";
 import { knownModules, modulesViaOracle, parseModulesSection, schedulable } from "./planner.ts";
@@ -68,7 +68,8 @@ type Live = {
   slot: Slot;
   abort: AbortController;
   runner: RpcRunner | null;
-  /** L'index du modèle courant dans la chaîne de son tier. */
+  /** Le tier de l'étape que sert le runner vivant, et l'index du modèle courant dans sa chaîne. */
+  tier: Tier | null;
   modelIndex: number;
   model: ModelChoice | null;
   /** Le jeton du fournisseur déjà pris au lancement du runner (le premier prompt ne repaie pas). */
@@ -273,6 +274,7 @@ export class Orchestrator {
       slot,
       abort: new AbortController(),
       runner: null,
+      tier: null,
       modelIndex: 0,
       model: null,
       prepaid: false,
@@ -558,24 +560,44 @@ export class Orchestrator {
     });
   }
 
+  /** Ajoute une consigne de reprise à celles déjà en attente (un renversement, puis la réponse aux escalades…). */
+  #addResume(runId: string, text: string): void {
+    const pending = this.#deps.store.getArtifact(runId, RESUME_ARTIFACT);
+    this.#deps.store.putArtifact(runId, RESUME_ARTIFACT, pending ? `${pending}\n\n${text}` : text, null);
+  }
+
   #decisionLines(runId: string): string[] {
     return this.#deps.store
       .listDecisions({ runId, status: ["auto", "accepted", "reversed"] })
-      .map(decision =>
-        decision.status === "reversed"
-          ? `#${decision.seq} ${decision.question} → « ${decision.reversalOption} » (TRANCHÉ PAR L'HUMAIN : ${decision.reversalReason})`
-          : `#${decision.seq} ${decision.question} → « ${decision.chosen} »${decision.status === "accepted" ? " (validée par l'humain)" : ""}`,
-      );
+      .map(decision => {
+        const from = decision.dependsOn.length > 0 ? ` [découle de ${decision.dependsOn.map(n => `#${n}`).join(", ")}]` : "";
+        return decision.status === "reversed"
+          ? `#${decision.seq} ${decision.question} → « ${decision.reversalOption} » (TRANCHÉ PAR L'HUMAIN : ${decision.reversalReason})${from}`
+          : `#${decision.seq} ${decision.question} → « ${decision.chosen} »${decision.status === "accepted" ? " (validée par l'humain)" : ""}${from}`;
+      });
   }
 
   // -- runners --------------------------------------------------------------
 
   async #ensureRunner(live: Live, run: RunRow, stepRow: StepRow): Promise<RpcRunner> {
-    if (live.runner?.alive) return live.runner;
     const { config, scheduler, store } = this.#deps;
     const step = run.step as StepKind;
-    const tier = STEP_TIER[step];
-    const pick = await scheduler.waitModel(tier, config.models[tier], 0, live.abort.signal);
+    const tier = stepTier(config.stepTiers, step, run.fixes, config.review.fixCap);
+    if (live.runner?.alive) {
+      // review ⇄ fix garde le runner et sa conversation : seul le modèle suit le tier de l'étape.
+      if (live.tier !== tier) {
+        const pick = await scheduler.waitModel(tier, modelChain(config, tier), 0, live.abort.signal);
+        live.tier = tier;
+        live.prepaid = pick !== null;
+        if (pick && (pick.choice.provider !== live.model?.provider || pick.choice.model !== live.model?.model)) {
+          await this.#switchModel(live, run, pick.choice, pick.index, "model_tier");
+          store.setStepRunner(stepRow.id, live.unit, `${pick.choice.provider}/${pick.choice.model}`);
+        } else if (pick) live.modelIndex = pick.index;
+      }
+      return live.runner;
+    }
+    const pick = await scheduler.waitModel(tier, modelChain(config, tier), 0, live.abort.signal);
+    live.tier = tier;
     live.model = pick?.choice ?? null;
     live.modelIndex = pick?.index ?? 0;
     live.prepaid = pick !== null;
@@ -614,8 +636,8 @@ export class Orchestrator {
   /** Un prompt, avec bascule de fournisseur sur rate limit (même runner, `set_model`). */
   async #prompt(live: Live, run: RunRow, message: string): Promise<PromptResult> {
     const { config, scheduler, store } = this.#deps;
-    const tier = STEP_TIER[run.step as StepKind];
-    const chain = config.models[tier];
+    const tier = live.tier ?? stepTier(config.stepTiers, run.step as StepKind, run.fixes, config.review.fixCap);
+    const chain = modelChain(config, tier);
     const runner = live.runner as RpcRunner;
     // Un jeton par prompt : le seau du fournisseur courant, ou le suivant de la chaîne.
     if (live.prepaid) live.prepaid = false;
@@ -637,14 +659,15 @@ export class Orchestrator {
     }
   }
 
-  async #switchModel(live: Live, run: RunRow, choice: ModelChoice, index: number): Promise<void> {
+  /** `model_failover` : rate limit, fournisseur suivant ; `model_tier` : l'étape suivante change de tier. */
+  async #switchModel(live: Live, run: RunRow, choice: ModelChoice, index: number, event: "model_failover" | "model_tier" = "model_failover"): Promise<void> {
     await (live.runner as RpcRunner).setModel(choice.provider, choice.model);
     const from = live.model ? `${live.model.provider}/${live.model.model}` : null;
     live.model = choice;
     live.modelIndex = index;
     const to = `${choice.provider}/${choice.model}`;
     this.#deps.store.updateRun(run.id, { model: to });
-    this.#event("model_failover", run.id, { from, to });
+    this.#event(event, run.id, { from, to });
   }
 
   // -- outils hôtes ---------------------------------------------------------
@@ -685,6 +708,9 @@ export class Orchestrator {
     const parsed = planDecision(args);
     if (!parsed.ok) return { text: `décision refusée : ${parsed.error}`, isError: true };
     const plan = parsed.plan;
+    const standing = new Set(store.listDecisions({ runId: run.id, status: ["auto", "accepted", "reversed"] }).map(d => d.seq));
+    const unknown = plan.input.dependsOn.filter(n => !standing.has(n));
+    if (unknown.length > 0) return { text: `décision refusée : dependsOn cite ${unknown.map(n => `#${n}`).join(", ")}, absente(s) de ce run (ou caduque)`, isError: true };
     if (plan.kind === "escalate") {
       const escalation = store.addEscalation({
         runId: run.id,
@@ -709,6 +735,7 @@ export class Orchestrator {
       rationale: plan.input.rationale,
       category: "reversible",
       checkpointSha: null,
+      dependsOn: plan.input.dependsOn,
     });
     const sha = await git.commitAll(run.worktree as string, checkpointMessage(run.id, decision.seq, plan.input));
     store.setCheckpoint(decision.id, sha);
@@ -872,7 +899,7 @@ export class Orchestrator {
       }
       return;
     }
-    store.putArtifact(run.id, RESUME_ARTIFACT, `Le merge a été arrêté : ${reason}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`, null);
+    this.#addResume(run.id, `Le merge a été arrêté : ${reason}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`);
     const patch = { state: "queued" as const, step, fixes: run.fixes + 1, reason, verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null };
     if (store.updateRunIf(run.id, ["merging"], patch)) this.#event("run_state", run.id, { state: "queued", step, reason });
   }
@@ -1000,11 +1027,9 @@ export class Orchestrator {
     // Le lot de la reprise : toutes les escalades de la DERNIÈRE étape escaladée.
     const lastEscalated = store.listSteps(runId).filter(step => step.status === "escalated").pop();
     const answered = store.listEscalations({ runId, status: "answered" }).filter(item => item.stepId === lastEscalated?.id);
-    store.putArtifact(
+    this.#addResume(
       runId,
-      RESUME_ARTIFACT,
       `L'humain a tranché les escalades de l'étape. Applique ces réponses, puis termine l'étape :\n${answered.map(item => `- ${item.question} → ${item.answer}`).join("\n")}`,
-      null,
     );
     const transition = resumeAfterEscalations({ step: current.step as StepKind, fixes: current.fixes, attempts: 0 });
     this.#apply(current, transition, ["escalated"]);
@@ -1020,9 +1045,12 @@ export class Orchestrator {
   }
 
   /**
-   * Renverse la décision `seq` : retour dur au checkpoint, l'option choisie par
-   * l'humain s'applique, sa raison part dans l'oracle, et le run reprend à l'étape du
-   * checkpoint. Un run déjà mergé ouvre un run de suite (le checkpoint n'existe plus).
+   * Renverse la décision `seq` ; la raison de l'humain part dans l'oracle.
+   * - Rien n'en dépend : pas de retour arrière, l'étape en cours (ou une correction
+   *   après la revue) applique l'option sur l'état courant ; les autres décisions tiennent.
+   * - Des décisions en découlent (`dependsOn`, transitivement) : retour dur au
+   *   checkpoint, seules ces dépendantes tombent ; les indépendantes sont réappliquées.
+   * Un run déjà mergé ouvre un run de suite (le checkpoint n'existe plus).
    */
   reverseDecision(runId: string, seq: number, option: string, reason: string): Promise<RunRow> {
     return this.#serial(runId, () => this.#reverseDecision(runId, seq, option, reason));
@@ -1039,14 +1067,19 @@ export class Orchestrator {
     if (run.state === "merging" || this.#merging.has(runId)) throw new HarnessError(409, "merge en cours : renverse après le merge (un run de suite sera ouvert)");
     const repo = this.#repo(run.repo);
     await oracle.retain(repo.scope, humanDecisionMemory({ feature: run.title, question: decision.question, chosen: option.trim(), reason: reason.trim(), reversedFrom: decision.chosen }), ["harness", "decision", "renversement"]);
+    const standing = store.listDecisions({ runId, status: ["auto", "accepted"] });
+    const fallen = dependentsOf(standing, seq);
+    const list = (seqs: number[]) => seqs.map(n => `#${n}`).join(", ");
 
     if (run.state === "merged" || run.worktree === null || decision.checkpointSha === null) {
-      store.reverseDecision(runId, seq, option.trim(), reason.trim());
-      this.#event("decision_reversed", runId, { seq, option, followUp: true });
+      store.reverseDecision(runId, seq, option.trim(), reason.trim(), fallen);
+      this.#event("decision_reversed", runId, { seq, option, followUp: true, superseded: fallen });
       return this.createRun({
         repo: run.repo,
         title: `Suite de « ${run.title} » : ${decision.question}`.slice(0, 120),
-        request: `La feature « ${run.title} » a été mergée avec la décision « ${decision.question} → ${decision.chosen} ». L'humain la renverse : « ${option.trim()} ». Raison : ${reason.trim()}. Applique ce changement.`,
+        request:
+          `La feature « ${run.title} » a été mergée avec la décision « ${decision.question} → ${decision.chosen} ». L'humain la renverse : « ${option.trim()} ». Raison : ${reason.trim()}. Applique ce changement.` +
+          (fallen.length > 0 ? ` Les décisions qui en découlaient (${list(fallen)}) sont à revoir.` : ""),
         modules: run.modules,
       });
     }
@@ -1054,25 +1087,54 @@ export class Orchestrator {
     await this.#halt(runId);
     const fresh = this.#run(runId);
     if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled") throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
+    const worktree = fresh.worktree as string;
+    store.updateRun(runId, { verdict: null });
+
+    if (fallen.length === 0) {
+      // Rien n'en découle : on garde tout le travail, l'option s'applique par-dessus.
+      if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120));
+      store.reverseDecision(runId, seq, option.trim(), reason.trim(), []);
+      this.#addResume(
+        runId,
+        `L'humain a renversé la décision #${seq} « ${decision.question} » : remplace « ${decision.chosen} » par « ${option.trim()} » (raison : ${reason.trim()}). ` +
+          "Applique ce changement sur l'état actuel du code (et des artefacts qui le citent) ; rien n'a été annulé, les autres décisions tiennent.",
+      );
+      this.#event("decision_reversed", runId, { seq, option, mode: "rework", superseded: [] });
+      // Une étape qui attend ses escalades reprendra d'elle-même, avec la consigne ; sinon on la relance.
+      if (fresh.state !== "escalated" && fresh.state !== "queued") {
+        const step: StepKind = fresh.step === null || fresh.step === "review" ? "fix" : fresh.step;
+        if (fresh.state === "running") {
+          for (const item of store.listEscalations({ runId, status: "open" })) store.answerEscalation(item.id, `caduque : étape relancée après le renversement de #${seq}`);
+        }
+        this.#apply(fresh, reworkAfterReversal({ step, fixes: fresh.fixes, attempts: 0 }, step, seq), [fresh.state]);
+      }
+      void this.tick();
+      return this.#run(runId);
+    }
+
     const stepKind = store.getStep(decision.stepId)?.kind ?? "impl";
-    await git.resetTo(fresh.worktree as string, decision.checkpointSha);
-    store.reverseDecision(runId, seq, option.trim(), reason.trim());
+    await git.resetTo(worktree, decision.checkpointSha);
+    store.reverseDecision(runId, seq, option.trim(), reason.trim(), fallen);
     // Les escalades encore ouvertes portaient sur un travail qui vient d'être annulé.
     for (const item of store.listEscalations({ runId, status: "open" })) store.answerEscalation(item.id, `caduque : reprise au checkpoint #${seq}`);
     const sha = await git.commitAll(
-      fresh.worktree as string,
+      worktree,
       checkpointMessage(runId, seq, { question: `${decision.question} (renversée)`, chosen: option.trim(), rationale: `Tranché par l'humain : ${reason.trim()}` }),
     );
     store.setCheckpoint(decision.id, sha);
+    // Les indépendantes postérieures ont perdu leur commit : elles repartent de ce checkpoint.
+    const kept = standing.filter(d => d.seq > seq && !fallen.includes(d.seq));
+    for (const survivor of kept) store.setCheckpoint(survivor.id, sha);
     store.putArtifact(
       runId,
       RESUME_ARTIFACT,
       `Reprise au checkpoint #${seq} : l'humain a renversé « ${decision.question} ». Applique « ${option.trim()} » (raison : ${reason.trim()}). ` +
-        "Tout ce qui a été fait après ce checkpoint a été annulé ; refais la suite de l'étape avec ce choix.",
+        "Tout ce qui a été fait après ce checkpoint a été annulé ; refais la suite de l'étape avec ce choix. " +
+        `Les décisions ${list(fallen)} en découlaient : elles sont annulées, retranche-les si la question se repose.` +
+        (kept.length > 0 ? ` Les décisions ${list(kept.map(d => d.seq))} n'en dépendaient pas : réapplique-les telles quelles.` : ""),
       null,
     );
-    store.updateRun(runId, { verdict: null });
-    this.#event("decision_reversed", runId, { seq, option, step: stepKind, checkpoint: sha });
+    this.#event("decision_reversed", runId, { seq, option, step: stepKind, checkpoint: sha, mode: "reset", superseded: fallen });
     this.#apply(fresh, resumeAtCheckpoint({ step: stepKind, fixes: fresh.fixes, attempts: 0 }, stepKind, seq), [fresh.state]);
     void this.tick();
     return this.#run(runId);
@@ -1100,9 +1162,9 @@ export class Orchestrator {
       throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
     }
     if (!approve && current.step === "specs") {
-      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`, null);
+      this.#addResume(runId, `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`);
     } else if (!approve) {
-      store.putArtifact(runId, RESUME_ARTIFACT, `L'humain a refusé le verdict : ${why}`, null);
+      this.#addResume(runId, `L'humain a refusé le verdict : ${why}`);
       store.updateRun(runId, { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null });
     }
     void this.tick();

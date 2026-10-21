@@ -36,6 +36,7 @@ export type PromptContext = {
 const POLICY = `## Politique de décision (non négociable)
 - Personne ne répondra à une question pendant l'étape : n'utilise JAMAIS \`ask\`.
 - Ce que les specs, l'oracle ou le code ne tranchent pas, tu le tranches : choisis l'option la PLUS RÉVERSIBLE et appelle l'outil \`decision\` (category: reversible). Le service pose un checkpoint ; l'humain relira et pourra renverser.
+- Un choix qui s'appuie sur une décision déjà prise la cite dans \`dependsOn\` (#N) : si l'humain renverse #N, seules ses dépendantes sont refaites. Un choix qui tiendrait quelle que soit l'issue des autres n'en cite aucune.
 - Irréversible = schéma de données, API publique, suppression (données, fichiers d'utilisateurs). Appelle \`decision\` avec la catégorie correspondante, N'APPLIQUE PAS le choix, contourne, et termine tout ce qui n'en dépend pas : les escalades partent ensemble à la fin de l'étape.
 - Une décision tranchée par l'humain (oracle) s'impose : ne la rouvre pas.
 - \`progress\` à chaque jalon franchi, une phrase.`;

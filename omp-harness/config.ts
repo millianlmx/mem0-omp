@@ -7,10 +7,27 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { STEP_KINDS } from "./machine.ts";
+import type { StepKind } from "./machine.ts";
 
 
-/** Les deux familles de modèles : rapide pour /req et /specs, lourd pour /impl et /review. */
-export type Tier = "fast" | "heavy";
+/** Les familles de modèles, de la moins chère à la plus capable. */
+export type Tier = "fast" | "standard" | "heavy";
+
+export const TIERS: readonly Tier[] = ["fast", "standard", "heavy"];
+
+/**
+ * Le tier de chaque étape par défaut : un gros modèle là où l'on juge (cerner le
+ * besoin, écrire les specs, relire avant l'auto-merge), un modèle moyen là où l'on
+ * exécute des specs précises (/impl, /impl --fix).
+ */
+export const DEFAULT_STEP_TIERS: Readonly<Record<StepKind, Tier>> = {
+  req: "heavy",
+  specs: "heavy",
+  impl: "standard",
+  fix: "standard",
+  review: "heavy",
+};
 
 /** Un modèle d'un fournisseur : la liste ordonnée d'un tier est sa chaîne de bascule. */
 export type ModelChoice = { provider: string; model: string };
@@ -94,7 +111,10 @@ export type HarnessConfig = {
   };
   /** Admission sur `MemAvailable` : un process ne démarre que s'il laisse `reserveMiB` libres. */
   admission: { reserveMiB: number; runnerMiB: number; heavyMiB: number };
-  models: { fast: ModelChoice[]; heavy: ModelChoice[] };
+  /** La chaîne de bascule de chaque tier ; une chaîne vide prend celle du tier au-dessus. */
+  models: Record<Tier, ModelChoice[]>;
+  /** Le tier de chaque étape (la dernière correction avant le plafond passe toujours en heavy). */
+  stepTiers: Record<StepKind, Tier>;
   providers: Record<string, ProviderLimit>;
   /** `specsGate` : la feature attend l'accord humain entre /specs et /impl. */
   review: { fixCap: number; maxDiffLines: number; specsGate: boolean };
@@ -120,6 +140,13 @@ export function launch(config: HarnessConfig, args: string[]): { command: string
 /** Le budget pire cas en Mio : runners + heavy + service. */
 export function worstCaseBudgetMiB(config: HarnessConfig, serviceMiB = 1024): number {
   return config.runner.slots * sizeMiB(config.runner.memoryMax) + config.heavy.slots * sizeMiB(config.heavy.memoryMax) + serviceMiB;
+}
+
+
+/** La chaîne de bascule d'un tier : la sienne, sinon celle du premier tier au-dessus qui en a une. */
+export function modelChain(config: HarnessConfig, tier: Tier): ModelChoice[] {
+  for (const candidate of TIERS.slice(TIERS.indexOf(tier))) if (config.models[candidate].length > 0) return config.models[candidate];
+  return [];
 }
 
 
@@ -169,7 +196,8 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       shell: "/bin/bash",
     },
     admission: { reserveMiB: 2048, runnerMiB: 1024, heavyMiB: 4096 },
-    models: { fast: [], heavy: [] },
+    models: { fast: [], standard: [], heavy: [] },
+    stepTiers: { ...DEFAULT_STEP_TIERS },
     providers: {},
     review: { fixCap: 3, maxDiffLines: 300, specsGate: true },
     oracle: null,
@@ -220,8 +248,12 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   for (const isolation of [config.runner.isolation, config.heavy.isolation]) {
     if (isolation !== "systemd" && isolation !== "none") fail(`isolation inconnue : ${String(isolation)}`);
   }
-  config.models.fast = checkModels("fast", config.models.fast);
-  config.models.heavy = checkModels("heavy", config.models.heavy);
+  for (const key of Object.keys(config.models)) if (!(TIERS as readonly string[]).includes(key)) fail(`models.${key} : tier inconnu (${TIERS.join(" | ")})`);
+  for (const tier of TIERS) config.models[tier] = checkModels(tier, config.models[tier]);
+  for (const [step, tier] of Object.entries(config.stepTiers)) {
+    if (!(STEP_KINDS as readonly string[]).includes(step)) fail(`stepTiers.${step} : étape inconnue (${STEP_KINDS.join(" | ")})`);
+    if (!(TIERS as readonly string[]).includes(tier)) fail(`stepTiers.${step} : tier inconnu (${TIERS.join(" | ")})`);
+  }
   for (const [provider, limit] of Object.entries(config.providers)) {
     if (!(limit.capacity >= 1) || !(limit.refillPerMinute > 0)) fail(`providers.${provider} : capacity ≥ 1 et refillPerMinute > 0`);
   }

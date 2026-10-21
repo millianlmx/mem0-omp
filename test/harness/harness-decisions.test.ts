@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   checkpointMessage,
+  dependentsOf,
   detectIrreversible,
   parseCheckpointTrailer,
   planDecision,
@@ -53,4 +54,27 @@ test("harness-decisions/AC-5 : le commit de checkpoint s'appelle « decision: �
   assert.match(message, /^decision: Nom du champ \? → exportedAt\n/);
   assert.deepEqual(parseCheckpointTrailer(message), { runId: "r1", seq: 4 });
   assert.equal(parseCheckpointTrailer("wip(impl): x"), null);
+});
+
+test("harness-decisions/AC-6 : une décision cite celles dont elle découle ; un renversement n'emporte que ses dépendantes, transitivement", () => {
+  const parsed = planDecision({ ...base, dependsOn: [3, 1, 3] });
+  assert.ok(parsed.ok);
+  assert.deepEqual(parsed.ok && parsed.plan.input.dependsOn, [1, 3], "triées, sans doublon");
+  assert.deepEqual(
+    planDecision(base).ok && (planDecision(base) as { plan: { input: { dependsOn: number[] } } }).plan.input.dependsOn,
+    [],
+  );
+  assert.match((planDecision({ ...base, dependsOn: [0] }) as { error: string }).error, /dependsOn/);
+  assert.match((planDecision({ ...base, dependsOn: "1" }) as { error: string }).error, /dependsOn/);
+
+  const run = [
+    { seq: 1, dependsOn: [] },
+    { seq: 2, dependsOn: [1] },
+    { seq: 3, dependsOn: [] },
+    { seq: 4, dependsOn: [2] },
+    { seq: 5, dependsOn: [3] },
+  ];
+  assert.deepEqual(dependentsOf(run, 1), [2, 4]);
+  assert.deepEqual(dependentsOf(run, 3), [5]);
+  assert.deepEqual(dependentsOf(run, 4), []);
 });

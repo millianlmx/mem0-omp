@@ -91,6 +91,7 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
       rationale: "r",
       category: "reversible",
       checkpointSha: null,
+      dependsOn: [],
     });
     const port = (server.address() as AddressInfo).port;
     const response = await fetch(`http://127.0.0.1:${port}/v1/inbox`, {

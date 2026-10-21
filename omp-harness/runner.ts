@@ -137,6 +137,13 @@ const DECISION_TOOL: HostToolDefinition = {
       chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
       rationale: { type: "string", description: "Pourquoi cette option : réversibilité, coût, cohérence avec l'existant." },
       category: { type: "string", enum: [...DECISION_CATEGORIES] },
+      dependsOn: {
+        type: "array",
+        items: { type: "integer", minimum: 1 },
+        description:
+          "Les numéros (#N) des décisions déjà prises dont ce choix découle. Renverser l'une d'elles annulera aussi celle-ci ; " +
+          "un choix qui tiendrait quelle que soit l'issue des autres n'en déclare aucune.",
+      },
     },
     required: ["question", "options", "chosen", "rationale", "category"],
     additionalProperties: false,

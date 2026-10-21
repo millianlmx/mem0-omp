@@ -18,17 +18,17 @@ dépendent, et le service du Mac (launchd) reste tel quel.
 | **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable | `scheduler.ts` | Un slot runner par run vivant. Un slot heavy par `run_tests`. Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. |
 | **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans l'oracle, puis précisés par la section `## Modules` des specs. Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation. |
 | **Runners OMP** : 1 par étape, 1 Go, profil pipeline | `runner.ts`, `rpc.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Le runner de la revue reste vivant pendant review ⇄ fix (cache de prompt). Les autres meurent en fin d'étape ou à l'escalade. |
-| **Politique de décision** | `decisions.ts` | Outil hôte `decision`. Une décision réversible devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. |
+| **Politique de décision** | `decisions.ts` | Outil hôte `decision`. Une décision réversible devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
 | **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, OOM | `heavy.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
 | **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Un diff de plus de 300 lignes interdit l'auto-merge. |
 | **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par /req, /specs et /project. En écriture : les comptes rendus de besoins, chaque feature mergée (knowledge-updater) et chaque correction humaine **avec sa raison**. Injoignable, il dégrade sans bloquer. |
-| **Backends LLM** : rapide et lourd, multi-provider | `config.ts` (`models`), `orchestrator.ts` | `models.fast` pour /req et /specs, `models.heavy` pour /impl, /review et fix. Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
+| **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `orchestrator.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review ⇄ fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
 | **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`. Bas risque + suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner) + diff ≤ 300 lignes : auto-merge. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 14 Go | `deploy/` | `omp-harness.slice` 16G ⊃ runners 5G + heavy 8G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
 | **Validation des specs** (ajout) | `machine.ts`, `orchestrator.ts` | `review.specsGate` (vrai par défaut) : après /specs, le run attend l'humain, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
 | **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules) par l'outil hôte `audit_propose`. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project. |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
-| **Boucle humaine** | `orchestrator.ts`, `http.ts` | Relire, accepter, renverser une décision. Le renversement fait un retour dur au checkpoint N, applique l'option choisie, écrit la raison dans l'oracle et reprend à l'étape du checkpoint. Un run déjà mergé ouvre un run de suite. |
+| **Boucle humaine** | `orchestrator.ts`, `http.ts` | Relire, accepter, renverser une décision. La raison part dans l'oracle. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service fait un retour dur au checkpoint N : seules ces dépendantes tombent, les indépendantes sont réappliquées. Un run déjà mergé ouvre un run de suite. |
 
 ## Écarts assumés au schéma
 
@@ -109,7 +109,7 @@ sur ton Mac.
 | `GET /v1/runs/{id}` | Run, étapes, décisions, escalades, tests, artefacts. |
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
 | `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |
-| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : reprise au checkpoint N, raison dans l'oracle. |
+| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
 | `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
 | `POST /v1/runs/{id}/cancel` | Annuler (la branche reste). |
 | `GET /v1/escalations` | Escalades ouvertes, **batchées par run** (écran iOS). |
@@ -150,7 +150,7 @@ le bash des jobs heavy (`heavy.shell`), le lanceur et `mem0-rs`, compilé depuis
     heavyPackages = [ pkgs.nodejs_22 ];             # les outils des tests de tes dépôts
     mem0.environment.OMLX_BASE_URL = "http://homelab:8000/v1";
     settings = {                                    # fusionné sur les défauts, sans secret
-      models.fast = [ { provider = "anthropic"; model = "claude-haiku-5-5"; } ];
+      models.standard = [ { provider = "anthropic"; model = "claude-sonnet-5-5"; } ];
       models.heavy = [ { provider = "anthropic"; model = "claude-opus-5-5"; } ];
       providers.anthropic = { capacity = 20; refillPerMinute = 20; };
       repos = [ {

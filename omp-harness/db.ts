@@ -64,6 +64,8 @@ export type DecisionRow = {
   category: DecisionCategory;
   status: DecisionStatus;
   checkpointSha: string | null;
+  /** Les numéros des décisions du run dont celle-ci découle. */
+  dependsOn: number[];
   reversalOption: string | null;
   reversalReason: string | null;
   createdAt: number;
@@ -263,6 +265,7 @@ const MIGRATIONS: string[] = [
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    );`,
+  `ALTER TABLE decisions ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]';`,
 ];
 
 
@@ -349,6 +352,7 @@ function decisionOf(row: Row): DecisionRow {
     category: str(row, "category") as DecisionCategory,
     status: str(row, "status") as DecisionStatus,
     checkpointSha: strOrNull(row, "checkpoint_sha"),
+    dependsOn: json<number[]>(row, "depends_on", []),
     reversalOption: strOrNull(row, "reversal_option"),
     reversalReason: strOrNull(row, "reversal_reason"),
     createdAt: num(row, "created_at"),
@@ -648,8 +652,8 @@ export class Store {
     return this.transaction(() => {
       const next = Number((this.#get("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM decisions WHERE run_id = ?", input.runId) as Row).next);
       const result = this.#run(
-        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, category, status, checkpoint_sha, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?, ?)`,
+        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, category, status, checkpoint_sha, depends_on, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?, ?, ?)`,
         input.runId,
         input.stepId,
         next,
@@ -659,6 +663,7 @@ export class Store {
         input.rationale,
         input.category,
         input.checkpointSha,
+        JSON.stringify(input.dependsOn),
         this.#now(),
       );
       return decisionOf(this.#get("SELECT * FROM decisions WHERE id = ?", Number(result.lastInsertRowid)) as Row);
@@ -694,8 +699,8 @@ export class Store {
     return this.getDecision(runId, seq);
   }
 
-  /** Renverse la décision `seq` ; toutes les suivantes du run deviennent caduques. */
-  reverseDecision(runId: string, seq: number, option: string, reason: string): void {
+  /** Renverse la décision `seq` ; celles de `superseded` (ses dépendantes) deviennent caduques. */
+  reverseDecision(runId: string, seq: number, option: string, reason: string, superseded: readonly number[]): void {
     this.transaction(() => {
       const at = this.#now();
       this.#run(
@@ -706,7 +711,9 @@ export class Store {
         runId,
         seq,
       );
-      this.#run("UPDATE decisions SET status = 'superseded', decided_at = ? WHERE run_id = ? AND seq > ? AND status IN ('auto', 'accepted')", at, runId, seq);
+      for (const n of superseded) {
+        this.#run("UPDATE decisions SET status = 'superseded', decided_at = ? WHERE run_id = ? AND seq = ? AND status IN ('auto', 'accepted')", at, runId, n);
+      }
     });
   }
 

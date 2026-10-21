@@ -22,14 +22,15 @@ export type RunState =
 
 export const STEP_KINDS: readonly StepKind[] = ["req", "specs", "impl", "review", "fix"];
 
-/** Le tier de modèle de chaque étape : rapide pour le cadrage, lourd pour le code. */
-export const STEP_TIER: Record<StepKind, Tier> = {
-  req: "fast",
-  specs: "fast",
-  impl: "heavy",
-  review: "heavy",
-  fix: "heavy",
-};
+/**
+ * Le tier de modèle d'une étape, d'après la configuration : la dernière correction
+ * autorisée (et toute correction demandée au-delà du plafond) passe en heavy — un
+ * modèle moyen qui n'a pas su corriger ne réessaie pas une fois de plus.
+ */
+export function stepTier(tiers: Record<StepKind, Tier>, step: StepKind, fixes: number, fixCap: number): Tier {
+  if (step === "fix" && fixes >= fixCap) return "heavy";
+  return tiers[step];
+}
 
 /** Les états où un run occupe encore son worktree et ses modules (planificateur). */
 export const ACTIVE_STATES: readonly RunState[] = ["running", "escalated", "awaiting_human", "merging"];
@@ -124,6 +125,12 @@ export function resumeAfterEscalations(cursor: RunCursor): Transition {
 /** Le renversement d'une décision : reprise à l'étape du checkpoint, nouveau runner. */
 export function resumeAtCheckpoint(cursor: RunCursor, step: StepKind, seq: number): Transition {
   return to("queued", step, cursor, { reason: `décision ${seq} renversée — reprise au checkpoint ${seq}` });
+}
+
+
+/** Le renversement d'une décision dont rien ne dépend : l'étape reprend sur l'état courant, sans retour arrière. */
+export function reworkAfterReversal(cursor: RunCursor, step: StepKind, seq: number): Transition {
+  return to("queued", step, cursor, { reason: `décision ${seq} renversée — correction sur l'état courant` });
 }
 
 

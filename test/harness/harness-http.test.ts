@@ -246,6 +246,7 @@ test("harness-http/AC-6 : la boîte de l'humain arrive d'un seul appel — escal
       rationale: "rfc",
       category: "reversible",
       checkpointSha: null,
+      dependsOn: [],
     });
     const last = world.store.appendEvent("x", null);
     const inbox = (await (await call(server.url, "GET", "/v1/inbox")).json()) as {

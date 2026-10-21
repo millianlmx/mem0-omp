@@ -1,13 +1,14 @@
 // Feature harness-machine : la machine à états pure req → specs → impl → review ⇄ fix.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DEFAULT_STEP_TIERS } from "../../omp-harness/config.ts";
 import {
-  STEP_TIER,
   afterHumanValidation,
   afterSpecsValidation,
   nextAfter,
   resumeAfterEscalations,
   resumeAtCheckpoint,
+  stepTier,
 } from "../../omp-harness/machine.ts";
 
 const limits = { fixCap: 2, stepRetries: 1, specsGate: false };
@@ -79,8 +80,20 @@ test("harness-machine/AC-5 : un échec relançable est relancé une fois, puis l
   );
 });
 
-test("harness-machine/AC-6 : modèle rapide pour /req et /specs, lourd pour /impl, /review et la correction ; un refus humain repart en correction", () => {
-  assert.deepEqual(STEP_TIER, { req: "fast", specs: "fast", impl: "heavy", review: "heavy", fix: "heavy" });
+test("harness-machine/AC-6 : gros modèle pour /req, /specs et /review, moyen pour /impl et la correction — la dernière correction passe en heavy ; un refus humain repart en correction", () => {
+  assert.deepEqual(DEFAULT_STEP_TIERS, {
+    req: "heavy",
+    specs: "heavy",
+    impl: "standard",
+    fix: "standard",
+    review: "heavy",
+  });
+  const tiers = { ...DEFAULT_STEP_TIERS };
+  assert.deepEqual(
+    [1, 2, 3, 4].map((fixes) => stepTier(tiers, "fix", fixes, 3)),
+    ["standard", "standard", "heavy", "heavy"],
+  );
+  assert.equal(stepTier({ ...tiers, impl: "fast" }, "impl", 0, 3), "fast", "le tier d'une étape se configure");
   assert.equal(afterHumanValidation({ step: "review", fixes: 3, attempts: 0 }, true, "").state, "merging");
   const refused = afterHumanValidation({ step: "review", fixes: 3, attempts: 0 }, false, "trop lent");
   assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "fix", 4]);
