@@ -15,9 +15,9 @@ public enum PipelineServerText {
 
     public static let setupTitle = "Relier le serveur"
     public static let setupExplanation =
-        "Le serveur conduit les features de bout en bout sur le VPS. Saisissez l’adresse publiée par Tailscale et le jeton d’accès créé à son installation."
-    public static let addressLabel = "Adresse du serveur"
-    public static let addressPrompt = "vps.exemple.ts.net"
+        "Le serveur conduit les features de bout en bout sur le VPS. Collez le code d’appairage qu’affiche harness.sh pair : il porte l’adresse, le jeton et la mémoire du serveur. À défaut, saisissez l’adresse publiée par Tailscale et le jeton d’accès."
+    public static let addressLabel = "Code d’appairage ou adresse"
+    public static let addressPrompt = "omp1:… ou vps.exemple.ts.net"
     public static let tokenLabel = "Jeton d’accès"
     public static let save = "Relier"
     public static let forget = "Oublier ce serveur"

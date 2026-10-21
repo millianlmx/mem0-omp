@@ -10,14 +10,14 @@
 // Les preuves Swift de chaque critère vivent dans les suites iOS/macOS, que ce
 // fichier NOMME sans les remplacer :
 //  - AC-1 `graphShowsTheWireFacts` (IOSMemoryGraphTests) + `derivationMatchesTheFrozenFacts`
-//    et `routeServesTheWireProjectionOfTheFacts` (MemoryGraphRelayTests, macOS) ;
-//  - AC-2 `testGraphIncludesManualLinks` (RemoteMemoryRouteTests, macOS) ;
+//    (MemoryGraphParityTests, macOS) et `graphProjectsTheFrozenFacts` (MemoryReaderTests) ;
+//  - AC-2 les liens manuels restent sur le Mac qui les a tracés (MemoryLinkStore) ;
 //  - AC-3 `graphReadsOnlyTheGraphRouteOnce` (IOSMemoryGraphTests) ;
 //  - AC-4/AC-5 `pinchAndDragMoveTheViewportAndKeepNodesHittable` (IOSMemoryGraphTests) ;
 //  - AC-6 `touchingAMemoryOpensItsSheet` (IOSMemoryGraphTests) ;
 //  - AC-7 `touchingATagAppliesItsFilterAndTheMenuClearsIt` et `tagFamilyEqualsVisibility`
-//    (IOSMemoryGraphTests, MemoryGraphRelayTests) ;
-//  - AC-8 `derivationMatchesTheFrozenFacts` (MemoryGraphRelayTests) ;
+//    (IOSMemoryGraphTests, MemoryGraphParityTests) ;
+//  - AC-8 `derivationMatchesTheFrozenFacts` (MemoryGraphParityTests) ;
 //  - AC-9 la recette `-memoire.recipe` (scripts/recette/ios-shots.sh) ;
 //  - AC-10 `theListIsTheOpeningMode` (IOSMemoryGraphTests).
 import test from "node:test";
@@ -53,7 +53,7 @@ function memoryAppCode(root: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// AC-1 : le noyau partagé et la route servent le graphe complet.
+// AC-1 : le noyau partagé et le lecteur de la mémoire du serveur rendent le graphe d'une portée.
 
 function sharedKernelFaults(root: string): string[] {
   const faults: string[] = [];
@@ -73,29 +73,26 @@ function sharedKernelFaults(root: string): string[] {
     if (!declares(core, name)) faults.push(`ConsoleCore ne déclare pas ${name}`);
   }
   if (declares(shell, "MemoryGraph")) faults.push("OMPConsole déclare encore MemoryGraph");
-  const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
+  const reads = source(path.join(root, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift"));
   const head =
-    "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = await resolvedScope(scope)";
-  if (!reads.includes(head)) faults.push("memoryGraph ne lit pas la seule portée résolue");
-  if (!reads.includes("MemoryGraph.nodes(rows:")) faults.push("memoryGraph ne dérive pas par le noyau partagé");
-  if (!reads.includes("MemoryGraphWire.id(")) faults.push("memoryGraph n'émet pas par le vocabulaire du fil");
-  const router = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
-  if (!router.includes('"memory.graph"')) faults.push("la route memory.graph n'est pas servie");
+    "    public func graph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        guard let scope else";
+  if (!reads.includes(head)) faults.push("le graphe ne lit pas la seule portée demandée");
+  if (!reads.includes("let rows = try await all(scope: scope).rows"))
+    faults.push("le graphe ne lit pas les souvenirs de sa portée");
+  if (!reads.includes("MemoryGraph.nodes(rows:")) faults.push("le graphe ne dérive pas par le noyau partagé");
+  if (!reads.includes("MemoryGraphWire.id(")) faults.push("le graphe n'émet pas par le vocabulaire du fil");
   return faults;
 }
 
-test("ios-memoire-graphe/AC-1 : le Mac sert le graphe complet d'une base par le noyau partagé", () => {
+test("ios-memoire-graphe/AC-1 : le lecteur de la mémoire du serveur rend le graphe d'une portée par le noyau partagé", () => {
   assert.deepEqual(sharedKernelFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
   const text = fs
     .readFileSync(target, "utf8")
-    .replace(
-      "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = await resolvedScope(scope)",
-      "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = (scope?.isEmpty == false) ? scope : nil",
-    );
+    .replace("let rows = try await all(scope: scope).rows", "let rows = try await all(scope: nil).rows");
   fs.writeFileSync(target, text);
-  assert.ok(sharedKernelFaults(copy).length > 0, "servir toutes les portées doit faire rougir la garde");
+  assert.ok(sharedKernelFaults(copy).length > 0, "lire toutes les portées doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------
@@ -260,7 +257,7 @@ function parityFaults(root: string): string[] {
   ]) {
     if (!fixture.includes(token)) faults.push(`MemoryGraphParity ne porte pas ${token}`);
   }
-  const mac = source(path.join(root, "omp-console", "Tests", "OMPConsoleTests", "MemoryGraphRelayTests.swift"));
+  const mac = source(path.join(root, "omp-console", "Tests", "OMPConsoleTests", "MemoryGraphParityTests.swift"));
   if (!mac.includes("MemoryGraphParity.facts")) faults.push("le test macOS ne confronte pas la fixture aux faits");
   const ios = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryGraphTests.swift"));
   if (!ios.includes("MemoryGraphParity.facts")) faults.push("le test iOS ne confronte pas la charge utile aux faits");

@@ -74,7 +74,7 @@ struct IOSMemoryDetailView: View {
                     Button {
                         dismiss()
                     } label: {
-                        Text(ConnectionText.close)
+                        Text(IOSMemoryText.close)
                             .padding(.horizontal, 8)
                             .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                             .contentShape(Rectangle())

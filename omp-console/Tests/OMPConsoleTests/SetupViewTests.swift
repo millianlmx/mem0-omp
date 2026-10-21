@@ -335,7 +335,7 @@ func failureSplitsSummaryFromDetail() {
         #expect(SetupText.failureDetail(.agent(.launchctlFailed(command: "bootstrap", detail: blank))) == nil)
     }
 
-    // Le bandeau de l'Accueil et l'API distante gardent leur phrase complète.
+    // Le bandeau de l'Accueil garde sa phrase complète.
     #expect(SetupText.failureMessage(.components(.install(component: "OMP", detail: "chmod refusé")))
         == "L’installation de « OMP » a échoué : chmod refusé")
 }

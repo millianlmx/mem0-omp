@@ -36,8 +36,6 @@ struct ConsoleRootView: View {
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre et se recalcule sans redémarrage.
     @ObservedObject var components: ComponentPresenceModel
-    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition.
-    let remote: RemoteServiceModel
     let terminalModel: TerminalConsoleModel
     let projectChooser: ProjectChooserModel
 
@@ -128,12 +126,6 @@ struct ConsoleRootView: View {
         .task {
             await server.load()
             server.startLive()
-        }
-        .onAppear {
-            // Le service d'API distante démarre à l'apparition si la préférence
-            // l'autorise (BR-9) ; `SetupModel.onReady` le relancera si la
-            // préparation n'était pas terminée.
-            Task { await remote.startIfEnabled() }
         }
         .frame(minWidth: 760, minHeight: 480)
     }

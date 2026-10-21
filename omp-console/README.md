@@ -40,7 +40,6 @@ Cible minimale : macOS 26.
 - [Confirmation au Quitter](#confirmation-au-quitter)
 - [Harnais réel](#harnais-réel)
 - [Consulter et corriger la mémoire du projet](#consulter-et-corriger-la-mémoire-du-projet)
-- [API distante](#api-distante)
 - [Vocabulaire et typographie](#vocabulaire-et-typographie)
 - [Structure du paquet](#structure-du-paquet)
 - [Plateforme](#plateforme)
@@ -176,19 +175,18 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
   dépend de `ConsoleCore` et de `ConsoleClient` (le client du serveur de
   pipelines, partagé avec l'app iOS).
 - **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
-  `OMPConsole`, de `ConsoleCore` et de `ConsoleClient` (son test de contrat
-  confronte le catalogue du client aux routes servies).
-- **ConsoleClient** — la **cible partagée macOS/iOS du client distant** : le
-  client typé du contrat d'API, la découverte Bonjour, le transport HTTP, le flux
-  SSE, le trousseau et le modèle observable unique — plus le client du serveur de
-  pipelines du VPS (`Harness*.swift`). Dépendance unique :
-  `ConsoleCore` ; ni AppKit ni UIKit.
+  `OMPConsole`, de `ConsoleCore` et de `ConsoleClient`.
+- **ConsoleClient** — la **cible partagée macOS/iOS des clients du serveur du VPS** :
+  le client du serveur de pipelines (`Harness*.swift`), le code d'appairage
+  (`HarnessPairing`), le lecteur de la mémoire du serveur (`MemoryReader`,
+  `MemoryAccess`) et le trousseau. Les deux apps sont indépendantes : aucune ne parle
+  à l'autre. Dépendance unique : `ConsoleCore` ; ni AppKit ni UIKit.
 - **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
-  cliente (doublures de transport, de trousseau et de découverte : aucun Mac
-  réel) ; dépend de `ConsoleClient` et de `ConsoleCore`.
+  cliente (doublures de transport et de trousseau, aucun réseau) ; dépend de
+  `ConsoleClient` et de `ConsoleCore`.
 - **ConsoleCore** — la **cible partagée macOS/iOS** : le vocabulaire figé des
   sections (`ConsoleSection`), les mots du serveur de pipelines
-  (`PipelineServerText`), le socle du contrat de l'API distante (`ConsoleAPI`), le
+  (`PipelineServerText`), la lecture des réponses de la mémoire (`MemoryWire`), le
   noyau du graphe de la mémoire et le rendu Markdown (`MarkdownDocument`). Aucune
   dépendance (ni interne, ni externe) : elle se compile seule
   (`swift build --target ConsoleCore`) et n'importe ni AppKit ni UIKit — la
@@ -698,7 +696,6 @@ Aucune machine virtuelle, aucun conteneur, aucun moteur de conteneurs.
 | jeton d'installation (jamais régénéré) | `…/stack/installation-token` (0600) | |
 | ancienne base Qdrant, source de la migration, jamais modifiée | `…/stack/qdrant_storage/` | |
 | traces de la migration unique | `…/stack/podman-migration/` (`history.db`, `import-report.json`, `bascule.json`) | |
-| appareils appairés | `…/remote/devices.json` (0600) | |
 
 - **Badge du coin inférieur gauche** — le pied de la barre latérale porte l'état
   du composant embarqué (identifiant AX `components.badge`) : « Tout est
@@ -735,9 +732,7 @@ Aucune machine virtuelle, aucun conteneur, aucun moteur de conteneurs.
   `~/Library/LaunchAgents` ; `OMP_CONSOLE_MEM0_PORT` déplace le port de l'agent
   (entier de 1 à 65535 ; toute autre valeur garde 8321) ; `OMP_CONSOLE_OMP_BINARY`
   force le binaire `omp` et devient alors le seul candidat (les recettes s'en
-  servent) ; `OMP_CONSOLE_REMOTE_PORT` déplace le port de l'API distante (entier
-  de 1 à 65535 ; toute autre valeur garde 8787), pour qu'une instance de recette
-  écoute à côté de celle de l'utilisateur. Sous une racine jetable SEULEMENT,
+  servent). Sous une racine jetable SEULEMENT,
   l'argument de lancement `-setup.recipe <valeur>` (`Setup/SetupRecipe.swift`)
   remplace l'installateur par un script, sans réseau ni mémoire : `progression`
   (téléchargement chiffré de 0 à 100 % en 10 s, puis attente), `indeterminee`
@@ -991,8 +986,6 @@ Preuves manuelles de compatibilité des clients, sur le même poste après la
 bascule — ni ré-appairage, ni changement de jeton ou de configuration (même port
 8321, même `MEM0_HTTP_TOKEN`, même jeton d'installation) :
 
-- **iPhone déjà appairé** : la section Mémoire affiche la liste du projet, puis
-  une recherche rend des résultats, sans nouvel appairage.
 - **Session `omp` en terminal** sur un dépôt : `/mem0-status` dit le service
   joignable, `mem0_search` rend des souvenirs repris de l'ancienne mémoire, et un
   souvenir écrit par `mem0_add` est relu ensuite (par `mem0_search`, ou dans la
@@ -1337,211 +1330,6 @@ dans le projet. `--filter recetteGraphe` exerce, lui, le cycle complet d'écritu
 le vrai service (créer, chercher, corriger, relier, détacher, supprimer) dans une
 portée dédiée `_graph-recipe`.
 
-## API distante
-
-La coque héberge une **API HTTP locale** pour un appareil du réseau local (un
-téléphone, une tablette, une autre machine) : elle sert l'appairage, l'état des
-composants du Mac et la mémoire du projet ouvert, et pousse ses changements par un
-flux temps réel. Les pipelines n'y passent pas : l'app iOS joint directement le
-serveur de pipelines du VPS (voir « Serveur de pipelines »).
-
-- **Routes** : l'API sert exactement **9 routes**, image exacte de
-  `ClientRoute.all` (le test de contrat de la coque confronte les deux) —
-  `GET /v1/version`, `GET /v1/devices`, `GET /v1/components`,
-  `GET /v1/memory/page`, `GET /v1/memory/search`, `GET /v1/memory/graph`,
-  `GET /v1/stream`, `POST /v1/pair` et `DELETE /v1/devices/self`.
-- **Transport** : HTTP/1.1 en clair, sur la **seule interface du réseau local**.
-  Le port par défaut est **8787** (`OMP_CONSOLE_REMOTE_PORT` le déplace, pour une
-  instance de recette) et le service est annoncé par **Bonjour** sous le
-  type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
-  protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
-  adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
-- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 3` et
-  chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
-  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie, et l'app
-  iOS se verrouille sur « version de protocole incompatible » avec les deux
-  numéros, sans double support. La version 3 retire toutes les routes du moteur
-  local (magasin, sessions, gestes, audits, statistiques) : une app de version 2
-  se verrouille face au Mac.
-- **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
-  qui rend le code partagé `outdated_service` (statut `503`, enveloppe
-  `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
-  le service mémoire répond 404 ou 405 sur son propre `/memory/graph` (service sans cette
-  route). Le message est celui des autres pannes mémoire ; un client qui ne connaît
-  pas ce code lit le `503` comme `unavailable`. La liste, la recherche et les autres
-  pannes du graphe (service injoignable, `500`, délai dépassé) gardent `unavailable`.
-  Le graphe lit la **seule portée résolue**, par la même règle que la liste (`scope`
-  explicite non vide, sinon le projet courant) ; sans portée résolue il rend un graphe
-  vide sans lire le service. Sa charge utile porte `scope` (la portée lue) ; il n'a
-  plus de borne en nombre de souvenirs, seulement une borne d'octets de **16 Mio**.
-- **Page de mémoire** : `GET /v1/memory/page` remplace `GET /v1/memory` et sert la
-  liste par pages. Paramètres : `scope` (facultatif, même résolution que le graphe),
-  `offset` (entier ≥ 0, défaut 0) et `limit` (1 à 200, défaut 100). Un `offset` ou
-  un `limit` hors bornes rend `400 bad_request`, vérifié AVANT toute lecture du
-  service. Charge utile `{scope, total, offset, rows, nextOffset}` : `nextOffset` est
-  absent sur la dernière page ; une page dépassant 2 Mio est raccourcie, sans jamais
-  servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
-  sans lire le service. La route ne rend jamais `404`.
-- **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":3}`
-  et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
-  routes). Le code est généré dans **Réglages… › Appareils** (⌘, ou menu « OMP Console ›
-  Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
-  valable **120 secondes** et à **usage unique** ; au-delà de 5 échecs, le code se
-  verrouille et seul un code neuf le déverrouille. Le code est accepté **avec ou sans
-  tiret ni espaces, en majuscules comme en minuscules** (`ABCD-EFGH`, `ABCD EFGH`,
-  `abcd-efgh`), et les sosies de chiffres absents de l'alphabet sont lus comme au
-  décodage Crockford : **I et L valent 1, O vaut 0** (U reste refusé). L'app
-  iOS/iPadOS, le client et le serveur le normalisent par le même
-  `PairingCodeFormat` (ConsoleCore, `lookalikes`).
-- **Nom et identité de l'appareil** : l'app iOS/iPadOS transmet le **modèle précis**
-  de l'appareil (« iPad Pro 13 pouces (M4) », « iPhone 17e »), jamais son nom
-  personnel, et un identifiant d'installation (`deviceKey`, champ optionnel). Un
-  **réappairage** du même appareil **remplace sa ligne** et révoque l'ancien jeton ;
-  deux appareils distincts du même modèle gardent chacun leur ligne. Les anciennes
-  lignes sans `deviceKey` (les « iPhone » d'avant) ne sont ni fusionnées ni
-  supprimées : on les révoque à la main.
-- **Réglages › Appareils** : le panneau Réglages (scène SwiftUI `Settings`, ⌘, ou
-  « OMP Console › Réglages… ») n'a qu'un onglet, « Appareils » ; « OMP Console ›
-  Appairage… » (⌥⌘A) ouvre ce même panneau, ou le ramène devant s'il est ouvert —
-  une seule fenêtre « Appareils », aucune feuille. L'interrupteur « Accès depuis
-  l'iPhone et l'iPad », en tête, est **actif par défaut** et mémorisé
-  (`remote.enabled`, relu au lancement) ; le couper arrête le serveur et son annonce
-  Bonjour et **annule le code en cours** (rallumé, aucun code actif). Le code ne se
-  propose que service actif : coupé, la zone dit seulement « Le service est
-  coupé. ». La liste « Appareils appairés » reste **visible et révocable service
-  coupé**. Le panneau a une taille fixe (560 × 560 pt de contenu) : interrupteur et
-  zone du code ne bougent pas, **seule la liste défile**, jusqu'au dernier appareil.
-  Le code affiche « Expire dans mm:ss », puis « Code expiré » à l'échéance ;
-  l'adresse du service n'apparaît qu'une fois, et c'est d'abord une adresse privée
-  du réseau local (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale
-  (100.64/10) puis lien-local. Une adresse Tailscale tapée à la main dans l'app
-  iOS/iPadOS fonctionne aussi : son ATS porte `NSAllowsArbitraryLoads` seul
-  (`NSAllowsLocalNetworking`, qui ne couvre pas 100.64/10, le ferait ignorer) ;
-  chaque ligne
-  porte la date complète (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton
-  « Révoquer » que VoiceOver annonce « Révoquer <nom> », confirmé par « Révoquer
-  <nom> ? » (« Révoquer » / « Annuler »).
-- **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
-  révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
-  dans Réglages › Appareils : jeton, ligne de `devices.json`, article du
-  trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
-  `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
-  révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
-  l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
-- **Permission macOS** : la première opération Bonjour d'un bundle lancé depuis le
-  Finder déclenche l'alerte « Réseau local » (TN3179) ; l'onglet Appareils explique le refus
-  et ouvre les Réglages Système. Un outil lancé depuis le Terminal (`swift test`,
-  `bun`) en est exempté — c'est ce qui rend la recette de découverte reproductible.
-- **État du Mac** : `GET /v1/components` sert
-  `{ompInstalled, ompPath?, setupBanner?, homeDirectory?}` (la présence réelle du
-  composant OMP et la phrase de préparation). `homeDirectory` est le dossier
-  personnel du Mac ; l'app iOS s'en sert pour abréger les chemins en `~/…` (un Mac
-  antérieur ne l'envoie pas : les chemins restent absolus).
-- **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
-  `devices` et `components`, avec un battement de cœur toutes les 15 secondes. À
-  l'abonnement, l'ordre est `hello`, `devices` (la connexion de l'appareil est
-  déclarée au registre), puis `components`. La révocation d'un appareil coupe son
-  flux immédiatement.
-
-### Sonde CLI
-
-`scripts/omp-console-api.ts` est la sonde manuelle du dépôt (appairage, lecture,
-flux) :
-
-```bash
-bun scripts/omp-console-api.ts pair --code XXXX-XXXX --name iPhone
-bun scripts/omp-console-api.ts status
-bun scripts/omp-console-api.ts memory --query "convention de nommage"
-bun scripts/omp-console-api.ts watch --seconds 10
-bun scripts/omp-console-api.ts forget
-```
-
-Le jeton vit au trousseau (service `com.omp.console.remote-api.cli`) et n'est jamais
-affiché. Codes de sortie : `0` succès, `1` refus (le code d'erreur partagé et le
-message du serveur sont imprimés tels quels), `2` prérequis absent (URL invalide,
-serveur injoignable).
-
-### Recettes
-
-```bash
-cd omp-console
-MEM0_REMOTE_RECIPE=1 swift test --filter AC-20    # CLI ↔ coque réelle : appairage, état, flux
-swift test --filter AC-1                          # annonce Bonjour + source locale
-```
-
-`AC-1` ne demande que `dns-sd` ; `AC-20` demande `bun` — sans lui, la recette est
-**sautée**, jamais verte à tort.
-
-#### Recette des Réglages › Appareils
-
-```bash
-bash scripts/swift-app.sh --no-tests              # le bundle à éprouver
-bash scripts/recette/mac-appairage-recette.sh             # Mac seul
-bash scripts/recette/mac-appairage-recette.sh --ios       # + iOS/iPadOS
-bash scripts/recette/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
-```
-
-Elle lance une **instance de recette distincte** en arrière-plan (`open -g -n`), sur
-un état jetable : 12 appareils hérités « iPhone » sans `deviceKey`, le port `OMP_CONSOLE_REMOTE_PORT=18787`. Seuls les composants de
-l'utilisateur (`components`) sont **liés** ; le reste du support de l'instance
-(`stack`, `mem0-rs`, `remote`…) est jetable. La préparation de l'instance écrit
-dans `components` (`ComponentInstaller` purge toute version d'omp autre que celle
-du bundle). D'où la **garde du manifeste** : avant tout lancement, la version
-d'omp épinglée dans le binaire du bundle doit être exactement celle du support
-réel — `components/omp/<v>` seul dans son dossier — sinon la recette sort en `2`
-sans rien lancer. L'instance démarre son propre service mémoire : sa racine
-jetable isole le label et le plist de l'agent (`<racine>/support/LaunchAgents/`),
-`OMP_CONSOLE_MEM0_PORT` le place sur un port libre, et la recette décharge en fin
-de passe tout plist de ce dossier (`launchctl bootout gui/$(id -u) <plist>`) ;
-l'agent de l'utilisateur n'est jamais touché. `caffeinate -d` empêche la veille
-d'écran (et le verrouillage qui la suit) pendant la passe.
-
-Chaque ligne du rapport est qualifiée par sa feature. Mac seul :
-`reglages-mac-appareils/AC-1` (« Réglages… » ouvre la fenêtre « Appareils », barre
-d'onglets `["Appareils"]`), `AC-2` (un 2e « Réglages… » : une seule fenêtre CG
-« Appareils »), `AC-6` (12 appareils : interrupteur et « Générer un code » dans la
-fenêtre, la liste défile jusqu'à la dernière ligne, révoquée puis confirmée ⇒ 11),
-`AC-3` (service actif : interrupteur à 1, code `XXXX-XXXX`, liste présente),
-`AC-10` et `AC-11` (Réglages fermés puis « Appairage… » : la fenêtre « Appareils »,
-aucune `AXSheet`) ; `mac-feuille-appairage-debordante/AC-6` à `AC-10` (révocation,
-libellés « Révoquer <nom> », date complète, adresse unique, décompte puis
-échéance). `--ios` ajoute `mac-feuille-appairage-debordante/AC-3`, `AC-4`, `AC-5`,
-`AC-6` et `AC-11`. La recette ne touche **jamais** l'interrupteur : AC-4, AC-5 et
-AC-9 de reglages-mac-appareils sont prouvés par les tests Swift. Quand la
-préparation de l'instance de recette échoue (`sheet.setup.failure` lisible, par
-exemple un service mémoire qui ne répond pas), le
-service distant ne démarre pas : les contrôles qui l'exigent (`reglages-mac-appareils/AC-3`,
-l'adresse unique, la phase `--ios`) sortent en `– … — non évalué (<cause>)`, ni
-verts ni rouges, et le bilan les compte. En `--captures-only` sur le bundle de la
-base, la feuille de préparation de l'instance est fermée (« Fermer ») si elle
-masque la feuille « Appairage ».
-
-La sonde AX `scripts/recette/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
-lit le panneau sans activer l'app ni la redimensionner : l'instance de
-l'utilisateur n'est jamais touchée. Son conteneur est la fenêtre qui contient
-`settings.devices` (à défaut, pour le bundle de la base, la feuille
-`pairing.sheet`). Sous-commandes : `ouvrir` (« Appairage… »), `reglages`
-(« Réglages… »), `compter <pid> <titre>` (fenêtres CoreGraphics du pid portant ce
-titre), `fermer` (bouton de fermeture des Réglages), `onglets` (titres de la barre
-d'onglets), `mesurer`, `defiler`, `presser`, `lire`, `attendre`, `confirmer`,
-`fenetre`, `plein-ecran`. Chaque pression de menu relève l'app au premier plan
-avant et après : si l'instance de recette y passe, la ligne échoue « focus volé »
-et la recette s'arrête (`1`). `--ios` construit une app signée
-ad hoc (`omp-console/.build-ios-recette`) et appaire trois simulateurs dédiés
-(`appairage-tab-a`, `appairage-tab-b`, `appairage-tel`, conservés d'un passage à
-l'autre, jamais désinstallés) en saisissant le code sous ses trois formes.
-Sorties (`--out`, défaut `/tmp/mac-appairage-recette-<horodatage>`) : `rapport.txt`
-(une ligne `✔`/`✗` par contrôle), mesures JSON et captures PNG
-(`apres-reglages-haut.png`, `apres-reglages-bas.png` ; `feuille-haut.png`,
-`feuille-bas.png` pour les captures « avant » de la base). En fin de passe, les
-appareils appairés par la recette sont révoqués par l'onglet (leurs jetons
-quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sortie :
-`0` vert sur tous les contrôles évalués, `1` au moins un critère rouge, focus volé
-ou capture « avant » manquante, `2` non exécuté (hors macOS, session verrouillée,
-Space plein écran d'une autre app, bundle absent, manifeste du bundle différent du
-support réel, Accessibilité refusée au terminal).
-
 ## Vocabulaire et typographie
 
 Les textes visibles des fichiers `*Text.swift` (ConsoleCore, ConsoleClient, coque
@@ -1575,22 +1363,21 @@ omp-console/
 │   ├── ProjectChooser/            le choix du projet des états vides
 │   ├── Setup/                     la préparation : composants, migration, service mémoire
 │   ├── Stack/                     le service mémoire (agent launchd), oMLX, ancienne pile
-│   ├── Remote/                    l'API distante (serveur HTTP, routeur, flux SSE, appareils)
-│   ├── Settings/                  Réglages › Appareils
 │   ├── Quit/                      la confirmation au Quitter
 │   ├── Intents/                   l'App Intent « Ouvre OMP Console »
 │   ├── MenuBar/                   l'ordre des séparateurs du menu principal
 │   └── Design/                    surfaces, badge d'état, diagnostic copiable, fenêtre principale
 ├── Sources/ConsoleClient/         la cible partagée macOS/iOS des clients distants
-│   ├── ConsoleClientModel.swift   le client du Mac : découverte, appairage, lectures, flux
-│   ├── ClientRoute.swift          le catalogue des 9 routes
 │   ├── HarnessModel.swift         le client du serveur de pipelines du VPS
+│   ├── HarnessPairing.swift       le code d'appairage `omp1:…` et `~/.omp/harness.json`
+│   ├── MemoryReader.swift         la lecture directe de la mémoire du serveur (iOS)
+│   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
 │   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
-│   ├── Design/                    sections, vocabulaire, contrat de l'API, mots du serveur de pipelines
-│   ├── Memory/                    le noyau du graphe de la mémoire
+│   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines
+│   ├── Memory/                    la lecture des réponses de la mémoire et le noyau du graphe
 │   ├── Files/MarkdownDocument.swift  le rendu Markdown en blocs
 │   ├── Setup/SetupText.swift      les mots de la préparation
 │   └── Support/                   JSON, chemins, URL
@@ -1629,71 +1416,25 @@ largeur compacte (iPad en Split View) range Statistiques et Mémoire sous « Plu
 et inversement. Le routage onglet ↔ section est pur (`IOSTabs.swift`, testé par
 `IOSTabsTests`).
 
-L'app a deux clients, sans magasin local :
+L'app est autonome : elle ne parle qu'au serveur du VPS, jamais à un Mac, et n'a
+aucun magasin local. Un seul geste la relie : coller le **code d'appairage**
+(`omp1:…`, affiché par `harness.sh up` ou `harness.sh pair` sur le VPS) dans la
+feuille « Serveur » (`IOSServerSheet`, bouton `ios.server.open`). Le code porte deux
+accès :
 
-- **Le serveur de pipelines du VPS** pour les cinq sections de Pilotage
+- **Le serveur de pipelines** pour les cinq sections de Pilotage
   (`IOSHarnessScreens.swift`) : les mêmes écrans que sur le Mac — résumé et boîte de
   l'humain, lancement d'une feature, d'un projet ou d'un audit, statistiques —, sur
-  le même `HarnessModel` (voir « Serveur de pipelines »). L'app joint le serveur en
-  https, sans passer par le Mac ; la feuille « Serveur » (`IOSServerSheet`, bouton
-  `ios.server.open`) relie l'adresse et le jeton. Les listes se tirent pour
+  le même `HarnessModel` (voir « Serveur de pipelines »). Les listes se tirent pour
   actualiser, et une feature en cours a son menu contextuel « Arrêter la feature ».
-- **Le Mac appairé** pour la Mémoire et l'état de connexion (`ConsoleClient`) —
-  découverte Bonjour, appairage au trousseau et feuille de connexion. Le Mac
-  découvert est joint par son adresse IPv4 ou IPv6, lien-local zoné compris ; une
-  adresse s'affiche toujours sans sa zone d'interface (`192.168.1.175:8787`,
-  `[fe80::1]:8787`), adresse manuelle comprise (`ClientAddress.display` ; la forme
-  enregistrée `ClientAddress.text` garde la zone).
+- **La mémoire du serveur** pour la section Mémoire (`MemoryAccess`, `MemoryReader`
+  dans `ConsoleClient`) : son adresse va aux préférences, son jeton au trousseau.
+  Sans elle, la Mémoire affiche « Mémoire non reliée » et « Relier le serveur », qui
+  ouvre la même feuille.
 
 L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad) portent
 le badge de ce qui attend l'humain sur le serveur, l'onglet Audit celui des audits
-à trier ; VoiceOver lit « Accueil, N en attente ». Le bouton antenne
-(« Connexion ») rouvre la feuille de connexion au Mac à tout moment, connecté ou
-non, une seule fois par écran : sur iPhone, dans la barre de chaque onglet, de la
-liste « Plus » et des écrans qu'elle pousse ; sur iPad, une fois, dans la barre de
-la section.
-
-Hors connexion au Mac, la Mémoire suit la même règle sur iPhone comme sur iPad.
-Rien encore chargé : la section n'affiche QUE le composant « non connecté » —
-« Pas de connexion au Mac », une phrase de cause (non appairé, appairage refusé ou
-révoqué, Mac injoignable, ou l'app à mettre à jour) et « Se connecter », qui ouvre
-la feuille Connexion — ou, pendant une tentative, le composant « Connexion au
-Mac… » avec son indicateur d'attente et aucun bouton. Données déjà chargées :
-elles restent affichées, sous le même composant en bandeau, qui disparaît seul à
-la reconnexion.
-
-La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
-jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
-trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
-(veille, autre réseau) laisse la Mémoire sur le composant « non connecté », cause
-« Mac injoignable ». Un jeton refusé la rouvre toujours ; `-section` au lancement
-(les captures) l'empêche de s'ouvrir d'elle-même.
-Elle a quatre modes, décidés par le statut d'appairage du client :
-
-- **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
-- **non appairé** : état, Macs découverts, adresse manuelle, code d'appairage
-  (focalisé, clavier levé ; tiret, espaces et casse ignorés, I et L lus 1, O lu 0 ;
-  champ déclaré code à usage unique, `.textContentType(.oneTimeCode)`, pour que
-  le clavier propose un code reçu) et une ligne d'aide qui indique où trouver le
-  code sur le Mac (« menu OMP Console › Appairage… (⌥⌘A), puis « Générer un
-  code » »). Un code mal formé affiche « Le code fait 8 caractères : chiffres 0–9
-  et lettres A–Z sauf U. ». Après « Appairer » (ou ↩ dans le champ), « Appairage
-  en cours… » et un indicateur s'affichent sous le bouton (`connection.code.progress`)
-  et « Appairer » reste désactivé jusqu'à la réponse du Mac : une seule requête
-  `POST /v1/pair` par appui ; un échec retire l'indicateur et affiche son message
-  sous le champ (`connection.code.error`). Quand le Mac a refusé le jeton, le
-  message « Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code
-  d'appairage. » s'y ajoute et l'adresse connue est préremplie ;
-- **connecté** : « Connecté », l'adresse du Mac une seule fois, « Oublier ce Mac » ;
-- **déconnecté** : l'état (« Mac injoignable », « Hors réseau »…), l'adresse une
-  fois, « Réessayer », la modification de l'adresse dans le groupe replié
-  « Modifier l'adresse » (une nouvelle adresse où le Mac répond reconnecte avec
-  le jeton existant, sans code), et « Oublier ce Mac ».
-
-Sur un appareil appairé, aucun champ n'a le focus à l'ouverture. « Oublier ce
-Mac » demande confirmation, tente au mieux `DELETE /v1/devices/self` quand le Mac
-est joint, puis efface le jeton local dans tous les cas ; la feuille passe alors
-en mode non appairé.
+à trier ; VoiceOver lit « Accueil, N en attente ».
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
@@ -1708,112 +1449,19 @@ contenu dans une colonne centrée de 720 pt marges comprises
 défilement garde toute la largeur. Sous ce plafond (iPhone en portrait, iPad barre
 latérale visible en portrait), rien ne change.
 
-### Erreurs du Mac
+### Pannes de la mémoire
 
-Toute erreur rendue par le Mac — Mémoire (liste, recherche, graphe) — passe par UN
-seul traducteur, `IOSMacErrorText`
-(`omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift`). Il range l'échec en causes
-distinguables et affiche la cause puis un remède propre à elle, sans URL, sans
-adresse, sans JSON brut et sans code HTTP : « app Mac trop ancienne » (404
-`route inconnue`, ou 404/405 hors contrat), « Mac injoignable » (connexion refusée,
-Mac non connecté), « délai dépassé » (une lecture de la Mémoire sans réponse à
-temps), « service indisponible sur le Mac » (503), « action refusée par le Mac »
-(403), « refus du Mac » avec son motif (400, 409 ou 404 métier, tant que le motif
-est présentable), la version de protocole incompatible, et le message générique
-« le Mac a rencontré une erreur » (500, corps illisible, code inattendu). Le mode
-Graphe de la Mémoire ajoute « service mémoire trop ancien » (`outdated_service`).
-Un **401** n'affiche aucun message de section : le parcours de jeton révoqué est
-inchangé (secret effacé du trousseau, retour à l'appairage). Chaque échec de
-chargement propose « Réessayer » (44 pt). La table cause → message est dans
-`omp-console/ios/DESIGN.md` (« Erreurs du Mac »). Les écrans du serveur de
-pipelines ont leur propre table, `HarnessFailureText` (`ConsoleClient`) : serveur
-injoignable, jeton refusé, délai dépassé, refus du serveur avec son motif, réponse
-illisible.
-
-### Recette : la feuille Connexion
-
-Recette historique, écrite pour l'ancienne coque : ses contrôles 5 et 7 lisent
-l'Accueil « non connecté », que l'Accueil du serveur de pipelines ne montre plus —
-ils sont à porter sur la Mémoire avant de la rejouer.
-`scripts/recette/ios-connexion-feuille-recette.sh` rejoue les contrôles de la feuille
-Connexion sur un iPhone et un iPad **privés**, créés par le script (noms
-`omp-connexion-tel-<moment>` / `omp-connexion-tab-<moment>`, sans « iPhone » ni
-« iPad ») puis supprimés à la sortie. Il construit l'app **signée** hors dépôt
-(DerivedData sous `/tmp`), ne touche à aucun autre simulateur, ni à l'app Mac, ni
-au focus du Mac :
-
-```bash
-# Relevé « avant » sur la base, puis « après » sur l'arbre de travail.
-bash scripts/recette/ios-connexion-feuille-recette.sh --avant <ref> --source <udid appairé>
-bash scripts/recette/ios-connexion-feuille-recette.sh --source <udid appairé>
-```
-
-- `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
-  depuis l'arbre de travail. Les valeurs attendues sont toujours lues dans
-  `ConnectionText.swift` et `IOSConnectionStateText.swift` (cause « Mac
-  injoignable » de l'Accueil) de l'arbre de travail : la base est jugée contre la
-  spécification corrigée.
-- `--source <udid>` désigne un simulateur déjà appairé au Mac : son trousseau
-  (copie `sqlite3 .backup` de `keychain-2-debug.db`) et sa préférence
-  `client.deviceId` sont greffés sur les appareils privés. Il n'est que lu. Sans
-  `--source`, ou si la coque ne sert pas `127.0.0.1:8787`, les contrôles 5 à 9
-  sont « sauté ».
-- Sorties dans `omp-console/build/connexion-ios-feuille-intrusive-et-sans/<avant|apres>/` :
-  une capture PNG et un relevé `idb ui describe-all` (JSON) par contrôle et par
-  appareil, `rapport.txt` (une ligne `ok|échec|sauté <AC> <appareil> <détail>`
-  par contrôle), `build.log`. Codes de sortie : 0 tous les contrôles exécutés
-  sont « ok », 1 au moins un « échec », 2 non exécuté (hors macOS, Xcode
-  inutilisable, idb absent, aucun runtime iOS ≥ 26, app non signée).
-
-Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
-
-1. **Premier lancement** (AC-3, AC-12) — sans jeton : la feuille s'ouvre d'elle-même
-   en « Non appairé », avec le champ du code, et la ligne d'aide sous le code dit
-   « Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code ». ».
-2. **Adresse vide** (AC-14) — « Utiliser cette adresse » est inactif ; après la
-   saisie de `1`, il devient actif.
-3. **« Effacer »** (AC-15) — lancé avec `-client.manualAddress 127.0.0.1:9` : la
-   cible de « Effacer » fait au moins 44 × 44 pt.
-4. **Code mal formé** (AC-13) — `UUUUUUUU` puis « Appairer » : « Le code fait 8
-   caractères : chiffres 0–9 et lettres A–Z sauf U. », jamais « A–Z, 0–9 » (I, L
-   et O sont lus comme des chiffres, U est la seule lettre refusée).
-5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
-   feuille, l'Accueil montre « Pas de connexion au Mac » et la cause « Mac
-   injoignable » (`ios.connexion.cause`, sans adresse). « Se connecter » ouvre
-   la feuille : « Mac injoignable », l'adresse une fois, « Réessayer », « Modifier
-   l'adresse » (replié), « Oublier ce Mac », aucun champ du code, aucun champ
-   focalisé, pas de clavier.
-6. **Nouvelle adresse, puis « Réessayer »** (AC-7, AC-8) — déplier « Modifier
-   l'adresse », saisir `127.0.0.1:8787` et valider : « Connecté » sans code. Puis,
-   vers un port libre injoignable, ouvrir la feuille, démarrer un relais vers 8787
-   et toucher « Réessayer » : « Connecté ».
-7. **Mac joignable** (AC-1, AC-5, AC-6) — adresse `127.0.0.1:8787` : aucune feuille
-   pendant 15 s, l'Accueil s'affiche. La feuille ouverte à la demande montre
-   « Connecté », l'adresse une fois et « Oublier ce Mac », sans code, champ
-   d'adresse, découverte ni focus. Elle s'ouvre par le bouton antenne quand il est
-   affiché ; sinon (base sans la PR #89), depuis l'Accueil « non connecté » de cause
-   « Mac injoignable », puis un relais rend le Mac joignable et la feuille passe
-   d'elle-même en mode connecté.
-8. **Oublier, puis annuler** (AC-9) — « Oublier ce Mac » ouvre la confirmation ;
-   l'annuler (toucher hors de la bulle : iOS 27 n'y montre pas « Annuler ») laisse
-   « Connecté ». Rien n'est émis vers le Mac.
-9. **Oublier hors ligne** (AC-11) — adresse `127.0.0.1:9`, « Oublier ce Mac » puis
-   confirmer : la feuille passe en non appairé ; un relancement rouvre la feuille
-   non appairée, sans « Oublier ce Mac ». L'adresse est injoignable : le jeton du
-   simulateur source n'est pas révoqué.
-
-Deux scénarios révoquent un jeton sur le Mac et exigent un appairage frais : ils se
-rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` et
-`ConnectionSheetModeTests`, AC-10 par `ForgetTests` et `DeviceForgetTests` :
-
-- **AC-4 — jeton révoqué** : sur le Mac, Réglages › Appareils puis « Révoquer »
-  l'appareil ; relancer l'app. Attendu : la feuille s'ouvre avec « Le Mac ne
-  reconnaît plus cet appareil. Saisissez un nouveau code d'appairage. », le champ
-  du code et l'adresse du Mac préremplie. Relancer sans saisir de code : la
-  feuille est en « Non appairé », sans ce message.
-- **AC-10 — oublier un Mac joignable** : appareil connecté, « Oublier ce Mac » puis
-  confirmer. Attendu : la feuille passe en « Non appairé », et l'appareil disparaît
-  de la liste « Appareils appairés » de Réglages › Appareils du Mac.
+Toute panne de lecture de la mémoire du serveur — liste, recherche, graphe — passe
+par UN seul traducteur, `IOSMemoryErrorText`
+(`omp-console/ios/OMPConsoleIOS/IOSMemoryErrorText.swift`). Il range la panne en
+causes distinguables et affiche la cause puis un remède, sans URL, sans adresse,
+sans JSON brut et sans code HTTP : « mémoire du serveur injoignable », « délai
+dépassé », « mémoire indisponible sur le serveur » (503), « jeton refusé » (401,
+403 : recoller le code d'appairage), et le message générique. Le mode Graphe ajoute
+« serveur mémoire trop ancien » (route graphe absente). Chaque échec de chargement
+propose « Réessayer » (44 pt). La table cause → message est dans
+`omp-console/ios/DESIGN.md` (« Pannes de la mémoire »). Les écrans du serveur de
+pipelines ont leur propre table, `HarnessFailureText` (`ConsoleClient`).
 
 ### Prérequis
 
@@ -2053,181 +1701,42 @@ dépôt et ne bloque rien.
 L'app iOS déclare un App Intent en lecture seule, **Statut de la connexion**
 (`IOSConnectionStatusIntent`, `ios/OMPConsoleIOS/IOSSiriText.swift`), et un App
 Shortcut qui le rend atteignable par la voix et depuis l'app Raccourcis. L'intent
-n'écrit rien, n'appaire rien et n'ouvre aucune connexion de plus : il lit le
-client distant UNIQUE de l'app (`OMPConsoleIOSApp` le crée et l'enregistre pour
-les intents par `IOSSharedClient`), attend la fin de la relecture du jeton au
-trousseau — jamais la découverte du Mac — puis énonce l'état à cet instant
-(`IOSSiriStatus`).
+n'écrit rien : il lit le serveur de pipelines UNIQUE de l'app (`OMPConsoleIOSApp` le
+crée et l'enregistre pour les intents par `IOSSharedServer`), relit sa boîte, puis
+énonce « Aucun serveur relié », « Serveur relié, injoignable » ou « Relié au
+serveur, N en attente » (`IOSSiriStatus`).
 
-Phrases Siri (en français, toutes avec le nom de l'app) :
+### Lire la mémoire du serveur depuis l'iPhone
 
-- « Statut de OMP Console »
-- « Connexion de OMP Console »
-- « Vérifier la connexion de OMP Console »
+La section **Mémoire** affiche le sommaire d'un projet de la mémoire du serveur —
+les mêmes souvenirs que la section Mémoire macOS quand le Mac est relié au même
+serveur, dans l'ordre du service —, permet d'ouvrir un souvenir et de chercher
+(la recherche est celle de l'outil `mem0_search` : pool sur-échantillonné, seuil et
+tri par cosinus brut), et dit chaque panne par sa cause et son remède. Le menu
+« Choisir le projet » liste les portées de la mémoire, la plus récemment écrite en
+tête ; sans choix, c'est elle qui est lue, et le choix est gardé. La liste se lit par
+pages de 100 souvenirs, en défilement continu. Un SECOND mode, le **graphe**,
+s'ajoute derrière la bascule « Graphe ⇄ Liste » : il est dérivé sur l'iPhone par le
+MÊME noyau que la fenêtre macOS (`MemoryGraph`, nœuds-souvenirs, nœuds-étiquettes,
+arêtes de proximité) — les liens manuels restent sur le Mac qui les a tracés —,
+manipulable au doigt (pincer, glisser, toucher) ; toucher un souvenir ouvre sa fiche
+en lecture seule, toucher un nœud-étiquette applique son filtre. L'app n'émet AUCUNE
+écriture et rien ne se rafraîchit en continu.
 
-Réponses énoncées :
+Recette pas à pas :
 
-| État du client | Réponse |
-|---|---|
-| Aucun jeton, ou jeton refusé par le Mac | « Non appairé » |
-| Jeton présent, Mac non joint (recherche, connexion en cours, Mac éteint ou injoignable, hors réseau, version incompatible) | « Appairé, Mac non joint » |
-| Flux ouvert vers le Mac | « Connecté à *X* », où *X* est le nom d'instance Bonjour du Mac (« OMP Console », « OMP Console (2) »…), ou `hôte:port` pour une adresse manuelle |
-
-- L'intent **ouvre l'app** au premier plan avant de répondre ; app tuée, Siri la
-  lance à froid.
-- Il exige un **iPhone déverrouillé** : le jeton est au trousseau en
-  `WhenUnlockedThisDeviceOnly`, illisible appareil verrouillé. iPhone verrouillé,
-  le système demande d'abord le déverrouillage.
-- Dans l'app **Raccourcis**, OMP Console propose la tuile *Statut de la
-  connexion* (symbole `macbook.and.iphone`), qui lance le même intent.
-- Siri ne répond que s'il est interrogé : l'app n'annonce rien, aucune
-  notification.
-- La coque macOS doit être ouverte et joignable pour entendre « Connecté à … ».
-
-Le build (`xcodebuild`, `scripts/ios-build.sh`) produit
-`OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata`, qui porte l'intent
-et ses trois phrases (`${applicationName}`), contrôlé à chaque build contre la liste
-attendue (voir *Liste attendue des intents Siri*). La réponse est prouvée par
-`ios/OMPConsoleIOSTests/IOSSiriStatusTests.swift` ; la reconnaissance vocale, elle,
-ne se prouve qu'à la main, sur appareil réel.
-
-**Preuve manuelle sur iPhone réel** (client-ios-possede-par-la-vue/AC-6, conduite
-par l'utilisateur) :
-
-1. Installer l'app sur l'iPhone par Xcode (cible `OMPConsoleIOS`, signature de
-   l'équipe du projet), comme dans *Installer sur un appareil réel*.
-2. Appairer l'iPhone au Mac ; régler Siri en français ; garder l'iPhone
-   déverrouillé.
-3. App Mac ouverte : dire « Dis Siri, statut de OMP Console ». Attendu : l'app
-   s'ouvre et Siri dit « Connecté à OMP Console » (ou le nom d'instance du Mac).
-4. Quitter l'app Mac, puis redire la phrase. Attendu : « Appairé, Mac non joint ».
-5. Dans Raccourcis, toucher la tuile *Statut de la connexion* d'OMP Console.
-   Attendu : la même réponse qu'à l'étape précédente.
-
-### Lire la mémoire du projet depuis l'iPhone
-
-La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
-mêmes souvenirs que la section Mémoire macOS, dans l'ordre du service —, permet
-d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire par une cause
-distinguable et son remède (voir « Erreurs du Mac »). Un SECOND mode, le
-**graphe**, s'ajoute derrière la bascule « Graphe ⇄ Liste » de la barre d'outils :
-la LISTE reste le mode d'OUVERTURE. Le graphe est
-calculé CÔTÉ MAC par le MÊME noyau que la fenêtre macOS (nœuds-souvenirs,
-nœuds-étiquettes, arêtes de proximité et liens manuels), manipulable au doigt
-(pincer, glisser, toucher) sur iPhone comme sur iPad ; toucher un souvenir met
-son voisinage en évidence et ouvre sa fiche en lecture seule, toucher un
-nœud-étiquette APPLIQUE son filtre (le menu « Étiquette » revient à la vue
-entière). VoiceOver parcourt le graphe nœud par nœud : chaque souvenir affiché
-annonce son titre et son nombre de liens (les titres liés en « Liés à », rotor
-« Plus de contenu »), chaque nœud-étiquette son nombre de souvenirs, et activer
-un élément agit comme le toucher. À l'ouverture, aucune étiquette n'en recouvre
-une autre : un texte sans place attend le zoom, une capsule devient une pastille.
-L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée et
-n'émet AUCUNE écriture — le graphe est une lecture (`GET /v1/memory/graph`), et
-rien ne se rafraîchit en continu.
-
-Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
-
-1. **Appairer** l'app au Mac (feuille de connexion), un projet étant choisi sur le
-   Mac (Fichiers, Terminal ou Mémoire) : la section affiche l'en-tête « N souvenirs » (le
-   total de la portée) puis les lignes de la première page du sommaire, chacune avec
-   le texte du souvenir tel qu'il est stocké (aucun rendu Markdown), sur 3 lignes au
-   plus (4 sur iPad), terminé par « … » s'il est plus long — le texte intégral est
-   dans la feuille (étape 2) —, dans l'ordre du service (les plus récents d'abord).
-   En faisant défiler jusqu'en bas, le pied « Chargement des souvenirs suivants… »
-   lit la page suivante de lui-même (défilement continu, 100 souvenirs par page),
-   jusqu'au dernier souvenir de la portée — chaque souvenir une seule fois, plus de
-   ligne de troncature. Si une page suivante échoue, le pied dit pourquoi et offre
-   « Réessayer », les lignes déjà lues restent. Aux tailles d'accessibilité, la date
-   et les étiquettes d'une ligne s'empilent sous le texte.
-2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre la date relative et
-   les étiquettes, puis le texte intégral tel qu'il est stocké (un `*` reste un `*`),
-   et l'identifiant et la portée sous « Détails techniques » ; se fermer par le geste
-   système (aucun bouton « Fermer »).
-3. **Chercher** — taper « mémoire du projet » puis valider (retour clavier) :
-   l'en-tête devient « Résultats pour « mémoire du projet » » et les lignes sont
-   celles de l'outil `mem0_search` (mêmes identifiants, même ordre). Une recherche
-   sans candidat au-dessus du plancher dit « Aucun résultat » — jamais le sommaire.
-   La frappe seule n'émet aucune requête.
-4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
-   le sommaire DÉJÀ lu revient, sans aucune requête.
-5. **La mémoire tombe** — décharger l'agent du service mémoire (`launchctl bootout
-   gui/$(id -u)/com.omp.console.mem0-rs`) puis tirer la liste vers le bas : le
-   bandeau rouge dit « Service indisponible sur le Mac. » et son remède, sans
-   adresse, sans JSON et sans code HTTP (le détail reste sur le Mac, dans la fenêtre
-   Mémoire) ; « Réessayer » repasse au sommaire dès que le service répond de
-   nouveau (`launchctl bootstrap gui/$(id -u)
-   ~/Library/LaunchAgents/com.omp.console.mem0-rs.plist`, ou relance de l'app Mac).
-   La liste et la recherche ne disent jamais « serveur
-   mémoire trop ancien » : cette cause n'existe que dans le graphe.
-6. **Aucun projet ouvert** — fermer le projet côté Mac puis tirer la liste : la carte
-   dit « Aucun projet ouvert », sans lire la mémoire.
-7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau « Pas de
-   connexion au Mac » et sa cause s'affichent au-dessus des souvenirs déjà lus,
-   le tirage de la liste ne relit rien, et aucune cause mémoire n'est inventée — jamais
-   « Délai dépassé » ; rien de lu, la section n'affiche que le composant
-   « non connecté ». Connecté, une lecture qui échoue faute de réseau dit « Mac
-   injoignable. » et son remède, sur un bandeau orange avec « Réessayer ».
-8. **Délai dépassé** — si le Mac, joint, met trop longtemps à servir une page ou le
-   graphe (mémoire très chargée), la section dit « Délai dépassé : le Mac a mis trop
-   de temps à répondre. » puis « Réessayez dans un instant. », avec « Réessayer ». Les
-   lectures Mémoire (pages et graphe) ont un délai propre, plus long que celui des
-   autres lectures ; les autres sections gardent « Mac injoignable. » (le traducteur
-   partagé ne distingue le délai dépassé que pour la Mémoire).
-9. **App Mac trop ancienne** — face à une app Mac qui précède la lecture par pages
-   (route `GET /v1/memory/page` inconnue), la liste dit « Fonction indisponible : app
-   Mac trop ancienne. » puis « Mettez à jour OMP Console sur le Mac, puis réessayez. »,
-   sans code HTTP ni JSON. Les deux apps se mettent à jour ensemble : aucun mode de
-   compatibilité.
-10. **Le graphe** — toucher « Graphe » : le panneau commence en haut, sous la barre de
-   navigation ; le compte dit « N souvenirs · 1 projet » — le graphe ne montre QUE
-   le projet ouvert, tous ses souvenirs, aucun d'une autre portée. Le canevas montre
-   les nœuds-souvenirs, les nœuds-étiquettes, les arêtes de proximité (trait plein
-   gris) et les liens
-   manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
-   toucher un souvenir pour ouvrir sa fiche (texte intégral tel qu'il est stocké, étiquettes, liens),
-   toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
-   Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
-   inchangé — c'est le mode d'ouverture.
-11. **Graphe et service trop ancien** — avec un service mémoire sans la route
-   `/memory/graph` (servi à l'adresse `MEM0_HTTP_URL` de l'app Mac), toucher
-   « Graphe » : le bandeau dit « Graphe indisponible : serveur
-   mémoire trop ancien sur le Mac. » puis « Mettez à jour OMP Console sur le Mac, puis
-   réessayez. », sans nom de service, sans URL, sans JSON et sans code HTTP. Si
-   c'est l'app Mac elle-même qui ne connaît pas la route, il dit « Graphe
-   indisponible : app Mac trop ancienne. » puis le même remède. Après la mise à jour,
-   « Réessayer » affiche le graphe sans relancer l'app.
-
-Recette OUTILLÉE : le test Swift gated `iosMemoireRecipe`
-(`omp-console/Tests/OMPConsoleTests/MemoryIOSRecipeTests.swift`, titre
-`ios-memoire/AC-1`) exerce contre une coque réelle les parties automatisables —
-sommaire relayé identique à celui de la coque macOS, recherche identique à la
-sélection de l'outil, panne relayée avec son message, et charge « aucun projet ». Il
-est gardé par la variable `MEM0_MEMOIRE_RECIPE` et se lance par :
-
-```bash
-MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
-```
-
-Banc sur la mémoire RÉELLE, sans toucher à l'app Mac : le test Swift gated
-`memoryDelayServe` (`omp-console/Tests/OMPConsoleTests/MemoryDelayServeTests.swift`)
-monte une coque construite depuis l'arbre de travail, branchée sur le vrai service
-mémoire, avec pour projet ouvert la racine `MEM0_MEMOIRE_DELAI_ROOT`. Variables :
-`MEM0_MEMOIRE_DELAI_SERVE=1` (sans elle, le test rend la main), `MEM0_MEMOIRE_DELAI_ROOT`
-(requise), `MEM0_MEMOIRE_DELAI_MINUTES` (durée de service, défaut 20 ; 0 = contrôles
-seuls) et `MEM0_MEMOIRE_DELAI_LATENCE` (secondes ajoutées avant chaque lecture lourde,
-défaut 0, pour provoquer un « Délai dépassé »). Il imprime `SCOPE <portée>`, puis, sans
-latence, `PAGES <n> LIGNES <n> DOUBLONS <d> TOTAL <total>` (toutes les pages lues par le
-client de production : lignes = total, aucun doublon) et `GRAPHE SOUVENIRS <n>
-AUTRES-PORTEES <k> TRONQUE <bool>` (un nœud par souvenir de la portée, aucun d'une
-autre, non tronqué), enfin `PORT <port>` et un `CODE <code>` d'appairage frais toutes
-les 90 s, à saisir dans un simulateur lancé avec `-client.manualAddress
-127.0.0.1:<port>`. Lancer sans tube (sous un terminal) : la sortie est tamponnée sinon.
-
-```bash
-MEM0_MEMOIRE_DELAI_SERVE=1 MEM0_MEMOIRE_DELAI_ROOT=/chemin/du/depot \
-  MEM0_MEMOIRE_DELAI_MINUTES=0 swift test --filter memoryDelayServe
-```
+1. Sur le VPS, `harness.sh pair` ; dans l'app, feuille « Serveur », coller le code
+   `omp1:…` puis « Relier ». Attendu : l'Accueil se remplit, et la Mémoire affiche
+   l'en-tête « N souvenirs » puis la première page du projet le plus récent.
+2. Toucher un souvenir. Attendu : sa fiche, texte intégral tel qu'il est stocké,
+   identifiant et portée sous « Détails techniques », aucun bouton d'écriture.
+3. « Choisir le projet », puis un autre projet. Attendu : la liste (et le graphe
+   s'il est affiché) relit cette portée ; relancer l'app garde ce choix.
+4. Chercher un terme. Attendu : les souvenirs au-dessus du seuil, ou l'un des trois
+   « rien trouvé » distincts ; vider le champ revient au sommaire sans requête.
+5. Couper le serveur (`harness.sh down`), tirer pour actualiser. Attendu : « Mémoire
+   du serveur injoignable. » et son remède, les lignes déjà lues restent, et
+   « Réessayer » relit une fois le serveur revenu.
 
 ### Clavier de l'iPad
 

@@ -4,18 +4,17 @@ import SwiftUI
 
 /// L'aiguillage UNIQUE section → écran de l'app iOS : les cinq sections de
 /// pilotage (Accueil, Pipelines, Projet, Audit, Statistiques) sont servies par le
-/// serveur de pipelines du VPS (`HarnessModel`, joint directement) ; Mémoire l'est
-/// par le Mac appairé (`ConsoleClientModel`). Chaque écran porte son propre cadre.
+/// serveur de pipelines du VPS (`HarnessModel`), Mémoire par la mémoire du même
+/// serveur (`MemoryAccess`) — l'un et l'autre joints directement, sans Mac.
+/// Chaque écran porte son propre cadre.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
-    @ObservedObject var client: ConsoleClientModel
+    @ObservedObject var memory: MemoryAccess
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
     let memoryRecipe: IOSMemoryGraphRecipe?
-    /// La feuille Connexion de la racine, ouverte par « Se connecter » de l'écran Mémoire.
-    @Binding var showConnection: Bool
 
     var body: some View {
         switch section {
@@ -26,7 +25,8 @@ struct IOSSectionView: View {
         case .stats: IOSHarnessStatsScreen(server: server, drafts: drafts)
         case .memory, .terminal, .files:
             // Terminal et Fichiers ne sont jamais atteints (`IOSSection.all`).
-            IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe, showConnection: $showConnection)
+            // « Relier le serveur » de l'écran Mémoire ouvre la feuille Serveur.
+            IOSMemoryScreen(client: memory, recipe: state, graphRecipe: memoryRecipe, showConnection: $drafts.serverSheetShown)
         }
     }
 }

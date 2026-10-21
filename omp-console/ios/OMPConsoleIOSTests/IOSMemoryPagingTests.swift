@@ -22,7 +22,7 @@ private final class PagingMemoryReader: IOSMemoryReading {
         let limit: Int?
     }
 
-    var state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
+    var isConfigured = true
     /// Les lignes servies, dans l'ordre du service ; un test peut en insérer en tête.
     var rows: [RemoteMemoryRow]
     let pageSize = 100
@@ -104,8 +104,8 @@ struct IOSMemoryPagingTests {
             more: .available
         ))
 
-        // Hors `.connected`, le pied ne lit rien.
-        reader.state = .unpaired
+        // Mémoire non reliée, le pied ne lit rien.
+        reader.isConfigured = false
         await model.loadMore()
         #expect(reader.calls.count == 1)
     }
@@ -170,9 +170,9 @@ struct IOSMemoryPagingTests {
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
 
-        reader.failures = [ClientError.transport(.timedOut("The request timed out."))]
+        reader.failures = [MemoryReadError.timedOut]
         await model.loadMore()
-        #expect(more(model) == .failed(message: IOSMacErrorText.message(for: .macTimedOut)))
+        #expect(more(model) == .failed(message: IOSMemoryErrorText.message(for: .timedOut)))
         #expect(ids(model).count == 100)
 
         // Réessayer (le bouton du pied) relit la même page.

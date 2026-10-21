@@ -42,7 +42,7 @@ marqueur `[test: <fonction>]` (une fonction de
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
   avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques —
   servis par le serveur de pipelines du VPS) puis Consultation (Mémoire, servie par
-  le Mac appairé) ; la barre d'onglets du haut n'apparaît que lorsqu'on masque la
+  la mémoire du même serveur) ; la barre d'onglets du haut n'apparaît que lorsqu'on masque la
   barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
@@ -51,11 +51,10 @@ marqueur `[test: <fonction>]` (une fonction de
 - `-section <x>` ouvre l'onglet de la section ; sur iPhone, Statistiques et
   Mémoire s'ouvrent déjà poussées dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
-- Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
-  barre de chaque écran : les quatre onglets, la liste « Plus », les écrans
-  qu'elle pousse et les six sections de l'iPad. Les écrans de pilotage portent
-  en plus, à gauche, le bouton du serveur de pipelines (`ios.server.open`).
-  `[garde: ios-bouton-connexion-introuvable/AC-5]`
+- L'app ne parle qu'au serveur du VPS, jamais à un Mac : les écrans de pilotage
+  portent, à gauche, le bouton du serveur de pipelines (`ios.server.open`), et la
+  Mémoire ouvre la même feuille par « Relier le serveur ».
+  `[garde: serveur-de-pipelines/AC-3]`
 
 ## Surfaces (S-1)
 
@@ -181,10 +180,11 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   sombre. Aucun écran ne change de teinte : ni `.tint(` global, ni
   `Color("AccentColor")` dans les sources. `[test: accentColorIsSystemBlue]`
 - Le message de l'alerte « Réseau local » (`NSLocalNetworkUsageDescription` de
-  `OMPConsoleIOS-Info.plist`) est exactement « OMP Console se connecte à votre Mac
-  sur le réseau local pour afficher et piloter vos pipelines. » : il vouvoie et ne
-  dit ni « coque » ni « macOS ». Le simulateur n'affiche jamais cette alerte
-  (TN3179) : le texte se prouve dans l'app installée.
+  `OMPConsoleIOS-Info.plist`) est exactement « OMP Console joint votre serveur de
+  pipelines et vos souvenirs quand ils sont sur votre réseau local. » : il vouvoie
+  et ne nomme ni le Mac, ni « coque », ni « macOS ». L'app ne déclare aucun service
+  Bonjour. Le simulateur n'affiche jamais cette alerte (TN3179) : le texte se prouve
+  dans l'app installée.
   `[test: localNetworkMessageSpeaksToTheUser]`
 - L'écran de lancement est celui que génère Xcode
   (`INFOPLIST_KEY_UILaunchScreen_Generation = YES`) : un `UILaunchScreen` vide,
@@ -221,33 +221,29 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   silencieux ; une valeur inconnue ne devient jamais une erreur.
   `[test: resolveScreenState]`
 
-## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
+## États de la mémoire (feature `etats-non-connecte-heterogenes-ios`)
 
-Seule la Mémoire est servie par le Mac appairé : c'est la seule section qui dit
-l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
+La Mémoire lit la mémoire du serveur du VPS, dont l'adresse et le jeton viennent du
+code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 
-- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion ;
+- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de la mémoire ;
   ses mots vivent dans `IOSConnectionStateText` et ses identifiants, tous
   préfixés `ios.connexion.`, dans `IOSConnectionStateAccessibility`.
   `[test: connectionIdentifiersAreUniqueAndPrefixed]`
-- Le statut présenté est une fonction pure de l'état du client
-  (`IOSConnectionStatus.resolve`) : une tentative fraîche est « Connexion au
-  Mac… » ; dès qu'une tentative a échoué, l'écran dit « Pas de connexion au Mac »
-  et le reste pendant les relances automatiques. `[test: resolvesEveryClientState]`
-  `[test: retryAfterFailureStaysDisconnected]`
-- « Pas de connexion au Mac » porte une phrase par cause — non appairé, appairage
-  refusé ou révoqué, Mac injoignable, app à mettre à jour, Mac à mettre à jour —
-  sans numéro de version, chemin ni adresse. `[test: causesHaveDistinctPhrases]`
-  `[test: updatePhrasesNameTheAppWithoutVersionNumbers]`
-- La Mémoire (liste et graphe) : rien de reçu hors connexion ⇒ le composant seul,
-  hors de la liste (et du panneau du graphe) ; données reçues ⇒ elles restent,
-  sous le bandeau, et la Mémoire relit au retour du Mac.
+- Le statut présenté est une fonction pure de l'accès (`IOSConnectionStatus.resolve`) :
+  « Lecture des réglages… » le temps de lire le trousseau, puis la mémoire reliée,
+  ou « Mémoire non reliée ». `[test: statusFollowsTheAccess]`
+- « Mémoire non reliée » dit le geste qui relie (coller le code d'appairage dans la
+  feuille Serveur), sans nommer de Mac, de version ni d'adresse, et « Relier le
+  serveur » ouvre cette feuille. `[test: causeNamesThePairingCode]`
+- La Mémoire (liste et graphe) : rien de reçu sans mémoire reliée ⇒ le composant
+  seul, hors de la liste (et du panneau du graphe) ; données reçues ⇒ elles restent,
+  sous le bandeau, et la Mémoire relit dès qu'un code est collé.
   `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
-- Les gestes qui exigent le Mac (recherche, relecture) restent visibles mais
-  inertes hors connexion, connexion en cours comprise, et se rouvrent dès la
-  connexion, sans relancer l'app. Le champ de recherche de la Mémoire, que
+- Les gestes qui lisent la mémoire (recherche, relecture, choix du projet) restent
+  visibles mais inertes tant qu'elle n'est pas reliée. Le champ de recherche, que
   `.disabled` ne grise pas en placement `.automatic`, est rendu inerte.
-  `[test: gesturesOnlyWhenConnected]`
+  `[test: gesturesNeedTheMemory]`
 
 ## Dynamic Type maximum (S-7)
 
@@ -320,24 +316,22 @@ l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
 
 ## Mémoire (feature `ios-memoire`)
 
-- L'écran Mémoire montre le sommaire du projet ouvert, dans l'ordre servi par le
-  Mac — les mêmes souvenirs que la section macOS, aucun tri local, et « Aucun projet
-  ouvert » quand la portée est nulle. `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
-- La liste se lit PAR PAGES bornées de la seule portée du projet (`GET /v1/memory/page`,
+- L'écran Mémoire montre le sommaire d'un projet de la mémoire du serveur, dans
+  l'ordre servi — les mêmes souvenirs que la section macOS quand le Mac est relié
+  au même serveur, aucun tri local, et « Aucun projet » quand la mémoire n'a encore
+  aucun souvenir. Le menu « Choisir le projet » liste les portées, la plus
+  récemment écrite en tête ; sans choix, c'est elle qui est lue.
+  `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
+- La liste se lit PAR PAGES bornées de la seule portée du projet (`MemoryReader`,
   100 souvenirs par page) : arrivé en bas, le pied « Chargement des souvenirs
   suivants… » lit la page suivante de lui-même (défilement continu), jusqu'au dernier
   souvenir, chaque souvenir une seule fois. Plus de troncature ni de ligne de
   troncature. L'échec d'une page suivante s'affiche dans le pied, avec « Réessayer »,
   et garde les lignes déjà lues. `[test: scrollingToTheEndLoadsEveryRowOnce]`
-- Un délai dépassé n'est PAS un Mac injoignable : dans la Mémoire seulement (entrée
-  `IOSMacFailure.ofMemoryRead` du traducteur partagé), « Délai dépassé : le Mac a mis
-  trop de temps à répondre. » puis « Réessayez dans un instant. » et « Mac injoignable. »
-  et son remède sont deux bandeaux distincts, chacun avec « Réessayer ». Les autres
-  sections gardent « Mac injoignable. ». `[test: listTimeoutSaysDelayExceeded]`
-- Face à une app Mac antérieure (qui ignore la route de page), la liste dit
-  « Fonction indisponible : app Mac trop ancienne. » puis « Mettez à jour OMP Console sur
-  le Mac, puis réessayez. », sans code HTTP ni JSON ; aucun code de compatibilité.
-  `[test: listOnOlderMacSaysMacOutdated]`
+- Un délai dépassé n'est PAS un serveur injoignable : « Délai dépassé : la mémoire a
+  mis trop de temps à répondre. » puis « Réessayez dans un instant. », et « Mémoire du
+  serveur injoignable. » et son remède, sont deux bandeaux distincts, chacun avec
+  « Réessayer ». `[test: listTimeoutSaysDelayExceeded]` `[test: unreachableNeverSaysDelay]`
 - Le détail d'un souvenir ouvre une feuille : la ligne de contexte (date relative,
   étiquettes), le texte intégral tel qu'il est stocké, identifiant et portée sous
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
@@ -378,12 +372,12 @@ l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
   depuis la teinte du noyau partagé — plus `Color.accentColor`, `.secondary` et
   `.primary` ; aucune teinte HSB fixe. La coque macOS garde `MemoryGraphStyle.hue(for:)`
   en HSB. `[test: paletteAdaptsToAppearanceAndContrast]`
-- Le graphe ne montre que la portée du PROJET OUVERT — la même que la liste, résolue
-  par le Mac —, tous ses souvenirs, sans borne en nombre (seule une charge au-delà de
-  16 Mio est retirée et annoncée « Graphe partiel »). Sans projet ouvert, il dit
-  « Aucun projet ouvert » et ne dessine aucun canevas. `[test: graphWithoutProjectSaysNoProject]`
-- Un graphe qui dépasse son délai dit « Délai dépassé : le Mac a mis trop de temps à
-  répondre. » puis « Réessayez dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
+- Le graphe ne montre que la portée du PROJET CHOISI — la même que la liste —, tous
+  ses souvenirs, sans borne en nombre. Sans projet, il dit « Aucun projet » et ne
+  dessine aucun canevas. `[test: graphWithoutProjectSaysNoProject]`
+- Un graphe qui dépasse son délai dit « Délai dépassé : la mémoire a mis trop de temps
+  à répondre. » puis « Réessayez dans un instant. » avec « Réessayer », jamais
+  « injoignable » ;
   le panneau commence en haut, sous la barre de navigation, dans tous les états.
   `[test: graphTimeoutSaysDelayExceeded]`
 - VoiceOver parcourt le graphe : un élément par souvenir affiché (« <titre>, N liens »,
@@ -400,52 +394,12 @@ l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
   puis les titres de souvenir ; un texte sans place est masqué jusqu'au zoom, et une
   capsule sans place devient une pastille. `[test: graphLabelsNeverOverlapAtOpeningScale]`
 
-## La feuille Connexion (feature `connexion-ios-feuille-intrusive-et-sans`)
-
-- La feuille ne s'ouvre d'elle-même que sans jeton ou quand le Mac refuse le
-  jeton (`ConnectionSheetMode.autoPresents`) : jamais pendant la lecture du
-  trousseau, jamais pour un appareil appairé, même si le Mac est injoignable —
-  la Mémoire reste alors dans son état dégradé « Mac injoignable ».
-  `[test: pairedConnectedNeverAutoPresents]` `[test: pairedUnreachableStaysClosed]`
-- Le mode de la feuille vient du statut d'appairage, pas de l'état de connexion :
-  lecture, non appairé (refusé ou non), connecté, déconnecté.
-  `[test: noTokenAutoPresentsUnpaired]` `[test: pairedNotConnectedIsDisconnected]`
-- Jeton refusé : message « Le Mac ne reconnaît plus cet appareil… », champ du
-  code et adresse connue préremplie. `[test: refusedAutoPresentsWithPrefill]`
-- Seul le mode non appairé focalise le champ du code ; sur un appareil appairé,
-  aucun champ n'a le focus et le clavier ne se lève pas. `[test: pairedModesNeverFocus]`
-- L'adresse du Mac ne s'affiche qu'UNE fois : le libellé d'état de la feuille
-  (`ConnectionText.sheetState`) n'en porte aucune. `[test: connectedStateWithoutAddress]`
-- Aucune adresse affichée ne porte de zone d'interface (`%en0`), adresse
-  manuelle comprise : la rangée « Effacer » et le préremplissage du mode refusé
-  passent par `ClientAddress.display`, qui délègue à `ClientEndpoint`.
-  `[test: zonedMacAddressShownWithoutZone]`
-- Déconnecté : « Réessayer » et la modification de l'adresse dans un groupe
-  `DisclosureGroup` replié à chaque ouverture ; l'identifiant
-  `connection.addressEdit` est posé sur l'étiquette, jamais sur le groupe (il
-  écraserait ceux du contenu). `[test: retrySuccessTurnsConnected]`
-- « Oublier ce Mac » passe par une confirmation posée SUR le bouton (bulle sur
-  iPad), puis la feuille reste ouverte en mode non appairé.
-  `[test: forgetConfirmationWords]` `[test: forgottenIsUnpaired]`
-- La ligne d'aide nomme le chemin réel du code sur le Mac. `[test: codeHelpNamesTheMacPath]`
-- Le code se saisit comme on veut : tiret, espaces et casse ignorés, I et L lus 1,
-  O lu 0 (Crockford) ; le message de format nomme les seules lettres refusées
-  (U). `[test: lookalikeLettersArmPairing]` `[test: malformedCodeNamesTheRealAlphabet]`
-- Pendant l'appairage, « Appairage en cours… » s'affiche sous « Appairer », désactivé
-  jusqu'à la réponse ; le champ du code est déclaré code à usage unique
-  (`.textContentType(.oneTimeCode)`). `[test: pairingInFlightDisarmsPair]`
-- Un appairage réussi se lit dans `ConnectionPairingOutcome` : `.paired` ferme la
-  feuille, un refus garde le message sous le champ.
-  `[test: successfulPairingFinishesTheFlow]` `[test: refusedPairingKeepsTheMessage]`
-- « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
-  a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
-  que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
-
 ## Les feuilles (feature `feuilles-ios-presentation-et-depots`)
 
-- La feuille du serveur de pipelines (`IOSServerSheet`) est un `Form` groupé :
-  adresse et jeton, « Relier », « Oublier ce serveur », et l'échec du dernier
-  échange en bandeau, par `HarnessFailure.message`.
+- La feuille du serveur de pipelines (`IOSServerSheet`) est un `Form` groupé : le
+  code d'appairage (ou l'adresse et le jeton), « Relier », « Oublier ce serveur », et
+  l'échec du dernier échange en bandeau, par `HarnessFailure.message`. Un code
+  accepté relie aussi la mémoire du serveur.
   `[garde: ios-erreurs-serveur-lisibles/AC-8]`
 
 ## Gestes et retours natifs (feature `ios-gestes-et-retours-natifs`)
@@ -454,9 +408,9 @@ l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
   pilotage et la Mémoire en mode Liste se relisent quand on tire le contenu vers
   le bas (`.refreshable`) ; l'indicateur système reste jusqu'à la fin de la
   relecture. `[garde: ios-gestes-et-retours-natifs/AC-2]`
-- La barre de la Mémoire porte trois boutons au plus, dans les deux modes :
-  « Sommaire », la bascule Graphe/Liste et l'antenne Connexion ; le champ de
-  recherche système n'en est pas un. `[garde: ios-gestes-et-retours-natifs/AC-4]`
+- La barre de la Mémoire porte trois boutons au plus, dans les deux modes : le menu
+  du projet, « Sommaire » et la bascule Graphe/Liste ; le champ de recherche système
+  n'en est pas un. `[garde: ios-gestes-et-retours-natifs/AC-4]`
 - Un appui long sur une rangée de feature ou une rangée Mémoire ouvre un menu
   contextuel natif qui ne propose que les actions déjà offertes pour cet élément
   dans son état courant ; « Arrêter la feature » est destructif et passe par une
@@ -472,52 +426,28 @@ l'état de connexion au Mac. Les écrans de pilotage joignent le serveur du VPS.
   portait passe par le contrôle : trait sélectionné pour une proposition d'audit
   retenue. `[garde: ios-gestes-et-retours-natifs/AC-12]`
 
-## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
+## Pannes de la mémoire (feature `ios-erreurs-serveur-lisibles`)
 
-- Un SEUL traducteur, `IOSMacErrorText` (`OMPConsoleIOS/IOSMacErrorText.swift`),
-  range tout échec d'appel au Mac en une cause distinguable ; la Mémoire (liste,
-  recherche, graphe) l'appelle et ne relit jamais le détail brut. Un message = la cause, puis un remède propre à cette cause,
-  au vouvoiement, en commençant par ce qui s'est passé puis ce qu'il faut faire ;
-  jamais de nom de service ni de commande, jamais d'URL, d'adresse, de JSON, de
-  `"detail"` ni de code HTTP. `[test: everyCauseHasItsOwnRemedy]`
-  `[test: macErrorsSayWhatHappenedThenWhatToDo]`
-- 404 « route inconnue » et 404/405 hors contrat : « Fonction indisponible : app Mac
-  trop ancienne. » — « Mettez à jour OMP Console sur le Mac, puis réessayez. » Seul le message EXACT
-  « route inconnue » vaut cette cause. `[test: macOutdatedOn404And405]`
-- Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — la
-  cause les couvre tous, et la raison système (qui peut nommer l'hôte) n'est jamais
-  affichée. La Mémoire (liste, recherche, graphe) passe par
-  `IOSMacFailure.ofMemoryRead`, qui distingue le délai dépassé (« Délai dépassé : le
-  Mac a mis trop de temps à répondre. ») et range tout 404 de ses routes en « app Mac
-  trop ancienne ». `[test: refusedConnectionIsMacUnreachable]`
-  `[test: otherSectionsKeepTheirTransportWording]`
-- 503 : « Service indisponible sur le Mac. » — le texte amont relayé (adresse,
-  JSON du service) est écarté. `[test: unavailableHidesRelayDetail]`
-- 403 : « Action refusée par le Mac. », distincte du 401 et du 404/405.
-  `[test: forbiddenIsRefused]`
-- 500, corps illisible, code ou statut inattendu : « Le Mac a rencontré une erreur. »,
-  sans aucun détail technique. `[test: serverAndUnreadableAreGeneric]`
-- Un refus métier (400, 409, 404 autre que « route inconnue ») affiche le motif
-  rédigé par le Mac, sans code HTTP ; un motif vide ou qui contient une URL, un
-  JSON ou un nombre à trois chiffres cède au message générique.
-  `[test: businessRefusalKeepsTheMacMotive]`
-- 401 : AUCUN message de section. Le parcours de jeton révoqué parle seul — secret
-  effacé du trousseau, retour à l'appairage, « Jeton révoqué » à l'écran.
-  `[test: unauthorizedHasNoMessage]`
-- Le graphe de la Mémoire garde sa distinction : `outdated_service` dit « serveur
-  mémoire trop ancien sur le Mac » puis « Mettez à jour OMP Console sur le Mac, puis
-  réessayez. », sans nom de service ; un 404 dit « app Mac trop ancienne ». La liste
-  et la recherche ne l'ont pas : un 503 qui cite une réponse 404/405 de mem0-http
-  reste « Service indisponible sur le Mac ». `[test: graphKeepsOutdatedDistinction]`
-  `[test: memoryNeverClaimsOutdated]`
+- Un SEUL traducteur, `IOSMemoryErrorText` (`OMPConsoleIOS/IOSMemoryErrorText.swift`),
+  range toute panne de lecture de la mémoire du serveur en une cause distinguable ;
+  la Mémoire (liste, recherche, graphe) l'appelle et ne relit jamais le détail brut.
+  Un message = la cause, puis un remède propre à cette cause, au vouvoiement ; jamais
+  de nom de service ni de commande, jamais d'URL, d'adresse, de JSON ni de code HTTP.
+  `[test: everyReadErrorHasItsCause]` `[test: everyCauseHasItsOwnRemedy]`
+  `[test: memoryErrorsSayWhatHappenedThenWhatToDo]`
+- Serveur injoignable, délai dépassé, mémoire indisponible (503), jeton refusé
+  (401, 403), réponse illisible : cinq causes, cinq remèdes. Un jeton refusé renvoie
+  au code d'appairage. `[test: refusedPointsToThePairingCode]` `[test: memoryRefusedTokenSaysSo]`
+- Le graphe garde sa distinction : une route graphe absente dit « serveur mémoire
+  trop ancien » puis « Mettez à jour le serveur, puis réessayez. » ; la liste et la
+  recherche ne le disent jamais. `[test: graphRefusedTokenSaysSo]`
 - Chaque échec de CHARGEMENT de la Mémoire propose « Réessayer » (cible de 44 pt),
   qui relance le chargement qui a échoué : liste et graphe. `[test: memoryRetryShowsData]`
   `[test: graphRetryShowsGraph]`
-- La Mémoire affiche le message du traducteur partagé, prouvé par une doublure
-  du Mac. `[test: memoryShowsTranslatedFailure]`
+- La Mémoire affiche le message du traducteur. `[test: memoryShowsTranslatedFailure]`
   `[test: graphShowsTranslatedFailure]`
 - Tous les textes visibles de l'app et de ConsoleCore vouvoient, y compris hors
   `*Text.swift`. `[garde: ios-redaction-vouvoiement/AC-8]`
-- Les deux écrans d'erreur de la Mémoire s'obtiennent sans Mac :
+- Les deux écrans d'erreur de la Mémoire s'obtiennent sans serveur :
   `-memoire.recipe injoignable` (liste) et `-memoire.recipe service-ancien` (graphe).
-  `[test: macErrorsSayWhatHappenedThenWhatToDo]`
+  `[test: memoryErrorsSayWhatHappenedThenWhatToDo]`

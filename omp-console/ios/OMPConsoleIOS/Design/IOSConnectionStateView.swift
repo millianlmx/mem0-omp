@@ -1,9 +1,9 @@
-// Le composant d'état de connexion PARTAGÉ par les sept sections (feature
+// Le composant d'état de la mémoire du serveur (feature
 // etats-non-connecte-heterogenes-ios, S-2, S-3, S-4) : une seule vue, deux
-// statuts (« non connecté » avec sa cause, « connexion en cours ») et deux formes
-// (plein écran quand la section n'a rien chargé, bandeau au-dessus des données
-// conservées). Une section n'en rend qu'UNE instance : les deux statuts ne
-// coexistent jamais.
+// statuts (« mémoire non reliée » avec sa cause, « lecture des réglages ») et deux
+// formes (plein écran quand rien n'est chargé, bandeau au-dessus des données
+// conservées). L'écran n'en rend qu'UNE instance : les deux statuts ne coexistent
+// jamais.
 //
 // Les mots viennent de `IOSConnectionStateText`. Aucune taille de police fixe,
 // aucun `lineLimit` : les textes se replient en Dynamic Type maximum. Le ton ne
@@ -23,7 +23,7 @@ struct IOSConnectionStateView: View {
     /// Jamais `.connected` : l'appelant ne rend la vue que hors connexion.
     let status: IOSConnectionStatus
     let layout: IOSConnectionStateLayout
-    /// Ouvre la feuille Connexion de la racine.
+    /// Ouvre la feuille Serveur de la racine (le code d'appairage).
     let onConnect: () -> Void
 
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -64,8 +64,8 @@ struct IOSConnectionStateView: View {
         .accessibilityIdentifier(IOSConnectionStateAccessibility.offlineScreen)
     }
 
-    /// Le patron bandeau puis bouton de la Mémoire et des Statistiques : le
-    /// message teinté, puis « Se connecter » hors de la teinte.
+    /// Le patron bandeau puis bouton : le message teinté, puis « Relier le
+    /// serveur » hors de la teinte.
     private func offlineBanner(_ cause: IOSDisconnectCause) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
@@ -83,7 +83,7 @@ struct IOSConnectionStateView: View {
         .accessibilityIdentifier(IOSConnectionStateAccessibility.offlineBanner)
     }
 
-    /// « Se connecter », la même cible dans les deux formes : le cadre de 44 pt
+    /// « Relier le serveur », la même cible dans les deux formes : le cadre de 44 pt
     /// est porté par le LIBELLÉ, donc par le cadre d'accessibilité du bouton
     /// (accessibilite-et-localisation-ios-residu, S-4).
     private var connectButton: some View {
@@ -123,11 +123,11 @@ struct IOSConnectionStateView: View {
 }
 
 extension View {
-    /// Lance `perform` quand le statut présenté du client PASSE à `.connected`
-    /// (relecture au retour du Mac, S-4) — jamais au premier rendu.
+    /// Lance `perform` quand la mémoire DEVIENT reliée (un code d'appairage vient
+    /// d'être collé, S-4) — jamais au premier rendu.
     @MainActor
-    func onMacReconnected(_ client: ConsoleClientModel, perform: @escaping () -> Void) -> some View {
-        onChange(of: IOSConnectionStatus.of(client) == .connected) { old, new in
+    func onMemoryConfigured(_ memory: MemoryAccess, perform: @escaping () -> Void) -> some View {
+        onChange(of: memory.isConfigured) { old, new in
             if !old && new { perform() }
         }
     }

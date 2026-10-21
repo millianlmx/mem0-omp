@@ -56,7 +56,7 @@ function swiftTestSources(): string[] {
     .map((e) => fs.readFileSync(path.join(e.parentPath, e.name), "utf8"));
 }
 
-test("known-flaky-tests-registry/AC-8 : le registre liste exactement les trois tests instables, au format imprimé, avec leur occurrence et sans condition", () => {
+test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests instables connus (aucun depuis le retrait de l'API entre les apps), au format imprimé, avec leur occurrence et sans condition", () => {
   const registre = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/tests-instables-connus.json"), "utf8"));
 
   assert.deepEqual(Object.keys(registre), ["tests"]);
@@ -70,11 +70,9 @@ test("known-flaky-tests-registry/AC-8 : le registre liste exactement les trois t
   }
 
   const identifiants: string[] = registre.tests.map((e: { identifiant: string }) => e.identifiant);
-  assert.deepEqual(identifiants, [
-    "duplicateHeaderIsBadRequest()",
-    "trailingSpaceIsAcceptedAfterTrim()",
-    "api-distante-du-console/AC-1",
-  ]);
+  // Les trois instables connus étaient des tests de l'API entre le Mac et l'iPhone,
+  // retirée : le registre est vide, et les relances s'éprouvent sur `REGISTRE_FIXTURE`.
+  assert.deepEqual(identifiants, []);
   assert.equal(new Set(identifiants).size, identifiants.length, "identifiants uniques");
 
   const sources = swiftTestSources();
@@ -135,6 +133,15 @@ const HORS_REGISTRE = "✗ au moins un test en échec n'est pas au registre des 
 
 const montage = montageAppIntents();
 
+/** Un registre de recette, posé dans la copie jetable : les relances s'y éprouvent. */
+const REGISTRE_FIXTURE =
+  '{\n  "tests": [\n    {\n      "identifiant": "duplicateHeaderIsBadRequest()",\n      "filtre": "RemoteVersionTests/duplicateHeaderIsBadRequest\\\\(\\\\)",\n      "occurrence": "run 38475731796, tentative 1 (PR feat/siri-iphone-pilotage-pipelines, 2026-10-13)"\n    },\n    {\n      "identifiant": "trailingSpaceIsAcceptedAfterTrim()",\n      "filtre": "RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\\\(\\\\)",\n      "occurrence": "run 39239142987, tentative 2 (PR feat/ci-without-cache, 2026-10-19)"\n    },\n    {\n      "identifiant": "api-distante-du-console/AC-1",\n      "filtre": "\\\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\\\(\\\\)",\n      "occurrence": "run 38563190542, tentative 1 (PR feat/arbitre-corpus-et-deduction, 2026-10-14)"\n    }\n  ]\n}';
+fs.writeFileSync(path.join(montage.copie, "scripts", "tests-instables-connus.json"), `${REGISTRE_FIXTURE}\n`);
+
+/** Le mode `--instables` de la copie jetable, qui lit `REGISTRE_FIXTURE`. */
+const verdictFixture = (...args: string[]) =>
+  spawnSync("bash", [path.join(montage.copie, "scripts", "ci-verdict.sh"), ...args], { encoding: "utf8" });
+
 type Essai = { sortie: string; code: number };
 type Lancement = AssemblageAppIntents & { appels: string[] };
 
@@ -191,7 +198,7 @@ test("known-flaky-tests-registry/AC-1 : un seul test rouge listé au registre, r
   assert.equal(r.appels[1], `${r.appels[0]} --filter \\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)`, trace(r));
 
   // Le mode consulté par la branche : code 0, le filtre du test sur stdout.
-  const mode = verdict("--instables", CLIENT);
+  const mode = verdictFixture("--instables", CLIENT);
   assert.equal(mode.status, 0, output(mode));
   assert.equal(mode.stdout, "\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)\n");
 

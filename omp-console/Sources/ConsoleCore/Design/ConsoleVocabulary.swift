@@ -52,8 +52,7 @@ public enum ConsoleFormat {
     }
 
     /// Le dossier personnel de CETTE machine : celui de l'utilisateur sur macOS,
-    /// aucun sur iOS (le bac à sable de l'app n'est le dossier de personne ; le
-    /// dossier du Mac arrive par `RemoteComponentsPayload.homeDirectory`).
+    /// aucun sur iOS (le bac à sable de l'app n'est le dossier de personne).
     public static var localHome: String? {
         #if os(macOS)
         NSHomeDirectory()

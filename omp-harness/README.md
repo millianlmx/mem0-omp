@@ -453,10 +453,12 @@ sudo systemctl start omp-harness-mem0
 
 ## Les apps
 
-OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain. Ses cinq
-sections de Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques) joignent ce
-serveur en https, avec l'adresse publiée par Tailscale et le jeton de
-`/var/lib/omp-harness/state/token`, saisis une fois dans la feuille « Serveur ». Elles
+OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain ; chaque app
+joint seule ce serveur, aucune ne dépend de l'autre. Ses cinq sections de Pilotage
+(Accueil, Pipelines, Projet, Audit, Statistiques) joignent le serveur en https, par le
+code d'appairage (`harness.sh pair`) collé une fois dans la feuille « Serveur » — ou
+l'adresse publiée par Tailscale et le jeton du service. Sur l'iPhone, la section
+Mémoire lit la mémoire de ce serveur, dont le même code porte l'adresse. Elles
 suivent `GET /v1/events` et relisent la boîte à chaque événement ; une coupure garde
 la dernière boîte, signalée hors ligne. Le client est partagé
 (`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`

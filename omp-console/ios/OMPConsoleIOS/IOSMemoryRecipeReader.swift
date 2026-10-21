@@ -1,5 +1,5 @@
 // Le lecteur de RECETTE de la Mémoire en mode liste (`-memoire.recipe clavier`,
-// ipad-clavier-et-largeur-de-lecture, S-8) : un client `.connected` sans réseau qui
+// ipad-clavier-et-largeur-de-lecture, S-8) : une mémoire reliée sans réseau qui
 // sert la fixture PARTAGÉE `MemoryGraphParity` par les trois lectures de
 // `IOSMemoryReading`. Le modèle et l'écran sont ceux de production ; seul le
 // lecteur change.
@@ -18,8 +18,8 @@ import Foundation
 
 @MainActor
 final class IOSMemoryRecipeReader: IOSMemoryReading {
-    /// Un point d'accès factice : rien n'est jamais ouvert vers lui.
-    let state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
+    /// Une mémoire tenue pour reliée : rien n'est jamais ouvert vers le réseau.
+    let isConfigured = true
 
     /// Les souvenirs de la fixture qui portent un texte, dans l'ordre du graphe.
     private static var rows: [RemoteMemoryRow] {

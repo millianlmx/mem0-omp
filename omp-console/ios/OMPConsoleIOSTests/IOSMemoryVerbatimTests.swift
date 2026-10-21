@@ -15,7 +15,7 @@ import Testing
 @MainActor
 private final class VerbatimGraphReader: IOSMemoryReading {
     let payload: RemoteMemoryGraphPayload
-    var state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
+    var isConfigured = true
 
     init(payload: RemoteMemoryGraphPayload) {
         self.payload = payload

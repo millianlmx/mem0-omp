@@ -151,9 +151,9 @@ const EXCEPTIONS: readonly Exception[] = [
     reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },
   {
-    file: "omp-console/ios/OMPConsoleIOS/ConnectionText.swift",
-    literal: "hôte ou hôte:port",
-    reason: "notation de saisie : `hôte:port` est une syntaxe d’adresse",
+    file: "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift",
+    literal: "omp1:… ou vps.exemple.ts.net",
+    reason: "exemple de saisie : `omp1:` est le préfixe du code d’appairage",
   },
   {
     file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
@@ -164,16 +164,6 @@ const EXCEPTIONS: readonly Exception[] = [
     file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
     literal: String.raw`podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué${NBSP}: \(detail)`,
     reason: "diagnostic copiable : `conteneur:chemin` est la syntaxe de `podman cp`",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
-    literal: "://",
-    reason: "fragment d’URL cherché dans un motif du Mac",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
-    literal: String.raw`\"detail\"`,
-    reason: "clé JSON cherchée dans un motif du Mac",
   },
 ];
 
@@ -267,7 +257,7 @@ const BASE = typographyFaults(SOURCES, GLOSSAIRE, EXCEPTIONS);
 
 const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
 const FILES_TEXT = "omp-console/Sources/OMPConsole/Files/FilesText.swift";
-const CONNECTION_TEXT = "omp-console/ios/OMPConsoleIOS/ConnectionText.swift";
+const CONNECTION_TEXT = "omp-console/ios/OMPConsoleIOS/IOSConnectionStateText.swift";
 
 /** Une copie des sources où `enum PlanteGarde { static let <name> = <literal> }` termine `file`. */
 function plant(sources: Map<string, string>, file: string, literal: string, name = "x"): Map<string, string> {
@@ -297,10 +287,10 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 21 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 20 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 21, `21 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  assert.equal(scoped.length, 20, `20 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
     assert.ok(
       scoped.some((file) => file.startsWith(`${base}/`)),

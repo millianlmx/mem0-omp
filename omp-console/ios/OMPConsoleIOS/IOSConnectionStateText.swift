@@ -1,36 +1,27 @@
-// Le vocabulaire des deux composants d'état de connexion des sept sections
-// (feature etats-non-connecte-heterogenes-ios, S-2, S-3) : « non connecté », avec
-// sa cause, et « connexion en cours ». Ces mots n'existent qu'ici : aucune autre
-// copie dans l'app.
+// Le vocabulaire des deux composants d'état de la mémoire du serveur : « mémoire
+// non reliée », avec sa cause, et « lecture des réglages ». Ces mots n'existent
+// qu'ici : aucune autre copie dans l'app.
 //
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`, garde design-ios/AC-5). Aucune
-// phrase ne cite un numéro de version, un chemin, une adresse ou un endpoint.
+// phrase ne cite un numéro de version, une adresse ou un endpoint.
 
 enum IOSConnectionStateText {
-    // --- « non connecté » (S-2) -----------------------------------------------
+    // --- « mémoire non reliée » -----------------------------------------------
 
-    static let title = "Pas de connexion au Mac"
-    static let connect = "Se connecter"
+    static let title = "Mémoire non reliée"
+    static let connect = "Relier le serveur"
 
     /// La phrase de cause, une par situation réelle.
     static func cause(_ cause: IOSDisconnectCause) -> String {
         switch cause {
         case .unpaired:
-            "Cet appareil n’est appairé à aucun Mac."
-        case .refused:
-            "Le Mac a refusé ou révoqué l’appairage de cet appareil. Appairez-le de nouveau."
-        case .unreachable:
-            "Le Mac ne répond pas. Vérifiez qu’il est allumé, qu’OMP Console y est ouverte et que cet appareil est sur le même réseau."
-        case .updateApp:
-            "Le Mac utilise une version plus récente d’OMP Console. Mettez à jour l’app sur cet appareil."
-        case .updateMac:
-            "Le Mac utilise une version plus ancienne d’OMP Console. Mettez à jour OMP Console sur le Mac."
+            "Collez le code d’appairage affiché par le serveur dans la feuille Serveur : il porte aussi sa mémoire."
         }
     }
 
-    // --- « connexion en cours » (S-3) -----------------------------------------
+    // --- « lecture des réglages » ---------------------------------------------
 
-    static let connectingTitle = "Connexion au Mac…"
+    static let connectingTitle = "Lecture des réglages…"
 }
 
 /// Les identifiants d'accessibilité des deux composants (tous préfixés

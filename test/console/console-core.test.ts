@@ -340,16 +340,12 @@ test("noyau-partage-console/AC-3 : chaque symbole déplacé n'est plus déclaré
   }
 });
 
-test("noyau-partage-console/AC-4 : ConsoleCore porte le socle de l'API distante et aucune charge utile de route", () => {
-  assert.ok(declaresType(CORE_SOURCES, "ConsoleAPI"), "ConsoleAPI n'est pas déclaré dans ConsoleCore");
-  assert.ok(declaresType(CORE_SOURCES, "ConsoleAPIError"), "ConsoleAPIError n'est pas déclaré dans ConsoleCore");
-  assert.ok(!declaresType(SHELL_SOURCES, "ConsoleAPI"), "ConsoleAPI est déclaré deux fois");
-
-  // La version du protocole vit en UN point : un seul littéral dans tout le paquet.
-  const versions = swiftFiles(CORE_SOURCES).filter((file) =>
-    /\bprotocolVersion\b\s*(?::[^=]*)?=\s*\d/.test(code(file)),
-  );
-  assert.equal(versions.length, 1, `protocolVersion déclaré ${versions.length} fois : ${versions.join(", ")}`);
+test("noyau-partage-console/AC-4 : ConsoleCore ne porte aucune API entre les apps ni aucune charge utile de route", () => {
+  // L'app Mac et l'app iOS sont indépendantes : aucun contrat d'API entre elles.
+  for (const name of ["ConsoleAPI", "ConsoleAPIError"]) {
+    assert.ok(!declaresType(CORE_SOURCES, name), `${name} est déclaré dans ConsoleCore`);
+    assert.ok(!declaresType(SHELL_SOURCES, name), `${name} est déclaré dans la coque Mac`);
+  }
 
   // `RpcDialogRequest` et `PendingRequest` ne sont pas des charges utiles de
   // route : le premier est la demande de dialogue du service OMP, type de domaine

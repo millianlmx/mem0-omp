@@ -12,7 +12,7 @@ mem0-omp ajoute trois choses à [OMP](https://omp.sh), l'agent de code :
 - **Un serveur de pipelines** (`omp-harness`, sur un VPS). `/req` cerne le besoin
   avec toi, puis le serveur enchaîne `/specs → /impl → /review → merge`, plusieurs
   features en parallèle, la nuit comme le jour, sans que ton Mac reste allumé.
-- **Une app Mac et iPhone** (OMP Console) pour répondre aux questions du serveur,
+- **Une app Mac et une app iPhone** (OMP Console), indépendantes, pour répondre aux questions du serveur,
   valider, suivre et lancer le travail.
 
 ## Pourquoi
@@ -198,7 +198,8 @@ la mémoire du Mac ».
 L'app iOS se construit avec Xcode sur ton iPhone branché au Mac (Mode développeur,
 ton compte de signature) : [omp-console/README.md](omp-console/README.md) § « Coque
 iOS », puis « Installer sur un appareil réel ». Le code est dans `omp-console/ios/`.
-Au lancement, **Serveur** attend le même code d'appairage que sur le Mac.
+Au lancement, **Serveur** attend le même code d'appairage que sur le Mac : l'app
+iPhone joint seule le serveur et sa mémoire, sans Mac allumé.
 
 ### 6. Vérifier
 
@@ -346,7 +347,6 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/app-icon.sh                dessine l'icône de l'app
 ├── scripts/run-console.sh             recompile et relance l'app Mac
 ├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
-├── scripts/omp-console-api.ts         sonde de l'API distante de l'app Mac
 ├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire du service mémoire
 ├── scripts/release.ts                 PR de release, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel

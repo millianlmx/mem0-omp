@@ -12,7 +12,7 @@ import Testing
 @Suite("ios-redaction-vouvoiement — rédaction des textes visibles")
 struct IOSRedactionTests {
     /// Les mots qu'aucun message d'erreur ne montre : services, commandes, branches.
-    private static let forbidden = ["mem0", "qdrant", "podman", "ollama", "omlx", "redéploie", "redéployez", "feat/", "branche"]
+    private static let forbidden = ["mem0", "qdrant", "podman", "ollama", "omlx", "redéploie", "redéployez", "feat/", "branche", "harness.sh"]
 
     /// Les fautes d'un message à la manière d'Apple : deux lignes non vides, la
     /// seconde ouverte par un impératif au vouvoiement, aucun mot interdit.
@@ -32,28 +32,21 @@ struct IOSRedactionTests {
         return faults
     }
 
-    @Test("ios-redaction-vouvoiement/AC-2 : macErrorsSayWhatHappenedThenWhatToDo — chaque message d'erreur dit ce qui s'est passé puis ce qu'il faut faire, au vouvoiement, sans service ni commande")
-    func macErrorsSayWhatHappenedThenWhatToDo() {
-        let failures: [IOSMacFailure] = [
-            .macOutdated, .macUnreachable, .macTimedOut, .serviceUnavailable, .refused,
-            .serviceOutdated, .rejected("carte inconnue"),
-            .incompatibleProtocol(local: ConsoleAPI.protocolVersion, remote: nil),
-            .incompatibleProtocol(local: 1, remote: 2),
-            .generic,
-        ]
+    @Test("ios-redaction-vouvoiement/AC-2 : memoryErrorsSayWhatHappenedThenWhatToDo — chaque message d'erreur dit ce qui s'est passé puis ce qu'il faut faire, au vouvoiement, sans service ni commande")
+    func memoryErrorsSayWhatHappenedThenWhatToDo() {
+        let failures: [IOSMemoryFailure] = [.unreachable, .timedOut, .serviceUnavailable, .refused, .serviceOutdated, .generic]
         for failure in failures {
-            let message = IOSMacErrorText.message(for: failure)
+            let message = IOSMemoryErrorText.message(for: failure)
             #expect(Self.faults(message).isEmpty, "\(failure) : \(Self.faults(message)) — « \(message) »")
             // La cause d'abord : la première ligne est la cause du traducteur.
             if failure != .serviceOutdated {
-                #expect(message.hasPrefix(IOSMacErrorText.cause(failure) + "\n"), "\(failure)")
+                #expect(message.hasPrefix(IOSMemoryErrorText.cause(failure) + "\n"), "\(failure)")
             }
         }
-        #expect(Self.faults(IOSMemoryText.graphMacOutdated).isEmpty, "\(Self.faults(IOSMemoryText.graphMacOutdated))")
-
-        // Le traducteur partagé ne montre jamais le détail brut du Mac.
-        let raw = ClientError.api(.badRequest("mem0-http a répondu 500 sur /memory"))
-        #expect(IOSMacErrorText.message(for: raw)?.contains("mem0-http") != true)
+        // Aucune commande du serveur dans un message.
+        for failure in failures {
+            #expect(!IOSMemoryErrorText.message(for: failure).contains("harness.sh"), "\(failure)")
+        }
     }
 
     @Test("ios-redaction-vouvoiement/AC-4 : proximityReadsAsPlainWords — une proximité se lit en clair, sans chiffre ni « Proximité »")

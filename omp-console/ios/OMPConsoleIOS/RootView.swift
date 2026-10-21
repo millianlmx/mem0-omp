@@ -10,44 +10,35 @@ import SwiftUI
 /// Consultation). Chaque onglet a sa `NavigationStack`. Le routage onglet ↔
 /// section est pur (`IOSTabs`).
 ///
-/// Elle REÇOIT les deux clients de `OMPConsoleIOSApp` : le serveur de pipelines du
-/// VPS (lu au lancement, son flux ouvert) et le client du Mac appairé (démarré ;
-/// la feuille de connexion au Mac s'ouvre d'elle-même SEULEMENT quand l'appareil
-/// n'a pas de jeton ou que le Mac l'a refusé, et qu'aucune section n'a été
-/// demandée par `-section`). Le bouton antenne la rouvre à la demande. L'onglet
-/// Accueil porte le badge de ce qui attend l'humain, l'onglet Audit celui des
-/// audits à trier.
+/// Elle REÇOIT les deux accès de `OMPConsoleIOSApp`, tous deux au serveur du VPS
+/// et posés par le même code d'appairage : ses pipelines (lus au lancement, flux
+/// ouvert) et sa mémoire. Aucun Mac. L'onglet Accueil porte le badge de ce qui
+/// attend l'humain, l'onglet Audit celui des audits à trier.
 struct RootView: View {
     @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
-    @ObservedObject var client: ConsoleClientModel
+    @ObservedObject var memory: MemoryAccess
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    @State private var showConnection = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// Le crochet de recette `-memoire.recipe`, quand il est donné.
     private let memoryRecipe: IOSMemoryGraphRecipe?
-    /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
-    /// ainsi leur écran, sans feuille par-dessus.
-    private let autoPresentConnection: Bool
 
     init(
-        client: ConsoleClientModel,
+        memory: MemoryAccess,
         server: HarnessModel,
         drafts: HarnessDrafts,
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
-        memoryRecipe: IOSMemoryGraphRecipe? = nil,
-        autoPresentConnection: Bool = true
+        memoryRecipe: IOSMemoryGraphRecipe? = nil
     ) {
-        self.client = client
+        self.memory = memory
         self.server = server
         self.drafts = drafts
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
         self.memoryRecipe = memoryRecipe
-        self.autoPresentConnection = autoPresentConnection
     }
 
     // Le `TabView` et l'onglet d'une section vivent hors de `body` : d'un seul
@@ -100,22 +91,13 @@ struct RootView: View {
                 route = IOSTabs.adapt(route, compact: size == .compact)
             }
             .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: IOSTabs.shown(currentRoute)) { select($0) })
-            .sheet(isPresented: $showConnection) {
-                ConnectionSheet(model: client)
-            }
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
             }
             .task {
+                await memory.load()
                 await server.load()
                 server.startLive()
-            }
-            .onAppear {
-                client.start()
-                presentConnectionIfNeeded()
-            }
-            .onChange(of: client.pairing) { _, _ in
-                presentConnectionIfNeeded()
             }
     }
 
@@ -131,19 +113,16 @@ struct RootView: View {
         Binding(get: { currentRoute }, set: { route = $0 })
     }
 
-    /// L'écran d'une section, avec son bouton antenne : contenu de chaque onglet ET
-    /// destination de « Plus », donc chaque écran porte le bouton exactement une fois.
+    /// L'écran d'une section : contenu de chaque onglet ET destination de « Plus ».
     private func sectionScreen(_ section: ConsoleSection) -> some View {
         IOSSectionView(
             section: section,
             state: state,
-            client: client,
+            memory: memory,
             server: server,
             drafts: drafts,
-            memoryRecipe: memoryRecipe,
-            showConnection: $showConnection
+            memoryRecipe: memoryRecipe
         )
-        .toolbar { connectionToolbarItem }
     }
 
     /// La liste de l'onglet « Plus » (iPhone) : des rangées système qui poussent
@@ -156,25 +135,10 @@ struct RootView: View {
             .accessibilityIdentifier("ios.plus." + section.rawValue)
         }
         .navigationTitle(IOSShellText.plusTitle)
-        .toolbar { connectionToolbarItem }
     }
 
     private func select(_ section: ConsoleSection) {
         route = IOSTabs.route(from: currentRoute, to: section, compact: isCompact)
-    }
-
-    /// Le bouton antenne (« Connexion » au Mac) : rouvre la feuille de connexion,
-    /// sans condition.
-    @ToolbarContentBuilder
-    private var connectionToolbarItem: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                showConnection = true
-            } label: {
-                Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
-            }
-            .accessibilityIdentifier(ConnectionAccessibility.open)
-        }
     }
 
     /// Le badge d'une section : ce qui attend l'humain sur l'Accueil, les audits à
@@ -185,15 +149,6 @@ struct RootView: View {
         case .home: return inbox.pendingCount
         case .audit: return inbox.auditsProposed.count
         default: return 0
-        }
-    }
-
-    /// La feuille s'ouvre d'elle-même sans jeton ou sur un jeton refusé, jamais
-    /// pendant la lecture du trousseau ni pour un appareil appairé (S-2).
-    private func presentConnectionIfNeeded() {
-        if autoPresentConnection,
-           ConnectionSheetMode.autoPresents(client.pairing, deferred: false) {
-            showConnection = true
         }
     }
 }

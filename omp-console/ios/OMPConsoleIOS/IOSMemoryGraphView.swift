@@ -54,23 +54,20 @@ struct IOSMemoryGraphView: View {
         switch model.state {
         case .idle, .loading:
             loading
-        case .failed(.macTimedOut):
-            banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
+        case .failed(.timedOut):
+            banner(IOSMemoryErrorText.message(for: .timedOut), tone: .attention)
             retry
         case .noProject:
             card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
         case .serviceOutdated:
             banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
             retry
-        case .macOutdated:
-            banner(IOSMemoryText.graphMacOutdated, tone: .attention)
-            retry
-        case .failed(.macUnreachable):
-            banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
+        case .failed(.unreachable):
+            banner(IOSMemoryErrorText.message(for: .unreachable), tone: .attention)
             card(IOSMemoryText.noData)
             retry
         case let .failed(cause):
-            banner(IOSMacErrorText.message(for: cause), tone: .danger)
+            banner(IOSMemoryErrorText.message(for: cause), tone: .danger)
             retry
         case .empty:
             ContentUnavailableView(

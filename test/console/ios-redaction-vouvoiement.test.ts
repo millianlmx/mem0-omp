@@ -132,7 +132,7 @@ function tutoiementFaults(sources: Map<string, string>, exceptions: readonly Exc
 const SOURCES = swiftSourceTree(ROOT, ROOTS);
 const BASE = tutoiementFaults(SOURCES);
 
-const MAC_ERROR_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift";
+const MEMORY_ERROR_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMemoryErrorText.swift";
 const MEMORY_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMemoryText.swift";
 const VOCABULARY = "omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift";
 const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
@@ -248,7 +248,7 @@ function conservedTerms(): string[] {
   return table.slice(2).map((row) => (row.replace(/^\|/, "").split("|")[0] ?? "").trim().replaceAll("`", ""));
 }
 
-test("ios-redaction-vouvoiement/AC-1 : aucun texte visible d'iOS ni de ConsoleCore ne tutoie ; les remèdes Mac injoignable et service mémoire vouvoient", () => {
+test("ios-redaction-vouvoiement/AC-1 : aucun texte visible d'iOS ni de ConsoleCore ne tutoie ; les remèdes serveur injoignable et service mémoire vouvoient", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
   assert.ok(
@@ -259,17 +259,17 @@ test("ios-redaction-vouvoiement/AC-1 : aucun texte visible d'iOS ni de ConsoleCo
     scoped.some((file) => file.startsWith("omp-console/ios/OMPConsoleIOS/")),
     "l'app iOS doit être lue",
   );
-  const macErrors = texts(MAC_ERROR_TEXT);
+  const memoryErrors = texts(MEMORY_ERROR_TEXT);
   assert.ok(
-    macErrors.some((text) => text.includes("Vérifiez que le Mac est allumé")),
-    "remède Mac injoignable au vouvoiement",
+    memoryErrors.some((text) => text.includes("Vérifiez que cet appareil est sur votre tailnet")),
+    "remède serveur injoignable au vouvoiement",
   );
   assert.ok(
-    macErrors.some((text) => text.includes("puis réessayez")),
+    memoryErrors.some((text) => text.includes("puis réessayez")),
     "« puis réessayez » dans les remèdes",
   );
   assert.ok(
-    texts(MEMORY_TEXT).some((text) => text.includes("Mettez à jour OMP Console sur le Mac")),
+    texts(MEMORY_TEXT).some((text) => text.includes("Mettez à jour le serveur")),
     "remède du service mémoire au vouvoiement",
   );
 });
@@ -309,7 +309,7 @@ test("ios-redaction-vouvoiement/AC-5 : le chargement de l'Accueil iOS n'affiche 
 
 test("ios-redaction-vouvoiement/AC-8 : un texte tutoyé échoue dans l'app iOS et dans ConsoleCore hors *Text.swift, jamais dans la coque macOS", () => {
   assertSane();
-  for (const file of [MAC_ERROR_TEXT, VOCABULARY]) {
+  for (const file of [MEMORY_ERROR_TEXT, VOCABULARY]) {
     assert.deepEqual(tutoiementFaults(plant(SOURCES, file, swiftLiteral(TUTOIEMENT))), [
       `${file}:${plantLine(file)} « ${TUTOIEMENT} » : tutoiement (vérifie, réessaie)`,
     ]);

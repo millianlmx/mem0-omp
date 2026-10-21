@@ -297,8 +297,7 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
     "test/outillage/check.test.ts",
     "test/console/coque-ios.test.ts",
     "test/console/console-core.test.ts",
-    "test/console/client-distant-ios.test.ts",
-    "test/console/reglages-mac-appareils.test.ts",
+    "test/console/serveur-de-pipelines.test.ts",
     ...all.filter((file) => path.basename(file).startsWith("ios-")),
   ];
   for (const file of minimums) assert.ok(listed.includes(file), `${file} absent de la liste macOS`);

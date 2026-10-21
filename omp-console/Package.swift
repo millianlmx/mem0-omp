@@ -26,9 +26,9 @@ let package = Package(
         .executable(name: "OMPConsole", targets: ["OMPConsole"]),
     ],
     targets: [
-        // Cible bibliothèque PARTAGÉE macOS/iOS : les modèles et constantes pures
-        // du magasin, le vocabulaire figé des sections et le socle du contrat de
-        // l'API distante — rien qui touche à une vue, donc ni AppKit ni UIKit
+        // Cible bibliothèque PARTAGÉE macOS/iOS : les modèles et constantes pures,
+        // le vocabulaire figé des sections, la lecture des réponses de la mémoire
+        // et le noyau de son graphe — rien qui touche à une vue, donc ni AppKit ni UIKit
         // (garde permanente : section « Noyau partagé » de scripts/check.sh).
         //
         // AUCUNE dépendance, ni interne ni externe : c'est ce qui la rend
@@ -36,10 +36,11 @@ let package = Package(
         // par un autre paquet (la coque iOS). Ses déclarations sont `public`,
         // jamais `package` — `package` serait invisible depuis un autre paquet.
         .target(name: "ConsoleCore", path: "Sources/ConsoleCore"),
-        // Cible PARTAGÉE macOS/iOS du client distant : le client typé du contrat
-        // d'API, la découverte Bonjour, le transport URLSession, le flux SSE, le
-        // trousseau et le modèle observable unique. Dépendance UNIQUE : ConsoleCore
-        // — ni AppKit, ni UIKit, ni Cocoa (garde « Noyau partagé » de check.sh).
+        // Cible PARTAGÉE macOS/iOS des clients du serveur du VPS : son serveur de
+        // pipelines, son code d'appairage, sa mémoire (lue directement par l'app
+        // iOS) et le trousseau. Les deux apps sont indépendantes : aucune ne parle à
+        // l'autre. Dépendance UNIQUE : ConsoleCore — ni AppKit, ni UIKit, ni Cocoa
+        // (garde « Noyau partagé » de check.sh).
         .target(name: "ConsoleClient", dependencies: ["ConsoleCore"], path: "Sources/ConsoleClient"),
         // Cible exécutable : le fichier d'entrée ne s'appelle PAS main.swift,
         // sinon `@main` est refusé.

@@ -85,7 +85,7 @@ final class ComponentPresenceModel: ObservableObject {
     }
 
     /// Le chemin du binaire d'un composant, tel que le manifeste le compose —
-    /// l'API le sert (`RemoteComponentsPayload.ompPath`, S-4).
+    /// la préparation le montre.
     func binaryPath(_ id: ComponentID) -> String {
         installer.binaryLocation(id).path
     }

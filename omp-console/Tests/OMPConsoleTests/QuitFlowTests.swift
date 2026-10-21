@@ -12,24 +12,21 @@ import AppKit
 import Testing
 @testable import OMPConsole
 
-/// Les trois accroches statiques du délégué, sauvegardées puis restaurées : un
+/// Les deux accroches statiques du délégué, sauvegardées puis restaurées : un
 /// test du Quitter ne laisse rien derrière lui.
 @MainActor
 struct SavedQuitStatics {
     private let terminal = AppDelegate.terminateTerminal
-    private let remote = AppDelegate.terminateRemoteService
     private let terminalActivity = AppDelegate.terminalQuitActivity
 
     /// Sauvegarde, puis remet toutes les accroches à nil.
     init() {
         AppDelegate.terminateTerminal = nil
-        AppDelegate.terminateRemoteService = nil
         AppDelegate.terminalQuitActivity = nil
     }
 
     func restore() {
         AppDelegate.terminateTerminal = terminal
-        AppDelegate.terminateRemoteService = remote
         AppDelegate.terminalQuitActivity = terminalActivity
     }
 }
@@ -55,13 +52,12 @@ final class QuitHarness {
         quit.closeAttachedSheets = { [unowned self] in log.append("feuilles") }
         quit.requestTermination = { [unowned self] in log.append("terminaison") }
         AppDelegate.terminateTerminal = { [unowned self] in log.append("terminal") }
-        AppDelegate.terminateRemoteService = { [unowned self] in log.append("service") }
     }
 
     var quit: QuitFlow { delegate.quit }
     var terminated: Bool { log.last == "terminaison" }
 
-    static let exitSequence = ["terminal", "service", "feuilles", "terminaison"]
+    static let exitSequence = ["terminal", "feuilles", "terminaison"]
 }
 
 private func quitEvent() -> NSAppleEventDescriptor {

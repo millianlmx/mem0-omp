@@ -142,24 +142,19 @@ function pullFaults(files: { harness: string; memory: string; all: Map<string, s
   return faults;
 }
 
-/** AC-4 (S-2) : la Mémoire déclare exactement deux ToolbarItem (« Sommaire », bascule). */
+/** AC-4 (S-2) : la Mémoire déclare exactement trois ToolbarItem (projet, « Sommaire », bascule). */
 function memoryBarFaults(memory: string): string[] {
   const faults: string[] = [];
   const items = toolbarItems(stripComments(memory));
-  if (items.length !== 2)
-    faults.push(`IOSMemoryScreen.swift : ${items.length} ToolbarItem (attendu 2 ; + l'antenne de RootView = 3)`);
+  if (items.length !== 3) faults.push(`IOSMemoryScreen.swift : ${items.length} ToolbarItem (attendu 3)`);
+  if (!items.some((item) => item.includes("projectMenu")))
+    faults.push("IOSMemoryScreen.swift : le menu du projet absent de la barre");
   if (!items.some((item) => item.includes("summaryButton")))
     faults.push("IOSMemoryScreen.swift : « Sommaire » absent de la barre");
   if (!items.some((item) => item.includes("IOSMemoryAccessibility.graphToggle")))
     faults.push("IOSMemoryScreen.swift : bascule Graphe/Liste absente de la barre");
   faults.push(...toolbarRefreshFaults("IOSMemoryScreen.swift", memory));
   return faults;
-}
-
-/** AC-4 : l'antenne Connexion de RootView reste UN seul bouton de barre. */
-function antennaFaults(root: string): string[] {
-  const n = toolbarItems(memberBody(stripComments(root), "var connectionToolbarItem")).length;
-  return n === 1 ? [] : [`RootView.swift : connectionToolbarItem porte ${n} ToolbarItem (attendu 1)`];
 }
 
 // MARK: - AC-5 : menus contextuels
@@ -472,9 +467,7 @@ test("ios-gestes-et-retours-natifs/AC-2 : les écrans du serveur et la liste de 
 test("ios-gestes-et-retours-natifs/AC-4 : la barre de la Mémoire porte trois boutons au plus, dans les deux modes", () => {
   const memory = appSource("IOSMemoryScreen.swift");
   assert.deepEqual(memoryBarFaults(memory), []);
-  assert.deepEqual(antennaFaults(appSource("RootView.swift")), []);
-
-  // Faute plantée : une troisième ToolbarItem (↻) dans la Mémoire ⇒ rouge.
+  // Faute plantée : une quatrième ToolbarItem (↻) dans la Mémoire ⇒ rouge.
   const third = plant(memory, (s) =>
     s.replace(
       "ToolbarItem(placement: .topBarTrailing) { summaryButton }",
@@ -483,8 +476,8 @@ test("ios-gestes-et-retours-natifs/AC-4 : la barre de la Mémoire porte trois bo
   );
   const faults = memoryBarFaults(third);
   assert.ok(
-    faults.some((f) => f.includes("3 ToolbarItem")),
-    "trois ToolbarItem doivent rougir",
+    faults.some((f) => f.includes("4 ToolbarItem")),
+    "quatre ToolbarItem doivent rougir",
   );
   assert.ok(
     faults.some((f) => f.includes("arrow.clockwise")),

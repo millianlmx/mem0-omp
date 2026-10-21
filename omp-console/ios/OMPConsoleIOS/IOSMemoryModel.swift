@@ -1,10 +1,11 @@
-// Le modèle de l'écran Mémoire de l'app iOS (BR-2) : il porte le client partagé,
-// déclenche les lectures (les pages du sommaire du projet, une recherche), et
-// dérive l'état d'écran par une fonction PURE, testable sans rendre de vue.
+// Le modèle de l'écran Mémoire de l'app iOS (BR-2) : il porte l'accès à la mémoire
+// du serveur, déclenche les lectures (les pages du sommaire du projet, une
+// recherche), et dérive l'état d'écran par une fonction PURE, testable sans rendre
+// de vue.
 //
 // Aucune scrutation : l'apparition de l'écran, le tirage pour actualiser/
-// « Réessayer » et le retour du Mac (`onMacReconnected`, posé par l'écran)
-// relisent la PREMIÈRE page ; l'arrivée du pied de liste à l'écran lit la page
+// « Réessayer », le choix d'un projet et la mémoire tout juste reliée
+// (`onMemoryConfigured`, posé par l'écran) relisent la PREMIÈRE page ; l'arrivée du pied de liste à l'écran lit la page
 // SUIVANTE (défilement continu, memoire-ios-expire-a-10-secondes S-4). Une donnée
 // déjà chargée prime sur le statut de connexion ; une donnée jamais chargée
 // laisse parler le composant d'état de connexion.
@@ -14,19 +15,19 @@ import ConsoleClient
 import ConsoleCore
 import Foundation
 
-/// La surface dont l'écran Mémoire a besoin : l'état du client et ses DEUX
-/// lectures. `ConsoleClientModel` la satisfait telle quelle ; un test la double
-/// avec un compteur, sans ouvrir de socket ni mentir sur le client — même motif
-/// que `MemoryServing`/`ScriptedMemoryService` de la coque macOS.
+/// La surface dont l'écran Mémoire a besoin : la mémoire est-elle reliée, et ses
+/// TROIS lectures. `MemoryAccess` la satisfait telle quelle ; un test la double
+/// avec un compteur, sans ouvrir de socket — même motif que
+/// `MemoryServing`/`ScriptedMemoryService` de la coque macOS.
 @MainActor
 protocol IOSMemoryReading: AnyObject {
-    var state: ClientState { get }
+    var isConfigured: Bool { get }
     func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload
 }
 
-extension ConsoleClientModel: IOSMemoryReading {}
+extension MemoryAccess: IOSMemoryReading {}
 
 /// L'état de la page suivante du sommaire (S-4) : le pied de liste le rend.
 enum IOSMemoryMore: Equatable {
@@ -80,10 +81,10 @@ enum IOSMemoryLoad: Equatable {
     case loading
     /// Le sommaire accumulé, page après page.
     case page(IOSMemorySummary)
-    /// Une recherche, telle que le Mac l'a sélectionnée.
+    /// Une recherche, sélectionnée comme `mem0_search`.
     case search(RemoteMemorySearchPayload)
     /// La lecture a échoué : la cause distinguable rendue par le traducteur partagé.
-    case failed(IOSMacFailure)
+    case failed(IOSMemoryFailure)
 }
 
 /// Ce que la section affiche : le sommaire du projet, ou les résultats d'une
@@ -96,12 +97,11 @@ enum IOSMemoryMode: Equatable {
 /// Les états d'écran, en une valeur ÉGALABLE : un test les confronte sans rendre
 /// de vue. Mêmes règles et mêmes mots que `MemoryModel.state` de la coque macOS.
 enum IOSMemoryScreenState: Equatable {
-    /// Rien de chargé, Mac non connecté : le composant d'état de connexion en
-    /// plein écran (etats-non-connecte-heterogenes-ios, S-4).
+    /// Rien de chargé, mémoire non reliée : le composant d'état en plein écran (etats-non-connecte-heterogenes-ios, S-4).
     case offline(IOSConnectionStatus)
     case loading
     case noProject
-    case failed(IOSMacFailure)
+    case failed(IOSMemoryFailure)
     case summaryEmpty(scope: String)
     case summary(scope: String, total: Int, rows: [RemoteMemoryRow], more: IOSMemoryMore)
     case searchEmptyNoMatch
@@ -141,19 +141,16 @@ final class IOSMemoryModel: ObservableObject {
 
     // MARK: - Décisions PURES (testables sans render)
 
-    /// Seul `.connected` autorise une lecture (patron `IOSProjectModel`).
-    static func gesturesEnabled(_ state: ClientState) -> Bool {
-        if case .connected = state { return true }
-        return false
+    /// Seule une mémoire reliée autorise une lecture.
+    static func gesturesEnabled(_ configured: Bool) -> Bool {
+        configured
     }
 
-    /// La classification d'une erreur de lecture : la cause vient du traducteur
-    /// partagé, par son entrée Mémoire `IOSMacFailure.ofMemoryRead` — un délai
-    /// dépassé n'y est jamais présenté comme un Mac injoignable (S-5). `nil` ⇔ 401 :
-    /// le parcours de jeton révoqué parle seul, la section retombe sur l'état du client.
+    /// La classification d'une erreur de lecture, par le traducteur
+    /// (`IOSMemoryFailure.of`) : un délai dépassé n'y est jamais présenté comme un
+    /// serveur injoignable (S-5).
     static func load(from error: Error) -> IOSMemoryLoad {
-        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
-        return .failed(cause)
+        .failed(IOSMemoryFailure.of(error))
     }
 
     /// Le message d'une panne, tel que l'écran le montre : celui du pied de liste
@@ -161,9 +158,9 @@ final class IOSMemoryModel: ObservableObject {
     static func failureMessage(_ load: IOSMemoryLoad) -> String {
         switch load {
         case .failed(let cause):
-            return IOSMacErrorText.message(for: cause)
+            return IOSMemoryErrorText.message(for: cause)
         case .idle, .loading, .page, .search:
-            return IOSMacErrorText.message(for: .macUnreachable)
+            return IOSMemoryErrorText.message(for: .unreachable)
         }
     }
 
@@ -221,13 +218,13 @@ final class IOSMemoryModel: ObservableObject {
     /// Le sommaire accumulé, ou `nil`.
     var summary: IOSMemorySummary? { summaryPage }
 
-    /// La recherche telle que le Mac l'a sélectionnée, ou `nil`.
+    /// La recherche telle qu'elle a été sélectionnée, ou `nil`.
     var search: RemoteMemorySearchPayload? {
         if case let .search(payload) = load { return payload }
         return nil
     }
 
-    /// La portée servie par le Mac : elle vient de la page, jamais d'un calcul local.
+    /// La portée lue : elle vient de la page, jamais d'un calcul local.
     var scope: String? { summaryPage?.scope }
 
     var isLoading: Bool { load == .loading }
@@ -253,7 +250,7 @@ final class IOSMemoryModel: ObservableObject {
     /// qui remplace tout le sommaire accumulé. Une lecture en vol, page suivante
     /// comprise, est annulée avant la suivante (patron `MemoryModel.perform`).
     func refresh() async {
-        guard Self.gesturesEnabled(client.state) else { return }
+        guard Self.gesturesEnabled(client.isConfigured) else { return }
         dropPendingMore()
         inFlight?.cancel()
         let task = Task { @MainActor in await perform() }
@@ -266,7 +263,7 @@ final class IOSMemoryModel: ObservableObject {
     /// hors du sommaire, sans page suivante, ou quand une page est déjà en vol —
     /// `more` passe à `.loading` AVANT la lecture, un second appel ne lit donc rien.
     func loadMore() async {
-        guard Self.gesturesEnabled(client.state), mode == .summary,
+        guard Self.gesturesEnabled(client.isConfigured), mode == .summary,
               var summary = summaryPage, let scope = summary.scope, let offset = summary.nextOffset
         else { return }
         switch summary.more {
@@ -294,7 +291,7 @@ final class IOSMemoryModel: ObservableObject {
     /// La validation du champ (retour clavier) : une requête blanche n'émet RIEN.
     func submitQuery() async {
         let requested = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !requested.isEmpty, Self.gesturesEnabled(client.state) else { return }
+        guard !requested.isEmpty, Self.gesturesEnabled(client.isConfigured) else { return }
         dropPendingMore()
         mode = .search(requested)
         inFlight?.cancel()

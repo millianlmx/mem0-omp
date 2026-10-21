@@ -57,7 +57,7 @@ jamais par un `t.skip` nu : c'est ce saut que `--strict` change en échec nommé
 `scripts/` ne garde à sa racine que ce que la CI, la release et le développement
 lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,
 `swift-app.sh`, `ios-build.sh`, `run-console.sh`, `mem0-http-contrat.sh`…) ; les
-recettes manuelles ou gatées (captures iOS, sondes AX, appairage, bascule réelle)
+recettes manuelles ou gatées (captures iOS, sondes AX, bascule réelle)
 vivent dans `scripts/recette/`.
 
 ## CI et release

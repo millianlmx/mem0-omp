@@ -285,8 +285,8 @@ function accentColorFaults(files: Files = new Map()): string[] {
 }
 
 const NETWORK_MESSAGE =
-  "OMP Console se connecte à votre Mac sur le réseau local pour afficher et piloter vos pipelines.";
-const NETWORK_PREFIX = "OMP Console se connecte à votre Mac";
+  "OMP Console joint votre serveur de pipelines et vos souvenirs quand ils sont sur votre réseau local.";
+const NETWORK_PREFIX = "OMP Console joint votre serveur";
 
 /** AC-7 : le message de l'alerte « Réseau local » parle à l'utilisateur, au vouvoiement, sans vocabulaire interne. */
 function networkMessageFaults(files: Files = new Map()): string[] {
@@ -298,15 +298,14 @@ function networkMessageFaults(files: Files = new Map()): string[] {
   if (message !== NETWORK_MESSAGE) faults.push(`${IOS_PLIST} : message ≠ « ${NETWORK_MESSAGE} »`);
   if (!message.startsWith(NETWORK_PREFIX))
     faults.push(`${IOS_PLIST} : le message ne commence pas par « ${NETWORK_PREFIX} »`);
-  for (const word of ["coque", "macos"]) {
+  for (const word of ["coque", "macos", "mac "]) {
     if (message.toLowerCase().includes(word)) faults.push(`${IOS_PLIST} : le message contient « ${word} »`);
   }
   if (!/\bvotre\b/.test(message) || !/\bvos\b/.test(message))
     faults.push(`${IOS_PLIST} : le message ne vouvoie pas (« votre », « vos »)`);
   if (message.includes("'")) faults.push(`${IOS_PLIST} : apostrophe droite dans le message`);
-  const services = plist.match(/<key>NSBonjourServices<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1];
-  const names = [...(services ?? "").matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1]);
-  if (names.join(",") !== "_ompconsole._tcp") faults.push(`${IOS_PLIST} : NSBonjourServices ≠ [_ompconsole._tcp]`);
+  // L'app ne cherche aucun Mac : aucun service Bonjour.
+  if (plist.includes("<key>NSBonjourServices</key>")) faults.push(`${IOS_PLIST} : NSBonjourServices présent`);
   if (!/<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/.test(plist))
     faults.push(`${IOS_PLIST} : NSAllowsArbitraryLoads ≠ true`);
   // Présent, il fait ignorer NSAllowsArbitraryLoads : l'adresse Tailscale (100.64/10) échouerait en -1022.
@@ -505,7 +504,7 @@ test("ios-identite-app/AC-4 : l'AccentColor du catalogue vaut le bleu système (
   ]);
 });
 
-test("ios-identite-app/AC-7 : le message « Réseau local » commence par « OMP Console se connecte à votre Mac », vouvoie et ne dit ni « coque » ni « macOS »", () => {
+test("ios-identite-app/AC-7 : le message « Réseau local » parle du serveur, vouvoie, ne dit ni « coque », ni « macOS », ni Mac, et aucun service Bonjour n'est déclaré", () => {
   assert.deepEqual(networkMessageFaults(), []);
 
   const plist = fs.readFileSync(path.join(ROOT, IOS_PLIST), "utf8");

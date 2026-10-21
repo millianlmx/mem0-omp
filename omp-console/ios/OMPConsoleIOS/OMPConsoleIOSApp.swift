@@ -12,24 +12,17 @@ import SwiftUI
 ///   fonctionnalité ;
 /// - `-memoire.recipe <…>` : l'état du graphe de la mémoire (`IOSMemoryGraphRecipe`).
 ///
-/// La feuille de connexion au Mac ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas
-/// été fourni : les captures gardent ainsi leur écran, sans feuille par-dessus.
-///
-/// L'App POSSÈDE les deux clients : celui du Mac appairé (`ConsoleClientModel.live()`,
-/// créé une fois par processus dans `init()`, y compris lors d'un lancement à froid
-/// par Siri), enregistré pour les App Intents (`IOSSharedClient`), qui sert la
-/// mémoire du projet ; et celui du serveur de pipelines du VPS (`HarnessModel`),
-/// qui sert les cinq sections de pilotage.
+/// L'App POSSÈDE les deux accès au serveur du VPS, posés par le MÊME code
+/// d'appairage (feuille Serveur) : ses pipelines (`HarnessModel`), qui servent les
+/// cinq sections de pilotage, et sa mémoire (`MemoryAccess`). Aucun Mac : l'app
+/// fonctionne seule.
 @main
 struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
     private let memoryRecipe: IOSMemoryGraphRecipe?
-    private let requestedSection: Bool
-    /// Le client du Mac, jamais en `@StateObject` : son autoclosure paresseuse
-    /// pourrait construire une autre instance que celle enregistrée.
-    private let client: ConsoleClientModel
-    @StateObject private var server = HarnessModel.live()
+    @StateObject private var memory: MemoryAccess
+    @StateObject private var server: HarnessModel
     @StateObject private var drafts = HarnessDrafts()
 
     init() {
@@ -37,20 +30,27 @@ struct OMPConsoleIOSApp: App {
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
-        requestedSection = arguments.contains("-section")
-        client = IOSSharedClient.install(ConsoleClientModel.live(), in: .shared)
+        let memory = MemoryAccess.live()
+        _memory = StateObject(wrappedValue: memory)
+        // Le code d'appairage accepté porte aussi la mémoire du serveur. L'instance
+        // est celle que résolvent les App Intents (`IOSSharedServer`).
+        let server = IOSSharedServer.install(HarnessModel.live(onPaired: { pairing in
+            Task { @MainActor in
+                await memory.configure(address: pairing.memoryAddress, token: pairing.memoryToken)
+            }
+        }), in: .shared)
+        _server = StateObject(wrappedValue: server)
     }
 
     var body: some Scene {
         WindowGroup {
             RootView(
-                client: client,
+                memory: memory,
                 server: server,
                 drafts: drafts,
                 selection: initialSection,
                 state: initialState,
-                memoryRecipe: memoryRecipe,
-                autoPresentConnection: !requestedSection
+                memoryRecipe: memoryRecipe
             )
         }
         .commands { IOSKeyboardCommands() }

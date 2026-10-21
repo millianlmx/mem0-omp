@@ -1,25 +1,17 @@
 // La GARDE TEXTUELLE de la feature `ios-erreurs-serveur-lisibles` (BR-7) : un SEUL
-// traducteur d'erreurs du Mac côté iOS (`IOSMacErrorText`). C'est le seul fichier
-// `test/*.test.ts` qui porte ce slug (invariant `criteria/AC-13`).
+// traducteur des pannes de la mémoire du serveur côté iOS (`IOSMemoryErrorText`).
+// C'est le seul fichier `test/*.test.ts` qui porte ce slug (invariant `criteria/AC-13`).
 //
 // Deux règles structurent ce fichier, comme `test/console/ios-memoire-graphe.test.ts` :
 //  1. tout ce qui doit ÉCHOUER est planté dans une COPIE JETABLE du dépôt (jamais
 //     l'arbre réel, qui doit rester publiable) ;
 //  2. les vérifications qui portent sur l'arbre réel tournent partout.
 //
-// Les preuves de comportement de chaque critère vivent dans les suites Swift, que ce
-// fichier NOMME sans les remplacer :
-//  - AC-1..AC-7 `macOutdatedOn404And405`, `refusedConnectionIsMacUnreachable`,
-//    `unavailableHidesRelayDetail`, `forbiddenIsRefused`, `unauthorizedHasNoMessage`,
-//    `serverAndUnreadableAreGeneric`, `everyCauseHasItsOwnRemedy` (IOSMacErrorTests)
-//    et `macDoubleFailuresReachTheCaller` / `unauthorizedReadRevokes` (ReadFailureTests) ;
-//  - AC-8 `memoryShowsTranslatedFailure` (Mémoire) et `graphShowsTranslatedFailure` (graphe) ;
-//  - AC-9 `graphKeepsOutdatedDistinction` (IOSMemoryGraphTests) ;
-//  - AC-10 `memoryNeverClaimsOutdated` (IOSMemoryModelTests).
-// Ce fichier prouve le versant « un seul traducteur » de l'AC-8 : la Mémoire, seule
-// section servie par le Mac, passe par `IOSMacErrorText` ; les écrans du serveur de
-// pipelines (VPS) passent par le leur, `HarnessFailure.message` ; aucun écran ne
-// relit un détail brut.
+// Les preuves de comportement vivent dans les suites Swift (IOSMemoryErrorTests,
+// IOSMemoryModelTests, IOSMemoryGraphTests), que ce fichier ne remplace pas. Il
+// prouve le versant « un seul traducteur » : la Mémoire passe par
+// `IOSMemoryErrorText` ; les écrans du serveur de pipelines passent par le leur,
+// `HarnessFailure.message` ; aucun écran ne relit un détail brut.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -32,7 +24,7 @@ function source(file: string): string {
   return stripComments(readIfExists(file));
 }
 
-/** Les fichiers de l'app iOS qui chargent des données du Mac (la Mémoire). */
+/** Les fichiers de l'app iOS qui lisent la mémoire du serveur. */
 const TRANSLATING_FILES = ["IOSMemoryScreen.swift", "IOSMemoryGraphView.swift"];
 
 /** Les fichiers qui affichent un échec du serveur de pipelines. */
@@ -55,13 +47,13 @@ function singleTranslatorFaults(root: string): string[] {
   const dir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
   const faults: string[] = [];
 
-  const translator = source(path.join(dir, "IOSMacErrorText.swift"));
-  if (!/\benum\s+IOSMacErrorText\b/.test(translator))
-    faults.push("IOSMacErrorText.swift ne déclare pas IOSMacErrorText");
+  const translator = source(path.join(dir, "IOSMemoryErrorText.swift"));
+  if (!/\benum\s+IOSMemoryErrorText\b/.test(translator))
+    faults.push("IOSMemoryErrorText.swift ne déclare pas IOSMemoryErrorText");
 
   for (const name of TRANSLATING_FILES) {
-    if (!source(path.join(dir, name)).includes("IOSMacErrorText.message(for:")) {
-      faults.push(`${name} ne passe pas par IOSMacErrorText.message(for:`);
+    if (!source(path.join(dir, name)).includes("IOSMemoryErrorText.message(for:")) {
+      faults.push(`${name} ne passe pas par IOSMemoryErrorText.message(for:`);
     }
   }
   for (const name of SERVER_FILES) {
@@ -82,7 +74,7 @@ function singleTranslatorFaults(root: string): string[] {
   return faults;
 }
 
-test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, aucune section ne relit un détail brut", () => {
+test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur des pannes de la mémoire, aucune section ne relit un détail brut", () => {
   assert.deepEqual(singleTranslatorFaults(ROOT), [], "l'arbre réel doit être sain");
 
   // La garde est vivante : réintroduire `api.message` dans IOSMemoryText la fait rougir.
@@ -104,7 +96,7 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur d'erreurs du Mac, a
   const screen = path.join(copy2, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
   fs.writeFileSync(
     screen,
-    fs.readFileSync(screen, "utf8").replaceAll("IOSMacErrorText.message(for:", "Fake.message(for:"),
+    fs.readFileSync(screen, "utf8").replaceAll("IOSMemoryErrorText.message(for:", "Fake.message(for:"),
   );
   assert.ok(
     singleTranslatorFaults(copy2).some((fault) => fault.includes("IOSMemoryScreen.swift ne passe pas")),

@@ -45,10 +45,8 @@ struct OMPConsoleApp: App {
     /// de sa feuille, et son `onReady` revérifie OMP.
     @StateObject private var setupModel: SetupModel
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
-    /// latérale le montre. Le service d'API le sert aussi (S-4).
+    /// latérale le montre.
     @StateObject private var componentsModel: ComponentPresenceModel
-    /// Le service d'API distante (BR-9) : l'appairage de l'iPhone et la mémoire.
-    @StateObject private var remoteModel: RemoteServiceModel
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal.
     @StateObject private var projectChooser = ProjectChooserModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -56,8 +54,6 @@ struct OMPConsoleApp: App {
     init() {
         let presence = OmpPresenceModel()
         _presence = StateObject(wrappedValue: presence)
-        // La préparation et la présence des composants sont construites AVANT le
-        // service d'API : il les sert (`GET /v1/components`, évènement `components`).
         // OMP absent au lancement : rien ne se télécharge d'office, la feuille
         // bloquante attend « Installer ». Le crochet de recette `-setup.recipe`
         // (racine jetable seulement) remplace l'installateur par un script.
@@ -65,27 +61,6 @@ struct OMPConsoleApp: App {
             ?? SetupModel.standard(autoPrepare: presence.canLaunch)
         let components = ComponentPresenceModel()
         _componentsModel = StateObject(wrappedValue: components)
-        let remote = RemoteServiceModel(
-            port: RemoteServiceModel.resolvedPort(environment: ProcessInfo.processInfo.environment),
-            components: { [weak components, weak setup] in
-                let installed = components.map { !$0.presence.missing.contains(.omp) } ?? false
-                return RemoteComponentsPayload(
-                    ompInstalled: installed,
-                    ompPath: installed ? components?.binaryPath(.omp) : nil,
-                    setupBanner: setup.flatMap { SetupText.banner(state: $0.state, dismissed: true) }
-                )
-            },
-            presenceChanges: components.$presence.voidChanges(),
-            setupChanges: setup.$state.voidChanges()
-        )
-        _remoteModel = StateObject(wrappedValue: remote)
-        // L'annonce Bonjour ne survit pas au process (S-14).
-        AppDelegate.terminateRemoteService = { [weak remote] in
-            remote?.stop()
-        }
-        // S-14 : le service ne démarre jamais tant que la préparation des composants
-        // n'est pas terminée — `onReady` en fait le démarrage différé.
-        remote.isSetupReady = { [weak setup] in setup?.state == .ready }
         setup.refreshOmp = {
             presence.recheck()
             return presence.canLaunch
@@ -95,7 +70,6 @@ struct OMPConsoleApp: App {
         setup.onReady = {
             presence.recheck()
             cleanup.refresh()
-            Task { await remote.startIfEnabled() }
         }
         _setupModel = StateObject(wrappedValue: setup)
     }
@@ -117,7 +91,6 @@ struct OMPConsoleApp: App {
                 presence: presence,
                 setup: setupModel,
                 components: componentsModel,
-                remote: remoteModel,
                 terminalModel: terminalModel,
                 projectChooser: projectChooser
             )
@@ -127,12 +100,7 @@ struct OMPConsoleApp: App {
             // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
             // barre d'outils… ».
             ToolbarCommands()
-            RemoteCommands()
             QuitCommands(quit: appDelegate.quit)
-        }
-        // Le panneau Réglages (⌘,) : un seul onglet, « Appareils ».
-        Settings {
-            ConsoleSettingsView(remote: remoteModel)
         }
     }
 }
@@ -162,19 +130,6 @@ struct SectionCommands: Commands {
     }
 }
 
-/// Menu de l'application ▸ « Appairage… » (⌥⌘A) : ouvre le panneau Réglages sur
-/// l'onglet « Appareils » (ou le ramène devant s'il est déjà ouvert). Aucune
-/// feuille, et la fenêtre principale n'est ni ramenée ni modifiée.
-struct RemoteCommands: Commands {
-    var body: some Commands {
-        CommandGroup(after: .appInfo) {
-            SettingsLink {
-                Text(PairingText.menuItem)
-            }
-            .keyboardShortcut("a", modifiers: [.command, .option])
-        }
-    }
-}
 
 /// Menu de l'application ▸ « Quitter OMP Console » (⌘Q, S-5.1) : remplace
 /// l'élément standard, dont l'action n'est plus appelée quand une feuille est
@@ -197,9 +152,6 @@ struct QuitCommands: Commands {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posée par `TerminalConsoleModel.init` (S-8).
     static var terminateTerminal: (() async -> Void)?
-    /// Posée par `OMPConsoleApp.init` : arrête le service d'API distante et son
-    /// annonce Bonjour (S-14).
-    static var terminateRemoteService: (() async -> Void)?
     /// L'activité du Terminal au moment du Quitter (S-1). Posée par
     /// `TerminalConsoleModel.init`.
     static var terminalQuitActivity: (@MainActor () -> QuitActivity?)?
@@ -223,7 +175,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             confirm: QuitAlert.run,
             runHooks: { @MainActor in
                 await Self.terminateTerminal?()
-                await Self.terminateRemoteService?()
             },
             closeAttachedSheets: Self.closeAttachedSheets,
             requestTermination: { NSApp.terminate(nil) }

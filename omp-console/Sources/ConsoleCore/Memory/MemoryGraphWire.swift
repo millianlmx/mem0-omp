@@ -1,8 +1,8 @@
 // Le VOCABULAIRE DU FIL du graphe des souvenirs, en un seul endroit (S-2) : un
 // identifiant de nœud se sérialise en `"memory:<id>"` ou `"tag:<nom>"`, la nature
-// d'un lien en `"semantic"` / `"tag"` / `"manual"`. La route (`RemoteReads`) émet
-// par ces fonctions et relit par les mêmes — plus de seconde table de
-// correspondance.
+// d'un lien en `"semantic"` / `"tag"` / `"manual"`. Le lecteur de l'app iOS
+// (`MemoryReader`) émet par ces fonctions et l'écran relit par les mêmes — plus de
+// seconde table de correspondance.
 
 import Foundation
 
