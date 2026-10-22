@@ -167,6 +167,18 @@ jobs:
           key: swiftpm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/Package.swift') }}
       - name: App Swift
         run: ./scripts/check.sh --sections=app-swift
+      # Le bundle assemblé, téléchargeable depuis le run (onglet Summary) pour essayer
+      # une PR sans la compiler. `ditto` garde les droits d'exécution et la signature
+      # ad hoc, que l'archive d'upload-artifact perdrait.
+      - name: Archiver l'app Mac
+        run: ditto -c -k --keepParent "omp-console/build/OMP Console.app" "omp-console/build/OMP-Console-macOS.zip"
+      - name: Publier l'app Mac (artefact du run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMP-Console-macOS
+          path: omp-console/build/OMP-Console-macOS.zip
+          retention-days: 14
+          if-no-files-found: error
 
   # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
   macos-app-ios:

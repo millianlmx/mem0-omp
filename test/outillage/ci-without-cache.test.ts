@@ -283,7 +283,15 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
   }
 });
 
-const ALLOWED_USES = ["actions/checkout@v4", "actions/setup-node@v4", "oven-sh/setup-bun@v2", "actions/cache@v6"];
+// `upload-artifact` ne restaure rien : il publie le bundle de l'app Mac du run
+// (macos-app-swift), à télécharger pour essayer une PR sans la compiler.
+const ALLOWED_USES = [
+  "actions/checkout@v4",
+  "actions/setup-node@v4",
+  "oven-sh/setup-bun@v2",
+  "actions/cache@v6",
+  "actions/upload-artifact@v4",
+];
 
 test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent ceux d'avant, sans relance ni contournement du cache", (t) => {
   for (const file of [CHECK_FILE, SIMULATION_FILE]) {
