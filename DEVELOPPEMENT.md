@@ -45,8 +45,11 @@ complète hors outillage. Un diff non vide que nul test ne concerne : message su
 sortie 0, rien sur stdout. `--macos` (avec `changed` ou `files` seulement) réduit la
 sélection aux fichiers de `--scope=macos`. `--scope=outillage` liste les fichiers
 qui relancent un `check.sh` complet (`check.test.ts`, `release.test.ts`,
-`release-simulation.test.ts`, règle par contenu) : `--scope=changed` ne les inclut jamais,
-`check.sh` sans option les lance toujours.
+`release-simulation.test.ts`, règle par contenu) : `--scope=changed` ne les inclut
+jamais, sauf sous `--with-outillage` (avec `changed` ou `files` seulement), où ils
+suivent les mêmes règles et entrent dans les replis ; c'est ce que `check.sh
+--tests-base` passe, pour qu'une PR qui touche `scripts/release.ts` lance
+`release.test.ts`. `check.sh` sans option les lance toujours.
 
 `scripts/test-files.sh --scope=files <chemins…>` applique les mêmes règles à une liste
 reçue en arguments au lieu du diff : c'est l'entrée du harness, qui connaît les fichiers
@@ -164,7 +167,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 |---|---|
 | `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `lint`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
-| `--tests-base=<réf>` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=changed=<réf>` (avec `--macos` si `--tests-scope=macos`) ; une sélection vide laisse la section verte avec un `·` explicatif |
+| `--tests-base=<réf>` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=changed=<réf> --with-outillage` (avec `--macos` si `--tests-scope=macos`) ; une sélection vide laisse la section verte avec un `·` explicatif ; en vert, la section liste aussi ses tests de 2 s ou plus |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 | `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
 

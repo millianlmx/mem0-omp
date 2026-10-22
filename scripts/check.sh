@@ -21,11 +21,11 @@ pass() { echo "  ✓ $1"; }
 #                             scripts/test-files.sh --scope=macos ;
 #   --tests-base=<réf>        `── Tests` ne lance que les fichiers que le diff
 #                             depuis <réf> concerne (scripts/test-files.sh
-#                             --scope=changed=<réf>, réduit à --macos sous
-#                             --tests-scope=macos). Un diff que nul test ne
-#                             concerne est un « rien à lancer » annoncé, pas un
-#                             échec ; un diff illisible ou vide replie sur la
-#                             liste complète (test-files.sh). Les pull_request
+#                             --scope=changed=<réf> --with-outillage, réduit à
+#                             --macos sous --tests-scope=macos). Un diff que nul
+#                             test ne concerne est un « rien à lancer » annoncé,
+#                             pas un échec ; un diff illisible ou vide replie sur
+#                             la liste complète (test-files.sh). Les pull_request
 #                             de check.yml passent la base de la PR ;
 #                             scripts/release.ts passe HEAD (ses écritures) ;
 #   --tests-part=1/2|2/2      découpe les TESTS de `── Tests` par TESTS_PART_PATTERN :
@@ -581,7 +581,7 @@ if command -v node >/dev/null 2>&1; then
   tests_select=()
   tests_relance="bash scripts/test-files.sh"
   if [ -n "$tests_base" ]; then
-    tests_select=("--scope=changed=$tests_base")
+    tests_select=("--scope=changed=$tests_base" "--with-outillage")
     [ "$tests_scope" = "macos" ] && tests_select+=("--macos")
   elif [ -n "$tests_scope" ]; then
     tests_select=("--scope=$tests_scope")
@@ -668,6 +668,21 @@ if command -v node >/dev/null 2>&1; then
         # Les sauts sont imprimés même en vert : un test d'AC qui se saute (prérequis
         # absent, profondeur) n'a rien prouvé, et seul ce compteur le montre.
         grep -E '^# skipped' "$tests_log"
+        # Les tests les plus longs (≥ 2 s, cinq au plus), même en vert : la durée
+        # de la section ne dit pas QUI la remplit, et un écart entre cette ligne
+        # et la durée de la section désigne un processus qui s'attarde après ses
+        # tests (mesuré le 2026-10-22 : 910 s de section pour 4 s de tests, un
+        # minuteur de `spawn` tenu par un `bun` absent).
+        awk '
+          /^(not )?ok [0-9]+ - / { name = $0; sub(/^(not )?ok [0-9]+ - /, "", name); sub(/ # (SKIP|TODO).*$/, "", name) }
+          /^  duration_ms: / {
+            ms = $2; gsub(",", ".", ms)
+            if (ms + 0 >= 2000 && name != "") printf "%d\t%s\n", int(ms / 1000 + 0.5), substr(name, 1, 80)
+            name = ""
+          }' "$tests_log" | sort -rn | head -n 5 | awk -F'\t' '
+          NR == 1 { line = "  · tests les plus longs :" }
+          { line = line (NR > 1 ? "," : "") " " $1 " s " $2 }
+          END { if (NR > 0) print line }'
         if [ -n "$tests_missing" ]; then
           strict_skips
         else

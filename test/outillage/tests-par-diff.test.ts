@@ -410,3 +410,45 @@ test(`${SLUG}/AC-12 : (c) un .md sous omp-console/ ne retient pas les tests macO
     "test/a/ios-ecran.test.ts",
   ]);
 });
+
+test(`${SLUG}/AC-13 : --with-outillage retient les tests d'outillage par les mêmes règles, replis compris, avec changed ou files seulement`, () => {
+  const dir = makeRepo();
+
+  // (a) touché directement : retenu, là où `changed` seul l'exclut (AC-3).
+  fs.appendFileSync(path.join(dir, "test", "a", "outil.test.ts"), "// touché\n");
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), []);
+  const touched = run(dir, "test-files.sh", ["--scope=changed", "--with-outillage"]);
+  assert.equal(touched.status, 0, touched.stderr);
+  assert.deepEqual(lines(touched.stdout), ["test/a/outil.test.ts"]);
+  assert.deepEqual(
+    lines(run(dir, "test-files.sh", ["--scope=files", "--with-outillage", "test/a/outil.test.ts"]).stdout),
+    ["test/a/outil.test.ts"],
+  );
+
+  // (d) et les replis : la liste complète le comprend, et le message le dit.
+  fs.appendFileSync(path.join(dir, "scripts", "check.sh"), "# touché\n");
+  const whole = run(dir, "test-files.sh", ["--scope=changed", "--with-outillage"]);
+  assert.deepEqual(lines(whole.stdout), [
+    "test/a/chain.test.ts",
+    "test/a/ios-ecran.test.ts",
+    "test/a/other.test.ts",
+    "test/a/outil.test.ts",
+    "test/req/ma-feature.test.ts",
+  ]);
+  assert.equal(whole.stderr, "· scripts/check.sh dans le diff : liste complète\n");
+  const empty = run(makeRepo(), "test-files.sh", ["--scope=changed", "--with-outillage"]);
+  assert.ok(lines(empty.stdout).includes("test/a/outil.test.ts"), empty.stdout);
+  assert.equal(empty.stderr, "· diff vide depuis la base : liste complète\n");
+
+  // `--macos` se combine : macOS ∩ diff, outillage compris, mais rien ici n'est macOS.
+  assert.equal(
+    run(dir, "test-files.sh", ["--scope=changed", "--with-outillage", "--macos"]).stdout,
+    "test/a/ios-ecran.test.ts\n",
+  );
+
+  // Hors changed/files : refusé, sans rien sur stdout.
+  const refused = run(dir, "test-files.sh", ["--scope=macos", "--with-outillage"]);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.stdout, "");
+  assert.equal(refused.stderr, "✗ --with-outillage ne s'emploie qu'avec --scope=changed ou --scope=files\n");
+});
