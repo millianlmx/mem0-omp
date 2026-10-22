@@ -18,7 +18,7 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { EventRow, RepoFilter } from "./db.ts";
+import type { DecisionStatus, EventRow, RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
@@ -30,7 +30,19 @@ import { computeStats } from "./stats.ts";
 export const API_VERSION = 1;
 
 /** Ce que ce serveur sait faire en plus de l'API 1 d'origine (les clients s'y adaptent). */
-export const API_FEATURES = ["clients", "priority", "if-match", "live-events", "repos", "reload", "providers"] as const;
+export const API_FEATURES = [
+  "clients",
+  "priority",
+  "if-match",
+  "live-events",
+  "repos",
+  "reload",
+  "providers",
+  "retry",
+  "revert",
+  "accept-all",
+  "answer-reason",
+] as const;
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -96,6 +108,12 @@ function integer(value: unknown, key: string): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value)) throw new HarnessError(400, `${key} : entier attendu`);
   return value as number;
+}
+
+const DECISION_STATUSES: readonly DecisionStatus[] = ["auto", "auto_timeout", "accepted", "reversed", "superseded"];
+
+function isDecisionStatus(value: string): value is DecisionStatus {
+  return DECISION_STATUSES.some((status) => status === value);
 }
 
 /** Le corps d'un `PUT /v1/providers/{name}` : les types vérifiés ici, les valeurs par providers.ts. */
@@ -265,11 +283,29 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       const answers = body.answers.map((item) => {
         const record = (item ?? {}) as Record<string, unknown>;
         if (typeof record.id !== "number" || typeof record.answer !== "string")
-          throw new HarnessError(400, "answers : { id: nombre, answer: chaîne }");
-        return { id: record.id, answer: record.answer };
+          throw new HarnessError(400, "answers : { id: nombre, answer: chaîne, reason?: chaîne }");
+        if (record.reason !== undefined && typeof record.reason !== "string")
+          throw new HarnessError(400, "answers[].reason : chaîne attendue");
+        return {
+          id: record.id,
+          answer: record.answer,
+          ...(typeof record.reason === "string" && record.reason.trim() !== "" ? { reason: record.reason } : {}),
+        };
       });
       send(call.res, 200, { run: await orchestrator.answerEscalations(runId(call), answers, call.actor) });
     }),
+    // La relance d'un run échoué ou en attente de l'humain : même étape, tout de suite.
+    route("POST", "/v1/runs/{id}/retry", "operator", async (call) =>
+      send(call.res, 200, { run: await orchestrator.retry(runId(call), call.actor) }),
+    ),
+    // Toutes les décisions prises seules d'un run, acceptées d'un geste.
+    route("POST", "/v1/runs/{id}/decisions/accept", "operator", async (call) =>
+      send(call.res, 200, await orchestrator.acceptAllDecisions(runId(call), call.actor)),
+    ),
+    // Le revert d'un run mergé : son commit est défait sur main, un run de suite est ouvert.
+    route("POST", "/v1/runs/{id}/revert", "operator", async (call) =>
+      send(call.res, 200, { run: await orchestrator.revert(runId(call), call.actor) }),
+    ),
     route("POST", "/v1/runs/{id}/decisions/{n}/accept", "operator", async (call) =>
       send(call.res, 200, {
         decision: await orchestrator.acceptDecision(runId(call), Number(call.match[2]), call.actor),
@@ -306,14 +342,9 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     // verdicts à valider, décisions prises seules, features en cours, et le
     // curseur du journal à partir duquel s'abonner au flux.
     route("GET", "/v1/inbox", "viewer", (call) => send(call.res, 200, inboxOf(store, call.repos))),
-    // La relecture du matin : les décisions prises seules, pas encore relues.
+    // La relecture du matin : les décisions prises seules (par l'agent, ou à l'échéance d'une escalade), pas encore relues.
     route("GET", "/v1/decisions", "viewer", (call) => {
-      const status = (call.url.searchParams.get("status") ?? "auto").split(",") as (
-        | "auto"
-        | "accepted"
-        | "reversed"
-        | "superseded"
-      )[];
+      const status = (call.url.searchParams.get("status") ?? "auto,auto_timeout").split(",").filter(isDecisionStatus);
       send(call.res, 200, { decisions: store.listDecisions({ status, repos: call.repos }) });
     }),
     // Chaque projet avec le décompte de ses runs par état (la liste des apps).

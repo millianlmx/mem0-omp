@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { sessionNudgeEnabled } from "../../omp-mem0-memory/config.ts";
 import { ROOT } from "../support/repo.ts";
 
-test("session-nudge-opt-out/AC-1 : la relance est active par défaut, coupée seulement par MEM0_NUDGE=0", () => {
+test("session-nudge-opt-out/AC-1 : la relance est active par défaut, coupée par MEM0_NUDGE=0 (seul) ou MEM0_MODE=runner", () => {
   assert.equal(sessionNudgeEnabled({}), true);
   assert.equal(sessionNudgeEnabled({ MEM0_NUDGE: "1" }), true);
   assert.equal(sessionNudgeEnabled({ MEM0_NUDGE: "0" }), false);

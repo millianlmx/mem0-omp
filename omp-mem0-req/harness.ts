@@ -108,21 +108,42 @@ export function writePairing(pairing: Pairing, home = os.homedir()): string[] {
   return written;
 }
 
-export class HarnessCallError extends Error {}
+/** Une réponse non 2xx (`status` HTTP) ou un serveur injoignable (`status` 0). */
+export class HarnessCallError extends Error {
+  readonly status: number;
+  constructor(message: string, status = 0) {
+    super(message);
+    this.status = status;
+  }
+}
 
-/** Un appel REST ; une réponse non 2xx lève avec le message d'erreur du serveur. */
+export type HarnessCallOptions = {
+  /** En-têtes ajoutés à l'appel (ex. `If-Match` : la révision du run lue avant un geste). */
+  headers?: Record<string, string>;
+  fetcher?: typeof fetch;
+};
+
+/**
+ * Un appel REST ; une réponse non 2xx lève une `HarnessCallError` qui porte le statut
+ * HTTP et le message d'erreur du serveur.
+ */
 export async function harnessCall<T>(
   target: HarnessTarget,
   method: "GET" | "POST",
   route: string,
   body?: unknown,
-  fetcher: typeof fetch = fetch,
+  options: HarnessCallOptions = {},
 ): Promise<T> {
+  const fetcher = options.fetcher ?? fetch;
   let response: Response;
   try {
     response = await fetcher(`${target.url}${route}`, {
       method,
-      headers: { Authorization: `Bearer ${target.token}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${target.token}`,
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(30_000),
     });
@@ -131,11 +152,14 @@ export async function harnessCall<T>(
       `harness injoignable (${target.url}) : ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!response.ok)
-    throw new HarnessCallError(
-      `harness : ${typeof payload.error === "string" ? payload.error : `HTTP ${response.status}`}`,
-    );
+  const payload: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error =
+      payload !== null && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+        ? payload.error
+        : `HTTP ${response.status}`;
+    throw new HarnessCallError(`harness : ${error}`, response.status);
+  }
   return payload as T;
 }
 
@@ -154,25 +178,30 @@ export type Inbox = {
   audits: Audit[];
 };
 
-/** Le résumé de la boîte de l'humain, tel que /pipelines l'affiche. */
+/**
+ * Le résumé de la boîte de l'humain, tel que /pipelines l'affiche et que `harness_inbox`
+ * le rend : chaque feature porte son id, c'est lui que prennent `harness_run` et les gestes.
+ */
 export function inboxSummary(inbox: Inbox, url: string): string {
   const specs = inbox.awaiting.filter((run) => run.step === "specs");
   const verdicts = inbox.awaiting.filter((run) => run.step !== "specs");
   const live = inbox.runs.filter((run) => run.state === "running" || run.state === "queued");
+  const failed = inbox.runs.filter((run) => run.state === "failed");
   const proposed = inbox.audits.filter((audit) => audit.state === "proposed");
   const lines = [
     `Harness ${url}`,
     `- ${inbox.batches.length} feature(s) en escalade, ${specs.length} specs et ${verdicts.length} verdict(s) à valider, ${inbox.decisions.length} décision(s) à relire`,
-    `- ${live.length} feature(s) en cours, ${proposed.length} audit(s) à trier`,
-    ...inbox.batches.map((batch) => `  · escalade : ${batch.run.title} (${batch.items.length})`),
-    ...specs.map((run) => `  · specs à valider : ${run.title}`),
-    ...verdicts.map((run) => `  · verdict : ${run.title} — ${run.reason ?? ""}`),
-    ...live.map((run) => `  · ${run.title} : ${run.step ? `/${run.step}` : run.state}`),
+    `- ${live.length} feature(s) en cours, ${failed.length} en échec, ${proposed.length} audit(s) à trier`,
+    ...inbox.batches.map((batch) => `  · escalade : ${batch.run.title} [${batch.run.id}] (${batch.items.length})`),
+    ...specs.map((run) => `  · specs à valider : ${run.title} [${run.id}]`),
+    ...verdicts.map((run) => `  · verdict : ${run.title} [${run.id}] — ${run.reason ?? ""}`),
+    ...live.map((run) => `  · ${run.title} [${run.id}] : ${run.step ? `/${run.step}` : run.state}`),
+    ...failed.map((run) => `  · en échec : ${run.title} [${run.id}] — ${run.reason ?? ""}`),
     ...proposed.map(
       (audit) =>
         `  · audit ${audit.id} (${audit.focus || "dépôt entier"}) : ${audit.proposals.length} proposition(s) — /audit lancer ${audit.id} 1,2…`,
     ),
-    "Les gestes (réponses, validations, renversements) se font dans OMP Console, Mac ou iOS.",
+    "Les gestes se font ici quand tu les demandes en clair (harness_validate, harness_answer, harness_reverse, harness_retry, harness_cancel, harness_accept_decisions), ou dans OMP Console.",
   ];
   return lines.join("\n");
 }

@@ -50,7 +50,11 @@ projets »).
 `add` clone le dépôt en nu, éprouve l'écriture sur son distant (un essai à blanc),
 devine ses commandes de test d'après ses manifestes (`package.json`, `Cargo.toml`,
 `go.mod`, `pyproject.toml`) et le déclare dans `~/.omp-harness/config.json`, puis recharge les dépôts du service sans
-arrêter les runs en cours (`harness.sh reload`). Si la clé
+arrêter les runs en cours (`harness.sh reload`). Pour un projet node, le `package.json`
+de `main` est lu : un script `test:touched` donne `tests.touched` = `npm run -s test:touched -- {files}`
+(sinon `npm test -- {files}`), `tests.pattern` vaut `test/**/*.test.ts` si un dossier
+`test/` existe (sinon `**/*.test.{ts,js}`), et les scripts `lint` et `typecheck` deviennent
+des `checks` nommés. Si la clé
 du service n'a pas accès, il l'affiche avec le lien GitHub où la poser (case « Allow
 write access ») et réessaie quand tu valides. Une URL `https://github.com/…` est
 convertie en SSH. Les commandes devinées, les modèles et le reste se règlent ensuite
@@ -111,8 +115,9 @@ chez Anthropic. `OMLX_API_TOKEN` passe la clé d'oMLX s'il en exige une, et
 
 La VM de Docker Desktop ou de podman doit avoir 8 Go (`up` le signale) ; le modèle
 compte en plus, hors VM. Hors ligne, les features avancent et fusionnent dans le clone
-du Mac : le push vers le distant échoue (événement `push_failed`) et part avec le
-merge suivant fait en ligne.
+du Mac : le push vers le distant échoue (événement `push_failed`, trois essais
+espacés), le run attend l'humain avec la raison ; `retry` ou la validation, en ligne,
+le poussent.
 
 **Changer de backend.** Sur la machine où tu travailles :
 
@@ -186,7 +191,8 @@ d'exemple par les tiens, et garde ou change les modèles (voir « Configuration 
   {
     "name": "mon-produit",
     "path": "/var/lib/omp-harness/repos/mon-produit",
-    "tests": { "touched": "npm test -- {files}", "full": "npm test" },
+    "tests": { "touched": "npm run -s test:touched -- {files}", "full": "npm test", "pattern": "test/**/*.test.ts" },
+    "checks": { "lint": "npm run -s lint" },
     "merge": "local",
     "remote": "origin"
   }
@@ -333,7 +339,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].path` | — | le clone nu du service |
 | `repos[].tests.touched` | `npm test -- {files}` | les tests des fichiers touchés ; `{files}` reçoit la liste |
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
-| `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR fusionnée par `gh` |
+| `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR posée en `gh pr merge --squash --auto`, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée) |
 | `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
 | `repos[].mainBranch` | `main` | la branche principale |
 | `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
@@ -344,13 +350,25 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `container.testImage` | `docker.io/library/node:22-bookworm` | l'image des tests par défaut |
 | `container.network` | `null` | le réseau des agents (celui du compose, qui porte la mémoire) |
 | `container.runnerEnvFile`, `container.runnerHome` | `null` | les clés des agents et leur HOME, chemins de l'hôte |
-| `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur un 429 ; vide, elle prend celle du niveau au-dessus ; un admin les remplace depuis les apps (`PUT /v1/models`) |
+| `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur une cause de `runner.failoverOn` (429, 5xx, réseau) ; vide, elle prend celle du niveau au-dessus ; un admin les remplace depuis les apps (`PUT /v1/models`) |
 | `stepTiers` | `req`, `specs`, `review` : `heavy` ; `impl`, `fix` : `standard` | le niveau de chaque étape ; la dernière correction avant le plafond passe toujours en `heavy` |
 | `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur (ceux déclarés depuis les apps s'y ajoutent) |
 | `providersEnvFile`, `providersModelsFile` | `providers.env`, `providers.models.yml` à côté de `tokenFile` | les clés et le `models.yml` des fournisseurs déclarés depuis les apps |
-| `review.specsGate` | `true` | la feature attend ta validation entre `/specs` et `/impl` |
+| `review.specsGate` | `"auto"` | la feature attend ta validation entre `/specs` et `/impl` : `true` toujours, `false` jamais, `"auto"` seulement si les specs découpent, laissent `## Modules` vide, touchent à l'irréversible, ou ouvrent un projet |
 | `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
 | `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
+| `review.autoMergeRisk` | `"medium"` | le risque le plus haut du verdict qui s'auto-merge encore (`"low"` pour serrer) |
+| `review.diffCount` | `"code"` | les lignes comptées face à `maxDiffLines` : `"code"` exclut tests, docs, CHANGELOG, manifestes et verrous ; `"all"` compte tout |
+| `review.escalationTimeoutSec` | `3600` | passé ce délai, une escalade ouverte (sauf une suppression) est tranchée sur la recommandation de l'agent, décision `auto_timeout` à relire ; `null` : jamais |
+| `review.mergeRetries` | `3` | les merges arrêtés (conflit, suite rouge, fusion refusée ou non constatée) relancés seuls — après 5, 15 puis 60 min — avant de te passer la main ; à part des corrections |
+| `review.mergePollSec`, `review.mergeWaitSec` | `60`, `7200` | en mode `gh`, la cadence de relecture de la PR (`gh pr view`) après `--auto`, et l'attente maximale de sa fusion ; au-delà, le merge est arrêté (`mergeRetries`) |
+| `runner.retryBackoffSec` | `[120, 600, 1800]` | l'attente avant chaque relance d'une étape échouée ; sa longueur est le nombre de relances si `stepRetries` n'est pas déclaré. Quota, réseau, fournisseur, délai : la liste se consomme entière, même cause répétée ; contexte, runner, sortie manquante, inconnu : deux fois de suite ⇒ l'humain. Liste épuisée ⇒ l'humain (`retry` relance), jamais `failed` |
+| `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
+| `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
+| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
+| `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
+| `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
+| `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
 | `runner.slots`, `heavy.slots` | `5`, `2` | agents et jobs de tests simultanés |
 | `runner.memoryMax`, `heavy.memoryMax` | `1G`, `4G` | le plafond mémoire de chacun |
 | `heavy.timeoutSec` | `1800` | la durée maximale d'un job de tests |
@@ -369,23 +387,81 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
 
 ## Une feature, pas à pas
 
+- **Artefacts tracés.** /req écrit des besoins `B-n : verbe objet contraintes` et
+  des critères `AC-n (B-m) : Given/When/Then` co-signés par leur besoin. /specs
+  ajoute un relevé du dépôt (chemins, symboles, conventions avec leurs lignes, pour
+  que /impl ne relise pas le dépôt), des spécifications `S-n (AC-…)` assez précises
+  pour écrire le test avant le code, une section `## Modules` obligatoire et un
+  `## Découpage` (`split_feature` au-delà du plafond de diff). /impl nomme chaque
+  test avec son `AC-n`, pose un `checkpoint` après chaque incrément cohérent,
+  corrige `specs.md` plutôt que d'implémenter à côté d'une spec ambiguë, et note
+  dans `## Reste` ce qui n'est pas livré.
+- **Ce que le service vérifie en fin d'étape** (`steps.ts`). /specs : `## Modules`
+  vide, un besoin `B-n` sans critère `AC-m (B-n)` ou un critère cité par aucune
+  `S-k (AC-m)` valent une relance, puis un échec `missing_output`. Un `## Découpage`
+  qui liste des features (`- titre — demande — modules`) devient un projet
+  « Découpage de « … » » (une seule fois, même si tu refais /specs), le run
+  courant garde sa part. /impl : un `## Reste` non vide ouvre un run de suite
+  « Suite de « … » » sur les mêmes modules (une seule fois).
+- **Interruption.** Une étape coupée (échéance, fournisseur, réseau, runner mort)
+  laisse un commit `wip(<étape>): interrompu (tentative N)` et la tentative
+  suivante reçoit la consigne de repartir de `git diff <base>` et de l'artefact,
+  pas de zéro. L'échec porte sa cause (`timeout`, `rate_limit`, `network`,
+  `provider`, `context`, `runner`, `missing_output`, `aborted`, `other`) : la
+  machine en déduit la relance, son délai, ou le passage à l'humain.
 - **Décisions.** Ce que les specs, la mémoire ou le code ne tranchent pas, l'agent
-  le tranche par l'option la plus réversible, avec l'outil `decision`. Le service en
-  fait un commit `decision: … → …` (point de reprise). Une décision cite celles dont
-  elle découle (`dependsOn`).
+  le tranche par l'option la plus réversible, avec l'outil `decision` (`chosen` et
+  2 à 4 `options`). Le service en fait un commit `decision: … → …` (point de
+  reprise). Une question de produit ou d'UX non tranchée (`clarification`) se décide
+  de la même façon, seul : tu pourras renverser après coup. Une décision cite
+  celles dont elle découle (`dependsOn`).
 - **Escalades.** Schéma de données, API publique, suppression : l'agent ne
-  l'applique pas, contourne et termine le reste. Les questions partent ensemble en
-  fin d'étape, et l'étape reprend quand tu as tout répondu.
+  l'applique pas, contourne et termine le reste. Avant d'escalader, le service
+  cherche dans la mémoire une décision que tu as déjà tranchée (tag
+  `harness,decision`, score ≥ 0,8, même catégorie) : s'il en trouve une, ta
+  réponse s'applique comme un checkpoint « tranché par l'humain le … (souvenir …) »,
+  sans question. Sinon l'escalade porte l'option recommandée par l'agent. Les
+  questions partent ensemble en fin d'étape, et l'étape reprend quand tu as tout
+  répondu.
 - **Renverser une décision.** Ta raison rejoint la mémoire. Si rien n'en découle,
   rien n'est annulé : l'étape en cours (ou une correction après la revue) applique
   ta nouvelle option sur le code actuel. Si des décisions en découlent, le service
-  revient au point de reprise : seules celles-là tombent, les autres sont
-  réappliquées. Après un merge, un run de suite s'ouvre.
-- **Revue.** L'agent de revue lance la suite complète et rend un verdict structuré
-  (`review_verdict`). Bas risque, suite verte sur l'arbre exact et diff court :
-  auto-merge. Sinon, tu valides ; tu lis le code si le verdict est faible.
-- **Merge.** Rebase sur `main`, squash, puis push sur le distant. Un push refusé
-  laisse un événement `push_failed` avec la raison.
+  reverte les commits de la décision et de ses dépendantes : seules celles-là
+  tombent, le travail indépendant fait après reste dans l'arbre (si le revert entre
+  en conflit, retour dur au point de reprise et les indépendantes sont
+  réappliquées). Après un merge, le commit squash est reverté sur `main` et un run
+  de suite s'ouvre. Une décision prise à l'échéance d'une escalade (`auto_timeout`)
+  se renverse comme les autres.
+- **Revue.** À l'entrée de la première revue (après le rebase), le service met la
+  suite complète en route avant même le prompt ; le `run_tests scope: full` de
+  l'agent rejoint ce job. L'agent de revue lit req, specs et impl, relit le diff
+  complet à la première passe et seulement le diff depuis la revue précédente
+  ensuite (`sinceSha` = HEAD à la fin de la revue précédente ; chaque bloquant
+  levé est vérifié un par un ; suite complète seulement quand il n'en reste
+  aucun — si elle manque encore, le service la réclame une fois), puis rend un
+  verdict structuré (`review_verdict`) avec une table AC par AC (`criteria` : id,
+  test nommé, `pass` | `fail` | `untested`) et une confiance honnête. Une suite
+  complète rouge devient un bloquant « suite complète rouge : … », quoi qu'en dise
+  la revue. Auto-merge si : aucun bloquant, risque ≤ `review.autoMergeRisk`, suite
+  verte sur l'arbre exact, diff court (`review.diffCount`), aucune escalade
+  ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
+  fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
+  sinon tu valides, et tu lis le code si le verdict est faible.
+- **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
+  non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
+  preuve.
+- **Merge.** Rebase sur `main`, squash, puis push sur le distant. Un push refusé par le
+  dépôt (branche protégée, droit manquant) n'est **pas** un merge : le run attend
+  l'humain avec la raison (« push refusé : … », événement `push_failed`) ; une
+  coupure réseau est réessayée trois fois avant. En mode `gh`, la PR est posée en
+  `--auto` et le run reste `merging` jusqu'à ce que GitHub l'ait fusionnée. Un merge
+  arrêté (conflit, suite rouge, fusion non constatée) repart seul après 5, 15 puis
+  60 min (`review.mergeRetries`). Mergée mais mauvaise ? `POST /v1/runs/{id}/revert` :
+  le commit squash est défait sur `main` (poussé, ou PR de revert en mode `gh`),
+  événement `reverted`, et un run de suite reprend la feature. L'oracle garde de chaque
+  feature mergée son résumé, ses modules, ses risques résiduels, ce que la revue n'a pas
+  vérifié et ses décisions — celles prises seules marquées « (choix de l'agent, non
+  validé) ».
 
 ## La mémoire du projet
 
@@ -398,8 +474,11 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   `GET /v1/status` l'affiche par dépôt.
 - **Agents branchés.** Chaque agent charge le plugin mémoire (`runner.extensions`)
   avec `MEM0_PROJECT_ID=<portée>`, `MEM0_AUTOSETUP=0` (rien n'est écrit dans le
-  dépôt, donc rien dans la PR) et `MEM0_NUDGE=0`. Le service écrit lui-même en
-  mémoire les besoins, chaque feature mergée et chaque correction humaine **avec sa
+  dépôt, donc rien dans la PR), `MEM0_NUDGE=0` et, avec `memory.runnerMode`
+  (vrai par défaut), `MEM0_MODE=runner` : ni rappel par tour ni épinglage — la
+  section Oracle du prompt est la seule source, et les outils `mem0_*` restent pour
+  écrire les pièges durables en fin d'étape. Le service écrit lui-même en mémoire
+  les besoins, chaque feature mergée et chaque correction humaine **avec sa
   raison**.
 - **Isolée.** `mem0-rs` tourne dans son conteneur (base en `~/.omp-harness/mem0`), ou
   sous `omp-mem0` avec systemd (base en `/var/lib/omp-mem0`, 0700), hors du budget
@@ -489,7 +568,7 @@ au serveur :
   (`VPS_OLLAMA_API_KEY`). Ils sont écrits dans le `models.yml` des runners.
 
 Puis les chaînes : pour chaque tier (`fast`, `standard`, `heavy`), la liste ordonnée
-des `fournisseur/modèle` à essayer (bascule sur le suivant après un rate limit). Une
+des `fournisseur/modèle` à essayer (bascule sur le suivant après un rate limit, un 5xx ou une panne réseau ; seul de sa chaîne, un fournisseur est réessayé après son `retry-after`). Une
 capacité et un remplissage par minute (`capacity`, `refillPerMinute`) donnent au
 fournisseur son seau à jetons. Tout s'applique au prochain runner, sans redémarrage,
 et survit aux redémarrages (base SQLite, `providers`/`settings`).
@@ -518,26 +597,28 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
 | `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur. |
 | `GET /v1/repos` | viewer | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`). |
-| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
-| `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`), étapes, décisions, escalades, tests, artefacts. |
-| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | operator | Répondre au lot. Le run reprend quand tout est répondu. |
-| `POST /v1/runs/{id}/decisions/{n}/accept` | operator | Accepter une décision prise seule. |
-| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | operator | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
+| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). |
+| `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`), étapes, décisions, escalades (avec `recommended`, `options`, `context`), tests, artefacts. |
+| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. |
+| `POST /v1/runs/{id}/decisions/{n}/accept` · `POST /v1/runs/{id}/decisions/accept` | operator | Accepter une décision prise seule, ou toutes celles du run d'un geste (`{accepted: n}`). |
+| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | operator | Renverser : correction sur l'état courant, ou revert des commits de N et de ses dépendantes si des décisions en découlent (retour dur au checkpoint N seulement si ce revert entre en conflit). Run mergé : revert du squash sur `main` puis run de suite. Raison dans l'oracle. |
 | `POST /v1/runs/{id}/validate` `{approve, reason?}` | operator | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
 | `POST /v1/runs/{id}/cancel` | operator | Annuler (la branche reste). |
+| `POST /v1/runs/{id}/retry` | operator | Relancer un run `failed` ou `awaiting_human` à son étape, tout de suite (409 sinon). |
+| `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé. |
 | `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
 | `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
-| `GET /v1/decisions?status=auto` | viewer | La relecture du matin. |
-| `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
+| `GET /v1/decisions?status=auto,auto_timeout` | viewer | La relecture du matin : les décisions prises seules par l'agent, ou à l'échéance d'une escalade. |
+| `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules (à part, hors du compte bloquant `pendingCount` = escalades ouvertes + runs en attente), features en cours, audits ouverts, curseur du flux. |
 | `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction. |
-| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. |
-| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet, ou annuler. |
+| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
+| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister, créer (le jeton n'est rendu qu'à la création), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
 | `PUT /v1/models` `{models: {fast, standard, heavy} \| null}` | admin | Les chaînes de modèles de chaque tier (`[{provider, model}]`) ; `null` revient à celles de la configuration. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `priority`, `step_started`, `step_done`, `step_timeout`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture.
@@ -548,32 +629,35 @@ insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lectur
 |---|---|---|
 | **Clients** : HTTPS + SSE, auth, point d'entrée unique | `http.ts`, `auth.ts`, `queries.ts` | Un jeton par client (empreinte SHA-256, comparée en temps constant), un rôle, des dépôts permis ; chaque route déclare son rôle minimal. Écoute sur `127.0.0.1` ; Tailscale ou un reverse proxy TLS publie l'API. Le flux SSE se rejoue depuis `Last-Event-ID`, filtré par dépôt. |
 | **SQLite** : source de vérité, un seul écrivain | `db.ts`, `events.ts` | Runs, étapes, décisions (checkpoints), escalades, artefacts, journal d'événements, cache heavy et tests lancés. Seul le service ouvre la base. Runners et jobs heavy passent par lui. Transactions réentrantes : les abonnés ne voient un événement qu'au COMMIT. Migrations numérotées (`PRAGMA user_version`). |
-| **Pipeline Service** : machine à états, reprise au checkpoint | `machine.ts`, `context.ts`, `orchestrator.ts`, `steps.ts` | Machine pure, table des transitions (`TRANSITIONS`) : toute écriture d'état passe par `context.transition`, en compare-and-swap, avec ses événements dans la même transaction. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. |
-| **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel`. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. |
-| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans l'oracle, puis précisés par la section `## Modules` des specs. Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation. |
-| **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Le runner de la revue reste vivant pendant review ⇄ fix (cache de prompt). Les autres meurent en fin d'étape ou à l'escalade. |
-| **Merges** : un dépôt à la fois | `merger.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. |
-| **Politique de décision** | `decisions.ts` | Outil hôte `decision`. Une décision réversible devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
-| **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, OOM | `heavy.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
-| **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Un diff de plus de 300 lignes interdit l'auto-merge. |
-| **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par /req, /specs et /project. En écriture : les comptes rendus de besoins, chaque feature mergée (knowledge-updater) et chaque correction humaine **avec sa raison**. Injoignable, il dégrade sans bloquer. |
-| **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review ⇄ fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
-| **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`. Bas risque + suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner) + diff ≤ 300 lignes : auto-merge. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
+| **Pipeline Service** : machine à états, reprise au checkpoint, relances différées | `machine.ts`, `context.ts`, `orchestrator.ts`, `steps.ts` | Machine pure, table des transitions (`TRANSITIONS`) : toute écriture d'état passe par `context.transition`, en compare-and-swap, avec ses événements dans la même transaction. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. Une étape qui échoue pour une cause relançable est remise en file avec `notBefore = maintenant + runner.retryBackoffSec[tentative]`. Les causes qui se résolvent en attendant (`rate_limit`, `network`, `provider`, `server_error`, `timeout`) consomment toute la liste, même répétées ; les autres (`context`, `runner`, `missing_output`, `other`) passent à l'humain dès deux échecs de suite. Liste épuisée ⇒ `awaiting_human` avec la cause (l'humain relance par `retry`) ; `failed` est réservé au non relançable. Un correcteur qui ne change rien conteste : la revue repart dans un runner neuf, et la seconde contestation passe à l'humain. Un run `failed` ou `awaiting_human` se relance (`retry`) à son étape. |
+| **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel` ; un run dont `notBefore` n'est pas passé, ou dont les modules sont encore en déduction, n'est pas candidat. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. À chaque tour, les escalades ouvertes depuis plus de `review.escalationTimeoutSec` sont tranchées sur la recommandation de l'agent. |
+| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans le texte de la feature et ses souvenirs de besoins (tag `besoins`) — pour un run seul aussi, avant son admission —, puis précisés par la section `## Modules` des specs ou l'outil `set_modules`. Les modules connus sont les dossiers jusqu'à deux niveaux, les fichiers de la racine, et les fichiers `.ts` d'un dossier plat (plus de 8). Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation ; un merge arrêté est relancé seul (`review.mergeRetries`, 5/15/60 min). |
+| **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance, bascule | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Chaque erreur de prompt est classée (`classifyPromptError` : `rate_limit` — 429/529 et messages de quota —, `server_error` 5xx, `network`, `context`, `other`) ; une cause de `runner.failoverOn` fait passer au fournisseur suivant de la chaîne (`set_model`, même conversation) ; chaîne à un seul fournisseur (ou tous à sec) ⇒ attente du `retry-after` du fournisseur (sinon 60 s), bornée par l'échéance, puis réessai du même, 3 fois au plus (`provider_retry`). L'erreur rendue à l'étape porte `cause` et `retryAfterMs`. Le runner de la revue reste vivant pendant review → fix (cache de prompt) ; fix → review repart à neuf. Les autres meurent en fin d'étape ou à l'escalade. |
+| **Merges** : un dépôt à la fois, jamais « merged » avant `main` | `merger.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. Mode `gh` : `gh pr merge --squash --auto`, puis `gh pr view` toutes les `mergePollSec` jusqu'à la fusion constatée (borne `mergeWaitSec`). Mode `local` : un push refusé ⇒ `awaiting_human` « push refusé : … », réseau ⇒ réessayé. Merge arrêté ⇒ `queued` avec `notBefore` (5/15/60 min), compté dans `mergeRetries`. `revert(run)` : `git revert` du squash dans un worktree jetable, push (ou PR `--auto`), événement `reverted`, run de suite. |
+| **Notifications** : ntfy, fire-and-forget | `notify.ts`, `context.ts` | Abonné au journal (`store.onEvent`) : chaque événement de `notify.events` part en `POST notify.url` avec `Title`/`Priority`/`Tags`/`Click`. Le titre est français et court (« Question — <feature> », « Verdict à valider — … », « Mergé — … »). Une erreur est journalisée (`notify_failed`) au plus une fois par heure, jamais levée. |
+| **Politique de décision** | `decisions.ts` | Outil hôte `decision` (`options` obligatoires, 2 à 4, `chosen` parmi elles). Une décision réversible — ou une `clarification` de produit/UX — devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
+| **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, dédoublonnage, OOM | `heavy.ts`, `proc.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env ; seul un VERT y entre, un rouge frais est relancé une fois (`heavy_fail_retry`) et jamais resservi. Deux appels de même clé partagent un seul process (`heavy_joined`) ; l'arrêt d'un appelant le désabonne, le dernier parti tue le job (SIGTERM puis SIGKILL, unité arrêtée, slot rendu). Scope `touched` : `tests.pattern` filtre les fichiers, aucun retenu ⇒ vert « rien lancé » (`heavy_skipped`) ; scope `check` : une commande nommée de `repos[].checks`, une clé de cache par nom. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
+| **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build, revert ciblé | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Le tree hash du cache heavy part d'une copie de l'index du worktree (git ne relit que ce qui a changé). `diffLines(mode)` : `code` ignore `test/**`, `*.test.*`, `Tests/`, `*.md`, `CHANGELOG*`, `package.json`, `*.lock` — ce qui compte face à `review.maxDiffLines` (`review.diffCount`). `revertRange(de, à)` défait une plage de commits en un seul commit `revert: …` (checkpoints vides sautés) ; un conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus — le renversement d'une décision ne perd plus le travail indépendant. |
+| **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par toutes les étapes et /project (`recall`), et par les escalades (`recallDecisions` : les souvenirs `harness,decision` seulement, filtrés ici car mem0-rs ne filtre les étiquettes que par égalité stricte). En écriture : les besoins `B-n` du compte rendu (`briefOfReq`, ≤ 500 car.), chaque feature mergée (knowledge-updater : résumé, modules, risques, non vérifié, décisions) et chaque décision humaine **avec sa raison**, sa catégorie, ses options et son contexte. Rendu au prompt avec l'étiquette principale et la date courte. Injoignable, il dégrade sans bloquer. |
+| **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review → fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur une cause de `runner.failoverOn`, `set_model` fait passer le **même** runner au fournisseur suivant. |
+| **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`, avec la table AC par AC (`criteria`) et une `confidence` obligatoires. Auto-merge si aucun bloquant, risque ≤ `review.autoMergeRisk`, suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner), diff ≤ `review.maxDiffLines`, aucune escalade ouverte, confiance forte, chaque `AC-n` de specs.md (`parseAcIds`) en `pass`, et tous les fichiers touchés (git) relus par la revue. Un point non vérifié ne bloque que s'il cite un `AC-n`. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 14 Go | `deploy/` | `omp-harness.slice` 16G ⊃ runners 5G + heavy 8G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
-| **Validation des specs** (ajout) | `machine.ts`, `gestures.ts` | `review.specsGate` (vrai par défaut) : après /specs, le run attend l'humain, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
-| **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules) par l'outil hôte `audit_propose`. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project. |
+| **Validation des specs** (ajout) | `machine.ts`, `gestures.ts` | `review.specsGate` (`"auto"` par défaut) : après /specs, le run attend l'humain — toujours (`true`), jamais (`false`), ou seulement si les specs découpent, laissent les modules vides, touchent à l'irréversible ou ouvrent un projet (`"auto"`) —, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
+| **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules, `evidence` fichier:ligne obligatoire pour une faiblesse, `dependsOn` par titre — résolu en index, refusé s'il est inconnu, se cite ou boucle —, `impact`, `effort`) par l'outil hôte `audit_propose` ; l'appel est refusé avec la raison tant que ces règles ne tiennent pas. Le prompt reçoit les runs ouverts du dépôt et les souvenirs « Feature mergée » (rappel `feature mergée <dépôt>`) pour ne pas proposer de doublon. Une analyse qui échoue (runner, réseau, échéance) repart une fois, runner et worktree neufs, avant `failed` ; pas quand le modèle a répondu sans proposer. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project, dans l'ordre topologique de `dependsOn`. |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
-| **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Relire, accepter, renverser une décision. La raison part dans l'oracle. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service fait un retour dur au checkpoint N : seules ces dépendantes tombent, les indépendantes sont réappliquées. Un run déjà mergé ouvre un run de suite. |
+| **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Répondre aux escalades (avec une raison, qui part dans l'oracle avec les options et le contexte), relancer un run échoué ou en attente (`retry`), accepter une décision ou toutes d'un geste, renverser une décision. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service **reverte** les commits de N et de ses dépendantes (du checkpoint N au checkpoint de la première survivante postérieure, sinon HEAD) : le travail indépendant d'après reste dans l'arbre, les checkpoints tiennent ; si ce revert entre en conflit, retour dur au checkpoint N et les indépendantes sont réappliquées par consigne. Un run déjà mergé : revert du commit squash sur `main`, puis un run de suite qui porte l'option (si le revert ne passe pas — push refusé —, événement `revert_failed` et run de suite seul). Sans réponse humaine passé `review.escalationTimeoutSec`, chaque escalade ouverte (jamais une suppression, ni une escalade sans recommandation) reçoit l'option recommandée : décision `auto_timeout` avec son checkpoint, renversable comme les autres, événement `decision_auto_timeout`, souvenir tagué `harness,decision,auto_timeout`, et le run reprend. |
 
 ## Sécurité et écarts assumés au schéma
 
 - **Heavy en service transitoire, pas en `--scope`.** Une scope ne porte ni
   `User=` ni `PrivateNetwork=`. Le job part donc en `systemd-run --wait --pipe` :
   mêmes limites cgroup, plus l'isolation demandée.
-- **Les outils du runner sont des outils hôtes RPC.** `run_tests`, `decision`,
-  `review_verdict`, `oracle_recall` et `progress` sont déclarés par
-  `set_host_tools` et exécutés par le service. Le runner n'a ni accès à la base ni
-  jeton d'API, et rien n'est à installer dans son profil.
+- **Les outils du runner sont des outils hôtes RPC.** `decision`, `progress`,
+  `oracle_recall`, `checkpoint` et `set_modules` à toutes les étapes,
+  `split_feature` en /specs et /impl, `run_tests` (`touched` | `full` | `check`) dès
+  /impl et `review_verdict` en revue sont déclarés par `set_host_tools` et exécutés
+  par le service. Le runner n'a ni accès à la base ni jeton d'API, et rien n'est à
+  installer dans son profil.
 - **Trois users au lieu d'un.** `omp-harness` tient la base et le jeton,
   `omp-runner` les clés LLM et les worktrees, `omp-heavy` rien. Un runner détourné
   par une injection de prompt ne peut pas s'auto-valider par l'API.

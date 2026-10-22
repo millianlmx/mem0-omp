@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { Store } from "../../omp-harness/db.ts";
 import type { EventRow } from "../../omp-harness/db.ts";
+import { EVENT_TYPES } from "../../omp-harness/events.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
@@ -167,6 +168,51 @@ test("harness-events/AC-5 : un run qui attend un runner n'écrit son refus d'adm
     assert.equal(refusals.length, 1, "un refus par attente, pas un par tour");
     assert.equal(refusals[0]?.payload.reason, "slots");
     assert.equal(world.store.getRun(second.id)?.state, "queued");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-events/AC-6 : le catalogue nomme les événements d'autonomie ; `project_done` part quand le dernier run d'un projet est terminal, mergé ou non", async () => {
+  const catalogue: readonly string[] = EVENT_TYPES;
+  for (const type of [
+    "run_failed",
+    "project_done",
+    "reverted",
+    "revert_failed",
+    "decision_auto_timeout",
+    "split",
+    "follow_up",
+    "checkpoint",
+    "heavy_joined",
+    "notify_failed",
+    "retried",
+  ])
+    assert.ok(catalogue.includes(type), `${type} manque au catalogue`);
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
+  await world.orchestrator.start();
+  try {
+    const { projectId, runs } = await world.orchestrator.createProject({
+      repo: "demo",
+      title: "Refonte export",
+      features: [
+        { title: "A", request: "a", modules: ["src/api"] },
+        { title: "B", request: "b", modules: ["src/db"] },
+      ],
+    });
+    await waitFor(
+      () => runs.every((run) => world.store.getRun(run.id)?.state === "running"),
+      () => runs.map((run) => String(world.store.getRun(run.id)?.state)).join(", "),
+    );
+    await world.orchestrator.cancel(runs[0]!.id);
+    assert.equal(world.store.getProject(projectId)?.status, "active", "un run encore vivant : le projet aussi");
+    assert.ok(!world.store.eventsSince(0).some((e) => e.type === "project_done"));
+    await world.orchestrator.cancel(runs[1]!.id);
+    assert.equal(world.store.getProject(projectId)?.status, "done");
+    const done = world.store.eventsSince(0).filter((e) => e.type === "project_done");
+    assert.equal(done.length, 1);
+    assert.deepEqual(done[0]?.payload, { projectId, title: "Refonte export", merged: 0, notMerged: 2 });
+    assert.equal(done[0]?.repo, "demo");
   } finally {
     await world.orchestrator.stop();
   }

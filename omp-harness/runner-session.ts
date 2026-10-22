@@ -1,18 +1,31 @@
 // La session d'un runner OMP : un process RPC, son modèle et sa chaîne de bascule.
 //
 // Partagée par les runs et les audits — une seule façon de lancer un runner, de
-// prendre un jeton de fournisseur par prompt, de basculer sur un rate limit (même
-// runner, `set_model`), de changer de tier entre deux étapes et de BORNER un prompt
-// dans le temps : au-delà de l'échéance de l'étape, le runner est arrêté et le
-// prompt rend une erreur relançable, jamais une attente infinie.
+// prendre un jeton de fournisseur par prompt, de basculer sur une erreur du
+// fournisseur (rate limit, 5xx, réseau : `runner.failoverOn`) vers le suivant de la
+// chaîne — ou, seul fournisseur, d'attendre son `retry-after` et de le réessayer —,
+// de changer de tier entre deux étapes et de BORNER un prompt dans le temps : au-delà
+// de l'échéance de l'étape, le runner est arrêté et le prompt rend une erreur
+// relançable, jamais une attente infinie.
 import type { ModelChoice, RepoConfig, Tier } from "./config.ts";
 import { modelChain } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { EventType } from "./events.ts";
 import { FAILOVER_PROMPT } from "./prompts.ts";
-import type { HostToolDefinition, HostToolHandler, PromptResult } from "./rpc.ts";
-import { RpcRunner, isRateLimit } from "./rpc.ts";
+import type { HostToolDefinition, HostToolHandler, PromptError, PromptErrorCause, PromptResult } from "./rpc.ts";
+import { RpcRunner, classifyPromptError, parseRetryAfter } from "./rpc.ts";
 import { runnerArgv, runnerEnv, stopRunner } from "./runner.ts";
+import { DEFAULT_COOLDOWN_MS } from "./scheduler.ts";
+
+export { classifyPromptError };
+export type { PromptErrorCause };
+
+/** Les réessais du MÊME fournisseur quand la chaîne n'en a qu'un (ou que tous sont à sec). */
+export const SAME_PROVIDER_RETRIES = 3;
+
+/** Le prompt de reprise après une erreur passagère du MÊME fournisseur (pas de bascule). */
+const RETRY_PROMPT =
+  "Reprends exactement où tu t'es arrêté : le fournisseur a rendu une erreur passagère, le même modèle reprend.";
 
 export type SessionHooks = {
   onHostTool: HostToolHandler;
@@ -20,18 +33,44 @@ export type SessionHooks = {
   event: (type: EventType, payload: Record<string, unknown>) => void;
   /** Le modèle ou l'unité du runner ont changé (lancement, bascule, changement de tier). */
   runnerChanged?: (unit: string | null, model: string | null) => void;
+  /** L'attente avant de réessayer le même fournisseur (tests : temps simulé) ; défaut : un vrai délai. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 };
+
+/** Le début du message d'une erreur de prompt due à l'échéance de l'étape (Steps : cause `timeout`). */
+export const STEP_TIMEOUT_PREFIX = "délai d'étape dépassé";
 
 /** Le résultat d'un prompt arrêté à l'échéance de son étape. */
 export function timeoutResult(seconds: number): PromptResult {
   return {
     status: "error",
-    error: { message: `délai d'étape dépassé (${seconds} s) : runner arrêté`, retryable: true },
+    error: { message: `${STEP_TIMEOUT_PREFIX} (${seconds} s) : runner arrêté`, retryable: true, cause: "other", retryAfterMs: null },
   };
 }
 
 export function modelLabel(model: ModelChoice | null): string | null {
   return model ? `${model.provider}/${model.model}` : null;
+}
+
+/** L'erreur d'un prompt avec sa cause et le délai demandé par le fournisseur. */
+function annotate(error: PromptError): PromptError & { cause: PromptErrorCause; retryAfterMs: number | null } {
+  return { ...error, cause: error.cause ?? classifyPromptError(error), retryAfterMs: parseRetryAfter(error) };
+}
+
+/** Un délai interrompu par `signal` (rejette alors). */
+function realSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new Error("attente annulée : run arrêté"));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("attente annulée : run arrêté"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export class RunnerSession {
@@ -104,7 +143,7 @@ export class RunnerSession {
       config.runner.isolation === "none" ? { ...process.env, ...this.#ctx.providers.runnerEnv() } : process.env;
     const proc = this.#ctx.spawn(argv.command, argv.args, {
       cwd: this.#cwd,
-      env: runnerEnv(scope, config.oracle, base),
+      env: runnerEnv(scope, config.oracle, base, config.memory.runnerMode),
     });
     const runner = new RpcRunner(proc, {
       onHostTool: this.#hooks.onHostTool,
@@ -138,8 +177,12 @@ export class RunnerSession {
 
   /**
    * Un prompt, avec un jeton du fournisseur courant (ou du suivant de la chaîne), la
-   * bascule sur rate limit, et l'échéance `deadlineAt` (ms) : passé ce temps, le
-   * runner est arrêté et le prompt rend une erreur relançable.
+   * bascule sur les causes de `runner.failoverOn`, et l'échéance `deadlineAt` (ms) :
+   * passé ce temps, le runner est arrêté et le prompt rend une erreur relançable.
+   *
+   * Chaîne à un seul fournisseur (ou tous à sec) : on attend `retry-after` (sinon le
+   * refroidissement par défaut), borné par l'échéance, et on réessaie le même, au
+   * plus SAME_PROVIDER_RETRIES fois. Toute erreur rendue porte sa `cause`.
    */
   async prompt(message: string, signal: AbortSignal, deadlineAt: number): Promise<PromptResult> {
     const { config, scheduler } = this.#ctx;
@@ -151,16 +194,39 @@ export class RunnerSession {
       if (pick && pick.index !== this.#modelIndex) await this.#switch(pick.choice, pick.index, "model_failover");
     }
     let text = message;
-    for (let failovers = 0; ; failovers++) {
+    let failovers = 0;
+    let sameRetries = 0;
+    for (;;) {
       const result = await this.#bounded(text, deadlineAt, signal);
-      if (result.status !== "error" || !isRateLimit(result.error) || !this.#model || failovers >= chain.length)
-        return result;
-      scheduler.reportRateLimit(this.#model.provider, null);
-      this.#hooks.event("rate_limited", { provider: this.#model.provider, model: this.#model.model });
-      const next = await scheduler.waitModel(tier, chain, (this.#modelIndex + 1) % chain.length, signal);
-      if (!next) return result;
-      await this.#switch(next.choice, next.index, "model_failover");
-      text = FAILOVER_PROMPT;
+      if (result.status !== "error" || !result.error) return result;
+      const error = annotate(result.error);
+      const classified: PromptResult = { status: "error", error };
+      const failoverOn: readonly string[] = config.runner.failoverOn;
+      if (!failoverOn.includes(error.cause)) return classified;
+      const current = this.#model ? { provider: this.#model.provider, model: this.#model.model } : null;
+      if (error.cause === "rate_limit") {
+        if (current) scheduler.reportRateLimit(current.provider, error.retryAfterMs);
+        this.#hooks.event("rate_limited", { ...current, retryAfterMs: error.retryAfterMs });
+      } else this.#hooks.event("provider_error", { ...current, cause: error.cause });
+      if (sameRetries >= SAME_PROVIDER_RETRIES || !this.alive) return classified;
+      const next =
+        current && chain.length > 1 && failovers < chain.length
+          ? await scheduler.waitModel(tier, chain, (this.#modelIndex + 1) % chain.length, signal)
+          : null;
+      if (next && (next.choice.provider !== current?.provider || next.choice.model !== current?.model)) {
+        failovers++;
+        await this.#switch(next.choice, next.index, "model_failover");
+        text = FAILOVER_PROMPT;
+        continue;
+      }
+      // Personne d'autre : on attend ce que le fournisseur demande (le planificateur
+      // l'a déjà fait si la chaîne a tourné jusqu'à lui), puis on le réessaie.
+      sameRetries++;
+      const wait = next ? 0 : Math.min(error.retryAfterMs ?? DEFAULT_COOLDOWN_MS, Math.max(0, deadlineAt - Date.now()));
+      this.#hooks.event("provider_retry", { ...current, cause: error.cause, waitMs: wait, attempt: sameRetries });
+      if (deadlineAt - Date.now() <= 0) return classified;
+      if (wait > 0) await (this.#hooks.sleep ?? realSleep)(wait, signal);
+      text = RETRY_PROMPT;
     }
   }
 

@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { RpcRunner, isRateLimit } from "../../omp-harness/rpc.ts";
-import type { RunnerProcess } from "../../omp-harness/rpc.ts";
+import { RpcRunner, classifyPromptError, isRateLimit, parseRetryAfter } from "../../omp-harness/rpc.ts";
+import type { PromptError, PromptErrorCause, RunnerProcess } from "../../omp-harness/rpc.ts";
 
 /** Un process factice : on écrit ses trames stdout, on lit ce que le runner lui envoie. */
 function fakeProc(): {
@@ -144,4 +144,39 @@ test("harness-rpc/AC-5 : un runner qu'on ne peut pas signaler (lancé par sudo) 
   const hung = new RpcRunner({ ...stuck.proc, kill: () => true }, { onHostTool: async () => ({ text: "" }) });
   await hung.stop(10);
   assert.equal(hung.alive, false);
+});
+
+test("harness-rpc/AC-6 : la cause d'une erreur de prompt se lit sur le statut puis sur le message — rate limit, 5xx, réseau, contexte, autre", () => {
+  const cases: [PromptError | null, PromptErrorCause][] = [
+    [{ message: "429 Too Many Requests", httpStatus: 429 }, "rate_limit"],
+    [{ message: "You have hit your usage limit for this period" }, "rate_limit"],
+    [{ message: "Internal Server Error", httpStatus: 503 }, "server_error"],
+    [{ message: "502 Bad Gateway" }, "server_error"],
+    [{ message: "fetch failed: ECONNRESET" }, "network"],
+    [{ message: "TypeError: fetch failed" }, "network"],
+    [{ message: "socket hang up" }, "network"],
+    [{ message: "prompt is too long: 213000 tokens > 200000 maximum context length" }, "context"],
+    [{ message: "input exceeds the maximum context window", httpStatus: 400 }, "context"],
+    [{ message: "Go model requires Global regions" }, "other"],
+    [{ message: "invalid api key", httpStatus: 401 }, "other"],
+    [null, "other"],
+  ];
+  for (const [error, cause] of cases) assert.equal(classifyPromptError(error), cause, JSON.stringify(error));
+  // Une erreur de contexte prime sur un 5xx : relancer tel quel ne sert à rien.
+  assert.equal(classifyPromptError({ message: "maximum context length exceeded", httpStatus: 500 }), "context");
+  assert.equal(isRateLimit({ message: "overloaded_error", httpStatus: 529 }), true);
+});
+
+test("harness-rpc/AC-7 : `retry-after` se lit dans les détails (en-tête en secondes ou date HTTP, retryAfter du corps) ou dans le message ; sinon null", () => {
+  const now = Date.parse("2026-10-22T10:00:00Z");
+  assert.equal(parseRetryAfter({ message: "429", details: { headers: { "retry-after": "30" } } }, now), 30_000);
+  assert.equal(parseRetryAfter({ message: "429", details: { headers: { "Retry-After": "Wed, 22 Oct 2026 10:00:45 GMT" } } }, now), 45_000);
+  assert.equal(parseRetryAfter({ message: "429", details: { body: { error: { retryAfter: 12 } } } }, now), 12_000);
+  assert.equal(parseRetryAfter({ message: "429", details: { retryAfterMs: 1500 } }, now), 1500);
+  assert.equal(parseRetryAfter({ message: "Rate limit reached. Please retry after 20 seconds." }, now), 20_000);
+  assert.equal(parseRetryAfter({ message: "Too many requests, try again in 2 min" }, now), 120_000);
+  assert.equal(parseRetryAfter({ message: "rate limited, retry in 750ms" }, now), 750);
+  assert.equal(parseRetryAfter({ message: "429 Too Many Requests" }, now), null);
+  assert.equal(parseRetryAfter({ message: "429", retryAfterMs: 9000, details: { headers: { "retry-after": "1" } } }, now), 9000, "une valeur déjà posée prime");
+  assert.equal(parseRetryAfter(null, now), null);
 });

@@ -10,6 +10,8 @@
     "oomScoreAdjust": 300,
     "profile": "pipeline",
     "stepTimeoutSec": 5400,
+    "retryBackoffSec": [120, 600, 1800],
+    "failoverOn": ["rate_limit", "server_error", "network"],
     "extensions": ["/opt/omp-harness/omp-mem0-memory/extension.ts"]
   },
   "heavy": {
@@ -48,15 +50,34 @@
     "anthropic": { "capacity": 20, "refillPerMinute": 20 },
     "openrouter": { "capacity": 10, "refillPerMinute": 10 }
   },
-  "review": { "fixCap": 3, "maxDiffLines": 300 },
+  "review": {
+    "fixCap": 3,
+    "maxDiffLines": 300,
+    "diffCount": "code",
+    "specsGate": "auto",
+    "autoMergeRisk": "medium",
+    "escalationTimeoutSec": 3600,
+    "mergeRetries": 3,
+    "mergeWaitSec": 7200
+  },
   "oracle": { "url": "http://127.0.0.1:8321", "token": null },
   "events": { "retentionDays": 30 },
+  "notify": {
+    "url": "https://ntfy.sh/<topic>",
+    "events": ["escalations", "specs_ready", "verdict", "run_failed", "project_done", "merged"]
+  },
+  "memory": { "runnerMode": true },
   "repos": [
     {
       "name": "mon-produit",
       "path": "/var/lib/omp-harness/repos/mon-produit",
       "mainBranch": "main",
-      "tests": { "touched": "npm test -- {files}", "full": "npm test" },
+      "tests": {
+        "touched": "npm run -s test:touched -- {files}",
+        "full": "npm test",
+        "pattern": "test/**/*.test.ts"
+      },
+      "checks": { "lint": "npm run -s lint", "typecheck": "npm run -s typecheck" },
       "merge": "local",
       "remote": "origin",
       "maxParallel": 3

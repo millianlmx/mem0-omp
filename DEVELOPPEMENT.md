@@ -29,6 +29,7 @@ npm test                                                        # = bash scripts
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/client-harness.test.ts   # un fichier
 bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
+npm run -s test:touched -- omp-harness/verdict.ts               # les tests que ces fichiers concernent
 bash scripts/test-ac.sh AC-1 AC-2                                # preuve par critère
 ```
 
@@ -40,6 +41,14 @@ hors outillage — jamais une liste vide silencieuse. `--scope=outillage` liste 
 qui relancent un `check.sh` complet (`check.test.ts`, `release.test.ts`,
 `release-simulation.test.ts`, règle par contenu) : `--scope=changed` ne les inclut jamais,
 `check.sh` sans option les lance toujours.
+
+`scripts/test-files.sh --scope=files <chemins…>` applique les mêmes règles à une liste
+reçue en arguments au lieu du diff : c'est l'entrée du harness, qui connaît les fichiers
+touchés depuis la base du run. À l'inverse de `changed`, un résultat vide y est légitime
+(liste vide, ou fichiers que nul test ne nomme) : message sur stderr, sortie 0, rien sur
+stdout. `scripts/test-touched.sh <chemins…>` (= `npm run test:touched -- …`) lance
+`node --test --test-reporter=tap` sur cette sélection, et sort 0 sans rien lancer quand
+elle est vide.
 
 `scripts/test-ac.sh [--base=<rev>] AC-1 AC-2 …` : pour chaque id, imprime les fichiers de
 test **du diff** qui le portent (`AC-1` ≠ `AC-10`) ou `(aucun test dans le diff)`, lance
@@ -145,9 +154,10 @@ local — sans option, toutes les sections et toute la suite tournent :
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 | `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
 
-À la racine du dépôt, `package.json` (privé, sans dépendance) donne trois alias :
+À la racine du dépôt, `package.json` (privé, sans dépendance) donne quatre alias :
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
-`bash scripts/typecheck.sh` et `npm test` lance `bash scripts/check.sh --sections=tests`.
+`bash scripts/typecheck.sh`, `npm test` lance `bash scripts/check.sh --sections=tests` et
+`npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh`.
 Les arguments placés après `--` sont transmis tels quels (`npm run check -- --sections=types`,
 `npm test -- --tests-part=1/2`) ; `npm test -- --sections=…` est refusé par `check.sh`
 (option répétée). Depuis `omp-mem0-req/` ou `omp-mem0-memory/`, npm lit le

@@ -74,6 +74,13 @@ struct HarnessInboxSections: View {
                 decisionView(decision, run: inbox.run(decision.runId))
                     .disabled(!server.canAct)
             }
+            ForEach(inbox.decisionRunIds, id: \.self) { runId in
+                Button(inbox.decisionRunIds.count == 1 ? PipelineServerText.acceptAll : PipelineServerText.acceptAllLine(inbox.run(runId)?.title ?? runId)) {
+                    Task { await server.acceptAllDecisions(runId: runId) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!server.canAct || server.busy.contains(runId))
+            }
         } header: {
             Text(PipelineServerText.toReview)
         } footer: {
@@ -111,34 +118,61 @@ struct HarnessInboxSections: View {
                         .foregroundStyle(.orange)
                     Text(item.question)
                         .textSelection(.enabled)
-                    if !item.context.isEmpty {
-                        Text(item.context)
+                    if let context = item.shownContext {
+                        Text(context)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let recommended = item.recommended {
+                        Text(PipelineServerText.recommended(recommended))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     HStack {
                         ForEach(item.options, id: \.self) { option in
-                            Button(option) { drafts.answers[item.id] = option }
-                                .buttonStyle(.bordered)
+                            Button {
+                                drafts.answers[item.id] = option
+                            } label: {
+                                Label(option, systemImage: drafts.answer(for: item) == option ? PipelineServerText.chosenSymbol : PipelineServerText.optionSymbol)
+                            }
+                            .buttonStyle(.bordered)
                         }
                     }
-                    TextField(PipelineServerText.answerPlaceholder, text: answerBinding(item.id))
+                    TextField(PipelineServerText.answerPlaceholder, text: answerBinding(item))
+                    TextField(PipelineServerText.reasonOptional, text: reasonBinding(item.id))
                 }
             }
-            Button(PipelineServerText.answer) {
-                let answers = drafts.answers(for: batch)
-                Task {
-                    if await server.answer(runId: batch.id, answers: answers) { drafts.clearAnswers(for: batch) }
+            HStack {
+                Button(PipelineServerText.answer) {
+                    let answers = drafts.answers(for: batch)
+                    let reasons = drafts.reasons(for: batch)
+                    Task {
+                        if await server.answer(runId: batch.id, answers: answers, reasons: reasons) { drafts.clearAnswers(for: batch) }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!drafts.canAnswer(batch) || server.busy.contains(batch.id))
+                if let recommended = HarnessDrafts.recommendedAnswers(for: batch) {
+                    Button(PipelineServerText.acceptRecommended) {
+                        Task {
+                            if await server.answer(runId: batch.id, answers: recommended) { drafts.clearAnswers(for: batch) }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(server.busy.contains(batch.id))
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!drafts.canAnswer(batch) || server.busy.contains(batch.id))
         }
         .padding(.vertical, 4)
     }
 
-    private func answerBinding(_ id: Int) -> Binding<String> {
-        Binding(get: { drafts.answers[id] ?? "" }, set: { drafts.answers[id] = $0 })
+    /// La saisie d'une réponse : l'option recommandée tant que rien n'est tapé.
+    private func answerBinding(_ item: HarnessEscalation) -> Binding<String> {
+        Binding(get: { drafts.answer(for: item) }, set: { drafts.answers[item.id] = $0 })
+    }
+
+    private func reasonBinding(_ id: Int) -> Binding<String> {
+        Binding(get: { drafts.reasons[id] ?? "" }, set: { drafts.reasons[id] = $0 })
     }
 
     // MARK: - Specs à valider
@@ -205,12 +239,18 @@ struct HarnessInboxSections: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button(PipelineServerText.approve) {
-                    Task { await server.validate(runId: run.id, approve: true, reason: "") }
+                if run.verdict != nil {
+                    Button(PipelineServerText.approve) {
+                        Task { await server.validate(runId: run.id, approve: true, reason: "") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button(PipelineServerText.refuse) { drafts.beginRefusal(run) }
+                        .buttonStyle(.bordered)
+                } else {
+                    // Arrêté sans verdict (échecs répétés, fusion refusée) : repart de son étape.
+                    Button(PipelineServerText.retry) { drafts.retryRequest = run }
+                        .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
-                Button(PipelineServerText.refuse) { drafts.beginRefusal(run) }
-                    .buttonStyle(.bordered)
             }
             .disabled(server.busy.contains(run.id))
         }
@@ -245,6 +285,11 @@ struct HarnessInboxSections: View {
             Text(PipelineServerText.rationale(decision.rationale))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let status = PipelineServerText.decisionStatus(decision.status) {
+                Text(status)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+            }
             HStack {
                 Button(PipelineServerText.accept) {
                     Task { await server.accept(runId: decision.runId, seq: decision.seq) }
@@ -259,7 +304,9 @@ struct HarnessInboxSections: View {
     }
 }
 
-/// Une feature en cours : titre, étape, corrections, et l'arrêt (confirmé par `harnessGestures`).
+/// Une feature : titre, étape, corrections, reprise différée ou dernier échec ; puis ses
+/// gestes, tous confirmés par `harnessGestures` : l'arrêt, la relance (en échec ou arrêtée
+/// sur une attente), l'annulation d'une feature fusionnée.
 struct HarnessRunRow: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -272,6 +319,11 @@ struct HarnessRunRow: View {
                 Text(run.statusLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let detail = run.detailLine() {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if run.fixes > 0 {
                     Text(PipelineServerText.fixes(run.fixes))
                         .font(.caption)
@@ -279,6 +331,16 @@ struct HarnessRunRow: View {
                 }
             }
             Spacer()
+            if run.canRetry {
+                Button(PipelineServerText.retry) { drafts.retryRequest = run }
+                    .buttonStyle(.bordered)
+                    .disabled(server.busy.contains(run.id))
+            }
+            if run.canRevert {
+                Button(PipelineServerText.revertFeature) { drafts.revertRequest = run }
+                    .buttonStyle(.bordered)
+                    .disabled(server.busy.contains(run.id))
+            }
             if let phase = run.phase, [.queued, .running, .escalated, .awaitingHuman].contains(phase) {
                 Button(PipelineServerText.stopFeature) { drafts.stopRequest = run }
                     .buttonStyle(.bordered)
@@ -306,7 +368,7 @@ struct HarnessFailureLabel: View {
 
 extension View {
     /// Les feuilles et confirmations des gestes du serveur : refus (specs ou verdict),
-    /// renversement d'une décision, arrêt d'une feature.
+    /// renversement d'une décision, arrêt, relance et annulation d'une feature.
     func harnessGestures(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         modifier(HarnessGestures(server: server, drafts: drafts))
     }
@@ -335,6 +397,32 @@ private struct HarnessGestures: ViewModifier {
                 Button(PipelineServerText.cancel, role: .cancel) {}
             } message: { _ in
                 Text(PipelineServerText.stopMessage)
+            }
+            .confirmationDialog(
+                PipelineServerText.retryConfirm,
+                isPresented: Binding(get: { drafts.retryRequest != nil }, set: { if !$0 { drafts.retryRequest = nil } }),
+                presenting: drafts.retryRequest
+            ) { run in
+                Button(PipelineServerText.retry) {
+                    Task { await server.retry(runId: run.id) }
+                }
+                Button(PipelineServerText.cancel, role: .cancel) {}
+            } message: { run in
+                if let detail = run.detailLine() { Text(detail) }
+                if let reason = run.reason { Text(reason) }
+                Text(PipelineServerText.retryMessage)
+            }
+            .confirmationDialog(
+                PipelineServerText.revertConfirm,
+                isPresented: Binding(get: { drafts.revertRequest != nil }, set: { if !$0 { drafts.revertRequest = nil } }),
+                presenting: drafts.revertRequest
+            ) { run in
+                Button(PipelineServerText.revertFeature, role: .destructive) {
+                    Task { await server.revert(runId: run.id) }
+                }
+                Button(PipelineServerText.cancel, role: .cancel) {}
+            } message: { _ in
+                Text(PipelineServerText.revertMessage)
             }
     }
 

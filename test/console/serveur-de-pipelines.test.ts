@@ -71,6 +71,7 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
         risks: ["r"],
         files: ["a.ts"],
         unverified: [],
+        criteria: [{ id: "AC-1", test: "test/a.test.ts", status: "pass" }],
         confidence: "strong",
       },
     });
@@ -151,6 +152,9 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['launch("/v1/audits"', "POST", "/v1/audits"],
     ['"/v1/audits/\\(id)/launch"', "POST", "/v1/audits/a1/launch"],
     ['"/v1/audits/\\(id)/cancel"', "POST", "/v1/audits/a1/cancel"],
+    ['path: "/retry"', "POST", "/v1/runs/r1/retry"],
+    ['path: "/decisions/accept"', "POST", "/v1/runs/r1/decisions/accept"],
+    ['path: "/revert"', "POST", "/v1/runs/r1/revert"],
   ];
   for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);

@@ -15,6 +15,10 @@ export const EVENT_TYPES = [
   "modules",
   "recovered",
   "admission_refused",
+  "run_failed",
+  "checkpoint",
+  "follow_up",
+  "split",
   // étapes et runners
   "step_started",
   "step_done",
@@ -23,6 +27,8 @@ export const EVENT_TYPES = [
   "runner_stopped",
   "rate_limited",
   "model_failover",
+  "provider_error",
+  "provider_retry",
   "model_tier",
   "progress",
   // décisions et boucle humaine
@@ -35,11 +41,16 @@ export const EVENT_TYPES = [
   "specs_ready",
   "review",
   "verdict",
+  "decision_auto_timeout",
+  "retried",
   // tests heavy
   "heavy_started",
   "heavy_done",
   "heavy_cached",
   "heavy_oom_retry",
+  "heavy_joined",
+  "heavy_fail_retry",
+  "heavy_skipped",
   // git et merge
   "rebased",
   "rebase_conflict",
@@ -47,12 +58,16 @@ export const EVENT_TYPES = [
   "merge_retry",
   "merged",
   "push_failed",
+  "reverted",
+  "revert_failed",
   // projets et audits
   "project_created",
   "project_done",
   "audit_state",
   // configuration du serveur
   "providers_changed",
+  // notifications sortantes (ntfy)
+  "notify_failed",
   // éphémères
   "activity",
 ] as const;

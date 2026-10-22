@@ -171,6 +171,53 @@ test(`${SLUG}/AC-4 : omp-console/ élargit la sélection`, () => {
   assert.deepEqual(lines(withConsole.stdout), ["test/a/chain.test.ts", "test/a/ios-ecran.test.ts"]);
 });
 
+test(`${SLUG}/AC-6 : --scope=files applique les règles a/b/c à la liste reçue, et un vide y est légitime (sortie 0)`, () => {
+  const dir = makeRepo();
+  // Sans diff : la liste vient d'argv. (b) un source nommé, (a) un test, (c) omp-console/.
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "src/chain.ts"]).stdout), ["test/a/chain.test.ts"]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "test/a/other.test.ts", "src/chain.ts"]).stdout), [
+    "test/a/chain.test.ts",
+    "test/a/other.test.ts",
+  ]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "omp-console/App.swift"]).stdout), [
+    "test/a/ios-ecran.test.ts",
+  ]);
+  // Un test d'outillage reçu directement reste exclu.
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "test/a/outil.test.ts"]).stdout), []);
+
+  // Liste vide ou fichiers que nul test ne nomme : rien sur stdout, message, sortie 0 (pas de repli).
+  for (const args of [["--scope=files"], ["--scope=files", "LICENSE"]]) {
+    const res = run(dir, "test-files.sh", args);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, "");
+    assert.match(res.stderr, /rien à lancer/);
+  }
+  // Les chemins viennent après l'option, jamais avant.
+  assert.equal(run(dir, "test-files.sh", ["src/chain.ts", "--scope=files"]).status, 1);
+});
+
+test(`${SLUG}/AC-7 : test-touched.sh lance les seuls tests que les fichiers concernent, et sort 0 sans rien lancer à vide`, () => {
+  const dir = makeRepo();
+  fs.copyFileSync(path.join(ROOT, "scripts", "test-touched.sh"), path.join(dir, "scripts", "test-touched.sh"));
+
+  const other = run(dir, "test-touched.sh", ["src/other.ts"]);
+  assert.equal(other.status, 0, `${other.stdout}${other.stderr}`);
+  assert.match(other.stdout, /^ok \d+ - autre\/AC-2/m);
+  assert.doesNotMatch(other.stdout, /chaine\/AC-1/);
+
+  // chain.test.ts porte un AC rouge : le code de node --test est rendu tel quel.
+  const chain = run(dir, "test-touched.sh", ["src/chain.ts"]);
+  assert.equal(chain.status, 1);
+  assert.match(chain.stdout, /^not ok \d+ - chaine\/AC-3/m);
+
+  for (const args of [[], ["LICENSE"]]) {
+    const res = run(dir, "test-touched.sh", args);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, "");
+    assert.match(res.stderr, /rien à lancer/);
+  }
+});
+
 test(`${SLUG}/AC-5 : test-ac.sh prouve chaque AC par les tests du diff en une passe : pass, absent, fail, sortie 1`, () => {
   const dir = makeRepo();
   fs.appendFileSync(path.join(dir, "src", "chain.ts"), "export const plus = 2;\n");

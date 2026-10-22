@@ -16,6 +16,7 @@
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Auditor } from "./audits.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
+import { retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
 import type { DecisionRow, RepoFilter, RunRow } from "./db.ts";
@@ -24,7 +25,9 @@ import { HumanLoop } from "./gestures.ts";
 import { newId } from "./ids.ts";
 import type { StepKind } from "./machine.ts";
 import { ACTIVE_STATES, crashed, nextAfter, recovered } from "./machine.ts";
+import type { FailCause } from "./machine.ts";
 import { Merger } from "./merger.ts";
+import { briefOfReq } from "./oracle.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
@@ -82,6 +85,8 @@ export class Orchestrator {
   readonly #live = new Map<string, LiveRun & { slot: Slot }>();
   /** Le dernier refus d'admission annoncé par run : un refus n'est écrit qu'une fois, pas à chaque tour. */
   readonly #refused = new Map<string, string>();
+  /** Les runs dont les modules sont en cours de déduction : pas candidats avant. */
+  readonly #inferring = new Set<string>();
   readonly #tickMs: number;
   #timer: NodeJS.Timeout | null = null;
   #ticking: Promise<void> | null = null;
@@ -96,13 +101,20 @@ export class Orchestrator {
   constructor(deps: OrchestratorDeps) {
     this.#ctx = new HarnessContext(deps);
     this.#tickMs = deps.tickMs ?? 1000;
-    this.#steps = new StepExecutor(this.#ctx);
-    this.#merger = new Merger(this.#ctx, () => this.#kick());
+    this.#steps = new StepExecutor(this.#ctx, {
+      createProject: (input, actor) => this.createProject(input, actor),
+      followUp: async (input, actor) => this.createRun(input, actor),
+    });
+    this.#merger = new Merger(this.#ctx, {
+      onDone: () => this.#kick(),
+      followUp: async (input, actor) => this.createRun(input, actor),
+    });
     this.#human = new HumanLoop(this.#ctx, {
       halt: (runId) => this.#halt(runId),
       tick: () => this.#kick(),
       merging: (runId) => this.#merger.has(runId),
-      followUp: (input, actor) => this.createRun(input, actor),
+      followUp: async (input, actor) => this.createRun(input, actor),
+      revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
   }
@@ -255,7 +267,7 @@ export class Orchestrator {
     if (this.#started) void this.tick();
   }
 
-  /** Un tour de scheduling : merges dus, audits, puis les runs en file que le planificateur libère. */
+  /** Un tour de scheduling : merges dus, escalades échues, audits, puis les runs en file que le planificateur libère. */
   tick(): Promise<void> {
     if (this.#ticking || this.#stopping) return this.#ticking ?? Promise.resolve();
     this.#ticking = this.#tick().finally(() => {
@@ -268,6 +280,12 @@ export class Orchestrator {
     const { store } = this.#ctx;
     this.#prune();
     for (const run of store.listRuns({ state: ["merging"] })) this.#merger.enqueue(run);
+    // Une escalade ouverte depuis trop longtemps est tranchée sur la recommandation de l'agent.
+    try {
+      await this.#human.autoDecideExpired(Date.now());
+    } catch (err) {
+      this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`);
+    }
     this.audits.tick();
     this.#admit();
   }
@@ -275,7 +293,10 @@ export class Orchestrator {
   /** Les candidats de chaque dépôt : les runs repris d'abord, puis les nouveaux que les modules et `maxParallel` laissent partir. */
   #candidates(): { candidates: Candidate[]; activeByRepo: Map<string, number>; activeByGroup: Map<string, number> } {
     const { store } = this.#ctx;
-    const queued = store.listRuns({ state: ["queued"] }).filter((run) => !this.#live.has(run.id));
+    // Un run relancé après un échec attend son heure (`notBefore`) : il n'est pas candidat avant.
+    const queued = store
+      .listRunsDue(Date.now())
+      .filter((run) => !this.#live.has(run.id) && !this.#inferring.has(run.id));
     // Un run lancé reste `queued` en base jusqu'à son worktree : il occupe déjà ses modules.
     const active = store.listRuns({ state: ACTIVE_STATES }).filter((run) => !this.#live.has(run.id));
     for (const live of this.#live.keys()) {
@@ -391,6 +412,7 @@ export class Orchestrator {
           attempts: run.attempts,
           keepRunner: false,
           rebase: false,
+          notBefore: null,
           reason: run.reason ?? "",
         },
         ["queued"],
@@ -403,15 +425,27 @@ export class Orchestrator {
         if (live.abort.signal.aborted) break;
         run = store.getRun(live.runId) as RunRow;
         const transition = nextAfter(
-          { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts },
+          { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts, lastFailCause: run.lastFailCause },
           outcome,
           {
             fixCap: config.review.fixCap,
-            stepRetries: config.runner.stepRetries,
+            retryBackoffSec: retryBackoff(config),
             specsGate: config.review.specsGate,
+            mergeRetries: config.review.mergeRetries,
           },
+          Date.now(),
         );
-        if (!this.#ctx.transition(run, transition, ["running"])) break;
+        // La cause d'un échec est gardée jusqu'à ce que l'étape rende quelque chose ; la
+        // contestation d'un correcteur (`missing_output`) survit à la revue qui la suit,
+        // pour que la seconde contestation passe à l'humain.
+        const lastFailCause: FailCause | null =
+          outcome.kind === "failed"
+            ? outcome.cause
+            : run.step === "review" && run.lastFailCause === "missing_output"
+              ? run.lastFailCause
+              : null;
+        if (!this.#ctx.transition(run, transition, ["running"], { patch: { notBefore: transition.notBefore, lastFailCause } }))
+          break;
         if (!transition.keepRunner) await live.session?.stop();
         if (transition.rebase) live.pendingRebase = true;
         if (transition.state !== "running") break;
@@ -434,7 +468,16 @@ export class Orchestrator {
     return slug;
   }
 
-  createRun(input: NewRunInput & { projectId?: string; projectOrder?: number }, actor: Actor = SERVICE): RunRow {
+  /**
+   * Un run sans `modules` : ils sont déduits par l'oracle (comme pour un projet) avant
+   * l'admission — sinon le run chevaucherait tout le dépôt jusqu'à ses specs. La
+   * déduction est asynchrone ; le run est créé tout de suite et n'est pas candidat
+   * tant qu'elle court.
+   */
+  createRun(
+    input: NewRunInput & { projectId?: string; projectOrder?: number; inferModules?: boolean },
+    actor: Actor = SERVICE,
+  ): RunRow {
     const repo = this.#ctx.repo(input.repo);
     if (input.title.trim() === "" || input.request.trim() === "")
       throw new HarnessError(400, "title et request sont requis");
@@ -471,13 +514,37 @@ export class Orchestrator {
       });
       return created;
     });
-    if (req !== "")
-      void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, [
+    // Seuls les titres de besoins (`B-n`) entrent dans l'oracle : un souvenir court, qui se rappelle bien.
+    const brief = req !== "" ? briefOfReq(req) : "";
+    if (brief !== "")
+      void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${brief}`, [
         "harness",
         "besoins",
       ]);
-    this.#kick();
+    if (input.inferModules !== false && (input.modules ?? []).length === 0) void this.#inferModules(run);
+    else this.#kick();
     return run;
+  }
+
+  /** Les modules d'un run créé sans : l'oracle, puis `modules` posés s'ils ne l'ont pas été entre-temps (`set_modules`). */
+  async #inferModules(run: RunRow): Promise<void> {
+    const { store, oracle, git } = this.#ctx;
+    this.#inferring.add(run.id);
+    try {
+      const repo = this.#ctx.repo(run.repo);
+      const known = knownModules(await git.listFiles(repo.path, repo.mainBranch));
+      const { modules } = await modulesViaOracle(oracle, repo.scope, `${run.title}\n${run.request}`, known);
+      const current = store.getRun(run.id);
+      if (modules.length > 0 && current && current.modules.length === 0 && current.state === "queued") {
+        store.updateRun(run.id, { modules });
+        this.#ctx.event("modules", run.id, { modules, source: "oracle" });
+      }
+    } catch (err) {
+      this.#ctx.log(`run ${run.id} : modules non déduits — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.#inferring.delete(run.id);
+      this.#kick();
+    }
   }
 
   /** /project : les modules de chaque feature (déclarés, sinon via l'oracle), puis une file planifiée. */
@@ -503,6 +570,8 @@ export class Orchestrator {
             ...feature,
             repo: repo.name,
             modules: modules[order] ?? [],
+            // Déjà demandés à l'oracle ci-dessus : une liste vide le reste.
+            inferModules: false,
             projectId: project.id,
             projectOrder: order,
             ...(input.priority !== undefined ? { priority: input.priority } : {}),
@@ -527,8 +596,27 @@ export class Orchestrator {
 
   // -- API : boucle humaine -------------------------------------------------
 
-  answerEscalations(runId: string, answers: { id: number; answer: string }[], actor: Actor = SERVICE): Promise<RunRow> {
+  answerEscalations(
+    runId: string,
+    answers: { id: number; answer: string; reason?: string }[],
+    actor: Actor = SERVICE,
+  ): Promise<RunRow> {
     return this.#human.answerEscalations(runId, answers, actor);
+  }
+
+  /** La relance par l'humain d'un run échoué ou en attente : même étape, tout de suite. */
+  retry(runId: string, actor: Actor = SERVICE): Promise<RunRow> {
+    return this.#human.retry(runId, actor);
+  }
+
+  /** Accepte d'un geste toutes les décisions prises seules d'un run. */
+  acceptAllDecisions(runId: string, actor: Actor = SERVICE): Promise<{ accepted: number }> {
+    return this.#human.acceptAllDecisions(runId, actor);
+  }
+
+  /** Le revert d'un run mergé : son commit squash est défait sur `main`, un run de suite est ouvert. */
+  revert(runId: string, actor: Actor = SERVICE): Promise<RunRow> {
+    return this.#merger.revert(runId, actor);
   }
 
   acceptDecision(runId: string, seq: number, actor: Actor = SERVICE): Promise<DecisionRow> {

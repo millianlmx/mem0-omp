@@ -138,7 +138,7 @@ case "$1" in
 
   --scope)
     # --scope --quiet --collect --unit=omp-runner-ID --slice=… -p MemoryMax=X
-    #   [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE=…]… -- choom -n N -- OMP_BIN …
+    #   [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE=…]… -- choom -n N -- OMP_BIN …
     [ "$#" -ge 12 ] || refuse "ligne de runner trop courte"
     [ "$2" = "--quiet" ] && [ "$3" = "--collect" ] || refuse "options de scope inattendues"
     unit="${4#--unit=}"
@@ -148,13 +148,13 @@ case "$1" in
     memory="${7#MemoryMax=}"
     [ "$7" = "MemoryMax=$memory" ] && [[ "$memory" =~ $size_re ]] || refuse "MemoryMax invalide : $7"
     shift 7
-    # La mémoire du projet du runner : trois variables, liste FERMÉE, valeurs simples.
+    # La mémoire du projet du runner : quatre variables, liste FERMÉE, valeurs simples.
     memory_env=()
     while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
       assignment="${1#--setenv=}"
       name="${assignment%%=*}"
       value="${assignment#*=}"
-      case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE) ;; *) refuse "variable de runner non permise : $name" ;; esac
+      case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE) ;; *) refuse "variable de runner non permise : $name" ;; esac
       [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
       memory_env+=("$name=$value")
       shift

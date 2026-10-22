@@ -60,6 +60,19 @@ public enum PipelineServerText {
     public static let stopFeature = "Arrêter la feature"
     public static let stopConfirm = "Arrêter cette feature ?"
     public static let stopMessage = "Le travail en cours s’arrête. La branche reste, pour inspection."
+    public static let acceptRecommended = "Accepter les recommandations"
+    public static let reasonOptional = "Raison (facultatif)"
+    public static let acceptAll = "Tout accepter"
+    public static let retry = "Relancer"
+    public static let retryConfirm = "Relancer cette feature ?"
+    public static let retryMessage = "La feature repart de son étape en cours, sur sa branche."
+    public static let revertFeature = "Annuler la feature"
+    public static let revertConfirm = "Annuler cette feature fusionnée ?"
+    public static let revertMessage = "Ses changements sont retirés de la branche principale. Une feature de suite reprend ce qui doit l’être."
+    /// Une décision tranchée par le serveur à l'échéance d'une escalade restée sans réponse.
+    public static let decidedAtDeadline = "Tranchée à l’échéance"
+    /// Une décision prise par l'agent, non validée par l'humain.
+    public static let decidedByAgent = "Choix de l’agent, non validé"
 
     // MARK: - Lignes
 
@@ -73,6 +86,42 @@ public enum PipelineServerText {
 
     /// La proposition de l'agent, pour une escalade.
     public static func proposal(_ text: String) -> String { "Proposé par l’agent : \(text)" }
+
+    /// L'option recommandée par l'agent, pour une escalade.
+    public static func recommended(_ text: String) -> String { "Recommandé : \(text)" }
+
+    /// « Tout accepter : Export CSV », quand plusieurs features ont des décisions à relire.
+    public static func acceptAllLine(_ title: String) -> String { "Tout accepter : \(title)" }
+
+    /// La reprise différée d'une feature en file : « Reprise à 14:05 ».
+    public static func resumeAt(_ time: String) -> String { "Reprise à \(time)" }
+
+    /// « Dernier échec : limite de débit »
+    public static func lastFailure(_ cause: String) -> String { "Dernier échec : \(cause)" }
+
+    /// Le statut d'une décision prise seule, quand il mérite un mot ; `nil` pour le cas ordinaire.
+    public static func decisionStatus(_ raw: String) -> String? {
+        switch raw {
+        case "auto_timeout": decidedAtDeadline
+        case "auto": decidedByAgent
+        default: nil
+        }
+    }
+
+    /// La cause d'un échec d'étape, telle que le serveur la classe.
+    public static func failCause(_ raw: String) -> String {
+        switch raw {
+        case "timeout": "délai dépassé"
+        case "rate_limit": "limite de débit"
+        case "network": "réseau"
+        case "provider": "fournisseur indisponible"
+        case "context": "contexte dépassé"
+        case "runner": "agent interrompu"
+        case "missing_output": "livrable absent"
+        case "aborted": "interrompu"
+        default: "autre cause"
+        }
+    }
 
     public static func modules(_ list: [String]) -> String { "Modules : \(list.joined(separator: ", "))" }
 

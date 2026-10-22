@@ -9,6 +9,7 @@ import { SERVICE } from "./context.ts";
 import type { AuditProposal, AuditRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
+import { isTerminal } from "./machine.ts";
 import { renderMemories } from "./oracle.ts";
 import { auditPrompt } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
@@ -29,15 +30,55 @@ type LiveAudit = {
   done: Promise<void>;
 };
 
-/** Valide les arguments de `audit_propose`. */
+const LEVELS = ["low", "medium", "high"] as const;
+type Level = (typeof LEVELS)[number];
+
+function level(value: unknown): Level | null {
+  return LEVELS.find((entry) => entry === value) ?? null;
+}
+
+function strings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/**
+ * Ordre topologique stable des index `picked` selon `dependsOn` (les prérequis hors de la
+ * sélection sont ignorés : l'humain a choisi). `null` si les dépendances bouclent.
+ */
+export function launchOrder(proposals: readonly Pick<AuditProposal, "dependsOn">[], picked: number[]): number[] | null {
+  const chosen = new Set(picked);
+  const order: number[] = [];
+  const placed = new Set<number>();
+  let progressed = true;
+  while (progressed && order.length < picked.length) {
+    progressed = false;
+    for (const index of picked) {
+      if (placed.has(index)) continue;
+      const deps = (proposals[index]?.dependsOn ?? []).filter((dep) => chosen.has(dep));
+      if (deps.every((dep) => placed.has(dep))) {
+        order.push(index);
+        placed.add(index);
+        progressed = true;
+      }
+    }
+  }
+  return order.length === picked.length ? order : null;
+}
+
+/**
+ * Valide les arguments de `audit_propose` : une faiblesse cite au moins un `fichier:ligne`,
+ * `dependsOn` (titres ou index) est résolu en index, sans inconnue, sans soi-même, sans cycle.
+ */
 export function parseProposals(
   args: Record<string, unknown>,
 ): { ok: true; proposals: AuditProposal[] } | { ok: false; error: string } {
   if (!Array.isArray(args.proposals)) return { ok: false, error: "proposals : liste attendue" };
+  const items = args.proposals.slice(0, 10).map((item: unknown): Record<string, unknown> => {
+    return typeof item === "object" && item !== null && !Array.isArray(item) ? { ...item } : {};
+  });
+  const titles = items.map((p) => (typeof p.title === "string" ? p.title.trim().toLowerCase() : ""));
   const proposals: AuditProposal[] = [];
-  for (const [index, item] of args.proposals.slice(0, 10).entries()) {
-    const p = (item ?? {}) as Record<string, unknown>;
-    const strings = (value: unknown) => Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  for (const [index, p] of items.entries()) {
     if (
       typeof p.title !== "string" ||
       p.title.trim() === "" ||
@@ -52,16 +93,51 @@ export function parseProposals(
         error: `proposals[${index}] : modules (chaînes), kind (faiblesse | feature) et rationale attendus`,
       };
     }
+    const evidence = strings(p.evidence) ? p.evidence.map((entry) => entry.trim()).filter((entry) => entry !== "") : null;
+    if (evidence === null) return { ok: false, error: `proposals[${index}] : evidence (liste de fichier:ligne) attendue` };
+    if (p.kind === "faiblesse" && evidence.length === 0) {
+      return {
+        ok: false,
+        error: `proposals[${index}] « ${p.title.trim()} » : une faiblesse cite au moins un fichier:ligne dans evidence`,
+      };
+    }
+    const impact = level(p.impact);
+    const effort = level(p.effort);
+    if (impact === null || effort === null)
+      return { ok: false, error: `proposals[${index}] : impact et effort (low | medium | high) attendus` };
+    if (!Array.isArray(p.dependsOn)) return { ok: false, error: `proposals[${index}] : dependsOn (liste) attendue` };
+    const dependsOn: number[] = [];
+    for (const dep of p.dependsOn) {
+      const resolved =
+        typeof dep === "number" && Number.isInteger(dep)
+          ? dep
+          : typeof dep === "string"
+            ? titles.indexOf(dep.trim().toLowerCase())
+            : -1;
+      if (resolved < 0 || resolved >= items.length)
+        return { ok: false, error: `proposals[${index}] : dependsOn cite une proposition inconnue (${String(dep)})` };
+      if (resolved === index) return { ok: false, error: `proposals[${index}] : dependsOn se cite elle-même` };
+      if (!dependsOn.includes(resolved)) dependsOn.push(resolved);
+    }
     proposals.push({
       title: p.title.trim(),
       request: p.request.trim(),
-      modules: p.modules as string[],
+      modules: p.modules,
       kind: p.kind,
       rationale: p.rationale.trim(),
+      evidence,
+      dependsOn,
+      impact,
+      effort,
     });
   }
+  if (launchOrder(proposals, proposals.map((_, index) => index)) === null)
+    return { ok: false, error: "dependsOn : les dépendances forment un cycle" };
   return { ok: true, proposals };
 }
+
+/** Le modèle a répondu sans rendre de propositions : relancer l'analyse n'y changerait rien. */
+class NoProposalsError extends Error {}
 
 export class Auditor {
   readonly #ctx: HarnessContext;
@@ -121,15 +197,26 @@ export class Auditor {
     const started = store.updateAuditIf(queued.id, ["queued"], { state: "analysing" });
     if (!started) return;
     this.#event(started);
-    let outcome: { proposals: AuditProposal[] } | { reason: string };
-    try {
-      outcome = { proposals: await this.#analyse(queued, live, repo, worktree) };
-    } catch (err) {
-      outcome = { reason: err instanceof Error ? err.message : String(err) };
-    } finally {
-      // Runner arrêté et worktree rendu AVANT d'annoncer l'issue.
-      await live.session?.stop();
-      await git.removeWorktree(repo.path, worktree, null).catch(() => {});
+    let outcome: { proposals: AuditProposal[] } | { reason: string } = { reason: "" };
+    // Une analyse en échec (runner, réseau, échéance) repart une fois, runner et worktree neufs ;
+    // pas quand le modèle a répondu sans rien proposer : la relance rendrait la même chose.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      live.proposals = null;
+      let retry = false;
+      try {
+        outcome = { proposals: await this.#analyse(queued, live, repo, worktree, attempt) };
+      } catch (err) {
+        outcome = { reason: err instanceof Error ? err.message : String(err) };
+        retry = attempt === 0 && !(err instanceof NoProposalsError) && !live.abort.signal.aborted;
+      } finally {
+        // Runner arrêté et worktree rendu AVANT d'annoncer l'issue (ou de repartir).
+        await live.session?.stop();
+        live.session = null;
+        await git.removeWorktree(repo.path, worktree, null).catch(() => {});
+      }
+      if (!retry) break;
+      this.#ctx.log(`audit ${queued.id} : analyse relancée après « ${"reason" in outcome ? outcome.reason : ""} »`);
+      this.#event(started, { retry: true, reason: "reason" in outcome ? outcome.reason : "" });
     }
     if (live.abort.signal.aborted) return;
     store.transaction(() => {
@@ -146,8 +233,14 @@ export class Auditor {
     if ("reason" in outcome) this.#ctx.log(`audit ${queued.id} en échec : ${outcome.reason}`);
   }
 
-  async #analyse(audit: AuditRow, live: LiveAudit, repo: RepoConfig, worktree: string): Promise<AuditProposal[]> {
-    const { git, config, oracle } = this.#ctx;
+  async #analyse(
+    audit: AuditRow,
+    live: LiveAudit,
+    repo: RepoConfig,
+    worktree: string,
+    attempt: number,
+  ): Promise<AuditProposal[]> {
+    const { git, config, oracle, store } = this.#ctx;
     await git.addWorktree(repo.path, worktree, null, await git.revParse(repo.path, repo.mainBranch));
     // La même session que les runs : bascule de fournisseur sur rate limit, échéance de l'étape.
     const session = new RunnerSession(
@@ -160,11 +253,25 @@ export class Auditor {
     );
     live.session = session;
     const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
-    await session.open("heavy", runnerUnit(audit.id, 0), live.abort.signal);
+    await session.open("heavy", runnerUnit(audit.id, attempt), live.abort.signal);
     await session.setHostTools(hostToolsFor("audit"));
-    const memories = renderMemories(await oracle.recall(repo.scope, audit.focus || repo.name));
+    const query = audit.focus || repo.name;
+    const [memories, delivered] = await Promise.all([
+      oracle.recall(repo.scope, query),
+      oracle.recall(repo.scope, `feature mergée ${repo.name}`),
+    ]);
+    const inFlight = store
+      .listRuns({ repo: repo.name })
+      .filter((run) => !isTerminal(run.state))
+      .map((run) => run.title);
     let result = await session.prompt(
-      auditPrompt({ repo: repo.name, focus: audit.focus, memories }),
+      auditPrompt({
+        repo: repo.name,
+        focus: audit.focus,
+        memories: renderMemories(memories),
+        inFlight,
+        delivered: renderMemories(delivered.filter((m) => /feature mergée/i.test(m.text))),
+      }),
       live.abort.signal,
       deadlineAt,
     );
@@ -176,7 +283,7 @@ export class Auditor {
       );
     }
     if (result.status !== "completed") throw new Error(result.error?.message ?? "erreur du runner");
-    if (live.proposals === null) throw new Error("les propositions n'ont pas été rendues par `audit_propose`");
+    if (live.proposals === null) throw new NoProposalsError("les propositions n'ont pas été rendues par `audit_propose`");
     return live.proposals;
   }
 
@@ -213,7 +320,11 @@ export class Auditor {
     }
   }
 
-  /** Les propositions retenues (index) partent en projet ; l'audit est clos. */
+  /**
+   * Les propositions retenues (index) partent en projet, ordonnées selon `dependsOn` : le
+   * `projectOrder` posé par createProject fait passer une feature après ses prérequis.
+   * L'audit est clos.
+   */
   async launch(
     id: string,
     items: number[],
@@ -224,14 +335,17 @@ export class Auditor {
     const audit = this.#get(id);
     if (audit.state !== "proposed")
       throw new HarnessError(409, `l'audit n'a pas de propositions à lancer (état ${audit.state})`);
-    const picked = [...new Set(items)].map((index) => audit.proposals[index]);
-    if (picked.length === 0 || picked.some((item) => item === undefined))
+    const indexes = [...new Set(items)];
+    if (indexes.length === 0 || indexes.some((index) => audit.proposals[index] === undefined))
       throw new HarnessError(400, `items : index de propositions attendus (0 à ${audit.proposals.length - 1})`);
+    const ordered = launchOrder(audit.proposals, indexes);
+    if (ordered === null) throw new HarnessError(400, "dependsOn : les dépendances des propositions forment un cycle");
+    const picked = ordered.flatMap((index) => audit.proposals[index] ?? []);
     // Le CAS d'abord : deux lancements simultanés (deux clients) ne créent pas deux projets.
     if (!store.updateAuditIf(id, ["proposed"], { state: "launched" }))
       throw new HarnessError(409, "l'audit a changé d'état");
     try {
-      const features = (picked as AuditProposal[]).map((item) => ({
+      const features = picked.map((item) => ({
         title: item.title,
         request: item.request,
         ...(item.modules.length > 0 ? { modules: item.modules } : {}),

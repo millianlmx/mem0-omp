@@ -29,7 +29,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { pinToolResult } from "./attach.ts";
 import { checkBrief } from "./brief.ts";
 import { countToolResult, pickSessionStopNudge } from "./checkpoint.ts";
-import { sessionNudgeEnabled } from "./config.ts";
+import { runnerMode, sessionNudgeEnabled } from "./config.ts";
 import { registerMem0Commands } from "./commands.ts";
 import { phaseStopContext } from "./phases.ts";
 import { handleRecall, registerRecallRenderer } from "./recall.ts";
@@ -52,11 +52,17 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   // catalogue marketplace) et le corps vivent ensemble dans commands.ts.
   registerMem0Commands(pi, rt);
 
+  // --- Mode runner (MEM0_MODE=runner) ---------------------------------------
+  // Un runner piloté par le harness ne pose pas de brief, ne reçoit ni rappel,
+  // ni agrafe, ni checkpoint, ni relance de fin : l'orchestrateur tient la
+  // mémoire via son oracle. Une garde par hook ; les outils mem0_* restent.
+
   // --- Vérification du brief au démarrage de session ------------------------
   // session_start couvre le cas normal ; le premier before_agent_start rattrape
   // les versions d'OMP où l'event ne remonte pas. checkBrief est mémoïsé, donc
   // le doublon ne coûte rien.
   pi.on("session_start", async (_event, ctx) => {
+    if (runnerMode()) return;
     try { checkBrief(rt, ctx); } catch { /* jamais bloquant */ }
   });
 
@@ -67,7 +73,12 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.on("session_branch", async (_event, ctx) => forgetInjected(rt, ctx));
 
   // --- Rappel à CHAQUE tour + sommaire exhaustif ----------------------------
-  pi.on("before_agent_start", async (event, ctx) => handleRecall(rt, event, ctx));
+  // En mode runner, rien n'est injecté : ni rappel, ni sommaire, ni checkpoint,
+  // ni brief au premier tour.
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (runnerMode()) return;
+    return handleRecall(rt, event, ctx);
+  });
 
   // --- Compteurs par outil + agrafage --------------------------------------
   //
@@ -78,6 +89,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     if (event.isError) return;
     const st = stateOf(rt, ctx);
     countToolResult(st, event.toolName);
+    if (runnerMode()) return;
     return pinToolResult(st, event);
   });
 

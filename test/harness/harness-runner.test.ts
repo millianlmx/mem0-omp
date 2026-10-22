@@ -8,10 +8,20 @@ import {
   hostToolsFor,
   runnerArgv,
   runnerEnv,
+  runnerMemoryEnv,
   writePipelineOverlay,
 } from "../../omp-harness/runner.ts";
 import { testConfig } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
+
+/** Lit un chemin dans le schéma JSON d'un outil hôte, sans en figer le type. */
+function at(step: Parameters<typeof hostToolsFor>[0], name: string, ...keys: string[]): unknown {
+  let node: unknown = hostToolsFor(step).find((tool) => tool.name === name)?.parameters;
+  for (const key of keys) {
+    node = node !== null && typeof node === "object" && key in node ? Reflect.get(node, key) : undefined;
+  }
+  return node;
+}
 
 test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranche des runners) sous choom 300, en mode RPC sans UI", () => {
   const config = testConfig("/srv/repo", (c) => {
@@ -30,7 +40,7 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
   const line = args.join(" ");
   assert.match(
     line,
-    /^--scope --quiet --collect --unit=omp-runner-r1-3 --slice=omp-harness-runners\.slice -p MemoryMax=1G --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 -- choom -n 300 -- omp /,
+    /^--scope --quiet --collect --unit=omp-runner-r1-3 --slice=omp-harness-runners\.slice -p MemoryMax=1G --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 --setenv=MEM0_MODE=runner -- choom -n 300 -- omp /,
   );
   for (const flag of [
     "--mode rpc",
@@ -55,6 +65,15 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
   });
   assert.equal(bare.command, "omp");
   assert.equal(bare.args.includes("--model"), false);
+  const classic = runnerArgv(
+    testConfig("/srv/repo", (c) => {
+      c.runner.isolation = "systemd";
+      c.launcher = [];
+      c.memory.runnerMode = false;
+    }),
+    { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope", repo: "/srv/repo" },
+  );
+  assert.equal(classic.args.some((arg) => arg.startsWith("--setenv=MEM0_MODE=")), false, "runnerMode:false ⇒ pas de MEM0_MODE");
 });
 
 test("harness-runner/AC-2 : le profil pipeline éteint LSP, DAP et le noyau Python", () => {
@@ -66,7 +85,7 @@ test("harness-runner/AC-2 : le profil pipeline éteint LSP, DAP et le noyau Pyth
   assert.equal(PIPELINE_SETTINGS.eval.py, false);
 });
 
-test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais jamais du jeton de l'API ; sa scope mémoire est celle du projet", () => {
+test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais jamais du jeton de l'API ; sa scope mémoire est celle du projet, en mode runner", () => {
   const env = runnerEnv(
     "demo-scope",
     { url: "http://127.0.0.1:8321", token: "m" },
@@ -75,24 +94,53 @@ test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais ja
   assert.equal(env.ANTHROPIC_API_KEY, "k");
   assert.equal("HARNESS_TOKEN" in env, false);
   assert.equal(env.MEM0_PROJECT_ID, "demo-scope");
+  assert.equal(env.MEM0_MODE, "runner");
   assert.equal(env.PI_PY, "0");
+  assert.equal("MEM0_MODE" in runnerEnv("demo-scope", null, {}, false), false);
+  assert.deepEqual(runnerMemoryEnv("s", true), { MEM0_PROJECT_ID: "s", MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0", MEM0_MODE: "runner" });
 });
 
-test("harness-runner/AC-4 : les outils hôtes suivent l'étape — run_tests dès /impl (full seulement en revue), review_verdict seulement en revue", () => {
+test("harness-runner/AC-4 : les outils hôtes suivent l'étape — checkpoint et set_modules partout, split_feature en specs et impl, run_tests dès /impl (full seulement en revue), review_verdict seulement en revue", () => {
   const names = (step: Parameters<typeof hostToolsFor>[0]) =>
     hostToolsFor(step)
       .map((tool) => tool.name)
       .sort();
-  assert.deepEqual(names("req"), ["decision", "oracle_recall", "progress"]);
-  assert.deepEqual(names("impl"), ["decision", "oracle_recall", "progress", "run_tests"]);
-  assert.deepEqual(names("review"), ["decision", "oracle_recall", "progress", "review_verdict", "run_tests"]);
-  const scopes = (step: Parameters<typeof hostToolsFor>[0]) =>
-    (
-      hostToolsFor(step).find((tool) => tool.name === "run_tests")!.parameters as {
-        properties: { scope: { enum: string[] } };
-      }
-    ).properties.scope.enum;
-  assert.deepEqual(scopes("impl"), ["touched"]);
-  assert.deepEqual(scopes("fix"), ["touched"]);
-  assert.deepEqual(scopes("review"), ["touched", "full"]);
+  const common = ["checkpoint", "decision", "oracle_recall", "progress", "set_modules"];
+  assert.deepEqual(names("req"), common);
+  assert.deepEqual(names("specs"), [...common, "split_feature"].sort());
+  assert.deepEqual(names("impl"), [...common, "run_tests", "split_feature"].sort());
+  assert.deepEqual(names("fix"), [...common, "run_tests"].sort());
+  assert.deepEqual(names("review"), [...common, "review_verdict", "run_tests"].sort());
+  assert.deepEqual(names("audit"), ["audit_propose", "oracle_recall", "progress"]);
+  assert.deepEqual(at("impl", "run_tests", "properties", "scope", "enum"), ["touched", "check"]);
+  assert.deepEqual(at("fix", "run_tests", "properties", "scope", "enum"), ["touched", "check"]);
+  assert.deepEqual(at("review", "run_tests", "properties", "scope", "enum"), ["touched", "full", "check"]);
+});
+
+test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le service lit", () => {
+  assert.deepEqual(at("req", "decision", "required"), ["question", "options", "chosen", "rationale", "category"]);
+  const categories = at("req", "decision", "properties", "category", "enum");
+  assert.ok(Array.isArray(categories) && categories.includes("clarification"));
+  assert.equal(at("req", "decision", "properties", "options", "minItems"), 2);
+  assert.equal(at("req", "decision", "properties", "options", "maxItems"), 4);
+  assert.deepEqual(at("req", "checkpoint", "required"), ["message"]);
+  assert.deepEqual(at("req", "set_modules", "required"), ["paths"]);
+  assert.deepEqual(at("specs", "split_feature", "required"), ["features"]);
+  assert.deepEqual(at("specs", "split_feature", "properties", "features", "items", "required"), ["title", "request", "modules"]);
+  assert.deepEqual(at("impl", "run_tests", "required"), ["scope"]);
+  assert.equal(at("impl", "run_tests", "properties", "check", "type"), "string");
+  const verdictRequired = at("review", "review_verdict", "required");
+  assert.ok(Array.isArray(verdictRequired) && verdictRequired.includes("criteria") && verdictRequired.includes("confidence"));
+  assert.deepEqual(at("review", "review_verdict", "properties", "criteria", "items", "required"), ["id", "test", "status"]);
+  assert.deepEqual(at("audit", "audit_propose", "properties", "proposals", "items", "required"), [
+    "title",
+    "request",
+    "modules",
+    "kind",
+    "rationale",
+    "evidence",
+    "dependsOn",
+    "impact",
+    "effort",
+  ]);
 });

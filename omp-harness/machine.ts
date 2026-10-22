@@ -2,8 +2,10 @@
 //
 // Fonction PURE : elle ne lance rien, ne lit rien. L'orchestrateur lui donne l'issue
 // d'une étape et applique la transition rendue. `keepRunner` dit si le runner de
-// l'étape reste vivant pour la suivante — seule la boucle review ⇄ fix le garde
-// (cache de prompt) ; partout ailleurs il meurt à la fin de l'étape ou à l'escalade.
+// l'étape reste vivant pour la suivante : req → specs (même rappel, même contexte) et
+// review → fix (le correcteur connaît les bloquants) ; fix → review le tue (un
+// arbitre ne relit pas sa propre correction) ; partout ailleurs il meurt à la fin de
+// l'étape ou à l'escalade.
 import type { Tier } from "./config.ts";
 import type { MergeDecision } from "./verdict.ts";
 
@@ -36,10 +38,34 @@ export const ACTIVE_STATES: readonly RunState[] = ["running", "escalated", "awai
 
 export const TERMINAL_STATES: readonly RunState[] = ["merged", "failed", "cancelled"];
 
+/** La cause d'un échec d'étape : décide de la relance, du backoff et du passage à l'humain. */
+export type FailCause =
+  | "timeout"
+  | "rate_limit"
+  | "server_error"
+  | "network"
+  | "provider"
+  | "context"
+  | "runner"
+  | "missing_output"
+  | "aborted"
+  | "other";
+
 export type StepOutcome =
-  /** L'étape a rendu ce qu'elle devait ; `escalations` = escalades ouvertes en fin d'étape. */
-  | { kind: "done"; escalations: number; merge?: MergeDecision; blockers?: number }
-  | { kind: "failed"; reason: string; retryable: boolean };
+  /**
+   * L'étape a rendu ce qu'elle devait ; `escalations` = escalades ouvertes en fin
+   * d'étape ; `gateNeeded` (specs) = la relecture humaine vaut la peine ;
+   * `criteriaMissing` (review) = critères d'acceptation sans verdict.
+   */
+  | {
+      kind: "done";
+      escalations: number;
+      merge?: MergeDecision;
+      blockers?: number;
+      gateNeeded?: boolean;
+      criteriaMissing?: string[];
+    }
+  | { kind: "failed"; reason: string; retryable: boolean; cause: FailCause };
 
 export type Transition = {
   state: RunState;
@@ -49,13 +75,29 @@ export type Transition = {
   keepRunner: boolean;
   /** Le rebase sur `main` est dû avant l'étape suivante (entrée en review). */
   rebase: boolean;
+  /** Le run n'est pas admis avant cet instant (epoch ms) ; `null` : tout de suite. */
+  notBefore: number | null;
   reason: string;
 };
 
-/** `specsGate` : après /specs, la feature attend l'accord humain avant /impl. */
-export type Limits = { fixCap: number; stepRetries: number; specsGate: boolean };
+/**
+ * `specsGate` : après /specs, la feature attend l'accord humain avant /impl (`"auto"` :
+ * seulement si l'étape l'a jugé utile). `retryBackoffSec` : l'attente avant chaque
+ * relance d'une étape échouée, et son nombre. `mergeRetries` : les merges arrêtés
+ * tolérés avant l'humain.
+ */
+export type Limits = {
+  fixCap: number;
+  retryBackoffSec: number[];
+  specsGate: boolean | "auto";
+  mergeRetries: number;
+};
 
-export type RunCursor = { step: StepKind; fixes: number; attempts: number };
+/** `lastFailCause` : la cause du dernier échec de la même étape (deux de suite ⇒ l'humain). */
+export type RunCursor = { step: StepKind; fixes: number; attempts: number; lastFailCause?: FailCause | null };
+
+/** L'attente avant la relance d'un merge arrêté : 5, 15 puis 60 minutes. */
+export const MERGE_BACKOFF_MS: readonly number[] = [300_000, 900_000, 3_600_000];
 
 const NEXT: Record<"req" | "specs" | "impl", StepKind> = { req: "specs", specs: "impl", impl: "review" };
 
@@ -65,21 +107,25 @@ function to(
   cursor: RunCursor,
   patch: Partial<Transition> & { reason: string },
 ): Transition {
-  return { state, step, fixes: cursor.fixes, attempts: 0, keepRunner: false, rebase: false, ...patch };
+  return {
+    state,
+    step,
+    fixes: cursor.fixes,
+    attempts: 0,
+    keepRunner: false,
+    rebase: false,
+    notBefore: null,
+    ...patch,
+  };
 }
 
-/** La transition qui suit l'issue d'une étape. */
-export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limits): Transition {
+/**
+ * La transition qui suit l'issue d'une étape. `now` sert au backoff des relances ;
+ * la fonction reste pure (l'instant lui est donné).
+ */
+export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limits, now = 0): Transition {
   const step = cursor.step;
-  if (outcome.kind === "failed") {
-    if (outcome.retryable && cursor.attempts < limits.stepRetries) {
-      return to("running", step, cursor, {
-        attempts: cursor.attempts + 1,
-        reason: `relance de /${step} : ${outcome.reason}`,
-      });
-    }
-    return to("failed", step, cursor, { attempts: cursor.attempts, reason: `/${step} a échoué : ${outcome.reason}` });
-  }
+  if (outcome.kind === "failed") return afterFailure(cursor, outcome, limits, now);
 
   // Les escalades d'une étape sont BATCHÉES : elles partent toutes ensemble, en fin
   // d'étape, et le runner meurt — la reprise se fera sur le checkpoint courant.
@@ -89,14 +135,23 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
 
   switch (step) {
     case "req":
-      return to("running", NEXT[step], cursor, { reason: "/req terminé" });
-    case "specs":
-      if (limits.specsGate) return to("awaiting_human", "specs", cursor, { reason: "specs à valider avant /impl" });
+      return to("running", NEXT[step], cursor, { keepRunner: true, reason: "/req terminé" });
+    case "specs": {
+      const gate = limits.specsGate === "auto" ? outcome.gateNeeded === true : limits.specsGate;
+      if (gate) {
+        return to("awaiting_human", "specs", cursor, {
+          reason:
+            limits.specsGate === "auto"
+              ? "specs à valider avant /impl (découpage, modules ou geste irréversible)"
+              : "specs à valider avant /impl",
+        });
+      }
       return to("running", NEXT[step], cursor, { reason: "/specs terminé" });
+    }
     case "impl":
       return to("running", "review", cursor, { rebase: true, reason: "/impl terminé — rebase sur main avant /review" });
     case "fix":
-      return to("running", "review", cursor, { keepRunner: true, reason: "/impl --fix terminé" });
+      return to("running", "review", cursor, { keepRunner: false, reason: "/impl --fix terminé" });
     case "review": {
       const blockers = outcome.blockers ?? 0;
       if (blockers > 0) {
@@ -119,6 +174,66 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
       });
     }
   }
+}
+
+/**
+ * Les causes qui se résolvent en attendant (quota, réseau, fournisseur, délai) : la
+ * liste de backoff se consomme entière, même cause répétée comprise. Les autres
+ * (contexte, runner, sortie manquante, inconnu) passent à l'humain dès qu'elles
+ * frappent deux fois de suite.
+ */
+export const WAITABLE_CAUSES: readonly FailCause[] = ["rate_limit", "network", "provider", "server_error", "timeout"];
+
+/**
+ * L'issue d'une étape qui a échoué : relance différée (backoff) tant qu'il en reste ;
+ * liste épuisée ⇒ l'humain (il peut relancer), jamais `failed`, réservé au non
+ * relançable. Un correcteur qui ne change rien n'est pas une panne : il conteste, la
+ * revue reprend.
+ */
+function afterFailure(
+  cursor: RunCursor,
+  outcome: Extract<StepOutcome, { kind: "failed" }>,
+  limits: Limits,
+  now: number,
+): Transition {
+  const step = cursor.step;
+  if (step === "fix" && outcome.cause === "missing_output") {
+    if (cursor.lastFailCause === "missing_output") {
+      return to("awaiting_human", "fix", cursor, {
+        reason: `le correcteur conteste les bloquants une seconde fois : ${outcome.reason}`,
+      });
+    }
+    return to("running", "review", cursor, {
+      keepRunner: false,
+      reason: `le correcteur conteste les bloquants (${outcome.reason}) — nouvelle revue`,
+    });
+  }
+  if (!outcome.retryable) {
+    return to("failed", step, cursor, { attempts: cursor.attempts, reason: `/${step} a échoué : ${outcome.reason}` });
+  }
+  if (cursor.lastFailCause === outcome.cause && !WAITABLE_CAUSES.includes(outcome.cause)) {
+    return to("awaiting_human", step, cursor, {
+      attempts: cursor.attempts,
+      reason: `/${step} a échoué deux fois de suite pour la même cause (${outcome.cause}) : ${outcome.reason}`,
+    });
+  }
+  const backoffSec = limits.retryBackoffSec[cursor.attempts];
+  if (backoffSec !== undefined) {
+    return to("queued", step, cursor, {
+      attempts: cursor.attempts + 1,
+      notBefore: now + backoffSec * 1000,
+      reason: `relance de /${step} dans ${backoffSec} s (${outcome.cause}) : ${outcome.reason}`,
+    });
+  }
+  return to("awaiting_human", step, cursor, {
+    attempts: cursor.attempts,
+    reason: `/${step} a échoué ${limits.retryBackoffSec.length + 1} fois (${outcome.cause}), relances épuisées : ${outcome.reason}`,
+  });
+}
+
+/** La relance par l'humain d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
+export function retried(cursor: RunCursor): Transition {
+  return to("queued", cursor.step, cursor, { attempts: 0, notBefore: null, reason: "relancé par l'humain" });
 }
 
 /** La reprise d'un run escaladé, une fois TOUTES ses escalades répondues : même étape, nouveau runner. */
@@ -188,19 +303,23 @@ export function assertTransition(from: readonly RunState[], to: RunState): void 
 }
 
 /**
- * Le merge s'arrête (conflit avec main, suite rouge après rebase) : retour en revue
- * ou en correction, une correction de plus au compteur ; au plafond, l'humain.
+ * Le merge s'arrête (conflit avec main, suite rouge après rebase, fusion refusée) :
+ * retour en revue ou en correction après un délai (5, 15 puis 60 min), compté dans
+ * `mergeRetries` — jamais dans `fixes`, qui ne compte que les corrections de revue ;
+ * au plafond, l'humain. Le merger incrémente lui-même `mergeRetries` sur le run.
  */
 export function afterMergeStopped(
-  cursor: Pick<RunCursor, "fixes">,
+  cursor: Pick<RunCursor, "fixes"> & { mergeRetries: number },
   step: "fix" | "review",
   reason: string,
-  fixCap: number,
+  limits: Pick<Limits, "mergeRetries">,
+  now: number,
 ): Transition {
   const at = { step, fixes: cursor.fixes, attempts: 0 };
-  if (cursor.fixes >= fixCap)
-    return to("awaiting_human", null, at, { reason: `${reason} — plafond de corrections atteint` });
-  return to("queued", step, at, { fixes: cursor.fixes + 1, reason });
+  if (cursor.mergeRetries >= limits.mergeRetries)
+    return to("awaiting_human", null, at, { reason: `${reason} — plafond de tentatives de merge atteint` });
+  const wait = MERGE_BACKOFF_MS[Math.min(cursor.mergeRetries, MERGE_BACKOFF_MS.length - 1)] ?? 0;
+  return to("queued", step, at, { notBefore: now + wait, reason });
 }
 
 /** Le merge est fait dans git : l'état suit, toujours. */
@@ -227,6 +346,7 @@ export function cancelled(cursor: RunCursor | { step: StepKind | null; fixes: nu
     attempts: cursor.attempts,
     keepRunner: false,
     rebase: false,
+    notBefore: null,
     reason: "annulé par l'humain",
   };
 }
@@ -243,6 +363,7 @@ export function crashed(
     attempts: cursor.attempts,
     keepRunner: false,
     rebase: false,
+    notBefore: null,
     reason,
   };
 }

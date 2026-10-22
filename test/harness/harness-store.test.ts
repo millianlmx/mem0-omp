@@ -16,13 +16,13 @@ test("harness-store/AC-1 : la base se crée migrée, en WAL, et une réouverture
   const dir = tmpdir("harness-store-");
   const file = path.join(dir, "h.sqlite");
   const first = new Store(file);
-  assert.equal(first.schemaVersion, 5);
+  assert.equal(first.schemaVersion, 6);
   first.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "harness/a" });
   assert.equal((first.db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
   first.close();
   const again = new Store(file);
   assert.equal(again.getRun("r1")?.title, "A");
-  assert.equal(again.schemaVersion, 5);
+  assert.equal(again.schemaVersion, 6);
   again.close();
 });
 
@@ -47,6 +47,7 @@ test("harness-store/AC-2 : un run naît en file à /req ; ses champs JSON (modul
     risks: [],
     files: ["x"],
     unverified: [],
+    criteria: [{ id: "AC-1", test: "test/x.test.ts", status: "pass" as const }],
     confidence: "strong" as const,
   };
   const updated = db.updateRun("r1", { state: "running", step: "review", verdict });
@@ -186,4 +187,125 @@ test("harness-store/AC-8 : une base existante migre sans perte — la consigne `
   db.addInstructions("r1", "et ceci");
   assert.equal(db.instructions("r1"), "reprends ici\n\net ceci");
   db.close();
+});
+
+test("harness-store/AC-9 : la migration de l'autonomie est idempotente — un run ancien naît sans attente ni merge relancé, une escalade ancienne sans recommandation", () => {
+  const file = path.join(tmpdir("harness-store-"), "h.sqlite");
+  const old = new DatabaseSync(file);
+  for (const sql of MIGRATIONS.slice(0, 5)) old.exec(sql);
+  old.exec("PRAGMA user_version = 5");
+  old.exec(`INSERT INTO runs (id, repo, slug, title, request, state, step, branch, created_at, updated_at)
+            VALUES ('r1', 'demo', 'a', 'A', 'a', 'queued', 'impl', 'harness/a', 1, 1)`);
+  old.exec(`INSERT INTO steps (run_id, kind, attempt, status, started_at) VALUES ('r1', 'impl', 0, 'running', 1)`);
+  old.exec(`INSERT INTO escalations (run_id, step_id, category, question, options, context, status, created_at)
+            VALUES ('r1', 1, 'schema', 'Q ?', '["a","b"]', 'ctx', 'open', 1)`);
+  old.close();
+  const db = new Store(file);
+  assert.equal(db.schemaVersion, 6);
+  const run = db.getRun("r1");
+  assert.deepEqual(
+    [run?.notBefore, run?.mergeRetries, run?.lastFailCause, run?.lastReviewSha],
+    [null, 0, null, null],
+  );
+  const [escalation] = db.listEscalations({ runId: "r1" });
+  assert.deepEqual([escalation?.recommended, escalation?.answerReason], [null, null]);
+  db.close();
+  // Réouvrir ne remigre pas et garde tout.
+  const again = new Store(file);
+  assert.equal(again.schemaVersion, 6);
+  assert.equal(again.listEscalations({ runId: "r1" }).length, 1);
+  again.close();
+});
+
+test("harness-store/AC-10 : les nouvelles colonnes font l'aller-retour ; une cause d'échec inconnue en base se lit « other »", () => {
+  const db = store();
+  db.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "b" });
+  const updated = db.updateRun("r1", {
+    notBefore: 5000,
+    mergeRetries: 2,
+    lastFailCause: "rate_limit",
+    lastReviewSha: "abc",
+  });
+  assert.deepEqual(
+    [updated.notBefore, updated.mergeRetries, updated.lastFailCause, updated.lastReviewSha],
+    [5000, 2, "rate_limit", "abc"],
+  );
+  db.db.exec("UPDATE runs SET last_fail_cause = 'martien' WHERE id = 'r1'");
+  assert.equal(db.getRun("r1")?.lastFailCause, "other");
+});
+
+test("harness-store/AC-11 : listRunsDue ne rend que les runs en file dont l'heure est venue", () => {
+  const db = store();
+  for (const [id, state, notBefore] of [
+    ["r1", "queued", null],
+    ["r2", "queued", 50],
+    ["r3", "queued", 500],
+    ["r4", "running", null],
+  ] as const) {
+    db.createRun({ id, repo: "demo", slug: id, title: id, request: id, branch: id });
+    db.updateRun(id, { state, notBefore });
+  }
+  assert.deepEqual(
+    db.listRunsDue(100).map((run) => run.id),
+    ["r1", "r2"],
+  );
+  assert.deepEqual(
+    db.listRunsDue(1000).map((run) => run.id),
+    ["r1", "r2", "r3"],
+  );
+});
+
+test("harness-store/AC-12 : une escalade garde la recommandation de l'agent et la raison de l'humain ; les décisions prises seules (auto ou à l'échéance) s'acceptent d'un geste", () => {
+  const db = store();
+  db.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "b" });
+  const step = db.startStep("r1", "impl", 0, null, null);
+  const escalation = db.addEscalation({
+    runId: "r1",
+    stepId: step.id,
+    category: "schema",
+    question: "Q ?",
+    options: ["a", "b"],
+    context: "ctx",
+    recommended: "a",
+  });
+  assert.equal(escalation.recommended, "a");
+  db.answerEscalation(escalation.id, "b", "mac", "a casse l'index");
+  const [answered] = db.listEscalations({ runId: "r1" });
+  assert.deepEqual([answered?.answer, answered?.answerReason, answered?.answeredBy], ["b", "a casse l'index", "mac"]);
+  // Sans recommandation ni raison : null, pas une chaîne vide.
+  const bare = db.addEscalation({ runId: "r1", stepId: step.id, category: "public_api", question: "?", options: [], context: "" });
+  db.answerEscalation(bare.id, "x");
+  assert.deepEqual(
+    [bare.recommended, db.listEscalations({ runId: "r1" })[1]?.answerReason],
+    [null, null],
+  );
+  const decision = {
+    runId: "r1",
+    stepId: step.id,
+    question: "?",
+    options: ["x", "y"],
+    chosen: "x",
+    rationale: "r",
+    category: "reversible" as const,
+    checkpointSha: null,
+    dependsOn: [],
+  };
+  db.addDecision(decision);
+  db.addDecision(decision, "auto_timeout");
+  db.addDecision(decision);
+  db.acceptDecision("r1", 3, "mac");
+  assert.deepEqual(
+    db.listDecisions({ runId: "r1" }).map((d) => d.status),
+    ["auto", "auto_timeout", "accepted"],
+  );
+  assert.equal(db.acceptAllDecisions("r1", "iphone"), 2);
+  assert.deepEqual(
+    db.listDecisions({ runId: "r1" }).map((d) => [d.status, d.decidedBy]),
+    [
+      ["accepted", "iphone"],
+      ["accepted", "iphone"],
+      ["accepted", "mac"],
+    ],
+  );
+  assert.equal(db.acceptAllDecisions("r1", "iphone"), 0);
 });

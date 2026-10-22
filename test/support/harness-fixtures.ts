@@ -65,6 +65,9 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   config.git = { authorName: "Harness", authorEmail: "harness@example.com" };
   // Les scénarios vont de /req au merge d'une traite ; la porte des specs a ses propres tests.
   config.review.specsGate = false;
+  // Une relance immédiate, une seule : les scénarios d'échec restent courts (le backoff a ses propres tests).
+  config.runner.retryBackoffSec = [0];
+  config.runner.stepRetries = 1;
   config.repos = [
     repoDefaults({
       name: "demo",
@@ -85,6 +88,11 @@ export class MemoryOracle implements Oracle {
   async recall(_scope: string, query: string): Promise<Memory[]> {
     this.queries.push(query);
     return this.memories;
+  }
+  /** Les décisions : `memories` filtrées sur les étiquettes `harness` et `decision`. */
+  async recallDecisions(_scope: string, question: string, limit = 5): Promise<Memory[]> {
+    this.queries.push(question);
+    return this.memories.filter((m) => m.tags.includes("harness") && m.tags.includes("decision")).slice(0, limit);
   }
   async retain(scope: string, text: string, tags: string[] = []): Promise<boolean> {
     this.retained.push({ scope, text, tags });
@@ -195,20 +203,21 @@ export const OK = {
   req: [
     {
       write: ".harness/req.md",
-      content: "## Besoins\nB-1 : exporter les données\n## Hors périmètre\n## Contraintes\n",
+      content:
+        "## Besoins\nB-1 : exporter les données au format CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Hors périmètre\n## Contraintes\n",
     },
   ],
   specs: [
     {
       write: ".harness/specs.md",
       content:
-        "## Spécifications\nexport CSV\n## Critères d'acceptation\nAC-1 : export\n## Modules\n- src/api\n## Découpage\naucun\n",
+        "## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\naucun\n",
     },
   ],
   impl: [
     { write: "src/api/export.ts", content: "export const exportCsv = () => 'a,b';\n" },
     { tool: "run_tests", args: { scope: "touched" } },
-    { write: ".harness/impl.md", content: "AC-1 fait\n" },
+    { write: ".harness/impl.md", content: "## Fait\nAC-1 fait\n## Reste\n" },
   ],
   review: [
     { tool: "run_tests", args: { scope: "full" } },
@@ -221,6 +230,7 @@ export const OK = {
         risks: [],
         files: ["src/api/export.ts"],
         unverified: [],
+        criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
         confidence: "strong",
       },
     },

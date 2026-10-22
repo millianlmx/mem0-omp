@@ -10,10 +10,42 @@ import * as path from "node:path";
 import type { HarnessConfig } from "./config.ts";
 import type { Git } from "./git.ts";
 
-export type TestPlan = { touched: string; full: string; testImage: string | null };
+export type TestPlan = {
+  touched: string;
+  full: string;
+  /** Le glob des fichiers de test (`repos[].tests.pattern`) ; `null` : pas de filtre. */
+  pattern: string | null;
+  /** Les commandes nommées (`repos[].checks`), devinées des scripts npm `lint` et `typecheck`. */
+  checks: Record<string, string>;
+  testImage: string | null;
+};
 
-/** Les commandes de test d'un dépôt, d'après les fichiers à la racine de sa branche principale. */
-export function detectTests(files: readonly string[]): TestPlan {
+/** Les scripts npm d'un `package.json` lu tel quel ; `{}` si absent ou illisible. */
+function npmScripts(packageJson: string | null): Record<string, string> {
+  if (packageJson === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(packageJson);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || !("scripts" in parsed)) return {};
+  const scripts: unknown = parsed.scripts;
+  if (typeof scripts !== "object" || scripts === null) return {};
+  const out: Record<string, string> = {};
+  for (const [name, command] of Object.entries(scripts)) if (typeof command === "string") out[name] = command;
+  return out;
+}
+
+/**
+ * Les commandes de test d'un dépôt, d'après les fichiers à la racine de sa branche
+ * principale et, pour un projet node, le contenu de son `package.json` : un script
+ * `test:touched` (qui reçoit les fichiers touchés et sort 0 à vide) prime sur
+ * `<runner> test -- {files}` ; `lint` et `typecheck` deviennent des `checks` nommés.
+ * Le glob des tests suit l'arborescence : `test/` ⇒ `test/**\/*.test.ts`, sinon
+ * `**\/*.test.{ts,js}`.
+ */
+export function detectTests(files: readonly string[], packageJson: string | null = null): TestPlan {
   const has = (name: string) => files.includes(name);
   if (has("package.json")) {
     const runner = has("pnpm-lock.yaml")
@@ -23,21 +55,32 @@ export function detectTests(files: readonly string[]): TestPlan {
         : has("bun.lockb") || has("bun.lock")
           ? "bun"
           : "npm";
-    return { touched: `${runner} test -- {files}`, full: `${runner} test`, testImage: null };
+    const scripts = npmScripts(packageJson);
+    const checks: Record<string, string> = {};
+    for (const name of ["lint", "typecheck"]) if (name in scripts) checks[name] = `${runner} run -s ${name}`;
+    return {
+      touched: "test:touched" in scripts ? `${runner} run -s test:touched -- {files}` : `${runner} test -- {files}`,
+      full: `${runner} test`,
+      pattern: has("test") ? "test/**/*.test.ts" : "**/*.test.{ts,js}",
+      checks,
+      testImage: null,
+    };
   }
   if (has("Cargo.toml"))
-    return { touched: "cargo test", full: "cargo test", testImage: "docker.io/library/rust:1-bookworm" };
+    return { touched: "cargo test", full: "cargo test", pattern: null, checks: {}, testImage: "docker.io/library/rust:1-bookworm" };
   if (has("go.mod"))
-    return { touched: "go test ./...", full: "go test ./...", testImage: "docker.io/library/golang:1-bookworm" };
+    return { touched: "go test ./...", full: "go test ./...", pattern: null, checks: {}, testImage: "docker.io/library/golang:1-bookworm" };
   if (has("pyproject.toml") || has("setup.py") || has("requirements.txt")) {
     return {
       touched: "python -m pytest {files}",
       full: "python -m pytest",
+      pattern: null,
+      checks: {},
       testImage: "docker.io/library/python:3-bookworm",
     };
   }
   // Rien de reconnu : les tests passent toujours, la revue lit le code.
-  return { touched: "true {files}", full: "true", testImage: null };
+  return { touched: "true {files}", full: "true", pattern: null, checks: {}, testImage: null };
 }
 
 /** Le nom d'un dépôt d'après son URL : `git@github.com:moi/mon-produit.git` → `mon-produit`. */
@@ -83,12 +126,15 @@ export async function addRepo(
     return { code: 4, message: `écriture refusée sur ${url} : ${write.stderr.trim().split("\n")[0] ?? ""}` };
 
   const listed = await git.raw(clone, ["ls-tree", "--name-only", mainBranch]);
-  const plan = detectTests(listed.code === 0 ? listed.stdout.split("\n").filter(Boolean) : []);
+  const files = listed.code === 0 ? listed.stdout.split("\n").filter(Boolean) : [];
+  const manifest = files.includes("package.json") ? await git.raw(clone, ["show", `${mainBranch}:package.json`]) : null;
+  const plan = detectTests(files, manifest !== null && manifest.code === 0 ? manifest.stdout : null);
   repos.push({
     name,
     path: clone,
     mainBranch,
-    tests: { touched: plan.touched, full: plan.full },
+    tests: { touched: plan.touched, full: plan.full, pattern: plan.pattern },
+    checks: plan.checks,
     ...(plan.testImage ? { testImage: plan.testImage } : {}),
     merge: "local",
     remote: "origin",

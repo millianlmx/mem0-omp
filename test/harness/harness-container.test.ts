@@ -76,6 +76,7 @@ test("harness-container/AC-1 : un runner est un conteneur frère plafonné, qui 
     "HOME=/home/runner",
     "MEM0_AUTOSETUP=0",
     "MEM0_HTTP_URL=http://mem0:8321",
+    "MEM0_MODE=runner",
     "MEM0_NUDGE=0",
     "MEM0_PROJECT_ID=demo",
     "PI_PY=0",
@@ -129,7 +130,7 @@ test("harness-container/AC-3 : l'arrêt forcé retire le conteneur ; la configur
   const calls: string[][] = [];
   const exec = async (command: string, args: string[], _options?: ProcOptions): Promise<ProcResult> => {
     calls.push([command, ...args]);
-    return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false };
+    return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, aborted: false };
   };
   const config = containerConfig();
   config.container.command = ["podman", "--remote"];
@@ -176,8 +177,8 @@ test("harness-container/AC-4 : en isolation container, un run va de /req au merg
     assert.equal(world.store.getRun(run.id)?.state, "merged", world.store.getRun(run.id)?.reason ?? "");
     assert.match(git(world.repo, "show", "main:src/api/export.ts"), /exportCsv/);
 
-    // Chaque runner part par `run -i` de l'image des runners, son worktree monté.
-    assert.ok(world.spawned.length >= 4);
+    // Chaque runner part par `run -i` de l'image des runners, son worktree monté (req et specs partagent le leur).
+    assert.ok(world.spawned.length >= 3);
     for (const { command, args } of world.spawned) {
       assert.equal(command, "env");
       const line = args.slice(args.indexOf("run"));

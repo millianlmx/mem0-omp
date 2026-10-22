@@ -111,7 +111,9 @@ struct IOSHarnessRepoPicker: View {
     }
 }
 
-/// Une feature : titre, état et étape, corrections, et l'arrêt (confirmé).
+/// Une feature : titre, état et étape, reprise différée ou dernier échec, corrections ;
+/// son menu demande l'arrêt, la relance (en échec ou arrêtée sur une attente) ou
+/// l'annulation d'une feature fusionnée, tous confirmés par `iosHarnessGestures`.
 struct IOSHarnessRunRow: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -121,6 +123,11 @@ struct IOSHarnessRunRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(run.title)
             IOSStatusChip(status: ConsoleStatus(text: run.statusLine, tone: Self.tone(of: run.phase)))
+            if let detail = run.detailLine() {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if run.fixes > 0 {
                 Text(PipelineServerText.fixes(run.fixes))
                     .font(.caption)
@@ -128,6 +135,12 @@ struct IOSHarnessRunRow: View {
             }
         }
         .contextMenu {
+            if run.canRetry {
+                Button(PipelineServerText.retry) { drafts.retryRequest = run }
+            }
+            if run.canRevert {
+                Button(PipelineServerText.revertFeature, role: .destructive) { drafts.revertRequest = run }
+            }
             if let phase = run.phase, [.queued, .running, .escalated, .awaitingHuman].contains(phase) {
                 Button(PipelineServerText.stopFeature, role: .destructive) { drafts.stopRequest = run }
             }
@@ -216,6 +229,13 @@ struct IOSHarnessInboxSections: View {
         Section {
             if inbox.decisions.isEmpty { empty }
             ForEach(inbox.decisions) { decision in decisionView(decision, run: inbox.run(decision.runId)).disabled(!server.canAct) }
+            ForEach(inbox.decisionRunIds, id: \.self) { runId in
+                Button(inbox.decisionRunIds.count == 1 ? PipelineServerText.acceptAll : PipelineServerText.acceptAllLine(inbox.run(runId)?.title ?? runId)) {
+                    Task { await server.acceptAllDecisions(runId: runId) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!server.canAct || server.busy.contains(runId))
+            }
         } header: {
             Text(PipelineServerText.toReview)
         } footer: {
@@ -247,8 +267,13 @@ struct IOSHarnessInboxSections: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.orange)
                     Text(item.question)
-                    if !item.context.isEmpty {
-                        Text(item.context)
+                    if let context = item.shownContext {
+                        Text(context)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let recommended = item.recommended {
+                        Text(PipelineServerText.recommended(recommended))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -258,25 +283,42 @@ struct IOSHarnessInboxSections: View {
                         } label: {
                             Label(
                                 option,
-                                systemImage: drafts.answers[item.id] == option ? PipelineServerText.chosenSymbol : PipelineServerText.optionSymbol
+                                systemImage: drafts.answer(for: item) == option ? PipelineServerText.chosenSymbol : PipelineServerText.optionSymbol
                             )
                         }
                         .buttonStyle(.borderless)
                     }
+                    // La réponse présélectionnée est l'option recommandée, tant que rien n'est tapé.
                     TextField(PipelineServerText.answerPlaceholder, text: Binding(
-                        get: { drafts.answers[item.id] ?? "" },
+                        get: { drafts.answer(for: item) },
                         set: { drafts.answers[item.id] = $0 }
+                    ))
+                    TextField(PipelineServerText.reasonOptional, text: Binding(
+                        get: { drafts.reasons[item.id] ?? "" },
+                        set: { drafts.reasons[item.id] = $0 }
                     ))
                 }
             }
             Button(PipelineServerText.answer) {
                 let answers = drafts.answers(for: batch)
+                let reasons = drafts.reasons(for: batch)
                 Task {
-                    if await server.answer(runId: batch.id, answers: answers) { drafts.clearAnswers(for: batch) }
+                    if await server.answer(runId: batch.id, answers: answers, reasons: reasons) { drafts.clearAnswers(for: batch) }
                 }
             }
             .buttonStyle(.borderedProminent)
             .disabled(!drafts.canAnswer(batch) || server.busy.contains(batch.id))
+            // Un seul geste : toutes les escalades du lot reçoivent la recommandation de l'agent.
+            if let recommended = HarnessDrafts.recommendedAnswers(for: batch) {
+                Button(PipelineServerText.acceptRecommended) {
+                    Task {
+                        if await server.answer(runId: batch.id, answers: recommended) { drafts.clearAnswers(for: batch) }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(server.busy.contains(batch.id))
+                .accessibilityIdentifier("ios.home.acceptRecommended")
+            }
         }
         .padding(.vertical, 4)
     }
@@ -335,12 +377,18 @@ struct IOSHarnessInboxSections: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button(PipelineServerText.approve) {
-                    Task { await server.validate(runId: run.id, approve: true, reason: "") }
+                if run.verdict != nil {
+                    Button(PipelineServerText.approve) {
+                        Task { await server.validate(runId: run.id, approve: true, reason: "") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button(PipelineServerText.refuse) { drafts.beginRefusal(run) }
+                        .buttonStyle(.bordered)
+                } else {
+                    // Arrêtée sans verdict (échecs répétés, fusion refusée) : repart de son étape.
+                    Button(PipelineServerText.retry) { drafts.retryRequest = run }
+                        .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
-                Button(PipelineServerText.refuse) { drafts.beginRefusal(run) }
-                    .buttonStyle(.bordered)
             }
             .disabled(server.busy.contains(run.id))
         }
@@ -372,6 +420,11 @@ struct IOSHarnessInboxSections: View {
             Text(PipelineServerText.rationale(decision.rationale))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let status = PipelineServerText.decisionStatus(decision.status) {
+                Text(status)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+            }
             HStack {
                 Button(PipelineServerText.accept) {
                     Task { await server.accept(runId: decision.runId, seq: decision.seq) }
@@ -658,7 +711,7 @@ struct IOSHarnessStatsScreen: View {
 
 extension View {
     /// Les feuilles et confirmations des gestes du serveur : refus (specs ou
-    /// verdict), renversement d'une décision, arrêt d'une feature.
+    /// verdict), renversement d'une décision, arrêt, relance et annulation d'une feature.
     func iosHarnessGestures(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         modifier(IOSHarnessGestures(server: server, drafts: drafts))
     }
@@ -688,6 +741,34 @@ private struct IOSHarnessGestures: ViewModifier {
                 Button(PipelineServerText.cancel, role: .cancel) {}
             } message: { _ in
                 Text(PipelineServerText.stopMessage)
+            }
+            .confirmationDialog(
+                PipelineServerText.retryConfirm,
+                isPresented: Binding(get: { drafts.retryRequest != nil }, set: { if !$0 { drafts.retryRequest = nil } }),
+                titleVisibility: .visible,
+                presenting: drafts.retryRequest
+            ) { run in
+                Button(PipelineServerText.retry) {
+                    Task { await server.retry(runId: run.id) }
+                }
+                Button(PipelineServerText.cancel, role: .cancel) {}
+            } message: { run in
+                if let detail = run.detailLine() { Text(detail) }
+                if let reason = run.reason { Text(reason) }
+                Text(PipelineServerText.retryMessage)
+            }
+            .confirmationDialog(
+                PipelineServerText.revertConfirm,
+                isPresented: Binding(get: { drafts.revertRequest != nil }, set: { if !$0 { drafts.revertRequest = nil } }),
+                titleVisibility: .visible,
+                presenting: drafts.revertRequest
+            ) { run in
+                Button(PipelineServerText.revertFeature, role: .destructive) {
+                    Task { await server.revert(runId: run.id) }
+                }
+                Button(PipelineServerText.cancel, role: .cancel) {}
+            } message: { _ in
+                Text(PipelineServerText.revertMessage)
             }
     }
 

@@ -10,6 +10,7 @@
 #   bash scripts/test-files.sh --scope=outillage   ceux qui relancent check.sh entier
 #   bash scripts/test-files.sh --scope=changed     ceux que le diff courant concerne
 #   bash scripts/test-files.sh --scope=changed=<base>   idem, diff depuis <base>
+#   bash scripts/test-files.sh --scope=files <chemins…>  ceux qu'une liste de fichiers concerne
 #
 # `--scope=macos` est la SEULE définition de « fichier de test qui appelle swift
 # ou xcodebuild » (la CI macOS des pull_request ne lance que ceux-là) : un fichier
@@ -33,20 +34,34 @@
 # Repli : git absent, hors dépôt, ou diff vide ⇒ message sur stderr et liste
 # complète (hors outillage), jamais une liste vide silencieuse.
 #
-# Jamais de liste vide silencieuse : ensemble vide, option inconnue ou python3
-# absent ⇒ message sur stderr et sortie 1.
+# `--scope=files <chemins…>` : les mêmes règles (a), (b), (c) appliquées à la
+# liste reçue en arguments (chemins relatifs à la racine) au lieu du diff git.
+# C'est l'entrée du harness (`npm run test:touched -- <fichiers>`), qui connaît
+# déjà les fichiers touchés depuis la base du run. Contrairement à `changed`, un
+# résultat VIDE est ici légitime et attendu : une liste vide ou des fichiers que
+# nul test ne nomme (README.md…) ⇒ message sur stderr, sortie 0, rien sur stdout
+# — le harness lit « rien à lancer », pas « lance tout ».
+#
+# Jamais de liste vide silencieuse : ensemble vide (sauf `files`), option inconnue
+# ou python3 absent ⇒ message sur stderr et sortie 1.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 scope=""
 base="HEAD"
+changed_files=()
 for arg in "$@"; do
+  if [ "$scope" = "files" ]; then
+    changed_files+=("$arg")
+    continue
+  fi
   case "$arg" in
     --scope=macos) scope="macos" ;;
     --scope=outillage) scope="outillage" ;;
     --scope=changed) scope="changed" ;;
     --scope=changed=*) scope="changed"; base="${arg#--scope=changed=}" ;;
+    --scope=files) scope="files" ;;
     *) echo "✗ option inconnue : $arg" >&2; exit 1 ;;
   esac
 done
@@ -88,6 +103,13 @@ if [ "$scope" = "changed" ]; then
   else
     echo "✗ git absent ou hors dépôt" >&2
   fi
+elif [ "$scope" = "files" ]; then
+  if [ "${#changed_files[@]}" -eq 0 ]; then
+    echo "· aucun fichier reçu : rien à lancer" >&2
+    exit 0
+  fi
+  changed="$(printf '%s\n' "${changed_files[@]}" | LC_ALL=C sort -u)"
+  changed_status=0
 fi
 
 # Le filtre passe par python3, jamais par `grep -P` (rejeté par le grep BSD de
@@ -114,6 +136,9 @@ def is_outillage(path):
 
 def emit(kept):
     if not kept:
+        if scope == "files":
+            print("· aucun test ne nomme ces fichiers : rien à lancer", file=sys.stderr)
+            sys.exit(0)
         print("✗ aucun fichier de test retenu", file=sys.stderr)
         sys.exit(1)
     for path in kept:
@@ -125,7 +150,7 @@ if scope == "macos":
 if scope == "outillage":
     emit([p for p in paths if is_outillage(p)])
 
-# scope == "changed"
+# scope == "changed" ou "files" (même liste `changed`, reçue d'argv)
 everything = [p for p in paths if not is_outillage(p)]
 changed = [line for line in os.environ["MEM0_TEST_CHANGED"].split("\n") if line.strip() != ""]
 if os.environ["MEM0_TEST_CHANGED_STATUS"] != "0":

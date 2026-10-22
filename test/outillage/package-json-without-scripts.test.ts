@@ -59,7 +59,7 @@ function fixture(dir: string, body: string): void {
 
 const HOST_TYPES_ABSENT = "types de l'hôte absents";
 
-test("package-json-without-scripts/AC-4 : le package.json racine est privé et ne porte que les trois alias", () => {
+test("package-json-without-scripts/AC-4 : le package.json racine est privé et ne porte que les alias vers scripts/", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(manifest, {
     private: true,
@@ -68,6 +68,7 @@ test("package-json-without-scripts/AC-4 : le package.json racine est privé et n
       check: "bash scripts/check.sh",
       typecheck: "bash scripts/typecheck.sh",
       test: "bash scripts/check.sh --sections=tests",
+      "test:touched": "bash scripts/test-touched.sh",
     },
   });
 });
@@ -165,6 +166,7 @@ test("package-json-without-scripts/AC-8 : le README associe npm run check, npm r
     ["npm run check", "bash scripts/check.sh"],
     ["npm run typecheck", "bash scripts/typecheck.sh"],
     ["npm test", "bash scripts/check.sh --sections=tests"],
+    ["npm run test:touched -- <fichiers…>", "bash scripts/test-touched.sh"],
   ]) {
     assert.ok(
       readme.includes(`\`${command}\` lance \`${script}\``),

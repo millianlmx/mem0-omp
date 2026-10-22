@@ -74,12 +74,14 @@ test("harness-memory/AC-2 : chaque runner charge le plugin mémoire dans la scop
     );
     assert.equal(world.store.getRun(run.id)?.state, "merged", String(world.store.getRun(run.id)?.reason));
     const starts = world.log().filter((entry) => entry.kind === "argv");
-    assert.equal(starts.length, 4);
+    // Trois runners : /req et /specs partagent le leur (même tier, cache de prompt).
+    assert.equal(starts.length, 3);
     for (const start of starts) {
       assert.deepEqual(start.env, {
         MEM0_PROJECT_ID: "mon-produit",
         MEM0_AUTOSETUP: "0",
         MEM0_NUDGE: "0",
+        MEM0_MODE: "runner",
         MEM0_HTTP_URL: "http://127.0.0.1:8321",
         MEM0_HTTP_TOKEN: "jeton-mem0",
         HARNESS_TOKEN: null,
@@ -121,7 +123,7 @@ test("harness-memory/AC-3 : derrière le lanceur root, la scope passe par trois 
   const out = ok.stdout.split("\n");
   assert.deepEqual(
     out.filter((l) => l.startsWith("env:")),
-    ["env:MEM0_PROJECT_ID=mon-produit", "env:MEM0_AUTOSETUP=0", "env:MEM0_NUDGE=0"],
+    ["env:MEM0_PROJECT_ID=mon-produit", "env:MEM0_AUTOSETUP=0", "env:MEM0_NUDGE=0", "env:MEM0_MODE=runner"],
   );
   assert.equal(
     out.some((l) => l.startsWith("--setenv")),
