@@ -1,15 +1,15 @@
 // Preuves du sélecteur de projet des états vides (mac-etats-vides-sans-issue,
-// lot BR-1) : la liste des projets connus, ses libellés, et l'écriture du choix
-// par l'unique écrivain du projet choisi de l'app — relu ensuite par Fichiers,
-// Terminal et Mémoire sur les MÊMES préférences.
+// lot BR-1) : la liste des projets déjà choisis, ses libellés, et l'écriture du
+// choix par l'unique écrivain du projet choisi de l'app — relu ensuite par
+// Fichiers, Terminal et Mémoire sur les MÊMES préférences.
 
 import ConsoleCore
 import Foundation
 import Testing
 @testable import OMPConsole
 
-/// Une racine git minimale (un dossier `.git`) : c'est la règle de
-/// `LaunchRepo.isGitRoot`, la seule que la liste applique.
+/// Une racine git minimale (un dossier `.git`) : c'est la seule règle que la
+/// liste applique.
 private func makeGitRoot(_ path: String) throws {
     try FileManager.default.createDirectory(atPath: path + "/.git", withIntermediateDirectories: true)
 }
@@ -22,21 +22,16 @@ private func emptyProjectSuite() -> UserDefaults {
     return suite
 }
 
-@MainActor
-private func makeSession(defaults: UserDefaults) -> SessionConsoleModel {
-    SessionConsoleModel(
-        host: makeScriptedHostedHost(ScriptedServiceTransport(), sessionFile: "/tmp/project-chooser.jsonl"),
-        defaults: defaults
-    )
+/// Un dossier jetable, pour y créer des racines.
+private func scratchDirectory() throws -> String {
+    let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("project-chooser-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    return dir
 }
 
-/// Le sélecteur branché sur le VRAI calcul des projets connus, lu dans le
-/// magasin de la fixture à chaque rafraîchissement (comme l'app le lit dans son
-/// `StoreHub`).
-@MainActor
-private func makeChooser(session: SessionConsoleModel, store: StoreFixture) -> ProjectChooserModel {
-    let reader = StoreReader(stateDir: store.root)
-    return ProjectChooserModel(session: session, knownRoots: { KnownProjects.roots(in: reader.readAll()) })
+/// Le chemin tel que le sélecteur l'écrit.
+private func standardized(_ path: String) -> String {
+    URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
 }
 
 private func isNoProject(_ state: MemoryModel.State) -> Bool {
@@ -44,36 +39,65 @@ private func isNoProject(_ state: MemoryModel.State) -> Bool {
     return false
 }
 
-// MARK: - Projets connus
-
-@Test("mac-etats-vides-sans-issue/AC-2 : les projets connus sont les lots ∪ les projets du magasin, racines git seulement, dédupliqués par realpath, triés")
-func knownProjectsAreTheStoreRoots() throws {
-    let store = StoreFixture()
-    let lotRoot = store.root + "/b-depot"
-    let projectRoot = store.root + "/a-depot"
-    let plain = store.root + "/hors-git"
-    let link = store.root + "/lien-vers-b"
-    try makeGitRoot(lotRoot)
-    try makeGitRoot(projectRoot)
-    try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: lotRoot)
-
-    store.publish(.lots, "\(fixtureId(0xA1)).json", object: lotObject(id: fixtureId(0xA1), repoRoot: lotRoot))
-    store.publish(.lots, "\(fixtureId(0xA2)).json", object: lotObject(id: fixtureId(0xA2), repoRoot: plain))
-    store.publish(.projects, "\(fixtureId(0xB1)).json", object: projectObject(repoKey: fixtureId(0xB1), repoRoot: projectRoot))
-    // Le même dépôt atteint par un lien : une seule entrée.
-    store.publish(.projects, "\(fixtureId(0xB2)).json", object: projectObject(repoKey: fixtureId(0xB2), repoRoot: link))
-
-    let roots = KnownProjects.roots(in: StoreReader(stateDir: store.root).readAll())
-    #expect(roots == [realpathOr(projectRoot), realpathOr(lotRoot)])
+@MainActor
+private func makeTerminal(defaults: UserDefaults) -> TerminalConsoleModel {
+    TerminalConsoleModel(defaults: defaults, environment: ["PATH": "/usr/bin:/bin"], git: filesGit())
 }
 
-@Test("mac-etats-vides-sans-issue/AC-5 : un magasin absent donne une liste vide, donc aucune entrée de menu")
-func absentStoreHasNoKnownProject() {
-    let store = StoreFixture(stores: [])
-    let roots = KnownProjects.roots(in: StoreReader(stateDir: store.root).readAll())
-    #expect(roots.isEmpty)
-    #expect(ProjectChooserModel.entries(for: roots).isEmpty)
+@MainActor
+private func makeMemory(defaults: UserDefaults) -> MemoryModel {
+    MemoryModel(
+        service: ScriptedMemoryService(),
+        environment: ["PATH": "/usr/bin:/bin"],
+        defaults: defaults,
+        paths: AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)),
+        omlxSession: StubURLProtocol.session()
+    )
+}
+
+@MainActor
+private func makeFiles(defaults: UserDefaults) -> FilesModel {
+    FilesModel(
+        projectRoot: nil,
+        git: filesGit(),
+        defaults: defaults,
+        fileManager: .default,
+        environment: ["PATH": "/usr/bin:/bin"]
+    )
+}
+
+// MARK: - Projets connus
+
+@MainActor
+@Test("mac-etats-vides-sans-issue/AC-2 : les projets connus sont les derniers choisis, du plus récent au plus ancien, racines git seulement")
+func knownProjectsAreTheRecentChoices() throws {
+    let dir = try scratchDirectory()
+    let alpha = dir + "/alpha"
+    let beta = dir + "/beta"
+    let plain = dir + "/hors-git"
+    try makeGitRoot(alpha)
+    try makeGitRoot(beta)
+    try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
+
+    let suite = emptyProjectSuite()
+    let chooser = ProjectChooserModel(defaults: suite)
+    chooser.select(projectRoot: URL(fileURLWithPath: alpha, isDirectory: true))
+    chooser.select(projectRoot: URL(fileURLWithPath: plain, isDirectory: true))
+    chooser.select(projectRoot: URL(fileURLWithPath: beta, isDirectory: true))
+    // Re-choisir un projet le remonte en tête, sans doublon.
+    chooser.select(projectRoot: URL(fileURLWithPath: alpha, isDirectory: true))
+
+    #expect(chooser.knownRoots == [standardized(alpha), standardized(beta)])
+    #expect(chooser.entries.map(\.label) == ["alpha", "beta"])
+}
+
+@MainActor
+@Test("mac-etats-vides-sans-issue/AC-5 : sans projet déjà choisi, la liste est vide, donc aucune entrée de menu")
+func noRecentChoiceHasNoKnownProject() {
+    let chooser = ProjectChooserModel(defaults: emptyProjectSuite())
+    chooser.refresh()
+    #expect(chooser.knownRoots.isEmpty)
+    #expect(chooser.entries.isEmpty)
 }
 
 // MARK: - Libellés
@@ -97,59 +121,29 @@ func homonymsNameTheirParent() {
 // MARK: - Le choix devient celui de l'app
 
 @MainActor
-@Test("mac-etats-vides-sans-issue/AC-4 : un projet choisi depuis l'état vide devient celui de Session OMP, Fichiers, Terminal et Mémoire")
+@Test("mac-etats-vides-sans-issue/AC-4 : un projet choisi depuis l'état vide devient celui de Fichiers, Terminal et Mémoire")
 func chosenProjectIsTheAppProject() async throws {
     let repo = try FilesFixture()
-    let store = StoreFixture()
-    store.publish(.lots, "\(fixtureId(0xC1)).json", object: lotObject(id: fixtureId(0xC1), repoRoot: repo.root))
     let suite = emptyProjectSuite()
-    let session = makeSession(defaults: suite)
-    #expect(session.projectRoot == nil)
-
-    // La liste parle en `realpath` (`/private/var/…`), la fixture en `/var/…`.
-    let chosen = realpathOr(repo.root)
-    let chooser = makeChooser(session: session, store: store)
-    chooser.refresh()
-    let entry = try #require(chooser.entries.first { $0.id == chosen })
-    #expect(chooser.choose(entry))
-
-    // Session OMP : la section publiée ET la préférence partagée.
-    #expect(session.projectRoot?.path == chosen)
+    let chooser = ProjectChooserModel(defaults: suite)
+    chooser.select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
+    let chosen = standardized(repo.root)
     #expect(suite.string(forKey: ProjectRoot.defaultsKey) == chosen)
 
     // Fichiers, sur les mêmes préférences, au rafraîchissement d'apparition.
-    let files = FilesModel(
-        projectRoot: nil,
-        git: filesGit(),
-        store: StoreReader(stateDir: store.root),
-        defaults: suite,
-        fileManager: .default,
-        environment: ["PATH": "/usr/bin:/bin"]
-    )
+    let files = makeFiles(defaults: suite)
     await files.refresh()
     #expect(files.projectRoot?.path == chosen)
     #expect(files.errorMessage == nil)
 
-    // Terminal : sur les mêmes préférences, il nomme ce projet (construction et
-    // apparition relisent la préférence par `followProjectRoot()`).
-    let terminal = TerminalConsoleModel(
-        defaults: suite,
-        environment: ["PATH": "/usr/bin:/bin"],
-        store: StoreReader(stateDir: store.root),
-        git: filesGit()
-    )
+    // Terminal : sur les mêmes préférences, il nomme ce projet.
+    let terminal = makeTerminal(defaults: suite)
     terminal.followProjectRoot()
     #expect(terminal.projectRoot?.path == chosen)
     #expect(terminal.projectPath == chosen)
 
     // Mémoire : la portée suit le projet, l'écran quitte « Aucun projet ouvert ».
-    let memory = MemoryModel(
-        service: ScriptedMemoryService(),
-        environment: ["PATH": "/usr/bin:/bin"],
-        defaults: suite,
-        paths: AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)),
-        omlxSession: StubURLProtocol.session()
-    )
+    let memory = makeMemory(defaults: suite)
     await memory.refresh()
     #expect(!isNoProject(memory.state))
 }
@@ -159,39 +153,34 @@ func chosenProjectIsTheAppProject() async throws {
 func terminalFollowsTheAppProject() throws {
     let repo = try FilesFixture()
     let suite = emptyProjectSuite()
-    let terminal = TerminalConsoleModel(
-        defaults: suite,
-        environment: ["PATH": "/usr/bin:/bin"],
-        store: StoreReader(stateDir: NSTemporaryDirectory()),
-        git: filesGit()
-    )
+    let terminal = makeTerminal(defaults: suite)
     #expect(terminal.projectRoot == nil)
     #expect(terminal.projectPath == nil)
 
-    makeSession(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
+    ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
     #expect(terminal.projectRoot == nil, "la préférence n'émet rien : il faut la relire")
     terminal.followProjectRoot()
-    #expect(terminal.projectRoot?.path == repo.root)
-    #expect(terminal.projectPath == repo.root)
+    #expect(terminal.projectRoot?.path == standardized(repo.root))
+    #expect(terminal.projectPath == standardized(repo.root))
 }
 
 @MainActor
 @Test("mac-etats-vides-sans-issue/AC-2 : une entrée dont le dossier a disparu n'écrit rien et sort du menu")
 func vanishedEntryWritesNothing() throws {
-    let store = StoreFixture()
-    let gone = store.root + "/disparu"
+    let dir = try scratchDirectory()
+    let kept = dir + "/garde"
+    let gone = dir + "/disparu"
+    try makeGitRoot(kept)
     try makeGitRoot(gone)
-    store.publish(.lots, "\(fixtureId(0xD1)).json", object: lotObject(id: fixtureId(0xD1), repoRoot: gone))
     let suite = emptyProjectSuite()
+    let chooser = ProjectChooserModel(defaults: suite)
+    chooser.select(projectRoot: URL(fileURLWithPath: gone, isDirectory: true))
+    chooser.select(projectRoot: URL(fileURLWithPath: kept, isDirectory: true))
     let before = suite.string(forKey: ProjectRoot.defaultsKey)
-    let session = makeSession(defaults: suite)
-    let chooser = makeChooser(session: session, store: store)
-    chooser.refresh()
-    let entry = try #require(chooser.entries.first { $0.id == realpathOr(gone) })
+    let entry = try #require(chooser.entries.first { $0.id == standardized(gone) })
 
     try FileManager.default.removeItem(atPath: gone)
     #expect(!chooser.choose(entry))
-    #expect(session.projectRoot == nil)
     #expect(suite.string(forKey: ProjectRoot.defaultsKey) == before)
     #expect(!chooser.entries.contains(entry))
 }
@@ -204,39 +193,6 @@ func vanishedEntryWritesNothing() throws {
 // états RÉELS des trois modèles sans projet.
 
 @MainActor
-private func makeTerminal(defaults: UserDefaults, store: String = NSTemporaryDirectory()) -> TerminalConsoleModel {
-    TerminalConsoleModel(
-        defaults: defaults,
-        environment: ["PATH": "/usr/bin:/bin"],
-        store: StoreReader(stateDir: store),
-        git: filesGit()
-    )
-}
-
-@MainActor
-private func makeMemory(defaults: UserDefaults) -> MemoryModel {
-    MemoryModel(
-        service: ScriptedMemoryService(),
-        environment: ["PATH": "/usr/bin:/bin"],
-        defaults: defaults,
-        paths: AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)),
-        omlxSession: StubURLProtocol.session()
-    )
-}
-
-@MainActor
-private func makeFiles(defaults: UserDefaults, store: String) -> FilesModel {
-    FilesModel(
-        projectRoot: nil,
-        git: filesGit(),
-        store: StoreReader(stateDir: store),
-        defaults: defaults,
-        fileManager: .default,
-        environment: ["PATH": "/usr/bin:/bin"]
-    )
-}
-
-@MainActor
 @Test("mac-etats-vides-sans-issue/AC-1 : sans projet choisi, Mémoire, Fichiers et Terminal montrent « Aucun projet ouvert », leur phrase et le bouton « Choisir un projet… »")
 func threeEmptyStatesCarryTheChooser() async {
     let suite = emptyProjectSuite()
@@ -245,7 +201,7 @@ func threeEmptyStatesCarryTheChooser() async {
     let memory = makeMemory(defaults: suite)
     await memory.refresh()
     #expect(isNoProject(memory.state))
-    let files = makeFiles(defaults: suite, store: NSTemporaryDirectory())
+    let files = makeFiles(defaults: suite)
     await files.refresh()
     #expect(files.projectRoot == nil)
     #expect(files.errorMessage == nil)
@@ -280,7 +236,7 @@ func terminalPlaceholderFollowsTheProject() throws {
     let terminal = makeTerminal(defaults: suite)
     #expect(TerminalPlaceholder.of(terminal) == .noProject)
 
-    makeSession(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
+    ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
     terminal.followProjectRoot()
     let name = (repo.root as NSString).lastPathComponent
     #expect(TerminalPlaceholder.of(terminal) == .waiting(projectName: name))
@@ -291,29 +247,28 @@ func terminalPlaceholderFollowsTheProject() throws {
 @MainActor
 @Test("mac-etats-vides-sans-issue/AC-2 : des projets connus ouvrent un menu — une entrée par projet, un séparateur, puis « Choisir un dossier… »")
 func knownProjectsOpenAMenu() throws {
-    let store = StoreFixture()
-    let alpha = store.root + "/alpha"
-    let beta = store.root + "/beta"
+    let dir = try scratchDirectory()
+    let alpha = dir + "/alpha"
+    let beta = dir + "/beta"
     try makeGitRoot(alpha)
     try makeGitRoot(beta)
-    store.publish(.lots, "\(fixtureId(0xE1)).json", object: lotObject(id: fixtureId(0xE1), repoRoot: alpha))
-    store.publish(.lots, "\(fixtureId(0xE2)).json", object: lotObject(id: fixtureId(0xE2), repoRoot: beta))
-    let chooser = makeChooser(session: makeSession(defaults: emptyProjectSuite()), store: store)
-    chooser.refresh()
+    let chooser = ProjectChooserModel(defaults: emptyProjectSuite())
+    chooser.select(projectRoot: URL(fileURLWithPath: beta, isDirectory: true))
+    chooser.select(projectRoot: URL(fileURLWithPath: alpha, isDirectory: true))
 
     let entries = [
-        ProjectChooserModel.Entry(id: realpathOr(alpha), label: "alpha"),
-        ProjectChooserModel.Entry(id: realpathOr(beta), label: "beta"),
+        ProjectChooserModel.Entry(id: standardized(alpha), label: "alpha"),
+        ProjectChooserModel.Entry(id: standardized(beta), label: "beta"),
     ]
     #expect(chooser.entries == entries)
     #expect(ProjectChooserForm.of(chooser.entries) == .menu([.project(entries[0]), .project(entries[1]), .separator, .chooseFolder]))
-    #expect(SessionConsoleText.chooseFolder == "Choisir un dossier\u{2026}")
+    #expect(ProjectChooserText.chooseFolder == "Choisir un dossier\u{2026}")
 }
 
 @MainActor
-@Test("mac-etats-vides-sans-issue/AC-5 : aucun projet connu — un bouton simple vers le panneau de Session OMP, jamais un menu vide")
+@Test("mac-etats-vides-sans-issue/AC-5 : aucun projet connu — un bouton simple vers le panneau d'ouverture, jamais un menu vide")
 func noKnownProjectIsAPlainButton() {
-    let chooser = ProjectChooserModel(session: makeSession(defaults: emptyProjectSuite()), knownRoots: { [] })
+    let chooser = ProjectChooserModel(defaults: emptyProjectSuite())
     chooser.refresh()
     #expect(chooser.entries.isEmpty)
     #expect(ProjectChooserForm.of(chooser.entries) == .folderButton)
@@ -323,26 +278,21 @@ func noKnownProjectIsAPlainButton() {
 @Test("mac-etats-vides-sans-issue/AC-3 : un projet choisi depuis l'état vide remplit l'écran courant — Mémoire et Fichiers se rechargent, le Terminal ouvre sa feuille sur ce projet")
 func chosenProjectFillsTheCurrentScreen() async throws {
     let repo = try FilesFixture()
-    let store = StoreFixture()
-    store.publish(.lots, "\(fixtureId(0xF1)).json", object: lotObject(id: fixtureId(0xF1), repoRoot: repo.root))
     let suite = emptyProjectSuite()
-    let chosen = realpathOr(repo.root)
+    let chosen = standardized(repo.root)
 
     // Les trois écrans sont dans leur état vide, modèles construits AVANT le choix
     // (comme dans l'app, où ils vivent à l'échelle de l'app).
     let memory = makeMemory(defaults: suite)
     await memory.refresh()
     #expect(isNoProject(memory.state))
-    let files = makeFiles(defaults: suite, store: store.root)
+    let files = makeFiles(defaults: suite)
     await files.refresh()
     #expect(files.projectRoot == nil)
-    let terminal = makeTerminal(defaults: suite, store: store.root)
+    let terminal = makeTerminal(defaults: suite)
     #expect(TerminalPlaceholder.of(terminal) == .noProject)
 
-    let chooser = makeChooser(session: makeSession(defaults: suite), store: store)
-    chooser.refresh()
-    let entry = try #require(chooser.entries.first { $0.id == chosen })
-    #expect(chooser.choose(entry))
+    ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
 
     // Mémoire : `onChosen` = `refresh()` ; l'écran quitte « Aucun projet ouvert ».
     await memory.refresh()
@@ -360,7 +310,7 @@ func chosenProjectFillsTheCurrentScreen() async throws {
     #expect(terminal.projectRoot?.path == chosen)
     #expect(await awaitMainTrue(timeout: 8) { terminal.targetsState != .loading && !terminal.targets.isEmpty })
     let primary = try #require(terminal.targets.first { $0.isPrimary })
-    #expect(realpathOr(primary.path) == chosen)
+    #expect(realpathOr(primary.path) == realpathOr(chosen))
 
     // « Annuler » : l'attente nomme le projet, plus d'état vide.
     terminal.dismissPicker()

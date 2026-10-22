@@ -1,0 +1,65 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8790 },
+  "dataDir": "/var/lib/omp-harness/state",
+  "worktreesDir": "/var/lib/omp-harness/worktrees",
+  "ompBin": "/usr/local/bin/omp",
+  "git": { "authorName": "omp-harness", "authorEmail": "omp-harness@vps.local" },
+  "runner": {
+    "slots": 5,
+    "memoryMax": "1G",
+    "oomScoreAdjust": 300,
+    "profile": "pipeline",
+    "stepTimeoutSec": 5400,
+    "extensions": ["/opt/omp-harness/omp-mem0-memory/extension.ts"]
+  },
+  "heavy": {
+    "slots": 2,
+    "memoryMax": "4G",
+    "cpuQuota": "300%",
+    "user": "omp-heavy",
+    "oomScoreAdjust": 800,
+    "oomRetries": 2,
+    "cargoTargetRoot": "/var/cache/omp-harness/cargo",
+    "readWritePaths": ["/var/cache/omp-harness/sccache", "/var/cache/omp-harness/pnpm-store", "/var/lib/omp-heavy"],
+    "env": {
+      "HOME": "/var/lib/omp-heavy",
+      "RUSTC_WRAPPER": "sccache",
+      "SCCACHE_DIR": "/var/cache/omp-harness/sccache",
+      "npm_config_store_dir": "/var/cache/omp-harness/pnpm-store"
+    }
+  },
+  "admission": { "reserveMiB": 2048, "runnerMiB": 1024, "heavyMiB": 4096 },
+  "models": {
+    "fast": [
+      { "provider": "anthropic", "model": "claude-haiku-5-5" },
+      { "provider": "openrouter", "model": "anthropic/claude-haiku-5-5" }
+    ],
+    "standard": [
+      { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      { "provider": "openrouter", "model": "anthropic/claude-sonnet-5-5" }
+    ],
+    "heavy": [
+      { "provider": "anthropic", "model": "claude-opus-5-5" },
+      { "provider": "openrouter", "model": "anthropic/claude-opus-5-5" }
+    ]
+  },
+  "stepTiers": { "req": "heavy", "specs": "heavy", "impl": "standard", "fix": "standard", "review": "heavy" },
+  "providers": {
+    "anthropic": { "capacity": 20, "refillPerMinute": 20 },
+    "openrouter": { "capacity": 10, "refillPerMinute": 10 }
+  },
+  "review": { "fixCap": 3, "maxDiffLines": 300 },
+  "oracle": { "url": "http://127.0.0.1:8321", "token": null },
+  "events": { "retentionDays": 30 },
+  "repos": [
+    {
+      "name": "mon-produit",
+      "path": "/var/lib/omp-harness/repos/mon-produit",
+      "mainBranch": "main",
+      "tests": { "touched": "npm test -- {files}", "full": "npm test" },
+      "merge": "local",
+      "remote": "origin",
+      "maxParallel": 3
+    }
+  ]
+}

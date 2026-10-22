@@ -3,87 +3,41 @@
 // composant système qui porte déjà le bouton de bascule de la barre latérale et
 // qui y pose le verre (Liquid Glass, aucun fond maison).
 //
-// Organisation (S-4 de omp-console-redesign) : barre latérale groupée
-// « Pilotage » / « Consultation », badge des attentes sur l'Accueil et des audits
-// qui attendent l'utilisateur sur Audit (audit-ui-redesign S-4), et au PIED
-// de la barre latérale le badge d'état des composants embarqués (S-2) — aucune
-// autre décoration (HIG Sidebars : l'état des notifications vit dans l'Accueil) ;
-// titre de fenêtre = la section courante, jamais le nom de l'app
-// (HIG Toolbars) ; barre d'outils PERSONNALISABLE « Nouvelle feature… » ; TOUT
-// vit dans cette fenêtre (plein écran) ; UNE feuille à la fois (« OMP est
-// requis », « Bienvenue », « Nouvelle feature », « Répondre », « Contrat »),
-// déduite par `MainSheetPolicy` (S-5).
+// Organisation : barre latérale groupée « Pilotage » / « Consultation », badge des
+// attentes du serveur de pipelines sur l'Accueil et des audits à trier sur Audit,
+// et au PIED de la barre latérale le badge d'état des composants embarqués (S-2) ;
+// titre de fenêtre = la section courante, jamais le nom de l'app (HIG Toolbars) ;
+// TOUT vit dans cette fenêtre. Deux feuilles : la préparation des composants
+// (bloquante tant qu'OMP manque) et la configuration du serveur de pipelines.
 //
 // La sélection est liée par une `Binding(get:set:)` construite à la main : le
 // modèle n'expose qu'un `select(_:)` (D3, `@State` interdit).
 
 import AppKit
+import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
 struct ConsoleRootView: View {
     @ObservedObject var model: ConsoleModel
-    /// Le modèle de la section « Fichiers » : il vit à l'échelle de l'app, comme les
-    /// autres, pour que la cible choisie et l'état de dépliage survivent au passage
-    /// d'une section à l'autre.
+    /// Le serveur de pipelines du VPS et les brouillons de ses écrans.
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var filesModel: FilesModel
-    /// Le tableau des pipelines, lu par l'Accueil ET par Pipelines : la racine en
-    /// tient l'abonnement, pour qu'aucune des deux sections ne le coupe à l'autre.
-    @ObservedObject var kanban: KanbanModel
-    /// Le modèle d'alertes : l'Accueil y lit l'état d'autorisation des
-    /// notifications. Il vit à l'échelle de l'app (porté par le délégué), comme les
-    /// autres.
-    @ObservedObject var alerts: AlertsModel
     /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
     /// la feuille de préparation bloquante y passe, comme ⌘Q.
     let quit: QuitFlow
-    /// Le modèle d'action : l'état des gestes et de la feuille de lancement survit
-    /// au passage d'une section à l'autre.
-    @ObservedObject var actions: ActionsModel
-    /// Le modèle de pilotage de projet : à l'échelle de l'app, comme les autres,
-    /// pour que la session hébergée survive au changement de section.
-    @ObservedObject var projectModel: ProjectConsoleModel
-    /// Le modèle de la section « Audit » : même raison.
-    @ObservedObject var auditModel: AuditConsoleModel
-    /// Le modèle de la section « Mémoire » : même raison, la portée et la liste
-    /// survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
-    /// Le modèle du MODE GRAPHE de la mémoire (S-1) : à l'échelle de l'app, comme
-    /// celui de la liste.
     @ObservedObject var memoryGraph: MemoryGraphModel
-    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman),
-    /// montré par la section Mémoire.
     @ObservedObject var podmanCleanup: PodmanCleanupModel
-    /// Le modèle de la feuille Contrat (S-7) : la feuille est présentée par la
-    /// racine, comme les autres — une seule à la fois.
-    @ObservedObject var contract: ContractModel
-    /// L'état de l'Accueil : la disponibilité d'OMP commande aussi la barre
-    /// d'outils et la feuille.
-    @ObservedObject var home: HomeModel
-    /// La préparation de l'app (S-5) : la feuille `.setup` et le bandeau de
-    /// l'Accueil en dépendent.
+    /// La présence d'OMP : la feuille de préparation en dépend.
+    @ObservedObject var presence: OmpPresenceModel
     @ObservedObject var setup: SetupModel
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre et se recalcule sans redémarrage.
     @ObservedObject var components: ComponentPresenceModel
-    /// L'écart de version du service OMP (S-4 de service-version-drift-detection) :
-    /// la racine le démarre à l'apparition, l'Accueil en montre le bandeau.
-    @ObservedObject var serviceVersion: ServiceVersionModel
-    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition.
-    /// Son interrupteur, le code et les appareils vivent dans Réglages › Appareils.
-    let remote: RemoteServiceModel
-
-    /// Les modèles des sections Session OMP, Terminal et Statistiques : à
-    /// l'échelle de l'app (`OMPConsoleApp`), comme les autres.
-    let sessionModel: SessionConsoleModel
     let terminalModel: TerminalConsoleModel
-    let statsModel: StatsModel
-    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
-    /// (S-2 de mac-etats-vides-sans-issue), à l'échelle de l'app.
     let projectChooser: ProjectChooserModel
-    /// Le crochet de recette `-surface.recipe` (S-5 de recette-ui-mac-automatisee),
-    /// `nil` hors recette : appliqué une seule fois, au premier affichage.
-    let surfaceRecipe: SurfaceRecipe?
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -94,37 +48,12 @@ struct ConsoleRootView: View {
         )
     }
 
-    /// La feuille due, selon l'ordre des règles de `MainSheetPolicy`.
-    private var currentSheet: MainSheet? {
-        MainSheetPolicy.sheet(
-            omp: home.omp,
-            setup: setup.state,
-            setupDismissed: setup.dismissed,
-            board: kanban.state,
-            welcomeSeen: home.welcomeSeen,
-            welcomeRequested: home.welcomeRequested,
-            launchFormShown: actions.launchFormShown,
-            answerCardID: home.answerCardID,
-            contract: contract.sheet
-        )
-    }
-
-    /// Le système n'écrit que `nil` (Échap, fermeture) : l'état qui a fait
-    /// apparaître la feuille courante est remis à zéro. La préparation, OMP
-    /// absent, ne se ferme jamais ainsi : la feuille est bloquante.
-    private var mainSheet: Binding<MainSheet?> {
+    /// La préparation est due (`SetupSheetPolicy`).
+    private var setupShown: Binding<Bool> {
         Binding(
-            get: { currentSheet },
-            set: { newValue in
-                guard newValue == nil else { return }
-                switch currentSheet {
-                case .setup: if home.canLaunch { setup.dismiss() }
-                case .welcome: home.closeWelcome()
-                case .newFeature: actions.launchFormShown = false
-                case .answer: home.dismissAnswer(actions: actions)
-                case .contract: contract.close()
-                case nil: break
-                }
+            get: { SetupSheetPolicy.isShown(omp: presence.omp, setup: setup.state, dismissed: setup.dismissed) },
+            set: { shown in
+                if !shown, presence.canLaunch { setup.dismiss() }
             }
         )
     }
@@ -136,18 +65,27 @@ struct ConsoleRootView: View {
         return { setup.reopen() }
     }
 
+    /// Le badge d'une section : ce qui attend l'humain sur l'Accueil, les audits à
+    /// trier sur Audit.
+    private func badge(for section: ConsoleSection) -> Int {
+        guard let inbox = server.inbox else { return 0 }
+        switch section {
+        case .home: return inbox.pendingCount
+        case .audit: return inbox.auditsProposed.count
+        default: return 0
+        }
+    }
+
     var body: some View {
-        let attentionCount = HomePresentation.attentionCount(omp: home.omp, board: kanban.state)
-        let auditsAwaiting = auditModel.board.awaitingUserCount
         NavigationSplitView {
             List(selection: selection) {
                 ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                     Section(group.title) {
                         ForEach(group.sections) { section in
-                            let badge = HomePresentation.sidebarBadge(for: section, attention: attentionCount, auditsAwaiting: auditsAwaiting)
-                            if badge > 0 {
+                            let count = badge(for: section)
+                            if count > 0 {
                                 Label(section.title, systemImage: section.systemImage)
-                                    .badge(badge)
+                                    .badge(count)
                                     .tag(section)
                             } else {
                                 Label(section.title, systemImage: section.systemImage)
@@ -158,119 +96,36 @@ struct ConsoleRootView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-            // Le badge d'état des composants, ancré au pied de la barre latérale
-            // et aligné sur son bord gauche (S-2) : la `List` est rentrée de sa
-            // hauteur et garde ses dernières lignes lisibles. Replier la barre
-            // latérale masque le badge avec elle — c'est le coin gauche de la
-            // fenêtre, comportement assumé. Un composant manque : le badge est
-            // un bouton qui rouvre la feuille de préparation (S-3).
             .safeAreaInset(edge: .bottom, alignment: .leading) {
                 ComponentBadge(status: components.presence.status, open: reopenSetup)
             }
         } detail: {
             SectionDetail(
                 section: model.selection,
-                home: home,
-                console: model,
+                server: server,
+                drafts: drafts,
                 filesModel: filesModel,
-                kanban: kanban,
-                actions: actions,
-                projectModel: projectModel,
-                auditModel: auditModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraph,
                 podmanCleanup: podmanCleanup,
-                contract: contract,
-                alerts: alerts,
-                setup: setup,
-                serviceVersion: serviceVersion,
-                sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel,
                 projectChooser: projectChooser
             )
-            // Le titre de la fenêtre EST la section courante (HIG Toolbars : ne
-            // pas titrer une fenêtre du nom de l'app). Aucune vue de section ne
-            // pose de titre à son tour.
+            // Le titre de la fenêtre EST la section courante (HIG Toolbars).
             .navigationTitle(model.selection.title)
-        }
-        // Personnalisable (clic droit ▸ « Personnaliser la barre d'outils… ») : un
-        // identifiant stable par article, que le système mémorise.
-        //
-        // Les quatre articles partagent le MÊME placement automatique et aucun
-        // `.buttonStyle` : le « + » avait seul `.primaryAction`, et c'est lui seul
-        // qui sortait en pastille bleue quand une section (Pipelines et son
-        // inspecteur) scindait la barre en plusieurs groupes de verre. Même
-        // placement, même rendu, dans toutes les sections.
-        // Personnalisable (clic droit ▸ « Personnaliser la barre d'outils… ») :
-        // l'action principale de l'app. Terminal, Session OMP et Statistiques
-        // sont des sections de la barre latérale, plus des fenêtres annexes : en
-        // plein écran, une fenêtre annexe partait dans son propre espace.
-        .toolbar(id: "main") {
-            ToolbarItem(id: "newFeature") {
-                Button {
-                    actions.launchFormShown = true
-                } label: {
-                    Label(HomeText.newFeature, systemImage: "plus")
-                }
-                .disabled(!home.canLaunch)
-                .help(home.canLaunch ? HomeText.newFeature : SetupText.homeMissingTitle)
-                .accessibilityIdentifier("toolbar.newFeature")
-            }
-            // L'action principale se déplace, mais ne se retire pas.
-            .customizationBehavior(.reorderable)
-        }
-        .sheet(item: mainSheet) { sheet in
-            switch sheet {
-            case .setup:
-                // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋
-                // (Doc-1) ; « Quitter » passe par le déroulé de la sortie, qui
-                // ferme lui-même les feuilles attachées.
-                SetupView(setup: setup, omp: home.omp, quit: { quit.request() })
-                    .interactiveDismissDisabled(!home.canLaunch)
-            case .welcome:
-                WelcomeSheet(home: home)
-            case .newFeature:
-                NewFeatureSheet(actions: actions, kanban: kanban, home: home, console: model)
-            case .answer(let cardID):
-                if let card = kanban.state.card(cardID) {
-                    AnswerSheet(card: card, home: home, actions: actions)
-                }
-            case .contract(let sheet):
-                ContractSheetView(sheet: sheet)
+            .sheet(isPresented: $drafts.serverSheetShown) {
+                ServerSheet(server: server, drafts: drafts)
             }
         }
-        // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert
-        // une fois, par la racine, et n'est plus lié à l'apparition d'une section.
-        .onAppear {
-            kanban.start()
-            // Le badge d'Audit lit l'ardoise sans ouvrir la section (idempotent :
-            // l'apparition d'`AuditView` ne rouvre pas l'abonnement).
-            auditModel.start()
-            // Premier contrôle, puis un par republication de `service.json`
-            // (idempotent).
-            serviceVersion.start()
-            actions.loadModelCatalog()
-            // Le service d'API distante démarre à l'apparition si la préférence
-            // l'autorise (BR-9) ; `SetupModel.onReady` le relancera si la
-            // préparation n'était pas terminée.
-            Task { await remote.startIfEnabled() }
-            if let surfaceRecipe {
-                Task {
-                    await surfaceRecipe.applyOnce(
-                        console: model,
-                        setup: setup,
-                        home: home,
-                        actions: actions,
-                        kanban: kanban,
-                        contract: contract,
-                        project: projectModel,
-                        session: sessionModel,
-                        terminal: terminalModel,
-                        memoryGraph: memoryGraph
-                    )
-                }
-            }
+        .sheet(isPresented: setupShown) {
+            // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
+            // « Quitter » passe par le déroulé de la sortie.
+            SetupView(setup: setup, omp: presence.omp, quit: { quit.request() })
+                .interactiveDismissDisabled(!presence.canLaunch)
+        }
+        .task {
+            await server.load()
+            server.startLive()
         }
         .frame(minWidth: 760, minHeight: 480)
     }

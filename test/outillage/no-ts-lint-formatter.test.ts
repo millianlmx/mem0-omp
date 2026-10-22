@@ -146,7 +146,7 @@ const repo = sharedRepo("lint-", { keepTest: () => false });
 
 const LINT_FAULT = "export function f(): void {\n  debugger;\n}\n";
 const FORMAT_FAULT = "export const  a = 1;\n";
-const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-mem0-req/, test/)";
+const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, test/)";
 const UNAVAILABLE_LINE = "  ✗ linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)";
 
 /** `scripts/check.sh --sections=lint` dans `cwd`, avec le Biome de la racine. */
@@ -182,8 +182,12 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });
 
-test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/ puis test/ rougit la section et désigne le fichier", () => {
-  for (const rel of ["omp-mem0-req/zz-faute-lint.ts", "test/support/zz-faute-lint.ts"]) {
+test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/ puis test/ rougit la section et désigne le fichier", () => {
+  for (const rel of [
+    "omp-mem0-req/zz-faute-lint.ts",
+    "omp-harness/zz-faute-lint.ts",
+    "test/support/zz-faute-lint.ts",
+  ]) {
     const dir = repo.fresh();
     fs.writeFileSync(path.join(dir, rel), LINT_FAULT);
     const r = runSection(dir);
@@ -197,8 +201,12 @@ test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/ puis test
   }
 });
 
-test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/ puis test/ rougit la section", () => {
-  for (const rel of ["omp-mem0-req/zz-faute-format.ts", "test/support/zz-faute-format.ts"]) {
+test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/ puis test/ rougit la section", () => {
+  for (const rel of [
+    "omp-mem0-req/zz-faute-format.ts",
+    "omp-harness/zz-faute-format.ts",
+    "test/support/zz-faute-format.ts",
+  ]) {
     const dir = repo.fresh();
     fs.writeFileSync(path.join(dir, rel), FORMAT_FAULT);
     const r = runSection(dir);
@@ -217,7 +225,7 @@ test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/ p
   }
 });
 
-test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/ et test/ laissent la section verte", () => {
+test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/ et test/ laissent la section verte", () => {
   const dir = repo.fresh();
   for (const rel of ["scripts/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
     fs.writeFileSync(path.join(dir, rel), `${LINT_FAULT}${FORMAT_FAULT}`);
@@ -336,11 +344,7 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
     if (typeof rules !== "object" || rules === null) continue;
     for (const [rule, level] of Object.entries(rules)) if (level === "off") off.push(`${group}/${rule}`);
   }
-  assert.deepEqual(off.sort(), [
-    "style/noNonNullAssertion",
-    "suspicious/noControlCharactersInRegex",
-    "suspicious/noTemplateCurlyInString",
-  ]);
+  assert.deepEqual(off.sort(), ["style/noNonNullAssertion", "suspicious/noTemplateCurlyInString"]);
   assert.equal(CONFIG.linter.rules.preset, "recommended");
   assert.equal(CONFIG.overrides, undefined, "aucun override ne coupe une règle en douce");
 
@@ -352,14 +356,16 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
   assert.match(commentAbove("noNonNullAssertion"), /comportement/);
   assert.match(commentAbove("noTemplateCurlyInString"), /test\/outillage\/check\.test\.ts:\d+/);
   assert.match(commentAbove("noTemplateCurlyInString"), /test\/console\/ios-memoire-graphe\.test\.ts:\d+/);
-  assert.match(commentAbove("noControlCharactersInRegex"), /omp-mem0-req\/panelWidth\.ts/);
-  assert.match(commentAbove("noControlCharactersInRegex"), /ANSI/);
   assert.equal(CONFIG.assist.enabled, false);
   assert.match(commentAbove("assist"), /imports/);
 
   // Aucune règle n'est coupée fichier par fichier : pas de commentaire de suppression.
   const marker = ["biome", "ignore"].join("-");
-  const suppressed = [...walk(path.join(ROOT, "omp-mem0-req")), ...walk(path.join(ROOT, "test"))]
+  const suppressed = [
+    ...walk(path.join(ROOT, "omp-mem0-req")),
+    ...walk(path.join(ROOT, "omp-harness")),
+    ...walk(path.join(ROOT, "test")),
+  ]
     .filter((file) => file.endsWith(".ts") && fs.readFileSync(file, "utf8").includes(marker))
     .map((file) => path.relative(ROOT, file));
   assert.deepEqual(suppressed, []);

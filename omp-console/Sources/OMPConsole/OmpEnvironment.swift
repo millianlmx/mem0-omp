@@ -9,9 +9,7 @@
 // `#!/usr/bin/env bun`, donc `bun` doit être trouvable dans le `PATH` de l'enfant.
 // Une app lancée par le Finder hérite du `PATH` de launchd
 // (`/usr/bin:/bin:/usr/sbin:/sbin`) et ne verrait JAMAIS `~/.bun/bin`, où omp est
-// installé sur le poste de référence. Les runs `omp -p` d'un lot, lancés par le
-// pilote, héritent de SON `PATH` : un conducteur sans ces replis ferait échouer
-// chacun de ses maillons.
+// installé sur le poste de référence.
 
 import Foundation
 

@@ -2,43 +2,6 @@
   "mac": {
     "OpenConsoleIntent": [
       "Ouvre ${applicationName}"
-    ],
-    "MacPendingIntent": [
-      "Qu’est-ce qui m’attend dans ${applicationName}",
-      "Ce qui m’attend dans ${applicationName}",
-      "Demandes en attente dans ${applicationName}",
-      "Questions en attente dans ${applicationName}"
-    ],
-    "MacAnswerIntent": [
-      "Réponds dans ${applicationName}",
-      "Répondre dans ${applicationName}",
-      "Répondre aux questions de ${applicationName}"
-    ],
-    "MacLaunchPipelineIntent": [
-      "Lancer une pipeline dans ${applicationName}",
-      "Lance une pipeline dans ${applicationName}",
-      "Nouvelle feature dans ${applicationName}"
-    ],
-    "MacResumeFeatureIntent": [
-      "Reprendre une pipeline dans ${applicationName}",
-      "Reprends une pipeline dans ${applicationName}"
-    ],
-    "MacStopFeatureIntent": [
-      "Arrêter une pipeline dans ${applicationName}",
-      "Arrête une pipeline dans ${applicationName}"
-    ],
-    "MacValidateSpecsIntent": [
-      "Valider les specs dans ${applicationName}",
-      "Valide les specs dans ${applicationName}"
-    ],
-    "MacAcceptReviewIntent": [
-      "Accepter la revue dans ${applicationName}",
-      "Accepte la revue dans ${applicationName}"
-    ],
-    "MacSessionPromptIntent": [
-      "Dis à ${applicationName}",
-      "Envoyer un message à ${applicationName}",
-      "Écrire à ${applicationName}"
     ]
   },
   "ios": {
@@ -46,39 +9,6 @@
       "Statut de ${applicationName}",
       "Connexion de ${applicationName}",
       "Vérifier la connexion de ${applicationName}"
-    ],
-    "IOSPendingRequestsIntent": [
-      "Demandes en attente dans ${applicationName}",
-      "Questions en attente dans ${applicationName}",
-      "Répondre aux questions de ${applicationName}",
-      "Ce qui attend dans ${applicationName}"
-    ],
-    "IOSLaunchFeatureIntent": [
-      "Lancer une feature dans ${applicationName}",
-      "Nouvelle feature dans ${applicationName}",
-      "Lancer une pipeline avec ${applicationName}"
-    ],
-    "IOSResumeFeatureIntent": [
-      "Reprendre une feature dans ${applicationName}",
-      "Relancer une feature dans ${applicationName}",
-      "Reprendre une pipeline avec ${applicationName}"
-    ],
-    "IOSStopFeatureIntent": [
-      "Arrêter une feature dans ${applicationName}",
-      "Arrêter une pipeline avec ${applicationName}"
-    ],
-    "IOSValidateSpecsIntent": [
-      "Valider les specs dans ${applicationName}",
-      "Valider des specs avec ${applicationName}"
-    ],
-    "IOSAcceptReviewIntent": [
-      "Accepter la revue dans ${applicationName}",
-      "Accepter une revue avec ${applicationName}"
-    ],
-    "IOSSessionPromptIntent": [
-      "Dis à ${applicationName}",
-      "Envoyer un message à ${applicationName}",
-      "Écrire à ${applicationName}"
     ]
   }
 }

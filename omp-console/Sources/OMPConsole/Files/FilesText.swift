@@ -9,10 +9,6 @@ import Foundation
 enum FilesText {
     // Barre d'outils
     static let targetPicker = "Dossier"
-    static let openMenu = "Ouvrir"
-    static let openHelp = "Ouvrir le contrat ou PROJECT.md"
-    static let contractButton = "Contrat"
-    static let projectButton = "PROJECT.md"
     static let refresh = "Rafraîchir"
 
     // Badges : un fichier suivi et inchangé n'en porte aucun.
@@ -33,8 +29,6 @@ enum FilesText {
     static let emptyFile = "Fichier vide."
     static let emptyNewFile = "Nouveau fichier vide."
     static let noDifference = "Aucune modification dans ce fichier."
-    static let noContract = "Aucun contrat dans ce dossier."
-    static let noProjectDocument = "Aucun PROJECT.md dans ce dossier."
 
     // Vues du document (S-18 R5)
     static let modePicker = "Affichage"
@@ -81,12 +75,6 @@ enum FilesText {
         }
     }
 
-    /// Le texte d'un accès dédié absent : jamais le contenu d'une autre cible, jamais
-    /// un contenu vide muet.
-    static func missingDedicatedDocument(_ relativePath: String) -> String {
-        relativePath == FilesModel.contractRelativePath ? noContract : noProjectDocument
-    }
-
     /// Le nom d'un mode : le contenu d'un Markdown est son RENDU, celui d'un fichier
     /// de code est son contenu.
     static func title(of mode: FilesDocumentMode, isMarkdown: Bool) -> String {
@@ -100,16 +88,15 @@ enum FilesText {
 
 extension FilesContent {
     /// Le message à afficher À LA PLACE du contenu, ou `nil` quand le contenu se rend
-    /// tel quel. C'est la règle de la vue, en une fonction pure : un document dédié
-    /// (contrat, `PROJECT.md`) a SON texte d'absence, un fichier de l'arbre a le sien.
-    func message(dedicated: String?) -> String? {
+    /// tel quel. C'est la règle de la vue, en une fonction pure.
+    var message: String? {
         switch self {
         case let .text(text):
             text.isEmpty ? FilesText.emptyFile : nil
         case .binary:
             FilesText.binary
         case .missing:
-            dedicated.map { FilesText.missingDedicatedDocument($0) } ?? FilesText.missingFile
+            FilesText.missingFile
         case .unreadable:
             FilesText.unreadable
         }

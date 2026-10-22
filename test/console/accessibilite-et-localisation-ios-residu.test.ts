@@ -4,9 +4,9 @@
 // Chaque garde lit les sources de l'app iOS (commentaires retirés) et rend une
 // liste de fautes, vide sur le dépôt ; une faute PLANTÉE en mémoire (texte modifié,
 // rien n'est écrit dans le dépôt) doit la faire rougir. Ce sont des gardes de FORME :
-// ce que l'écran rend (éléments `Image` absents de `idb ui describe-all`, cadres AX
-// ≥ 44 × 44, identifiants uniques) se prouve au simulateur par
-// `scripts/recette/ios-accessibilite-localisation-recette.sh` et par la recette des 8 surfaces.
+// ce que l'écran rend (cadres AX ≥ 44 × 44, identifiants uniques, éléments collés au
+// bord) se prouve au simulateur par la recette idb des six sections
+// (`scripts/recette/ios-recette-ui.sh`).
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -18,25 +18,16 @@ import { stripComments } from "../support/swift-source.ts";
 const APP = path.join("omp-console", "ios", "OMPConsoleIOS");
 const CORE = path.join("omp-console", "Sources", "ConsoleCore");
 
-const HOME_VIEW = path.join(APP, "HomeView.swift");
-const WELCOME = path.join(APP, "HomeWelcomeSheet.swift");
-const PIPELINES = path.join(APP, "PipelinesScreen.swift");
-const CARD_SHEET = path.join(APP, "PipelinesCardSheet.swift");
-const CARD_RECIPE = path.join(APP, "PipelinesCardRecipe.swift");
-const PIPELINES_TEXT = path.join(APP, "PipelinesText.swift");
-const PLAN = path.join(APP, "IOSProjectPlanView.swift");
-const PROJECT = path.join(APP, "IOSProjectScreen.swift");
-const SECTION_VIEW = path.join(APP, "IOSSectionView.swift");
+const HARNESS = path.join(APP, "IOSHarnessScreens.swift");
 const MEMORY = path.join(APP, "IOSMemoryScreen.swift");
 const GRAPH = path.join(APP, "IOSMemoryGraphView.swift");
-const KANBAN_TEXT = path.join(CORE, "Kanban", "KanbanText.swift");
-const NEW_FEATURE_TEXT = path.join(CORE, "Kanban", "NewFeatureText.swift");
+const PIPELINE_TEXT = path.join(CORE, "Design", "PipelineServerText.swift");
 const EXCEPTIONS = path.join("scripts", "recette", "ios-recette-ui-exceptions.json");
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const PBXPROJ = path.join("omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
 const INFO_PLIST = path.join("omp-console", "ios", "OMPConsoleIOS-Info.plist");
 const ROOT_VIEW = path.join(APP, "RootView.swift");
-const HOME_TEXT = path.join(APP, "IOSHomeText.swift");
+const SHELL_TEXT = path.join(APP, "IOSShellText.swift");
 const CONNECTION_STATE = path.join(APP, "Design", "IOSConnectionStateView.swift");
 
 /** Les fichiers lus par les gardes, chemin relatif → texte. */
@@ -44,24 +35,7 @@ type Sources = Map<string, string>;
 
 /** Les sources du dépôt (commentaires retirés pour le Swift, texte brut pour le JSON, le pbxproj et le plist). */
 function repoSources(): Sources {
-  const files = [
-    HOME_VIEW,
-    WELCOME,
-    PIPELINES,
-    CARD_SHEET,
-    CARD_RECIPE,
-    PIPELINES_TEXT,
-    PLAN,
-    PROJECT,
-    SECTION_VIEW,
-    MEMORY,
-    GRAPH,
-    KANBAN_TEXT,
-    NEW_FEATURE_TEXT,
-    ROOT_VIEW,
-    HOME_TEXT,
-    CONNECTION_STATE,
-  ];
+  const files = [HARNESS, MEMORY, GRAPH, PIPELINE_TEXT, ROOT_VIEW, SHELL_TEXT, CONNECTION_STATE];
   const sources: Sources = new Map();
   for (const rel of files) sources.set(rel, stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8")));
   for (const rel of [EXCEPTIONS, PBXPROJ, INFO_PLIST]) sources.set(rel, fs.readFileSync(path.join(ROOT, rel), "utf8"));
@@ -84,15 +58,11 @@ function plant(sources: Sources, rel: string, from: string | RegExp, to: string)
   return copy;
 }
 
-const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // ── AC-1 : symboles décoratifs muets (S-1) ─────────────────────────────────────
 
-const DECORATIVE: Array<[string, string]> = [
-  [HOME_VIEW, "Image(systemName: IOSHomeText.natureSymbol(attention.nature))"],
-  [WELCOME, "Image(systemName: promise.symbol)"],
-  [PIPELINES, "Image(systemName: row.lane.symbol)"],
-];
+const DECORATIVE: Array<[string, string]> = [[HARNESS, "Image(systemName: IOSShellText.serverSymbol)"]];
 
 function decorativeFaults(sources: Sources): string[] {
   const faults: string[] = [];
@@ -113,35 +83,41 @@ function decorativeFaults(sources: Sources): string[] {
 
 // ── AC-2 : symboles porteurs de sens libellés en français (S-2) ────────────────
 
+/** Les boutons à symbole : le `Label` français, puis l'identifiant du contrôle. */
+const MEANINGFUL: Array<{ name: string; label: string; anchor: string }> = [
+  {
+    name: "Serveur",
+    label: "Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)",
+    anchor: '.accessibilityIdentifier("ios.server.open")',
+  },
+];
+
 function meaningfulFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  const screen = get(sources, PIPELINES);
-  // `.disabled(…)` : le « + » est grisé hors connexion (etats-non-connecte-heterogenes-ios, S-5).
-  if (
-    !/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*(?:\.disabled\([^()]*\)\s*)?\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(
-      screen,
-    )
-  ) {
+  const screen = get(sources, HARNESS);
+  for (const { name, label, anchor } of MEANINGFUL) {
+    if (!new RegExp(`${escapeRegex(label)}\\s*\\}\\s*${escapeRegex(anchor)}`).test(screen)) {
+      faults.push(`IOSHarnessScreens : le bouton ${anchor} n'a plus ${label} pour libellé (${name})`);
+    }
+  }
+  if (!screen.includes("Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol)")) {
     faults.push(
-      'PipelinesScreen : le bouton pipelines.newFeature n\'a plus Label(NewFeatureText.command, systemImage: "plus") pour libellé',
+      "IOSHarnessScreens : « Ajouter une feature » n'a plus Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol) pour libellé",
     );
   }
-  if (!get(sources, KANBAN_TEXT).includes('public static let refresh = "Rafraîchir"')) {
-    faults.push("KanbanText.refresh n'est plus « Rafraîchir »");
-  }
-  if (!get(sources, NEW_FEATURE_TEXT).includes('public static let command = "Nouvelle feature\u2026"')) {
-    faults.push("NewFeatureText.command n'est plus « Nouvelle feature… » (ellipse U+2026)");
-  }
+  const text = get(sources, PIPELINE_TEXT);
+  if (!text.includes('public static let open = "Serveur"'))
+    faults.push("PipelineServerText.open n'est plus « Serveur »");
+  if (!text.includes('public static let addFeature = "Ajouter une feature"'))
+    faults.push("PipelineServerText.addFeature n'est plus « Ajouter une feature »");
   return faults;
 }
 
 // ── AC-3 : identifiants de conteneur non propagés (S-3) ────────────────────────
 
 const CONTAINERS: Array<[string, string]> = [
-  [PIPELINES, ".accessibilityIdentifier(PipelinesAccessibility.screen)"],
+  [HARNESS, '.accessibilityIdentifier("ios.screen." + section.rawValue)'],
   [MEMORY, ".accessibilityIdentifier(IOSMemoryAccessibility.screen)"],
-  [PROJECT, ".accessibilityIdentifier(ProjectAccessibility.screen)"],
-  [SECTION_VIEW, '.accessibilityIdentifier("ios.screen." + section.rawValue)'],
 ];
 
 interface ExceptionEntry {
@@ -152,7 +128,7 @@ interface ExceptionEntry {
 function containerFaults(sources: Sources): string[] {
   const faults: string[] = [];
   for (const [rel, id] of CONTAINERS) {
-    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escapeRegExp(id)}`);
+    const pattern = new RegExp(`\\.accessibilityElement\\(children: \\.contain\\)\\s*${escapeRegex(id)}`);
     if (!pattern.test(get(sources, rel))) {
       faults.push(`${rel} : .accessibilityElement(children: .contain) doit précéder immédiatement ${id}`);
     }
@@ -161,43 +137,6 @@ function containerFaults(sources: Sources): string[] {
     if (entry.element === "id:ios.memoire.screen") {
       faults.push(`${EXCEPTIONS} : une exception ${entry.regle} subsiste sur id:ios.memoire.screen`);
     }
-  }
-  return faults;
-}
-
-// ── AC-4 : un identifiant par carte, crochet `ardoise` (S-3) ───────────────────
-
-function cardFaults(sources: Sources): string[] {
-  const faults: string[] = [];
-  if (!get(sources, PIPELINES_TEXT).includes('static let recipeArdoise = "ardoise"')) {
-    faults.push('PipelinesText.recipeArdoise = "ardoise" manque');
-  }
-  const recipe = get(sources, CARD_RECIPE);
-  if (!recipe.includes("case PipelinesText.recipeArdoise: return .ardoise")) {
-    faults.push("PipelinesCardRecipe.named ne reconnaît pas `ardoise`");
-  }
-  if (!/var card: KanbanCard\? \{ self == \.ardoise \? nil : Self\.fixtureCard \}/.test(recipe)) {
-    faults.push("PipelinesCardRecipe.card doit être nil pour `ardoise` (aucune fiche ne s'ouvre)");
-  }
-  const screen = get(sources, PIPELINES);
-  if (!screen.includes("board: cardRecipe?.forcedBoard ?? PipelinesModel.boardState(of: client, nowMs: Self.nowMs)")) {
-    faults.push("PipelinesScreen.screenState n'utilise pas l'ardoise de fixture du crochet `ardoise`");
-  }
-  if (!/if cardRecipe\.forcedBoard != nil \{[^}]*cardRecipe\.announce\(\)/.test(screen)) {
-    faults.push("PipelinesScreen.onAppear n'annonce pas le crochet `ardoise` (signal pipelines-recipe-ready)");
-  }
-  if (
-    !/Button \{ sheet = \.card\(card\.id\) \} label: \{\s*cardLabel\(card, showsRepo: showsRepo\)\s*\}\s*\.buttonStyle\(\.plain\)\s*\.accessibilityIdentifier\(PipelinesAccessibility\.card\(card\.id\)\)/.test(
-      screen,
-    )
-  ) {
-    faults.push(
-      "PipelinesScreen.cardButton : le corps de carte ne porte plus .accessibilityIdentifier(PipelinesAccessibility.card(card.id))",
-    );
-  }
-  const text = get(sources, PIPELINES_TEXT);
-  if (!text.includes('static func card(_ id: String) -> String { "pipelines.card.\\(id)" }')) {
-    faults.push("PipelinesAccessibility.card ne rend plus pipelines.card.<id>, distinct de pipelines.lane.<voie>");
   }
   return faults;
 }
@@ -221,31 +160,6 @@ const TARGETS: Target[] = [
     file: CONNECTION_STATE,
     label: "Text(IOSConnectionStateText.connect)",
     anchor: ".accessibilityIdentifier(IOSConnectionStateAccessibility.connect)",
-  },
-  {
-    name: "Ouvrir la PR (Accueil)",
-    file: HOME_VIEW,
-    label: "Text(HomeText.openPR)",
-    anchor: ".accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))",
-  },
-  {
-    name: "Ouvrir la PR (carte Pipelines)",
-    file: PIPELINES,
-    label: "Text(HomeText.openPR)",
-    anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))",
-  },
-  {
-    name: "Ouvrir la PR (fiche de carte)",
-    file: CARD_SHEET,
-    label: "Text(HomeText.openPR)",
-    anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))",
-  },
-  {
-    name: "Ouvrir la PR (plan Projet)",
-    file: PLAN,
-    label: "Text(ProjectViewText.prOpen)",
-    anchor: "Link(destination: link) {",
-    opens: true,
   },
   {
     name: "Réessayer (Mémoire)",
@@ -273,12 +187,11 @@ const TARGETS: Target[] = [
   },
 ];
 
-/** Le cadre de 44 pt du libellé : carré minimal, ou ligne pleine largeur d'au moins 44 pt de haut (« Ouvrir la PR » d'une carte Pipelines). */
+/** Le cadre de 44 pt du libellé : carré minimal, ou ligne pleine largeur d'au moins 44 pt de haut. */
 const SHAPE = String.raw`[^{}]*?\.frame\((?:minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget|maxWidth: \.infinity, minHeight: IOSMetrics\.minimumTarget, alignment: \.leading)\)\s*\.contentShape\(Rectangle\(\)\)\s*\}`;
 
 /** Les entrées d'exception que S-4 interdit désormais. */
 const PROTECTED_S4: ExceptionEntry[] = [
-  { regle: "cible-44", element: "id:ios.home.delivered.open.feature:ade5316c34182862:terminee" },
   { regle: "cible-44", element: "id:ios.connexion.connect" },
   { regle: "cible-44", element: "id:ios.memoire.retry" },
   { regle: "cible-44", element: "id:ios.memoire.graphe.etiquette" },
@@ -305,7 +218,7 @@ function targetFaults(sources: Sources): string[] {
       continue;
     }
     const segment = target.opens ? text.slice(labelAt) : text.slice(labelAt, anchorAt);
-    const shape = new RegExp(`^${escapeRegExp(target.label)}${SHAPE}`).exec(segment);
+    const shape = new RegExp(`^${escapeRegex(target.label)}${SHAPE}`).exec(segment);
     if (shape === null) {
       faults.push(
         `${target.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) (ou une ligne .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)) puis .contentShape(Rectangle())`,
@@ -320,7 +233,7 @@ function targetFaults(sources: Sources): string[] {
     }
   }
   for (const entry of JSON.parse(get(sources, EXCEPTIONS)) as ExceptionEntry[]) {
-    if (entry.regle === "cible-44" && /^id:ios\.home\.delivered\.open\..+$/.test(entry.element)) {
+    if (entry.regle === "cible-44" && PROTECTED_S4.some((p) => p.element === entry.element)) {
       faults.push(`${EXCEPTIONS} : une exception cible-44 subsiste sur ${entry.element}`);
     }
   }
@@ -347,60 +260,58 @@ function validate(entries: ExceptionEntry[]): { status: number | null; stderr: s
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-test("accessibilite-et-localisation-ios-residu/AC-1 : les symboles décoratifs de l'Accueil, de la Bienvenue et des Pipelines sont masqués à VoiceOver", () => {
+test("accessibilite-et-localisation-ios-residu/AC-1 : le symbole décoratif des écrans du serveur est masqué à VoiceOver", () => {
   const sources = repoSources();
   assert.deepEqual(decorativeFaults(sources), []);
   const planted = plant(
     sources,
-    WELCOME,
-    /(Image\(systemName: promise\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
+    HARNESS,
+    /(Image\(systemName: IOSShellText\.serverSymbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
     "$1",
   );
   assert.ok(
-    decorativeFaults(planted).some((f) => f.includes("promise.symbol")),
-    "un symbole de promesse lu par VoiceOver doit faire rougir la garde",
-  );
-  const lane = plant(
-    sources,
-    PIPELINES,
-    /(Image\(systemName: row\.lane\.symbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
-    "$1",
-  );
-  assert.ok(
-    decorativeFaults(lane).some((f) => f.includes("row.lane.symbol")),
-    "un symbole de voie lu par VoiceOver doit faire rougir la garde",
+    decorativeFaults(planted).some((f) => f.includes("serverSymbol")),
+    "un symbole décoratif lu par VoiceOver doit faire rougir la garde",
   );
 });
 
-// Le bouton ↻ de Pipelines est retiré par ios-gestes-et-retours-natifs (S-2, tirer
-// pour actualiser) : seul « Nouvelle feature… » reste un symbole de barre à libeller.
-test("accessibilite-et-localisation-ios-residu/AC-2 : Nouvelle feature… garde son libellé français, jamais le nom du symbole", () => {
+test("accessibilite-et-localisation-ios-residu/AC-2 : « Serveur » et « Ajouter une feature » gardent leur libellé français, jamais le nom du symbole", () => {
   const sources = repoSources();
   assert.deepEqual(meaningfulFaults(sources), []);
   const icon = plant(
     sources,
-    PIPELINES,
-    'Label(NewFeatureText.command, systemImage: "plus")',
-    'Image(systemName: "plus")',
+    HARNESS,
+    "Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)",
+    "Image(systemName: IOSShellText.serverSymbol)",
   );
   assert.ok(
-    meaningfulFaults(icon).some((f) => f.includes("pipelines.newFeature")),
-    "un symbole nu sur Nouvelle feature… doit faire rougir la garde",
+    meaningfulFaults(icon).some((f) => f.includes("ios.server.open")),
+    "un symbole nu sur « Serveur » doit faire rougir la garde",
+  );
+  const add = plant(
+    sources,
+    HARNESS,
+    "Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol)",
+    "Image(systemName: IOSShellText.addSymbol)",
+  );
+  assert.ok(
+    meaningfulFaults(add).some((f) => f.includes("Ajouter une feature")),
+    "un symbole nu sur « Ajouter une feature » doit faire rougir la garde",
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran Pipelines, Mémoire et Projet ne se propagent plus à leurs enfants", () => {
+test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran du serveur et de la Mémoire ne se propagent plus à leurs enfants", () => {
   const sources = repoSources();
   assert.deepEqual(containerFaults(sources), []);
   const planted = plant(
     sources,
-    PIPELINES,
-    /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\(PipelinesAccessibility\.screen\))/,
+    HARNESS,
+    /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\("ios\.screen\." \+ section\.rawValue\))/,
     "$1",
   );
   assert.ok(
-    containerFaults(planted).some((f) => f.includes("PipelinesAccessibility.screen")),
-    "un écran Pipelines sans .contain doit faire rougir la garde",
+    containerFaults(planted).some((f) => f.includes("ios.screen.")),
+    "un écran du serveur sans .contain doit faire rougir la garde",
   );
   const memory = plant(
     sources,
@@ -419,27 +330,7 @@ test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran 
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-4 : chaque carte de Pipelines porte son identifiant propre, et le crochet ardoise les montre sans appairage", () => {
-  const sources = repoSources();
-  assert.deepEqual(cardFaults(sources), []);
-  const planted = plant(sources, CARD_RECIPE, "case PipelinesText.recipeArdoise: return .ardoise", "");
-  assert.ok(
-    cardFaults(planted).some((f) => f.includes("ardoise")),
-    "un crochet ardoise non reconnu doit faire rougir la garde",
-  );
-  const shared = plant(
-    sources,
-    PIPELINES,
-    ".accessibilityIdentifier(PipelinesAccessibility.card(card.id))",
-    ".accessibilityIdentifier(PipelinesAccessibility.lane(card.id))",
-  );
-  assert.ok(
-    cardFaults(shared).some((f) => f.includes("corps de carte")),
-    "un corps de carte sans identifiant propre doit faire rougir la garde",
-  );
-});
-
-test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter, Réessayer et le menu d'étiquettes portent une cible de 44 pt sur leur libellé", () => {
+test("accessibilite-et-localisation-ios-residu/AC-5 : Se connecter, Réessayer et le menu d'étiquettes portent une cible de 44 pt sur leur libellé", () => {
   const sources = repoSources();
   assert.deepEqual(targetFaults(sources), []);
 
@@ -464,25 +355,20 @@ test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter
     targetFaults(menu).some((f) => f.startsWith("Menu d'étiquettes")),
     "un menu sans forme de toucher doit faire rougir la garde",
   );
-  const excepted = plant(
-    sources,
-    EXCEPTIONS,
-    /^\[/,
-    '[{"regle": "cible-44", "element": "id:ios.home.delivered.open.feature:ade5316c34182862:terminee"},',
-  );
+  const excepted = plant(sources, EXCEPTIONS, /^\[/, '[{"regle": "cible-44", "element": "id:ios.memoire.retry"},');
   assert.ok(
-    targetFaults(excepted).some((f) => f.includes("ios.home.delivered.open")),
-    "une exception sur Ouvrir la PR doit faire rougir la garde",
+    targetFaults(excepted).some((f) => f.includes("id:ios.memoire.retry")),
+    "une exception sur Réessayer doit faire rougir la garde",
   );
 
   // L'analyseur refuse désormais d'excepter un contrôle de S-4.
   for (const entry of PROTECTED_S4) {
-    const r = validate([{ regle: "cible-44", element: "id:ios.home.root" }, entry]);
+    const r = validate([{ regle: "cible-44", element: "id:ios.server.open" }, entry]);
     assert.equal(r.status, 2, JSON.stringify(entry));
     assert.match(r.stderr, /^exception 2 interdite/, JSON.stringify(entry));
   }
   assert.equal(
-    validate([{ regle: "cible-44", element: "id:ios.home.root" }]).status,
+    validate([{ regle: "cible-44", element: "id:ios.server.open" }]).status,
     0,
     "un voisin légitime reste permis",
   );
@@ -648,11 +534,11 @@ function block(text: string, marker: string): string | null {
 
 const ROOT_TITLE = 'static let rootTitle = "OMP Console"';
 const SIDEBAR_HEADER = ".tabViewSidebarHeader {";
-const TITLE_TEXT = "Text(IOSHomeText.rootTitle)";
+const TITLE_TEXT = "Text(IOSShellText.rootTitle)";
 
 function rootTitleFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  if (!get(sources, HOME_TEXT).includes(ROOT_TITLE)) faults.push(`IOSHomeText.swift ne déclare pas ${ROOT_TITLE}`);
+  if (!get(sources, SHELL_TEXT).includes(ROOT_TITLE)) faults.push(`IOSShellText.swift ne déclare pas ${ROOT_TITLE}`);
   const root = get(sources, ROOT_VIEW);
   const titles = root.split(TITLE_TEXT).length - 1;
   if (titles !== 1) faults.push(`RootView.swift pose ${TITLE_TEXT} ${titles} fois (attendu : 1)`);
@@ -692,26 +578,26 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   const sources = repoSources();
   assert.deepEqual(rootTitleFaults(sources), []);
 
-  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(IOSHomeText.plusTitle)");
+  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(IOSShellText.plusTitle)");
   assert.ok(
     rootTitleFaults(removed).some((f) => f.includes("fois")),
     "un titre retiré doit faire rougir la garde",
   );
-  const renamed = plant(sources, HOME_TEXT, ROOT_TITLE, 'static let rootTitle = "OMPConsoleIOS"');
+  const renamed = plant(sources, SHELL_TEXT, ROOT_TITLE, 'static let rootTitle = "OMPConsoleIOS"');
   assert.ok(
-    rootTitleFaults(renamed).some((f) => f.startsWith("IOSHomeText.swift")),
+    rootTitleFaults(renamed).some((f) => f.startsWith("IOSShellText.swift")),
     "un autre titre doit faire rougir la garde",
   );
   const elsewhere = plant(
     plant(
       sources,
       ROOT_VIEW,
-      /(\.tabViewSidebarHeader \{\s*)Text\(IOSHomeText\.rootTitle\)/,
-      "$1Text(IOSHomeText.plusTitle)",
+      /(\.tabViewSidebarHeader \{\s*)Text\(IOSShellText\.rootTitle\)/,
+      "$1Text(IOSShellText.plusTitle)",
     ),
     ROOT_VIEW,
-    ".navigationTitle(IOSHomeText.plusTitle)",
-    `.navigationTitle(IOSHomeText.plusTitle)\n        .overlay { ${TITLE_TEXT} }`,
+    ".navigationTitle(IOSShellText.plusTitle)",
+    `.navigationTitle(IOSShellText.plusTitle)\n        .overlay { ${TITLE_TEXT} }`,
   );
   assert.ok(
     rootTitleFaults(elsewhere).some((f) => f.includes("en-tête")),

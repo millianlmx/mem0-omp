@@ -49,25 +49,6 @@ struct FilesView: ConsoleSectionView {
             }
         }
         ToolbarItem(placement: .primaryAction) {
-            Menu {
-                Button {
-                    model.openContract()
-                } label: {
-                    Label(FilesText.contractButton, systemImage: "doc.plaintext")
-                }
-                Button {
-                    model.openProjectDocument()
-                } label: {
-                    Label(FilesText.projectButton, systemImage: "doc.richtext")
-                }
-            } label: {
-                Label(FilesText.openMenu, systemImage: "doc.text")
-            }
-            .help(FilesText.openHelp)
-            .disabled(model.target == nil)
-            .accessibilityIdentifier("files.open")
-        }
-        ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.refresh() }
             } label: {
@@ -226,18 +207,7 @@ struct FilesView: ConsoleSectionView {
                 }
             }
             .padding(8)
-        case .contract:
-            dedicatedHeader(FilesModel.contractRelativePath)
-        case .projectDocument:
-            dedicatedHeader(FilesModel.projectDocumentRelativePath)
         }
-    }
-
-    private func dedicatedHeader(_ title: String) -> some View {
-        Text(verbatim: title)
-            .font(.headline)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
     }
 
     // MARK: - Les vues du document (S-18 R5)
@@ -294,12 +264,8 @@ struct FilesView: ConsoleSectionView {
                 }
                 .background(Color(nsColor: .textBackgroundColor))
             } else {
-                contentSection(dedicated: nil)
+                contentSection
             }
-        case .contract:
-            contentSection(dedicated: FilesModel.contractRelativePath)
-        case .projectDocument:
-            contentSection(dedicated: FilesModel.projectDocumentRelativePath)
         }
     }
 
@@ -336,9 +302,9 @@ struct FilesView: ConsoleSectionView {
 
     /// Un Markdown se lit RENDU (ou en source numérotée) ; tout autre texte passe
     /// par la visionneuse de code. Les messages d'état sont ceux d'avant S-18.
-    @ViewBuilder private func contentSection(dedicated: String?) -> some View {
+    @ViewBuilder private var contentSection: some View {
         if let content = model.content {
-            if let message = content.message(dedicated: dedicated) {
+            if let message = content.message {
                 if case let .unreadable(reason) = content {
                     self.message(message, diagnostic: reason)
                 } else {

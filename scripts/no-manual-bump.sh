@@ -48,6 +48,8 @@ import json, subprocess, sys
 
 base, head = sys.argv[1], sys.argv[2]
 CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"]
+# Les services versionnés hors catalogue (scripts/release.ts, SERVICES).
+SERVICES = ["omp-harness/package.json"]
 SUFFIX = ("le bump appartient au job de release : retire ce changement de la PR "
           "(PUBLISHING.md, § Mettre à jour)")
 
@@ -90,6 +92,10 @@ def carriers(ref):
         meta = cat.get("metadata") or {}
         if "version" in meta:
             found[(rel, "metadata.version")] = meta.get("version")
+    for rel in SERVICES:
+        raw = at(ref, rel)
+        if raw is not None:
+            found[(rel, "version")] = json.loads(raw).get("version")
     # Les deux catalogues décrivent les mêmes porteurs : sans plus de détail, la
     # clé (chemin, libellé) garde un exemplaire par fichier PORTEUR.
     return found

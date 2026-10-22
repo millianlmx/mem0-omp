@@ -103,6 +103,22 @@ function mkCtx(cwd: string): Ctx {
 
 const text = (ctx: Ctx) => ctx.notices.map((n) => n.message).join("\n");
 
+/**
+ * Rend l'écriture de `file` impossible et rend de quoi la rétablir. Sans privilège :
+ * le répertoire passe en 0500. En root, qui passe outre les droits, un DOSSIER occupe
+ * le chemin exact du temporaire de writeFileAtomic : personne n'y écrit un fichier.
+ * Ce dossier-bouchon n'est pas un temporaire laissé par l'écriture.
+ */
+function blockWrites(dir: string, file: string): { blocker: string | null; restore: () => void } {
+  if (process.getuid?.() === 0) {
+    const blocker = `${file}.tmp-${process.pid}`;
+    fs.mkdirSync(blocker);
+    return { blocker, restore: () => fs.rmSync(blocker, { recursive: true, force: true }) };
+  }
+  fs.chmodSync(dir, 0o500);
+  return { blocker: null, restore: () => fs.chmodSync(dir, 0o700) };
+}
+
 // ---------------------------------------------------------------------------
 // AC-4 — écritures atomiques
 // ---------------------------------------------------------------------------
@@ -150,24 +166,26 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
   const target = path.join(readOnly, "AGENTS.md");
   fs.writeFileSync(target, user, "utf8");
   const before = fs.readFileSync(target);
-  fs.chmodSync(readOnly, 0o500);
+  const block = blockWrites(readOnly, target);
   try {
-    let blocked = false;
-    try {
-      fs.writeFileSync(path.join(readOnly, ".sonde"), "x");
-    } catch {
-      blocked = true;
+    if (block.blocker === null) {
+      let blocked = false;
+      try {
+        fs.writeFileSync(path.join(readOnly, ".sonde"), "x");
+      } catch {
+        blocked = true;
+      }
+      assert.ok(blocked, "le répertoire doit être réellement non inscriptible (uid non privilégié)");
     }
-    assert.ok(blocked, "le répertoire doit être réellement non inscriptible (uid non privilégié)");
-    assert.throws(() => writeFileAtomic(target, "remplacé"), /EACCES|EPERM|permission/i);
+    assert.throws(() => writeFileAtomic(target, "remplacé"), /EACCES|EPERM|EISDIR|permission/i);
     assert.ok(fs.readFileSync(target).equals(before), "fichier d'origine inchangé octet pour octet");
     assert.deepEqual(
-      tmpLeftovers(readOnly).filter((p) => p.includes("AGENTS.md.tmp-")),
+      tmpLeftovers(readOnly).filter((p) => p.includes("AGENTS.md.tmp-") && p !== block.blocker),
       [],
       "aucun temporaire laissé par l'écriture en échec",
     );
   } finally {
-    fs.chmodSync(readOnly, 0o700);
+    block.restore();
   }
 
   // Même panne vue d'en haut : /mem0-brief --update sur un bloc périmé doit
@@ -176,7 +194,7 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
   const agentsRo = path.join(repoRo, "AGENTS.md");
   fs.writeFileSync(agentsRo, "<!-- mem0:brief v3 -->\n## Mémoire du projet\nvieux\n<!-- /mem0:brief -->\n", "utf8");
   const beforeRo = fs.readFileSync(agentsRo);
-  fs.chmodSync(repoRo, 0o500);
+  const blockRo = blockWrites(repoRo, agentsRo);
   const ctxRo = mkCtx(repoRo);
   try {
     await app.commands.get("mem0-brief")!("--update", ctxRo as never);
@@ -184,7 +202,7 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
     assert.match(text(ctxRo), /AGENTS\.md=failed/, "l'échec est rapporté, pas un succès");
     assert.ok(!text(ctxRo).includes("AGENTS.md=created"), "jamais un succès annoncé sans écriture");
   } finally {
-    fs.chmodSync(repoRo, 0o700);
+    blockRo.restore();
   }
 });
 

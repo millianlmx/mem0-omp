@@ -38,11 +38,6 @@ public enum SetupText {
     /// L'état de succès (la feuille se ferme d'elle-même par la politique).
     public static let done = "Préparation terminée."
 
-    // --- l'Accueil sans composants -------------------------------------------
-    public static let homeMissingTitle = "OMP n’est pas installé"
-    public static let homeMissingBody =
-        "Installez OMP depuis la feuille de préparation : les fonctions qui en dépendent se débloquent à la fin de l’installation."
-
     // --- le badge des composants ---------------------------------------------
     /// L'état positif du badge (S-1) : les composants embarqués sont installés.
     public static let componentsAllInstalled = "Tout est installé"

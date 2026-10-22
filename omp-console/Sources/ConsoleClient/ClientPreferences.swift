@@ -15,20 +15,6 @@ public protocol ClientPreferences: Sendable {
     func set(_ value: Bool, forKey key: String)
 }
 
-/// Les clés de préférences, écrites une seule fois.
-public enum ClientPreferenceKey {
-    /// L'adresse manuelle posée pour cet appareil.
-    public static let manualAddress = "client.manualAddress"
-    /// L'identifiant d'appareil appairé (UUID minuscule).
-    public static let deviceId = "client.deviceId"
-    /// L'identité de cette installation (UUID minuscule), créée au premier
-    /// appairage puis envoyée à chacun (`deviceKey`) : le Mac remplace la ligne
-    /// de l'appareil qui se réappaire. Jamais effacée, pas même à la révocation.
-    public static let installationId = "client.installationId"
-    /// La feuille de bienvenue a été vue (le MÊME nom que la préférence macOS).
-    public static let welcomeSeen = "home.welcomeSeen"
-}
-
 /// La production : `UserDefaults.standard`. `UserDefaults` est documenté
 /// sûr entre fils ; on l'annote `@unchecked Sendable`.
 public struct UserDefaultsClientPreferences: ClientPreferences, @unchecked Sendable {

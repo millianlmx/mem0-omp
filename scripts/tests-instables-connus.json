@@ -1,29 +1,3 @@
 {
-  "tests": [
-    {
-      "identifiant": "client-rpc-omp/AC-2",
-      "filtre": "\\.modelGatesLaunchAndPrompt\\(\\)",
-      "occurrence": "run local de swift test du 2026-10-18 (worktree model-selector-in-embedded-omp-session, pendant scripts/ios-build.sh)"
-    },
-    {
-      "identifiant": "bug-embedded-podman-machine/AC-5",
-      "filtre": "\\.startPollsUntilStopped\\(\\)",
-      "occurrence": "run 39239142987, tentative 1 (PR feat/ci-without-cache, 2026-10-19)"
-    },
-    {
-      "identifiant": "duplicateHeaderIsBadRequest()",
-      "filtre": "RemoteVersionTests/duplicateHeaderIsBadRequest\\(\\)",
-      "occurrence": "run 38475731796, tentative 1 (PR feat/siri-iphone-pilotage-pipelines, 2026-10-13)"
-    },
-    {
-      "identifiant": "trailingSpaceIsAcceptedAfterTrim()",
-      "filtre": "RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\)",
-      "occurrence": "run 39239142987, tentative 2 (PR feat/ci-without-cache, 2026-10-19)"
-    },
-    {
-      "identifiant": "api-distante-du-console/AC-1",
-      "filtre": "\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)",
-      "occurrence": "run 38563190542, tentative 1 (PR feat/arbitre-corpus-et-deduction, 2026-10-14)"
-    }
-  ]
+  "tests": []
 }

@@ -1,0 +1,6 @@
+# /etc/sudoers.d/omp-harness (0440) — la SEULE élévation du service : le lanceur
+# root, qui valide chaque ligne systemd-run avant de l'exécuter.
+# Jamais SETENV ni -E : sudo remet l'environnement à zéro (BASH_ENV, LD_*, PATH de
+# l'appelant ne passent pas). Les clés des runners viennent de
+# /etc/omp-harness/runner.env, que seul root lit.
+omp-harness ALL=(root) NOPASSWD: /usr/local/libexec/omp-harness-systemd-run

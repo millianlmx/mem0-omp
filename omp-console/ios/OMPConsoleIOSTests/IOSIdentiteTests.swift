@@ -51,18 +51,17 @@ struct IOSIdentiteTests {
         }
     }
 
-    @Test("ios-identite-app/AC-7 — le message « Réseau local » du bundle commence par « OMP Console se connecte à votre Mac », vouvoie et ne dit ni « coque » ni « macOS »")
+    @Test("ios-identite-app/AC-7 — le message « Réseau local » du bundle parle du serveur et de la mémoire, vouvoie, ne nomme ni le Mac ni « coque », et l'app n'annonce aucun service Bonjour")
     func localNetworkMessageSpeaksToTheUser() {
         let message = info["NSLocalNetworkUsageDescription"] as? String ?? ""
-        #expect(message == "OMP Console se connecte à votre Mac sur le réseau local pour afficher et piloter vos pipelines.")
-        #expect(message.hasPrefix("OMP Console se connecte à votre Mac"))
+        #expect(message == "OMP Console joint votre serveur de pipelines et vos souvenirs quand ils sont sur votre réseau local.")
         #expect(!message.localizedCaseInsensitiveContains("coque"))
-        #expect(!message.localizedCaseInsensitiveContains("macos"))
+        #expect(!message.localizedCaseInsensitiveContains("mac"))
         #expect(message.contains("votre") && message.contains("vos"))
         #expect(!message.contains("'"))
-        #expect(info["NSBonjourServices"] as? [String] == ["_ompconsole._tcp"])
-        // Le Mac se joint en HTTP, au LAN comme par Tailscale (100.64/10, hors du
-        // « réseau local » d'ATS). `NSAllowsLocalNetworking` présent ferait ignorer
+        #expect(info["NSBonjourServices"] == nil)
+        // Le serveur se joint au LAN comme par Tailscale (100.64/10, hors du
+        // « réseau local » d'ATS), en HTTP quand il n'est pas publié en HTTPS. `NSAllowsLocalNetworking` présent ferait ignorer
         // `NSAllowsArbitraryLoads` par iOS : l'adresse Tailscale échouerait en -1022.
         let transport = info["NSAppTransportSecurity"] as? [String: Any]
         #expect(transport?["NSAllowsArbitraryLoads"] as? Bool == true)

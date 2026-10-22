@@ -38,7 +38,6 @@ func recetteManuelleRendUneVraieCible() async throws {
     let model = FilesModel(
         projectRoot: URL(fileURLWithPath: target),
         git: nil,
-        store: StoreReader(),
         defaults: suite,
         fileManager: .default
     )

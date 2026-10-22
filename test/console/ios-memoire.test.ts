@@ -80,27 +80,19 @@ function contractFaults(...ids: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// AC-1 : le sommaire relayé est miroité, borné, et rendu par les mots du noyau.
+// AC-1 : le sommaire est lu par pages bornées sur la mémoire du serveur, et rendu
+// par les mots du noyau.
 
-/** Les manques du relais (AC-1). Vide quand tout est là. */
+/** Les manques de la lecture du sommaire (AC-1). Vide quand tout est là. */
 function relayFaults(root: string): string[] {
   const faults: string[] = [];
-  const internal = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "Payloads.swift"));
-  const mirror = clientCode(root, "ClientPayloads.swift");
-  const internalPage = structBlock(internal, "RemoteMemoryPagePayload");
-  const mirrorPage = structBlock(mirror, "RemoteMemoryPagePayload");
-  for (const [name, block] of [
-    ["Payloads.swift", internalPage],
-    ["ClientPayloads.swift", mirrorPage],
-  ]) {
-    if (!block.includes("scope: String?")) faults.push(`${name} : RemoteMemoryPagePayload sans scope`);
-    if (!block.includes("nextOffset: Int?")) faults.push(`${name} : RemoteMemoryPagePayload sans nextOffset`);
-  }
-  if (!/static let memoryPageSize = 100/.test(internal))
-    faults.push("RemoteLimits.memoryPageSize n'est pas figé à 100");
-  const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  if (!reads.includes("RemoteLimits.memoryPageSize"))
-    faults.push("RemoteReads.memoryPage ne borne pas par RemoteLimits.memoryPageSize");
+  const payloads = clientCode(root, "MemoryPayloads.swift");
+  const page = structBlock(payloads, "RemoteMemoryPagePayload");
+  if (!page.includes("scope: String?")) faults.push("MemoryPayloads.swift : RemoteMemoryPagePayload sans scope");
+  if (!page.includes("nextOffset: Int?")) faults.push("MemoryPayloads.swift : RemoteMemoryPagePayload sans nextOffset");
+  const reader = clientCode(root, "MemoryReader.swift");
+  if (!/public static let pageSize = 100/.test(reader)) faults.push("MemoryReader.pageSize n'est pas figé à 100");
+  if (!reader.includes("Self.pageSize")) faults.push("MemoryReader.page ne borne pas par MemoryReader.pageSize");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes("MemoryText.summaryCount(")) faults.push("l'écran n'emploie pas MemoryText.summaryCount");
   if (!screen.includes("IOSMemoryText.loadingMore"))
@@ -123,12 +115,12 @@ function relayFaults(root: string): string[] {
   return faults;
 }
 
-test("ios-memoire/AC-1 : le sommaire relayé est miroité, borné, et rendu par les mots du noyau", () => {
+test("ios-memoire/AC-1 : le sommaire est lu par pages bornées sur la mémoire du serveur, et rendu par les mots du noyau", () => {
   assert.deepEqual(relayFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replaceAll("RemoteLimits.memoryPageSize", "RemoteLimits.statsRows"));
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
+  fs.writeFileSync(target, code(target).replaceAll("Self.pageSize", "Int.max"));
   assert.ok(relayFaults(copy).length > 0, "une borne de sommaire retirée doit faire rougir la garde");
 });
 
@@ -225,20 +217,19 @@ function searchParityFaults(root: string): string[] {
   if (threshold !== "0.55") faults.push(`config.ts : SEARCH_THRESHOLD ≠ 0.55 (${threshold})`);
   if (poolMax !== "50") faults.push(`config.ts : SEARCH_POOL_MAX ≠ 50 (${poolMax})`);
   if (defaultLimit !== "6") faults.push(`tools.ts : le défaut de limit n'est pas 6 (${defaultLimit})`);
-  const search = shellCode(root, "Memory", "MemorySearch.swift");
+  const search = source(path.join(root, "omp-console", "Sources", "ConsoleCore", "Memory", "MemoryWire.swift"));
   if (!search.includes(`static let threshold: Double = ${threshold}`))
     faults.push("MemorySearch.threshold ≠ SEARCH_THRESHOLD");
   if (!search.includes(`static let poolMax = ${poolMax}`)) faults.push("MemorySearch.poolMax ≠ SEARCH_POOL_MAX");
   if (!search.includes(`static let defaultLimit = ${defaultLimit}`))
     faults.push("MemorySearch.defaultLimit ≠ le défaut de tools.ts");
-  const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  if (!reads.includes("MemorySearch.select(")) faults.push("la route n'emploie pas MemorySearch.select");
-  if (!reads.includes("MemorySearch.pool(requested:"))
-    faults.push("la route n'emploie pas MemorySearch.pool(requested:)");
-  if (reads.includes("memoryLimitDefault")) faults.push("un second défaut de limite subsiste");
-  const client = clientCode(root, "ConsoleClientModel.swift");
-  if (!client.includes("public func memorySearch(query: String, scope: String?, limit: Int?)")) {
-    faults.push("le client n'expose pas memorySearch(query:scope:limit:)");
+  const reader = clientCode(root, "MemoryReader.swift");
+  if (!reader.includes("MemorySearch.select(")) faults.push("le lecteur n'emploie pas MemorySearch.select");
+  if (!reader.includes("MemorySearch.pool(requested:"))
+    faults.push("le lecteur n'emploie pas MemorySearch.pool(requested:)");
+  const access = clientCode(root, "MemoryAccess.swift");
+  if (!access.includes("public func memorySearch(query: String, scope: String?, limit: Int?)")) {
+    faults.push("l'accès n'expose pas memorySearch(query:scope:limit:)");
   }
   if (!appFile(root, "IOSMemoryModel.swift").includes("client.memorySearch(query: query, scope: nil, limit: nil)")) {
     faults.push("l'écran ne cherche pas par client.memorySearch");
@@ -291,36 +282,35 @@ test("ios-memoire/AC-5 : trois « rien trouvé » distincts, jamais le sommaire 
 });
 
 // ---------------------------------------------------------------------------
-// AC-6 : « Mémoire indisponible » porte l'adresse sondée et le dernier message.
+// AC-6 : « Mémoire indisponible » se dit sans adresse ni détail amont, avec son remède.
 
-/** Les manques du relais de panne (AC-6). */
+/** Les manques de la panne de la mémoire (AC-6). */
 function unavailableFaults(root: string): string[] {
   const faults: string[] = [];
-  const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  if (!reads.includes("MemoryText.unavailableDetail(address:")) {
-    faults.push("memoryError n'emploie pas la constante partagée unavailableDetail");
+  const reader = clientCode(root, "MemoryReader.swift");
+  if (!/case 503: throw MemoryReadError\.unavailable/.test(reader)) {
+    faults.push("le lecteur ne distingue pas le service indisponible (503)");
   }
-  if (!/func memoryError\(_ error: Error, config: MemoryServiceConfig\) -> ConsoleAPIError/.test(reads)) {
-    faults.push("memoryError n'est plus le point unique de traduction");
-  }
+  const translator = appFile(root, "IOSMemoryErrorText.swift");
+  if (!/case \.unavailable: \.serviceUnavailable/.test(translator))
+    faults.push("le traducteur ne rend pas « service indisponible »");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes("MemoryText.retry")) faults.push("l'écran n'offre pas « Réessayer »");
   if (!screen.includes("tone: .danger")) faults.push("le bandeau d'indisponibilité n'est pas rouge");
-  if (!screen.includes("IOSMacErrorText.message(for:"))
-    faults.push("l'écran ne lit pas le message du traducteur partagé");
+  if (!screen.includes("IOSMemoryErrorText.message(for:")) faults.push("l'écran ne lit pas le message du traducteur");
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryModelTests.swift"));
   if (!tests.includes('"ios-memoire/AC-6')) faults.push("IOSMemoryModelTests ne porte pas le titre ios-memoire/AC-6");
   faults.push(...contractFaults("AC-6"));
   return faults;
 }
 
-test("ios-memoire/AC-6 : « Mémoire indisponible » porte l'adresse sondée et le dernier message", () => {
+test("ios-memoire/AC-6 : « Mémoire indisponible » se dit sans adresse ni détail amont, avec son remède", () => {
   assert.deepEqual(unavailableFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replaceAll("MemoryText.unavailableDetail(address:", "String(describing:"));
-  assert.ok(unavailableFaults(copy).length > 0, "une panne sans constante partagée doit faire rougir la garde");
+  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
+  fs.writeFileSync(target, code(target).replaceAll("IOSMemoryErrorText.message(for:", "String(describing:"));
+  assert.ok(unavailableFaults(copy).length > 0, "une panne sans traducteur doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------
@@ -329,11 +319,11 @@ test("ios-memoire/AC-6 : « Mémoire indisponible » porte l'adresse sondée et 
 /** Les manques du cas « aucun projet » (AC-7). */
 function noProjectFaults(root: string): string[] {
   const faults: string[] = [];
-  const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
+  const reads = clientCode(root, "MemoryReader.swift");
   const early = reads.indexOf("scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil");
-  const firstAll = reads.indexOf("service.all(scope:");
-  if (early === -1) faults.push("RemoteReads.memoryPage ne rend pas la page vide sans portée");
-  if (firstAll === -1) faults.push("service.all absent de RemoteReads");
+  const firstAll = reads.indexOf("try await all(scope: scope)");
+  if (early === -1) faults.push("MemoryReader.page ne rend pas la page vide sans portée");
+  if (firstAll === -1) faults.push("la lecture de la portée est absente de MemoryReader");
   if (early !== -1 && firstAll !== -1 && early > firstAll) {
     faults.push("la page vide est rendue APRÈS l'appel au service");
   }
@@ -356,7 +346,7 @@ test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas a
   assert.deepEqual(noProjectFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
   fs.writeFileSync(
     target,
     code(target).replace(
@@ -368,28 +358,26 @@ test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas a
 });
 
 // ---------------------------------------------------------------------------
-// AC-8 : quand le Mac ne répond plus, une panne de TRANSPORT n'est jamais une
-// cause mémoire. L'écran « non connecté » lui-même est le composant partagé
+// AC-8 : quand le serveur ne répond plus, une panne de TRANSPORT n'est jamais une
+// cause mémoire. L'écran « mémoire non reliée » lui-même est le composant partagé
 // (feature etats-non-connecte-heterogenes-ios, IOSConnectionStatusTests).
 
 /** Les manques de la classification des pannes du client (AC-8). */
 function clientStateFaults(root: string): string[] {
   const faults: string[] = [];
   const model = appFile(root, "IOSMemoryModel.swift");
-  // L'entrée Mémoire du traducteur partagé (`ofMemoryRead`, délai dépassé distinct) compte.
-  if (!/IOSMacFailure\.(of|ofMemoryRead)\(/.test(model))
-    faults.push("le modèle ne classe pas l'erreur par le traducteur partagé");
-  if (model.includes("api.message")) faults.push("le modèle relaie le détail brut du Mac");
+  if (!/IOSMemoryFailure\.of\(/.test(model)) faults.push("le modèle ne classe pas l'erreur par le traducteur");
+  if (model.includes("api.message")) faults.push("le modèle relaie un détail brut");
   faults.push(...contractFaults("AC-8"));
   return faults;
 }
 
-test("ios-memoire/AC-8 : quand le Mac ne répond plus, c'est l'état du client", () => {
+test("ios-memoire/AC-8 : quand le serveur ne répond plus, la panne est dite par le traducteur", () => {
   assert.deepEqual(clientStateFaults(ROOT), []);
 
   const copy = shared.fresh();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryModel.swift");
-  fs.writeFileSync(target, code(target).replaceAll("IOSMacFailure.ofMemoryRead(", "classifyLocally("));
+  fs.writeFileSync(target, code(target).replaceAll("IOSMemoryFailure.of(", "classifyLocally("));
   assert.ok(
     clientStateFaults(copy).length > 0,
     "une panne classée hors du traducteur partagé doit faire rougir la garde",
@@ -408,18 +396,14 @@ function refreshFaults(root: string): string[] {
   for (const token of ["Timer", "Task.sleep", "DispatchQueue"]) {
     if (memory.includes(token)) faults.push(`la section Mémoire porte ${token}`);
   }
-  const stream = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteStream.swift"));
-  if (/memoi|memory/i.test(stream)) faults.push("le flux SSE porte un évènement mémoire");
-  const parser = clientCode(root, "ClientStreamParser.swift");
-  if (/memoi|memory/i.test(parser)) faults.push("le parseur de flux porte un évènement mémoire");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes(".refreshable { await model.refresh() }"))
     faults.push("le tirage pour actualiser de la liste manque");
   if (!screen.includes(".task {")) faults.push("l'apparition de l'écran ne charge pas");
   const model = appFile(root, "IOSMemoryModel.swift");
   if (!model.includes("inFlight?.cancel()")) faults.push("un chargement en vol n'est pas annulé avant le suivant");
-  if (!model.includes("guard Self.gesturesEnabled(client.state) else { return }")) {
-    faults.push("une lecture est possible hors .connected");
+  if (!model.includes("guard Self.gesturesEnabled(client.isConfigured) else { return }")) {
+    faults.push("une lecture est possible sans mémoire reliée");
   }
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryModelTests.swift"));
   if (!tests.includes('"ios-memoire/AC-9')) faults.push("IOSMemoryModelTests ne porte pas le titre ios-memoire/AC-9");
@@ -448,9 +432,15 @@ function readOnlyFaults(root: string): string[] {
   for (const token of ["MemoryText.createMemory", "MemoryText.edit", "MemoryText.delete", "MemoryText.save"]) {
     if (memory.includes(token)) faults.push(`la section Mémoire porte ${token}`);
   }
-  const client = clientCode(root, "ConsoleClientModel.swift");
-  for (const token of ["func memoryAdd", "func memoryUpdate", "func memoryDelete", "func memoryWrite"]) {
-    if (client.includes(token)) faults.push(`ConsoleClientModel expose ${token}`);
+  const client = clientCode(root, "MemoryReader.swift") + clientCode(root, "MemoryAccess.swift");
+  for (const token of [
+    "func memoryAdd",
+    "func memoryUpdate",
+    "func memoryDelete",
+    "func memoryWrite",
+    '"POST", body: ["text"',
+  ]) {
+    if (client.includes(token)) faults.push(`le lecteur de la mémoire expose ${token}`);
   }
   const app = memoryAppCode(root);
   if (!app.includes("model.refresh()")) faults.push("aucune lecture n'est déclenchée depuis l'écran");

@@ -10,7 +10,7 @@
 // disque. Égal et chargé ⇒ on attend la santé ; sinon garde de port, écriture
 // atomique 0600, `bootout` attendu par `print`, puis `bootstrap` repris (DOC-2 :
 // `bootout` rend 0 avant que launchd n'ait déchargé, un `bootstrap` immédiat
-// échoue en EIO et ne laisse AUCUN job — séquence de omp-mem0-req/launchd.ts).
+// échoue en EIO et ne laisse AUCUN job).
 //
 // Identité : `/health` doit rendre `ok == true` ET `installation ==` le jeton
 // d'installation (`isOurMem0`) ; un port tenu par un autre programme que le job est

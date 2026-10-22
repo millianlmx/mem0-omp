@@ -371,7 +371,7 @@ export function registerMem0Commands(pi: ExtensionAPI, rt: Mem0Runtime): void {
         st.currentPhase = null;
         st.phaseTriggered = false;
         // Seule opération destructive du registry : par définition, elle retire
-        // les phases des autres sessions (README §Phases).
+        // les phases des autres sessions (README, § La mémoire).
         const ok = mutatePhases((r) => {
           r.clear();
           for (const d of DEFAULT_PHASES) r.set(d, { brief: "" });

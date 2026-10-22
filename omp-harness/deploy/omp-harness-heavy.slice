@@ -1,0 +1,10 @@
+# Les jobs heavy (tests, builds : 4 Go chacun, 2 au plus). Enfant de omp-harness.slice.
+# Un OOM ici est un job raté — échec structuré, 2 relances —, jamais la box.
+[Unit]
+Description=OMP harness — jobs heavy
+
+[Slice]
+MemoryMax=8G
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=60%
+ManagedOOMSwap=kill

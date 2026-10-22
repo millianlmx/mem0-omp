@@ -45,10 +45,6 @@ func fullScenarioIsReadOnly() async throws {
     let untrackedDiff = try await git.run(GitCommand.diffUntracked(path: "folder/new.txt"), in: target.path)
     #expect(untrackedDiff.code == 1)
 
-    // 4. Le contrat dédié (ignoré par git, atteint hors arbre).
-    let contract = FilesReader.read(path: joinPath(target.path, ".omp/pipeline/contract.md"), fileManager: .default)
-    #expect(contract == .text("# contrat de la fixture\n"))
-
     let statusAfter = try scene.fixture.status(in: target.path)
     let indexAfter = try scene.fixture.indexDigest(in: target.path)
     let filesAfter = scene.fixture.fileDigests(in: target.path)
@@ -121,14 +117,8 @@ private func makeReadOnlyScene() async throws -> ReadOnlyScene {
     try fixture.write(".omp/pipeline/contract.md", "# contrat de la fixture\n", in: worktree)
     try fixture.write("tracked.txt", "a\nz\n")
 
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("lecture-seule", "feat/lecture-seule", worktree, initial)]
-    )
     let git = filesGit()
-    let targets = try await TargetCatalog.list(git: git, store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: git, projectRoot: fixture.root)
     guard let target = targets.first(where: { !$0.isPrimary }) else {
         throw FilesFixtureFailure.git(command: "catalogue", code: 1, stderr: "worktree absent : \(targets.map(\.label))")
     }

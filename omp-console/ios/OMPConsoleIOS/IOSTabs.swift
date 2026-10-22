@@ -1,6 +1,6 @@
 import ConsoleCore
 
-/// La valeur de sélection de la barre d'onglets / barre latérale : une des huit
+/// La valeur de sélection de la barre d'onglets / barre latérale : une des
 /// sections, ou l'onglet « Plus » de l'iPhone.
 enum IOSTab: Hashable {
     case section(ConsoleSection)
@@ -15,27 +15,17 @@ struct IOSTabRoute: Equatable {
 
 /// Le routage pur entre onglets et sections de la coque iOS : sans état, sans
 /// UIKit, dérivé de `IOSSection`. L'iPhone (largeur compacte) montre quatre
-/// sections — Accueil, Pipelines, Sessions, Audit — puis « Plus », qui pousse les
-/// quatre autres ; l'iPad (largeur régulière) montre les huit sections dans la
-/// barre latérale, sans « Plus ».
+/// sections — Accueil, Pipelines, Projet, Audit — puis « Plus », qui pousse
+/// Statistiques et Mémoire ; l'iPad (largeur régulière) montre toutes les sections
+/// dans la barre latérale, sans « Plus ».
 enum IOSTabs {
-    /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste
-    /// (audit-ui-redesign, S-5 : Mémoire à l'ancienne place d'Audit).
-    static let plusSections: [ConsoleSection] = [.project, .memory, .session, .stats]
+    /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste.
+    static let plusSections: [ConsoleSection] = [.stats, .memory]
 
     /// Les sections DÉCLARÉES dans le groupe, dans l'ordre de déclaration du
-    /// `TabView` (audit-ui-redesign, S-5). En régulier : l'ordre de la barre
-    /// latérale. En compact, la barre d'onglets suit l'ordre de déclaration À
-    /// PLAT (Doc-1) : Audit quitte Pilotage et s'insère juste après Sessions, à
-    /// l'ancienne place de Mémoire.
+    /// `TabView` : l'ordre de la barre latérale, quelle que soit la largeur.
     static func declaredSections(of group: ConsoleSectionGroup, compact: Bool) -> [ConsoleSection] {
-        let sections = IOSSection.sections(of: group)
-        guard compact else { return sections }
-        var declared = sections.filter { $0 != .audit }
-        if let sessions = declared.firstIndex(of: .sessions) {
-            declared.insert(.audit, at: sessions + 1)
-        }
-        return declared
+        IOSSection.sections(of: group)
     }
 
     /// La barre d'onglets de l'iPhone, dans l'ordre affiché : les sections

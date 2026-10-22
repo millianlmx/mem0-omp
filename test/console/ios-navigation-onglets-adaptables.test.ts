@@ -25,18 +25,15 @@ type Sources = Map<string, string>;
 
 /** Une copie des sources où `from` est remplacé par `to` dans `rel` ; la faute doit exister. */
 function plant(sources: Sources, rel: string, from: string, to: string): Sources {
-  const before = sources.get(rel);
-  assert.ok(
-    typeof before === "string" && before.includes(from),
-    `la faute ne peut pas être plantée : « ${from} » est absent de ${rel}`,
-  );
+  const before = sources.get(rel) ?? "";
+  assert.ok(before.includes(from), `la faute ne peut pas être plantée : « ${from} » est absent de ${rel}`);
   return new Map(sources).set(rel, before.replace(from, to));
 }
 
 /** Les tests Swift que la section « Navigation » de DESIGN.md doit citer (S-7). */
 const NAVIGATION_MARKERS = [
   "[test: compactTabsAreFourSectionsThenPlus]",
-  "[test: plusListsTheFourOtherSections]",
+  "[test: plusListsTheOtherSections]",
   "[test: groupedSections]",
   "[test: sizeClassChangeMovesBetweenPlusAndSidebar]",
   "[test: launchRoutesEachSectionOnIPhone]",
@@ -109,9 +106,9 @@ test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'ong
     designFaults(stack).some((f) => f.includes("pile")),
     "une puce sur la pile repliée doit faire rougir la garde",
   );
-  const unmarked = plant(sources, DESIGN, "[test: plusListsTheFourOtherSections]", "[test: groupedSections]");
+  const unmarked = plant(sources, DESIGN, "[test: plusListsTheOtherSections]", "[test: groupedSections]");
   assert.ok(
-    designFaults(unmarked).some((f) => f.includes("plusListsTheFourOtherSections")),
+    designFaults(unmarked).some((f) => f.includes("plusListsTheOtherSections")),
     "une puce « Plus » sans son test doit faire rougir la garde",
   );
   const renamed = plant(sources, DESIGN, "## Navigation", "## Parcours");

@@ -22,7 +22,7 @@ func defaultTargetFollowsTheOpenProject() async throws {
     // n'y est pas.
     let paths = scene.model.tree?.entries.map(\.path) ?? []
     #expect(paths.contains("folder/new.txt"))
-    #expect(paths.contains(FilesModel.projectDocumentRelativePath) == false)
+    #expect(paths.contains("PROJECT.md") == false)
 
     // Changer de cible : le principal, et SON arbre.
     try scene.fixture.write("only-main.txt", "m\n")
@@ -107,7 +107,7 @@ func primaryDiffUsesHeadInTheModel() async throws {
 @MainActor
 @Test("visionneuse-de-fichiers-et-diffs/AC-7 : ouvrir un fichier publie son contenu, à l'identique du disque")
 func contentIsPublishedByteExact() async throws {
-    let scene = try FilesScene(contract: "ligne accentuée : éàü ✓\n")
+    let scene = try FilesScene()
     await scene.open()
     await scene.openFile("tracked.txt")
     #expect(scene.model.content == .text("b\n"))
@@ -120,81 +120,6 @@ func contentIsPublishedByteExact() async throws {
     let onDisk = try #require(scene.fixture.read(".gitignore", in: scene.worktree))
     await scene.openFile(".gitignore")
     #expect(scene.model.content == .text(onDisk))
-}
-
-@MainActor
-@Test("visionneuse-de-fichiers-et-diffs/AC-8 : l'accès dédié au contrat publie le contrat de la CIBLE ACTIVE, et désélectionne l'arbre")
-func contractOfActiveTargetIsPublished() async throws {
-    let scene = try FilesScene(contract: "# contrat du worktree\n")
-    await scene.open()
-    await scene.openFile("tracked.txt")
-    #expect(scene.model.highlight == "tracked.txt")
-
-    scene.model.openContract()
-    #expect(await waitUntilFiles { scene.model.content == .text("# contrat du worktree\n") })
-    #expect(scene.model.pane == .contract)
-    #expect(scene.model.highlight == nil)
-    #expect(scene.model.target?.path == scene.worktree)
-    // Le contrat n'est PAS une entrée d'arbre : git l'ignore.
-    #expect(scene.model.tree?.entries.map(\.path).contains(FilesModel.contractRelativePath) == false)
-    // Aucun diff n'est calculé pour un document dédié.
-    #expect(scene.model.diff == nil)
-}
-
-@MainActor
-@Test("visionneuse-de-fichiers-et-diffs/AC-9 : sans contrat, l'accès dédié rend « missing » et le texte d'absence, jamais un autre contenu")
-func missingContractIsReported() async throws {
-    let scene = try FilesScene(contract: nil)
-    await scene.open()
-
-    scene.model.openContract()
-    #expect(await waitUntilFiles { scene.model.content == .missing })
-    #expect(scene.model.pane == .contract)
-    #expect(FilesText.missingDedicatedDocument(FilesModel.contractRelativePath) == FilesText.noContract)
-    #expect(FilesText.noContract == "Aucun contrat dans ce dossier.")
-    // Le texte affiché est bien celui de l'ABSENCE, pas celui d'un fichier disparu.
-    #expect(scene.model.content?.message(dedicated: FilesModel.contractRelativePath) == FilesText.noContract)
-}
-
-@MainActor
-@Test("visionneuse-de-fichiers-et-diffs/AC-8 : après un changement de cible, l'accès dédié relit le contrat de la NOUVELLE cible")
-func contractFollowsTheTargetChange() async throws {
-    let scene = try FilesScene(contract: "# contrat du worktree\n")
-    try scene.fixture.write(FilesModel.contractRelativePath, "# contrat du principal\n")
-    await scene.open()
-
-    scene.model.openContract()
-    #expect(await waitUntilFiles { scene.model.content == .text("# contrat du worktree\n") })
-
-    guard let primary = scene.model.targets.first(where: \.isPrimary) else {
-        Issue.record("le principal doit être une cible")
-        return
-    }
-    scene.model.select(target: primary)
-    #expect(await waitUntilFiles { scene.model.target?.isPrimary == true && scene.model.tree != nil })
-
-    // Le document affiché est celui de la cible COURANTE : jamais le contenu laissé
-    // par la cible précédente.
-    #expect(await waitUntilFiles { scene.model.content == .text("# contrat du principal\n") })
-    #expect(scene.model.pane == .contract)
-}
-
-@MainActor
-@Test("visionneuse-de-fichiers-et-diffs/AC-10 : l'accès dédié à PROJECT.md publie le document du dépôt principal")
-func projectDocumentIsPublished() async throws {
-    let scene = try FilesScene(projectDocument: "# projet de la fixture\n")
-    await scene.open()
-    guard let primary = scene.model.targets.first(where: \.isPrimary) else {
-        Issue.record("le principal doit être une cible")
-        return
-    }
-    scene.model.select(target: primary)
-    #expect(await waitUntilFiles { scene.model.target?.isPrimary == true && scene.model.tree != nil })
-
-    scene.model.openProjectDocument()
-    #expect(await waitUntilFiles { scene.model.content == .text("# projet de la fixture\n") })
-    #expect(scene.model.pane == .projectDocument)
-    #expect(scene.model.diff == nil)
 }
 
 @MainActor
@@ -211,8 +136,6 @@ func modelWalkIsReadOnly() async throws {
         scene.model.select(file: entry)
         _ = await waitUntilFiles { scene.model.highlight == entry.path && scene.model.content != nil }
     }
-    scene.model.openContract()
-    _ = await waitUntilFiles { scene.model.content != nil }
 
     #expect(try scene.fixture.status(in: scene.worktree) == statusBefore)
     #expect(try scene.fixture.indexDigest(in: scene.worktree) == indexBefore)
@@ -222,7 +145,7 @@ func modelWalkIsReadOnly() async throws {
 @MainActor
 @Test("visionneuse-de-fichiers-et-diffs/AC-14 : lire un fichier non suivi par le modèle le laisse « ?? »")
 func untrackedStaysUntrackedThroughModel() async throws {
-    let scene = try FilesScene(contract: nil)
+    let scene = try FilesScene()
     await scene.open()
     let before = try scene.fixture.status(in: scene.worktree)
     #expect(before.contains("?? folder/new.txt"))
@@ -242,7 +165,6 @@ func missingGitIsReportedInTheModel() async throws {
     let model = FilesModel(
         projectRoot: URL(fileURLWithPath: NSTemporaryDirectory()),
         git: nil,
-        store: StoreReader(stateDir: NSTemporaryDirectory()),
         defaults: suite,
         fileManager: .default,
         environment: ["PATH": "/nowhere", "OMP_CONSOLE_GIT_BINARY": "/nowhere/git"]
@@ -267,7 +189,6 @@ func noProjectIsAnEmptyState() async throws {
     let model = FilesModel(
         projectRoot: nil,
         git: filesGit(),
-        store: StoreReader(stateDir: NSTemporaryDirectory()),
         defaults: suite,
         fileManager: .default,
         environment: ["PATH": "/usr/bin:/bin"]
@@ -294,7 +215,6 @@ func nonRepositoryIsReported() async throws {
     let model = FilesModel(
         projectRoot: URL(fileURLWithPath: plain),
         git: filesGit(),
-        store: StoreReader(stateDir: NSTemporaryDirectory()),
         defaults: suite,
         fileManager: .default,
         environment: ["PATH": "/usr/bin:/bin"]

@@ -13,8 +13,8 @@ Sous-commandes :
   analyser --exceptions <f> --valider-seulement
       Valide seulement la liste d'exceptions : 0 si valide, 2 + message sinon.
   analyser --releves <dossier> --exceptions <f> --rapport <fichier.txt>
-      Valide les exceptions, exige les 27 paires <surface>-<apparence>-<taille>
-      .json|.png, vérifie les marqueurs et le contrôle « appairé », applique les
+      Valide les exceptions, exige les 18 paires <surface>-<apparence>-<taille>
+      .json|.png, vérifie les marqueurs et le contrôle « relié », applique les
       trois règles de défaut, écrit le rapport. Sortie 0 (aucun SIGNALÉ),
       1 (au moins un SIGNALÉ), 2 (la recette n'a pas pu conclure).
 
@@ -24,7 +24,7 @@ Règles de défaut (relevé par relevé, l'élément Application est exclu) :
   id-duplique  un AXUniqueId non vide porté par au moins 2 éléments (une ligne
                par élément) ;
   bord         un élément (source ax) ou une plage de pixels de la capture
-               (source capture, sections seulement) collé au bord de l'écran.
+               (source capture) collé au bord de l'écran.
 
 Les noms de fichier cités dans « relevé manquant » et « relevé invalide » sont
 ceux du fichier fautif, extension comprise.
@@ -39,21 +39,17 @@ import zlib
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
-# (clé, est une section). Seule `kanban-fiche` est une feuille : son fond touche
-# les bords par construction, la règle bord/capture ne s'y applique pas.
-SURFACES = [
-    ("home", True),
-    ("kanban", True),
-    ("project", True),
-    ("audit", True),
-    ("session", True),
-    ("sessions", True),
-    ("memory", True),
-    ("stats", True),
-    ("kanban-fiche", False),
-]
-SURFACE_KEYS = [s for s, _ in SURFACES]
-SECTION_SURFACES = {s for s, est_section in SURFACES if est_section}
+# Les six sections de l'app iOS (rawValue de `-section`), dans l'ordre de `allCases`,
+# et le titre de leur barre de navigation.
+TITRES = {
+    "home": "Accueil",
+    "kanban": "Pipelines",
+    "project": "Projet",
+    "audit": "Audit",
+    "stats": "Statistiques",
+    "memory": "Mémoire",
+}
+SURFACE_KEYS = list(TITRES)
 
 # (apparence, taille)
 CONFIGS = [("clair", "defaut"), ("sombre", "defaut"), ("clair", "ax-xl")]
@@ -78,22 +74,17 @@ CLES_EXCEPTION = ("surface", "apparence", "taille", "regle", "source", "element"
 
 # Entrées protégées : elles masqueraient un défaut visé par l'audit.
 PROTEGES_CIBLE_44 = {
-    "id:ios.home.allPipelines",
-    "id:ios.projet.start",
-    "libellé:Tout afficher",
-    "libellé:Lire le contrat",
-    "libellé:Piloter un projet…",
     "id:ios.connexion.connect",
     "id:ios.memoire.retry",
     "id:ios.memoire.graphe.etiquette",
 }
-PROTEGE_CONTRAT = re.compile(r"^id:ios\.home\.attention\..+\.contract$")
-PROTEGE_OUVRIR_PR = re.compile(r"^id:ios\.home\.delivered\.open\..+$")
-PROTEGES_ID_DUPLIQUE = {"id:pipelines.card.sheet.title", "id:ios.memoire.screen"}
-PROTEGES_BORD_CAPTURE = {"kanban", "sessions", "memory", "*"}
+PROTEGES_ID_DUPLIQUE = {"id:ios.memoire.screen"}
+PROTEGES_BORD_CAPTURE = {"kanban", "memory", "*"}
 
-LIBELLE_NON_APPAIRE = "Non appairé"
-MSG_APPAIRE = "simulateur appairé : la recette exige un simulateur jamais appairé au Mac"
+# Un simulateur jamais relié au serveur de pipelines montre « Configurer le
+# serveur » : la recette ne capture alors aucun dépôt réel.
+ID_NON_RELIE = "ios.server.configure"
+MSG_RELIE = "simulateur relié : la recette exige un simulateur jamais relié au serveur de pipelines"
 
 
 class Echec(Exception):
@@ -174,39 +165,16 @@ def _ids(arbre):
 
 def _marqueur_propre(surface, arbre):
     ids = _ids(arbre)
-    libelles = [_texte(e.get("AXLabel")) for e in arbre]
     titres = [_texte(e.get("AXLabel")) for e in arbre if e.get("type") == "Heading"]
-    fiche = any(i.startswith("pipelines.card.sheet") for i in ids)
-    if surface == "home":
-        return "ios.home.allPipelines" in ids
-    if surface == "kanban":
-        return not fiche and any(i.startswith("pipelines.") for i in ids)
-    if surface == "project":
-        # Non appairé, l'écran Projet n'expose que « Non appairé » et sa barre de
-        # navigation, dont l'identifiant est le titre (MESURÉ iOS 27, iPhone).
-        return (
-            "ios.screen.project" in ids
-            or any(i.startswith("ios.projet") for i in ids)
-            or "Projet" in titres
-            or "Projet" in ids
-        )
-    if surface == "audit":
-        return any(i == "ios.audit" or i.startswith("ios.audit.") for i in ids)
-    if surface == "session":
-        return any(i.startswith("ios.sessionomp") for i in ids)
-    if surface == "sessions":
-        return any(l.startswith("parity-session-1") for l in libelles)
+    if surface not in TITRES:
+        raise Echec("surface inconnue : " + surface)
     if surface == "memory":
         return any(i.startswith("ios.memoire.") for i in ids)
-    if surface == "stats":
-        return (
-            any(i.startswith("ios.stats") for i in ids)
-            or "ios.screen.stats" in ids
-            or "Statistiques" in titres
-        )
-    if surface == "kanban-fiche":
-        return fiche
-    raise Echec("surface inconnue : " + surface)
+    # Les écrans du serveur portent `ios.screen.<rawValue>` ; idb ne rend pas
+    # toujours les conteneurs, et la barre de navigation a pour identifiant son
+    # titre (MESURÉ iOS 27, iPhone).
+    titre = TITRES[surface]
+    return "ios.screen." + surface in ids or titre in titres or titre in ids
 
 
 # Les écrans pleins de l'état de connexion partagé (IOSConnectionStateView, #118) :
@@ -295,11 +263,7 @@ def _valider_entree(n, e):
 
 def _protegee(e):
     if e["regle"] == "cible-44":
-        return (
-            e["element"] in PROTEGES_CIBLE_44
-            or bool(PROTEGE_CONTRAT.match(e["element"]))
-            or bool(PROTEGE_OUVRIR_PR.match(e["element"]))
-        )
+        return e["element"] in PROTEGES_CIBLE_44
     if e["regle"] == "id-duplique":
         return e["element"] in PROTEGES_ID_DUPLIQUE
     if e["regle"] == "bord":
@@ -518,14 +482,13 @@ def signalements(surface, apparence, taille, arbre, chemin_png):
         ajoute("id-duplique", "ax", e, c)
     for e, c in regle_bord_ax(arbre, largeur):
         ajoute("bord", "ax", e, c)
-    if surface in SECTION_SURFACES:
-        for _cote, e, c in regle_bord_capture(arbre, largeur, chemin_png):
-            sortie.append(
-                Signalement(
-                    surface, apparence, taille, "bord", "capture",
-                    designation(e) if e is not None else "type:capture", c,
-                )
+    for _cote, e, c in regle_bord_capture(arbre, largeur, chemin_png):
+        sortie.append(
+            Signalement(
+                surface, apparence, taille, "bord", "capture",
+                designation(e) if e is not None else "type:capture", c,
             )
+        )
     return sortie
 
 
@@ -584,10 +547,8 @@ def analyser(dossier, exceptions, rapport):
             raise Echec("surface non vérifiée : %s %s %s (marqueur absent)" % (surface, apparence, taille))
 
     for surface, _, _, base in nommes:
-        if surface == "kanban" and not any(
-            e.get("AXLabel") == LIBELLE_NON_APPAIRE for e in arbres[base]
-        ):
-            raise Echec(MSG_APPAIRE)
+        if surface == "kanban" and ID_NON_RELIE not in _ids(arbres[base]):
+            raise Echec(MSG_RELIE)
 
     tous = []
     for surface, apparence, taille, base in nommes:

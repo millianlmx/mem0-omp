@@ -5,7 +5,7 @@
 //
 // Il mesure les largeurs IDÉALES (`sizeThatFits(.unspecified)` : un `Text` sur une
 // seule ligne, sans repli) et applique la règle pure
-// `IOSHomeContent.rowAxis(title:controls:available:spacing:)` : la rangée
+// `IOSRowAxis.of(title:controls:available:spacing:)` : la rangée
 // s'empile parce que son contenu ne tient pas, jamais parce que la taille de
 // texte a franchi un seuil. Aucun plafond de taille de texte n'est nécessaire :
 // un titre long passe sur sa ligne au lieu d'être coupé au milieu d'un mot.
@@ -70,7 +70,7 @@ struct IOSAdaptiveRow: Layout {
         let controlsWidth = controlSizes.isEmpty
             ? 0
             : controlSizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(controlSizes.count - 1)
-        let axis = IOSHomeContent.rowAxis(
+        let axis = IOSRowAxis.of(
             title: titleIdeal.width,
             controls: controlSizes.map(\.width),
             available: available,
@@ -150,5 +150,29 @@ struct IOSAdaptiveRow: Layout {
         }
         let width = pinsControlsTrailing ? available : min(widest, available)
         return Arrangement(size: CGSize(width: width, height: y), slots: slots)
+    }
+}
+
+/// La disposition d'une rangée « titre | puce | bouton » : une ligne, deux lignes
+/// (titre, puis les contrôles côte à côte), ou empilée (chacun sur sa ligne).
+enum IOSRowAxis: Equatable {
+    case horizontal, twoLine, stacked
+
+    /// L'axe d'une rangée selon son CONTENU seul (ios-dynamic-type-ax-residuel,
+    /// S-3), jamais selon la taille de texte ni la classe de largeur : tout sur une
+    /// ligne si tout y tient ; sinon le titre sur sa ligne et les contrôles ensemble
+    /// sur la suivante s'ils y tiennent ; sinon chacun sur sa ligne.
+    ///
+    /// `title` : largeur IDÉALE (sur une ligne) du bloc titre ; `controls` : largeurs
+    /// idéales des contrôles (pastille, bouton…) dans l'ordre ; `available` : largeur
+    /// proposée (`nil` = idéale demandée) ; `spacing` : espacement horizontal. Une
+    /// égalité exacte tient.
+    static func of(title: CGFloat, controls: [CGFloat], available: CGFloat?, spacing: CGFloat) -> IOSRowAxis {
+        guard let available else { return .horizontal }
+        guard available > 0 else { return .stacked }
+        let together = controls.isEmpty ? 0 : controls.reduce(0, +) + spacing * CGFloat(controls.count - 1)
+        if title + (controls.isEmpty ? 0 : spacing + together) <= available { return .horizontal }
+        if !controls.isEmpty, together <= available { return .twoLine }
+        return .stacked
     }
 }

@@ -230,21 +230,10 @@ exact plutôt que sur une branche :
    omp plugin upgrade omp-mem0-req@mem0-omp
    ```
 
-3. Relance le service de pipelines. Vérifie d'abord qu'aucun run de pipeline ne
-   tourne : `/pipelines` affiche « aucune pipeline en cours » et
-   `ls ~/.omp/agent/pipeline/running/` ne liste rien. La relance
-   (`launchctl kickstart -k`) tue le process du service et interrompt le maillon
-   en cours. Ensuite, dans une session OMP ouverte après l'upgrade (relance
-   `omp`), note le pid affiché par `/service status`, puis lance :
-
-   ```
-   /service install
-   ```
-
-   C'est le code mis à jour qui réécrit le plist et relance le service ; message
-   attendu : `[service] service installé et relancé (launchd)`. Sans ce pas, le
-   service garde l'ancien code en mémoire (par exemple
-   `route inconnue : POST /v1/audits` depuis OMP Console).
+3. Relance `omp` : `/reload-plugins` rafraîchit les commandes et les skills, mais
+   pas les modules d'extension, donc une session ouverte avant l'upgrade garde
+   l'ancien code. Les pipelines tournent sur le harness du VPS, pas dans `omp` :
+   relancer ne coupe aucun run.
 
 4. Vérifie le plugin installé :
 
@@ -256,16 +245,6 @@ exact plutôt que sur une branche :
    `omp plugin list` affiche la nouvelle version, et le lien pointe vers
    `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<nouvelle version>`.
 
-5. Vérifie le service relancé : `/service status` affiche
-   `[service] en marche (pid <N>, port <P>)` avec un pid différent de celui noté
-   au pas 3. Ce process a démarré après l'upgrade : il a donc chargé le plugin du
-   lien vérifié au pas 4. Pid inchangé ou `arrêté` : le service sert encore
-   l'ancien code (ou ne tourne pas) ; relance `/service install` et lis son
-   message. Constate aussi que `/service status` ne signale aucun écart de
-   version : une ligne `[service] écart de version …` veut dire que le service
-   n'exécute pas la version du plugin installée au pas 2 ; relance
-   `/service install` et lis son message.
-
 ### Tester une branche avant sa release
 
 1. Charge la copie de travail à la place de la version publiée (`<worktree>` est
@@ -275,18 +254,11 @@ exact plutôt que sur une branche :
    omp plugin link <worktree>/omp-mem0-req
    ```
 
-2. Relance le service comme au pas 3 ci-dessus : aucun run de pipeline en cours,
-   puis, dans une session OMP ouverte après le link, note le pid affiché par
-   `/service status` et lance :
-
-   ```
-   /service install
-   ```
+2. Relance `omp` comme au pas 3 ci-dessus.
 
 3. Vérifie le plugin : `omp plugin list`, et
    `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe vers
-   `<worktree>/omp-mem0-req`. Vérifie le service : `/service status` affiche un
-   pid différent de celui noté au pas 2.
+   `<worktree>/omp-mem0-req`.
 
 4. Reviens à la version publiée :
 
@@ -295,16 +267,9 @@ exact plutôt que sur une branche :
    omp plugin upgrade omp-mem0-req@mem0-omp
    ```
 
-   Puis, dans une session OMP ouverte après l'upgrade, relance le service :
-
-   ```
-   /service install
-   ```
-
-   Et refais la même vérification : `omp plugin list` affiche la version
-   publiée, `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe de nouveau
-   vers `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<version>`, et
-   `/service status` affiche un pid différent de celui vérifié au pas 3.
+   Relance `omp`, et refais la même vérification : `omp plugin list` affiche la
+   version publiée, et `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe de
+   nouveau vers `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<version>`.
 
 ## Release automatique
 
@@ -333,6 +298,12 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    poussée, puis une release GitHub par version, portant les commandes
    d'installation et de mise à jour — et « ce qui casse / quoi faire » pour un bump
    majeur.
+
+Le serveur de pipelines `omp-harness/` suit le même chemin sans être un plugin du
+catalogue : son `omp-harness/package.json` est bumpé d'après les commits qui touchent
+`omp-harness/`, tagué `omp-harness-v<version>` et publié avec une note qui renvoie à
+son installation (`harness.sh up`), jamais à `/marketplace`. Sa version ne se monte
+pas plus à la main que celle d'un plugin, et `/v1/health` la rend aux clients.
 
 ```bash
 # Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :

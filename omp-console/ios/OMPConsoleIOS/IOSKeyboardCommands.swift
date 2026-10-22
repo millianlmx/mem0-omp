@@ -1,16 +1,16 @@
 // Les commandes clavier de l'iPad (ipad-clavier-et-largeur-de-lecture, S-2, S-3) :
-// la table des onze raccourcis, leur routage vers l'écran courant, et les commandes
-// de scène qui les posent dans la barre des menus de l'iPad (menus Présentation et
-// Fichier), sur le patron des commandes du Mac (`SectionCommands`, `NewItemCommands`).
+// la table des raccourcis, leur routage vers l'écran courant, et les commandes de
+// scène qui les posent dans la barre des menus de l'iPad (menu Présentation), sur
+// le patron des commandes du Mac (`SectionCommands`).
 //
-// Le routage passe par `@FocusedValue` : la racine publie la sélection de section et
-// « Nouvelle feature », chaque écran publie son rafraîchissement et, s'il cherche,
-// sa recherche (`.focusedSceneValue`). Une fermeture voyage dans une struct
+// Le routage passe par `@FocusedValue` : la racine publie la sélection de section,
+// chaque écran publie son rafraîchissement et, s'il cherche, sa recherche
+// (`.focusedSceneValue`). Une fermeture voyage dans une struct
 // `Equatable` (jamais nue dans une entrée de `FocusedValues`, qui invaliderait ses
 // lecteurs à chaque mise à jour).
 //
-// Aucun littéral ici : libellés et touches viennent de `ConsoleSection.title`,
-// `NewFeatureText` et `IOSKeyboardText` ; les chiffres sont calculés.
+// Aucun littéral ici : libellés et touches viennent de `ConsoleSection.title` et
+// `IOSKeyboardText` ; les chiffres sont calculés.
 
 import ConsoleClient
 import ConsoleCore
@@ -24,13 +24,13 @@ struct IOSShortcut: Equatable {
     let key: Character
 }
 
-/// La table des onze raccourcis de l'iPad.
+/// La table des raccourcis de l'iPad.
 enum IOSKeyboard {
-    /// Le modificateur des onze raccourcis : ⌘ seul. Aucune touche nue, donc ⎋ et ↩
+    /// Le modificateur des raccourcis : ⌘ seul. Aucune touche nue, donc ⎋ et ↩
     /// restent aux feuilles.
     static let modifiers: EventModifiers = .command
 
-    /// ⌘1…⌘8 : les huit sections, dans l'ordre affiché par la barre latérale.
+    /// ⌘1…⌘6 : les sections, dans l'ordre affiché par la barre latérale.
     static var sections: [(section: ConsoleSection, shortcut: IOSShortcut)] {
         IOSSection.sidebarOrder.enumerated().map { index, section in
             (section, IOSShortcut(title: section.title, key: Character(String(index + 1))))
@@ -41,23 +41,10 @@ enum IOSKeyboard {
     static let refresh = IOSShortcut(title: IOSKeyboardText.refresh, key: IOSKeyboardText.refreshKey)
     /// ⌘F : activer le champ de recherche de l'écran courant.
     static let search = IOSShortcut(title: IOSKeyboardText.search, key: IOSKeyboardText.searchKey)
-    /// ⌘N : basculer sur Pipelines et ouvrir « Nouvelle feature ».
-    static let newFeature = IOSShortcut(title: NewFeatureText.command, key: IOSKeyboardText.newFeatureKey)
 
-    /// Les onze raccourcis : les sections, puis Actualiser, Rechercher, Nouvelle feature.
+    /// Les raccourcis : les sections, puis Actualiser, Rechercher.
     static var all: [IOSShortcut] {
-        sections.map(\.shortcut) + [refresh, search, newFeature]
-    }
-
-    /// Le rafraîchissement des écrans nourris par le flux (Accueil, Pipelines,
-    /// Sessions) : relire `GET /v1/store`, que le client republie en instantané et
-    /// en ardoise. Actif seulement quand le client est connecté.
-    @MainActor static func storeRefresh(client: ConsoleClientModel, owner: ConsoleSection) -> IOSCommandAction {
-        let connected: Bool
-        if case .connected = client.state { connected = true } else { connected = false }
-        return IOSCommandAction(owner: owner, isEnabled: connected) {
-            Task { _ = try? await client.store() }
-        }
+        sections.map(\.shortcut) + [refresh, search]
     }
 }
 
@@ -81,10 +68,8 @@ struct IOSSectionSelector: Equatable {
 }
 
 extension FocusedValues {
-    /// Publiée par `RootView` : la sélection de section (⌘1…⌘7).
+    /// Publiée par `RootView` : la sélection de section (⌘1…⌘6).
     @Entry var iosSelectSection: IOSSectionSelector?
-    /// Publiée par `RootView` : Pipelines puis la feuille « Nouvelle feature » (⌘N).
-    @Entry var iosNewFeature: IOSCommandAction?
     /// Publiée par l'écran affiché : relire ses données (⌘R).
     @Entry var iosRefresh: IOSCommandAction?
     /// Publiée par l'écran affiché qui possède un champ de recherche (⌘F).
@@ -108,20 +93,16 @@ enum IOSModalPresence {
     }
 }
 
-/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘7, Actualiser ⌘R,
-/// Rechercher ⌘F) et menu Fichier (Nouvelle feature… ⌘N, à la place de « Nouvelle
-/// fenêtre » : l'app garde une seule fenêtre et un seul client).
+/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘6, Actualiser ⌘R,
+/// Rechercher ⌘F) ; « Nouvelle fenêtre » est retirée (l'app garde une seule
+/// fenêtre et un seul client).
 struct IOSKeyboardCommands: Commands {
     @FocusedValue(\.iosSelectSection) private var selector
-    @FocusedValue(\.iosNewFeature) private var newFeature
     @FocusedValue(\.iosRefresh) private var refresh
     @FocusedValue(\.iosSearch) private var search
 
     var body: some Commands {
-        CommandGroup(replacing: .newItem) {
-            command(IOSKeyboard.newFeature) { perform(newFeature) }
-                .disabled(newFeature == nil)
-        }
+        CommandGroup(replacing: .newItem) {}
         CommandGroup(before: .sidebar) {
             ForEach(IOSKeyboard.sections, id: \.section) { entry in
                 command(entry.shortcut) { select(entry.section) }

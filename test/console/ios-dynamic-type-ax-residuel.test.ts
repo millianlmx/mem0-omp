@@ -36,7 +36,7 @@ function capFaults(sources: Map<string, string>): string[] {
 test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans l'app iOS", () => {
   const sources = swiftSources(APP);
   assert.ok(
-    sources.has("HomeView.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")),
+    sources.has("IOSHarnessScreens.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")),
     "les sources de l'app doivent être lues, sous-dossiers compris",
   );
   assert.deepEqual(capFaults(sources), [], "l'arbre réel doit être sain");
@@ -50,28 +50,28 @@ test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans 
     copy.set(name, next);
     return capFaults(copy);
   };
-  const anchor = "        .padding(.vertical, rowPadding)";
+  const anchor = "        .accessibilityElement(children: .combine)";
   assert.ok(
-    planted("IOSSessionsScreen.swift", (s) =>
+    planted("IOSHarnessScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(...DynamicTypeSize.accessibility3)\n${anchor}`),
     ).length > 0,
     "un plafond `...accessibility3` doit faire rougir la garde",
   );
   assert.ok(
-    planted("IOSSessionsScreen.swift", (s) =>
+    planted("IOSHarnessScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(.large ..< .accessibility4)\n${anchor}`),
     ).length > 0,
     "un plafond `..<` doit faire rougir la garde",
   );
   assert.ok(
     planted(
-      "IOSHomeContent.swift",
-      (s) => `${s}\nextension IOSHomeContent { static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3 }\n`,
+      "Design/IOSMetrics.swift",
+      (s) => `${s}\nextension IOSMetrics { static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3 }\n`,
     ).length > 0,
     "la constante rowButtonMaximumSize doit faire rougir la garde",
   );
   assert.deepEqual(
-    planted("IOSSessionsScreen.swift", (s) =>
+    planted("IOSHarnessScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(.accessibility2)\n${anchor}`),
     ),
     [],

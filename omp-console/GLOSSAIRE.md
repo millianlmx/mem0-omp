@@ -1,6 +1,6 @@
 # Glossaire des textes d’OMP Console
 
-Ce glossaire régit les textes des fichiers `*Text.swift` de `omp-console/Sources/ConsoleCore`, `omp-console/Sources/OMPConsole` et `omp-console/ios/OMPConsoleIOS`. La règle : on francise, sauf les termes conservés. Une même notion porte le même terme sur Mac et sur iOS. La garde `test/console/typographie-et-glossaire-francais.test.ts` lit les deux tableaux ci-dessous : ils sont la seule source des termes conservés et des anglicismes bannis.
+Ce glossaire régit les textes des fichiers `*Text.swift` de `omp-console/Sources/ConsoleCore`, `omp-console/Sources/ConsoleClient`, `omp-console/Sources/OMPConsole` et `omp-console/ios/OMPConsoleIOS`. La règle : on francise, sauf les termes conservés. Une même notion porte le même terme sur Mac et sur iOS. La garde `test/console/typographie-et-glossaire-francais.test.ts` lit les deux tableaux ci-dessous : ils sont la seule source des termes conservés et des anglicismes bannis.
 
 ## Termes conservés
 
@@ -17,8 +17,6 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `/impl` | terme métier OMP | « Modèle exécution » |
 | `/review` | terme métier OMP | « Modèle cadrage+revue » |
 | `audit` | terme métier OMP | « Lancer un audit… » |
-| `brief` | terme métier OMP | « Brief de l’audit » |
-| `arbitre` | terme métier OMP | « Décisions de l’arbitre » |
 | `escalade` | terme métier OMP | « Une escalade attend la réponse de l’utilisateur » |
 | `Given` | syntaxe des critères OMP | « Given un contrat long » |
 | `When` | syntaxe des critères OMP | « When la feuille s’ouvre » |
@@ -33,7 +31,6 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `OMLX_API_TOKEN` | nom propre ou norme | « vérifiez OMLX_API_TOKEN. » |
 | `Podman` | nom propre ou norme | « Installation de Podman… » |
 | `Git` | nom propre ou norme | « Ce dossier n’est pas un dépôt Git. » |
-| `GitHub` | nom propre ou norme | « Relire l’état des PR sur GitHub (⌘R) » |
 | `Apple` | nom propre ou norme | « Les outils de développement d’Apple sont introuvables » |
 | `Mac` | nom propre ou norme | « Oublier ce Mac » |
 | `macOS` | nom propre ou norme | « avec les mêmes bornes que sur macOS » |
@@ -44,7 +41,6 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `Swift` | nom propre ou norme | « Les tests Swift lisent… » |
 | `Node` | nom propre ou norme | « La garde Node plante une faute dans une copie jetable du dépôt. » |
 | `Markdown` | nom propre ou norme | « Chaque section arrive du Mac sous forme de texte Markdown » |
-| `Claude Opus` | nom propre ou norme | « Claude Opus 5.5 » |
 | `CSV` | nom propre ou norme | « Exporter les souvenirs du projet au format CSV. » |
 | `UTF-8` | nom propre ou norme | « pas du texte UTF-8 » |
 | `SHA-256` | nom propre ou norme | « empreinte SHA-256 différente » |

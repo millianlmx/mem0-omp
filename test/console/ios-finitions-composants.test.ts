@@ -4,8 +4,8 @@
 //
 // Fonctions pures sur le texte source de l'app iOS ; chaque faute est plantée EN
 // MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt, aucun SwiftUI rendu. Le
-// fichier ne lit ni le contrat ni l'historique git. La preuve visuelle (coche,
-// champ qui grandit) est la recette de captures de la feature.
+// fichier ne lit ni le contrat ni l'historique git. La preuve visuelle (coche) est
+// la recette de captures de la feature.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -30,8 +30,7 @@ function plant(source: string, change: (s: string) => string): string {
   return after;
 }
 
-const DIALOG = "IOSProjectDialogSheet.swift";
-const METRICS = path.join("Design", "IOSMetrics.swift");
+const AUDITS = "IOSHarnessScreens.swift";
 
 /** Les caractères de coche interdits comme marque de sélection (U+2713, U+2714). */
 const CHECK_CHARACTERS = ["\u2713", "\u2714"];
@@ -54,145 +53,64 @@ function checkCharacterFaults(sources: Map<string, string>): string[] {
 }
 
 /**
- * AC-2 : l'option choisie d'« OMP vous demande » porte la coche SF Symbol, masquée
- * à VoiceOver ; l'état reste annoncé par le trait « sélectionné ».
+ * AC-2 : une proposition d'audit retenue porte la coche SF Symbol
+ * (`IOSShellText.pickedSymbol`) ; l'état reste annoncé par le trait « sélectionné ».
  */
-function dialogCheckmarkFaults(source: string): string[] {
-  const options = memberBody(stripComments(source), "private var selectForm");
+function pickCheckmarkFaults(source: string): string[] {
+  const rows = memberBody(stripComments(source), "private func auditRows");
+  if (rows === "") return [`${AUDITS} : auditRows introuvable`];
   const faults: string[] = [];
-  if (options === "") return [`${DIALOG} : selectForm introuvable`];
   if (
-    !/Image\(systemName: IOSHomeText\.selectedSymbol\)(?:\s*\.\w+\([^()]*\))*?\s*\.accessibilityHidden\(true\)/.test(
-      options,
+    !/Image\(systemName: drafts\.isPicked\(audit, index\) \? IOSShellText\.pickedSymbol : IOSShellText\.unpickedSymbol\)/.test(
+      rows,
     )
   ) {
-    faults.push(
-      `${DIALOG} : l'option choisie doit porter Image(systemName: IOSHomeText.selectedSymbol) masquée par .accessibilityHidden(true)`,
-    );
+    faults.push(`${AUDITS} : la proposition retenue doit porter Image(systemName: … IOSShellText.pickedSymbol …)`);
   }
-  if (!options.includes(".accessibilityAddTraits(selectedIndex == index ? .isSelected : [])")) {
-    faults.push(`${DIALOG} : l'option perd le trait .isSelected, VoiceOver n'annonce plus le choix`);
+  if (!rows.includes(".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])")) {
+    faults.push(`${AUDITS} : la proposition perd le trait .isSelected, VoiceOver n'annonce plus le choix`);
   }
   return faults;
 }
 
-/**
- * AC-5 : la réponse libre est un champ vertical borné en LIGNES par
- * `IOSMetrics.dialogAnswerLines`, plus jamais un `TextEditor` figé à 240 pt.
- */
-function editorFieldFaults(source: string): string[] {
-  const code = stripComments(source);
-  const faults: string[] = [];
-  // Le texte du `case .editor:` du `form`, jusqu'au cas suivant (c'est le dernier).
-  const form = memberBody(code, "private var form");
-  const at = form.indexOf("case .editor:");
-  const rest = at < 0 ? "" : form.slice(at + "case .editor:".length);
-  const next = rest.search(/\bcase \./);
-  const editor = next < 0 ? rest : rest.slice(0, next);
-  if (!/TextField\([^\n]*axis:\s*\.vertical\)\s*\.lineLimit\(IOSMetrics\.dialogAnswerLines\)/.test(editor)) {
-    faults.push(
-      `${DIALOG} : case .editor doit rendre TextField(…, axis: .vertical).lineLimit(IOSMetrics.dialogAnswerLines)`,
-    );
-  }
-  if (!editor.includes(".accessibilityIdentifier(ProjectAccessibility.dialogInput)")) {
-    faults.push(`${DIALOG} : case .editor perd l'identifiant ProjectAccessibility.dialogInput`);
-  }
-  if (count(code, "TextEditor(") > 0) faults.push(`${DIALOG} : TextEditor( reparaît, sa hauteur ne suit pas le texte`);
-  if (count(code, "minHeight: 240") > 0) faults.push(`${DIALOG} : minHeight: 240 reparaît, le champ part court`);
-  return faults;
-}
-
-/** AC-5 : la plage de lignes du champ part à 3 lignes au plus et laisse grandir. */
-function answerLinesFaults(metrics: string): string[] {
-  const match = /static let dialogAnswerLines: ClosedRange<Int> = (\d+)\.\.\.(\d+)/.exec(stripComments(metrics));
-  if (!match) return ["IOSMetrics.swift : static let dialogAnswerLines: ClosedRange<Int> = a...b absent"];
-  const [low, high] = [Number(match[1]), Number(match[2])];
-  return low <= 3 && 3 < high ? [] : [`IOSMetrics.swift : dialogAnswerLines = ${low}...${high}, attendu a ≤ 3 < b`];
-}
-
-test("ios-finitions-composants/AC-2 : « OMP vous demande » coche l'option choisie du symbole système, aucun « ✓ » dans l'app iOS", () => {
+test("ios-finitions-composants/AC-2 : une proposition d'audit retenue porte la coche du symbole système, aucun « ✓ » dans l'app iOS", () => {
   const sources = swiftSources(APP);
-  assert.ok(sources.has(DIALOG), "la feuille du dialogue doit être lue");
+  assert.ok(sources.has(AUDITS), "les écrans du serveur doivent être lus");
   assert.deepEqual(checkCharacterFaults(sources), []);
-  assert.deepEqual(dialogCheckmarkFaults(appSource(DIALOG)), []);
+  assert.deepEqual(pickCheckmarkFaults(appSource(AUDITS)), []);
 
   // Faute plantée : la coche redevient le caractère « ✓ » ⇒ rouge.
-  const typed = plant(appSource(DIALOG), (s) =>
-    s.replace("Image(systemName: IOSHomeText.selectedSymbol)", 'Text("✓")'),
+  const typed = plant(appSource(AUDITS), (s) =>
+    s.replace(
+      "Image(systemName: drafts.isPicked(audit, index) ? IOSShellText.pickedSymbol : IOSShellText.unpickedSymbol)",
+      'Text("✓")',
+    ),
   );
   assert.ok(
-    checkCharacterFaults(new Map([[DIALOG, typed]])).some((f) => f.includes("✓")),
+    checkCharacterFaults(new Map([[AUDITS, typed]])).some((f) => f.includes("✓")),
     "un « ✓ » dans le code doit rougir",
   );
   assert.ok(
-    dialogCheckmarkFaults(typed).some((f) => f.includes("selectedSymbol")),
+    pickCheckmarkFaults(typed).some((f) => f.includes("pickedSymbol")),
     "la coche texte doit rougir",
   );
 
-  // Faute plantée : la coche n'est plus masquée à VoiceOver ⇒ rouge.
-  const spoken = plant(appSource(DIALOG), (s) =>
-    s.replace(/(IOSHomeText\.selectedSymbol\)[\s\S]*?)\s*\.accessibilityHidden\(true\)/, "$1"),
-  );
-  assert.ok(
-    dialogCheckmarkFaults(spoken).some((f) => f.includes("accessibilityHidden")),
-    "une coche lue par VoiceOver doit rougir",
-  );
-
   // Faute plantée : le trait « sélectionné » disparaît ⇒ rouge.
-  const silent = plant(appSource(DIALOG), (s) =>
-    s.replace(".accessibilityAddTraits(selectedIndex == index ? .isSelected : [])", ""),
+  const silent = plant(appSource(AUDITS), (s) =>
+    s.replace(".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])", ""),
   );
   assert.ok(
-    dialogCheckmarkFaults(silent).some((f) => f.includes(".isSelected")),
+    pickCheckmarkFaults(silent).some((f) => f.includes(".isSelected")),
     "un choix non annoncé doit rougir",
   );
 
   // Un « ✓ » cité en commentaire n'est pas du code ⇒ vert.
-  const commented = plant(appSource(DIALOG), (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
-  assert.deepEqual(checkCharacterFaults(new Map([[DIALOG, commented]])), []);
+  const commented = plant(appSource(AUDITS), (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
+  assert.deepEqual(checkCharacterFaults(new Map([[AUDITS, commented]])), []);
 });
 
-test("ios-finitions-composants/AC-5 : la réponse libre d'« OMP vous demande » part à 3 lignes, grandit jusqu'à 8 puis défile", () => {
-  assert.deepEqual(editorFieldFaults(appSource(DIALOG)), []);
-  assert.deepEqual(answerLinesFaults(appSource(METRICS)), []);
-
-  // Faute plantée : le TextEditor figé à 240 pt revient ⇒ rouge.
-  const frozen = plant(appSource(DIALOG), (s) =>
-    s.replace(
-      'TextField(dialog.placeholder ?? "", text: $text, axis: .vertical)\n                .lineLimit(IOSMetrics.dialogAnswerLines)',
-      "TextEditor(text: $text)\n                .frame(minHeight: 240)",
-    ),
-  );
-  const frozenFaults = editorFieldFaults(frozen);
-  assert.ok(
-    frozenFaults.some((f) => f.includes("TextEditor(")),
-    "un TextEditor doit rougir",
-  );
-  assert.ok(
-    frozenFaults.some((f) => f.includes("minHeight: 240")),
-    "une hauteur de 240 pt doit rougir",
-  );
-
-  // Faute plantée : le champ vertical perd sa plage de lignes ⇒ rouge.
-  const unbounded = plant(appSource(DIALOG), (s) =>
-    s.replace("\n                .lineLimit(IOSMetrics.dialogAnswerLines)", ""),
-  );
-  assert.ok(
-    editorFieldFaults(unbounded).some((f) => f.includes("lineLimit")),
-    "un champ sans plage de lignes doit rougir",
-  );
-
-  // Faute plantée : la plage part à 8 lignes, le champ ne grandit plus ⇒ rouge.
-  const tall = plant(appSource(METRICS), (s) =>
-    s.replace("dialogAnswerLines: ClosedRange<Int> = 3...8", "dialogAnswerLines: ClosedRange<Int> = 8...8"),
-  );
-  assert.deepEqual(answerLinesFaults(tall), ["IOSMetrics.swift : dialogAnswerLines = 8...8, attendu a ≤ 3 < b"]);
-});
-
-const STATS_SCREEN = "IOSStatsScreen.swift";
-const STATS_CONTENT = "IOSStatsContent.swift";
-const DURATION_CALL = "ConsoleFormat.duration(";
-const STATS_VALUE = "Text(card(model.elapsedMs(at:";
+const STATS = "IOSHarnessScreens.swift";
+const DURATIONS = ["ConsoleFormat.duration(", "PipelineServerText.duration", "PipelineServerText.stepLine("];
 const MONOSPACED = ".monospacedDigit()";
 
 /** Le texte qui va de `at` à la première ligne réduite à `}` (incluse), ou à la fin. */
@@ -203,29 +121,24 @@ function untilClosingLine(code: string, at: number): string {
 }
 
 /**
- * AC-6 : toute durée rendue applique `.monospacedDigit()` sur son `Text`. Une
- * occurrence de `ConsoleFormat.duration(` est soit (a) dans IOSStatsContent.swift,
- * dont les valeurs ne sont rendues que par `cardSection`, soit (b) l'argument d'un
- * `Text(` suivi de `.monospacedDigit()` avant la première ligne `}` ; et (c) le
- * `Text` des valeurs de Statistiques porte `.monospacedDigit()`.
+ * AC-6 : toute durée rendue applique `.monospacedDigit()` sur son `Text` : chaque
+ * occurrence d'un formateur de durée est sur la ligne d'un `Text(`, et
+ * `.monospacedDigit()` suit avant la première ligne `}`.
  */
 function durationFaults(sources: Map<string, string>): string[] {
   const faults = new Set<string>();
   for (const [file, source] of sources) {
-    if (file === STATS_CONTENT) continue;
     const code = stripComments(source);
-    for (let at = code.indexOf(DURATION_CALL); at >= 0; at = code.indexOf(DURATION_CALL, at + 1)) {
-      // Une durée lue par VoiceOver dans le descripteur d'un graphique n'est pas
-      // dessinée : la chasse fixe ne la concerne pas (IOSStatsCharts).
-      if (/valueDescriptionProvider:\s*\{\s*$/.test(code.slice(Math.max(0, at - 60), at))) continue;
-      const inText = code.slice(at - "Text(".length, at) === "Text(";
-      if (!inText || !untilClosingLine(code, at).includes(MONOSPACED)) faults.add(`durée rendue hors garde : ${file}`);
+    for (const token of DURATIONS) {
+      for (let at = code.indexOf(token); at >= 0; at = code.indexOf(token, at + 1)) {
+        const lineStart = code.lastIndexOf("\n", at) + 1;
+        const line = code.slice(lineStart, at);
+        const textAt = line.lastIndexOf("Text(");
+        if (textAt < 0 || !untilClosingLine(code, lineStart + textAt).includes(MONOSPACED))
+          faults.add(`durée rendue hors garde : ${file}`);
+      }
     }
   }
-  const stats = stripComments(sources.get(STATS_SCREEN) ?? "");
-  const value = stats.indexOf(STATS_VALUE);
-  if (value < 0 || !untilClosingLine(stats, value).includes(MONOSPACED))
-    faults.add(`durée rendue hors garde : ${STATS_SCREEN}`);
   return [...faults];
 }
 
@@ -243,20 +156,14 @@ test("ios-finitions-composants/AC-6 : toute durée de l'app iOS s'affiche en chi
   const sources = swiftSources(APP);
   assert.deepEqual(durationFaults(sources), []);
 
-  // Fautes plantées : chacun des 4 rendus perd `.monospacedDigit()` ⇒ rouge.
-  const sites: Array<[string, string]> = [
-    ["HomeView.swift", DURATION_CALL],
-    ["PipelinesScreen.swift", DURATION_CALL],
-    ["PipelinesCardSheet.swift", DURATION_CALL],
-    [STATS_SCREEN, STATS_VALUE],
-  ];
-  for (const [file, anchor] of sites) {
-    assert.ok(sources.has(file), `${file} doit être lu`);
-    const lost = new Map(sources).set(file, dropMonospaced(sources.get(file)!, anchor));
+  // Fautes plantées : chacun des rendus des Statistiques perd `.monospacedDigit()` ⇒ rouge.
+  for (const anchor of ["PipelineServerText.duration", "PipelineServerText.stepLine("]) {
+    assert.ok(sources.get(STATS)?.includes(anchor), `${STATS} doit rendre ${anchor}`);
+    const lost = new Map(sources).set(STATS, dropMonospaced(sources.get(STATS)!, anchor));
     assert.deepEqual(
       durationFaults(lost),
-      [`durée rendue hors garde : ${file}`],
-      `${file} sans chasse fixe doit rougir`,
+      [`durée rendue hors garde : ${STATS}`],
+      `${anchor} sans chasse fixe doit rougir`,
     );
   }
 
@@ -266,33 +173,31 @@ test("ios-finitions-composants/AC-6 : toute durée de l'app iOS s'affiche en chi
     "struct Fictive: View {\n    var body: some View {\n        Text(ConsoleFormat.duration(ms: 0))\n    }\n}\n",
   );
   assert.deepEqual(durationFaults(bare), ["durée rendue hors garde : Fictive.swift"]);
+
+  // Faute plantée : une durée passée en valeur texte d'un LabeledContent ⇒ rouge.
+  const labelled = new Map(sources).set(
+    "Fictive.swift",
+    "struct Fictive: View {\n    var body: some View {\n        LabeledContent(t, value: PipelineServerText.duration(1))\n    }\n}\n",
+  );
+  assert.deepEqual(durationFaults(labelled), ["durée rendue hors garde : Fictive.swift"]);
 });
 
-const NEW_FEATURE = "NewFeatureSheetView.swift";
-const PIPELINES_TEXT = "PipelinesText.swift";
-const REPO_PICKER = "Picker(NewFeatureText.repo, selection: $repo)";
+const PICKER = "IOSHarnessScreens.swift";
+const REPO_PICKER = "Picker(PipelineServerText.repoLabel, selection: Binding(";
 
 /**
- * AC-8 : le dépôt de « Nouvelle feature » se choisit dans un `Picker` natif. L'invite
- * « Choisir un dépôt » est étiquetée `""` et inactive ; chaque dépôt montre son libellé
- * et porte sa racine en tag ; le `Menu` reconstruit et son chevron ont disparu.
+ * AC-8 : le dépôt d'un lancement se choisit dans un `Picker` natif ; chaque dépôt
+ * montre son nom et le porte en tag ; aucun `Menu` reconstruit ni chevron.
  */
 function repoPickerFaults(sources: Map<string, string>): string[] {
-  const view = stripComments(sources.get(NEW_FEATURE) ?? "");
-  if (view === "") return [`${NEW_FEATURE} : introuvable`];
+  const view = memberBody(stripComments(sources.get(PICKER) ?? ""), "struct IOSHarnessRepoPicker");
+  if (view === "") return [`${PICKER} : IOSHarnessRepoPicker introuvable`];
   const faults: string[] = [];
   if (view.includes("Menu {"))
-    faults.push(`${NEW_FEATURE} : un Menu reconstruit subsiste, le sélecteur est le Picker natif`);
-  if (!view.includes(REPO_PICKER)) faults.push(`${NEW_FEATURE} : ${REPO_PICKER} absent`);
-  if (
-    !/Text\(NewFeatureText\.repoPrompt\)\s*(?:\.tag\(""\)\s*\.selectionDisabled\(\)|\.selectionDisabled\(\)\s*\.tag\(""\))/.test(
-      view,
-    )
-  ) {
-    faults.push(`${NEW_FEATURE} : l'invite doit être Text(NewFeatureText.repoPrompt).tag("").selectionDisabled()`);
-  }
-  if (!/Text\(verbatim: choice\.label\)\s*\.tag\(choice\.root\)/.test(view)) {
-    faults.push(`${NEW_FEATURE} : chaque dépôt doit être Text(verbatim: choice.label).tag(choice.root)`);
+    faults.push(`${PICKER} : un Menu reconstruit subsiste, le sélecteur est le Picker natif`);
+  if (!view.includes(REPO_PICKER)) faults.push(`${PICKER} : ${REPO_PICKER} absent`);
+  if (!/Text\(repo\.name\)\s*\.tag\(repo\.name\)/.test(view)) {
+    faults.push(`${PICKER} : chaque dépôt doit être Text(repo.name).tag(repo.name)`);
   }
   for (const [name, source] of sources) {
     if (stripComments(source).includes("repoMenuSymbol"))
@@ -301,58 +206,39 @@ function repoPickerFaults(sources: Map<string, string>): string[] {
   return faults;
 }
 
-test("ios-finitions-composants/AC-8 : « Nouvelle feature » choisit son dépôt dans un Picker natif, invite inactive, racine lancée", () => {
+test("ios-finitions-composants/AC-8 : un lancement choisit son dépôt dans un Picker natif, tagué par le nom du dépôt", () => {
   const sources = swiftSources(APP);
-  assert.ok(sources.has(NEW_FEATURE), "la feuille Nouvelle feature doit être lue");
-  assert.ok(sources.has(PIPELINES_TEXT), "le vocabulaire Pipelines doit être lu");
+  assert.ok(sources.has(PICKER), "les écrans du serveur doivent être lus");
   assert.deepEqual(repoPickerFaults(sources), []);
-  const view = sources.get(NEW_FEATURE)!;
-  const withSheet = (source: string) => new Map(sources).set(NEW_FEATURE, source);
+  const view = sources.get(PICKER)!;
+  const withView = (source: string) => new Map(sources).set(PICKER, source);
 
   // Faute plantée : le Picker redevient un Menu ⇒ rouge.
-  const menu = plant(view, (s) => s.replace(`${REPO_PICKER} {`, "Menu {"));
+  const menu = plant(view, (s) => s.replace(REPO_PICKER, "Menu { Binding("));
   assert.deepEqual(
-    repoPickerFaults(withSheet(menu)).filter((f) => f.includes("Menu") || f.includes("absent")).length,
+    repoPickerFaults(withView(menu)).filter((f) => f.includes("Menu") || f.includes("absent")).length,
     2,
   );
 
-  // Faute plantée : l'invite devient choisissable ⇒ rouge.
-  const choosable = plant(view, (s) => s.replace(".selectionDisabled()", ""));
+  // Faute plantée : le tag porte autre chose que le nom ⇒ rouge.
+  const labelled = plant(view, (s) => s.replace(".tag(repo.name)", ".tag(repo.scope)"));
   assert.ok(
-    repoPickerFaults(withSheet(choosable)).some((f) => f.includes("l'invite")),
-    "une invite choisissable doit rougir",
+    repoPickerFaults(withView(labelled)).some((f) => f.includes("tag(repo.name)")),
+    "un tag faux doit rougir",
   );
 
-  // Faute plantée : l'invite perd son tag "" (la rangée s'afficherait vide) ⇒ rouge.
-  const untagged = plant(view, (s) => s.replace('.tag("")', ""));
-  assert.ok(
-    repoPickerFaults(withSheet(untagged)).some((f) => f.includes("l'invite")),
-    "une invite sans tag doit rougir",
-  );
-
-  // Faute plantée : le tag porte le libellé, pas la racine ⇒ rouge.
-  const labelled = plant(view, (s) => s.replace(".tag(choice.root)", ".tag(choice.label)"));
-  assert.ok(
-    repoPickerFaults(withSheet(labelled)).some((f) => f.includes("choice.root")),
-    "un libellé lancé comme dépôt doit rougir",
-  );
-
-  // Faute plantée : le chevron du Menu revient dans le vocabulaire ⇒ rouge.
-  const chevron = plant(sources.get(PIPELINES_TEXT)!, (s) =>
-    s.replace(
-      "static let newFeatureSheetId",
-      'static let repoMenuSymbol = "chevron.up.chevron.down"\n    static let newFeatureSheetId',
-    ),
+  // Faute plantée : le chevron du Menu revient ⇒ rouge.
+  const chevron = new Map(sources).set(
+    "IOSShellText.swift",
+    `${sources.get("IOSShellText.swift")}\nlet repoMenuSymbol = "chevron.up.chevron.down"\n`,
   );
   assert.ok(
-    repoPickerFaults(new Map(sources).set(PIPELINES_TEXT, chevron)).some((f) =>
-      f.startsWith(`${PIPELINES_TEXT} : repoMenuSymbol`),
-    ),
+    repoPickerFaults(chevron).some((f) => f.startsWith("IOSShellText.swift : repoMenuSymbol")),
     "un repoMenuSymbol rendu doit rougir",
   );
 
   // Un « Menu { » cité en commentaire n'est pas du code ⇒ vert.
-  assert.deepEqual(repoPickerFaults(withSheet(`// L'ancien sélecteur était un Menu { … }.\n${view}`)), []);
+  assert.deepEqual(repoPickerFaults(withView(`// L'ancien sélecteur était un Menu { … }.\n${view}`)), []);
 });
 
 const RECIPE = path.join(ROOT, "scripts", "recette", "ios-finitions-composants-recette.sh");

@@ -125,15 +125,13 @@ func terminationGuardCoversTheThreeHooks() async {
 }
 
 @MainActor
-@Test("terminal-integre/AC-10 : l'accroche du terminal ne dépend ni de la session ni du projet")
+@Test("terminal-integre/AC-10 : l'accroche du terminal est appelée au Quitter, seule")
 func terminalHookIsIndependentFromTheOthers() async {
     let saved = SavedQuitStatics()
     defer { saved.restore() }
     let delegate = AppDelegate()
 
-    var sessionCalled = false
     var terminalCalled = false
-    AppDelegate.terminateSession = { sessionCalled = true }
     AppDelegate.terminateTerminal = { terminalCalled = true }
 
     var requested = false
@@ -141,5 +139,5 @@ func terminalHookIsIndependentFromTheOthers() async {
     delegate.quit.closeAttachedSheets = {}
     delegate.quit.requestTermination = { requested = true }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
-    #expect(await awaitMainTrue { sessionCalled && terminalCalled && requested })
+    #expect(await awaitMainTrue { terminalCalled && requested })
 }

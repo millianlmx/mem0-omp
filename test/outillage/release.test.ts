@@ -42,6 +42,7 @@ import {
   renderChangelogEntry,
   renderReleaseBody,
   repoFromRemote,
+  SERVICES,
   utcDate,
   versionTag,
   type Change,
@@ -649,6 +650,13 @@ function makeRepo(kind: string, steps: Step[], options: { tagCurrent?: boolean }
       git(["tag", "-a", tag, "-m", tag], dir);
     }
   }
+  // Les services hors catalogue ne sont pas l'objet des scénarios : leur version
+  // courante est toujours publiée (taguée), le plan ne parle que des plugins.
+  for (const service of SERVICES) {
+    if (!fs.existsSync(path.join(dir, service.dir, "package.json"))) continue;
+    const tag = versionTag(service.name, versionIn(dir, `${service.dir}/package.json`));
+    git(["tag", "-a", tag, "-m", tag], dir);
+  }
   git(["remote", "add", "origin", remote], dir);
   git(["push", "-q", "origin", "main", "--tags"], dir);
 
@@ -750,11 +758,12 @@ function releaseCalls(journal: string) {
   return readCalls(journal).filter((call) => call.tag !== "");
 }
 
+/** Les tags du remote, hors ceux des services que la fixture pose d'office (makeRepo). */
 function remoteTags(remote: string): string[] {
   return remoteGit(remote, ["tag", "-l"])
     .trim()
     .split("\n")
-    .filter((tag) => tag !== "")
+    .filter((tag) => tag !== "" && !SERVICES.some((service) => tag.startsWith(`${service.name}-v`)))
     .sort();
 }
 
@@ -789,7 +798,7 @@ const DOCS_STEPS: Step[] = [
 const MAJOR_STEPS: Step[] = [
   {
     subject: "feat(req): les specs figées portent leur date",
-    edits: [{ file: `${REQ.dir}/seeds.ts`, append: "\n// scénario\n" }],
+    edits: [{ file: `${REQ.dir}/harness.ts`, append: "\n// scénario\n" }],
   },
   {
     subject: "feat(memory)!: le brief change de format",
@@ -898,12 +907,20 @@ type ScenarioSet = {
   backlog: BacklogBuilt;
   blocked: BlockedBuilt;
   noToken: NoTokenBuilt;
+  /** Un `feat` sur le harness, en `--dry-run` : le service a son bump, sans catalogue. */
+  service: Built;
   /** Dépôt vierge pour les cas d'arguments de `--simulate` : aucun run de moteur. */
   argCases: Repo;
 };
 
 async function buildScenarios(): Promise<ScenarioSet> {
-  const [patch, docs, major, tagged, backlog, blocked, noToken] = await Promise.all([
+  const serviceRepo = makeRepo("service", [
+    {
+      subject: "feat(harness): une capacité de plus",
+      edits: [{ file: "omp-harness/README.md", append: "\nUne ligne.\n" }],
+    },
+  ]);
+  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun] = await Promise.all([
     buildSimple("patch", PATCH_STEPS),
     buildSimple("docs", DOCS_STEPS),
     buildSimple("major", MAJOR_STEPS),
@@ -911,8 +928,19 @@ async function buildScenarios(): Promise<ScenarioSet> {
     buildBacklog("backlog"),
     buildBlocked("blocked"),
     buildNoToken("token"),
+    runEngine(serviceRepo, { extra: ["--dry-run"] }),
   ]);
-  return { patch, docs, major, tagged, backlog, blocked, noToken, argCases: makeRepo("args", PATCH_STEPS) };
+  return {
+    patch,
+    docs,
+    major,
+    tagged,
+    backlog,
+    blocked,
+    noToken,
+    service: { repo: serviceRepo, run: serviceRun },
+    argCases: makeRepo("args", PATCH_STEPS),
+  };
 }
 
 // Un hook `before` de la racine, jamais un `await` de premier niveau : les tests
@@ -1419,4 +1447,21 @@ test("le remote du harnais refuse tout push sur refs/heads/main (rôle GH006)", 
     "",
     "main n'a pas bougé",
   );
+});
+
+test("release/AC-10 : un service hors catalogue (omp-harness) est versionné comme un plugin — bump, tag, note qui ne l'installe pas par /marketplace", (t) => {
+  const built = scenario(SCENARIOS?.service, t);
+  if (built === null) return;
+  const { repo, run } = built;
+  assert.equal(run.status, 0, output(run));
+  const current = versionIn(repo.dir, "omp-harness/package.json");
+  assert.ok(output(run).includes(`✓ omp-harness : minor ${current} → ${bumpVersion(current, "minor")}`), output(run));
+  for (const plugin of PLUGINS) assert.ok(output(run).includes(`· ${plugin.name} : inchangé`), output(run));
+
+  const body = renderReleaseBody(
+    [{ ...fixtureRelease("minor", null), name: "omp-harness", dir: "omp-harness", tag: "omp-harness-v0.3.0" }],
+    { ownerRepo: "o/r", marketplace: "m" },
+  );
+  assert.match(body, /harness\.sh up/);
+  assert.doesNotMatch(body, /\/marketplace install omp-harness/);
 });

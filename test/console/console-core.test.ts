@@ -193,92 +193,18 @@ function docOnlyCopy(): string {
 const SWIFT_SOURCES = path.join("Sources", "ConsoleCore");
 const SHELL_SOURCES_REL = path.join("Sources", "OMPConsole");
 
-/** Les symboles déplacés de S-1/S-3 (type, ou fichier pour StoreModels/StoreRuns). */
+/** Les symboles déplacés de S-1/S-3 vers le noyau, que la coque ne redéclare pas. */
 const MOVED: string[] = [
-  "PipelineStore",
-  "StoreModels",
-  "StoreSnapshot",
-  "StoreRuns",
   "ConsoleSection",
   "ConsoleSectionGroup",
   "ConsoleTone",
   "ConsoleStatus",
-  "PhaseText",
   "ConsoleFormat",
-  "HomeText",
-  "KanbanText",
-  "ProjectViewText",
-  "SessionConsoleText",
-  "ConversationText",
   "MemoryText",
-  "StatsPresentation",
-  "ContractText",
   "SetupText",
-  // ios-accueil / BR-1 : le noyau partagé de l'Accueil (S-1).
-  "KanbanColumn",
-  "KanbanMark",
-  "KanbanSourceKind",
-  "KanbanSource",
-  "KanbanCardRun",
-  "KanbanCardAction",
-  "KanbanCard",
-  "KanbanAnomaly",
-  "KanbanBoard",
-  "KanbanBoardState",
-  "KanbanStep",
-  "KanbanRepoKey",
-  "KanbanLane",
-  "KanbanLaneContent",
-  "KanbanCardPresentation",
-  "KanbanAnomalies",
-  "KanbanDedup",
-  "KanbanActionZone",
-  "KanbanActionPresentation",
-  "KanbanLaunchRepos",
-  "ActionsText",
-  "ActionJournalState",
-  "ActionJournalEntry",
-  "HomeState",
-  "HomeDashboard",
-  "HomeAttentionNature",
-  "HomeAttention",
-  "HomeCardAction",
-  // accueil-en-cours-melange-pause-et-compte / BR-2 : comptes de la barre de menus (S-6).
-  "HomeCounts",
-  "HomePresentation",
-  "OmpStatus",
-  "MainSheetPolicy",
-  "ContractMoment",
-  "ContractSection",
-  "ContractContent",
-  "ContractUnreadable",
-  "ContractDocument",
-  "HomeParity",
-  // ios-sessions / BR-1 : le noyau partagé des faits de session (S-1, S-3, S-6, S-8).
-  "ViewerTarget",
-  "SessionDay",
-  "SessionDays",
-  "RunChoice",
-  "RunChoiceState",
-  "FollowPolicy",
-  "SessionViewerState",
-  "ConversationEntry",
-  "TokenUsage",
-  "SessionHeader",
-  "SessionKind",
-  "ToolCall",
-  "UserTurn",
-  "AssistantTurn",
-  "ToolResultTurn",
-  "CompactionMarker",
-  "BranchSummaryMarker",
-  "SkipReason",
-  "SkippedEntry",
-  "SessionConversation",
-  "AskSpan",
-  "DiffLine",
-  "DiffTone",
-  "BodySegment",
+  "JSONValue",
+  // serveur-de-pipelines : le vocabulaire du serveur, partagé par les deux coques.
+  "PipelineServerText",
   // ios-memoire-graphe / BR-1 : le noyau partagé du graphe des souvenirs (S-2).
   "MemoryRow",
   "MemoryGraphEdge",
@@ -296,13 +222,10 @@ const MOVED: string[] = [
   "MemoryGraphLayout",
   "MemoryGraphWire",
   "MemoryGraphParity",
-  // attentes-dispersees-entre-sources / BR-1 : le dialogue du service, un seul type (S-2).
-  "RpcDialogMethod",
-  "RpcDialogRequest",
 ];
 
-/** Les cinq symboles qui RESTENT dans la coque (S-1). */
-const SHELL_ONLY: string[] = ["StoreReader", "StoreWatcher", "StoreHub", "FilesText", "TerminalViewText"];
+/** Les symboles qui RESTENT dans la coque (S-1). */
+const SHELL_ONLY: string[] = ["FilesText", "TerminalViewText", "OmpStatus"];
 
 test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans dépendance vers une autre cible du paquet", (t) => {
   const pkg = path.join(SHELL, "Package.swift");
@@ -325,11 +248,13 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   // L'ensemble des dépendances du manifeste, cible par cible. `ConsoleClient` a
   // rejoint `OMPConsoleTests` avec la feature `client-distant-ios` : son test
   // canonique AC-13 confronte le catalogue client à `RemoteRouter.routes`, ce qui
-  // exige les DEUX modules dans la même cible de tests.
+  // exige les DEUX modules dans la même cible de tests. `ConsoleClient` a rejoint
+  // `OMPConsole` avec le serveur de pipelines du VPS : la coque Mac et l'app iOS
+  // partagent le même client (`HarnessModel`), au lieu de deux copies.
   const EXPECTED_DEPENDENCIES: Record<string, string[]> = {
     ConsoleCore: [],
     ConsoleClient: ["ConsoleCore"],
-    OMPConsole: ["ConsoleCore"],
+    OMPConsole: ["ConsoleCore", "ConsoleClient"],
     OMPConsoleTests: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
     ConsoleClientTests: ["ConsoleClient", "ConsoleCore"],
   };
@@ -415,16 +340,12 @@ test("noyau-partage-console/AC-3 : chaque symbole déplacé n'est plus déclaré
   }
 });
 
-test("noyau-partage-console/AC-4 : ConsoleCore porte le socle de l'API distante et aucune charge utile de route", () => {
-  assert.ok(declaresType(CORE_SOURCES, "ConsoleAPI"), "ConsoleAPI n'est pas déclaré dans ConsoleCore");
-  assert.ok(declaresType(CORE_SOURCES, "ConsoleAPIError"), "ConsoleAPIError n'est pas déclaré dans ConsoleCore");
-  assert.ok(!declaresType(SHELL_SOURCES, "ConsoleAPI"), "ConsoleAPI est déclaré deux fois");
-
-  // La version du protocole vit en UN point : un seul littéral dans tout le paquet.
-  const versions = swiftFiles(CORE_SOURCES).filter((file) =>
-    /\bprotocolVersion\b\s*(?::[^=]*)?=\s*\d/.test(code(file)),
-  );
-  assert.equal(versions.length, 1, `protocolVersion déclaré ${versions.length} fois : ${versions.join(", ")}`);
+test("noyau-partage-console/AC-4 : ConsoleCore ne porte aucune API entre les apps ni aucune charge utile de route", () => {
+  // L'app Mac et l'app iOS sont indépendantes : aucun contrat d'API entre elles.
+  for (const name of ["ConsoleAPI", "ConsoleAPIError"]) {
+    assert.ok(!declaresType(CORE_SOURCES, name), `${name} est déclaré dans ConsoleCore`);
+    assert.ok(!declaresType(SHELL_SOURCES, name), `${name} est déclaré dans la coque Mac`);
+  }
 
   // `RpcDialogRequest` et `PendingRequest` ne sont pas des charges utiles de
   // route : le premier est la demande de dialogue du service OMP, type de domaine

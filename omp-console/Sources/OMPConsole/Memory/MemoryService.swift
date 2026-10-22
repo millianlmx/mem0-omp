@@ -14,9 +14,10 @@ import Foundation
 
 // MARK: - Configuration
 
-/// L'adresse et le jeton du service (S-7), lus dans l'environnement du process —
-/// jamais dans un fichier, jamais dans une préférence. Une variable posée mais VIDE
-/// est traitée comme absente (le `||` du plugin, config.ts:2,4).
+/// L'adresse et le jeton du service (S-7) : l'environnement du process, sinon
+/// `~/.omp/mem0.json` (le fichier que lit aussi le plugin mémoire), sinon le service
+/// de l'app. Une variable posée mais VIDE est traitée comme absente (le `||` du
+/// plugin, config.ts).
 struct MemoryServiceConfig: Equatable, Sendable {
     var baseURL: URL
     var token: String
@@ -32,11 +33,33 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// Sans `MEM0_HTTP_URL`, la base vise le port de l'agent mem0-rs de l'app
     /// (`MemoryAgent.port(environment:)`, 8321 hors recette — S-8).
     static func fromEnvironment(_ environment: [String: String]) -> MemoryServiceConfig {
-        let raw = environment["MEM0_HTTP_URL"].flatMap { $0.isEmpty ? nil : $0 }
+        let value: (String) -> String? = { key in environment[key].flatMap { $0.isEmpty ? nil : $0 } }
         let agentBase = URL(string: "http://localhost:\(MemoryAgent.port(environment: environment))") ?? defaultBaseURL
+        // Le jeton du fichier ne vaut que pour l'adresse du fichier : une adresse de
+        // l'environnement ne reçoit jamais le jeton d'un autre service.
+        let file = value("MEM0_HTTP_URL") == nil ? MemorySettingsFile.load(environment: environment) : nil
+        let raw = value("MEM0_HTTP_URL") ?? file?.url
         let baseURL = raw.flatMap { URL(string: $0) } ?? agentBase
-        let token = environment["MEM0_HTTP_TOKEN"].flatMap { $0.isEmpty ? nil : $0 } ?? ""
-        return MemoryServiceConfig(baseURL: baseURL, token: token)
+        let token = value("MEM0_HTTP_TOKEN") ?? file?.token ?? ""
+        var config = MemoryServiceConfig(baseURL: baseURL, token: token)
+        config.chosen = file != nil && raw == file?.url
+        return config
+    }
+
+    /// L'adresse vient de `~/.omp/mem0.json` : la mémoire que l'utilisateur a choisie
+    /// (celle d'un serveur, ou une pile en conteneurs sur ce Mac), jamais un port de
+    /// l'app tenu par un autre.
+    var chosen: Bool = false
+
+    /// La sonde identitaire (jeton d'installation) ne garde que le service de l'app :
+    /// une adresse distante ou choisie en est dispensée.
+    var verifiesIdentity: Bool { !isRemote && !chosen }
+
+    /// Vrai pour une adresse hors de ce Mac : la mémoire d'un serveur, choisie
+    /// explicitement et authentifiée par son jeton.
+    var isRemote: Bool {
+        guard let host = baseURL.host else { return false }
+        return !StackOwnership.isLocalHost(host)
     }
 
     /// La configuration EFFECTIVE du client : l'environnement, PLUS le jeton
@@ -93,6 +116,29 @@ enum MemoryWritePath: Equatable, Sendable {
     }
 }
 
+/// `~/.omp/mem0.json` — `{ "url": …, "token": … }` : la mémoire partagée avec le
+/// serveur de pipelines. Une app lancée par le Finder ne voit pas le profil du
+/// shell ; ce fichier, lu aussi par le plugin mémoire, donne la même adresse aux
+/// sessions et à l'app.
+enum MemorySettingsFile {
+    static func url(environment: [String: String]) -> URL? {
+        guard let home = environment["HOME"], !home.isEmpty else { return nil }
+        return URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".omp/mem0.json")
+    }
+
+    /// L'adresse et le jeton du fichier ; `nil` s'il manque, est illisible ou ne
+    /// porte pas d'adresse.
+    static func load(environment: [String: String]) -> (url: String, token: String?)? {
+        guard let file = url(environment: environment),
+              let data = try? Data(contentsOf: file),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let address = object["url"] as? String, !address.isEmpty
+        else { return nil }
+        let token = (object["token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return (address, token)
+    }
+}
+
 // MARK: - Modèle de données
 
 /// L'état du service (S-6.2) : disponible ou non, et le DERNIER message d'erreur
@@ -105,148 +151,6 @@ struct MemoryHealth: Equatable, Sendable {
     /// l'adresse répond, mais ce n'est pas la pile de l'app. Cet état n'est JAMAIS
     /// « disponible » (S-5, BR-9).
     var isForeign: Bool = false
-}
-
-// `MemoryRow` et `MemoryGraphEdge` vivent désormais dans `ConsoleCore`
-// (`MemoryGraphFacts.swift`) : l'app iOS en a besoin, et ne lie pas cette cible.
-
-/// La réponse de `GET /memory/graph`, décodée TOLÉRAMMENT : une arête dont les
-/// extrémités ne sont pas deux chaînes et le score un nombre fini est ignorée — une
-/// réponse partiellement illisible ne fait pas tomber le graphe entier.
-struct MemoryGraphEdges: Equatable, Sendable {
-    var total: Int
-    var edges: [MemoryGraphEdge]
-
-    static func decode(_ json: Any) -> MemoryGraphEdges {
-        let object = json as? [String: Any]
-        let raw = object?["edges"] as? [Any] ?? []
-        var edges: [MemoryGraphEdge] = []
-        for entry in raw {
-            guard let edge = entry as? [String: Any],
-                  let source = edge["source"] as? String,
-                  let target = edge["target"] as? String,
-                  let score = edge["score"] as? NSNumber,
-                  !MemoryJSON.isBoolean(score) else { continue }
-            let value = score.doubleValue
-            guard value.isFinite else { continue }
-            edges.append(MemoryGraphEdge(source: source, target: target, score: value))
-        }
-        let total = object?["total"] as? Int ?? edges.count
-        return MemoryGraphEdges(total: total, edges: edges)
-    }
-}
-
-/// Le sommaire d'une portée (S-3) : le compte `total` du service et ses lignes,
-/// dans l'ordre rendu.
-struct MemoryPage: Equatable, Sendable {
-    var total: Int
-    var rows: [MemoryRow]
-
-    /// Un tableau nu est accepté autant qu'un objet `{"total": n, "results": […]}` ;
-    /// `total` absent (ou non entier) vaut le nombre de lignes reçues.
-    static func decode(_ json: Any) -> MemoryPage {
-        let rows = MemoryJSON.rows(json).map(MemoryJSON.row)
-        let total = (json as? [String: Any])?["total"] as? Int ?? rows.count
-        return MemoryPage(total: total, rows: rows)
-    }
-}
-
-/// Les gardes de décodage des lignes réseau, portées de `mem0Client.ts:82-111`.
-/// Les lignes ne sont validées nulle part ailleurs : chaque garde est locale, et
-/// une ligne mal formée rend un champ `nil` — jamais un `force`-unwrap, jamais une
-/// exception qui ferait tomber la liste entière.
-enum MemoryJSON {
-    /// `rows(result)` (mem0Client.ts:71-73) : tableau nu ou `{"results": […]}`.
-    static func rows(_ json: Any) -> [Any] {
-        if let array = json as? [Any] { return array }
-        if let object = json as? [String: Any], let results = object["results"] as? [Any] { return results }
-        return []
-    }
-
-    /// `memoryLine(m)` : `m.memory`, sinon `m.text`, sinon la sérialisation JSON.
-    static func line(_ json: Any) -> String {
-        guard let object = json as? [String: Any] else { return scalar(json) }
-        if let memory = object["memory"], !(memory is NSNull) { return scalar(memory) }
-        if let text = object["text"], !(text is NSNull) { return scalar(text) }
-        return scalar(json)
-    }
-
-    /// `memoryId(m)` : `String(m.id)` pour une chaîne ou un nombre, `"?"` sinon.
-    static func identifier(_ json: Any) -> String {
-        guard let object = json as? [String: Any], let raw = object["id"] else { return "?" }
-        if let string = raw as? String { return string }
-        // `typeof id === "number"` : un booléen n'est PAS un nombre ici (mesuré :
-        // JSONSerialization rend `true` en NSNumber).
-        if let number = raw as? NSNumber, !isBoolean(number) { return number.stringValue }
-        return "?"
-    }
-
-    /// `semanticScore(row)` : `score_details.semantic_score`, seulement s'il est
-    /// fini — champ absent, non numérique, NaN ou infini rendent `nil`.
-    static func score(_ json: Any) -> Double? {
-        guard let object = json as? [String: Any],
-              let details = object["score_details"] as? [String: Any],
-              let raw = details["semantic_score"] as? NSNumber,
-              !isBoolean(raw)
-        else { return nil }
-        let value = raw.doubleValue
-        return value.isFinite ? value : nil
-    }
-
-    static func updatedAt(_ json: Any) -> String? {
-        guard let object = json as? [String: Any], let raw = object["updated_at"], !(raw is NSNull) else {
-            return nil
-        }
-        return scalar(raw)
-    }
-
-    /// `metadata.tags` tel que le serveur le stocke (`"a,b"`, http_server.py) :
-    /// découpé aux virgules, détouré, sans segment vide. Absent ou non textuel ⇒
-    /// aucune étiquette.
-    static func tags(_ json: Any) -> [String] {
-        guard let object = json as? [String: Any],
-              let metadata = object["metadata"] as? [String: Any],
-              let raw = metadata["tags"] as? String
-        else { return [] }
-        return raw.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-    }
-
-    /// `agent_id` de la ligne (S-2) : la portée du souvenir, absente ⇒ `nil` (la
-    /// ligne reste un nœud, regroupé sous « Sans projet »).
-    static func agentId(_ json: Any) -> String? {
-        guard let object = json as? [String: Any], let raw = object["agent_id"], !(raw is NSNull) else {
-            return nil
-        }
-        return raw as? String
-    }
-
-    static func row(_ json: Any) -> MemoryRow {
-        MemoryRow(
-            id: identifier(json),
-            text: line(json),
-            updatedAt: updatedAt(json),
-            semanticScore: score(json),
-            tags: tags(json),
-            agentId: agentId(json)
-        )
-    }
-
-    static func isBoolean(_ number: NSNumber) -> Bool {
-        CFGetTypeID(number) == CFBooleanGetTypeID()
-    }
-
-    /// La forme TEXTE d'une valeur JSON : une chaîne telle quelle, tout le reste
-    /// sérialisé en JSON (le `String(...)`/`JSON.stringify` du plugin).
-    static func scalar(_ value: Any) -> String {
-        if let string = value as? String { return string }
-        if let fragment = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
-           let text = String(data: fragment, encoding: .utf8) {
-            return text
-        }
-        return "\(value)"
-    }
 }
 
 // MARK: - Étiquettes (S-8)
@@ -359,7 +263,8 @@ struct HTTPMemoryService: MemoryServing {
     /// La sonde `/health` ne lève JAMAIS : l'état est une valeur, pas une erreur
     /// (S-6.1). Elle est aussi la sonde IDENTITAIRE (S-4) : un `200 ok` n'est
     /// accepté que s'il porte le jeton d'installation de l'app ; un `200 ok` sans
-    /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ».
+    /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ». Une
+    /// adresse distante ou choisie (`verifiesIdentity` faux) en est dispensée.
     func health() async -> MemoryHealth {
         do {
             let json = try await send(url(for: .health), method: MemoryRoute.health.method, body: nil, timeout: Self.otherTimeout)
@@ -369,6 +274,11 @@ struct HTTPMemoryService: MemoryServing {
             // (un service muet n'est pas un autre service prouvé).
             guard ok else {
                 return MemoryHealth(isAvailable: false, errorMessage: MemoryText.unreadableResponse)
+            }
+            // La sonde identitaire garde le port LOCAL de l'app ; une adresse distante
+            // est un choix explicite de l'utilisateur, authentifié par son jeton.
+            if !config.verifiesIdentity {
+                return MemoryHealth(isAvailable: true, errorMessage: nil)
             }
             let returned = object?["installation"] as? String
             let expected = config.installationToken

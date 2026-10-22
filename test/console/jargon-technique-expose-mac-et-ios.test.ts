@@ -13,20 +13,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, sharedRepo } from "../support/repo.ts";
-import { swiftFiles } from "../support/swift-source.ts";
 
 /** Les fichiers lus par les gardes, relatifs à la racine du dépôt. */
 const FILES = {
-  kanbanView: "omp-console/Sources/OMPConsole/Kanban/KanbanView.swift",
-  sessionView: "omp-console/Sources/OMPConsole/SessionConsoleView.swift",
-  projectView: "omp-console/Sources/OMPConsole/Project/ProjectConsoleView.swift",
-  coreSessionText: "omp-console/Sources/ConsoleCore/Session/SessionConsoleText.swift",
-  pipelinesScreen: "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift",
   filesText: "omp-console/Sources/OMPConsole/Files/FilesText.swift",
   terminalText: "omp-console/Sources/OMPConsole/Terminal/TerminalViewText.swift",
   memoryView: "omp-console/Sources/OMPConsole/Memory/MemoryView.swift",
   memoryGraphView: "omp-console/Sources/OMPConsole/Memory/MemoryGraphView.swift",
-  contractSheet: "omp-console/Sources/OMPConsole/Contract/ContractSheetView.swift",
   terminalView: "omp-console/Sources/OMPConsole/Terminal/TerminalConsoleView.swift",
 } as const;
 
@@ -64,7 +57,7 @@ function scan(source: string): { code: string; literals: string[] } {
     const multi = source.startsWith('"""', i + hashes);
     const quote = multi ? '"""' : '"';
     const close = quote + "#".repeat(hashes);
-    const escapeText = `\\${"#".repeat(hashes)}`;
+    const escaped = `\\${"#".repeat(hashes)}`;
     code += source.slice(i, i + hashes + quote.length);
     i += hashes + quote.length;
     let literal = "";
@@ -74,8 +67,8 @@ function scan(source: string): { code: string; literals: string[] } {
         i += close.length;
         break;
       }
-      if (source.startsWith(escapeText, i)) {
-        const after = i + escapeText.length;
+      if (source.startsWith(escaped, i)) {
+        const after = i + escaped.length;
         if (source[after] === "(") {
           // Interpolation : du code jusqu'à la parenthèse fermante équilibrée.
           literals.push(literal);
@@ -172,126 +165,7 @@ function calls(code: string, name: string): { start: number; end: number; text: 
   return out;
 }
 
-/** Le code privé des appels `name(…)` (remplacés par une espace). */
-function withoutCalls(code: string, name: string): string {
-  let out = "";
-  let cursor = 0;
-  for (const call of calls(code, name)) {
-    if (call.start < cursor) continue;
-    out += `${code.slice(cursor, call.start)} `;
-    cursor = call.end;
-  }
-  return out + code.slice(cursor);
-}
-
 const missing = (file: string) => `${file} : fichier introuvable`;
-
-// ── G1 : bulle « n problèmes » du Kanban Mac ───────────────────────────────
-
-function kanbanFaults(root: string): string[] {
-  const file = FILES.kanbanView;
-  const code = codeOf(root, file);
-  if (code === null) return [missing(file)];
-  const faults: string[] = [];
-  for (const banned of ["anomaly.detail", "KanbanText.technical"]) {
-    if (code.includes(banned)) faults.push(`${file} : affiche « ${banned} »`);
-  }
-  for (const required of ["DiagnosticCopyButton(", "KanbanText.diagnosticReport("]) {
-    if (!code.includes(required)) faults.push(`${file} : ne contient plus « ${required} »`);
-  }
-  return faults;
-}
-
-test("jargon-technique-expose-mac-et-ios/AC-1 : la bulle « n problèmes » n'affiche ni le détail brut ni le pli technique, et garde « Copier le diagnostic »", () => {
-  assert.deepEqual(kanbanFaults(ROOT), []);
-
-  const copy = shared.fresh();
-  append(copy, FILES.kanbanView, "let leak = Text(anomaly.detail)");
-  plant(copy, FILES.kanbanView, "KanbanText.diagnosticReport(", "KanbanText.marks(");
-  assert.deepEqual(kanbanFaults(copy), [
-    `${FILES.kanbanView} : affiche « anomaly.detail »`,
-    `${FILES.kanbanView} : ne contient plus « KanbanText.diagnosticReport( »`,
-  ]);
-
-  const removed = shared.fresh();
-  fs.rmSync(path.join(removed, FILES.kanbanView));
-  assert.deepEqual(kanbanFaults(removed), [missing(FILES.kanbanView)]);
-});
-
-// ── G2 : inspecteurs Session OMP et Projet du Mac ──────────────────────────
-
-function inspectorFaults(root: string): string[] {
-  const faults: string[] = [];
-  for (const file of [FILES.sessionView, FILES.projectView]) {
-    const code = codeOf(root, file);
-    if (code === null) {
-      faults.push(missing(file));
-      continue;
-    }
-    if (withoutCalls(code, "SessionConsoleText.diagnostic").includes("host.pid")) {
-      faults.push(`${file} : « host.pid » hors de SessionConsoleText.diagnostic(`);
-    }
-    if (/\bfieldPid\b/.test(code)) faults.push(`${file} : emploie « fieldPid »`);
-  }
-  const coreDir = path.join(root, "omp-console/Sources/ConsoleCore");
-  const core = (fs.existsSync(coreDir) ? swiftFiles(coreDir) : []).map((file) =>
-    path.relative(root, file).split(path.sep).join("/"),
-  );
-  if (core.length === 0) faults.push("omp-console/Sources/ConsoleCore : aucune source");
-  for (const file of core) {
-    if (/\b(?:let|var|func)\s+fieldPid\b/.test(codeOf(root, file) ?? "")) {
-      faults.push(`${file} : déclare « fieldPid »`);
-    }
-  }
-  return faults;
-}
-
-test("jargon-technique-expose-mac-et-ios/AC-3 : les inspecteurs Session OMP et Projet ne montrent le PID nulle part hors du diagnostic copié", () => {
-  assert.deepEqual(inspectorFaults(ROOT), []);
-
-  const copy = shared.fresh();
-  append(copy, FILES.sessionView, 'let leak = Text("\\(host.pid ?? 0)")');
-  append(copy, FILES.projectView, "let leak = Text(SessionConsoleText.fieldPid)");
-  append(copy, FILES.coreSessionText, 'extension SessionConsoleText { public static let fieldPid = "pid" }');
-  assert.deepEqual(inspectorFaults(copy), [
-    `${FILES.sessionView} : « host.pid » hors de SessionConsoleText.diagnostic(`,
-    `${FILES.projectView} : emploie « fieldPid »`,
-    `${FILES.coreSessionText} : déclare « fieldPid »`,
-  ]);
-});
-
-// ── G3 : marques des cartes Pipelines iOS/iPadOS ───────────────────────────
-
-function marksFaults(root: string): string[] {
-  const file = FILES.pipelinesScreen;
-  const code = codeOf(root, file);
-  if (code === null) return [missing(file)];
-  const faults: string[] = [];
-  for (const banned of ["KanbanText.marks(", "marksText"]) {
-    if (code.includes(banned)) faults.push(`${file} : affiche « ${banned} »`);
-  }
-  if (!code.includes("KanbanText.marksSentence(")) {
-    faults.push(`${file} : ne contient plus « KanbanText.marksSentence( »`);
-  }
-  return faults;
-}
-
-test("jargon-technique-expose-mac-et-ios/AC-5 : les cartes Pipelines iOS disent leurs marques en phrase, jamais en marque brute", () => {
-  assert.deepEqual(marksFaults(ROOT), []);
-
-  const copy = shared.fresh();
-  plant(
-    copy,
-    FILES.pipelinesScreen,
-    "KanbanText.marksSentence(card.marks)",
-    "card.marksText.map(KanbanText.marks(_:))",
-  );
-  assert.deepEqual(marksFaults(copy), [
-    `${FILES.pipelinesScreen} : affiche « KanbanText.marks( »`,
-    `${FILES.pipelinesScreen} : affiche « marksText »`,
-    `${FILES.pipelinesScreen} : ne contient plus « KanbanText.marksSentence( »`,
-  ]);
-});
 
 // ── G4 : libellés de Fichiers et du Terminal (S-10) ────────────────────────
 
@@ -345,7 +219,7 @@ test("jargon-technique-expose-mac-et-ios/AC-8 : aucun libellé de Fichiers ni du
   assert.deepEqual(labelFaults(quiet), []);
 });
 
-// ── G5 : Mémoire et contrat ────────────────────────────────────────────────
+// ── G5 : Mémoire ─────────────────────────────────────────────────────────
 
 const RAW_MEMORY_DETAILS = ["unavailableDetail(", "foreignOwnershipDetail("];
 
@@ -363,23 +237,18 @@ function memoryFaults(root: string): string[] {
       }
     }
   }
-  const contract = codeOf(root, FILES.contractSheet);
-  if (contract === null) faults.push(missing(FILES.contractSheet));
-  else if (contract.includes("pathLabel")) faults.push(`${FILES.contractSheet} : affiche « pathLabel »`);
   return faults;
 }
 
-test("jargon-technique-expose-mac-et-ios/AC-6 : la Mémoire n'affiche pas son détail brut et la feuille du contrat ne montre pas de chemin", () => {
+test("jargon-technique-expose-mac-et-ios/AC-6 : la Mémoire n'affiche pas son détail brut", () => {
   assert.deepEqual(memoryFaults(ROOT), []);
 
   const copy = shared.fresh();
   append(copy, FILES.memoryView, 'let leak = Text(verbatim: MemoryText.unavailableDetail(address: "a", error: "b"))');
   append(copy, FILES.memoryGraphView, "let leak = Text(MemoryText.foreignOwnershipDetail(foreign))");
-  append(copy, FILES.contractSheet, "let leak = Text(ContractText.pathLabel)");
   assert.deepEqual(memoryFaults(copy), [
     `${FILES.memoryView} : Text( affiche « unavailableDetail( »`,
     `${FILES.memoryGraphView} : Text( affiche « foreignOwnershipDetail( »`,
-    `${FILES.contractSheet} : affiche « pathLabel »`,
   ]);
 
   // Passé à « Copier le diagnostic », le détail brut est permis.

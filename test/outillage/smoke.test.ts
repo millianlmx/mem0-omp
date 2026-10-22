@@ -217,7 +217,7 @@ test("smoke/AC-2 : les deux plugins sont chargés et invoqués dans un vrai OMP,
 
   // Une commande ET un outil invoqués, avec le RÉSULTAT observé.
   assert.match(out, /✓ \/mem0-status invoqué — « [^»]*ok=true[^»]* »/, out);
-  assert.match(out, /✓ \/req invoqué — « [^»]*nom de feature requis[^»]* »/, out);
+  assert.match(out, /✓ \/pipelines invoqué — « [^»]*harness non configuré[^»]* »/, out);
   assert.match(out, /✓ mem0_search invoqué — .*\[smoke-2\] souvenir de recherche \(fixture\)/, out);
   // Le service mem0 est un STUB local : aucun conteneur, aucun credential.
   assert.match(out, /✓ le stub mem0 a été appelé \(GET \/health\) sur http:\/\/127\.0\.0\.1:\d+/, out);

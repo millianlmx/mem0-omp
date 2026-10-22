@@ -1,5 +1,5 @@
 // Garde de la feature `typographie-et-glossaire-francais` (S-4) : les textes des
-// fichiers `*Text.swift` de ConsoleCore, de la coque Mac et de la coque iOS suivent
+// fichiers `*Text.swift` de ConsoleCore, du client, de la coque Mac et de la coque iOS suivent
 // la typographie française (’, espace insécable avant ; : ! ?, « » avec espaces
 // insécables intérieures, …) et le glossaire `omp-console/GLOSSAIRE.md` (aucun
 // anglicisme banni).
@@ -20,9 +20,10 @@ import { INTERPOLATION_MARK, swiftSourceTree, swiftTextUnits } from "../support/
 
 const GLOSSARY_PATH = "omp-console/GLOSSAIRE.md";
 
-/** Les trois racines lues ; un fichier n'est jugé que sous l'une d'elles. */
+/** Les quatre racines lues ; un fichier n'est jugé que sous l'une d'elles. */
 const ROOTS = [
   "omp-console/Sources/ConsoleCore",
+  "omp-console/Sources/ConsoleClient",
   "omp-console/Sources/OMPConsole",
   "omp-console/ios/OMPConsoleIOS",
 ] as const;
@@ -140,39 +141,19 @@ const EXCEPTIONS: readonly Exception[] = [
     reason: "expression régulière (chaîne brute) des liens Markdown",
   },
   {
-    file: "omp-console/Sources/ConsoleCore/Viewer/ToolArgumentsText.swift",
-    literal: "diff",
-    reason: "clé brute d’un appel de l’outil `edit`, comparée à l’appel, jamais affichée",
+    file: "omp-console/Sources/ConsoleClient/HarnessFailureText.swift",
+    literal: "impl",
+    reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },
   {
-    file: "omp-console/ios/OMPConsoleIOS/ConnectionText.swift",
-    literal: "hôte ou hôte:port",
-    reason: "notation de saisie : `hôte:port` est une syntaxe d’adresse",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift",
-    literal: "specs",
-    reason: "valeur de fil `verdict` de l’API (`verdictSpecs`)",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift",
+    file: "omp-console/Sources/ConsoleClient/HarnessFailureText.swift",
     literal: "review",
-    reason: "valeur de fil `verdict` de l’API (`verdictReview`)",
+    reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },
   {
-    file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift",
-    constant: "longContract",
-    reason: "contenu factice d’un contract.md de recette (Markdown et code)",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift",
-    constant: "dialogJSON",
-    reason: "JSON du fil de la recette",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift",
-    constant: "editorDialogJSON",
-    reason: "JSON du fil de la recette",
+    file: "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift",
+    literal: "omp1:… ou vps.exemple.ts.net",
+    reason: "exemple de saisie : `omp1:` est le préfixe du code d’appairage",
   },
   {
     file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
@@ -183,46 +164,6 @@ const EXCEPTIONS: readonly Exception[] = [
     file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",
     literal: String.raw`podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué${NBSP}: \(detail)`,
     reason: "diagnostic copiable : `conteneur:chemin` est la syntaxe de `podman cp`",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
-    literal: "://",
-    reason: "fragment d’URL cherché dans un motif du Mac",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift",
-    literal: String.raw`\"detail\"`,
-    reason: "clé JSON cherchée dans un motif du Mac",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSSessionOmpText.swift",
-    literal: "ios.sessionomp.launch.commit",
-    reason: "identifiant d’accessibilité",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSSessionText.swift",
-    literal: String.raw`ios.session.diff.\(rowId).\(index)`,
-    reason: "identifiant d’accessibilité",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
-    literal: "ios.stats.chart.tokens",
-    reason: "identifiant d’accessibilité",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
-    literal: "recette-specs",
-    reason: "slug de feature de la recette",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift",
-    literal: "recette-impl",
-    reason: "slug de feature de la recette",
-  },
-  {
-    file: "omp-console/ios/OMPConsoleIOS/ProjectText.swift",
-    literal: "ios.projet.launch.commit",
-    reason: "identifiant d’accessibilité",
   },
 ];
 
@@ -314,9 +255,9 @@ const GLOSSAIRE = fs.existsSync(path.join(ROOT, GLOSSARY_PATH))
   : null;
 const BASE = typographyFaults(SOURCES, GLOSSAIRE, EXCEPTIONS);
 
-const HOME_TEXT = "omp-console/Sources/ConsoleCore/Home/HomeText.swift";
+const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
 const FILES_TEXT = "omp-console/Sources/OMPConsole/Files/FilesText.swift";
-const CONNECTION_TEXT = "omp-console/ios/OMPConsoleIOS/ConnectionText.swift";
+const CONNECTION_TEXT = "omp-console/ios/OMPConsoleIOS/IOSConnectionStateText.swift";
 
 /** Une copie des sources où `enum PlanteGarde { static let <name> = <literal> }` termine `file`. */
 function plant(sources: Map<string, string>, file: string, literal: string, name = "x"): Map<string, string> {
@@ -346,10 +287,10 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 43 *Text.swift de ConsoleCore, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 20 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 43, `43 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  assert.equal(scoped.length, 20, `20 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
     assert.ok(
       scoped.some((file) => file.startsWith(`${base}/`)),
@@ -478,10 +419,10 @@ test("typographie-et-glossaire-francais/AC-7 : une faute dans un Swift qui ne se
   assertSane();
   const fault = `\nenum PlanteGarde { static let x = "l'appairage..." }\n`;
   const sources = new Map(SOURCES);
-  const presentation = "omp-console/Sources/ConsoleCore/Home/HomePresentation.swift";
+  const presentation = "omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift";
   assert.ok(sources.has(presentation), `source non chargée : ${presentation}`);
   sources.set(presentation, `${sources.get(presentation)}${fault}`);
-  sources.set("omp-console/Sources/ConsoleCore/Home/HomeTextStyle.swift", fault);
+  sources.set("omp-console/Sources/ConsoleCore/Design/PipelineServerTextStyle.swift", fault);
   sources.set("omp-console/Tests/OMPConsoleTests/PlanteText.swift", fault);
   assert.deepEqual(typographyFaults(sources, GLOSSAIRE, EXCEPTIONS), []);
   // Contre-épreuve : la même faute dans un *Text.swift des racines est vue.

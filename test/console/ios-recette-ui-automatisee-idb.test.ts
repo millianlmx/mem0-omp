@@ -1,6 +1,6 @@
 // Garde de l'ANALYSEUR de la recette idb (`scripts/recette/ios-recette-ui-analyse.py`) :
 // règles de défaut, exceptions, rapport et verdict. L'analyseur est pur, donc on
-// l'éprouve sur 27 relevés SYNTHÉTIQUES (JSON écrits ici, PNG unis 1206 × 2622
+// l'éprouve sur 18 relevés SYNTHÉTIQUES (JSON écrits ici, PNG unis 1206 × 2622
 // écrits par zlib) lancés par `spawnSync` — aucun simulateur, aucun idb, aucun Pillow.
 //
 // Le script `scripts/recette/ios-recette-ui.sh` (relevés réels, intégration) est prouvé
@@ -19,7 +19,7 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const EXCEPTIONS_VERSIONNEES = path.join(ROOT, "scripts", "recette", "ios-recette-ui-exceptions.json");
 
-const SURFACES = ["home", "kanban", "project", "audit", "session", "sessions", "memory", "stats", "kanban-fiche"];
+const SURFACES = ["home", "kanban", "project", "audit", "stats", "memory"];
 const CONFIGS: Array<[string, string]> = [
   ["clair", "defaut"],
   ["sombre", "defaut"],
@@ -104,27 +104,19 @@ const cadre = (x: number, y: number, width: number, height: number): Frame => ({
 function marqueurPropre(surface: string): Element[] {
   const f = cadre(20, 120, 200, 44);
   switch (surface) {
-    case "home":
-      return [{ type: "StaticText", AXUniqueId: "ios.home.allPipelines", frame: f }];
     case "kanban":
       return [
-        { type: "StaticText", AXUniqueId: "pipelines.list", frame: f },
-        { type: "StaticText", AXLabel: "Non appairé", frame: cadre(20, 200, 200, 44) },
+        { type: "StaticText", AXUniqueId: "ios.screen.kanban", frame: f },
+        bouton("ios.server.configure", cadre(20, 200, 200, 44)),
       ];
     case "project":
       return [{ type: "Heading", AXLabel: "Projet", frame: f }];
-    case "audit":
-      return [{ type: "StaticText", AXUniqueId: "ios.audit", frame: f }];
-    case "session":
-      return [{ type: "StaticText", AXUniqueId: "ios.sessionomp.status", frame: f }];
-    case "sessions":
-      return [{ type: "StaticText", AXLabel: "parity-session-1 · ouverte", frame: f }];
-    case "memory":
-      return [{ type: "StaticText", AXUniqueId: "ios.memoire.mode", frame: f }];
     case "stats":
       return [{ type: "Heading", AXLabel: "Statistiques", frame: f }];
+    case "memory":
+      return [{ type: "StaticText", AXUniqueId: "ios.memoire.mode", frame: f }];
     default:
-      return [{ type: "StaticText", AXUniqueId: "pipelines.card.sheet.root", frame: f }];
+      return [{ type: "StaticText", AXUniqueId: `ios.screen.${surface}`, frame: f }];
   }
 }
 
@@ -144,7 +136,7 @@ type Personnalisation = {
   sans?: string[];
 };
 
-/** Dossier de 27 relevés synthétiques propres, modifiables par `perso`. */
+/** Dossier de 18 relevés synthétiques propres, modifiables par `perso`. */
 function releves(perso: Personnalisation = {}): string {
   const dossier = frais("releves");
   for (const [apparence, taille] of CONFIGS) {
@@ -230,26 +222,27 @@ test("ios-recette-ui-automatisee-idb/AC-5 : un bouton de 20 pt sort en 1 et sa l
     releves({
       marqueur: (s, a, t) =>
         s === "home" && a === "clair" && t === "defaut"
-          ? [bouton("ios.home.allPipelines", cadre(289.7, 136.7, 96.3, 20.3))]
+          ? [...marqueurPropre("home"), bouton("ios.server.open", cadre(289.7, 136.7, 96.3, 20.3))]
           : undefined,
     }),
   );
   assert.equal(p.status, 1, p.stderr);
   assert.deepEqual(p.lignes, [
-    "SIGNALÉ\tsurface=home\tapparence=clair\ttaille=defaut\tregle=cible-44\tsource=ax\telement=id:ios.home.allPipelines\tcadre=289.7,136.7,96.3x20.3",
+    "SIGNALÉ\tsurface=home\tapparence=clair\ttaille=defaut\tregle=cible-44\tsource=ax\telement=id:ios.server.open\tcadre=289.7,136.7,96.3x20.3",
   ]);
   assert.match(p.stdout, /^rapport : .*rapport\.txt$/m);
   assert.match(p.stdout, /^1 signalé\(s\), 0 excepté\(s\)$/m);
 });
 
-test("ios-recette-ui-automatisee-idb/AC-3 : « Tout afficher » et « Lire le contrat » à 20,3 pt de haut sont signalés cible-44", () => {
+test("ios-recette-ui-automatisee-idb/AC-3 : « Serveur » et « Configurer le serveur » à 20,3 pt de haut sont chacun signalés cible-44", () => {
   const p = analyser(
     releves({
       marqueur: (s, a, t) =>
         s === "home" && a === "clair" && t === "defaut"
           ? [
-              bouton("ios.home.allPipelines", cadre(289.7, 136.7, 96.3, 20.3), { AXLabel: "Tout afficher" }),
-              bouton("ios.home.attention.f1.contract", cadre(40, 300, 104.7, 20.3), { AXLabel: "Lire le contrat" }),
+              ...marqueurPropre("home"),
+              bouton("ios.server.open", cadre(289.7, 136.7, 96.3, 20.3), { AXLabel: "Serveur" }),
+              bouton("ios.server.configure", cadre(40, 300, 104.7, 20.3), { AXLabel: "Configurer le serveur" }),
             ]
           : undefined,
     }),
@@ -257,14 +250,11 @@ test("ios-recette-ui-automatisee-idb/AC-3 : « Tout afficher » et « Lire le co
   assert.equal(p.status, 1);
   const lignes = p.lignes.filter((l) => l.includes("regle=cible-44"));
   assert.equal(lignes.length, 2);
-  for (const [id, h] of [
-    ["ios.home.allPipelines", "20.3"],
-    ["ios.home.attention.f1.contract", "20.3"],
-  ]) {
+  for (const id of ["ios.server.open", "ios.server.configure"]) {
     const l = lignes.find((x) => x.includes(`element=id:${id}\t`));
     assert.ok(l, `ligne pour ${id}`);
     assert.ok(l.startsWith(`SIGNALÉ\t${CTX("home")}\t`), l);
-    assert.ok(l.endsWith(`x${h}`), `hauteur ${h} dans ${l}`);
+    assert.ok(l.endsWith("x20.3"), `hauteur 20.3 dans ${l}`);
   }
 });
 
@@ -285,21 +275,19 @@ test("bornes cible-44 : 44,0 x 44,0 passe, 43,9 est signalé, un StaticText de 2
   assert.deepEqual(els, ["element=id:ko.hauteur", "element=id:ko.largeur", "element=id:champ.court"]);
 });
 
-test("ios-recette-ui-automatisee-idb/AC-4 : deux éléments portant pipelines.card.sheet.title donnent deux lignes id-duplique sur la feuille", () => {
-  const titre = (y: number): Element => ({
+test("ios-recette-ui-automatisee-idb/AC-4 : deux éléments portant le même identifiant donnent deux lignes id-duplique", () => {
+  const rangee = (y: number): Element => ({
     type: "StaticText",
-    AXUniqueId: "pipelines.card.sheet.title",
-    AXLabel: "Reprendre le lot",
+    AXUniqueId: "ios.memoire.row.m1",
+    AXLabel: "Un souvenir",
     frame: cadre(20, y, 300, 44),
   });
-  const p = analyser(releves({ elements: sur("kanban-fiche", "clair", "defaut", [titre(180), titre(240)]) }));
+  const p = analyser(releves({ elements: sur("memory", "clair", "defaut", [rangee(180), rangee(240)]) }));
   assert.equal(p.status, 1);
   assert.equal(p.lignes.length, 2);
   for (const l of p.lignes) {
     assert.ok(
-      l.startsWith(
-        `SIGNALÉ\t${CTX("kanban-fiche")}\tregle=id-duplique\tsource=ax\telement=id:pipelines.card.sheet.title\t`,
-      ),
+      l.startsWith(`SIGNALÉ\t${CTX("memory")}\tregle=id-duplique\tsource=ax\telement=id:ios.memoire.row.m1\t`),
       l,
     );
   }
@@ -345,16 +333,20 @@ test("bord ax : x = 0 signalé, x = 0,6 non signalé, bord droit signalé", () =
   );
 });
 
-test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Pipelines, Sessions et Mémoire est signalée avec l'élément le plus à gauche", () => {
+test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Pipelines et Mémoire est signalée avec l'élément le plus à gauche", () => {
   const conteneur = (id: string): Element => ({ type: "Group", AXUniqueId: id, frame: cadre(16, 100, 370, 700) });
   const ecrans: Record<string, string> = {
-    kanban: "pipelines.screen",
-    sessions: "ios.sessions.screen",
+    kanban: "ios.screen.kanban",
     memory: "ios.memoire.screen",
   };
   const p = analyser(
     releves({
-      elements: (s, a, t) => (a === "clair" && t === "defaut" && ecrans[s] ? [conteneur(ecrans[s])] : []),
+      // Sur Pipelines, le conteneur remplace le marqueur (même identifiant : sinon id-duplique).
+      marqueur: (s, a, t) =>
+        s === "kanban" && a === "clair" && t === "defaut"
+          ? [conteneur(ecrans.kanban), ...marqueurPropre("kanban").slice(1)]
+          : undefined,
+      elements: (s, a, t) => (s === "memory" && a === "clair" && t === "defaut" ? [conteneur(ecrans.memory)] : []),
       bandes: (s, a, t) =>
         a === "clair" && t === "defaut" && ecrans[s]
           ? [{ cote: "gauche", y0: 100, y1: 744, couleur: [242, 242, 247] }]
@@ -366,15 +358,14 @@ test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Pipel
   assert.deepEqual(
     bord.map((l) => l.split("\t").slice(1, 2).concat(l.split("\t").slice(6, 8)).join("|")),
     [
-      "surface=kanban|element=id:pipelines.screen|cadre=0.0,100.0,0.3x644.0",
-      "surface=sessions|element=id:ios.sessions.screen|cadre=0.0,100.0,0.3x644.0",
+      "surface=kanban|element=id:ios.screen.kanban|cadre=0.0,100.0,0.3x644.0",
       "surface=memory|element=id:ios.memoire.screen|cadre=0.0,100.0,0.3x644.0",
     ],
   );
-  assert.equal(p.lignes.length, 3, "aucun autre signalement");
+  assert.equal(p.lignes.length, 2, "aucun autre signalement");
 });
 
-test("bord capture : 44 pt signalé, 43 pt non, écart de 6 non, côté droit en x = W - 1/échelle, aucune analyse sur la feuille", () => {
+test("bord capture : 44 pt signalé, 43 pt non, écart de 6 non, côté droit en x = W - 1/échelle", () => {
   const bandes = (parSurface: Record<string, Bande[]>) => (s: string, a: string, t: string) =>
     a === "clair" && t === "defaut" ? (parSurface[s] ?? []) : [];
   const p = analyser(
@@ -389,10 +380,9 @@ test("bord capture : 44 pt signalé, 43 pt non, écart de 6 non, côté droit en
           { cote: "gauche", y0: 100, y1: 144, couleur: [220, 220, 225] },
           { cote: "droite", y0: 300, y1: 344, couleur: [220, 220, 225] },
         ],
-        session: [{ cote: "gauche", y0: 100, y1: 143, couleur: [220, 220, 225] }],
+        audit: [{ cote: "gauche", y0: 100, y1: 143, couleur: [220, 220, 225] }],
         stats: [{ cote: "gauche", y0: 100, y1: 400, couleur: [249, 249, 249] }],
         memory: [{ cote: "gauche", y0: 100, y1: 400, couleur: [248, 248, 248] }],
-        "kanban-fiche": [{ cote: "gauche", y0: 100, y1: 500, couleur: [204, 204, 204] }],
       }),
     }),
   );
@@ -537,15 +527,11 @@ test("exceptions : fichier absent, JSON invalide et valeur non tableau font sort
 
 test("exceptions protégées : une par famille d'audit sort en 2 avec le message interdite", () => {
   const protegees: Exception[] = [
-    exception({ element: "id:ios.home.allPipelines" }),
-    exception({ element: "id:ios.projet.start" }),
-    exception({ element: "libellé:Tout afficher" }),
-    exception({ element: "libellé:Lire le contrat" }),
-    exception({ element: "libellé:Piloter un projet…" }),
-    exception({ element: "id:ios.home.attention.abc.contract" }),
-    exception({ regle: "id-duplique", element: "id:pipelines.card.sheet.title", surface: "kanban-fiche" }),
-    exception({ regle: "bord", source: "capture", surface: "kanban", element: "id:pipelines.screen" }),
-    exception({ regle: "bord", source: "capture", surface: "sessions", element: "id:ios.sessions.screen" }),
+    exception({ element: "id:ios.connexion.connect" }),
+    exception({ element: "id:ios.memoire.retry" }),
+    exception({ element: "id:ios.memoire.graphe.etiquette" }),
+    exception({ regle: "id-duplique", element: "id:ios.memoire.screen", surface: "memory" }),
+    exception({ regle: "bord", source: "capture", surface: "kanban", element: "id:ios.screen.kanban" }),
     exception({ regle: "bord", source: "capture", surface: "memory", element: "id:ios.memoire.screen" }),
     exception({ regle: "bord", source: "capture", surface: "*", element: "type:capture" }),
   ];
@@ -560,8 +546,8 @@ test("exceptions protégées : une par famille d'audit sort en 2 avec le message
   // les voisins légitimes restent permis
   for (const permise of [
     exception({ regle: "bord", source: "capture", surface: "home", element: "id:ios.home.root" }),
-    exception({ regle: "bord", source: "ax", surface: "kanban", element: "id:pipelines.screen" }),
-    exception({ regle: "cible-44", element: "id:ios.home.attention.abc.open" }),
+    exception({ regle: "bord", source: "ax", surface: "kanban", element: "id:ios.screen.kanban" }),
+    exception({ regle: "cible-44", element: "id:ios.server.configure" }),
     exception({ regle: "id-duplique", element: "id:autre.titre" }),
   ]) {
     assert.equal(valider([permise]).status, 0, JSON.stringify(permise));
@@ -581,7 +567,7 @@ test("la liste d'exceptions versionnée est valide", () => {
 
 // ── Relevés incomplets ou faux ────────────────────────────────────────────────
 
-test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou un kanban sans « Non appairé » font sortir en 2", () => {
+test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou un kanban relié au serveur font sortir en 2", () => {
   const manquante = analyser(releves({ sans: ["memory-sombre-defaut.png"] }));
   assert.equal(manquante.status, 2);
   assert.equal(manquante.stderr.trim(), "relevé manquant : memory-sombre-defaut.png");
@@ -610,20 +596,23 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(racine.status, 2);
   assert.equal(racine.stderr.trim(), "surface non vérifiée : project sombre defaut (marqueur absent)");
 
-  const appaire = analyser(
+  const relie = analyser(
     releves({
       marqueur: (s) =>
         s === "kanban"
-          ? [{ type: "StaticText", AXUniqueId: "pipelines.list", frame: cadre(20, 100, 100, 44) }]
+          ? [{ type: "StaticText", AXUniqueId: "ios.screen.kanban", frame: cadre(20, 100, 100, 44) }]
           : undefined,
     }),
   );
-  assert.equal(appaire.status, 2);
-  assert.equal(appaire.stderr.trim(), "simulateur appairé : la recette exige un simulateur jamais appairé au Mac");
-  assert.equal(appaire.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
+  assert.equal(relie.status, 2);
+  assert.equal(
+    relie.stderr.trim(),
+    "simulateur relié : la recette exige un simulateur jamais relié au serveur de pipelines",
+  );
+  assert.equal(relie.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
 });
 
-test("marqueur : vrai sur la surface annoncée, faux sur la liste « Plus », un écran plein « non connecté » ou « connexion en cours », ou la feuille sur kanban", () => {
+test("marqueur : vrai sur la surface annoncée, faux sur la liste « Plus » ou sur un écran plein « non connecté » ou « connexion en cours »", () => {
   const sonde = (surface: string, elements: Element[]) => {
     const f = path.join(frais("marqueur"), "releve.json");
     fs.writeFileSync(f, JSON.stringify([application(), ...elements]));
@@ -656,15 +645,20 @@ test("marqueur : vrai sur la surface annoncée, faux sur la liste « Plus », un
     0,
     "un bandeau au-dessus des données n'exclut pas la surface",
   );
-  assert.equal(sonde("kanban", [...marqueurPropre("kanban"), ...marqueurPropre("kanban-fiche")]), 1);
+  assert.equal(sonde("kanban", marqueurPropre("home")), 1, "l'écran d'une autre section");
   assert.equal(
     sonde("project", [{ type: "StaticText", AXLabel: "Projet", frame: cadre(20, 100, 100, 44) }]),
     1,
     "libellé sans type Heading",
   );
   assert.equal(
-    sonde("project", [{ type: "StaticText", AXUniqueId: "ios.projet.start", frame: cadre(20, 100, 100, 44) }]),
+    sonde("project", [{ type: "StaticText", AXUniqueId: "ios.screen.project", frame: cadre(20, 100, 100, 44) }]),
     0,
+  );
+  assert.equal(
+    sonde("project", [{ type: "Other", AXUniqueId: "Projet", frame: cadre(0, 50, 402, 44) }]),
+    0,
+    "la barre de navigation",
   );
   assert.equal(
     sonde("stats", [{ type: "StaticText", AXUniqueId: "ios.screen.stats", frame: cadre(20, 100, 100, 44) }]),

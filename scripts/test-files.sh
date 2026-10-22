@@ -27,11 +27,9 @@
 # `--scope=changed[=<base>]` (base par défaut : HEAD) : les fichiers du diff =
 # `git diff --name-only <base>` + les fichiers non suivis non ignorés. Retenus :
 #   (a) les test/**/*.test.ts du diff eux-mêmes ;
-#   (b) test/req/<slug>.test.ts dont le slug figure dans .omp/pipeline/contract.md
-#       (s'il existe) ;
-#   (c) tout fichier de test dont le texte nomme un fichier source du diff par
+#   (b) tout fichier de test dont le texte nomme un fichier source du diff par
 #       son nom (`chain.ts`) ou par la fin d'un import (`/chain"`) ;
-#   (d) les fichiers de `--scope=macos` si le diff touche omp-console/.
+#   (c) les fichiers de `--scope=macos` si le diff touche omp-console/.
 # Repli : git absent, hors dépôt, ou diff vide ⇒ message sur stderr et liste
 # complète (hors outillage), jamais une liste vide silencieuse.
 #
@@ -100,7 +98,6 @@ python3 - "${files[@]}" <<'PY'
 import os, re, sys
 MACOS = re.compile(r"\b(swift|swiftc|xcodebuild|xcrun)\b|swift-app\.sh|ios-build\.sh")
 OUTILLAGE = re.compile(r'\["scripts/check\.sh"\]|^\s*"scripts/release\.ts",$', re.M)
-CONTRACT = os.path.join(".omp", "pipeline", "contract.md")
 
 scope = os.environ["MEM0_TEST_SCOPE"]
 paths = sys.argv[1:]
@@ -143,17 +140,7 @@ kept = set()
 for path in changed:
     if path in texts:
         kept.add(path)
-# (b) les tests de feature dont le slug figure dans le contrat courant.
-if os.path.isfile(CONTRACT):
-    with open(CONTRACT, encoding="utf-8") as handle:
-        contract = handle.read()
-    for path in paths:
-        if not path.startswith("test/req/"):
-            continue
-        slug = os.path.basename(path)[: -len(".test.ts")]
-        if re.search(r"(?<![A-Za-z0-9_-])" + re.escape(slug) + r"(?![A-Za-z0-9_-])", contract):
-            kept.add(path)
-# (c) les tests qui nomment un fichier source du diff.
+# (b) les tests qui nomment un fichier source du diff.
 sources = [p for p in changed if p not in texts]
 rules = []
 for source in sources:
@@ -170,7 +157,7 @@ if rules:
         text = texts[path]
         if any(rule.search(text) for rule in rules):
             kept.add(path)
-# (d) le diff touche omp-console/ : les tests qui dépendent de macOS.
+# (c) le diff touche omp-console/ : les tests qui dépendent de macOS.
 if any(p.startswith("omp-console/") for p in changed):
     for path in paths:
         if is_macos(path):

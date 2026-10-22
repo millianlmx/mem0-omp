@@ -1,6 +1,6 @@
 // Assertion 3 de S-4 : les vues de section déclarent chacune leur section.
 //
-// Le test nomme les dix TYPES puis confronte l'ensemble des sections qu'ils
+// Le test nomme les huit TYPES puis confronte l'ensemble des sections qu'ils
 // déclarent à `Set(ConsoleSection.allCases)` : une vue manquante rend l'ensemble
 // plus petit, deux vues sur la même section le réduisent aussi — les deux
 // scénarios rougissent sans seconde table à maintenir.
@@ -14,32 +14,25 @@ import ConsoleCore
 @MainActor
 @Test("socle-app-swift/AC-2 : chaque section a sa vue, dans la fenêtre principale")
 func everySectionHasItsView() {
-    let declared: Set<ConsoleSection> = [
-        HomeView.section,
-        KanbanView.section,
-        ProjectView.section,
-        AuditView.section,
-        SessionConsoleSectionView.section,
+    let declared: [ConsoleSection] = [
+        HomeSectionView.section,
+        PipelinesSectionView.section,
+        ProjectSectionView.section,
+        AuditSectionView.section,
+        StatsSectionView.section,
         TerminalSectionView.section,
-        SessionsView.section,
         FilesView.section,
         MemoryView.section,
-        StatsSectionView.section,
     ]
-    #expect(declared == Set(ConsoleSection.allCases))
+    #expect(declared.count == ConsoleSection.allCases.count)
+    #expect(Set(declared) == Set(ConsoleSection.allCases))
 }
 
-@Test("plein écran : ouvrir une session la pousse dans la section Sessions, une à la fois")
-func openingASessionStaysInTheMainWindow() {
+@Test("la coque s'ouvre sur l'Accueil, et changer de section est idempotent")
+func selectionStartsAtHome() {
     let model = ConsoleModel()
-    let first = ViewerTarget(sessionFile: "/a.jsonl", title: "a")
-    let second = ViewerTarget(sessionFile: "/b.jsonl", title: "b")
-    model.openSession(first)
-    #expect(model.selection == .sessions)
-    #expect(model.sessionsPath == [first])
-    // Changer de section garde la session ouverte ; en ouvrir une autre la remplace.
-    model.select(.home)
-    #expect(model.sessionsPath == [first])
-    model.openSession(second)
-    #expect(model.sessionsPath == [second])
+    #expect(model.selection == .home)
+    model.select(.stats)
+    model.select(.stats)
+    #expect(model.selection == .stats)
 }

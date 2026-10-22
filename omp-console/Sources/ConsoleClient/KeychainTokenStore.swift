@@ -1,10 +1,8 @@
-// Le jeton d'appareil, derrière une couture injectable : la production écrit au
-// trousseau, les tests en mémoire (AUCUN test n'écrit dans le vrai trousseau).
-//
-// Patron exact de `Sources/OMPConsole/Remote/DeviceTokenStore.swift` : appels
-// `SecItem*` hors du fil principal, article `kSecClassGenericPassword` avec
-// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (Doc-5) — le jeton ne migre pas
-// avec une sauvegarde d'un autre appareil.
+// Les jetons (serveur de pipelines, mémoire), derrière une couture injectable : la
+// production écrit au trousseau, les tests en mémoire (AUCUN test n'écrit dans le
+// vrai trousseau). Appels `SecItem*` hors du fil principal, article
+// `kSecClassGenericPassword` avec `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
+// (Doc-5) — le jeton ne migre pas avec une sauvegarde d'un autre appareil.
 
 import Foundation
 import Security

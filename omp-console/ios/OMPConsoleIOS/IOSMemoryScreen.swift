@@ -1,6 +1,7 @@
-// L'écran Mémoire de la coque iOS (BR-2) : le sommaire du projet ouvert — les
-// MÊMES souvenirs que la section « Mémoire » de macOS —, une recherche qui se
-// SOUMET (jamais à la frappe), et l'état de la mémoire dit sans masquer sa cause.
+// L'écran Mémoire de la coque iOS (BR-2) : le sommaire d'un projet de la mémoire
+// du serveur — les MÊMES souvenirs que la section « Mémoire » de macOS quand le Mac
+// est relié au même serveur —, un menu du projet lu, une recherche qui se SOUMET
+// (jamais à la frappe), et l'état de la mémoire dit sans masquer sa cause.
 //
 // Chaque état rendu par `IOSMemoryModel.screen` a sa branche ici, et aucune phrase
 // n'est composée : les mots viennent du noyau partagé (`MemoryText`) ou du
@@ -15,12 +16,13 @@ import ConsoleCore
 import SwiftUI
 
 struct IOSMemoryScreen: View {
-    @ObservedObject var client: ConsoleClientModel
+    /// La mémoire du serveur (le code d'appairage) : les lectures et le projet lu.
+    @ObservedObject var client: MemoryAccess
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
     /// Le crochet de recette `-memoire.recipe` : mode graphe, ou liste sur fixture.
     let graphRecipe: IOSMemoryGraphRecipe?
-    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    /// La feuille Serveur de la racine, ouverte par « Relier le serveur ».
     @Binding var showConnection: Bool
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
@@ -38,7 +40,7 @@ struct IOSMemoryScreen: View {
     @FocusState private var searchFocused: Bool
 
     init(
-        client: ConsoleClientModel,
+        client: MemoryAccess,
         recipe: IOSScreenState,
         graphRecipe: IOSMemoryGraphRecipe? = nil,
         showConnection: Binding<Bool>
@@ -62,6 +64,7 @@ struct IOSMemoryScreen: View {
     var body: some View {
         panel
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { projectMenu }
                 ToolbarItem(placement: .topBarTrailing) { summaryButton }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -88,12 +91,10 @@ struct IOSMemoryScreen: View {
                 await model.refresh()
                 graphRecipe?.announce(list: model)
             }
-            .onMacReconnected(client) {
-                // Retour du Mac (S-4) : la liste relit, et le graphe s'il est affiché.
-                Task {
-                    await model.refresh()
-                    if graph.shown { await graph.refresh() }
-                }
+            .onMemoryConfigured(client) {
+                // Un code d'appairage vient d'être collé (S-4) : la liste relit, et le
+                // graphe s'il est affiché.
+                Task { await reload() }
             }
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
@@ -107,6 +108,36 @@ struct IOSMemoryScreen: View {
             })
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
+    }
+
+    /// Le projet lu : les portées de la mémoire, la plus récemment écrite en tête.
+    /// En choisir une relit la liste, et le graphe s'il est affiché.
+    private var projectMenu: some View {
+        Menu {
+            ForEach(client.scopes, id: \.self) { scope in
+                Button {
+                    client.choose(scope: scope)
+                    Task { await reload() }
+                } label: {
+                    if scope == model.scope {
+                        Label(scope, systemImage: "checkmark")
+                    } else {
+                        Text(verbatim: scope)
+                    }
+                }
+                .accessibilityIdentifier(IOSMemoryAccessibility.projectOption(scope))
+            }
+        } label: {
+            Label(IOSMemoryText.projectMenu, systemImage: IOSMemoryText.projectSymbol)
+        }
+        .disabled(!connection.gesturesEnabled || client.scopes.isEmpty)
+        .accessibilityIdentifier(IOSMemoryAccessibility.project)
+    }
+
+    /// Une relecture complète : la liste, et le graphe s'il est affiché.
+    private func reload() async {
+        await model.refresh()
+        if graph.shown { await graph.refresh() }
     }
 
     /// « Sommaire » est TOUJOURS là. Indisponible (mode Graphe, sommaire déjà
@@ -158,7 +189,7 @@ struct IOSMemoryScreen: View {
     // MARK: - Statut de connexion
 
     /// Le statut présenté. Sous le crochet `-memoire.recipe`, la fixture tient
-    /// lieu de Mac : l'écran est connecté (etats-non-connecte-heterogenes-ios, S-4).
+    /// lieu de serveur : l'écran est relié (etats-non-connecte-heterogenes-ios, S-4).
     private var connection: IOSConnectionStatus {
         if graphRecipe != nil { return .connected }
         return IOSConnectionStatus.of(client)
@@ -223,7 +254,7 @@ struct IOSMemoryScreen: View {
             IOSMemoryGraphView(model: graph, connection: connection, showConnection: $showConnection)
         }
         if let status = fullScreenStatus {
-            // Rien de chargé, Mac non connecté : le composant partagé SEUL, hors
+            // Rien de chargé, mémoire non reliée : le composant partagé SEUL, hors
             // du défilement et du panneau.
             IOSConnectionStateView(status: status, layout: .screen, onConnect: openConnection)
         } else if graph.shown {
@@ -252,11 +283,11 @@ struct IOSMemoryScreen: View {
         }
     }
 
-    /// La saisie de la recherche. Hors connexion, la recherche (soumise au Mac)
-    /// est inerte : les écritures sont ignorées (etats-non-connecte-heterogenes-ios,
+    /// La saisie de la recherche. Mémoire non reliée, la recherche (soumise au
+    /// serveur) est inerte : les écritures sont ignorées (etats-non-connecte-heterogenes-ios,
     /// S-5). Écart MESURÉ à D-2 : un `.disabled` sur la vue qui porte `.searchable`
     /// laisse le champ `.automatic` actif sur iOS 27 et grise tout le panneau, dont
-    /// « Se connecter » du bandeau et les rangées. Une écriture ignorée redessine
+    /// « Relier le serveur » du bandeau et les rangées. Une écriture ignorée redessine
     /// aussitôt l'écran : sans cela, le champ garde la frappe affichée jusqu'au
     /// rendu suivant (MESURÉ par la recette, contrôle 7).
     private var queryBinding: Binding<String> {
@@ -321,21 +352,18 @@ struct IOSMemoryScreen: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-        case .failed(.macUnreachable):
-            banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
+        case .failed(.unreachable):
+            banner(IOSMemoryErrorText.message(for: .unreachable), tone: .attention)
             stateRow(IOSMemoryText.noData)
             retryButton
-        case .failed(.macTimedOut):
-            banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
+        case .failed(.timedOut):
+            banner(IOSMemoryErrorText.message(for: .timedOut), tone: .attention)
             stateRow(IOSMemoryText.noData)
-            retryButton
-        case .failed(.macOutdated):
-            banner(IOSMacErrorText.message(for: .macOutdated), tone: .attention)
             retryButton
         case .noProject:
             stateRow(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
         case .failed(let cause):
-            banner(IOSMacErrorText.message(for: cause), tone: .danger)
+            banner(IOSMemoryErrorText.message(for: cause), tone: .danger)
             retryButton
         case .summaryEmpty(let scope):
             stateRow(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))

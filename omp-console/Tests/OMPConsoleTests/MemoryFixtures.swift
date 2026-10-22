@@ -303,9 +303,13 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 /// Un client HTTP réel sur le stub, sans jeton par défaut.
-func stubbedHTTPMemoryService(token: String = "", installationToken: String = "") -> HTTPMemoryService {
+func stubbedHTTPMemoryService(
+    token: String = "",
+    installationToken: String = "",
+    baseURL: String = "http://localhost:8321"
+) -> HTTPMemoryService {
     let config = MemoryServiceConfig(
-        baseURL: URL(string: "http://localhost:8321")!,
+        baseURL: URL(string: baseURL)!,
         token: token,
         installationToken: installationToken
     )

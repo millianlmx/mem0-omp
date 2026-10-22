@@ -1,202 +1,91 @@
-// La preuve Swift de l'intent témoin (feature client-ios-possede-par-la-vue, S-3) :
-// sur de VRAIS `ConsoleClientModel` câblés à des doublures (aucun réseau, aucun
-// trousseau réel), l'intent attend la relecture du jeton puis énonce l'une des
-// trois phrases, sans appairage ni connexion de plus.
+// La preuve Swift de l'intent témoin et de la racine de composition du serveur de
+// pipelines (feature client-ios-possede-par-la-vue) : l'instance que l'app passe aux
+// vues est celle que les App Intents résolvent, et l'intent énonce l'une des trois
+// phrases, sans Mac et sans écriture.
 //
-// Un `AppDependency` ne se lit que DANS le déroulé d'exécution d'un intent :
-// l'intent est donc exécuté par `callAsFunction(donate:)` contre un gestionnaire
-// AUTONOME, jamais `.shared`, et `intent.client` n'est jamais lu depuis le test.
+// Un `AppDependency` ne se lit que DANS le déroulé d'exécution d'un intent : les
+// intents sont exécutés par `callAsFunction(donate:)` contre un gestionnaire
+// AUTONOME, jamais `.shared`.
 
 import AppIntents
 import ConsoleClient
-import ConsoleCore
 import Foundation
 import Testing
 
 @testable import OMPConsoleIOS
 
-/// Le résultat d'une réponse lancée en tâche : `nil` tant qu'elle n'a pas rendu.
+/// Un serveur qui ne répond rien : chaque appel échoue en transport.
+private struct SilentHarnessTransport: HarnessTransport {
+    func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
+        throw URLError(.cannotConnectToHost)
+    }
+
+    func events(_ call: HarnessCall, server: HarnessServer) async throws -> AsyncThrowingStream<Data, Error> {
+        throw URLError(.cannotConnectToHost)
+    }
+}
+
+/// Un intent de test, jamais exposé : il résout le serveur comme tout intent de
+/// l'app, mais dans le gestionnaire du test, et le relève.
+private struct SharedServerProbe: AppIntent {
+    static let title: LocalizedStringResource = "Sonde du serveur partagé"
+    @MainActor static var resolved: [HarnessModel] = []
+
+    @AppDependency var server: HarnessModel
+
+    init() { _server = AppDependency() }
+    init(dependencies: AppDependencyManager) { _server = AppDependency(manager: dependencies) }
+
+    @MainActor
+    func perform() async throws -> IntentResultContainer<Never, Never, Never, Never> {
+        Self.resolved.append(server)
+        return .result()
+    }
+}
+
 @MainActor
-private final class AnswerOutcome {
-    var value: String?
+private func silentServer() -> HarnessModel {
+    HarnessModel(transport: SilentHarnessTransport(), preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore())
 }
-
-/// Un transport qui ne sert aucune route : 404 partout, flux injoignable.
-private func silentTransport() -> ScriptedClientTransport {
-    ScriptedClientTransport { _ in ClientDoubles.response(status: 404, json: #"{"error":{"code":"not_found"}}"#) }
-}
-
-/// Le nombre de flux temps réel ouverts vers le Mac.
-private func streamCount(_ transport: OpenStreamTransport) -> Int {
-    transport.requests.filter { $0.method == "GET" && $0.path == "/v1/stream" }.count
-}
-
-/// Le nombre d'appairages tentés.
-private func pairCount(_ transport: OpenStreamTransport) -> Int {
-    transport.requests.filter { $0.method == "POST" && $0.path == ConsoleAPI.Service.basePath + "/pair" }.count
-}
-
-private let lanEndpoint = ClientEndpoint.manual(host: "192.168.1.20", port: 8787)
-
-/// Les sept états du client hors connexion.
-private let notConnectedStates: [ClientState] = [
-    .unpaired,
-    .searching,
-    .connecting(endpoint: lanEndpoint),
-    .noNetwork,
-    .macAbsent(endpoint: lanEndpoint),
-    .revoked,
-    .incompatibleProtocol(local: 1, remote: 2),
-]
-
-/// Les huit états du client.
-private let allStates: [ClientState] = notConnectedStates + [.connected(endpoint: lanEndpoint)]
 
 @Suite("client-ios-possede-par-la-vue — l'intent témoin")
 @MainActor
 struct IOSSiriStatusTests {
-    @Test("client-ios-possede-par-la-vue/AC-1 : les vues et l'intent témoin reçoivent la même instance, et le trousseau n'est lu qu'une fois")
-    func intentAndViewsShareOneRead() async throws {
+    @Test("les vues et les intents reçoivent la même instance du serveur")
+    func viewsAndIntentsShareTheInstance() async throws {
+        SharedServerProbe.resolved = []
         let manager = AppDependencyManager()
-        let tokens = CountingTokenStore(["dev-1": "tok-1"])
-        let client = ClientDoubles.pairedModel(tokens: tokens, transport: silentTransport())
-
-        let shared = IOSSharedClient.install(client, in: manager)
-        let intent = IOSConnectionStatusIntent(dependencies: manager)
-        let _: Void = try await intent(donate: false)
-
-        // L'intent a démarré et attendu CE client-là.
-        #expect(await tokens.reads == 1)
-        #expect(shared.pairing == .paired)
-
-        // Ce que fait `RootView.onAppear`, puis une seconde réponse : aucune
-        // nouvelle lecture du trousseau.
-        shared.start()
-        let answer = await IOSSiriStatus.answer(for: shared)
-        #expect(await tokens.reads == 1)
-        #expect(answer == IOSSiriText.pairedNotJoined)
-        #expect(answer == "Appairé, Mac non joint")
-        shared.stop()
+        let created = silentServer()
+        let forViews = IOSSharedServer.install(created, in: manager)
+        let _: Void = try await SharedServerProbe(dependencies: manager)(donate: false)
+        let _: Void = try await SharedServerProbe(dependencies: manager)(donate: false)
+        #expect(forViews === created)
+        #expect(SharedServerProbe.resolved.count == 2)
+        #expect(SharedServerProbe.resolved.allSatisfy { $0 === created })
     }
 
-    @Test("client-ios-possede-par-la-vue/AC-3 : connecté au Mac « X », l'intent répond « Connecté à X » sans appairage ni seconde connexion")
-    func connectedNamesTheMac() async throws {
-        let mac = DiscoveredMac(
-            name: "Mac de Léa",
-            endpoint: .bonjour(name: "Mac de Léa", host: "127.0.0.1", port: 8787)
-        )
-        let tokens = CountingTokenStore(["dev-1": "tok-1"])
-        let transport = OpenStreamTransport()
-        let client = ClientDoubles.pairedModel(
-            tokens: tokens,
-            transport: transport,
-            discovery: AnnouncingDiscovery(mac)
-        )
-        client.start()
-        await ClientDoubles.until(client, state: { $0 == .connected(endpoint: mac.endpoint) })
-        #expect(streamCount(transport) == 1)
-
-        let answer = await IOSSiriStatus.answer(for: client)
-
-        #expect(answer == IOSSiriText.connected(macName: "Mac de Léa"))
-        #expect(answer == "Connecté à Mac de Léa")
-        #expect(streamCount(transport) == 1)
-        #expect(pairCount(transport) == 0)
-        #expect(await tokens.reads == 1)
-        #expect(client.state == .connected(endpoint: mac.endpoint))
-        client.stop()
-
-        // Table pure : une adresse manuelle, ou un nom Bonjour blanc, se dit
-        // `hôte:port`.
-        let manual = IOSSiriStatus.resolve(pairing: .paired, state: .connected(endpoint: lanEndpoint))
-        #expect(manual == .connected(macName: "192.168.1.20:8787"))
-        #expect(manual.phrase == IOSSiriText.connected(macName: "192.168.1.20:8787"))
-        #expect(manual.phrase == "Connecté à 192.168.1.20:8787")
-        let blank = IOSSiriStatus.resolve(
-            pairing: .paired,
-            state: .connected(endpoint: .bonjour(name: "  ", host: "192.168.1.12", port: 8787))
-        )
-        #expect(blank.phrase == IOSSiriText.connected(macName: "192.168.1.12:8787"))
-        #expect(blank.phrase == "Connecté à 192.168.1.12:8787")
+    @Test("la table : aucun serveur, serveur injoignable, ou ce qui attend l'humain")
+    func resolvesTheThreeStates() {
+        #expect(IOSSiriStatus.resolve(isConfigured: false, inbox: nil, failed: false) == .unconfigured)
+        #expect(IOSSiriStatus.resolve(isConfigured: true, inbox: nil, failed: false) == .unreachable)
+        #expect(IOSSiriStatus.resolve(isConfigured: true, inbox: HarnessInbox(), failed: true) == .unreachable)
+        #expect(IOSSiriStatus.resolve(isConfigured: true, inbox: HarnessInbox(), failed: false) == .connected(pending: 0))
     }
 
-    @Test("client-ios-possede-par-la-vue/AC-4 : sans jeton, lancé à froid, l'intent répond « Non appairé », jamais pendant la lecture")
-    func unpairedNeverAnswersWhileRestoring() async throws {
-        // Préférence d'appareil posée, trousseau vide, lecture retenue.
-        let tokens = CountingTokenStore([:], held: true)
-        let client = ClientDoubles.pairedModel(tokens: tokens, transport: silentTransport())
-        let outcome = AnswerOutcome()
-        let task = Task { @MainActor in
-            outcome.value = await IOSSiriStatus.answer(for: client)
-        }
-        await tokens.readsReached(1)
-        #expect(outcome.value == nil)
-        #expect(client.pairing == .restoring)
-
-        await tokens.open()
-        await task.value
-        #expect(outcome.value == IOSSiriText.unpaired)
-        #expect(outcome.value == "Non appairé")
-        #expect(await tokens.reads == 1)
-        client.stop()
-
-        // Sans préférence d'appareil : aucune lecture du trousseau.
-        let untouched = CountingTokenStore()
-        let fresh = ConsoleClientModel(
-            transport: silentTransport(),
-            discovery: SilentDiscovery(),
-            preferences: InMemoryClientPreferences(),
-            tokens: untouched,
-            pacer: ImmediatePacer(),
-            pathSource: SilentPathSource(),
-            deviceName: "iPhone",
-            searchPacer: ImmediatePacer()
-        )
-        let answer = await IOSSiriStatus.answer(for: fresh)
-        #expect(answer == IOSSiriText.unpaired)
-        #expect(answer == "Non appairé")
-        #expect(await untouched.reads == 0)
-        fresh.stop()
-
-        // Table pure : refusé ou non appairé, quel que soit l'état.
-        for pairing in [ClientPairingStatus.refused(endpoint: nil), .unpaired] {
-            for state in allStates {
-                let status = IOSSiriStatus.resolve(pairing: pairing, state: state)
-                #expect(status == .unpaired, "\(pairing) × \(state)")
-                #expect(status.phrase == "Non appairé")
-            }
-        }
+    @Test("trois phrases distinctes, sans Mac")
+    func phrasesAreDistinctWithoutMac() {
+        let phrases = [IOSSiriStatus.unconfigured, .unreachable, .connected(pending: 0), .connected(pending: 3)].map(\.phrase)
+        #expect(Set(phrases).count == phrases.count)
+        #expect(phrases.allSatisfy { !$0.contains("Mac") })
+        #expect(IOSSiriText.connected(pending: 3) == "Relié au serveur, 3 en attente")
     }
 
-    @Test("client-ios-possede-par-la-vue/AC-5 : jeton présent et Mac éteint, l'intent lancé à froid répond « Appairé, Mac non joint »")
-    func pairedWithoutMacSaysNotJoined() async throws {
-        // Aucun Mac découvert, aucune adresse.
-        let tokens = CountingTokenStore(["dev-1": "tok-1"])
-        let client = ClientDoubles.pairedModel(tokens: tokens, transport: silentTransport())
-        let answer = await IOSSiriStatus.answer(for: client)
-        #expect(answer == IOSSiriText.pairedNotJoined)
-        #expect(answer == "Appairé, Mac non joint")
-        client.stop()
-
-        // Adresse manuelle, Mac éteint : le flux est injoignable.
-        let offTokens = CountingTokenStore(["dev-1": "tok-1"])
-        let off = ClientDoubles.pairedModel(
-            tokens: offTokens,
-            transport: silentTransport(),
-            address: "127.0.0.1:8787"
-        )
-        let offAnswer = await IOSSiriStatus.answer(for: off)
-        #expect(offAnswer == IOSSiriText.pairedNotJoined)
-        #expect(offAnswer == "Appairé, Mac non joint")
-        await ClientDoubles.until(off, state: { if case .macAbsent = $0 { return true } else { return false } })
-        #expect(await IOSSiriStatus.answer(for: off) == "Appairé, Mac non joint")
-        off.stop()
-
-        // Table pure : appairé, les sept états hors connexion.
-        for state in notConnectedStates {
-            let status = IOSSiriStatus.resolve(pairing: .paired, state: state)
-            #expect(status == .pairedNotJoined, "\(state)")
-            #expect(status.phrase == "Appairé, Mac non joint")
-        }
+    @Test("sans serveur relié, l'intent le dit sans rien appeler")
+    func unconfiguredIntentSaysSo() async throws {
+        let manager = AppDependencyManager()
+        _ = IOSSharedServer.install(silentServer(), in: manager)
+        let answer = await IOSSiriStatus.answer(for: silentServer())
+        #expect(answer == IOSSiriText.unconfigured)
+        let _: Void = try await IOSConnectionStatusIntent(dependencies: manager)(donate: false)
     }
 }

@@ -3,121 +3,54 @@ import ConsoleCore
 import Foundation
 import SwiftUI
 
-/// Le point d'entrée de l'app iOS. Deux crochets de recette sont lus dans les
+/// Le point d'entrée de l'app iOS. Trois crochets de recette sont lus dans les
 /// arguments de lancement :
 ///
 /// - `-section <rawValue>` : la section ouverte au démarrage (script de captures) ;
 /// - `-ios.state <ready|error>` : l'état d'écran, pour capturer le bandeau
 ///   d'erreur par un chemin RÉEL (S-3) — un crochet de recette, pas une
 ///   fonctionnalité ;
-/// - `-home.recipe <état>` : l'état de l'Accueil forcé depuis la fixture
-///   partagée `HomeParity` (S-10, S-11), pour capturer les cinq états par un
-///   chemin RÉEL — un crochet de recette, pas une fonctionnalité ;
-/// - `-home.row <n>` : la rangée du tableau de bord (« En cours » puis « Livrées
-///   récemment ») amenée en haut de l'écran, pour capturer les rangées en Dynamic
-///   Type (feature ios-accueil-dynamic-type-casse) — un crochet de recette, pas
-///   une fonctionnalité ;
-/// - `-sessions.recipe <liste|vide|visionneuse|illisible|erreur|en-direct|phases|chargement|fil-vide|suivi|longue>` :
-///   l'état de la section Sessions forcé depuis la fixture partagée `SessionParity`
-///   (S-1, S-4, S-9), pour capturer l'écran réel ; `erreur` ouvre la visionneuse
-///   d'un run vivant dont la lecture échoue (statut 500), pour capturer son bandeau
-///   d'erreur (ios-dynamic-type-ax-residuel) — un crochet de recette, pas une
-///   fonctionnalité ;
-/// - `-pipelines.recipe <vide|choisi|rempli>` : la feuille « Nouvelle feature »
-///   ouverte d'elle-même sur l'écran Pipelines, dans un état forcé (dépôts, dépôt
-///   choisi, titre, besoin), pour capturer la feuille sans appairage ;
-///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
-///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
-///   crochets de recette, pas des fonctionnalités.
-/// - `-stats.recipe <vide|chargement|bascule|pleine>` : la section Statistiques
-///   ouverte sur son modèle et son écran RÉELS, nourris par une lecture en mémoire
-///   et un client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables),
-///   pour capturer l'état vide, le chargement, la bascule de projet et, avec
-///   `pleine`, le tableau dès le lancement — un crochet de recette, pas une
-///   fonctionnalité. À lancer avec `-section stats`.
-/// - `-pipelines.board pleine` : l'écran Pipelines rend l'ardoise de la fixture
-///   partagée `KanbanBoardParity` (une voie vide, une voie « Livrées » de 100
-///   cartes, des noms longs) à la place de celle du Mac, pour mesurer les voies et
-///   les cartes sans appairage — un crochet de recette, pas une fonctionnalité.
-/// - `-projet.recipe <lancement|dialogue|saisie>` et `-sessionomp.recipe lancement` : la
-///   feuille « Piloter un projet… », « OMP vous demande » (choix, ou saisie libre pour
-///   `saisie`) ou « Lancer une session OMP » ouverte d'elle-même sur une fixture
-///   (feuilles-ios-presentation-et-depots, ios-finitions-composants), sans réseau ;
-///   `-projet.recipe plan` : l'écran Projet vif sur un plan de six étapes plus haut
-///   qu'un écran (ios-listes-groupees-natives), sans réseau — des crochets de
-///   recette, pas des fonctionnalités.
-/// - `-pipelines.board marques` : l'écran Pipelines rend l'ardoise dérivée de
-///   `HomeParity` (celle de `-pipelines.recipe`), qui porte une carte au pilote
-///   arrêté, pour voir la phrase de ses marques sans appairage.
+/// - `-memoire.recipe <…>` : l'état du graphe de la mémoire (`IOSMemoryGraphRecipe`).
 ///
-/// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
-/// fourni : les captures de `scripts/recette/ios-shots.sh` gardent ainsi leur écran,
-/// sans feuille par-dessus.
-///
-/// L'App POSSÈDE le client distant unique (`ConsoleClientModel.live()`, créé une
-/// fois par processus dans `init()`, y compris lors d'un lancement à froid par
-/// Siri) : elle l'enregistre pour les App Intents (`IOSSharedClient`) et le passe
-/// à `RootView`, qui le démarre. Vues et intents partagent ainsi la même instance
-/// et la même lecture du trousseau (S-1 de client-ios-possede-par-la-vue).
-///
-/// Aucun argument reconnu ⇒ l'Accueil et l'état `ready`.
+/// L'App POSSÈDE les deux accès au serveur du VPS, posés par le MÊME code
+/// d'appairage (feuille Serveur) : ses pipelines (`HarnessModel`), qui servent les
+/// cinq sections de pilotage, et sa mémoire (`MemoryAccess`). Aucun Mac : l'app
+/// fonctionne seule.
 @main
 struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
-    private let recipe: IOSHomeRecipe?
-    private let recipeRow: Int?
-    private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
-    private let pipelinesRecipe: IOSPipelinesRecipe?
-    private let cardRecipe: PipelinesCardRecipe?
-    private let statsRecipe: IOSStatsRecipe?
-    private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
-    private let projectRecipe: IOSProjectRecipe?
-    private let sessionOmpRecipe: IOSSessionOmpRecipe?
-    private let auditRecipe: IOSAuditRecipe?
-    private let requestedSection: Bool
-    /// Le client distant unique, jamais en `@StateObject` : son autoclosure
-    /// paresseuse pourrait construire une autre instance que celle enregistrée.
-    private let client: ConsoleClientModel
+    @StateObject private var memory: MemoryAccess
+    @StateObject private var server: HarnessModel
+    @StateObject private var drafts = HarnessDrafts()
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
-        recipe = IOSHomeRecipe.resolve(arguments)
-        recipeRow = IOSHomeRecipe.row(arguments)
-        sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
-        pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
-        cardRecipe = PipelinesCardRecipe.resolve(arguments)
-        statsRecipe = IOSStatsRecipe.resolve(arguments)
-        pipelinesBoardRecipe = IOSPipelinesBoardRecipe.resolve(arguments)
-        projectRecipe = IOSProjectRecipe.resolve(arguments)
-        sessionOmpRecipe = IOSSessionOmpRecipe.resolve(arguments)
-        auditRecipe = IOSAuditRecipe.resolve(arguments)
-        requestedSection = arguments.contains("-section")
-        client = IOSSharedClient.install(ConsoleClientModel.live(), in: .shared)
+        let memory = MemoryAccess.live()
+        _memory = StateObject(wrappedValue: memory)
+        // Le code d'appairage accepté porte aussi la mémoire du serveur. L'instance
+        // est celle que résolvent les App Intents (`IOSSharedServer`).
+        let server = IOSSharedServer.install(HarnessModel.live(onPaired: { pairing in
+            Task { @MainActor in
+                await memory.configure(address: pairing.memoryAddress, token: pairing.memoryToken)
+            }
+        }), in: .shared)
+        _server = StateObject(wrappedValue: server)
     }
 
     var body: some Scene {
         WindowGroup {
             RootView(
-                client: client,
+                memory: memory,
+                server: server,
+                drafts: drafts,
                 selection: initialSection,
                 state: initialState,
-                recipe: recipe,
-                recipeRow: recipeRow,
-                sessionRecipe: sessionRecipe,
-                memoryRecipe: memoryRecipe,
-                pipelinesRecipe: pipelinesRecipe,
-                cardRecipe: cardRecipe,
-                statsRecipe: statsRecipe,
-                pipelinesBoardRecipe: pipelinesBoardRecipe,
-                projectRecipe: projectRecipe,
-                sessionOmpRecipe: sessionOmpRecipe,
-                auditRecipe: auditRecipe,
-                autoPresentConnection: !requestedSection
+                memoryRecipe: memoryRecipe
             )
         }
         .commands { IOSKeyboardCommands() }

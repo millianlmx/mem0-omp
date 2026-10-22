@@ -1,0 +1,32 @@
+# L'oracle : mem0-rs, la mémoire du PROJET, sur le VPS. Embeddings et extraction
+# servis par le homelab via Tailscale (OMLX_BASE_URL dans /etc/omp-harness/mem0.env).
+# Installé par deploy/install.sh en /etc/systemd/system/omp-harness-mem0.service.
+[Unit]
+Description=OMP harness — oracle mem0-rs (mémoire du projet)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Before=omp-harness.service
+
+[Service]
+Type=simple
+User=omp-mem0
+Group=omp-mem0
+EnvironmentFile=/etc/omp-harness/mem0.env
+ExecStart=/usr/local/bin/mem0-rs --host 127.0.0.1 --port 8321
+Restart=on-failure
+RestartSec=5
+# Hors de omp-harness.slice : la mémoire ne compte pas dans le budget des runs
+# et ne meurt pas d'un OOM de job. Sa base ne vit que dans /var/lib/omp-mem0.
+MemoryMax=512M
+OOMScoreAdjust=-500
+ManagedOOMPreference=omit
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/omp-mem0
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

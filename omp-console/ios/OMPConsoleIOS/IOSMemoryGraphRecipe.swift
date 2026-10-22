@@ -8,7 +8,7 @@
 // (ipad-clavier-et-largeur-de-lecture, S-8) garde, elle, le mode liste SANS fiche et
 // branche le modèle de la liste sur `IOSMemoryRecipeReader`, lecteur de la même fixture.
 // Les recettes de PANNE (ios-redaction-vouvoiement, S-2) branchent la liste ET le graphe
-// sur `IOSMemoryFailureReader` : `injoignable` garde la liste face à un Mac injoignable,
+// sur `IOSMemoryFailureReader` : `injoignable` garde la liste face à un serveur injoignable,
 // `serviceAncien` montre le graphe face à un service mémoire trop ancien.
 //
 // Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSHomeRecipe`, la
@@ -30,7 +30,7 @@ enum IOSMemoryGraphRecipe: Equatable {
     case liste
     /// Le mode liste sur la fixture, lu par `IOSMemoryRecipeReader` (S-8).
     case clavier
-    /// Le mode liste face à un Mac injoignable, lu par `IOSMemoryFailureReader`.
+    /// Le mode liste face à un serveur injoignable, lu par `IOSMemoryFailureReader`.
     case injoignable
     /// Le mode graphe face à un service mémoire trop ancien, même lecteur.
     case serviceAncien

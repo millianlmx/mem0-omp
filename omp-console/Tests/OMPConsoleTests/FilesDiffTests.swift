@@ -110,17 +110,15 @@ func branchCommitDiffIsNotEmpty() async throws {
     #expect(!diff.isEmpty)
     #expect(diff.lines.map(\.text) == lines(of: expected))
 
-    // La base ENREGISTRÉE est bien celle employée : `main-note.txt` n'existe pas
-    // dans le commit de base (il est arrivé après), donc il apparaît en AJOUT — le
-    // diff contre la base de fusion (`main`, plus récente) serait vide.
+    // La base est la base de fusion avec `main` : ce que `main` a reçu avant la
+    // création de la branche (`main-note.txt`) n'est pas un écart de la feature.
     let mainNote = FilesDiff.parse(
         try await scene.git.run(
             GitCommand.diffTracked(base: scene.base, path: "main-note.txt"),
             in: scene.worktree
         ).stdout
     )
-    #expect(!mainNote.isEmpty)
-    #expect(mainNote.hunks.flatMap { $0 }.allSatisfy { $0.kind != .removal })
+    #expect(mainNote.isEmpty)
 }
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-5 : le diff d'un fichier non suivi est son contenu en ajout, sans passer par l'index")
@@ -169,14 +167,13 @@ func primaryDiffUsesHead() async throws {
 }
 
 /// Le scénario des AC-3 à AC-6, monté une fois pour toutes : un principal qui a
-/// avancé après le commit initial, un worktree de feature dont la base ENREGISTRÉE
-/// est le commit initial (donc plus ancienne que la base de fusion), un fichier
-/// modifié par un commit de branche, un fichier modifié sans commit, un fichier non
-/// suivi.
+/// avancé avant la création de la feature, un worktree de feature (base : la base
+/// de fusion avec `main`), un fichier modifié par un commit de branche, un fichier
+/// modifié sans commit, un fichier non suivi.
 private struct DiffScene {
     let fixture: FilesFixture
     let worktree: String
-    /// Le commit initial : la base enregistrée de la feature.
+    /// La base de fusion de la feature avec `main`.
     let base: String
     let primary: FilesTarget
     let target: FilesTarget
@@ -185,11 +182,10 @@ private struct DiffScene {
 
 private func makeDiffScene() async throws -> DiffScene {
     let fixture = try FilesFixture()
-    let initial = try fixture.head()
-
     try fixture.write("main-note.txt", "main\n")
     try fixture.git(["add", "."])
     try fixture.git(["commit", "-qm", "main avance"])
+    let mergeBase = try fixture.head()
 
     let worktree = try fixture.makeWorktree(slug: "visionneuse")
     try fixture.write("folder/inner.txt", "f2\n", in: worktree)
@@ -200,18 +196,12 @@ private func makeDiffScene() async throws -> DiffScene {
     try fixture.write("folder/new.txt", "x\ny\n", in: worktree)    // non suivi
     try fixture.write("tracked.txt", "a\nz\n")                     // principal, non commité
 
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("visionneuse", "feat/visionneuse", worktree, initial)]
-    )
     let git = filesGit()
-    let targets = try await TargetCatalog.list(git: git, store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: git, projectRoot: fixture.root)
     guard let primary = targets.first(where: \.isPrimary), let target = targets.first(where: { !$0.isPrimary }) else {
         throw FilesFixtureFailure.git(command: "catalogue", code: 1, stderr: "cible attendue absente : \(targets.map(\.label))")
     }
-    return DiffScene(fixture: fixture, worktree: worktree, base: initial, primary: primary, target: target, git: git)
+    return DiffScene(fixture: fixture, worktree: worktree, base: mergeBase, primary: primary, target: target, git: git)
 }
 
 /// La sortie de git découpée en lignes, sans le fragment vide final.

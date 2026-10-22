@@ -342,7 +342,6 @@ PHONE_TABS = ("Accueil", "Pipelines", "Sessions", "Audit", PLUS)
 TITLES = set(TITLE.values()) | {PLUS}
 ROOT_TITLE = "OMP Console"
 TAB_BAR = "Barre d’onglets"
-CONNECT_OPEN, CONNECT_SHEET, CONNECT_CLOSE = "connection.open", "connection.sheet", "connection.close"
 TOGGLE_IN_SIDEBAR, TOGGLE_IN_BAR = "ToggleSidebar", "ToggleSideBar"
 ROW = "ios.sessions.row."
 # Codes HID des chiffres 1…8 (`idb ui key`).
@@ -596,57 +595,12 @@ def selected_tab(tabs):
     return next((first_word(label(t)) for t in tabs if "Selected" in traits(t)), None)
 
 
-def connection_buttons(udid, elements, rows):
-    return {frame_key(e): e for e in bar_elements(udid, elements, rows) if ident(e) == CONNECT_OPEN}
-
-
-def connection_count(device, udid, elements, rows, where):
-    found = connection_buttons(udid, elements, rows)
-    places = ", ".join(f"({x},{y})" for x, y, _, _ in sorted(found))
-    return ("AC-7", len(found) == 1, device,
-            f"{where} : {len(found)} bouton {CONNECT_OPEN} dans la barre" + (f" {places}" if found else ""))
-
-
-def connection_sheet(device, udid, elements, rows, where):
-    """Toucher l'antenne ouvre la feuille Connexion ; « Fermer » la referme.
-    Sur iPad en portrait, la barre latérale RECOUVRE le détail (constat S-3 (1)) :
-    un premier toucher hors d'elle la referme sans atteindre le bouton ; le
-    bouton est alors relu et touché une seconde fois, et le détail le dit."""
-    note_text = ""
-    for attempt in range(2):
-        found = connection_buttons(udid, elements, rows)
-        if not found:
-            return [("AC-7", False, device, f"{where} : {CONNECT_OPEN} introuvable pour le toucher")]
-        tap(udid, *center(next(iter(found.values()))), pause=2.5)
-        elements = describe_once(udid) or []
-        if CONNECT_SHEET in ids(elements):
-            break
-        if attempt == 0 and device == "tab":
-            note_text = " (1er toucher : la barre latérale superposée se referme)"
-            elements = stable(udid, lambda els: title(els) is not None, f"{where} après fermeture de la barre latérale")
-    else:
-        return [("AC-7", False, device, f"{where} : le toucher de {CONNECT_OPEN} n'ouvre pas {CONNECT_SHEET}")]
-    close = one(elements, CONNECT_CLOSE)
-    if close is None:
-        return [("AC-7", False, device, f"{where} : {CONNECT_SHEET} ouverte sans {CONNECT_CLOSE}")]
-    tap(udid, *center(close), pause=2.5)
-    after = stable(udid, lambda els: CONNECT_SHEET not in ids(els), f"{where} : fermeture de la feuille")
-    return [("AC-7", CONNECT_SHEET not in ids(after), device,
-             f"{where} : toucher {CONNECT_OPEN} ouvre {CONNECT_SHEET}{note_text}, {CONNECT_CLOSE} la referme")]
-
-
-# ── iPhone, mode après ───────────────────────────────────────────────────────
-
-PHONE_BAR = (84,)
-
-
 def expected_phone_tab(raw):
     return PLUS if raw in PLUS_SECTIONS else TITLE[raw]
 
 
 def phone_sections(udid):
     results = []
-    plus_list_seen = False
     for raw, name in SECTIONS:
         launch(udid, f"tel-{raw}", "-section", raw, "-home.welcomeSeen", "YES")
         elements = stable(udid, lambda els: title(els) == name, f"iPhone {raw}")
@@ -660,8 +614,6 @@ def phone_sections(udid):
             results.append(("AC-1", ok, "tel",
                             f"{raw} : onglets {' · '.join(names) or 'aucun'}, sélectionné {selected or 'aucun'}, "
                             + ("aucun bouton retour" if back is None else f"bouton retour « {label(back)} »")))
-        results.append(connection_count("tel", udid, elements, PHONE_BAR,
-                                        f"{raw} ({'poussé dans Plus' if raw in PLUS_SECTIONS else 'racine d’onglet'})"))
         wanted = expected_phone_tab(raw)
         if raw in PLUS_SECTIONS:
             if back is None:
@@ -672,9 +624,6 @@ def phone_sections(udid):
             ok = selected == wanted and title(listed) == PLUS
             results.append(("AC-9", ok, "tel",
                             f"{raw} : onglet {selected or 'aucun'}, titre « {name} » poussé, retour « {label(back)} » → « {title(listed)} »"))
-            if not plus_list_seen:
-                plus_list_seen = True
-                results.append(connection_count("tel", udid, listed, PHONE_BAR, "liste « Plus »"))
         else:
             results.append(("AC-9", selected == wanted and back is None, "tel",
                             f"{raw} : onglet {selected or 'aucun'}, titre « {title(elements)} »"))
@@ -700,7 +649,7 @@ def phone_switch(udid):
 
 
 def phone_plus(udid):
-    """AC-3 (+ AC-7, toucher sur un écran poussé) : la liste « Plus » et Statistiques."""
+    """AC-3 : la liste « Plus » et Statistiques."""
     results = []
     launch(udid, "tel-ac3", "-section", "home", "-home.welcomeSeen", "YES")
     elements = stable(udid, lambda els: title(els) == "Accueil", "iPhone Accueil (AC-3)")
@@ -728,8 +677,6 @@ def phone_plus(udid):
     results.append(("AC-3", back is not None, "tel",
                     "Statistiques touché → titre « Statistiques », "
                     + (f"bouton retour « {label(back)} »" if back is not None else "aucun bouton retour")))
-    results += connection_sheet("tel", udid, elements, PHONE_BAR, "Statistiques poussé")
-    elements = stable(udid, lambda els: title(els) == "Statistiques", "iPhone Statistiques après la feuille")
     back = back_button(udid, elements)
     if back is None:
         results.append(("AC-3", False, "tel", "bouton retour de Statistiques introuvable"))
@@ -862,14 +809,7 @@ def pad_sections(udid):
         chosen = [ident(e) for e in entries if "Selected" in traits(e)]
         results.append(("AC-10", chosen == [f"ios.tab.{raw}"] and title(elements) == name, "tab",
                         f"-section {raw} : entrée sélectionnée {', '.join(chosen) or 'aucune'}, titre « {title(elements)} »"))
-        results.append(connection_count("tab", udid, elements, PAD_BAR, raw))
     return results
-
-
-def pad_connection(udid):
-    launch(udid, "tab-ac7", "-section", "memory", "-home.welcomeSeen", "YES")
-    elements = stable(udid, lambda els: title(els) == "Mémoire", "iPad Mémoire (AC-7)")
-    return connection_sheet("tab", udid, elements, PAD_BAR, "memory")
 
 
 def pad_keyboard(udid):
@@ -923,7 +863,7 @@ def pad_toggle(udid):
     return results
 
 
-PAD_AFTER = (pad_sections, lambda u: badge_checks("tab", u), pad_connection, pad_keyboard, pad_toggle)
+PAD_AFTER = (pad_sections, lambda u: badge_checks("tab", u), pad_keyboard, pad_toggle)
 
 
 # ── Mode avant : l'ancienne coque ────────────────────────────────────────────

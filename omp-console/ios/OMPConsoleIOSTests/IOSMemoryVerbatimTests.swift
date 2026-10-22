@@ -1,6 +1,6 @@
 // Les preuves Swift de ios-souvenir-markdown-altere : le texte d'un souvenir
 // s'affiche TEL QU'IL EST STOCKÉ sur les trois surfaces iOS (liste, fiche, fiche du
-// graphe), et les autres contenus gardent leur rendu Markdown.
+// graphe).
 //
 // Le texte affiché est une fonction PURE de la vue (`IOSMemoryDetailView.text`),
 // affichée par `Text(verbatim:)` : le test la confronte sans rendre l'écran.
@@ -15,7 +15,7 @@ import Testing
 @MainActor
 private final class VerbatimGraphReader: IOSMemoryReading {
     let payload: RemoteMemoryGraphPayload
-    var state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
+    var isConfigured = true
 
     init(payload: RemoteMemoryGraphPayload) {
         self.payload = payload
@@ -84,25 +84,5 @@ struct IOSMemoryVerbatimTests {
 
         #expect(model.row("m-brut")?.text == stored)
         #expect(model.row("m-brut").map(IOSMemoryDetailView.text) == stored)
-    }
-
-    @Test("ios-souvenir-markdown-altere/AC-4 : un contenu non-souvenir garde son gras Markdown")
-    func otherMarkdownContentStillRendersBold() {
-        var sources: [(String, [MarkdownBlock])] = []
-        if case let .blocks(blocks) = IOSProjectModel.documentState(state: "text", content: "**gras**", reason: nil) {
-            sources.append(("document projet", blocks))
-        } else {
-            Issue.record("le document projet n'a pas rendu de blocs")
-        }
-        sources.append(("réponse d'agent", ConversationText.blocks("**gras**")))
-
-        for (origin, blocks) in sources {
-            guard blocks.count == 1, case let .paragraph(p) = blocks[0] else {
-                Issue.record("\(origin) : un seul paragraphe attendu, reçu \(blocks)")
-                continue
-            }
-            #expect(String(p.characters) == "gras", "\(origin)")
-            #expect(p.runs.first?.inlinePresentationIntent?.contains(.stronglyEmphasized) == true, "\(origin)")
-        }
     }
 }

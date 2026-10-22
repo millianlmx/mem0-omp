@@ -1,0 +1,25 @@
+# Le service du harness en conteneur. Il ne lance rien lui-même : chaque runner et
+# chaque job de tests est un conteneur FRÈRE, par le socket du moteur monté dans
+# /var/run/docker.sock (Docker, ou l'API compatible de podman). Construit depuis la
+# racine du dépôt : voir compose.yaml.
+ARG NODE_IMAGE=docker.io/library/node:22-bookworm-slim
+ARG DOCKER_CLI_IMAGE=docker.io/library/docker:29-cli
+FROM ${DOCKER_CLI_IMAGE} AS cli
+
+FROM ${NODE_IMAGE}
+# Les paquets absents de l'image de base, et eux seuls (`gh` sert `"merge": "gh"`).
+ARG PACKAGES="ca-certificates git openssh-client gh"
+RUN missing="$(for p in $PACKAGES; do dpkg -s "$p" >/dev/null 2>&1 || echo "$p"; done)"; \
+    if [ -n "$missing" ]; then apt-get update && apt-get install -y --no-install-recommends $missing && rm -rf /var/lib/apt/lists/*; fi
+# Le seul client du moteur : la CLI Docker, qui parle aussi à l'API de podman.
+COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker
+COPY omp-harness /opt/omp-harness/omp-harness
+COPY omp-mem0-memory /opt/omp-harness/omp-mem0-memory
+COPY omp-harness/deploy/container/omp-harness-check /usr/local/bin/omp-harness-check
+COPY omp-harness/deploy/container/harness-entrypoint /usr/local/bin/omp-harness-entrypoint
+# L'entrée déclare l'uid du lancement (ssh en a besoin) : /etc/passwd lui est ouvert.
+RUN chmod o+w /etc/passwd
+ENV DOCKER_HOST=unix:///var/run/docker.sock
+EXPOSE 8790
+ENTRYPOINT ["/usr/local/bin/omp-harness-entrypoint"]
+CMD ["node", "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "/opt/omp-harness/omp-harness/main.ts", "--config", "/etc/omp-harness/config.json"]

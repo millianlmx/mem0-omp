@@ -56,7 +56,7 @@ function swiftTestSources(): string[] {
     .map((e) => fs.readFileSync(path.join(e.parentPath, e.name), "utf8"));
 }
 
-test("known-flaky-tests-registry/AC-8 : le registre liste exactement les cinq tests instables, au format imprimé, avec leur occurrence et sans condition", () => {
+test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests instables connus (aucun depuis le retrait de l'API entre les apps), au format imprimé, avec leur occurrence et sans condition", () => {
   const registre = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/tests-instables-connus.json"), "utf8"));
 
   assert.deepEqual(Object.keys(registre), ["tests"]);
@@ -70,13 +70,9 @@ test("known-flaky-tests-registry/AC-8 : le registre liste exactement les cinq te
   }
 
   const identifiants: string[] = registre.tests.map((e: { identifiant: string }) => e.identifiant);
-  assert.deepEqual(identifiants, [
-    "client-rpc-omp/AC-2",
-    "bug-embedded-podman-machine/AC-5",
-    "duplicateHeaderIsBadRequest()",
-    "trailingSpaceIsAcceptedAfterTrim()",
-    "api-distante-du-console/AC-1",
-  ]);
+  // Les trois instables connus étaient des tests de l'API entre le Mac et l'iPhone,
+  // retirée : le registre est vide, et les relances s'éprouvent sur `REGISTRE_FIXTURE`.
+  assert.deepEqual(identifiants, []);
   assert.equal(new Set(identifiants).size, identifiants.length, "identifiants uniques");
 
   const sources = swiftTestSources();
@@ -99,8 +95,8 @@ const ESC = "\x1b";
 const ROUGE = `${ESC}[91m✘${ESC}[0m`;
 const VERT = `${ESC}[92m✔${ESC}[0m`;
 
-const CLIENT = '"client-rpc-omp/AC-2 : le modèle garde le lancement et le prompt"';
-const PODMAN = "\"bug-embedded-podman-machine/AC-5 : `start()` sonde à l'intervalle donné, `stop()` l'arrête\"";
+const CLIENT = "\"api-distante-du-console/AC-1 : l'API est annoncée par Bonjour et ne répond qu'à une source locale\"";
+const DOUBLON = "duplicateHeaderIsBadRequest()";
 const AUTRE = '"autre-feature/AC-1 : x"';
 
 const echoue = (nom: string) => `✘ Test ${nom} failed after 0.307 seconds with 1 issue.`;
@@ -136,6 +132,15 @@ const RELANCE_ROUGE = "✗ relance rouge des tests instables connus : verdict bl
 const HORS_REGISTRE = "✗ au moins un test en échec n'est pas au registre des tests instables : aucune relance";
 
 const montage = montageAppIntents();
+
+/** Un registre de recette, posé dans la copie jetable : les relances s'y éprouvent. */
+const REGISTRE_FIXTURE =
+  '{\n  "tests": [\n    {\n      "identifiant": "duplicateHeaderIsBadRequest()",\n      "filtre": "RemoteVersionTests/duplicateHeaderIsBadRequest\\\\(\\\\)",\n      "occurrence": "run 38475731796, tentative 1 (PR feat/siri-iphone-pilotage-pipelines, 2026-10-13)"\n    },\n    {\n      "identifiant": "trailingSpaceIsAcceptedAfterTrim()",\n      "filtre": "RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\\\(\\\\)",\n      "occurrence": "run 39239142987, tentative 2 (PR feat/ci-without-cache, 2026-10-19)"\n    },\n    {\n      "identifiant": "api-distante-du-console/AC-1",\n      "filtre": "\\\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\\\(\\\\)",\n      "occurrence": "run 38563190542, tentative 1 (PR feat/arbitre-corpus-et-deduction, 2026-10-14)"\n    }\n  ]\n}';
+fs.writeFileSync(path.join(montage.copie, "scripts", "tests-instables-connus.json"), `${REGISTRE_FIXTURE}\n`);
+
+/** Le mode `--instables` de la copie jetable, qui lit `REGISTRE_FIXTURE`. */
+const verdictFixture = (...args: string[]) =>
+  spawnSync("bash", [path.join(montage.copie, "scripts", "ci-verdict.sh"), ...args], { encoding: "utf8" });
 
 type Essai = { sortie: string; code: number };
 type Lancement = AssemblageAppIntents & { appels: string[] };
@@ -176,35 +181,41 @@ test("known-flaky-tests-registry/AC-1 : un seul test rouge listé au registre, r
     { sortie: relanceVerte(CLIENT), code: 0 },
   );
   assert.equal(r.status, 0, trace(r));
-  assert.ok(r.sortie.includes("  ✓ client-rpc-omp/AC-2 : instable connu (run local"), trace(r));
-  assert.ok(r.sortie.includes("↻ relance unique des tests instables connus : client-rpc-omp/AC-2\n"), trace(r));
-  assert.ok(r.sortie.includes("  ✓ relance verte des tests instables connus : client-rpc-omp/AC-2\n"), trace(r));
+  assert.ok(r.sortie.includes("  ✓ api-distante-du-console/AC-1 : instable connu (run 38563190542"), trace(r));
+  assert.ok(
+    r.sortie.includes("↻ relance unique des tests instables connus : api-distante-du-console/AC-1\n"),
+    trace(r),
+  );
+  assert.ok(
+    r.sortie.includes("  ✓ relance verte des tests instables connus : api-distante-du-console/AC-1\n"),
+    trace(r),
+  );
   assert.ok(r.sortie.includes("  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"), trace(r));
   assert.ok(!r.sortie.includes(L187), trace(r));
   assert.equal(r.appels.length, 2, trace(r));
   assert.match(r.appels[0], /^swift test -c release\b/);
   assert.ok(!r.appels[0].includes("--filter"), trace(r));
-  assert.equal(r.appels[1], `${r.appels[0]} --filter \\.modelGatesLaunchAndPrompt\\(\\)`, trace(r));
+  assert.equal(r.appels[1], `${r.appels[0]} --filter \\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)`, trace(r));
 
   // Le mode consulté par la branche : code 0, le filtre du test sur stdout.
-  const mode = verdict("--instables", CLIENT);
+  const mode = verdictFixture("--instables", CLIENT);
   assert.equal(mode.status, 0, output(mode));
-  assert.equal(mode.stdout, "\\.modelGatesLaunchAndPrompt\\(\\)\n");
+  assert.equal(mode.stdout, "\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)\n");
 
   // Deux tests listés, symbole SF Symbols suivi de deux espaces : un seul appel
   // de relance, un motif par alternation, chaque test nommé.
   const deux = lancerSwiftApp(
-    { sortie: essaiRouge(PODMAN, "trailingSpaceIsAcceptedAfterTrim()").replaceAll("✘", "\u{100884} "), code: 1 },
-    { sortie: relanceVerte(PODMAN, "trailingSpaceIsAcceptedAfterTrim()"), code: 0 },
+    { sortie: essaiRouge(DOUBLON, "trailingSpaceIsAcceptedAfterTrim()").replaceAll("✘", "\u{100884} "), code: 1 },
+    { sortie: relanceVerte(DOUBLON, "trailingSpaceIsAcceptedAfterTrim()"), code: 0 },
   );
   assert.equal(deux.status, 0, trace(deux));
-  const ids = "bug-embedded-podman-machine/AC-5, trailingSpaceIsAcceptedAfterTrim()";
+  const ids = "duplicateHeaderIsBadRequest(), trailingSpaceIsAcceptedAfterTrim()";
   assert.ok(deux.sortie.includes(`↻ relance unique des tests instables connus : ${ids}\n`), trace(deux));
   assert.ok(deux.sortie.includes(`  ✓ relance verte des tests instables connus : ${ids}\n`), trace(deux));
   assert.equal(deux.appels.length, 2, trace(deux));
   assert.ok(
     deux.appels[1].endsWith(
-      " --filter (?:\\.startPollsUntilStopped\\(\\))|(?:RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\))",
+      " --filter (?:RemoteVersionTests/duplicateHeaderIsBadRequest\\(\\))|(?:RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\))",
     ),
     trace(deux),
   );
@@ -293,7 +304,7 @@ test("known-flaky-tests-registry/AC-6 : un échec non attribuable à un test nom
       code: 1,
     },
     "(b) plantage": {
-      sortie: `◇ Test run started.\n◇ Test ${PODMAN} started.\nerror: Exited with unexpected signal code 11`,
+      sortie: `◇ Test run started.\n◇ Test ${DOUBLON} started.\nerror: Exited with unexpected signal code 11`,
       code: 1,
     },
     "(c) illisible": { sortie: "n'importe quoi", code: 1 },

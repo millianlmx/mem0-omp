@@ -240,7 +240,7 @@ enum SetupPresentation {
 
 struct SetupView: View {
     @ObservedObject var setup: SetupModel
-    /// La présence d'OMP lue par `HomeModel` : `.missing` ⇒ mode bloquant.
+    /// La présence d’OMP lue par `OmpPresenceModel` : `.missing` ⇒ mode bloquant.
     let omp: OmpStatus
     /// « Quitter » : ferme la feuille par programme puis termine l'app (Doc-2).
     let quit: @MainActor () -> Void

@@ -128,17 +128,6 @@ struct AppPaths: Equatable, Sendable {
         supportRoot.appendingPathComponent(MemoryLinkStore.fileName)
     }
 
-    /// `<racine>/remote` : l'état du service d'API distante (le registre des
-    /// appareils appairés ; les jetons, eux, vivent au trousseau).
-    var remoteDir: URL {
-        supportRoot.appendingPathComponent("remote", isDirectory: true)
-    }
-
-    /// `<racine>/remote/devices.json` : les appareils appairés, écrit en 0600.
-    var devicesFile: URL {
-        remoteDir.appendingPathComponent("devices.json")
-    }
-
     /// `<stackRoot>/podman-migration` (0700) : les artefacts de la migration
     /// unique de la pile podman vers mem0-rs (S-4 d'omp-console-sans-podman).
     var podmanMigrationRoot: URL {

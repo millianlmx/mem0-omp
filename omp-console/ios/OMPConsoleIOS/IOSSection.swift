@@ -14,23 +14,22 @@ enum IOSSection {
         group.sections.filter { all.contains($0) }
     }
 
-    /// Les huit sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
-    /// groupe, comme la `List` de `RootView`. Les raccourcis ⌘1…⌘8 suivent cet
+    /// Les sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
+    /// groupe, comme la barre de `RootView`. Les raccourcis ⌘1…⌘6 suivent cet
     /// ordre ; si la barre latérale change, ils la suivent.
     static var sidebarOrder: [ConsoleSection] {
         ConsoleSectionGroup.allCases.flatMap(sections(of:))
     }
 
-    /// Le symbole SF d'une section sur iOS : celui de `ConsoleSection`, sauf Sessions
-    /// (`IOSSessionText.sectionSymbol`), pour qu'elle ne ressemble plus à Session OMP.
+    /// Le symbole SF d'une section sur iOS : celui de `ConsoleSection`.
     static func systemImage(of section: ConsoleSection) -> String {
-        section == .sessions ? IOSSessionText.sectionSymbol : section.systemImage
+        section.systemImage
     }
 
     /// La section désignée par l'argument de lancement `-section <rawValue>`.
     ///
     /// La DERNIÈRE paire reconnue gagne. Rien à lire, un drapeau sans valeur ou une
-    /// valeur qui ne désigne pas l'une des huit sections rendent l'Accueil : jamais
+    /// valeur qui ne désigne pas l'une des sections rendent l'Accueil : jamais
     /// d'alerte, jamais de persistance (l'app n'écrit rien).
     static func resolve(_ arguments: [String]) -> ConsoleSection {
         var resolved: ConsoleSection = .home

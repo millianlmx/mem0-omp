@@ -1,0 +1,6 @@
+# Les images du harness (omp-harness/deploy/container) ne prennent que leur code :
+# rien d'autre du dépôt n'entre dans le contexte de build.
+*
+!omp-harness
+!omp-mem0-memory
+omp-harness/deploy/nixos

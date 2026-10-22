@@ -16,13 +16,7 @@ func catalogListsPrimaryAndFeatureWorktree() async throws {
     try fixture.write("only-worktree.txt", "w\n", in: worktree)
     try fixture.write("only-main.txt", "m\n")
 
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("alpha", "feat/alpha", worktree, initial)]
-    )
-    let targets = try await TargetCatalog.list(git: filesGit(), store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: filesGit(), projectRoot: fixture.root)
 
     #expect(targets.count == 2)
     #expect(targets[0].isPrimary)
@@ -45,13 +39,7 @@ func treeBelongsToTheChosenTarget() async throws {
     try fixture.write("only-worktree.txt", "w\n", in: worktree)
     try fixture.write("only-main.txt", "m\n")
 
-    let store = StoreFixture()
-    let reader = filesStore(
-        store,
-        principal: fixture.root,
-        features: [("beta", "feat/beta", worktree, initial)]
-    )
-    let targets = try await TargetCatalog.list(git: filesGit(), store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: filesGit(), projectRoot: fixture.root)
     let git = filesGit()
 
     let fromPrimary = try await tree(of: targets[0], git: git)
@@ -76,9 +64,7 @@ func catalogSkipsNonFeatureAndDeadWorktrees() async throws {
     // `worktree list` ne purge RIEN : le répertoire supprimé reste listé (`prunable`).
     try FileManager.default.removeItem(atPath: dead)
 
-    let store = StoreFixture()
-    let reader = filesStore(store, principal: fixture.root, features: [])
-    let targets = try await TargetCatalog.list(git: filesGit(), store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: filesGit(), projectRoot: fixture.root)
 
     #expect(targets.map(\.label).contains("hors-feature") == false)
     #expect(targets.count == 1)
@@ -96,9 +82,7 @@ func catalogReportsUnavailableBase() async throws {
     // porter un sha de base.
     try fixture.git(["checkout", "-q", "--detach", "HEAD"])
 
-    let store = StoreFixture()
-    let reader = filesStore(store, principal: fixture.root, features: [])
-    let targets = try await TargetCatalog.list(git: filesGit(), store: reader, projectRoot: fixture.root)
+    let targets = try await TargetCatalog.list(git: filesGit(), projectRoot: fixture.root)
 
     guard let feature = targets.first(where: { $0.path == worktree }) else {
         Issue.record("le worktree doit rester une cible : \(targets.map(\.label))")
@@ -123,10 +107,8 @@ func catalogRejectsNonRepository() async throws {
     try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: plain) }
 
-    let store = StoreFixture()
-    let reader = filesStore(store, principal: plain, features: [])
     await #expect(throws: FilesError.notARepository(path: plain)) {
-        try await TargetCatalog.list(git: filesGit(), store: reader, projectRoot: plain)
+        try await TargetCatalog.list(git: filesGit(), projectRoot: plain)
     }
 }
 

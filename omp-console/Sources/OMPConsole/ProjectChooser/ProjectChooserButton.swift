@@ -72,7 +72,7 @@ struct ProjectChooserButton: View {
                         case .separator:
                             Divider()
                         case .chooseFolder:
-                            Button(SessionConsoleText.chooseFolder) { chooseFolder() }
+                            Button(ProjectChooserText.chooseFolder) { chooseFolder() }
                         }
                     }
                 }

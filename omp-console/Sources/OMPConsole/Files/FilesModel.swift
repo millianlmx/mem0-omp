@@ -18,21 +18,11 @@ import Foundation
 
 @MainActor
 final class FilesModel: ObservableObject {
-    /// Ce que la colonne de droite affiche. Activer un accès dédié remplace le
-    /// document ET désélectionne la ligne d'arbre : l'état n'est plus un fichier.
+    /// Ce que la colonne de droite affiche.
     enum Pane: Equatable {
         case none
         case file(FilesEntry)
-        case contract
-        case projectDocument
     }
-
-    /// Les deux documents de pilotage, atteints HORS arbre : le contrat est ignoré
-    /// par git, il ne peut donc pas figurer dans l'arbre (S-6).
-    /// `nonisolated` : ce sont des constantes, lisibles depuis les textes comme
-    /// depuis les tests, sans passer par le fil principal.
-    nonisolated static let contractRelativePath = ContractText.relativePath
-    nonisolated static let projectDocumentRelativePath = "PROJECT.md"
 
     /// L'anti-rebond de S-7 : un lot d'événements ne déclenche qu'un rechargement
     /// par 300 ms d'accalmie, quelle que soit la rafale (checkout, build).
@@ -65,7 +55,6 @@ final class FilesModel: ObservableObject {
 
     private let git: GitCLI?
     private let gitFailure: ReadableFailure?
-    private let store: StoreReader
     private let defaults: UserDefaults
     private let fileManager: FileManager
 
@@ -87,13 +76,11 @@ final class FilesModel: ObservableObject {
     init(
         projectRoot: URL? = ProjectRoot.resolve(defaults: .standard, fileManager: .default),
         git: GitCLI? = nil,
-        store: StoreReader = StoreReader(),
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.projectRoot = projectRoot
-        self.store = store
         self.defaults = defaults
         self.fileManager = fileManager
         if let git {
@@ -143,7 +130,7 @@ final class FilesModel: ObservableObject {
         defer { if generation == self.generation { isLoading = false } }
 
         do {
-            let listed = try await TargetCatalog.list(git: git, store: store, projectRoot: projectRoot.path)
+            let listed = try await TargetCatalog.list(git: git, projectRoot: projectRoot.path)
             guard generation == self.generation else { return }
             targets = listed
             // Une cible dont le répertoire a disparu sort du catalogue (S-1 : jamais
@@ -253,24 +240,6 @@ final class FilesModel: ObservableObject {
                 publish(diff: nil)
             }
             publish(content: FilesReader.read(path: joinPath(target.path, entry.path), fileManager: fileManager))
-
-        case .contract:
-            diffBase = nil
-            diffFailure = nil
-            publish(diff: nil)
-            publish(content: FilesReader.read(
-                path: joinPath(target.path, Self.contractRelativePath),
-                fileManager: fileManager
-            ))
-
-        case .projectDocument:
-            diffBase = nil
-            diffFailure = nil
-            publish(diff: nil)
-            publish(content: FilesReader.read(
-                path: joinPath(target.path, Self.projectDocumentRelativePath),
-                fileManager: fileManager
-            ))
         }
     }
 
@@ -298,23 +267,6 @@ final class FilesModel: ObservableObject {
     func select(path: String) {
         guard let entry = tree?.entries.first(where: { $0.path == path }) else { return }
         select(file: entry)
-    }
-
-    /// Active l'accès dédié au contrat de la cible active (S-6).
-    func openContract() {
-        openDedicated(.contract)
-    }
-
-    /// Active l'accès dédié à `PROJECT.md` de la cible active (S-6).
-    func openProjectDocument() {
-        openDedicated(.projectDocument)
-    }
-
-    private func openDedicated(_ pane: Pane) {
-        self.pane = pane
-        highlight = nil
-        generation += 1
-        Task { [weak self] in await self?.reloadCurrentDocument() }
     }
 
     /// Replie ou déplie un répertoire. Le `DisclosureGroup` écrit la NOUVELLE valeur
@@ -461,8 +413,6 @@ extension FilesModel.Pane {
         switch self {
         case .none: nil
         case let .file(entry): entry.path
-        case .contract: FilesModel.contractRelativePath
-        case .projectDocument: FilesModel.projectDocumentRelativePath
         }
     }
 }

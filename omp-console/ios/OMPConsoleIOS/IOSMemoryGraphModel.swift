@@ -1,6 +1,6 @@
 // L'état observable du MODE GRAPHE de la section Mémoire de l'app iOS (S-3, S-4,
-// S-6) : il lit une seule fois le graphe du Mac (`GET /v1/memory/graph`, via le
-// client partagé), place les nœuds hors du fil principal, et porte les gestes de
+// S-6) : il lit une seule fois le graphe de la mémoire du serveur (via
+// `MemoryAccess`), place les nœuds hors du fil principal, et porte les gestes de
 // vue (pincer, glisser, toucher).
 //
 // Aucune écriture : la seule lecture est `client.memoryGraph(scope:)` — jamais une
@@ -19,15 +19,14 @@ import Foundation
 @MainActor
 final class IOSMemoryGraphModel: ObservableObject {
     /// Les états d'écran du graphe, ÉGALABLES pour être confrontés en test sans
-    /// rendre de vue. « client non connecté » est dérivé de `client.state` (aucun
-    /// cas dédié ici : rien n'a été lu).
+    /// rendre de vue. « mémoire non reliée » est dérivé de `client.isConfigured`
+    /// (aucun cas dédié ici : rien n'a été lu).
     enum State: Equatable {
         case idle
         case loading
         case noProject
         case serviceOutdated
-        case macOutdated
-        case failed(IOSMacFailure)
+        case failed(IOSMemoryFailure)
         case empty
         case graph(
             nodes: [MemoryGraphNode],
@@ -59,10 +58,9 @@ final class IOSMemoryGraphModel: ObservableObject {
 
     // MARK: - Décisions PURES
 
-    /// Seul `.connected` autorise une lecture (patron `IOSMemoryModel`).
-    static func gesturesEnabled(_ state: ClientState) -> Bool {
-        if case .connected = state { return true }
-        return false
+    /// Seule une mémoire reliée autorise une lecture (patron `IOSMemoryModel`).
+    static func gesturesEnabled(_ configured: Bool) -> Bool {
+        configured
     }
 
     /// Un graphe reçu (peuplé ou vide) : hors connexion, il reste affiché sous le
@@ -71,22 +69,16 @@ final class IOSMemoryGraphModel: ObservableObject {
     static func hasData(_ state: State) -> Bool {
         switch state {
         case .graph, .empty: return true
-        case .idle, .loading, .noProject, .serviceOutdated, .macOutdated, .failed: return false
+        case .idle, .loading, .noProject, .serviceOutdated, .failed: return false
         }
     }
 
-    /// La classification d'une panne de lecture, par l'entrée Mémoire du traducteur
-    /// partagé (`IOSMacFailure.ofMemoryRead`) : la route graphe n'émet aucun 404
-    /// métier, tout `not_found` dit « app Mac trop ancienne » (D-4), et un délai
-    /// dépassé reste distinct du Mac injoignable. Un 401 (`nil`) laisse l'état
-    /// `.idle`, le parcours de révocation parle seul.
+    /// La classification d'une panne de lecture, par le traducteur
+    /// (`IOSMemoryFailure.of`) : une route graphe absente dit « serveur mémoire trop
+    /// ancien », et un délai dépassé reste distinct d'un serveur injoignable.
     static func failure(from error: Error) -> State {
-        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
-        switch cause {
-        case .serviceOutdated: return .serviceOutdated
-        case .macOutdated: return .macOutdated
-        default: return .failed(cause)
-        }
+        let cause = IOSMemoryFailure.of(error)
+        return cause == .serviceOutdated ? .serviceOutdated : .failed(cause)
     }
 
     // MARK: - Ce que la vue lit
@@ -185,9 +177,10 @@ final class IOSMemoryGraphModel: ObservableObject {
         if state == .loading { state = .idle }
     }
 
-    /// ⌘R « Actualiser » et le retour du Mac : une lecture neuve du graphe.
+    /// ⌘R « Actualiser », le choix d'un projet et la mémoire tout juste reliée :
+    /// une lecture neuve du graphe.
     func refresh() async {
-        guard Self.gesturesEnabled(client.state) else { return }
+        guard Self.gesturesEnabled(client.isConfigured) else { return }
         await perform { await self.load(showsLoading: true) }
     }
 
@@ -304,7 +297,7 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// La lecture : une seule route (`memoryGraph`), et rien hors `.connected`.
     /// `showsLoading` faux garde l'état affiché pendant la lecture (S-2).
     private func load(showsLoading: Bool) async {
-        guard Self.gesturesEnabled(client.state) else { return }
+        guard Self.gesturesEnabled(client.isConfigured) else { return }
         if showsLoading { state = .loading }
         do {
             let payload = try await client.memoryGraph(scope: nil)
@@ -319,7 +312,7 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// Le placement (hors du fil principal) puis la publication de l'état : le
     /// chargement couvre la lecture ET le placement, le canevas n'est jamais vide.
     private func publish(_ payload: RemoteMemoryGraphPayload) async {
-        // La coque n'a résolu aucune portée : « aucun projet », jamais un graphe vide.
+        // Aucune portée lue : « aucun projet », jamais un graphe vide.
         guard payload.scope != nil else {
             resetVanished(nodes: [])
             state = .noProject

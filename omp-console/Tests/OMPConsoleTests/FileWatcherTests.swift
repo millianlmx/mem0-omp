@@ -1,9 +1,9 @@
-// Preuves de S-3 (veille du fichier de session) : AC-7 et AC-13, dont cette veille
-// est le DÉCLENCHEUR.
+// Preuves de la veille d'un fichier (S-3 de visionneuse-de-session, réemployée par
+// la présence des composants) : AC-7 et AC-13.
 //
-// Le consommateur est UNIQUE et de longue durée (patron `StoreWatchTests.swift`) :
-// une `Task` avec `for await`, jamais une suite d'appels à échéance sur le même
-// flux. Les fixtures sont de vrais fichiers sous `NSTemporaryDirectory()`.
+// Le consommateur est UNIQUE et de longue durée : une `Task` avec `for await`,
+// jamais une suite d'appels à échéance sur le même flux. Les fixtures sont de
+// vrais fichiers sous `NSTemporaryDirectory()`.
 
 import Darwin
 import Foundation
@@ -11,11 +11,46 @@ import Testing
 
 @testable import OMPConsole
 
+/// Un fichier veillé dans son propre répertoire temporaire.
+private final class WatchedFile {
+    let directory: URL
+    let file: URL
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("veille-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        file = directory.appendingPathComponent("fichier.txt")
+    }
+
+    var path: String { file.path }
+
+    var size: Int {
+        ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int) ?? 0
+    }
+
+    func write(_ lines: [String]) throws {
+        try Data(lines.map { $0 + "\n" }.joined().utf8).write(to: file)
+    }
+
+    /// Un ajout APPEND-ONLY.
+    func append(_ lines: [String]) throws {
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: handle.seekToEnd())
+        try handle.write(contentsOf: Data(lines.map { $0 + "\n" }.joined().utf8))
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
 @Test("visionneuse-de-session/AC-7 : un ajout d'octets délivre UN réveil")
 func watcherEmitsOncePerAppend() async throws {
-    let fixture = try ViewerSessionFixture()
+    let fixture = try WatchedFile()
     defer { fixture.remove() }
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
 
     let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
@@ -29,7 +64,7 @@ func watcherEmitsOncePerAppend() async throws {
     try? await Task.sleep(for: .milliseconds(300))
     #expect(seen.count == 0)
 
-    try fixture.append([ViewerLines.user("Bonjour")])
+    try fixture.append(["Bonjour"])
     #expect(await awaitTrue(timeout: 2.0) { seen.count >= 1 })
 
     // Un ajout délivre PLUSIEURS événements de vnode (masque mesuré
@@ -38,7 +73,7 @@ func watcherEmitsOncePerAppend() async throws {
     #expect(seen.count == 1)
 
     // Un second ajout : un second réveil, pas un de plus.
-    try fixture.append([ViewerLines.assistant(id: "e2", text: "suite")])
+    try fixture.append(["suite"])
     #expect(await awaitTrue(timeout: 2.0) { seen.count == 2 })
     try? await Task.sleep(for: .milliseconds(400))
     #expect(seen.count == 2)
@@ -49,7 +84,7 @@ func watcherEmitsOncePerAppend() async throws {
 
 @Test("visionneuse-de-session/AC-13 : un fichier créé APRÈS l'armement délivre un réveil")
 func watcherEmitsWhenTheFileAppears() async throws {
-    let fixture = try ViewerSessionFixture()
+    let fixture = try WatchedFile()
     defer { fixture.remove() }
     // Aucune écriture : le fichier n'existe pas et son répertoire, si.
     #expect(!FileManager.default.fileExists(atPath: fixture.path))
@@ -67,7 +102,7 @@ func watcherEmitsWhenTheFileAppears() async throws {
 
     // Le fichier APPARAÎT sous l'ancêtre veillé : c'est le fondement de la reprise
     // automatique (patron `absentStoreEmitsWhenItAppears`).
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
     #expect(await awaitTrue(timeout: 2.0) { seen.count >= 1 })
 
     // Il disparaît : nouveau réveil (la veille remonte à l'ancêtre).
@@ -77,7 +112,7 @@ func watcherEmitsWhenTheFileAppears() async throws {
 
     // Il réapparaît : encore un.
     let afterRemoval = seen.count
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
     #expect(await awaitTrue(timeout: 2.0) { seen.count > afterRemoval })
 }
 
@@ -106,9 +141,9 @@ func watcherFollowsABurstOfIntermediateDirectories() async throws {
 
 @Test("visionneuse-de-session/AC-13 : la permission fait partie de l'instantané")
 func watcherSeesAPermissionChange() async throws {
-    let fixture = try ViewerSessionFixture()
+    let fixture = try WatchedFile()
     defer { fixture.remove() }
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
 
     let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
@@ -131,12 +166,12 @@ func watcherSeesAPermissionChange() async throws {
 
 @Test("visionneuse-de-session/AC-13 : un fichier EXISTANT illisible à l'armement délivre un réveil dès qu'il devient lisible")
 func watcherResumesOnAFileUnreadableAtArming() async throws {
-    let fixture = try ViewerSessionFixture()
+    let fixture = try WatchedFile()
     defer {
         chmod(fixture.path, 0o644)
         fixture.remove()
     }
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
     // Le fichier EXISTE, mais sans droit de lecture : `open(…, O_EVTONLY)` rend
     // EACCES, aucune source vnode ne peut être armée dessus, et la source armée sur
     // son RÉPERTOIRE ne voit RIEN de lui (mesuré : ni `chmod` ni octets ajoutés).
@@ -162,15 +197,15 @@ func watcherResumesOnAFileUnreadableAtArming() async throws {
 
     // Le ré-armement a rendu le vnode : un ajout d'octets délivre lui aussi un réveil.
     let afterChmod = seen.count
-    try fixture.append([ViewerLines.user("Bonjour")])
+    try fixture.append(["Bonjour"])
     #expect(await awaitTrue(timeout: 2.0) { seen.count > afterChmod })
 }
 
 @Test("visionneuse-de-session/AC-7 : arrêter la veille termine son flux")
 func stoppingTheWatcherEndsTheStream() async throws {
-    let fixture = try ViewerSessionFixture()
+    let fixture = try WatchedFile()
     defer { fixture.remove() }
-    try fixture.write([ViewerLines.header()])
+    try fixture.write(["en-tête"])
 
     let watcher = FileWatcher(path: fixture.path)
     let stream = watcher.changes
@@ -182,7 +217,7 @@ func stoppingTheWatcherEndsTheStream() async throws {
 
     // Idempotent : un second arrêt ne lève rien et ne relance rien.
     watcher.stop()
-    try fixture.append([ViewerLines.user("après l'arrêt")])
+    try fixture.append(["après l'arrêt"])
     try? await Task.sleep(for: .milliseconds(300))
     #expect(values == 0)
 }

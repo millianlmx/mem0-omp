@@ -1,48 +1,48 @@
 // Le vocabulaire de l'écran Mémoire de l'app iOS : les quelques mots propres à
 // cette coque, et ses identifiants d'accessibilité.
 //
-// Fichier de VOCABULAIRE (`*Text.swift`), comme `ProjectText.swift` et
-// `ConnectionText.swift` : la garde `design-ios/AC-5` n'autorise un littéral
+// Fichier de VOCABULAIRE (`*Text.swift`), comme `IOSText.swift` et
+// `IOSConnectionStateText.swift` : la garde `design-ios/AC-5` n'autorise un littéral
 // alphabétique que dans ces fichiers-là — toute vue de l'écran ne lit que des
 // constantes d'ici ou du noyau partagé `ConsoleCore`.
 //
 // Les mots DURABLES (états, compte, résultats, troncature) viennent du noyau :
-// l'app ne réinvente aucun libellé partagé. Ce qui reste ici, c'est ce qui nomme
-// un raccourci macOS ou une surface absente du Mac.
+// l'app ne réinvente aucun libellé partagé. Ce qui reste ici, c'est ce qui est
+// propre à l'iPhone : le choix du projet, la fiche, les recettes.
 
 import ConsoleClient
 import ConsoleCore
 
 /// Les mots propres à l'écran Mémoire (BR-2) — le reste vient de `ConsoleCore`.
 enum IOSMemoryText {
-    /// L'état vide de l'app quand le Mac n'est pas joignable : on ne peut PAS
+    /// L'état vide de l'app quand le serveur n'est pas joignable : on ne peut PAS
     /// affirmer que la mémoire est vide (on ne l'a pas lue), donc on le dit.
-    static let noData = "Aucune donnée reçue du Mac pour l’instant."
+    static let noData = "Aucune donnée reçue du serveur pour l’instant."
 
-    /// Aucun projet ouvert : le libellé partagé `MemoryText.noProjectDescription`
-    /// accompagne le bouton « Choisir un projet… » de la coque macOS, absent sur
-    /// iPhone — l'app garde sa propre phrase, sans bouton, seul mot où elle
-    /// s'écarte du noyau.
-    static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
+    /// Aucun projet : la mémoire du serveur n'a encore aucun souvenir.
+    static let noProjectDetail = "La mémoire du serveur n’a encore aucun souvenir."
+
+    /// Le menu du projet lu (les portées de la mémoire, la plus récente en tête).
+    static let projectMenu = "Choisir le projet"
+    static let projectSymbol = "folder"
 
     /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
     static let loadingMore = "Chargement des souvenirs suivants…"
 
     /// Le titre de la barre de la fiche d'un souvenir (feuilles-ios-presentation-et-depots, S-6).
     static let detailTitle = "Souvenir"
+    /// Le bouton qui ferme la fiche.
+    static let close = "Fermer"
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
-    /// Le graphe partiel : le Mac a retiré des lignes à l'une des deux bornes.
-    static let graphPartial = "Graphe partiel : le Mac n’a pas servi tous les souvenirs."
+    /// Le graphe partiel : des lignes ont été retirées à l'une des deux bornes.
+    static let graphPartial = "Graphe partiel : tous les souvenirs n’ont pas été servis."
 
-    /// La route graphe est absente côté mem0-http (code partagé `outdated_service`) :
-    /// la cause et le remède, sans adresse, sans JSON ni code HTTP.
+    /// La route graphe est absente du serveur mémoire : la cause et le remède, sans
+    /// adresse, sans JSON ni code HTTP.
     static let graphServiceOutdated =
-        "Graphe indisponible : serveur mémoire trop ancien sur le Mac.\nMettez à jour OMP Console sur le Mac, puis réessayez."
-
-    /// L'app Mac elle-même ne connaît pas la route graphe (`not_found`).
-    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne.\nMettez à jour OMP Console sur le Mac, puis réessayez."
+        "Graphe indisponible : serveur mémoire trop ancien.\nMettez à jour le serveur, puis réessayez."
 
     /// Le titre du bloc de liens de la fiche.
     static let links = "Liens"
@@ -122,17 +122,14 @@ enum IOSMemoryText {
     static let keyboardRecipe = "clavier"
 
     /// Le signal de LECTURE de la recette `clavier`, écrit sur la sortie d'erreur à
-    /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
-    /// littéral dans `scripts/recette/ios-clavier-largeur-recette.sh`).
+    /// chaque lecture du sommaire : une recette compte ⌘R par lui.
     static let keyboardRecipeRead = "memoire-recipe-read"
 
     /// Les recettes de PANNE (ios-redaction-vouvoiement, S-2) : `injoignable` montre la
-    /// liste face à un Mac injoignable, `service-ancien` le graphe face à un service
+    /// liste face à un serveur injoignable, `service-ancien` le graphe face à un service
     /// mémoire trop ancien. Les deux modèles lisent `IOSMemoryFailureReader`.
     static let failureRecipeUnreachable = "injoignable"
     static let failureRecipeOutdated = "service-ancien"
-    /// Le détail porté par l'erreur simulée : jamais affiché, le traducteur le tait.
-    static let failureRecipeDetail = "recette"
 
     // MARK: - « Sommaire » et « Liste » : deux icônes distinctes
 
@@ -156,6 +153,9 @@ enum IOSMemoryAccessibility {
     static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
     static let close = "ios.memoire.close"
+    static let project = "ios.memoire.projet"
+
+    static func projectOption(_ scope: String) -> String { "ios.memoire.projet.\(scope)" }
 
     static func row(_ id: String) -> String { "ios.memoire.row.\(id)" }
 
@@ -169,7 +169,6 @@ enum IOSMemoryAccessibility {
     static let graphRecenter = "ios.memoire.graphe.recenter"
     static let graphTagMenu = "ios.memoire.graphe.etiquette"
     static let graphPartial = "ios.memoire.graphe.partiel"
-    static let graphDetail = "ios.memoire.graphe.fiche"
 
     static func graphTagOption(_ tag: String) -> String { "ios.memoire.graphe.etiquette.\(tag)" }
 

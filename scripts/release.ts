@@ -108,6 +108,20 @@ export type Plan = {
 
 const LEVELS: Record<Level, number> = { patch: 1, minor: 2, major: 3 };
 
+/**
+ * Les SERVICES : versionnés et publiés comme un plugin (historique, bump, tag
+ * `<nom>-v<version>`, `CHANGELOG.md`, release), mais absents du catalogue — ils
+ * ne s'installent pas par `/marketplace`. Un service dont le `package.json` manque
+ * sur la référence `main` est ignoré.
+ */
+export const SERVICES: ReadonlyArray<{ name: string; dir: string; install: string }> = [
+  {
+    name: "omp-harness",
+    dir: "omp-harness",
+    install: "bash omp-harness/deploy/container/harness.sh up   # ou omp-harness/README.md § « Installer le serveur »",
+  },
+];
+
 /** Sujet conventionnel : `type(scope)!: …` — le `!` porte la rupture (CC §13). */
 const SUBJECT = /^([A-Za-z]+)(\([^)]*\))?(!)?:/;
 
@@ -416,10 +430,12 @@ export function renderReleaseBody(
       }
       lines.push("");
     }
+    const service = SERVICES.find((entry) => entry.name === release.name);
     lines.push(
       "### Installation",
-      `/marketplace add ${options.ownerRepo}`,
-      `/marketplace install ${release.name}@${options.marketplace}`,
+      ...(service
+        ? [`Depuis un clone de ${options.ownerRepo} à ce tag :`, service.install]
+        : [`/marketplace add ${options.ownerRepo}`, `/marketplace install ${release.name}@${options.marketplace}`]),
       "",
       "### Mise à jour",
       `Suivre la procédure de \`PUBLISHING.md\` § « Mettre à jour » (dépôt ${options.ownerRepo}).`,
@@ -1094,7 +1110,11 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const plugins = localPlugins(catalog);
+  // Les services hors catalogue suivent les plugins, s'ils existent sur la référence `main`.
+  const services = SERVICES.filter(
+    (service) => gitQuiet(["cat-file", "-e", `${args.main}:${service.dir}/package.json`]).code === 0,
+  ).map((service) => ({ name: service.name, dir: service.dir }));
+  const plugins = [...localPlugins(catalog), ...services];
   if (plugins.length === 0) {
     console.log("· catalogue sans plugin local");
     return 0;

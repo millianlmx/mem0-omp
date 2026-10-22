@@ -1,7 +1,32 @@
 // Config du dispositif : URL et jeton mem0, budgets, seuils de rappel, d'agrafage et de recherche.
-export const MEM0_HTTP_URL = process.env.MEM0_HTTP_URL || "http://localhost:8321";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-export const MEM0_HTTP_TOKEN = process.env.MEM0_HTTP_TOKEN || "";
+/**
+ * L'adresse et le jeton du service : `MEM0_HTTP_URL` / `MEM0_HTTP_TOKEN`, sinon
+ * `~/.omp/mem0.json` (`{ "url", "token" }`, lu aussi par l'app OMP Console : la mémoire
+ * partagée avec le serveur de pipelines), sinon le service local. Le jeton du fichier
+ * ne vaut que pour l'adresse du fichier.
+ */
+export function resolveMem0Target(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): { url: string; token: string } {
+  if (env.MEM0_HTTP_URL) return { url: env.MEM0_HTTP_URL, token: env.MEM0_HTTP_TOKEN || "" };
+  let file: { url?: unknown; token?: unknown } = {};
+  try {
+    file = JSON.parse(readFileSync(join(home, ".omp", "mem0.json"), "utf8"));
+  } catch {
+    // Pas de fichier, ou illisible : le service local.
+  }
+  if (typeof file.url !== "string" || file.url === "") return { url: "http://localhost:8321", token: env.MEM0_HTTP_TOKEN || "" };
+  const token = env.MEM0_HTTP_TOKEN || (typeof file.token === "string" ? file.token : "");
+  return { url: file.url.replace(/\/+$/, ""), token };
+}
+
+const TARGET = resolveMem0Target();
+
+export const MEM0_HTTP_URL = TARGET.url;
+
+export const MEM0_HTTP_TOKEN = TARGET.token;
 
 // Budgets par opération. `add` avec infer=true déclenche DEUX passes LLM côté
 // serveur (extraction de faits + fusion avec l'existant) : sur qwen3-8b en local
@@ -82,6 +107,14 @@ export const EXPLORE_TOOLS: Record<string, true> = { read: true, grep: true, glo
 export const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, apply_patch: true };
 
 export const GLOBAL_SCOPE = "_global";
+
+// MEM0_NUDGE=0 coupe la relance d'écriture de fin de session — pour les agents
+// conduits par un orchestrateur (runners du harness) dont un autre composant tient
+// déjà la mémoire à jour : sans elle, chaque étape paierait un tour de plus. Lu à
+// l'APPEL, pas à l'évaluation du module : l'environnement fait foi au moment du stop.
+export function sessionNudgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.MEM0_NUDGE !== "0";
+}
 
 // MEM0_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.
 export const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";

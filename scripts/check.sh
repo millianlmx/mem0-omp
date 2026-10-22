@@ -327,7 +327,7 @@ fi
 # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
 #
 # Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
-# (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
+# (`omp-mem0-memory/*.ts`, `omp-mem0-req/*.ts`) : ne contrôler que
 # `extension.ts` laisserait passer un import de valeur écrit dans un module.
 if command -v python3 >/dev/null 2>&1; then
 python3 - <<'PY'
@@ -392,7 +392,7 @@ lint_out="$(bash scripts/lint.sh 2>&1)"
 lint_status=$?
 [ -n "$lint_out" ] && printf '%s\n' "$lint_out"
 case "$lint_status" in
-  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, test/)" ;;
+  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, test/)" ;;
   3) fail "linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)" ;;
   *)
     lint_paths="$(printf '%s\n' "$lint_out" | grep -oE '^[^[:space:]:]+\.(ts|jsonc)' | awk '!seen[$0]++' | tr '\n' ' ')"
@@ -615,7 +615,7 @@ if command -v node >/dev/null 2>&1; then
         if [ -n "$tests_missing" ]; then
           strict_skips
         else
-          pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+          pass "tests unitaires (mémoire, harness, client du harness, console, outillage)"
         fi
       fi
     else
