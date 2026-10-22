@@ -234,3 +234,36 @@ test("serveur-de-pipelines/AC-4 : le jeton ne vit qu'au trousseau ; seule l'adre
     "un service de trousseau distinct de celui du Mac",
   );
 });
+
+test("serveur-de-pipelines/AC-5 : les apps Mac et iOS ouvrent « Fournisseurs et modèles » aux seuls admins, sur les routes du serveur, la clé en champ secret", () => {
+  const app = (file: string) => read("omp-console", file);
+  const model = app("Sources/ConsoleClient/HarnessModel.swift");
+  for (const route of [
+    '"GET", path: "/v1/providers"',
+    '"PUT", "/v1/providers/',
+    '"DELETE", "/v1/providers/',
+    '"PUT", "/v1/models"',
+  ])
+    assert.ok(model.includes(route), `le client appelle ${route}`);
+  assert.match(model, /isAdmin: Bool \{ client\?\.role == "admin" \}/);
+  for (const [sheet, screen] of [
+    ["Sources/OMPConsole/Server/ServerSheet.swift", "ProvidersView"],
+    ["ios/OMPConsoleIOS/IOSServerSheet.swift", "IOSProvidersScreen"],
+  ] as const) {
+    const source = app(sheet);
+    const gate = source.indexOf("if server.isAdmin {");
+    assert.ok(
+      gate > 0 && source.indexOf(`${screen}(server: server, drafts: drafts)`) > gate,
+      `${sheet} : réservé aux admins`,
+    );
+  }
+  for (const form of ["Sources/OMPConsole/Server/ProvidersView.swift", "ios/OMPConsoleIOS/IOSProvidersScreen.swift"]) {
+    const source = app(form);
+    assert.match(
+      source,
+      /SecureField\(\s*PipelineServerText\.keyLabel,\s*text: field\(\\\.apiKey\)/,
+      `${form} : la clé en champ secret`,
+    );
+    assert.ok(source.includes("server.saveChains(nil)"), `${form} : retour aux modèles du serveur`);
+  }
+});

@@ -341,36 +341,3 @@ test("harness-providers/AC-4 : en conteneur, providers.env est monté et l'entr�
   assert.equal(linked.status, 0, linked.stderr);
   assert.ok(!/^(providerenv|models):/m.test(linked.stdout), linked.stdout);
 });
-
-test("harness-providers/AC-5 : les apps Mac et iOS ouvrent « Fournisseurs et modèles » aux seuls admins, sur les routes du serveur, la clé en champ secret", () => {
-  const read = (file: string) => fs.readFileSync(path.join(ROOT, "omp-console", file), "utf8");
-  const model = read("Sources/ConsoleClient/HarnessModel.swift");
-  for (const route of [
-    '"GET", path: "/v1/providers"',
-    '"PUT", "/v1/providers/',
-    '"DELETE", "/v1/providers/',
-    '"PUT", "/v1/models"',
-  ])
-    assert.ok(model.includes(route), `le client appelle ${route}`);
-  assert.match(model, /isAdmin: Bool \{ client\?\.role == "admin" \}/);
-  for (const [sheet, screen] of [
-    ["Sources/OMPConsole/Server/ServerSheet.swift", "ProvidersView"],
-    ["ios/OMPConsoleIOS/IOSServerSheet.swift", "IOSProvidersScreen"],
-  ] as const) {
-    const source = read(sheet);
-    const gate = source.indexOf("if server.isAdmin {");
-    assert.ok(
-      gate > 0 && source.indexOf(`${screen}(server: server, drafts: drafts)`) > gate,
-      `${sheet} : réservé aux admins`,
-    );
-  }
-  for (const form of ["Sources/OMPConsole/Server/ProvidersView.swift", "ios/OMPConsoleIOS/IOSProvidersScreen.swift"]) {
-    const source = read(form);
-    assert.match(
-      source,
-      /SecureField\(\s*PipelineServerText\.keyLabel,\s*text: field\(\\\.apiKey\)/,
-      `${form} : la clé en champ secret`,
-    );
-    assert.ok(source.includes("server.saveChains(nil)"), `${form} : retour aux modèles du serveur`);
-  }
-});
