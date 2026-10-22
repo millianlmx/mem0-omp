@@ -5,7 +5,11 @@
 #     enable = true;
 #     ompPackage = inputs.omp.packages.${pkgs.system}.omp;   # github:can1357/oh-my-pi/v18.6.0
 #     settings.repos = [ { name = "mon-produit"; path = "/var/lib/omp-harness/repos/mon-produit"; … } ];
+#     tailscale.serve = true;                                 # l'API (443) et la mémoire (8443) sur le tailnet
 #   };
+#
+# Les embeddings de la mémoire sont servis sur la machine même (`embeddings`, un Ollama
+# sur 127.0.0.1) : rien à installer ailleurs.
 #
 # Mêmes users, mêmes droits, mêmes tranches et le même lanceur root que sur Debian ;
 # seuls les chemins changent (store Nix, /run/wrappers/bin/sudo, bash du store).
@@ -68,7 +72,50 @@ let
     };
     oracle = if cfg.mem0.enable then { url = "http://127.0.0.1:8321"; token = null; } else null;
   };
-  harnessConfig = (pkgs.formats.json { }).generate "omp-harness-config.json" (lib.recursiveUpdate defaults cfg.settings);
+  merged = lib.recursiveUpdate defaults cfg.settings;
+  harnessConfig = (pkgs.formats.json { }).generate "omp-harness-config.json" merged;
+
+  # Les réglages de mem0-rs : l'Ollama local quand il est déclaré, sinon un serveur ailleurs ;
+  # `mem0.environment` l'emporte toujours.
+  ollamaUrl = "http://127.0.0.1:${toString cfg.embeddings.port}/v1";
+  mem0Environment =
+    (
+      if cfg.embeddings.enable then
+        {
+          OMLX_BASE_URL = ollamaUrl;
+          OMLX_EMBED_MODEL = cfg.embeddings.model;
+          # Sans modèle de chat, l'extraction (add infer=true) n'est pas servie ; le harness et
+          # le plugin mémoire écrivent sans extraction par défaut.
+          OMLX_LLM_MODEL = if cfg.embeddings.llmModel != null then cfg.embeddings.llmModel else cfg.embeddings.model;
+          EMBEDDING_DIMS = toString cfg.embeddings.dims;
+        }
+      else
+        {
+          OMLX_BASE_URL = "http://homelab:8000/v1";
+          OMLX_LLM_MODEL = "qwen3-8b";
+          OMLX_EMBED_MODEL = "bge-m3";
+          EMBEDDING_DIMS = "1024";
+        }
+    )
+    // cfg.mem0.environment;
+
+  tailscale = config.services.tailscale.package;
+  serveScript = pkgs.writeShellScript "omp-harness-tailscale-serve" ''
+    set -eu
+    # Le nœud doit être connecté (BackendState Running) : deux minutes au plus, puis échec et relance.
+    for _ in $(seq 60); do
+      if ${tailscale}/bin/tailscale status --json --peers=false 2>/dev/null | grep -q '"BackendState": *"Running"'; then break; fi
+      sleep 2
+    done
+    ${tailscale}/bin/tailscale serve --bg --https=${toString cfg.tailscale.httpsPort} http://127.0.0.1:${toString merged.listen.port}
+    ${lib.optionalString (cfg.mem0.enable && cfg.tailscale.mem0HttpsPort != null)
+      "${tailscale}/bin/tailscale serve --bg --https=${toString cfg.tailscale.mem0HttpsPort} http://127.0.0.1:8321"}
+  '';
+  unserveScript = pkgs.writeShellScript "omp-harness-tailscale-unserve" ''
+    ${tailscale}/bin/tailscale serve --https=${toString cfg.tailscale.httpsPort} off || true
+    ${lib.optionalString (cfg.mem0.enable && cfg.tailscale.mem0HttpsPort != null)
+      "${tailscale}/bin/tailscale serve --https=${toString cfg.tailscale.mem0HttpsPort} off || true"}
+  '';
 
   launcherConf = ''
     # Généré par le module NixOS — lu, jamais sourcé, par le lanceur root.
@@ -148,13 +195,69 @@ in
       };
       environment = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
-        default = {
-          OMLX_BASE_URL = "http://homelab:8000/v1";
-          OMLX_LLM_MODEL = "qwen3-8b";
-          OMLX_EMBED_MODEL = "bge-m3";
-          EMBEDDING_DIMS = "1024";
-        };
-        description = "Réglages non secrets de mem0-rs ; OMLX_API_TOKEN va dans /etc/omp-harness/mem0.env.";
+        default = { };
+        example = { OMLX_BASE_URL = "http://homelab:8000/v1"; };
+        description = ''
+          Réglages non secrets de mem0-rs, par-dessus ceux du module (l'Ollama local de
+          `embeddings`, sinon http://homelab:8000/v1) ; OMLX_API_TOKEN va dans /etc/omp-harness/mem0.env.
+        '';
+      };
+    };
+
+    embeddings = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Un Ollama sur cette machine (127.0.0.1 seulement) qui sert les embeddings de la mémoire.
+          Faux : mem0.environment.OMLX_BASE_URL désigne un serveur compatible OpenAI ailleurs.
+        '';
+      };
+      model = lib.mkOption {
+        type = lib.types.str;
+        default = "bge-m3";
+        description = "Le modèle d'embeddings, téléchargé par Ollama au premier démarrage.";
+      };
+      dims = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 1024;
+        description = "La dimension de ses vecteurs (1024 pour bge-m3) ; une base existante garde la sienne.";
+      };
+      llmModel = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "qwen3:1.7b";
+        description = ''
+          Un modèle de chat servi par le même Ollama pour l'extraction de souvenirs (add infer=true).
+          null : pas d'extraction ; le harness et le plugin mémoire n'en demandent pas par défaut.
+        '';
+      };
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 11434;
+        description = "Le port local d'Ollama.";
+      };
+    };
+
+    tailscale = {
+      serve = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Publie l'API du harness et la mémoire en HTTPS sur le tailnet (`tailscale serve`), au
+          démarrage, une fois le nœud connecté. Exige services.tailscale.enable (et, pour une
+          connexion sans geste, services.tailscale.authKeyFile).
+        '';
+      };
+      httpsPort = lib.mkOption {
+        type = lib.types.port;
+        default = 443;
+        description = "Le port HTTPS de l'API sur le tailnet : https://<machine>.<tailnet>.ts.net.";
+      };
+      mem0HttpsPort = lib.mkOption {
+        type = lib.types.nullOr lib.types.port;
+        default = 8443;
+        description = "Le port HTTPS de la mémoire sur le tailnet (partagée avec le Mac) ; null : non publiée.";
       };
     };
 
@@ -168,7 +271,19 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       { assertion = lib.hasPrefix "/" cfg.ompBin; message = "services.omp-harness : renseigne ompPackage (ou ompBin, chemin absolu)."; }
+      {
+        assertion = !cfg.tailscale.serve || config.services.tailscale.enable;
+        message = "services.omp-harness.tailscale.serve exige services.tailscale.enable = true (et un nœud connecté : services.tailscale.authKeyFile).";
+      }
     ];
+
+    # Les embeddings de la mémoire, sur la machine : jamais exposés hors de la boucle locale.
+    services.ollama = lib.mkIf cfg.embeddings.enable {
+      enable = true;
+      host = "127.0.0.1";
+      port = cfg.embeddings.port;
+      loadModels = [ cfg.embeddings.model ] ++ lib.optional (cfg.embeddings.llmModel != null) cfg.embeddings.llmModel;
+    };
 
     users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-mem0 = { }; };
     users.users = {
@@ -248,12 +363,13 @@ in
 
     systemd.services.omp-harness-mem0 = lib.mkIf cfg.mem0.enable {
       description = "OMP harness — oracle mem0-rs (mémoire du projet)";
-      after = [ "network-online.target" "tailscaled.service" "omp-harness-secrets.service" ];
-      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "tailscaled.service" "omp-harness-secrets.service" ]
+        ++ lib.optionals cfg.embeddings.enable [ "ollama.service" "ollama-model-loader.service" ];
+      wants = [ "network-online.target" ] ++ lib.optionals cfg.embeddings.enable [ "ollama.service" "ollama-model-loader.service" ];
       requires = [ "omp-harness-secrets.service" ];
       before = [ "omp-harness.service" ];
       wantedBy = [ "multi-user.target" ];
-      environment = cfg.mem0.environment // { MEM0_DB_PATH = "/var/lib/omp-mem0/mem0-rs.db"; };
+      environment = mem0Environment // { MEM0_DB_PATH = "/var/lib/omp-mem0/mem0-rs.db"; };
       serviceConfig = {
         User = "omp-mem0";
         Group = "omp-mem0";
@@ -299,6 +415,23 @@ in
         MemoryMax = "1G";
         OOMScoreAdjust = -900;
         ManagedOOMPreference = "omit";
+      };
+    };
+
+    # `tailscale serve` déclaré : la publication suit la configuration, et s'efface avec elle.
+    systemd.services.omp-harness-tailscale-serve = lib.mkIf cfg.tailscale.serve {
+      description = "OMP harness — publication sur le tailnet (tailscale serve)";
+      after = [ "tailscaled.service" "tailscaled-autoconnect.service" "omp-harness.service" ];
+      wants = [ "tailscaled.service" ];
+      wantedBy = [ "multi-user.target" ];
+      restartTriggers = [ serveScript ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = serveScript;
+        ExecStop = unserveScript;
+        Restart = "on-failure";
+        RestartSec = 30;
       };
     };
 

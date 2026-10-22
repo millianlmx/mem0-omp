@@ -250,7 +250,8 @@ Mac :
             enable = true;
             ompPackage = omp.packages.${pkgs.system}.omp;
             heavyPackages = [ pkgs.nodejs_22 ];      # les outils des tests de tes dépôts
-            mem0.environment.OMLX_BASE_URL = "http://homelab:8000/v1";
+            tailscale.serve = true;                  # l'API (443) et la mémoire (8443) sur le tailnet
+            # embeddings : un Ollama local sert bge-m3 à la mémoire (défaut, rien à installer ailleurs)
             settings = {                            # fusionné sur les défauts, sans secret
               models.standard = [ { provider = "anthropic"; model = "claude-sonnet-5-5"; } ];
               models.heavy = [ { provider = "anthropic"; model = "claude-opus-5-5"; } ];
@@ -284,8 +285,20 @@ sudo -u omp-harness git clone --bare git@github.com:<toi>/mon-produit.git /var/l
 echo 'ANTHROPIC_API_KEY=sk-ant-…' | sudo tee -a /etc/omp-harness/runner.env >/dev/null
 sudo omp-harness-check
 sudo systemctl restart omp-harness
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8790
 ```
+
+La machine doit être sur le tailnet (`services.tailscale.enable = true;`, et
+`services.tailscale.authKeyFile` pour la connecter sans geste) : avec
+`tailscale.serve = true`, le service `omp-harness-tailscale-serve` publie l'API et la
+mémoire dès que le nœud est connecté, et les retire à l'arrêt. Sans lui, publie à la
+main : `sudo tailscale serve --bg --https=443 http://127.0.0.1:8790`.
+
+**Les embeddings.** `embeddings.enable` (vrai par défaut) déclare `services.ollama` sur
+`127.0.0.1:11434`, qui télécharge `bge-m3` au premier démarrage ; mem0-rs y est
+pointé. `embeddings.llmModel = "qwen3:1.7b";` ajoute un modèle de chat pour
+l'extraction de souvenirs (`infer`), que ni le harness ni le plugin ne demandent par
+défaut. `embeddings.enable = false;` et `mem0.environment.OMLX_BASE_URL` désignent un
+serveur ailleurs.
 
 `omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
 (root seul, jamais dans le store) avec le jeton de la mémoire ; un `OMLX_API_TOKEN`
