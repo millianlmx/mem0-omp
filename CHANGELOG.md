@@ -1,5 +1,17 @@
 # Journal des versions
 
+## omp-mem0-memory 3.0.0 — 2026-10-22
+
+- feat(harness)!: un seul moteur de pipelines — le harness du VPS (brouillon) (#248) (31f2a5e)
+
+## omp-mem0-req 1.0.0 — 2026-10-22
+
+- feat(harness)!: un seul moteur de pipelines — le harness du VPS (brouillon) (#248) (31f2a5e)
+
+## omp-harness 0.2.0 — 2026-10-22
+
+- feat(harness)!: un seul moteur de pipelines — le harness du VPS (brouillon) (#248) (31f2a5e)
+
 ## omp-mem0-req 0.34.0 — 2026-10-20
 
 - ci(release): préparer le linter épinglé avant check.sh dans release et release-simulation, documenter la section lint (no-ts-lint-formatter) (#234) (28ca102)
