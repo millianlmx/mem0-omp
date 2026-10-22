@@ -1,7 +1,7 @@
 // Les statistiques du harness (`GET /v1/stats`) : ce que le VPS a produit et ce qu'il
 // en a coûté — runs par état, étapes et leurs durées, corrections, tests heavy,
 // décisions, audits. Fonction PURE sur la base : rien n'est tenu à part.
-import type { Store } from "./db.ts";
+import type { RepoFilter, Store } from "./db.ts";
 
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,12 +22,15 @@ function countBy<T>(items: T[], key: (item: T) => string): Record<string, number
 }
 
 
-export function computeStats(store: Store, now = Date.now()): Record<string, unknown> {
-  const runs = store.listRuns();
+/** Les statistiques des dépôts que le lecteur voit (`repos`, `null` : tous). */
+export function computeStats(store: Store, now = Date.now(), repos: RepoFilter = null): Record<string, unknown> {
+  const runs = store.listRuns({ repos });
+  const ids = new Set(runs.map(run => run.id));
+  const mine = <T extends { runId: string }>(items: T[]): T[] => (repos === null ? items : items.filter(item => ids.has(item.runId)));
   const merged = runs.filter(run => run.state === "merged");
   const finished = runs.filter(run => run.state === "merged" || run.state === "failed");
-  const steps = store.allSteps();
-  const tests = store.allTestRuns();
+  const steps = mine(store.allSteps());
+  const tests = mine(store.allTestRuns());
   const byKind: Record<string, { count: number; failed: number; medianSec: number | null }> = {};
   for (const kind of new Set(steps.map(step => step.kind))) {
     const ofKind = steps.filter(step => step.kind === kind);
@@ -56,9 +59,9 @@ export function computeStats(store: Store, now = Date.now()): Record<string, unk
       /** Les jobs relancés après un OOM. */
       retried: tests.filter(test => test.attempts > 1).length,
     },
-    decisions: countBy(store.listDecisions(), decision => decision.status),
-    escalations: countBy(store.listEscalations(), item => item.status),
-    audits: countBy(store.listAudits(), audit => audit.state),
-    projects: countBy(store.listProjects(), project => project.status),
+    decisions: countBy(store.listDecisions({ repos }), decision => decision.status),
+    escalations: countBy(store.listEscalations({ repos }), item => item.status),
+    audits: countBy(store.listAudits([], repos), audit => audit.state),
+    projects: countBy(store.listProjects(repos), project => project.status),
   };
 }

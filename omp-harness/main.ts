@@ -6,22 +6,29 @@
 //     tests et le déclare dans le fichier de configuration (codes : repos.ts).
 //   … --models <omlx/<modèle>|anthropic> [--omlx-url <url>] [--omlx-context <n>] : les
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
+//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] : un client
+//     de plus (son jeton s'affiche une fois) ; --revoke-client <nom> ; --list-clients.
 //
-// Le jeton d'API vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en 0600
-// au premier démarrage). SIGTERM arrête proprement : plus de requêtes, runners
-// arrêtés ; au redémarrage, chaque run reprend à son dernier checkpoint.
+// Le jeton historique vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en
+// 0600 au premier démarrage) : c'est le client `admin`. Les autres clients vivent
+// dans `clientsFile` (auth.ts), relu à chaque changement. SIGTERM arrête proprement :
+// plus de requêtes, runners arrêtés ; au redémarrage, chaque run reprend à son
+// dernier checkpoint. SIGHUP relit la configuration et recharge les dépôts sans
+// arrêter les runs.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
+import type { Role } from "./auth.ts";
+import { ClientRegistry } from "./auth.ts";
 import { renderChecks, runChecks } from "./check.ts";
 import { loadConfig } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
 import { Store } from "./db.ts";
 import { Git } from "./git.ts";
 import { HeavyRunner } from "./heavy.ts";
-import { createHandler } from "./http.ts";
+import { HARNESS_VERSION, createHandler } from "./http.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { setModels } from "./local-model.ts";
@@ -45,7 +52,7 @@ export function loadToken(config: HarnessConfig, env: Record<string, string | un
 export const spawnRunner: SpawnRunner = (command, args, options) => spawn(command, args, { cwd: options.cwd, env: options.env as NodeJS.ProcessEnv, stdio: ["pipe", "pipe", "pipe"] });
 
 
-export type Harness = { orchestrator: Orchestrator; server: http.Server; store: Store; stop: () => Promise<void> };
+export type Harness = { orchestrator: Orchestrator; server: http.Server; store: Store; clients: ClientRegistry; stop: () => Promise<void> };
 
 
 export async function startHarness(config: HarnessConfig, options: { spawn?: SpawnRunner; log?: (line: string) => void; token?: string } = {}): Promise<Harness> {
@@ -67,13 +74,15 @@ export async function startHarness(config: HarnessConfig, options: { spawn?: Spa
   const orchestrator = new Orchestrator({ config, store, scheduler, git, heavy, oracle, spawn: options.spawn ?? spawnRunner, exec: execProcess, log });
   await orchestrator.start();
   const token = options.token ?? loadToken(config);
-  const server = http.createServer(createHandler({ orchestrator, token }));
+  const clients = new ClientRegistry(config.clientsFile, token);
+  const server = http.createServer(createHandler({ orchestrator, clients }));
   await new Promise<void>(resolve => server.listen(config.listen.port, config.listen.host, resolve));
-  log(`à l'écoute sur ${config.listen.host}:${(server.address() as { port: number }).port}`);
+  log(`omp-harness ${HARNESS_VERSION} à l'écoute sur ${config.listen.host}:${(server.address() as { port: number }).port} — ${config.repos.length} dépôt(s), ${clients.list().length} client(s)`);
   return {
     orchestrator,
     server,
     store,
+    clients,
     stop: async () => {
       server.closeAllConnections?.();
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -112,6 +121,30 @@ if (isMain) {
     console.log(`✓ ${setModels(file, config, models, url ? { baseUrl: url, contextWindow: context } : undefined)}`);
     process.exit(0);
   }
+  const clientName = argValue(process.argv, "--add-client");
+  if (clientName !== null || process.argv.includes("--revoke-client") || process.argv.includes("--list-clients")) {
+    const registry = new ClientRegistry(config.clientsFile);
+    try {
+      if (clientName !== null) {
+        const repos = argValue(process.argv, "--repos") ?? "*";
+        const { client, token } = registry.add(clientName, (argValue(process.argv, "--role") ?? "operator") as Role, repos === "*" ? "*" : repos.split(",").map(name => name.trim()).filter(Boolean));
+        // Le jeton seul sur stdout (scriptable : harness.sh en fait un code d'appairage), le reste sur stderr.
+        console.error(`✓ client ${client.name} (${client.role}, dépôts : ${client.repos === "*" ? "tous" : client.repos.join(", ")}) — son jeton ne sera plus affiché :`);
+        console.log(token);
+      } else if (process.argv.includes("--revoke-client")) {
+        const name = argValue(process.argv, "--revoke-client") ?? "";
+        const revoked = registry.revoke(name);
+        console.log(revoked ? `✓ client ${name} révoqué` : `✗ client inconnu : ${name}`);
+        process.exit(revoked ? 0 : 1);
+      } else {
+        for (const client of registry.list()) console.log(`${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}`);
+      }
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
   if (process.argv.includes("--check")) {
     if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN) config.oracle.token = process.env.MEM0_HTTP_TOKEN;
     const oracle = config.oracle ? new HttpOracle(config.oracle) : null;
@@ -125,4 +158,14 @@ if (isMain) {
       void harness.stop().finally(() => process.exit(0));
     });
   }
+  // SIGHUP : la configuration relue, les dépôts rechargés à chaud (un dépôt ajouté
+  // par `--add-repo` sert sans arrêter les runs des autres). Une configuration
+  // invalide est refusée et journalisée : l'ancienne reste en place.
+  process.on("SIGHUP", () => {
+    try {
+      void harness.orchestrator.reloadRepos(loadConfig(file).repos);
+    } catch (err) {
+      console.error(`[omp-harness] rechargement refusé : ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }

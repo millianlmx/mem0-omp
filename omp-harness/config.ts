@@ -61,12 +61,19 @@ export type RepoConfig = {
   remote: string | null;
   /** L'image des tests de ce dépôt en isolation `container` ; `null` : `container.testImage`. */
   testImage: string | null;
+  /**
+   * Les runs de ce dépôt vivants en même temps, au plus (`null` : seuls les slots et
+   * les modules bornent). Un gros dépôt ne prend pas tous les runners aux autres.
+   */
+  maxParallel: number | null;
 };
 
 export type HarnessConfig = {
   listen: { host: string; port: number };
-  /** Le fichier du jeton d'API (créé en 0600 au premier démarrage s'il manque). */
+  /** Le fichier du jeton d'API (créé en 0600 au premier démarrage s'il manque) : le client `admin` historique. */
   tokenFile: string;
+  /** Les clients nommés (jetons hachés, rôles, dépôts permis), gérés par `--add-client` (auth.ts). */
+  clientsFile: string;
   /** La base SQLite et les overlays de réglages des runners. */
   dataDir: string;
   /** Les worktrees git, un par run. */
@@ -89,6 +96,12 @@ export type HarnessConfig = {
     profile: string;
     /** Le nombre de relances d'une étape qui a échoué sans verdict. */
     stepRetries: number;
+    /**
+     * La durée maximale d'une étape, prompts et relances compris : au-delà, le runner
+     * est arrêté et l'étape échoue (relançable). Un agent qui boucle ne garde pas son
+     * slot indéfiniment.
+     */
+    stepTimeoutSec: number;
     /**
      * Les extensions chargées par chaque runner (`-e`) — d'abord le plugin mémoire
      * `omp-mem0-memory/extension.ts` : rappel automatique dans la mémoire du projet.
@@ -147,6 +160,8 @@ export type HarnessConfig = {
   /** `specsGate` : la feature attend l'accord humain entre /specs et /impl. */
   review: { fixCap: number; maxDiffLines: number; specsGate: boolean };
   oracle: { url: string; token: string | null } | null;
+  /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
+  events: { retentionDays: number };
   repos: RepoConfig[];
 };
 
@@ -193,6 +208,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
   return {
     listen: { host: "127.0.0.1", port: 8790 },
     tokenFile: path.join(base, "token"),
+    clientsFile: path.join(base, "clients.json"),
     dataDir: base,
     worktreesDir: path.join(base, "worktrees"),
     ompBin: "omp",
@@ -206,6 +222,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       isolation: "systemd",
       profile: "pipeline",
       stepRetries: 1,
+      stepTimeoutSec: 5400,
       extensions: [],
     },
     heavy: {
@@ -238,6 +255,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     providers: {},
     review: { fixCap: 3, maxDiffLines: 300, specsGate: true },
     oracle: null,
+    events: { retentionDays: 30 },
     repos: [],
   };
 }
@@ -278,6 +296,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.listen.port) || config.listen.port < 0 || config.listen.port > 65535) fail("listen.port invalide");
   if (!Number.isInteger(config.runner.slots) || config.runner.slots < 1) fail("runner.slots doit être ≥ 1");
   if (!Number.isInteger(config.heavy.slots) || config.heavy.slots < 1) fail("heavy.slots doit être ≥ 1");
+  if (!(config.runner.stepTimeoutSec >= 1)) fail("runner.stepTimeoutSec doit être ≥ 1");
+  if (!(config.events.retentionDays > 0)) fail("events.retentionDays doit être > 0");
   sizeMiB(config.runner.memoryMax);
   sizeMiB(config.heavy.memoryMax);
   if (!/^\d+%$/.test(config.heavy.cpuQuota)) fail("heavy.cpuQuota doit être un pourcentage (300%)");
@@ -305,6 +325,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     names.add(repo.name);
     if (typeof repo.path !== "string" || !path.isAbsolute(repo.path)) fail(`repos.${repo.name}.path doit être absolu`);
     if (repo.merge !== "local" && repo.merge !== "gh") fail(`repos.${repo.name}.merge : local | gh`);
+    if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1)) fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
   }
   return config;
 }
@@ -323,6 +344,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       merge: "local",
       remote: null,
       testImage: null,
+      maxParallel: null,
     },
     raw,
   );
@@ -342,6 +364,8 @@ export function loadConfig(file: string | null): HarnessConfig {
     if (raw.tokenFile === undefined) config.tokenFile = path.join(raw.dataDir, "token");
     if (raw.worktreesDir === undefined) config.worktreesDir = path.join(raw.dataDir, "worktrees");
   }
+  // Les clients vivent à côté du jeton historique (même dossier d'état, mêmes droits).
+  if (raw.clientsFile === undefined) config.clientsFile = path.join(path.dirname(config.tokenFile), "clients.json");
   return validateConfig(config);
 }
 

@@ -85,7 +85,12 @@ export type SlotKind = "runner" | "heavy";
 
 export type Slot = { kind: SlotKind; label: string; release: () => void };
 
+export type SlotSnapshot = { used: number; capacity: number; labels: string[]; waiting: number };
+
 export type Refusal = { refused: "slots" | "memory"; detail: string };
+
+/** Une attente de slot : servie dans l'ordre (priorité, puis arrivée). */
+type Waiter = { kind: SlotKind; label: string; priority: number; seq: number; resolve: (slot: Slot) => void };
 
 export type ModelPick = { choice: ModelChoice; index: number } | { waitMs: number };
 
@@ -113,6 +118,10 @@ export class Scheduler {
   readonly #buckets = new Map<string, TokenBucket>();
   readonly #limits: Record<string, ProviderLimit>;
   #nextId = 1;
+  #waiters: Waiter[] = [];
+  #waiterSeq = 0;
+  #polling = false;
+  #pollMs = 1000;
 
   constructor(options: SchedulerOptions) {
     this.#capacity = { runner: options.runnerSlots, heavy: options.heavySlots };
@@ -146,18 +155,73 @@ export class Scheduler {
         if (released) return;
         released = true;
         held.delete(id);
+        // Le slot rendu va d'abord à ceux qui attendent : jamais doublés par un nouveau venu.
+        this.#serve(kind);
       },
     };
   }
 
-  /** Attend un slot (sondage), jusqu'à `signal`. */
-  async acquire(kind: SlotKind, label: string, signal?: AbortSignal, pollMs = 1000): Promise<Slot> {
-    for (;;) {
-      if (signal?.aborted) throw new Error("attente de slot annulée");
+  /**
+   * Attend un slot, jusqu'à `signal`. Les attentes sont servies dans l'ordre —
+   * priorité décroissante, puis ordre d'arrivée — et un nouveau venu ne double
+   * jamais quelqu'un qui attend déjà : aucun run ne meurt de faim derrière les autres.
+   */
+  acquire(kind: SlotKind, label: string, signal?: AbortSignal, priority = 0, pollMs = 1000): Promise<Slot> {
+    if (signal?.aborted) return Promise.reject(new Error("attente de slot annulée"));
+    if (!this.#waiters.some(waiter => waiter.kind === kind)) {
       const slot = this.tryAcquire(kind, label);
-      if (!("refused" in slot)) return slot;
-      await this.#sleep(pollMs);
+      if (!("refused" in slot)) return Promise.resolve(slot);
     }
+    this.#pollMs = Math.min(this.#pollMs, pollMs);
+    return new Promise<Slot>((resolve, reject) => {
+      const waiter: Waiter = { kind, label, priority, seq: this.#waiterSeq++, resolve: slot => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(slot);
+      } };
+      const onAbort = () => {
+        this.#waiters = this.#waiters.filter(other => other !== waiter);
+        reject(new Error("attente de slot annulée"));
+        // Une attente retirée peut débloquer celles qui la suivaient.
+        this.#serve(kind);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.#waiters.push(waiter);
+      this.#poll();
+    });
+  }
+
+  /** Les attentes de `kind`, dans l'ordre où elles seront servies. */
+  #queue(kind: SlotKind): Waiter[] {
+    return this.#waiters.filter(waiter => waiter.kind === kind).sort((a, b) => b.priority - a.priority || a.seq - b.seq);
+  }
+
+  /** Sert la file de `kind` tant que la tête obtient un slot (la tête bloquée bloque la suite : FIFO strict). */
+  #serve(kind: SlotKind): void {
+    for (const waiter of this.#queue(kind)) {
+      const slot = this.tryAcquire(kind, waiter.label);
+      if ("refused" in slot) return;
+      this.#waiters = this.#waiters.filter(other => other !== waiter);
+      waiter.resolve(slot);
+    }
+  }
+
+  /** Tant que quelqu'un attend, la file est resservie à intervalles (la mémoire libre peut remonter). */
+  #poll(): void {
+    if (this.#polling) return;
+    this.#polling = true;
+    void (async () => {
+      while (this.#waiters.length > 0) {
+        await this.#sleep(this.#pollMs);
+        this.#serve("runner");
+        this.#serve("heavy");
+      }
+      this.#polling = false;
+    })();
+  }
+
+  /** Le nombre d'attentes en file, par sorte de slot. */
+  waiting(): Record<SlotKind, number> {
+    return { runner: this.#queue("runner").length, heavy: this.#queue("heavy").length };
   }
 
   #bucket(provider: string): TokenBucket | null {
@@ -215,12 +279,13 @@ export class Scheduler {
     this.#limits[provider] = { capacity: 1, refillPerMinute: 60 };
   }
 
-  snapshot(): { runner: { used: number; capacity: number; labels: string[] }; heavy: { used: number; capacity: number; labels: string[] }; memAvailableMiB: number | null; providers: Record<string, number> } {
+  snapshot(): { runner: SlotSnapshot; heavy: SlotSnapshot; memAvailableMiB: number | null; providers: Record<string, number> } {
     const providers: Record<string, number> = {};
     for (const [name, bucket] of this.#buckets) providers[name] = Math.floor(bucket.available());
+    const waiting = this.waiting();
     return {
-      runner: { used: this.#held.runner.size, capacity: this.#capacity.runner, labels: [...this.#held.runner.values()] },
-      heavy: { used: this.#held.heavy.size, capacity: this.#capacity.heavy, labels: [...this.#held.heavy.values()] },
+      runner: { used: this.#held.runner.size, capacity: this.#capacity.runner, labels: [...this.#held.runner.values()], waiting: waiting.runner },
+      heavy: { used: this.#held.heavy.size, capacity: this.#capacity.heavy, labels: [...this.#held.heavy.values()], waiting: waiting.heavy },
       memAvailableMiB: this.#mem(),
       providers,
     };

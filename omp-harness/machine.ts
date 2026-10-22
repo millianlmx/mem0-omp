@@ -152,3 +152,81 @@ export function afterSpecsValidation(cursor: RunCursor, approve: boolean, reason
 export function isTerminal(state: RunState): boolean {
   return (TERMINAL_STATES as readonly string[]).includes(state);
 }
+
+
+// -- merge, annulation, reprise, panne -----------------------------------------
+//
+// Ces issues ne suivent pas une étape, mais elles passent par la même table : le
+// service n'écrit jamais un état à la main.
+
+/**
+ * Les transitions permises : état courant → états suivants. Toute écriture d'état
+ * du service passe par `assertTransition` ; une transition absente d'ici est un bug.
+ */
+export const TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
+  queued: ["queued", "running", "cancelled", "failed"],
+  running: ["running", "queued", "escalated", "awaiting_human", "merging", "failed", "cancelled"],
+  escalated: ["queued", "cancelled", "failed"],
+  awaiting_human: ["queued", "merging", "cancelled", "failed"],
+  merging: ["merged", "queued", "awaiting_human", "failed"],
+  merged: [],
+  // Un run échoué peut être rouvert (décision renversée) ou annulé.
+  failed: ["queued", "cancelled"],
+  cancelled: [],
+};
+
+/** Les états d'où l'humain peut annuler (un merge en cours ne s'interrompt pas). */
+export const CANCELLABLE: readonly RunState[] = ["queued", "running", "escalated", "awaiting_human", "failed"];
+
+
+export function canTransition(from: RunState, to: RunState): boolean {
+  return TRANSITIONS[from].includes(to);
+}
+
+
+/** Lève si l'une des transitions `from → to` n'est pas dans la table. */
+export function assertTransition(from: readonly RunState[], to: RunState): void {
+  const illegal = from.filter(state => !canTransition(state, to));
+  if (illegal.length > 0) throw new Error(`transition interdite : ${illegal.join(", ")} → ${to}`);
+}
+
+
+/**
+ * Le merge s'arrête (conflit avec main, suite rouge après rebase) : retour en revue
+ * ou en correction, une correction de plus au compteur ; au plafond, l'humain.
+ */
+export function afterMergeStopped(cursor: Pick<RunCursor, "fixes">, step: "fix" | "review", reason: string, fixCap: number): Transition {
+  const at = { step, fixes: cursor.fixes, attempts: 0 };
+  if (cursor.fixes >= fixCap) return to("awaiting_human", null, at, { reason: `${reason} — plafond de corrections atteint` });
+  return to("queued", step, at, { fixes: cursor.fixes + 1, reason });
+}
+
+
+/** Le merge est fait dans git : l'état suit, toujours. */
+export function afterMerged(cursor: Pick<RunCursor, "fixes">): Transition {
+  return to("merged", null, { step: "review", fixes: cursor.fixes, attempts: 0 }, { reason: "mergé" });
+}
+
+
+/** Un merge impossible (push refusé par gh, erreur git) : l'humain reprend la main. */
+export function afterMergeFailed(cursor: Pick<RunCursor, "fixes">, reason: string): Transition {
+  return to("awaiting_human", null, { step: "review", fixes: cursor.fixes, attempts: 0 }, { reason: `merge impossible : ${reason}` });
+}
+
+
+/** L'annulation par l'humain : l'étape courante est gardée pour l'historique. */
+export function cancelled(cursor: RunCursor | { step: StepKind | null; fixes: number; attempts: number }): Transition {
+  return { state: "cancelled", step: cursor.step, fixes: cursor.fixes, attempts: cursor.attempts, keepRunner: false, rebase: false, reason: "annulé par l'humain" };
+}
+
+
+/** Une panne qui empêche le run d'avancer (worktree perdu, erreur du service). */
+export function crashed(cursor: { step: StepKind | null; fixes: number; attempts: number }, reason: string): Transition {
+  return { state: "failed", step: cursor.step, fixes: cursor.fixes, attempts: cursor.attempts, keepRunner: false, rebase: false, reason };
+}
+
+
+/** Le service a redémarré pendant l'étape : elle repart de son dernier checkpoint, nouveau runner. */
+export function recovered(cursor: RunCursor): Transition {
+  return to("queued", cursor.step, cursor, { attempts: cursor.attempts, reason: "service redémarré — reprise au dernier checkpoint" });
+}

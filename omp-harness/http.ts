@@ -1,34 +1,52 @@
-// L'API du service : REST + SSE, l'UNIQUE point d'entrée des clients (macOS, iOS, web).
+// L'API du service : REST + SSE, l'UNIQUE point d'entrée des clients (macOS, iOS, web,
+// plugin omp) — plusieurs clients à la fois.
 //
 // Écoute en local (127.0.0.1) ; Tailscale ou un reverse proxy TLS la publie. Chaque
-// requête porte `Authorization: Bearer <jeton>`, comparé en temps constant. Le flux
-// `GET /v1/events` rejoue le journal depuis `Last-Event-ID` : un client qui se
-// reconnecte ne perd aucun événement.
-import { timingSafeEqual } from "node:crypto";
+// requête porte `Authorization: Bearer <jeton>` : le jeton désigne un CLIENT (auth.ts),
+// son rôle et les dépôts qu'il voit. Un client ne voit ni ne touche les runs d'un
+// dépôt qui ne lui est pas permis (404, comme s'ils n'existaient pas).
+//
+// Les gestes acceptent `If-Match: <rev>` : la révision du run lue par le client. Si
+// un autre client a agi entre-temps, le geste est refusé (412) au lieu d'agir sur une
+// vue périmée. `GET /v1/runs/{id}` rend la révision en `ETag`.
+//
+// Le flux `GET /v1/events` rejoue le journal depuis `Last-Event-ID` : un client qui
+// se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
+// (éphémère, jamais rejouée).
+import { readFileSync } from "node:fs";
 import * as http from "node:http";
+import type { Client, Role } from "./auth.ts";
+import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
+import type { Actor } from "./context.ts";
+import type { EventRow, RepoFilter } from "./db.ts";
+import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
-import type { EventRow } from "./db.ts";
 import type { Orchestrator } from "./orchestrator.ts";
-import { HarnessError } from "./orchestrator.ts";
+import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
 
 
 export const API_VERSION = 1;
 
+/** Ce que ce serveur sait faire en plus de l'API 1 d'origine (les clients s'y adaptent). */
+export const API_FEATURES = ["clients", "priority", "if-match", "live-events", "repos", "reload"] as const;
+
+/** La version du service, lue dans son `package.json`. */
+export const HARNESS_VERSION: string = (() => {
+  try {
+    return String((JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version?: unknown }).version ?? "0.0.0");
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 const MAX_BODY = 1024 * 1024;
 const PING_MS = 15_000;
 
 
-function sameToken(given: string, expected: string): boolean {
-  const a = Buffer.from(given);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-
-function send(res: http.ServerResponse, status: number, body: unknown): void {
+function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const json = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json), "Cache-Control": "no-store" });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json), "Cache-Control": "no-store", ...headers });
   res.end(json);
 }
 
@@ -68,248 +86,256 @@ function stringList(value: unknown, key: string): string[] | undefined {
 }
 
 
+function integer(value: unknown, key: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value)) throw new HarnessError(400, `${key} : entier attendu`);
+  return value as number;
+}
+
+
+/** `If-Match: 12`, `"12"` ou `W/"12"` → 12 ; absent → `undefined`. */
+export function ifMatch(req: http.IncomingMessage): number | undefined {
+  const header = req.headers["if-match"];
+  if (typeof header !== "string" || header.trim() === "" || header.trim() === "*") return undefined;
+  const value = Number(header.trim().replace(/^W\//, "").replace(/^"|"$/g, ""));
+  if (!Number.isInteger(value) || value < 0) throw new HarnessError(400, "If-Match : la révision du run (entier) attendue");
+  return value;
+}
+
+
 function sseFrame(event: EventRow): string {
-  return `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+  // Un éphémère n'a pas d'`id:` : il ne déplace pas le curseur de reprise du client.
+  return `${event.ephemeral ? "" : `id: ${event.id}\n`}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 
-/** Le contenu de `GET /v1/inbox`. */
-export function inboxOf(store: Orchestrator["store"]): Record<string, unknown> {
-  const runs = store.listRuns();
-  const byRun = new Map<string, unknown[]>();
-  for (const item of store.listEscalations({ status: "open" })) byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
-  const decisions = store.listDecisions({ status: ["auto"] });
-  const referenced = new Set([...byRun.keys(), ...decisions.map(decision => decision.runId)]);
-  const terminal = new Set(["merged", "failed", "cancelled"]);
-  return {
-    batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })),
-    awaiting: runs.filter(run => run.state === "awaiting_human"),
-    decisions,
-    runs: runs.filter(run => !terminal.has(run.state) || referenced.has(run.id)),
-    audits: store.listAudits(["queued", "analysing", "proposed"]),
-    cursor: store.lastEventId(),
-  };
-}
+/** La boîte de l'humain (rétrocompatible : sans filtre, tous les dépôts). */
+export { inboxOf } from "./queries.ts";
 
 
-export type HttpOptions = { orchestrator: Orchestrator; token: string; version?: string };
+export type HttpOptions = {
+  orchestrator: Orchestrator;
+  /** Le jeton historique : le client `admin` (ignoré si `clients` est donné). */
+  token?: string;
+  /** Les clients nommés ; par défaut, le seul jeton historique. */
+  clients?: ClientRegistry;
+  version?: string;
+};
+
+type Call = {
+  match: RegExpExecArray;
+  req: http.IncomingMessage;
+  res: http.ServerResponse;
+  url: URL;
+  client: Client;
+  /** Les dépôts que le client voit (`null` : tous). */
+  repos: RepoFilter;
+  /** L'auteur du geste et la révision qu'il a lue. */
+  actor: Actor;
+};
+
+export type Route = { method: "GET" | "POST" | "DELETE"; path: string; role: Role; pattern: RegExp; handle: (call: Call) => Promise<void> | void };
 
 
-/** Le gestionnaire de requêtes (sans serveur) : testable par `http.createServer`. */
-export function createHandler(options: HttpOptions): http.RequestListener {
-  const { orchestrator, token } = options;
+/** Les routes de l'API, avec le rôle minimal de chacune : la table que documente le README du harness. */
+export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): Route[] {
   const store = orchestrator.store;
+  const route = (method: Route["method"], path: string, role: Role, handle: Route["handle"]): Route => ({
+    method,
+    path,
+    role,
+    // `{id}` et `{name}` : un segment ; `{n}` : un entier.
+    pattern: new RegExp(`^${path.replace(/\{n\}/g, "(\\d+)").replace(/\{(id|name)\}/g, "([\\w.-]+)")}$`),
+    handle,
+  });
+  const requireRepo = (call: Call, repo: string): void => {
+    if (!canSeeRepo(call.client, repo)) throw new HarnessError(403, `le client ${call.client.name} n'a pas accès au dépôt ${repo}`);
+  };
+  const visibleAudit = (call: Call, id: string) => {
+    const audit = store.getAudit(id);
+    if (!audit || !canSeeRepo(call.client, audit.repo)) throw new HarnessError(404, `audit inconnu : ${id}`);
+    return audit;
+  };
+  const runId = (call: Call): string => orchestrator.visibleRun(call.match[1] as string, call.repos).id;
 
-  const routes: { method: string; pattern: RegExp; handle: (match: RegExpExecArray, req: http.IncomingMessage, res: http.ServerResponse, url: URL) => Promise<void> | void }[] = [
-    {
-      method: "GET",
-      pattern: /^\/v1\/status$/,
-      handle: async (_m, _req, res) => send(res, 200, { ...orchestrator.status(), oracle: await orchestrator.oracleStatus() }),
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/runs$/,
-      handle: (_m, _req, res, url) => {
-        const state = url.searchParams.get("state");
-        const repo = url.searchParams.get("repo");
-        const runs = store.listRuns({ ...(state ? { state: state.split(",") as RunState[] } : {}), ...(repo ? { repo } : {}) });
-        send(res, 200, { runs });
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs$/,
-      handle: async (_m, req, res) => {
-        const body = await readBody(req);
-        const modules = stringList(body.modules, "modules");
-        const slug = text(body, "slug", false);
-        const needs = text(body, "req", false);
-        const run = orchestrator.createRun({
-          repo: text(body, "repo"),
+  return [
+    route("GET", "/v1/me", "viewer", call => send(call.res, 200, { client: call.client })),
+    route("GET", "/v1/status", "viewer", async call => send(call.res, 200, { ...orchestrator.status(call.repos), oracle: await orchestrator.oracleStatus() })),
+    route("GET", "/v1/repos", "viewer", call =>
+      send(call.res, 200, {
+        repos: orchestrator.config.repos
+          .filter(repo => canSeeRepo(call.client, repo.name))
+          .map(repo => ({ name: repo.name, scope: repo.scope, mainBranch: repo.mainBranch, merge: repo.merge, maxParallel: repo.maxParallel })),
+      }),
+    ),
+    route("GET", "/v1/runs", "viewer", call => {
+      const state = call.url.searchParams.get("state");
+      const repo = call.url.searchParams.get("repo");
+      const runs = store.listRuns({ ...(state ? { state: state.split(",") as RunState[] } : {}), ...(repo ? { repo } : {}), repos: call.repos });
+      send(call.res, 200, { runs });
+    }),
+    route("POST", "/v1/runs", "operator", async call => {
+      const body = await readBody(call.req);
+      const modules = stringList(body.modules, "modules");
+      const slug = text(body, "slug", false);
+      const needs = text(body, "req", false);
+      const priority = integer(body.priority, "priority");
+      const repo = text(body, "repo");
+      requireRepo(call, repo);
+      const run = orchestrator.createRun(
+        {
+          repo,
           title: text(body, "title"),
           request: text(body, "request"),
           ...(slug ? { slug } : {}),
           ...(needs ? { req: needs } : {}),
           ...(modules ? { modules } : {}),
-        });
-        send(res, 201, { run });
-      },
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/runs\/([\w-]+)$/,
-      handle: (m, _req, res) => send(res, 200, orchestrator.runView(m[1] as string)),
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs\/([\w-]+)\/cancel$/,
-      handle: async (m, _req, res) => send(res, 200, { run: await orchestrator.cancel(m[1] as string) }),
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs\/([\w-]+)\/escalations$/,
-      handle: async (m, req, res) => {
-        const body = await readBody(req);
-        if (!Array.isArray(body.answers)) throw new HarnessError(400, "answers : liste de { id, answer } attendue");
-        const answers = body.answers.map(item => {
-          const record = (item ?? {}) as Record<string, unknown>;
-          if (typeof record.id !== "number" || typeof record.answer !== "string") throw new HarnessError(400, "answers : { id: nombre, answer: chaîne }");
-          return { id: record.id, answer: record.answer };
-        });
-        send(res, 200, { run: await orchestrator.answerEscalations(m[1] as string, answers) });
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs\/([\w-]+)\/decisions\/(\d+)\/accept$/,
-      handle: (m, _req, res) => send(res, 200, { decision: orchestrator.acceptDecision(m[1] as string, Number(m[2])) }),
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs\/([\w-]+)\/decisions\/(\d+)\/reverse$/,
-      handle: async (m, req, res) => {
-        const body = await readBody(req);
-        send(res, 200, { run: await orchestrator.reverseDecision(m[1] as string, Number(m[2]), text(body, "option"), text(body, "reason")) });
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/runs\/([\w-]+)\/validate$/,
-      handle: async (m, req, res) => {
-        const body = await readBody(req);
-        if (typeof body.approve !== "boolean") throw new HarnessError(400, "approve : booléen attendu");
-        send(res, 200, { run: await orchestrator.validate(m[1] as string, body.approve, text(body, "reason", false)) });
-      },
-    },
-    {
-      // Les escalades ouvertes, BATCHÉES par run : l'écran iOS les traite d'un geste.
-      method: "GET",
-      pattern: /^\/v1\/escalations$/,
-      handle: (_m, _req, res, url) => {
-        const status = url.searchParams.get("status") === "answered" ? "answered" : "open";
-        const byRun = new Map<string, unknown[]>();
-        for (const item of store.listEscalations({ status })) byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
-        send(res, 200, { batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })) });
-      },
-    },
-    {
-      // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
-      // verdicts à valider, décisions prises seules, features en cours, et le
-      // curseur du journal à partir duquel s'abonner au flux.
-      method: "GET",
-      pattern: /^\/v1\/inbox$/,
-      handle: (_m, _req, res) => send(res, 200, inboxOf(store)),
-    },
-    {
-      // La relecture du matin : les décisions prises seules, pas encore relues.
-      method: "GET",
-      pattern: /^\/v1\/decisions$/,
-      handle: (_m, _req, res, url) => {
-        const status = (url.searchParams.get("status") ?? "auto").split(",") as ("auto" | "accepted" | "reversed" | "superseded")[];
-        send(res, 200, { decisions: store.listDecisions({ status }) });
-      },
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/projects$/,
-      // Chaque projet avec le décompte de ses runs par état (la liste des apps).
-      handle: (_m, _req, res) => {
-        const projects = store.listProjects().map(project => {
-          const runs = store.listRuns({ projectId: project.id });
-          const byState: Record<string, number> = {};
-          for (const run of runs) byState[run.state] = (byState[run.state] ?? 0) + 1;
-          return { ...project, runs: { total: runs.length, byState } };
-        });
-        send(res, 200, { projects });
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/projects$/,
-      handle: async (_m, req, res) => {
-        const body = await readBody(req);
-        if (!Array.isArray(body.features)) throw new HarnessError(400, "features : liste attendue");
-        const features = body.features.map(item => {
-          const record = (item ?? {}) as Record<string, unknown>;
-          const modules = stringList(record.modules, "features[].modules");
-          const slug = text(record, "slug", false);
-          return { title: text(record, "title"), request: text(record, "request"), ...(slug ? { slug } : {}), ...(modules ? { modules } : {}) };
-        });
-        send(res, 201, await orchestrator.createProject({ repo: text(body, "repo"), title: text(body, "title"), features }));
-      },
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/projects\/([\w-]+)$/,
-      handle: (m, _req, res) => {
-        const project = store.getProject(m[1] as string);
-        if (!project) throw new HarnessError(404, `projet inconnu : ${m[1]}`);
-        send(res, 200, { project, runs: store.listRuns({ projectId: project.id }) });
-      },
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/audits$/,
-      handle: (_m, _req, res) => send(res, 200, { audits: store.listAudits() }),
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/audits$/,
-      handle: async (_m, req, res) => {
-        const body = await readBody(req);
-        const audit = orchestrator.audits.create(text(body, "repo"), text(body, "focus", false));
-        void orchestrator.tick();
-        send(res, 201, { audit });
-      },
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/audits\/([\w-]+)$/,
-      handle: (m, _req, res) => {
-        const audit = store.getAudit(m[1] as string);
-        if (!audit) throw new HarnessError(404, `audit inconnu : ${m[1]}`);
-        send(res, 200, { audit });
-      },
-    },
-    {
-      // Les propositions retenues (index dans `proposals`) partent en projet.
-      method: "POST",
-      pattern: /^\/v1\/audits\/([\w-]+)\/launch$/,
-      handle: async (m, req, res) => {
-        const body = await readBody(req);
-        if (!Array.isArray(body.items) || body.items.some(item => !Number.isInteger(item))) throw new HarnessError(400, "items : liste d'index attendue");
-        send(res, 201, await orchestrator.audits.launch(m[1] as string, body.items as number[], text(body, "title", false)));
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/v1\/audits\/([\w-]+)\/cancel$/,
-      handle: async (m, _req, res) => send(res, 200, { audit: await orchestrator.audits.cancel(m[1] as string) }),
-    },
-    {
-      method: "GET",
-      pattern: /^\/v1\/stats$/,
-      handle: (_m, _req, res) => send(res, 200, { ...computeStats(store), scheduler: orchestrator.status().scheduler }),
-    },
+          ...(priority !== undefined ? { priority } : {}),
+        },
+        call.actor,
+      );
+      send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
+    }),
+    route("GET", "/v1/runs/{id}", "viewer", call => {
+      const view = orchestrator.runView(call.match[1] as string, call.repos);
+      send(call.res, 200, view, { ETag: `"${(view.run as { rev: number }).rev}"` });
+    }),
+    route("POST", "/v1/runs/{id}/cancel", "operator", async call => send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) })),
+    route("POST", "/v1/runs/{id}/priority", "operator", async call => {
+      const body = await readBody(call.req);
+      const priority = integer(body.priority, "priority");
+      if (priority === undefined) throw new HarnessError(400, "priority : entier attendu");
+      send(call.res, 200, { run: await orchestrator.setPriority(runId(call), priority, call.actor) });
+    }),
+    route("POST", "/v1/runs/{id}/escalations", "operator", async call => {
+      const body = await readBody(call.req);
+      if (!Array.isArray(body.answers)) throw new HarnessError(400, "answers : liste de { id, answer } attendue");
+      const answers = body.answers.map(item => {
+        const record = (item ?? {}) as Record<string, unknown>;
+        if (typeof record.id !== "number" || typeof record.answer !== "string") throw new HarnessError(400, "answers : { id: nombre, answer: chaîne }");
+        return { id: record.id, answer: record.answer };
+      });
+      send(call.res, 200, { run: await orchestrator.answerEscalations(runId(call), answers, call.actor) });
+    }),
+    route("POST", "/v1/runs/{id}/decisions/{n}/accept", "operator", async call =>
+      send(call.res, 200, { decision: await orchestrator.acceptDecision(runId(call), Number(call.match[2]), call.actor) }),
+    ),
+    route("POST", "/v1/runs/{id}/decisions/{n}/reverse", "operator", async call => {
+      const body = await readBody(call.req);
+      send(call.res, 200, { run: await orchestrator.reverseDecision(runId(call), Number(call.match[2]), text(body, "option"), text(body, "reason"), call.actor) });
+    }),
+    route("POST", "/v1/runs/{id}/validate", "operator", async call => {
+      const body = await readBody(call.req);
+      if (typeof body.approve !== "boolean") throw new HarnessError(400, "approve : booléen attendu");
+      send(call.res, 200, { run: await orchestrator.validate(runId(call), body.approve, text(body, "reason", false), call.actor) });
+    }),
+    // Les escalades ouvertes, BATCHÉES par run : l'écran iOS les traite d'un geste.
+    route("GET", "/v1/escalations", "viewer", call =>
+      send(call.res, 200, escalationBatches(store, call.url.searchParams.get("status") === "answered" ? "answered" : "open", call.repos)),
+    ),
+    // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
+    // verdicts à valider, décisions prises seules, features en cours, et le
+    // curseur du journal à partir duquel s'abonner au flux.
+    route("GET", "/v1/inbox", "viewer", call => send(call.res, 200, inboxOf(store, call.repos))),
+    // La relecture du matin : les décisions prises seules, pas encore relues.
+    route("GET", "/v1/decisions", "viewer", call => {
+      const status = (call.url.searchParams.get("status") ?? "auto").split(",") as ("auto" | "accepted" | "reversed" | "superseded")[];
+      send(call.res, 200, { decisions: store.listDecisions({ status, repos: call.repos }) });
+    }),
+    // Chaque projet avec le décompte de ses runs par état (la liste des apps).
+    route("GET", "/v1/projects", "viewer", call => send(call.res, 200, { projects: projectsOf(store, call.repos) })),
+    route("POST", "/v1/projects", "operator", async call => {
+      const body = await readBody(call.req);
+      if (!Array.isArray(body.features)) throw new HarnessError(400, "features : liste attendue");
+      const features = body.features.map(item => {
+        const record = (item ?? {}) as Record<string, unknown>;
+        const modules = stringList(record.modules, "features[].modules");
+        const slug = text(record, "slug", false);
+        return { title: text(record, "title"), request: text(record, "request"), ...(slug ? { slug } : {}), ...(modules ? { modules } : {}) };
+      });
+      const repo = text(body, "repo");
+      requireRepo(call, repo);
+      const priority = integer(body.priority, "priority");
+      send(call.res, 201, await orchestrator.createProject({ repo, title: text(body, "title"), features, ...(priority !== undefined ? { priority } : {}) }, call.actor));
+    }),
+    route("GET", "/v1/projects/{id}", "viewer", call => {
+      const project = store.getProject(call.match[1] as string);
+      if (!project || !canSeeRepo(call.client, project.repo)) throw new HarnessError(404, `projet inconnu : ${call.match[1]}`);
+      send(call.res, 200, { project, runs: store.listRuns({ projectId: project.id }) });
+    }),
+    route("GET", "/v1/audits", "viewer", call => send(call.res, 200, { audits: store.listAudits([], call.repos) })),
+    route("POST", "/v1/audits", "operator", async call => {
+      const body = await readBody(call.req);
+      const repo = text(body, "repo");
+      requireRepo(call, repo);
+      const audit = orchestrator.audits.create(repo, text(body, "focus", false), call.actor);
+      void orchestrator.tick();
+      send(call.res, 201, { audit });
+    }),
+    route("GET", "/v1/audits/{id}", "viewer", call => send(call.res, 200, { audit: visibleAudit(call, call.match[1] as string) })),
+    // Les propositions retenues (index dans `proposals`) partent en projet.
+    route("POST", "/v1/audits/{id}/launch", "operator", async call => {
+      const audit = visibleAudit(call, call.match[1] as string);
+      const body = await readBody(call.req);
+      if (!Array.isArray(body.items) || body.items.some(item => !Number.isInteger(item))) throw new HarnessError(400, "items : liste d'index attendue");
+      send(call.res, 201, await orchestrator.audits.launch(audit.id, body.items as number[], text(body, "title", false), call.actor));
+    }),
+    route("POST", "/v1/audits/{id}/cancel", "operator", async call => send(call.res, 200, { audit: await orchestrator.audits.cancel(visibleAudit(call, call.match[1] as string).id, call.actor) })),
+    route("GET", "/v1/stats", "viewer", call => send(call.res, 200, { ...computeStats(store, Date.now(), call.repos), scheduler: orchestrator.status(call.repos).scheduler })),
+    // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
+    route("GET", "/v1/clients", "admin", call => send(call.res, 200, { clients: clients.list() })),
+    route("POST", "/v1/clients", "admin", async call => {
+      const body = await readBody(call.req);
+      const role = text(body, "role", false) || "operator";
+      if (!(ROLES as readonly string[]).includes(role)) throw new HarnessError(400, `role : ${ROLES.join(" | ")}`);
+      const repos = body.repos === undefined || body.repos === "*" ? "*" : stringList(body.repos, "repos");
+      try {
+        const { client, token } = clients.add(text(body, "name"), role as Role, repos ?? "*");
+        send(call.res, 201, { client, token });
+      } catch (err) {
+        throw new HarnessError(400, err instanceof Error ? err.message : String(err));
+      }
+    }),
+    route("DELETE", "/v1/clients/{name}", "admin", call => {
+      if (!clients.revoke(call.match[1] as string)) throw new HarnessError(404, `client inconnu : ${call.match[1]}`);
+      send(call.res, 200, { revoked: call.match[1] });
+    }),
   ];
+}
 
-  function events(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+
+/** Le gestionnaire de requêtes (sans serveur) : testable par `http.createServer`. */
+export function createHandler(options: HttpOptions): http.RequestListener {
+  const { orchestrator } = options;
+  const store = orchestrator.store;
+  const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
+  const routes = apiRoutes(orchestrator, clients);
+
+  function events(req: http.IncomingMessage, res: http.ServerResponse, url: URL, repos: RepoFilter): void {
     const runId = url.searchParams.get("run");
+    const live = url.searchParams.get("live") === "1";
     const header = req.headers["last-event-id"];
     let cursor = Number((typeof header === "string" ? header : null) ?? url.searchParams.get("after") ?? "0") || 0;
     res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    const visible = (event: EventRow): boolean =>
+      (runId === null || event.runId === runId) && (repos === null || (event.repo !== null && repos.includes(event.repo)));
     // Rejeu, puis le direct : l'abonnement est posé AVANT la lecture, le curseur écarte les doublons.
     const pending: EventRow[] = [];
     let replaying = true;
     const write = (event: EventRow): void => {
-      if (event.id <= cursor || (runId !== null && event.runId !== runId)) return;
+      if (!visible(event)) return;
+      if (event.ephemeral) {
+        if (live && !replaying) res.write(sseFrame(event));
+        return;
+      }
+      if (event.id <= cursor) return;
       cursor = event.id;
       res.write(sseFrame(event));
     };
     const unsubscribe = store.onEvent(event => (replaying ? pending.push(event) : write(event)));
-    for (let batch = store.eventsSince(cursor, runId); batch.length > 0; batch = store.eventsSince(cursor, runId)) batch.forEach(write);
+    for (let batch = store.eventsSince(cursor, runId, 500, repos); batch.length > 0; batch = store.eventsSince(cursor, runId, 500, repos)) batch.forEach(write);
     replaying = false;
-    pending.forEach(write);
+    pending.filter(event => !event.ephemeral).forEach(write);
     const ping = setInterval(() => res.write(": ping\n\n"), PING_MS);
     ping.unref?.();
     req.on("close", () => {
@@ -329,17 +355,18 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           throw new HarnessError(400, "URL illisible");
         }
         if (req.method === "GET" && url.pathname === "/v1/health") {
-          send(res, 200, { ok: true, api: API_VERSION, version: options.version ?? null });
+          send(res, 200, { ok: true, api: API_VERSION, version: options.version ?? HARNESS_VERSION, features: API_FEATURES });
           return;
         }
         const auth = req.headers.authorization ?? "";
-        const given = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-        if (!sameToken(given, token)) {
+        const client = clients.authenticate(auth.startsWith("Bearer ") ? auth.slice(7) : "");
+        if (!client) {
           send(res, 401, { error: "jeton absent ou invalide" });
           return;
         }
+        const repos = repoFilter(client);
         if (req.method === "GET" && url.pathname === "/v1/events") {
-          events(req, res, url);
+          events(req, res, url, repos);
           return;
         }
         let matchedPath = false;
@@ -348,7 +375,8 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           if (!match) continue;
           matchedPath = true;
           if (route.method !== req.method) continue;
-          await route.handle(match, req, res, url);
+          if (!allows(client.role, route.role)) throw new HarnessError(403, `le rôle ${client.role} ne permet pas ${route.method} ${route.path} (${route.role} requis)`);
+          await route.handle({ match, req, res, url, client, repos, actor: { by: client.name, rev: ifMatch(req) } });
           return;
         }
         send(res, matchedPath ? 405 : 404, { error: matchedPath ? "méthode non permise" : "route inconnue" });

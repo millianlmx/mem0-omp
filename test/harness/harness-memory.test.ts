@@ -66,7 +66,7 @@ test("harness-memory/AC-2 : chaque runner charge le plugin mémoire dans la scop
   );
   await world.orchestrator.start();
   try {
-    assert.deepEqual(world.orchestrator.status().repos, [{ name: "demo", scope: "mon-produit" }]);
+    assert.deepEqual(world.orchestrator.status().repos, [{ name: "demo", scope: "mon-produit", maxParallel: null }]);
     const run = world.orchestrator.createRun({ repo: "demo", title: "Export", request: "Exporter" });
     await waitFor(
       () => ["merged", "failed", "awaiting_human"].includes(world.store.getRun(run.id)?.state ?? ""),

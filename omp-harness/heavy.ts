@@ -37,6 +37,8 @@ export type HeavyJob = {
   scope: TestScope;
   /** Les fichiers touchés (scope `touched`). */
   files: string[];
+  /** La priorité du run : à attente égale, un job plus prioritaire prend le slot heavy d'abord. */
+  priority?: number;
 };
 
 export type HeavyResult = {
@@ -246,7 +248,7 @@ export class HeavyRunner {
     let last: HeavyResult | null = null;
     while (attempts < maxAttempts) {
       attempts++;
-      const slot = await scheduler.acquire("heavy", `${job.runId}:${job.scope}`, signal);
+      const slot = await scheduler.acquire("heavy", `${job.runId}:${job.scope}`, signal, job.priority ?? 0);
       const unit = `omp-heavy-${job.runId}-${++this.#seq}`;
       const argv = heavyArgv(config, job.worktree, unit, command, env, job.repo);
       store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt: attempts, unit });

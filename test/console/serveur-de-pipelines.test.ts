@@ -8,7 +8,8 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
-import { createHandler } from "../../omp-harness/http.ts";
+import { ClientRegistry } from "../../omp-harness/auth.ts";
+import { apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -129,33 +130,37 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
 
 test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dans le routeur du serveur, en Bearer", () => {
   const model = fs.readFileSync(path.join(CLIENT, "HarnessModel.swift"), "utf8");
-  const router = read("omp-harness", "http.ts");
-  const calls: [string, string][] = [
-    ["/v1/inbox", String.raw`\/v1\/inbox`],
-    ["/v1/events?after=", "/v1/events"],
-    ['path: "/escalations"', String.raw`\/escalations$`],
-    ['"/decisions/\\(seq)/accept"', String.raw`\/decisions\/(\d+)\/accept$`],
-    ['"/decisions/\\(seq)/reverse"', String.raw`\/decisions\/(\d+)\/reverse$`],
-    ['path: "/validate"', String.raw`\/validate$`],
-    ['path: "/cancel"', String.raw`\/cancel$`],
-    ['path: "/v1/status"', String.raw`\/v1\/status$`],
-    ['path: "/v1/projects"', String.raw`\/v1\/projects$`],
-    ['path: "/v1/audits"', String.raw`\/v1\/audits$`],
-    ['path: "/v1/stats"', String.raw`\/v1\/stats$`],
-    ['path: "/v1/runs/\\(id)"', String.raw`\/v1\/runs\/([\w-]+)$`],
-    ['launch("/v1/runs"', String.raw`\/v1\/runs$`],
-    ['launch("/v1/projects"', String.raw`\/v1\/projects$`],
-    ['launch("/v1/audits"', String.raw`\/v1\/audits$`],
-    ['"/v1/audits/\\(id)/launch"', String.raw`\/v1\/audits\/([\w-]+)\/launch$`],
-    ['"/v1/audits/\\(id)/cancel"', String.raw`\/v1\/audits\/([\w-]+)\/cancel$`],
+  // La table des routes du serveur, telle que le gestionnaire HTTP la sert.
+  const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
+  const served = (method: string, sample: string) => routes.some((route) => route.method === method && route.pattern.test(sample));
+  const calls: [string, string, string][] = [
+    ["/v1/inbox", "GET", "/v1/inbox"],
+    ['path: "/escalations"', "POST", "/v1/runs/r1/escalations"],
+    ['"/decisions/\\(seq)/accept"', "POST", "/v1/runs/r1/decisions/3/accept"],
+    ['"/decisions/\\(seq)/reverse"', "POST", "/v1/runs/r1/decisions/3/reverse"],
+    ['path: "/validate"', "POST", "/v1/runs/r1/validate"],
+    ['path: "/cancel"', "POST", "/v1/runs/r1/cancel"],
+    ['path: "/v1/status"', "GET", "/v1/status"],
+    ['path: "/v1/projects"', "GET", "/v1/projects"],
+    ['path: "/v1/audits"', "GET", "/v1/audits"],
+    ['path: "/v1/stats"', "GET", "/v1/stats"],
+    ['path: "/v1/runs/\\(id)"', "GET", "/v1/runs/r1"],
+    ['launch("/v1/runs"', "POST", "/v1/runs"],
+    ['launch("/v1/projects"', "POST", "/v1/projects"],
+    ['launch("/v1/audits"', "POST", "/v1/audits"],
+    ['"/v1/audits/\\(id)/launch"', "POST", "/v1/audits/a1/launch"],
+    ['"/v1/audits/\\(id)/cancel"', "POST", "/v1/audits/a1/cancel"],
   ];
-  for (const [client, server] of calls) {
+  for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
-    assert.ok(router.includes(server), `le serveur ne sert pas ${server}`);
+    assert.ok(served(method, sample), `le serveur ne sert pas ${method} ${sample}`);
   }
+  // Le flux d'événements est servi hors de la table (SSE).
+  assert.ok(model.includes("/v1/events?after="), "le client ne suit plus /v1/events");
+  assert.match(read("omp-harness", "http.ts"), /url\.pathname === "\/v1\/events"/);
   const transport = fs.readFileSync(path.join(CLIENT, "HarnessTransport.swift"), "utf8");
   assert.match(transport, /"Bearer \\\(server\.token\)", forHTTPHeaderField: "Authorization"/);
-  assert.match(router, /auth\.startsWith\("Bearer "\)/);
+  assert.match(read("omp-harness", "http.ts"), /auth\.startsWith\("Bearer "\)/);
 });
 
 test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis chaque section de pilotage, sur un seul client par app", () => {
