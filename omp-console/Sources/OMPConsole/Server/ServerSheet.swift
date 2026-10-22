@@ -1,5 +1,6 @@
 // La feuille « Serveur de pipelines » : relier le serveur du VPS (omp-harness) par
-// son adresse et son jeton d'accès, ou l'oublier. Les sections de pilotage (Accueil,
+// son adresse et son jeton d'accès, ou l'oublier ; un admin y déclare aussi les
+// fournisseurs LLM et les modèles (`ProvidersView`). Les sections de pilotage (Accueil,
 // Pipelines, Projet, Audit, Statistiques) l'ouvrent depuis leur barre d'outils.
 //
 // Le modèle (`HarnessModel`) et les brouillons (`HarnessDrafts`) sont ceux de la
@@ -29,6 +30,14 @@ struct ServerSheet: View {
                             .accessibilityIdentifier("server.forget")
                     } header: {
                         Text(server.address ?? "")
+                    }
+                    if server.isAdmin {
+                        Section {
+                            NavigationLink(PipelineServerText.providersOpen) {
+                                ProvidersView(server: server, drafts: drafts)
+                            }
+                            .accessibilityIdentifier("server.providers")
+                        }
                     }
                 } else {
                     Section {

@@ -4,7 +4,8 @@ import SwiftUI
 
 /// La feuille « Serveur de pipelines » : relier le serveur du VPS (omp-harness),
 /// joint directement (Tailscale) sans passer par le Mac, par son adresse et son
-/// jeton d'accès, ou l'oublier. Les écrans de pilotage l'ouvrent depuis leur barre.
+/// jeton d'accès, ou l'oublier ; un admin y déclare aussi les fournisseurs LLM et
+/// les modèles (`IOSProvidersScreen`). Les écrans de pilotage l'ouvrent depuis leur barre.
 ///
 /// Le modèle et les brouillons sont ceux de l'app, les mots du noyau
 /// (`PipelineServerText`) : aucun libellé en dur ici (`design-ios/AC-5`).
@@ -27,6 +28,14 @@ struct IOSServerSheet: View {
                             .accessibilityIdentifier("ios.server.forget")
                     } header: {
                         Text(server.address ?? "")
+                    }
+                    if server.isAdmin {
+                        Section {
+                            NavigationLink(PipelineServerText.providersOpen) {
+                                IOSProvidersScreen(server: server, drafts: drafts)
+                            }
+                            .accessibilityIdentifier("ios.server.providers")
+                        }
                     }
                 } else {
                     Section {

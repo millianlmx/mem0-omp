@@ -139,6 +139,11 @@ function containerRunnerArgv(
     `${spec.overlay}:${spec.overlay}:ro`,
     ...(box.runnerHome ? ["--volume", `${box.runnerHome}:/home/runner`] : []),
     ...(box.runnerEnvFile ? ["--volume", `${box.runnerEnvFile}:/run/secrets/runner.env:ro`] : []),
+    // Les clés déclarées par l'API (providers.ts) : montées seulement si le fichier existe
+    // (un montage d'un fichier absent créerait un répertoire).
+    ...(fs.existsSync(config.providersEnvFile)
+      ? ["--volume", `${config.providersEnvFile}:/run/secrets/providers.env:ro`]
+      : []),
     ...Object.entries(env).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
     box.runnerImage,
     ...omp,

@@ -43,6 +43,10 @@ public final class HarnessModel: ObservableObject {
     /// Le client de ce jeton (`/v1/me`) : son rôle dit si les gestes sont permis.
     /// `nil` tant qu'il n'est pas lu, ou avec un serveur antérieur aux clients multiples.
     @Published public private(set) var client: HarnessClient?
+    /// Les fournisseurs LLM et les chaînes de modèles (admin), lus à la demande de leur écran.
+    @Published public private(set) var providerCatalog: HarnessProviderCatalog?
+    /// Une déclaration de fournisseur ou de modèles attend la réponse du serveur.
+    @Published public private(set) var isSavingProviders = false
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -60,6 +64,8 @@ public final class HarnessModel: ObservableObject {
     private var wantsCatalog = false
     /// `/v1/me` a été demandé pour ce serveur (une fois : un serveur ancien ne l'a pas).
     private var clientAsked = false
+    /// L'écran des fournisseurs est ouvert : le flux les relit avec la boîte.
+    private var wantsProviders = false
 
     public init(
         transport: any HarnessTransport,
@@ -100,6 +106,9 @@ public final class HarnessModel: ObservableObject {
     /// Les gestes et lancements sont permis à ce jeton : vrai sauf pour un lecteur
     /// (un serveur qui ne dit rien de ses clients permet tout).
     public var canAct: Bool { client?.canAct ?? true }
+
+    /// Ce jeton administre le serveur : fournisseurs LLM et modèles (lu dans `/v1/me`).
+    public var isAdmin: Bool { client?.role == "admin" }
 
     // MARK: - Configuration
 
@@ -186,6 +195,8 @@ public final class HarnessModel: ObservableObject {
         projects = []
         audits = []
         stats = nil
+        providerCatalog = nil
+        wantsProviders = false
         failure = nil
         preferences.set(nil, forKey: Self.addressKey)
         try? await tokens.remove(deviceId: Self.tokenAccount)
@@ -302,6 +313,7 @@ public final class HarnessModel: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.refresh()
             if self?.wantsCatalog == true { await self?.refreshCatalog() }
+            if self?.wantsProviders == true { await self?.refreshProviders() }
             self?.refreshTask = nil
         }
     }
@@ -449,6 +461,72 @@ public final class HarnessModel: ObservableObject {
         return inbox.batches.compactMap(\.run).first { $0.id == runId }
             ?? inbox.awaiting.first { $0.id == runId }
             ?? inbox.runs.first { $0.id == runId }
+    }
+
+    // MARK: - Fournisseurs (admin)
+
+    /// Relit les fournisseurs et les chaînes de modèles. Dès le premier appel, le flux
+    /// les relit aussi à chaque événement (un autre appareil admin a pu les changer).
+    public func refreshProviders() async {
+        wantsProviders = true
+        guard let server else { return }
+        do {
+            providerCatalog = try await perform(HarnessCall(method: "GET", path: "/v1/providers"), on: server)
+            failure = nil
+        } catch {
+            failure = Self.failure(of: error)
+        }
+    }
+
+    /// Déclare ou modifie un fournisseur ; sa clé part vers le serveur et n'en revient pas.
+    @discardableResult
+    public func saveProvider(_ draft: HarnessProviderDraft) async -> Bool {
+        guard draft.problem == nil, let name = draft.effectiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            failure = .rejected("")
+            return false
+        }
+        let reply: HarnessProviderReply? = await administer("PUT", "/v1/providers/\(name)", body: draft.body)
+        if reply != nil { await refreshProviders() }
+        return reply != nil
+    }
+
+    /// Retire un fournisseur déclaré depuis les apps (refusé tant qu'une chaîne le nomme).
+    @discardableResult
+    public func removeProvider(_ name: String) async -> Bool {
+        guard let id = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return false }
+        let reply: HarnessAck? = await administer("DELETE", "/v1/providers/\(id)", body: nil as HarnessChainsBody?)
+        if reply != nil { await refreshProviders() }
+        return reply != nil
+    }
+
+    /// Remplace les chaînes de modèles ; `nil` revient à celles de la configuration du serveur.
+    @discardableResult
+    public func saveChains(_ chains: HarnessModelChains?) async -> Bool {
+        let reply: HarnessProviderCatalog? = await administer("PUT", "/v1/models", body: HarnessChainsBody(models: chains))
+        if let reply { providerCatalog = reply }
+        return reply != nil
+    }
+
+    private func administer<Body: Encodable, Reply: Decodable>(_ method: String, _ path: String, body: Body?) async -> Reply? {
+        guard let server else { return nil }
+        var encoded: Data?
+        if let body {
+            guard let data = try? JSONEncoder().encode(body) else {
+                failure = .unreadable
+                return nil
+            }
+            encoded = data
+        }
+        isSavingProviders = true
+        defer { isSavingProviders = false }
+        do {
+            let reply: Reply = try await perform(HarnessCall(method: method, path: path, body: encoded), on: server)
+            failure = nil
+            return reply
+        } catch {
+            failure = Self.failure(of: error)
+            return nil
+        }
     }
 
     // MARK: - Échange

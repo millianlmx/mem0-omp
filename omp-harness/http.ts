@@ -22,13 +22,15 @@ import type { EventRow, RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
+import type { ModelChains, ProviderInput } from "./providers.ts";
+import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS } from "./providers.ts";
 import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
 
 export const API_VERSION = 1;
 
 /** Ce que ce serveur sait faire en plus de l'API 1 d'origine (les clients s'y adaptent). */
-export const API_FEATURES = ["clients", "priority", "if-match", "live-events", "repos", "reload"] as const;
+export const API_FEATURES = ["clients", "priority", "if-match", "live-events", "repos", "reload", "providers"] as const;
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -96,6 +98,28 @@ function integer(value: unknown, key: string): number | undefined {
   return value as number;
 }
 
+/** Le corps d'un `PUT /v1/providers/{name}` : les types vérifiés ici, les valeurs par providers.ts. */
+function providerInput(body: Record<string, unknown>): ProviderInput {
+  const nullableInteger = (key: string): number | null | undefined =>
+    body[key] === null ? null : integer(body[key], key);
+  const nullableText = (key: string): string | null | undefined => {
+    const value = body[key];
+    if (value === undefined || value === null) return value;
+    return text(body, key);
+  };
+  if (body.models !== undefined && !Array.isArray(body.models))
+    throw new HarnessError(400, "models : liste de { id, contextWindow?, maxTokens? } attendue");
+  return {
+    kind: text(body, "kind"),
+    baseUrl: nullableText("baseUrl"),
+    api: nullableText("api"),
+    models: body.models as ProviderInput["models"],
+    apiKey: body.apiKey === undefined ? undefined : text(body, "apiKey"),
+    capacity: nullableInteger("capacity"),
+    refillPerMinute: nullableInteger("refillPerMinute"),
+  };
+}
+
 /** `If-Match: 12`, `"12"` ou `W/"12"` → 12 ; absent → `undefined`. */
 export function ifMatch(req: http.IncomingMessage): number | undefined {
   const header = req.headers["if-match"];
@@ -133,7 +157,7 @@ type Call = {
 };
 
 export type Route = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   role: Role;
   pattern: RegExp;
@@ -161,6 +185,16 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     return audit;
   };
   const runId = (call: Call): string => orchestrator.visibleRun(call.match[1] as string, call.repos).id;
+  const providersView = () => {
+    const { models, source } = orchestrator.providers.chains();
+    return {
+      providers: orchestrator.providers.list(),
+      models,
+      modelsSource: source,
+      kinds: [...Object.keys(KNOWN_PROVIDERS), COMPATIBLE],
+      apis: COMPATIBLE_APIS,
+    };
+  };
 
   return [
     route("GET", "/v1/me", "viewer", (call) => send(call.res, 200, { client: call.client })),
@@ -368,6 +402,27 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("DELETE", "/v1/clients/{name}", "admin", (call) => {
       if (!clients.revoke(call.match[1] as string)) throw new HarnessError(404, `client inconnu : ${call.match[1]}`);
       send(call.res, 200, { revoked: call.match[1] });
+    }),
+    // Les fournisseurs LLM et les chaînes de modèles : admin seulement. Une clé entre, jamais ne sort.
+    route("GET", "/v1/providers", "admin", (call) => send(call.res, 200, providersView())),
+    route("PUT", "/v1/providers/{name}", "admin", async (call) => {
+      const provider = orchestrator.providers.put(
+        call.match[1] as string,
+        providerInput(await readBody(call.req)),
+        call.actor.by,
+      );
+      send(call.res, 200, { provider });
+    }),
+    route("DELETE", "/v1/providers/{name}", "admin", (call) => {
+      orchestrator.providers.remove(call.match[1] as string, call.actor.by);
+      send(call.res, 200, { removed: call.match[1] });
+    }),
+    route("PUT", "/v1/models", "admin", async (call) => {
+      const body = await readBody(call.req);
+      if (body.models !== null && (typeof body.models !== "object" || Array.isArray(body.models)))
+        throw new HarnessError(400, "models : { fast, standard, heavy } attendu, ou null (retour à la configuration)");
+      orchestrator.providers.setChains(body.models as ModelChains | null, call.actor.by);
+      send(call.res, 200, providersView());
     }),
   ];
 }

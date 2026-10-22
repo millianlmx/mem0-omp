@@ -54,6 +54,11 @@ export class TokenBucket {
     return Math.max(cooling, Math.ceil(missing / this.#perMs));
   }
 
+  /** Millisecondes de refroidissement restantes (0 : aucun). */
+  coolingMs(): number {
+    return Math.max(0, this.#coolUntil - this.#now());
+  }
+
   /** Un rate limit : le seau est vidé et le fournisseur refroidit `ms`. */
   coolDown(ms: number): void {
     const now = this.#refill();
@@ -274,6 +279,21 @@ export class Scheduler {
       from = 0;
       await this.#sleep(Math.min(pick.waitMs, 30_000));
     }
+  }
+
+  /**
+   * La limite d'un fournisseur changée à chaud (déclarée par l'API) ; `null` la retire.
+   * Le seau repart plein à la nouvelle limite ; un refroidissement en cours est gardé.
+   */
+  setProviderLimit(provider: string, limit: ProviderLimit | null): void {
+    const current = this.#limits[provider];
+    if (current?.capacity === limit?.capacity && current?.refillPerMinute === limit?.refillPerMinute) return;
+    const cooling = this.#buckets.get(provider)?.coolingMs() ?? 0;
+    this.#buckets.delete(provider);
+    if (limit === null) delete this.#limits[provider];
+    else this.#limits[provider] = limit;
+    // Sans limite, un refroidissement en cours garde son seau minimal (comme reportRateLimit).
+    if (cooling > 0) this.reportRateLimit(provider, cooling);
   }
 
   /** Un rate limit reçu d'un fournisseur : son seau est vidé, il refroidit. */

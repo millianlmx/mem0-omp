@@ -344,9 +344,10 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `container.testImage` | `docker.io/library/node:22-bookworm` | l'image des tests par défaut |
 | `container.network` | `null` | le réseau des agents (celui du compose, qui porte la mémoire) |
 | `container.runnerEnvFile`, `container.runnerHome` | `null` | les clés des agents et leur HOME, chemins de l'hôte |
-| `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur un 429 ; vide, elle prend celle du niveau au-dessus |
+| `models.fast`, `models.standard`, `models.heavy` | `[]` | la chaîne de modèles de chaque niveau, dans l'ordre de bascule sur un 429 ; vide, elle prend celle du niveau au-dessus ; un admin les remplace depuis les apps (`PUT /v1/models`) |
 | `stepTiers` | `req`, `specs`, `review` : `heavy` ; `impl`, `fix` : `standard` | le niveau de chaque étape ; la dernière correction avant le plafond passe toujours en `heavy` |
-| `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur |
+| `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur (ceux déclarés depuis les apps s'y ajoutent) |
+| `providersEnvFile`, `providersModelsFile` | `providers.env`, `providers.models.yml` à côté de `tokenFile` | les clés et le `models.yml` des fournisseurs déclarés depuis les apps |
 | `review.specsGate` | `true` | la feature attend ta validation entre `/specs` et `/impl` |
 | `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
 | `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
@@ -433,7 +434,7 @@ la fois (le Mac, l'iPhone, un collègue, une CI).
 |---|---|
 | `viewer` | lire : boîte, runs, projets, audits, statistiques, flux |
 | `operator` | lire, créer runs, projets et audits, faire les gestes (escalades, décisions, validations, annulation, priorité) |
-| `admin` | tout, plus gérer les clients (`/v1/clients`) |
+| `admin` | tout, plus gérer les clients (`/v1/clients`), les fournisseurs LLM et les modèles (`/v1/providers`, `/v1/models`) |
 
 Un client borné à des dépôts ne voit rien des autres : listes et flux filtrés, 404
 sur un run d'ailleurs, 403 à la création. Le jeton historique (`tokenFile`) reste le
@@ -472,6 +473,41 @@ par ordre d'arrivée : personne ne double personne. Les merges d'un même dépô
 passent l'un après l'autre (le second se rebase sur le `main` du premier) ; les
 dépôts différents mergent en parallèle.
 
+## Les fournisseurs LLM, déclarés depuis les apps
+
+Un client `admin` déclare les fournisseurs et choisit les modèles depuis l'écran
+« Fournisseurs » des apps Mac et iOS (ou `/v1/providers`, `/v1/models`), sans toucher
+au serveur :
+
+- **les fournisseurs connus d'omp** — `anthropic`, `openai`, `openrouter`, `google`,
+  `mistral`, `xai` : une clé suffit (elle va dans la variable qu'omp lit déjà :
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`…) ;
+- **les fournisseurs compatibles OpenAI** (`openai-compatible`) — Ollama, vLLM,
+  LiteLLM, un oMLX joint par Tailscale… : un nom (`vps-ollama`), une adresse
+  (`http://127.0.0.1:11434/v1`), un protocole (`openai-completions` par défaut), des
+  modèles (`{id, contextWindow?, maxTokens?}`) et, au besoin, une clé
+  (`VPS_OLLAMA_API_KEY`). Ils sont écrits dans le `models.yml` des runners.
+
+Puis les chaînes : pour chaque tier (`fast`, `standard`, `heavy`), la liste ordonnée
+des `fournisseur/modèle` à essayer (bascule sur le suivant après un rate limit). Une
+capacité et un remplissage par minute (`capacity`, `refillPerMinute`) donnent au
+fournisseur son seau à jetons. Tout s'applique au prochain runner, sans redémarrage,
+et survit aux redémarrages (base SQLite, `providers`/`settings`).
+
+**Les clés n'entrent jamais en base ni dans une réponse.** Elles vivent dans
+`providers.env` (0600, à côté du jeton : `providersEnvFile`), et arrivent aux runners
+selon l'isolation :
+
+| Isolation | Clés | `models.yml` des compatibles |
+|---|---|---|
+| `none` | ajoutées à l'environnement du runner | `providersModelsFile` (à poser soi-même) |
+| `container` | `providers.env` monté en `/run/secrets/providers.env`, lu (jamais sourcé) par l'entrée | écrit dans le HOME monté des runners, bloc `omlx` d'un `up --omlx` gardé |
+| `systemd` | lues par le lanceur root (`PROVIDERS_ENV_FILE`) : seulement des `*_API_KEY` aux valeurs simples | posé par le lanceur sous `~omp-runner/.omp/profiles/<profil>/agent/`, écrit **par** `omp-runner` (`runuser`) |
+
+Une clé déclarée ici passe après `runner.env` (écrit par root) et l'emporte ; les
+autres variables de `runner.env` restent à root. Le lanceur ne lit un fichier du
+service que s'il est régulier, n'est pas un lien et n'appartient pas à root.
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -498,6 +534,9 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet, ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister, créer (le jeton n'est rendu qu'à la création), révoquer. |
+| `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
+| `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
+| `PUT /v1/models` `{models: {fast, standard, heavy} \| null}` | admin | Les chaînes de modèles de chaque tier (`[{provider, model}]`) ; `null` revient à celles de la configuration. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `priority`, `step_started`, `step_done`, `step_timeout`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle

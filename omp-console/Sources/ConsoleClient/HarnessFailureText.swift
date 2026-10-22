@@ -44,3 +44,17 @@ extension HarnessRun {
         }
     }
 }
+
+extension HarnessProviderDraft.Problem {
+    /// Ce qui empêche le fournisseur de partir, et comment y remédier.
+    public var message: String {
+        switch self {
+        case .name: PipelineServerText.providerNameProblem
+        case .reservedName: PipelineServerText.providerReservedProblem
+        case .address: PipelineServerText.providerAddressProblem
+        case .models: PipelineServerText.providerModelsProblem
+        case .key: PipelineServerText.providerKeyProblem
+        case .limit: PipelineServerText.providerLimitProblem
+        }
+    }
+}

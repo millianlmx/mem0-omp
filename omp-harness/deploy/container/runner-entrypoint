@@ -1,6 +1,6 @@
 #!/bin/sh
 # L'entrée des runners : les clés des fournisseurs et le jeton de la mémoire viennent
-# du fichier monté (jamais de la ligne de commande, que `ps` montrerait), puis omp.
+# des fichiers montés (jamais de la ligne de commande, que `ps` montrerait), puis omp.
 set -eu
 # Un uid choisi au lancement, inconnu de l'image : déclaré, avec le HOME des runners.
 if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
@@ -10,5 +10,21 @@ if [ -r /run/secrets/runner.env ]; then
   set -a
   . /run/secrets/runner.env
   set +a
+fi
+# Les clés déclarées par l'API (le service les écrit) : lues, jamais sourcées, et
+# seulement des `*_API_KEY` ; elles passent après runner.env et l'emportent.
+if [ -r /run/secrets/providers.env ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      *[!A-Za-z0-9_=._~+/:-]*) continue ;;
+    esac
+    name=${line%%=*}
+    case "$name" in
+      [A-Z]*_API_KEY) ;;
+      *) continue ;;
+    esac
+    case "$name" in *[!A-Z0-9_]*) continue ;; esac
+    export "$line"
+  done < /run/secrets/providers.env
 fi
 exec "$@"

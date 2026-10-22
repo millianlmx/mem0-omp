@@ -260,6 +260,113 @@ public enum PipelineServerText {
         return parts.joined(separator: " · ")
     }
 
+    // MARK: - Fournisseurs et modèles (admin)
+
+    public static let providersOpen = "Fournisseurs et modèles"
+    public static let providersTitle = "Fournisseurs et modèles"
+    public static let providersHint =
+        "Les clés partent vers le serveur et n’en reviennent jamais. Chaque agent lancé ensuite reçoit les fournisseurs et les modèles déclarés ici."
+    public static let chainsTitle = "Modèles par niveau"
+    public static let chainsHint =
+        "Pour chaque niveau, les modèles à essayer dans l’ordre, sous la forme fournisseur/modèle, séparés par des virgules. Un fournisseur à court de débit fait passer au suivant ; un niveau vide prend celui du dessus."
+    public static let chainsPrompt = "anthropic/claude-sonnet-5-5"
+    public static let chainsFromApps = "Modèles choisis depuis les apps"
+    public static let chainsFromServer = "Modèles de la configuration du serveur"
+    public static let saveChains = "Enregistrer les modèles"
+    public static let resetChains = "Revenir aux modèles du serveur"
+    public static let invalidChain = "Chaque modèle s’écrit fournisseur/modèle, séparé du suivant par une virgule."
+    public static let providersSection = "Fournisseurs"
+    public static let noProvider = "Aucun fournisseur déclaré."
+    public static let addProvider = "Ajouter un fournisseur…"
+    public static let newProviderTitle = "Nouveau fournisseur"
+    public static let editProvider = "Modifier"
+    public static let removeProvider = "Retirer"
+    public static let removeProviderConfirm = "Retirer ce fournisseur ?"
+    public static let removeProviderMessage = "Sa clé est effacée du serveur. Un fournisseur encore nommé dans les modèles par niveau ne peut pas partir."
+    public static let providerFromServer = "Déclaré par la configuration du serveur"
+    public static let kindLabel = "Fournisseur"
+    public static let providerNameLabel = "Nom"
+    public static let providerNamePrompt = "vps-ollama"
+    public static let providerAddressLabel = "Adresse"
+    public static let providerAddressPrompt = "Adresse du service, souvent terminée par /v1"
+    public static let protocolLabel = "Protocole"
+    public static let providerModelsLabel = "Modèles"
+    public static let providerModelsPrompt = "qwen3-coder, llama3.3"
+    public static let keyLabel = "Clé"
+    public static let keyPrompt = "Clé du fournisseur"
+    public static let removeKey = "Effacer la clé déclarée"
+    public static let noKey = "Sans clé"
+    public static let limitTitle = "Débit (facultatif)"
+    public static let capacityLabel = "Requêtes d’avance"
+    public static let refillLabel = "Requêtes par minute"
+    public static let limitHint = "Vide : sans limite. Au-delà, les agents attendent ou passent au modèle suivant."
+    public static let saveProvider = "Enregistrer"
+    public static let compatibleHint = "Un service compatible OpenAI (Ollama, vLLM, LiteLLM…) joint par le serveur, par exemple l’Ollama du VPS ou un oMLX publié par Tailscale."
+
+    // Ce qui empêche un fournisseur de partir.
+    public static let providerNameProblem = "Le nom s’écrit en minuscules, chiffres et tirets, une lettre d’abord, 32 caractères au plus."
+    public static let providerReservedProblem = "Ce nom est réservé au serveur oMLX du Mac : choisissez-en un autre."
+    public static let providerAddressProblem = "L’adresse commence par http ou https, sans espace."
+    public static let providerModelsProblem = "Indiquez au moins un modèle."
+    public static let providerKeyProblem = "La clé compte au moins 8 caractères, sans espace."
+    public static let providerLimitProblem = "Le débit demande les deux nombres, chacun au moins égal à 1."
+
+    /// L'origine des modèles par niveau, puis la règle de saisie.
+    public static func chainsFooter(fromApps: Bool) -> String {
+        "\(fromApps ? chainsFromApps : chainsFromServer). \(chainsHint)"
+    }
+
+    /// Le nom d'un niveau de modèles.
+    public static func tier(_ raw: String) -> String {
+        switch raw {
+        case "fast": "Rapide"
+        case "standard": "Standard"
+        case "heavy": "Approfondi"
+        default: raw
+        }
+    }
+
+    /// Le nom d'une sorte de fournisseur.
+    public static func providerKind(_ raw: String) -> String {
+        switch raw {
+        case "anthropic": "Anthropic"
+        case "openai": "OpenAI"
+        case "openrouter": "OpenRouter"
+        case "google": "Google Gemini"
+        case "mistral": "Mistral"
+        case "xai": "xAI"
+        case "openai-compatible": "Compatible OpenAI"
+        default: raw
+        }
+    }
+
+    /// Le nom d'un protocole d'un fournisseur compatible.
+    public static func providerProtocol(_ raw: String) -> String {
+        switch raw {
+        case "openai-completions": "Complétions OpenAI"
+        case "openai-responses": "Réponses OpenAI"
+        case "anthropic-messages": "Messages Anthropic"
+        default: raw
+        }
+    }
+
+    /// L'état de la clé : « Clé ••••9f3c » ou « Sans clé ».
+    public static func keyState(hasKey: Bool, hint: String?) -> String {
+        guard hasKey else { return noKey }
+        return hint.map { "Clé ••••\($0)" } ?? keyLabel
+    }
+
+    /// L'invite du champ de clé d'un fournisseur qui en a déjà une.
+    public static func keepKeyPrompt(_ hint: String) -> String { "Vide : la clé ••••\(hint) reste" }
+
+    /// « Compatible OpenAI · 2 modèles · Clé ••••9f3c »
+    public static func providerLine(kind: String, models: Int, key: String) -> String {
+        var parts = [providerKind(kind)]
+        if models > 0 { parts.append(countLine(models, one: "modèle", many: "modèles")) }
+        parts.append(key)
+        return parts.joined(separator: " · ")
+    }
+
     // MARK: - Échecs (cause, puis remède)
 
     public static let invalidAddress = "Cette adresse n’est pas valide. Saisissez le nom du serveur publié par Tailscale."

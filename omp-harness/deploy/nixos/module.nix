@@ -128,6 +128,8 @@ let
     RUNNER_SLICE=omp-harness-runners.slice
     OMP_BIN=${cfg.ompBin}
     RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+    PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
+    PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
     HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     HEAVY_SHELL=${shell}
   '';

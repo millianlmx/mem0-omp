@@ -115,11 +115,18 @@ export class Orchestrator {
     return this.#ctx.config;
   }
 
+  /** Les fournisseurs LLM et les chaînes de modèles, déclarés par l'API. */
+  get providers(): HarnessContext["providers"] {
+    return this.#ctx.providers;
+  }
+
   // -- cycle de vie ---------------------------------------------------------
 
   /** Reprise après redémarrage, puis la boucle de scheduling. */
   async start(): Promise<void> {
     this.#ctx.overlay();
+    // Les fournisseurs et chaînes déclarés par l'API passent avant la reprise des runs.
+    this.#ctx.providers.apply();
     await this.#prepareRepos(this.#ctx.config.repos);
     await this.recover();
     this.#started = true;

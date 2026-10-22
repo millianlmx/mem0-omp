@@ -67,6 +67,10 @@ log({
       (key) => [key, process.env[key] ?? null],
     ),
   ),
+  // Les clés de fournisseurs posées par les tests (préfixe `test-`) : jamais celles de la machine.
+  keys: Object.fromEntries(
+    Object.entries(process.env).filter(([key, value]) => key.endsWith("_API_KEY") && value?.startsWith("test-")),
+  ),
 });
 
 function callTool(name: string, args: Record<string, unknown>): Promise<string> {

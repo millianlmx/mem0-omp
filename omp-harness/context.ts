@@ -18,6 +18,7 @@ import type { RunState, Transition } from "./machine.ts";
 import { assertTransition } from "./machine.ts";
 import type { Oracle } from "./oracle.ts";
 import type { Exec } from "./proc.ts";
+import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -59,6 +60,8 @@ export class HarnessContext {
   readonly spawn: SpawnRunner;
   readonly exec: Exec;
   readonly log: (line: string) => void;
+  /** Les fournisseurs et chaînes de modèles déclarés par l'API (admin). */
+  readonly providers: ProviderRegistry;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -71,6 +74,12 @@ export class HarnessContext {
     this.spawn = deps.spawn;
     this.exec = deps.exec;
     this.log = deps.log ?? (() => {});
+    this.providers = new ProviderRegistry({
+      config: this.config,
+      store: this.store,
+      scheduler: this.scheduler,
+      log: this.log,
+    });
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */

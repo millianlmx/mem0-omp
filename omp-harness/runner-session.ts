@@ -99,7 +99,13 @@ export class RunnerSession {
       repo: this.#repo.path,
       oracleUrl: config.oracle?.url ?? null,
     });
-    const proc = this.#ctx.spawn(argv.command, argv.args, { cwd: this.#cwd, env: runnerEnv(scope, config.oracle) });
+    // Sans lanceur ni conteneur, les clés déclarées par l'API passent par l'environnement du runner.
+    const base =
+      config.runner.isolation === "none" ? { ...process.env, ...this.#ctx.providers.runnerEnv() } : process.env;
+    const proc = this.#ctx.spawn(argv.command, argv.args, {
+      cwd: this.#cwd,
+      env: runnerEnv(scope, config.oracle, base),
+    });
     const runner = new RpcRunner(proc, {
       onHostTool: this.#hooks.onHostTool,
       onFrame: (frame) => {

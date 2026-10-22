@@ -70,8 +70,34 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var picks: [String: Set<Int>] = [:]
     /// Les specs relues (run → contenu de `specs.md`) et le refus en cours.
     @Published public var specs: [String: String] = [:]
+    /// Le fournisseur en cours de saisie (sa feuille est ouverte), et celui dont le
+    /// retrait attend confirmation (admin).
+    @Published public var provider: HarnessProviderDraft?
+    @Published public var providerRemoval: HarnessProvider?
+    /// Les modèles par niveau en cours de saisie (`fournisseur/modèle, …`).
+    @Published public var chains: [String: String] = [:]
 
     public init() {}
+
+    /// Reprend dans la saisie les modèles par niveau que le serveur vient de rendre.
+    public func loadChains(_ catalog: HarnessProviderCatalog) {
+        chains = Dictionary(uniqueKeysWithValues: HarnessModelChains.tiers.map { ($0, HarnessModelChains.text(catalog.models[$0])) })
+    }
+
+    /// Les modèles par niveau saisis, ou `nil` si un maillon n'a pas la forme `fournisseur/modèle`.
+    public var parsedChains: HarnessModelChains? {
+        var out = HarnessModelChains()
+        for tier in HarnessModelChains.tiers {
+            guard let chain = HarnessModelChains.parse(chains[tier] ?? "") else { return nil }
+            out[tier] = chain
+        }
+        return out
+    }
+
+    /// Ouvre la saisie d'un nouveau fournisseur, ou la modification d'un déclaré.
+    public func beginProvider(_ existing: HarnessProvider? = nil) {
+        provider = existing.map { HarnessProviderDraft(editing: $0) } ?? HarnessProviderDraft()
+    }
 
     /// Le dépôt des lancements : celui choisi, sinon le premier déclaré.
     public func launchRepo(in repos: [HarnessRepo]) -> String? {

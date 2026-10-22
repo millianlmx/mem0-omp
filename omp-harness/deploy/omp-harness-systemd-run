@@ -9,6 +9,7 @@
 #   --scope …  -- choom -n N -- OMP_BIN … un runner : scope MemoryMax, relancé sous
 #                                        RUNNER_USER (jamais root, jamais le service),
 #                                        avec les clés de RUNNER_ENV_FILE (root seul)
+#                                        puis celles déclarées par l'API (*_API_KEY)
 #   --wait --pipe …  -- HEAVY_SHELL -c CMD un job heavy : service transitoire forcé
 #                                        User=HEAVY_USER, PrivateNetwork=yes,
 #                                        chemins inscriptibles sous WRITABLE_ROOTS
@@ -38,6 +39,10 @@ HEAVY_SLICE=omp-harness-heavy.slice
 RUNNER_SLICE=omp-harness-runners.slice
 OMP_BIN=/usr/local/bin/omp
 RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+# Les fournisseurs déclarés par l'API (écrits par le service, pas par root) : leurs clés
+# et le models.yml des fournisseurs compatibles OpenAI.
+PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
+PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
 # Le bash des jobs heavy : `/bin/bash`, ou son chemin du store sous NixOS.
 HEAVY_SHELL=/bin/bash
 # Ce qu'un job heavy ne doit jamais voir, ajouté par le lanceur lui-même.
@@ -62,6 +67,8 @@ if [ -r "$CONF" ]; then
       RUNNER_SLICE) RUNNER_SLICE="$value" ;;
       OMP_BIN) OMP_BIN="$value" ;;
       RUNNER_ENV_FILE) RUNNER_ENV_FILE="$value" ;;
+      PROVIDERS_ENV_FILE) PROVIDERS_ENV_FILE="$value" ;;
+      PROVIDERS_MODELS_FILE) PROVIDERS_MODELS_FILE="$value" ;;
       HEAVY_HIDDEN) HEAVY_HIDDEN="$value" ;;
       HEAVY_SHELL) HEAVY_SHELL="$value" ;;
       *) ;;
@@ -97,6 +104,13 @@ within() {
     case "$target" in "$resolved"/?*) return 0 ;; esac
   done
   return 1
+}
+
+# Un fichier écrit par le service : régulier, pas un lien, et pas à root (avec
+# fs.protected_hardlinks, un lien dur vers un fichier de root garde root pour
+# propriétaire). Sans ce contrôle, le service ferait lire n'importe quel fichier à root.
+service_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %u -- "$1")" != "0" ]
 }
 
 run() {
@@ -162,6 +176,33 @@ case "$1" in
         case "${BASH_REMATCH[1]}" in BASH_ENV | ENV | LD_* | PATH | HOME | USER | LOGNAME | SHELL) continue ;; esac
         export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
       done < "$RUNNER_ENV_FILE"
+    fi
+    # Les clés déclarées par l'API : seulement des `*_API_KEY` aux valeurs simples. Elles
+    # passent après runner.env et l'emportent (root garde la main sur tout le reste).
+    if service_file "$PROVIDERS_ENV_FILE"; then
+      while IFS= read -r line; do
+        [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,512})$ ]] || continue
+        export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+        if [ "$DRY_RUN" = "1" ]; then printf 'providerenv:%s\n' "${BASH_REMATCH[1]}"; fi
+      done < "$PROVIDERS_ENV_FILE"
+    fi
+    # Le models.yml des fournisseurs compatibles, posé sous le profil du runner, ÉCRIT PAR
+    # le runner lui-même (runuser) : root n'écrit jamais dans un HOME qui ne lui est pas.
+    profile=""
+    previous=""
+    for arg in "$@"; do
+      if [ "$previous" = "--profile" ]; then profile="$arg"; fi
+      previous="$arg"
+    done
+    if [ -n "$profile" ] && service_file "$PROVIDERS_MODELS_FILE"; then
+      [[ "$profile" =~ $unit_id_re ]] || refuse "profil invalide : $profile"
+      models_dir="$HOME/.omp/profiles/$profile/agent"
+      if [ "$DRY_RUN" = "1" ]; then
+        printf 'models:%s\n' "$models_dir/models.yml"
+      else
+        runuser -u "$RUNNER_USER" -- /bin/sh -c 'umask 077 && mkdir -p -- "$1" && cat > "$1/models.yml.tmp" && mv -f -- "$1/models.yml.tmp" "$1/models.yml"' \
+          sh "$models_dir" < "$PROVIDERS_MODELS_FILE" || refuse "models.yml du runner non posé"
+      fi
     fi
     # La scope du run passe APRÈS runner.env : elle vaut pour ce run, pas pour tous.
     for assignment in "${memory_env[@]}"; do

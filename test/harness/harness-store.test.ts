@@ -16,13 +16,13 @@ test("harness-store/AC-1 : la base se crée migrée, en WAL, et une réouverture
   const dir = tmpdir("harness-store-");
   const file = path.join(dir, "h.sqlite");
   const first = new Store(file);
-  assert.equal(first.schemaVersion, 4);
+  assert.equal(first.schemaVersion, 5);
   first.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "harness/a" });
   assert.equal((first.db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
   first.close();
   const again = new Store(file);
   assert.equal(again.getRun("r1")?.title, "A");
-  assert.equal(again.schemaVersion, 4);
+  assert.equal(again.schemaVersion, 5);
   again.close();
 });
 

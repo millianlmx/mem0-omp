@@ -506,4 +506,123 @@ struct HarnessModelTests {
         #expect(features?.first?["modules"] as? [String] == ["src/api", "docs"])
         #expect(features?.last?["modules"] == nil, "une feature sans modules laisse le serveur les chercher")
     }
+
+    @Test("un admin lit les fournisseurs et déclare une clé qui ne revient jamais ; les champs vides ne partent pas")
+    func providers() async throws {
+        let catalog = #"""
+        {"providers":[
+          {"name":"openai","kind":"openai","source":"api","baseUrl":null,"api":null,"models":[],"capacity":null,"refillPerMinute":null,
+           "keyVariable":"OPENAI_API_KEY","hasKey":true,"keyHint":"9f3c","updatedBy":"admin"},
+          {"name":"vps-ollama","kind":"openai-compatible","source":"api","baseUrl":"http://127.0.0.1:11434/v1","api":"openai-completions",
+           "models":[{"id":"qwen3-coder","contextWindow":32768}],"capacity":5,"refillPerMinute":10,
+           "keyVariable":"VPS_OLLAMA_API_KEY","hasKey":false,"keyHint":null,"updatedBy":"admin"},
+          {"name":"anthropic","kind":"anthropic","source":"config","baseUrl":null,"api":null,"models":[],"capacity":null,"refillPerMinute":null,
+           "keyVariable":"ANTHROPIC_API_KEY","hasKey":false,"keyHint":null,"updatedBy":null}],
+         "models":{"fast":[],"standard":[{"provider":"anthropic","model":"claude-sonnet-5-5"}],"heavy":[{"provider":"vps-ollama","model":"qwen3-coder"}]},
+         "modelsSource":"api","kinds":["anthropic","openai","openai-compatible"],"apis":["openai-completions"]}
+        """#
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("GET", "/v1/me"): ok(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0}}"#)
+            case ("GET", "/v1/providers"), ("PUT", "/v1/models"): ok(catalog)
+            case ("PUT", "/v1/providers/openai"): ok(#"{"provider":{"name":"openai","kind":"openai","hasKey":true,"keyHint":"wxyz"}}"#)
+            case ("DELETE", "/v1/providers/vps-ollama"): HarnessReply(status: 409, body: Data(#"{"error":"fournisseur utilisé par les chaînes heavy"}"#.utf8))
+            default: ok(inboxJSON)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        #expect(model.isAdmin)
+        await model.refreshProviders()
+        let read = try #require(model.providerCatalog)
+        #expect(read.providers.map(\.name) == ["openai", "vps-ollama", "anthropic"])
+        #expect(read.providers[1].isCompatible && read.providers[1].models.first?.contextWindow == 32768)
+        #expect(read.providers[2].isEditable == false, "un fournisseur de la configuration se lit seulement")
+        #expect(read.modelsFromApps)
+        #expect(PipelineServerText.keyState(hasKey: true, hint: read.providers[0].keyHint) == "Clé ••••9f3c")
+
+        // La modification garde la clé tant qu'on n'en saisit pas une neuve.
+        let drafts = HarnessDrafts()
+        drafts.beginProvider(read.providers[0])
+        var draft = try #require(drafts.provider)
+        #expect(draft.keyHint == "9f3c" && draft.apiKey.isEmpty)
+        #expect(await model.saveProvider(draft))
+        let kept = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "PUT" }?.body)) as? [String: Any]
+        #expect(kept?["kind"] as? String == "openai")
+        #expect(kept?["apiKey"] == nil, "un champ de clé vide garde la clé déclarée")
+        #expect(kept?["baseUrl"] == nil && kept?["models"] == nil, "un fournisseur connu n'envoie ni adresse ni modèles")
+        #expect(kept?["capacity"] is NSNull, "un débit vide retire la limite")
+
+        draft.apiKey = " sk-test-wxyz "
+        #expect(await model.saveProvider(draft))
+        let fresh = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "PUT" }?.body)) as? [String: Any]
+        #expect(fresh?["apiKey"] as? String == "sk-test-wxyz")
+        draft.apiKey = ""
+        draft.removeKey = true
+        #expect(await model.saveProvider(draft))
+        let cleared = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "PUT" }?.body)) as? [String: Any]
+        #expect(cleared?["apiKey"] as? String == "", "effacer la clé envoie une clé vide")
+
+        // Retirer un fournisseur encore nommé : le motif du serveur reste.
+        #expect(await model.removeProvider("vps-ollama") == false)
+        #expect(model.failure == .rejected("fournisseur utilisé par les chaînes heavy"))
+    }
+
+    @Test("un fournisseur compatible demande nom, adresse et modèles ; les modèles par niveau se saisissent fournisseur/modèle")
+    func compatibleProviderAndChains() async throws {
+        var draft = HarnessProviderDraft(kind: HarnessProviderDraft.compatible)
+        #expect(draft.problem == .name)
+        draft.name = "VPS-Ollama"
+        #expect(draft.effectiveName == "vps-ollama")
+        #expect(draft.problem == .address)
+        draft.baseUrl = "http://127.0.0.1:11434/v1"
+        #expect(draft.problem == .models)
+        draft.models = "qwen3-coder, llama3.3 qwen3-coder"
+        #expect(draft.modelList == ["qwen3-coder", "llama3.3"])
+        draft.capacity = "5"
+        #expect(draft.problem == .limit)
+        draft.refillPerMinute = "10"
+        draft.apiKey = "court"
+        #expect(draft.problem == .key)
+        #expect(draft.problem?.message == PipelineServerText.providerKeyProblem)
+        draft.apiKey = ""
+        #expect(draft.problem == nil)
+        draft.name = "omlx"
+        #expect(draft.problem == .reservedName)
+        draft.name = "vps-ollama"
+        let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft.body)) as? [String: Any]
+        #expect(body?["kind"] as? String == "openai-compatible")
+        #expect(body?["api"] as? String == "openai-completions")
+        #expect((body?["models"] as? [[String: Any]])?.compactMap { $0["id"] as? String } == ["qwen3-coder", "llama3.3"])
+        #expect(body?["capacity"] as? Int == 5 && body?["refillPerMinute"] as? Int == 10)
+
+        #expect(HarnessModelChains.parse("anthropic/claude-opus-5-5, vps-ollama/qwen3-coder")
+            == [HarnessModelChoice(provider: "anthropic", model: "claude-opus-5-5"), HarnessModelChoice(provider: "vps-ollama", model: "qwen3-coder")])
+        #expect(HarnessModelChains.parse("") == [])
+        #expect(HarnessModelChains.parse("claude-opus") == nil)
+
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("PUT", "/v1/models"): ok(#"{"providers":[],"models":{"fast":[],"standard":[],"heavy":[]},"modelsSource":"config","kinds":[],"apis":[]}"#)
+            default: ok(inboxJSON)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        let drafts = HarnessDrafts()
+        drafts.chains = ["fast": "", "standard": "vps-ollama/qwen3-coder", "heavy": "anthropic/claude-opus-5-5, vps-ollama/qwen3-coder"]
+        let chains = try #require(drafts.parsedChains)
+        #expect(await model.saveChains(chains))
+        let sent = try JSONSerialization.jsonObject(with: try #require(transport.calls.last?.body)) as? [String: Any]
+        let heavy = (sent?["models"] as? [String: Any])?["heavy"] as? [[String: String]]
+        #expect(heavy?.map { $0["provider"] ?? "" } == ["anthropic", "vps-ollama"])
+        #expect(await model.saveChains(nil))
+        let reset = try JSONSerialization.jsonObject(with: try #require(transport.calls.last?.body)) as? [String: Any]
+        #expect(reset?["models"] is NSNull, "revenir aux modèles du serveur envoie null")
+        #expect(model.providerCatalog?.modelsFromApps == false)
+        drafts.chains["heavy"] = "sans-barre"
+        #expect(drafts.parsedChains == nil)
+    }
 }

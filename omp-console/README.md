@@ -257,6 +257,16 @@ exécuter une étape elle-même.
   `~/.omp/mem0.json`, que lisent les plugins d'omp et la section Mémoire (après une
   relance). Sans serveur enregistré, l'app Mac prend celui de `~/.omp/harness.json`
   (posé par `/pair` dans omp).
+- **Fournisseurs et modèles** (jeton `admin` seulement) — dans la feuille
+  « Serveur », « Fournisseurs et modèles » (`ProvidersView.swift`,
+  `ios/OMPConsoleIOS/IOSProvidersScreen.swift`) déclare les fournisseurs LLM du
+  serveur : un fournisseur connu d'omp (Anthropic, OpenAI, OpenRouter, Google
+  Gemini, Mistral, xAI) avec sa clé, ou un service compatible OpenAI (l'Ollama du
+  VPS, vLLM, un oMLX publié par Tailscale…) avec son adresse, son protocole et ses
+  modèles ; puis les **modèles par niveau** (Rapide, Standard, Approfondi), saisis
+  `fournisseur/modèle` dans l'ordre de bascule. La clé part vers le serveur
+  (`PUT /v1/providers/{name}`) et n'en revient jamais : l'écran n'en montre que les
+  quatre derniers caractères. Un champ de clé vide garde la clé déclarée.
 - **Un seul client.** Un `HarnessModel` et un `HarnessDrafts` pour toute la
   fenêtre : les cinq sections partagent la même boîte, le même catalogue et les
   mêmes brouillons de lancement. Sans serveur relié, chacune montre le même appel à

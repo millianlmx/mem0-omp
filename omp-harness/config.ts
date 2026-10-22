@@ -73,6 +73,12 @@ export type HarnessConfig = {
   tokenFile: string;
   /** Les clients nommés (jetons hachés, rôles, dépôts permis), gérés par `--add-client` (auth.ts). */
   clientsFile: string;
+  /**
+   * Les fournisseurs déclarés par l'API (providers.ts) : leurs clés (`*_API_KEY`, 0600) et
+   * le `models.yml` des fournisseurs compatibles OpenAI, que le lanceur pose chez les runners.
+   */
+  providersEnvFile: string;
+  providersModelsFile: string;
   /** La base SQLite et les overlays de réglages des runners. */
   dataDir: string;
   /** Les worktrees git, un par run. */
@@ -210,6 +216,8 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     listen: { host: "127.0.0.1", port: 8790 },
     tokenFile: path.join(base, "token"),
     clientsFile: path.join(base, "clients.json"),
+    providersEnvFile: path.join(base, "providers.env"),
+    providersModelsFile: path.join(base, "providers.models.yml"),
     dataDir: base,
     worktreesDir: path.join(base, "worktrees"),
     ompBin: "omp",
@@ -372,6 +380,10 @@ export function loadConfig(file: string | null): HarnessConfig {
   }
   // Les clients vivent à côté du jeton historique (même dossier d'état, mêmes droits).
   if (raw.clientsFile === undefined) config.clientsFile = path.join(path.dirname(config.tokenFile), "clients.json");
+  if (raw.providersEnvFile === undefined)
+    config.providersEnvFile = path.join(path.dirname(config.tokenFile), "providers.env");
+  if (raw.providersModelsFile === undefined)
+    config.providersModelsFile = path.join(path.dirname(config.tokenFile), "providers.models.yml");
   return validateConfig(config);
 }
 
