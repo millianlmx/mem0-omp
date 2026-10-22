@@ -1,8 +1,43 @@
 # Développer mem0-omp
 
-Le détail de la suite de tests, de la CI et de la release. Les règles à respecter
+L'organisation du dépôt et le détail de la suite de tests, de la CI et de la release. Les règles à respecter
 avant une PR sont dans [CONTRIBUTING.md](CONTRIBUTING.md), la publication dans
 [PUBLISHING.md](PUBLISHING.md).
+
+## Le dépôt
+
+```
+mem0-omp/                              racine = marketplace OMP
+├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
+├── omp-mem0-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
+├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
+├── omp-harness/                       le serveur de pipelines du VPS
+│   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
+├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
+│   └── ios/                           le projet Xcode de l'app iOS
+├── mem0-stack/                        la pile conteneur du service mémoire
+│   └── mem0-rs/                       le serveur mémoire (Rust + SQLite)
+├── test/                              la suite node --test
+├── scripts/check.sh                   la validation avant publication
+├── scripts/test-files.sh              liste les fichiers de test : tous, macOS, du diff, d'une liste, outillage
+├── scripts/test-touched.sh            lance les tests qu'une liste de fichiers concerne (npm run test:touched)
+├── scripts/test-ac.sh                 preuve par critère : les tests du diff qui portent AC-n
+├── scripts/ci-verdict.sh              verdict de l'agrégateur macOS de la CI
+├── scripts/ci-scope.sh                dit si le diff d'une PR impose de compiler l'app Mac ou l'app iOS
+├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois
+├── scripts/typecheck.sh               type-check des plugins et de test/ (tsc épinglé)
+├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
+├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
+├── scripts/swift-app.sh               tests release puis bundle .app de l'app Mac
+├── scripts/ios-build.sh               compile et teste l'app iOS (Xcode)
+├── scripts/app-icon.sh                dessine l'icône de l'app
+├── scripts/run-console.sh             recompile et relance l'app Mac
+├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
+├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire du service mémoire
+├── scripts/release.ts                 PR de release, tags et releases au merge
+├── scripts/no-manual-bump.sh          refuse un bump de version manuel
+└── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
+```
 
 ## Tests et scripts
 

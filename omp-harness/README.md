@@ -485,8 +485,15 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
   voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
 
-**Reprendre la mémoire du Mac**, une fois la copie `/tmp/mem0-rs.db` posée sur le VPS
-(README racine, étape 4) :
+**Reprendre la mémoire du Mac**, avant d'écrire quoi que ce soit sur le serveur (même
+modèle d'embedding des deux côtés, `EMBEDDING_DIMS`). Sur le Mac, copie sa base :
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.omp.console/mem0-rs/mem0-rs.db ".backup /tmp/mem0-rs.db"
+scp /tmp/mem0-rs.db <vps>:/tmp/
+```
+
+Puis sur le VPS :
 
 ```bash
 # en conteneurs (docker, ou podman)

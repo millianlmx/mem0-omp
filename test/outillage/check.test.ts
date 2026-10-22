@@ -688,7 +688,7 @@ chmod +x "$target/release/mem0-rs"`,
   );
 });
 
-test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes et le README racine y renvoie", () => {
+test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes, l'arborescence la cite et le README racine y renvoie", () => {
   // L'invariant criteria/AC-13 exige qu'un slug de feature vive dans UN SEUL
   // fichier de test : ce test vit donc ici, avec les autres `socle-app-swift`.
   const shell = fs.readFileSync(path.join(ROOT, "omp-console", "README.md"), "utf8");
@@ -703,11 +703,13 @@ test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes e
     "omp-console/README.md : le chemin du bundle produit est absent",
   );
 
-  // Le README racine cite la coque dans son arborescence et renvoie à son document.
+  // L'arborescence du dépôt (DEVELOPPEMENT.md) cite la coque, et le README racine
+  // renvoie à son document.
+  const dev = fs.readFileSync(path.join(ROOT, "DEVELOPPEMENT.md"), "utf8");
+  const tree = dev.split("\n```").find((block) => block.includes("racine = marketplace OMP"));
+  assert.ok(tree !== undefined, "arborescence absente de DEVELOPPEMENT.md");
+  assert.ok(tree.includes("omp-console/"), "DEVELOPPEMENT.md : omp-console/ absent de l'arborescence");
   const rootReadme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
-  const tree = rootReadme.split("\n```").find((block) => block.includes("racine = marketplace OMP"));
-  assert.ok(tree !== undefined, "arborescence absente du README");
-  assert.ok(tree.includes("omp-console/"), "README : omp-console/ absent de l'arborescence");
   assert.ok(rootReadme.includes("omp-console/README.md"), "README : aucun renvoi vers omp-console/README.md");
 });
 

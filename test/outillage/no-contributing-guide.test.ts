@@ -185,8 +185,8 @@ test("no-contributing-guide/AC-1 : le guide énonce les six règles, chacune ave
 test("no-contributing-guide/AC-2 : les renvois du guide visent des fichiers et des titres présents", () => {
   const real = realGuide();
   for (const link of [
-    "[README.md § « Tests et scripts »](README.md)",
-    "[README.md § « CI et release »](README.md)",
+    "[DEVELOPPEMENT.md § « Tests et scripts »](DEVELOPPEMENT.md)",
+    "[DEVELOPPEMENT.md § « CI et release »](DEVELOPPEMENT.md)",
     "[PUBLISHING.md](PUBLISHING.md)",
   ]) {
     assert.ok(real.includes(link), `renvoi absent : ${link}`);
@@ -248,7 +248,7 @@ test("no-contributing-guide/AC-5 : une option refusée par test-files.sh échoue
 test("no-contributing-guide/AC-6 : un titre de section cité absent fait échouer la garde en le nommant", () => {
   const real = realGuide();
   const readme = mutate(real, "« CI et release »", "« CI et publication »");
-  assert.ok(guideFaults(readme, ROOT).includes("titre absent : README.md § « CI et publication »"));
+  assert.ok(guideFaults(readme, ROOT).includes("titre absent : DEVELOPPEMENT.md § « CI et publication »"));
   const publishing = mutate(real, "« Mettre à jour »", "« Mise à niveau »");
   assert.ok(guideFaults(publishing, ROOT).includes("titre absent : PUBLISHING.md § « Mise à niveau »"));
 });
