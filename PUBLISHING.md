@@ -299,6 +299,12 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    d'installation et de mise à jour — et « ce qui casse / quoi faire » pour un bump
    majeur.
 
+Le serveur de pipelines `omp-harness/` suit le même chemin sans être un plugin du
+catalogue : son `omp-harness/package.json` est bumpé d'après les commits qui touchent
+`omp-harness/`, tagué `omp-harness-v<version>` et publié avec une note qui renvoie à
+son installation (`harness.sh up`), jamais à `/marketplace`. Sa version ne se monte
+pas plus à la main que celle d'un plugin, et `/v1/health` la rend aux clients.
+
 ```bash
 # Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :
 node --experimental-strip-types scripts/release.ts --before <sha> --after <sha> --dry-run

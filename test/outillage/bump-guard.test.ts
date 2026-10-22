@@ -208,3 +208,22 @@ test("base absente ou introuvable : sortie non nulle, diagnostic nommé", () => 
   assert.notEqual(bogus.status, 0, output(bogus));
   assert.ok(output(bogus).includes("✗ option inconnue : --inconnue"), output(bogus));
 });
+
+test("service : la version d'omp-harness, hors catalogue, ne se monte pas non plus à la main", () => {
+  const dir = makeRepo();
+  const rel = "omp-harness/package.json";
+  fs.mkdirSync(path.join(dir, "omp-harness"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, rel), path.join(dir, rel));
+  commitAll(dir, "chore: le service");
+  const before = readJson<{ version: string }>(dir, rel).version;
+  const run = withPullRequest(dir, () => {
+    const pkg = readJson<Record<string, unknown>>(dir, rel);
+    pkg.version = "9.9.9";
+    fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(pkg, null, 2)}\n`);
+  });
+  assert.equal(run.status, 1, output(run));
+  assert.ok(
+    output(run).includes(`  ✗ ${rel} : version modifiée à la main (${before} → 9.9.9) — ${SUFFIX}`),
+    output(run),
+  );
+});

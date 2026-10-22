@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
+import { SERVICES, bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
@@ -210,6 +210,12 @@ function makeRepo(kind: string, steps: Step[], prepare?: (dir: string) => void):
   git(["commit", "-q", "-m", "chore: base du scénario"], dir);
   for (const plugin of PLUGINS) {
     const tag = versionTag(plugin.name, versionIn(dir, `${plugin.dir}/package.json`));
+    git(["tag", "-a", tag, "-m", tag], dir);
+  }
+  // Les services hors catalogue ne sont pas l'objet des scénarios : leur version courante est publiée.
+  for (const service of SERVICES) {
+    if (!fs.existsSync(path.join(dir, service.dir, "package.json"))) continue;
+    const tag = versionTag(service.name, versionIn(dir, `${service.dir}/package.json`));
     git(["tag", "-a", tag, "-m", tag], dir);
   }
   git(["remote", "add", "origin", remote], dir);
