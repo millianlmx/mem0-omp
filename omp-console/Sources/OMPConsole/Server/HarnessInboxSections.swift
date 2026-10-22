@@ -18,12 +18,19 @@ struct HarnessInboxSections: View {
     let inbox: HarnessInbox
 
     var body: some View {
+        if !server.canAct {
+            Section {
+                Text(PipelineServerText.readOnly)
+                    .foregroundStyle(.secondary)
+            }
+        }
         Section {
             if inbox.batches.isEmpty {
                 emptyRow
             }
             ForEach(inbox.batches) { batch in
                 batchView(batch)
+                    .disabled(!server.canAct)
             }
         } header: {
             Text(PipelineServerText.toDecide)
@@ -37,6 +44,7 @@ struct HarnessInboxSections: View {
             }
             ForEach(inbox.specsAwaiting) { run in
                 specsView(run)
+                    .disabled(!server.canAct)
             }
         } header: {
             Text(PipelineServerText.specsToValidate)
@@ -50,6 +58,7 @@ struct HarnessInboxSections: View {
             }
             ForEach(inbox.verdictsAwaiting) { run in
                 verdictView(run)
+                    .disabled(!server.canAct)
             }
         } header: {
             Text(PipelineServerText.verdictsToValidate)
@@ -63,6 +72,7 @@ struct HarnessInboxSections: View {
             }
             ForEach(inbox.decisions) { decision in
                 decisionView(decision, run: inbox.run(decision.runId))
+                    .disabled(!server.canAct)
             }
         } header: {
             Text(PipelineServerText.toReview)

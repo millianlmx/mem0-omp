@@ -164,6 +164,10 @@ public enum PipelineServerText {
     public static let launchRunHint = "Le serveur la conduit seul : besoins, specs (à valider), implémentation, revue, fusion."
     public static let titleLabel = "Titre"
     public static let requestLabel = "Demande"
+    /// Les chemins que la feature touchera : ce sont eux qui décident du parallélisme.
+    public static let modulesLabel = "Modules touchés (facultatif, ex. src/api, docs)"
+    /// Un jeton en lecture seule : la boîte se lit, les gestes se font ailleurs.
+    public static let readOnly = "Cet appareil a un accès en lecture seule : les gestes et les lancements se font depuis un appareil opérateur."
     public static let launch = "Lancer"
     public static let allRuns = "Toutes les features"
     public static let noRun = "Aucune feature sur ce serveur."
@@ -268,4 +272,14 @@ public enum PipelineServerText {
     public static func rejected(_ motive: String) -> String {
         motive.isEmpty ? "Le serveur a refusé ce geste." : "Le serveur a refusé ce geste : \(motive)"
     }
+
+    /// Un geste que l'accès de cet appareil ne permet pas (lecture seule, ou autre dépôt).
+    public static func forbidden(_ motive: String) -> String {
+        motive.isEmpty
+            ? "L’accès de cet appareil ne permet pas ce geste. Demandez un accès opérateur à l’administrateur du serveur."
+            : "L’accès de cet appareil ne permet pas ce geste : \(motive)"
+    }
+
+    /// Un autre appareil a agi sur la feature entre-temps : rien n'a été fait, la boîte est relue.
+    public static let stale = "Cette feature a changé depuis votre dernière lecture. La boîte vient d’être relue : refaites le geste si besoin."
 }

@@ -12,6 +12,8 @@ extension HarnessFailure {
         case .unreachable: PipelineServerText.unreachable
         case .timedOut: PipelineServerText.timedOut
         case .rejected(let motive): PipelineServerText.rejected(motive)
+        case .forbidden(let motive): PipelineServerText.forbidden(motive)
+        case .stale: PipelineServerText.stale
         case .unreadable: PipelineServerText.unreadable
         }
     }

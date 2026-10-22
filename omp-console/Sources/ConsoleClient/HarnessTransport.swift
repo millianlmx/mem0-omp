@@ -16,16 +16,19 @@ public struct HarnessServer: Equatable, Sendable {
     }
 }
 
-/// Un appel : méthode, chemin (requête comprise), corps JSON éventuel.
+/// Un appel : méthode, chemin (requête comprise), corps JSON éventuel, en-têtes en plus
+/// (`If-Match` : la révision du run que l'app a lue).
 public struct HarnessCall: Equatable, Sendable {
     public var method: String
     public var path: String
     public var body: Data?
+    public var headers: [String: String]
 
-    public init(method: String, path: String, body: Data? = nil) {
+    public init(method: String, path: String, body: Data? = nil, headers: [String: String] = [:]) {
         self.method = method
         self.path = path
         self.body = body
+        self.headers = headers
     }
 }
 
@@ -53,6 +56,10 @@ public enum HarnessFailure: Error, Equatable, Sendable {
     case timedOut
     /// Le serveur a refusé le geste ; son motif, tel qu'il l'a écrit.
     case rejected(String)
+    /// Le jeton de cet appareil ne permet pas ce geste (rôle ou dépôt) ; le motif du serveur.
+    case forbidden(String)
+    /// Un autre client a changé la feature depuis la dernière lecture : le geste n'a pas eu lieu.
+    case stale
     /// Une réponse que cette version de l'app ne sait pas lire.
     case unreadable
 }
@@ -151,6 +158,7 @@ public struct URLSessionHarnessTransport: HarnessTransport {
         request.httpMethod = call.method
         request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
+        for (name, value) in call.headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body = call.body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

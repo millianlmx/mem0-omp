@@ -211,6 +211,7 @@ struct HarnessProjectsView: View {
                         TextField(PipelineServerText.titleLabel, text: $feature.title)
                         TextField(PipelineServerText.requestLabel, text: $feature.request, axis: .vertical)
                             .lineLimit(2...6)
+                        TextField(PipelineServerText.modulesLabel, text: $feature.modules)
                         if drafts.features.count > 1 {
                             Button(PipelineServerText.removeFeature, role: .destructive) { drafts.removeFeature(feature.id) }
                                 .buttonStyle(.borderless)

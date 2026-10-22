@@ -174,7 +174,10 @@ struct HarnessModelTests {
         #expect(model.inbox?.cursor == 42)
         #expect(preferences.string(forKey: HarnessModel.addressKey) == "https://vps.example")
         #expect(await tokens.knownTokens[HarnessModel.tokenAccount] == "bon")
-        #expect(transport.calls.last?.path == "/v1/inbox")
+        // La boîte d'abord (la preuve), puis le client du jeton ; un serveur sans /v1/me ne gêne rien.
+        #expect(transport.calls.suffix(2).map(\.path) == ["/v1/inbox", "/v1/me"])
+        #expect(model.client == nil)
+        #expect(model.canAct)
 
         #expect(await model.configure(address: "ftp://x", token: "t") == false)
         #expect(model.failure == .invalidAddress)
@@ -410,5 +413,97 @@ struct HarnessModelTests {
 
         #expect(await model.launchRun(repo: "x", title: "T", request: "r") == nil)
         #expect(model.failure == .rejected("dépôt inconnu : x"))
+    }
+
+    @Test("chaque geste porte la révision lue : un autre appareil a agi entre-temps, le geste est refusé et la boîte relue")
+    func staleGesture() async throws {
+        let transport = ScriptedHarnessTransport()
+        let withRev = inboxJSON.replacingOccurrences(of: #""reason": "2 décision(s)""#, with: #""reason": "2 décision(s)", "rev": 7, "priority": 2, "createdBy": "mac""#)
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("POST", "/v1/runs/r1/cancel"): HarnessReply(status: 412, body: Data(#"{"error":"le run a changé"}"#.utf8))
+            case ("POST", _): ok(#"{"run":{}}"#)
+            default: ok(withRev)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        let run = try #require(model.inbox?.batches.first?.run)
+        #expect(run.rev == 7)
+        #expect(run.priority == 2)
+        #expect(run.createdBy == "mac")
+
+        let inboxReads = transport.calls.filter { $0.path == "/v1/inbox" }.count
+        #expect(await model.cancel(runId: "r1") == false)
+        let post = try #require(transport.calls.last { $0.method == "POST" })
+        #expect(post.headers["If-Match"] == "\"7\"")
+        #expect(model.failure == .stale)
+        #expect(model.failure?.message == PipelineServerText.stale)
+        #expect(transport.calls.filter { $0.path == "/v1/inbox" }.count == inboxReads + 1, "la boîte est relue")
+
+        // Un run absent de la boîte (lu ailleurs) part sans révision : le serveur n'impose rien.
+        #expect(await model.accept(runId: "inconnu", seq: 1))
+        #expect(transport.calls.last { $0.method == "POST" }?.headers.isEmpty == true)
+    }
+
+    @Test("un jeton en lecture seule le sait (/v1/me) ; un geste refusé par le rôle garde le motif du serveur")
+    func viewerClient() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("GET", "/v1/me"): ok(#"{"client":{"name":"ipad","role":"viewer","repos":["demo"],"createdAt":1}}"#)
+            case ("POST", _): HarnessReply(status: 403, body: Data(#"{"error":"le rôle viewer ne permet pas cela"}"#.utf8))
+            default: ok(inboxJSON)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        #expect(model.client == HarnessClient(name: "ipad", role: "viewer", repos: ["demo"]))
+        #expect(model.canAct == false)
+        #expect(await model.validate(runId: "r2", approve: true, reason: "") == false)
+        #expect(model.failure == .forbidden("le rôle viewer ne permet pas cela"))
+        #expect(model.failure?.message == PipelineServerText.forbidden("le rôle viewer ne permet pas cela"))
+        // Un administrateur, lui, voit tous les dépôts (`"*"`).
+        let admin = try? JSONDecoder().decode(HarnessMe.self, from: Data(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0}}"#.utf8))
+        #expect(admin?.client.repos == nil)
+        #expect(admin?.client.canAct == true)
+    }
+
+    @Test("priorité, modules et projet : les corps portent ce qui est saisi, et rien de plus pour un serveur ancien")
+    func priorityAndModules() async throws {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("POST", "/v1/runs"): HarnessReply(status: 201, body: Data(#"{"run":{"id":"r9","repo":"demo","slug":"x","title":"T","request":"r","state":"queued","fixes":0,"modules":["src/api"],"createdAt":1,"updatedAt":1}}"#.utf8))
+            case ("POST", "/v1/projects"): HarnessReply(status: 201, body: Data(#"{"projectId":"p2","runs":[]}"#.utf8))
+            case ("POST", _): ok(#"{"run":{}}"#)
+            default: catalogServer(call)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+
+        #expect(await model.setPriority(runId: "r4", priority: 10))
+        let bump = try #require(transport.calls.last { $0.method == "POST" })
+        #expect(bump.path == "/v1/runs/r4/priority")
+        #expect((try JSONSerialization.jsonObject(with: try #require(bump.body)) as? [String: Int]) == ["priority": 10])
+
+        #expect(await model.launchRun(repo: "demo", title: "T", request: "r", modules: ["src/api"], priority: 3)?.id == "r9")
+        let run = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "POST" && $0.path == "/v1/runs" }?.body)) as? [String: Any]
+        #expect(run?["modules"] as? [String] == ["src/api"])
+        #expect(run?["priority"] as? Int == 3)
+
+        _ = await model.launchRun(repo: "demo", title: "T", request: "r")
+        let plain = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "POST" && $0.path == "/v1/runs" }?.body)) as? [String: Any]
+        #expect(plain.map { Set($0.keys) } == ["repo", "title", "request"], "un serveur ancien reçoit le même corps qu'avant")
+
+        let draft = HarnessFeatureDraft(title: "A", request: "a", modules: " src/api, docs src/api ")
+        #expect(draft.moduleList == ["src/api", "docs"])
+        #expect(await model.launchProject(repo: "demo", title: "Refonte", features: [draft, HarnessFeatureDraft(title: "B", request: "b")], priority: 1) == "p2")
+        let project = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "POST" && $0.path == "/v1/projects" }?.body)) as? [String: Any]
+        #expect(project?["priority"] as? Int == 1)
+        let features = project?["features"] as? [[String: Any]]
+        #expect(features?.first?["modules"] as? [String] == ["src/api", "docs"])
+        #expect(features?.last?["modules"] == nil, "une feature sans modules laisse le serveur les chercher")
     }
 }

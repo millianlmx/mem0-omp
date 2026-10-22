@@ -61,13 +61,21 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var prUrl: String?
     public var reason: String?
     public var model: String?
+    /// La révision du run (+1 à chaque écriture) : renvoyée en `If-Match` avec un geste.
+    /// `nil` avec un serveur antérieur aux clients multiples.
+    public var rev: Int?
+    /// La priorité d'admission (plus grand = plus tôt) ; `nil` avec un serveur antérieur.
+    public var priority: Int?
+    /// Le client qui a lancé la feature (`nil` : le service, ou le jeton historique).
+    public var createdBy: String?
     public var createdAt: Double
     public var updatedAt: Double
 
     public init(
         id: String, repo: String, slug: String, title: String, request: String, state: String, step: String? = nil,
         fixes: Int = 0, modules: [String] = [], verdict: HarnessVerdict? = nil, mergeSha: String? = nil,
-        prUrl: String? = nil, reason: String? = nil, model: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
+        prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
+        createdBy: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
     ) {
         self.id = id
         self.repo = repo
@@ -83,6 +91,9 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.prUrl = prUrl
         self.reason = reason
         self.model = model
+        self.rev = rev
+        self.priority = priority
+        self.createdBy = createdBy
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -414,6 +425,38 @@ public struct HarnessRunView: Codable, Equatable, Sendable {
 }
 
 /// Un dépôt déclaré sur le serveur (`GET /v1/status`).
+/// Le client de ce jeton (`GET /v1/me`) : son nom, son rôle, ses dépôts.
+public struct HarnessClient: Decodable, Equatable, Sendable {
+    public var name: String
+    /// `viewer` (lecture), `operator` (gestes et lancements) ou `admin`.
+    public var role: String
+    /// Les dépôts permis ; `nil` : tous (`"*"` côté serveur).
+    public var repos: [String]?
+
+    public init(name: String, role: String, repos: [String]? = nil) {
+        self.name = name
+        self.role = role
+        self.repos = repos
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, role, repos }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        role = try container.decode(String.self, forKey: .role)
+        repos = try? container.decode([String].self, forKey: .repos)
+    }
+
+    /// Le rôle permet les gestes et les lancements (un lecteur ne voit que la boîte).
+    public var canAct: Bool { role != "viewer" }
+}
+
+/// La réponse de `GET /v1/me`.
+public struct HarnessMe: Decodable, Equatable, Sendable {
+    public var client: HarnessClient
+}
+
 public struct HarnessRepo: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var scope: String

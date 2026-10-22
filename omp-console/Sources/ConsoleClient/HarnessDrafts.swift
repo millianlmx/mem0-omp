@@ -11,11 +11,25 @@ public struct HarnessFeatureDraft: Equatable, Sendable, Identifiable {
     public var id: UUID
     public var title: String
     public var request: String
+    /// Les chemins du dépôt que la feature touchera, séparés par des virgules ou des
+    /// espaces (`src/api, docs`) : ce sont eux qui décident du parallélisme. Vide : le
+    /// serveur les cherche dans la mémoire du projet.
+    public var modules: String
 
-    public init(id: UUID = UUID(), title: String = "", request: String = "") {
+    public init(id: UUID = UUID(), title: String = "", request: String = "", modules: String = "") {
         self.id = id
         self.title = title
         self.request = request
+        self.modules = modules
+    }
+
+    /// Les modules saisis, un par chemin, sans doublon ; vide si rien n'est saisi.
+    public var moduleList: [String] {
+        var seen = Set<String>()
+        return modules
+            .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" })
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// Titre et demande saisis : la feature peut partir.

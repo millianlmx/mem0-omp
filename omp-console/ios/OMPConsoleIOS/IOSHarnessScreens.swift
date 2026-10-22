@@ -184,9 +184,14 @@ struct IOSHarnessInboxSections: View {
     let inbox: HarnessInbox
 
     var body: some View {
+        if !server.canAct {
+            Section {
+                Text(PipelineServerText.readOnly).foregroundStyle(.secondary)
+            }
+        }
         Section {
             if inbox.batches.isEmpty { empty }
-            ForEach(inbox.batches) { batch in batchView(batch) }
+            ForEach(inbox.batches) { batch in batchView(batch).disabled(!server.canAct) }
         } header: {
             Text(PipelineServerText.toDecide)
         } footer: {
@@ -194,7 +199,7 @@ struct IOSHarnessInboxSections: View {
         }
         Section {
             if inbox.specsAwaiting.isEmpty { empty }
-            ForEach(inbox.specsAwaiting) { run in specsView(run) }
+            ForEach(inbox.specsAwaiting) { run in specsView(run).disabled(!server.canAct) }
         } header: {
             Text(PipelineServerText.specsToValidate)
         } footer: {
@@ -202,7 +207,7 @@ struct IOSHarnessInboxSections: View {
         }
         Section {
             if inbox.verdictsAwaiting.isEmpty { empty }
-            ForEach(inbox.verdictsAwaiting) { run in verdictView(run) }
+            ForEach(inbox.verdictsAwaiting) { run in verdictView(run).disabled(!server.canAct) }
         } header: {
             Text(PipelineServerText.verdictsToValidate)
         } footer: {
@@ -210,7 +215,7 @@ struct IOSHarnessInboxSections: View {
         }
         Section {
             if inbox.decisions.isEmpty { empty }
-            ForEach(inbox.decisions) { decision in decisionView(decision, run: inbox.run(decision.runId)) }
+            ForEach(inbox.decisions) { decision in decisionView(decision, run: inbox.run(decision.runId)).disabled(!server.canAct) }
         } header: {
             Text(PipelineServerText.toReview)
         } footer: {
@@ -446,6 +451,7 @@ struct IOSHarnessProjectsScreen: View {
                 Section {
                     TextField(PipelineServerText.titleLabel, text: $feature.title)
                     TextField(PipelineServerText.requestLabel, text: $feature.request, axis: .vertical)
+                    TextField(PipelineServerText.modulesLabel, text: $feature.modules)
                     if drafts.features.count > 1 {
                         Button(PipelineServerText.removeFeature, role: .destructive) { drafts.removeFeature(feature.id) }
                     }

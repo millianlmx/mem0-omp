@@ -40,6 +40,9 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var busyAudits: Set<String> = []
     /// Un lancement (feature, projet, audit) attend la réponse du serveur.
     @Published public private(set) var isLaunching = false
+    /// Le client de ce jeton (`/v1/me`) : son rôle dit si les gestes sont permis.
+    /// `nil` tant qu'il n'est pas lu, ou avec un serveur antérieur aux clients multiples.
+    @Published public private(set) var client: HarnessClient?
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -55,6 +58,8 @@ public final class HarnessModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     /// Un écran a demandé le catalogue : le flux le relit avec la boîte.
     private var wantsCatalog = false
+    /// `/v1/me` a été demandé pour ce serveur (une fois : un serveur ancien ne l'a pas).
+    private var clientAsked = false
 
     public init(
         transport: any HarnessTransport,
@@ -91,6 +96,10 @@ public final class HarnessModel: ObservableObject {
     }
 
     public var isConfigured: Bool { server != nil }
+
+    /// Les gestes et lancements sont permis à ce jeton : vrai sauf pour un lecteur
+    /// (un serveur qui ne dit rien de ses clients permet tout).
+    public var canAct: Bool { client?.canAct ?? true }
 
     // MARK: - Configuration
 
@@ -153,8 +162,11 @@ public final class HarnessModel: ObservableObject {
             server = candidate
             address = normalized
             inbox = fetched
+            client = nil
+            clientAsked = false
             failure = nil
             if let pairing { onPaired(pairing) }
+            await readClient()
             return true
         } catch {
             failure = Self.failure(of: error)
@@ -168,6 +180,8 @@ public final class HarnessModel: ObservableObject {
         server = nil
         address = nil
         inbox = nil
+        client = nil
+        clientAsked = false
         repos = []
         projects = []
         audits = []
@@ -189,6 +203,17 @@ public final class HarnessModel: ObservableObject {
             failure = nil
         } catch {
             failure = Self.failure(of: error)
+        }
+        if !clientAsked { await readClient() }
+    }
+
+    /// Lit le client de ce jeton (`/v1/me`). Un serveur antérieur aux clients multiples
+    /// n'a pas cette route : rien n'est retenu, rien n'est signalé.
+    private func readClient() async {
+        guard let server else { return }
+        clientAsked = true
+        if let me: HarnessMe = try? await perform(HarnessCall(method: "GET", path: "/v1/me"), on: server) {
+            client = me.client
         }
     }
 
@@ -315,19 +340,32 @@ public final class HarnessModel: ObservableObject {
         await gesture(runId, method: "POST", path: "/cancel", body: EmptyBody())
     }
 
+    /// Change la priorité d'une feature (plus grand = admise plus tôt, de -1000 à 1000).
+    @discardableResult
+    public func setPriority(runId: String, priority: Int) async -> Bool {
+        await gesture(runId, method: "POST", path: "/priority", body: PriorityBody(priority: priority))
+    }
+
     // MARK: - Lancements
 
-    /// Lance une feature : le serveur la conduit de /req au merge.
+    /// Lance une feature : le serveur la conduit de /req au merge. `modules` (les chemins
+    /// touchés) et `priority` sont facultatifs : sans eux, le serveur décide.
     @discardableResult
-    public func launchRun(repo: String, title: String, request: String) async -> HarnessRun? {
-        let reply: HarnessRunReply? = await launch("/v1/runs", body: RunBody(repo: repo, title: title, request: request))
+    public func launchRun(repo: String, title: String, request: String, modules: [String] = [], priority: Int? = nil) async -> HarnessRun? {
+        let body = RunBody(repo: repo, title: title, request: request, modules: modules.isEmpty ? nil : modules, priority: priority)
+        let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
     }
 
     /// Lance un projet : ses features tournent en parallèle quand leurs modules sont disjoints.
     @discardableResult
-    public func launchProject(repo: String, title: String, features: [HarnessFeatureDraft]) async -> String? {
-        let body = ProjectBody(repo: repo, title: title, features: features.map { ProjectBody.Feature(title: $0.title, request: $0.request) })
+    public func launchProject(repo: String, title: String, features: [HarnessFeatureDraft], priority: Int? = nil) async -> String? {
+        let body = ProjectBody(
+            repo: repo,
+            title: title,
+            priority: priority,
+            features: features.map { ProjectBody.Feature(title: $0.title, request: $0.request, modules: $0.moduleList.isEmpty ? nil : $0.moduleList) }
+        )
         let reply: HarnessProjectReply? = await launch("/v1/projects", body: body)
         return reply?.projectId
     }
@@ -389,15 +427,28 @@ public final class HarnessModel: ObservableObject {
         }
         busy.insert(runId)
         defer { busy.remove(runId) }
+        // La révision lue avec la boîte : un autre appareil qui a agi entre-temps fait refuser le geste.
+        let headers = knownRun(runId)?.rev.map { ["If-Match": "\"\($0)\""] } ?? [:]
         do {
-            let _: HarnessAck = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded), on: server)
+            let _: HarnessAck = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
             failure = nil
             await refresh()
             return true
         } catch {
-            failure = Self.failure(of: error)
+            let failed = Self.failure(of: error)
+            if failed == .stale { await refresh() }
+            // Relue ou non, la boîte ne doit pas effacer la raison de l'échec.
+            failure = failed
             return false
         }
+    }
+
+    /// Le run tel que la dernière boîte le montre (batches, validations, en cours).
+    private func knownRun(_ runId: String) -> HarnessRun? {
+        guard let inbox else { return nil }
+        return inbox.batches.compactMap(\.run).first { $0.id == runId }
+            ?? inbox.awaiting.first { $0.id == runId }
+            ?? inbox.runs.first { $0.id == runId }
     }
 
     // MARK: - Échange
@@ -410,6 +461,11 @@ public final class HarnessModel: ObservableObject {
             return value
         case 401:
             throw HarnessFailure.unauthorized
+        case 412:
+            throw HarnessFailure.stale
+        case 403:
+            let message = (try? JSONDecoder().decode(HarnessErrorBody.self, from: reply.body))?.error ?? ""
+            throw HarnessFailure.forbidden(message)
         default:
             let message = (try? JSONDecoder().decode(HarnessErrorBody.self, from: reply.body))?.error ?? ""
             throw HarnessFailure.rejected(message)
@@ -442,20 +498,29 @@ private struct ValidateBody: Encodable {
     var reason: String
 }
 
+private struct PriorityBody: Encodable {
+    var priority: Int
+}
+
+/// Les champs facultatifs (`nil`) ne partent pas : un serveur antérieur reçoit le même corps qu'avant.
 private struct RunBody: Encodable {
     var repo: String
     var title: String
     var request: String
+    var modules: [String]?
+    var priority: Int?
 }
 
 private struct ProjectBody: Encodable {
     struct Feature: Encodable {
         var title: String
         var request: String
+        var modules: [String]?
     }
 
     var repo: String
     var title: String
+    var priority: Int?
     var features: [Feature]
 }
 
