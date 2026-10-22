@@ -283,7 +283,10 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    sa version courante ;
 2. **Branche** — `release/<sha de l'événement>`, sur laquelle il écrit les
    versions, les deux catalogues et `CHANGELOG.md`, puis prouve le résultat avec
-   `./scripts/check.sh` (rouge ⇒ rien n'est committé) ;
+   `./scripts/check.sh` limité aux sections que la release peut casser
+   (catalogue, noms, plugins, versions, extension, types, lint, smoke, noyau)
+   plus les tests que les fichiers écrits concernent (`--tests-base=HEAD`) ;
+   rouge ⇒ rien n'est committé ;
 3. **PR** — poussée de la branche, puis PR vers `main` ouverte avec le jeton dédié
    (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée ;
 4. **Statuts requis** — le job attend que les trois statuts requis passent sur
@@ -372,9 +375,12 @@ rejoue la release de la PR **sur une copie jetable** : `scripts/release-simulati
 crée un worktree git détaché du commit de fusion que GitHub fournit déjà pour la
 PR, `scripts/release.ts` y calcule le plan, y écrit les versions, les deux
 catalogues et `CHANGELOG.md` — exactement ce que le job de release écrirait — puis
-y lance `./scripts/check.sh`. Le verdict est celui de la release **entière** : un
-plan inexploitable ou une écriture fautive échoue avant `check.sh`, un `check.sh`
-rouge échoue après.
+y lance `./scripts/check.sh` sur les mêmes sections que le job de release
+(catalogue, noms, plugins, versions, extension, types, lint, smoke, noyau, plus
+les tests que les fichiers écrits concernent via `--tests-base=HEAD`) ; la suite
+entière reste au job `check` de la PR. Le verdict est celui de la release
+**entière** : un plan inexploitable ou une écriture fautive échoue avant
+`check.sh`, un `check.sh` rouge échoue après.
 
 Ce job ne fait **jamais** rien d'autre : rien n'est poussé, aucune branche n'est
 poussée, aucun tag n'est posé, aucune PR n'est ouverte, et l'arbre de la PR n'est

@@ -4,6 +4,7 @@
   "scripts": {
     "check": "bash scripts/check.sh",
     "typecheck": "bash scripts/typecheck.sh",
-    "test": "bash scripts/check.sh --sections=tests"
+    "test": "bash scripts/check.sh --sections=tests",
+    "test:touched": "bash scripts/test-touched.sh"
   }
 }

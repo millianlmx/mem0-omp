@@ -116,22 +116,43 @@ jobs:
           # tests de test/ sautés faute de prérequis installable (prerequisAbsent).
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_RUST: "1"
-        run: ./scripts/check.sh --strict
+        # En pull_request, `── Tests` ne lance que les fichiers que le diff de la
+        # PR concerne (`--tests-base`, scripts/test-files.sh) : la base de la PR
+        # est connue grâce à fetch-depth: 0. Au push vers `main`, l'option est
+        # vide et la suite entière tourne : c'est le filet des trous de sélection.
+        run: ./scripts/check.sh --strict ${{ github.event_name == 'pull_request' && format('--tests-base={0}', github.event.pull_request.base.sha) || '' }}
 
   # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
   # un seul job, il durait ≈ 36 min, au-delà des 2100 s d'attente de fusion que
   # release.yml accorde à scripts/release.ts (`--merge-timeout 2100`). Aucun de
-  # ces jobs n'a de `needs` ni de `if:` — ils démarrent
-  # ensemble, et un job sauté rapporterait « Success » sans rien prouver. L'union de
-  # leurs `--sections` couvre les 13 sections de check.sh : rien de ce que le job
-  # macOS vérifiait ne disparaît.
+  # ces jobs n'a de `needs` — ils démarrent ensemble. Leur seul `if:` est
+  # `github.event_name == 'pull_request'`, toujours vrai pour l'événement qui
+  # porte les statuts requis : un job ne peut pas être sauté sur une PR. Au push
+  # vers `main`, ils ne tournent pas (mesuré le 2026-10-22 : 16 jobs macOS par
+  # feature pour 5 runners, dont 8 au push qui reprouvaient l'arbre que la PR de
+  # release venait de prouver). L'union de leurs `--sections` couvre
+  # les 13 sections de check.sh : rien de ce que le job macOS vérifiait ne disparaît.
+  #
+  # Les deux jobs d'app ne compilent que si le diff de la PR peut avoir changé
+  # l'app (scripts/ci-scope.sh : omp-console/, scripts/, mem0-stack/, ce
+  # fichier). La décision tient au diff, jamais au nom de la branche : un fork
+  # choisit sa branche, pas son diff. Le job reste vert quand l'étape est sautée,
+  # avec une ligne qui le dit : il n'y a rien à prouver pour ce diff.
 
   # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation
-  # hormis la restauration des caches.
+  # hormis la restauration du cache cargo (le mem0-rs embarqué). Aucun cache
+  # SwiftPM : mesuré le 2026-10-22, un `.build-app` restauré (« Cache hit ») ne
+  # dispensait d'aucune des 136 unités (« Build complete! (390.39 sec) »), les
+  # mtimes du checkout invalidant tout, et la clé (Package.swift seul) n'était
+  # jamais resauvegardée.
   macos-app-swift:
     runs-on: macos-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # La portée du diff compare la base et la tête de la PR.
+          fetch-depth: 0
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
       # dans chaque clé de cache, pour qu'une mise à jour de l'image change la clé
       # au lieu de restaurer des artefacts compilés par un autre compilateur. Un
@@ -158,21 +179,28 @@ jobs:
             ~/.cargo/git/db
             mem0-stack/mem0-rs/target
           key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
-      # Scratch SwiftPM persistant du job. `swift test` seul y écrit : un scratch ne sert
-      # qu'à un type de commande SwiftPM.
-      - name: Cache SwiftPM (.build-app)
-        uses: actions/cache@v6
-        with:
-          path: omp-console/.build-app
-          key: swiftpm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/Package.swift') }}
+      # Le diff de la PR touche-t-il l'app Mac ? Sinon les trois étapes qui
+      # suivent sont sautées (`steps.scope.outputs.run`), et le job le dit.
+      - name: Portée du diff (app Swift)
+        id: scope
+        run: |
+          if bash scripts/ci-scope.sh --base="${{ github.event.pull_request.base.sha }}" app-swift; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::App Swift non recompilée : rien du diff ne touche omp-console/, scripts/, mem0-stack/ ni check.yml"
+          fi
       - name: App Swift
+        if: steps.scope.outputs.run == '1'
         run: ./scripts/check.sh --sections=app-swift
       # Le bundle assemblé, téléchargeable depuis le run (onglet Summary) pour essayer
       # une PR sans la compiler. `ditto` garde les droits d'exécution et la signature
       # ad hoc, que l'archive d'upload-artifact perdrait.
       - name: Archiver l'app Mac
+        if: steps.scope.outputs.run == '1'
         run: ditto -c -k --keepParent "omp-console/build/OMP Console.app" "omp-console/build/OMP-Console-macOS.zip"
       - name: Publier l'app Mac (artefact du run)
+        if: steps.scope.outputs.run == '1'
         uses: actions/upload-artifact@v4
         with:
           name: OMP-Console-macOS
@@ -183,13 +211,27 @@ jobs:
   # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
   macos-app-ios:
     runs-on: macos-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # La portée du diff compare la base et la tête de la PR.
+          fetch-depth: 0
       # Aucun cache ici, c'est un choix mesuré (ci-without-cache) : un DerivedData
       # `omp-console/.build-ios` restauré ne fait rien gagner. xcodebuild recompile
       # tout, car les mtimes du checkout l'invalident, et ~235 s vont au démarrage
       # des tests sur simulateur.
+      - name: Portée du diff (app iOS)
+        id: scope
+        run: |
+          if bash scripts/ci-scope.sh --base="${{ github.event.pull_request.base.sha }}" app-ios; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::App iOS non recompilée : rien du diff ne touche omp-console/, scripts/ ni check.yml"
+          fi
       - name: App iOS
+        if: steps.scope.outputs.run == '1'
         env:
           # Xcode est utilisable sur macos-latest : un « non exécuté » de la
           # section iOS y est un échec, jamais un skip silencieux.
@@ -198,10 +240,11 @@ jobs:
 
   # Suite node sur macOS, en deux parts qui exécutent chaque test exactement une
   # fois (motif unique TESTS_PART_PATTERN de check.sh) : 1/2 porte les tests lourds
-  # de test/outillage/check.test.ts et les sections légères, 2/2 tout le reste. En
-  # pull_request, `--tests-scope=macos` ne garde que les fichiers qui dépendent de
-  # macOS (scripts/test-files.sh) : la suite complète tourne déjà sur ubuntu. Au
-  # push vers `main`, la suite complète tourne aussi sur macOS.
+  # de test/outillage/check.test.ts et les sections légères, 2/2 tout le reste.
+  # `--tests-scope=macos` ne garde que les fichiers qui dépendent de macOS
+  # (scripts/test-files.sh) et `--tests-base` les réduit à ceux que le diff de la
+  # PR concerne : la suite complète tourne sur ubuntu, et un diff qui ne touche
+  # ni omp-console/ ni un script macOS ne lance rien ici.
   macos-tests:
     # Nom explicite : sans lui, le nom affiché listerait aussi `sections`, ajouté
     # par `include` ; seul `part` distingue les deux jobs.
@@ -216,6 +259,7 @@ jobs:
           - part: "2/2"
             sections: tests
     runs-on: macos-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -248,10 +292,10 @@ jobs:
       # l'image : les restaurer épinglerait une toolchain périmée) ni
       # registry/src (régénéré). Pas de restore-keys : une clé changée repart de
       # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
-      # Seule la partie 1/2 compile mem0-rs en PR (section rust) ; au push, la 2/2
-      # lance aussi les tests test/stack/* qui le compilent.
+      # Seule la partie 1/2 compile mem0-rs (section rust) ; la 2/2 n'y touche
+      # que si le diff retient un test de test/stack/*, rare.
       - name: Cache cargo (mem0-rs)
-        if: matrix.part == '1/2' || github.event_name == 'push'
+        if: matrix.part == '1/2'
         uses: actions/cache@v6
         with:
           path: |
@@ -260,16 +304,9 @@ jobs:
             ~/.cargo/git/db
             mem0-stack/mem0-rs/target
           key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
-      # Scratch SwiftPM persistant du job. Seul socle-app-swift/AC-1, de la partie 1/2,
-      # y compile (`swift build --scratch-path omp-console/.build-node`).
-      - name: Cache SwiftPM (.build-node)
-        if: matrix.part == '1/2'
-        uses: actions/cache@v6
-        with:
-          path: omp-console/.build-node
-          key: swiftpm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('omp-console/Package.swift') }}
+      # Aucun cache SwiftPM pour `.build-node` (socle-app-swift/AC-1) : même
+      # constat que pour `.build-app` du job macos-app-swift.
       - name: Refuser un bump de version manuel dans la PR
-        if: github.event_name == 'pull_request'
         run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
       - name: Installer l'hôte OMP (types et SDK)
         run: |
@@ -293,18 +330,19 @@ jobs:
           # Prérequis manquant = échec, jamais un skip (voir le job `check`).
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_RUST: "1"
-        run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} ${{ github.event_name == 'pull_request' && '--tests-scope=macos' || '' }}
+        run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} --tests-scope=macos --tests-base=${{ github.event.pull_request.base.sha }}
 
   # Agrégateur : son nom est le statut requis `check (macos-latest)` de la
-  # protection de `main` (PUBLISHING.md § Blocage du merge). `if: always()` le fait
+  # protection de `main` (PUBLISHING.md § Blocage du merge). `always()` le fait
   # tourner même quand un job macOS échoue ou que le run est annulé : sans lui, il
-  # serait « skipped », et un statut requis sauté compte comme passant. Le verdict
-  # est rendu par scripts/ci-verdict.sh, qui n'accepte que trois `success`.
+  # serait « skipped », et un statut requis sauté compte comme passant. Comme les
+  # jobs qu'il juge, il ne tourne qu'en pull_request. Le verdict est rendu par
+  # scripts/ci-verdict.sh, qui n'accepte que trois `success`.
   check-macos:
     name: check (macos-latest)
     runs-on: ubuntu-latest
     needs: [macos-app-swift, macos-app-ios, macos-tests]
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
       - name: Verdict des jobs macOS

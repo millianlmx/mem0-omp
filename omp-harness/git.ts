@@ -39,6 +39,24 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * Les fichiers hors « code » pour le compte du diff en mode `code` : tests, docs,
+ * changelog, manifestes et verrous (`test/**`, `**\/*.test.*`, `**\/Tests/**`, `**\/*.md`,
+ * `CHANGELOG*`, `package.json`, `*.lock`).
+ */
+export function isNonCode(file: string): boolean {
+  const parts = file.split("/");
+  const name = parts[parts.length - 1] ?? file;
+  if (parts[0] === "test" && parts.length > 1) return true;
+  if (parts.slice(0, -1).includes("Tests")) return true;
+  if (/\.test\.[^/]+$/.test(name)) return true;
+  if (/\.md$/i.test(name)) return true;
+  if (/^CHANGELOG/.test(name)) return true;
+  if (name === "package.json") return true;
+  if (/\.lock$/.test(name)) return true;
+  return false;
+}
+
 export class Git {
   readonly #exec: Exec;
   readonly #identity: GitIdentity;
@@ -183,13 +201,19 @@ export class Git {
    * Le tree hash du RÉPERTOIRE DE TRAVAIL (fichiers non commités et non suivis
    * compris, ignorés exclus) — calculé dans un index temporaire, sans toucher
    * l'index du worktree. C'est la clé du cache des résultats heavy.
+   *
+   * L'index du worktree est COPIÉ dans l'index temporaire avant `add -A` : git y
+   * retrouve les stat des fichiers inchangés et ne relit pas tout l'arbre.
    */
   async workingTreeHash(worktree: string): Promise<string> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-harness-index-"));
     const index = path.join(dir, "index");
     try {
       const env = { GIT_INDEX_FILE: index };
-      await this.run(worktree, ["read-tree", "HEAD"], env);
+      const gitDir = this.#worktrees.get(path.resolve(worktree));
+      const current = gitDir ? path.join(gitDir, "index") : null;
+      if (current && fs.existsSync(current)) fs.copyFileSync(current, index);
+      else await this.run(worktree, ["read-tree", "HEAD"], env);
       await this.run(worktree, ["add", "-A", "--", "."], env);
       return await this.run(worktree, ["write-tree"], env);
     } finally {
@@ -229,6 +253,41 @@ export class Git {
     return { ok: false, conflicts };
   }
 
+  /**
+   * Revert des commits de `fromExclusive..toInclusive` (du plus récent au plus ancien,
+   * sans commit intermédiaire ; les commits vides sont sautés), puis UN commit. Un
+   * conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus.
+   */
+  async revertRange(
+    worktree: string,
+    fromExclusive: string,
+    toInclusive: string,
+  ): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }> {
+    const shas = (await this.run(worktree, ["rev-list", `${fromExclusive}..${toInclusive}`]))
+      .split("\n")
+      .filter(Boolean);
+    const head = await this.revParse(worktree, "HEAD");
+    for (const sha of shas) {
+      // Un checkpoint vide (commit --allow-empty) n'a rien à défaire : git refuse de le reverter.
+      if ((await this.raw(worktree, ["diff-tree", "--quiet", "--root", sha])).code === 0) continue;
+      const result = await this.raw(worktree, ["revert", "--no-commit", "--no-edit", sha]);
+      if (result.code === 0) continue;
+      const conflicts = await this.unmergedFiles(worktree);
+      await this.raw(worktree, ["revert", "--abort"]);
+      await this.resetTo(worktree, head);
+      return { ok: false, conflicts };
+    }
+    await this.run(worktree, [
+      "commit",
+      "--allow-empty",
+      "--no-verify",
+      "-q",
+      "-m",
+      `revert: ${fromExclusive.slice(0, 7)}..${(await this.revParse(worktree, toInclusive)).slice(0, 7)}`,
+    ]);
+    return { ok: true, sha: await this.revParse(worktree, "HEAD") };
+  }
+
   /** Une fusion est-elle en cours (MERGE_HEAD) ? */
   async mergeInProgress(worktree: string): Promise<boolean> {
     return (await this.raw(worktree, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])).code === 0;
@@ -258,13 +317,18 @@ export class Git {
     return map;
   }
 
-  /** Lignes ajoutées + supprimées de `base` au répertoire de travail (binaires exclus). */
-  async diffLines(worktree: string, base: string): Promise<number> {
+  /**
+   * Lignes ajoutées + supprimées de `base` au répertoire de travail (binaires exclus).
+   * Mode `code` : sans tests, docs, changelog ni manifestes — le seuil d'auto-merge
+   * mesure ce qui porte du risque.
+   */
+  async diffLines(worktree: string, base: string, mode: "all" | "code"): Promise<number> {
     const out = await this.run(worktree, ["diff", "--numstat", base]);
     let total = 0;
     for (const line of out.split("\n")) {
-      const [added, deleted] = line.split("\t");
+      const [added, deleted, file] = line.split("\t");
       if (added === undefined || deleted === undefined || added === "-") continue;
+      if (mode === "code" && file !== undefined && isNonCode(file)) continue;
       total += Number(added) + Number(deleted);
     }
     return total;

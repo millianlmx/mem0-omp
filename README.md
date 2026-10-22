@@ -251,22 +251,31 @@ Puis sur le Mac, dans un de tes dépôts :
 
 | Commande | Ce qu'elle fait |
 |---|---|
-| `/req [demande]` | Cerne le besoin avec toi, une question à la fois, sans concevoir la solution. Une fois le compte rendu validé, la feature part au serveur, qui commence par /specs. |
-| `/project [description]` | Découpe un projet en features autonomes. Celles qui touchent des modules différents tournent en parallèle, chacune mergée dès sa validation. |
+| `/req [demande]` | Cerne le besoin avec toi sans concevoir la solution : un seul `ask` groupé par tour (2-3 options, la recommandation en tête), deux tours au plus. Le compte rendu porte les besoins `B-n` et leurs critères `AC-n (B-m)` Given/When/Then, que tu co-signes. Une fois validé, l'agent repère les chemins touchés (`modules`) et la feature part au serveur, qui commence par /specs. |
+| `/project [description]` | Découpe un projet en features autonomes, chacune avec ses `modules`. Celles qui touchent des modules différents tournent en parallèle, chacune mergée dès sa validation. |
 | `/audit [focus]` | Un agent lit la branche principale sans rien modifier, puis propose des faiblesses à corriger et des features. `/audit liste` les montre, `/audit lancer <id> 1,3` lance celles retenues. |
-| `/pipelines` | La boîte de l'humain : questions en attente, specs et verdicts à valider, décisions à relire, features en cours. |
+| `/pipelines` | La boîte de l'humain : questions en attente, specs et verdicts à valider, décisions à relire, features en cours — affichée, et postée dans la conversation pour que l'agent la voie. |
+| `/harness-follow [stop]` | Suit le serveur dans la session : specs prêtes, verdicts, questions et fins de feature arrivent en messages « [harness] … », sans déclencher de tour. Démarré seul après un lancement en session interactive. |
 
 **Changer de backend.** La même pile tourne sur le VPS et sur ton Mac. Sur le Mac,
 `harness.sh up` puis `harness.sh connect` font viser la pile locale par les plugins et
 l'app (pipelines et mémoire) ; `harness.sh disconnect` les ramène au VPS. Détails :
 `omp-harness/README.md` § « En conteneurs ».
 
-OMP te demande ton accord avant chaque envoi au serveur, même en mode yolo. Tout le
-reste se fait dans l'app, sur le Mac ou l'iPhone :
+OMP te demande ton accord avant chaque lancement sur le serveur, même en mode yolo. Les
+autres gestes se font soit dans la conversation, soit dans l'app :
 
-- **Accueil** : répondre aux questions irréversibles, valider ou refuser les specs et
-  les verdicts, relire les décisions que les agents ont prises seuls. Un renversement
-  ne refait que ce qui découle de la décision.
+- **Dans la session** : l'agent lit la boîte (`harness_inbox`), un run avec ses specs,
+  décisions, escalades et verdict (`harness_run`), son journal (`harness_events`). Quand
+  tu le lui dis en clair (« valide », « réponds B », « relance », « annule »), il
+  valide ou refuse (`harness_validate`), répond aux questions (`harness_answer`),
+  renverse une décision (`harness_reverse`), relance (`harness_retry`), annule
+  (`harness_cancel`) ou accepte toutes les décisions prises seules
+  (`harness_accept_decisions`) — sans dialogue d'approbation supplémentaire : ta
+  phrase est l'autorisation. Si la boîte a changé entre-temps, le geste est refusé et
+  l'agent relit le run.
+- **Accueil** (app Mac ou iPhone) : les mêmes gestes, plus la relecture des décisions.
+  Un renversement ne refait que ce qui découle de la décision.
 - **Pipelines, Projet, Audit** : lancer et suivre.
 - **Statistiques** : taux de merge, délais, corrections, état du serveur.
 
@@ -321,6 +330,7 @@ Les commandes :
 | `MEM0_AUTOSETUP` | `1` | `0` : le plugin n'écrit jamais dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` : souvenirs injectés sans être affichés |
 | `MEM0_NUDGE` | `1` | `0` : pas de relance d'écriture en fin de session |
+| `MEM0_MODE` | — | `runner` : session pilotée par le harness — ni rappel par tour, ni sommaire, ni agrafage, ni « mem0 checkpoint », ni relance de fin, ni brief posé ; les outils `mem0_*` restent |
 | `HARNESS_URL`, `HARNESS_TOKEN` | — | le serveur et son jeton ; à défaut, `~/.omp/harness.json` |
 | `HARNESS_REPO` | nom du dossier | le nom du dépôt déclaré sur le serveur |
 
@@ -352,7 +362,7 @@ La configuration du serveur (dépôts, modèles, plafonds) est décrite dans
 mem0-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
 ├── omp-mem0-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
-├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines)
+├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
 ├── omp-harness/                       le serveur de pipelines du VPS
 │   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
 ├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
@@ -361,9 +371,11 @@ mem0-omp/                              racine = marketplace OMP
 │   └── mem0-rs/                       le serveur mémoire (Rust + SQLite)
 ├── test/                              la suite node --test
 ├── scripts/check.sh                   la validation avant publication
-├── scripts/test-files.sh              liste les fichiers de test : tous, macOS, du diff, outillage
+├── scripts/test-files.sh              liste les fichiers de test : tous, macOS, du diff, d'une liste, outillage
+├── scripts/test-touched.sh            lance les tests qu'une liste de fichiers concerne (npm run test:touched)
 ├── scripts/test-ac.sh                 preuve par critère : les tests du diff qui portent AC-n
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur macOS de la CI
+├── scripts/ci-scope.sh                dit si le diff d'une PR impose de compiler l'app Mac ou l'app iOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois
 ├── scripts/typecheck.sh               type-check des plugins et de test/ (tsc épinglé)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
@@ -386,22 +398,58 @@ des tests, de la CI et de la release dans [DEVELOPPEMENT.md](DEVELOPPEMENT.md).
 
 Un fichier de test par feature, rangé sous `test/` selon ce qu'il éprouve ; chaque
 critère `<slug>/AC-<n>` n'est porté que par un test. `scripts/check.sh` est le seul
-juge avant de pousser. À la racine, `package.json` donne trois alias :
+juge avant de pousser. À la racine, `package.json` donne quatre alias :
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
-`bash scripts/typecheck.sh` et `npm test` lance `bash scripts/check.sh --sections=tests`.
+`bash scripts/typecheck.sh`, `npm test` lance `bash scripts/check.sh --sections=tests`
+et `npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh` (les
+tests que ces fichiers concernent ; aucun ⇒ sortie 0, c'est l'entrée du harness).
 
 ```bash
 npm run check                                                   # tout
 bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
+npm run -s test:touched -- omp-harness/verdict.ts               # les tests que ces fichiers concernent
+bash scripts/check.sh --tests-base=origin/main                  # toutes les sections, tests réduits au diff
 ```
+
+`scripts/test-files.sh --scope=changed[=<base>]` et `--scope=files <chemins…>`
+retiennent : (a) les tests du diff ; (b) les tests qui nomment un fichier du diff
+par son nom de base ou par la fin d'un import (`/chain"`) ; (b') les tests dont
+les imports relatifs, suivis de proche en proche, atteignent un fichier du diff ;
+(c) les tests macOS si le diff touche `omp-console/` hors `.md` ; (d) la suite
+entière hors outillage si le diff touche `scripts/check.sh`,
+`scripts/test-files.sh`, `package.json`, `tsconfig.json` ou `tsconfig.test.json`.
+Le modificateur `--macos` réduit cette sélection aux tests qui dépendent de macOS.
+Un diff que nul test ne concerne donne une liste vide, sortie 0, et un message
+sur stderr ; seuls un diff vide, une base inconnue ou git absent replient sur la
+liste complète.
+
+`scripts/check.sh --tests-base=<réf>` applique cette sélection à la section
+`── Tests` (diff depuis `<réf>`) ; une sélection vide laisse la section verte.
+Chaque section exécutée se termine par sa durée, `  · <n> s`, pour lire dans un
+journal où le temps part.
 
 Le reste (dossiers, options de `check.sh`, contrat du service mémoire, preuves
 conteneur) : [DEVELOPPEMENT.md](DEVELOPPEMENT.md).
 
 ## CI et release
 
-Chaque PR passe `scripts/check.sh` sur Ubuntu et sur macOS, plus une simulation de sa
-release. Après le merge, un job ouvre la PR de release, décide les versions d'après
-les commits, écrit `CHANGELOG.md`, puis pousse les tags : rien n'est jamais poussé
-directement sur `main`, et personne ne monte une version à la main. Le jeton que ce
-job exige est décrit dans `PUBLISHING.md` § Jeton de release.
+En pull_request, le job `check` (Ubuntu) passe toutes les sections de
+`scripts/check.sh`, les tests réduits à ceux que le diff de la PR concerne
+(`--tests-base`). Les jobs macOS ne tournent qu'en pull_request : les deux jobs
+d'app ne compilent que si le diff touche `omp-console/`, `scripts/`, `mem0-stack/`
+ou `check.yml` (décision de `scripts/ci-scope.sh`, sinon l'étape est sautée et le
+job reste vert), et `macos-tests` ne lance que les tests macOS que le diff
+concerne. Au push vers `main`, seul le job Ubuntu tourne, suite entière : c'est le
+filet des trous de sélection. Mesuré le 2026-10-22, avant ce découpage :
+`macos-app-ios` 674 s dont 13 s de tests, `macos-app-swift` 529 s, 16 jobs macOS
+par feature pour 5 runners, `release-simulation` 18 min dont 989 s de `check.sh`
+complet.
+
+La simulation de release de chaque PR et le job de release ne rejouent que les
+sections que la release peut casser (catalogue, noms, plugins, versions,
+extension, types, lint, smoke, noyau) plus les tests que les fichiers écrits
+concernent (`--tests-base=HEAD`). Après le merge, le job de release ouvre la PR de
+release, décide les versions d'après les commits, écrit `CHANGELOG.md`, puis
+pousse les tags : rien n'est jamais poussé directement sur `main`, et personne ne
+monte une version à la main. Le jeton que ce job exige est décrit dans
+`PUBLISHING.md` § Jeton de release.

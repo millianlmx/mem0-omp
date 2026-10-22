@@ -35,12 +35,21 @@ export type HostToolDefinition = {
   loadMode?: "essential" | "discoverable";
 };
 
+/** La cause d'une erreur de prompt, lue sur le statut HTTP ou le message : ce qui décide de la bascule et de la relance. */
+export type PromptErrorCause = "rate_limit" | "server_error" | "network" | "context" | "other";
+
 export type PromptError = {
   message: string;
   provider?: string;
   model?: string;
   httpStatus?: number;
   retryable?: boolean;
+  /** Posée par la session du runner (classifyPromptError) avant de rendre l'erreur à l'étape. */
+  cause?: PromptErrorCause;
+  /** Le `retry-after` du fournisseur en ms, s'il l'a dit ; sinon `null`. */
+  retryAfterMs?: number | null;
+  /** Les détails bruts qu'OMP joint à l'erreur (en-têtes, corps) : fouillés pour `retry-after`. */
+  details?: unknown;
 };
 
 export type PromptResult = { status: "completed" | "aborted" | "error"; error: PromptError | null };
@@ -321,9 +330,95 @@ export class RpcRunner {
   }
 }
 
+const RATE_LIMIT = /(\brate[ -]?limit(ed)?\b|\btoo many requests\b|\bquota\b|overloaded|\busage limit\b)/i;
+const NETWORK =
+  /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network error|stream (closed|ended|disconnected)|terminated)\b/i;
+const CONTEXT =
+  /\b(context[ _-]?(length|window)|too long|maximum context|prompt is too long|exceeds the (maximum )?(context|token))\b/i;
+
+/** La cause d'une erreur de prompt : 429 et messages de quota, 5xx, pannes réseau, contexte dépassé, le reste. */
+export function classifyPromptError(error: PromptError | null): PromptErrorCause {
+  if (!error) return "other";
+  const status = error.httpStatus ?? null;
+  // 529 : « overloaded » chez Anthropic — un refroidissement, pas une panne.
+  if (status === 429 || status === 529) return "rate_limit";
+  if (CONTEXT.test(error.message)) return "context";
+  if (RATE_LIMIT.test(error.message)) return "rate_limit";
+  if (status !== null && status >= 500 && status <= 599) return "server_error";
+  if (
+    /\b5\d\d\b/.test(error.message) &&
+    /\b(internal server error|bad gateway|service unavailable|gateway timeout|server error)\b/i.test(error.message)
+  )
+    return "server_error";
+  if (NETWORK.test(error.message)) return "network";
+  return "other";
+}
+
 /** Un rate limit dans l'erreur d'un prompt : 429, ou un message de quota. */
 export function isRateLimit(error: PromptError | null): boolean {
-  if (!error) return false;
-  if (error.httpStatus === 429) return true;
-  return /\b(rate[ -]?limit|too many requests|quota|overloaded|usage limit)\b/i.test(error.message);
+  return classifyPromptError(error) === "rate_limit";
+}
+
+/** Une valeur `retry-after` (secondes, ou date HTTP) en ms, ou `null`. */
+function retryAfterValue(value: unknown, now: number): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value * 1000);
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (/^\d+(\.\d+)?$/.test(text)) return Math.round(Number(text) * 1000);
+  const date = Date.parse(text);
+  if (Number.isNaN(date)) return null;
+  return Math.max(0, date - now);
+}
+
+/** Cherche `retry-after` / `retryAfter` dans un objet (en-têtes, corps), sans descendre plus de 4 niveaux. */
+function retryAfterIn(value: unknown, now: number, depth = 0): number | null {
+  if (depth > 4 || value === null || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = retryAfterIn(item, now, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  const record: Record<string, unknown> = Object.fromEntries(Object.entries(value));
+  for (const [key, entry] of Object.entries(record)) {
+    const name = key.toLowerCase().replace(/[-_]/g, "");
+    if (name === "retryafter" || name === "retryafterms") {
+      const parsed =
+        name === "retryafterms" && typeof entry === "number" ? Math.round(entry) : retryAfterValue(entry, now);
+      if (parsed !== null) return parsed;
+    }
+  }
+  for (const entry of Object.values(record)) {
+    const found = retryAfterIn(entry, now, depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Le délai demandé par le fournisseur, en ms : `retry-after` dans les détails de
+ * l'erreur (en-têtes ou corps), `retryAfter` déjà posé, ou « retry after N s » /
+ * « try again in N s|min » dans le message. `null` quand rien ne le dit.
+ */
+export function parseRetryAfter(error: PromptError | null, now = Date.now()): number | null {
+  if (!error) return null;
+  if (typeof error.retryAfterMs === "number") return error.retryAfterMs;
+  const inDetails = retryAfterIn(error.details, now);
+  if (inDetails !== null) return inDetails;
+  const match = error.message.match(
+    /\b(?:retry[ -]?after|try again in|retry in|wait)\s*:?\s*(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|sec|seconds?|m|min|minutes?|h|hours?)?\b/i,
+  );
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = (match[2] ?? "s").toLowerCase();
+  const factor =
+    unit.startsWith("ms") || unit.startsWith("milli")
+      ? 1
+      : unit.startsWith("m")
+        ? 60_000
+        : unit.startsWith("h")
+          ? 3_600_000
+          : 1000;
+  return Math.round(amount * factor);
 }

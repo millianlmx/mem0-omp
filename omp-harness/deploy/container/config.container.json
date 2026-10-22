@@ -10,6 +10,8 @@
     "isolation": "container",
     "slots": 5,
     "memoryMax": "1G",
+    "retryBackoffSec": [120, 600, 1800],
+    "failoverOn": ["rate_limit", "server_error", "network"],
     "extensions": ["/opt/omp-harness/omp-mem0-memory/extension.ts"]
   },
   "heavy": {
@@ -30,12 +32,35 @@
     "runnerHome": "@ROOT@/runner-home"
   },
   "models": {
-    "standard": [{ "provider": "anthropic", "model": "claude-sonnet-5-5" }],
-    "heavy": [{ "provider": "anthropic", "model": "claude-opus-5-5" }]
+    "standard": [
+      { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+      { "provider": "openrouter", "model": "anthropic/claude-sonnet-5-5" }
+    ],
+    "heavy": [
+      { "provider": "anthropic", "model": "claude-opus-5-5" },
+      { "provider": "openrouter", "model": "anthropic/claude-opus-5-5" }
+    ]
   },
   "stepTiers": { "req": "heavy", "specs": "heavy", "impl": "standard", "fix": "standard", "review": "heavy" },
-  "providers": { "anthropic": { "capacity": 20, "refillPerMinute": 20 } },
-  "review": { "fixCap": 3, "maxDiffLines": 300 },
+  "providers": {
+    "anthropic": { "capacity": 20, "refillPerMinute": 20 },
+    "openrouter": { "capacity": 10, "refillPerMinute": 10 }
+  },
+  "review": {
+    "fixCap": 3,
+    "maxDiffLines": 300,
+    "diffCount": "code",
+    "specsGate": "auto",
+    "autoMergeRisk": "medium",
+    "escalationTimeoutSec": 3600,
+    "mergeRetries": 3,
+    "mergeWaitSec": 7200
+  },
   "oracle": { "url": "http://mem0:8321", "token": null },
+  "notify": {
+    "url": null,
+    "events": ["escalations", "specs_ready", "verdict", "run_failed", "project_done", "merged"]
+  },
+  "memory": { "runnerMode": true },
   "repos": []
 }

@@ -277,19 +277,33 @@ exécuter une étape elle-même.
   décisions à relire, audits à trier), puis le détail, en sections :
   - **À trancher** : les escalades d'une feature, répondues en un seul geste
     (`POST /v1/runs/{id}/escalations`) ; la feature reprend quand toutes ont leur
-    réponse ;
+    réponse. Chaque réponse part de l'option que l'agent recommande (`recommended`) ;
+    une saisie la remplace, et une raison facultative l'accompagne (`reason`).
+    « Accepter les recommandations » répond tout le lot d'un geste, quand chaque
+    escalade en a une ;
   - **Specs à valider** : la porte des specs — après /specs, la feature attend
     l'humain avant /impl. « Lire les specs » montre `specs.md` du run
     (`GET /v1/runs/{id}`), « Valider les specs » lance /impl, « Refuser » demande une
     raison, qui fait réécrire les specs et rejoint la mémoire du projet ;
   - **Verdicts à valider** : verdict, risque, bloquants, points non vérifiés ; un
     verdict faible demande de lire les différences. « Valider et fusionner » ou
-    « Refuser » avec une raison (`POST /v1/runs/{id}/validate`) ;
+    « Refuser » avec une raison (`POST /v1/runs/{id}/validate`). Une feature arrêtée
+    sans verdict (échecs répétés, fusion refusée) propose « Relancer » ;
   - **Décisions prises seules** : chaque choix réversible d'un agent est un point
     de reprise — « Accepter », ou « Renverser… » avec une option et une raison, qui
-    fait reprendre la feature à cet endroit ;
+    fait reprendre la feature à cet endroit ; « Tout accepter » accepte d'un geste
+    celles d'une feature (`POST /v1/runs/{id}/decisions/accept`). Une décision
+    `auto_timeout` (tranchée par le serveur à l'échéance d'une escalade) est
+    marquée « Tranchée à l’échéance » ;
   - **Features en cours**, chacune avec « Arrêter la feature » (confirmé ; la
-    branche reste, pour inspection).
+    branche reste, pour inspection). Une feature en file dit sa reprise différée
+    (`notBefore`), une feature en échec sa dernière cause (`lastFailCause`).
+- **Relancer, annuler.** Une feature `failed` ou `awaiting_human` se relance
+  (`POST /v1/runs/{id}/retry`, confirmé : elle repart de son étape) ; une feature
+  `merged` s'annule (`POST /v1/runs/{id}/revert`, confirmé : commit inverse sur la
+  branche principale, feature de suite). Sur le Mac, ce sont les boutons de la
+  rangée ; sur iOS, son menu contextuel. Comme les autres gestes, ils portent la
+  révision lue (`If-Match`).
 - **Pipelines** — « Nouvelle feature » : le dépôt (parmi ceux que le serveur déclare,
   `GET /v1/status`), un titre et la demande ; « Lancer » (`POST /v1/runs`) confie la
   feature au serveur, qui la conduit seul — besoins, specs (à valider),
@@ -315,8 +329,11 @@ exécuter une étape elle-même.
   garde la dernière boîte reçue, signalée « Hors ligne : dernière boîte reçue ».
   « Actualiser » (⌘R) relit à la demande.
 - **Badges.** La barre latérale (et, sur iOS, la barre d'onglets) porte sur
-  « Accueil » le nombre de ce qui attend l'humain, et sur « Audit » le nombre
-  d'audits à trier.
+  « Accueil » ce qui bloque une feature tant que l'humain n'a pas agi
+  (`pendingCount` : escalades ouvertes, specs et verdicts à valider — pas les
+  décisions prises seules, ni les audits), et sur « Audit » le nombre d'audits à
+  trier. Sur iOS, le retour au premier plan (`scenePhase` active) ferme le flux,
+  relit la boîte, puis rouvre le flux.
 - **Code partagé.** Le modèle (`HarnessModel`), les brouillons (`HarnessDrafts`),
   le transport (`HarnessTransport`) et le contrat (`HarnessWire`) vivent dans
   `ConsoleClient` ; les mots vivent dans `ConsoleCore` (`PipelineServerText`). La
@@ -1501,17 +1518,20 @@ En ligne de commande, `DEVELOPER_DIR` désigne l'installation d'Xcode quand
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-build.sh
 ```
 
-Le script compile l'app en destination générique, choisit un simulateur iOS ≥ 26
-et lance la suite Swift Testing de la cible `OMPConsoleIOSTests`. `--no-tests`
-s'arrête après la compilation. Après la compilation, dans les deux modes, le
-script contrôle `OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata` contre
-la même liste que le bundle Mac (voir *Liste attendue des intents Siri*) ; s'il
-manque :
+Le script cherche d'abord un simulateur iOS ≥ 26. S'il en trouve un, il le
+démarre en arrière-plan et lance un seul `xcodebuild test`, qui compile l'app et
+exécute la suite Swift Testing de la cible `OMPConsoleIOSTests` ; sans simulateur,
+ou avec `--no-tests`, il compile seulement, en destination générique. Dans tous
+les cas, le script contrôle ensuite
+`OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata` de l'app produite
+contre la même liste que le bundle Mac (voir *Liste attendue des intents Siri*) ;
+s'il manque :
 `  ✗ Metadata.appintents absent de l'app iOS : omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)`,
 et s'il s'en écarte :
 `  ✗ Metadata.appintents de l'app iOS non conforme à scripts/app-intents/attendus.json`,
-tous deux en code 1, sans lancer les tests. Codes de sortie : `0` compilé (et
-testé), `1` échec, `2` « non exécuté ».
+tous deux en code 1. Codes de sortie : `0` compilé (et testé, sauf `--no-tests`
+ou sans simulateur — la ligne `· tests non exécutés : …` le dit), `1` échec,
+`2` « non exécuté » (hors macOS, Xcode inutilisable).
 
 L'icône de l'app iOS vient du catalogue `OMPConsoleIOS/Assets.xcassets`
 (`AppIcon`, variantes claire, sombre et teintée) ; elle est dessinée avec celle du

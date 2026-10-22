@@ -130,11 +130,139 @@ struct HarnessModelTests {
         #expect(inbox.awaiting.first?.verdict?.isWeak == true)
         #expect(inbox.awaiting.first?.verdict?.isLowRisk == false)
         #expect(inbox.decisions.first?.alternatives == [";"])
-        #expect(inbox.pendingCount == 3)
+        #expect(inbox.pendingCount == 2, "escalades et attentes seulement : les décisions prises seules ne bloquent rien")
+        #expect(inbox.decisionRunIds == ["r3"])
         #expect(inbox.cursor == 42)
         #expect(inbox.runs.last?.phase == nil, "un état apparu après cette version se lit sans échouer")
         #expect(inbox.active.map(\.id) == ["r4", "r5"])
         #expect(inbox.runs.first?.stepLabel == PipelineServerText.stepReview)
+    }
+
+    @Test("un serveur antérieur n'écrit ni recommandation, ni options, ni fusions retentées : nil, vide, zéro")
+    func decodesWithoutNewFields() throws {
+        let inbox = try JSONDecoder().decode(HarnessInbox.self, from: Data(inboxJSON.utf8))
+        let item = try #require(inbox.batches.first?.items.first)
+        #expect(item.recommended == nil)
+        #expect(item.context == "Proposé")
+        let run = try #require(inbox.batches.first?.run)
+        #expect(run.mergeRetries == 0)
+        #expect(run.notBefore == nil)
+        #expect(run.lastFailCause == nil)
+        let bare = try JSONDecoder().decode(HarnessEscalation.self, from: Data(#"{"id":1,"runId":"r1","category":"schema","question":"Q ?","status":"open"}"#.utf8))
+        #expect(bare.options == [])
+        #expect(bare.context == nil)
+        #expect(bare.shownContext == nil)
+    }
+
+    @Test("recommandation, options, contexte, fusions retentées, reprise différée et cause d'échec se décodent et se réencodent")
+    func decodesNewFields() throws {
+        let json = inboxJSON
+            .replacingOccurrences(of: #""context": "Proposé""#, with: #""context": "Proposé", "recommended": "colonne""#)
+            .replacingOccurrences(of: #""reason": "2 décision(s)""#, with: #""reason": "2 décision(s)", "mergeRetries": 2, "notBefore": 1700000000000, "lastFailCause": "rate_limit""#)
+        let inbox = try JSONDecoder().decode(HarnessInbox.self, from: Data(json.utf8))
+        let item = try #require(inbox.batches.first?.items.first)
+        #expect(item.recommended == "colonne")
+        #expect(item.options == ["colonne", "table"])
+        #expect(item.shownContext == "Proposé")
+        let run = try #require(inbox.batches.first?.run)
+        #expect(run.mergeRetries == 2)
+        #expect(run.notBefore == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(run.lastFailCause == "rate_limit")
+        let again = try JSONDecoder().decode(HarnessRun.self, from: JSONEncoder().encode(run))
+        #expect(again == run, "l'instant repart en millisecondes")
+
+        var queued = run
+        queued.state = "queued"
+        #expect(queued.detailLine(now: Date(timeIntervalSince1970: 1_699_999_000)) == PipelineServerText.resumeAt(Date(timeIntervalSince1970: 1_700_000_000).formatted(date: .omitted, time: .shortened)))
+        #expect(queued.detailLine(now: Date(timeIntervalSince1970: 1_700_000_001)) == nil, "une échéance passée ne se dit plus")
+        var failed = run
+        failed.state = "failed"
+        #expect(failed.detailLine() == PipelineServerText.lastFailure(PipelineServerText.failCause("rate_limit")))
+        #expect(failed.canRetry && !failed.canRevert)
+        var merged = run
+        merged.state = "merged"
+        #expect(merged.canRevert && !merged.canRetry)
+        #expect(merged.detailLine() == nil)
+    }
+
+    @Test("une décision tranchée à l'échéance se dit ; une décision ordinaire est un choix de l'agent")
+    func decisionStatusLabels() {
+        #expect(HarnessDecision(id: 1, runId: "r", seq: 1, question: "q", options: [], chosen: "a", rationale: "", status: "auto_timeout").decidedAtDeadline)
+        #expect(PipelineServerText.decisionStatus("auto_timeout") == PipelineServerText.decidedAtDeadline)
+        #expect(PipelineServerText.decisionStatus("auto") == PipelineServerText.decidedByAgent)
+        #expect(PipelineServerText.decisionStatus("accepted") == nil)
+    }
+
+    @Test("les brouillons d'escalade partent de la recommandation ; une saisie la remplace ; « Accepter les recommandations » exige une recommandation par escalade")
+    func draftsPreselectRecommended() {
+        let first = HarnessEscalation(id: 7, runId: "r1", category: "schema", question: "Où ?", options: ["colonne", "table"], recommended: "colonne")
+        let second = HarnessEscalation(id: 9, runId: "r1", category: "deletion", question: "Supprimer ?", options: ["oui", "non"])
+        let drafts = HarnessDrafts()
+        let withReco = HarnessEscalationBatch(run: nil, items: [first])
+        #expect(drafts.answer(for: first) == "colonne")
+        #expect(drafts.isRecommended(first))
+        #expect(drafts.canAnswer(withReco))
+        #expect(drafts.answers(for: withReco) == [7: "colonne"])
+        #expect(HarnessDrafts.recommendedAnswers(for: withReco) == [7: "colonne"])
+
+        let mixed = HarnessEscalationBatch(run: nil, items: [first, second])
+        #expect(drafts.canAnswer(mixed) == false, "la seconde n'a ni saisie ni recommandation")
+        #expect(HarnessDrafts.recommendedAnswers(for: mixed) == nil)
+        drafts.answers[9] = " non "
+        drafts.answers[7] = "table"
+        drafts.reasons[7] = " déjà une table "
+        drafts.reasons[9] = "  "
+        #expect(drafts.isRecommended(first) == false)
+        #expect(drafts.canAnswer(mixed))
+        #expect(drafts.answers(for: mixed) == [7: "table", 9: "non"])
+        #expect(drafts.reasons(for: mixed) == [7: "déjà une table"], "une raison vide ne part pas")
+        #expect(HarnessDrafts.recommendedAnswers(for: mixed) == nil, "une saisie ne tient pas lieu de recommandation")
+        drafts.clearAnswers(for: mixed)
+        #expect(drafts.answers.isEmpty && drafts.reasons.isEmpty)
+        #expect(drafts.answer(for: first) == "colonne", "la recommandation revient après l'envoi")
+        #expect(HarnessDrafts.recommendedAnswers(for: HarnessEscalationBatch(run: nil, items: [])) == nil)
+    }
+
+    @Test("une réponse porte sa raison quand il y en a une ; sans raison, le corps est celui d'avant")
+    func answersCarryReasons() async throws {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in call.method == "POST" ? ok(#"{"run":{}}"#) : ok(inboxJSON) }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        #expect(await model.answer(runId: "r1", answers: [7: "table", 9: "non"], reasons: [7: " déjà une table ", 9: " "]))
+        let post = try #require(transport.calls.first { $0.method == "POST" })
+        let decoded = try JSONSerialization.jsonObject(with: try #require(post.body)) as? [String: [[String: Any]]]
+        let answers = try #require(decoded?["answers"])
+        #expect(answers.map { $0["id"] as? Int } == [7, 9])
+        #expect(answers[0]["reason"] as? String == "déjà une table")
+        #expect(answers[1]["reason"] == nil, "une raison vide n'est pas envoyée")
+    }
+
+    @Test("relancer, tout accepter et annuler visent leur route, avec la révision lue")
+    func retryAcceptAllRevertRoutes() async throws {
+        let transport = ScriptedHarnessTransport()
+        let withRev = inboxJSON.replacingOccurrences(of: #""reason": "2 décision(s)""#, with: #""reason": "2 décision(s)", "rev": 7"#)
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("POST", "/v1/runs/r1/retry"): ok(#"{"run":{}}"#)
+            case ("POST", "/v1/runs/r1/decisions/accept"): ok(#"{"accepted":2}"#)
+            case ("POST", "/v1/runs/r1/revert"): ok(#"{"run":{}}"#)
+            case ("POST", "/v1/runs/r4/retry"): HarnessReply(status: 409, body: Data(#"{"error":"ni en échec ni en attente"}"#.utf8))
+            default: ok(withRev)
+            }
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        #expect(await model.retry(runId: "r1"))
+        #expect(await model.acceptAllDecisions(runId: "r1"))
+        #expect(await model.revert(runId: "r1"))
+        let posts = transport.calls.filter { $0.method == "POST" }
+        #expect(posts.map(\.path) == ["/v1/runs/r1/retry", "/v1/runs/r1/decisions/accept", "/v1/runs/r1/revert"])
+        #expect(posts.allSatisfy { $0.headers["If-Match"] == "\"7\"" })
+        #expect(transport.calls.last?.path == "/v1/inbox", "la boîte est relue après le geste")
+        #expect(await model.retry(runId: "r4") == false)
+        #expect(model.failure == .rejected("ni en échec ni en attente"))
+        #expect(model.busy.isEmpty)
     }
 
     @Test("une saisie devient une adresse https sans barre finale ; le reste est refusé")

@@ -22,6 +22,11 @@ async function until(world: FakeWorld, runId: string, states: string[], timeoutM
   );
 }
 
+/** La revue qui passe d'OK, mais qui relit `files` (le verdict doit couvrir tous les fichiers touchés). */
+function reviewOf(files: string[]): Record<string, unknown>[] {
+  return OK.review.map((step) => (step.tool === "review_verdict" ? { ...step, args: { ...step.args, files } } : step));
+}
+
 test("harness-pipeline/AC-1 : un run bas risque aux tests verts va de /req au merge squash sur main, sans humain", async () => {
   const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] });
   await world.orchestrator.start();
@@ -47,10 +52,11 @@ test("harness-pipeline/AC-1 : un run bas risque aux tests verts va de /req au me
       world.store.listSteps(run.id).map((step) => `${step.kind}:${step.status}`),
       ["req:done", "specs:done", "impl:done", "review:done"],
     );
-    // La suite complète a tourné une fois, en heavy, et le résultat est en cache.
+    // La suite complète a tourné une fois, en heavy (mise en route par le service à l'entrée en revue,
+    // rejointe par le runner : un relevé chacun), et le résultat est en cache.
     assert.deepEqual(
       world.store.listTestRuns(run.id).map((t) => `${t.scope}:${t.outcome}`),
-      ["touched:pass", "full:pass"],
+      ["touched:pass", "full:pass", "full:pass"],
     );
     // Knowledge-updater : le compte rendu de besoins et la feature mergée retournent à l'oracle.
     await waitFor(
@@ -64,7 +70,7 @@ test("harness-pipeline/AC-1 : un run bas risque aux tests verts va de /req au me
   }
 });
 
-test("harness-pipeline/AC-2 : chaque étape a son runner, sauf review ⇄ fix qui garde le même process (cache de prompt)", async () => {
+test("harness-pipeline/AC-2 : chaque étape a son runner, sauf req → specs et review → fix qui gardent le même process ; la revue après correction repart d'un runner neuf", async () => {
   const blocked = [
     { tool: "run_tests", args: { scope: "full" } },
     {
@@ -76,6 +82,7 @@ test("harness-pipeline/AC-2 : chaque étape a son runner, sauf review ⇄ fix qu
         risks: [],
         files: ["src/api/export.ts"],
         unverified: [],
+        criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }],
         confidence: "strong",
       },
     },
@@ -84,7 +91,7 @@ test("harness-pipeline/AC-2 : chaque étape a son runner, sauf review ⇄ fix qu
     req: [OK.req],
     specs: [OK.specs],
     impl: [OK.impl],
-    review: [blocked, OK.review],
+    review: [blocked, reviewOf(["src/api/export.ts", "src/api/export.test.ts"])],
     fix: [
       [
         { write: "src/api/export.test.ts", content: "// AC-1\n" },
@@ -102,10 +109,11 @@ test("harness-pipeline/AC-2 : chaque étape a son runner, sauf review ⇄ fix qu
     const pidOf = (step: string) => prompts.filter((p) => p.step === step).map((p) => p.pid);
     const reviewPids = pidOf("review");
     assert.equal(reviewPids.length, 2);
-    assert.equal(reviewPids[0], reviewPids[1], "la revue reprend dans le même runner");
+    assert.notEqual(reviewPids[0], reviewPids[1], "la revue après correction juge dans un runner neuf");
     assert.equal(pidOf("fix")[0], reviewPids[0], "la correction tourne dans le runner de la revue");
-    const distinct = new Set([pidOf("req")[0], pidOf("specs")[0], pidOf("impl")[0], reviewPids[0]]);
-    assert.equal(distinct.size, 4, "req, specs, impl et review ont chacun leur runner");
+    assert.equal(pidOf("specs")[0], pidOf("req")[0], "/specs continue dans le runner de /req");
+    const distinct = new Set([pidOf("req")[0], pidOf("impl")[0], reviewPids[0], reviewPids[1]]);
+    assert.equal(distinct.size, 4, "req+specs, impl, et chaque revue ont leur runner");
     // Le prompt de correction porte les bloquants de la revue.
     assert.match(String(prompts.find((p) => p.step === "fix")?.message), /AC-1 sans test/);
   } finally {
@@ -113,17 +121,19 @@ test("harness-pipeline/AC-2 : chaque étape a son runner, sauf review ⇄ fix qu
   }
 });
 
-const MEDIUM_REVIEW = [
+/** Une revue sans bloquant mais à risque haut : au-dessus de `review.autoMergeRisk`, l'humain valide. */
+const HUMAN_REVIEW = [
   { tool: "run_tests", args: { scope: "full" } },
   {
     tool: "review_verdict",
     args: {
-      risk: "medium",
+      risk: "high",
       summary: "à relire",
       blockers: [],
       risks: ["format"],
       files: ["src/api/export.ts"],
       unverified: [],
+      criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
       confidence: "strong",
     },
   },
@@ -136,25 +146,27 @@ function decide(question: string, options: string[], dependsOn: number[] = []) {
   };
 }
 
-test("harness-pipeline/AC-3 : une décision réversible devient un commit WIP « decision: … » ; renversée avec des dépendantes, le run reprend au checkpoint — seules ses dépendantes tombent, les autres sont réappliquées", async () => {
+test("harness-pipeline/AC-3 : une décision réversible devient un commit WIP « decision: … » ; renversée avec des dépendantes, ses commits et ceux de ses dépendantes sont revertés — le travail indépendant reste dans l'arbre", async () => {
   const world = fakeWorld({
     req: [OK.req],
     specs: [OK.specs],
     impl: [
       [
         decide("Séparateur CSV ?", ["virgule", "point-virgule"]),
+        { write: "src/api/separator.ts", content: "export const SEP = ',';\n" },
         decide("Échappement des guillemets ?", ["doublés", "antislash"], [1]),
+        { write: "src/api/quotes.ts", content: "export const QUOTE = '\"\"';\n" },
         decide("Nom du fichier ?", ["export.csv", "donnees.csv"]),
         ...OK.impl,
         { write: "src/api/after-decision.ts", content: "// fait après la décision\n" },
       ],
       OK.impl,
     ],
-    review: [MEDIUM_REVIEW, OK.review],
+    review: [HUMAN_REVIEW, reviewOf(["src/api/export.ts", "src/api/after-decision.ts"])],
   });
   await world.orchestrator.start();
   try {
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Export séparateur", request: "Exporter" });
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export séparateur", request: "Exporter" });
     await until(world, run.id, ["awaiting_human", "merged", "failed"]);
     assert.equal(world.store.getRun(run.id)?.state, "awaiting_human", stateOf(world, run.id));
     const decisions = world.store.listDecisions({ runId: run.id });
@@ -173,8 +185,9 @@ test("harness-pipeline/AC-3 : une décision réversible devient un commit WIP «
     );
     assert.ok(fs.existsSync(path.join(worktree, "src/api/after-decision.ts")));
 
+    const checkpoint3 = decisions[2]?.checkpointSha;
     await world.orchestrator.reverseDecision(run.id, 1, "point-virgule", "Excel FR attend le point-virgule");
-    // Le travail postérieur au checkpoint est annulé, l'humain est dans l'oracle.
+    // Les commits de #1 et #2 sont revertés, l'humain est dans l'oracle.
     assert.ok(world.oracle.retained.some((m) => /renversée/.test(m.text) && /Excel FR/.test(m.text)));
     assert.deepEqual(
       world.store.listDecisions({ runId: run.id }).map((d) => d.status),
@@ -182,22 +195,24 @@ test("harness-pipeline/AC-3 : une décision réversible devient un commit WIP «
       "seule la dépendante tombe",
     );
     const reversed = world.store.eventsSince(0, run.id).find((e) => e.type === "decision_reversed");
-    assert.equal(reversed?.payload.mode, "reset");
+    assert.equal(reversed?.payload.mode, "revert");
+    assert.equal(world.store.getDecision(run.id, 3)?.checkpointSha, checkpoint3, "le checkpoint de #3 est conservé");
+    assert.ok(!fs.existsSync(path.join(worktree, "src/api/separator.ts")), "le travail de #1 est défait");
+    assert.ok(!fs.existsSync(path.join(worktree, "src/api/quotes.ts")), "le travail de #2 est défait");
+    assert.ok(fs.existsSync(path.join(worktree, "src/api/after-decision.ts")), "le travail indépendant reste");
     await until(world, run.id, ["merged", "failed", "awaiting_human"]);
     assert.equal(world.store.getRun(run.id)?.state, "merged", stateOf(world, run.id));
     const resumed = world
       .log()
       .filter((e) => e.kind === "prompt" && e.step === "impl")
       .pop();
-    assert.match(String(resumed?.message), /Reprise au checkpoint #1/);
+    assert.match(String(resumed?.message), /les commits après le checkpoint #1 \(jusqu'à #3\) ont été revertés/);
     assert.match(String(resumed?.message), /point-virgule/);
     assert.match(String(resumed?.message), /décisions #2 en découlaient/);
-    assert.match(String(resumed?.message), /décisions #3 n'en dépendaient pas : réapplique-les/);
+    assert.match(String(resumed?.message), /décisions #3 n'en dépendent pas : elles tiennent et restent dans l'arbre/);
     assert.match(String(resumed?.message), /#3 Nom du fichier \? → « export\.csv »/, "l'indépendante tient");
-    assert.throws(
-      () => git(world.repo, "show", "main:src/api/after-decision.ts"),
-      "le travail d'après le checkpoint ne revient pas",
-    );
+    assert.match(git(world.repo, "show", "main:src/api/after-decision.ts"), /fait après la décision/);
+    assert.throws(() => git(world.repo, "show", "main:src/api/separator.ts"), "le travail de #1 ne revient pas");
     assert.match(git(world.repo, "log", "-1", "--format=%B", "main"), /Séparateur CSV \? → point-virgule/);
   } finally {
     await world.orchestrator.stop();
@@ -216,12 +231,12 @@ test("harness-pipeline/AC-15 : une décision dont rien ne dépend se renverse sa
         { write: "src/api/after-decision.ts", content: "// fait après la décision\n" },
       ],
     ],
-    review: [MEDIUM_REVIEW, OK.review],
+    review: [HUMAN_REVIEW, reviewOf(["src/api/export.ts", "src/api/after-decision.ts"])],
     fix: [[{ write: "src/api/export.ts", content: "export const exportCsv = () => 'a;b';\n" }]],
   });
   await world.orchestrator.start();
   try {
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Export séparateur", request: "Exporter" });
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export séparateur", request: "Exporter" });
     await until(world, run.id, ["awaiting_human", "merged", "failed"]);
     assert.equal(world.store.getRun(run.id)?.state, "awaiting_human", stateOf(world, run.id));
     const head = git(world.store.getRun(run.id)?.worktree as string, "rev-parse", "HEAD");
@@ -290,7 +305,7 @@ test("harness-pipeline/AC-4 : une décision irréversible n'est pas appliquée ;
   });
   await world.orchestrator.start();
   try {
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Export daté", request: "Exporter" });
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export daté", request: "Exporter" });
     await until(world, run.id, ["escalated", "merged", "failed"]);
     assert.equal(world.store.getRun(run.id)?.state, "escalated", stateOf(world, run.id));
     const open = world.store.listEscalations({ runId: run.id, status: "open" });
@@ -326,7 +341,7 @@ test("harness-pipeline/AC-4 : une décision irréversible n'est pas appliquée ;
   }
 });
 
-test("harness-pipeline/AC-5 : un verdict faible (points non vérifiés) attend l'humain, qui lit le code ; un refus renvoie en correction avec sa raison", async () => {
+test("harness-pipeline/AC-5 : un verdict faible (un critère non vérifié) attend l'humain, qui lit le code ; un refus renvoie en correction avec sa raison", async () => {
   const weak = [
     { tool: "run_tests", args: { scope: "full" } },
     {
@@ -337,7 +352,8 @@ test("harness-pipeline/AC-5 : un verdict faible (points non vérifiés) attend l
         blockers: [],
         risks: [],
         files: ["src/api/export.ts"],
-        unverified: ["perf sur 1M lignes"],
+        unverified: ["AC-1 : la perf sur 1M lignes n'a pas été vérifiée"],
+        criteria: [{ id: "AC-1", test: "harness/AC-1", status: "untested" }],
         confidence: "strong",
       },
     },
@@ -346,7 +362,7 @@ test("harness-pipeline/AC-5 : un verdict faible (points non vérifiés) attend l
     req: [OK.req],
     specs: [OK.specs],
     impl: [OK.impl],
-    review: [weak, OK.review],
+    review: [weak, reviewOf(["src/api/export.ts", "src/api/stream.ts"])],
     fix: [[{ write: "src/api/stream.ts", content: "// streaming\n" }]],
   });
   await world.orchestrator.start();
@@ -355,7 +371,7 @@ test("harness-pipeline/AC-5 : un verdict faible (points non vérifiés) attend l
     await until(world, run.id, ["awaiting_human", "merged", "failed"]);
     const waiting = world.store.getRun(run.id);
     assert.equal(waiting?.state, "awaiting_human");
-    assert.match(waiting?.reason ?? "", /verdict faible/);
+    assert.match(waiting?.reason ?? "", /non vérifié|verdict faible/);
     const review = world.store.eventsSince(0, run.id).find((e) => e.type === "review");
     assert.equal(
       (review!.payload.merge as { readCode: boolean }).readCode,
@@ -410,14 +426,15 @@ test("harness-pipeline/AC-6 : un rate limit bascule le runner sur le fournisseur
     assert.ok(
       world.store.eventsSince(0, run.id).some((e) => e.type === "model_failover" && e.payload.to === "beta/big2"),
     );
-    // Le modèle de départ suit le tier de l'étape : rapide pour req, et pour impl
-    // (standard) la chaîne lourde, faute de chaîne standard.
+    // Le modèle de départ suit le tier de l'étape : rapide pour req (et specs, même
+    // runner), et pour impl (standard) la chaîne lourde, faute de chaîne standard.
     const argvs = world
       .log()
       .filter((e) => e.kind === "argv")
       .map((e) => (e.argv as string[]).join(" "));
+    assert.equal(argvs.length, 3, "req+specs, impl, review");
     assert.match(argvs[0] as string, /--model fastco\/f1/);
-    assert.match(argvs[2] as string, /--model alpha\/big/);
+    assert.match(argvs[1] as string, /--model alpha\/big/);
   } finally {
     await world.orchestrator.stop();
   }
@@ -539,7 +556,12 @@ test("harness-pipeline/AC-9 : un rebase en conflit devient une fusion de main fa
     req: [OK.req],
     specs: [OK.specs],
     impl: [[{ sleep: 300 }, { write: "README.md", content: "// README.md\nexport CSV\n" }, ...OK.impl]],
-    review: [[{ write: "README.md", content: "// README.md\nexport CSV\nguide v2\n" }, ...OK.review]],
+    review: [
+      [
+        { write: "README.md", content: "// README.md\nexport CSV\nguide v2\n" },
+        ...reviewOf(["src/api/export.ts", "README.md"]),
+      ],
+    ],
   });
   await world.orchestrator.start();
   try {
@@ -625,6 +647,10 @@ test("harness-pipeline/AC-12 : un audit lit main en lecture seule, rend ses prop
       modules: ["src/api"],
       kind: "faiblesse",
       rationale: "aucune validation",
+      evidence: ["src/api/routes.ts:12"],
+      dependsOn: [],
+      impact: "medium",
+      effort: "low",
     },
     {
       title: "Index du schéma",
@@ -632,6 +658,10 @@ test("harness-pipeline/AC-12 : un audit lit main en lecture seule, rend ses prop
       modules: ["src/db"],
       kind: "feature",
       rationale: "requêtes lentes",
+      evidence: [],
+      dependsOn: [],
+      impact: "medium",
+      effort: "low",
     },
   ];
   const world = fakeWorld({
@@ -736,7 +766,7 @@ test("harness-pipeline/AC-14 : un run créé avec son compte rendu de besoins (/
   }
 });
 
-test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; review ⇄ fix garde son runner et change seulement de modèle, la dernière correction passe en heavy", async () => {
+test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; review → fix garde son runner et change seulement de modèle, la dernière correction passe en heavy", async () => {
   const blocked = [
     { tool: "run_tests", args: { scope: "full" } },
     {
@@ -748,6 +778,7 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
         risks: [],
         files: ["src/api/export.ts"],
         unverified: [],
+        criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }],
         confidence: "strong",
       },
     },
@@ -758,7 +789,11 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
       req: [OK.req],
       specs: [OK.specs],
       impl: [OK.impl],
-      review: [blocked, blocked, OK.review],
+      review: [
+        blocked,
+        blocked,
+        reviewOf(["src/api/export.ts", "src/api/export-1.test.ts", "src/api/export-2.test.ts"]),
+      ],
       fix: [fixed(1), fixed(2)],
     },
     {
@@ -781,16 +816,17 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
       .log()
       .filter((e) => e.kind === "argv")
       .map((e) => (e.argv as string[]).join(" "));
-    assert.equal(argvs.length, 4, "req, specs, impl, review : un runner chacun");
-    assert.match(argvs[0] as string, /--model big\/h1/, "/req : heavy");
-    assert.match(argvs[1] as string, /--model big\/h1/, "/specs : heavy");
-    assert.match(argvs[2] as string, /--model mid\/m1/, "/impl : standard");
-    assert.match(argvs[3] as string, /--model big\/h1/, "/review : heavy");
+    assert.equal(argvs.length, 5, "req+specs, impl, et une revue par passe : un runner chacun");
+    assert.match(argvs[0] as string, /--model big\/h1/, "/req (puis /specs) : heavy");
+    assert.match(argvs[1] as string, /--model mid\/m1/, "/impl : standard");
+    assert.match(argvs[2] as string, /--model big\/h1/, "/review : heavy");
+    assert.match(argvs[3] as string, /--model big\/h1/, "/review après la correction 1 : heavy, runner neuf");
+    assert.match(argvs[4] as string, /--model big\/h1/, "/review après la correction 2 : heavy, runner neuf");
     const switched = world.log().filter((e) => e.kind === "command" && e.type === "set_model");
     assert.deepEqual(
       switched.map((e) => `${e.provider}/${e.modelId}`),
-      ["mid/m1", "big/h1"],
-      "fix 1 en standard, retour en heavy pour la revue ; fix 2 (dernière) reste en heavy",
+      ["mid/m1"],
+      "fix 1 en standard dans le runner de la revue ; fix 2 (dernière) reste en heavy, sans bascule",
     );
     assert.ok(world.store.eventsSince(0, run.id).some((e) => e.type === "model_tier" && e.payload.to === "mid/m1"));
   } finally {
@@ -798,22 +834,54 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
   }
 });
 
-test("harness-pipeline/AC-17 : une étape qui dépasse son échéance arrête son runner et échoue, relançable — un agent qui boucle ne garde pas son slot", async () => {
+test("harness-pipeline/AC-17 : une étape qui dépasse son échéance arrête son runner et échoue, relançable ; relances épuisées, l'humain reprend la main — un agent qui boucle ne garde pas son slot", async () => {
   const world = fakeWorld({ req: [[{ sleep: 60_000 }]] }, { patch: (config) => (config.runner.stepTimeoutSec = 1) });
   await world.orchestrator.start();
   try {
     const run = world.orchestrator.createRun({ repo: "demo", title: "Boucle", request: "ne finit jamais" });
     await until(world, run.id, ["failed", "merged", "awaiting_human"], 20_000);
     const steps = world.store.listSteps(run.id);
-    // Une relance (stepRetries = 1), puis l'échec : chaque tentative arrêtée à l'échéance.
+    // Une relance (stepRetries = 1, sans attente) ; le délai se résout en attendant, donc
+    // la liste se consomme entière, puis l'humain (qui peut relancer), jamais `failed`.
     assert.deepEqual(
       steps.map((step) => `${step.kind}:${step.status}`),
       ["req:failed", "req:failed"],
     );
     assert.match(steps[0]?.summary ?? "", /délai d'étape dépassé \(1 s\)/);
     assert.equal(world.store.eventsSince(0, run.id).filter((event) => event.type === "step_timeout").length, 2);
-    assert.match(world.store.getRun(run.id)?.reason ?? "", /délai d'étape dépassé/);
+    const halted = world.store.getRun(run.id);
+    assert.deepEqual([halted?.state, halted?.step, halted?.lastFailCause], ["awaiting_human", "req", "timeout"]);
+    assert.match(halted?.reason ?? "", /2 fois \(timeout\), relances épuisées/);
+    // Entre les deux tentatives, le run est repassé par la file avec sa cause gardée.
+    assert.ok(
+      world.store
+        .eventsSince(0, run.id)
+        .some(
+          (e) => e.type === "run_state" && e.payload.state === "queued" && /relance/.test(String(e.payload.reason)),
+        ),
+    );
     assert.equal(world.scheduler.snapshot().runner.used, 0, "le slot est rendu");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-pipeline/AC-18 : un run en file dont l'heure n'est pas venue (`notBefore`) n'est pas admis, puis part quand elle l'est", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Plus tard", request: "x", modules: ["src/api"] });
+    world.store.updateRun(run.id, { notBefore: Date.now() + 60 * 60 * 1000 });
+    await world.orchestrator.start();
+    await world.orchestrator.tick();
+    assert.equal(world.store.getRun(run.id)?.state, "queued", "pas avant l'heure");
+    assert.ok(!(world.orchestrator.status().live as string[]).includes(run.id));
+    world.store.updateRun(run.id, { notBefore: Date.now() - 1 });
+    await world.orchestrator.tick();
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "running",
+      () => stateOf(world, run.id),
+    );
+    assert.equal(world.store.getRun(run.id)?.notBefore, null, "l'admission efface l'attente");
   } finally {
     await world.orchestrator.stop();
   }

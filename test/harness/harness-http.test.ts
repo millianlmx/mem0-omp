@@ -288,6 +288,10 @@ test("harness-http/AC-7 : audits, statistiques et projets résumés — ce que l
       modules: ["src/db"],
       kind: "faiblesse",
       rationale: "aucun test",
+      evidence: ["src/db/schema.ts:1"],
+      dependsOn: [],
+      impact: "medium",
+      effort: "low",
     },
   ];
   const world = fakeWorld({ audit: [[{ tool: "audit_propose", args: { proposals } }]], req: [[{ sleep: 60_000 }]] });
@@ -333,6 +337,113 @@ test("harness-http/AC-7 : audits, statistiques et projets résumés — ce que l
     assert.deepEqual(stats.audits, { launched: 1 });
     assert.equal(stats.scheduler.runner.capacity, 5);
     assert.equal((await call(server.url, "POST", `/v1/audits/${audit.id}/cancel`)).status, 409);
+  } finally {
+    await server.close();
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-http/AC-8 : relancer un run échoué ou en attente (409 sinon), accepter toutes ses décisions d'un geste, refuser le revert d'un run non mergé", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
+  const server = await serve(world);
+  try {
+    const run = world.store.createRun({
+      id: "r1",
+      repo: "demo",
+      slug: "a",
+      title: "A",
+      request: "a",
+      branch: "b",
+      state: "failed",
+      step: "impl",
+    });
+    world.store.updateRun(run.id, { attempts: 2, lastFailCause: "timeout", notBefore: Date.now() + 999_999 });
+    const view = (await (await call(server.url, "GET", "/v1/runs/r1")).json()) as {
+      run: { mergeRetries: number; notBefore: number | null; lastFailCause: string | null };
+    };
+    assert.deepEqual([view.run.mergeRetries, view.run.lastFailCause], [0, "timeout"]);
+    assert.ok(view.run.notBefore !== null, "la vue expose l'attente");
+    const retried = await call(server.url, "POST", "/v1/runs/r1/retry");
+    assert.equal(retried.status, 200);
+    const { run: back } = (await retried.json()) as {
+      run: { state: string; step: string; attempts: number; notBefore: number | null; lastFailCause: string | null };
+    };
+    assert.deepEqual(
+      [back.state, back.step, back.attempts, back.notBefore, back.lastFailCause],
+      ["queued", "impl", 0, null, null],
+    );
+    assert.equal((await call(server.url, "POST", "/v1/runs/r1/retry")).status, 409, "déjà en file");
+    assert.equal((await call(server.url, "POST", "/v1/runs/r1/revert")).status, 409, "pas mergé");
+    const step = world.store.startStep("r1", "impl", 0, null, null);
+    const decision = {
+      runId: "r1",
+      stepId: step.id,
+      question: "?",
+      options: ["x", "y"],
+      chosen: "x",
+      rationale: "r",
+      category: "reversible" as const,
+      checkpointSha: null,
+      dependsOn: [],
+    };
+    world.store.addDecision(decision);
+    world.store.addDecision(decision, "auto_timeout");
+    const accepted = await call(server.url, "POST", "/v1/runs/r1/decisions/accept");
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), { accepted: 2 });
+    assert.deepEqual(
+      world.store.listDecisions({ runId: "r1" }).map((d) => d.status),
+      ["accepted", "accepted"],
+    );
+    assert.equal((await call(server.url, "POST", "/v1/runs/zz/retry")).status, 404);
+  } finally {
+    await server.close();
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-http/AC-9 : une réponse d'escalade porte sa raison (optionnelle, chaîne) ; la vue du run expose la recommandation de l'agent", async () => {
+  const world = fakeWorld({});
+  const server = await serve(world);
+  try {
+    const run = world.store.createRun({
+      id: "r1",
+      repo: "demo",
+      slug: "a",
+      title: "A",
+      request: "a",
+      branch: "b",
+      state: "escalated",
+      step: "impl",
+    });
+    const step = world.store.startStep(run.id, "impl", 0, null, null);
+    world.store.finishStep(step.id, "escalated", null);
+    const one = world.store.addEscalation({
+      runId: "r1",
+      stepId: step.id,
+      category: "schema",
+      question: "Colonne ?",
+      options: ["a", "b"],
+      context: "la table users",
+      recommended: "a",
+    });
+    const view = (await (await call(server.url, "GET", "/v1/runs/r1")).json()) as {
+      escalations: { recommended: string | null; options: string[]; context: string }[];
+    };
+    assert.deepEqual(
+      view.escalations.map((e) => [e.recommended, e.options, e.context]),
+      [["a", ["a", "b"], "la table users"]],
+    );
+    assert.equal(
+      (await call(server.url, "POST", "/v1/runs/r1/escalations", { answers: [{ id: one.id, answer: "b", reason: 3 }] }))
+        .status,
+      400,
+    );
+    const answered = await call(server.url, "POST", "/v1/runs/r1/escalations", {
+      answers: [{ id: one.id, answer: "b", reason: "a casse l'index" }],
+    });
+    assert.equal(answered.status, 200);
+    assert.equal(world.store.listEscalations({ runId: "r1" })[0]?.answerReason, "a casse l'index");
   } finally {
     await server.close();
     await world.orchestrator.stop();

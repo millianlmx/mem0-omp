@@ -42,8 +42,11 @@ public struct HarnessFeatureDraft: Equatable, Sendable, Identifiable {
 public final class HarnessDrafts: ObservableObject {
     @Published public var address = ""
     @Published public var token = ""
-    /// Les réponses en cours, par identifiant d'escalade.
+    /// Les réponses saisies, par identifiant d'escalade. Sans saisie, la réponse d'une
+    /// escalade est l'option recommandée par l'agent (`answer(for:)`).
     @Published public var answers: [Int: String] = [:]
+    /// La raison facultative de chaque réponse, par identifiant d'escalade.
+    @Published public var reasons: [Int: String] = [:]
     /// Le run dont on refuse le verdict, et la raison du refus.
     @Published public var refusal: HarnessRun?
     @Published public var refusalReason = ""
@@ -53,6 +56,10 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var reversalReason = ""
     /// La feature dont l'arrêt attend confirmation.
     @Published public var stopRequest: HarnessRun?
+    /// La feature dont la relance attend confirmation (en échec, ou arrêtée sur une attente).
+    @Published public var retryRequest: HarnessRun?
+    /// La feature fusionnée dont l'annulation (commit inverse) attend confirmation.
+    @Published public var revertRequest: HarnessRun?
     @Published public var forgetAsked = false
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false
@@ -140,15 +147,49 @@ public final class HarnessDrafts: ObservableObject {
 
     public func isPicked(_ audit: HarnessAudit, _ index: Int) -> Bool { picks[audit.id]?.contains(index) ?? false }
 
-    /// Chaque escalade du lot a une réponse : le lot peut partir.
+    /// La réponse courante d'une escalade : la saisie, sinon l'option recommandée par l'agent.
+    public func answer(for item: HarnessEscalation) -> String {
+        if let typed = answers[item.id] { return typed }
+        return item.recommended ?? ""
+    }
+
+    /// La réponse d'une escalade est l'option recommandée, non modifiée.
+    public func isRecommended(_ item: HarnessEscalation) -> Bool {
+        guard let recommended = item.recommended else { return false }
+        return answer(for: item) == recommended
+    }
+
+    /// Chaque escalade du lot a une réponse (saisie ou recommandée) : le lot peut partir.
     public func canAnswer(_ batch: HarnessEscalationBatch) -> Bool {
-        !batch.items.isEmpty && batch.items.allSatisfy { !(answers[$0.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        !batch.items.isEmpty && batch.items.allSatisfy { !answer(for: $0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// Les réponses d'un lot, prêtes à envoyer.
     public func answers(for batch: HarnessEscalationBatch) -> [Int: String] {
         var out: [Int: String] = [:]
-        for item in batch.items { out[item.id] = (answers[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        for item in batch.items { out[item.id] = answer(for: item).trimmingCharacters(in: .whitespacesAndNewlines) }
+        return out
+    }
+
+    /// Les raisons données dans un lot (les vides n'y sont pas).
+    public func reasons(for batch: HarnessEscalationBatch) -> [Int: String] {
+        var out: [Int: String] = [:]
+        for item in batch.items {
+            let reason = (reasons[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !reason.isEmpty { out[item.id] = reason }
+        }
+        return out
+    }
+
+    /// Les recommandations de l'agent pour tout le lot, ou `nil` si une escalade n'en a pas :
+    /// « Accepter les recommandations » répond tout d'un geste, sans tenir compte des saisies.
+    public static func recommendedAnswers(for batch: HarnessEscalationBatch) -> [Int: String]? {
+        guard !batch.items.isEmpty else { return nil }
+        var out: [Int: String] = [:]
+        for item in batch.items {
+            guard let recommended = item.recommended, !recommended.isEmpty else { return nil }
+            out[item.id] = recommended
+        }
         return out
     }
 
@@ -171,8 +212,11 @@ public final class HarnessDrafts: ObservableObject {
 
     public var canRefuse: Bool { !refusalReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    /// Après un envoi réussi, les réponses du lot sont oubliées.
+    /// Après un envoi réussi, les réponses et raisons du lot sont oubliées.
     public func clearAnswers(for batch: HarnessEscalationBatch) {
-        for item in batch.items { answers[item.id] = nil }
+        for item in batch.items {
+            answers[item.id] = nil
+            reasons[item.id] = nil
+        }
     }
 }

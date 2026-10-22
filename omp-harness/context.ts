@@ -15,7 +15,8 @@ import { EPHEMERAL_EVENTS } from "./events.ts";
 import type { Git } from "./git.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import type { RunState, Transition } from "./machine.ts";
-import { assertTransition } from "./machine.ts";
+import { assertTransition, isTerminal } from "./machine.ts";
+import { Notifier } from "./notify.ts";
 import type { Oracle } from "./oracle.ts";
 import type { Exec } from "./proc.ts";
 import { ProviderRegistry } from "./providers.ts";
@@ -62,6 +63,8 @@ export class HarnessContext {
   readonly log: (line: string) => void;
   /** Les fournisseurs et chaînes de modèles déclarés par l'API (admin). */
   readonly providers: ProviderRegistry;
+  /** Les notifications sortantes (ntfy), abonnées au journal : chaque pièce n'a rien à faire pour notifier. */
+  readonly notifier: Notifier;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -80,6 +83,8 @@ export class HarnessContext {
       scheduler: this.scheduler,
       log: this.log,
     });
+    this.notifier = new Notifier({ config: this.config, store: this.store, log: this.log });
+    this.notifier.subscribe();
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */
@@ -136,6 +141,7 @@ export class HarnessContext {
           fixes: transition.fixes,
           attempts: transition.attempts,
           reason: transition.reason,
+          notBefore: transition.notBefore,
           ...options.patch,
         },
         options.actor?.rev,
@@ -163,10 +169,33 @@ export class HarnessContext {
         if (transition.step === "specs") this.event("specs_ready", run.id, { reason: transition.reason });
         else this.event("verdict", run.id, { verdict: next.verdict, reason: transition.reason });
       }
+      if (transition.state === "failed")
+        this.event("run_failed", run.id, {
+          step: transition.step,
+          reason: transition.reason,
+          cause: next.lastFailCause,
+        });
+      if (isTerminal(transition.state) && run.projectId) this.#closeProjectIfDone(run.projectId, run.repo);
       return next;
     });
     if (!updated) this.log(`run ${run.id} : transition vers ${transition.state} écartée (état changé entre-temps)`);
     return updated;
+  }
+
+  /** Le projet est clos quand plus aucun de ses runs n'est vivant : `project_done` compte ce qui a mergé. */
+  #closeProjectIfDone(projectId: string, repo: string): void {
+    const runs = this.store.listRuns({ projectId });
+    if (runs.some((other) => !isTerminal(other.state))) return;
+    const project = this.store.getProject(projectId);
+    if (!project || project.status === "done") return;
+    this.store.setProjectStatus(projectId, "done");
+    const merged = runs.filter((other) => other.state === "merged").length;
+    this.event(
+      "project_done",
+      null,
+      { projectId, title: project.title, merged, notMerged: runs.length - merged },
+      repo,
+    );
   }
 
   /** `main` local avancé depuis le remote (fast-forward seulement ; une divergence est journalisée). */

@@ -41,6 +41,24 @@ export type ProviderLimit = { capacity: number; refillPerMinute: number };
  */
 export type Isolation = "systemd" | "container" | "none";
 
+/** Les causes d'échec d'un prompt qui peuvent faire basculer sur le fournisseur suivant. */
+export type FailoverCause = "rate_limit" | "server_error" | "network";
+
+export const FAILOVER_CAUSES: readonly FailoverCause[] = ["rate_limit", "server_error", "network"];
+
+/** L'attente avant chaque relance d'une étape échouée : 2, 10 puis 30 minutes. */
+export const DEFAULT_RETRY_BACKOFF_SEC: readonly number[] = [120, 600, 1800];
+
+/** Les événements notifiés par défaut : ce qui attend l'humain, et ce qui finit. */
+export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
+  "escalations",
+  "specs_ready",
+  "verdict",
+  "run_failed",
+  "project_done",
+  "merged",
+];
+
 export type RepoConfig = {
   /** Le nom par lequel l'API désigne le dépôt — jamais un chemin fourni par le client. */
   name: string;
@@ -52,8 +70,14 @@ export type RepoConfig = {
    */
   scope: string;
   mainBranch: string;
-  /** Les commandes de test ; `{files}` reçoit les fichiers touchés, cités pour le shell. */
-  tests: { touched: string; full: string };
+  /**
+   * Les commandes de test ; `{files}` reçoit les fichiers touchés, cités pour le
+   * shell. `pattern` : le glob des fichiers de test (`test/**\/*.test.ts`) qui filtre
+   * `{files}` ; `null` = pas de filtre.
+   */
+  tests: { touched: string; full: string; pattern: string | null };
+  /** Les commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que `run_tests scope:"check"` lance. */
+  checks: Record<string, string>;
   /** `local` : squash + update-ref sur `main` ; `gh` : PR puis `gh pr merge --squash`. */
   merge: "local" | "gh";
   /** Le remote poussé après un merge local, ou `null` (aucun push). */
@@ -99,8 +123,15 @@ export type HarnessConfig = {
     isolation: Isolation;
     /** Le profil OMP isolé des runners (réglages, caches, sessions). */
     profile: string;
-    /** Le nombre de relances d'une étape qui a échoué sans verdict. */
+    /**
+     * Le nombre de relances d'une étape qui a échoué sans verdict ; absent, c'est la
+     * longueur de `retryBackoffSec`.
+     */
     stepRetries: number;
+    /** L'attente (s) avant chaque relance : la n-ième relance attend `retryBackoffSec[n]`. */
+    retryBackoffSec: number[];
+    /** Les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne. */
+    failoverOn: FailoverCause[];
     /**
      * La durée maximale d'une étape, prompts et relances compris : au-delà, le runner
      * est arrêté et l'étape échoue (relançable). Un agent qui boucle ne garde pas son
@@ -162,8 +193,32 @@ export type HarnessConfig = {
   /** Le tier de chaque étape (la dernière correction avant le plafond passe toujours en heavy). */
   stepTiers: Record<StepKind, Tier>;
   providers: Record<string, ProviderLimit>;
-  /** `specsGate` : la feature attend l'accord humain entre /specs et /impl. */
-  review: { fixCap: number; maxDiffLines: number; specsGate: boolean };
+  /**
+   * `specsGate` : la feature attend l'accord humain entre /specs et /impl (`"auto"` :
+   * seulement si les specs découpent, laissent les modules vides ou touchent à
+   * l'irréversible). `autoMergeRisk` : le risque le plus haut qui s'auto-merge.
+   * `diffCount` : les lignes comptées face à `maxDiffLines` (`code` exclut tests, docs
+   * et manifestes). `escalationTimeoutSec` : passé ce délai, une escalade ouverte est
+   * tranchée sur la recommandation de l'agent (`null` : jamais). `mergeRetries` : les
+   * merges arrêtés tolérés avant l'humain. `mergePollSec` / `mergeWaitSec` : en mode
+   * `gh`, la cadence de relecture de la PR après `gh pr merge --auto` et l'attente
+   * maximale de sa fusion (les checks requis de la branche protégée).
+   */
+  review: {
+    fixCap: number;
+    maxDiffLines: number;
+    specsGate: boolean | "auto";
+    autoMergeRisk: "low" | "medium";
+    diffCount: "all" | "code";
+    escalationTimeoutSec: number | null;
+    mergeRetries: number;
+    mergePollSec: number;
+    mergeWaitSec: number;
+  };
+  /** Les notifications sortantes (ntfy ou webhook) : `url` null = aucune ; `events` = les types envoyés. */
+  notify: { url: string | null; events: string[] };
+  /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
+  memory: { runnerMode: boolean };
   oracle: { url: string; token: string | null } | null;
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
@@ -230,7 +285,9 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       slice: "omp-harness-runners.slice",
       isolation: "systemd",
       profile: "pipeline",
-      stepRetries: 1,
+      stepRetries: DEFAULT_RETRY_BACKOFF_SEC.length,
+      retryBackoffSec: [...DEFAULT_RETRY_BACKOFF_SEC],
+      failoverOn: [...FAILOVER_CAUSES],
       stepTimeoutSec: 5400,
       extensions: [],
     },
@@ -262,7 +319,19 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     models: { fast: [], standard: [], heavy: [] },
     stepTiers: { ...DEFAULT_STEP_TIERS },
     providers: {},
-    review: { fixCap: 3, maxDiffLines: 300, specsGate: true },
+    review: {
+      fixCap: 3,
+      maxDiffLines: 300,
+      specsGate: "auto",
+      autoMergeRisk: "medium",
+      diffCount: "code",
+      escalationTimeoutSec: 3600,
+      mergeRetries: 3,
+      mergePollSec: 60,
+      mergeWaitSec: 7200,
+    },
+    notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS] },
+    memory: { runnerMode: true },
     oracle: null,
     events: { retentionDays: 30 },
     repos: [],
@@ -343,7 +412,47 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1))
       fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
   }
+  if (!Array.isArray(config.runner.retryBackoffSec) || config.runner.retryBackoffSec.some((s) => !(s >= 0)))
+    fail("runner.retryBackoffSec : liste de secondes ≥ 0");
+  if (!Number.isInteger(config.runner.stepRetries) || config.runner.stepRetries < 0)
+    fail("runner.stepRetries doit être un entier ≥ 0");
+  if (
+    !Array.isArray(config.runner.failoverOn) ||
+    config.runner.failoverOn.some((cause) => !(FAILOVER_CAUSES as readonly string[]).includes(cause))
+  )
+    fail(`runner.failoverOn : liste parmi ${FAILOVER_CAUSES.join(" | ")}`);
+  if (config.review.specsGate !== true && config.review.specsGate !== false && config.review.specsGate !== "auto")
+    fail('review.specsGate : true | false | "auto"');
+  if (config.review.autoMergeRisk !== "low" && config.review.autoMergeRisk !== "medium")
+    fail("review.autoMergeRisk : low | medium");
+  if (config.review.diffCount !== "all" && config.review.diffCount !== "code") fail("review.diffCount : all | code");
+  if (config.review.escalationTimeoutSec !== null && !(config.review.escalationTimeoutSec > 0))
+    fail("review.escalationTimeoutSec : secondes > 0, ou null");
+  if (!Number.isInteger(config.review.mergeRetries) || config.review.mergeRetries < 0)
+    fail("review.mergeRetries doit être un entier ≥ 0");
+  if (!(config.review.mergePollSec > 0)) fail("review.mergePollSec : secondes > 0");
+  if (!(config.review.mergeWaitSec > 0)) fail("review.mergeWaitSec : secondes > 0");
+  if (config.notify.url !== null && typeof config.notify.url !== "string") fail("notify.url : URL ou null");
+  if (!Array.isArray(config.notify.events) || config.notify.events.some((event) => typeof event !== "string"))
+    fail("notify.events : liste de noms d'événements");
+  if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
+  for (const repo of config.repos) {
+    if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
+      fail(`repos.${repo.name}.tests.pattern : glob ou null`);
+    if (!isRecord(repo.checks) || Object.values(repo.checks).some((command) => typeof command !== "string"))
+      fail(`repos.${repo.name}.checks : { nom: commande }`);
+  }
   return config;
+}
+
+/**
+ * Les attentes effectives des relances d'une étape : `stepRetries` entrées, prises
+ * dans `retryBackoffSec` (la dernière répétée s'il en manque, 0 si la liste est vide).
+ */
+export function retryBackoff(config: HarnessConfig): number[] {
+  const list = config.runner.retryBackoffSec;
+  const last = list[list.length - 1] ?? 0;
+  return Array.from({ length: config.runner.stepRetries }, (_, index) => list[index] ?? last);
 }
 
 /** Les défauts d'un dépôt déclaré par son seul nom et son chemin. */
@@ -355,7 +464,8 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       path: String(raw.path ?? ""),
       scope: "",
       mainBranch: "main",
-      tests: { touched: "npm test -- {files}", full: "npm test" },
+      tests: { touched: "npm test -- {files}", full: "npm test", pattern: null },
+      checks: {},
       merge: "local",
       remote: null,
       testImage: null,
@@ -373,6 +483,9 @@ export function loadConfig(file: string | null): HarnessConfig {
   if (!isRecord(raw)) fail("la racine doit être un objet");
   const repos = Array.isArray(raw.repos) ? raw.repos.map((entry) => repoDefaults(isRecord(entry) ? entry : {})) : [];
   const config = merge(base, { ...raw, repos });
+  // Sans `stepRetries` déclaré, la liste des attentes dit combien de relances on fait.
+  if (isRecord(raw.runner) && raw.runner.stepRetries === undefined)
+    config.runner.stepRetries = config.runner.retryBackoffSec.length;
   // Un `dataDir` déclaré entraîne ce qui en dépend, sauf déclaration explicite.
   if (typeof raw.dataDir === "string") {
     if (raw.tokenFile === undefined) config.tokenFile = path.join(raw.dataDir, "token");

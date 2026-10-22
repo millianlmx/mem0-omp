@@ -5,18 +5,28 @@
 import type { RepoFilter, RunRow, Store } from "./db.ts";
 import { isTerminal } from "./machine.ts";
 
-/** La boîte de l'humain, d'un seul appel : escalades batchées, validations, décisions prises seules, features en cours, audits. */
+/**
+ * La boîte de l'humain, d'un seul appel : escalades batchées, validations, décisions prises
+ * seules, features en cours, audits. `pendingCount` compte ce qui BLOQUE un run (escalades
+ * ouvertes, runs en attente de validation) ; les décisions `auto`/`auto_timeout` sont à
+ * relire, pas bloquantes : listées à part, chacune avec son `status`.
+ */
 export function inboxOf(store: Store, repos: RepoFilter = null): Record<string, unknown> {
   const runs = store.listRuns({ repos });
   const byId = new Map(runs.map((run) => [run.id, run]));
   const byRun = new Map<string, unknown[]>();
-  for (const item of store.listEscalations({ status: "open", repos }))
+  let openEscalations = 0;
+  for (const item of store.listEscalations({ status: "open", repos })) {
+    openEscalations += 1;
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
-  const decisions = store.listDecisions({ status: ["auto"], repos });
+  }
+  const awaiting = runs.filter((run) => run.state === "awaiting_human");
+  const decisions = store.listDecisions({ status: ["auto", "auto_timeout"], repos });
   const referenced = new Set([...byRun.keys(), ...decisions.map((decision) => decision.runId)]);
   return {
+    pendingCount: openEscalations + awaiting.length,
     batches: [...byRun].map(([runId, items]) => ({ run: byId.get(runId) ?? store.getRun(runId), items })),
-    awaiting: runs.filter((run) => run.state === "awaiting_human"),
+    awaiting,
     decisions,
     runs: runs.filter((run) => !isTerminal(run.state) || referenced.has(run.id)),
     audits: store.listAudits(["queued", "analysing", "proposed"], repos),

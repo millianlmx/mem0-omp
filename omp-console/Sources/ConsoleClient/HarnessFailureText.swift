@@ -2,6 +2,7 @@
 // (`PipelineServerText`), la correspondance vit ici, une seule fois pour les deux apps.
 
 import ConsoleCore
+import Foundation
 
 extension HarnessFailure {
     /// La cause, puis le remède, au vouvoiement.
@@ -28,6 +29,19 @@ extension HarnessRun {
 
     /// L'étape en cours, sous son nom de commande, ou `nil` hors étape.
     public var stepLabel: String? { step.map(Self.label(forStep:)) }
+
+    /// Ce que les rangées disent sous l'état : la reprise différée d'un run en file
+    /// (« Reprise à 14:05 »), la cause du dernier échec d'un run en échec ou arrêté ;
+    /// `nil` sinon.
+    public func detailLine(now: Date = Date()) -> String? {
+        if phase == .queued, let notBefore, notBefore > now {
+            return PipelineServerText.resumeAt(notBefore.formatted(date: .omitted, time: .shortened))
+        }
+        if canRetry, let lastFailCause {
+            return PipelineServerText.lastFailure(PipelineServerText.failCause(lastFailCause))
+        }
+        return nil
+    }
 
     /// Les étapes du serveur, dans l'ordre du chemin nominal (statistiques).
     public static let stepKinds = ["req", "specs", "impl", "review", "fix"]

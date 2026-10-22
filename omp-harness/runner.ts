@@ -84,10 +84,14 @@ export async function stopRunner(
 /**
  * Ce que le plugin mémoire d'un runner doit savoir : la scope du PROJET (celle du
  * Mac et de l'oracle), ne jamais écrire dans le dépôt (le brief finirait dans la
- * PR), et pas de relance de fin de session (le knowledge-updater tient la mémoire).
+ * PR), pas de relance de fin de session (le knowledge-updater tient la mémoire), et
+ * le mode runner (`config.memory.runnerMode`) : ni rappel par tour ni épinglage —
+ * la section Oracle du prompt est la seule source ; les outils mem0_* restent.
  */
-export function runnerMemoryEnv(scope: string): Record<string, string> {
-  return { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
+export function runnerMemoryEnv(scope: string, runnerMode: boolean): Record<string, string> {
+  const env: Record<string, string> = { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
+  if (runnerMode) env.MEM0_MODE = "runner";
+  return env;
 }
 
 export type RunnerSpec = {
@@ -113,7 +117,7 @@ function containerRunnerArgv(
   const env = {
     HOME: "/home/runner",
     PI_PY: "0",
-    ...runnerMemoryEnv(spec.scope),
+    ...runnerMemoryEnv(spec.scope, config.memory.runnerMode),
     ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}),
   };
   return engine(config, [
@@ -180,7 +184,9 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "-p",
     `MemoryMax=${config.runner.memoryMax}`,
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
-    ...Object.entries(runnerMemoryEnv(spec.scope)).map(([key, value]) => `--setenv=${key}=${value}`),
+    ...Object.entries(runnerMemoryEnv(spec.scope, config.memory.runnerMode)).map(
+      ([key, value]) => `--setenv=${key}=${value}`,
+    ),
     "--",
     "choom",
     "-n",
@@ -199,8 +205,9 @@ export function runnerEnv(
   scope: string,
   oracle: HarnessConfig["oracle"],
   base: Record<string, string | undefined> = process.env,
+  runnerMode = true,
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...base, ...runnerMemoryEnv(scope), PI_PY: "0" };
+  const env: Record<string, string | undefined> = { ...base, ...runnerMemoryEnv(scope, runnerMode), PI_PY: "0" };
   if (oracle) {
     env.MEM0_HTTP_URL = oracle.url;
     if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;
@@ -216,14 +223,14 @@ const DECISION_TOOL: HostToolDefinition = {
   label: "Harness — décision",
   description:
     "Enregistre une décision NON TRANCHÉE par les specs ou l'oracle. Choisis l'option la PLUS RÉVERSIBLE. " +
-    "`category: reversible` → le service pose un checkpoint (commit WIP « decision: … ») et tu continues avec ton choix. " +
+    "`category: reversible` (choix technique) ou `clarification` (question de produit/UX non tranchée, réversible) → le service pose un checkpoint (commit WIP « decision: … ») et tu continues avec ton choix ; l'humain pourra renverser. " +
     "`schema` (schéma de données), `public_api` (API publique) ou `deletion` (suppression) → escalade : n'applique PAS ce choix, " +
     "contourne et termine tout ce qui n'en dépend pas ; l'humain tranchera en fin d'étape. N'utilise JAMAIS l'outil `ask`.",
   parameters: {
     type: "object",
     properties: {
       question: { type: "string", description: "La question, autoportante." },
-      options: { ...STRINGS, minItems: 2, description: "Les options envisagées, mot pour mot." },
+      options: { ...STRINGS, minItems: 2, maxItems: 4, description: "Les options envisagées (2 à 4), mot pour mot." },
       chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
       rationale: {
         type: "string",
@@ -244,6 +251,63 @@ const DECISION_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const CHECKPOINT_TOOL: HostToolDefinition = {
+  name: "checkpoint",
+  label: "Harness — checkpoint",
+  description:
+    "Commite l'état courant du worktree (commit WIP par le service) et rend son `sha`. Appelle-le après chaque incrément cohérent : un délai ou une relance repart de là.",
+  parameters: {
+    type: "object",
+    properties: { message: { type: "string", description: "Ce que l'incrément livre, une phrase." } },
+    required: ["message"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const SET_MODULES_TOOL: HostToolDefinition = {
+  name: "set_modules",
+  label: "Harness — modules touchés",
+  description:
+    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus.",
+  parameters: {
+    type: "object",
+    properties: { paths: { ...STRINGS, minItems: 1, description: "Chemins relatifs à la racine du dépôt." } },
+    required: ["paths"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const SPLIT_TOOL: HostToolDefinition = {
+  name: "split_feature",
+  label: "Harness — découpage",
+  description:
+    "Découpe la feature : les sous-features listées (AUTRES que celle que ce run continue d'implémenter) partent dans un projet à part, chacune avec sa demande rédigée comme un /req et ses modules. Ce run garde la première part.",
+  parameters: {
+    type: "object",
+    properties: {
+      features: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            request: { type: "string", description: "La demande, autoportante, rédigée comme un /req." },
+            modules: { ...STRINGS, minItems: 1 },
+          },
+          required: ["title", "request", "modules"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["features"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const PROGRESS_TOOL: HostToolDefinition = {
   name: "progress",
   label: "Harness — avancement",
@@ -258,17 +322,24 @@ const PROGRESS_TOOL: HostToolDefinition = {
 };
 
 function runTestsTool(step: StepKind): HostToolDefinition {
-  const scopes = step === "review" ? ["touched", "full"] : ["touched"];
+  const scopes = step === "review" ? ["touched", "full", "check"] : ["touched", "check"];
   return {
     name: "run_tests",
     label: "Harness — tests (heavy)",
     description:
-      step === "review"
-        ? "Lance la suite COMPLÈTE (`scope: full`, UNE fois par revue) ou les tests des fichiers touchés, dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. Tu attends le résultat."
-        : "Lance les tests des fichiers touchés (`scope: touched`) dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. La suite complète est réservée à /review. Tu attends le résultat.",
+      (step === "review"
+        ? "Lance la suite COMPLÈTE (`scope: full`, UNE fois par revue — le service l'a déjà mise en route, l'appel la rejoint) ou les tests des fichiers touchés (`scope: touched`), dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. Tu attends le résultat."
+        : "Lance les tests des fichiers touchés (`scope: touched`) dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. La suite complète est réservée à /review. Tu attends le résultat.") +
+      " `scope: check` + `check: <nom>` lance une commande nommée du dépôt (lint, typecheck…).",
     parameters: {
       type: "object",
-      properties: { scope: { type: "string", enum: scopes } },
+      properties: {
+        scope: { type: "string", enum: scopes },
+        check: {
+          type: "string",
+          description: "Le nom de la commande (`repos[].checks`), avec `scope: check` seulement.",
+        },
+      },
       required: ["scope"],
       additionalProperties: false,
     },
@@ -280,8 +351,9 @@ const VERDICT_TOOL: HostToolDefinition = {
   name: "review_verdict",
   label: "Harness — verdict de revue",
   description:
-    "Rend le verdict STRUCTURÉ de la revue, une fois, à la fin. `blockers` non vide ⇒ correction. `risk: low` + suite complète verte ⇒ auto-merge. " +
-    "`unverified` liste ce que tu n'as pas pu vérifier ; `confidence: weak` si tu doutes de ta propre revue (l'humain lira alors le code).",
+    "Rend le verdict STRUCTURÉ de la revue, une fois, à la fin. `criteria` est la table AC par AC : chaque AC-n de specs.md, le test nommé qui le prouve, son état. " +
+    "`blockers` non vide ⇒ correction. Aucun bloquant + risque sous le plafond + suite complète verte + chaque AC `pass` + `confidence: strong` ⇒ auto-merge. " +
+    "`unverified` liste ce que tu n'as pas pu vérifier (cite l'AC-n concerné s'il y en a un) ; `confidence: weak` si tu doutes de ta propre revue (l'humain lira alors le code).",
   parameters: {
     type: "object",
     properties: {
@@ -289,11 +361,24 @@ const VERDICT_TOOL: HostToolDefinition = {
       summary: { type: "string" },
       blockers: STRINGS,
       risks: STRINGS,
-      files: STRINGS,
+      files: { ...STRINGS, description: "Tous les fichiers du diff, tels que relus." },
       unverified: STRINGS,
+      criteria: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "AC-n" },
+            test: { type: "string", description: "Le nom du test qui le prouve (vide si untested)." },
+            status: { type: "string", enum: ["pass", "fail", "untested"] },
+          },
+          required: ["id", "test", "status"],
+          additionalProperties: false,
+        },
+      },
       confidence: { type: "string", enum: ["strong", "weak"] },
     },
-    required: ["risk", "summary", "blockers", "risks", "files", "unverified", "confidence"],
+    required: ["risk", "summary", "blockers", "risks", "files", "unverified", "criteria", "confidence"],
     additionalProperties: false,
   },
   loadMode: "essential",
@@ -319,7 +404,8 @@ const AUDIT_TOOL: HostToolDefinition = {
   label: "Harness — propositions d'audit",
   description:
     "Rend les propositions de l'audit, une fois, à la fin (la liste peut être vide). Chaque proposition est une feature AUTONOME : " +
-    "`request` est rédigée comme une demande /req, `modules` liste les chemins du dépôt qu'elle touchera, `kind` dit si elle corrige une faiblesse ou ajoute une feature.",
+    "`request` est rédigée comme une demande /req, `modules` liste les chemins du dépôt qu'elle touchera, `kind` dit si elle corrige une faiblesse ou ajoute une feature, " +
+    "`evidence` cite les `fichier:ligne` qui prouvent une faiblesse (OBLIGATOIRE non vide pour `kind: faiblesse`), `dependsOn` les titres des propositions à livrer avant, `impact` et `effort` ordonnent la liste.",
   parameters: {
     type: "object",
     properties: {
@@ -334,8 +420,15 @@ const AUDIT_TOOL: HostToolDefinition = {
             modules: STRINGS,
             kind: { type: "string", enum: ["faiblesse", "feature"] },
             rationale: { type: "string" },
+            evidence: {
+              ...STRINGS,
+              description: "`fichier:ligne` qui prouvent la faiblesse ; vide seulement pour une feature.",
+            },
+            dependsOn: { ...STRINGS, description: "Les titres des propositions à livrer avant celle-ci." },
+            impact: { type: "string", enum: ["low", "medium", "high"] },
+            effort: { type: "string", enum: ["low", "medium", "high"] },
           },
-          required: ["title", "request", "modules", "kind", "rationale"],
+          required: ["title", "request", "modules", "kind", "rationale", "evidence", "dependsOn", "impact", "effort"],
           additionalProperties: false,
         },
       },
@@ -346,10 +439,15 @@ const AUDIT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
-/** Les outils hôtes d'une étape (ou de l'audit, qui ne décide ni ne teste rien). */
+/**
+ * Les outils hôtes d'une étape (ou de l'audit, qui ne décide ni ne teste rien) :
+ * `checkpoint` et `set_modules` partout, `split_feature` en specs et impl, `run_tests`
+ * dès /impl, `review_verdict` en revue seulement.
+ */
 export function hostToolsFor(step: StepKind | "audit"): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
-  const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL];
+  const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
+  if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
   if (step === "review") tools.push(VERDICT_TOOL);
   return tools;

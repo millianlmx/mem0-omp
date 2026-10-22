@@ -108,12 +108,21 @@ export const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast
 
 export const GLOBAL_SCOPE = "_global";
 
-// MEM0_NUDGE=0 coupe la relance d'écriture de fin de session — pour les agents
-// conduits par un orchestrateur (runners du harness) dont un autre composant tient
-// déjà la mémoire à jour : sans elle, chaque étape paierait un tour de plus. Lu à
-// l'APPEL, pas à l'évaluation du module : l'environnement fait foi au moment du stop.
+// MEM0_MODE=runner : la session est un runner conduit par un orchestrateur (harness)
+// dont un autre composant tient déjà la mémoire à jour (oracle de l'orchestrateur).
+// Tout ce qui s'adresse à un humain ou coûte un tour est coupé : rappel par tour,
+// épinglage sur les outils d'exploration, « mem0 checkpoint », relance de fin de
+// session, pose du brief. Les outils mem0_* restent enregistrés. Lu à l'APPEL,
+// pas à l'évaluation du module : l'environnement fait foi au moment du hook.
+export function runnerMode(env: Record<string, string | undefined> = process.env): boolean {
+  return env.MEM0_MODE === "runner";
+}
+
+// MEM0_NUDGE=0 coupe la relance d'écriture de fin de session seule — pour les
+// agents pilotés qui gardent le reste du dispositif : sans elle, chaque étape
+// paierait un tour de plus. MEM0_MODE=runner la coupe aussi. Lu à l'APPEL.
 export function sessionNudgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env.MEM0_NUDGE !== "0";
+  return env.MEM0_NUDGE !== "0" && !runnerMode(env);
 }
 
 // MEM0_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.

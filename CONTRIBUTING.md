@@ -6,9 +6,11 @@ Ces six règles ne sont pas des recommandations : chacune est jugée par le dép
 
 Chaque critère d'acceptation est prouvé par un test titré `test("<slug>/AC-<n> : …")`. Un id qualifié `<slug>/AC-<n>` désigne un seul test, et tous les ids d'un même slug vivent dans un seul fichier `test/**/<slug>.test.ts`. Un id nu `AC-<n>` est interdit dans un titre de test. Le juge est `criteria/AC-13`, dans `test/outillage/criteria.test.ts`, qui parcourt les titres de tous les fichiers de test du dépôt.
 
+Un test juge l'état courant du dépôt, jamais un état historique : pas de `git show <sha>:…` pour comparer à un commit. Il ne fige pas non plus le texte libre d'un workflow, d'un script ou d'une doc quand une lecture structurelle (jobs, clés `if:`/`needs:`/`runs-on:`, étapes présentes, ordre relatif) ou une exécution prouve la même chose : un test de wording devenu faux se réécrit ou se supprime, il ne se re-fige pas à l'identique.
+
 ## 2. Lancer les tests touchés
 
-`scripts/test-files.sh --scope=changed` liste, un par ligne, les fichiers de test touchés par le diff contre HEAD (fichiers non suivis compris) et ceux qui nomment un source modifié. Passe cette liste à `node --test --experimental-strip-types` pour ne relancer que ce que ta modification concerne. Pour comparer à une autre base, l'option devient `--scope=changed=<base>`.
+`scripts/test-files.sh --scope=changed` liste, un par ligne, les fichiers de test touchés par le diff contre HEAD (fichiers non suivis compris), ceux qui nomment un source modifié et ceux dont les imports relatifs atteignent un source modifié. Passe cette liste à `node --test --experimental-strip-types` pour ne relancer que ce que ta modification concerne. Pour comparer à une autre base, l'option devient `--scope=changed=<base>` ; `--macos` réduit la liste aux tests qui dépendent de macOS. `scripts/check.sh --tests-base=<réf>` fait la même réduction dans la section tests de check.sh, les autres sections restant entières.
 
 ## 3. Respecter les verrous de documentation
 

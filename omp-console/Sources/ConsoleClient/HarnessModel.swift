@@ -320,12 +320,33 @@ public final class HarnessModel: ObservableObject {
 
     // MARK: - Gestes
 
-    /// Répond à TOUTES les escalades ouvertes d'un run (identifiant → réponse) : le run
-    /// reprend son étape quand la dernière est répondue.
+    /// Répond à TOUTES les escalades ouvertes d'un run (identifiant → réponse, et la raison
+    /// facultative de chaque réponse) : le run reprend son étape quand la dernière est répondue.
     @discardableResult
-    public func answer(runId: String, answers: [Int: String]) async -> Bool {
-        let items = answers.keys.sorted().map { AnswerBody.Item(id: $0, answer: answers[$0] ?? "") }
+    public func answer(runId: String, answers: [Int: String], reasons: [Int: String] = [:]) async -> Bool {
+        let items = answers.keys.sorted().map { id in
+            let reason = reasons[id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return AnswerBody.Item(id: id, answer: answers[id] ?? "", reason: reason.isEmpty ? nil : reason)
+        }
         return await gesture(runId, method: "POST", path: "/escalations", body: AnswerBody(answers: items))
+    }
+
+    /// Relance une feature en échec, ou arrêtée sur une attente : elle repart de son étape.
+    @discardableResult
+    public func retry(runId: String) async -> Bool {
+        await gesture(runId, method: "POST", path: "/retry", body: EmptyBody())
+    }
+
+    /// Accepte d'un coup toutes les décisions prises seules d'un run.
+    @discardableResult
+    public func acceptAllDecisions(runId: String) async -> Bool {
+        await gesture(runId, method: "POST", path: "/decisions/accept", body: EmptyBody())
+    }
+
+    /// Annule une feature fusionnée : son commit est inversé sur la branche principale.
+    @discardableResult
+    public func revert(runId: String) async -> Bool {
+        await gesture(runId, method: "POST", path: "/revert", body: EmptyBody())
     }
 
     /// Accepte une décision prise seule : elle tient.
@@ -558,9 +579,11 @@ public final class HarnessModel: ObservableObject {
 private struct EmptyBody: Encodable {}
 
 private struct AnswerBody: Encodable {
+    /// `reason` absent du JSON quand il est `nil` : un serveur antérieur reçoit le même corps qu'avant.
     struct Item: Encodable {
         var id: Int
         var answer: String
+        var reason: String?
     }
 
     var answers: [Item]

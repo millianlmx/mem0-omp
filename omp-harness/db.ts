@@ -5,9 +5,10 @@
 // hash + commande + env). Aucun autre process n'ouvre ce fichier en écriture : les
 // runners et les jobs heavy passent par le service.
 import { DatabaseSync } from "node:sqlite";
-import type { StepKind, RunState } from "./machine.ts";
+import type { FailCause, StepKind, RunState } from "./machine.ts";
 import type { Verdict } from "./verdict.ts";
 import type { DecisionCategory } from "./decisions.ts";
+import type { TestScope } from "./heavy.ts";
 
 export type RunRow = {
   id: string;
@@ -32,6 +33,14 @@ export type RunRow = {
   model: string | null;
   /** Plus grand = admis avant les autres (à état égal) ; 0 par défaut. */
   priority: number;
+  /** Un run `queued` n'est pas admis avant cet instant (epoch ms) : le backoff des relances. */
+  notBefore: number | null;
+  /** Les merges arrêtés et relancés (conflit, suite rouge, fusion refusée) ; à part de `fixes`. */
+  mergeRetries: number;
+  /** La cause du dernier échec d'étape (deux de suite, même cause ⇒ l'humain). */
+  lastFailCause: FailCause | null;
+  /** Le HEAD à la fin de la dernière revue : la suivante relit le diff depuis là. */
+  lastReviewSha: string | null;
   /** La révision du run : +1 à chaque écriture. Un client la renvoie en `If-Match` pour ne pas agir sur une vue périmée. */
   rev: number;
   /** Le client qui a créé le run (`null` : service ou jeton historique). */
@@ -55,7 +64,8 @@ export type StepRow = {
   endedAt: number | null;
 };
 
-export type DecisionStatus = "auto" | "accepted" | "reversed" | "superseded";
+/** `auto_timeout` : tranchée par le service à l'échéance d'une escalade, sur la recommandation de l'agent. */
+export type DecisionStatus = "auto" | "auto_timeout" | "accepted" | "reversed" | "superseded";
 
 export type DecisionRow = {
   id: number;
@@ -87,8 +97,12 @@ export type EscalationRow = {
   question: string;
   options: string[];
   context: string;
+  /** L'option que l'agent aurait prise (celle de l'auto-décision à l'échéance). */
+  recommended: string | null;
   status: "open" | "answered";
   answer: string | null;
+  /** La raison donnée par l'humain avec sa réponse. */
+  answerReason: string | null;
   /** Le client qui a répondu (`null` : réponse du service, escalade devenue caduque). */
   answeredBy: string | null;
   createdAt: number;
@@ -127,7 +141,7 @@ export type TestRunRow = {
   id: number;
   runId: string;
   stepId: number | null;
-  scope: "touched" | "full";
+  scope: TestScope;
   key: string;
   tree: string;
   outcome: string;
@@ -140,13 +154,22 @@ export type ProjectRow = { id: string; repo: string; title: string; status: "act
 
 export type AuditState = "queued" | "analysing" | "proposed" | "launched" | "failed" | "cancelled";
 
-/** Une proposition d'audit : une faiblesse à corriger ou une feature à construire. */
+/**
+ * Une proposition d'audit : une faiblesse à corriger ou une feature à construire.
+ * `evidence` cite les `fichier:ligne` (non vide pour une faiblesse) ; `dependsOn` liste les
+ * index des propositions prérequises (résolus à la réception, l'outil hôte reçoit des titres).
+ * Stockée dans la colonne JSON `audits.proposals` (pas de migration pour un champ de plus).
+ */
 export type AuditProposal = {
   title: string;
   request: string;
   modules: string[];
   kind: "faiblesse" | "feature";
   rationale: string;
+  evidence: string[];
+  dependsOn: number[];
+  impact: "low" | "medium" | "high";
+  effort: "low" | "medium" | "high";
 };
 
 export type AuditRow = {
@@ -329,6 +352,15 @@ export const MIGRATIONS: readonly string[] = [
      updated_at INTEGER NOT NULL,
      updated_by TEXT
    );`,
+  // L'autonomie : le backoff des relances, les merges relancés, la cause du dernier
+  // échec, le HEAD de la dernière revue ; la recommandation de l'agent et la raison de
+  // l'humain sur une escalade.
+  `ALTER TABLE runs ADD COLUMN not_before INTEGER;
+   ALTER TABLE runs ADD COLUMN merge_retries INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE runs ADD COLUMN last_fail_cause TEXT;
+   ALTER TABLE runs ADD COLUMN last_review_sha TEXT;
+   ALTER TABLE escalations ADD COLUMN recommended TEXT;
+   ALTER TABLE escalations ADD COLUMN answer_reason TEXT;`,
 ];
 
 type SqlValue = string | number | null;
@@ -358,6 +390,25 @@ function json<T>(row: Row, key: string, fallback: T): T {
   }
 }
 
+const FAIL_CAUSES: readonly FailCause[] = [
+  "timeout",
+  "rate_limit",
+  "server_error",
+  "network",
+  "provider",
+  "context",
+  "runner",
+  "missing_output",
+  "aborted",
+  "other",
+];
+
+/** Une cause lue en base : connue, sinon `other` (une valeur inconnue ne casse pas la lecture). */
+function failCauseOf(value: string | null): FailCause | null {
+  if (value === null) return null;
+  return FAIL_CAUSES.find((cause) => cause === value) ?? "other";
+}
+
 function runOf(row: Row): RunRow {
   return {
     id: str(row, "id"),
@@ -381,6 +432,10 @@ function runOf(row: Row): RunRow {
     reason: strOrNull(row, "reason"),
     model: strOrNull(row, "model"),
     priority: num(row, "priority"),
+    notBefore: numOrNull(row, "not_before"),
+    mergeRetries: num(row, "merge_retries"),
+    lastFailCause: failCauseOf(strOrNull(row, "last_fail_cause")),
+    lastReviewSha: strOrNull(row, "last_review_sha"),
     rev: num(row, "rev"),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
@@ -434,8 +489,10 @@ function escalationOf(row: Row): EscalationRow {
     question: str(row, "question"),
     options: json<string[]>(row, "options", []),
     context: str(row, "context"),
+    recommended: strOrNull(row, "recommended"),
     status: str(row, "status") as "open" | "answered",
     answer: strOrNull(row, "answer"),
+    answerReason: strOrNull(row, "answer_reason"),
     answeredBy: strOrNull(row, "answered_by"),
     createdAt: num(row, "created_at"),
     answeredAt: numOrNull(row, "answered_at"),
@@ -472,7 +529,7 @@ function testRunOf(row: Row): TestRunRow {
     id: num(row, "id"),
     runId: str(row, "run_id"),
     stepId: numOrNull(row, "step_id"),
-    scope: str(row, "scope") as "touched" | "full",
+    scope: str(row, "scope") as TestScope,
     key: str(row, "key"),
     tree: str(row, "tree"),
     outcome: str(row, "outcome"),
@@ -536,6 +593,10 @@ const RUN_COLUMNS: Record<string, string> = {
   reason: "reason",
   model: "model",
   priority: "priority",
+  notBefore: "not_before",
+  mergeRetries: "merge_retries",
+  lastFailCause: "last_fail_cause",
+  lastReviewSha: "last_review_sha",
 };
 
 export type RunPatch = Partial<
@@ -554,6 +615,10 @@ export type RunPatch = Partial<
     | "reason"
     | "model"
     | "priority"
+    | "notBefore"
+    | "mergeRetries"
+    | "lastFailCause"
+    | "lastReviewSha"
   >
 >;
 
@@ -735,6 +800,14 @@ export class Store {
     return this.#all(`SELECT * FROM runs ${clause} ORDER BY project_order, created_at, id`, ...params).map(runOf);
   }
 
+  /** Les runs en file dont l'heure est venue : `not_before` absent ou passé. */
+  listRunsDue(now: number): RunRow[] {
+    return this.#all(
+      "SELECT * FROM runs WHERE state = 'queued' AND (not_before IS NULL OR not_before <= ?) ORDER BY project_order, created_at, id",
+      now,
+    ).map(runOf);
+  }
+
   updateRun(id: string, patch: RunPatch): RunRow {
     const run = this.updateRunIf(id, null, patch);
     if (!run) throw new Error(`run introuvable : ${id}`);
@@ -833,11 +906,13 @@ export class Store {
 
   // -- décisions ------------------------------------------------------------
 
+  /** `status` : `auto` (prise par l'agent) ou `auto_timeout` (prise à l'échéance d'une escalade). */
   addDecision(
     input: Omit<
       DecisionRow,
       "id" | "seq" | "status" | "reversalOption" | "reversalReason" | "decidedBy" | "createdAt" | "decidedAt"
     >,
+    status: "auto" | "auto_timeout" = "auto",
   ): DecisionRow {
     return this.transaction(() => {
       const next = Number(
@@ -846,7 +921,7 @@ export class Store {
       );
       const result = this.#run(
         `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, category, status, checkpoint_sha, depends_on, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.runId,
         input.stepId,
         next,
@@ -855,6 +930,7 @@ export class Store {
         input.chosen,
         input.rationale,
         input.category,
+        status,
         input.checkpointSha,
         JSON.stringify(input.dependsOn),
         this.#now(),
@@ -890,13 +966,24 @@ export class Store {
 
   acceptDecision(runId: string, seq: number, by: string | null = null): DecisionRow | null {
     this.#run(
-      "UPDATE decisions SET status = 'accepted', decided_at = ?, decided_by = ? WHERE run_id = ? AND seq = ? AND status = 'auto'",
+      "UPDATE decisions SET status = 'accepted', decided_at = ?, decided_by = ? WHERE run_id = ? AND seq = ? AND status IN ('auto', 'auto_timeout')",
       this.#now(),
       by,
       runId,
       seq,
     );
     return this.getDecision(runId, seq);
+  }
+
+  /** Accepte d'un geste toutes les décisions prises seules d'un run ; rend leur nombre. */
+  acceptAllDecisions(runId: string, by: string | null = null): number {
+    const result = this.#run(
+      "UPDATE decisions SET status = 'accepted', decided_at = ?, decided_by = ? WHERE run_id = ? AND status IN ('auto', 'auto_timeout')",
+      this.#now(),
+      by,
+      runId,
+    );
+    return Number(result.changes);
   }
 
   /** Renverse la décision `seq` ; celles de `superseded` (ses dépendantes) deviennent caduques. */
@@ -933,16 +1020,19 @@ export class Store {
   // -- escalades ------------------------------------------------------------
 
   addEscalation(
-    input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context">,
+    input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context"> & {
+      recommended?: string | null;
+    },
   ): EscalationRow {
     const result = this.#run(
-      "INSERT INTO escalations (run_id, step_id, category, question, options, context, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
+      "INSERT INTO escalations (run_id, step_id, category, question, options, context, recommended, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
       input.runId,
       input.stepId,
       input.category,
       input.question,
       JSON.stringify(input.options),
       input.context,
+      input.recommended ?? null,
       this.#now(),
     );
     return escalationOf(this.#get("SELECT * FROM escalations WHERE id = ?", Number(result.lastInsertRowid)) as Row);
@@ -970,10 +1060,12 @@ export class Store {
     return this.#all(`SELECT * FROM escalations ${clause} ORDER BY id`, ...params).map(escalationOf);
   }
 
-  answerEscalation(id: number, answer: string, by: string | null = null): void {
+  /** `reason` : la raison donnée par l'humain (`null` : réponse sans raison, ou du service). */
+  answerEscalation(id: number, answer: string, by: string | null = null, reason: string | null = null): void {
     this.#run(
-      "UPDATE escalations SET status = 'answered', answer = ?, answered_at = ?, answered_by = ? WHERE id = ? AND status = 'open'",
+      "UPDATE escalations SET status = 'answered', answer = ?, answer_reason = ?, answered_at = ?, answered_by = ? WHERE id = ? AND status = 'open'",
       answer,
+      reason,
       this.#now(),
       by,
       id,

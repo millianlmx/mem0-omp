@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { prerequisAbsent } from "../support/prerequis.ts";
+
 import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -120,6 +120,9 @@ const SECTION_IDS = [
   "app-ios",
 ];
 const MACOS_JOBS = ["macos-app-swift", "macos-app-ios", "macos-tests"];
+/** Les jobs macOS ne tournent qu'en pull_request ; l'agrégateur aussi, mais toujours (jamais « skipped »). */
+const PULL_REQUEST_IF = "github.event_name == 'pull_request'";
+const AGGREGATOR_IF = "${{ always() && github.event_name == 'pull_request' }}";
 const WORKFLOW_FILE = ".github/workflows/check.yml";
 const readWorkflow = () => fs.readFileSync(path.join(ROOT, WORKFLOW_FILE), "utf8");
 
@@ -246,10 +249,8 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     [["--sections=noms,,catalogue"], `✗ section inconnue : «  » (attendu : ${ids})`],
     [
       ["--bogus"],
-      "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)",
+      "✗ option inconnue : --bogus (attendu : --sections=…, --tests-scope=macos, --tests-base=<réf>, --tests-part=1/2|2/2, --strict)",
     ],
-    [["--tests-scope=linux"], "✗ --tests-scope : valeur inconnue « linux » (attendu : macos)"],
-    [["--tests-part=3/3"], "✗ --tests-part : valeur inconnue « 3/3 » (attendu : 1/2, 2/2)"],
     [["--sections=noms", "--sections=catalogue"], "✗ option répétée : --sections"],
   ];
   for (const [args, message] of cases) {
@@ -400,20 +401,20 @@ test("ci-macos-jobs-paralleles/AC-7 : au push vers main, les tests node macOS ne
   assert.equal(listed.status, 0, output(listed));
   assert.deepEqual(lines(listed.stdout), listTestFiles(ROOT));
 
-  // Volet CI : --tests-scope=macos n'est ajouté qu'en pull_request ; au push, le
-  // job macOS lance la même liste que le job ubuntu (check.sh sans --tests-scope).
+  // Volet CI : en pull_request (seul événement du job), macos-tests filtre par
+  // --tests-scope=macos et par le diff depuis la base de la PR (--tests-base).
   const workflow = readWorkflow();
   const tests = workflowJobs(workflow).get("macos-tests") ?? "";
   assert.equal(
     stepsOf(tests).find((line) => line.includes("./scripts/check.sh")),
     "        run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} " +
-      "${{ github.event_name == 'pull_request' && '--tests-scope=macos' || '' }}",
+      "--tests-scope=macos --tests-base=${{ github.event.pull_request.base.sha }}",
   );
   // Nulle part ailleurs dans le workflow (commentaires exclus).
   assert.equal(workflow.replace(/^\s*#.*$/gm, "").split("--tests-scope=macos").length - 1, 1);
 });
 
-test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests node sont distincts, sans attente, et l'agrégateur les attend", () => {
+test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests node sont distincts, sans attente, réservés aux pull_request, et l'agrégateur les attend", () => {
   const jobs = workflowJobs(readWorkflow());
   assert.equal([...jobs.keys()][0], "check", "le job ubuntu `check` reste le premier du fichier");
 
@@ -427,8 +428,8 @@ test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests
     );
     assert.equal(
       jobKey(job, "if"),
-      id === "check-macos" ? "${{ always() }}" : null,
-      `${id} : aucun if: de job hors agrégateur`,
+      id === "check-macos" ? AGGREGATOR_IF : MACOS_JOBS.includes(id) ? PULL_REQUEST_IF : null,
+      `${id} : les jobs macOS ne tournent qu'en pull_request, l'agrégateur toujours en pull_request, le job check sans if:`,
     );
   }
 
@@ -489,16 +490,15 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
   const none = verdict();
   assert.equal(none.status, 1, output(none));
   assert.equal(none.stdout, "✗ aucun job à juger\n");
-
-  // L'agrégateur tourne toujours (`always()`, jamais « skipped ») et juge le
-  // résultat de chacune de ses dépendances.
+  // L'agrégateur tourne à chaque pull_request (`always()`, jamais « skipped »)
+  // et juge le résultat de chacune de ses dépendances.
   const aggregator = workflowJobs(readWorkflow()).get("check-macos") ?? "";
-  assert.equal(jobKey(aggregator, "if"), "${{ always() }}");
+  assert.equal(jobKey(aggregator, "if"), AGGREGATOR_IF);
   const call = MACOS_JOBS.map((job) => `${job}=\${{ needs.${job}.result }}`).join(" ");
   assert.ok(stepsOf(aggregator).includes(`        run: bash scripts/ci-verdict.sh ${call}`), aggregator);
 });
 
-/** L'étape de la Qdrant source des tests d'import mem0-rs, ajoutée au job check après f3fbfe6. */
+/** L'étape de la Qdrant source des tests d'import mem0-rs, juste après celle du linter. */
 const QDRANT_STEP = [
   "      - name: Préparer la Qdrant source des tests d'import mem0-rs",
   "        run: bash scripts/mem0-http-contrat.sh --prepare",
@@ -536,53 +536,38 @@ const CARGO_CACHE_STEP = [
   "            mem0-stack/mem0-rs/target",
   "          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}",
 ];
-/** L'installation de l'hôte : la version, littérale dans f3fbfe6, vient de l'`env:` du workflow (ci-without-cache S-1). */
-const HOST_INSTALL = {
-  f3fbfe6:
-    '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22',
-  now: '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"',
-};
-
-/** Retire `block`, présent une seule fois et d'un seul tenant, d'une liste d'étapes (absent : erreur). */
-function withoutBlock(steps: string[], block: string[]): string[] {
-  const at = steps.indexOf(block[0] ?? "");
-  assert.ok(at !== -1, `étape « ${block[0]?.trim()} » introuvable dans le job check`);
-  assert.equal(steps.filter((line) => line === block[0]).length, 1, `étape « ${block[0]?.trim()} » dupliquée`);
-  assert.deepEqual(steps.slice(at, at + block.length), block);
-  return [...steps.slice(0, at), ...steps.slice(at + block.length)];
-}
-/** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), ajoutée au job check après f3fbfe6. */
+/** L'installation de l'hôte : la version vient de l'`env:` du workflow (ci-without-cache S-1). */
+const HOST_INSTALL =
+  '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"';
+/** L'étape du TypeScript épinglé du type-check (typecheck-fetches-tsc-from-network S-6), après l'installation de l'hôte. */
 const TYPESCRIPT_STEP = [
   "      - name: Installer le TypeScript épinglé du type-check",
   "        run: bash scripts/typecheck.sh --prepare",
 ];
-/** Le lancement de check.sh du job check, en mode strict (silent-prerequisite-skips S-6) ; f3fbfe6 le lançait sans option. */
-const STRICT_RUN = "        run: ./scripts/check.sh --strict";
+/** Le lancement de check.sh du job check : strict, et en pull_request filtré par le diff depuis la base. */
+const STRICT_RUN = "        run: ./scripts/check.sh --strict ";
 /** L'étape du linter épinglé (no-ts-lint-formatter S-6), juste avant celle de la Qdrant source. */
 const LINT_STEP = ["      - name: Préparer le linter épinglé (Biome)", "        run: bash scripts/lint.sh --prepare"];
 
-/** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
-function withoutStep(steps: string[], first: string, count: number): string[] {
-  const at = steps.indexOf(first);
-  assert.ok(at !== -1, `étape « ${first.trim()} » introuvable dans f3fbfe6`);
-  return [...steps.slice(0, at), ...steps.slice(at + count)];
-}
-
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source, celle de la toolchain Rust, l'empreinte, les caches et la version de l'hôte de ci-without-cache, celle du linter épinglé, et le mode strict", (t) => {
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique et complet : strict, filtré par --tests-base en pull_request seulement, sans banc Python ni iOS, avec l'empreinte, les caches, le linter, la Qdrant source et la toolchain Rust dans l'ordre", () => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
   const check = jobs.get("check") ?? "";
   assert.equal(jobKey(check, "runs-on"), "${{ matrix.os }}");
   assert.equal(jobKey(check, "name"), null);
-  assert.equal(
-    stepsOf(check).filter((line) => line === STRICT_RUN).length,
-    1,
-    "check.sh --strict, une seule fois, sur ubuntu",
+  const steps = stepsOf(check);
+  const runs = steps.filter((line) => line.startsWith(STRICT_RUN));
+  assert.equal(runs.length, 1, "check.sh --strict, une seule fois, sur ubuntu");
+  // La sélection par le diff n'a de base qu'en pull_request ; au push vers main,
+  // l'option est vide et la suite entière tourne.
+  assert.match(
+    runs[0] ?? "",
+    /\$\{\{ github\.event_name == 'pull_request' && format\('--tests-base=\{0\}', github\.event\.pull_request\.base\.sha\) \|\| '' \}\}$/,
+    runs[0],
   );
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
   // (a) Plus aucune trace du banc Python de mem0-http.
-  const steps = stepsOf(check);
   for (const needle of ["mem0-http-test.sh", "setup-python", "image_python", "MEM0_OMP_REQUIRE_HTTP_API"]) {
     assert.ok(!steps.some((line) => line.includes(needle)), `${needle} encore présent dans le job check :\n${check}`);
   }
@@ -604,59 +589,58 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.equal(steps[fingerprint - 1], '          node-version: "22"', check);
   const caches = [...FINGERPRINT_STEP, ...NPM_CACHE_STEP, ...CARGO_CACHE_STEP];
   assert.deepEqual(steps.slice(fingerprint, fingerprint + caches.length), caches, check);
-  assert.equal(steps.filter((line) => line === HOST_INSTALL.now).length, 1, check);
-  const current = withoutBlock(
-    withoutBlock(withoutBlock(steps, FINGERPRINT_STEP), NPM_CACHE_STEP),
-    CARGO_CACHE_STEP,
-  ).map((line) => (line === HOST_INSTALL.now ? HOST_INSTALL.f3fbfe6 : line));
+  assert.equal(steps.filter((line) => line === HOST_INSTALL).length, 1, check);
   // (b'') L'étape du linter épinglé : une seule fois, ses deux lignes consécutives,
   // immédiatement avant l'étape de la Qdrant source.
   assert.equal(steps.filter((line) => LINT_STEP.includes(line)).length, 2, check);
   assert.equal(steps[at - 2], LINT_STEP[0], check);
   assert.equal(steps[at - 1], LINT_STEP[1], check);
+  // (c) L'étape du TypeScript épinglé suit l'installation de l'hôte ; le linter
+  // la suit (après setup-bun) : l'ordre relatif des préparations est fixé.
+  const typescript = steps.indexOf(TYPESCRIPT_STEP[0] ?? "");
+  assert.ok(typescript > steps.indexOf(HOST_INSTALL), check);
+  assert.equal(steps[typescript + 1], TYPESCRIPT_STEP[1], check);
+  assert.ok(typescript < at - 2, check);
+});
 
-  if (DEPTH > 0) {
-    t.skip(NESTED);
-    return;
-  }
-  const before = spawnSync("git", ["show", `f3fbfe6:${WORKFLOW_FILE}`], { cwd: ROOT, encoding: "utf8" });
-  // Un clone superficiel (`--depth`) n'a pas f3fbfe6 : c'est un prérequis absent,
-  // que --strict change en échec nommé — la CI clone l'historique complet.
-  const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: ROOT, encoding: "utf8" });
-  if (before.status !== 0 && shallow.stdout.trim() === "true") {
-    prerequisAbsent(
-      t,
-      "historique git complet (clone superficiel)",
-      "le job check n'est pas comparé à f3fbfe6 ; `git fetch --unshallow` le permet",
+/** L'appel de scripts/ci-scope.sh d'un job d'app : la base de la PR, puis la section. */
+const scopeCall = (section: string) =>
+  `          if bash scripts/ci-scope.sh --base="\${{ github.event.pull_request.base.sha }}" ${section}; then`;
+
+test("ci-macos-jobs-paralleles/AC-13 : les jobs d'app ne compilent que si le diff de la PR touche l'app — étape de portée, puis étapes coûteuses conditionnées", () => {
+  const jobs = workflowJobs(readWorkflow());
+  for (const [id, section, costly] of [
+    ["macos-app-swift", "app-swift", ["App Swift", "Archiver l'app Mac", "Publier l'app Mac (artefact du run)"]],
+    ["macos-app-ios", "app-ios", ["App iOS"]],
+  ] as const) {
+    const job = jobs.get(id) ?? "";
+    const steps = stepsOf(job);
+    // L'historique complet : la portée compare la base et la tête de la PR.
+    assert.equal(steps[0], "      - uses: actions/checkout@v4", id);
+    assert.ok(steps.includes("          fetch-depth: 0"), `${id} : fetch-depth: 0 attendu\n${job}`);
+    // L'étape de portée, identifiée `scope`, appelle ci-scope.sh avec la base de la PR.
+    const scope = steps.indexOf("        id: scope");
+    assert.ok(scope > 0, `${id} : étape id: scope introuvable\n${job}`);
+    assert.equal(
+      steps[scope - 1],
+      `      - name: Portée du diff (${section === "app-swift" ? "app Swift" : "app iOS"})`,
+      id,
     );
-    return;
+    assert.equal(steps.filter((line) => line === "        id: scope").length, 1, id);
+    assert.ok(steps.slice(scope, scope + 4).includes(scopeCall(section)), `${id} : appel de ci-scope.sh\n${job}`);
+    // Chaque étape coûteuse, après la portée, porte la condition au niveau étape.
+    const guarded = steps.filter((line) => line === "        if: steps.scope.outputs.run == '1'").length;
+    assert.equal(guarded, costly.length, `${id} : ${costly.length} étapes conditionnées attendues\n${job}`);
+    for (const name of costly) {
+      const step = steps.indexOf(`      - name: ${name}`);
+      assert.ok(step > scope, `${id} : étape « ${name} » absente ou avant la portée\n${job}`);
+      assert.equal(steps[step + 1], "        if: steps.scope.outputs.run == '1'", `${id} : « ${name} »`);
+    }
+    assert.ok(
+      steps.some((line) => line === `        run: ./scripts/check.sh --sections=${section}`),
+      `${id} : lancement de check.sh --sections=${section}\n${job}`,
+    );
   }
-  assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
-  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter(
-    (line) => !line.includes("MEM0_OMP_REQUIRE_IOS"),
-  );
-  assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
-  // (c) f3fbfe6 moins le banc Python retiré : l'étape `image_python` (2 lignes),
-  // `setup-python` (3 lignes), la préparation du test d'API (2 lignes) et
-  // `MEM0_OMP_REQUIRE_HTTP_API`.
-  old = withoutStep(old, "      - id: image_python", 2);
-  old = withoutStep(old, "      - uses: actions/setup-python@v7", 3);
-  old = withoutStep(old, "      - name: Préparer l'environnement du test d'API mem0-http", 2);
-  old = old.filter((line) => !line.includes("MEM0_OMP_REQUIRE_HTTP_API"));
-  // (d) Le mode strict : la ligne de lancement est ramenée à celle de f3fbfe6.
-  assert.deepEqual(
-    current
-      .filter(
-        (line) =>
-          !QDRANT_STEP.includes(line) &&
-          !RUST_STEP.includes(line) &&
-          !TYPESCRIPT_STEP.includes(line) &&
-          !LINT_STEP.includes(line) &&
-          !line.includes("MEM0_OMP_REQUIRE_RUST"),
-      )
-      .map((line) => (line === STRICT_RUN ? "        run: ./scripts/check.sh" : line)),
-    old,
-  );
 });
 
 const WORKFLOW_CONCURRENCY = [

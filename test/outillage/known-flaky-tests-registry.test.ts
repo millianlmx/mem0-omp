@@ -56,7 +56,7 @@ function swiftTestSources(): string[] {
     .map((e) => fs.readFileSync(path.join(e.parentPath, e.name), "utf8"));
 }
 
-test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests instables connus (aucun depuis le retrait de l'API entre les apps), au format imprimé, avec leur occurrence et sans condition", () => {
+test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests instables connus, au format imprimé, avec leur occurrence et sans condition", () => {
   const registre = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/tests-instables-connus.json"), "utf8"));
 
   assert.deepEqual(Object.keys(registre), ["tests"]);
@@ -70,9 +70,9 @@ test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests i
   }
 
   const identifiants: string[] = registre.tests.map((e: { identifiant: string }) => e.identifiant);
-  // Les trois instables connus étaient des tests de l'API entre le Mac et l'iPhone,
-  // retirée : le registre est vide, et les relances s'éprouvent sur `REGISTRE_FIXTURE`.
-  assert.deepEqual(identifiants, []);
+  // Les instables de l'API entre le Mac et l'iPhone sont partis avec elle ; restent le
+  // réveil du FileWatcher sur un fichier illisible et l'arrêt des terminaux à la sortie.
+  assert.deepEqual(identifiants, ["visionneuse-de-session/AC-13", "terminal-integre/AC-9"]);
   assert.equal(new Set(identifiants).size, identifiants.length, "identifiants uniques");
 
   const sources = swiftTestSources();

@@ -43,9 +43,21 @@ export function schedulable(candidates: PlanItem[], active: PlanItem[]): string[
   return started;
 }
 
-/** Les modules connus d'un dépôt : ses dossiers jusqu'à `depth` niveaux, et ses fichiers de premier niveau. */
+/**
+ * Le nombre de fichiers `.ts` à partir duquel un dossier de profondeur `depth` est
+ * « plat » : ses fichiers sont eux-mêmes des modules (omp-harness/*.ts), sinon deux
+ * features de ce dossier se chevaucheraient toujours.
+ */
+export const FLAT_DIR_FILES = 8;
+
+/**
+ * Les modules connus d'un dépôt : ses dossiers jusqu'à `depth` niveaux, ses fichiers
+ * de premier niveau, et les fichiers `.ts` d'un dossier plat de profondeur `depth`
+ * (plus de `FLAT_DIR_FILES` fichiers `.ts` directs).
+ */
 export function knownModules(files: string[], depth = 2): string[] {
   const modules = new Set<string>();
+  const tsByDir = new Map<string, string[]>();
   for (const file of files) {
     const parts = file.split("/");
     if (parts.length === 1) {
@@ -54,6 +66,13 @@ export function knownModules(files: string[], depth = 2): string[] {
     }
     for (let level = 1; level <= Math.min(depth, parts.length - 1); level++)
       modules.add(parts.slice(0, level).join("/"));
+    if (parts.length - 1 <= depth && file.endsWith(".ts")) {
+      const dir = parts.slice(0, -1).join("/");
+      tsByDir.set(dir, [...(tsByDir.get(dir) ?? []), file]);
+    }
+  }
+  for (const entries of tsByDir.values()) {
+    if (entries.length > FLAT_DIR_FILES) for (const file of entries) modules.add(file);
   }
   return [...modules].sort();
 }
@@ -68,7 +87,11 @@ export function modulesFromText(text: string, known: string[]): string[] {
   return found.filter((module) => !found.some((other) => other !== module && contains(module, other))).sort();
 }
 
-/** Les modules touchés d'une feature selon l'oracle (souvenirs + texte de la feature). */
+/**
+ * Les modules touchés d'une feature selon l'oracle : les chemins nommés par le texte
+ * de la feature et par ses souvenirs de besoins (tag `besoins`) seulement — les
+ * « Modules : » des autres features rappelées ne sont pas les siens.
+ */
 export async function modulesViaOracle(
   oracle: Oracle,
   scope: string,
@@ -76,7 +99,8 @@ export async function modulesViaOracle(
   known: string[],
 ): Promise<{ modules: string[]; memories: Memory[] }> {
   const memories = await oracle.recall(scope, featureText, 8);
-  const corpus = [featureText, ...memories.map((memory) => memory.text)].join("\n");
+  const needs = memories.filter((memory) => memory.tags.includes("besoins"));
+  const corpus = [featureText, ...needs.map((memory) => memory.text)].join("\n");
   return { modules: modulesFromText(corpus, known), memories };
 }
 

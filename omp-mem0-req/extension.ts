@@ -4,8 +4,12 @@
 // dialogue cerne les besoins (ou découpe le projet), puis un outil crée le run
 // (ou le projet) sur le serveur, qui conduit specs → impl → review → merge. /audit
 // lance l'audit sur le serveur et y choisit les propositions ; /pipelines résume la
-// boîte de l'humain. Les gestes de la boucle humaine se font dans OMP Console.
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+// boîte de l'humain. Les gestes de la boucle humaine se font depuis la session
+// (outils harness_*, tools.ts) quand l'utilisateur les demande en clair, ou dans
+// OMP Console ; /harness-follow (follow.ts) pousse les moments d'attente dans la
+// conversation.
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { createFollower, FOLLOW_MESSAGE_TYPE } from "./follow.ts";
 import {
   HarnessCallError,
   decodePairing,
@@ -17,6 +21,9 @@ import {
   writePairing,
 } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
+import { registerHarnessTools } from "./tools.ts";
+
+export { LAUNCH_APPROVAL } from "./tools.ts";
 
 type Ctx = {
   cwd: string;
@@ -27,9 +34,6 @@ type Ctx = {
   };
 };
 
-type FeatureParams = { title: string; request: string; modules?: string[] };
-type LaunchParams = FeatureParams & { req: string };
-type ProjectParams = { title: string; features: FeatureParams[] };
 type Audit = {
   id: string;
   focus: string;
@@ -37,31 +41,36 @@ type Audit = {
   proposals: { title: string; kind: string; rationale: string }[];
 };
 
-/**
- * La validation d'un geste qui crée du travail sur le serveur : demandée à chaque
- * appel, même en mode yolo. Seule une politique `deny` l'emporte.
- */
-export const LAUNCH_APPROVAL = { tier: "write", policy: "prompt", reason: "crée du travail sur le harness" } as const;
+/** Les règles de questionnement communes à /req et /project : un `ask` groupé, des options franches, deux tours au plus. */
+const ASK_RULES = `Questions : UN SEUL appel \`ask\` groupé par tour, qui porte TOUTES les questions de l'enjeu (jamais une question à la fois). Chaque question offre 2 à 3 options, ta recommandation EN TÊTE et marquée « (recommandé) » ; jamais d'option « peu importe », « à toi de voir » ou « autre » : si tu ne sais pas trancher, dis ce que tu recommandes et pourquoi. Au plus 2 tours de questions : au-delà, tranche toi-même les points restants et dis-le dans le compte rendu.`;
 
 export const REQ_SEED = (demand: string, repo: string) => `# /req — besoins d'une feature du dépôt « ${repo} »
 
 Demande : ${demand || "(à recueillir auprès de l'utilisateur)"}
 
-Cerne les BESOINS avec l'utilisateur, sans concevoir la solution : pose tes questions avec \`ask\`, une à la fois, jusqu'à pouvoir écrire le compte rendu. Lis le code juste assez pour comprendre le contexte.
+Cerne les BESOINS avec l'utilisateur, sans concevoir la solution. Lis le code juste assez pour comprendre le contexte (grep, glob, read).
+
+${ASK_RULES}
 
 Le compte rendu a exactement ces sections :
 ## Besoins
 (numérotés B-1, B-2… : ce que l'utilisateur doit pouvoir faire, observable)
+## Critères d'acceptation
+(numérotés AC-1 (B-1), AC-2 (B-1), AC-3 (B-2)… : chacun cite son besoin et s'écrit Given / When / Then ; l'utilisateur les co-signe avec les besoins, le harness les vérifie un par un en revue)
 ## Hors périmètre
 ## Contraintes
 
-Montre-le à l'utilisateur. Quand il le valide, appelle \`harness_launch\` (titre court, demande d'origine, compte rendu) : le harness conduira /specs, /impl, /review et le merge sur le serveur. Ne modifie AUCUN fichier.`;
+Montre-le à l'utilisateur. Quand il le valide : repère avec grep/glob les chemins du dépôt que la feature touchera (dossiers ou fichiers existants), puis appelle \`harness_launch\` (titre court, demande d'origine, \`modules\` = ces chemins, obligatoire et jamais vide, compte rendu) : le harness conduira /specs, /impl, /review et le merge sur le serveur. Ne modifie AUCUN fichier.`;
 
 export const PROJECT_SEED = (description: string, repo: string) => `# /project — un projet du dépôt « ${repo} »
 
 Projet : ${description || "(à recueillir auprès de l'utilisateur)"}
 
-Cerne le projet avec l'utilisateur (\`ask\`, une question à la fois), puis découpe-le en FEATURES autonomes : chacune livrable seule en moins de ~300 lignes de diff, avec sa demande rédigée comme une demande /req et, si tu les connais, les chemins du dépôt qu'elle touchera (\`modules\` : c'est ce qui décide du parallélisme). Montre le plan ; quand l'utilisateur le valide, appelle \`harness_project\`. Ne modifie AUCUN fichier.`;
+Cerne le projet avec l'utilisateur, puis découpe-le en FEATURES autonomes : chacune livrable seule en moins de ~300 lignes de diff, avec sa demande rédigée comme une demande /req et ses \`modules\` : les chemins du dépôt qu'elle touchera, repérés par grep/glob, obligatoires et jamais vides (c'est ce qui décide du parallélisme).
+
+${ASK_RULES}
+
+Montre le plan (titre, demande, modules de chaque feature) ; quand l'utilisateur le valide, appelle \`harness_project\`. Ne modifie AUCUN fichier.`;
 
 function target(ctx: Ctx, tag: string): HarnessTarget | null {
   const resolved = resolveTarget(ctx.cwd);
@@ -70,10 +79,6 @@ function target(ctx: Ctx, tag: string): HarnessTarget | null {
     return null;
   }
   return resolved;
-}
-
-function text(content: string, isError = false) {
-  return { content: [{ type: "text" as const, text: content }], ...(isError ? { isError: true } : {}) };
 }
 
 /** Un appel au harness depuis une commande : l'erreur devient un avertissement nommé. */
@@ -87,78 +92,9 @@ async function guarded(ctx: Ctx, tag: string, fn: () => Promise<void>): Promise<
 }
 
 export default function reqExtension(pi: ExtensionAPI) {
-  const { z } = pi.zod;
-  const fields = {
-    title: z.string().describe("Titre court de la feature"),
-    request: z.string().describe("La demande, rédigée comme une demande /req autoportante"),
-    modules: z.array(z.string()).optional().describe("Chemins du dépôt que la feature touchera, s'ils sont connus"),
-  };
-  const feature = z.object(fields);
-
-  pi.registerTool({
-    name: "harness_launch",
-    label: "Harness — lancer la feature",
-    loadMode: "essential",
-    approval: LAUNCH_APPROVAL,
-    description:
-      "Crée la feature sur le harness avec le compte rendu de besoins VALIDÉ par l'utilisateur (sections ## Besoins, ## Hors périmètre, ## Contraintes) : " +
-      "le serveur enchaîne /specs (que l'utilisateur validera dans OMP Console), /impl, /review et le merge.",
-    parameters: z.object({ ...fields, req: z.string().describe("Le compte rendu de besoins validé, en Markdown") }),
-    async execute(
-      _id: string,
-      params: LaunchParams,
-      _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
-      ctx: ExtensionContext,
-    ) {
-      const resolved = resolveTarget(ctx?.cwd ?? process.cwd());
-      if ("refusal" in resolved) return text(resolved.refusal, true);
-      try {
-        const { run } = await harnessCall<{ run: { id: string; branch: string } }>(resolved, "POST", "/v1/runs", {
-          repo: resolved.repo,
-          ...params,
-        });
-        return text(
-          `Feature créée sur le harness : run ${run.id}, branche ${run.branch}. Les specs arriveront à valider dans OMP Console. Termine ta réponse.`,
-        );
-      } catch (err) {
-        return text(err instanceof Error ? err.message : String(err), true);
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "harness_project",
-    label: "Harness — lancer le projet",
-    loadMode: "essential",
-    approval: LAUNCH_APPROVAL,
-    description:
-      "Crée le projet VALIDÉ par l'utilisateur sur le harness : ses features partent en pipelines, en parallèle quand leurs modules sont disjoints, chacune mergée dès sa validation.",
-    parameters: z.object({ title: z.string(), features: z.array(feature).min(1) }),
-    async execute(
-      _id: string,
-      params: ProjectParams,
-      _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
-      ctx: ExtensionContext,
-    ) {
-      const resolved = resolveTarget(ctx?.cwd ?? process.cwd());
-      if ("refusal" in resolved) return text(resolved.refusal, true);
-      try {
-        const created = await harnessCall<{ projectId: string; runs: { id: string; modules: string[] }[] }>(
-          resolved,
-          "POST",
-          "/v1/projects",
-          { repo: resolved.repo, ...params },
-        );
-        return text(
-          `Projet ${created.projectId} créé : ${created.runs.length} feature(s) en file sur le harness. Suivi dans OMP Console. Termine ta réponse.`,
-        );
-      } catch (err) {
-        return text(err instanceof Error ? err.message : String(err), true);
-      }
-    },
-  });
+  const follower = createFollower(pi);
+  registerHarnessTools(pi, { onLaunched: (resolved, runs) => follower.start(resolved, runs) });
+  pi.on("session_shutdown", () => follower.stop());
 
   pi.registerCommand("req", {
     description:
@@ -265,7 +201,7 @@ export default function reqExtension(pi: ExtensionAPI) {
         );
       } catch (err) {
         ctx.ui?.notify?.(
-          `[pair] ${pairing.url} ne répond pas avec ce jeton : ${(err as Error).message}. Rien n'a été écrit.`,
+          `[pair] ${pairing.url} ne répond pas avec ce jeton : ${err instanceof Error ? err.message : String(err)}. Rien n'a été écrit.`,
           "error",
         );
       }
@@ -280,8 +216,35 @@ export default function reqExtension(pi: ExtensionAPI) {
       if (!resolved) return;
       await guarded(ctx, "pipelines", async () => {
         const inbox = await harnessCall<Inbox>(resolved, "GET", "/v1/inbox");
-        ctx.ui?.notify?.(inboxSummary(inbox, resolved.url), "info");
+        const summary = inboxSummary(inbox, resolved.url);
+        ctx.ui?.notify?.(summary, "info");
+        // Posté aussi dans la conversation : le modèle le voit, et peut proposer le geste.
+        pi.sendMessage({ customType: FOLLOW_MESSAGE_TYPE, content: summary, display: true }, { triggerTurn: false });
       });
+    },
+  });
+
+  pi.registerCommand("harness-follow", {
+    description:
+      "Suit le harness dans cette session : specs prêtes, verdicts, questions et fins de feature arrivent en messages « [harness] » ; /harness-follow stop l'arrête",
+    handler: async (args: unknown, ctx: Ctx) => {
+      const word = String(args ?? "")
+        .trim()
+        .toLowerCase();
+      if (word === "stop") {
+        const was = follower.active();
+        follower.stop();
+        ctx.ui?.notify?.(was ? "[harness-follow] suivi arrêté." : "[harness-follow] aucun suivi en cours.", "info");
+        return;
+      }
+      const resolved = target(ctx, "harness-follow");
+      if (!resolved) return;
+      follower.stop();
+      follower.start(resolved, []);
+      ctx.ui?.notify?.(
+        `[harness-follow] suivi de ${resolved.repo} sur ${resolved.url} : les moments d'attente arriveront ici. /harness-follow stop pour l'arrêter.`,
+        "info",
+      );
     },
   });
 }

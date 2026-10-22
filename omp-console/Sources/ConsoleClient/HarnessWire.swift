@@ -68,6 +68,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var priority: Int?
     /// Le client qui a lancé la feature (`nil` : le service, ou le jeton historique).
     public var createdBy: String?
+    /// Les fusions retentées après un refus (0 avec un serveur antérieur).
+    public var mergeRetries: Int
+    /// En file : l'instant avant lequel le serveur ne reprend pas (délai après un échec relançable).
+    public var notBefore: Date?
+    /// La cause du dernier échec d'étape (`timeout`, `rate_limit`, `network`…), ou `nil`.
+    public var lastFailCause: String?
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -75,7 +81,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         id: String, repo: String, slug: String, title: String, request: String, state: String, step: String? = nil,
         fixes: Int = 0, modules: [String] = [], verdict: HarnessVerdict? = nil, mergeSha: String? = nil,
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
-        createdBy: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
+        createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
+        createdAt: Double = 0, updatedAt: Double = 0
     ) {
         self.id = id
         self.repo = repo
@@ -94,8 +101,70 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.rev = rev
         self.priority = priority
         self.createdBy = createdBy
+        self.mergeRetries = mergeRetries
+        self.notBefore = notBefore
+        self.lastFailCause = lastFailCause
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, createdAt, updatedAt
+    }
+
+    /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause` :
+    /// 0 et `nil`. `notBefore` est un instant en millisecondes.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        repo = try container.decode(String.self, forKey: .repo)
+        slug = try container.decode(String.self, forKey: .slug)
+        title = try container.decode(String.self, forKey: .title)
+        request = try container.decode(String.self, forKey: .request)
+        state = try container.decode(String.self, forKey: .state)
+        step = try container.decodeIfPresent(String.self, forKey: .step)
+        fixes = try container.decode(Int.self, forKey: .fixes)
+        modules = try container.decode([String].self, forKey: .modules)
+        verdict = try container.decodeIfPresent(HarnessVerdict.self, forKey: .verdict)
+        mergeSha = try container.decodeIfPresent(String.self, forKey: .mergeSha)
+        prUrl = try container.decodeIfPresent(String.self, forKey: .prUrl)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        rev = try container.decodeIfPresent(Int.self, forKey: .rev)
+        priority = try container.decodeIfPresent(Int.self, forKey: .priority)
+        createdBy = try container.decodeIfPresent(String.self, forKey: .createdBy)
+        mergeRetries = try container.decodeIfPresent(Int.self, forKey: .mergeRetries) ?? 0
+        notBefore = try container.decodeIfPresent(Double.self, forKey: .notBefore).map { Date(timeIntervalSince1970: $0 / 1000) }
+        lastFailCause = try container.decodeIfPresent(String.self, forKey: .lastFailCause)
+        createdAt = try container.decode(Double.self, forKey: .createdAt)
+        updatedAt = try container.decode(Double.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(repo, forKey: .repo)
+        try container.encode(slug, forKey: .slug)
+        try container.encode(title, forKey: .title)
+        try container.encode(request, forKey: .request)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(step, forKey: .step)
+        try container.encode(fixes, forKey: .fixes)
+        try container.encode(modules, forKey: .modules)
+        try container.encodeIfPresent(verdict, forKey: .verdict)
+        try container.encodeIfPresent(mergeSha, forKey: .mergeSha)
+        try container.encodeIfPresent(prUrl, forKey: .prUrl)
+        try container.encodeIfPresent(reason, forKey: .reason)
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encodeIfPresent(rev, forKey: .rev)
+        try container.encodeIfPresent(priority, forKey: .priority)
+        try container.encodeIfPresent(createdBy, forKey: .createdBy)
+        try container.encode(mergeRetries, forKey: .mergeRetries)
+        try container.encodeIfPresent(notBefore.map { ($0.timeIntervalSince1970 * 1000).rounded() }, forKey: .notBefore)
+        try container.encodeIfPresent(lastFailCause, forKey: .lastFailCause)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
@@ -103,6 +172,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
 
     /// Le run attend la validation de ses SPECS (avant /impl), pas d'un verdict.
     public var awaitsSpecs: Bool { phase == .awaitingHuman && step == "specs" }
+
+    /// Le run peut repartir de son étape : en échec, ou arrêté sur une attente de l'humain.
+    public var canRetry: Bool { phase == .failed || phase == .awaitingHuman }
+
+    /// Le run est fusionné : sa feature peut être annulée (commit inverse sur la branche principale).
+    public var canRevert: Bool { phase == .merged }
 }
 
 /// Une décision prise seule par un runner : un point de reprise.
@@ -131,6 +206,9 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
     }
 
+    /// La décision a été tranchée par le serveur à l'échéance d'une escalade restée sans réponse.
+    public var decidedAtDeadline: Bool { status == "auto_timeout" }
+
     /// Les options que l'humain peut choisir à la place.
     public var alternatives: [String] { options.filter { $0 != chosen } }
 }
@@ -141,18 +219,45 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
     public var runId: String
     public var category: String
     public var question: String
+    /// Les options proposées (vide avec un serveur antérieur).
     public var options: [String]
-    public var context: String
+    /// L'option que l'agent aurait choisie : la réponse présélectionnée dans les apps.
+    public var recommended: String?
+    public var context: String?
     public var status: String
 
-    public init(id: Int, runId: String, category: String, question: String, options: [String], context: String = "", status: String = "open") {
+    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, status: String = "open") {
         self.id = id
         self.runId = runId
         self.category = category
         self.question = question
         self.options = options
+        self.recommended = recommended
         self.context = context
         self.status = status
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, runId, category, question, options, recommended, context, status
+    }
+
+    /// Un serveur antérieur n'écrit ni `recommended`, ni `options`, ni `context` : `nil` et vide.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        runId = try container.decode(String.self, forKey: .runId)
+        category = try container.decode(String.self, forKey: .category)
+        question = try container.decode(String.self, forKey: .question)
+        options = try container.decodeIfPresent([String].self, forKey: .options) ?? []
+        recommended = try container.decodeIfPresent(String.self, forKey: .recommended)
+        context = try container.decodeIfPresent(String.self, forKey: .context)
+        status = try container.decode(String.self, forKey: .status)
+    }
+
+    /// Le contexte donné par l'agent, s'il en a donné un.
+    public var shownContext: String? {
+        guard let context, !context.isEmpty else { return nil }
+        return context
     }
 }
 
@@ -393,8 +498,16 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
         }
     }
 
-    /// Ce qui attend l'humain : escalades, specs et verdicts, décisions à relire, audits à trier.
-    public var pendingCount: Int { batches.reduce(0) { $0 + $1.items.count } + awaiting.count + decisions.count + auditsProposed.count }
+    /// Ce qui BLOQUE une feature tant que l'humain n'a pas agi : escalades ouvertes, specs
+    /// et verdicts à valider. Les décisions prises seules (relues après coup) et les audits
+    /// à trier n'y entrent pas : ils ont leurs propres compteurs.
+    public var pendingCount: Int { batches.reduce(0) { $0 + $1.items.count } + awaiting.count }
+
+    /// Les runs qui ont des décisions à relire, dans l'ordre de la boîte, sans doublon.
+    public var decisionRunIds: [String] {
+        var seen = Set<String>()
+        return decisions.map(\.runId).filter { seen.insert($0).inserted }
+    }
 }
 
 /// Un artefact d'étape (`req.md`, `specs.md`, `impl.md`).

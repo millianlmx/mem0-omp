@@ -21,6 +21,7 @@ struct RootView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Le crochet de recette `-memoire.recipe`, quand il est donné.
     private let memoryRecipe: IOSMemoryGraphRecipe?
@@ -98,6 +99,16 @@ struct RootView: View {
                 await memory.load()
                 await server.load()
                 server.startLive()
+            }
+            // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
+            // boîte fraîche : ce qui a changé pendant l'absence se voit tout de suite.
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                server.stopLive()
+                Task {
+                    await server.refresh()
+                    server.startLive()
+                }
             }
     }
 

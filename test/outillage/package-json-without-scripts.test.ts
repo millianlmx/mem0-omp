@@ -28,6 +28,16 @@ function bash(cwd: string, args: string[], timeout = 600_000): SpawnSyncReturns<
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
 
+/**
+ * stdout sans les lignes de durée `  · <n> s` que check.sh ferme chaque section
+ * avec : deux lancements n'ont aucune raison de rendre la même seconde entière.
+ */
+const sansDurees = (stdout: string) =>
+  stdout
+    .split("\n")
+    .filter((line) => !/^ {2}· \d+ s$/.test(line))
+    .join("\n");
+
 /** Copie du dépôt sans aucun fichier de test. */
 const prunedCopy = (): string => copyRepo("npm-alias-", { keepTest: () => false });
 
@@ -59,7 +69,7 @@ function fixture(dir: string, body: string): void {
 
 const HOST_TYPES_ABSENT = "types de l'hôte absents";
 
-test("package-json-without-scripts/AC-4 : le package.json racine est privé et ne porte que les trois alias", () => {
+test("package-json-without-scripts/AC-4 : le package.json racine est privé et ne porte que les alias vers scripts/", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   assert.deepEqual(manifest, {
     private: true,
@@ -68,6 +78,7 @@ test("package-json-without-scripts/AC-4 : le package.json racine est privé et n
       check: "bash scripts/check.sh",
       typecheck: "bash scripts/typecheck.sh",
       test: "bash scripts/check.sh --sections=tests",
+      "test:touched": "bash scripts/test-touched.sh",
     },
   });
 });
@@ -78,7 +89,7 @@ test("package-json-without-scripts/AC-3 : npm run check -- --sections=<id> ne la
   const b = bash(dir, ["scripts/check.sh", "--sections=catalogue"]);
   assert.equal(b.status, 0, output(b));
   assert.equal(n.status, 0, output(n));
-  assert.equal(n.stdout, b.stdout);
+  assert.equal(sansDurees(n.stdout), sansDurees(b.stdout));
   assert.ok(n.stdout.includes("── Catalogue marketplace"), n.stdout);
   assert.ok(!n.stdout.includes("── Noms"), n.stdout);
   assert.ok(!n.stdout.includes("── Tests"), n.stdout);
@@ -92,7 +103,7 @@ test("package-json-without-scripts/AC-1 : npm run check rend la sortie et le cod
   assert.notEqual(b.status, 0, output(b));
   assert.equal(n.status, b.status, output(n));
   assert.ok(b.stdout.includes("les catalogues .omp-plugin et .claude-plugin ont divergé"), output(b));
-  assert.ok(n.stdout.includes(b.stdout), `npm :\n${n.stdout}\ncheck.sh :\n${b.stdout}`);
+  assert.ok(sansDurees(n.stdout).includes(sansDurees(b.stdout)), `npm :\n${n.stdout}\ncheck.sh :\n${b.stdout}`);
 });
 
 test("package-json-without-scripts/AC-2 : npm run typecheck sort 0 sur une copie verte et non nul sur une erreur de type plantée", (t) => {
@@ -126,7 +137,7 @@ test("package-json-without-scripts/AC-6 : npm test exécute réellement la secti
   fs.rmSync(marker);
   const b = bash(dir, ["scripts/check.sh", "--sections=tests"]);
   assert.equal(b.status, 0, output(b));
-  assert.equal(n.stdout, b.stdout);
+  assert.equal(sansDurees(n.stdout), sansDurees(b.stdout));
 });
 
 test("package-json-without-scripts/AC-5 : npm test sort non nul et nomme le test en échec quand une assertion est faussée", () => {
@@ -141,14 +152,24 @@ test("package-json-without-scripts/AC-5 : npm test sort non nul et nomme le test
 test("package-json-without-scripts/AC-7 : npm test -- <option> transmet --tests-part et --tests-scope à check.sh", () => {
   const dir = prunedCopy();
   fixture(dir, GREEN_BODY);
-  for (const arg of ["--tests-part=1/2", "--tests-scope=macos"]) {
+  // Dans la copie élaguée, le test fixture n'est ni check.test.ts (seul fichier de
+  // la part 1/2) ni un test macOS : chaque option laisse `── Tests` sans fichier,
+  // et la ligne qui le dit est la preuve que l'option est arrivée à check.sh.
+  const cases: Array<[string, string]> = [
+    ["--tests-part=1/2", "  ✗ tests unitaires — aucun fichier de test retenu (--tests-scope=aucun, --tests-part=1/2)"],
+    [
+      "--tests-scope=macos",
+      "  ✗ tests unitaires — scripts/test-files.sh a échoué (relance : bash scripts/test-files.sh --scope=macos)",
+    ],
+  ];
+  for (const [arg, verdict] of cases) {
     const n = npm(dir, ["--silent", "test", "--", arg]);
     const b = bash(dir, ["scripts/check.sh", "--sections=tests", arg]);
     assert.notEqual(b.status, 0, `${arg} : ${output(b)}`);
     assert.equal(n.status, b.status, `${arg} : ${output(n)}`);
-    assert.equal(n.stdout, b.stdout, arg);
-    assert.ok(n.stdout.includes("aucun fichier de test retenu"), `${arg} : ${output(n)}`);
-    assert.ok(n.stdout.includes(arg), `${arg} : ${output(n)}`);
+    assert.equal(sansDurees(n.stdout), sansDurees(b.stdout), arg);
+    const lines = n.stdout.split("\n");
+    assert.ok(lines.includes(verdict), `${arg} : ${output(n)}`);
     assert.ok(!n.stderr.includes("option inconnue"), `${arg} : ${n.stderr}`);
     assert.ok(!b.stderr.includes("option inconnue"), `${arg} : ${b.stderr}`);
   }
@@ -165,6 +186,7 @@ test("package-json-without-scripts/AC-8 : le README associe npm run check, npm r
     ["npm run check", "bash scripts/check.sh"],
     ["npm run typecheck", "bash scripts/typecheck.sh"],
     ["npm test", "bash scripts/check.sh --sections=tests"],
+    ["npm run test:touched -- <fichiers…>", "bash scripts/test-touched.sh"],
   ]) {
     assert.ok(
       readme.includes(`\`${command}\` lance \`${script}\``),

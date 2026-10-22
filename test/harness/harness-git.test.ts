@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Git } from "../../omp-harness/git.ts";
+import { Git, isNonCode } from "../../omp-harness/git.ts";
 import { checkpointMessage } from "../../omp-harness/decisions.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
 import { commitOnMain, git, harnessRepo } from "../support/harness-fixtures.ts";
@@ -74,7 +74,7 @@ test("harness-git/AC-5 : le merge squash pose un commit sur main sans checkout, 
   await client.commitAll(wt, "wip 1");
   fs.writeFileSync(path.join(wt, "b.ts"), "b");
   await client.commitAll(wt, "wip 2");
-  assert.equal(await client.diffLines(wt, main), 2);
+  assert.equal(await client.diffLines(wt, main, "all"), 2);
   assert.deepEqual(await client.touchedFiles(wt, main), ["a.ts", "b.ts"]);
   await assert.rejects(client.squashMerge(repo, "harness/x", "main", "0".repeat(40), "m"));
   const sha = await client.squashMerge(repo, "harness/x", "main", main, "Feature X");
@@ -127,4 +127,90 @@ test("harness-git/AC-7 : le gitdir du clone perd l'écriture de groupe et la gar
   await worktree(repo, "harness/y");
   walk(path.join(repo, ".git"));
   assert.deepEqual(writable, []);
+});
+
+test("harness-git/AC-8 : revertRange défait une plage de commits (checkpoints vides compris) en un commit, et garde le travail d'avant", async () => {
+  const repo = harnessRepo();
+  const wt = await worktree(repo);
+  fs.writeFileSync(path.join(wt, "keep.ts"), "garde\n");
+  const before = await client.commitAll(wt, "wip avant");
+  const empty = await client.commitAll(wt, checkpointMessage("r1", 1, { question: "q", chosen: "c", rationale: "r" }));
+  assert.equal(
+    git(wt, "rev-parse", `${empty}^{tree}`),
+    git(wt, "rev-parse", `${before}^{tree}`),
+    "le checkpoint est vide",
+  );
+  fs.writeFileSync(path.join(wt, "feature.ts"), "a\n");
+  await client.commitAll(wt, "wip 1");
+  fs.writeFileSync(path.join(wt, "feature.ts"), "a\nb\n");
+  fs.writeFileSync(path.join(wt, "keep.ts"), "garde\nmodifié\n");
+  await client.commitAll(wt, "wip 2");
+  const result = await client.revertRange(wt, before, "HEAD");
+  assert.ok(result.ok, "le revert passe");
+  assert.equal(git(wt, "rev-parse", "HEAD"), result.sha);
+  assert.match(git(wt, "log", "-1", "--format=%s"), /^revert: [0-9a-f]{7}\.\.[0-9a-f]{7}$/);
+  assert.equal(fs.existsSync(path.join(wt, "feature.ts")), false, "les commits de la plage sont défaits");
+  assert.equal(fs.readFileSync(path.join(wt, "keep.ts"), "utf8"), "garde\n", "ce qui précède la plage reste");
+  assert.equal(git(wt, "rev-parse", "HEAD^{tree}"), git(wt, "rev-parse", `${before}^{tree}`));
+  assert.equal(await client.isDirty(wt), false);
+  // Une plage sans changement net rend quand même un commit.
+  const nothing = await client.revertRange(wt, "HEAD", "HEAD");
+  assert.ok(nothing.ok && nothing.sha !== result.sha);
+});
+
+test("harness-git/AC-9 : un revert en conflit est abandonné, l'arbre rendu propre à HEAD, et ses fichiers rendus", async () => {
+  const repo = harnessRepo();
+  const wt = await worktree(repo);
+  const base = git(wt, "rev-parse", "HEAD");
+  fs.writeFileSync(path.join(wt, "README.md"), "v1\n");
+  await client.commitAll(wt, "wip 1");
+  fs.writeFileSync(path.join(wt, "README.md"), "v2\n");
+  const head = await client.commitAll(wt, "wip 2");
+  // Défaire seulement « wip 1 » alors que « wip 2 » a réécrit la même ligne : conflit.
+  const result = await client.revertRange(wt, base, `${head}^`);
+  assert.deepEqual(result, { ok: false, conflicts: ["README.md"] });
+  assert.equal(git(wt, "rev-parse", "HEAD"), head, "HEAD n'a pas bougé");
+  assert.equal(fs.readFileSync(path.join(wt, "README.md"), "utf8"), "v2\n", "le worktree est revenu à HEAD");
+  assert.equal(await client.isDirty(wt), false);
+  assert.notEqual(
+    (await client.raw(wt, ["rev-parse", "-q", "--verify", "REVERT_HEAD"])).code,
+    0,
+    "aucun revert en cours",
+  );
+});
+
+test("harness-git/AC-10 : diffLines en mode `code` ignore tests, docs, changelog, manifestes et verrous ; `all` compte tout", async () => {
+  const repo = harnessRepo();
+  const wt = await worktree(repo);
+  const main = git(repo, "rev-parse", "main");
+  const files: Record<string, string> = {
+    "src/x.ts": "1\n2\n",
+    "test/x.test.ts": "1\n",
+    "src/x.test.ts": "1\n",
+    "Sources/Tests/Y.swift": "1\n",
+    "docs/new.md": "1\n",
+    "CHANGELOG.md": "1\n",
+    "package.json": "{}\n",
+    "bun.lock": "1\n",
+    "Cargo.lock": "1\n",
+  };
+  for (const [file, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(wt, file)), { recursive: true });
+    fs.writeFileSync(path.join(wt, file), content);
+  }
+  await client.commitAll(wt, "wip");
+  assert.equal(await client.diffLines(wt, main, "all"), 10);
+  assert.equal(await client.diffLines(wt, main, "code"), 2);
+  assert.deepEqual(
+    ["test/a.ts", "a/b/Tests/c.ts", "x.test.swift", "README.md", "CHANGELOG", "package.json", "yarn.lock"].map(
+      isNonCode,
+    ),
+    [true, true, true, true, true, true, true],
+  );
+  assert.deepEqual(["src/test.ts", "testing/a.ts", "src/Tests.ts", "package-lock.json"].map(isNonCode), [
+    false,
+    false,
+    false,
+    false,
+  ]);
 });

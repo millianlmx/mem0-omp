@@ -24,9 +24,9 @@ import type { Exec, ProcResult } from "./proc.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Git } from "./git.ts";
 
-export type TestScope = "touched" | "full";
+export type TestScope = "touched" | "full" | "check";
 
-export type HeavyOutcome = "pass" | "fail" | "oom" | "timeout" | "error" | "skipped";
+export type HeavyOutcome = "pass" | "fail" | "oom" | "timeout" | "error" | "aborted";
 
 export type HeavyJob = {
   runId: string;
@@ -36,6 +36,8 @@ export type HeavyJob = {
   scope: TestScope;
   /** Les fichiers touchés (scope `touched`). */
   files: string[];
+  /** Le nom de la commande dans `repo.checks` (scope `check`). */
+  check?: string;
   /** La priorité du run : à attente égale, un job plus prioritaire prend le slot heavy d'abord. */
   priority?: number;
 };
@@ -48,6 +50,9 @@ export type HeavyResult = {
   durationMs: number;
   attempts: number;
   cached: boolean;
+  /** Rien n'a été lancé (aucun fichier de test touché) : `outcome` vaut `pass` et `note` le dit. */
+  skipped: boolean;
+  note: string | null;
   tree: string;
   key: string;
   command: string;
@@ -61,14 +66,55 @@ export function shellQuote(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** La commande de test d'une scope, ou `null` (scope `touched` sans fichier : rien à tester). */
-export function testCommand(repo: RepoConfig, scope: TestScope, files: string[]): string | null {
-  if (scope === "full") return repo.tests.full;
-  if (files.length === 0) return null;
-  const quoted = files.map(shellQuote).join(" ");
-  return repo.tests.touched.includes("{files}")
-    ? repo.tests.touched.split("{files}").join(quoted)
-    : `${repo.tests.touched} ${quoted}`;
+/**
+ * Un glob maison (`**` : tout chemin, `*` : tout sauf `/`, `?` : un caractère) contre
+ * un chemin relatif au worktree. Un motif sans `/` se compare au nom de fichier.
+ */
+export function matchesGlob(pattern: string, file: string): boolean {
+  let regex = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === "*" && pattern[i + 1] === "*") {
+      const slash = pattern[i + 2] === "/";
+      regex += slash ? "(?:.*/)?" : ".*";
+      i += slash ? 2 : 1;
+    } else if (char === "*") regex += "[^/]*";
+    else if (char === "?") regex += "[^/]";
+    else regex += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  const subject = pattern.includes("/") ? file : (file.split("/").pop() ?? file);
+  return new RegExp(`^${regex}$`).test(subject);
+}
+
+/** Les fichiers de `files` qui sont des tests selon `repo.tests.pattern` (`null` : tous). */
+export function testFiles(repo: RepoConfig, files: string[]): string[] {
+  const pattern = repo.tests.pattern;
+  return pattern === null ? files : files.filter((file) => matchesGlob(pattern, file));
+}
+
+/**
+ * La commande d'une scope, ou `null` : scope `touched` sans fichier de test (rien à
+ * lancer), scope `check` sans commande de ce nom.
+ */
+export function testCommand(repo: RepoConfig, scope: TestScope, files: string[], check?: string): string | null {
+  switch (scope) {
+    case "full":
+      return repo.tests.full;
+    case "check":
+      return check !== undefined && Object.hasOwn(repo.checks, check) ? repo.checks[check] : null;
+    case "touched": {
+      const tests = testFiles(repo, files);
+      if (tests.length === 0) return null;
+      const quoted = tests.map(shellQuote).join(" ");
+      return repo.tests.touched.includes("{files}")
+        ? repo.tests.touched.split("{files}").join(quoted)
+        : `${repo.tests.touched} ${quoted}`;
+    }
+    default: {
+      const _exhaustive: never = scope;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Variables qui changent d'un worktree à l'autre sans changer le résultat : hors clé de cache. */
@@ -203,6 +249,7 @@ export function systemdResult(stderr: string): string | null {
 /** L'issue d'un job à partir de son process. */
 export function classify(result: ProcResult): HeavyOutcome {
   const unitResult = systemdResult(result.stderr);
+  if (result.aborted) return "aborted";
   if (result.timedOut || unitResult === "timeout") return "timeout";
   if (unitResult === "oom-kill" || result.code === 137 || (result.code === null && result.signal === "SIGKILL"))
     return "oom";
@@ -230,8 +277,33 @@ export type HeavyDeps = {
   now?: () => number;
 };
 
+/** Un job en vol : sa promesse, ses appelants qui attendent encore, et de quoi l'arrêter. */
+type Flight = {
+  promise: Promise<HeavyResult>;
+  waiters: number;
+  controller: AbortController;
+};
+
+/** Le résultat d'un job qui n'a rien lancé (base des issues `skipped` et `error` avant tout process). */
+const NOTHING_RAN: HeavyResult = {
+  outcome: "pass",
+  exitCode: null,
+  output: "",
+  durationMs: 0,
+  attempts: 0,
+  cached: false,
+  skipped: false,
+  note: null,
+  tree: "",
+  key: "",
+  command: "",
+};
+
+type JobId = { key: string; tree: string; command: string; env: Record<string, string> };
+
 export class HeavyRunner {
   readonly #deps: HeavyDeps;
+  readonly #flights = new Map<string, Flight>();
   #seq = 0;
 
   constructor(deps: HeavyDeps) {
@@ -242,35 +314,43 @@ export class HeavyRunner {
   async keyFor(
     job: Omit<HeavyJob, "runId" | "stepId">,
   ): Promise<{ key: string; tree: string; command: string } | null> {
-    const command = testCommand(job.repo, job.scope, job.files);
+    const command = testCommand(job.repo, job.scope, job.files, job.check);
     if (command === null) return null;
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
     return { key: cacheKey(tree, command, heavyEnv(this.#deps.config, job.worktree)), tree, command };
   }
 
+  /** Les clés des jobs en vol (observabilité, tests). */
+  get inFlight(): string[] {
+    return [...this.#flights.keys()];
+  }
+
+  /**
+   * Le résultat de la scope sur l'arbre courant : le cache (vert seulement), le job
+   * déjà en vol sur la même clé (rejoint), ou un job neuf. `signal` est celui de
+   * l'APPELANT : son arrêt le désabonne ; le job n'est tué que quand plus personne
+   * ne l'attend.
+   */
   async run(job: HeavyJob, signal?: AbortSignal): Promise<HeavyResult> {
-    const { config, store, scheduler, exec } = this.#deps;
-    const now = this.#deps.now ?? Date.now;
+    const { config, store } = this.#deps;
+    if (signal?.aborted) throw new Error("job heavy annulé : appel arrêté");
     const env = heavyEnv(config, job.worktree);
-    const command = testCommand(job.repo, job.scope, job.files);
+    const command = testCommand(job.repo, job.scope, job.files, job.check);
     if (command === null) {
-      return {
-        outcome: "skipped",
-        exitCode: null,
-        output: "aucun fichier touché : rien à tester",
-        durationMs: 0,
-        attempts: 0,
-        cached: false,
-        tree: "",
-        key: "",
-        command: "",
-      };
+      if (job.scope === "check") {
+        const known = Object.keys(job.repo.checks);
+        const list = known.length > 0 ? `connus : ${known.join(", ")}` : "aucun check déclaré";
+        return { ...NOTHING_RAN, outcome: "error", output: `check inconnu : ${job.check ?? "(aucun nom)"} (${list})` };
+      }
+      const note = job.files.length === 0 ? "aucun fichier touché : rien à tester" : "aucun test touché";
+      store.appendEvent("heavy_skipped", job.runId, { scope: job.scope, files: job.files.length, note });
+      return { ...NOTHING_RAN, skipped: true, note, output: note };
     }
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
     const key = cacheKey(tree, command, env);
 
     const hit = store.cacheGet(key);
-    if (hit) {
+    if (hit && hit.outcome === "pass") {
       store.addTestRun({
         runId: job.runId,
         stepId: job.stepId,
@@ -289,93 +369,171 @@ export class HeavyRunner {
         durationMs: hit.durationMs,
         attempts: 0,
         cached: true,
+        skipped: false,
+        note: null,
         tree,
         key,
         command,
       };
     }
 
-    const maxAttempts = 1 + config.heavy.oomRetries;
-    let attempts = 0;
-    let last: HeavyResult | null = null;
-    while (attempts < maxAttempts) {
-      attempts++;
-      const slot = await scheduler.acquire("heavy", `${job.runId}:${job.scope}`, signal, job.priority ?? 0);
-      const unit = `omp-heavy-${job.runId}-${++this.#seq}`;
-      const argv = heavyArgv(config, job.worktree, unit, command, env, job.repo);
-      store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt: attempts, unit });
-      const started = now();
-      let result: ProcResult;
-      try {
-        result = await exec(argv.command, argv.args, {
-          cwd: job.worktree,
-          env: config.heavy.isolation === "none" ? env : clientEnv(),
-          // systemd borne le job lui-même (RuntimeMaxSec) ; un conteneur, c'est le délai du client.
-          timeoutMs: (config.heavy.timeoutSec + (config.heavy.isolation === "container" ? 0 : 30)) * 1000,
-          maxBytes: OUTPUT_TAIL,
-        });
-      } finally {
-        // Un client tué au délai laisse son conteneur vivant : il part avec le slot.
-        if (config.heavy.isolation === "container") await forceStop(config, exec, unit, "container").catch(() => {});
-        slot.release();
-      }
-      const outcome = classify(result);
-      const output = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.slice(-OUTPUT_TAIL);
-      last = {
-        outcome,
-        exitCode: result.code,
-        output,
-        durationMs: now() - started,
-        attempts,
-        cached: false,
-        tree,
-        key,
-        command,
-      };
-      store.appendEvent("heavy_done", job.runId, {
-        scope: job.scope,
-        attempt: attempts,
-        outcome,
-        exitCode: result.code,
+    // Un job que plus personne n'attend est en train de mourir : on n'y monte pas.
+    const live = this.#flights.get(key);
+    let flight = live && !live.controller.signal.aborted ? live : undefined;
+    if (flight) {
+      store.appendEvent("heavy_joined", job.runId, { scope: job.scope, tree, waiters: flight.waiters + 1 });
+    } else {
+      const controller = new AbortController();
+      const created: Flight = { promise: Promise.resolve(NOTHING_RAN), waiters: 0, controller };
+      created.promise = this.#execute(job, { key, tree, command, env }, controller.signal).finally(() => {
+        if (this.#flights.get(key) === created) this.#flights.delete(key);
       });
-      if (outcome !== "oom") break;
-      if (attempts < maxAttempts)
-        store.appendEvent("heavy_oom_retry", job.runId, {
-          scope: job.scope,
-          attempt: attempts,
-          memoryMax: config.heavy.memoryMax,
-        });
+      // Un job abandonné par tous (slot refusé, process tué) rejette sans personne pour l'entendre.
+      created.promise.catch(() => {});
+      this.#flights.set(key, created);
+      flight = created;
     }
-    const final = last as HeavyResult;
-    // Seules les issues DÉTERMINISTES entrent au cache : un OOM ou un délai dépend de la charge.
-    if (final.outcome === "pass" || final.outcome === "fail") {
-      store.cachePut({
-        key,
-        repo: job.repo.name,
-        tree,
-        command,
-        outcome: final.outcome,
-        exitCode: final.exitCode ?? -1,
-        output: final.output,
-        durationMs: final.durationMs,
-      });
-    }
+    const result = await this.#join(flight, signal);
     store.addTestRun({
       runId: job.runId,
       stepId: job.stepId,
       scope: job.scope,
       key,
       tree,
-      outcome: final.outcome,
+      outcome: result.outcome,
       cached: false,
-      attempts,
+      attempts: result.attempts,
     });
-    return final;
+    return result;
+  }
+
+  /** Attend `flight` au nom d'un appelant ; son arrêt le désabonne, le dernier parti arrête le job. */
+  #join(flight: Flight, signal: AbortSignal | undefined): Promise<HeavyResult> {
+    if (signal?.aborted) return Promise.reject(new Error("job heavy annulé : appel arrêté"));
+    flight.waiters++;
+    return new Promise<HeavyResult>((resolve, reject) => {
+      let left = false;
+      const leave = () => {
+        if (left) return;
+        left = true;
+        flight.waiters--;
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        leave();
+        if (flight.waiters === 0) flight.controller.abort();
+        reject(new Error("job heavy annulé : appel arrêté"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      flight.promise.then(
+        (result) => {
+          leave();
+          resolve(result);
+        },
+        (error: unknown) => {
+          leave();
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
+  }
+
+  /**
+   * Le job lui-même : un slot heavy par tentative, relances sur OOM, et UNE relance
+   * d'un rouge frais (un échec instable ne vaut pas verdict). Seul un vert entre au cache.
+   */
+  async #execute(job: HeavyJob, id: JobId, signal: AbortSignal): Promise<HeavyResult> {
+    const { config, store } = this.#deps;
+    let attempts = 0;
+    let oomRetries = 0;
+    let failRetried = false;
+    let last: HeavyResult = NOTHING_RAN;
+    for (;;) {
+      attempts++;
+      last = await this.#attempt(job, id, attempts, signal);
+      if (last.outcome === "fail" && !failRetried) {
+        failRetried = true;
+        store.appendEvent("heavy_fail_retry", job.runId, {
+          scope: job.scope,
+          attempt: attempts,
+          exitCode: last.exitCode,
+        });
+        continue;
+      }
+      if (last.outcome === "oom" && oomRetries < config.heavy.oomRetries) {
+        oomRetries++;
+        store.appendEvent("heavy_oom_retry", job.runId, {
+          scope: job.scope,
+          attempt: attempts,
+          memoryMax: config.heavy.memoryMax,
+        });
+        continue;
+      }
+      break;
+    }
+    // Seul un VERT entre au cache : un rouge peut être instable, un OOM ou un délai dépend de la charge.
+    if (last.outcome === "pass") {
+      store.cachePut({
+        key: id.key,
+        repo: job.repo.name,
+        tree: id.tree,
+        command: id.command,
+        outcome: last.outcome,
+        exitCode: last.exitCode ?? -1,
+        output: last.output,
+        durationMs: last.durationMs,
+      });
+    }
+    return last;
+  }
+
+  /** Une tentative : un slot, un process (tué par `signal`), son issue. */
+  async #attempt(job: HeavyJob, id: JobId, attempt: number, signal: AbortSignal): Promise<HeavyResult> {
+    const { config, store, scheduler, exec } = this.#deps;
+    const now = this.#deps.now ?? Date.now;
+    const slot = await scheduler.acquire("heavy", `${job.runId}:${job.scope}`, signal, job.priority ?? 0);
+    const unit = `omp-heavy-${job.runId}-${++this.#seq}`;
+    const argv = heavyArgv(config, job.worktree, unit, id.command, id.env, job.repo);
+    store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt, unit });
+    const started = now();
+    let result: ProcResult;
+    try {
+      result = await exec(argv.command, argv.args, {
+        cwd: job.worktree,
+        env: config.heavy.isolation === "none" ? id.env : clientEnv(),
+        // systemd borne le job lui-même (RuntimeMaxSec) ; un conteneur, c'est le délai du client.
+        timeoutMs: (config.heavy.timeoutSec + (config.heavy.isolation === "container" ? 0 : 30)) * 1000,
+        maxBytes: OUTPUT_TAIL,
+        signal,
+      });
+    } finally {
+      // Un client tué (délai, arrêt) laisse son unité ou son conteneur vivant : il part avec le slot.
+      if (config.heavy.isolation === "container" || (config.heavy.isolation === "systemd" && signal.aborted))
+        await forceStop(config, exec, unit, config.heavy.isolation).catch(() => {});
+      slot.release();
+    }
+    const outcome = classify(result);
+    const output = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.slice(-OUTPUT_TAIL);
+    store.appendEvent("heavy_done", job.runId, { scope: job.scope, attempt, outcome, exitCode: result.code });
+    return {
+      outcome,
+      exitCode: result.code,
+      output,
+      durationMs: now() - started,
+      attempts: attempt,
+      cached: false,
+      skipped: false,
+      note: null,
+      tree: id.tree,
+      key: id.key,
+      command: id.command,
+    };
   }
 }
 
 /** Le résultat rendu au runner : structuré, jamais une exception. */
 export function heavyReport(result: HeavyResult, memoryMax: string): string {
+  if (result.skipped) return `VERT (rien lancé : ${result.note ?? "rien à tester"})`;
   const head = result.cached
     ? "(cache : arbre déjà testé)"
     : `(${result.attempts} tentative(s), ${Math.round(result.durationMs / 1000)} s)`;
@@ -388,9 +546,13 @@ export function heavyReport(result: HeavyResult, memoryMax: string): string {
       return `ÉCHEC STRUCTURÉ : OOM — le job a dépassé MemoryMax=${memoryMax} ${result.attempts} fois. Réduis la portée (moins de fichiers, moins de parallélisme de test) ; ce n'est PAS un échec de tes tests.`;
     case "timeout":
       return `ÉCHEC STRUCTURÉ : délai dépassé ${head}\n${result.output.slice(-4000)}`;
-    case "skipped":
-      return result.output;
+    case "aborted":
+      return `ÉCHEC STRUCTURÉ : job arrêté (plus personne ne l'attendait) ${head}`;
     case "error":
       return `ÉCHEC STRUCTURÉ : le job n'a pas pu démarrer\n${result.output.slice(-2000)}`;
+    default: {
+      const _exhaustive: never = result.outcome;
+      return _exhaustive;
+    }
   }
 }

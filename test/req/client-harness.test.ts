@@ -41,6 +41,8 @@ function plugin() {
     registerCommand: (name: string, spec: { handler: Handler }) => commands.set(name, spec.handler),
     registerTool: (tool: Tool) => tools.set(tool.name, tool),
     sendUserMessage: (message: string) => sent.push(message),
+    sendMessage: () => undefined,
+    on: () => undefined,
   };
   reqExtension(pi as never);
   return { commands, tools, sent };
@@ -129,23 +131,40 @@ test("client-harness/AC-3 : harness_launch crée la feature avec ses besoins (el
     assert.deepEqual(tools.get("harness_launch")?.approval, LAUNCH_APPROVAL);
     assert.deepEqual(tools.get("harness_project")?.approval, LAUNCH_APPROVAL);
     const { ctx } = ctxIn(world.repo);
+    const noModules = await tools
+      .get("harness_launch")
+      ?.execute(
+        "t",
+        { title: "Export", request: "exporter", modules: [], req: "## Besoins\n" },
+        undefined,
+        undefined,
+        ctx,
+      );
+    assert.equal(noModules?.isError, true);
+    assert.match(noModules?.content[0]?.text ?? "", /modules/);
     const refused = await tools
       .get("harness_launch")
-      ?.execute("t", { title: "Export", request: "exporter", req: "pas de section" }, undefined, undefined, ctx);
+      ?.execute(
+        "t",
+        { title: "Export", request: "exporter", modules: ["src"], req: "pas de section" },
+        undefined,
+        undefined,
+        ctx,
+      );
     assert.equal(refused?.isError, true);
     assert.match(refused?.content[0]?.text ?? "", /## Besoins/);
     const launched = await tools
       .get("harness_launch")
       ?.execute(
         "t",
-        { title: "Export", request: "exporter", req: "## Besoins\nB-1 : exporter\n" },
+        { title: "Export", request: "exporter", modules: ["src"], req: "## Besoins\nB-1 : exporter\n" },
         undefined,
         undefined,
         ctx,
       );
     assert.match(launched?.content[0]?.text ?? "", /Feature créée sur le harness/);
     const [run] = world.store.listRuns();
-    assert.deepEqual([run?.title, run?.step], ["Export", "specs"]);
+    assert.deepEqual([run?.title, run?.step, run?.modules], ["Export", "specs", ["src"]]);
     const project = await tools.get("harness_project")?.execute(
       "t",
       {
@@ -176,8 +195,22 @@ test("client-harness/AC-4 : /audit lance l'audit sur le serveur, /audit liste mo
       modules: ["src/db"],
       kind: "faiblesse",
       rationale: "aucun test",
+      evidence: ["src/db/schema.ts:1"],
+      dependsOn: [],
+      impact: "medium",
+      effort: "low",
     },
-    { title: "Export", request: "Exporter en CSV", modules: ["src/api"], kind: "feature", rationale: "demandé" },
+    {
+      title: "Export",
+      request: "Exporter en CSV",
+      modules: ["src/api"],
+      kind: "feature",
+      rationale: "demandé",
+      evidence: [],
+      dependsOn: [],
+      impact: "high",
+      effort: "medium",
+    },
   ];
   const world = fakeWorld({ audit: [[{ tool: "audit_propose", args: { proposals } }]], req: [[{ sleep: 60_000 }]] });
   await world.orchestrator.start();

@@ -66,6 +66,8 @@ function pairCommand() {
     },
     registerTool: () => {},
     sendUserMessage: () => {},
+    sendMessage: () => {},
+    on: () => {},
   };
   reqExtension(pi as never);
   const notes: string[] = [];

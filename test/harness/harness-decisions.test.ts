@@ -43,10 +43,27 @@ test("harness-decisions/AC-3 : une décision déclarée réversible mais qui tra
 });
 
 test("harness-decisions/AC-4 : une décision mal formée est refusée avec un motif lisible", () => {
-  assert.match((planDecision({ ...base, chosen: "autre" }) as { error: string }).error, /une des options/);
-  assert.match((planDecision({ ...base, options: ["seule"] }) as { error: string }).error, /deux options/);
-  assert.match((planDecision({ ...base, rationale: "" }) as { error: string }).error, /rationale/);
-  assert.match((planDecision({ ...base, category: "peut-être" }) as { error: string }).error, /category/);
+  const error = (raw: unknown) => {
+    const parsed = planDecision(raw);
+    return parsed.ok ? "" : parsed.error;
+  };
+  assert.match(error({ ...base, chosen: "autre" }), /une des options/);
+  assert.match(error({ ...base, options: ["seule"] }), /deux options/);
+  assert.match(error({ ...base, options: undefined }), /deux options/, "options est obligatoire");
+  assert.match(error({ ...base, options: ["a", "b", "c", "d", "e"], chosen: "a" }), /au plus 4 options/);
+  assert.match(error({ ...base, options: ["a", "a"], chosen: "a" }), /identiques/);
+  assert.match(error({ ...base, rationale: "" }), /rationale/);
+  assert.match(error({ ...base, category: "peut-être" }), /category/);
+  const four = planDecision({ ...base, options: ["a", "b", "c", "d"], chosen: "d" });
+  assert.ok(four.ok && four.plan.kind === "checkpoint", "quatre options passent");
+});
+
+test("harness-decisions/AC-7 : une clarification (produit, UX) est réversible — checkpoint, jamais d'escalade, sauf si le texte trahit l'irréversible", () => {
+  const parsed = planDecision({ ...base, category: "clarification" });
+  assert.ok(parsed.ok && parsed.plan.kind === "checkpoint");
+  assert.equal(parsed.ok && parsed.plan.input.category, "clarification", "la catégorie déclarée est gardée");
+  const hardened = planDecision({ ...base, category: "clarification", rationale: "on fait DROP TABLE legacy" });
+  assert.ok(hardened.ok && hardened.plan.kind === "escalate" && hardened.plan.category === "schema");
 });
 
 test("harness-decisions/AC-5 : le commit de checkpoint s'appelle « decision: … » et porte un trailer qui survit au rebase", () => {
@@ -60,12 +77,14 @@ test("harness-decisions/AC-6 : une décision cite celles dont elle découle ; un
   const parsed = planDecision({ ...base, dependsOn: [3, 1, 3] });
   assert.ok(parsed.ok);
   assert.deepEqual(parsed.ok && parsed.plan.input.dependsOn, [1, 3], "triées, sans doublon");
-  assert.deepEqual(
-    planDecision(base).ok && (planDecision(base) as { plan: { input: { dependsOn: number[] } } }).plan.input.dependsOn,
-    [],
-  );
-  assert.match((planDecision({ ...base, dependsOn: [0] }) as { error: string }).error, /dependsOn/);
-  assert.match((planDecision({ ...base, dependsOn: "1" }) as { error: string }).error, /dependsOn/);
+  const bare = planDecision(base);
+  assert.deepEqual(bare.ok && bare.plan.input.dependsOn, []);
+  const error = (raw: unknown) => {
+    const result = planDecision(raw);
+    return result.ok ? "" : result.error;
+  };
+  assert.match(error({ ...base, dependsOn: [0] }), /dependsOn/);
+  assert.match(error({ ...base, dependsOn: "1" }), /dependsOn/);
 
   const run = [
     { seq: 1, dependsOn: [] },

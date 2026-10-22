@@ -910,10 +910,8 @@ async function publish(
 
   let mergeSha: string | null = null;
   if (written.length > 0) {
-    const check = run("bash", ["scripts/check.sh"]);
+    const check = runCheck(written);
     if (check.code !== 0) {
-      const output = `${check.stdout}${check.stderr}`.trim();
-      if (output !== "") console.error(output);
       console.error("✗ check.sh rouge après écriture — rien n'est committé");
       return 1;
     }
@@ -1040,17 +1038,40 @@ function simulate(plan: Plan, catalog: Catalog): number {
     console.log(`· écrit : ${written.join(", ")}`);
   }
 
-  // `check.sh` est lancé TEL QUEL : la simulation doit voir ce que verrait la
-  // release, ni plus (pas de gate plus strict) ni moins.
-  const check = run("bash", ["scripts/check.sh"]);
+  const check = runCheck(written);
   if (check.code !== 0) {
-    const checkOutput = `${check.stdout}${check.stderr}`.trim();
-    if (checkOutput !== "") console.error(checkOutput);
     console.error("✗ check.sh rouge sur l'arbre de release simulé — la release échouerait ici");
     return 1;
   }
   console.log("✓ release simulée : check.sh vert sur l'arbre écrit");
   return 0;
+}
+
+/**
+ * Les sections de check.sh que la release peut casser : celles qui lisent les
+ * catalogues, les versions et les manifestes, plus celles qui ne coûtent rien.
+ * Ni `rust`, ni `app-swift`, ni `app-ios` : la release n'écrit aucun fichier
+ * Rust ni Swift, et la PR fusionnée les a prouvés sur le même code. `tests`
+ * n'est ajoutée que si la release a écrit quelque chose, et `--tests-base=HEAD`
+ * la réduit aux tests que ces écritures concernent (scripts/test-files.sh).
+ * Mesuré le 2026-10-22 : un check.sh complet dans la copie de la simulation
+ * durait 989 s, soit le statut requis le plus long d'une PR.
+ */
+const RELEASE_CHECK_SECTIONS = ["catalogue", "noms", "plugins", "versions", "extension", "types", "lint", "smoke", "noyau"];
+
+/**
+ * `check.sh` sur l'arbre écrit. Sa sortie est recopiée MÊME en vert : les durées
+ * de section qu'il imprime sont la seule mesure du coût de cette preuve dans un
+ * journal de release ou de simulation.
+ */
+function runCheck(written: string[]): { code: number } {
+  const sections = written.length > 0 ? [...RELEASE_CHECK_SECTIONS, "tests"] : RELEASE_CHECK_SECTIONS;
+  const args = [`--sections=${sections.join(",")}`];
+  if (written.length > 0) args.push("--tests-base=HEAD");
+  const check = run("bash", ["scripts/check.sh", ...args]);
+  const output = `${check.stdout}${check.stderr}`.trim();
+  if (output !== "") (check.code === 0 ? console.log : console.error)(output);
+  return { code: check.code };
 }
 
 async function main(argv: string[]): Promise<number> {
