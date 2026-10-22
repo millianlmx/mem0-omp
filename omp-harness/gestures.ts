@@ -13,9 +13,17 @@ import type { DecisionRow, RunRow } from "./db.ts";
 import { checkpointMessage, dependentsOf } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
 import type { StepKind } from "./machine.ts";
-import { CANCELLABLE, afterHumanValidation, afterSpecsValidation, cancelled, isTerminal, resumeAfterEscalations, resumeAtCheckpoint, reworkAfterReversal } from "./machine.ts";
+import {
+  CANCELLABLE,
+  afterHumanValidation,
+  afterSpecsValidation,
+  cancelled,
+  isTerminal,
+  resumeAfterEscalations,
+  resumeAtCheckpoint,
+  reworkAfterReversal,
+} from "./machine.ts";
 import { humanDecisionMemory } from "./oracle.ts";
-
 
 export type GestureHooks = {
   /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
@@ -25,9 +33,11 @@ export type GestureHooks = {
   /** Le run est-il enfilé ou en cours de merge ? */
   merging: (runId: string) => boolean;
   /** Ouvre un run de suite (décision renversée après le merge). */
-  followUp: (input: { repo: string; title: string; request: string; modules: string[]; priority: number }, actor: Actor) => RunRow;
+  followUp: (
+    input: { repo: string; title: string; request: string; modules: string[]; priority: number },
+    actor: Actor,
+  ) => RunRow;
 };
-
 
 export class HumanLoop {
   readonly #ctx: HarnessContext;
@@ -56,7 +66,10 @@ export class HumanLoop {
   #fresh(runId: string, actor: Actor): RunRow {
     const run = this.#ctx.run(runId);
     if (actor.rev !== undefined && run.rev !== actor.rev) {
-      throw new HarnessError(412, `le run a changé depuis ta lecture (révision ${run.rev}, la tienne ${actor.rev}) : relis-le`);
+      throw new HarnessError(
+        412,
+        `le run a changé depuis ta lecture (révision ${run.rev}, la tienne ${actor.rev}) : relis-le`,
+      );
     }
     return run;
   }
@@ -72,10 +85,11 @@ export class HumanLoop {
     const { store, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
     if (run.state !== "escalated") throw new HarnessError(409, `le run n'attend pas de réponse (état ${run.state})`);
-    const open = new Map(store.listEscalations({ runId, status: "open" }).map(item => [item.id, item]));
+    const open = new Map(store.listEscalations({ runId, status: "open" }).map((item) => [item.id, item]));
     for (const { id, answer } of answers) {
       if (!open.get(id)) throw new HarnessError(404, `escalade ouverte inconnue : ${id}`);
-      if (typeof answer !== "string" || answer.trim() === "") throw new HarnessError(400, `réponse vide pour l'escalade ${id}`);
+      if (typeof answer !== "string" || answer.trim() === "")
+        throw new HarnessError(400, `réponse vide pour l'escalade ${id}`);
     }
     const repo = this.#ctx.repo(run.repo);
     const answered = store.transaction(() =>
@@ -83,25 +97,43 @@ export class HumanLoop {
         const item = open.get(id);
         if (!item) return [];
         store.answerEscalation(id, answer.trim(), actor.by);
-        this.#ctx.event("escalation_answered", runId, { id, answer: answer.trim(), ...(actor.by ? { by: actor.by } : {}) });
+        this.#ctx.event("escalation_answered", runId, {
+          id,
+          answer: answer.trim(),
+          ...(actor.by ? { by: actor.by } : {}),
+        });
         return [{ item, answer: answer.trim() }];
       }),
     );
     for (const { item, answer } of answered) {
-      await oracle.retain(repo.scope, humanDecisionMemory({ feature: run.title, question: item.question, chosen: answer, reason: answer }), ["harness", "decision", item.category]);
+      await oracle.retain(
+        repo.scope,
+        humanDecisionMemory({ feature: run.title, question: item.question, chosen: answer, reason: answer }),
+        ["harness", "decision", item.category],
+      );
     }
     // Relu APRÈS les écritures de l'oracle : un geste a pu passer entre-temps.
     const current = this.#ctx.run(runId);
     if (current.state !== "escalated" || store.listEscalations({ runId, status: "open" }).length > 0) return current;
     // Le lot de la reprise : toutes les escalades de la DERNIÈRE étape escaladée.
-    const lastEscalated = store.listSteps(runId).filter(step => step.status === "escalated").pop();
-    const batch = store.listEscalations({ runId, status: "answered" }).filter(item => item.stepId === lastEscalated?.id);
+    const lastEscalated = store
+      .listSteps(runId)
+      .filter((step) => step.status === "escalated")
+      .pop();
+    const batch = store
+      .listEscalations({ runId, status: "answered" })
+      .filter((item) => item.stepId === lastEscalated?.id);
     store.transaction(() => {
-      const moved = this.#ctx.transition(current, resumeAfterEscalations({ step: current.step as StepKind, fixes: current.fixes, attempts: 0 }), ["escalated"], { actor: { by: actor.by } });
+      const moved = this.#ctx.transition(
+        current,
+        resumeAfterEscalations({ step: current.step as StepKind, fixes: current.fixes, attempts: 0 }),
+        ["escalated"],
+        { actor: { by: actor.by } },
+      );
       if (moved) {
         store.addInstructions(
           runId,
-          `L'humain a tranché les escalades de l'étape. Applique ces réponses, puis termine l'étape :\n${batch.map(item => `- ${item.question} → ${item.answer}`).join("\n")}`,
+          `L'humain a tranché les escalades de l'étape. Applique ces réponses, puis termine l'étape :\n${batch.map((item) => `- ${item.question} → ${item.answer}`).join("\n")}`,
         );
       }
     });
@@ -143,14 +175,27 @@ export class HumanLoop {
     if (run.state === "cancelled") throw new HarnessError(409, "run annulé");
     const decision = store.getDecision(runId, seq);
     if (!decision) throw new HarnessError(404, `décision inconnue : ${runId}#${seq}`);
-    if (decision.status === "reversed" || decision.status === "superseded") throw new HarnessError(409, `décision #${seq} déjà ${decision.status}`);
-    if (option === "" || reason === "") throw new HarnessError(400, "option et reason sont requises : la raison retourne dans l'oracle");
-    if (run.state === "merging" || this.#hooks.merging(runId)) throw new HarnessError(409, "merge en cours : renverse après le merge (un run de suite sera ouvert)");
+    if (decision.status === "reversed" || decision.status === "superseded")
+      throw new HarnessError(409, `décision #${seq} déjà ${decision.status}`);
+    if (option === "" || reason === "")
+      throw new HarnessError(400, "option et reason sont requises : la raison retourne dans l'oracle");
+    if (run.state === "merging" || this.#hooks.merging(runId))
+      throw new HarnessError(409, "merge en cours : renverse après le merge (un run de suite sera ouvert)");
     const repo = this.#ctx.repo(run.repo);
-    await oracle.retain(repo.scope, humanDecisionMemory({ feature: run.title, question: decision.question, chosen: option, reason, reversedFrom: decision.chosen }), ["harness", "decision", "renversement"]);
+    await oracle.retain(
+      repo.scope,
+      humanDecisionMemory({
+        feature: run.title,
+        question: decision.question,
+        chosen: option,
+        reason,
+        reversedFrom: decision.chosen,
+      }),
+      ["harness", "decision", "renversement"],
+    );
     const standing = store.listDecisions({ runId, status: ["auto", "accepted"] });
     const fallen = dependentsOf(standing, seq);
-    const list = (seqs: number[]) => seqs.map(n => `#${n}`).join(", ");
+    const list = (seqs: number[]) => seqs.map((n) => `#${n}`).join(", ");
     const by = actor.by ? { by: actor.by } : {};
 
     if (run.state === "merged" || run.worktree === null || decision.checkpointSha === null) {
@@ -174,12 +219,14 @@ export class HumanLoop {
 
     await this.#hooks.halt(runId);
     const fresh = this.#ctx.run(runId);
-    if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled") throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
+    if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled")
+      throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
     const worktree = fresh.worktree as string;
 
     if (fallen.length === 0) {
       // Rien n'en découle : on garde tout le travail, l'option s'applique par-dessus.
-      if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120));
+      if (await git.isDirty(worktree))
+        await git.commitAll(worktree, `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120));
       store.transaction(() => {
         store.updateRun(runId, { verdict: null });
         store.reverseDecision(runId, seq, option, reason, [], actor.by);
@@ -193,9 +240,15 @@ export class HumanLoop {
         if (fresh.state !== "escalated" && fresh.state !== "queued") {
           const step: StepKind = fresh.step === null || fresh.step === "review" ? "fix" : fresh.step;
           if (fresh.state === "running") {
-            for (const item of store.listEscalations({ runId, status: "open" })) store.answerEscalation(item.id, `caduque : étape relancée après le renversement de #${seq}`);
+            for (const item of store.listEscalations({ runId, status: "open" }))
+              store.answerEscalation(item.id, `caduque : étape relancée après le renversement de #${seq}`);
           }
-          this.#ctx.transition(this.#ctx.run(runId), reworkAfterReversal({ step, fixes: fresh.fixes, attempts: 0 }, step, seq), [fresh.state], { actor: { by: actor.by } });
+          this.#ctx.transition(
+            this.#ctx.run(runId),
+            reworkAfterReversal({ step, fixes: fresh.fixes, attempts: 0 }, step, seq),
+            [fresh.state],
+            { actor: { by: actor.by } },
+          );
         }
       });
       this.#hooks.tick();
@@ -204,14 +257,22 @@ export class HumanLoop {
 
     const stepKind = store.getStep(decision.stepId)?.kind ?? "impl";
     await git.resetTo(worktree, decision.checkpointSha);
-    const sha = await git.commitAll(worktree, checkpointMessage(runId, seq, { question: `${decision.question} (renversée)`, chosen: option, rationale: `Tranché par l'humain : ${reason}` }));
+    const sha = await git.commitAll(
+      worktree,
+      checkpointMessage(runId, seq, {
+        question: `${decision.question} (renversée)`,
+        chosen: option,
+        rationale: `Tranché par l'humain : ${reason}`,
+      }),
+    );
     // Les indépendantes postérieures ont perdu leur commit : elles repartent de ce checkpoint.
-    const kept = standing.filter(d => d.seq > seq && !fallen.includes(d.seq));
+    const kept = standing.filter((d) => d.seq > seq && !fallen.includes(d.seq));
     store.transaction(() => {
       store.updateRun(runId, { verdict: null });
       store.reverseDecision(runId, seq, option, reason, fallen, actor.by);
       // Les escalades encore ouvertes portaient sur un travail qui vient d'être annulé.
-      for (const item of store.listEscalations({ runId, status: "open" })) store.answerEscalation(item.id, `caduque : reprise au checkpoint #${seq}`);
+      for (const item of store.listEscalations({ runId, status: "open" }))
+        store.answerEscalation(item.id, `caduque : reprise au checkpoint #${seq}`);
       store.setCheckpoint(decision.id, sha);
       for (const survivor of kept) store.setCheckpoint(survivor.id, sha);
       store.setInstructions(
@@ -219,10 +280,25 @@ export class HumanLoop {
         `Reprise au checkpoint #${seq} : l'humain a renversé « ${decision.question} ». Applique « ${option} » (raison : ${reason}). ` +
           "Tout ce qui a été fait après ce checkpoint a été annulé ; refais la suite de l'étape avec ce choix. " +
           `Les décisions ${list(fallen)} en découlaient : elles sont annulées, retranche-les si la question se repose.` +
-          (kept.length > 0 ? ` Les décisions ${list(kept.map(d => d.seq))} n'en dépendaient pas : réapplique-les telles quelles.` : ""),
+          (kept.length > 0
+            ? ` Les décisions ${list(kept.map((d) => d.seq))} n'en dépendaient pas : réapplique-les telles quelles.`
+            : ""),
       );
-      this.#ctx.event("decision_reversed", runId, { seq, option, step: stepKind, checkpoint: sha, mode: "reset", superseded: fallen, ...by });
-      this.#ctx.transition(this.#ctx.run(runId), resumeAtCheckpoint({ step: stepKind, fixes: fresh.fixes, attempts: 0 }, stepKind, seq), [fresh.state], { actor: { by: actor.by } });
+      this.#ctx.event("decision_reversed", runId, {
+        seq,
+        option,
+        step: stepKind,
+        checkpoint: sha,
+        mode: "reset",
+        superseded: fallen,
+        ...by,
+      });
+      this.#ctx.transition(
+        this.#ctx.run(runId),
+        resumeAtCheckpoint({ step: stepKind, fixes: fresh.fixes, attempts: 0 }, stepKind, seq),
+        [fresh.state],
+        { actor: { by: actor.by } },
+      );
     });
     this.#hooks.tick();
     return this.#ctx.run(runId);
@@ -238,19 +314,36 @@ export class HumanLoop {
   async #validate(runId: string, approve: boolean, why: string, actor: Actor): Promise<RunRow> {
     const { store, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
-    if (run.state !== "awaiting_human") throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
+    if (run.state !== "awaiting_human")
+      throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
     const specs = run.step === "specs";
     if (!approve) {
       if (why === "") throw new HarnessError(400, "un refus porte sa raison");
-      await oracle.retain(this.#ctx.repo(run.repo).scope, `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`, ["harness", "correction"]);
+      await oracle.retain(
+        this.#ctx.repo(run.repo).scope,
+        `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`,
+        ["harness", "correction"],
+      );
     }
     const current = this.#ctx.run(runId);
     const cursor = { step: current.step ?? "review", fixes: current.fixes, attempts: 0 };
-    const transition = current.step === "specs" ? afterSpecsValidation(cursor, approve, why) : afterHumanValidation(cursor, approve, why);
-    const patch = !approve && current.step !== "specs" ? { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null } : {};
+    const transition =
+      current.step === "specs"
+        ? afterSpecsValidation(cursor, approve, why)
+        : afterHumanValidation(cursor, approve, why);
+    const patch =
+      !approve && current.step !== "specs"
+        ? { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null }
+        : {};
     const moved = store.transaction(() => {
       const next = this.#ctx.transition(current, transition, ["awaiting_human"], { patch, actor: { by: actor.by } });
-      if (next && !approve) store.addInstructions(runId, current.step === "specs" ? `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.` : `L'humain a refusé le verdict : ${why}`);
+      if (next && !approve)
+        store.addInstructions(
+          runId,
+          current.step === "specs"
+            ? `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`
+            : `L'humain a refusé le verdict : ${why}`,
+        );
       return next;
     });
     if (!moved) throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
@@ -267,7 +360,8 @@ export class HumanLoop {
     const run = this.#fresh(runId, actor);
     if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
     // Un merge en cours touche main et le worktree : on ne l'interrompt pas à mi-chemin.
-    if (run.state === "merging" || this.#hooks.merging(runId)) throw new HarnessError(409, "merge en cours : impossible d'annuler");
+    if (run.state === "merging" || this.#hooks.merging(runId))
+      throw new HarnessError(409, "merge en cours : impossible d'annuler");
     if (!this.#ctx.transition(run, cancelled(run), CANCELLABLE, { actor: { by: actor.by } })) {
       throw new HarnessError(409, `le run a changé d'état (${this.#ctx.run(runId).state})`);
     }
@@ -283,7 +377,8 @@ export class HumanLoop {
       const { store } = this.#ctx;
       const run = this.#fresh(runId, actor);
       if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
-      if (!Number.isInteger(priority) || Math.abs(priority) > 1000) throw new HarnessError(400, "priority : entier entre -1000 et 1000");
+      if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
+        throw new HarnessError(400, "priority : entier entre -1000 et 1000");
       store.transaction(() => {
         store.updateRun(runId, { priority });
         this.#ctx.event("priority", runId, { priority, ...(actor.by ? { by: actor.by } : {}) });

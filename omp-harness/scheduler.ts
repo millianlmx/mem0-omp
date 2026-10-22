@@ -8,7 +8,6 @@
 import * as fs from "node:fs";
 import type { HarnessConfig, ModelChoice, ProviderLimit, Tier } from "./config.ts";
 
-
 /** Un seau à jetons : `capacity` d'avance, remplissage continu. */
 export class TokenBucket {
   readonly capacity: number;
@@ -63,13 +62,11 @@ export class TokenBucket {
   }
 }
 
-
 /** `MemAvailable` de `/proc/meminfo`, en Mio, ou `null` si la ligne manque. */
 export function parseMemAvailableMiB(meminfo: string): number | null {
   const match = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo);
   return match ? Math.floor(Number(match[1]) / 1024) : null;
 }
-
 
 /** La lecture réelle : `null` hors Linux (aucune admission mémoire, seulement les slots). */
 export function readMemAvailableMiB(): number | null {
@@ -79,7 +76,6 @@ export function readMemAvailableMiB(): number | null {
     return null;
   }
 }
-
 
 export type SlotKind = "runner" | "heavy";
 
@@ -107,7 +103,6 @@ export type SchedulerOptions = {
 /** Le refroidissement par défaut d'un fournisseur limité sans `retry-after`. */
 export const DEFAULT_COOLDOWN_MS = 60_000;
 
-
 export class Scheduler {
   readonly #capacity: Record<SlotKind, number>;
   readonly #held: Record<SlotKind, Map<number, string>> = { runner: new Map(), heavy: new Map() };
@@ -128,7 +123,7 @@ export class Scheduler {
     this.#admission = options.admission;
     this.#mem = options.memAvailableMiB ?? readMemAvailableMiB;
     this.#now = options.now ?? Date.now;
-    this.#sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#limits = { ...options.providers };
   }
 
@@ -139,11 +134,15 @@ export class Scheduler {
   /** Un slot tout de suite, ou le motif du refus (slots pleins, mémoire insuffisante). */
   tryAcquire(kind: SlotKind, label: string): Slot | Refusal {
     const held = this.#held[kind];
-    if (held.size >= this.#capacity[kind]) return { refused: "slots", detail: `${held.size}/${this.#capacity[kind]} slots ${kind} occupés` };
+    if (held.size >= this.#capacity[kind])
+      return { refused: "slots", detail: `${held.size}/${this.#capacity[kind]} slots ${kind} occupés` };
     const available = this.#mem();
     const need = this.#need(kind);
     if (available !== null && available - need < this.#admission.reserveMiB) {
-      return { refused: "memory", detail: `MemAvailable ${available} Mio − ${need} Mio < réserve ${this.#admission.reserveMiB} Mio` };
+      return {
+        refused: "memory",
+        detail: `MemAvailable ${available} Mio − ${need} Mio < réserve ${this.#admission.reserveMiB} Mio`,
+      };
     }
     const id = this.#nextId++;
     held.set(id, label);
@@ -168,18 +167,24 @@ export class Scheduler {
    */
   acquire(kind: SlotKind, label: string, signal?: AbortSignal, priority = 0, pollMs = 1000): Promise<Slot> {
     if (signal?.aborted) return Promise.reject(new Error("attente de slot annulée"));
-    if (!this.#waiters.some(waiter => waiter.kind === kind)) {
+    if (!this.#waiters.some((waiter) => waiter.kind === kind)) {
       const slot = this.tryAcquire(kind, label);
       if (!("refused" in slot)) return Promise.resolve(slot);
     }
     this.#pollMs = Math.min(this.#pollMs, pollMs);
     return new Promise<Slot>((resolve, reject) => {
-      const waiter: Waiter = { kind, label, priority, seq: this.#waiterSeq++, resolve: slot => {
-        signal?.removeEventListener("abort", onAbort);
-        resolve(slot);
-      } };
+      const waiter: Waiter = {
+        kind,
+        label,
+        priority,
+        seq: this.#waiterSeq++,
+        resolve: (slot) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(slot);
+        },
+      };
       const onAbort = () => {
-        this.#waiters = this.#waiters.filter(other => other !== waiter);
+        this.#waiters = this.#waiters.filter((other) => other !== waiter);
         reject(new Error("attente de slot annulée"));
         // Une attente retirée peut débloquer celles qui la suivaient.
         this.#serve(kind);
@@ -192,7 +197,9 @@ export class Scheduler {
 
   /** Les attentes de `kind`, dans l'ordre où elles seront servies. */
   #queue(kind: SlotKind): Waiter[] {
-    return this.#waiters.filter(waiter => waiter.kind === kind).sort((a, b) => b.priority - a.priority || a.seq - b.seq);
+    return this.#waiters
+      .filter((waiter) => waiter.kind === kind)
+      .sort((a, b) => b.priority - a.priority || a.seq - b.seq);
   }
 
   /** Sert la file de `kind` tant que la tête obtient un slot (la tête bloquée bloque la suite : FIFO strict). */
@@ -200,7 +207,7 @@ export class Scheduler {
     for (const waiter of this.#queue(kind)) {
       const slot = this.tryAcquire(kind, waiter.label);
       if ("refused" in slot) return;
-      this.#waiters = this.#waiters.filter(other => other !== waiter);
+      this.#waiters = this.#waiters.filter((other) => other !== waiter);
       waiter.resolve(slot);
     }
   }
@@ -252,7 +259,12 @@ export class Scheduler {
   }
 
   /** Attend un modèle de la chaîne du tier. Une chaîne vide rend `null` : le modèle par défaut d'OMP. */
-  async waitModel(tier: Tier, candidates: ModelChoice[], from = 0, signal?: AbortSignal): Promise<{ choice: ModelChoice; index: number } | null> {
+  async waitModel(
+    tier: Tier,
+    candidates: ModelChoice[],
+    from = 0,
+    signal?: AbortSignal,
+  ): Promise<{ choice: ModelChoice; index: number } | null> {
     if (candidates.length === 0) return null;
     for (;;) {
       if (signal?.aborted) throw new Error(`attente d'un modèle ${tier} annulée`);
@@ -279,13 +291,28 @@ export class Scheduler {
     this.#limits[provider] = { capacity: 1, refillPerMinute: 60 };
   }
 
-  snapshot(): { runner: SlotSnapshot; heavy: SlotSnapshot; memAvailableMiB: number | null; providers: Record<string, number> } {
+  snapshot(): {
+    runner: SlotSnapshot;
+    heavy: SlotSnapshot;
+    memAvailableMiB: number | null;
+    providers: Record<string, number>;
+  } {
     const providers: Record<string, number> = {};
     for (const [name, bucket] of this.#buckets) providers[name] = Math.floor(bucket.available());
     const waiting = this.waiting();
     return {
-      runner: { used: this.#held.runner.size, capacity: this.#capacity.runner, labels: [...this.#held.runner.values()], waiting: waiting.runner },
-      heavy: { used: this.#held.heavy.size, capacity: this.#capacity.heavy, labels: [...this.#held.heavy.values()], waiting: waiting.heavy },
+      runner: {
+        used: this.#held.runner.size,
+        capacity: this.#capacity.runner,
+        labels: [...this.#held.runner.values()],
+        waiting: waiting.runner,
+      },
+      heavy: {
+        used: this.#held.heavy.size,
+        capacity: this.#capacity.heavy,
+        labels: [...this.#held.heavy.values()],
+        waiting: waiting.heavy,
+      },
       memAvailableMiB: this.#mem(),
       providers,
     };

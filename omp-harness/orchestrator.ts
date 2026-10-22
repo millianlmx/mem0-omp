@@ -38,15 +38,26 @@ export type { Actor, SpawnRunner } from "./context.ts";
 
 export type OrchestratorDeps = HarnessDeps;
 
-
 /** `req` : le compte rendu de besoins déjà établi en session interactive (/req local) — le run part de /specs. */
-export type NewRunInput = { repo: string; title: string; request: string; slug?: string; modules?: string[]; req?: string; priority?: number };
+export type NewRunInput = {
+  repo: string;
+  title: string;
+  request: string;
+  slug?: string;
+  modules?: string[];
+  req?: string;
+  priority?: number;
+};
 
-export type NewProjectInput = { repo: string; title: string; priority?: number; features: { title: string; request: string; slug?: string; modules?: string[] }[] };
+export type NewProjectInput = {
+  repo: string;
+  title: string;
+  priority?: number;
+  features: { title: string; request: string; slug?: string; modules?: string[] }[];
+};
 
 /** Une heure : la cadence de la purge du journal. */
 const PRUNE_EVERY_MS = 60 * 60 * 1000;
-
 
 export function slugify(text: string): string {
   const slug = text
@@ -60,10 +71,8 @@ export function slugify(text: string): string {
   return slug === "" ? "feature" : slug;
 }
 
-
 /** Un candidat à l'admission et ce qui décide de son rang. */
 type Candidate = { run: RunRow; resumed: boolean; group: string };
-
 
 export class Orchestrator {
   readonly #ctx: HarnessContext;
@@ -90,9 +99,9 @@ export class Orchestrator {
     this.#steps = new StepExecutor(this.#ctx);
     this.#merger = new Merger(this.#ctx, () => this.#kick());
     this.#human = new HumanLoop(this.#ctx, {
-      halt: runId => this.#halt(runId),
+      halt: (runId) => this.#halt(runId),
       tick: () => this.#kick(),
-      merging: runId => this.#merger.has(runId),
+      merging: (runId) => this.#merger.has(runId),
       followUp: (input, actor) => this.createRun(input, actor),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
@@ -147,20 +156,26 @@ export class Orchestrator {
    */
   async reloadRepos(next: RepoConfig[]): Promise<{ added: string[]; removed: string[]; kept: string[] }> {
     const config = this.#ctx.config;
-    const before = new Map(config.repos.map(repo => [repo.name, repo]));
-    const names = new Set(next.map(repo => repo.name));
-    const kept = config.repos.filter(repo => !names.has(repo.name) && this.store.listRuns({ repo: repo.name, state: [...ACTIVE_STATES, "queued"] }).length > 0);
+    const before = new Map(config.repos.map((repo) => [repo.name, repo]));
+    const names = new Set(next.map((repo) => repo.name));
+    const kept = config.repos.filter(
+      (repo) =>
+        !names.has(repo.name) &&
+        this.store.listRuns({ repo: repo.name, state: [...ACTIVE_STATES, "queued"] }).length > 0,
+    );
     for (const repo of next) {
       const previous = before.get(repo.name);
       if (previous && repo.scope === "") repo.scope = previous.scope;
     }
-    await this.#prepareRepos(next.filter(repo => !before.has(repo.name) || repo.scope === ""));
+    await this.#prepareRepos(next.filter((repo) => !before.has(repo.name) || repo.scope === ""));
     config.repos = [...next, ...kept];
-    const added = next.filter(repo => !before.has(repo.name)).map(repo => repo.name);
-    const removed = [...before.keys()].filter(name => !names.has(name) && !kept.some(repo => repo.name === name));
-    this.#ctx.log(`dépôts rechargés : +${added.join(", ") || "∅"} −${removed.join(", ") || "∅"}${kept.length > 0 ? ` (gardés, runs vivants : ${kept.map(repo => repo.name).join(", ")})` : ""}`);
+    const added = next.filter((repo) => !before.has(repo.name)).map((repo) => repo.name);
+    const removed = [...before.keys()].filter((name) => !names.has(name) && !kept.some((repo) => repo.name === name));
+    this.#ctx.log(
+      `dépôts rechargés : +${added.join(", ") || "∅"} −${removed.join(", ") || "∅"}${kept.length > 0 ? ` (gardés, runs vivants : ${kept.map((repo) => repo.name).join(", ")})` : ""}`,
+    );
     this.#kick();
-    return { added, removed, kept: kept.map(repo => repo.name) };
+    return { added, removed, kept: kept.map((repo) => repo.name) };
   }
 
   async stop(): Promise<void> {
@@ -172,7 +187,7 @@ export class Orchestrator {
       live.abort.abort();
       await live.session?.stop();
     }
-    await Promise.allSettled(lives.map(live => live.done));
+    await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -194,7 +209,11 @@ export class Orchestrator {
       try {
         await git.trustWorktree(this.#ctx.repo(run.repo).path, run.worktree);
       } catch (err) {
-        this.#ctx.transition(run, crashed(run, `worktree non reconnu par son clone : ${err instanceof Error ? err.message : String(err)}`), [run.state]);
+        this.#ctx.transition(
+          run,
+          crashed(run, `worktree non reconnu par son clone : ${err instanceof Error ? err.message : String(err)}`),
+          [run.state],
+        );
       }
     }
     for (const run of store.listRuns({ state: ["running"] })) {
@@ -207,7 +226,8 @@ export class Orchestrator {
       }
       const cursor = { step: (run.step ?? "req") as StepKind, fixes: run.fixes, attempts: run.attempts };
       store.transaction(() => {
-        if (this.#ctx.transition(run, recovered(cursor), ["running"])) this.#ctx.event("recovered", run.id, { step: run.step });
+        if (this.#ctx.transition(run, recovered(cursor), ["running"]))
+          this.#ctx.event("recovered", run.id, { step: run.step });
       });
     }
     await this.audits.recover();
@@ -219,7 +239,8 @@ export class Orchestrator {
     if (now - this.#prunedAt < PRUNE_EVERY_MS) return;
     this.#prunedAt = now;
     const pruned = this.store.pruneEvents(now - this.#ctx.config.events.retentionDays * 24 * 60 * 60 * 1000);
-    if (pruned > 0) this.#ctx.log(`journal : ${pruned} événement(s) de plus de ${this.#ctx.config.events.retentionDays} j purgé(s)`);
+    if (pruned > 0)
+      this.#ctx.log(`journal : ${pruned} événement(s) de plus de ${this.#ctx.config.events.retentionDays} j purgé(s)`);
   }
 
   /** Un tour automatique (un run créé, un slot rendu, un geste) : seulement une fois le service démarré. */
@@ -247,9 +268,9 @@ export class Orchestrator {
   /** Les candidats de chaque dépôt : les runs repris d'abord, puis les nouveaux que les modules et `maxParallel` laissent partir. */
   #candidates(): { candidates: Candidate[]; activeByRepo: Map<string, number>; activeByGroup: Map<string, number> } {
     const { store } = this.#ctx;
-    const queued = store.listRuns({ state: ["queued"] }).filter(run => !this.#live.has(run.id));
+    const queued = store.listRuns({ state: ["queued"] }).filter((run) => !this.#live.has(run.id));
     // Un run lancé reste `queued` en base jusqu'à son worktree : il occupe déjà ses modules.
-    const active = store.listRuns({ state: ACTIVE_STATES }).filter(run => !this.#live.has(run.id));
+    const active = store.listRuns({ state: ACTIVE_STATES }).filter((run) => !this.#live.has(run.id));
     for (const live of this.#live.keys()) {
       const run = store.getRun(live);
       if (run) active.push(run);
@@ -264,15 +285,21 @@ export class Orchestrator {
     for (const run of queued) byRepo.set(run.repo, [...(byRepo.get(run.repo) ?? []), run]);
     const candidates: Candidate[] = [];
     for (const [name, runs] of byRepo) {
-      const repo = this.#ctx.config.repos.find(entry => entry.name === name);
+      const repo = this.#ctx.config.repos.find((entry) => entry.name === name);
       if (!repo) continue;
       // Un run qui a déjà un worktree a déjà été admis par le planificateur : il repasse devant.
-      const resumed = runs.filter(run => run.worktree !== null);
-      const fresh = runs.filter(run => run.worktree === null);
-      const others = active.filter(run => run.repo === name).map(run => ({ id: run.id, modules: run.modules }));
-      const free = new Set(schedulable(fresh.map(run => ({ id: run.id, modules: run.modules })), [...others, ...resumed.map(run => ({ id: run.id, modules: run.modules }))]));
-      let room = repo.maxParallel === null ? Number.POSITIVE_INFINITY : repo.maxParallel - (activeByRepo.get(name) ?? 0);
-      for (const run of [...resumed, ...fresh.filter(run => free.has(run.id))]) {
+      const resumed = runs.filter((run) => run.worktree !== null);
+      const fresh = runs.filter((run) => run.worktree === null);
+      const others = active.filter((run) => run.repo === name).map((run) => ({ id: run.id, modules: run.modules }));
+      const free = new Set(
+        schedulable(
+          fresh.map((run) => ({ id: run.id, modules: run.modules })),
+          [...others, ...resumed.map((run) => ({ id: run.id, modules: run.modules }))],
+        ),
+      );
+      let room =
+        repo.maxParallel === null ? Number.POSITIVE_INFINITY : repo.maxParallel - (activeByRepo.get(name) ?? 0);
+      for (const run of [...resumed, ...fresh.filter((run) => free.has(run.id))]) {
         if (room <= 0) break;
         candidates.push({ run, resumed: run.worktree !== null, group: groupOf(run) });
         room--;
@@ -285,7 +312,7 @@ export class Orchestrator {
   #admit(): void {
     const { candidates, activeByRepo, activeByGroup } = this.#candidates();
     // Un run qui n'attend plus (admis, annulé, devenu non candidat) oublie son dernier refus.
-    const waiting = new Set(candidates.map(c => c.run.id));
+    const waiting = new Set(candidates.map((c) => c.run.id));
     for (const id of this.#refused.keys()) if (!waiting.has(id)) this.#refused.delete(id);
     const rank = (c: Candidate): number[] => [
       -c.run.priority,
@@ -301,7 +328,11 @@ export class Orchestrator {
       if ("refused" in slot) {
         const why = `${slot.refused}: ${slot.detail}`;
         if (this.#refused.get(next.run.id)?.split(":")[0] !== slot.refused) {
-          this.#ctx.event("admission_refused", next.run.id, { reason: slot.refused, detail: slot.detail, waiting: candidates.length + 1 });
+          this.#ctx.event("admission_refused", next.run.id, {
+            reason: slot.refused,
+            detail: slot.detail,
+            waiting: candidates.length + 1,
+          });
         }
         this.#refused.set(next.run.id, why);
         return;
@@ -344,7 +375,19 @@ export class Orchestrator {
       // Une revue reprise (escalade, renversement) re-passe par le rebase.
       if (run.step === "review") live.pendingRebase = true;
       // Un geste humain (annulation…) a pu passer pendant le provisionnement : rien ne l'écrase.
-      const started = this.#ctx.transition(run, { state: "running", step: run.step, fixes: run.fixes, attempts: run.attempts, keepRunner: false, rebase: false, reason: run.reason ?? "" }, ["queued"]);
+      const started = this.#ctx.transition(
+        run,
+        {
+          state: "running",
+          step: run.step,
+          fixes: run.fixes,
+          attempts: run.attempts,
+          keepRunner: false,
+          rebase: false,
+          reason: run.reason ?? "",
+        },
+        ["queued"],
+      );
       if (!started) return;
       while (!live.abort.signal.aborted) {
         run = store.getRun(live.runId) as RunRow;
@@ -352,11 +395,15 @@ export class Orchestrator {
         const outcome = await this.#steps.execute(live, run);
         if (live.abort.signal.aborted) break;
         run = store.getRun(live.runId) as RunRow;
-        const transition = nextAfter({ step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts }, outcome, {
-          fixCap: config.review.fixCap,
-          stepRetries: config.runner.stepRetries,
-          specsGate: config.review.specsGate,
-        });
+        const transition = nextAfter(
+          { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts },
+          outcome,
+          {
+            fixCap: config.review.fixCap,
+            stepRetries: config.runner.stepRetries,
+            specsGate: config.review.specsGate,
+          },
+        );
         if (!this.#ctx.transition(run, transition, ["running"])) break;
         if (!transition.keepRunner) await live.session?.stop();
         if (transition.rebase) live.pendingRebase = true;
@@ -366,7 +413,8 @@ export class Orchestrator {
       const run = store.getRun(live.runId);
       if (run && (run.state === "queued" || run.state === "running") && !live.abort.signal.aborted) {
         const reason = err instanceof Error ? err.message : String(err);
-        if (this.#ctx.transition(run, crashed(run, reason), [run.state])) this.#ctx.log(`run ${live.runId} en échec : ${reason}`);
+        if (this.#ctx.transition(run, crashed(run, reason), [run.state]))
+          this.#ctx.log(`run ${live.runId} en échec : ${reason}`);
       }
     }
   }
@@ -381,11 +429,13 @@ export class Orchestrator {
 
   createRun(input: NewRunInput & { projectId?: string; projectOrder?: number }, actor: Actor = SERVICE): RunRow {
     const repo = this.#ctx.repo(input.repo);
-    if (input.title.trim() === "" || input.request.trim() === "") throw new HarnessError(400, "title et request sont requis");
+    if (input.title.trim() === "" || input.request.trim() === "")
+      throw new HarnessError(400, "title et request sont requis");
     const req = input.req?.trim() ?? "";
     if (req !== "" && !/^##\s+Besoins/m.test(req)) throw new HarnessError(400, "req : la section `## Besoins` manque");
     const priority = input.priority ?? 0;
-    if (!Number.isInteger(priority) || Math.abs(priority) > 1000) throw new HarnessError(400, "priority : entier entre -1000 et 1000");
+    if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
+      throw new HarnessError(400, "priority : entier entre -1000 et 1000");
     const { store } = this.#ctx;
     const run = store.transaction(() => {
       const slug = this.#freeSlug(input.repo, slugify(input.slug ?? input.title));
@@ -414,7 +464,11 @@ export class Orchestrator {
       });
       return created;
     });
-    if (req !== "") void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, ["harness", "besoins"]);
+    if (req !== "")
+      void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, [
+        "harness",
+        "besoins",
+      ]);
     this.#kick();
     return run;
   }
@@ -427,15 +481,39 @@ export class Orchestrator {
     const known = knownModules(await git.listFiles(repo.path, repo.mainBranch));
     const modules: string[][] = [];
     for (const feature of input.features) {
-      modules.push(feature.modules && feature.modules.length > 0 ? feature.modules : (await modulesViaOracle(oracle, repo.scope, `${feature.title}\n${feature.request}`, known)).modules);
+      modules.push(
+        feature.modules && feature.modules.length > 0
+          ? feature.modules
+          : (await modulesViaOracle(oracle, repo.scope, `${feature.title}\n${feature.request}`, known)).modules,
+      );
     }
     // Le projet et ses runs naissent ensemble : un client ne voit jamais un projet à moitié créé.
     return store.transaction(() => {
       const project = store.createProject({ id: newId("p"), repo: repo.name, title: input.title });
       const runs = input.features.map((feature, order) =>
-        this.createRun({ ...feature, repo: repo.name, modules: modules[order] ?? [], projectId: project.id, projectOrder: order, ...(input.priority !== undefined ? { priority: input.priority } : {}) }, actor),
+        this.createRun(
+          {
+            ...feature,
+            repo: repo.name,
+            modules: modules[order] ?? [],
+            projectId: project.id,
+            projectOrder: order,
+            ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          },
+          actor,
+        ),
       );
-      this.#ctx.event("project_created", null, { projectId: project.id, repo: repo.name, runs: runs.map(run => ({ id: run.id, modules: run.modules })), ...(actor.by ? { by: actor.by } : {}) }, repo.name);
+      this.#ctx.event(
+        "project_created",
+        null,
+        {
+          projectId: project.id,
+          repo: repo.name,
+          runs: runs.map((run) => ({ id: run.id, modules: run.modules })),
+          ...(actor.by ? { by: actor.by } : {}),
+        },
+        repo.name,
+      );
       return { projectId: project.id, runs };
     });
   }
@@ -499,7 +577,9 @@ export class Orchestrator {
         runner: { ...snapshot.runner, labels: snapshot.runner.labels.filter(visible) },
         heavy: { ...snapshot.heavy, labels: snapshot.heavy.labels.filter(visible) },
       },
-      repos: this.#ctx.config.repos.filter(repo => repos === null || repos.includes(repo.name)).map(repo => ({ name: repo.name, scope: repo.scope, maxParallel: repo.maxParallel })),
+      repos: this.#ctx.config.repos
+        .filter((repo) => repos === null || repos.includes(repo.name))
+        .map((repo) => ({ name: repo.name, scope: repo.scope, maxParallel: repo.maxParallel })),
     };
   }
 
@@ -510,12 +590,10 @@ export class Orchestrator {
   }
 }
 
-
 /** Le groupe d'équité d'un run : son projet, sinon lui-même. */
 function groupOf(run: RunRow): string {
   return run.projectId ?? `run:${run.id}`;
 }
-
 
 function compareRanks(a: number[], b: number[]): number {
   for (let i = 0; i < a.length; i++) {

@@ -24,7 +24,6 @@ import type { Exec, ProcResult } from "./proc.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Git } from "./git.ts";
 
-
 export type TestScope = "touched" | "full";
 
 export type HeavyOutcome = "pass" | "fail" | "oom" | "timeout" | "error" | "skipped";
@@ -57,25 +56,23 @@ export type HeavyResult = {
 /** Les octets de sortie gardés d'un job : la fin, là où est l'échec. */
 export const OUTPUT_TAIL = 20_000;
 
-
 /** Une chaîne citée pour `bash -c`. */
 export function shellQuote(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
-
 
 /** La commande de test d'une scope, ou `null` (scope `touched` sans fichier : rien à tester). */
 export function testCommand(repo: RepoConfig, scope: TestScope, files: string[]): string | null {
   if (scope === "full") return repo.tests.full;
   if (files.length === 0) return null;
   const quoted = files.map(shellQuote).join(" ");
-  return repo.tests.touched.includes("{files}") ? repo.tests.touched.split("{files}").join(quoted) : `${repo.tests.touched} ${quoted}`;
+  return repo.tests.touched.includes("{files}")
+    ? repo.tests.touched.split("{files}").join(quoted)
+    : `${repo.tests.touched} ${quoted}`;
 }
-
 
 /** Variables qui changent d'un worktree à l'autre sans changer le résultat : hors clé de cache. */
 const KEY_EXCLUDED_ENV = new Set(["CARGO_TARGET_DIR", "HOME", "TMPDIR"]);
-
 
 /** L'environnement COMPLET d'un job heavy : rien n'est hérité du service (aucune clé). */
 export function heavyEnv(config: HarnessConfig, worktree: string): Record<string, string> {
@@ -84,33 +81,42 @@ export function heavyEnv(config: HarnessConfig, worktree: string): Record<string
     LANG: "C.UTF-8",
     CI: "1",
   };
-  if (config.heavy.cargoTargetRoot) env.CARGO_TARGET_DIR = path.join(config.heavy.cargoTargetRoot, path.basename(worktree));
+  if (config.heavy.cargoTargetRoot)
+    env.CARGO_TARGET_DIR = path.join(config.heavy.cargoTargetRoot, path.basename(worktree));
   return { ...env, ...config.heavy.env };
 }
-
 
 /** La clé du cache : tree hash + commande + env (hors variables de chemin propres au worktree). */
 export function cacheKey(tree: string, command: string, env: Record<string, string>): string {
   const stable = Object.keys(env)
-    .filter(key => !KEY_EXCLUDED_ENV.has(key))
+    .filter((key) => !KEY_EXCLUDED_ENV.has(key))
     .sort()
-    .map(key => [key, env[key]]);
-  return createHash("sha256").update(JSON.stringify({ tree, command, env: stable })).digest("hex");
+    .map((key) => [key, env[key]]);
+  return createHash("sha256")
+    .update(JSON.stringify({ tree, command, env: stable }))
+    .digest("hex");
 }
-
 
 /** `300%` → `3` : le quota CPU de systemd en nombre de cœurs du moteur. */
 export function cpusOf(quota: string): string {
   return String(Number.parseInt(quota, 10) / 100);
 }
 
-
 /** Le job en conteneur frère : sans réseau ni secret, worktree en écriture, clone en lecture. */
-function containerHeavyArgv(config: HarnessConfig, repo: RepoConfig, worktree: string, unit: string, command: string, env: Record<string, string>): { command: string; args: string[] } {
+function containerHeavyArgv(
+  config: HarnessConfig,
+  repo: RepoConfig,
+  worktree: string,
+  unit: string,
+  command: string,
+  env: Record<string, string>,
+): { command: string; args: string[] } {
   const heavy = config.heavy;
   const writable = [worktree, ...(heavy.cargoTargetRoot ? [heavy.cargoTargetRoot] : []), ...heavy.readWritePaths];
   return engine(config, [
-    "run", "--rm", "--init",
+    "run",
+    "--rm",
+    "--init",
     `--name=${unit}`,
     "--label=omp-harness=heavy",
     "--network=none",
@@ -123,17 +129,25 @@ function containerHeavyArgv(config: HarnessConfig, repo: RepoConfig, worktree: s
     `--user=${containerUser(config)}`,
     "--tmpfs=/tmp",
     `--workdir=${worktree}`,
-    ...[...new Set(writable)].flatMap(dir => ["--volume", `${dir}:${dir}`]),
+    ...[...new Set(writable)].flatMap((dir) => ["--volume", `${dir}:${dir}`]),
     ...(writable.includes(repo.path) ? [] : ["--volume", `${repo.path}:${repo.path}:ro`]),
     ...Object.entries({ HOME: "/tmp", ...env }).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
     repo.testImage ?? config.container.testImage,
-    "bash", "-c", command,
+    "bash",
+    "-c",
+    command,
   ]);
 }
 
-
 /** La ligne de commande d'un job : unité systemd transitoire, conteneur frère, ou `bash -c` nu (isolation `none`). */
-export function heavyArgv(config: HarnessConfig, worktree: string, unit: string, command: string, env: Record<string, string>, repo?: RepoConfig): { command: string; args: string[] } {
+export function heavyArgv(
+  config: HarnessConfig,
+  worktree: string,
+  unit: string,
+  command: string,
+  env: Record<string, string>,
+  repo?: RepoConfig,
+): { command: string; args: string[] } {
   if (config.heavy.isolation === "none") return { command: "bash", args: ["-c", command] };
   if (config.heavy.isolation === "container") {
     if (!repo) throw new Error("isolation container : le dépôt du job est requis (image de tests, clone)");
@@ -149,17 +163,28 @@ export function heavyArgv(config: HarnessConfig, worktree: string, unit: string,
     `--unit=${unit}`,
     `--slice=${heavy.slice}`,
     `--working-directory=${worktree}`,
-    "-p", `MemoryMax=${heavy.memoryMax}`,
-    "-p", `CPUQuota=${heavy.cpuQuota}`,
-    "-p", `User=${heavy.user}`,
-    "-p", "PrivateNetwork=yes",
-    "-p", `OOMScoreAdjust=${heavy.oomScoreAdjust}`,
-    "-p", `RuntimeMaxSec=${heavy.timeoutSec}`,
-    "-p", "NoNewPrivileges=yes",
-    "-p", "PrivateTmp=yes",
-    "-p", "UMask=0002",
-    "-p", "ProtectSystem=strict",
-    "-p", `ReadWritePaths=${writable.join(" ")}`,
+    "-p",
+    `MemoryMax=${heavy.memoryMax}`,
+    "-p",
+    `CPUQuota=${heavy.cpuQuota}`,
+    "-p",
+    `User=${heavy.user}`,
+    "-p",
+    "PrivateNetwork=yes",
+    "-p",
+    `OOMScoreAdjust=${heavy.oomScoreAdjust}`,
+    "-p",
+    `RuntimeMaxSec=${heavy.timeoutSec}`,
+    "-p",
+    "NoNewPrivileges=yes",
+    "-p",
+    "PrivateTmp=yes",
+    "-p",
+    "UMask=0002",
+    "-p",
+    "ProtectSystem=strict",
+    "-p",
+    `ReadWritePaths=${writable.join(" ")}`,
     ...Object.entries(env).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
     heavy.shell,
@@ -169,24 +194,22 @@ export function heavyArgv(config: HarnessConfig, worktree: string, unit: string,
   return launch(config, args);
 }
 
-
 /** Le `Finished with result: …` de `systemd-run --wait`, ou `null`. */
 export function systemdResult(stderr: string): string | null {
   const match = /Finished with result:\s*([\w-]+)/.exec(stderr);
   return match ? (match[1] as string) : null;
 }
 
-
 /** L'issue d'un job à partir de son process. */
 export function classify(result: ProcResult): HeavyOutcome {
   const unitResult = systemdResult(result.stderr);
   if (result.timedOut || unitResult === "timeout") return "timeout";
-  if (unitResult === "oom-kill" || result.code === 137 || (result.code === null && result.signal === "SIGKILL")) return "oom";
+  if (unitResult === "oom-kill" || result.code === 137 || (result.code === null && result.signal === "SIGKILL"))
+    return "oom";
   if (result.code === 0) return "pass";
   if (result.code === 127 && result.stdout === "") return "error";
   return "fail";
 }
-
 
 /** L'environnement du CLI qui lance le job : de quoi joindre le moteur, rien d'autre. */
 function clientEnv(): Record<string, string> {
@@ -198,7 +221,6 @@ function clientEnv(): Record<string, string> {
   return env;
 }
 
-
 export type HeavyDeps = {
   config: HarnessConfig;
   store: Store;
@@ -207,7 +229,6 @@ export type HeavyDeps = {
   exec: Exec;
   now?: () => number;
 };
-
 
 export class HeavyRunner {
   readonly #deps: HeavyDeps;
@@ -218,7 +239,9 @@ export class HeavyRunner {
   }
 
   /** La clé de cache de la scope sur l'arbre COURANT du worktree, ou `null` si rien à tester. */
-  async keyFor(job: Omit<HeavyJob, "runId" | "stepId">): Promise<{ key: string; tree: string; command: string } | null> {
+  async keyFor(
+    job: Omit<HeavyJob, "runId" | "stepId">,
+  ): Promise<{ key: string; tree: string; command: string } | null> {
     const command = testCommand(job.repo, job.scope, job.files);
     if (command === null) return null;
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
@@ -231,16 +254,45 @@ export class HeavyRunner {
     const env = heavyEnv(config, job.worktree);
     const command = testCommand(job.repo, job.scope, job.files);
     if (command === null) {
-      return { outcome: "skipped", exitCode: null, output: "aucun fichier touché : rien à tester", durationMs: 0, attempts: 0, cached: false, tree: "", key: "", command: "" };
+      return {
+        outcome: "skipped",
+        exitCode: null,
+        output: "aucun fichier touché : rien à tester",
+        durationMs: 0,
+        attempts: 0,
+        cached: false,
+        tree: "",
+        key: "",
+        command: "",
+      };
     }
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
     const key = cacheKey(tree, command, env);
 
     const hit = store.cacheGet(key);
     if (hit) {
-      store.addTestRun({ runId: job.runId, stepId: job.stepId, scope: job.scope, key, tree, outcome: hit.outcome, cached: true, attempts: 0 });
+      store.addTestRun({
+        runId: job.runId,
+        stepId: job.stepId,
+        scope: job.scope,
+        key,
+        tree,
+        outcome: hit.outcome,
+        cached: true,
+        attempts: 0,
+      });
       store.appendEvent("heavy_cached", job.runId, { scope: job.scope, outcome: hit.outcome, tree });
-      return { outcome: hit.outcome, exitCode: hit.exitCode, output: hit.output, durationMs: hit.durationMs, attempts: 0, cached: true, tree, key, command };
+      return {
+        outcome: hit.outcome,
+        exitCode: hit.exitCode,
+        output: hit.output,
+        durationMs: hit.durationMs,
+        attempts: 0,
+        cached: true,
+        tree,
+        key,
+        command,
+      };
     }
 
     const maxAttempts = 1 + config.heavy.oomRetries;
@@ -269,25 +321,64 @@ export class HeavyRunner {
       }
       const outcome = classify(result);
       const output = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.slice(-OUTPUT_TAIL);
-      last = { outcome, exitCode: result.code, output, durationMs: now() - started, attempts, cached: false, tree, key, command };
-      store.appendEvent("heavy_done", job.runId, { scope: job.scope, attempt: attempts, outcome, exitCode: result.code });
+      last = {
+        outcome,
+        exitCode: result.code,
+        output,
+        durationMs: now() - started,
+        attempts,
+        cached: false,
+        tree,
+        key,
+        command,
+      };
+      store.appendEvent("heavy_done", job.runId, {
+        scope: job.scope,
+        attempt: attempts,
+        outcome,
+        exitCode: result.code,
+      });
       if (outcome !== "oom") break;
-      if (attempts < maxAttempts) store.appendEvent("heavy_oom_retry", job.runId, { scope: job.scope, attempt: attempts, memoryMax: config.heavy.memoryMax });
+      if (attempts < maxAttempts)
+        store.appendEvent("heavy_oom_retry", job.runId, {
+          scope: job.scope,
+          attempt: attempts,
+          memoryMax: config.heavy.memoryMax,
+        });
     }
     const final = last as HeavyResult;
     // Seules les issues DÉTERMINISTES entrent au cache : un OOM ou un délai dépend de la charge.
     if (final.outcome === "pass" || final.outcome === "fail") {
-      store.cachePut({ key, repo: job.repo.name, tree, command, outcome: final.outcome, exitCode: final.exitCode ?? -1, output: final.output, durationMs: final.durationMs });
+      store.cachePut({
+        key,
+        repo: job.repo.name,
+        tree,
+        command,
+        outcome: final.outcome,
+        exitCode: final.exitCode ?? -1,
+        output: final.output,
+        durationMs: final.durationMs,
+      });
     }
-    store.addTestRun({ runId: job.runId, stepId: job.stepId, scope: job.scope, key, tree, outcome: final.outcome, cached: false, attempts });
+    store.addTestRun({
+      runId: job.runId,
+      stepId: job.stepId,
+      scope: job.scope,
+      key,
+      tree,
+      outcome: final.outcome,
+      cached: false,
+      attempts,
+    });
     return final;
   }
 }
 
-
 /** Le résultat rendu au runner : structuré, jamais une exception. */
 export function heavyReport(result: HeavyResult, memoryMax: string): string {
-  const head = result.cached ? "(cache : arbre déjà testé)" : `(${result.attempts} tentative(s), ${Math.round(result.durationMs / 1000)} s)`;
+  const head = result.cached
+    ? "(cache : arbre déjà testé)"
+    : `(${result.attempts} tentative(s), ${Math.round(result.durationMs / 1000)} s)`;
   switch (result.outcome) {
     case "pass":
       return `VERT ${head}\n${result.output.slice(-2000)}`;

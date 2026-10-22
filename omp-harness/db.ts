@@ -9,7 +9,6 @@ import type { StepKind, RunState } from "./machine.ts";
 import type { Verdict } from "./verdict.ts";
 import type { DecisionCategory } from "./decisions.ts";
 
-
 export type RunRow = {
   id: string;
   repo: string;
@@ -100,7 +99,15 @@ export type EscalationRow = {
  * Un événement du journal. `repo` sert au filtrage par client (un client ne voit que
  * ses dépôts). Un événement ÉPHÉMÈRE (`id` 0) est poussé en direct, jamais stocké.
  */
-export type EventRow = { id: number; at: number; runId: string | null; repo: string | null; type: string; payload: Record<string, unknown>; ephemeral?: true };
+export type EventRow = {
+  id: number;
+  at: number;
+  runId: string | null;
+  repo: string | null;
+  type: string;
+  payload: Record<string, unknown>;
+  ephemeral?: true;
+};
 
 export type CacheOutcome = "pass" | "fail";
 
@@ -134,7 +141,13 @@ export type ProjectRow = { id: string; repo: string; title: string; status: "act
 export type AuditState = "queued" | "analysing" | "proposed" | "launched" | "failed" | "cancelled";
 
 /** Une proposition d'audit : une faiblesse à corriger ou une feature à construire. */
-export type AuditProposal = { title: string; request: string; modules: string[]; kind: "faiblesse" | "feature"; rationale: string };
+export type AuditProposal = {
+  title: string;
+  request: string;
+  modules: string[];
+  kind: "faiblesse" | "feature";
+  rationale: string;
+};
 
 export type AuditRow = {
   id: string;
@@ -147,7 +160,6 @@ export type AuditRow = {
   createdAt: number;
   updatedAt: number;
 };
-
 
 export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE runs (
@@ -299,7 +311,6 @@ export const MIGRATIONS: readonly string[] = [
    CREATE INDEX runs_repo_state ON runs (repo, state);`,
 ];
 
-
 type SqlValue = string | number | null;
 type Row = Record<string, unknown>;
 
@@ -326,7 +337,6 @@ function json<T>(row: Row, key: string, fallback: T): T {
     return fallback;
   }
 }
-
 
 function runOf(row: Row): RunRow {
   return {
@@ -476,7 +486,6 @@ function projectOf(row: Row): ProjectRow {
   };
 }
 
-
 /** Les colonnes modifiables d'un run, en camelCase → snake_case. */
 const RUN_COLUMNS: Record<string, string> = {
   state: "state",
@@ -494,14 +503,30 @@ const RUN_COLUMNS: Record<string, string> = {
   priority: "priority",
 };
 
-export type RunPatch = Partial<Pick<RunRow, "state" | "step" | "fixes" | "attempts" | "worktree" | "baseSha" | "modules" | "verdict" | "mergeSha" | "prUrl" | "reason" | "model" | "priority">>;
+export type RunPatch = Partial<
+  Pick<
+    RunRow,
+    | "state"
+    | "step"
+    | "fixes"
+    | "attempts"
+    | "worktree"
+    | "baseSha"
+    | "modules"
+    | "verdict"
+    | "mergeSha"
+    | "prUrl"
+    | "reason"
+    | "model"
+    | "priority"
+  >
+>;
 
 export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" | "branch"> &
   Partial<Pick<RunRow, "projectId" | "projectOrder" | "modules" | "state" | "step" | "priority" | "createdBy">>;
 
 /** Le filtre d'un lecteur : `null` voit tous les dépôts, sinon seulement ceux de la liste. */
 export type RepoFilter = readonly string[] | null;
-
 
 /** Restreint une requête sur une table liée aux runs (`run_id`) aux dépôts permis ; `false` : aucun dépôt permis. */
 function repoClause(repos: RepoFilter | undefined, where: string[], params: SqlValue[]): boolean {
@@ -512,14 +537,12 @@ function repoClause(repos: RepoFilter | undefined, where: string[], params: SqlV
   return true;
 }
 
-
 function encode(value: unknown): SqlValue {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" || typeof value === "number") return value;
   if (typeof value === "boolean") return value ? 1 : 0;
   return JSON.stringify(value);
 }
-
 
 export class Store {
   readonly db: DatabaseSync;
@@ -634,7 +657,9 @@ export class Store {
     return this.#get("SELECT 1 AS hit FROM runs WHERE repo = ? AND slug = ?", repo, slug) !== undefined;
   }
 
-  listRuns(filter: { state?: readonly RunState[]; repo?: string; projectId?: string; repos?: RepoFilter } = {}): RunRow[] {
+  listRuns(
+    filter: { state?: readonly RunState[]; repo?: string; projectId?: string; repos?: RepoFilter } = {},
+  ): RunRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
     if (filter.state && filter.state.length > 0) {
@@ -702,7 +727,12 @@ export class Store {
 
   /** Ajoute une consigne à celles déjà en attente (un renversement, puis la réponse aux escalades…). */
   addInstructions(runId: string, text: string): void {
-    this.#run("UPDATE runs SET instructions = CASE WHEN instructions IS NULL OR instructions = '' THEN ? ELSE instructions || char(10) || char(10) || ? END WHERE id = ?", text, text, runId);
+    this.#run(
+      "UPDATE runs SET instructions = CASE WHEN instructions IS NULL OR instructions = '' THEN ? ELSE instructions || char(10) || char(10) || ? END WHERE id = ?",
+      text,
+      text,
+      runId,
+    );
   }
 
   /** Remplace les consignes en attente (une reprise au checkpoint annule les précédentes). */
@@ -751,9 +781,17 @@ export class Store {
 
   // -- décisions ------------------------------------------------------------
 
-  addDecision(input: Omit<DecisionRow, "id" | "seq" | "status" | "reversalOption" | "reversalReason" | "decidedBy" | "createdAt" | "decidedAt">): DecisionRow {
+  addDecision(
+    input: Omit<
+      DecisionRow,
+      "id" | "seq" | "status" | "reversalOption" | "reversalReason" | "decidedBy" | "createdAt" | "decidedAt"
+    >,
+  ): DecisionRow {
     return this.transaction(() => {
-      const next = Number((this.#get("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM decisions WHERE run_id = ?", input.runId) as Row).next);
+      const next = Number(
+        (this.#get("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM decisions WHERE run_id = ?", input.runId) as Row)
+          .next,
+      );
       const result = this.#run(
         `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, category, status, checkpoint_sha, depends_on, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?, ?, ?)`,
@@ -799,12 +837,25 @@ export class Store {
   }
 
   acceptDecision(runId: string, seq: number, by: string | null = null): DecisionRow | null {
-    this.#run("UPDATE decisions SET status = 'accepted', decided_at = ?, decided_by = ? WHERE run_id = ? AND seq = ? AND status = 'auto'", this.#now(), by, runId, seq);
+    this.#run(
+      "UPDATE decisions SET status = 'accepted', decided_at = ?, decided_by = ? WHERE run_id = ? AND seq = ? AND status = 'auto'",
+      this.#now(),
+      by,
+      runId,
+      seq,
+    );
     return this.getDecision(runId, seq);
   }
 
   /** Renverse la décision `seq` ; celles de `superseded` (ses dépendantes) deviennent caduques. */
-  reverseDecision(runId: string, seq: number, option: string, reason: string, superseded: readonly number[], by: string | null = null): void {
+  reverseDecision(
+    runId: string,
+    seq: number,
+    option: string,
+    reason: string,
+    superseded: readonly number[],
+    by: string | null = null,
+  ): void {
     this.transaction(() => {
       const at = this.#now();
       this.#run(
@@ -817,14 +868,21 @@ export class Store {
         seq,
       );
       for (const n of superseded) {
-        this.#run("UPDATE decisions SET status = 'superseded', decided_at = ? WHERE run_id = ? AND seq = ? AND status IN ('auto', 'accepted')", at, runId, n);
+        this.#run(
+          "UPDATE decisions SET status = 'superseded', decided_at = ? WHERE run_id = ? AND seq = ? AND status IN ('auto', 'accepted')",
+          at,
+          runId,
+          n,
+        );
       }
     });
   }
 
   // -- escalades ------------------------------------------------------------
 
-  addEscalation(input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context">): EscalationRow {
+  addEscalation(
+    input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context">,
+  ): EscalationRow {
     const result = this.#run(
       "INSERT INTO escalations (run_id, step_id, category, question, options, context, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
       input.runId,
@@ -838,7 +896,9 @@ export class Store {
     return escalationOf(this.#get("SELECT * FROM escalations WHERE id = ?", Number(result.lastInsertRowid)) as Row);
   }
 
-  listEscalations(filter: { runId?: string; status?: "open" | "answered"; stepId?: number; repos?: RepoFilter } = {}): EscalationRow[] {
+  listEscalations(
+    filter: { runId?: string; status?: "open" | "answered"; stepId?: number; repos?: RepoFilter } = {},
+  ): EscalationRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
     if (!repoClause(filter.repos, where, params)) return [];
@@ -859,7 +919,13 @@ export class Store {
   }
 
   answerEscalation(id: number, answer: string, by: string | null = null): void {
-    this.#run("UPDATE escalations SET status = 'answered', answer = ?, answered_at = ?, answered_by = ? WHERE id = ? AND status = 'open'", answer, this.#now(), by, id);
+    this.#run(
+      "UPDATE escalations SET status = 'answered', answer = ?, answered_at = ?, answered_by = ? WHERE id = ? AND status = 'open'",
+      answer,
+      this.#now(),
+      by,
+      id,
+    );
   }
 
   // -- artefacts ------------------------------------------------------------
@@ -886,11 +952,13 @@ export class Store {
   }
 
   listArtifacts(runId: string): { name: string; content: string; stepId: number | null }[] {
-    return this.#all("SELECT name, content, step_id FROM artifacts WHERE run_id = ? ORDER BY name", runId).map(row => ({
-      name: str(row, "name"),
-      content: str(row, "content"),
-      stepId: numOrNull(row, "step_id"),
-    }));
+    return this.#all("SELECT name, content, step_id FROM artifacts WHERE run_id = ? ORDER BY name", runId).map(
+      (row) => ({
+        name: str(row, "name"),
+        content: str(row, "content"),
+        stepId: numOrNull(row, "step_id"),
+      }),
+    );
   }
 
   // -- journal d'événements ------------------------------------------------
@@ -899,10 +967,24 @@ export class Store {
    * Écrit un événement au journal et l'annonce aux abonnés (au COMMIT s'il est écrit
    * dans une transaction). `repo` est déduit du run quand il n'est pas donné.
    */
-  appendEvent(type: string, runId: string | null, payload: Record<string, unknown> = {}, repo: string | null = null): EventRow {
+  appendEvent(
+    type: string,
+    runId: string | null,
+    payload: Record<string, unknown> = {},
+    repo: string | null = null,
+  ): EventRow {
     const at = this.#now();
-    const owner = repo ?? (runId !== null ? (this.getRun(runId)?.repo ?? null) : typeof payload.repo === "string" ? payload.repo : null);
-    const result = this.#run("INSERT INTO events (at, run_id, repo, type, payload) VALUES (?, ?, ?, ?, ?)", at, runId, owner, type, JSON.stringify(payload));
+    const owner =
+      repo ??
+      (runId !== null ? (this.getRun(runId)?.repo ?? null) : typeof payload.repo === "string" ? payload.repo : null);
+    const result = this.#run(
+      "INSERT INTO events (at, run_id, repo, type, payload) VALUES (?, ?, ?, ?, ?)",
+      at,
+      runId,
+      owner,
+      type,
+      JSON.stringify(payload),
+    );
     const event: EventRow = { id: Number(result.lastInsertRowid), at, runId, repo: owner, type, payload };
     if (this.#depth > 0) this.#held.push(event);
     else this.#notify(event);
@@ -913,8 +995,15 @@ export class Store {
    * Un événement ÉPHÉMÈRE : poussé aux abonnés en direct, jamais écrit (activité des
    * outils, attente d'admission). Il ne fait pas avancer le curseur du journal.
    */
-  publish(type: string, runId: string | null, payload: Record<string, unknown> = {}, repo: string | null = null): EventRow {
-    const owner = repo ?? (runId !== null ? (this.getRun(runId)?.repo ?? null) : typeof payload.repo === "string" ? payload.repo : null);
+  publish(
+    type: string,
+    runId: string | null,
+    payload: Record<string, unknown> = {},
+    repo: string | null = null,
+  ): EventRow {
+    const owner =
+      repo ??
+      (runId !== null ? (this.getRun(runId)?.repo ?? null) : typeof payload.repo === "string" ? payload.repo : null);
     const event: EventRow = { id: 0, at: this.#now(), runId, repo: owner, type, payload, ephemeral: true };
     this.#notify(event);
     return event;
@@ -942,7 +1031,9 @@ export class Store {
       where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
       params.push(...repos);
     }
-    return this.#all(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`, ...params, limit).map(eventOf);
+    return this.#all(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`, ...params, limit).map(
+      eventOf,
+    );
   }
 
   /** Le dernier identifiant du journal (0 s'il est vide) : le curseur d'un abonnement qui ne veut que la suite. */
@@ -955,7 +1046,10 @@ export class Store {
    * sauf le dernier (le curseur ne recule jamais). Rend le nombre d'événements purgés.
    */
   pruneEvents(before: number): number {
-    const result = this.#run("DELETE FROM events WHERE at < ? AND id < (SELECT COALESCE(MAX(id), 0) FROM events)", before);
+    const result = this.#run(
+      "DELETE FROM events WHERE at < ? AND id < (SELECT COALESCE(MAX(id), 0) FROM events)",
+      before,
+    );
     return Number(result.changes);
   }
 
@@ -1011,7 +1105,13 @@ export class Store {
   // -- projets --------------------------------------------------------------
 
   createProject(input: Pick<ProjectRow, "id" | "repo" | "title">): ProjectRow {
-    this.#run("INSERT INTO projects (id, repo, title, status, created_at) VALUES (?, ?, ?, 'active', ?)", input.id, input.repo, input.title, this.#now());
+    this.#run(
+      "INSERT INTO projects (id, repo, title, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+      input.id,
+      input.repo,
+      input.title,
+      this.#now(),
+    );
     return this.getProject(input.id) as ProjectRow;
   }
 
@@ -1023,14 +1123,24 @@ export class Store {
   listProjects(repos: RepoFilter = null): ProjectRow[] {
     if (repos === null) return this.#all("SELECT * FROM projects ORDER BY created_at, id").map(projectOf);
     if (repos.length === 0) return [];
-    return this.#all(`SELECT * FROM projects WHERE repo IN (${repos.map(() => "?").join(", ")}) ORDER BY created_at, id`, ...repos).map(projectOf);
+    return this.#all(
+      `SELECT * FROM projects WHERE repo IN (${repos.map(() => "?").join(", ")}) ORDER BY created_at, id`,
+      ...repos,
+    ).map(projectOf);
   }
 
   // -- audits ---------------------------------------------------------------
 
   createAudit(input: Pick<AuditRow, "id" | "repo" | "focus">): AuditRow {
     const at = this.#now();
-    this.#run("INSERT INTO audits (id, repo, focus, state, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)", input.id, input.repo, input.focus, at, at);
+    this.#run(
+      "INSERT INTO audits (id, repo, focus, state, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)",
+      input.id,
+      input.repo,
+      input.focus,
+      at,
+      at,
+    );
     return this.getAudit(input.id) as AuditRow;
   }
 
@@ -1056,9 +1166,18 @@ export class Store {
   }
 
   /** Compare-and-swap, comme `updateRunIf` : `null` si l'audit a changé d'état entre-temps. */
-  updateAuditIf(id: string, expected: readonly AuditState[], patch: Partial<Pick<AuditRow, "state" | "proposals" | "projectId" | "reason">>): AuditRow | null {
-    const columns: Record<string, string> = { state: "state", proposals: "proposals", projectId: "project_id", reason: "reason" };
-    const sets = Object.keys(patch).map(key => `${columns[key]} = ?`);
+  updateAuditIf(
+    id: string,
+    expected: readonly AuditState[],
+    patch: Partial<Pick<AuditRow, "state" | "proposals" | "projectId" | "reason">>,
+  ): AuditRow | null {
+    const columns: Record<string, string> = {
+      state: "state",
+      proposals: "proposals",
+      projectId: "project_id",
+      reason: "reason",
+    };
+    const sets = Object.keys(patch).map((key) => `${columns[key]} = ?`);
     const values = Object.values(patch).map(encode);
     const result = this.#run(
       `UPDATE audits SET ${[...sets, "updated_at = ?"].join(", ")} WHERE id = ? AND state IN (${expected.map(() => "?").join(", ")})`,

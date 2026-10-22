@@ -19,7 +19,6 @@ import { DECISION_CATEGORIES } from "./decisions.ts";
 import type { Exec } from "./proc.ts";
 import type { HostToolDefinition, RpcRunner } from "./rpc.ts";
 
-
 /** Les réglages du profil pipeline, en overlay `--config` (YAML ⊃ JSON). */
 export const PIPELINE_SETTINGS = {
   lsp: { enabled: false },
@@ -27,7 +26,6 @@ export const PIPELINE_SETTINGS = {
   eval: { py: false },
   python: { kernelMode: "per-call" },
 } as const;
-
 
 /** Écrit l'overlay du profil pipeline dans `dataDir` et rend son chemin. */
 export function writePipelineOverlay(dataDir: string): string {
@@ -37,12 +35,10 @@ export function writePipelineOverlay(dataDir: string): string {
   return file;
 }
 
-
 /** Le nom d'unité d'un runner : retrouvable (et arrêtable) après un redémarrage du service. */
 export function runnerUnit(runId: string, stepId: number): string {
   return `omp-runner-${runId}-${stepId}`;
 }
-
 
 /** Une commande du moteur de conteneurs (`docker …` ou `podman …`). */
 export function engine(config: HarnessConfig, args: string[]): { command: string; args: string[] } {
@@ -50,15 +46,18 @@ export function engine(config: HarnessConfig, args: string[]): { command: string
   return { command: command as string, args: [...prefix, ...args] };
 }
 
-
 /** L'utilisateur des conteneurs : celui de la configuration, sinon celui du service. */
 export function containerUser(config: HarnessConfig): string {
   return config.container.user ?? `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
 }
 
-
 /** Arrête de force l'unité d'un runner ou d'un job : la scope systemd, ou le conteneur. */
-export async function forceStop(config: HarnessConfig, exec: Exec, unit: string, isolation = config.runner.isolation): Promise<void> {
+export async function forceStop(
+  config: HarnessConfig,
+  exec: Exec,
+  unit: string,
+  isolation = config.runner.isolation,
+): Promise<void> {
   if (isolation === "systemd") {
     const stop = launch(config, ["--stop", `${unit}.scope`]);
     await exec(stop.command, stop.args, { timeoutMs: 15_000 });
@@ -68,16 +67,19 @@ export async function forceStop(config: HarnessConfig, exec: Exec, unit: string,
   }
 }
 
-
 /**
  * Arrête un runner : stdin fermé, puis signaux, puis l'arrêt forcé de son unité — un
  * runner lancé par sudo, ou dans un conteneur, n'est pas signalable par le service.
  */
-export async function stopRunner(config: HarnessConfig, exec: Exec, runner: RpcRunner, unit: string | null): Promise<void> {
+export async function stopRunner(
+  config: HarnessConfig,
+  exec: Exec,
+  runner: RpcRunner,
+  unit: string | null,
+): Promise<void> {
   const force = unit && config.runner.isolation !== "none" ? () => forceStop(config, exec, unit) : undefined;
   await runner.stop(5000, force);
 }
-
 
 /**
  * Ce que le plugin mémoire d'un runner doit savoir : la scope du PROJET (celle du
@@ -87,7 +89,6 @@ export async function stopRunner(config: HarnessConfig, exec: Exec, runner: RpcR
 export function runnerMemoryEnv(scope: string): Record<string, string> {
   return { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
 }
-
 
 export type RunnerSpec = {
   unit: string;
@@ -101,14 +102,25 @@ export type RunnerSpec = {
   oracleUrl?: string | null;
 };
 
-
 /** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
-function containerRunnerArgv(config: HarnessConfig, spec: RunnerSpec, omp: string[]): { command: string; args: string[] } {
+function containerRunnerArgv(
+  config: HarnessConfig,
+  spec: RunnerSpec,
+  omp: string[],
+): { command: string; args: string[] } {
   if (!spec.repo) throw new Error("isolation container : le clone du dépôt du runner est requis");
   const box = config.container;
-  const env = { HOME: "/home/runner", PI_PY: "0", ...runnerMemoryEnv(spec.scope), ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}) };
+  const env = {
+    HOME: "/home/runner",
+    PI_PY: "0",
+    ...runnerMemoryEnv(spec.scope),
+    ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}),
+  };
   return engine(config, [
-    "run", "--rm", "-i", "--init",
+    "run",
+    "--rm",
+    "-i",
+    "--init",
     `--name=${spec.unit}`,
     "--label=omp-harness=runner",
     `--memory=${config.runner.memoryMax}`,
@@ -119,9 +131,12 @@ function containerRunnerArgv(config: HarnessConfig, spec: RunnerSpec, omp: strin
     `--user=${containerUser(config)}`,
     ...(box.network ? [`--network=${box.network}`] : []),
     `--workdir=${spec.cwd}`,
-    "--volume", `${spec.cwd}:${spec.cwd}`,
-    "--volume", `${spec.repo}:${spec.repo}:ro`,
-    "--volume", `${spec.overlay}:${spec.overlay}:ro`,
+    "--volume",
+    `${spec.cwd}:${spec.cwd}`,
+    "--volume",
+    `${spec.repo}:${spec.repo}:ro`,
+    "--volume",
+    `${spec.overlay}:${spec.overlay}:ro`,
     ...(box.runnerHome ? ["--volume", `${box.runnerHome}:/home/runner`] : []),
     ...(box.runnerEnvFile ? ["--volume", `${box.runnerEnvFile}:/run/secrets/runner.env:ro`] : []),
     ...Object.entries(env).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
@@ -130,21 +145,24 @@ function containerRunnerArgv(config: HarnessConfig, spec: RunnerSpec, omp: strin
   ]);
 }
 
-
 export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: string; args: string[] } {
   const omp = [
     config.ompBin,
-    "--mode", "rpc",
+    "--mode",
+    "rpc",
     "--no-ui",
     "--no-session",
     "--no-lsp",
     "--no-title",
     "--auto-approve",
-    "--profile", config.runner.profile,
-    "--config", spec.overlay,
-    "--cwd", spec.cwd,
+    "--profile",
+    config.runner.profile,
+    "--config",
+    spec.overlay,
+    "--cwd",
+    spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
-    ...config.runner.extensions.flatMap(extension => ["-e", extension]),
+    ...config.runner.extensions.flatMap((extension) => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
@@ -154,15 +172,18 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "--collect",
     `--unit=${spec.unit}`,
     `--slice=${config.runner.slice}`,
-    "-p", `MemoryMax=${config.runner.memoryMax}`,
+    "-p",
+    `MemoryMax=${config.runner.memoryMax}`,
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
     ...Object.entries(runnerMemoryEnv(spec.scope)).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
-    "choom", "-n", String(config.runner.oomScoreAdjust), "--",
+    "choom",
+    "-n",
+    String(config.runner.oomScoreAdjust),
+    "--",
     ...omp,
   ]);
 }
-
 
 /**
  * L'environnement d'un runner lancé SANS le lanceur root : celui du service (clés des
@@ -183,9 +204,7 @@ export function runnerEnv(
   return env;
 }
 
-
 const STRINGS = { type: "array", items: { type: "string" } } as const;
-
 
 const DECISION_TOOL: HostToolDefinition = {
   name: "decision",
@@ -201,7 +220,10 @@ const DECISION_TOOL: HostToolDefinition = {
       question: { type: "string", description: "La question, autoportante." },
       options: { ...STRINGS, minItems: 2, description: "Les options envisagées, mot pour mot." },
       chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
-      rationale: { type: "string", description: "Pourquoi cette option : réversibilité, coût, cohérence avec l'existant." },
+      rationale: {
+        type: "string",
+        description: "Pourquoi cette option : réversibilité, coût, cohérence avec l'existant.",
+      },
       category: { type: "string", enum: [...DECISION_CATEGORIES] },
       dependsOn: {
         type: "array",
@@ -221,7 +243,12 @@ const PROGRESS_TOOL: HostToolDefinition = {
   name: "progress",
   label: "Harness — avancement",
   description: "Signale une étape franchie (une phrase). Visible en direct par l'humain ; n'attend aucune réponse.",
-  parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
+  parameters: {
+    type: "object",
+    properties: { message: { type: "string" } },
+    required: ["message"],
+    additionalProperties: false,
+  },
   loadMode: "essential",
 };
 
@@ -234,7 +261,12 @@ function runTestsTool(step: StepKind): HostToolDefinition {
       step === "review"
         ? "Lance la suite COMPLÈTE (`scope: full`, UNE fois par revue) ou les tests des fichiers touchés, dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. Tu attends le résultat."
         : "Lance les tests des fichiers touchés (`scope: touched`) dans un slot heavy isolé (4 Go, sans réseau). Un arbre déjà testé rend le résultat en cache. La suite complète est réservée à /review. Tu attends le résultat.",
-    parameters: { type: "object", properties: { scope: { type: "string", enum: scopes } }, required: ["scope"], additionalProperties: false },
+    parameters: {
+      type: "object",
+      properties: { scope: { type: "string", enum: scopes } },
+      required: ["scope"],
+      additionalProperties: false,
+    },
     loadMode: "essential",
   };
 }
@@ -268,10 +300,14 @@ const RECALL_TOOL: HostToolDefinition = {
   description:
     "Cherche dans l'oracle du projet (briefs clients, comptes rendus de besoins, schémas d'archi, décisions tranchées par l'humain). " +
     "Une décision tranchée par l'humain s'impose : ne la rouvre pas.",
-  parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+  parameters: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+    additionalProperties: false,
+  },
   loadMode: "essential",
 };
-
 
 const AUDIT_TOOL: HostToolDefinition = {
   name: "audit_propose",
@@ -304,7 +340,6 @@ const AUDIT_TOOL: HostToolDefinition = {
   },
   loadMode: "essential",
 };
-
 
 /** Les outils hôtes d'une étape (ou de l'audit, qui ne décide ni ne teste rien). */
 export function hostToolsFor(step: StepKind | "audit"): HostToolDefinition[] {

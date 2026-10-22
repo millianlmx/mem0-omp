@@ -14,7 +14,6 @@ import type { HostToolDefinition, HostToolHandler, PromptResult } from "./rpc.ts
 import { RpcRunner, isRateLimit } from "./rpc.ts";
 import { runnerArgv, runnerEnv, stopRunner } from "./runner.ts";
 
-
 export type SessionHooks = {
   onHostTool: HostToolHandler;
   /** Un événement de la session (runner lancé ou arrêté, bascule, délai) au nom de son propriétaire. */
@@ -25,14 +24,15 @@ export type SessionHooks = {
 
 /** Le résultat d'un prompt arrêté à l'échéance de son étape. */
 export function timeoutResult(seconds: number): PromptResult {
-  return { status: "error", error: { message: `délai d'étape dépassé (${seconds} s) : runner arrêté`, retryable: true } };
+  return {
+    status: "error",
+    error: { message: `délai d'étape dépassé (${seconds} s) : runner arrêté`, retryable: true },
+  };
 }
-
 
 export function modelLabel(model: ModelChoice | null): string | null {
   return model ? `${model.provider}/${model.model}` : null;
 }
-
 
 export class RunnerSession {
   readonly #ctx: HarnessContext;
@@ -102,9 +102,10 @@ export class RunnerSession {
     const proc = this.#ctx.spawn(argv.command, argv.args, { cwd: this.#cwd, env: runnerEnv(scope, config.oracle) });
     const runner = new RpcRunner(proc, {
       onHostTool: this.#hooks.onHostTool,
-      onFrame: frame => {
+      onFrame: (frame) => {
         // L'activité des outils est ÉPHÉMÈRE : poussée en direct, jamais écrite au journal.
-        if (frame.type === "tool_execution_start") this.#hooks.event("activity", { tool: frame.toolName, intent: frame.intent ?? null });
+        if (frame.type === "tool_execution_start")
+          this.#hooks.event("activity", { tool: frame.toolName, intent: frame.intent ?? null });
       },
     });
     this.#runner = runner;
@@ -146,7 +147,8 @@ export class RunnerSession {
     let text = message;
     for (let failovers = 0; ; failovers++) {
       const result = await this.#bounded(text, deadlineAt, signal);
-      if (result.status !== "error" || !isRateLimit(result.error) || !this.#model || failovers >= chain.length) return result;
+      if (result.status !== "error" || !isRateLimit(result.error) || !this.#model || failovers >= chain.length)
+        return result;
       scheduler.reportRateLimit(this.#model.provider, null);
       this.#hooks.event("rate_limited", { provider: this.#model.provider, model: this.#model.model });
       const next = await scheduler.waitModel(tier, chain, (this.#modelIndex + 1) % chain.length, signal);
@@ -181,7 +183,7 @@ export class RunnerSession {
     }
     const pending = this.#live().prompt(text);
     let timer: NodeJS.Timeout | null = null;
-    const expired = new Promise<"expired">(resolve => {
+    const expired = new Promise<"expired">((resolve) => {
       timer = setTimeout(() => resolve("expired"), remaining);
     });
     try {

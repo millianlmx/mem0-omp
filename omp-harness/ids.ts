@@ -3,7 +3,6 @@
 // deux créations de la même milliseconde (plusieurs clients en même temps).
 import { randomBytes } from "node:crypto";
 
-
 export function newId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
 }

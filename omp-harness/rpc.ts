@@ -7,7 +7,6 @@
 // le service reste l'unique point d'entrée et l'unique écrivain.
 import type { Readable, Writable } from "node:stream";
 
-
 /** Le process d'un runner, tel que `child_process.spawn` le rend. */
 export type RunnerProcess = {
   pid?: number;
@@ -22,7 +21,11 @@ export type RunnerProcess = {
 
 export type HostToolResult = { text: string; isError?: boolean; details?: unknown };
 
-export type HostToolHandler = (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<HostToolResult>;
+export type HostToolHandler = (
+  name: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+) => Promise<HostToolResult>;
 
 export type HostToolDefinition = {
   name: string;
@@ -32,7 +35,13 @@ export type HostToolDefinition = {
   loadMode?: "essential" | "discoverable";
 };
 
-export type PromptError = { message: string; provider?: string; model?: string; httpStatus?: number; retryable?: boolean };
+export type PromptError = {
+  message: string;
+  provider?: string;
+  model?: string;
+  httpStatus?: number;
+  retryable?: boolean;
+};
 
 export type PromptResult = { status: "completed" | "aborted" | "error"; error: PromptError | null };
 
@@ -40,17 +49,14 @@ type Frame = Record<string, unknown>;
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 
-
 /** Les méthodes d'UI qui ATTENDENT une réponse : un runner n'a pas d'humain, on annule. */
 const BLOCKING_UI = new Set(["select", "confirm", "input", "editor", "ask"]);
-
 
 export class RunnerExited extends Error {
   constructor(detail: string) {
     super(`runner arrêté : ${detail}`);
   }
 }
-
 
 export class RpcRunner {
   readonly #proc: RunnerProcess;
@@ -86,10 +92,10 @@ export class RpcRunner {
     proc.stdin?.on("error", () => {
       /* un stdin fermé par un runner mort : la sortie le dit déjà */
     });
-    proc.on("error", error => {
+    proc.on("error", (error) => {
       this.#stderr.push(`[harness] ${error.message}\n`);
     });
-    this.exited = new Promise(resolve => {
+    this.exited = new Promise((resolve) => {
       proc.once("exit", (code, signal) => {
         this.#fail(new RunnerExited(`code ${code ?? "∅"}, signal ${signal ?? "∅"} — ${this.stderrTail().slice(-500)}`));
         resolve({ code, signal });
@@ -181,7 +187,12 @@ export class RpcRunner {
       this.#toolCalls.get(target)?.abort();
       return;
     }
-    if (type === "extension_ui_request" && id !== null && typeof frame.method === "string" && BLOCKING_UI.has(frame.method)) {
+    if (
+      type === "extension_ui_request" &&
+      id !== null &&
+      typeof frame.method === "string" &&
+      BLOCKING_UI.has(frame.method)
+    ) {
       this.#write({ type: "extension_ui_response", id, cancelled: true });
       return;
     }
@@ -195,7 +206,10 @@ export class RpcRunner {
     try {
       result = await this.#onHostTool(name, args, controller.signal);
     } catch (err) {
-      result = { text: `échec de l'outil ${name} : ${err instanceof Error ? err.message : String(err)}`, isError: true };
+      result = {
+        text: `échec de l'outil ${name} : ${err instanceof Error ? err.message : String(err)}`,
+        isError: true,
+      };
     } finally {
       this.#toolCalls.delete(id);
     }
@@ -203,7 +217,10 @@ export class RpcRunner {
     this.#write({
       type: "host_tool_result",
       id,
-      result: { content: [{ type: "text", text: result.text }], ...(result.details !== undefined ? { details: result.details } : {}) },
+      result: {
+        content: [{ type: "text", text: result.text }],
+        ...(result.details !== undefined ? { details: result.details } : {}),
+      },
       ...(result.isError ? { isError: true } : {}),
     });
   }
@@ -244,7 +261,7 @@ export class RpcRunner {
         reject(this.#dead);
         return;
       }
-      this.#prompts.set(id, { resolve: value => resolve(value as PromptResult), reject });
+      this.#prompts.set(id, { resolve: (value) => resolve(value as PromptResult), reject });
       this.#requests.set(id, { resolve: () => {}, reject });
       this.#write({ type: "prompt", id, message });
     });
@@ -261,7 +278,8 @@ export class RpcRunner {
   async lastAssistantText(): Promise<string> {
     const data = await this.request({ type: "get_last_assistant_text" });
     if (typeof data === "string") return data;
-    if (data !== null && typeof data === "object" && typeof (data as { text?: unknown }).text === "string") return (data as { text: string }).text;
+    if (data !== null && typeof data === "object" && typeof (data as { text?: unknown }).text === "string")
+      return (data as { text: string }).text;
     return "";
   }
 
@@ -269,7 +287,7 @@ export class RpcRunner {
     let timer: NodeJS.Timeout | null = null;
     const exited = await Promise.race([
       this.exited.then(() => true),
-      new Promise<boolean>(resolve => {
+      new Promise<boolean>((resolve) => {
         timer = setTimeout(() => resolve(false), ms);
       }),
     ]);
@@ -302,7 +320,6 @@ export class RpcRunner {
     this.#fail(new RunnerExited("arrêt forcé : le process ne répond plus"));
   }
 }
-
 
 /** Un rate limit dans l'erreur d'un prompt : 429, ou un message de quota. */
 export function isRateLimit(error: PromptError | null): boolean {

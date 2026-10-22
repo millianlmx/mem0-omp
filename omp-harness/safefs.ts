@@ -9,12 +9,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-
 /** La taille maximale d'un artefact ingéré. */
 export const MAX_ARTIFACT_BYTES = 1024 * 1024;
 
 const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW } = fs.constants;
-
 
 /** Le chemin réel d'un descripteur, ou `null` hors Linux. */
 function fdPath(fd: number): string | null {
@@ -25,12 +23,10 @@ function fdPath(fd: number): string | null {
   }
 }
 
-
 /** Le dossier d'artefacts attendu : `<worktree réel>/<dir>`, jamais résolu à travers `<dir>`. */
 export function expectedDir(worktree: string, dir: string): string {
   return path.join(fs.realpathSync(worktree), dir);
 }
-
 
 /** Le dossier d'artefacts, recréé en vrai dossier s'il a été remplacé par un lien ou un fichier. */
 export function ensureArtifactsDir(worktree: string, dir: string): string {
@@ -42,16 +38,14 @@ export function ensureArtifactsDir(worktree: string, dir: string): string {
     stat = null;
   }
   if (stat && !stat.isDirectory()) fs.rmSync(target, { force: true });
-  if (!stat || !stat.isDirectory()) fs.mkdirSync(target);
+  if (!stat?.isDirectory()) fs.mkdirSync(target);
   return target;
 }
-
 
 function assertInside(fd: number, dir: string, name: string): void {
   const real = fdPath(fd);
   if (real !== null && real !== path.join(dir, name)) throw new Error(`artefact détourné : ${name} → ${real}`);
 }
-
 
 /** Le contenu d'un artefact, ou `null` (lien, pas un fichier, trop gros, absent). */
 export function readArtifact(dir: string, name: string): string | null {
@@ -72,7 +66,6 @@ export function readArtifact(dir: string, name: string): string | null {
     fs.closeSync(fd);
   }
 }
-
 
 /** Écrit un artefact : l'entrée existante (lien compris) est retirée, puis créée en O_EXCL|O_NOFOLLOW. */
 export function writeArtifact(dir: string, name: string, content: string): void {

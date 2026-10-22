@@ -14,16 +14,22 @@ import * as path from "node:path";
 import type { Exec, ProcResult } from "./proc.ts";
 import { parseCheckpointTrailer } from "./decisions.ts";
 
-
 export type GitIdentity = { authorName: string; authorEmail: string };
 
 /** Le dossier des artefacts d'étape dans un worktree : exclu de git, ingéré par le service. */
 export const ARTIFACTS_DIR = ".harness";
 
-
 /** Forcé sur chaque appel : aucun programme tiers ne part d'une config ou d'un hook. */
-const HARDENING = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "protocol.ext.allow=never"];
-
+const HARDENING = [
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "commit.gpgSign=false",
+  "-c",
+  "protocol.ext.allow=never",
+];
 
 export class GitError extends Error {
   readonly result: ProcResult;
@@ -32,7 +38,6 @@ export class GitError extends Error {
     this.result = result;
   }
 }
-
 
 export class Git {
   readonly #exec: Exec;
@@ -142,7 +147,8 @@ export class Git {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
     const line = `/${ARTIFACTS_DIR}/`;
-    if (!current.split("\n").includes(line)) fs.appendFileSync(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`);
+    if (!current.split("\n").includes(line))
+      fs.appendFileSync(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`);
   }
 
   /** Crée le worktree du run sur une branche neuve partant de `base` (`null` : HEAD détachée, l'audit). Idempotent. */
@@ -154,8 +160,14 @@ export class Git {
     // Le parent n'est pas inscriptible par le groupe : un runner ne peut ni renommer ni remplacer son worktree.
     fs.mkdirSync(path.dirname(worktree), { recursive: true, mode: 0o2750 });
     fs.chmodSync(path.dirname(worktree), 0o2750);
-    const exists = branch !== null && (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
-    const args = branch === null ? ["worktree", "add", "--detach", worktree, base] : exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base];
+    const exists =
+      branch !== null && (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
+    const args =
+      branch === null
+        ? ["worktree", "add", "--detach", worktree, base]
+        : exists
+          ? ["worktree", "add", worktree, branch]
+          : ["worktree", "add", "-b", branch, worktree, base];
     await this.run(repo, args);
     await this.excludeArtifacts(repo);
     await this.trustWorktree(repo, worktree);
@@ -204,10 +216,15 @@ export class Git {
   }
 
   /** Rebase sur `onto` ; un conflit est abandonné et ses fichiers rendus. */
-  async rebase(worktree: string, onto: string): Promise<{ ok: true; head: string } | { ok: false; conflicts: string[] }> {
+  async rebase(
+    worktree: string,
+    onto: string,
+  ): Promise<{ ok: true; head: string } | { ok: false; conflicts: string[] }> {
     const result = await this.raw(worktree, ["rebase", "-q", onto]);
     if (result.code === 0) return { ok: true, head: await this.revParse(worktree, "HEAD") };
-    const conflicts = (await this.raw(worktree, ["diff", "--name-only", "--diff-filter=U"])).stdout.split("\n").filter(Boolean);
+    const conflicts = (await this.raw(worktree, ["diff", "--name-only", "--diff-filter=U"])).stdout
+      .split("\n")
+      .filter(Boolean);
     await this.raw(worktree, ["rebase", "--abort"]);
     return { ok: false, conflicts };
   }
@@ -257,7 +274,9 @@ export class Git {
   async touchedFiles(worktree: string, base: string): Promise<string[]> {
     const changed = (await this.run(worktree, ["diff", "--name-only", base])).split("\n");
     const untracked = (await this.run(worktree, ["ls-files", "--others", "--exclude-standard"])).split("\n");
-    return [...new Set([...changed, ...untracked].filter(file => file !== "" && !file.startsWith(`${ARTIFACTS_DIR}/`)))].sort();
+    return [
+      ...new Set([...changed, ...untracked].filter((file) => file !== "" && !file.startsWith(`${ARTIFACTS_DIR}/`))),
+    ].sort();
   }
 
   /**
@@ -265,7 +284,13 @@ export class Git {
    * branche avec `main` pour parent, posé par `update-ref` en compare-and-swap. Un
    * `main` qui a bougé entre-temps fait échouer le geste — jamais un écrasement.
    */
-  async squashMerge(repo: string, branch: string, main: string, expectedMain: string, message: string): Promise<string> {
+  async squashMerge(
+    repo: string,
+    branch: string,
+    main: string,
+    expectedMain: string,
+    message: string,
+  ): Promise<string> {
     // L'arbre de la branche REMPLACE celui de main : il doit contenir main, sinon le
     // squash effacerait en silence ce qui a été mergé depuis la base du run.
     if ((await this.raw(repo, ["merge-base", "--is-ancestor", expectedMain, branch])).code !== 0) {

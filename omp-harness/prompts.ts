@@ -3,7 +3,6 @@
 import type { StepKind } from "./machine.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
 
-
 /** Le fichier d'artefact que chaque étape DOIT écrire (la revue rend son verdict par outil). */
 export const STEP_ARTIFACT: Record<StepKind, string | null> = {
   req: "req.md",
@@ -32,7 +31,6 @@ export type PromptContext = {
   conflicts: string[];
 };
 
-
 const POLICY = `## Politique de décision (non négociable)
 - Personne ne répondra à une question pendant l'étape : n'utilise JAMAIS \`ask\`.
 - Ce que les specs, l'oracle ou le code ne tranchent pas, tu le tranches : choisis l'option la PLUS RÉVERSIBLE et appelle l'outil \`decision\` (category: reversible). Le service pose un checkpoint ; l'humain relira et pourra renverser.
@@ -41,22 +39,18 @@ const POLICY = `## Politique de décision (non négociable)
 - Une décision tranchée par l'humain (oracle) s'impose : ne la rouvre pas.
 - \`progress\` à chaque jalon franchi, une phrase.`;
 
-
 function section(title: string, body: string | null): string {
   return body === null || body.trim() === "" ? "" : `\n## ${title}\n${body.trim()}\n`;
 }
 
-
 function decisionsBlock(decisions: string[]): string | null {
-  return decisions.length === 0 ? null : decisions.map(line => `- ${line}`).join("\n");
+  return decisions.length === 0 ? null : decisions.map((line) => `- ${line}`).join("\n");
 }
-
 
 const ART = ARTIFACTS_DIR;
 
-
 const BODY: Record<StepKind, (ctx: PromptContext) => string> = {
-  req: ctx => `# /req — besoins de « ${ctx.title} »
+  req: (ctx) => `# /req — besoins de « ${ctx.title} »
 
 Établis les BESOINS de cette demande, sans concevoir la solution. Lis le code juste assez pour comprendre le contexte ; commence par \`oracle_recall\` sur le sujet.
 
@@ -69,7 +63,7 @@ const BODY: Record<StepKind, (ctx: PromptContext) => string> = {
 
 Ne modifie AUCUN autre fichier.`,
 
-  specs: ctx => `# /specs — spécifications de « ${ctx.title} »
+  specs: (ctx) => `# /specs — spécifications de « ${ctx.title} »
 
 Lis \`${ART}/req.md\`. Écris \`${ART}/specs.md\` avec exactement ces sections :
 ## Spécifications
@@ -83,7 +77,7 @@ Lis \`${ART}/req.md\`. Écris \`${ART}/specs.md\` avec exactement ces sections :
 
 Ne modifie AUCUN autre fichier.`,
 
-  impl: ctx => `# /impl — implémentation de « ${ctx.title} »
+  impl: (ctx) => `# /impl — implémentation de « ${ctx.title} »
 
 Lis \`${ART}/req.md\` et \`${ART}/specs.md\`. Implémente les spécifications, avec un test par critère d'acceptation.
 - Diff visé : < ${ctx.maxDiffLines} lignes. Au-delà, arrête-toi à un incrément cohérent et note le reste dans \`${ART}/impl.md\`.
@@ -92,21 +86,20 @@ Lis \`${ART}/req.md\` et \`${ART}/specs.md\`. Implémente les spécifications, a
 
 Termine par \`${ART}/impl.md\` : ce qui est fait, AC par AC, et ce qui reste.`,
 
-  review: ctx => `# /review — revue de « ${ctx.title} »
+  review: (ctx) => `# /review — revue de « ${ctx.title} »
 
 Relis le diff complet : \`git diff ${ctx.baseSha}\` (base = main), contre \`${ART}/specs.md\` critère par critère.
 - Lance la suite COMPLÈTE une fois : \`run_tests\` avec \`scope: full\`.
 - Ne modifie PAS le code pendant la revue : un bloquant part en correction.
 - Termine par \`review_verdict\` : risque, bloquants, risques résiduels, fichiers touchés, ce que tu n'as PAS vérifié, confiance.`,
 
-  fix: ctx => `# /impl --fix — corrections de « ${ctx.title} »
+  fix: (ctx) => `# /impl --fix — corrections de « ${ctx.title} »
 
 Corrige ces bloquants de la revue, et rien d'autre :
-${ctx.blockers.map(blocker => `- ${blocker}`).join("\n") || "- (voir la reprise ci-dessous)"}
+${ctx.blockers.map((blocker) => `- ${blocker}`).join("\n") || "- (voir la reprise ci-dessous)"}
 
 Vérifie avec \`run_tests\` (\`scope: touched\`). Ne commite pas. La revue reprendra ensuite dans cette même session.`,
 };
-
 
 /** Le prompt complet d'une étape. */
 export function stepPrompt(ctx: PromptContext): string {
@@ -125,19 +118,17 @@ export function stepPrompt(ctx: PromptContext): string {
   }
   parts.push(section("Reprise", ctx.resume));
   parts.push(`\n${POLICY}\n`);
-  return parts.filter(part => part !== "").join("\n");
+  return parts.filter((part) => part !== "").join("\n");
 }
-
 
 /** La relance unique d'une étape qui n'a pas rendu son artefact ou son verdict. */
 export function nudgePrompt(step: StepKind, missing: string): string {
   return `L'étape /${step} n'est pas terminée : ${missing}. Termine-la maintenant, sans rien rouvrir.`;
 }
 
-
 /** Le prompt de reprise après une bascule de fournisseur sur rate limit. */
-export const FAILOVER_PROMPT = "Reprends exactement où tu t'es arrêté : le fournisseur précédent a atteint sa limite de débit, tu tournes maintenant sur un autre modèle.";
-
+export const FAILOVER_PROMPT =
+  "Reprends exactement où tu t'es arrêté : le fournisseur précédent a atteint sa limite de débit, tu tournes maintenant sur un autre modèle.";
 
 /** Le prompt de l'audit d'un dépôt : lecture seule, propositions par `audit_propose`. */
 export function auditPrompt(ctx: { repo: string; focus: string; memories: string | null }): string {
@@ -155,6 +146,6 @@ Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus util
     section("Oracle (rappel du service)", ctx.memories),
     `\n- \`progress\` à chaque partie du dépôt parcourue, une phrase. N'utilise JAMAIS \`ask\`.\n`,
   ]
-    .filter(part => part !== "")
+    .filter((part) => part !== "")
     .join("\n");
 }

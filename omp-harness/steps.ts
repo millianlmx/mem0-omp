@@ -23,7 +23,6 @@ import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./
 import type { Verdict } from "./verdict.ts";
 import { mergeDecision } from "./verdict.ts";
 
-
 /** L'état vivant d'un run conduit par ce process. */
 export type LiveRun = StepState & {
   runId: string;
@@ -34,7 +33,6 @@ export type LiveRun = StepState & {
   conflicts: string[];
   done: Promise<void>;
 };
-
 
 export function liveRun(runId: string): LiveRun {
   return {
@@ -50,7 +48,6 @@ export function liveRun(runId: string): LiveRun {
   };
 }
 
-
 export class StepExecutor {
   readonly #ctx: HarnessContext;
 
@@ -61,14 +58,19 @@ export class StepExecutor {
   /** La session du run, liée à son worktree ; ses événements portent le run et l'étape. */
   session(live: LiveRun, run: RunRow): RunnerSession {
     const { store } = this.#ctx;
-    live.session ??= new RunnerSession(this.#ctx, { repo: this.#ctx.repo(run.repo), cwd: run.worktree as string }, {
-      onHostTool: (name, args, signal) => runHostTool(this.#ctx, live, live.runId, name, args, signal),
-      event: (type, payload) => this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
-      runnerChanged: (unit, model) => {
-        store.updateRun(live.runId, { model });
-        if (live.step) store.setStepRunner(live.step.id, unit, model);
+    live.session ??= new RunnerSession(
+      this.#ctx,
+      { repo: this.#ctx.repo(run.repo), cwd: run.worktree as string },
+      {
+        onHostTool: (name, args, signal) => runHostTool(this.#ctx, live, live.runId, name, args, signal),
+        event: (type, payload) =>
+          this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
+        runnerChanged: (unit, model) => {
+          store.updateRun(live.runId, { model });
+          if (live.step) store.setStepRunner(live.step.id, unit, model);
+        },
       },
-    });
+    );
     return live.session;
   }
 
@@ -97,7 +99,13 @@ export class StepExecutor {
     }
     const session = this.session(live, run);
     const reused = session.alive;
-    const stepRow = store.startStep(run.id, step, run.attempts, reused ? session.model : null, reused ? session.unit : null);
+    const stepRow = store.startStep(
+      run.id,
+      step,
+      run.attempts,
+      reused ? session.model : null,
+      reused ? session.unit : null,
+    );
     live.step = stepRow;
     live.verdict = null;
     live.fullRunsThisStep = 0;
@@ -107,10 +115,15 @@ export class StepExecutor {
     try {
       this.#materialize(run);
       // Une fusion de main en cours (rebase en conflit) : ses fichiers encore en conflit partent dans le prompt.
-      if (step === "review" && (await git.mergeInProgress(worktree))) live.conflicts = await git.unmergedFiles(worktree);
+      if (step === "review" && (await git.mergeInProgress(worktree)))
+        live.conflicts = await git.unmergedFiles(worktree);
       const headBefore = await git.revParse(worktree, "HEAD");
       const dirtyBefore = await git.isDirty(worktree);
-      await session.open(stepTier(config.stepTiers, step, run.fixes, config.review.fixCap), runnerUnit(run.id, stepRow.id), live.abort.signal);
+      await session.open(
+        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        runnerUnit(run.id, stepRow.id),
+        live.abort.signal,
+      );
       await session.setHostTools(hostToolsFor(step));
 
       const repo = this.#ctx.repo(run.repo);
@@ -120,7 +133,10 @@ export class StepExecutor {
         request: run.request,
         baseSha: run.baseSha ?? "main",
         maxDiffLines: config.review.maxDiffLines,
-        memories: step === "req" || step === "specs" ? renderMemories(await this.#ctx.oracle.recall(repo.scope, `${run.title}\n${run.request}`)) : null,
+        memories:
+          step === "req" || step === "specs"
+            ? renderMemories(await this.#ctx.oracle.recall(repo.scope, `${run.title}\n${run.request}`))
+            : null,
         blockers: run.verdict?.blockers ?? [],
         resume: store.instructions(run.id),
         decisions: this.#decisionLines(run.id),
@@ -130,13 +146,15 @@ export class StepExecutor {
       live.conflicts = [];
 
       let result = await session.prompt(prompt, live.abort.signal, deadlineAt);
-      let missing = result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
+      let missing =
+        result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
       if (result.status === "completed" && missing !== null) {
         result = await session.prompt(nudgePrompt(step, missing), live.abort.signal, deadlineAt);
         missing = result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
       }
       if (result.status !== "completed") {
-        const reason = result.error?.message ?? (result.status === "aborted" ? "prompt interrompu" : "erreur du runner");
+        const reason =
+          result.error?.message ?? (result.status === "aborted" ? "prompt interrompu" : "erreur du runner");
         store.finishStep(stepRow.id, "failed", reason);
         return { kind: "failed", reason, retryable: result.error?.retryable !== false };
       }
@@ -164,15 +182,24 @@ export class StepExecutor {
     const step = run.step as StepKind;
     const artifact = STEP_ARTIFACT[step];
     const content = artifact === null ? null : readArtifact(expectedDir(worktree, ARTIFACTS_DIR), artifact);
-    if (artifact !== null && content === null) return `\`${ARTIFACTS_DIR}/${artifact}\` n'existe pas (ou n'est pas un fichier régulier)`;
+    if (artifact !== null && content === null)
+      return `\`${ARTIFACTS_DIR}/${artifact}\` n'existe pas (ou n'est pas un fichier régulier)`;
     if (step === "req" && !/^##\s+Besoins/m.test(content ?? "")) return "la section `## Besoins` manque dans req.md";
-    if (step === "specs" && !/^##\s+Crit[eè]res d'acceptation/m.test(content ?? "")) return "la section `## Critères d'acceptation` manque dans specs.md";
+    if (step === "specs" && !/^##\s+Crit[eè]res d'acceptation/m.test(content ?? ""))
+      return "la section `## Critères d'acceptation` manque dans specs.md";
     if (step === "review" && (await git.mergeInProgress(worktree))) {
       const unresolved = await this.#unresolvedConflicts(worktree);
       if (unresolved.length > 0) return `des marqueurs de conflit restent dans ${unresolved.join(", ")}`;
     }
-    if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0) return "aucun fichier du dépôt n'a changé";
-    if (step === "fix" && !dirtyBefore && !(await git.isDirty(worktree)) && (await git.revParse(worktree, "HEAD")) === headBefore) return "aucune correction n'a été faite";
+    if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0)
+      return "aucun fichier du dépôt n'a changé";
+    if (
+      step === "fix" &&
+      !dirtyBefore &&
+      !(await git.isDirty(worktree)) &&
+      (await git.revParse(worktree, "HEAD")) === headBefore
+    )
+      return "aucune correction n'a été faite";
     if (step === "review" && live.verdict === null) return "le verdict n'a pas été rendu par `review_verdict`";
     return null;
   }
@@ -188,7 +215,12 @@ export class StepExecutor {
     if (step === "req") {
       // Le compte rendu de besoins rejoint le corpus de l'oracle.
       const req = store.getArtifact(run.id, "req.md");
-      if (req) await this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, ["harness", "besoins"]);
+      if (req)
+        await this.#ctx.oracle.retain(
+          repo.scope,
+          `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`,
+          ["harness", "besoins"],
+        );
     }
     if (step === "specs") {
       const modules = parseModulesSection(store.getArtifact(run.id, "specs.md") ?? "");
@@ -199,7 +231,8 @@ export class StepExecutor {
         });
       }
     }
-    if (await git.mergeInProgress(worktree)) await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
+    if (await git.mergeInProgress(worktree))
+      await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
     else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
 
     const escalations = store.listEscalations({ runId: run.id, status: "open", stepId: stepRow.id }).length;
@@ -266,21 +299,20 @@ export class StepExecutor {
   /** Les fichiers d'une fusion en cours qui portent encore des marqueurs de conflit. */
   async #unresolvedConflicts(worktree: string): Promise<string[]> {
     const files = await this.#ctx.git.unmergedFiles(worktree);
-    return files.filter(file => {
+    return files.filter((file) => {
       const content = readArtifact(path.dirname(path.join(fs.realpathSync(worktree), file)), path.basename(file));
       return content === null || /^(<{7}|>{7}) /m.test(content);
     });
   }
 
   #decisionLines(runId: string): string[] {
-    return this.#ctx.store
-      .listDecisions({ runId, status: ["auto", "accepted", "reversed"] })
-      .map(decision => {
-        const from = decision.dependsOn.length > 0 ? ` [découle de ${decision.dependsOn.map(n => `#${n}`).join(", ")}]` : "";
-        return decision.status === "reversed"
-          ? `#${decision.seq} ${decision.question} → « ${decision.reversalOption} » (TRANCHÉ PAR L'HUMAIN : ${decision.reversalReason})${from}`
-          : `#${decision.seq} ${decision.question} → « ${decision.chosen} »${decision.status === "accepted" ? " (validée par l'humain)" : ""}${from}`;
-      });
+    return this.#ctx.store.listDecisions({ runId, status: ["auto", "accepted", "reversed"] }).map((decision) => {
+      const from =
+        decision.dependsOn.length > 0 ? ` [découle de ${decision.dependsOn.map((n) => `#${n}`).join(", ")}]` : "";
+      return decision.status === "reversed"
+        ? `#${decision.seq} ${decision.question} → « ${decision.reversalOption} » (TRANCHÉ PAR L'HUMAIN : ${decision.reversalReason})${from}`
+        : `#${decision.seq} ${decision.question} → « ${decision.chosen} »${decision.status === "accepted" ? " (validée par l'humain)" : ""}${from}`;
+    });
   }
 
   /** Rebase sur main avant /review ; les checkpoints sont remappés, un conflit part dans le prompt. */

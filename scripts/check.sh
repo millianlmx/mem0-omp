@@ -392,7 +392,7 @@ lint_out="$(bash scripts/lint.sh 2>&1)"
 lint_status=$?
 [ -n "$lint_out" ] && printf '%s\n' "$lint_out"
 case "$lint_status" in
-  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, test/)" ;;
+  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, test/)" ;;
   3) fail "linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)" ;;
   *)
     lint_paths="$(printf '%s\n' "$lint_out" | grep -oE '^[^[:space:]:]+\.(ts|jsonc)' | awk '!seen[$0]++' | tr '\n' ' ')"

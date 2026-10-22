@@ -22,8 +22,11 @@ import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
 
-
-export type SpawnRunner = (command: string, args: string[], options: { cwd: string; env: Record<string, string | undefined> }) => RunnerProcess;
+export type SpawnRunner = (
+  command: string,
+  args: string[],
+  options: { cwd: string; env: Record<string, string | undefined> },
+) => RunnerProcess;
 
 export type HarnessDeps = {
   config: HarnessConfig;
@@ -45,7 +48,6 @@ export type HarnessDeps = {
 export type Actor = { by: string | null; rev?: number };
 
 export const SERVICE: Actor = { by: null };
-
 
 export class HarnessContext {
   readonly config: HarnessConfig;
@@ -91,7 +93,12 @@ export class HarnessContext {
   }
 
   /** Un événement : journalisé, ou poussé en direct s'il est éphémère. */
-  event(type: EventType, runId: string | null, payload: Record<string, unknown> = {}, repo: string | null = null): void {
+  event(
+    type: EventType,
+    runId: string | null,
+    payload: Record<string, unknown> = {},
+    repo: string | null = null,
+  ): void {
     if (EPHEMERAL_EVENTS.has(type)) this.store.publish(type, runId, payload, repo);
     else this.store.appendEvent(type, runId, payload, repo);
   }
@@ -101,7 +108,12 @@ export class HarnessContext {
    * l'acteur en donne une, à la révision qu'il a lue) ; sinon `null`. La table de
    * `machine.ts` est vérifiée d'abord : une transition hors table est un bug, elle lève.
    */
-  transition(run: RunRow, transition: Transition, expected: readonly RunState[], options: { patch?: RunPatch; actor?: Actor } = {}): RunRow | null {
+  transition(
+    run: RunRow,
+    transition: Transition,
+    expected: readonly RunState[],
+    options: { patch?: RunPatch; actor?: Actor } = {},
+  ): RunRow | null {
     assertTransition(expected, transition.state);
     const { store } = this;
     const by = options.actor?.by ?? null;
@@ -109,14 +121,34 @@ export class HarnessContext {
       const next = store.updateRunIf(
         run.id,
         expected,
-        { state: transition.state, step: transition.step, fixes: transition.fixes, attempts: transition.attempts, reason: transition.reason, ...options.patch },
+        {
+          state: transition.state,
+          step: transition.step,
+          fixes: transition.fixes,
+          attempts: transition.attempts,
+          reason: transition.reason,
+          ...options.patch,
+        },
         options.actor?.rev,
       );
       if (!next) return null;
-      this.event("run_state", run.id, { state: transition.state, step: transition.step, reason: transition.reason, ...(by ? { by } : {}) });
+      this.event("run_state", run.id, {
+        state: transition.state,
+        step: transition.step,
+        reason: transition.reason,
+        ...(by ? { by } : {}),
+      });
       if (transition.state === "escalated") {
         const items = store.listEscalations({ runId: run.id, status: "open" });
-        this.event("escalations", run.id, { step: run.step, items: items.map(item => ({ id: item.id, category: item.category, question: item.question, options: item.options })) });
+        this.event("escalations", run.id, {
+          step: run.step,
+          items: items.map((item) => ({
+            id: item.id,
+            category: item.category,
+            question: item.question,
+            options: item.options,
+          })),
+        });
       }
       if (transition.state === "awaiting_human") {
         if (transition.step === "specs") this.event("specs_ready", run.id, { reason: transition.reason });
@@ -131,7 +163,12 @@ export class HarnessContext {
   /** `main` local avancé depuis le remote (fast-forward seulement ; une divergence est journalisée). */
   async fetchMain(repo: RepoConfig): Promise<void> {
     if (!repo.remote) return;
-    const result = await this.git.raw(repo.path, ["fetch", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`]);
+    const result = await this.git.raw(repo.path, [
+      "fetch",
+      "-q",
+      repo.remote,
+      `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`,
+    ]);
     if (result.code !== 0) this.log(`fetch ${repo.name} : ${result.stderr.trim().slice(0, 200)}`);
   }
 
