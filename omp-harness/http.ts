@@ -109,10 +109,6 @@ function sseFrame(event: EventRow): string {
 }
 
 
-/** La boîte de l'humain (rétrocompatible : sans filtre, tous les dépôts). */
-export { inboxOf } from "./queries.ts";
-
-
 export type HttpOptions = {
   orchestrator: Orchestrator;
   /** Le jeton historique : le client `admin` (ignoré si `clients` est donné). */

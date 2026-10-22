@@ -797,3 +797,24 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
     await world.orchestrator.stop();
   }
 });
+
+test("harness-pipeline/AC-17 : une étape qui dépasse son échéance arrête son runner et échoue, relançable — un agent qui boucle ne garde pas son slot", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] }, { patch: (config) => (config.runner.stepTimeoutSec = 1) });
+  await world.orchestrator.start();
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Boucle", request: "ne finit jamais" });
+    await until(world, run.id, ["failed", "merged", "awaiting_human"], 20_000);
+    const steps = world.store.listSteps(run.id);
+    // Une relance (stepRetries = 1), puis l'échec : chaque tentative arrêtée à l'échéance.
+    assert.deepEqual(
+      steps.map((step) => `${step.kind}:${step.status}`),
+      ["req:failed", "req:failed"],
+    );
+    assert.match(steps[0]?.summary ?? "", /délai d'étape dépassé \(1 s\)/);
+    assert.equal(world.store.eventsSince(0, run.id).filter((event) => event.type === "step_timeout").length, 2);
+    assert.match(world.store.getRun(run.id)?.reason ?? "", /délai d'étape dépassé/);
+    assert.equal(world.scheduler.snapshot().runner.used, 0, "le slot est rendu");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});

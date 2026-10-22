@@ -7,6 +7,10 @@
 #                                                    (gardé d'un up à l'autre ; up --anthropic : retour)
 #   bash omp-harness/deploy/container/harness.sh add <url>  ajoute un dépôt (te guide pour sa clé de déploiement)
 #   bash omp-harness/deploy/container/harness.sh pair       réaffiche le code d'appairage
+#   bash omp-harness/deploy/container/harness.sh client add <nom> [viewer|operator|admin] [dépôt,…]
+#                                                    un client de plus (un iPad, un collègue) et son code d'appairage
+#   bash omp-harness/deploy/container/harness.sh client list | client revoke <nom>
+#   bash omp-harness/deploy/container/harness.sh reload     relit config.json : dépôts rechargés, runs en cours gardés
 #
 #   bash omp-harness/deploy/container/harness.sh check      vérifie tout, sans rien modifier
 #   bash omp-harness/deploy/container/harness.sh login      connecte les runners à un compte OMP (au lieu d'une clé API)
@@ -397,7 +401,7 @@ cmd_add() {
     code=0
     harness_main "${args[@]}" || code=$?
     case "$code" in
-      0) compose restart harness >/dev/null; echo "Lance un pipeline depuis omp ou l'app."; return ;;
+      0) cmd_reload >/dev/null; echo "Lance un pipeline depuis omp ou l'app."; return ;;
       3|4)
         deploy_key_help "$url"
         [ -t 0 ] || exit "$code"
@@ -423,6 +427,42 @@ cmd_pair() {
   echo "  omp1:$code"
   echo
   echo "Sur ton Mac : dans omp, /pair omp1:… — ou colle-le dans l'app, feuille Serveur (Mac et iPhone)."
+}
+
+# ------------------------------------------------------------------------ clients
+
+# Un client nommé : son jeton ne s'affiche qu'une fois, dans son code d'appairage. Un
+# client borné à certains dépôts ne reçoit pas la mémoire (elle couvre tous les
+# projets du serveur).
+cmd_client() {
+  local action="${1:-}" name="${2:-}" role="${3:-operator}" repos="${4:-*}"
+  case "$action" in
+    add)
+      [ -n "$name" ] || die "usage : client add <nom> [viewer|operator|admin] [dépôt,…]"
+      local token mem0_url="" mem0_token=""
+      token="$(harness_main --add-client "$name" --role "$role" --repos "$repos")" || exit 1
+      if [ "$repos" = "*" ]; then
+        mem0_url="$(setting MEM0_URL "$ROOT/published.env")"
+        mem0_token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+      fi
+      local code
+      code="$(printf '%s\n%s\n%s\n%s\n' "$(setting URL "$ROOT/published.env")" "$token" "$mem0_url" "$mem0_token" |
+        base64 | tr -d '\n=' | tr '+/' '-_')"
+      echo "Code d'appairage de $name (secret ; il ne sera plus affiché) :"
+      echo
+      echo "  omp1:$code"
+      ;;
+    list) harness_main --list-clients ;;
+    revoke) [ -n "$name" ] || die "usage : client revoke <nom>"; harness_main --revoke-client "$name" ;;
+    *) die "usage : client add <nom> [rôle] [dépôts] | client list | client revoke <nom>" ;;
+  esac
+}
+
+# Relit la configuration sans arrêter les runs (SIGHUP) ; un moteur qui ne sait pas
+# signaler un service redémarre le harness (les runs reprennent à leur checkpoint).
+cmd_reload() {
+  compose kill -s HUP harness >/dev/null 2>&1 || compose restart harness >/dev/null
+  echo "Configuration relue."
 }
 
 # ----------------------------------------------------------------------- le reste
@@ -466,6 +506,8 @@ case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   add) shift; cmd_add "$@" ;;
   pair) cmd_pair ;;
+  client) shift; cmd_client "$@" ;;
+  reload) cmd_reload ;;
   check) compose run --rm --no-deps harness omp-harness-check ;;
   login) cmd_login ;;
   key) cat "$ROOT/home/.ssh/id_ed25519.pub" ;;
@@ -476,5 +518,5 @@ case "${1:-}" in
   restart) compose restart ;;
   start) cmd_start ;;
   down) compose down ;;
-  *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

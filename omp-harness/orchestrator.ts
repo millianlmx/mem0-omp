@@ -77,6 +77,8 @@ export class Orchestrator {
   #timer: NodeJS.Timeout | null = null;
   #ticking: Promise<void> | null = null;
   #stopping = false;
+  /** Les tours automatiques n'ont lieu qu'après `start()` : la reprise des runs interrompus passe d'abord. */
+  #started = false;
   #prunedAt = 0;
 
   /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
@@ -86,10 +88,10 @@ export class Orchestrator {
     this.#ctx = new HarnessContext(deps);
     this.#tickMs = deps.tickMs ?? 1000;
     this.#steps = new StepExecutor(this.#ctx);
-    this.#merger = new Merger(this.#ctx, () => void this.tick());
+    this.#merger = new Merger(this.#ctx, () => this.#kick());
     this.#human = new HumanLoop(this.#ctx, {
       halt: runId => this.#halt(runId),
-      tick: () => void this.tick(),
+      tick: () => this.#kick(),
       merging: runId => this.#merger.has(runId),
       followUp: (input, actor) => this.createRun(input, actor),
     });
@@ -111,6 +113,7 @@ export class Orchestrator {
     this.#ctx.overlay();
     await this.#prepareRepos(this.#ctx.config.repos);
     await this.recover();
+    this.#started = true;
     this.#prune();
     this.#timer = setInterval(() => void this.tick(), this.#tickMs);
     this.#timer.unref?.();
@@ -156,7 +159,7 @@ export class Orchestrator {
     const added = next.filter(repo => !before.has(repo.name)).map(repo => repo.name);
     const removed = [...before.keys()].filter(name => !names.has(name) && !kept.some(repo => repo.name === name));
     this.#ctx.log(`dépôts rechargés : +${added.join(", ") || "∅"} −${removed.join(", ") || "∅"}${kept.length > 0 ? ` (gardés, runs vivants : ${kept.map(repo => repo.name).join(", ")})` : ""}`);
-    void this.tick();
+    this.#kick();
     return { added, removed, kept: kept.map(repo => repo.name) };
   }
 
@@ -219,6 +222,11 @@ export class Orchestrator {
     if (pruned > 0) this.#ctx.log(`journal : ${pruned} événement(s) de plus de ${this.#ctx.config.events.retentionDays} j purgé(s)`);
   }
 
+  /** Un tour automatique (un run créé, un slot rendu, un geste) : seulement une fois le service démarré. */
+  #kick(): void {
+    if (this.#started) void this.tick();
+  }
+
   /** Un tour de scheduling : merges dus, audits, puis les runs en file que le planificateur libère. */
   tick(): Promise<void> {
     if (this.#ticking || this.#stopping) return this.#ticking ?? Promise.resolve();
@@ -276,6 +284,9 @@ export class Orchestrator {
   /** L'admission équitable : un candidat à la fois, au meilleur rang, tant qu'un slot runner se libère. */
   #admit(): void {
     const { candidates, activeByRepo, activeByGroup } = this.#candidates();
+    // Un run qui n'attend plus (admis, annulé, devenu non candidat) oublie son dernier refus.
+    const waiting = new Set(candidates.map(c => c.run.id));
+    for (const id of this.#refused.keys()) if (!waiting.has(id)) this.#refused.delete(id);
     const rank = (c: Candidate): number[] => [
       -c.run.priority,
       c.resumed ? 0 : 1,
@@ -310,7 +321,7 @@ export class Orchestrator {
       slot.release();
       this.#live.delete(runId);
       // Un slot rendu : le suivant de la file peut partir sans attendre le tour d'horloge.
-      if (!this.#stopping) void this.tick();
+      if (!this.#stopping) this.#kick();
     });
   }
 
@@ -404,7 +415,7 @@ export class Orchestrator {
       return created;
     });
     if (req !== "") void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${req.slice(0, 4000)}`, ["harness", "besoins"]);
-    void this.tick();
+    this.#kick();
     return run;
   }
 
@@ -471,11 +482,23 @@ export class Orchestrator {
 
   status(repos: RepoFilter = null): Record<string, unknown> {
     const load = loadOf(this.store, repos, new Set(this.#live.keys()));
+    // Un client borné ne voit que les libellés (ids de run ou d'audit) de ses dépôts ; les compteurs restent globaux.
+    const visible = (label: string): boolean => {
+      if (repos === null) return true;
+      const id = label.split(":")[0] ?? "";
+      const repo = this.store.getRun(id)?.repo ?? this.store.getAudit(id)?.repo ?? null;
+      return repo !== null && repos.includes(repo);
+    };
+    const snapshot = this.#ctx.scheduler.snapshot();
     return {
       runs: load.runs,
       byRepo: load.byRepo,
-      live: [...this.#live.keys()].filter(id => repos === null || repos.includes(this.store.getRun(id)?.repo ?? "")),
-      scheduler: this.#ctx.scheduler.snapshot(),
+      live: [...this.#live.keys()].filter(visible),
+      scheduler: {
+        ...snapshot,
+        runner: { ...snapshot.runner, labels: snapshot.runner.labels.filter(visible) },
+        heavy: { ...snapshot.heavy, labels: snapshot.heavy.labels.filter(visible) },
+      },
       repos: this.#ctx.config.repos.filter(repo => repos === null || repos.includes(repo.name)).map(repo => ({ name: repo.name, scope: repo.scope, maxParallel: repo.maxParallel })),
     };
   }

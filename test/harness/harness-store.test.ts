@@ -3,7 +3,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { Store } from "../../omp-harness/db.ts";
+import { DatabaseSync } from "node:sqlite";
+import { MIGRATIONS, Store } from "../../omp-harness/db.ts";
 import { tmpdir } from "../support/repo.ts";
 
 function store(): Store {
@@ -148,4 +149,41 @@ test("harness-store/AC-7 : une mise à jour conditionnelle n'écrase jamais un �
   assert.equal(db.updateRunIf("r1", ["queued"], { state: "running" }), null);
   assert.equal(db.getRun("r1")?.state, "cancelled");
   assert.equal(db.updateRunIf("r1", ["cancelled"], { reason: "vu" })?.reason, "vu");
+});
+
+test("harness-store/AC-8 : une base existante migre sans perte — la consigne `_resume.md` passe en colonne, chaque événement gagne son dépôt", () => {
+  const file = path.join(tmpdir("harness-store-"), "h.sqlite");
+  // Une base telle que la version 3 du schéma la laissait.
+  const old = new DatabaseSync(file);
+  for (const sql of MIGRATIONS.slice(0, 3)) old.exec(sql);
+  old.exec("PRAGMA user_version = 3");
+  old.exec(`INSERT INTO runs (id, repo, slug, title, request, state, step, branch, created_at, updated_at)
+            VALUES ('r1', 'demo', 'a', 'A', 'a', 'escalated', 'impl', 'harness/a', 1, 1)`);
+  old.exec(
+    "INSERT INTO artifacts (run_id, name, content, updated_at) VALUES ('r1', '_resume.md', 'reprends ici', 1), ('r1', 'specs.md', 'S', 1)",
+  );
+  old.exec(
+    `INSERT INTO events (at, run_id, type, payload) VALUES (1, 'r1', 'run_state', '{}'), (2, NULL, 'audit_state', '{"repo":"autre"}')`,
+  );
+  old.close();
+  const db = new Store(file);
+  assert.equal(db.schemaVersion, MIGRATIONS.length);
+  assert.equal(db.instructions("r1"), "reprends ici");
+  assert.deepEqual(
+    db.listArtifacts("r1").map((artifact) => artifact.name),
+    ["specs.md"],
+  );
+  assert.deepEqual(
+    db.eventsSince(0).map((event) => event.repo),
+    ["demo", "autre"],
+  );
+  const run = db.getRun("r1");
+  assert.deepEqual([run?.priority, run?.rev, run?.createdBy], [0, 0, null]);
+  // La révision monte à chaque écriture, et un CAS à une révision périmée n'écrit rien.
+  assert.equal(db.updateRun("r1", { reason: "x" }).rev, 1);
+  assert.equal(db.updateRunIf("r1", null, { reason: "y" }, 0), null);
+  assert.equal(db.updateRunIf("r1", null, { reason: "y" }, 1)?.rev, 2);
+  db.addInstructions("r1", "et ceci");
+  assert.equal(db.instructions("r1"), "reprends ici\n\net ceci");
+  db.close();
 });

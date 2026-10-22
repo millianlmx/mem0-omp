@@ -112,6 +112,11 @@ export class RunnerSession {
     this.#hooks.runnerChanged?.(unit, this.model);
     this.#hooks.event("runner_started", { unit, model: this.model });
     await runner.ready();
+    // Un arrêt demandé pendant le lancement : le runner tout juste né ne survit pas.
+    if (signal.aborted) {
+      await this.stop();
+      throw new Error("runner arrêté pendant son lancement");
+    }
     return false;
   }
 
@@ -140,7 +145,7 @@ export class RunnerSession {
     }
     let text = message;
     for (let failovers = 0; ; failovers++) {
-      const result = await this.#bounded(text, deadlineAt);
+      const result = await this.#bounded(text, deadlineAt, signal);
       if (result.status !== "error" || !isRateLimit(result.error) || !this.#model || failovers >= chain.length) return result;
       scheduler.reportRateLimit(this.#model.provider, null);
       this.#hooks.event("rate_limited", { provider: this.#model.provider, model: this.#model.model });
@@ -151,8 +156,22 @@ export class RunnerSession {
     }
   }
 
-  /** Le prompt borné par l'échéance : à l'heure, le runner est arrêté (son prompt rejette, ignoré). */
-  async #bounded(text: string, deadlineAt: number): Promise<PromptResult> {
+  /**
+   * Le prompt borné par l'échéance et par `signal` : à l'heure, le runner est arrêté
+   * (son prompt rejette, ignoré) ; sur un arrêt, il est arrêté aussi et le prompt lève.
+   */
+  async #bounded(text: string, deadlineAt: number, signal: AbortSignal): Promise<PromptResult> {
+    if (signal.aborted) throw new Error("prompt annulé : run arrêté");
+    const onAbort = () => void this.stop();
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      return await this.#timed(text, deadlineAt);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  async #timed(text: string, deadlineAt: number): Promise<PromptResult> {
     const seconds = this.#ctx.config.runner.stepTimeoutSec;
     const remaining = deadlineAt - Date.now();
     if (remaining <= 0) {

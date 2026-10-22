@@ -3,9 +3,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_STEP_TIERS } from "../../omp-harness/config.ts";
 import {
+  CANCELLABLE,
+  TRANSITIONS,
   afterHumanValidation,
+  afterMergeFailed,
+  afterMergeStopped,
+  afterMerged,
   afterSpecsValidation,
+  assertTransition,
+  canTransition,
+  cancelled,
   nextAfter,
+  recovered,
   resumeAfterEscalations,
   resumeAtCheckpoint,
   stepTier,
@@ -116,4 +125,30 @@ test("harness-machine/AC-7 : avec la porte des specs, /specs terminé attend l'h
   const refused = afterSpecsValidation(cursor, false, "AC-2 invérifiable");
   assert.deepEqual([refused.state, refused.step, refused.fixes], ["queued", "specs", 0]);
   assert.match(refused.reason, /AC-2 invérifiable/);
+});
+
+test("harness-machine/AC-8 : toute transition passe par la table — le merge, l'annulation et la reprise aussi ; une transition hors table lève", () => {
+  // Les états terminaux ne bougent plus.
+  assert.deepEqual(TRANSITIONS.merged, []);
+  assert.deepEqual(TRANSITIONS.cancelled, []);
+  // Un merge en cours ne s'annule pas ; un run échoué se rouvre ou s'annule.
+  assert.ok(!CANCELLABLE.includes("merging"));
+  assert.ok(canTransition("failed", "queued"));
+  assert.throws(() => assertTransition(["merged"], "queued"), /merged → queued/);
+  assert.throws(() => assertTransition(["queued", "merging"], "cancelled"), /merging → cancelled/);
+  assert.doesNotThrow(() => assertTransition(CANCELLABLE, "cancelled"));
+  // Le merge arrêté retourne en correction, une de plus au compteur ; au plafond, l'humain.
+  const stopped = afterMergeStopped({ fixes: 1 }, "fix", "suite rouge", 2);
+  assert.deepEqual([stopped.state, stopped.step, stopped.fixes], ["queued", "fix", 2]);
+  const capped = afterMergeStopped({ fixes: 2 }, "review", "conflit", 2);
+  assert.deepEqual([capped.state, capped.step], ["awaiting_human", null]);
+  assert.match(capped.reason, /plafond/);
+  assert.deepEqual([afterMerged({ fixes: 1 }).state, afterMerged({ fixes: 1 }).step], ["merged", null]);
+  assert.match(afterMergeFailed({ fixes: 0 }, "push refusé").reason, /merge impossible : push refusé/);
+  assert.equal(cancelled({ step: "impl", fixes: 0, attempts: 0 }).state, "cancelled");
+  const back = recovered({ step: "impl", fixes: 1, attempts: 1 });
+  assert.deepEqual([back.state, back.step, back.fixes, back.attempts], ["queued", "impl", 1, 1]);
+  // Chaque issue de la machine est une transition que la table permet.
+  for (const transition of [stopped, capped]) assert.ok(canTransition("merging", transition.state));
+  assert.ok(canTransition("running", recovered({ step: "req", fixes: 0, attempts: 0 }).state));
 });

@@ -9,6 +9,7 @@
     "memoryMax": "1G",
     "oomScoreAdjust": 300,
     "profile": "pipeline",
+    "stepTimeoutSec": 5400,
     "extensions": ["/opt/omp-harness/omp-mem0-memory/extension.ts"]
   },
   "heavy": {
@@ -49,6 +50,7 @@
   },
   "review": { "fixCap": 3, "maxDiffLines": 300 },
   "oracle": { "url": "http://127.0.0.1:8321", "token": null },
+  "events": { "retentionDays": 30 },
   "repos": [
     {
       "name": "mon-produit",
@@ -56,7 +58,8 @@
       "mainBranch": "main",
       "tests": { "touched": "npm test -- {files}", "full": "npm test" },
       "merge": "local",
-      "remote": "origin"
+      "remote": "origin",
+      "maxParallel": 3
     }
   ]
 }

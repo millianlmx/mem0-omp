@@ -25,10 +25,7 @@
       "suspicious": {
         // Les tests cherchent volontairement des littéraux `${…}` de sources Swift et de sorties App Shortcut
         // (test/outillage/check.test.ts:691, test/console/ios-memoire-graphe.test.ts:270).
-        "noTemplateCurlyInString": "off",
-        // Le panneau retire volontairement séquences ANSI et caractères de contrôle par regex
-        // (omp-mem0-req/panelWidth.ts ANSI_AT/ANSI_GLOBAL/CONTROL_GLOBAL, panel.ts, panelRows.ts SGR_MOUSE, inbox.ts).
-        "noControlCharactersInRegex": "off"
+        "noTemplateCurlyInString": "off"
       }
     }
   },

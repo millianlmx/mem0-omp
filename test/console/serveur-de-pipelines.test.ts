@@ -132,7 +132,8 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
   const model = fs.readFileSync(path.join(CLIENT, "HarnessModel.swift"), "utf8");
   // La table des routes du serveur, telle que le gestionnaire HTTP la sert.
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
-  const served = (method: string, sample: string) => routes.some((route) => route.method === method && route.pattern.test(sample));
+  const served = (method: string, sample: string) =>
+    routes.some((route) => route.method === method && route.pattern.test(sample));
   const calls: [string, string, string][] = [
     ["/v1/inbox", "GET", "/v1/inbox"],
     ['path: "/escalations"', "POST", "/v1/runs/r1/escalations"],

@@ -336,11 +336,7 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
     if (typeof rules !== "object" || rules === null) continue;
     for (const [rule, level] of Object.entries(rules)) if (level === "off") off.push(`${group}/${rule}`);
   }
-  assert.deepEqual(off.sort(), [
-    "style/noNonNullAssertion",
-    "suspicious/noControlCharactersInRegex",
-    "suspicious/noTemplateCurlyInString",
-  ]);
+  assert.deepEqual(off.sort(), ["style/noNonNullAssertion", "suspicious/noTemplateCurlyInString"]);
   assert.equal(CONFIG.linter.rules.preset, "recommended");
   assert.equal(CONFIG.overrides, undefined, "aucun override ne coupe une règle en douce");
 
@@ -352,8 +348,6 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
   assert.match(commentAbove("noNonNullAssertion"), /comportement/);
   assert.match(commentAbove("noTemplateCurlyInString"), /test\/outillage\/check\.test\.ts:\d+/);
   assert.match(commentAbove("noTemplateCurlyInString"), /test\/console\/ios-memoire-graphe\.test\.ts:\d+/);
-  assert.match(commentAbove("noControlCharactersInRegex"), /omp-mem0-req\/panelWidth\.ts/);
-  assert.match(commentAbove("noControlCharactersInRegex"), /ANSI/);
   assert.equal(CONFIG.assist.enabled, false);
   assert.match(commentAbove("assist"), /imports/);
 

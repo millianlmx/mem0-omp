@@ -149,7 +149,7 @@ export type AuditRow = {
 };
 
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE runs (
      id TEXT PRIMARY KEY,
      repo TEXT NOT NULL,

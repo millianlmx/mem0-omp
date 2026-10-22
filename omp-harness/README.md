@@ -43,15 +43,19 @@ bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.
    **Serveur** de l'app.
 
 Relancé, `up` met à jour et redémarre sans toucher aux secrets ni à la
-configuration. `harness.sh pair` réaffiche le code.
+configuration. `harness.sh pair` réaffiche le code. `harness.sh client add <nom>`
+crée un client de plus et affiche SON code (voir « Plusieurs clients, plusieurs
+projets »).
 
 `add` clone le dépôt en nu, éprouve l'écriture sur son distant (un essai à blanc),
 devine ses commandes de test d'après ses manifestes (`package.json`, `Cargo.toml`,
-`go.mod`, `pyproject.toml`) et le déclare dans `~/.omp-harness/config.json`. Si la clé
+`go.mod`, `pyproject.toml`) et le déclare dans `~/.omp-harness/config.json`, puis recharge les dépôts du service sans
+arrêter les runs en cours (`harness.sh reload`). Si la clé
 du service n'a pas accès, il l'affiche avec le lien GitHub où la poser (case « Allow
 write access ») et réessaie quand tu valides. Une URL `https://github.com/…` est
 convertie en SSH. Les commandes devinées, les modèles et le reste se règlent ensuite
-dans `config.json` (voir « Configuration »), puis `harness.sh restart`.
+dans `config.json` (voir « Configuration »), puis `harness.sh reload` (les dépôts) ou
+`harness.sh restart` (le reste).
 
 | Variable de `up` | Effet |
 |---|---|
@@ -339,6 +343,15 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `heavy.env` | `{}` | l'environnement des tests, et rien d'autre |
 | `oracle` | `{ "url": "http://127.0.0.1:8321" }` (posé par l'installation) | la mémoire du projet ; `null` la coupe |
 | `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
+| `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
+| `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
+| `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure) |
+| `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement |
+
+Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
+omp-harness`) relit la configuration et recharge les dépôts : un dépôt ajouté sert
+tout de suite, un dépôt retiré qui a encore des runs vivants est gardé jusqu'à leur
+fin. Une configuration invalide est refusée, l'ancienne reste en place.
 
 ## Une feature, pas à pas
 
@@ -396,50 +409,107 @@ sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/mem0-rs.db /var/lib/omp-mem0/m
 sudo systemctl start omp-harness-mem0
 ```
 
+## Plusieurs clients, plusieurs projets
+
+Un serveur sert plusieurs dépôts, plusieurs projets par dépôt et plusieurs clients à
+la fois (le Mac, l'iPhone, un collègue, une CI).
+
+**Les clients.** Chacun a son jeton, son rôle et ses dépôts (`auth.ts`) :
+
+| Rôle | Peut |
+|---|---|
+| `viewer` | lire : boîte, runs, projets, audits, statistiques, flux |
+| `operator` | lire, créer runs, projets et audits, faire les gestes (escalades, décisions, validations, annulation, priorité) |
+| `admin` | tout, plus gérer les clients (`/v1/clients`) |
+
+Un client borné à des dépôts ne voit rien des autres : listes et flux filtrés, 404
+sur un run d'ailleurs, 403 à la création. Le jeton historique (`tokenFile`) reste le
+client `admin` sur tous les dépôts : les codes d'appairage déjà distribués marchent.
+
+```bash
+bash omp-harness/deploy/container/harness.sh client add ipad viewer mon-produit   # son code d'appairage
+bash omp-harness/deploy/container/harness.sh client list
+bash omp-harness/deploy/container/harness.sh client revoke ipad
+# avec systemd : sudo -u omp-harness node --experimental-strip-types /opt/omp-harness/omp-harness/main.ts \
+#   --config /etc/omp-harness/config.json --add-client ipad --role viewer --repos mon-produit
+```
+
+Le fichier ne garde que l'empreinte SHA-256 de chaque jeton ; une révocation vaut à
+la requête suivante. Un client borné à des dépôts ne reçoit pas la mémoire dans son
+code (elle couvre tous les projets du serveur).
+
+**L'auteur de chaque geste** est gardé : créateur du run (`createdBy`), réponse aux
+escalades (`answeredBy`), décision acceptée ou renversée (`decidedBy`), et `by` dans
+les événements du journal.
+
+**Deux clients sur le même run.** Les gestes d'un run passent un par un. Chaque run
+porte une révision (`rev`, +1 à chaque écriture) rendue en `ETag` par
+`GET /v1/runs/{id}` ; un geste envoyé avec `If-Match: "<rev>"` est refusé (412) si un
+autre client a agi entre-temps : il relit au lieu d'agir sur une vue périmée.
+
+**L'admission équitable.** À chaque tour, les runs en file sont admis un par un, au
+meilleur rang : priorité (`priority`, de -1000 à 1000, à la création ou par
+`POST /v1/runs/{id}/priority`), puis les runs repris (escalade répondue), puis le
+dépôt et le projet qui ont le moins de runs vivants, puis l'ancienneté. Un arriéré
+sur un dépôt ne prive donc pas les autres, et `repos[].maxParallel` plafonne un
+dépôt. Les tests heavy attendent leur slot dans une file servie par priorité puis
+par ordre d'arrivée : personne ne double personne. Les merges d'un même dépôt
+passent l'un après l'autre (le second se rebase sur le `main` du premier) ; les
+dépôts différents mergent en parallèle.
+
 ## API
 
-`Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health`.
+`Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
+du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 
-| Route | Effet |
-|---|---|
-| `GET /v1/status` | Compteurs par état, runs vivants, slots, `MemAvailable`, jetons par fournisseur. |
-| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?}` | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
-| `GET /v1/runs/{id}` | Run, étapes, décisions, escalades, tests, artefacts. |
-| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | Répondre au lot. Le run reprend quand tout est répondu. |
-| `POST /v1/runs/{id}/decisions/{n}/accept` | Accepter une décision prise seule. |
-| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
-| `POST /v1/runs/{id}/validate` `{approve, reason?}` | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
-| `POST /v1/runs/{id}/cancel` | Annuler (la branche reste). |
-| `GET /v1/escalations` | Escalades ouvertes, **batchées par run** (écran iOS). |
-| `GET /v1/decisions?status=auto` | La relecture du matin. |
-| `GET /v1/inbox` | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
-| `GET /v1/projects` · `POST /v1/projects` `{repo, title, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | /project. La liste porte le décompte des runs de chaque projet par état. |
-| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | /audit : `queued` → `analysing` → `proposed`. |
-| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | Lancer les propositions retenues en projet, ou annuler. |
-| `GET /v1/stats` | Les statistiques du harness, avec l'état du scheduler. |
-| `GET /v1/events?run=…` | SSE. `id:` = curseur du journal. Événements : `run_created`, `run_state`, `step_started`, `step_done`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merged`, `progress`… |
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
+| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur. |
+| `GET /v1/repos` | viewer | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`). |
+| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. |
+| `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`), étapes, décisions, escalades, tests, artefacts. |
+| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer}]}` | operator | Répondre au lot. Le run reprend quand tout est répondu. |
+| `POST /v1/runs/{id}/decisions/{n}/accept` | operator | Accepter une décision prise seule. |
+| `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | operator | Renverser : correction sur l'état courant, ou reprise au checkpoint N si des décisions en découlent. Raison dans l'oracle. |
+| `POST /v1/runs/{id}/validate` `{approve, reason?}` | operator | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
+| `POST /v1/runs/{id}/cancel` | operator | Annuler (la branche reste). |
+| `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
+| `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
+| `GET /v1/decisions?status=auto` | viewer | La relecture du matin. |
+| `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules, features en cours, audits ouverts, curseur du flux. |
+| `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction. |
+| `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. |
+| `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet, ou annuler. |
+| `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. |
+| `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister, créer (le jeton n'est rendu qu'à la création), révoquer. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `priority`, `step_started`, `step_done`, `step_timeout`, `decision`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
+
+Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
+insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture.
 
 ## Architecture
 
 | Case du schéma | Où | Ce qui le garantit |
 |---|---|---|
-| **Clients** : HTTPS + SSE, auth, point d'entrée unique | `http.ts` | Jeton Bearer comparé en temps constant. Écoute sur `127.0.0.1` ; Tailscale ou un reverse proxy TLS publie l'API. Le flux SSE se rejoue depuis `Last-Event-ID`. |
-| **SQLite** : source de vérité, un seul écrivain | `db.ts` | Runs, étapes, décisions (checkpoints), escalades, artefacts, journal d'événements, cache heavy et tests lancés. Seul le service ouvre la base. Runners et jobs heavy passent par lui. |
-| **Pipeline Service** : machine à états, reprise au checkpoint | `machine.ts`, `orchestrator.ts` | Machine pure. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. |
-| **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable | `scheduler.ts` | Un slot runner par run vivant. Un slot heavy par `run_tests`. Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. |
+| **Clients** : HTTPS + SSE, auth, point d'entrée unique | `http.ts`, `auth.ts`, `queries.ts` | Un jeton par client (empreinte SHA-256, comparée en temps constant), un rôle, des dépôts permis ; chaque route déclare son rôle minimal. Écoute sur `127.0.0.1` ; Tailscale ou un reverse proxy TLS publie l'API. Le flux SSE se rejoue depuis `Last-Event-ID`, filtré par dépôt. |
+| **SQLite** : source de vérité, un seul écrivain | `db.ts`, `events.ts` | Runs, étapes, décisions (checkpoints), escalades, artefacts, journal d'événements, cache heavy et tests lancés. Seul le service ouvre la base. Runners et jobs heavy passent par lui. Transactions réentrantes : les abonnés ne voient un événement qu'au COMMIT. Migrations numérotées (`PRAGMA user_version`). |
+| **Pipeline Service** : machine à états, reprise au checkpoint | `machine.ts`, `context.ts`, `orchestrator.ts`, `steps.ts` | Machine pure, table des transitions (`TRANSITIONS`) : toute écriture d'état passe par `context.transition`, en compare-and-swap, avec ses événements dans la même transaction. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. |
+| **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel`. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. |
 | **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans l'oracle, puis précisés par la section `## Modules` des specs. Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation. |
-| **Runners OMP** : 1 par étape, 1 Go, profil pipeline | `runner.ts`, `rpc.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Le runner de la revue reste vivant pendant review ⇄ fix (cache de prompt). Les autres meurent en fin d'étape ou à l'escalade. |
+| **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Le runner de la revue reste vivant pendant review ⇄ fix (cache de prompt). Les autres meurent en fin d'étape ou à l'escalade. |
+| **Merges** : un dépôt à la fois | `merger.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. |
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision`. Une décision réversible devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
 | **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, OOM | `heavy.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
 | **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Un diff de plus de 300 lignes interdit l'auto-merge. |
 | **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par /req, /specs et /project. En écriture : les comptes rendus de besoins, chaque feature mergée (knowledge-updater) et chaque correction humaine **avec sa raison**. Injoignable, il dégrade sans bloquer. |
-| **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `orchestrator.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review ⇄ fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
+| **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review ⇄ fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur un 429, `set_model` fait passer le **même** runner au fournisseur suivant. |
 | **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`. Bas risque + suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner) + diff ≤ 300 lignes : auto-merge. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 14 Go | `deploy/` | `omp-harness.slice` 16G ⊃ runners 5G + heavy 8G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
-| **Validation des specs** (ajout) | `machine.ts`, `orchestrator.ts` | `review.specsGate` (vrai par défaut) : après /specs, le run attend l'humain, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
+| **Validation des specs** (ajout) | `machine.ts`, `gestures.ts` | `review.specsGate` (vrai par défaut) : après /specs, le run attend l'humain, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
 | **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules) par l'outil hôte `audit_propose`. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project. |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
-| **Boucle humaine** | `orchestrator.ts`, `http.ts` | Relire, accepter, renverser une décision. La raison part dans l'oracle. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service fait un retour dur au checkpoint N : seules ces dépendantes tombent, les indépendantes sont réappliquées. Un run déjà mergé ouvre un run de suite. |
+| **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Relire, accepter, renverser une décision. La raison part dans l'oracle. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service fait un retour dur au checkpoint N : seules ces dépendantes tombent, les indépendantes sont réappliquées. Un run déjà mergé ouvre un run de suite. |
 
 ## Sécurité et écarts assumés au schéma
 
