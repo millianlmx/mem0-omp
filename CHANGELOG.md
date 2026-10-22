@@ -1,5 +1,17 @@
 # Journal des versions
 
+## omp-mem0-memory 4.0.0 — 2026-10-22
+
+- feat(harness,req,memory,console)!: harness autonome — relances différées, auto-décision à l'échéance, auto-merge par critères, pilotage depuis omp ; CI par diff (#251) (4256521)
+
+## omp-mem0-req 2.0.0 — 2026-10-22
+
+- feat(harness,req,memory,console)!: harness autonome — relances différées, auto-décision à l'échéance, auto-merge par critères, pilotage depuis omp ; CI par diff (#251) (4256521)
+
+## omp-harness 1.0.0 — 2026-10-22
+
+- feat(harness,req,memory,console)!: harness autonome — relances différées, auto-décision à l'échéance, auto-merge par critères, pilotage depuis omp ; CI par diff (#251) (4256521)
+
 ## omp-mem0-memory 3.0.0 — 2026-10-22
 
 - feat(harness)!: un seul moteur de pipelines — le harness du VPS (brouillon) (#248) (31f2a5e)
