@@ -304,3 +304,36 @@ test("harness-clients/AC-7 : main.ts --add-client imprime le seul jeton sur stdo
   assert.equal(run("--revoke-client", "iphone").status, 0);
   assert.equal(run("--revoke-client", "iphone").status, 1);
 });
+
+test("harness-clients/AC-8 : sous systemd, `omp-harness-client` ajoute, liste et révoque en omp-harness ; install.sh et le module NixOS le livrent", () => {
+  const dir = tmpdir("harness-clients-systemd-");
+  const configFile = path.join(dir, "config.json");
+  fs.writeFileSync(configFile, JSON.stringify({ dataDir: dir, repos: [] }));
+  const script = path.join(ROOT, "omp-harness", "deploy", "omp-harness-client");
+  // Sans sudo (OMP_HARNESS_AS vide) et avec le node du test : la même ligne que sur le VPS.
+  const env = {
+    ...process.env,
+    OMP_HARNESS_AS: "",
+    OMP_HARNESS_NODE: process.execPath,
+    OMP_HARNESS_MAIN: path.join(ROOT, "omp-harness", "main.ts"),
+    OMP_HARNESS_CONFIG: configFile,
+  };
+  const run = (...args: string[]) => spawnSync("sh", [script, ...args], { encoding: "utf8", env });
+  const added = run("add", "ipad", "viewer", "demo");
+  assert.equal(added.status, 0, added.stderr);
+  assert.match(added.stdout.trim(), /^[0-9a-f]{64}$/, "le jeton seul sur stdout");
+  assert.match(run("list").stdout, /^ipad\tviewer\tdemo$/m);
+  assert.equal(run("revoke", "ipad").status, 0);
+  assert.equal(run("add").status, 64, "un nom manquant est un usage");
+  assert.equal(run().status, 64);
+  // La ligne par défaut passe par sudo vers omp-harness, comme omp-harness-check.
+  assert.match(fs.readFileSync(script, "utf8"), /AS="\$\{OMP_HARNESS_AS-sudo -u omp-harness -H\}"/);
+  const deploy = path.join(ROOT, "omp-harness", "deploy");
+  assert.match(
+    fs.readFileSync(path.join(deploy, "install.sh"), "utf8"),
+    /install -m 0755 "\$HERE\/omp-harness-client" \/usr\/local\/bin\/omp-harness-client/,
+  );
+  const module = fs.readFileSync(path.join(deploy, "nixos", "module.nix"), "utf8");
+  assert.match(module, /writeShellScriptBin "omp-harness-client"/);
+  assert.match(module, /environment\.systemPackages = \[[^\]]*\bclient\b/);
+});

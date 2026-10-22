@@ -90,6 +90,17 @@ let
     exec /run/wrappers/bin/sudo -u omp-harness -H ${pkgs.bash}/bin/sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; PATH=${lib.makeBinPath [ pkgs.git pkgs.openssh pkgs.gh ]}:$PATH exec ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json --check'
   '';
 
+  # `sudo omp-harness-client add|list|revoke …` : les clients du harness, en omp-harness (auth.ts).
+  client = pkgs.writeShellScriptBin "omp-harness-client" ''
+    run() { exec /run/wrappers/bin/sudo -u omp-harness -H ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json "$@"; }
+    case "''${1:-}" in
+      add) [ -n "''${2:-}" ] || exit 64; run --add-client "$2" --role "''${3:-operator}" --repos "''${4:-*}" ;;
+      list) run --list-clients ;;
+      revoke) [ -n "''${2:-}" ] || exit 64; run --revoke-client "$2" ;;
+      *) echo "usage : omp-harness-client add <nom> [viewer|operator|admin] [dépôt,…|*] | list | revoke <nom>" >&2; exit 64 ;;
+    esac
+  '';
+
   homes = { omp-harness = "/var/lib/omp-harness"; omp-runner = "/var/lib/omp-runner"; omp-heavy = "/var/lib/omp-heavy"; };
 in
 {
@@ -190,7 +201,7 @@ in
 
     environment.etc."omp-harness/launcher.conf".text = launcherConf;
     environment.etc."omp-harness/config.json" = { source = harnessConfig; mode = "0640"; group = "omp-harness"; };
-    environment.systemPackages = [ cfg.nodejs pkgs.git pkgs.util-linux check ] ++ lib.optional (cfg.ompPackage != null) cfg.ompPackage;
+    environment.systemPackages = [ cfg.nodejs pkgs.git pkgs.util-linux check client ] ++ lib.optional (cfg.ompPackage != null) cfg.ompPackage;
 
     systemd.slices = {
       omp-harness = { description = "OMP harness — budget mémoire total"; sliceConfig = { MemoryMax = "16G"; MemoryHigh = "15G"; }; };

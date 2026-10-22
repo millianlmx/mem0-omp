@@ -430,8 +430,10 @@ client `admin` sur tous les dépôts : les codes d'appairage déjà distribués 
 bash omp-harness/deploy/container/harness.sh client add ipad viewer mon-produit   # son code d'appairage
 bash omp-harness/deploy/container/harness.sh client list
 bash omp-harness/deploy/container/harness.sh client revoke ipad
-# avec systemd : sudo -u omp-harness node --experimental-strip-types /opt/omp-harness/omp-harness/main.ts \
-#   --config /etc/omp-harness/config.json --add-client ipad --role viewer --repos mon-produit
+# avec systemd (Debian ou NixOS) : le jeton seul s'affiche, à coller avec l'adresse dans la feuille « Serveur »
+sudo omp-harness-client add ipad viewer mon-produit
+sudo omp-harness-client list
+sudo omp-harness-client revoke ipad
 ```
 
 Le fichier ne garde que l'empreinte SHA-256 de chaque jeton ; une révocation vaut à

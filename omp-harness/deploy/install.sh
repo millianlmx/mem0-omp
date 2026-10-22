@@ -108,6 +108,7 @@ if [ ! -e /var/lib/omp-harness/.ssh/id_ed25519 ]; then
   chmod 0600 /var/lib/omp-harness/.ssh/config
 fi
 install -m 0755 "$HERE/omp-harness-check" /usr/local/bin/omp-harness-check
+install -m 0755 "$HERE/omp-harness-client" /usr/local/bin/omp-harness-client
 
 echo "· tranches, service, zram, oomd"
 install -m 0644 "$HERE/omp-harness.slice" "$HERE/omp-harness-runners.slice" "$HERE/omp-harness-heavy.slice" \
