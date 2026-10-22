@@ -117,8 +117,7 @@ export async function openEvents(
   }
   if (!response.ok || response.body === null) {
     const payload: unknown = await response.json().catch(() => ({}));
-    const error =
-      isRecord(payload) && typeof payload.error === "string" ? payload.error : `HTTP ${response.status}`;
+    const error = isRecord(payload) && typeof payload.error === "string" ? payload.error : `HTTP ${response.status}`;
     throw new HarnessCallError(`harness : ${error}`, response.status);
   }
   return { status: response.status, events: readBody(response.body) };

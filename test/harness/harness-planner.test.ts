@@ -38,12 +38,28 @@ test("harness-planner/AC-3 : les modules d'une feature se lisent dans son texte 
   assert.deepEqual(modulesFromText("touche `src/api` et src/api/routes.ts", known), ["src/api"]);
   const oracle = new MemoryOracle();
   oracle.memories = [
-    { id: "1", text: "L'export vit dans src/db (décision du 3 mars).", score: 0.9, tags: ["harness", "besoins"], createdAt: null },
-    { id: "2", text: "Feature mergée « Guide » — Modules : docs", score: 0.8, tags: ["harness", "merged"], createdAt: null },
+    {
+      id: "1",
+      text: "L'export vit dans src/db (décision du 3 mars).",
+      score: 0.9,
+      tags: ["harness", "besoins"],
+      createdAt: null,
+    },
+    {
+      id: "2",
+      text: "Feature mergée « Guide » — Modules : docs",
+      score: 0.8,
+      tags: ["harness", "merged"],
+      createdAt: null,
+    },
   ];
   const result = await modulesViaOracle(oracle, "demo", "Ajouter un export dans src/api", known);
   assert.deepEqual(result.modules, ["src/api", "src/db"]);
-  assert.equal(result.memories.length, 2, "les souvenirs rappelés sont tous rendus, seuls les besoins nomment des modules");
+  assert.equal(
+    result.memories.length,
+    2,
+    "les souvenirs rappelés sont tous rendus, seuls les besoins nomment des modules",
+  );
   assert.deepEqual(parseModulesSection("## Modules\n- `src/api/`\n* docs\n## Découpage\n- pas ça\n"), [
     "src/api",
     "docs",
@@ -98,7 +114,13 @@ test("harness-planner/AC-4 : un /project lance en parallèle ses features disjoi
 test("harness-planner/AC-6 : un run créé sans modules les déduit de l'oracle avant son admission, et ne bloque plus les features disjointes", async () => {
   const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
   world.oracle.memories = [
-    { id: "1", text: "Besoins « Export » : tout se passe dans src/api.", score: 0.9, tags: ["harness", "besoins"], createdAt: null },
+    {
+      id: "1",
+      text: "Besoins « Export » : tout se passe dans src/api.",
+      score: 0.9,
+      tags: ["harness", "besoins"],
+      createdAt: null,
+    },
   ];
   try {
     const inferred = world.orchestrator.createRun({ repo: "demo", title: "Export", request: "Exporter en CSV" });
@@ -111,7 +133,12 @@ test("harness-planner/AC-6 : un run créé sans modules les déduit de l'oracle 
     assert.ok(
       world.store.eventsSince(0, inferred.id).some((e) => e.type === "modules" && e.payload.source === "oracle"),
     );
-    const docs = world.orchestrator.createRun({ repo: "demo", title: "Docs", request: "documenter", modules: ["docs"] });
+    const docs = world.orchestrator.createRun({
+      repo: "demo",
+      title: "Docs",
+      request: "documenter",
+      modules: ["docs"],
+    });
     await world.orchestrator.start();
     await waitFor(
       () => world.store.getRun(docs.id)?.state === "running" && world.store.getRun(inferred.id)?.state === "running",

@@ -24,9 +24,7 @@ async function until(world: FakeWorld, runId: string, states: string[], timeoutM
 
 /** La revue qui passe d'OK, mais qui relit `files` (le verdict doit couvrir tous les fichiers touchés). */
 function reviewOf(files: string[]): Record<string, unknown>[] {
-  return OK.review.map((step) =>
-    step.tool === "review_verdict" ? { ...step, args: { ...step.args, files } } : step,
-  );
+  return OK.review.map((step) => (step.tool === "review_verdict" ? { ...step, args: { ...step.args, files } } : step));
 }
 
 test("harness-pipeline/AC-1 : un run bas risque aux tests verts va de /req au merge squash sur main, sans humain", async () => {
@@ -791,7 +789,11 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
       req: [OK.req],
       specs: [OK.specs],
       impl: [OK.impl],
-      review: [blocked, blocked, reviewOf(["src/api/export.ts", "src/api/export-1.test.ts", "src/api/export-2.test.ts"])],
+      review: [
+        blocked,
+        blocked,
+        reviewOf(["src/api/export.ts", "src/api/export-1.test.ts", "src/api/export-2.test.ts"]),
+      ],
       fix: [fixed(1), fixed(2)],
     },
     {
@@ -854,7 +856,9 @@ test("harness-pipeline/AC-17 : une étape qui dépasse son échéance arrête so
     assert.ok(
       world.store
         .eventsSince(0, run.id)
-        .some((e) => e.type === "run_state" && e.payload.state === "queued" && /relance/.test(String(e.payload.reason))),
+        .some(
+          (e) => e.type === "run_state" && e.payload.state === "queued" && /relance/.test(String(e.payload.reason)),
+        ),
     );
     assert.equal(world.scheduler.snapshot().runner.used, 0, "le slot est rendu");
   } finally {

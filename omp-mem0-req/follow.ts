@@ -40,7 +40,8 @@ export type FollowerOptions = {
 /** Le texte posté pour un événement suivi, ou `null` s'il ne mérite rien. */
 export function followLine(event: HarnessEvent, title: string): string | null {
   const name = `${title} [${event.runId ?? "?"}]`;
-  const reason = typeof event.payload.reason === "string" && event.payload.reason !== "" ? ` — ${event.payload.reason}` : "";
+  const reason =
+    typeof event.payload.reason === "string" && event.payload.reason !== "" ? ` — ${event.payload.reason}` : "";
   switch (event.type) {
     case "specs_ready":
       return `[harness] specs prêtes à valider : ${name}${reason}. Lis-les avec harness_run ; harness_validate si l'utilisateur tranche.`;
@@ -65,14 +66,17 @@ export function followLine(event: HarnessEvent, title: string): string | null {
             : null,
         )
         .filter((line): line is string => line !== null);
-      return [`[harness] ${items.length} question(s) en attente sur ${name} :`, ...questions, "harness_run pour les options ; harness_answer si l'utilisateur répond."].join(
-        "\n",
-      );
+      return [
+        `[harness] ${items.length} question(s) en attente sur ${name} :`,
+        ...questions,
+        "harness_run pour les options ; harness_answer si l'utilisateur répond.",
+      ].join("\n");
     }
     case "run_state": {
       const state = event.payload.state;
       if (state === "merged") return `[harness] ${name} mergée${reason}.`;
-      if (state === "failed") return `[harness] ${name} en échec${reason}. harness_retry si l'utilisateur veut relancer.`;
+      if (state === "failed")
+        return `[harness] ${name} en échec${reason}. harness_retry si l'utilisateur veut relancer.`;
       return null;
     }
     default:
@@ -149,7 +153,8 @@ export function createFollower(pi: Pick<ExtensionAPI, "sendMessage">, options: F
   return {
     start(next, launched) {
       for (const run of launched) titles.set(run.id, run.title);
-      const same = target !== null && target.url === next.url && target.token === next.token && target.repo === next.repo;
+      const same =
+        target !== null && target.url === next.url && target.token === next.token && target.repo === next.repo;
       if (same && controller !== null) {
         // Le suivi reste ouvert : un filtre vide (tout le dépôt) absorbe les nouveaux runs,
         // un filtre nommé s'élargit à ceux qu'on vient de lancer.

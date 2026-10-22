@@ -2,13 +2,15 @@
 // scripts/ios-build.sh dans une copie jetable (feature recette-siri-de-bout-en-bout,
 // S-5).
 //
-// `xcodebuild build` y écrit le `Metadata.appintents/extract.actionsdata` de l'app
-// là où le vrai l'écrit (à la RACINE du `.app`) : le contenu conforme vient de la
-// liste attendue (`actionsData("ios")`), ou du fichier désigné par
-// `FAUX_ACTIONSDATA`. Aucun outil Apple réel n'est requis : les tests tournent
-// aussi sous ubuntu (doublure `uname`). `xcrun` ne connaît aucun simulateur, donc
-// l'assemblage complet s'arrête après la compilation, comme sur un poste sans
-// simulateur iOS 26.
+// `xcodebuild build` comme `xcodebuild test` y écrivent le
+// `Metadata.appintents/extract.actionsdata` de l'app là où le vrai l'écrit (à la
+// RACINE du `.app`) : le contenu conforme vient de la liste attendue
+// (`actionsData("ios")`), ou du fichier désigné par `FAUX_ACTIONSDATA`. Aucun
+// outil Apple réel n'est requis : les tests tournent aussi sous ubuntu (doublure
+// `uname`). Par défaut `xcrun` ne connaît aucun simulateur, donc l'assemblage
+// complet se réduit à la compilation générique, comme sur un poste sans
+// simulateur iOS 26 ; avec `FAUX_SIMULATEUR=<udid>`, il en annonce un sur un
+// runtime iOS 26 et journalise `simctl boot`/`bootstatus`.
 //
 // Ce module n'est pas un fichier de test (pas de suffixe `.test.ts`) : seuls les
 // tests l'importent.
@@ -44,14 +46,28 @@ export function montageIosBuild(): {
 
   const doublures: Record<string, string> = {
     uname: "printf 'Darwin\\n'",
-    xcrun: "printf '{}\\n'",
+    xcrun: `printf 'xcrun %s\\n' "$*" >> '${journal}'
+case "$2" in
+  list)
+    if [ -z "\${FAUX_SIMULATEUR:-}" ]; then printf '{}\\n'; exit 0; fi
+    case "$3" in
+      runtimes)
+        printf '{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-26-0","version":"26.0","isAvailable":true}]}\\n'
+        ;;
+      devices)
+        printf '{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-0":[{"udid":"%s","name":"Doublure"}]}}\\n' "$FAUX_SIMULATEUR"
+        ;;
+    esac
+    ;;
+esac
+exit 0`,
     python3: `exec '${python}' "$@"`,
     xcodebuild: `printf 'xcodebuild %s\\n' "$*" >> '${journal}'
 case "$1" in
   -showsdks)
     printf 'iOS SDKs:\\n'
     ;;
-  build)
+  build | test)
     derived=""
     prev=""
     for a in "$@"; do
@@ -74,7 +90,7 @@ exit 0`,
   }
 
   const base: NodeJS.ProcessEnv = { ...process.env };
-  for (const cle of ["FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "DEVELOPER_DIR"]) delete base[cle];
+  for (const cle of ["FAUX_APPINTENTS", "FAUX_ACTIONSDATA", "FAUX_SIMULATEUR", "DEVELOPER_DIR"]) delete base[cle];
 
   const run = (args: string[], env: Record<string, string> = {}): SpawnSyncReturns<string> => {
     fs.rmSync(journal, { force: true });

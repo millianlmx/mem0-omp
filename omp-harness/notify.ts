@@ -49,8 +49,7 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
     case "escalations": {
       const items = Array.isArray(payload.items) ? payload.items : [];
       const first = items[0];
-      const question =
-        first !== null && typeof first === "object" && "question" in first ? text(first.question) : "";
+      const question = first !== null && typeof first === "object" && "question" in first ? text(first.question) : "";
       return {
         title: `Question — ${feature}`,
         body: short(

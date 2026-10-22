@@ -1,3 +1,14 @@
 {
-  "tests": []
+  "tests": [
+    {
+      "identifiant": "visionneuse-de-session/AC-13",
+      "filtre": "\\.watcherResumesOnAFileUnreadableAtArming\\(\\)",
+      "occurrence": "runs des PR #221 (×3) et #229, 2026-10-19/20 (FileWatcherTests.swift, fichier illisible à l'armement)"
+    },
+    {
+      "identifiant": "terminal-integre/AC-9",
+      "filtre": "\\.quittingTheAppKillsLiveTerminals\\(\\)",
+      "occurrence": "run 38432015514, tentative 1 (TerminalModelTests.swift, quitter l'app tue les terminaux vivants)"
+    }
+  ]
 }

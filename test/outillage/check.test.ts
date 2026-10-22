@@ -243,7 +243,7 @@ test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
   const systems = matrix[1].split(",").map((s) => s.trim());
   assert.deepEqual(systems, ["ubuntu-latest"]);
   assert.match(workflow, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
-  assert.match(workflow, /run: \.\/scripts\/check\.sh --strict\s*$/m);
+  assert.match(workflow, /^ {8}run: \.\/scripts\/check\.sh --strict .*--tests-base=/m);
 
   // macOS : jobs parallèles qui lancent check.sh par sections, et leur agrégateur.
   assert.match(workflow, /^ {4}name: check \(macos-latest\)$/m);

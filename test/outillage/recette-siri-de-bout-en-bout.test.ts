@@ -66,11 +66,21 @@ function ajouterPhrase(data: ActionsData, type: string, phrase: string): void {
   raccourci.phraseTemplates.push({ key: phrase });
 }
 
+/** Les sous-commandes `xcodebuild` du journal des doublures, hors sonde `-showsdks`, dans l'ordre. */
+function appelsXcodebuild(journal: string): string[] {
+  if (!fs.existsSync(journal)) return [];
+  return fs
+    .readFileSync(journal, "utf8")
+    .split("\n")
+    .filter((ligne) => ligne.startsWith("xcodebuild ") && !ligne.startsWith("xcodebuild -showsdks"))
+    .map((ligne) => ligne.split(" ")[1] ?? "");
+}
+
 /**
  * Lance l'assemblage COMPLET du bundle sur `extract.actionsdata` doublé (et une
  * liste attendue modifiée par `liste`, si donnée), puis prouve l'échec : code 1,
  * lignes attendues sur stderr, ligne finale du script ; Mac sans bundle ni
- * signature, iOS sans aucun `xcodebuild test`. Rend stderr.
+ * signature, iOS (sans simulateur) sans aucun `xcodebuild test`. Rend stderr.
  */
 function prouverEchec(
   bundle: Bundle,
@@ -136,6 +146,8 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     );
   }
 
+  // iOS sans simulateur (doublure `xcrun` muette) : --no-tests comme complet font
+  // UNE compilation générique, jamais de `xcodebuild test`.
   const ios = montageIosBuild();
   for (const args of [["--no-tests"], []]) {
     const voie = args.length === 0 ? "complet" : "--no-tests";
@@ -149,7 +161,45 @@ test("recette-siri-de-bout-en-bout/AC-1 : sur la base conforme, l'assemblage Mac
     if (voie === "complet") {
       assert.ok(sortie.includes("tests non exécutés : aucun simulateur iOS 26 disponible"), `[iOS complet] ${sortie}`);
     }
+    const appels = appelsXcodebuild(ios.journal);
+    assert.deepEqual(appels, ["build"], `[iOS ${voie}] une seule compilation générique attendue\n${appels.join("\n")}`);
   }
+
+  // iOS avec un simulateur iOS 26 : il est démarré en arrière-plan, puis UN SEUL
+  // `xcodebuild test` compile et teste ; le contrôle des intents porte sur l'app
+  // qu'il a produite.
+  const udid = "DOUBLURE-0000-4000-8000-000000000026";
+  const r = ios.run([], { FAUX_SIMULATEUR: udid });
+  const sortie = `${r.stdout}${r.stderr}`;
+  assert.equal(r.status, 0, `[iOS simulateur] ${sortie}`);
+  assert.ok(r.stdout.includes(`tests de l'app iOS sur le simulateur ${udid}`), `[iOS simulateur] ${sortie}`);
+  assert.ok(r.stdout.includes(ligneConforme("ios")), `[iOS simulateur] ligne ✓ absente\n${sortie}`);
+  assert.ok(r.stdout.includes("✓ app iOS compilée et testée"), `[iOS simulateur] ${sortie}`);
+  const journal = fs.readFileSync(ios.journal, "utf8");
+  assert.deepEqual(appelsXcodebuild(ios.journal), ["test"], `[iOS simulateur] un seul xcodebuild attendu\n${journal}`);
+  assert.ok(journal.includes(`xcrun simctl boot ${udid}`), `[iOS simulateur] simulateur non démarré\n${journal}`);
+  assert.ok(
+    journal.indexOf(`xcrun simctl boot ${udid}`) < journal.indexOf("xcodebuild test"),
+    `[iOS simulateur] le démarrage doit précéder xcodebuild test\n${journal}`,
+  );
+  assert.ok(new RegExp(`^xcodebuild test .*id=${udid}`, "m").test(journal), `[iOS simulateur] destination\n${journal}`);
+
+  // Et un écart d'intents, avec simulateur, échoue APRÈS ce même `xcodebuild test`.
+  const [type] = Object.keys(readAttendus().ios);
+  const ecarte = ios.run([], {
+    FAUX_SIMULATEUR: udid,
+    FAUX_ACTIONSDATA: ecart("ios", (data) => {
+      delete data.actions[type];
+      data.autoShortcuts = data.autoShortcuts.filter((r) => r.actionIdentifier !== type);
+    }),
+  });
+  assert.equal(ecarte.status, 1, `[iOS simulateur, écart] ${ecarte.stdout}${ecarte.stderr}`);
+  assert.ok(ecarte.stderr.includes(NON_CONFORME.ios), `[iOS simulateur, écart] ${ecarte.stderr}`);
+  assert.deepEqual(
+    appelsXcodebuild(ios.journal),
+    ["test"],
+    "[iOS simulateur, écart] le contrôle suit l'unique xcodebuild test",
+  );
 });
 
 test("recette-siri-de-bout-en-bout/AC-2 : un intent attendu absent du bundle fait échouer l'assemblage en le nommant", () => {

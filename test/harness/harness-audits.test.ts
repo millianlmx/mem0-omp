@@ -12,7 +12,13 @@ const TOKEN = "t".repeat(64);
 
 const BASE = { modules: ["src/db"], rationale: "lu dans le code", dependsOn: [], impact: "medium", effort: "low" };
 
-const SCHEMA = { ...BASE, title: "Indexer le schéma", request: "Indexer les colonnes lues", kind: "feature", evidence: [] };
+const SCHEMA = {
+  ...BASE,
+  title: "Indexer le schéma",
+  request: "Indexer les colonnes lues",
+  kind: "feature",
+  evidence: [],
+};
 const TESTS = {
   ...BASE,
   title: "Tester le schéma",
@@ -88,7 +94,9 @@ test("harness-audits/AC-2 : les champs sont persistés, rendus par la vue, et le
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     const view = (await response.json()) as {
-      audit: { proposals: { title: string; evidence: string[]; dependsOn: number[]; impact: string; effort: string }[] };
+      audit: {
+        proposals: { title: string; evidence: string[]; dependsOn: number[]; impact: string; effort: string }[];
+      };
     };
     assert.deepEqual(
       view.audit.proposals.map((p) => [p.title, p.evidence, p.dependsOn, p.impact, p.effort]),
@@ -146,13 +154,27 @@ test("harness-audits/AC-3 : un runner d'audit qui plante est relancé une fois ;
 });
 
 test("harness-audits/AC-4 : le prompt d'audit nomme les runs ouverts et les features mergées du dépôt", async () => {
-  const world = fakeWorld({ audit: [[{ tool: "audit_propose", args: { proposals: [] } }]], req: [[{ sleep: 60_000 }]] });
+  const world = fakeWorld({
+    audit: [[{ tool: "audit_propose", args: { proposals: [] } }]],
+    req: [[{ sleep: 60_000 }]],
+  });
   world.oracle.memories = [
-    { id: "m1", text: "Feature mergée « Export CSV » (abc) : export simple", score: 0.9, tags: ["harness"], createdAt: null },
+    {
+      id: "m1",
+      text: "Feature mergée « Export CSV » (abc) : export simple",
+      score: 0.9,
+      tags: ["harness"],
+      createdAt: null,
+    },
   ];
   await world.orchestrator.start();
   try {
-    world.orchestrator.createRun({ repo: "demo", title: "Import JSON", request: "importer du JSON", modules: ["src/io"] });
+    world.orchestrator.createRun({
+      repo: "demo",
+      title: "Import JSON",
+      request: "importer du JSON",
+      modules: ["src/io"],
+    });
     const audit = world.orchestrator.audits.create("demo", "");
     await proposed(world, audit.id);
     const prompt = world.log().find((e) => e.kind === "prompt" && e.step === "audit");

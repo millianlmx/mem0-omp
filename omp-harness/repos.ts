@@ -67,9 +67,21 @@ export function detectTests(files: readonly string[], packageJson: string | null
     };
   }
   if (has("Cargo.toml"))
-    return { touched: "cargo test", full: "cargo test", pattern: null, checks: {}, testImage: "docker.io/library/rust:1-bookworm" };
+    return {
+      touched: "cargo test",
+      full: "cargo test",
+      pattern: null,
+      checks: {},
+      testImage: "docker.io/library/rust:1-bookworm",
+    };
   if (has("go.mod"))
-    return { touched: "go test ./...", full: "go test ./...", pattern: null, checks: {}, testImage: "docker.io/library/golang:1-bookworm" };
+    return {
+      touched: "go test ./...",
+      full: "go test ./...",
+      pattern: null,
+      checks: {},
+      testImage: "docker.io/library/golang:1-bookworm",
+    };
   if (has("pyproject.toml") || has("setup.py") || has("requirements.txt")) {
     return {
       touched: "python -m pytest {files}",

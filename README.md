@@ -375,6 +375,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/test-touched.sh            lance les tests qu'une liste de fichiers concerne (npm run test:touched)
 ├── scripts/test-ac.sh                 preuve par critère : les tests du diff qui portent AC-n
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur macOS de la CI
+├── scripts/ci-scope.sh                dit si le diff d'une PR impose de compiler l'app Mac ou l'app iOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois
 ├── scripts/typecheck.sh               type-check des plugins et de test/ (tsc épinglé)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
@@ -407,15 +408,48 @@ tests que ces fichiers concernent ; aucun ⇒ sortie 0, c'est l'entrée du harne
 npm run check                                                   # tout
 bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
 npm run -s test:touched -- omp-harness/verdict.ts               # les tests que ces fichiers concernent
+bash scripts/check.sh --tests-base=origin/main                  # toutes les sections, tests réduits au diff
 ```
+
+`scripts/test-files.sh --scope=changed[=<base>]` et `--scope=files <chemins…>`
+retiennent : (a) les tests du diff ; (b) les tests qui nomment un fichier du diff
+par son nom de base ou par la fin d'un import (`/chain"`) ; (b') les tests dont
+les imports relatifs, suivis de proche en proche, atteignent un fichier du diff ;
+(c) les tests macOS si le diff touche `omp-console/` hors `.md` ; (d) la suite
+entière hors outillage si le diff touche `scripts/check.sh`,
+`scripts/test-files.sh`, `package.json`, `tsconfig.json` ou `tsconfig.test.json`.
+Le modificateur `--macos` réduit cette sélection aux tests qui dépendent de macOS.
+Un diff que nul test ne concerne donne une liste vide, sortie 0, et un message
+sur stderr ; seuls un diff vide, une base inconnue ou git absent replient sur la
+liste complète.
+
+`scripts/check.sh --tests-base=<réf>` applique cette sélection à la section
+`── Tests` (diff depuis `<réf>`) ; une sélection vide laisse la section verte.
+Chaque section exécutée se termine par sa durée, `  · <n> s`, pour lire dans un
+journal où le temps part.
 
 Le reste (dossiers, options de `check.sh`, contrat du service mémoire, preuves
 conteneur) : [DEVELOPPEMENT.md](DEVELOPPEMENT.md).
 
 ## CI et release
 
-Chaque PR passe `scripts/check.sh` sur Ubuntu et sur macOS, plus une simulation de sa
-release. Après le merge, un job ouvre la PR de release, décide les versions d'après
-les commits, écrit `CHANGELOG.md`, puis pousse les tags : rien n'est jamais poussé
-directement sur `main`, et personne ne monte une version à la main. Le jeton que ce
-job exige est décrit dans `PUBLISHING.md` § Jeton de release.
+En pull_request, le job `check` (Ubuntu) passe toutes les sections de
+`scripts/check.sh`, les tests réduits à ceux que le diff de la PR concerne
+(`--tests-base`). Les jobs macOS ne tournent qu'en pull_request : les deux jobs
+d'app ne compilent que si le diff touche `omp-console/`, `scripts/`, `mem0-stack/`
+ou `check.yml` (décision de `scripts/ci-scope.sh`, sinon l'étape est sautée et le
+job reste vert), et `macos-tests` ne lance que les tests macOS que le diff
+concerne. Au push vers `main`, seul le job Ubuntu tourne, suite entière : c'est le
+filet des trous de sélection. Mesuré le 2026-10-22, avant ce découpage :
+`macos-app-ios` 674 s dont 13 s de tests, `macos-app-swift` 529 s, 16 jobs macOS
+par feature pour 5 runners, `release-simulation` 18 min dont 989 s de `check.sh`
+complet.
+
+La simulation de release de chaque PR et le job de release ne rejouent que les
+sections que la release peut casser (catalogue, noms, plugins, versions,
+extension, types, lint, smoke, noyau) plus les tests que les fichiers écrits
+concernent (`--tests-base=HEAD`). Après le merge, le job de release ouvre la PR de
+release, décide les versions d'après les commits, écrit `CHANGELOG.md`, puis
+pousse les tags : rien n'est jamais poussé directement sur `main`, et personne ne
+monte une version à la main. Le jeton que ce job exige est décrit dans
+`PUBLISHING.md` § Jeton de release.

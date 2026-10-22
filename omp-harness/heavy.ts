@@ -453,7 +453,11 @@ export class HeavyRunner {
       last = await this.#attempt(job, id, attempts, signal);
       if (last.outcome === "fail" && !failRetried) {
         failRetried = true;
-        store.appendEvent("heavy_fail_retry", job.runId, { scope: job.scope, attempt: attempts, exitCode: last.exitCode });
+        store.appendEvent("heavy_fail_retry", job.runId, {
+          scope: job.scope,
+          attempt: attempts,
+          exitCode: last.exitCode,
+        });
         continue;
       }
       if (last.outcome === "oom" && oomRetries < config.heavy.oomRetries) {

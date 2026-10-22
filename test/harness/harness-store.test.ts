@@ -203,10 +203,7 @@ test("harness-store/AC-9 : la migration de l'autonomie est idempotente — un ru
   const db = new Store(file);
   assert.equal(db.schemaVersion, 6);
   const run = db.getRun("r1");
-  assert.deepEqual(
-    [run?.notBefore, run?.mergeRetries, run?.lastFailCause, run?.lastReviewSha],
-    [null, 0, null, null],
-  );
+  assert.deepEqual([run?.notBefore, run?.mergeRetries, run?.lastFailCause, run?.lastReviewSha], [null, 0, null, null]);
   const [escalation] = db.listEscalations({ runId: "r1" });
   assert.deepEqual([escalation?.recommended, escalation?.answerReason], [null, null]);
   db.close();
@@ -273,12 +270,16 @@ test("harness-store/AC-12 : une escalade garde la recommandation de l'agent et l
   const [answered] = db.listEscalations({ runId: "r1" });
   assert.deepEqual([answered?.answer, answered?.answerReason, answered?.answeredBy], ["b", "a casse l'index", "mac"]);
   // Sans recommandation ni raison : null, pas une chaîne vide.
-  const bare = db.addEscalation({ runId: "r1", stepId: step.id, category: "public_api", question: "?", options: [], context: "" });
+  const bare = db.addEscalation({
+    runId: "r1",
+    stepId: step.id,
+    category: "public_api",
+    question: "?",
+    options: [],
+    context: "",
+  });
   db.answerEscalation(bare.id, "x");
-  assert.deepEqual(
-    [bare.recommended, db.listEscalations({ runId: "r1" })[1]?.answerReason],
-    [null, null],
-  );
+  assert.deepEqual([bare.recommended, db.listEscalations({ runId: "r1" })[1]?.answerReason], [null, null]);
   const decision = {
     runId: "r1",
     stepId: step.id,

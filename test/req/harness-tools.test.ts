@@ -183,7 +183,13 @@ async function fakeHarness(options: { rev?: number; events?: string[] } = {}) {
       if (req.method === "POST" && url.pathname === "/v1/runs")
         return json(201, { run: { id: "r9", branch: "feat/x" } });
       if (req.method === "POST" && url.pathname === "/v1/projects")
-        return json(201, { projectId: "p1", runs: [{ id: "r2", modules: [] }, { id: "r3", modules: [] }] });
+        return json(201, {
+          projectId: "p1",
+          runs: [
+            { id: "r2", modules: [] },
+            { id: "r3", modules: [] },
+          ],
+        });
       if (req.method === "POST" && url.pathname.startsWith("/v1/runs/r1/")) {
         if (req.headers["if-match"] !== String(rev)) return json(412, { error: "révision périmée" });
         rev += 1;
@@ -212,7 +218,9 @@ async function fakeHarness(options: { rev?: number; events?: string[] } = {}) {
       waiters.push({ prefix, resolve });
       return promise;
     },
-    dropConnections: () => sockets.forEach((socket) => socket.destroy()),
+    dropConnections: () => {
+      for (const socket of sockets) socket.destroy();
+    },
     close: async () => {
       server.closeAllConnections();
       const closed = Promise.withResolvers<void>();
@@ -419,7 +427,10 @@ test("harness-tools/AC-5 : harness_launch refuse des modules vides ; harness_pro
     const follow = await server.nextRequest("/v1/events");
     assert.equal(follow.path, "/v1/events?live=1");
     assert.equal(box.sent.length, 0);
-    const headless = await launch({ title: "Y", request: "y", modules: ["src"], req: "## Besoins\n" }, { ...ctx, hasUI: false });
+    const headless = await launch(
+      { title: "Y", request: "y", modules: ["src"], req: "## Besoins\n" },
+      { ...ctx, hasUI: false },
+    );
     assert.match(headless?.content[0]?.text ?? "", /run r9/);
   } finally {
     pointAt(null);
@@ -520,10 +531,10 @@ test("harness-tools/AC-8 : le suivi poste « [harness] … » sans déclencher d
   });
   const box = mailbox();
   const errors: string[] = [];
-  const follower = createFollower(
-    { sendMessage: box.sendMessage } as never,
-    { reconnectMs: 20, onError: (message) => errors.push(message) },
-  );
+  const follower = createFollower({ sendMessage: box.sendMessage } as never, {
+    reconnectMs: 20,
+    onError: (message) => errors.push(message),
+  });
   const target = { url: server.url, token: TOKEN, repo: "demo" };
   try {
     follower.start(target, [{ id: "r1", title: "Export CSV" }]);
@@ -544,7 +555,10 @@ test("harness-tools/AC-8 : le suivi poste « [harness] … » sans déclencher d
     assert.ok(box.sent.every((item) => item.message.customType === "harness" && item.message.display === true));
     assert.ok(box.sent.every((item) => JSON.stringify(item.options) === JSON.stringify({ triggerTurn: false })));
     const opened = server.seen.filter((item) => item.path.startsWith("/v1/events"));
-    assert.deepEqual(opened.map((item) => item.path), ["/v1/events?live=1"]);
+    assert.deepEqual(
+      opened.map((item) => item.path),
+      ["/v1/events?live=1"],
+    );
     // Coupure : le suivi revient après `reconnectMs` en reprenant au dernier id lu.
     const first = server.seen.length;
     server.dropConnections();
@@ -561,10 +575,7 @@ test("harness-tools/AC-8 : le suivi poste « [harness] … » sans déclencher d
       followLine({ id: 1, type: "run_state", at: 1, runId: "r1", repo: "demo", payload: { state: "queued" } }, "X"),
       null,
     );
-    assert.equal(
-      followLine({ id: 1, type: "progress", at: 1, runId: "r1", repo: "demo", payload: {} }, "X"),
-      null,
-    );
+    assert.equal(followLine({ id: 1, type: "progress", at: 1, runId: "r1", repo: "demo", payload: {} }, "X"), null);
   } finally {
     follower.stop();
     await server.close();

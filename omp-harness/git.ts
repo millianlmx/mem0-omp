@@ -263,7 +263,9 @@ export class Git {
     fromExclusive: string,
     toInclusive: string,
   ): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }> {
-    const shas = (await this.run(worktree, ["rev-list", `${fromExclusive}..${toInclusive}`])).split("\n").filter(Boolean);
+    const shas = (await this.run(worktree, ["rev-list", `${fromExclusive}..${toInclusive}`]))
+      .split("\n")
+      .filter(Boolean);
     const head = await this.revParse(worktree, "HEAD");
     for (const sha of shas) {
       // Un checkpoint vide (commit --allow-empty) n'a rien à défaire : git refuse de le reverter.

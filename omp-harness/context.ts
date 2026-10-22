@@ -170,7 +170,11 @@ export class HarnessContext {
         else this.event("verdict", run.id, { verdict: next.verdict, reason: transition.reason });
       }
       if (transition.state === "failed")
-        this.event("run_failed", run.id, { step: transition.step, reason: transition.reason, cause: next.lastFailCause });
+        this.event("run_failed", run.id, {
+          step: transition.step,
+          reason: transition.reason,
+          cause: next.lastFailCause,
+        });
       if (isTerminal(transition.state) && run.projectId) this.#closeProjectIfDone(run.projectId, run.repo);
       return next;
     });

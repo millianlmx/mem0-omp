@@ -133,7 +133,13 @@ test("client-harness/AC-3 : harness_launch crée la feature avec ses besoins (el
     const { ctx } = ctxIn(world.repo);
     const noModules = await tools
       .get("harness_launch")
-      ?.execute("t", { title: "Export", request: "exporter", modules: [], req: "## Besoins\n" }, undefined, undefined, ctx);
+      ?.execute(
+        "t",
+        { title: "Export", request: "exporter", modules: [], req: "## Besoins\n" },
+        undefined,
+        undefined,
+        ctx,
+      );
     assert.equal(noModules?.isError, true);
     assert.match(noModules?.content[0]?.text ?? "", /modules/);
     const refused = await tools

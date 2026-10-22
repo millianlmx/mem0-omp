@@ -79,7 +79,10 @@ test("harness-oracle/AC-3 : une décision humaine rejoint l'oracle avec sa raiso
     context: "export lu par la compta",
     reversedFrom: ",",
   });
-  assert.match(text, /^Décision renversée \(le runner avait choisi « , »\) \[catégorie : schema\] — feature « Export »/);
+  assert.match(
+    text,
+    /^Décision renversée \(le runner avait choisi « , »\) \[catégorie : schema\] — feature « Export »/,
+  );
   assert.match(text, /Options : , \| ;\./);
   assert.match(text, /Contexte : export lu par la compta/);
   assert.match(text, /Raison : Excel FR$/);

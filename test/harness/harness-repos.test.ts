@@ -73,7 +73,12 @@ test("harness-repos/AC-1 : les commandes de test et l'image viennent des manifes
 
 test("harness-repos/AC-4 : un package.json avec test:touched donne la commande touched, le glob suit test/, lint et typecheck deviennent des checks", () => {
   const manifest = JSON.stringify({
-    scripts: { test: "x", "test:touched": "bash scripts/test-touched.sh", lint: "bash scripts/lint.sh", typecheck: "tsc" },
+    scripts: {
+      test: "x",
+      "test:touched": "bash scripts/test-touched.sh",
+      lint: "bash scripts/lint.sh",
+      typecheck: "tsc",
+    },
   });
   assert.deepEqual(detectTests(["package.json", "test"], manifest), {
     touched: "npm run -s test:touched -- {files}",
@@ -87,7 +92,10 @@ test("harness-repos/AC-4 : un package.json avec test:touched donne la commande t
   assert.equal(only.touched, "yarn test -- {files}");
   assert.deepEqual(only.checks, { lint: "yarn run -s lint" });
   assert.deepEqual(detectTests(["package.json"], "{ pas du json").checks, {});
-  assert.equal(detectTests(["package.json"], JSON.stringify({ scripts: { "test:touched": 3 } })).touched, "npm test -- {files}");
+  assert.equal(
+    detectTests(["package.json"], JSON.stringify({ scripts: { "test:touched": 3 } })).touched,
+    "npm test -- {files}",
+  );
 });
 
 test("harness-repos/AC-2 : un dépôt joignable est cloné, éprouvé et déclaré à la place de l'exemple ; le redéclarer ne change rien", async () => {

@@ -93,8 +93,11 @@ export function parseProposals(
         error: `proposals[${index}] : modules (chaînes), kind (faiblesse | feature) et rationale attendus`,
       };
     }
-    const evidence = strings(p.evidence) ? p.evidence.map((entry) => entry.trim()).filter((entry) => entry !== "") : null;
-    if (evidence === null) return { ok: false, error: `proposals[${index}] : evidence (liste de fichier:ligne) attendue` };
+    const evidence = strings(p.evidence)
+      ? p.evidence.map((entry) => entry.trim()).filter((entry) => entry !== "")
+      : null;
+    if (evidence === null)
+      return { ok: false, error: `proposals[${index}] : evidence (liste de fichier:ligne) attendue` };
     if (p.kind === "faiblesse" && evidence.length === 0) {
       return {
         ok: false,
@@ -131,7 +134,12 @@ export function parseProposals(
       effort,
     });
   }
-  if (launchOrder(proposals, proposals.map((_, index) => index)) === null)
+  if (
+    launchOrder(
+      proposals,
+      proposals.map((_, index) => index),
+    ) === null
+  )
     return { ok: false, error: "dependsOn : les dépendances forment un cycle" };
   return { ok: true, proposals };
 }
@@ -283,7 +291,8 @@ export class Auditor {
       );
     }
     if (result.status !== "completed") throw new Error(result.error?.message ?? "erreur du runner");
-    if (live.proposals === null) throw new NoProposalsError("les propositions n'ont pas été rendues par `audit_propose`");
+    if (live.proposals === null)
+      throw new NoProposalsError("les propositions n'ont pas été rendues par `audit_propose`");
     return live.proposals;
   }
 

@@ -135,7 +135,11 @@ test("harness-git/AC-8 : revertRange défait une plage de commits (checkpoints v
   fs.writeFileSync(path.join(wt, "keep.ts"), "garde\n");
   const before = await client.commitAll(wt, "wip avant");
   const empty = await client.commitAll(wt, checkpointMessage("r1", 1, { question: "q", chosen: "c", rationale: "r" }));
-  assert.equal(git(wt, "rev-parse", `${empty}^{tree}`), git(wt, "rev-parse", `${before}^{tree}`), "le checkpoint est vide");
+  assert.equal(
+    git(wt, "rev-parse", `${empty}^{tree}`),
+    git(wt, "rev-parse", `${before}^{tree}`),
+    "le checkpoint est vide",
+  );
   fs.writeFileSync(path.join(wt, "feature.ts"), "a\n");
   await client.commitAll(wt, "wip 1");
   fs.writeFileSync(path.join(wt, "feature.ts"), "a\nb\n");
@@ -168,7 +172,11 @@ test("harness-git/AC-9 : un revert en conflit est abandonné, l'arbre rendu prop
   assert.equal(git(wt, "rev-parse", "HEAD"), head, "HEAD n'a pas bougé");
   assert.equal(fs.readFileSync(path.join(wt, "README.md"), "utf8"), "v2\n", "le worktree est revenu à HEAD");
   assert.equal(await client.isDirty(wt), false);
-  assert.notEqual((await client.raw(wt, ["rev-parse", "-q", "--verify", "REVERT_HEAD"])).code, 0, "aucun revert en cours");
+  assert.notEqual(
+    (await client.raw(wt, ["rev-parse", "-q", "--verify", "REVERT_HEAD"])).code,
+    0,
+    "aucun revert en cours",
+  );
 });
 
 test("harness-git/AC-10 : diffLines en mode `code` ignore tests, docs, changelog, manifestes et verrous ; `all` compte tout", async () => {
@@ -194,8 +202,15 @@ test("harness-git/AC-10 : diffLines en mode `code` ignore tests, docs, changelog
   assert.equal(await client.diffLines(wt, main, "all"), 10);
   assert.equal(await client.diffLines(wt, main, "code"), 2);
   assert.deepEqual(
-    ["test/a.ts", "a/b/Tests/c.ts", "x.test.swift", "README.md", "CHANGELOG", "package.json", "yarn.lock"].map(isNonCode),
+    ["test/a.ts", "a/b/Tests/c.ts", "x.test.swift", "README.md", "CHANGELOG", "package.json", "yarn.lock"].map(
+      isNonCode,
+    ),
     [true, true, true, true, true, true, true],
   );
-  assert.deepEqual(["src/test.ts", "testing/a.ts", "src/Tests.ts", "package-lock.json"].map(isNonCode), [false, false, false, false]);
+  assert.deepEqual(["src/test.ts", "testing/a.ts", "src/Tests.ts", "package-lock.json"].map(isNonCode), [
+    false,
+    false,
+    false,
+    false,
+  ]);
 });

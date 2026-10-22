@@ -5,7 +5,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { matchingHumanDecision, memoryCategory, memoryChoice, parseSplitFeatures } from "../../omp-harness/host-tools.ts";
+import {
+  matchingHumanDecision,
+  memoryCategory,
+  memoryChoice,
+  parseSplitFeatures,
+} from "../../omp-harness/host-tools.ts";
 import {
   failCauseOf,
   gateNeeded,
@@ -51,14 +56,18 @@ test("harness-steps/AC-2 : `## Reste` d'impl.md : vide, absent ou « aucun » �
   assert.equal(parseRemaining("## Fait\nAC-1\n## Reste\n"), "");
   assert.equal(parseRemaining("## Fait\nAC-1\n"), "");
   assert.equal(parseRemaining("## Fait\nAC-1\n## Reste\naucun\n"), "");
-  assert.equal(parseRemaining("## Fait\nAC-1\n## Reste\n- la pagination\n- les tests du tri\n"), "- la pagination\n- les tests du tri");
+  assert.equal(
+    parseRemaining("## Fait\nAC-1\n## Reste\n- la pagination\n- les tests du tri\n"),
+    "- la pagination\n- les tests du tri",
+  );
 });
 
 test("harness-steps/AC-3 : la couverture des specs — chaque B-n a un AC-m (B-n), chaque AC est cité par un S-k (AC-m)", () => {
   const req = OK.req[0]?.content ?? "";
   assert.equal(specsCoverageGap(req, OK.specs[0]?.content ?? ""), null);
   assert.match(
-    specsCoverageGap(req.replace("format CSV\n", "format CSV\nB-2 : importer un CSV\n"), OK.specs[0]?.content ?? "") ?? "",
+    specsCoverageGap(req.replace("format CSV\n", "format CSV\nB-2 : importer un CSV\n"), OK.specs[0]?.content ?? "") ??
+      "",
     /B-2 n'a aucun critère/,
   );
   const orphanAc = (OK.specs[0]?.content ?? "").replace("S-1 (AC-1)", "S-1");
@@ -81,7 +90,10 @@ test("harness-steps/AC-4 : gateNeeded — découpage, modules vides, irréversib
 
 test("harness-steps/AC-5 : la cause d'un prompt manqué — délai, bascule du fournisseur, réseau, contexte, arrêt", () => {
   assert.equal(failCauseOf("aborted", null), "aborted");
-  assert.equal(failCauseOf("error", { message: "délai d'étape dépassé (1 s) : runner arrêté", retryable: true }), "timeout");
+  assert.equal(
+    failCauseOf("error", { message: "délai d'étape dépassé (1 s) : runner arrêté", retryable: true }),
+    "timeout",
+  );
   assert.equal(failCauseOf("error", { message: "429", cause: "rate_limit" }), "rate_limit");
   assert.equal(failCauseOf("error", { message: "502", cause: "server_error" }), "provider");
   assert.equal(failCauseOf("error", { message: "ECONNRESET", cause: "network" }), "network");
@@ -123,7 +135,9 @@ test("harness-steps/AC-8 : des specs sans `## Modules` sont relancées une fois,
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
     await until(world, run.id, ["failed", "awaiting_human", "merged"]);
-    const nudges = world.log().filter((entry) => entry.kind === "prompt" && entry.step === "specs" && entry.nudge === true);
+    const nudges = world
+      .log()
+      .filter((entry) => entry.kind === "prompt" && entry.step === "specs" && entry.nudge === true);
     assert.equal(nudges.length, 1, "une relance");
     assert.match(String(nudges[0]?.message), /`## Modules` de specs\.md est vide/);
     const specsSteps = world.store.listSteps(run.id).filter((step) => step.kind === "specs");
@@ -277,14 +291,21 @@ test("harness-steps/AC-12 : la seconde revue est incrémentale — elle reçoit 
     specs: [OK.specs],
     impl: [OK.impl],
     review: [blocked, weak],
-    fix: [[{ write: "src/api/export.ts", content: "export const exportCsv = () => '\"a\",b';\n" }, { write: ".harness/fix.md", content: "## Levées\n- guillemets échappés\n" }]],
+    fix: [
+      [
+        { write: "src/api/export.ts", content: "export const exportCsv = () => '\"a\",b';\n" },
+        { write: ".harness/fix.md", content: "## Levées\n- guillemets échappés\n" },
+      ],
+    ],
   });
   await world.orchestrator.start();
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
     await until(world, run.id, ["awaiting_human", "merged", "failed"]);
     assert.equal(world.store.getRun(run.id)?.state, "awaiting_human", stateOf(world, run.id));
-    const reviews = world.log().filter((entry) => entry.kind === "prompt" && entry.step === "review" && entry.nudge !== true);
+    const reviews = world
+      .log()
+      .filter((entry) => entry.kind === "prompt" && entry.step === "review" && entry.nudge !== true);
     assert.equal(reviews.length, 2);
     const worktree = world.store.getRun(run.id)?.worktree ?? "";
     // HEAD à la fin de la première revue = le parent du commit de fin de correction.
@@ -305,12 +326,20 @@ test("harness-steps/AC-13 : une suite complète rouge devient un bloquant, quoi 
     { write: "FAIL_FULL", content: "" },
     { write: ".harness/impl.md", content: "## Fait\nAC-1 fait\n## Reste\n" },
   ];
-  const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [impl], review: [OK.review], fix: [[{ sleep: 60_000 }]] });
+  const world = fakeWorld({
+    req: [OK.req],
+    specs: [OK.specs],
+    impl: [impl],
+    review: [OK.review],
+    fix: [[{ sleep: 60_000 }]],
+  });
   await world.orchestrator.start();
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
     await waitFor(
-      () => world.store.getRun(run.id)?.step === "fix" || ["merged", "failed", "awaiting_human"].includes(world.store.getRun(run.id)?.state ?? ""),
+      () =>
+        world.store.getRun(run.id)?.step === "fix" ||
+        ["merged", "failed", "awaiting_human"].includes(world.store.getRun(run.id)?.state ?? ""),
       () => stateOf(world, run.id),
       30_000,
     );
@@ -435,7 +464,9 @@ test("harness-steps/AC-16 : set_modules pose les modules du run pendant l'étape
     assert.equal(live?.state, "running");
     assert.equal(live?.step, "specs");
     assert.deepEqual(live?.modules, ["src/db", "docs"]);
-    assert.ok(world.store.eventsSince(0, run.id).some((item) => item.type === "modules" && item.payload.by === "runner"));
+    assert.ok(
+      world.store.eventsSince(0, run.id).some((item) => item.type === "modules" && item.payload.by === "runner"),
+    );
     const tools = world.log().filter((entry) => entry.kind === "tool" && entry.tool === "checkpoint");
     assert.match(String(tools[0]?.result), /^checkpoint [0-9a-f]{12} posé$/);
     assert.match(String(tools[1]?.result), /^rien à committer : HEAD [0-9a-f]{12}$/);

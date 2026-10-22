@@ -33,22 +33,27 @@ npm run -s test:touched -- omp-harness/verdict.ts               # les tests que 
 bash scripts/test-ac.sh AC-1 AC-2                                # preuve par critère
 ```
 
-`scripts/test-files.sh --scope=changed[=<base>]` (base `HEAD`) retient : les
-`test/**/*.test.ts` du diff (`git diff --name-only` + non suivis), tout test dont le texte nomme un fichier
-source du diff (`chain.ts` ou `/chain"`), et les tests `--scope=macos` si le diff touche
-`omp-console/`. Sans git, base inconnue ou diff vide : message sur stderr et liste complète
-hors outillage — jamais une liste vide silencieuse. `--scope=outillage` liste les fichiers
+`scripts/test-files.sh --scope=changed[=<base>]` (base `HEAD`) retient : (a) les
+`test/**/*.test.ts` du diff (`git diff --name-only` + non suivis) ; (b) tout test dont le texte
+nomme un fichier du diff par son nom de base (`chain.ts`, `README.md`) ou par la fin d'un
+import (`/chain"`) ; (b') tout test dont les imports relatifs, suivis de proche en proche,
+atteignent un fichier du diff ; (c) les tests `--scope=macos` si le diff touche
+`omp-console/` hors `.md` ; (d) la liste complète hors outillage si le diff touche
+`scripts/check.sh`, `scripts/test-files.sh`, `package.json`, `tsconfig.json` ou
+`tsconfig.test.json`. Sans git, base inconnue ou diff vide : message sur stderr et liste
+complète hors outillage. Un diff non vide que nul test ne concerne : message sur stderr,
+sortie 0, rien sur stdout. `--macos` (avec `changed` ou `files` seulement) réduit la
+sélection aux fichiers de `--scope=macos`. `--scope=outillage` liste les fichiers
 qui relancent un `check.sh` complet (`check.test.ts`, `release.test.ts`,
 `release-simulation.test.ts`, règle par contenu) : `--scope=changed` ne les inclut jamais,
 `check.sh` sans option les lance toujours.
 
 `scripts/test-files.sh --scope=files <chemins…>` applique les mêmes règles à une liste
 reçue en arguments au lieu du diff : c'est l'entrée du harness, qui connaît les fichiers
-touchés depuis la base du run. À l'inverse de `changed`, un résultat vide y est légitime
-(liste vide, ou fichiers que nul test ne nomme) : message sur stderr, sortie 0, rien sur
-stdout. `scripts/test-touched.sh <chemins…>` (= `npm run test:touched -- …`) lance
-`node --test --test-reporter=tap` sur cette sélection, et sort 0 sans rien lancer quand
-elle est vide.
+touchés depuis la base du run. Une liste vide ou des fichiers que nul test ne concerne :
+message sur stderr, sortie 0, rien sur stdout. `scripts/test-touched.sh <chemins…>`
+(= `npm run test:touched -- …`) lance `node --test --test-reporter=tap` sur cette
+sélection, et sort 0 sans rien lancer quand elle est vide.
 
 `scripts/test-ac.sh [--base=<rev>] AC-1 AC-2 …` : pour chaque id, imprime les fichiers de
 test **du diff** qui le portent (`AC-1` ≠ `AC-10`) ou `(aucun test dans le diff)`, lance
@@ -94,10 +99,18 @@ Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux stat
 ainsi que `release-simulation` : le merge est bloqué.
 
 Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 13
-sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
-jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
-(`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
-`macos-tests (2/2)`, qui se partagent la suite node. Dans `macos-app-swift`, quand
+sections à chaque run ; en pull_request il ajoute `--tests-base=<sha de la base>` et la
+section tests se réduit aux fichiers que le diff de la PR concerne, au push vers `main`
+la suite node tourne entière (filet des trous de sélection). Les jobs macOS ne tournent
+qu'en pull_request, en **parallèle**, sur des runners distincts et sans `needs` entre
+eux : `macos-app-swift` (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`)
+et `macos-tests (1/2)`, `macos-tests (2/2)`. Les deux jobs d'app commencent par
+`scripts/ci-scope.sh --base=<sha de la base> app-swift|app-ios` : si rien dans le diff ne
+commence par `omp-console/`, `scripts/`, `mem0-stack/` (app Swift seulement) ou
+`.github/workflows/check.yml`, l'étape de compilation est sautée et le job reste vert ;
+un diff illisible ou vide fait compiler. Mesuré le 2026-10-22, avant ce découpage :
+`macos-app-ios` 674 s dont 13 s de tests, `macos-app-swift` 529 s, 16 jobs macOS par
+feature pour 5 runners. Dans `macos-app-swift`, quand
 `swift test` échoue, `scripts/swift-app.sh` lit les tests tombés. S'ils figurent TOUS
 au registre `scripts/tests-instables-connus.json` (consulté par
 `scripts/ci-verdict.sh --instables`), il les relance une seule fois
@@ -107,22 +120,22 @@ illisible ou interruption. Le statut `check (macos-latest)`
 est celui d'un job **agrégateur** qui les attend, tourne même quand l'un d'eux
 échoue ou est annulé (`if: always()`), et ne réussit que si les trois résultats
 valent `success` (`scripts/ci-verdict.sh`) — jamais « skipped », qui compterait
-comme passant. En pull_request, les jobs macOS ne lancent que les fichiers de test
-qui appellent swift ou xcodebuild (`scripts/test-files.sh --scope=macos` : nom en
-`ios-*`, ou mention de `swift`, `swiftc`, `xcodebuild`, `xcrun`, `swift-app.sh` ou
-`ios-build.sh`) — un fichier nouveau est classé sans liste à tenir ; la suite
-complète tourne déjà sur Ubuntu. Au push vers `main`, macOS relance la suite
-complète. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
+comme passant. `macos-tests` lance `--tests-scope=macos --tests-base=<sha de la base>` :
+les fichiers de test qui appellent swift ou xcodebuild (`scripts/test-files.sh --scope=macos` :
+nom en `ios-*`, ou mention de `swift`, `swiftc`, `xcodebuild`, `xcrun`, `swift-app.sh` ou
+`ios-build.sh`), réduits à ceux que le diff concerne ; un ensemble vide laisse la
+section verte. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
 un run déclenché par un push vers `main` n'est jamais annulé.
 
 **Caches de la CI.** Les jobs qui installent ou compilent restaurent un cache
 `actions/cache@v6` avant `check.sh` : `check` et `macos-tests` le cache npm
 `~/.npm` (hôte OMP) et le cache cargo (`~/.cargo/registry/index`,
 `~/.cargo/registry/cache`, `~/.cargo/git/db` et `mem0-stack/mem0-rs/target`) —
-dans `macos-tests`, cargo pour la partie 1/2 et au push vers `main`, plus le
-scratch SwiftPM `omp-console/.build-node` pour la partie 1/2 ; `macos-app-swift`
-le cache cargo (cible release de `swift-app.sh`) et `omp-console/.build-app` ;
-`release-simulation` le cache cargo. L'agrégateur `check (macos-latest)` ne cache
+dans `macos-tests`, cargo pour la partie 1/2 seulement ; `macos-app-swift`
+le cache cargo (cible release de `swift-app.sh`) ;
+`release-simulation` le cache cargo. Plus aucun cache SwiftPM (`.build-app`,
+`.build-node`) : restauré, il ne faisait rien gagner. L'agrégateur
+`check (macos-latest)` ne cache
 rien, `macos-app-ios` non plus : mesuré, un DerivedData `omp-console/.build-ios`
 restauré ne fait rien gagner (xcodebuild recompile tout, car les mtimes du checkout
 l'invalident, et le démarrage des tests sur simulateur pèse ~235 s). Chaque clé porte
@@ -151,8 +164,12 @@ local — sans option, toutes les sections et toute la suite tournent :
 |---|---|
 | `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `lint`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
+| `--tests-base=<réf>` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=changed=<réf>` (avec `--macos` si `--tests-scope=macos`) ; une sélection vide laisse la section verte avec un `·` explicatif |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 | `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
+
+Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (secondes
+entières), pour lire dans un journal de CI où le temps part.
 
 À la racine du dépôt, `package.json` (privé, sans dépendance) donne quatre alias :
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
@@ -166,7 +183,11 @@ Les arguments placés après `--` sont transmis tels quels (`npm run check -- --
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
 écriture des versions, des deux catalogues et de `CHANGELOG.md`, puis
-`./scripts/check.sh` — sans rien pousser, sans tag et sans PR. Son statut,
+`./scripts/check.sh` limité aux sections que la release peut casser
+(`--sections=catalogue,noms,plugins,versions,extension,types,lint,smoke,noyau,tests`
+avec `--tests-base=HEAD` : les tests que les fichiers écrits concernent) — sans rien
+pousser, sans tag et sans PR. Le job de release lance la même commande. Mesuré le
+2026-10-22 avant cette réduction : 18 min, dont 989 s de `check.sh` complet. Son statut,
 `release-simulation`, est requis : une PR dont la release simulée échouerait ne
 peut pas être fusionnée.
 

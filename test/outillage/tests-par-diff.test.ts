@@ -1,5 +1,6 @@
 // Tests de la sélection des tests par le diff : `scripts/test-files.sh
-// --scope=changed[=<base>]` / `--scope=outillage` et `scripts/test-ac.sh`.
+// --scope=changed[=<base>]` / `--scope=files` / `--macos` / `--scope=outillage`
+// et `scripts/test-ac.sh`.
 //
 // Tout tourne dans un dépôt git MINIMAL (quelques fichiers, jamais une copie du
 // dépôt) : ce qu'on prouve, c'est la règle de sélection et la lecture du TAP,
@@ -23,6 +24,8 @@ function makeRepo(): string {
     fs.copyFileSync(path.join(ROOT, "scripts", script), path.join(dir, "scripts", script));
   }
   fs.writeFileSync(path.join(dir, "package.json"), '{ "type": "module" }\n');
+  // Un check.sh de fixture, jamais lancé : seul son NOM compte pour la règle (d).
+  fs.writeFileSync(path.join(dir, "scripts", "check.sh"), "#!/usr/bin/env bash\nexit 0\n");
   fs.mkdirSync(path.join(dir, "src"));
   fs.mkdirSync(path.join(dir, "test", "a"), { recursive: true });
   fs.mkdirSync(path.join(dir, "test", "req"), { recursive: true });
@@ -74,6 +77,29 @@ function makeRepo(): string {
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "-q", "-m", "fixture"]);
   return dir;
+}
+
+/**
+ * Ajoute (et commite) un module intermédiaire : service.ts importe chain.ts, et
+ * service.test.ts importe service.ts sans jamais nommer chain. C'est la règle (b').
+ */
+function withService(dir: string): void {
+  fs.writeFileSync(
+    path.join(dir, "src", "service.ts"),
+    'import { chain } from "./chain.ts";\nexport const service = chain;\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, "test", "a", "service.test.ts"),
+    [
+      'import test from "node:test";',
+      'import assert from "node:assert/strict";',
+      'import { service } from "../../src/service.ts";',
+      'test("service/AC-1 : le service répond", () => { assert.equal(service, 1); });',
+      "",
+    ].join("\n"),
+  );
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "service"]);
 }
 
 function git(cwd: string, args: string[]): string {
@@ -174,7 +200,9 @@ test(`${SLUG}/AC-4 : omp-console/ élargit la sélection`, () => {
 test(`${SLUG}/AC-6 : --scope=files applique les règles a/b/c à la liste reçue, et un vide y est légitime (sortie 0)`, () => {
   const dir = makeRepo();
   // Sans diff : la liste vient d'argv. (b) un source nommé, (a) un test, (c) omp-console/.
-  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "src/chain.ts"]).stdout), ["test/a/chain.test.ts"]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "src/chain.ts"]).stdout), [
+    "test/a/chain.test.ts",
+  ]);
   assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "test/a/other.test.ts", "src/chain.ts"]).stdout), [
     "test/a/chain.test.ts",
     "test/a/other.test.ts",
@@ -259,4 +287,126 @@ test(`${SLUG}/AC-5 : test-ac.sh prouve chaque AC par les tests du diff en une pa
   // Sans identifiant ou avec un identifiant mal formé : refus explicite.
   assert.equal(run(dir, "test-ac.sh", []).status, 1);
   assert.match(run(dir, "test-ac.sh", ["AC-x"]).stderr, /identifiant invalide/);
+});
+
+test(`${SLUG}/AC-8 : (b') un test dont les imports relatifs atteignent le module modifié est retenu sans le nommer`, () => {
+  const dir = makeRepo();
+  withService(dir);
+  fs.appendFileSync(path.join(dir, "src", "chain.ts"), "export const plus = 2;\n");
+
+  const changed = run(dir, "test-files.sh", ["--scope=changed"]);
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.deepEqual(lines(changed.stdout), ["test/a/chain.test.ts", "test/a/service.test.ts"]);
+
+  // La même clôture pour une liste reçue en argv ; other.test.ts n'importe pas chain.
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "src/chain.ts"]).stdout), [
+    "test/a/chain.test.ts",
+    "test/a/service.test.ts",
+  ]);
+  // service.ts seul : service.test.ts le nomme (b), chain.test.ts ne l'importe pas.
+  fs.appendFileSync(path.join(dir, "src", "service.ts"), "export const plus = 2;\n");
+  git(dir, ["checkout", "--", "src/chain.ts"]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), ["test/a/service.test.ts"]);
+});
+
+test(`${SLUG}/AC-9 : (d) package.json ou scripts/check.sh dans le diff rend la liste complète hors outillage, avec le message`, () => {
+  const dir = makeRepo();
+  const everything = [
+    "test/a/chain.test.ts",
+    "test/a/ios-ecran.test.ts",
+    "test/a/other.test.ts",
+    "test/req/ma-feature.test.ts",
+  ];
+
+  fs.appendFileSync(path.join(dir, "package.json"), "\n");
+  const pkg = run(dir, "test-files.sh", ["--scope=changed"]);
+  assert.equal(pkg.status, 0, pkg.stderr);
+  assert.deepEqual(lines(pkg.stdout), everything);
+  assert.equal(pkg.stderr, "· package.json dans le diff : liste complète hors outillage\n");
+
+  fs.appendFileSync(path.join(dir, "scripts", "check.sh"), "# touché\n");
+  const both = run(dir, "test-files.sh", ["--scope=changed"]);
+  assert.deepEqual(lines(both.stdout), everything);
+  assert.equal(both.stderr, "· package.json, scripts/check.sh dans le diff : liste complète hors outillage\n");
+
+  // La même règle pour une liste reçue en argv.
+  const files = run(dir, "test-files.sh", ["--scope=files", "scripts/check.sh"]);
+  assert.deepEqual(lines(files.stdout), everything);
+  assert.equal(files.stderr, "· scripts/check.sh dans le diff : liste complète hors outillage\n");
+});
+
+test(`${SLUG}/AC-10 : --macos réduit la sélection (et ses replis) aux tests macOS, et ne s'emploie qu'avec changed ou files`, () => {
+  const dir = makeRepo();
+
+  // Repli « diff vide » : la liste complète, réduite aux tests macOS.
+  const empty = run(dir, "test-files.sh", ["--scope=changed", "--macos"]);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.deepEqual(lines(empty.stdout), ["test/a/ios-ecran.test.ts"]);
+  assert.match(empty.stderr, /diff vide/);
+
+  // Seul chain.ts bouge : la sélection réduite est vide, et c'est « rien à lancer ».
+  fs.appendFileSync(path.join(dir, "src", "chain.ts"), "export const plus = 2;\n");
+  const none = run(dir, "test-files.sh", ["--scope=changed", "--macos"]);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(none.stdout, "");
+  assert.equal(none.stderr, "· aucun test ne concerne ces fichiers : rien à lancer\n");
+
+  // omp-console/ bouge aussi : seul le test macOS reste.
+  fs.appendFileSync(path.join(dir, "omp-console", "App.swift"), "let plus = 2\n");
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed", "--macos"]).stdout), [
+    "test/a/ios-ecran.test.ts",
+  ]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "--macos", "omp-console/App.swift"]).stdout), [
+    "test/a/ios-ecran.test.ts",
+  ]);
+  const filesNone = run(dir, "test-files.sh", ["--scope=files", "--macos", "src/chain.ts"]);
+  assert.equal(filesNone.status, 0, filesNone.stderr);
+  assert.equal(filesNone.stdout, "");
+  assert.match(filesNone.stderr, /rien à lancer/);
+
+  // Hors changed/files : refus explicite, rien sur stdout.
+  for (const args of [["--macos"], ["--scope=macos", "--macos"], ["--scope=outillage", "--macos"]]) {
+    const res = run(dir, "test-files.sh", args);
+    assert.equal(res.status, 1, args.join(" "));
+    assert.equal(res.stdout, "");
+    assert.equal(res.stderr, "✗ --macos ne s'emploie qu'avec --scope=changed ou --scope=files\n");
+  }
+});
+
+test(`${SLUG}/AC-11 : un diff non vide que nul test ne concerne sort 0, stdout vide, « rien à lancer »`, () => {
+  const dir = makeRepo();
+  const expectNothing = (label: string) => {
+    const res = run(dir, "test-files.sh", ["--scope=changed"]);
+    assert.equal(res.status, 0, `${label} : ${res.stderr}`);
+    assert.equal(res.stdout, "", label);
+    assert.equal(res.stderr, "· aucun test ne concerne ces fichiers : rien à lancer\n", label);
+  };
+  // Un fichier non suivi que rien ne nomme.
+  fs.writeFileSync(path.join(dir, "LICENSE"), "MIT\n");
+  expectNothing("LICENSE non suivi");
+  // Le même fichier commité puis modifié : le diff est non vide, et toujours sans test.
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "licence"]);
+  fs.appendFileSync(path.join(dir, "LICENSE"), "2026\n");
+  expectNothing("LICENSE modifié");
+});
+
+test(`${SLUG}/AC-12 : (c) un .md sous omp-console/ ne retient pas les tests macOS`, () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "omp-console", "README.md"), "# App\n");
+  const alone = run(dir, "test-files.sh", ["--scope=changed"]);
+  assert.equal(alone.status, 0, alone.stderr);
+  assert.equal(alone.stdout, "");
+  assert.match(alone.stderr, /rien à lancer/);
+
+  fs.appendFileSync(path.join(dir, "src", "chain.ts"), "export const plus = 2;\n");
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), ["test/a/chain.test.ts"]);
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=files", "omp-console/README.md"]).stdout), []);
+
+  // Un fichier non-.md de omp-console/ garde la règle (c).
+  fs.appendFileSync(path.join(dir, "omp-console", "App.swift"), "let plus = 2\n");
+  assert.deepEqual(lines(run(dir, "test-files.sh", ["--scope=changed"]).stdout), [
+    "test/a/chain.test.ts",
+    "test/a/ios-ecran.test.ts",
+  ]);
 });

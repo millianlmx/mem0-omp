@@ -19,6 +19,15 @@ pass() { echo "  ✓ $1"; }
 #   --sections=<id>[,<id>…]   n'exécute que ces sections (ordre du script) ;
 #   --tests-scope=macos       `── Tests` ne lance que les fichiers de
 #                             scripts/test-files.sh --scope=macos ;
+#   --tests-base=<réf>        `── Tests` ne lance que les fichiers que le diff
+#                             depuis <réf> concerne (scripts/test-files.sh
+#                             --scope=changed=<réf>, réduit à --macos sous
+#                             --tests-scope=macos). Un diff que nul test ne
+#                             concerne est un « rien à lancer » annoncé, pas un
+#                             échec ; un diff illisible ou vide replie sur la
+#                             liste complète (test-files.sh). Les pull_request
+#                             de check.yml passent la base de la PR ;
+#                             scripts/release.ts passe HEAD (ses écritures) ;
 #   --tests-part=1/2|2/2      découpe les TESTS de `── Tests` par TESTS_PART_PATTERN :
 #                             1/2 = test/outillage/check.test.ts filtré par --test-name-pattern,
 #                             2/2 = tout l'ensemble filtré par --test-skip-pattern.
@@ -34,12 +43,20 @@ pass() { echo "  ✓ $1"; }
 #                             copie imbriquée, l'opt-in, et MEM0_OMP_SKIP_* qui
 #                             garde la priorité. Comme les autres options, il ne
 #                             passe pas aux check.sh relancés dans les copies.
+#
+# Chaque section exécutée se termine par sa durée (`  · <n> s`, secondes
+# entières de `$SECONDS`) : c'est ce qui permet de lire, dans un journal de CI
+# ou de release, où le temps passe — mesuré le 2026-10-22, la simulation de
+# release mettait 989 s là où le job check en mettait 321 sur le même arbre,
+# sans qu'aucune ligne ne dise pourquoi.
 SECTION_IDS="catalogue noms plugins versions extension types lint rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^socle-app-swift/'
 sections=""
 sections_set=0
 tests_scope=""
 tests_scope_set=0
+tests_base=""
+tests_base_set=0
 tests_part=""
 tests_part_set=0
 strict=0
@@ -56,6 +73,11 @@ for arg in "$@"; do
       tests_scope_set=1
       tests_scope="${arg#--tests-scope=}"
       ;;
+    --tests-base=*)
+      [ "$tests_base_set" -eq 1 ] && usage_error "option répétée : --tests-base"
+      tests_base_set=1
+      tests_base="${arg#--tests-base=}"
+      ;;
     --tests-part=*)
       [ "$tests_part_set" -eq 1 ] && usage_error "option répétée : --tests-part"
       tests_part_set=1
@@ -66,7 +88,7 @@ for arg in "$@"; do
       strict=1
       ;;
     *)
-      usage_error "option inconnue : $arg (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2, --strict)"
+      usage_error "option inconnue : $arg (attendu : --sections=…, --tests-scope=macos, --tests-base=<réf>, --tests-part=1/2|2/2, --strict)"
       ;;
   esac
 done
@@ -86,17 +108,35 @@ fi
 if [ "$tests_scope_set" -eq 1 ] && [ "$tests_scope" != "macos" ]; then
   usage_error "--tests-scope : valeur inconnue « $tests_scope » (attendu : macos)"
 fi
+if [ "$tests_base_set" -eq 1 ] && [ -z "$tests_base" ]; then
+  usage_error "--tests-base : référence vide (attendu : --tests-base=<réf git>)"
+fi
 if [ "$tests_part_set" -eq 1 ] && [ "$tests_part" != "1/2" ] && [ "$tests_part" != "2/2" ]; then
   usage_error "--tests-part : valeur inconnue « $tests_part » (attendu : 1/2, 2/2)"
 fi
 
+# La section ouverte et son départ (`$SECONDS`) : `section_on` ferme la
+# précédente en imprimant sa durée, et la dernière est fermée avant le verdict.
+section_open=""
+section_start=0
+section_close() {
+  [ -n "$section_open" ] || return 0
+  echo "  · $((SECONDS - section_start)) s"
+  section_open=""
+}
+
 # Vrai si la section <id> doit s'exécuter : toutes sans `--sections`.
 section_on() {
-  [ "$sections_set" -eq 0 ] && return 0
-  case ",$sections," in
-    *",$1,"*) return 0 ;;
-  esac
-  return 1
+  section_close
+  if [ "$sections_set" -eq 1 ]; then
+    case ",$sections," in
+      *",$1,"*) ;;
+      *) return 1 ;;
+    esac
+  fi
+  section_open="$1"
+  section_start=$SECONDS
+  return 0
 }
 
 # Vrai si l'absence d'un prérequis du domaine <X> (SMOKE, RUST, IOS) est un
@@ -532,15 +572,26 @@ strict_skips() {
 # processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
 # la seule trace qui distingue « un test est tombé » de « le processus est mort ».
 if command -v node >/dev/null 2>&1; then
-  # L'ensemble de fichiers vient de scripts/test-files.sh, seul porteur de la
-  # règle « dépend de macOS » ; un échec du script (python3 absent, ensemble
-  # vide) rougit la section en recopiant sa sortie, sans lancer node.
-  if [ -n "$tests_scope" ]; then
-    tests_list="$(bash scripts/test-files.sh "--scope=$tests_scope" 2>&1)"
-  else
-    tests_list="$(bash scripts/test-files.sh 2>&1)"
+  # L'ensemble de fichiers vient de scripts/test-files.sh, seul porteur des
+  # règles « dépend de macOS » et « concerné par le diff » ; un échec du script
+  # (python3 absent, ensemble vide) rougit la section en recopiant sa sortie,
+  # sans lancer node. Ses messages de sélection (repli, diff vide, « rien à
+  # lancer ») arrivent sur stderr et sont recopiés : un journal doit dire
+  # pourquoi la suite a été réduite, ou pas.
+  tests_select=()
+  tests_relance="bash scripts/test-files.sh"
+  if [ -n "$tests_base" ]; then
+    tests_select=("--scope=changed=$tests_base")
+    [ "$tests_scope" = "macos" ] && tests_select+=("--macos")
+  elif [ -n "$tests_scope" ]; then
+    tests_select=("--scope=$tests_scope")
   fi
+  [ "${#tests_select[@]}" -gt 0 ] && tests_relance="$tests_relance ${tests_select[*]}"
+  tests_notes="$(mktemp)"
+  tests_list="$(bash scripts/test-files.sh ${tests_select[@]+"${tests_select[@]}"} 2>"$tests_notes")"
   tests_list_status=$?
+  sed 's/^/  /' "$tests_notes"
+  rm -f "$tests_notes"
   test_files=()
   if [ "$tests_list_status" -eq 0 ]; then
     while IFS= read -r tests_file; do
@@ -550,8 +601,6 @@ if command -v node >/dev/null 2>&1; then
       fi
       test_files+=("$tests_file")
     done <<<"$tests_list"
-  else
-    [ -n "$tests_list" ] && printf '%s\n' "$tests_list" | sed 's/^/  /'
   fi
   tests_filter=()
   case "$tests_part" in
@@ -559,10 +608,15 @@ if command -v node >/dev/null 2>&1; then
     2/2) tests_filter=("--test-skip-pattern=$TESTS_PART_PATTERN") ;;
   esac
   if [ "${#test_files[@]}" -eq 0 ]; then
-    if [ "$tests_list_status" -eq 0 ] || printf '%s\n' "$tests_list" | grep -qF "aucun fichier de test retenu"; then
-      fail "tests unitaires — aucun fichier de test retenu (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
+    if [ "$tests_list_status" -ne 0 ]; then
+      fail "tests unitaires — scripts/test-files.sh a échoué (relance : $tests_relance)"
+    elif [ -n "$tests_base" ]; then
+      # Sélection par le diff : un ensemble vide est un « rien à prouver ici »
+      # annoncé par test-files.sh ci-dessus, jamais un échec — le push vers main
+      # et la PR de release rejouent la suite entière.
+      echo "  · aucun fichier de test concerné par le diff depuis $tests_base (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
     else
-      fail "tests unitaires — scripts/test-files.sh a échoué (relance : bash scripts/test-files.sh${tests_scope:+ --scope=$tests_scope})"
+      fail "tests unitaires — aucun fichier de test retenu (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
     fi
   else
     echo "  · ${#test_files[@]} fichier(s) de test : ${test_files[*]}"
@@ -606,7 +660,9 @@ if command -v node >/dev/null 2>&1; then
           /^(not )?ok [0-9]+ - / { name = $0; sub(/^(not )?ok [0-9]+ - /, "", name); if (!(name in launched)) n++ }
           END { print n + 0 }' - "$tests_log")"
       fi
-      if [ "$tests_ran" -eq 0 ]; then
+      if [ "$tests_ran" -eq 0 ] && [ -n "$tests_base" ]; then
+        echo "  · aucun test du diff depuis $tests_base pour --tests-part=$tests_part"
+      elif [ "$tests_ran" -eq 0 ]; then
         fail "tests unitaires — aucun test exécuté pour --tests-part=$tests_part"
       else
         # Les sauts sont imprimés même en vert : un test d'AC qui se saute (prérequis
@@ -810,6 +866,7 @@ else
 fi
 fi
 
+section_close
 echo
 if [ "$FAIL" -eq 0 ]; then
   echo "Dépôt prêt à publier."

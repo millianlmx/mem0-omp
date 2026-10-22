@@ -184,7 +184,9 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "-p",
     `MemoryMax=${config.runner.memoryMax}`,
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
-    ...Object.entries(runnerMemoryEnv(spec.scope, config.memory.runnerMode)).map(([key, value]) => `--setenv=${key}=${value}`),
+    ...Object.entries(runnerMemoryEnv(spec.scope, config.memory.runnerMode)).map(
+      ([key, value]) => `--setenv=${key}=${value}`,
+    ),
     "--",
     "choom",
     "-n",
@@ -333,7 +335,10 @@ function runTestsTool(step: StepKind): HostToolDefinition {
       type: "object",
       properties: {
         scope: { type: "string", enum: scopes },
-        check: { type: "string", description: "Le nom de la commande (`repos[].checks`), avec `scope: check` seulement." },
+        check: {
+          type: "string",
+          description: "Le nom de la commande (`repos[].checks`), avec `scope: check` seulement.",
+        },
       },
       required: ["scope"],
       additionalProperties: false,
@@ -415,7 +420,10 @@ const AUDIT_TOOL: HostToolDefinition = {
             modules: STRINGS,
             kind: { type: "string", enum: ["faiblesse", "feature"] },
             rationale: { type: "string" },
-            evidence: { ...STRINGS, description: "`fichier:ligne` qui prouvent la faiblesse ; vide seulement pour une feature." },
+            evidence: {
+              ...STRINGS,
+              description: "`fichier:ligne` qui prouvent la faiblesse ; vide seulement pour une feature.",
+            },
             dependsOn: { ...STRINGS, description: "Les titres des propositions à livrer avant celle-ci." },
             impact: { type: "string", enum: ["low", "medium", "high"] },
             effort: { type: "string", enum: ["low", "medium", "high"] },

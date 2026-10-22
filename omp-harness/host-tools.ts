@@ -189,7 +189,10 @@ async function checkpointDecision(
     checkpointSha: null,
     dependsOn: input.dependsOn,
   });
-  const sha = await git.commitAll(run.worktree as string, checkpointMessage(run.id, decision.seq, { ...input, rationale }));
+  const sha = await git.commitAll(
+    run.worktree as string,
+    checkpointMessage(run.id, decision.seq, { ...input, rationale }),
+  );
   store.transaction(() => {
     store.setCheckpoint(decision.id, sha);
     ctx.event("decision", run.id, {
@@ -230,7 +233,12 @@ async function checkpointTool(
 }
 
 /** `set_modules { paths }` : les modules du run posés tout de suite — le planificateur peut admettre les autres. */
-function setModulesTool(ctx: HarnessContext, run: RunRow, step: StepRow, args: Record<string, unknown>): HostToolResult {
+function setModulesTool(
+  ctx: HarnessContext,
+  run: RunRow,
+  step: StepRow,
+  args: Record<string, unknown>,
+): HostToolResult {
   const { store } = ctx;
   const paths = pathList(args.paths);
   if (paths === null || paths.length === 0)
@@ -278,7 +286,12 @@ async function splitFeatureTool(
   const parsed = parseSplitFeatures(args.features);
   if (!parsed.ok) return { text: `split_feature refusé : ${parsed.error}`, isError: true };
   const { projectId, runs } = await hooks.createProject(
-    { repo: run.repo, title: `Découpage de « ${run.title} »`.slice(0, 120), priority: run.priority, features: parsed.features },
+    {
+      repo: run.repo,
+      title: `Découpage de « ${run.title} »`.slice(0, 120),
+      priority: run.priority,
+      features: parsed.features,
+    },
     SERVICE,
   );
   ctx.event("split", run.id, {

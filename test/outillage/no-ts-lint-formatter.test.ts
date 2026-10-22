@@ -160,15 +160,16 @@ function runSection(cwd: string, env: Record<string, string> = {}) {
 }
 
 /**
- * Les lignes de la section `── Lint TypeScript` (seule lancée), en-tête exclu : la
- * sortie de Biome a ses propres lignes vides, seules la ligne vide et le verdict
- * final de check.sh sont retirés.
+ * Les lignes de la section `── Lint TypeScript` (seule lancée), en-tête et durée
+ * (`  · <n> s`, ligne de clôture de chaque section de check.sh) exclus : la sortie
+ * de Biome a ses propres lignes vides, seules la ligne vide et le verdict final
+ * de check.sh sont retirés.
  */
 function sectionLines(stdout: string): string[] {
   const lines = stdout.split("\n");
   const start = lines.indexOf("── Lint TypeScript");
   assert.ok(start !== -1, `en-tête « ── Lint TypeScript » absent :\n${stdout}`);
-  const section = lines.slice(start + 1);
+  const section = lines.slice(start + 1).filter((line) => !/^ {2}· \d+ s$/.test(line));
   while (section.length > 0 && ["", "Dépôt prêt à publier."].includes(section.at(-1) ?? "")) section.pop();
   return section;
 }
@@ -178,6 +179,7 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.equal(r.status, 0, output(r));
   const section = sectionLines(r.stdout);
   assert.equal(section.at(-1), PASS_LINE, output(r));
+  // Aucune ligne `  · ` autre que la durée de section (déjà retirée) : ni saut, ni note.
   assert.ok(!section.some((line) => line.startsWith("  ✗ ") || line.startsWith("  · ")), output(r));
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });

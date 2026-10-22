@@ -63,9 +63,15 @@ log({
   argv: process.argv.slice(2),
   cwd: process.cwd(),
   env: Object.fromEntries(
-    ["MEM0_PROJECT_ID", "MEM0_AUTOSETUP", "MEM0_NUDGE", "MEM0_MODE", "MEM0_HTTP_URL", "MEM0_HTTP_TOKEN", "HARNESS_TOKEN"].map(
-      (key) => [key, process.env[key] ?? null],
-    ),
+    [
+      "MEM0_PROJECT_ID",
+      "MEM0_AUTOSETUP",
+      "MEM0_NUDGE",
+      "MEM0_MODE",
+      "MEM0_HTTP_URL",
+      "MEM0_HTTP_TOKEN",
+      "HARNESS_TOKEN",
+    ].map((key) => [key, process.env[key] ?? null]),
   ),
   // Les clés de fournisseurs posées par les tests (préfixe `test-`) : jamais celles de la machine.
   keys: Object.fromEntries(

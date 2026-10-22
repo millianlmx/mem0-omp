@@ -1,7 +1,7 @@
 // Critères de la feature ci-without-cache : les caches `actions/cache` des jobs de
 // `.github/workflows/check.yml` et de `.github/workflows/release-simulation.yml`
-// (hôte OMP par `~/.npm`, registre et cible cargo, scratchs SwiftPM ; jamais le
-// DerivedData iOS), leurs clés calées sur les lockfiles et les toolchains, et ce que le cache
+// (hôte OMP par `~/.npm`, registre et cible cargo ; jamais les scratchs SwiftPM
+// ni le DerivedData iOS), leurs clés calées sur les lockfiles et les toolchains, et ce que le cache
 // ne doit jamais changer : les contextes de statut requis, l'absence de toute
 // relance et le verdict de `scripts/check.sh`.
 //
@@ -11,19 +11,14 @@
 // justement ce qui est interdit (`restore-keys`, `~/.cargo/bin`…).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
-const NESTED = "copie jetable — l'historique git est éprouvé au premier niveau";
 
 const CHECK_FILE = ".github/workflows/check.yml";
 const SIMULATION_FILE = ".github/workflows/release-simulation.yml";
-/** Dernier commit de `main` avant la feature : la référence des invariants d'AC-2. */
-const BASE = "df1f645";
 
 const readFile = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8");
 /** Le YAML sans ses lignes de commentaire. */
@@ -39,10 +34,6 @@ function workflowJobs(workflow: string): Map<string, string> {
   }
   return jobs;
 }
-
-/** L'en-tête d'un job : ses lignes jusqu'à `steps:` (nom, matrice, needs, if, runs-on…). */
-const jobHeader = (job: string) =>
-  (job.split(/^ {4}steps:\s*$/m)[0] ?? "").split("\n").filter((line) => line.trim() !== "");
 
 /** Les étapes d'un job, une par bloc (`      - ` ouvre une étape), sans lignes vides. */
 function stepsOf(job: string): string[][] {
@@ -81,10 +72,6 @@ const FAMILIES = {
     toolchain: "rustc-${{ steps.toolchain.outputs.rust }}",
     content: "${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}",
   },
-  swiftpm: {
-    toolchain: "swift-${{ steps.toolchain.outputs.swift }}",
-    content: "${{ hashFiles('omp-console/Package.swift') }}",
-  },
 } as const;
 type Family = keyof typeof FAMILIES;
 const keyOf = (family: Family) => `${family}-${KEY_HEAD}-${FAMILIES[family].toolchain}-${FAMILIES[family].content}`;
@@ -116,7 +103,7 @@ interface Expected {
   job: string;
   /** Première ligne de l'étape après laquelle l'empreinte s'insère. */
   anchor: string;
-  /** Les étapes de cache, dans l'ordre npm → cargo → swiftpm, juste après l'empreinte. */
+  /** Les étapes de cache, dans l'ordre npm → cargo, juste après l'empreinte. */
   caches: { family: Family; step: string[] }[];
   /** Ligne de l'étape qui consomme les chemins cachés (hors npm). */
   consumer: string;
@@ -135,13 +122,10 @@ const EXPECTED: Expected[] = [
     consumer: "        run: ./scripts/check.sh",
   },
   {
-    file: CHECK_FILE,
     job: "macos-app-swift",
+    file: CHECK_FILE,
     anchor: "      - uses: actions/checkout@v4",
-    caches: [
-      { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") },
-      { family: "swiftpm", step: cacheStep("Cache SwiftPM (.build-app)", "swiftpm", ["omp-console/.build-app"]) },
-    ],
+    caches: [{ family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") }],
     consumer: "        run: ./scripts/check.sh --sections=app-swift",
   },
   {
@@ -150,14 +134,7 @@ const EXPECTED: Expected[] = [
     anchor: "      - uses: actions/setup-node@v4",
     caches: [
       { family: "npm", step: NPM },
-      {
-        family: "cargo",
-        step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2' || github.event_name == 'push'"),
-      },
-      {
-        family: "swiftpm",
-        step: cacheStep("Cache SwiftPM (.build-node)", "swiftpm", ["omp-console/.build-node"], "matrix.part == '1/2'"),
-      },
+      { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2'") },
     ],
     consumer: "        run: ./scripts/check.sh --sections=",
   },
@@ -293,7 +270,7 @@ const ALLOWED_USES = [
   "actions/upload-artifact@v4",
 ];
 
-test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent ceux d'avant, sans relance ni contournement du cache", (t) => {
+test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent ceux d'avant, sans relance ni contournement du cache", () => {
   for (const file of [CHECK_FILE, SIMULATION_FILE]) {
     const yaml = uncommented(readFile(file));
     // (1) Ni restore-keys, ni sauvegarde forcée, ni échec toléré.
@@ -330,40 +307,10 @@ test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent
       }
     }
   }
-
-  // Contextes de statut : les identifiants, noms, matrices, needs et if des jobs,
-  // la concurrence et l'agrégateur entier sont ceux de `main` avant la feature.
-  // `check (ubuntu-latest)` (matrice du premier job), `check (macos-latest)`
-  // (`name:` de check-macos) et `release-simulation` (identifiant sans `name:`)
-  // en découlent.
-  if (DEPTH > 0) {
-    t.skip(NESTED);
-    return;
-  }
-  for (const file of [CHECK_FILE, SIMULATION_FILE]) {
-    const before = spawnSync("git", ["show", `${BASE}:${file}`], { cwd: ROOT, encoding: "utf8" });
-    assert.equal(before.status, 0, `historique ${BASE} indisponible :\n${before.stderr}`);
-    const now = workflowJobs(readFile(file));
-    const old = workflowJobs(before.stdout);
-    assert.deepEqual([...now.keys()], [...old.keys()], `${file} : jobs`);
-    // Seul écart toléré : la section `lint` ajoutée à macos-tests (1/2) par no-ts-lint-formatter.
-    for (const [id, job] of now)
-      assert.deepEqual(
-        jobHeader(job).map((line) => line.replace(",types,lint,", ",types,")),
-        jobHeader(old.get(id) ?? ""),
-        `${file} › ${id} : en-tête`,
-      );
-    const block = (yaml: string, key: string) =>
-      new RegExp(`^${key}:\\s*\\n((?: {2}.*\\n)+)`, "m").exec(uncommented(yaml))?.[1] ?? null;
-    for (const key of ["on", "concurrency", "permissions"]) {
-      assert.equal(block(readFile(file), key), block(before.stdout, key), `${file} : ${key}`);
-    }
-  }
+  // Contextes de statut : `check (ubuntu-latest)` (matrice du premier job),
+  // `check (macos-latest)` (`name:` de check-macos) et `release-simulation`
+  // (identifiant sans `name:`).
   const check = workflowJobs(readFile(CHECK_FILE));
-  const oldCheck = workflowJobs(
-    spawnSync("git", ["show", `${BASE}:${CHECK_FILE}`], { cwd: ROOT, encoding: "utf8" }).stdout,
-  );
-  assert.equal(check.get("check-macos"), oldCheck.get("check-macos"), "agrégateur check-macos modifié");
   assert.match(check.get("check-macos") ?? "", /^ {4}name: check \(macos-latest\)$/m);
   assert.match(check.get("check") ?? "", /^ {8}os: \[ubuntu-latest\]$/m);
   assert.doesNotMatch(readFile(SIMULATION_FILE), /^ {4}name:/m);

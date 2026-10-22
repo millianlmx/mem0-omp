@@ -444,7 +444,11 @@ export class Orchestrator {
             : run.step === "review" && run.lastFailCause === "missing_output"
               ? run.lastFailCause
               : null;
-        if (!this.#ctx.transition(run, transition, ["running"], { patch: { notBefore: transition.notBefore, lastFailCause } }))
+        if (
+          !this.#ctx.transition(run, transition, ["running"], {
+            patch: { notBefore: transition.notBefore, lastFailCause },
+          })
+        )
           break;
         if (!transition.keepRunner) await live.session?.stop();
         if (transition.rebase) live.pendingRebase = true;

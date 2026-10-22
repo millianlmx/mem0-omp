@@ -331,8 +331,10 @@ export class RpcRunner {
 }
 
 const RATE_LIMIT = /(\brate[ -]?limit(ed)?\b|\btoo many requests\b|\bquota\b|overloaded|\busage limit\b)/i;
-const NETWORK = /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network error|stream (closed|ended|disconnected)|terminated)\b/i;
-const CONTEXT = /\b(context[ _-]?(length|window)|too long|maximum context|prompt is too long|exceeds the (maximum )?(context|token))\b/i;
+const NETWORK =
+  /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network error|stream (closed|ended|disconnected)|terminated)\b/i;
+const CONTEXT =
+  /\b(context[ _-]?(length|window)|too long|maximum context|prompt is too long|exceeds the (maximum )?(context|token))\b/i;
 
 /** La cause d'une erreur de prompt : 429 et messages de quota, 5xx, pannes réseau, contexte dépassé, le reste. */
 export function classifyPromptError(error: PromptError | null): PromptErrorCause {
@@ -343,7 +345,10 @@ export function classifyPromptError(error: PromptError | null): PromptErrorCause
   if (CONTEXT.test(error.message)) return "context";
   if (RATE_LIMIT.test(error.message)) return "rate_limit";
   if (status !== null && status >= 500 && status <= 599) return "server_error";
-  if (/\b5\d\d\b/.test(error.message) && /\b(internal server error|bad gateway|service unavailable|gateway timeout|server error)\b/i.test(error.message))
+  if (
+    /\b5\d\d\b/.test(error.message) &&
+    /\b(internal server error|bad gateway|service unavailable|gateway timeout|server error)\b/i.test(error.message)
+  )
     return "server_error";
   if (NETWORK.test(error.message)) return "network";
   return "other";
@@ -379,7 +384,8 @@ function retryAfterIn(value: unknown, now: number, depth = 0): number | null {
   for (const [key, entry] of Object.entries(record)) {
     const name = key.toLowerCase().replace(/[-_]/g, "");
     if (name === "retryafter" || name === "retryafterms") {
-      const parsed = name === "retryafterms" && typeof entry === "number" ? Math.round(entry) : retryAfterValue(entry, now);
+      const parsed =
+        name === "retryafterms" && typeof entry === "number" ? Math.round(entry) : retryAfterValue(entry, now);
       if (parsed !== null) return parsed;
     }
   }
@@ -406,6 +412,13 @@ export function parseRetryAfter(error: PromptError | null, now = Date.now()): nu
   if (!match) return null;
   const amount = Number(match[1]);
   const unit = (match[2] ?? "s").toLowerCase();
-  const factor = unit.startsWith("ms") || unit.startsWith("milli") ? 1 : unit.startsWith("m") ? 60_000 : unit.startsWith("h") ? 3_600_000 : 1000;
+  const factor =
+    unit.startsWith("ms") || unit.startsWith("milli")
+      ? 1
+      : unit.startsWith("m")
+        ? 60_000
+        : unit.startsWith("h")
+          ? 3_600_000
+          : 1000;
   return Math.round(amount * factor);
 }

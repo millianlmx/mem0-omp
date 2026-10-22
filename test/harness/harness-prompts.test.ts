@@ -122,7 +122,11 @@ test("harness-prompts/AC-6 : la politique tranche seule les clarifications (chos
   for (const step of ["req", "specs", "impl", "review", "fix"] as const) {
     const prompt = stepPrompt(ctx({ step }));
     assert.match(prompt, /## Oracle \(rappel du service\)\n- \[2026-10-01\] décision/, step);
-    assert.match(prompt, /`category: clarification`.*tranches SEUL.*`chosen` \+ `options`.*l'humain pourra renverser/, step);
+    assert.match(
+      prompt,
+      /`category: clarification`.*tranches SEUL.*`chosen` \+ `options`.*l'humain pourra renverser/,
+      step,
+    );
     assert.match(prompt, /n'utilise JAMAIS `ask`/, step);
     assert.doesNotMatch(prompt, /oracle_recall/, step);
   }

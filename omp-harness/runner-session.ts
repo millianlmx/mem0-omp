@@ -44,7 +44,12 @@ export const STEP_TIMEOUT_PREFIX = "délai d'étape dépassé";
 export function timeoutResult(seconds: number): PromptResult {
   return {
     status: "error",
-    error: { message: `${STEP_TIMEOUT_PREFIX} (${seconds} s) : runner arrêté`, retryable: true, cause: "other", retryAfterMs: null },
+    error: {
+      message: `${STEP_TIMEOUT_PREFIX} (${seconds} s) : runner arrêté`,
+      retryable: true,
+      cause: "other",
+      retryAfterMs: null,
+    },
   };
 }
 

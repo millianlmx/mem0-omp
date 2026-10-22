@@ -136,7 +136,7 @@ function idsOf(text: string, prefix: string): string[] {
 /** Les identifiants cités entre parenthèses juste après `id` sur sa ligne : `AC-2 (B-1, B-3)`. */
 function citedBy(text: string, id: string): string[] {
   const line = new RegExp(`^\\s*(?:[-*]\\s*)?\\*{0,2}${id}\\*{0,2}\\s*\\(([^)]*)\\)`, "m").exec(text);
-  return line === null ? [] : (line[1] ?? "").match(/\b(?:B|AC)-\d+\b/g) ?? [];
+  return line === null ? [] : ((line[1] ?? "").match(/\b(?:B|AC)-\d+\b/g) ?? []);
 }
 
 /**
@@ -178,7 +178,7 @@ export function gateNeeded(run: Pick<RunRow, "projectId" | "projectOrder">, spec
 /** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
 export function failCauseOf(status: "aborted" | "error", error: PromptError | null): FailCause {
   if (status === "aborted") return "aborted";
-  if (error !== null && error.message.startsWith(STEP_TIMEOUT_PREFIX)) return "timeout";
+  if (error?.message.startsWith(STEP_TIMEOUT_PREFIX)) return "timeout";
   const cause = error?.cause;
   switch (cause) {
     case "rate_limit":
@@ -226,8 +226,7 @@ export class StepExecutor {
       this.#ctx,
       { repo: this.#ctx.repo(run.repo), cwd: run.worktree as string },
       {
-        onHostTool: (name, args, signal) =>
-          runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
+        onHostTool: (name, args, signal) => runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
         event: (type, payload) =>
           this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
         runnerChanged: (unit, model) => {
@@ -285,7 +284,8 @@ export class StepExecutor {
       if (step === "review" && (await git.mergeInProgress(worktree)))
         live.conflicts = await git.unmergedFiles(worktree);
       // La première revue a besoin de la suite complète : elle part tout de suite, le runner la rejoindra.
-      if (step === "review" && run.fixes === 0 && live.conflicts.length === 0) this.#launchFullSuite(live, run, stepRow);
+      if (step === "review" && run.fixes === 0 && live.conflicts.length === 0)
+        this.#launchFullSuite(live, run, stepRow);
       const headBefore = await git.revParse(worktree, "HEAD");
       const dirtyBefore = await git.isDirty(worktree);
       await session.open(
@@ -383,7 +383,9 @@ export class StepExecutor {
       if (!(await git.mergeInProgress(worktree)) && (await git.isDirty(worktree)))
         await git.commitAll(worktree, `wip(${step}): interrompu (tentative ${attempt})`);
     } catch (err) {
-      this.#ctx.log(`run ${run.id} : commit WIP impossible après interruption — ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(
+        `run ${run.id} : commit WIP impossible après interruption — ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     const artifact = STEP_ARTIFACT[step] ?? "impl.md";
     store.addInstructions(
@@ -416,7 +418,9 @@ export class StepExecutor {
           return result;
         },
         (err: unknown) => {
-          this.#ctx.log(`run ${run.id} : suite complète anticipée en échec — ${err instanceof Error ? err.message : String(err)}`);
+          this.#ctx.log(
+            `run ${run.id} : suite complète anticipée en échec — ${err instanceof Error ? err.message : String(err)}`,
+          );
           return null;
         },
       );
@@ -541,7 +545,12 @@ export class StepExecutor {
         this.#ctx.event("review", run.id, { verdict: review.verdict, merge: review.merge });
       }
       store.finishStep(stepRow.id, escalations > 0 ? "escalated" : "done", null);
-      this.#ctx.event("step_done", run.id, { step, stepId: stepRow.id, escalations, ...(gate !== null ? { gateNeeded: gate } : {}) });
+      this.#ctx.event("step_done", run.id, {
+        step,
+        stepId: stepRow.id,
+        escalations,
+        ...(gate !== null ? { gateNeeded: gate } : {}),
+      });
     });
     return outcome;
   }
@@ -592,7 +601,11 @@ export class StepExecutor {
       },
       SERVICE,
     );
-    this.#ctx.event("follow_up", run.id, { runId: followUp.id, title: followUp.title, remaining: remaining.slice(0, 500) });
+    this.#ctx.event("follow_up", run.id, {
+      runId: followUp.id,
+      title: followUp.title,
+      remaining: remaining.slice(0, 500),
+    });
   }
 
   /** Les artefacts du run, écrits dans `.harness/` avant l'étape (le runner lit ceux de N-1). */

@@ -35,7 +35,11 @@ function decide(question: string, options: string[], dependsOn: number[] = []) {
   };
 }
 
-function escalate(question: string, category: "schema" | "deletion", options = ["ajouter une colonne", "table séparée"]) {
+function escalate(
+  question: string,
+  category: "schema" | "deletion",
+  options = ["ajouter une colonne", "table séparée"],
+) {
   return { tool: "decision", args: { question, options, chosen: options[0], rationale: "simple", category } };
 }
 
@@ -79,7 +83,11 @@ test("harness-gestures/AC-1 : passé l'échéance, une escalade ouverte est tran
       impl: [[escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
       review: [OK.review],
     },
-    { patch: (config) => void (config.review.escalationTimeoutSec = 1) },
+    {
+      patch: (config) => {
+        config.review.escalationTimeoutSec = 1;
+      },
+    },
   );
   await world.orchestrator.start();
   try {
@@ -129,7 +137,11 @@ test("harness-gestures/AC-2 : sans échéance (null), une escalade attend l'huma
       impl: [[escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
       review: [OK.review],
     },
-    { patch: (config) => void (config.review.escalationTimeoutSec = null) },
+    {
+      patch: (config) => {
+        config.review.escalationTimeoutSec = null;
+      },
+    },
   );
   await world.orchestrator.start();
   try {
@@ -159,7 +171,11 @@ test("harness-gestures/AC-3 : une suppression n'est jamais tranchée à l'éché
       ],
       review: [OK.review],
     },
-    { patch: (config) => void (config.review.escalationTimeoutSec = 1) },
+    {
+      patch: (config) => {
+        config.review.escalationTimeoutSec = 1;
+      },
+    },
   );
   await world.orchestrator.start();
   try {
@@ -185,7 +201,9 @@ test("harness-gestures/AC-3 : une suppression n'est jamais tranchée à l'éché
       [{ id: deletion.id, answer: "non", reason: "l'historique sert aux audits" }],
       { by: "mac" },
     );
-    const answered = world.store.listEscalations({ runId: run.id, status: "answered" }).find((i) => i.id === deletion.id);
+    const answered = world.store
+      .listEscalations({ runId: run.id, status: "answered" })
+      .find((i) => i.id === deletion.id);
     assert.equal(answered?.answer, "non");
     assert.equal(answered?.answerReason, "l'historique sert aux audits");
     assert.equal(answered?.answeredBy, "mac");
@@ -249,12 +267,15 @@ test("harness-gestures/AC-4 : une décision prise à l'échéance se renverse co
 });
 
 test("harness-gestures/AC-5 : relancer — 200 sur un run échoué (même étape, tout de suite), 200 sur un run en attente, 409 sur un run qui tourne ou mergé", async () => {
-  const world = fakeWorld({
-    req: [OK.req],
-    specs: [OK.specs],
-    impl: [OK.impl],
-    review: [MEDIUM_REVIEW, OK.review],
-  }, { patch: gated });
+  const world = fakeWorld(
+    {
+      req: [OK.req],
+      specs: [OK.specs],
+      impl: [OK.impl],
+      review: [MEDIUM_REVIEW, OK.review],
+    },
+    { patch: gated },
+  );
   await world.orchestrator.start();
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export relancé", request: "Exporter" });
@@ -293,12 +314,17 @@ test("harness-gestures/AC-5 : relancer — 200 sur un run échoué (même étape
 });
 
 test("harness-gestures/AC-6 : « tout accepter » passe les décisions auto et auto_timeout du run en accepted, un événement par décision", async () => {
-  const world = fakeWorld({
-    req: [OK.req],
-    specs: [OK.specs],
-    impl: [[decide("Séparateur CSV ?", ["virgule", "point-virgule"]), decide("Nom ?", ["a.csv", "b.csv"]), ...OK.impl]],
-    review: [MEDIUM_REVIEW],
-  }, { patch: gated });
+  const world = fakeWorld(
+    {
+      req: [OK.req],
+      specs: [OK.specs],
+      impl: [
+        [decide("Séparateur CSV ?", ["virgule", "point-virgule"]), decide("Nom ?", ["a.csv", "b.csv"]), ...OK.impl],
+      ],
+      review: [MEDIUM_REVIEW],
+    },
+    { patch: gated },
+  );
   await world.orchestrator.start();
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export accepté", request: "Exporter" });
@@ -329,24 +355,27 @@ test("harness-gestures/AC-6 : « tout accepter » passe les décisions auto et a
 });
 
 test("harness-gestures/AC-7 : si le revert des commits de la décision entre en conflit, retour dur au checkpoint — tout le travail postérieur est annulé, les indépendantes sont réappliquées par consigne", async () => {
-  const world = fakeWorld({
-    req: [OK.req],
-    specs: [OK.specs],
-    impl: [
-      [
-        decide("Séparateur CSV ?", ["virgule", "point-virgule"]),
-        { write: "src/api/separator.ts", content: "export const SEP = ',';\n" },
-        decide("Échappement des guillemets ?", ["doublés", "antislash"], [1]),
-        { write: "src/api/separator.ts", content: "export const SEP = ',';\nexport const QUOTE = '\"\"';\n" },
-        decide("Nom du fichier ?", ["export.csv", "donnees.csv"]),
-        // Le même fichier est retouché après la plage : le revert ne peut pas s'appliquer proprement.
-        { write: "src/api/separator.ts", content: "export const SEP = ';';\nexport const QUOTE = '\"\"';\n" },
-        ...OK.impl,
+  const world = fakeWorld(
+    {
+      req: [OK.req],
+      specs: [OK.specs],
+      impl: [
+        [
+          decide("Séparateur CSV ?", ["virgule", "point-virgule"]),
+          { write: "src/api/separator.ts", content: "export const SEP = ',';\n" },
+          decide("Échappement des guillemets ?", ["doublés", "antislash"], [1]),
+          { write: "src/api/separator.ts", content: "export const SEP = ',';\nexport const QUOTE = '\"\"';\n" },
+          decide("Nom du fichier ?", ["export.csv", "donnees.csv"]),
+          // Le même fichier est retouché après la plage : le revert ne peut pas s'appliquer proprement.
+          { write: "src/api/separator.ts", content: "export const SEP = ';';\nexport const QUOTE = '\"\"';\n" },
+          ...OK.impl,
+        ],
+        OK.impl,
       ],
-      OK.impl,
-    ],
-    review: [MEDIUM_REVIEW, OK.review],
-  }, { patch: gated });
+      review: [MEDIUM_REVIEW, OK.review],
+    },
+    { patch: gated },
+  );
   await world.orchestrator.start();
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export séparateur", request: "Exporter" });
@@ -356,10 +385,11 @@ test("harness-gestures/AC-7 : si le revert des commits de la décision entre en 
     assert.ok(worktree);
     await world.orchestrator.reverseDecision(run.id, 1, "point-virgule", "Excel FR attend le point-virgule");
     const reversed = world.store.eventsSince(0, run.id).find((e) => e.type === "decision_reversed");
-    assert.equal(reversed?.payload.mode, "reset");
+    assert.ok(reversed, "événement decision_reversed attendu");
+    assert.equal(reversed.payload.mode, "reset");
     assert.ok(
-      (reversed?.payload.conflicts as string[]).some((file) => /separator\.ts/.test(file)),
-      JSON.stringify(reversed?.payload),
+      (reversed.payload.conflicts as string[]).some((file) => /separator\.ts/.test(file)),
+      JSON.stringify(reversed.payload),
     );
     assert.deepEqual(
       world.store.listDecisions({ runId: run.id }).map((d) => d.status),
@@ -367,7 +397,10 @@ test("harness-gestures/AC-7 : si le revert des commits de la décision entre en 
     );
     assert.ok(!fs.existsSync(path.join(worktree, "src/api/separator.ts")), "retour au checkpoint #1");
     assert.ok(!fs.existsSync(path.join(worktree, "src/api/export.ts")), "le travail postérieur est annulé");
-    assert.match(git(worktree, "log", "-1", "--format=%s"), /^decision: Séparateur CSV \? \(renversée\) → point-virgule/);
+    assert.match(
+      git(worktree, "log", "-1", "--format=%s"),
+      /^decision: Séparateur CSV \? \(renversée\) → point-virgule/,
+    );
     // Les survivantes repartent du nouveau checkpoint.
     const sha = git(worktree, "rev-parse", "HEAD");
     assert.equal(world.store.getDecision(run.id, 3)?.checkpointSha, sha);
@@ -461,13 +494,20 @@ test("harness-gestures/AC-9 : l'inbox compte ce qui bloque (escalades ouvertes +
   const inbox = inboxOf(store);
   assert.equal(inbox.pendingCount, 3, "deux escalades ouvertes + un run en attente");
   assert.deepEqual(
-    (inbox.decisions as { runId: string; question: string; status: string }[]).map((d) => [d.runId, d.question, d.status]),
+    (inbox.decisions as { runId: string; question: string; status: string }[]).map((d) => [
+      d.runId,
+      d.question,
+      d.status,
+    ]),
     [
       ["r2", "échue", "auto_timeout"],
       ["r3", "autre", "auto"],
     ],
   );
-  assert.deepEqual((inbox.awaiting as { id: string }[]).map((r) => r.id), ["r2"]);
+  assert.deepEqual(
+    (inbox.awaiting as { id: string }[]).map((r) => r.id),
+    ["r2"],
+  );
   assert.deepEqual(
     (inbox.runs as { id: string }[]).map((r) => r.id).sort(),
     ["r1", "r2", "r3"],

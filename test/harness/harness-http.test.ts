@@ -430,7 +430,10 @@ test("harness-http/AC-9 : une réponse d'escalade porte sa raison (optionnelle, 
     const view = (await (await call(server.url, "GET", "/v1/runs/r1")).json()) as {
       escalations: { recommended: string | null; options: string[]; context: string }[];
     };
-    assert.deepEqual(view.escalations.map((e) => [e.recommended, e.options, e.context]), [["a", ["a", "b"], "la table users"]]);
+    assert.deepEqual(
+      view.escalations.map((e) => [e.recommended, e.options, e.context]),
+      [["a", ["a", "b"], "la table users"]],
+    );
     assert.equal(
       (await call(server.url, "POST", "/v1/runs/r1/escalations", { answers: [{ id: one.id, answer: "b", reason: 3 }] }))
         .status,

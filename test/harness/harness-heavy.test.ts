@@ -257,7 +257,13 @@ function heavyWorld(exec: Exec, patch: (config: HarnessConfig) => void = () => {
 }
 
 /** Un `exec` qui ne rend la main qu'au signal du job ou quand le test le libère ; compte ses lancements. */
-function gate(): { exec: Exec; calls: number; aborted: AbortSignal[]; release: (code: number) => void; started: Promise<void> } {
+function gate(): {
+  exec: Exec;
+  calls: number;
+  aborted: AbortSignal[];
+  release: (code: number) => void;
+  started: Promise<void>;
+} {
   let release = (_code: number) => {};
   const startedResolvers = Promise.withResolvers<void>();
   const state = {
@@ -337,10 +343,7 @@ test("harness-heavy/AC-9 : `tests.pattern` ne garde que les fichiers de test ; s
     if (repo) repo.tests.pattern = "test/**/*.test.ts";
   });
   const skipped = await heavy.run(job("r1", "touched", ["src/a.ts", "README.md"]));
-  assert.deepEqual(
-    [skipped.outcome, skipped.skipped, skipped.note, g.calls],
-    ["pass", true, "aucun test touché", 0],
-  );
+  assert.deepEqual([skipped.outcome, skipped.skipped, skipped.note, g.calls], ["pass", true, "aucun test touché", 0]);
   assert.equal(store.eventsSince(0, "r1").filter((e) => e.type === "heavy_skipped").length, 1);
   assert.match(heavyReport(skipped, "4G"), /^VERT \(rien lancé/);
   const pending = heavy.run(job("r1", "touched", ["src/a.ts", "test/x.test.ts"]));
@@ -365,8 +368,20 @@ test("harness-heavy/AC-10 : scope `check` lance la commande nommée de `repos[].
   g.release(0);
   const ran = await lint;
   assert.deepEqual([ran.outcome, ran.command, g.calls], ["pass", "echo lint", 1]);
-  const keyLint = await heavy.keyFor({ repo: job("r1").repo, worktree: job("r1").worktree, scope: "check", files: [], check: "lint" });
-  const keyTypes = await heavy.keyFor({ repo: job("r1").repo, worktree: job("r1").worktree, scope: "check", files: [], check: "types" });
+  const keyLint = await heavy.keyFor({
+    repo: job("r1").repo,
+    worktree: job("r1").worktree,
+    scope: "check",
+    files: [],
+    check: "lint",
+  });
+  const keyTypes = await heavy.keyFor({
+    repo: job("r1").repo,
+    worktree: job("r1").worktree,
+    scope: "check",
+    files: [],
+    check: "types",
+  });
   assert.ok(keyLint && keyTypes && keyLint.key !== keyTypes.key, "un check par clé");
   assert.equal(store.cacheGet(keyLint.key)?.outcome, "pass");
   const again = await heavy.run(job("r2", "check", [], "lint"));

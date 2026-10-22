@@ -187,7 +187,11 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
   const id = z.string().describe("L'id du run (lu dans harness_inbox ou harness_run)");
 
   function modulesRefusal(modules: unknown, what: string): string | null {
-    if (!Array.isArray(modules) || modules.length === 0 || modules.some((item) => typeof item !== "string" || item === ""))
+    if (
+      !Array.isArray(modules) ||
+      modules.length === 0 ||
+      modules.some((item) => typeof item !== "string" || item === "")
+    )
       return `${what} : \`modules\` doit lister au moins un chemin du dépôt (repère-les par grep/glob avant de lancer).`;
     return null;
   }
@@ -262,7 +266,10 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
         if (ctx?.hasUI)
           deps.onLaunched?.(
             target,
-            created.runs.map((run, index) => ({ id: run.id, title: run.title ?? params.features[index]?.title ?? run.id })),
+            created.runs.map((run, index) => ({
+              id: run.id,
+              title: run.title ?? params.features[index]?.title ?? run.id,
+            })),
           );
         return text(
           `Projet ${created.projectId} créé : ${created.runs.length} feature(s) en file sur le harness (${created.runs.map((run) => run.id).join(", ")}). Suivi par harness_inbox ou OMP Console. Termine ta réponse.`,
@@ -280,7 +287,13 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     description:
       "Lit la boîte de l'humain sur le harness : escalades, specs et verdicts à valider, décisions à relire, features en cours (avec leurs ids). Lecture seule.",
     parameters: z.object({}),
-    async execute(_id: string, _params: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(
+      _id: string,
+      _params: unknown,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
       try {
@@ -299,7 +312,13 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     description:
       "Lit un run du harness : état, étape, décisions, escalades ouvertes, verdict de revue, et les artefacts req.md / specs.md / impl.md. Lecture seule ; à relire avant tout geste.",
     parameters: z.object({ id }),
-    async execute(_id: string, params: IdParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(
+      _id: string,
+      params: IdParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
       try {
@@ -377,9 +396,7 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     description: `Répond aux escalades ouvertes d'un run (id de l'escalade, réponse choisie parmi ses options, raison facultative). ${GESTURE_RULE}`,
     parameters: z.object({
       id,
-      answers: z
-        .array(z.object({ id: z.number().int(), answer: z.string(), reason: z.string().optional() }))
-        .min(1),
+      answers: z.array(z.object({ id: z.number().int(), answer: z.string(), reason: z.string().optional() })).min(1),
     }),
     async execute(
       _id: string,
@@ -429,7 +446,13 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     loadMode: "essential",
     description: `Relance un run en échec ou en attente de l'humain, à la même étape. ${GESTURE_RULE}`,
     parameters: z.object({ id }),
-    async execute(_id: string, params: IdParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(
+      _id: string,
+      params: IdParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
       const result = await gesture(target, params.id, "/retry", {}, fetcher);
@@ -443,7 +466,13 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     loadMode: "essential",
     description: `Annule un run : son runner s'arrête, rien n'est mergé. ${GESTURE_RULE}`,
     parameters: z.object({ id }),
-    async execute(_id: string, params: IdParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(
+      _id: string,
+      params: IdParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
       const result = await gesture(target, params.id, "/cancel", {}, fetcher);
@@ -457,7 +486,13 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     loadMode: "essential",
     description: `Accepte d'un coup toutes les décisions que l'agent a prises seul sur un run (statut auto ou auto_timeout). ${GESTURE_RULE}`,
     parameters: z.object({ id }),
-    async execute(_id: string, params: IdParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(
+      _id: string,
+      params: IdParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
       const result = await gesture(target, params.id, "/decisions/accept", {}, fetcher);

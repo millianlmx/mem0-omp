@@ -81,13 +81,56 @@ refuse() {
   exit 64
 }
 
+# Équivalent portable de `realpath -m` (GNU seul ; le realpath BSD de macOS, où
+# tournent les tests, n'a pas `-m`) : normalisation lexicale (`.`, `..`, `//`),
+# résolution des liens du plus long préfixe existant (`cd -P`), puis des liens
+# qui suivent (`readlink`, borné). Le reste, inexistant, est recollé tel quel.
+canon() {
+  local input="$1" hops=0 out seg rest prefix suffix link
+  while :; do
+    case "$input" in /*) ;; *) input="$PWD/$input" ;; esac
+    out=""
+    rest="$input"
+    while [ -n "$rest" ]; do
+      seg="${rest%%/*}"
+      if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+      case "$seg" in
+        "" | .) ;;
+        ..) out="${out%/*}" ;;
+        *) out="$out/$seg" ;;
+      esac
+    done
+    prefix="$out"
+    suffix=""
+    while [ -n "$prefix" ] && [ ! -d "$prefix" ]; do
+      suffix="/${prefix##*/}$suffix"
+      prefix="${prefix%/*}"
+    done
+    prefix=$(cd -P -- "${prefix:-/}" 2>/dev/null && pwd -P) || prefix="${prefix:-/}"
+    [ "$prefix" = "/" ] && prefix=""
+    # Premier composant restant : un lien (vers un fichier, ou cassé) se suit.
+    seg="${suffix#/}"
+    seg="${seg%%/*}"
+    if [ -n "$seg" ] && [ -L "$prefix/$seg" ] && [ "$hops" -lt 40 ]; then
+      hops=$((hops + 1))
+      link=$(readlink -- "$prefix/$seg")
+      case "$link" in /*) ;; *) link="$prefix/$link" ;; esac
+      input="$link${suffix#/"$seg"}"
+      continue
+    fi
+    out="$prefix$suffix"
+    printf '%s\n' "${out:-/}"
+    return 0
+  done
+}
+
 # `path` est-il STRICTEMENT sous une des racines données (liens résolus) ?
 under() {
   local target root resolved
-  target=$(realpath -m -- "$1")
+  target=$(canon "$1")
   shift
   for root in "$@"; do
-    resolved=$(realpath -m -- "$root")
+    resolved=$(canon "$root")
     case "$target" in "$resolved"/?*) return 0 ;; esac
   done
   return 1
@@ -96,10 +139,10 @@ under() {
 # `path` est-il une des racines, ou dessous ?
 within() {
   local target root resolved
-  target=$(realpath -m -- "$1")
+  target=$(canon "$1")
   shift
   for root in "$@"; do
-    resolved=$(realpath -m -- "$root")
+    resolved=$(canon "$root")
     [ "$target" = "$resolved" ] && return 0
     case "$target" in "$resolved"/?*) return 0 ;; esac
   done
@@ -110,7 +153,12 @@ within() {
 # fs.protected_hardlinks, un lien dur vers un fichier de root garde root pour
 # propriétaire). Sans ce contrôle, le service ferait lire n'importe quel fichier à root.
 service_file() {
-  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %u -- "$1")" != "0" ]
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(owner_uid "$1")" != "0" ]
+}
+
+# L'uid du propriétaire : `stat -c` (GNU, la cible) ou `stat -f` (BSD : macOS, où tournent les tests).
+owner_uid() {
+  stat -c %u -- "$1" 2>/dev/null || stat -f %u -- "$1"
 }
 
 run() {
@@ -181,7 +229,8 @@ case "$1" in
     # passent après runner.env et l'emportent (root garde la main sur tout le reste).
     if service_file "$PROVIDERS_ENV_FILE"; then
       while IFS= read -r line; do
-        [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,512})$ ]] || continue
+        # 8 à 512 caractères ; la borne haute hors du motif : le regex BSD refuse `{8,512}` (RE_DUP_MAX 255).
+        [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,})$ ]] && [ "${#BASH_REMATCH[2]}" -le 512 ] || continue
         export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
         if [ "$DRY_RUN" = "1" ]; then printf 'providerenv:%s\n' "${BASH_REMATCH[1]}"; fi
       done < "$PROVIDERS_ENV_FILE"
@@ -246,7 +295,10 @@ case "$1" in
           rel="${cwd#"$WORKTREES_ROOT"/}"
           [ "$rel" != "$cwd" ] && [ "${rel%%/*}" != "$rel" ] || refuse "répertoire hors des worktrees : $arg"
           [[ "${rel%%/*}" =~ $name_re ]] && [[ "${rel#*/}" =~ $name_re ]] || refuse "répertoire hors des worktrees : $arg"
-          [ "$(realpath -m -- "$cwd")" = "$cwd" ] || refuse "répertoire non canonique : $arg"
+          # Canonique SOUS la racine : ni `.`/`..`/`//`, ni lien dans <dépôt>/<feature>
+          # (la racine, configurée par root, est résolue des deux côtés : /var est un
+          # lien sur macOS, où tournent les tests).
+          [ "$(canon "$cwd")" = "$(canon "$WORKTREES_ROOT")/$rel" ] || refuse "répertoire non canonique : $arg"
           seen_cwd=1
           final+=("$arg")
           ;;

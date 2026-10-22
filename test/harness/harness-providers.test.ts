@@ -280,6 +280,8 @@ test("harness-providers/AC-4 : en conteneur, providers.env est monté et l'entr�
     .readFileSync(path.join(DEPLOY, "container", "runner-entrypoint"), "utf8")
     .replaceAll("/run/secrets/providers.env", secrets)
     .replaceAll("/run/secrets/runner.env", path.join(dir, "absent"))
+    // Sans `getent` (macOS), l'entrée déclare l'uid : dans une copie, pas dans /etc/passwd.
+    .replace("/etc/passwd", path.join(dir, "passwd"))
     .replace('exec "$@"', 'env | grep -E "API_KEY|LD_PRELOAD" | sort');
   const script = path.join(dir, "entry.sh");
   fs.writeFileSync(script, entry);

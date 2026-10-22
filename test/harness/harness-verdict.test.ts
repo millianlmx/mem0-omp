@@ -41,7 +41,11 @@ test("harness-verdict/AC-1 : un verdict se valide champ par champ ; risque, rés
 
 test("harness-verdict/AC-2 : risque sous le plafond + suite verte + petite PR + chaque AC prouvé + fichiers relus → auto-merge", () => {
   assert.deepEqual(mergeDecision(verdict, evidence), { auto: true });
-  assert.deepEqual(mergeDecision({ ...verdict, risk: "medium" }, evidence), { auto: true }, "medium ≤ autoMergeRisk medium");
+  assert.deepEqual(
+    mergeDecision({ ...verdict, risk: "medium" }, evidence),
+    { auto: true },
+    "medium ≤ autoMergeRisk medium",
+  );
   assert.deepEqual(mergeDecision(verdict, { ...evidence, autoMergeRisk: "low" }), { auto: true });
 });
 
@@ -63,7 +67,11 @@ test("harness-verdict/AC-3 : chaque écart à la règle renvoie à l'humain, ave
   for (const [v, e, reason] of cases) {
     const decision = mergeDecision({ ...verdict, ...v }, { ...evidence, ...e });
     assert.ok(!decision.auto && decision.reasons.some((r) => reason.test(r)), String(reason));
-    assert.equal(!decision.auto && decision.readCode, v.unverified !== undefined, "un verdict fort se lit sans le code");
+    assert.equal(
+      !decision.auto && decision.readCode,
+      v.unverified !== undefined,
+      "un verdict fort se lit sans le code",
+    );
   }
   const weak = mergeDecision({ ...verdict, confidence: "weak" }, evidence);
   assert.ok(!weak.auto && weak.reasons.includes("verdict faible") && weak.readCode);

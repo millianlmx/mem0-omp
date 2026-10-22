@@ -32,8 +32,13 @@ export interface Oracle {
 function tagsOf(record: Record<string, unknown>): string[] {
   const metadata = record.metadata;
   const raw =
-    record.tags ?? (metadata !== null && typeof metadata === "object" && "tags" in metadata ? metadata.tags : undefined);
-  if (typeof raw === "string") return raw.split(",").map((tag) => tag.trim()).filter(Boolean);
+    record.tags ??
+    (metadata !== null && typeof metadata === "object" && "tags" in metadata ? metadata.tags : undefined);
+  if (typeof raw === "string")
+    return raw
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
   if (Array.isArray(raw)) return raw.filter((tag): tag is string => typeof tag === "string");
   return [];
 }
@@ -170,13 +175,18 @@ export const NO_ORACLE: Oracle = {
 export function briefOfReq(reqMd: string): string {
   const lines = reqMd
     .split("\n")
-    .map((line) => line.replace(/^\s*(?:[-*]\s+)?/, "").replace(/\*\*/g, "").trim())
+    .map((line) =>
+      line
+        .replace(/^\s*(?:[-*]\s+)?/, "")
+        .replace(/\*\*/g, "")
+        .trim(),
+    )
     .filter((line) => /^B-\d+\b/.test(line));
   let out = "";
   for (const line of lines) {
     const next = out === "" ? line : `${out}\n${line}`;
     if (next.length > 500) {
-      if (out === "") out = line.slice(0, 499) + "…";
+      if (out === "") out = `${line.slice(0, 499)}…`;
       break;
     }
     out = next;
@@ -224,4 +234,3 @@ export function humanDecisionMemory(input: {
   const reason = input.reason.trim() === "" ? "sans raison donnée" : input.reason.trim();
   return `Décision ${verb}${category} — feature « ${input.feature} » : ${input.question} → « ${input.chosen} ».${options}${context} Raison : ${reason}`;
 }
-

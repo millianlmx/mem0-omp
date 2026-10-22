@@ -1518,17 +1518,20 @@ En ligne de commande, `DEVELOPER_DIR` désigne l'installation d'Xcode quand
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-build.sh
 ```
 
-Le script compile l'app en destination générique, choisit un simulateur iOS ≥ 26
-et lance la suite Swift Testing de la cible `OMPConsoleIOSTests`. `--no-tests`
-s'arrête après la compilation. Après la compilation, dans les deux modes, le
-script contrôle `OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata` contre
-la même liste que le bundle Mac (voir *Liste attendue des intents Siri*) ; s'il
-manque :
+Le script cherche d'abord un simulateur iOS ≥ 26. S'il en trouve un, il le
+démarre en arrière-plan et lance un seul `xcodebuild test`, qui compile l'app et
+exécute la suite Swift Testing de la cible `OMPConsoleIOSTests` ; sans simulateur,
+ou avec `--no-tests`, il compile seulement, en destination générique. Dans tous
+les cas, le script contrôle ensuite
+`OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata` de l'app produite
+contre la même liste que le bundle Mac (voir *Liste attendue des intents Siri*) ;
+s'il manque :
 `  ✗ Metadata.appintents absent de l'app iOS : omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)`,
 et s'il s'en écarte :
 `  ✗ Metadata.appintents de l'app iOS non conforme à scripts/app-intents/attendus.json`,
-tous deux en code 1, sans lancer les tests. Codes de sortie : `0` compilé (et
-testé), `1` échec, `2` « non exécuté ».
+tous deux en code 1. Codes de sortie : `0` compilé (et testé, sauf `--no-tests`
+ou sans simulateur — la ligne `· tests non exécutés : …` le dit), `1` échec,
+`2` « non exécuté » (hors macOS, Xcode inutilisable).
 
 L'icône de l'app iOS vient du catalogue `OMPConsoleIOS/Assets.xcassets`
 (`AppIcon`, variantes claire, sombre et teintée) ; elle est dessinée avec celle du

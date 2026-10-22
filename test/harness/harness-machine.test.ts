@@ -100,7 +100,10 @@ test("harness-machine/AC-5 : un échec relançable est remis en file après le b
     backoff,
     3_000_000,
   );
-  assert.deepEqual([exhausted.state, exhausted.step, exhausted.attempts, exhausted.notBefore], ["awaiting_human", "impl", 2, null]);
+  assert.deepEqual(
+    [exhausted.state, exhausted.step, exhausted.attempts, exhausted.notBefore],
+    ["awaiting_human", "impl", 2, null],
+  );
   assert.match(exhausted.reason, /3 fois \(rate_limit\), relances épuisées/);
   const fatal = nextAfter({ step: "impl", fixes: 0, attempts: 0 }, failed("runner", false), backoff, 0);
   assert.deepEqual([fatal.state, fatal.notBefore], ["failed", null]);
@@ -117,15 +120,28 @@ test("harness-machine/AC-9 : une cause qui se résout en attendant consomme tout
   }
   // Contexte, runner, inconnu : la seconde fois de suite, l'humain.
   for (const cause of ["context", "runner", "other"] as const) {
-    const human = nextAfter({ step: "impl", fixes: 0, attempts: 1, lastFailCause: cause }, failed(cause, true, "x"), three);
+    const human = nextAfter(
+      { step: "impl", fixes: 0, attempts: 1, lastFailCause: cause },
+      failed(cause, true, "x"),
+      three,
+    );
     assert.deepEqual([human.state, human.step, human.attempts], ["awaiting_human", "impl", 1], cause);
     assert.match(human.reason, new RegExp(`deux fois de suite .*${cause}.*x`));
     // Une cause différente continue les relances.
-    assert.equal(nextAfter({ step: "impl", fixes: 0, attempts: 1, lastFailCause: cause }, failed("network"), three).state, "queued");
+    assert.equal(
+      nextAfter({ step: "impl", fixes: 0, attempts: 1, lastFailCause: cause }, failed("network"), three).state,
+      "queued",
+    );
   }
   // Un run sans échec précédent n'est pas concerné ; liste à une entrée épuisée ⇒ l'humain.
-  assert.equal(nextAfter({ step: "impl", fixes: 0, attempts: 1, lastFailCause: null }, failed("context"), limits).state, "awaiting_human");
-  assert.equal(nextAfter({ step: "impl", fixes: 0, attempts: 0, lastFailCause: null }, failed("context"), limits).state, "queued");
+  assert.equal(
+    nextAfter({ step: "impl", fixes: 0, attempts: 1, lastFailCause: null }, failed("context"), limits).state,
+    "awaiting_human",
+  );
+  assert.equal(
+    nextAfter({ step: "impl", fixes: 0, attempts: 0, lastFailCause: null }, failed("context"), limits).state,
+    "queued",
+  );
 });
 
 test("harness-machine/AC-10 : un correcteur qui ne change rien conteste — retour en revue dans un runner neuf, puis l'humain à la seconde contestation", () => {
@@ -150,7 +166,10 @@ test("harness-machine/AC-11 : la porte des specs en « auto » n'attend l'humain
     ["impl", "impl"],
   );
   // `true` et `false` ignorent le jugement de l'étape.
-  assert.equal(nextAfter(cursor, { ...done, gateNeeded: false }, { ...limits, specsGate: true }).state, "awaiting_human");
+  assert.equal(
+    nextAfter(cursor, { ...done, gateNeeded: false }, { ...limits, specsGate: true }).state,
+    "awaiting_human",
+  );
   assert.equal(nextAfter(cursor, { ...done, gateNeeded: true }, { ...limits, specsGate: false }).step, "impl");
 });
 

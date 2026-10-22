@@ -170,13 +170,20 @@ test("harness-rpc/AC-6 : la cause d'une erreur de prompt se lit sur le statut pu
 test("harness-rpc/AC-7 : `retry-after` se lit dans les détails (en-tête en secondes ou date HTTP, retryAfter du corps) ou dans le message ; sinon null", () => {
   const now = Date.parse("2026-10-22T10:00:00Z");
   assert.equal(parseRetryAfter({ message: "429", details: { headers: { "retry-after": "30" } } }, now), 30_000);
-  assert.equal(parseRetryAfter({ message: "429", details: { headers: { "Retry-After": "Wed, 22 Oct 2026 10:00:45 GMT" } } }, now), 45_000);
+  assert.equal(
+    parseRetryAfter({ message: "429", details: { headers: { "Retry-After": "Wed, 22 Oct 2026 10:00:45 GMT" } } }, now),
+    45_000,
+  );
   assert.equal(parseRetryAfter({ message: "429", details: { body: { error: { retryAfter: 12 } } } }, now), 12_000);
   assert.equal(parseRetryAfter({ message: "429", details: { retryAfterMs: 1500 } }, now), 1500);
   assert.equal(parseRetryAfter({ message: "Rate limit reached. Please retry after 20 seconds." }, now), 20_000);
   assert.equal(parseRetryAfter({ message: "Too many requests, try again in 2 min" }, now), 120_000);
   assert.equal(parseRetryAfter({ message: "rate limited, retry in 750ms" }, now), 750);
   assert.equal(parseRetryAfter({ message: "429 Too Many Requests" }, now), null);
-  assert.equal(parseRetryAfter({ message: "429", retryAfterMs: 9000, details: { headers: { "retry-after": "1" } } }, now), 9000, "une valeur déjà posée prime");
+  assert.equal(
+    parseRetryAfter({ message: "429", retryAfterMs: 9000, details: { headers: { "retry-after": "1" } } }, now),
+    9000,
+    "une valeur déjà posée prime",
+  );
   assert.equal(parseRetryAfter(null, now), null);
 });

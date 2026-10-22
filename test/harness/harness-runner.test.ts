@@ -73,7 +73,11 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
     }),
     { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope", repo: "/srv/repo" },
   );
-  assert.equal(classic.args.some((arg) => arg.startsWith("--setenv=MEM0_MODE=")), false, "runnerMode:false ⇒ pas de MEM0_MODE");
+  assert.equal(
+    classic.args.some((arg) => arg.startsWith("--setenv=MEM0_MODE=")),
+    false,
+    "runnerMode:false ⇒ pas de MEM0_MODE",
+  );
 });
 
 test("harness-runner/AC-2 : le profil pipeline éteint LSP, DAP et le noyau Python", () => {
@@ -97,7 +101,12 @@ test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais ja
   assert.equal(env.MEM0_MODE, "runner");
   assert.equal(env.PI_PY, "0");
   assert.equal("MEM0_MODE" in runnerEnv("demo-scope", null, {}, false), false);
-  assert.deepEqual(runnerMemoryEnv("s", true), { MEM0_PROJECT_ID: "s", MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0", MEM0_MODE: "runner" });
+  assert.deepEqual(runnerMemoryEnv("s", true), {
+    MEM0_PROJECT_ID: "s",
+    MEM0_AUTOSETUP: "0",
+    MEM0_NUDGE: "0",
+    MEM0_MODE: "runner",
+  });
 });
 
 test("harness-runner/AC-4 : les outils hôtes suivent l'étape — checkpoint et set_modules partout, split_feature en specs et impl, run_tests dès /impl (full seulement en revue), review_verdict seulement en revue", () => {
@@ -126,12 +135,22 @@ test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le ser
   assert.deepEqual(at("req", "checkpoint", "required"), ["message"]);
   assert.deepEqual(at("req", "set_modules", "required"), ["paths"]);
   assert.deepEqual(at("specs", "split_feature", "required"), ["features"]);
-  assert.deepEqual(at("specs", "split_feature", "properties", "features", "items", "required"), ["title", "request", "modules"]);
+  assert.deepEqual(at("specs", "split_feature", "properties", "features", "items", "required"), [
+    "title",
+    "request",
+    "modules",
+  ]);
   assert.deepEqual(at("impl", "run_tests", "required"), ["scope"]);
   assert.equal(at("impl", "run_tests", "properties", "check", "type"), "string");
   const verdictRequired = at("review", "review_verdict", "required");
-  assert.ok(Array.isArray(verdictRequired) && verdictRequired.includes("criteria") && verdictRequired.includes("confidence"));
-  assert.deepEqual(at("review", "review_verdict", "properties", "criteria", "items", "required"), ["id", "test", "status"]);
+  assert.ok(
+    Array.isArray(verdictRequired) && verdictRequired.includes("criteria") && verdictRequired.includes("confidence"),
+  );
+  assert.deepEqual(at("review", "review_verdict", "properties", "criteria", "items", "required"), [
+    "id",
+    "test",
+    "status",
+  ]);
   assert.deepEqual(at("audit", "audit_propose", "properties", "proposals", "items", "required"), [
     "title",
     "request",

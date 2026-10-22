@@ -32,7 +32,8 @@ export type MergerHooks = {
 const DECIDED: DecisionStatus[] = ["auto", "auto_timeout", "accepted", "reversed"];
 
 /** Les refus de push qui tiennent au réseau, pas au dépôt : réessayés. */
-const NETWORK_PUSH_ERROR = /could not resolve|could not connect|connection (?:refused|reset|timed out)|timed out|unable to access|network is unreachable|early EOF|remote end hung up|temporarily unavailable|operation timed out/i;
+const NETWORK_PUSH_ERROR =
+  /could not resolve|could not connect|connection (?:refused|reset|timed out)|timed out|unable to access|network is unreachable|early EOF|remote end hung up|temporarily unavailable|operation timed out/i;
 
 /** Les attentes entre deux poussées après une coupure réseau, en multiples de `mergePollSec`. */
 const PUSH_RETRY_STEPS: readonly number[] = [1, 2, 5];
@@ -197,11 +198,9 @@ export class Merger {
       await new Promise<void>((resolve) => setTimeout(resolve, wait * config.review.mergePollSec * 1000));
     }
     const current = this.#ctx.store.getRun(run.id) ?? run;
-    this.#ctx.transition(
-      current,
-      { ...afterMergeFailed(current, detail), reason: `push refusé : ${detail}` },
-      ["merging"],
-    );
+    this.#ctx.transition(current, { ...afterMergeFailed(current, detail), reason: `push refusé : ${detail}` }, [
+      "merging",
+    ]);
     return false;
   }
 
@@ -246,8 +245,7 @@ export class Merger {
         await this.#ctx.fetchMain(repo);
         return { kind: "merged", prUrl };
       }
-      if (state === "CLOSED")
-        return { kind: "stopped", prUrl, reason: "la PR a été fermée sans être fusionnée" };
+      if (state === "CLOSED") return { kind: "stopped", prUrl, reason: "la PR a été fermée sans être fusionnée" };
       if (Date.now() >= deadline)
         return {
           kind: "stopped",
@@ -281,7 +279,9 @@ export class Merger {
     store.transaction(() => {
       const patch = {
         mergeRetries: run.mergeRetries + 1,
-        ...(transition.state === "queued" ? { verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null } : {}),
+        ...(transition.state === "queued"
+          ? { verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null }
+          : {}),
       };
       const moved = this.#ctx.transition(run, transition, ["merging"], { patch });
       if (moved && transition.state === "queued")

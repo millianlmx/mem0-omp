@@ -73,7 +73,7 @@ Lis \`${ART}/req.md\`, \`${ART}/specs.md\` et \`${ART}/impl.md\` : la revue juge
       ? `Première revue : relis le diff COMPLET, \`git diff ${ctx.baseSha}\` (base = main), critère par critère.
 - Lance la suite COMPLÈTE une fois : \`run_tests\` avec \`scope: full\` (le service l'a déjà mise en route à l'entrée de la revue ; l'appel rejoint ce job).`
       : `Revue INCRÉMENTALE : relis le diff depuis \`${ctx.sinceSha}\` (\`git diff ${ctx.sinceSha}\`), c'est la correction ; vérifie chaque bloquant levé par la revue précédente, un par un, avec sa preuve :
-${bullets(ctx.previousBlockers) ?? "- (aucun bloquant transmis : relis \`.harness/fix.md\`)"}
+${bullets(ctx.previousBlockers) ?? "- (aucun bloquant transmis : relis `.harness/fix.md`)"}
 - \`run_tests\` avec \`scope: touched\` d'abord ; la suite \`scope: full\` seulement s'il ne reste plus AUCUN bloquant.`;
   return `${head}
 
@@ -213,7 +213,9 @@ Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus util
     section(
       "Déjà en cours ou livré — ne propose pas de doublon",
       [
-        (ctx.inFlight ?? []).length > 0 ? `Runs ouverts :\n${(ctx.inFlight ?? []).map((t) => `- ${t}`).join("\n")}` : "",
+        (ctx.inFlight ?? []).length > 0
+          ? `Runs ouverts :\n${(ctx.inFlight ?? []).map((t) => `- ${t}`).join("\n")}`
+          : "",
         ctx.delivered ?? "",
       ]
         .filter((part) => part !== "")

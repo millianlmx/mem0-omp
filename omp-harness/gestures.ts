@@ -220,7 +220,9 @@ export class HumanLoop {
     }
     for (const [runId, items] of byRun) {
       await this.#serial(runId, () => this.#autoDecide(runId, items, timeoutSec)).catch((err: unknown) =>
-        this.#ctx.log(`run ${runId} : auto-décision à l'échéance écartée (${err instanceof Error ? err.message : err})`),
+        this.#ctx.log(
+          `run ${runId} : auto-décision à l'échéance écartée (${err instanceof Error ? err.message : err})`,
+        ),
       );
     }
   }
@@ -229,7 +231,7 @@ export class HumanLoop {
     const { store, git } = this.#ctx;
     const run = store.getRun(runId);
     // Seul un run qui ATTEND ses réponses se tranche : un runner vivant finit son étape d'abord.
-    if (!run || run.state !== "escalated") return;
+    if (run?.state !== "escalated") return;
     const open = new Set(store.listEscalations({ runId, status: "open" }).map((item) => item.id));
     const rationale = `${TIMEOUT_REASON} ${timeoutSec} s sans réponse humaine`;
     const decided: { item: EscalationRow; decision: DecisionRow }[] = [];
@@ -386,9 +388,7 @@ export class HumanLoop {
     const last = Math.max(...chain);
     // La plage de la décision et de ses dépendantes : du checkpoint de `seq` à celui de la
     // première décision survivante postérieure (son commit porte le travail d'avant elle), sinon HEAD.
-    const boundary = standing
-      .filter((d) => d.seq > last && d.checkpointSha !== null)
-      .sort((a, b) => a.seq - b.seq)[0];
+    const boundary = standing.filter((d) => d.seq > last && d.checkpointSha !== null).sort((a, b) => a.seq - b.seq)[0];
     const to = boundary?.checkpointSha ?? "HEAD";
     const reverted = await git.revertRange(worktree, decision.checkpointSha, to);
     const kept = standing.filter((d) => d.seq > seq && !chain.includes(d.seq));
@@ -491,7 +491,10 @@ export class HumanLoop {
     const runId = fresh.id;
     const seq = decision.seq;
     if (fresh.worktree !== null && (await git.isDirty(fresh.worktree)))
-      await git.commitAll(fresh.worktree, `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120));
+      await git.commitAll(
+        fresh.worktree,
+        `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120),
+      );
     store.transaction(() => {
       store.updateRun(runId, { verdict: null });
       store.reverseDecision(runId, seq, option, reason, fallen, actor.by);

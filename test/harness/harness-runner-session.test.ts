@@ -33,8 +33,10 @@ function scriptedRunner(script: (PromptError | null)[]) {
     const out = (frame: object) => stdout.write(`${JSON.stringify(frame)}\n`);
     stdin.on("data", (chunk: string) => {
       for (const line of chunk.split("\n").filter(Boolean)) {
-        const frame: { id: string; type: string; message?: string; provider?: string; modelId?: string } = JSON.parse(line);
-        if (frame.type === "set_host_tools") out({ id: frame.id, type: "response", command: frame.type, success: true, data: {} });
+        const frame: { id: string; type: string; message?: string; provider?: string; modelId?: string } =
+          JSON.parse(line);
+        if (frame.type === "set_host_tools")
+          out({ id: frame.id, type: "response", command: frame.type, success: true, data: {} });
         if (frame.type === "set_model") {
           models.push(`${frame.provider}/${frame.modelId}`);
           out({ id: frame.id, type: "response", command: frame.type, success: true, data: {} });
@@ -43,7 +45,11 @@ function scriptedRunner(script: (PromptError | null)[]) {
           prompts.push(frame.message ?? "");
           out({ id: frame.id, type: "response", command: "prompt", success: true });
           const error = script.shift() ?? null;
-          out(error ? { id: frame.id, type: "prompt_result", status: "error", error } : { id: frame.id, type: "prompt_result", status: "completed", error: null });
+          out(
+            error
+              ? { id: frame.id, type: "prompt_result", status: "error", error }
+              : { id: frame.id, type: "prompt_result", status: "completed", error: null },
+          );
         }
       }
     });
@@ -80,7 +86,16 @@ function world(script: (PromptError | null)[], patch: (config: HarnessConfig) =>
   const git = new Git(execProcess, config.git);
   const heavy = new HeavyRunner({ config, store, scheduler, git, exec: execProcess });
   const runner = scriptedRunner(script);
-  const ctx = new HarnessContext({ config, store, scheduler, git, heavy, oracle: new MemoryOracle(), spawn: runner.spawn, exec: execProcess });
+  const ctx = new HarnessContext({
+    config,
+    store,
+    scheduler,
+    git,
+    heavy,
+    oracle: new MemoryOracle(),
+    spawn: runner.spawn,
+    exec: execProcess,
+  });
   const events: { type: EventType; payload: Record<string, unknown> }[] = [];
   const sleeps: number[] = [];
   const repoConfig = config.repos[0];
@@ -152,7 +167,11 @@ test("harness-runner-session/AC-2 : une cause hors `failoverOn` (contexte, autre
 });
 
 test("harness-runner-session/AC-3 : chaîne à un seul fournisseur — attendre `retry-after` (sinon le refroidissement par défaut) puis réessayer le même, au plus 3 fois", async () => {
-  const limited: PromptError = { message: "429 Too Many Requests", httpStatus: 429, details: { headers: { "retry-after": "7" } } };
+  const limited: PromptError = {
+    message: "429 Too Many Requests",
+    httpStatus: 429,
+    details: { headers: { "retry-after": "7" } },
+  };
   const w = world([limited, { message: "502 Bad Gateway" }, null], (config) => {
     config.models = { fast: [], standard: [], heavy: [{ provider: "alpha", model: "big" }] };
   });
@@ -184,9 +203,12 @@ test("harness-runner-session/AC-3 : chaîne à un seul fournisseur — attendre 
 });
 
 test("harness-runner-session/AC-4 : l'attente avant réessai est bornée par l'échéance de l'étape ; à l'échéance, l'erreur est rendue sans réessai", async () => {
-  const w = world([{ message: "429", httpStatus: 429, details: { headers: { "retry-after": "600" } } }, null], (config) => {
-    config.models = { fast: [], standard: [], heavy: [{ provider: "alpha", model: "big" }] };
-  });
+  const w = world(
+    [{ message: "429", httpStatus: 429, details: { headers: { "retry-after": "600" } } }, null],
+    (config) => {
+      config.models = { fast: [], standard: [], heavy: [{ provider: "alpha", model: "big" }] };
+    },
+  );
   await w.session.open("heavy", "u1", new AbortController().signal);
   const result = await w.session.prompt("bonjour", new AbortController().signal, Date.now() + 5_000);
   assert.equal(result.status, "completed");
