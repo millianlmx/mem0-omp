@@ -1,6 +1,6 @@
 {
   "name": "omp-mem0-req",
-  "version": "0.34.0",
+  "version": "1.0.0",
   "description": "Client du harness (omp-harness, le Pipeline Service du VPS), seul moteur des pipelines. /req cerne les besoins avec toi dans la session, puis crée la feature sur le serveur, qui conduit /specs (validées dans OMP Console), /impl, /review et le merge. /project découpe un projet en features lancées en parallèle quand leurs modules sont disjoints. /audit lance un audit du dépôt sur le serveur et y lance les propositions retenues. /pipelines résume la boîte de l'humain. Configuration : HARNESS_URL et HARNESS_TOKEN, ou ~/.omp/harness.json.",
   "license": "MIT",
   "author": "MillianLMX",
