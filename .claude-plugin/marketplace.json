@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.11.0"
+    "version": "3.0.0"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
       "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire du projet en prompt système, exhaustif tant qu'il n'est pas tronqué (60 entrées), au-delà de quoi il dit lui-même ce qui manque, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le stack mem0-stack en local.",
-      "version": "2.11.0",
+      "version": "3.0.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -44,7 +44,7 @@
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Client du harness (omp-harness, le Pipeline Service du VPS), seul moteur des pipelines. /req cerne les besoins avec toi dans la session (un ask groupé, deux tours au plus, critères AC-n co-signés), puis crée la feature sur le serveur, qui conduit /specs, /impl, /review et le merge. /project découpe un projet en features lancées en parallèle quand leurs modules sont disjoints. /audit lance un audit du dépôt sur le serveur et y lance les propositions retenues. /pipelines résume la boîte de l'humain ; /harness-follow pousse specs prêtes, verdicts et questions dans la session. Outils harness_inbox, harness_run, harness_events et les gestes (validate, answer, reverse, retry, cancel, accept_decisions) quand tu les demandes en clair. Configuration : HARNESS_URL et HARNESS_TOKEN, ou ~/.omp/harness.json.",
-      "version": "0.34.0",
+      "version": "1.0.0",
       "author": {
         "name": "MillianLMX"
       },
