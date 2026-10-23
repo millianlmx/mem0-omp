@@ -8,11 +8,13 @@ garde pour toi. Les plugins et l'app OMP Console en sont les clients.
 
 ## Installer le serveur
 
-Deux façons, mêmes garanties : chaque agent et chaque job de tests est isolé, plafonné
+Trois façons, mêmes garanties : chaque agent et chaque job de tests est isolé, plafonné
 en mémoire, et les tests tournent sans réseau ni clé.
 
 - **En conteneurs** (Docker ou podman) : le même déploiement sur n'importe quel VPS
   et sur ton Mac, ce qui permet de changer de backend en une commande.
+- **Avec Portainer** : l'URL du dépôt dans Portainer, et la pile se monte seule, sans
+  terminal.
 - **Avec systemd** (Debian, Ubuntu, NixOS) : installé dans le système, sans moteur de
   conteneurs.
 
@@ -129,6 +131,70 @@ bash omp-harness/deploy/container/harness.sh disconnect   # retour au réglage p
 `connect` réécrit `~/.omp/harness.json` et `~/.omp/mem0.json` en gardant tes
 correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance omp et
 l'app ensuite.
+
+### Avec Portainer
+
+`docker-compose.yml`, à la racine du dépôt, monte tout le serveur sans terminal :
+le harness, sa mémoire et ses embeddings. Il faut Docker sur l'hôte, Portainer qui le
+pilote, et Tailscale installé sur l'hôte et connecté (`tailscale up`) : la pile n'en
+embarque pas, elle se publie par celui de l'hôte.
+
+1. Dans Portainer : **Stacks › Add stack › Repository**. URL :
+   `https://github.com/millianlmx/mem0-omp`, référence `refs/heads/main`, chemin du
+   compose : `docker-compose.yml`.
+2. Dans **Environment variables**, au minimum :
+
+   | Variable | Valeur |
+   |---|---|
+   | `ANTHROPIC_API_KEY` | la clé des agents (ou `OPENROUTER_API_KEY`) |
+   | `OMP_HARNESS_REPOS` | tes dépôts, séparés par des virgules : `git@github.com:toi/a.git,git@github.com:toi/b.git` |
+
+3. **Deploy the stack**. La première fois, la construction des images prend quelques
+   minutes.
+
+Ensuite, tout se lit dans les journaux des conteneurs :
+
+- **`setup`** affiche la clé SSH du service. Pose-la en clé de déploiement de chaque
+  dépôt, case « Allow write access » cochée.
+- **`repos`** déclare les dépôts. Tant qu'une clé manque, il donne le lien GitHub où la
+  poser et réessaie toutes les 30 s : rien à redéployer.
+- **`pairing`** publie le harness et sa mémoire sur le tailnet par le Tailscale de
+  l'hôte (son socket, `/var/run/tailscale`), puis affiche le code d'appairage `omp1:…`,
+  à coller dans l'app ou avec `/pair`. Si Tailscale manque ou n'est pas connecté sur
+  l'hôte, il le dit et attend. Redémarre-le pour réafficher le code.
+
+`setup`, `repos`, `runner-image` et `test-image` s'arrêtent une fois leur travail
+fait : l'état « exited » est normal. Le tailnet doit avoir MagicDNS et HTTPS activés,
+comme pour `harness.sh up`. `pairing` règle le `tailscale serve` de l'hôte comme le
+ferait `harness.sh up` : le port 443 vers le harness, le port 8443 vers la mémoire, au
+nom de la machine sur le tailnet (`https://<vps>.<tailnet>.ts.net`). Si l'hôte sert
+déjà autre chose sur ces ports, pose `OMP_HARNESS_TAILSCALE_SERVE=0` et publie
+toi-même `127.0.0.1:8790` et `127.0.0.1:8321`.
+
+Les autres variables, facultatives :
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `OMP_HARNESS_ROOT` | `/var/lib/omp-harness` | les données, sur l'hôte |
+| `OMP_HARNESS_SECRETS` | `/var/lib/omp-harness-secrets` | les secrets, sur l'hôte (les clés LLM n'y sont lues que par les runners) |
+| `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
+| `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
+| `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
+| `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
+| `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
+| `OMP_HARNESS_TAILSCALE_SERVE` | `1` | `0` : `pairing` ne touche pas au `tailscale serve` de l'hôte |
+
+Chaque redéploiement (**Pull and redeploy**, ou une variable changée) relit les
+variables : la clé du modèle et la liste des dépôts suivent, le jeton de la mémoire,
+la clé SSH et `config.json` sont gardés. Pour la vérification, ouvre la console du
+conteneur `harness` et lance `omp-harness-check`. Les autres réglages (modèles,
+plafonds) se font dans `config.json`, sous `OMP_HARNESS_ROOT`, puis en redémarrant
+`harness`.
+
+Cette pile et `harness.sh up` ne cohabitent pas sur le même hôte : elles prennent les
+mêmes images, le même réseau et les mêmes ports. Le mode tout en local sur oMLX et la
+connexion des runners à un compte OMP (`harness.sh login`) restent propres à
+`harness.sh`.
 
 ### Avec systemd
 
@@ -485,8 +551,15 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
   voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
 
-**Reprendre la mémoire du Mac**, une fois la copie `/tmp/mem0-rs.db` posée sur le VPS
-(README racine, étape 4) :
+**Reprendre la mémoire du Mac**, avant d'écrire quoi que ce soit sur le serveur (même
+modèle d'embedding des deux côtés, `EMBEDDING_DIMS`). Sur le Mac, copie sa base :
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.omp.console/mem0-rs/mem0-rs.db ".backup /tmp/mem0-rs.db"
+scp /tmp/mem0-rs.db <vps>:/tmp/
+```
+
+Puis sur le VPS :
 
 ```bash
 # en conteneurs (docker, ou podman)

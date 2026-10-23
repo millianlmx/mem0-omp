@@ -1,0 +1,62 @@
+#!/bin/sh
+# La publication et le code d'appairage de la pile (docker-compose.yml), par le
+# Tailscale installé sur l'hôte : son socket est monté, rien d'autre de Tailscale ne
+# tourne dans la pile. Dès que le harness a son jeton et que l'hôte est sur le
+# tailnet, publie le harness en HTTPS sur 443 et la mémoire sur 8443 (comme
+# `harness.sh up`), puis écrit dans les journaux du service `pairing` le même code
+# que `harness.sh pair` : `omp1:` puis, en base64url, le harness, son jeton, la
+# mémoire et son jeton. Relancer le service le réaffiche.
+set -eu
+
+SOCKET="${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}"
+TOKEN_FILE="${OMP_HARNESS_TOKEN_FILE:-/state/token}"
+MEM0_ENV="${OMP_HARNESS_MEM0_ENV:-/secrets/mem0.env}"
+PORT="${OMP_HARNESS_PORT:-8790}"
+MEM0_PORT="${OMP_HARNESS_MEM0_PORT:-8321}"
+POLL="${OMP_HARNESS_PAIRING_POLL:-5}"
+
+ts() { tailscale --socket="$SOCKET" "$@"; }
+
+said=""
+say_once() {
+  [ "$1" != "$said" ] || return 0
+  echo "$1"
+  said="$1"
+}
+
+while :; do
+  if [ ! -S "$SOCKET" ]; then
+    say_once "· Pas de Tailscale sur l'hôte ($SOCKET absent) : installe-le, puis « tailscale up »"
+  else
+    json="$(ts status --json 2>/dev/null || true)"
+    name="$(printf '%s' "$json" | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)"
+    if [ -z "$name" ]; then
+      say_once "· Le Tailscale de l'hôte n'est pas connecté : « tailscale up » sur le VPS"
+    elif [ ! -s "$TOKEN_FILE" ] || [ ! -s "$MEM0_ENV" ]; then
+      say_once "· En attente du premier démarrage du harness"
+    else
+      break
+    fi
+  fi
+  sleep "$POLL"
+done
+
+if [ "${OMP_HARNESS_TAILSCALE_SERVE:-1}" != 0 ]; then
+  # Les ports de la pile sont publiés sur la boucle locale de l'hôte : c'est là que le
+  # Tailscale de l'hôte les joint.
+  ts serve --bg --https=443 "http://127.0.0.1:$PORT" >/dev/null ||
+    { echo "✗ tailscale serve a échoué : active HTTPS et MagicDNS sur le tailnet (console Tailscale › DNS)" >&2; exit 1; }
+  ts serve --bg --https=8443 "http://127.0.0.1:$MEM0_PORT" >/dev/null ||
+    { echo "✗ tailscale serve a échoué pour la mémoire (8443)" >&2; exit 1; }
+  echo "✓ publié sur le tailnet : https://$name (harness), https://$name:8443 (mémoire)"
+fi
+
+code="$(printf '%s\n%s\n%s\n%s\n' \
+  "https://$name" "$(tr -d '\n' < "$TOKEN_FILE")" \
+  "https://$name:8443" "$(sed -n 's/^MEM0_HTTP_TOKEN=//p' "$MEM0_ENV" | tail -1)" |
+  base64 | tr -d '\n=' | tr '+/' '-_')"
+echo "Code d'appairage (secret : il donne accès au harness et à la mémoire) :"
+echo
+echo "  omp1:$code"
+echo
+echo "Sur ton Mac : dans omp, /pair omp1:… — ou colle-le dans l'app, feuille Serveur (Mac et iPhone)."

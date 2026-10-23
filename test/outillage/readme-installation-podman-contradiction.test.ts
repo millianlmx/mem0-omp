@@ -1,5 +1,5 @@
 // Garde du bloc « ## Installation » de README.md : trois voies dans l'ordre app
-// OMP Console < pile conteneur à la main < plugins seuls, aucune commande podman
+// OMP Console < pile conteneur à la main < plugins, aucune commande podman
 // ou docker dans la voie de l'app ni dans celle des plugins (ni l'une ni l'autre
 // n'exige de moteur de conteneurs ; le serveur, lui, peut en utiliser un), et la
 // pile jamais redite « obligatoire ».
@@ -32,7 +32,7 @@ function installationBlock(readme: string): string | null {
 function voieKind(heading: string): VoieKind {
   if (heading.includes("OMP Console")) return "app";
   if (heading.includes("pile conteneur")) return "manuelle";
-  if (heading.includes("Les plugins seuls")) return "plugins";
+  if (heading.includes("Les plugins")) return "plugins";
   return "autre";
 }
 
@@ -134,7 +134,7 @@ test("readme-installation-podman-contradiction/AC-1 : trois voies dans l'ordre a
 test("readme-installation-podman-contradiction/AC-2 : la voie app ne porte aucune commande de service et renvoie à omp-console/README.md", () => {
   const app = voie("app").text;
   assert.doesNotMatch(app, /podman|docker|compose|doctor\.sh|\.env\b/i);
-  for (const needle of ["omp-console/README.md", "n'installe pas les plugins", "« Les plugins seuls »"]) {
+  for (const needle of ["omp-console/README.md", "n'installe pas les plugins", "« Les plugins dans omp »"]) {
     assert.ok(app.includes(needle), `voie app sans « ${needle} »`);
   }
 });
@@ -153,7 +153,7 @@ test("readme-installation-podman-contradiction/AC-3 : la voie manuelle garde clo
   }
 });
 
-test("readme-installation-podman-contradiction/AC-4 : la voie plugins seuls garde marketplace, CLI, install.sh, service joignable et mode dégradé", () => {
+test("readme-installation-podman-contradiction/AC-4 : la voie plugins garde marketplace, CLI, install.sh, service joignable et mode dégradé", () => {
   const plugins = voie("plugins").text;
   for (const needle of [
     "/marketplace add millianlmx/mem0-omp",
@@ -168,7 +168,7 @@ test("readme-installation-podman-contradiction/AC-4 : la voie plugins seuls gard
     "Aucun service",
     "se dégrade proprement",
   ]) {
-    assert.ok(plugins.includes(needle), `voie plugins seuls sans « ${needle} »`);
+    assert.ok(plugins.includes(needle), `voie plugins sans « ${needle} »`);
   }
   assert.ok(requireBlock().includes("PUBLISHING.md"), "section Installation sans renvoi vers PUBLISHING.md");
 });
@@ -200,7 +200,7 @@ test("readme-installation-podman-contradiction/AC-8 : voie manuelle remise avant
   );
 });
 
-test("readme-installation-podman-contradiction/AC-9 : podman ou docker compose dans la voie app ou plugins seuls : la garde rougit", () => {
+test("readme-installation-podman-contradiction/AC-9 : podman ou docker compose dans la voie app ou plugins : la garde rougit", () => {
   const inApp = installationViolations(insertAfter(headingIndex("app"), "podman compose up -d"));
   assert.ok(
     inApp.some((violation) => /^podman dans la voie app/.test(violation)),

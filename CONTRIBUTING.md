@@ -14,7 +14,7 @@ Un test juge l'état courant du dépôt, jamais un état historique : pas de `gi
 
 ## 3. Respecter les verrous de documentation
 
-Les verrous de `test/outillage/docs.test.ts` lient `README.md` et `PUBLISHING.md` au catalogue des plugins et au flux réel de CI et de release. Toute édition de ces documents se vérifie avec ce fichier de test.
+Les verrous de `test/outillage/docs.test.ts` lient `README.md`, `DEVELOPPEMENT.md` et `PUBLISHING.md` au catalogue des plugins et au flux réel de CI et de release. Toute édition de ces documents se vérifie avec ce fichier de test.
 
 ## 4. Aucun bump de version à la main
 
@@ -30,7 +30,7 @@ Une pull request ordinaire ne monte jamais une version : le job `check` de la CI
 
 ## Pour aller plus loin
 
-- [README.md § « Tests et scripts »](README.md) : scripts et tests du dépôt.
-- [README.md § « CI et release »](README.md) : workflows CI et release.
+- [DEVELOPPEMENT.md § « Tests et scripts »](DEVELOPPEMENT.md) : scripts et tests du dépôt.
+- [DEVELOPPEMENT.md § « CI et release »](DEVELOPPEMENT.md) : workflows CI et release.
 - [PUBLISHING.md](PUBLISHING.md) : publication et mise à jour.
-- [DEVELOPPEMENT.md](DEVELOPPEMENT.md) : le détail des tests, de la CI, de la release et du contrat du service mémoire.
+- [DEVELOPPEMENT.md](DEVELOPPEMENT.md) : l'arborescence du dépôt et le contrat du service mémoire.

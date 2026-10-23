@@ -1,4 +1,4 @@
-// Tests de la documentation publiée (README.md, PUBLISHING.md) contre la source
+// Tests de la documentation publiée (README.md, DEVELOPPEMENT.md, PUBLISHING.md) contre la source
 // de vérité du dépôt : le catalogue marketplace. Les listes comparées sont
 // CALCULÉES à l'exécution (catalogue, contenu des fichiers, parcours du dépôt) :
 // une liste écrite en dur dans le test ne prouverait que la liste.
@@ -115,11 +115,11 @@ function citedPaths(text: string, only: "json" | "any" = "any"): string[] {
   return [...found].sort();
 }
 
-/** Le bloc de code de l'arborescence du README. */
-function treeBlock(readme: string): string {
-  const blocks = readme.split("\n```");
+/** Le bloc de code de l'arborescence du dépôt (DEVELOPPEMENT.md). */
+function treeBlock(doc: string): string {
+  const blocks = doc.split("\n```");
   const tree = blocks.find((block) => block.includes("racine = marketplace OMP"));
-  assert.ok(tree !== undefined, "arborescence absente du README");
+  assert.ok(tree !== undefined, "arborescence absente de DEVELOPPEMENT.md");
   return tree;
 }
 
@@ -149,7 +149,7 @@ test("docs/AC-19 : les commandes d'installation du README portent le slug réel 
 
 test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arborescence", () => {
   const readme = read("README.md");
-  const tree = treeBlock(readme);
+  const tree = treeBlock(read("DEVELOPPEMENT.md"));
   const entries = catalog().plugins;
   assert.ok(entries.length >= 2, "le catalogue publie les deux plugins du dépôt");
 
@@ -158,13 +158,13 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
       readme.includes(`install ${entry.name}@mem0-omp`),
       `README : « install ${entry.name}@mem0-omp » absent de la section Installation`,
     );
-    assert.ok(tree.includes(`${entry.name}/`), `README : ${entry.name}/ absent de l'arborescence`);
+    assert.ok(tree.includes(`${entry.name}/`), `DEVELOPPEMENT.md : ${entry.name}/ absent de l'arborescence`);
   }
 
   // Forme figée de l'arborescence : le service avec son sous-dossier, les tests
   // et le script de validation.
   for (const expected of ["mem0-stack/", "mem0-rs/", "test/", "scripts/check.sh"]) {
-    assert.ok(tree.includes(expected), `README : ${expected} absent de l'arborescence`);
+    assert.ok(tree.includes(expected), `DEVELOPPEMENT.md : ${expected} absent de l'arborescence`);
   }
 });
 
@@ -213,9 +213,9 @@ test("docs/AC-22 : le README conditionne l'exhaustivité du sommaire", () => {
   assert.deepEqual(summaryWording(read("README.md"), 2), [], "le README sur-promet le sommaire");
 });
 
-test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le prérequis du jeton", () => {
+test("docs/AC-6 : PUBLISHING et DEVELOPPEMENT décrivent le flux réel et le prérequis du jeton", () => {
   const doc = read("PUBLISHING.md");
-  const readme = read("README.md");
+  const dev = read("DEVELOPPEMENT.md");
 
   // (a) Le flux RÉELLEMENT exécuté : PR de bot auto-mergée après les statuts
   // requis, bump par le job, journal, rattrapage, idempotence.
@@ -239,11 +239,11 @@ test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le préreq
   assert.match(publish, /amorçage/i, "le push initial est annoté comme amorçage");
   assert.match(publish, /ce n'est pas le chemin de release/);
 
-  const ci = section(readme, "CI et release");
-  assert.match(ci, /directement sur `main`/, "le README dit que main n'est jamais poussé directement");
+  const ci = section(dev, "CI et release");
+  assert.match(ci, /directement sur `main`/, "DEVELOPPEMENT.md dit que main n'est jamais poussé directement");
   assert.match(ci, /job/);
   assert.match(ci, /CHANGELOG\.md/);
-  assert.match(ci, /PUBLISHING\.md` § Jeton de release/, "le README renvoie au prérequis du jeton");
+  assert.match(ci, /PUBLISHING\.md` § Jeton de release/, "DEVELOPPEMENT.md renvoie au prérequis du jeton");
 
   // (c) Le prérequis utilisateur, documenté pas à pas.
   const token = section(doc, "Jeton de release");

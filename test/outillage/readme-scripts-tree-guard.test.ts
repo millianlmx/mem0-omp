@@ -1,16 +1,16 @@
-// Garde « arbre du README ↔ racine de scripts/ » : chaque fichier à la racine de
+// Garde « arbre de DEVELOPPEMENT.md ↔ racine de scripts/ » : chaque fichier à la racine de
 // scripts/ (bit exécutable ou non, dossiers exclus) a exactement une ligne racine
-// `scripts/<nom>` dans le bloc d'arborescence du README, et chaque ligne racine
+// `scripts/<nom>` dans le bloc d'arborescence de DEVELOPPEMENT.md, et chaque ligne racine
 // cite un fichier qui existe. Les lignes de sous-chemin (`scripts/recette/…`,
 // dossiers compagnons) ne sont comparées dans aucun sens. Les mutations portent
-// sur des copies du README réel et de la liste réelle : jamais d'arbre en dur.
+// sur des copies de DEVELOPPEMENT.md réel et de la liste réelle : jamais d'arbre en dur.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
-const HEADER = "arborescence du README désaccordée avec scripts/ :";
+const HEADER = "arborescence de DEVELOPPEMENT.md désaccordée avec scripts/ :";
 
 /** Une ligne racine du bloc : glyphes d'arbre, puis `scripts/<nom>` sans `/` après le nom. */
 const ROOT_ENTRY = /^[\s│├└─]*scripts\/([^\s/]+)(?=\s|$)/u;
@@ -18,11 +18,11 @@ const ROOT_ENTRY = /^[\s│├└─]*scripts\/([^\s/]+)(?=\s|$)/u;
 /** Une ligne de sous-chemin du bloc : `scripts/<nom>/…`. */
 const SUBPATH_ENTRY = /^[\s│├└─]*scripts\/[^\s/]+\//u;
 
-/** Le bloc de code de l'arborescence du README. */
+/** Le bloc de code de l'arborescence de DEVELOPPEMENT.md. */
 function treeBlock(readme: string): string {
   const blocks = readme.split("\n```");
   const tree = blocks.find((block) => block.includes("racine = marketplace OMP"));
-  assert.ok(tree !== undefined, "arborescence absente du README");
+  assert.ok(tree !== undefined, "arborescence absente de DEVELOPPEMENT.md");
   return tree;
 }
 
@@ -45,7 +45,7 @@ function listRootFiles(dir: string): string[] {
     .sort();
 }
 
-/** Les écarts entre l'arbre du README et la liste des fichiers, une ligne par écart, triés. */
+/** Les écarts entre l'arbre de DEVELOPPEMENT.md et la liste des fichiers, une ligne par écart, triés. */
 function scriptsTreeFaults(readme: string, files: readonly string[]): string[] {
   const cited = rootEntries(readme);
   const present = new Set(files);
@@ -84,19 +84,19 @@ function rootLine(readme: string, name: string): string {
   return line;
 }
 
-/** Le README dont le bloc d'arborescence est transformé par `edit`. */
+/** Le document dont le bloc d'arborescence est transformé par `edit`. */
 function withTree(readme: string, edit: (tree: string) => string): string {
   const tree = treeBlock(readme);
-  assert.equal(readme.split(tree).length, 2, "bloc d'arborescence non unique dans le README");
+  assert.equal(readme.split(tree).length, 2, "bloc d'arborescence non unique dans DEVELOPPEMENT.md");
   return readme.replace(tree, edit(tree));
 }
 
-const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+const readme = fs.readFileSync(path.join(ROOT, "DEVELOPPEMENT.md"), "utf8");
 const scriptsDir = path.join(ROOT, "scripts");
 const real = listRootFiles(scriptsDir);
 const victim = real[0];
 
-test("readme-scripts-tree-guard/AC-1 : l'arbre du README réel cite exactement une fois chaque fichier réel de scripts/", () => {
+test("readme-scripts-tree-guard/AC-1 : l'arbre de DEVELOPPEMENT.md réel cite exactement une fois chaque fichier réel de scripts/", () => {
   assert.ok(real.length > 0, "scripts/ sans fichier à sa racine");
   assert.deepEqual(scriptsTreeFaults(readme, real), []);
   assertScriptsTree(readme, real);
@@ -135,7 +135,7 @@ test("readme-scripts-tree-guard/AC-3 : une ligne qui cite un fichier retiré ou 
 
 test("readme-scripts-tree-guard/AC-4 : une ligne racine dupliquée est nommée comme doublon", () => {
   const line = rootLine(readme, victim);
-  assert.equal(readme.split(line).length, 2, `ligne de scripts/${victim} non unique dans le README`);
+  assert.equal(readme.split(line).length, 2, `ligne de scripts/${victim} non unique dans DEVELOPPEMENT.md`);
   const duplicated = readme.replace(line, `${line}\n${line}`);
   assert.throws(() => assertScriptsTree(duplicated, real), expected(`- scripts/${victim} : doublon (2 lignes)`));
 });

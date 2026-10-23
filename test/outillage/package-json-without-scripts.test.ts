@@ -179,9 +179,9 @@ test("package-json-without-scripts/AC-7 : npm test -- <option> transmet --tests-
   );
 });
 
-test("package-json-without-scripts/AC-8 : le README associe npm run check, npm run typecheck et npm test au script qu'ils lancent", () => {
-  // Espaces repliés : le paragraphe du README coupe ses phrases en fin de ligne.
-  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/\s+/g, " ");
+test("package-json-without-scripts/AC-8 : DEVELOPPEMENT.md associe npm run check, npm run typecheck et npm test au script qu'ils lancent", () => {
+  // Espaces repliés : le paragraphe de DEVELOPPEMENT.md coupe ses phrases en fin de ligne.
+  const readme = fs.readFileSync(path.join(ROOT, "DEVELOPPEMENT.md"), "utf8").replace(/\s+/g, " ");
   for (const [command, script] of [
     ["npm run check", "bash scripts/check.sh"],
     ["npm run typecheck", "bash scripts/typecheck.sh"],
@@ -190,7 +190,7 @@ test("package-json-without-scripts/AC-8 : le README associe npm run check, npm r
   ]) {
     assert.ok(
       readme.includes(`\`${command}\` lance \`${script}\``),
-      `README.md : « \`${command}\` lance \`${script}\` » absent`,
+      `DEVELOPPEMENT.md : « \`${command}\` lance \`${script}\` » absent`,
     );
   }
 });
