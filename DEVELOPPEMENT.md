@@ -36,6 +36,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
 ├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire du service mémoire
 ├── scripts/release.ts                 PR de release, tags et releases au merge
+├── scripts/release-assets.sh          construit l'app Mac et l'IPA jointes à chaque release
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel
 └── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
 ```
@@ -351,6 +352,12 @@ section datée par version publiée, et les versions historiques jamais publiée
 rattrapées par le même run. Le jeton dédié que ce job exige, ses permissions et sa
 création sont dans `PUBLISHING.md` § Jeton de release ; les règles de décision, le
 flux en six étapes et la commande de protection de branche aussi.
+
+Chaque release publiée déclenche ensuite `.github/workflows/release-assets.yml` :
+deux jobs macOS construisent OMP Console depuis le tag (`scripts/release-assets.sh
+mac|ios`) et joignent à la release `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`
+(non signée), avec leurs `.sha256`. Le détail : `PUBLISHING.md` § Apps jointes aux
+releases.
 
 ## L'API d'extension d'OMP à surveiller
 

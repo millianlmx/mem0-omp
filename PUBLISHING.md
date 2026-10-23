@@ -27,7 +27,8 @@ mem0-omp/                              ← racine du dépôt = marketplace
 ├── scripts/release-simulation.sh      ← simule la release d'une PR sur une copie jetable
 ├── .github/workflows/check.yml        ← la CI des PR
 ├── .github/workflows/release-simulation.yml  ← répète la release sur le commit de fusion de la PR
-└── .github/workflows/release.yml      ← le job de release au merge sur main
+├── .github/workflows/release.yml      ← le job de release au merge sur main
+└── .github/workflows/release-assets.yml  ← joint les apps Mac et iOS à chaque release publiée
 ```
 
 Deux fichiers font tout le travail, et ce sont ceux qu'on rate le plus souvent :
@@ -367,6 +368,35 @@ débloquerait le merge en silence. Ce sont
 ces trois statuts que la PR de release doit obtenir avant d'être fusionnée — d'où
 le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
 déclencherait aucun run.
+
+## Apps jointes aux releases
+
+Chaque release publiée, quel que soit le composant, déclenche
+`.github/workflows/release-assets.yml` : deux jobs macOS construisent OMP Console
+depuis le code du tag avec `scripts/release-assets.sh mac|ios`, puis la joignent à
+la release (`gh release upload --clobber`) :
+
+| Fichier | Contenu |
+|---|---|
+| `OMP-Console-macOS.zip` | le bundle `OMP Console.app`, assemblé par `scripts/swift-app.sh --no-tests` (les tests ont tourné sur la PR) |
+| `OMP-Console-iOS.ipa` | l'app iOS en Release pour un appareil, **non signée** |
+| `<fichier>.sha256` | l'empreinte de chacun (`shasum -a 256 -c`) |
+
+Le dépôt n'a ni certificat ni profil Apple, ce qui a deux conséquences :
+
+- **Mac** : le bundle est signé ad hoc. macOS le met en quarantaine au
+  téléchargement : `xattr -dr com.apple.quarantine "OMP Console.app"` avant de
+  l'ouvrir. Siri et Raccourcis n'en exécutent aucun intent (il faut une identité
+  d'équipe, cf. `omp-console/README.md` § « Assembler le bundle `.app` »).
+- **iOS** : l'IPA s'installe après re-signature avec ton compte Apple (Sideloadly,
+  AltStore), ou compile l'app avec Xcode (`omp-console/README.md` § « Installer sur
+  un appareil réel »).
+
+Les releases sont créées avec le jeton dédié, et c'est ce qui déclenche le
+workflow : un événement du jeton du dépôt n'en déclencherait aucun. Le
+téléversement, lui, passe par le jeton du run, limité à ce job
+(`contents: write`). Une release déjà publiée se complète à la main :
+**Actions › release-assets › Run workflow**, avec son tag.
 
 ## Simulation de release
 

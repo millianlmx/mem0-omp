@@ -1,0 +1,54 @@
+name: release-assets
+
+# Chaque release publiée reçoit les apps OMP Console : le bundle macOS
+# (OMP-Console-macOS.zip) et l'app iOS (OMP-Console-iOS.ipa, non signée), chacune
+# avec son empreinte .sha256. Les releases sont créées par le job de release avec le
+# jeton dédié (RELEASE_TOKEN) : contrairement à celles du GITHUB_TOKEN, elles
+# déclenchent ce workflow. `workflow_dispatch` rejoint une release déjà publiée
+# (rattrapage, ou un job tombé).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la release à compléter (ex. omp-harness-v1.2.0)"
+        required: true
+
+permissions:
+  contents: read
+
+# Une construction par release : un rejeu attend le précédent au lieu de téléverser
+# en même temps que lui.
+concurrency:
+  group: release-assets-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    name: app (${{ matrix.app }})
+    runs-on: macos-latest
+    timeout-minutes: 45
+    # Seul ce job écrit : `gh release upload` exige contents: write.
+    permissions:
+      contents: write
+    strategy:
+      # L'app Mac et l'app iOS sont indépendantes : l'échec de l'une n'annule pas
+      # le téléversement de l'autre.
+      fail-fast: false
+      matrix:
+        app: [mac, ios]
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Le code du tag, jamais celui de main : l'app jointe est celle de la release.
+          ref: refs/tags/${{ env.TAG }}
+      - name: Construire l'app
+        run: bash scripts/release-assets.sh ${{ matrix.app }}
+      # --clobber : un rejeu remplace les fichiers déjà joints au lieu d'échouer.
+      - name: Joindre à la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" omp-console/build/release-assets/* --clobber --repo "$GITHUB_REPOSITORY"

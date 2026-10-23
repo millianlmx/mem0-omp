@@ -658,6 +658,11 @@ jobs CI `macos-app-swift` et `macos-app-ios`.
 
 ## Ouvrir l'app
 
+Sans compiler : chaque release GitHub du dépôt porte `OMP-Console-macOS.zip`, signé
+ad hoc. Retire la quarantaine avant de l'ouvrir (`xattr -dr com.apple.quarantine
+"OMP Console.app"`) ; Siri n'en exécute aucun intent (voir § « Assembler le bundle
+`.app` »).
+
 Double-cliquez `omp-console/build/OMP Console.app`, ou :
 
 ```bash
@@ -1723,6 +1728,11 @@ idb lance un `idb_companion --udid <UDID>` qui survit à `simctl delete` : sans
 
 Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation du
 dépôt et ne bloque rien.
+
+Sans Xcode, chaque release GitHub du dépôt porte `OMP-Console-iOS.ipa`, construite
+en Release mais **non signée** : elle s'installe après re-signature avec ton compte
+Apple (Sideloadly, AltStore). Le détail : `PUBLISHING.md` § Apps jointes aux
+releases. Avec Xcode :
 
 1. Brancher l'**appareil** à ce Mac et l'activer (sur l'appareil : *Réglages ▸
    Confidentialité et sécurité ▸ **Mode développeur***, puis redémarrer).
