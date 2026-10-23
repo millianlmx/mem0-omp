@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.3.1 — 2026-10-23
+
+- fix(harness): la connexion d'un abonnement démarre omp sans clé, et un refus d'omp nomme sa cause (#260) (4e906e2)
+
 ## omp-harness 1.3.0 — 2026-10-23
 
 - feat(harness,ci): ports du tailnet réglables pour `pairing`, apps Mac et iOS jointes à chaque release (#258) (477afda)
