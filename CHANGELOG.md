@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.2.0 — 2026-10-23
+
+- feat(harness,console): connecter les abonnements des fournisseurs depuis les apps Mac et iOS (#255) (b252bab)
+
 ## omp-harness 1.1.0 — 2026-10-23
 
 - feat(harness): README d'accueil et déploiement du serveur depuis Portainer (#254) (7ccd276)
