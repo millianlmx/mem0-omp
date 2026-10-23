@@ -100,10 +100,7 @@ export class RpcRunner {
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.#feed(chunk));
     proc.stderr?.setEncoding("utf8");
-    proc.stderr?.on("data", (chunk: string) => {
-      this.#stderr.push(chunk);
-      if (this.#stderr.length > 50) this.#stderr.shift();
-    });
+    proc.stderr?.on("data", (chunk: string) => this.#keep(chunk));
     proc.stdin?.on("error", () => {
       /* un stdin fermé par un runner mort : la sortie le dit déjà */
     });
@@ -124,6 +121,11 @@ export class RpcRunner {
 
   stderrTail(): string {
     return this.#stderr.join("");
+  }
+
+  #keep(text: string): void {
+    this.#stderr.push(text);
+    if (this.#stderr.length > 50) this.#stderr.shift();
   }
 
   #fail(error: Error): void {
@@ -156,6 +158,9 @@ export class RpcRunner {
           frame = null;
         }
         if (frame !== null && typeof frame === "object" && !Array.isArray(frame)) this.#dispatch(frame as Frame);
+        // Une ligne qui n'est pas une trame : omp écrit ainsi ses refus de démarrer
+        // (« No models available… ») ; gardée avec stderr, elle nomme la cause d'un arrêt.
+        else this.#keep(`${line}\n`);
       }
       newline = this.#buffer.indexOf("\n");
     }

@@ -655,6 +655,9 @@ au serveur :
   HOME qu'eux) et confie à l'app deux gestes : ouvrir le lien dans un navigateur, puis
   coller le code d'autorisation ou l'URL de retour. Les identifiants restent dans le
   HOME des runners : ils ne passent ni par le service, ni par l'API, ni par la base.
+  Cet omp ne reçoit aucune clé ; comme omp refuse de démarrer sans modèle, il porte
+  une clé factice d'un fournisseur sans abonnement (`GROQ_API_KEY`), qui ne fait
+  paraître aucun abonnement connecté.
   Un abonnement qu'aucune chaîne ne pourrait nommer (`openai-codex`…) est déclaré
   `oauth` à la connexion ; `anthropic` (Claude Pro/Max) garde sa sorte. Une connexion
   à la fois ; en isolation systemd, elle se fait au terminal

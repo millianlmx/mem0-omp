@@ -53,6 +53,14 @@ const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 /** Une connexion finie reste lisible ce temps-là, le temps que l'app lise son issue. */
 const KEEP_MS = 10 * 60 * 1000;
 
+/**
+ * omp refuse de démarrer en mode RPC sans aucun modèle utilisable (« No models
+ * available »). Une connexion n'en appelle aucun et ne reçoit aucune clé : une clé
+ * factice d'un fournisseur sans abonnement (Groq) suffit à le démarrer, sans
+ * qu'aucun abonnement ne paraisse connecté.
+ */
+export const LOGIN_PLACEHOLDER_ENV: Readonly<Record<string, string>> = { GROQ_API_KEY: "omp-harness-login" };
+
 type Live = {
   view: LoginView;
   runner: RpcRunner | null;
@@ -106,6 +114,7 @@ export function loginArgv(config: HarnessConfig, unit: string): { command: strin
       `${box.runnerHome}:/home/runner`,
       "--env",
       "HOME=/home/runner",
+      ...Object.entries(LOGIN_PLACEHOLDER_ENV).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
       box.runnerImage,
       ...omp("/home/runner"),
     ]);
@@ -324,6 +333,7 @@ export class OAuthLogins {
     const argv = loginArgv(this.#config, unit);
     const env: Record<string, string | undefined> = { ...process.env };
     delete env.HARNESS_TOKEN;
+    for (const [key, value] of Object.entries(LOGIN_PLACEHOLDER_ENV)) env[key] ??= value;
     const proc = this.#spawn(argv.command, argv.args, { cwd: this.#config.dataDir, env });
     return new RpcRunner(proc, {
       onHostTool: async () => ({ text: "aucun outil hôte pendant une connexion", isError: true }),
