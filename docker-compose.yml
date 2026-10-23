@@ -10,6 +10,8 @@
 #   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
 #   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
 #   OMLX_BASE_URL          un serveur d'embeddings à toi ; sinon l'Ollama de la pile
+#   OMP_HARNESS_TAILNET_PORT       le port https du harness sur le tailnet (443)
+#   OMP_HARNESS_TAILNET_MEM0_PORT  celui de la mémoire (8443)
 #   OMP_HARNESS_TAILSCALE_SERVE=0  ne touche pas au `tailscale serve` de l'hôte
 #
 # Tailscale n'est pas dans la pile : celui de l'hôte publie le harness et sa mémoire
@@ -125,8 +127,8 @@ services:
     environment:
       OLLAMA_HOST: http://embeddings:11434
 
-  # Publie le harness (443) et sa mémoire (8443) par le Tailscale de l'hôte, puis
-  # écrit le code d'appairage dans ses journaux.
+  # Publie le harness (443) et sa mémoire (8443), ou les ports OMP_HARNESS_TAILNET_*,
+  # par le Tailscale de l'hôte, puis écrit le code d'appairage dans ses journaux.
   pairing:
     build:
       context: .
@@ -140,6 +142,8 @@ services:
     environment:
       OMP_HARNESS_PORT: ${OMP_HARNESS_PORT:-8790}
       OMP_HARNESS_MEM0_PORT: ${OMP_HARNESS_MEM0_PORT:-8321}
+      OMP_HARNESS_TAILNET_PORT: ${OMP_HARNESS_TAILNET_PORT:-443}
+      OMP_HARNESS_TAILNET_MEM0_PORT: ${OMP_HARNESS_TAILNET_MEM0_PORT:-8443}
       OMP_HARNESS_TAILSCALE_SERVE: ${OMP_HARNESS_TAILSCALE_SERVE:-1}
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state:/state:ro

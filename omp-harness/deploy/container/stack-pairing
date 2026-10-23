@@ -3,9 +3,11 @@
 # Tailscale installé sur l'hôte : son socket est monté, rien d'autre de Tailscale ne
 # tourne dans la pile. Dès que le harness a son jeton et que l'hôte est sur le
 # tailnet, publie le harness en HTTPS sur 443 et la mémoire sur 8443 (comme
-# `harness.sh up`), puis écrit dans les journaux du service `pairing` le même code
-# que `harness.sh pair` : `omp1:` puis, en base64url, le harness, son jeton, la
-# mémoire et son jeton. Relancer le service le réaffiche.
+# `harness.sh up` ; OMP_HARNESS_TAILNET_PORT et OMP_HARNESS_TAILNET_MEM0_PORT
+# changent ces ports quand l'hôte sert déjà autre chose, Portainer par exemple),
+# puis écrit dans les journaux du service `pairing` le même code que
+# `harness.sh pair` : `omp1:` puis, en base64url, le harness, son jeton, la mémoire
+# et son jeton. Relancer le service le réaffiche.
 set -eu
 
 SOCKET="${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}"
@@ -14,6 +16,8 @@ MEM0_ENV="${OMP_HARNESS_MEM0_ENV:-/secrets/mem0.env}"
 PORT="${OMP_HARNESS_PORT:-8790}"
 MEM0_PORT="${OMP_HARNESS_MEM0_PORT:-8321}"
 POLL="${OMP_HARNESS_PAIRING_POLL:-5}"
+TS_PORT="${OMP_HARNESS_TAILNET_PORT:-443}"
+TS_MEM0_PORT="${OMP_HARNESS_TAILNET_MEM0_PORT:-8443}"
 
 ts() { tailscale --socket="$SOCKET" "$@"; }
 
@@ -41,19 +45,29 @@ while :; do
   sleep "$POLL"
 done
 
+# L'adresse d'un port du tailnet : 443 est le port implicite de https.
+url_of() {
+  if [ "$1" = 443 ]; then echo "https://$name"; else echo "https://$name:$1"; fi
+}
+harness_url="$(url_of "$TS_PORT")"
+mem0_url="$(url_of "$TS_MEM0_PORT")"
+
 if [ "${OMP_HARNESS_TAILSCALE_SERVE:-1}" != 0 ]; then
   # Les ports de la pile sont publiés sur la boucle locale de l'hôte : c'est là que le
-  # Tailscale de l'hôte les joint.
-  ts serve --bg --https=443 "http://127.0.0.1:$PORT" >/dev/null ||
+  # Tailscale de l'hôte les joint. La sortie de `serve` reste dans les journaux : quand
+  # HTTPS n'est pas activé sur le tailnet, la CLI y écrit le lien d'activation, puis
+  # attend qu'il soit suivi.
+  echo "· tailscale serve : https $TS_PORT → harness, https $TS_MEM0_PORT → mémoire (si un lien d'activation suit, ouvre-le : le service attend)"
+  ts serve --bg "--https=$TS_PORT" "http://127.0.0.1:$PORT" ||
     { echo "✗ tailscale serve a échoué : active HTTPS et MagicDNS sur le tailnet (console Tailscale › DNS)" >&2; exit 1; }
-  ts serve --bg --https=8443 "http://127.0.0.1:$MEM0_PORT" >/dev/null ||
-    { echo "✗ tailscale serve a échoué pour la mémoire (8443)" >&2; exit 1; }
-  echo "✓ publié sur le tailnet : https://$name (harness), https://$name:8443 (mémoire)"
+  ts serve --bg "--https=$TS_MEM0_PORT" "http://127.0.0.1:$MEM0_PORT" ||
+    { echo "✗ tailscale serve a échoué pour la mémoire ($TS_MEM0_PORT)" >&2; exit 1; }
+  echo "✓ publié sur le tailnet : $harness_url (harness), $mem0_url (mémoire)"
 fi
 
 code="$(printf '%s\n%s\n%s\n%s\n' \
-  "https://$name" "$(tr -d '\n' < "$TOKEN_FILE")" \
-  "https://$name:8443" "$(sed -n 's/^MEM0_HTTP_TOKEN=//p' "$MEM0_ENV" | tail -1)" |
+  "$harness_url" "$(tr -d '\n' < "$TOKEN_FILE")" \
+  "$mem0_url" "$(sed -n 's/^MEM0_HTTP_TOKEN=//p' "$MEM0_ENV" | tail -1)" |
   base64 | tr -d '\n=' | tr '+/' '-_')"
 echo "Code d'appairage (secret : il donne accès au harness et à la mémoire) :"
 echo
