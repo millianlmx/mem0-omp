@@ -221,7 +221,8 @@ process.exit(url.includes("verrou") && seen === 1 ? 4 : 0);
 
 /**
  * Un socket et une doublure de la CLI tailscale : `status --json` rend tour à tour
- * les états de `states` (le dernier reste), `serve` est journalisé et rend `serveCode`.
+ * les états de `states` (le dernier reste), `serve` est journalisé, écrit une ligne sur
+ * sa sortie et rend `serveCode`.
  */
 async function fakeTailscale(states: string[], serveCode = 0) {
   const dir = tmpdir("harness-portainer-pair-");
@@ -236,7 +237,7 @@ async function fakeTailscale(states: string[], serveCode = 0) {
     `#!/bin/sh
 [ "$1" = "--socket=${socket}" ] || { echo "socket attendu" >&2; exit 2; }
 shift
-if [ "$1" = serve ]; then echo "$*" >> "${dir}/serve.log"; exit ${serveCode}; fi
+if [ "$1" = serve ]; then echo "$*" >> "${dir}/serve.log"; echo "sortie de serve : $*"; exit ${serveCode}; fi
 n=$(cat "${dir}/n" 2>/dev/null || echo 0)
 [ "$n" -ge ${states.length - 1} ] || echo $((n + 1)) > "${dir}/n"
 cat "${dir}/state$n"
@@ -345,7 +346,12 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
   assert.match(dockerfile, /CMD \["\/usr\/local\/bin\/omp-harness-pairing"\]/, "le script, jamais tailscaled");
   // Le dossier du socket, pas le socket : un fichier absent deviendrait un dossier sur l'hôte.
   assert.match(service("pairing"), /- \$\{OMP_HARNESS_TAILSCALE_RUN:-\/var\/run\/tailscale\}:\/var\/run\/tailscale\n/);
-  for (const variable of ["OMP_HARNESS_PORT", "OMP_HARNESS_MEM0_PORT"])
+  for (const variable of [
+    "OMP_HARNESS_PORT",
+    "OMP_HARNESS_MEM0_PORT",
+    "OMP_HARNESS_TAILNET_PORT",
+    "OMP_HARNESS_TAILNET_MEM0_PORT",
+  ])
     assert.ok(service("pairing").includes(`${variable}: \${${variable}:-`), `${variable} absent de pairing`);
   assert.match(
     read(path.join(BOX, "Dockerfile.harness")),
@@ -360,4 +366,37 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
   });
   assert.equal(entry.status, 0, entry.stderr);
   assert.equal(entry.stdout, "depuis-le-fichier");
+});
+
+test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing` y publie le harness et la mémoire, le code les porte, la sortie de `serve` reste dans les journaux", async () => {
+  const ts = await fakeTailscale([RUNNING]);
+  try {
+    const env = { ...ts.env, OMP_HARNESS_TAILNET_PORT: "444", OMP_HARNESS_TAILNET_MEM0_PORT: "8444" };
+    const pairing = run(PAIRING, [], env);
+    assert.equal(pairing.status, 0, pairing.stderr);
+    assert.equal(
+      ts.serveLog(),
+      "serve --bg --https=444 http://127.0.0.1:8790\nserve --bg --https=8444 http://127.0.0.1:8321\n",
+    );
+    // Le lien d'activation HTTPS que `serve` écrit sur sa sortie n'est pas avalé.
+    assert.match(pairing.stdout, /sortie de serve : serve --bg --https=444 /);
+    const code = /omp1:[A-Za-z0-9_-]+/.exec(pairing.stdout)?.[0];
+    assert.ok(code, pairing.stdout);
+    assert.deepEqual(decodePairing(code), {
+      url: "https://vps.tail1234.ts.net:444",
+      token: "harness-token",
+      mem0Url: "https://vps.tail1234.ts.net:8444",
+      mem0Token: "mem0-token",
+    });
+
+    // OMP_HARNESS_TAILSCALE_SERVE=0 : rien n'est publié, mais le code garde les ports choisis.
+    fs.rmSync(path.join(ts.dir, "serve.log"));
+    const untouched = run(PAIRING, [], { ...env, OMP_HARNESS_TAILSCALE_SERVE: "0" });
+    assert.equal(untouched.status, 0, untouched.stderr);
+    assert.equal(ts.serveLog(), "");
+    const kept = /omp1:[A-Za-z0-9_-]+/.exec(untouched.stdout)?.[0];
+    assert.equal(decodePairing(kept ?? "")?.url, "https://vps.tail1234.ts.net:444");
+  } finally {
+    ts.close();
+  }
 });

@@ -168,8 +168,16 @@ fait : l'état « exited » est normal. Le tailnet doit avoir MagicDNS et HTTPS 
 comme pour `harness.sh up`. `pairing` règle le `tailscale serve` de l'hôte comme le
 ferait `harness.sh up` : le port 443 vers le harness, le port 8443 vers la mémoire, au
 nom de la machine sur le tailnet (`https://<vps>.<tailnet>.ts.net`). Si l'hôte sert
-déjà autre chose sur ces ports, pose `OMP_HARNESS_TAILSCALE_SERVE=0` et publie
-toi-même `127.0.0.1:8790` et `127.0.0.1:8321`.
+déjà autre chose sur ces ports (Portainer sur 443, par exemple), choisis-en d'autres
+avec `OMP_HARNESS_TAILNET_PORT` et `OMP_HARNESS_TAILNET_MEM0_PORT` : `pairing` y
+publie le harness et la mémoire, et le code d'appairage porte ces ports. Un `tailscale
+serve` sur un port déjà pris remplace ce qui y était publié. Avec
+`OMP_HARNESS_TAILSCALE_SERVE=0`, `pairing` ne touche pas au `tailscale serve` de
+l'hôte : publie toi-même `127.0.0.1:8790` et `127.0.0.1:8321` sur ces deux ports.
+
+Si HTTPS n'est pas activé sur le tailnet, `tailscale serve` écrit un lien
+d'activation dans les journaux de `pairing` et attend qu'il soit suivi ; le code
+s'affiche ensuite, sans rien relancer.
 
 Les autres variables, facultatives :
 
@@ -182,6 +190,7 @@ Les autres variables, facultatives :
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
+| `OMP_HARNESS_TAILNET_PORT`, `OMP_HARNESS_TAILNET_MEM0_PORT` | `443`, `8443` | les ports https du harness et de la mémoire sur le tailnet, ceux du code d'appairage |
 | `OMP_HARNESS_TAILSCALE_SERVE` | `1` | `0` : `pairing` ne touche pas au `tailscale serve` de l'hôte |
 
 Chaque redéploiement (**Pull and redeploy**, ou une variable changée) relit les
