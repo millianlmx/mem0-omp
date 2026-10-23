@@ -17,20 +17,34 @@ export type SpawnOptions = { cwd: string; env: NodeJS.ProcessEnv; timeout: numbe
  * standard fermée d'emblée, et une commande introuvable rend un statut null
  * (message d'erreur ajouté à stderr) au lieu de lever — une promesse jamais
  * attendue ne fait donc pas tomber le fichier de test.
+ *
+ * Le délai est tenu ICI, par un minuteur `unref` annulé à la fin du processus,
+ * et jamais par l'option `timeout` de `spawn` : mesuré sur node 26 et 22, cette
+ * option arme un minuteur qu'elle n'annule que sur `exit`, et une commande
+ * introuvable n'émet jamais `exit` — le fichier de test restait vivant jusqu'à
+ * l'échéance (300 s par copie pour `bun` absent dans smoke.test.ts, soit les
+ * 910 s de la section Tests de release-simulation du 2026-10-22).
  */
 export function spawnAsync(command: string, args: string[], options: SpawnOptions): Promise<Run> {
   const { promise, resolve } = Promise.withResolvers<Run>();
-  const child = spawn(command, args, options);
+  const { timeout, ...rest } = options;
+  const child = spawn(command, args, rest);
   let stdout = "";
   let stderr = "";
+  const timer = setTimeout(() => child.kill("SIGTERM"), timeout);
+  timer.unref();
+  const settle = (run: Run): void => {
+    clearTimeout(timer);
+    resolve(run);
+  };
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
     stdout += chunk;
   });
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     stderr += chunk;
   });
-  child.on("error", (error) => resolve({ status: null, stdout, stderr: `${stderr}${error.message}` }));
-  child.on("close", (status) => resolve({ status, stdout, stderr }));
+  child.on("error", (error) => settle({ status: null, stdout, stderr: `${stderr}${error.message}` }));
+  child.on("close", (status) => settle({ status, stdout, stderr }));
   child.stdin.end();
   return promise;
 }

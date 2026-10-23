@@ -278,3 +278,38 @@ test(`${SLUG}/AC-3 : chaque section exécutée se ferme par sa durée, et une er
     "✗ option inconnue : --inconnue (attendu : --sections=…, --tests-scope=macos, --tests-base=<réf>, --tests-part=1/2|2/2, --strict)\n",
   );
 });
+
+test(`${SLUG}/AC-4 : en vert, la section Tests nomme ses tests de 2 s ou plus, et se tait quand il n'y en a pas`, () => {
+  const dir = lightRepo();
+  // Des tests courts seulement : aucune ligne.
+  const quick = checkTests(dir, []);
+  assert.equal(quick.status, 0, `${quick.stdout}${quick.stderr}`);
+  assert.ok(!quick.stdout.includes("tests les plus longs"), quick.stdout);
+
+  // Un test de 2,3 s et un autre de 0 s : seul le premier est nommé, en secondes
+  // entières. L'attente est RÉELLE, à dessein : la ligne lit le `duration_ms` que
+  // node mesure à l'horloge, qu'aucune horloge factice ne ferait avancer.
+  write(
+    dir,
+    "test/a/lent.test.ts",
+    [
+      'import test from "node:test";',
+      'import { setTimeout as sleep } from "node:timers/promises";',
+      'test("lent/AC-1 : attend", async () => { await sleep(2300); });',
+      'test("lent/AC-2 : répond", () => {});',
+      "",
+    ].join("\n"),
+  );
+  const slow = checkTests(dir, []);
+  assert.equal(slow.status, 0, `${slow.stdout}${slow.stderr}`);
+  const summary = lines(slow.stdout).filter((line) => line.startsWith("  · tests les plus longs :"));
+  assert.equal(summary.length, 1, slow.stdout);
+  assert.equal(summary[0], "  · tests les plus longs : 2 s lent/AC-1 : attend");
+  // La ligne précède le ✓ de la section, après le compte des sauts.
+  const out = lines(slow.stdout);
+  assert.ok(
+    out.indexOf(summary[0]!) <
+      out.indexOf("  ✓ tests unitaires (mémoire, harness, client du harness, console, outillage)"),
+    slow.stdout,
+  );
+});

@@ -57,6 +57,13 @@
 # fichiers de `--scope=macos`. C'est la part macOS d'une pull_request : les tests
 # que le diff concerne ET qui ne prouvent quelque chose que sur un Mac.
 #
+# `--with-outillage` (avec changed ou files) : les fichiers de `--scope=outillage`
+# sont des fichiers comme les autres, retenus par les mêmes règles et compris
+# dans les replis. C'est ce que passe `check.sh --tests-base` : en CI, un diff qui
+# touche scripts/release.ts doit lancer release.test.ts même s'il relance un
+# check.sh entier dans sa copie. Sans l'option (harness, `test:touched`), ils
+# restent exclus : un maillon qui vérifie son lot ne rejoue pas la suite.
+#
 # Jamais de liste vide silencieuse : option inconnue, aucun fichier de test dans
 # test/, ou python3 absent ⇒ message sur stderr et sortie 1.
 set -uo pipefail
@@ -66,9 +73,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 scope=""
 base="HEAD"
 macos_only=0
+with_outillage=0
 changed_files=()
 for arg in "$@"; do
-  if [ "$scope" = "files" ] && [ "$arg" != "--macos" ]; then
+  if [ "$scope" = "files" ] && [ "$arg" != "--macos" ] && [ "$arg" != "--with-outillage" ]; then
     changed_files+=("$arg")
     continue
   fi
@@ -79,12 +87,19 @@ for arg in "$@"; do
     --scope=changed=*) scope="changed"; base="${arg#--scope=changed=}" ;;
     --scope=files) scope="files" ;;
     --macos) macos_only=1 ;;
+    --with-outillage) with_outillage=1 ;;
     *) echo "✗ option inconnue : $arg" >&2; exit 1 ;;
   esac
 done
-if [ "$macos_only" -eq 1 ] && [ "$scope" != "changed" ] && [ "$scope" != "files" ]; then
-  echo "✗ --macos ne s'emploie qu'avec --scope=changed ou --scope=files" >&2
-  exit 1
+if [ "$scope" != "changed" ] && [ "$scope" != "files" ]; then
+  if [ "$macos_only" -eq 1 ]; then
+    echo "✗ --macos ne s'emploie qu'avec --scope=changed ou --scope=files" >&2
+    exit 1
+  fi
+  if [ "$with_outillage" -eq 1 ]; then
+    echo "✗ --with-outillage ne s'emploie qu'avec --scope=changed ou --scope=files" >&2
+    exit 1
+  fi
 fi
 
 # `find`, jamais `**` : le bash 3.2 des Mac n'a pas `globstar`.
@@ -137,7 +152,7 @@ fi
 # macOS, voir `── Extension` de check.sh). L'ordre est celui du tri ci-dessus,
 # reçu en arguments : python ne retrie rien.
 MEM0_TEST_SCOPE="$scope" MEM0_TEST_CHANGED="$changed" MEM0_TEST_CHANGED_STATUS="$changed_status" \
-MEM0_TEST_MACOS_ONLY="$macos_only" \
+MEM0_TEST_MACOS_ONLY="$macos_only" MEM0_TEST_WITH_OUTILLAGE="$with_outillage" \
 python3 - "${files[@]}" <<'PY'
 import os, re, sys
 MACOS = re.compile(r"\b(swift|swiftc|xcodebuild|xcrun)\b|swift-app\.sh|ios-build\.sh")
@@ -157,6 +172,7 @@ WHOLE_SUITE = {
 
 scope = os.environ["MEM0_TEST_SCOPE"]
 macos_only = os.environ["MEM0_TEST_MACOS_ONLY"] == "1"
+with_outillage = os.environ["MEM0_TEST_WITH_OUTILLAGE"] == "1"
 paths = sys.argv[1:]
 texts = {}
 for path in paths:
@@ -183,7 +199,7 @@ def emit(kept):
     sys.exit(0)
 
 def emit_everything(everything):
-    # Les replis : la liste complète hors outillage, jamais une sortie vide.
+    # Les replis : la liste complète (hors outillage, sauf --with-outillage), jamais une sortie vide.
     if macos_only:
         everything = [p for p in everything if is_macos(p)]
     for path in everything:
@@ -196,20 +212,24 @@ if scope == "outillage":
     emit([p for p in paths if is_outillage(p)])
 
 # scope == "changed" ou "files" (même liste `changed`, reçue d'argv)
-everything = [p for p in paths if not is_outillage(p)]
+def retained(path):
+    return with_outillage or not is_outillage(path)
+
+everything = [p for p in paths if retained(p)]
+complete = "liste complète" if with_outillage else "liste complète hors outillage"
 changed = [line for line in os.environ["MEM0_TEST_CHANGED"].split("\n") if line.strip() != ""]
 if os.environ["MEM0_TEST_CHANGED_STATUS"] != "0":
-    print("· repli : liste complète hors outillage", file=sys.stderr)
+    print(f"· repli : {complete}", file=sys.stderr)
     emit_everything(everything)
 if not changed:
-    print("· diff vide depuis la base : liste complète hors outillage", file=sys.stderr)
+    print(f"· diff vide depuis la base : {complete}", file=sys.stderr)
     emit_everything(everything)
 changed_set = set(changed)
 
 # (d) un fichier qui conditionne la suite entière.
 whole = sorted(changed_set & WHOLE_SUITE)
 if whole:
-    print(f"· {', '.join(whole)} dans le diff : liste complète hors outillage", file=sys.stderr)
+    print(f"· {', '.join(whole)} dans le diff : {complete}", file=sys.stderr)
     emit_everything(everything)
 
 # (b') clôture des imports relatifs, calculée à la demande et mise en cache.
@@ -284,5 +304,5 @@ if any(p.startswith("omp-console/") and not p.endswith(".md") for p in changed):
         if is_macos(path):
             kept.add(path)
 
-emit([p for p in paths if p in kept and not is_outillage(p)])
+emit([p for p in paths if p in kept and retained(p)])
 PY

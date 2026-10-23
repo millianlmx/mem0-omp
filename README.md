@@ -418,7 +418,9 @@ les imports relatifs, suivis de proche en proche, atteignent un fichier du diff 
 (c) les tests macOS si le diff touche `omp-console/` hors `.md` ; (d) la suite
 entière hors outillage si le diff touche `scripts/check.sh`,
 `scripts/test-files.sh`, `package.json`, `tsconfig.json` ou `tsconfig.test.json`.
-Le modificateur `--macos` réduit cette sélection aux tests qui dépendent de macOS.
+Le modificateur `--macos` réduit cette sélection aux tests qui dépendent de macOS ;
+`--with-outillage` y admet les tests qui relancent un `check.sh` complet
+(`--scope=outillage`), que `changed` exclut sinon.
 Un diff que nul test ne concerne donne une liste vide, sortie 0, et un message
 sur stderr ; seuls un diff vide, une base inconnue ou git absent replient sur la
 liste complète.
