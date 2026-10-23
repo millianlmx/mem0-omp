@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.1.0 — 2026-10-23
+
+- feat(harness): README d'accueil et déploiement du serveur depuis Portainer (#254) (7ccd276)
+
 ## omp-mem0-memory 4.0.0 — 2026-10-22
 
 - feat(harness,req,memory,console)!: harness autonome — relances différées, auto-décision à l'échéance, auto-merge par critères, pilotage depuis omp ; CI par diff (#251) (4256521)
