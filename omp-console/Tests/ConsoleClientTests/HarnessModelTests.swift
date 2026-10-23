@@ -753,4 +753,91 @@ struct HarnessModelTests {
         drafts.chains["heavy"] = "sans-barre"
         #expect(drafts.parsedChains == nil)
     }
+
+    @Test("un abonnement se connecte depuis l'app : la page à ouvrir, le code rapporté, puis les fournisseurs relus")
+    func subscriptionLogin() async throws {
+        final class Steps: @unchecked Sendable {
+            let lock = NSLock()
+            var reads = 0
+            var answered = false
+            func read() -> Int { lock.withLock { reads += 1; return reads } }
+            func answer() { lock.withLock { answered = true } }
+            var wasAnswered: Bool { lock.withLock { answered } }
+        }
+        let steps = Steps()
+        let waiting = #"{"login":{"id":"l1","provider":"openai-codex","state":"waiting","url":"https://auth.example.com/authorize?s=1","instructions":"Complete login","prompt":"Paste the code","progress":[],"error":null}}"#
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            switch (call.method, call.path) {
+            case ("GET", "/v1/me"): return ok(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0}}"#)
+            case ("GET", "/v1/oauth"):
+                return ok(#"{"providers":[{"id":"openai-codex","name":"ChatGPT Plus/Pro","available":true,"authenticated":false},{"id":"anthropic","name":"Claude Pro/Max","available":true,"authenticated":true},{"id":"retired","name":"Ancien","available":false,"authenticated":false}],"login":null}"#)
+            case ("POST", "/v1/oauth/openai-codex/login"):
+                return HarnessReply(status: 201, body: Data(#"{"login":{"id":"l1","provider":"openai-codex","state":"starting","url":null,"prompt":null,"progress":[],"error":null}}"#.utf8))
+            case ("GET", "/v1/oauth/logins/l1"):
+                if steps.wasAnswered { return ok(#"{"login":{"id":"l1","provider":"openai-codex","state":"done","url":null,"prompt":null,"progress":[],"error":null}}"#) }
+                _ = steps.read()
+                return ok(waiting)
+            case ("POST", "/v1/oauth/logins/l1/answer"):
+                steps.answer()
+                return ok(#"{"login":{"id":"l1","provider":"openai-codex","state":"verifying","url":null,"prompt":null,"progress":[],"error":null}}"#)
+            case ("GET", "/v1/providers"):
+                return ok(#"{"providers":[{"name":"openai-codex","kind":"oauth","source":"api","models":[],"keyVariable":"OPENAI_CODEX_API_KEY","hasKey":false}],"models":{"fast":[],"standard":[],"heavy":[]},"modelsSource":"config","kinds":["oauth"],"apis":[]}"#)
+            default: return ok(inboxJSON)
+            }
+        }
+        let model = HarnessModel(transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+                                 retryDelay: .seconds(3600), refreshDelay: .milliseconds(1), loginPollDelay: .milliseconds(5))
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        await model.refreshLogins()
+        let logins = try #require(model.loginProviders)
+        #expect(logins.map(\.id) == ["openai-codex", "anthropic", "retired"])
+        #expect(HarnessDrafts.connectable(logins).map(\.id) == ["openai-codex"], "ni un abonnement connecté, ni un indisponible")
+        let drafts = HarnessDrafts()
+        #expect(drafts.chosenLogin(in: logins) == "openai-codex")
+        drafts.loginProvider = "anthropic"
+        #expect(drafts.chosenLogin(in: logins) == "openai-codex", "un abonnement déjà connecté ne se choisit pas")
+
+        #expect(await model.startLogin("openai-codex"))
+        #expect(await eventually { model.login?.awaitsCode == true })
+        let shown = try #require(model.login)
+        #expect(shown.phase == .waiting)
+        #expect(shown.link == URL(string: "https://auth.example.com/authorize?s=1"))
+
+        #expect(await model.answerLogin("  code-42 \n"))
+        let sent = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.path == "/v1/oauth/logins/l1/answer" }?.body)) as? [String: Any]
+        #expect(sent?["value"] as? String == "code-42", "le code part sans les espaces copiés autour")
+        #expect(await eventually { model.login?.succeeded == true })
+        #expect(await eventually { model.providerCatalog?.providers.first?.isSubscription == true }, "les fournisseurs sont relus à la réussite")
+        #expect(PipelineServerText.providerKind("oauth") == "Abonnement")
+        model.dismissLogin()
+        #expect(model.login == nil)
+    }
+
+    @Test("un abonnement déclaré se modifie sans clé ; un serveur sans abonnements cache la section sans échec")
+    func subscriptionDraftAndOlderServer() async throws {
+        let provider = HarnessProvider(name: "openai-codex", kind: HarnessProviderDraft.subscription)
+        var draft = HarnessProviderDraft(editing: provider)
+        #expect(draft.isSubscription && draft.effectiveName == "openai-codex")
+        draft.apiKey = "x"
+        #expect(draft.problem == nil, "un abonnement n'a pas de clé à vérifier")
+        let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft.body)) as? [String: Any]
+        #expect(body?["kind"] as? String == "oauth")
+        #expect(body?["apiKey"] == nil, "aucune clé ne part pour un abonnement")
+
+        let unknown = try JSONDecoder().decode(HarnessLogin.self, from: Data(#"{"id":"l","provider":"p","state":"etat_futur"}"#.utf8))
+        #expect(unknown.phase == .waiting && !unknown.isFinished && unknown.link == nil)
+        let unsafe = HarnessLogin(id: "l", provider: "p", state: "waiting", url: "javascript:alert(1)")
+        #expect(unsafe.link == nil, "seule une page http(s) s'ouvre")
+
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            call.path == "/v1/oauth" ? HarnessReply(status: 404, body: Data(#"{"error":"route inconnue"}"#.utf8)) : ok(inboxJSON)
+        }
+        let model = makeModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        await model.refreshLogins()
+        #expect(model.loginProviders == nil)
+        #expect(model.failure == nil)
+    }
 }

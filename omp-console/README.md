@@ -267,6 +267,16 @@ exécuter une étape elle-même.
   `fournisseur/modèle` dans l'ordre de bascule. La clé part vers le serveur
   (`PUT /v1/providers/{name}`) et n'en revient jamais : l'écran n'en montre que les
   quatre derniers caractères. Un champ de clé vide garde la clé déclarée.
+  La section **Abonnements** connecte un abonnement sans clé (Claude Pro/Max,
+  ChatGPT Plus/Pro, Gemini…, la liste que donne omp, `GET /v1/oauth`) : choisir
+  l'abonnement, « Connecter », ouvrir la page de connexion dans le navigateur
+  (Safari sur l'iPhone), s'y connecter, puis coller dans l'app le code ou l'adresse
+  entière de la page finale (elle pointe vers `localhost`, que le navigateur ne joint
+  pas). Le serveur la relaie à omp, qui garde les identifiants chez les agents ;
+  l'app relit la connexion chaque seconde jusqu'à son issue, puis les fournisseurs.
+  Un abonnement connecté figure dans les fournisseurs (sorte « Abonnement »,
+  `oauth`) et se nomme dans les modèles par niveau (`openai-codex/…`). La section se
+  cache face à un serveur qui ne connaît pas les abonnements.
 - **Un seul client.** Un `HarnessModel` et un `HarnessDrafts` pour toute la
   fenêtre : les cinq sections partagent la même boîte, le même catalogue et les
   mêmes brouillons de lancement. Sans serveur relié, chacune montre le même appel à

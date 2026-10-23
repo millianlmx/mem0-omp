@@ -83,6 +83,10 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var providerRemoval: HarnessProvider?
     /// Les modèles par niveau en cours de saisie (`fournisseur/modèle, …`).
     @Published public var chains: [String: String] = [:]
+    /// L'abonnement choisi pour une connexion, et son code (ou l'adresse de la page
+    /// finale) en cours de saisie.
+    @Published public var loginProvider = ""
+    @Published public var loginCode = ""
 
     public init() {}
 
@@ -104,6 +108,18 @@ public final class HarnessDrafts: ObservableObject {
     /// Ouvre la saisie d'un nouveau fournisseur, ou la modification d'un déclaré.
     public func beginProvider(_ existing: HarnessProvider? = nil) {
         provider = existing.map { HarnessProviderDraft(editing: $0) } ?? HarnessProviderDraft()
+    }
+
+    /// Les abonnements à connecter (disponibles, pas encore connectés), et le choisi :
+    /// celui de la saisie s'il en fait partie, sinon le premier.
+    public static func connectable(_ providers: [HarnessLoginProvider]) -> [HarnessLoginProvider] {
+        providers.filter { $0.available && !$0.authenticated }
+    }
+
+    public func chosenLogin(in providers: [HarnessLoginProvider]) -> String? {
+        let open = Self.connectable(providers)
+        if open.contains(where: { $0.id == loginProvider }) { return loginProvider }
+        return open.first?.id
     }
 
     /// Le dépôt des lancements : celui choisi, sinon le premier déclaré.

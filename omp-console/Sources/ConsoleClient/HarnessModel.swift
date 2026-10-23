@@ -47,12 +47,19 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var providerCatalog: HarnessProviderCatalog?
     /// Une déclaration de fournisseur ou de modèles attend la réponse du serveur.
     @Published public private(set) var isSavingProviders = false
+    /// Les abonnements que le serveur sait connecter (admin) ; `nil` tant qu'ils ne sont
+    /// pas lus, ou avec un serveur qui ne les connaît pas (la section se cache).
+    @Published public private(set) var loginProviders: [HarnessLoginProvider]?
+    /// La connexion d'abonnement en cours, ou la dernière finie tant qu'elle n'est pas refermée.
+    @Published public private(set) var login: HarnessLogin?
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
     private let tokens: any TokenStore
     private let retryDelay: Duration
     private let refreshDelay: Duration
+    /// Le rythme de relecture d'une connexion d'abonnement en cours.
+    private let loginPollDelay: Duration
     /// Le serveur de la machine quand rien n'est enregistré (Mac : `~/.omp/harness.json`).
     private let fallback: @Sendable () -> (address: String, token: String)?
     /// Un code d'appairage accepté (Mac : écrit pour les plugins d'omp et la mémoire).
@@ -66,6 +73,8 @@ public final class HarnessModel: ObservableObject {
     private var clientAsked = false
     /// L'écran des fournisseurs est ouvert : le flux les relit avec la boîte.
     private var wantsProviders = false
+    /// La relecture de la connexion d'abonnement en cours.
+    private var loginTask: Task<Void, Never>?
 
     public init(
         transport: any HarnessTransport,
@@ -73,6 +82,7 @@ public final class HarnessModel: ObservableObject {
         tokens: any TokenStore,
         retryDelay: Duration = .seconds(5),
         refreshDelay: Duration = .milliseconds(300),
+        loginPollDelay: Duration = .seconds(1),
         fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
         onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in }
     ) {
@@ -81,6 +91,7 @@ public final class HarnessModel: ObservableObject {
         self.tokens = tokens
         self.retryDelay = retryDelay
         self.refreshDelay = refreshDelay
+        self.loginPollDelay = loginPollDelay
         self.fallback = fallback
         self.onPaired = onPaired
     }
@@ -197,6 +208,10 @@ public final class HarnessModel: ObservableObject {
         stats = nil
         providerCatalog = nil
         wantsProviders = false
+        loginTask?.cancel()
+        loginTask = nil
+        loginProviders = nil
+        login = nil
         failure = nil
         preferences.set(nil, forKey: Self.addressKey)
         try? await tokens.remove(deviceId: Self.tokenAccount)
@@ -526,6 +541,91 @@ public final class HarnessModel: ObservableObject {
         let reply: HarnessProviderCatalog? = await administer("PUT", "/v1/models", body: HarnessChainsBody(models: chains))
         if let reply { providerCatalog = reply }
         return reply != nil
+    }
+
+    // MARK: - Abonnements (admin)
+
+    /// Relit les abonnements et la connexion en cours (reprise si l'écran s'est rouvert).
+    /// Un serveur qui ne les connaît pas laisse `loginProviders` à `nil`, sans échec affiché.
+    public func refreshLogins() async {
+        guard let server else { return }
+        guard let catalog: HarnessLoginCatalog = try? await perform(HarnessCall(method: "GET", path: "/v1/oauth"), on: server) else {
+            loginProviders = nil
+            return
+        }
+        loginProviders = catalog.providers
+        if let active = catalog.login {
+            login = active
+            followLogin()
+        }
+    }
+
+    /// Lance la connexion d'un abonnement ; la page à ouvrir arrive dans `login`.
+    @discardableResult
+    public func startLogin(_ provider: String) async -> Bool {
+        guard let id = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return false }
+        let reply: HarnessLoginReply? = await administer("POST", "/v1/oauth/\(id)/login", body: nil as HarnessLoginAnswer?)
+        guard let reply else { return false }
+        login = reply.login
+        followLogin()
+        return true
+    }
+
+    /// Renvoie au serveur le code (ou l'adresse de la page finale) copié du navigateur.
+    @discardableResult
+    public func answerLogin(_ value: String) async -> Bool {
+        let code = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = login, !code.isEmpty else { return false }
+        let reply: HarnessLoginReply? = await administer("POST", "/v1/oauth/logins/\(current.id)/answer", body: HarnessLoginAnswer(value: code))
+        guard let reply else { return false }
+        login = reply.login
+        followLogin()
+        return true
+    }
+
+    /// Abandonne la connexion en cours : rien n'est enregistré.
+    public func cancelLogin() async {
+        guard let current = login, !current.isFinished else {
+            login = nil
+            return
+        }
+        let reply: HarnessLoginReply? = await administer("DELETE", "/v1/oauth/logins/\(current.id)", body: nil as HarnessLoginAnswer?)
+        loginTask?.cancel()
+        loginTask = nil
+        login = reply?.login ?? login
+    }
+
+    /// Referme une connexion finie.
+    public func dismissLogin() {
+        guard login?.isFinished != false else { return }
+        login = nil
+    }
+
+    /// Relit la connexion jusqu'à son issue ; à la fin, les fournisseurs et les abonnements
+    /// sont relus (un abonnement connecté peut désormais figurer dans les modèles).
+    private func followLogin() {
+        guard loginTask == nil, let current = login, !current.isFinished else { return }
+        let delay = loginPollDelay
+        loginTask = Task { [weak self] in
+            var id = current.id
+            while !Task.isCancelled {
+                try? await Task.sleep(for: delay)
+                guard let self, !Task.isCancelled, let server = self.server else { break }
+                guard let reply: HarnessLoginReply = try? await self.perform(HarnessCall(method: "GET", path: "/v1/oauth/logins/\(id)"), on: server)
+                else { continue }
+                // Une connexion relancée entre-temps a pris la place : on suit la nouvelle.
+                if let shown = self.login, shown.id != id, !shown.isFinished { id = shown.id; continue }
+                self.login = reply.login
+                if reply.login.isFinished {
+                    self.loginTask = nil
+                    if reply.login.succeeded {
+                        await self.refreshProviders()
+                        await self.refreshLogins()
+                    }
+                    return
+                }
+            }
+        }
     }
 
     private func administer<Body: Encodable, Reply: Decodable>(_ method: String, _ path: String, body: Body?) async -> Reply? {

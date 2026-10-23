@@ -352,6 +352,42 @@ public enum PipelineServerText {
     public static let saveProvider = "Enregistrer"
     public static let compatibleHint = "Un service compatible OpenAI (Ollama, vLLM, LiteLLM…) joint par le serveur, par exemple l’Ollama du VPS ou un oMLX publié par Tailscale."
 
+    // Les abonnements : connectés dans le navigateur, sans clé.
+    public static let loginsSection = "Abonnements"
+    public static let loginsHint =
+        "Connectez un abonnement (Claude Pro ou Max, ChatGPT Plus ou Pro, Gemini…) à la place d’une clé. La connexion se fait dans votre navigateur ; ses identifiants restent sur le serveur, chez les agents."
+    public static let noLoginProvider = "Le serveur ne propose aucun abonnement à connecter."
+    public static let loginConnect = "Connecter"
+    public static let loginReconnect = "Reconnecter"
+    public static let loginConnected = "Connecté"
+    public static let loginNotConnected = "Non connecté"
+    public static let loginStarting = "Le serveur prépare la connexion…"
+    public static let loginOpen = "Ouvrir la page de connexion"
+    public static let loginOpenHint =
+        "Connectez-vous sur la page qui s’ouvre. Si elle finit sur un code, ou sur une erreur à une adresse « localhost », copiez ce code ou cette adresse entière et collez-le ci-dessous."
+    public static let loginCodeLabel = "Code ou adresse de la page finale"
+    public static let loginCodePrompt = "Collez le code ou l’adresse"
+    public static let loginSend = "Envoyer le code"
+    public static let loginVerifying = "Le serveur vérifie le code…"
+    public static let loginDone = "Abonnement connecté. Les agents s’en servent dès qu’un modèle par niveau le nomme."
+    public static let loginCancelled = "Connexion abandonnée : rien n’a été enregistré."
+    public static let loginTerminalHint =
+        "Certains abonnements ne se connectent qu’au terminal du serveur : lancez-y omp avec le profil des agents, puis la commande de connexion."
+    public static let loginCancel = "Abandonner"
+    public static let loginClose = "Fermer"
+    public static let subscriptionKey = "Connexion par abonnement"
+
+    /// Le titre d'une connexion en cours.
+    public static func loginTitle(_ name: String) -> String { "Connexion à \(name)" }
+
+    /// L'échec d'une connexion, avec le motif du serveur.
+    public static func loginFailed(_ motive: String) -> String {
+        motive.isEmpty ? "La connexion a échoué." : "La connexion a échoué : \(motive)"
+    }
+
+    /// L'état d'un abonnement chez les agents du serveur.
+    public static func loginState(connected: Bool) -> String { connected ? loginConnected : loginNotConnected }
+
     // Ce qui empêche un fournisseur de partir.
     public static let providerNameProblem = "Le nom s’écrit en minuscules, chiffres et tirets, une lettre d’abord, 32 caractères au plus."
     public static let providerReservedProblem = "Ce nom est réservé au serveur oMLX du Mac : choisissez-en un autre."
@@ -385,6 +421,7 @@ public enum PipelineServerText {
         case "mistral": "Mistral"
         case "xai": "xAI"
         case "openai-compatible": "Compatible OpenAI"
+        case "oauth": "Abonnement"
         default: raw
         }
     }

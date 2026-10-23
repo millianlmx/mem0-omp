@@ -13,6 +13,10 @@
 //   { "sleep": 60000 }                          attend (une étape qui dure)
 // La dernière occurrence se répète. Le compteur d'occurrences vit dans FAKE_STATE
 // (il survit aux process : un nouveau runner reprend la suite du scénario).
+// La connexion OAuth (oauth.ts) : `loginProviders` est la liste que rend
+// `get_login_providers` ; `login` ({ url, instructions, prompt, code, error }) dit le
+// flux de `login` — `error` le refuse d'emblée, sinon `open_url`, une notification puis
+// `input`, jusqu'à recevoir `code` (un `input` annulé est redemandé, comme omp).
 // Chaque prompt, appel d'outil et commande est journalisé en JSONL dans FAKE_LOG.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -55,6 +59,17 @@ function stepOf(message: string): string | null {
 }
 
 const waiting = new Map<string, (text: string) => void>();
+type LoginScenario = { url?: string; instructions?: string; prompt?: string; code?: string; error?: string };
+/** La commande `login` en cours et la demande d'`input` qu'elle attend. */
+let login: { id: string; provider: string; inputId: string } | null = null;
+let uiSeq = 0;
+
+function askCode(): void {
+  if (!login) return;
+  login.inputId = `fake-ui-${++uiSeq}`;
+  const flow = (scenario.login ?? {}) as LoginScenario;
+  out({ type: "extension_ui_request", id: login.inputId, method: "input", title: flow.prompt ?? "Paste the code" });
+}
 let toolSeq = 0;
 let currentStep = "req";
 
@@ -150,6 +165,56 @@ lines.on("line", (line) => {
       out({ id, type: "response", command: "prompt", success: true, data: { agentInvoked: true } });
       void runPrompt(id, String(frame.message ?? ""));
       return;
+    case "get_login_providers":
+      log({ kind: "command", type: frame.type });
+      out({
+        id,
+        type: "response",
+        command: frame.type,
+        success: true,
+        data: { providers: scenario.loginProviders ?? [] },
+      });
+      return;
+    case "login": {
+      const flow = (scenario.login ?? {}) as LoginScenario;
+      log({ kind: "command", type: frame.type, providerId: frame.providerId });
+      if (flow.error) {
+        out({ id, type: "response", command: "login", success: false, error: flow.error });
+        return;
+      }
+      login = { id, provider: String(frame.providerId), inputId: "" };
+      out({
+        type: "extension_ui_request",
+        id: `fake-ui-${++uiSeq}`,
+        method: "open_url",
+        url: flow.url ?? "https://example.com/oauth",
+        instructions: flow.instructions ?? "",
+      });
+      out({
+        type: "extension_ui_request",
+        id: `fake-ui-${++uiSeq}`,
+        method: "notify",
+        message: "Waiting for browser authentication...",
+      });
+      askCode();
+      return;
+    }
+    case "extension_ui_response": {
+      log({ kind: "ui_response", id, value: frame.value ?? null, cancelled: frame.cancelled === true });
+      if (!login || id !== login.inputId) return;
+      if (frame.cancelled === true) {
+        askCode();
+        return;
+      }
+      const flow = (scenario.login ?? {}) as LoginScenario;
+      const done = login;
+      login = null;
+      if (frame.value === flow.code)
+        out({ id: done.id, type: "response", command: "login", success: true, data: { providerId: done.provider } });
+      else
+        out({ id: done.id, type: "response", command: "login", success: false, error: "Invalid authorization code" });
+      return;
+    }
     default:
       out({ id, type: "response", command: frame.type, success: true, data: {} });
   }

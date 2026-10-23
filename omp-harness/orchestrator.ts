@@ -132,6 +132,11 @@ export class Orchestrator {
     return this.#ctx.providers;
   }
 
+  /** Les connexions OAuth des fournisseurs, menées depuis les apps. */
+  get logins(): HarnessContext["logins"] {
+    return this.#ctx.logins;
+  }
+
   // -- cycle de vie ---------------------------------------------------------
 
   /** Reprise après redémarrage, puis la boucle de scheduling. */
@@ -208,6 +213,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
   }

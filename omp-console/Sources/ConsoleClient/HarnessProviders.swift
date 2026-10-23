@@ -4,6 +4,11 @@
 //
 // Une clé part vers le serveur et n'en revient jamais : le serveur ne rend que
 // `hasKey` et ses quatre derniers caractères (`keyHint`).
+//
+// Un abonnement (Claude Pro/Max, ChatGPT…) se connecte sans clé (`/v1/oauth`) : le
+// serveur donne le lien de la page de connexion, l'app l'ouvre dans le navigateur
+// puis renvoie le code (ou l'adresse de la page finale) que le navigateur affiche.
+// Les identifiants restent sur le serveur, chez ses agents.
 
 import Foundation
 
@@ -39,6 +44,8 @@ public struct HarnessProvider: Decodable, Equatable, Sendable, Identifiable {
 
     public var id: String { name }
     public var isCompatible: Bool { kind == HarnessProviderDraft.compatible }
+    /// Un abonnement connecté depuis les apps : ni clé ni adresse.
+    public var isSubscription: Bool { kind == HarnessProviderDraft.subscription }
     public var isEditable: Bool { source == "api" }
 
     public init(
@@ -187,6 +194,8 @@ public struct HarnessProviderCatalog: Decodable, Equatable, Sendable {
 public struct HarnessProviderDraft: Equatable, Sendable, Identifiable {
     /// La sorte des fournisseurs compatibles OpenAI (Ollama, vLLM, LiteLLM…).
     public static let compatible = "openai-compatible"
+    /// La sorte d'un abonnement, déclaré par le serveur à sa connexion (sans clé).
+    public static let subscription = "oauth"
     /// Les fournisseurs connus d'omp, dans l'ordre du sélecteur.
     public static let knownKinds = ["anthropic", "openai", "openrouter", "google", "mistral", "xai"]
     /// Les protocoles d'un fournisseur compatible.
@@ -243,10 +252,13 @@ public struct HarnessProviderDraft: Equatable, Sendable, Identifiable {
     }
 
     public var isCompatible: Bool { kind == Self.compatible }
+    /// Un abonnement n'a pas de clé : son champ ne s'affiche pas, et rien ne part.
+    public var isSubscription: Bool { kind == Self.subscription }
 
     /// Le nom envoyé : celui de la sorte pour un fournisseur connu.
     public var effectiveName: String {
-        isCompatible ? name.trimmingCharacters(in: .whitespaces).lowercased() : kind
+        if isSubscription { return editing ?? name }
+        return isCompatible ? name.trimmingCharacters(in: .whitespaces).lowercased() : kind
     }
 
     /// Les identifiants de modèles saisis, sans doublon.
@@ -268,7 +280,7 @@ public struct HarnessProviderDraft: Equatable, Sendable, Identifiable {
             if modelList.isEmpty { return .models }
         }
         let key = apiKey.trimmingCharacters(in: .whitespaces)
-        if !key.isEmpty, key.count < 8 || key.contains(" ") { return .key }
+        if !isSubscription, !key.isEmpty, key.count < 8 || key.contains(" ") { return .key }
         let capacityValue = Int(capacity.trimmingCharacters(in: .whitespaces))
         let refillValue = Int(refillPerMinute.trimmingCharacters(in: .whitespaces))
         let capacityEmpty = capacity.trimmingCharacters(in: .whitespaces).isEmpty
@@ -292,7 +304,7 @@ public struct HarnessProviderDraft: Equatable, Sendable, Identifiable {
             baseUrl: isCompatible ? baseUrl.trimmingCharacters(in: .whitespaces) : nil,
             api: isCompatible ? api : nil,
             models: isCompatible ? modelList.map { HarnessProviderModel(id: $0) } : nil,
-            apiKey: removeKey ? "" : (key.isEmpty ? nil : key),
+            apiKey: isSubscription ? nil : (removeKey ? "" : (key.isEmpty ? nil : key)),
             capacity: capacityValue.map { .value($0) } ?? .null,
             refillPerMinute: refillValue.map { .value($0) } ?? .null
         )
@@ -339,4 +351,123 @@ struct HarnessChainsBody: Encodable {
 /// La réponse de `PUT /v1/providers/{name}`.
 struct HarnessProviderReply: Decodable {
     var provider: HarnessProvider
+}
+
+// MARK: - Abonnements (connexion OAuth)
+
+/// Un abonnement que le serveur sait connecter, et s'il l'est déjà chez ses agents.
+public struct HarnessLoginProvider: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var available: Bool
+    public var authenticated: Bool
+
+    public init(id: String, name: String, available: Bool = true, authenticated: Bool = false) {
+        self.id = id
+        self.name = name
+        self.available = available
+        self.authenticated = authenticated
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, available, authenticated }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = (try? container.decode(String.self, forKey: .name)) ?? id
+        available = (try? container.decode(Bool.self, forKey: .available)) ?? true
+        authenticated = (try? container.decode(Bool.self, forKey: .authenticated)) ?? false
+    }
+}
+
+/// Une connexion d'abonnement, telle que le serveur la suit (`/v1/oauth/logins/{id}`).
+public struct HarnessLogin: Decodable, Equatable, Sendable, Identifiable {
+    /// Les états du serveur : `starting`, `waiting`, `verifying`, puis `done`, `failed` ou `cancelled`.
+    public var id: String
+    public var provider: String
+    public var state: String
+    public var url: String?
+    /// La question du serveur quand il attend le code ; `nil` sinon.
+    public var prompt: String?
+    public var error: String?
+
+    public init(id: String, provider: String, state: String, url: String? = nil, prompt: String? = nil, error: String? = nil) {
+        self.id = id
+        self.provider = provider
+        self.state = state
+        self.url = url
+        self.prompt = prompt
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, provider, state, url, prompt, error }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        provider = try container.decode(String.self, forKey: .provider)
+        state = try container.decode(String.self, forKey: .state)
+        url = try? container.decode(String.self, forKey: .url)
+        prompt = try? container.decode(String.self, forKey: .prompt)
+        error = try? container.decode(String.self, forKey: .error)
+    }
+
+    /// Où en est la connexion, pour les écrans.
+    public enum Phase: Equatable, Sendable {
+        case starting, waiting, verifying, done, failed, cancelled
+    }
+
+    /// La phase de l'état du serveur ; un état inconnu de cette version se lit « en attente ».
+    public var phase: Phase {
+        switch state {
+        case "starting": .starting
+        case "verifying": .verifying
+        case "done": .done
+        case "failed": .failed
+        case "cancelled": .cancelled
+        default: .waiting
+        }
+    }
+
+    /// La connexion est finie : réussie, échouée ou abandonnée.
+    public var isFinished: Bool { [.done, .failed, .cancelled].contains(phase) }
+    public var succeeded: Bool { phase == .done }
+    /// Le serveur attend le code (ou l'adresse de la page finale).
+    public var awaitsCode: Bool { prompt != nil && !isFinished }
+
+    /// La page de connexion à ouvrir, seulement en http(s).
+    public var link: URL? {
+        guard let url, let parsed = URL(string: url), let scheme = parsed.scheme?.lowercased(), scheme == "https" || scheme == "http"
+        else { return nil }
+        return parsed
+    }
+}
+
+/// La réponse de `GET /v1/oauth` : les abonnements et la connexion en cours.
+public struct HarnessLoginCatalog: Decodable, Equatable, Sendable {
+    public var providers: [HarnessLoginProvider]
+    public var login: HarnessLogin?
+
+    private enum CodingKeys: String, CodingKey { case providers, login }
+
+    public init(providers: [HarnessLoginProvider] = [], login: HarnessLogin? = nil) {
+        self.providers = providers
+        self.login = login
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providers = (try? container.decode([HarnessLoginProvider].self, forKey: .providers)) ?? []
+        login = try? container.decode(HarnessLogin.self, forKey: .login)
+    }
+}
+
+/// La réponse des gestes d'une connexion.
+struct HarnessLoginReply: Decodable {
+    var login: HarnessLogin
+}
+
+/// Le corps de `POST /v1/oauth/logins/{id}/answer`.
+struct HarnessLoginAnswer: Encodable {
+    var value: String
 }
