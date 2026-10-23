@@ -81,9 +81,9 @@ coller sur GitHub, avec le lien, et attend.
 
 **Avec Portainer.** Ajoute une stack depuis le dépôt
 `https://github.com/millianlmx/mem0-omp` (fichier `docker-compose.yml`), avec
-`ANTHROPIC_API_KEY`, `TS_AUTHKEY` et `OMP_HARNESS_REPOS` dans ses variables. La pile se
-monte seule. La clé de déploiement s'affiche dans les journaux du conteneur `setup`,
-le code d'appairage dans ceux de `pairing`. Le détail :
+`ANTHROPIC_API_KEY` et `OMP_HARNESS_REPOS` dans ses variables. La pile se monte seule
+et se publie par le Tailscale du VPS. La clé de déploiement s'affiche dans les
+journaux du conteneur `setup`, le code d'appairage dans ceux de `pairing`. Le détail :
 [omp-harness/README.md](omp-harness/README.md) § « Avec Portainer ».
 
 **Sans VPS.** Le même serveur tourne sur ton Mac avec oMLX, sans internet ni clé

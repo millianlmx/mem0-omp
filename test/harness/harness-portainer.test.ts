@@ -2,12 +2,15 @@
 // du dépôt dans Portainer (ou `docker compose up -d` à la racine), et la pile se
 // monte seule. `setup` rejoue ce que `harness.sh up` fait en interactif, `repos`
 // déclare les dépôts et réessaie tant que la clé de déploiement manque, `pairing`
-// écrit le code d'appairage dans ses journaux. Les scripts tournent ici pour de vrai,
-// sur des dossiers jetables ; seuls node (--add-repo) et tailscale sont doublés.
+// publie la pile par le Tailscale de l'hôte (son socket monté, aucun démon dans la
+// pile) et écrit le code d'appairage dans ses journaux. Les scripts tournent ici pour
+// de vrai, sur des dossiers jetables ; seuls node (--add-repo), ssh-keygen et la CLI
+// tailscale sont doublés.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as path from "node:path";
 import { loadConfig } from "../../omp-harness/config.ts";
 import { decodePairing } from "../../omp-mem0-req/harness.ts";
@@ -79,8 +82,7 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
     ["repos", "omp-harness:local"],
     ["runner-image", "omp-harness-runner:local"],
     ["mem0", "mem0-rs:local"],
-    ["tailscale", "omp-harness-tailscale:local"],
-    ["pairing", "omp-harness-tailscale:local"],
+    ["pairing", "omp-harness-pairing:local"],
   ]) {
     const block = service(name);
     const anchor = /<<: \*(\S+)/.exec(block)?.[1];
@@ -105,7 +107,7 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
   assert.equal(JSON.parse(read(TEMPLATE)).container.network, "omp-harness");
 
   // Les clés LLM n'entrent que dans `setup`, qui les écrit pour les runners.
-  for (const name of ["harness", "repos", "mem0", "tailscale", "pairing"]) {
+  for (const name of ["harness", "repos", "mem0", "pairing"]) {
     assert.doesNotMatch(service(name), /API_KEY|runner\.env/, `${name} voit les clés LLM`);
   }
   assert.match(service("setup"), /ANTHROPIC_API_KEY: \$\{ANTHROPIC_API_KEY:-\}/);
@@ -113,7 +115,7 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
   assert.match(service("harness"), /\/harness:\/run\/secrets\/omp-harness:ro/);
   assert.match(service("mem0"), /\/mem0:\/run\/secrets\/mem0:ro/);
 
-  // Aucun port public : la boucle locale, et le tailnet par le conteneur Tailscale.
+  // Aucun port public : la boucle locale, que le Tailscale de l'hôte ouvre au tailnet.
   const published = [...compose.matchAll(/^ {4}ports:\n((?: {6}(?:#.*|- .*)\n)+)/gm)].flatMap((m) =>
     m[1].split("\n").filter((line) => line.trim().startsWith("- ")),
   );
@@ -217,20 +219,27 @@ process.exit(url.includes("verrou") && seen === 1 ? 4 : 0);
   assert.match(none.stdout, /Aucun dépôt dans OMP_HARNESS_REPOS/);
 });
 
-test("harness-portainer/AC-5 : `pairing` attend Tailscale, montre le lien de connexion, puis écrit le code que /pair et l'app lisent", () => {
+/**
+ * Un socket et une doublure de la CLI tailscale : `status --json` rend tour à tour
+ * les états de `states` (le dernier reste), `serve` est journalisé et rend `serveCode`.
+ */
+async function fakeTailscale(states: string[], serveCode = 0) {
   const dir = tmpdir("harness-portainer-pair-");
   const bin = path.join(dir, "bin");
   fs.mkdirSync(bin);
-  // Doublure de `tailscale status --json` : non connecté au premier appel, connecté ensuite.
+  const socket = path.join(dir, "tailscaled.sock");
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(socket, resolve));
+  for (const [i, state] of states.entries()) fs.writeFileSync(path.join(dir, `state${i}`), state);
   fs.writeFileSync(
     path.join(bin, "tailscale"),
     `#!/bin/sh
-n=$(cat "${dir}/n" 2>/dev/null || echo 0); echo $((n + 1)) > "${dir}/n"
-if [ "$n" = 0 ]; then
-  printf '{\\n  "BackendState": "NeedsLogin",\\n  "AuthURL": "https://login.tailscale.com/a/abc123",\\n  "Self": {\\n    "DNSName": ""\\n  }\\n}\\n'
-else
-  printf '{\\n  "BackendState": "Running",\\n  "Self": {\\n    "DNSName": "omp-harness.tail1234.ts.net."\\n  },\\n  "Peer": {\\n    "x": { "DNSName": "mac.tail1234.ts.net." }\\n  }\\n}\\n'
-fi
+[ "$1" = "--socket=${socket}" ] || { echo "socket attendu" >&2; exit 2; }
+shift
+if [ "$1" = serve ]; then echo "$*" >> "${dir}/serve.log"; exit ${serveCode}; fi
+n=$(cat "${dir}/n" 2>/dev/null || echo 0)
+[ "$n" -ge ${states.length - 1} ] || echo $((n + 1)) > "${dir}/n"
+cat "${dir}/state$n"
 `,
     { mode: 0o755 },
   );
@@ -239,33 +248,105 @@ fi
     path.join(dir, "mem0.env"),
     "MEM0_HTTP_TOKEN=mem0-token\nOMLX_BASE_URL=http://embeddings:11434/v1\n",
   );
-  const pairing = run(PAIRING, [], {
+  const env = {
     PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    TS_SOCKET: socket,
     OMP_HARNESS_TOKEN_FILE: path.join(dir, "token"),
     OMP_HARNESS_MEM0_ENV: path.join(dir, "mem0.env"),
     OMP_HARNESS_PAIRING_POLL: "0",
-  });
-  assert.equal(pairing.status, 0, pairing.stderr);
-  assert.match(pairing.stdout, /https:\/\/login\.tailscale\.com\/a\/abc123/);
-  const code = /omp1:\S+/.exec(pairing.stdout)?.[0];
-  assert.ok(code, pairing.stdout);
-  assert.deepEqual(decodePairing(code), {
-    url: "https://omp-harness.tail1234.ts.net",
-    token: "harness-token",
-    mem0Url: "https://omp-harness.tail1234.ts.net:8443",
-    mem0Token: "mem0-token",
-  });
+    OMP_HARNESS_PORT: "8790",
+    OMP_HARNESS_MEM0_PORT: "8321",
+  };
+  const serveLog = () => (fs.existsSync(path.join(dir, "serve.log")) ? read(path.join(dir, "serve.log")) : "");
+  return { dir, env, serveLog, close: () => server.close() };
+}
+
+const LOGGED_OUT = `{
+  "BackendState": "NeedsLogin",
+  "Self": {
+    "DNSName": ""
+  }
+}`;
+const RUNNING = `{
+  "BackendState": "Running",
+  "Self": {
+    "DNSName": "vps.tail1234.ts.net."
+  },
+  "Peer": {
+    "x": { "DNSName": "mac.tail1234.ts.net." }
+  }
+}`;
+
+test("harness-portainer/AC-5 : `pairing` attend le Tailscale de l'hôte, publie le harness sur 443 et la mémoire sur 8443, puis écrit le code que /pair et l'app lisent", async () => {
+  const ts = await fakeTailscale([LOGGED_OUT, RUNNING]);
+  try {
+    const pairing = run(PAIRING, [], ts.env);
+    assert.equal(pairing.status, 0, pairing.stderr);
+    assert.match(pairing.stdout, /Le Tailscale de l'hôte n'est pas connecté : « tailscale up »/);
+    assert.equal(
+      ts.serveLog(),
+      "serve --bg --https=443 http://127.0.0.1:8790\nserve --bg --https=8443 http://127.0.0.1:8321\n",
+      "le harness et la mémoire, par les ports de la boucle locale de l'hôte",
+    );
+    const code = /omp1:[A-Za-z0-9_-]+/.exec(pairing.stdout)?.[0];
+    assert.ok(code, pairing.stdout);
+    assert.deepEqual(decodePairing(code), {
+      url: "https://vps.tail1234.ts.net",
+      token: "harness-token",
+      mem0Url: "https://vps.tail1234.ts.net:8443",
+      mem0Token: "mem0-token",
+    });
+
+    // OMP_HARNESS_TAILSCALE_SERVE=0 : le `tailscale serve` de l'hôte n'est pas touché.
+    fs.rmSync(path.join(ts.dir, "serve.log"));
+    const untouched = run(PAIRING, [], { ...ts.env, OMP_HARNESS_TAILSCALE_SERVE: "0" });
+    assert.equal(untouched.status, 0, untouched.stderr);
+    assert.equal(ts.serveLog(), "");
+    assert.match(untouched.stdout, /omp1:/);
+  } finally {
+    ts.close();
+  }
 });
 
-test("harness-portainer/AC-6 : Tailscale publie le harness sur 443 et la mémoire sur 8443 ; le service lit son jeton dans le fichier monté", () => {
-  const serve = JSON.parse(read(path.join(BOX, "tailscale-serve.json")));
-  assert.deepEqual(Object.keys(serve.TCP).sort(), ["443", "8443"]);
-  assert.equal(serve.Web["${TS_CERT_DOMAIN}:443"].Handlers["/"].Proxy, "http://harness:8790");
-  assert.equal(serve.Web["${TS_CERT_DOMAIN}:8443"].Handlers["/"].Proxy, "http://mem0:8321");
-  const dockerfile = read(path.join(BOX, "Dockerfile.tailscale"));
-  assert.match(dockerfile, /tailscale\/tailscale:v\d+\.\d+\.\d+/, "Tailscale épinglé");
-  for (const env of ["TS_SERVE_CONFIG=", "TS_AUTH_ONCE=true", "TS_STATE_DIR=/var/lib/tailscale"])
-    assert.ok(dockerfile.includes(env), `${env} absent`);
+test("harness-portainer/AC-6 : sans Tailscale sur l'hôte, `pairing` le dit et attend ; un `serve` refusé échoue en nommant HTTPS", async () => {
+  // Socket absent : le message, puis l'attente (le service ne sort pas).
+  const dir = tmpdir("harness-portainer-nots-");
+  const child = spawn("sh", [PAIRING], {
+    env: { PATH: process.env.PATH, TS_SOCKET: path.join(dir, "absent.sock"), OMP_HARNESS_PAIRING_POLL: "0.1" },
+  });
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(child.exitCode, null, "le service attend Tailscale");
+  child.kill();
+  await exited;
+  assert.match(out, /Pas de Tailscale sur l'hôte \(.*absent\.sock absent\)/);
+  assert.equal(out.split("\n").filter(Boolean).length, 1, "le message n'est pas répété");
+
+  const ts = await fakeTailscale([RUNNING], 1);
+  try {
+    const refused = run(PAIRING, [], ts.env);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /active HTTPS et MagicDNS/);
+    assert.doesNotMatch(refused.stdout, /omp1:/);
+  } finally {
+    ts.close();
+  }
+});
+
+test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing` n'a que la CLI et le dossier du socket de l'hôte ; le service lit son jeton dans le fichier monté", () => {
+  assert.doesNotMatch(compose, /TS_AUTHKEY|TS_STATE_DIR|^ {2}tailscale:/m);
+  assert.equal(fs.existsSync(path.join(BOX, "Dockerfile.tailscale")), false);
+  const dockerfile = read(path.join(BOX, "Dockerfile.pairing"));
+  assert.match(dockerfile, /tailscale\/tailscale:v\d+\.\d+\.\d+/, "la CLI Tailscale épinglée");
+  assert.match(dockerfile, /CMD \["\/usr\/local\/bin\/omp-harness-pairing"\]/, "le script, jamais tailscaled");
+  // Le dossier du socket, pas le socket : un fichier absent deviendrait un dossier sur l'hôte.
+  assert.match(service("pairing"), /- \$\{OMP_HARNESS_TAILSCALE_RUN:-\/var\/run\/tailscale\}:\/var\/run\/tailscale\n/);
+  for (const variable of ["OMP_HARNESS_PORT", "OMP_HARNESS_MEM0_PORT"])
+    assert.ok(service("pairing").includes(`${variable}: \${${variable}:-`), `${variable} absent de pairing`);
   assert.match(
     read(path.join(BOX, "Dockerfile.harness")),
     /COPY omp-harness\/deploy\/container\/stack-setup \/usr\/local\/bin\/omp-harness-stack/,

@@ -6,13 +6,14 @@
 #
 # Variables de la pile, toutes facultatives sauf la clé du modèle :
 #   ANTHROPIC_API_KEY (ou OPENROUTER_API_KEY)  la clé des agents
-#   TS_AUTHKEY             une clé d'auth Tailscale ; sans elle, le lien de connexion
-#                          s'affiche dans les journaux du service `pairing`
 #   OMP_HARNESS_REPOS      les dépôts, séparés par des virgules (git@github.com:toi/dépôt.git)
-#   OMP_HARNESS_HOSTNAME   le nom sur le tailnet (omp-harness)
 #   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
 #   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
 #   OMLX_BASE_URL          un serveur d'embeddings à toi ; sinon l'Ollama de la pile
+#   OMP_HARNESS_TAILSCALE_SERVE=0  ne touche pas au `tailscale serve` de l'hôte
+#
+# Tailscale n'est pas dans la pile : celui de l'hôte publie le harness et sa mémoire
+# (service `pairing`, par son socket).
 #
 # Les chemins de données sont montés au MÊME endroit dans le service : il lance ses
 # runners et ses jobs de tests en conteneurs frères, qui montent un worktree par son
@@ -24,13 +25,6 @@ x-harness-image: &harness-image
     dockerfile: omp-harness/deploy/container/Dockerfile.harness
   image: omp-harness:local
   # Construite depuis le dépôt, jamais tirée d'un registre.
-  pull_policy: build
-
-x-tailscale-image: &tailscale-image
-  build:
-    context: .
-    dockerfile: omp-harness/deploy/container/Dockerfile.tailscale
-  image: omp-harness-tailscale:local
   pull_policy: build
 
 x-paths: &paths
@@ -47,7 +41,6 @@ services:
     restart: "no"
     environment:
       <<: *paths
-      OMP_HARNESS_HOSTNAME: ${OMP_HARNESS_HOSTNAME:-omp-harness}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OMLX_BASE_URL: ${OMLX_BASE_URL:-}
@@ -67,7 +60,7 @@ services:
       test-image: { condition: service_completed_successfully }
       mem0: { condition: service_started }
     ports:
-      # La boucle locale seulement : le tailnet passe par le service `tailscale`.
+      # La boucle locale seulement : le Tailscale de l'hôte l'ouvre au tailnet.
       - "127.0.0.1:${OMP_HARNESS_PORT:-8790}:8790"
     environment:
       <<: *paths
@@ -132,29 +125,28 @@ services:
     environment:
       OLLAMA_HOST: http://embeddings:11434
 
-  # Le harness et sa mémoire en HTTPS sur ton tailnet (443 et 8443), sans port public.
-  tailscale:
-    <<: *tailscale-image
-    hostname: ${OMP_HARNESS_HOSTNAME:-omp-harness}
-    restart: unless-stopped
-    environment:
-      TS_AUTHKEY: ${TS_AUTHKEY:-}
-      TS_HOSTNAME: ${OMP_HARNESS_HOSTNAME:-omp-harness}
-    volumes:
-      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale:/var/lib/tailscale
-      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale-run:/var/run/tailscale
-
-  # Écrit le code d'appairage dans ses journaux dès que tout est prêt.
+  # Publie le harness (443) et sa mémoire (8443) par le Tailscale de l'hôte, puis
+  # écrit le code d'appairage dans ses journaux.
   pairing:
-    <<: *tailscale-image
-    command: ["omp-harness-pairing"]
-    entrypoint: []
+    build:
+      context: .
+      dockerfile: omp-harness/deploy/container/Dockerfile.pairing
+    image: omp-harness-pairing:local
+    pull_policy: build
+    # Un init en PID 1 : le script attend en boucle, un arrêt le coupe tout de suite.
+    init: true
     restart: on-failure
-    depends_on: [tailscale, harness]
+    depends_on: [harness]
+    environment:
+      OMP_HARNESS_PORT: ${OMP_HARNESS_PORT:-8790}
+      OMP_HARNESS_MEM0_PORT: ${OMP_HARNESS_MEM0_PORT:-8321}
+      OMP_HARNESS_TAILSCALE_SERVE: ${OMP_HARNESS_TAILSCALE_SERVE:-1}
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state:/state:ro
-      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale-run:/var/run/tailscale
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/secrets:ro
+      # Le dossier du socket de tailscaled sur l'hôte, pas le socket lui-même : un
+      # fichier absent deviendrait un dossier.
+      - ${OMP_HARNESS_TAILSCALE_RUN:-/var/run/tailscale}:/var/run/tailscale
 
   # Les images que le service lance à la demande : construites ou tirées avec la
   # pile, puis arrêtées (état « exited » : c'est normal).

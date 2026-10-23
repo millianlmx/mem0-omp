@@ -65,7 +65,7 @@ cmd_init() {
     sed -e "s|@ROOT@|$ROOT|g" -e "s|@SECRETS@|$SECRETS|g" "$TEMPLATE" > "$ROOT/config.json"
 
   if [ ! -e "$ROOT/home/.ssh/id_ed25519" ]; then
-    ssh-keygen -q -t ed25519 -N '' -C "omp-harness@${OMP_HARNESS_HOSTNAME:-omp-harness}" -f "$ROOT/home/.ssh/id_ed25519"
+    ssh-keygen -q -t ed25519 -N '' -C omp-harness -f "$ROOT/home/.ssh/id_ed25519"
     # Premier contact : la clé d'hôte est retenue ; une clé qui change ensuite est refusée.
     printf 'Host *\n  StrictHostKeyChecking accept-new\n  ConnectTimeout 20\n' > "$ROOT/home/.ssh/config"
     chmod 0600 "$ROOT/home/.ssh/config"

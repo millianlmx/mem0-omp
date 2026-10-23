@@ -1,0 +1,7 @@
+# Le service `pairing` de la pile (docker-compose.yml) : la CLI Tailscale seule, qui
+# parle au Tailscale de l'hôte par son socket monté — aucun démon dans la pile.
+ARG TAILSCALE_IMAGE=docker.io/tailscale/tailscale:v1.102.5
+FROM ${TAILSCALE_IMAGE}
+COPY omp-harness/deploy/container/stack-pairing /usr/local/bin/omp-harness-pairing
+ENTRYPOINT []
+CMD ["/usr/local/bin/omp-harness-pairing"]

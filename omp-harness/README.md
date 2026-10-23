@@ -135,8 +135,9 @@ l'app ensuite.
 ### Avec Portainer
 
 `docker-compose.yml`, à la racine du dépôt, monte tout le serveur sans terminal :
-le harness, sa mémoire, ses embeddings, et Tailscale en conteneur pour le publier sur
-ton tailnet. Il faut Docker sur l'hôte et Portainer qui le pilote.
+le harness, sa mémoire et ses embeddings. Il faut Docker sur l'hôte, Portainer qui le
+pilote, et Tailscale installé sur l'hôte et connecté (`tailscale up`) : la pile n'en
+embarque pas, elle se publie par celui de l'hôte.
 
 1. Dans Portainer : **Stacks › Add stack › Repository**. URL :
    `https://github.com/millianlmx/mem0-omp`, référence `refs/heads/main`, chemin du
@@ -146,7 +147,6 @@ ton tailnet. Il faut Docker sur l'hôte et Portainer qui le pilote.
    | Variable | Valeur |
    |---|---|
    | `ANTHROPIC_API_KEY` | la clé des agents (ou `OPENROUTER_API_KEY`) |
-   | `TS_AUTHKEY` | une clé d'auth Tailscale (admin Tailscale › Settings › Keys) |
    | `OMP_HARNESS_REPOS` | tes dépôts, séparés par des virgules : `git@github.com:toi/a.git,git@github.com:toi/b.git` |
 
 3. **Deploy the stack**. La première fois, la construction des images prend quelques
@@ -158,26 +158,31 @@ Ensuite, tout se lit dans les journaux des conteneurs :
   dépôt, case « Allow write access » cochée.
 - **`repos`** déclare les dépôts. Tant qu'une clé manque, il donne le lien GitHub où la
   poser et réessaie toutes les 30 s : rien à redéployer.
-- **`pairing`** affiche le code d'appairage `omp1:…`, à coller dans l'app ou avec
-  `/pair`. Sans `TS_AUTHKEY`, il affiche d'abord le lien de connexion à Tailscale.
-  Redémarre-le pour réafficher le code.
+- **`pairing`** publie le harness et sa mémoire sur le tailnet par le Tailscale de
+  l'hôte (son socket, `/var/run/tailscale`), puis affiche le code d'appairage `omp1:…`,
+  à coller dans l'app ou avec `/pair`. Si Tailscale manque ou n'est pas connecté sur
+  l'hôte, il le dit et attend. Redémarre-le pour réafficher le code.
 
 `setup`, `repos`, `runner-image` et `test-image` s'arrêtent une fois leur travail
 fait : l'état « exited » est normal. Le tailnet doit avoir MagicDNS et HTTPS activés,
-comme pour `harness.sh up`. Le serveur est servi sur `https://omp-harness.<tailnet>.ts.net`
-et la mémoire sur le port 8443 du même nom.
+comme pour `harness.sh up`. `pairing` règle le `tailscale serve` de l'hôte comme le
+ferait `harness.sh up` : le port 443 vers le harness, le port 8443 vers la mémoire, au
+nom de la machine sur le tailnet (`https://<vps>.<tailnet>.ts.net`). Si l'hôte sert
+déjà autre chose sur ces ports, pose `OMP_HARNESS_TAILSCALE_SERVE=0` et publie
+toi-même `127.0.0.1:8790` et `127.0.0.1:8321`.
 
 Les autres variables, facultatives :
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `OMP_HARNESS_HOSTNAME` | `omp-harness` | le nom du serveur sur le tailnet |
 | `OMP_HARNESS_ROOT` | `/var/lib/omp-harness` | les données, sur l'hôte |
 | `OMP_HARNESS_SECRETS` | `/var/lib/omp-harness-secrets` | les secrets, sur l'hôte (les clés LLM n'y sont lues que par les runners) |
 | `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
+| `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
+| `OMP_HARNESS_TAILSCALE_SERVE` | `1` | `0` : `pairing` ne touche pas au `tailscale serve` de l'hôte |
 
 Chaque redéploiement (**Pull and redeploy**, ou une variable changée) relit les
 variables : la clé du modèle et la liste des dépôts suivent, le jeton de la mémoire,
