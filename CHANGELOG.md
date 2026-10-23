@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.3.0 — 2026-10-23
+
+- feat(harness,ci): ports du tailnet réglables pour `pairing`, apps Mac et iOS jointes à chaque release (#258) (477afda)
+
 ## omp-harness 1.2.0 — 2026-10-23
 
 - feat(harness,console): connecter les abonnements des fournisseurs depuis les apps Mac et iOS (#255) (b252bab)
