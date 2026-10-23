@@ -12,7 +12,7 @@ import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import { loginArgv } from "../../omp-harness/oauth.ts";
-import { RpcRunner } from "../../omp-harness/rpc.ts";
+import { RpcRunner, RunnerExited } from "../../omp-harness/rpc.ts";
 import type { RunnerProcess } from "../../omp-harness/rpc.ts";
 import { fakeWorld, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
@@ -233,6 +233,9 @@ test("harness-oauth/AC-5 : l'omp de la connexion est celui des runners — en co
     assert.ok(flags.includes(flag), `${flag} absent`);
   const volumes = flags.flatMap((arg, i) => (arg === "--volume" ? [flags[i + 1]] : []));
   assert.deepEqual(volumes, ["/srv/omp/runner-home:/home/runner"], "ni worktree, ni clé, ni runner.env");
+  // omp ne démarre pas sans un modèle : la clé factice d'un fournisseur sans abonnement.
+  const envs = flags.flatMap((arg, i) => (arg === "--env" ? [flags[i + 1]] : []));
+  assert.deepEqual(envs, ["HOME=/home/runner", "GROQ_API_KEY=omp-harness-login"]);
   assert.deepEqual(line.args.slice(image + 1, image + 4), ["/usr/local/bin/omp", "--mode", "rpc"]);
   assert.ok(line.args.includes(config.runner.profile));
 
@@ -318,4 +321,29 @@ test("harness-oauth/AC-7 : un fournisseur `oauth` se déclare sans adresse ni cl
     assert.equal(keyed.status, 400);
     assert.match(String(keyed.body.error), /pas de clé/);
   });
+});
+
+test("harness-oauth/AC-8 : un omp qui refuse de démarrer nomme sa cause, même écrite hors trame sur sa sortie", async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  let exit: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
+  const proc: RunnerProcess = {
+    stdin: new PassThrough(),
+    stdout,
+    stderr,
+    kill: () => true,
+    once: (_event: string, listener: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+      exit = listener;
+    },
+    on: () => undefined,
+  } as unknown as RunnerProcess;
+  const runner = new RpcRunner(proc, { onHostTool: async () => ({ text: "" }), interactive: true });
+  stdout.write("No models available. Use /login or set an API key environment variable.\n");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(exit, "l'arrêt du process est écouté");
+  (exit as (code: number | null, signal: NodeJS.Signals | null) => void)(1, null);
+  await assert.rejects(
+    runner.ready(1000),
+    (err: Error) => err instanceof RunnerExited && /code 1, .*No models available/.test(err.message),
+  );
 });
