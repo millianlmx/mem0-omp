@@ -61,7 +61,7 @@ grep -rlE 'github\.com/[^/[:space:]]+/mem0-omp' . --exclude-dir=.git --exclude-d
 ./scripts/check.sh
 ```
 
-Cette commande liste exactement cinq fichiers — `README.md`,
+Cette commande liste exactement six fichiers — `README.md`, `omp-harness/README.md`,
 `.omp-plugin/marketplace.json`, `.claude-plugin/marketplace.json`,
 `omp-mem0-memory/package.json` et ce `PUBLISHING.md` — et c'est elle qui fait
 autorité : après une édition, relance-la plutôt que de te fier à cette liste.

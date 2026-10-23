@@ -1,0 +1,139 @@
+#!/bin/sh
+# Le harness déployé sans terminal (Portainer, ou `docker compose up -d` à la racine du
+# dépôt) : ce que `harness.sh up` et `harness.sh add` font en interactif, rejoué à
+# chaque démarrage de la pile, sans rien perdre. Les réglages viennent des variables
+# de la pile (docker-compose.yml) ; le jeton de la mémoire et la clé SSH, eux, ne
+# sont créés qu'une fois.
+#
+#   omp-harness-stack init    dossiers, secrets, config.json, clé SSH (service `setup`)
+#   omp-harness-stack repos   déclare les dépôts d'OMP_HARNESS_REPOS (service `repos`)
+set -eu
+
+ROOT="${OMP_HARNESS_ROOT:?OMP_HARNESS_ROOT manquant}"
+SECRETS="${OMP_HARNESS_SECRETS:?OMP_HARNESS_SECRETS manquant}"
+TEMPLATE="${OMP_HARNESS_TEMPLATE:-/opt/omp-harness/omp-harness/deploy/container/config.container.json}"
+MAIN="${OMP_HARNESS_MAIN:-/opt/omp-harness/omp-harness/main.ts}"
+RETRY="${OMP_HARNESS_REPOS_RETRY:-30}"
+
+die() { echo "✗ $*" >&2; exit 1; }
+setting() { [ ! -e "$2" ] || sed -n "s/^$1=//p" "$2" | tail -1; }
+
+# Les fichiers .env sont sourcés par les conteneurs : une valeur ne porte que des
+# caractères sans effet pour le shell.
+check_values() {
+  for name in OMLX_BASE_URL OMLX_API_TOKEN OMLX_LLM_MODEL OMLX_EMBED_MODEL EMBEDDING_DIMS \
+    ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
+    eval "value=\${$name:-}"
+    case "$value" in
+      *[!A-Za-z0-9_.:/~+=@-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
+    esac
+  done
+}
+
+cmd_init() {
+  check_values
+  umask 022
+  mkdir -p "$ROOT/state" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
+    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$SECRETS/harness" "$SECRETS/mem0"
+  chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/mem0" "$ROOT/home/.ssh"
+
+  # Le jeton de la mémoire, partagé par le service, mem0-rs et les runners : gardé.
+  token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0/mem0.env")"
+  [ -n "$token" ] || token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+
+  umask 077
+  printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness/harness.env"
+  {
+    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    printf 'OMLX_BASE_URL=%s\n' "${OMLX_BASE_URL:-http://embeddings:11434/v1}"
+    printf 'OMLX_API_TOKEN=%s\n' "${OMLX_API_TOKEN:-}"
+    printf 'OMLX_LLM_MODEL=%s\n' "${OMLX_LLM_MODEL:-qwen3-8b}"
+    printf 'OMLX_EMBED_MODEL=%s\n' "${OMLX_EMBED_MODEL:-bge-m3}"
+    printf 'EMBEDDING_DIMS=%s\n' "${EMBEDDING_DIMS:-1024}"
+  } > "$SECRETS/mem0/mem0.env"
+  # Les clés LLM ne vont qu'aux runners : le service ne les voit jamais.
+  {
+    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
+      eval "value=\${$name:-}"
+      [ -z "$value" ] || printf '%s=%s\n' "$name" "$value"
+    done
+  } > "$SECRETS/runner.env"
+  umask 022
+
+  [ -e "$ROOT/config.json" ] ||
+    sed -e "s|@ROOT@|$ROOT|g" -e "s|@SECRETS@|$SECRETS|g" "$TEMPLATE" > "$ROOT/config.json"
+
+  if [ ! -e "$ROOT/home/.ssh/id_ed25519" ]; then
+    ssh-keygen -q -t ed25519 -N '' -C "omp-harness@${OMP_HARNESS_HOSTNAME:-omp-harness}" -f "$ROOT/home/.ssh/id_ed25519"
+    # Premier contact : la clé d'hôte est retenue ; une clé qui change ensuite est refusée.
+    printf 'Host *\n  StrictHostKeyChecking accept-new\n  ConnectTimeout 20\n' > "$ROOT/home/.ssh/config"
+    chmod 0600 "$ROOT/home/.ssh/config"
+  fi
+
+  echo "✓ harness prêt dans $ROOT (secrets dans $SECRETS)"
+  grep -q '^[A-Z_]*API_KEY=.' "$SECRETS/runner.env" ||
+    echo "· Aucune clé de modèle : pose ANTHROPIC_API_KEY dans les variables de la pile, puis redéploie"
+  echo "· Clé SSH du service (clé de déploiement de tes dépôts, « Allow write access ») :"
+  echo
+  cat "$ROOT/home/.ssh/id_ed25519.pub"
+}
+
+# L'URL SSH d'un dépôt GitHub donné en HTTPS : la clé de déploiement ne sert qu'en SSH.
+ssh_url() {
+  case "$1" in
+    https://github.com/*) path="${1#https://github.com/}"; echo "git@github.com:${path%.git}.git" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+deploy_key_help() {
+  echo "  Pose la clé du service en clé de déploiement de $1, « Allow write access » cochée :"
+  slug="$(printf '%s' "$1" | sed -n 's#^git@github\.com:\(.*\)\.git$#\1#p')"
+  [ -z "$slug" ] || echo "  https://github.com/$slug/settings/keys/new"
+  echo "  $(cat "$ROOT/home/.ssh/id_ed25519.pub")"
+}
+
+# Le service relit config.json sans arrêter ses runs (SIGHUP). Il est retrouvé par les
+# étiquettes de la pile, quel que soit le nom que Portainer lui a donné.
+reload_harness() {
+  project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$(hostname)" 2>/dev/null)" || return 0
+  ids="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=harness)"
+  [ -z "$ids" ] || docker kill -s HUP $ids >/dev/null
+}
+
+# Réessaie toutes les $RETRY s les dépôts refusés : une clé de déploiement posée sur
+# GitHub suffit, la pile n'a pas à être redéployée.
+cmd_repos() {
+  pending="$(printf '%s' "${OMP_HARNESS_REPOS:-}" | tr ', ' '\n\n' | sed '/^$/d')"
+  [ -n "$pending" ] || { echo "· Aucun dépôt dans OMP_HARNESS_REPOS"; exit 0; }
+  round=0
+  while [ -n "$pending" ]; do
+    left=""
+    added=0
+    for url in $pending; do
+      url="$(ssh_url "$url")"
+      code=0
+      node --experimental-strip-types --disable-warning=ExperimentalWarning \
+        --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$MAIN" --config "$ROOT/config.json" --add-repo "$url" || code=$?
+      case "$code" in
+        0) added=1 ;;
+        3|4) left="$left $url"; [ $((round % 20)) -ne 0 ] || deploy_key_help "$url" ;;
+        *) left="$left $url" ;;
+      esac
+    done
+    [ "$added" = 0 ] || reload_harness
+    pending="$left"
+    [ -n "$pending" ] || break
+    [ "$round" -ne 0 ] || echo "· Nouvel essai toutes les ${RETRY} s :$pending"
+    round=$((round + 1))
+    sleep "$RETRY"
+  done
+  echo "✓ dépôts déclarés"
+}
+
+case "${1:-}" in
+  init) cmd_init ;;
+  repos) cmd_repos ;;
+  *) die "usage : omp-harness-stack init | repos" ;;
+esac

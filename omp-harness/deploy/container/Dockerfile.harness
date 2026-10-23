@@ -17,6 +17,7 @@ COPY omp-harness /opt/omp-harness/omp-harness
 COPY omp-mem0-memory /opt/omp-harness/omp-mem0-memory
 COPY omp-harness/deploy/container/omp-harness-check /usr/local/bin/omp-harness-check
 COPY omp-harness/deploy/container/harness-entrypoint /usr/local/bin/omp-harness-entrypoint
+COPY omp-harness/deploy/container/stack-setup /usr/local/bin/omp-harness-stack
 # L'entrée déclare l'uid du lancement (ssh en a besoin) : /etc/passwd lui est ouvert.
 RUN chmod o+w /etc/passwd
 ENV DOCKER_HOST=unix:///var/run/docker.sock

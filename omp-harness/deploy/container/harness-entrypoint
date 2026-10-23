@@ -7,6 +7,13 @@ set -eu
 if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
   echo "omp-harness:x:$(id -u):$(id -g):omp-harness:${HOME:-/tmp}:/bin/sh" >> /etc/passwd
 fi
+# La pile docker-compose.yml monte le jeton de la mémoire en fichier (il est créé au
+# démarrage, après la lecture du compose) : lu ici, jamais passé en argument.
+if [ -n "${OMP_HARNESS_ENV_FILE:-}" ] && [ -r "$OMP_HARNESS_ENV_FILE" ]; then
+  set -a
+  . "$OMP_HARNESS_ENV_FILE"
+  set +a
+fi
 if [ -n "${HOME:-}" ]; then
   export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -F $HOME/.ssh/config -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
 fi

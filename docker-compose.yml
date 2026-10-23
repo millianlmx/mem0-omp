@@ -1,0 +1,177 @@
+# Le serveur de pipelines en une pile, sans terminal : Portainer (Stacks › Add stack ›
+# Repository, l'URL de ce dépôt, ce fichier) ou `docker compose up -d` ici. Au premier
+# démarrage, `setup` crée les secrets, la configuration et la clé SSH ; les suivants
+# ne font que reprendre les variables ci-dessous. Le détail :
+# omp-harness/README.md § « Avec Portainer ».
+#
+# Variables de la pile, toutes facultatives sauf la clé du modèle :
+#   ANTHROPIC_API_KEY (ou OPENROUTER_API_KEY)  la clé des agents
+#   TS_AUTHKEY             une clé d'auth Tailscale ; sans elle, le lien de connexion
+#                          s'affiche dans les journaux du service `pairing`
+#   OMP_HARNESS_REPOS      les dépôts, séparés par des virgules (git@github.com:toi/dépôt.git)
+#   OMP_HARNESS_HOSTNAME   le nom sur le tailnet (omp-harness)
+#   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
+#   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
+#   OMLX_BASE_URL          un serveur d'embeddings à toi ; sinon l'Ollama de la pile
+#
+# Les chemins de données sont montés au MÊME endroit dans le service : il lance ses
+# runners et ses jobs de tests en conteneurs frères, qui montent un worktree par son
+# chemin sur l'hôte.
+
+x-harness-image: &harness-image
+  build:
+    context: .
+    dockerfile: omp-harness/deploy/container/Dockerfile.harness
+  image: omp-harness:local
+  # Construite depuis le dépôt, jamais tirée d'un registre.
+  pull_policy: build
+
+x-tailscale-image: &tailscale-image
+  build:
+    context: .
+    dockerfile: omp-harness/deploy/container/Dockerfile.tailscale
+  image: omp-harness-tailscale:local
+  pull_policy: build
+
+x-paths: &paths
+  OMP_HARNESS_ROOT: ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
+  OMP_HARNESS_SECRETS: ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}
+  HOME: ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/home
+
+services:
+  # Une fois par démarrage : dossiers, secrets (le jeton de la mémoire est gardé),
+  # config.json, clé SSH. Les autres services l'attendent.
+  setup:
+    <<: *harness-image
+    command: ["omp-harness-stack", "init"]
+    restart: "no"
+    environment:
+      <<: *paths
+      OMP_HARNESS_HOSTNAME: ${OMP_HARNESS_HOSTNAME:-omp-harness}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OMLX_BASE_URL: ${OMLX_BASE_URL:-}
+      OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
+      OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
+      EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}:${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}:${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}
+
+  harness:
+    <<: *harness-image
+    restart: unless-stopped
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      runner-image: { condition: service_completed_successfully }
+      test-image: { condition: service_completed_successfully }
+      mem0: { condition: service_started }
+    ports:
+      # La boucle locale seulement : le tailnet passe par le service `tailscale`.
+      - "127.0.0.1:${OMP_HARNESS_PORT:-8790}:8790"
+    environment:
+      <<: *paths
+      # Le jeton de la mémoire, rien d'autre : les clés LLM ne sont jamais montées ici.
+      OMP_HARNESS_ENV_FILE: /run/secrets/omp-harness/harness.env
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}:${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/config.json:/etc/omp-harness/config.json:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/harness:/run/secrets/omp-harness:ro
+      - ${OMP_HARNESS_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+
+  # Déclare les dépôts d'OMP_HARNESS_REPOS ; un dépôt refusé est réessayé toutes les
+  # 30 s, le temps de poser la clé de déploiement affichée dans ses journaux.
+  repos:
+    <<: *harness-image
+    command: ["omp-harness-stack", "repos"]
+    restart: "no"
+    depends_on:
+      harness: { condition: service_started }
+    environment:
+      <<: *paths
+      OMP_HARNESS_REPOS: ${OMP_HARNESS_REPOS:-}
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}:${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
+      - ${OMP_HARNESS_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+
+  mem0:
+    build: mem0-stack/mem0-rs
+    image: mem0-rs:local
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    # Ses réglages et son jeton, écrits par `setup` : lus au démarrage.
+    entrypoint: ["/bin/sh", "-c", "set -a && . /run/secrets/mem0/mem0.env && set +a && exec /usr/local/bin/mem0-rs --host 0.0.0.0 --port 8321"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${OMP_HARNESS_MEM0_PORT:-8321}:8321"
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/mem0:/data
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/run/secrets/mem0:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Les embeddings de la mémoire : un Ollama sur le CPU, et son modèle tiré une fois.
+  embeddings:
+    image: docker.io/ollama/ollama:0.12.6
+    restart: unless-stopped
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/ollama:/root/.ollama
+
+  embeddings-model:
+    image: docker.io/ollama/ollama:0.12.6
+    command: ["pull", "${OMLX_EMBED_MODEL:-bge-m3}"]
+    restart: on-failure
+    depends_on: [embeddings]
+    environment:
+      OLLAMA_HOST: http://embeddings:11434
+
+  # Le harness et sa mémoire en HTTPS sur ton tailnet (443 et 8443), sans port public.
+  tailscale:
+    <<: *tailscale-image
+    hostname: ${OMP_HARNESS_HOSTNAME:-omp-harness}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${OMP_HARNESS_HOSTNAME:-omp-harness}
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale:/var/lib/tailscale
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale-run:/var/run/tailscale
+
+  # Écrit le code d'appairage dans ses journaux dès que tout est prêt.
+  pairing:
+    <<: *tailscale-image
+    command: ["omp-harness-pairing"]
+    entrypoint: []
+    restart: on-failure
+    depends_on: [tailscale, harness]
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state:/state:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/tailscale-run:/var/run/tailscale
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/secrets:ro
+
+  # Les images que le service lance à la demande : construites ou tirées avec la
+  # pile, puis arrêtées (état « exited » : c'est normal).
+  runner-image:
+    build:
+      context: .
+      dockerfile: omp-harness/deploy/container/Dockerfile.runner
+    image: omp-harness-runner:local
+    pull_policy: build
+    restart: "no"
+
+  test-image:
+    image: docker.io/library/node:22-bookworm
+    command: ["true"]
+    restart: "no"
+
+networks:
+  default:
+    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `mem0`.
+    name: omp-harness

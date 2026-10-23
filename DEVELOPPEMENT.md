@@ -9,6 +9,7 @@ avant une PR sont dans [CONTRIBUTING.md](CONTRIBUTING.md), la publication dans
 ```
 mem0-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
+├── docker-compose.yml                 le serveur en une pile, pour Portainer (omp-harness/README.md § « Avec Portainer »)
 ├── omp-mem0-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
 ├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
 ├── omp-harness/                       le serveur de pipelines du VPS

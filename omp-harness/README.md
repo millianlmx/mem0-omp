@@ -8,11 +8,13 @@ garde pour toi. Les plugins et l'app OMP Console en sont les clients.
 
 ## Installer le serveur
 
-Deux façons, mêmes garanties : chaque agent et chaque job de tests est isolé, plafonné
+Trois façons, mêmes garanties : chaque agent et chaque job de tests est isolé, plafonné
 en mémoire, et les tests tournent sans réseau ni clé.
 
 - **En conteneurs** (Docker ou podman) : le même déploiement sur n'importe quel VPS
   et sur ton Mac, ce qui permet de changer de backend en une commande.
+- **Avec Portainer** : l'URL du dépôt dans Portainer, et la pile se monte seule, sans
+  terminal.
 - **Avec systemd** (Debian, Ubuntu, NixOS) : installé dans le système, sans moteur de
   conteneurs.
 
@@ -129,6 +131,65 @@ bash omp-harness/deploy/container/harness.sh disconnect   # retour au réglage p
 `connect` réécrit `~/.omp/harness.json` et `~/.omp/mem0.json` en gardant tes
 correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance omp et
 l'app ensuite.
+
+### Avec Portainer
+
+`docker-compose.yml`, à la racine du dépôt, monte tout le serveur sans terminal :
+le harness, sa mémoire, ses embeddings, et Tailscale en conteneur pour le publier sur
+ton tailnet. Il faut Docker sur l'hôte et Portainer qui le pilote.
+
+1. Dans Portainer : **Stacks › Add stack › Repository**. URL :
+   `https://github.com/millianlmx/mem0-omp`, référence `refs/heads/main`, chemin du
+   compose : `docker-compose.yml`.
+2. Dans **Environment variables**, au minimum :
+
+   | Variable | Valeur |
+   |---|---|
+   | `ANTHROPIC_API_KEY` | la clé des agents (ou `OPENROUTER_API_KEY`) |
+   | `TS_AUTHKEY` | une clé d'auth Tailscale (admin Tailscale › Settings › Keys) |
+   | `OMP_HARNESS_REPOS` | tes dépôts, séparés par des virgules : `git@github.com:toi/a.git,git@github.com:toi/b.git` |
+
+3. **Deploy the stack**. La première fois, la construction des images prend quelques
+   minutes.
+
+Ensuite, tout se lit dans les journaux des conteneurs :
+
+- **`setup`** affiche la clé SSH du service. Pose-la en clé de déploiement de chaque
+  dépôt, case « Allow write access » cochée.
+- **`repos`** déclare les dépôts. Tant qu'une clé manque, il donne le lien GitHub où la
+  poser et réessaie toutes les 30 s : rien à redéployer.
+- **`pairing`** affiche le code d'appairage `omp1:…`, à coller dans l'app ou avec
+  `/pair`. Sans `TS_AUTHKEY`, il affiche d'abord le lien de connexion à Tailscale.
+  Redémarre-le pour réafficher le code.
+
+`setup`, `repos`, `runner-image` et `test-image` s'arrêtent une fois leur travail
+fait : l'état « exited » est normal. Le tailnet doit avoir MagicDNS et HTTPS activés,
+comme pour `harness.sh up`. Le serveur est servi sur `https://omp-harness.<tailnet>.ts.net`
+et la mémoire sur le port 8443 du même nom.
+
+Les autres variables, facultatives :
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `OMP_HARNESS_HOSTNAME` | `omp-harness` | le nom du serveur sur le tailnet |
+| `OMP_HARNESS_ROOT` | `/var/lib/omp-harness` | les données, sur l'hôte |
+| `OMP_HARNESS_SECRETS` | `/var/lib/omp-harness-secrets` | les secrets, sur l'hôte (les clés LLM n'y sont lues que par les runners) |
+| `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
+| `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
+| `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
+| `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
+
+Chaque redéploiement (**Pull and redeploy**, ou une variable changée) relit les
+variables : la clé du modèle et la liste des dépôts suivent, le jeton de la mémoire,
+la clé SSH et `config.json` sont gardés. Pour la vérification, ouvre la console du
+conteneur `harness` et lance `omp-harness-check`. Les autres réglages (modèles,
+plafonds) se font dans `config.json`, sous `OMP_HARNESS_ROOT`, puis en redémarrant
+`harness`.
+
+Cette pile et `harness.sh up` ne cohabitent pas sur le même hôte : elles prennent les
+mêmes images, le même réseau et les mêmes ports. Le mode tout en local sur oMLX et la
+connexion des runners à un compte OMP (`harness.sh login`) restent propres à
+`harness.sh`.
 
 ### Avec systemd
 

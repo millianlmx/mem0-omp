@@ -79,6 +79,13 @@ bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.
 S'il ne peut pas pousser sur le dépôt, `add` te donne la clé de déploiement à
 coller sur GitHub, avec le lien, et attend.
 
+**Avec Portainer.** Ajoute une stack depuis le dépôt
+`https://github.com/millianlmx/mem0-omp` (fichier `docker-compose.yml`), avec
+`ANTHROPIC_API_KEY`, `TS_AUTHKEY` et `OMP_HARNESS_REPOS` dans ses variables. La pile se
+monte seule. La clé de déploiement s'affiche dans les journaux du conteneur `setup`,
+le code d'appairage dans ceux de `pairing`. Le détail :
+[omp-harness/README.md](omp-harness/README.md) § « Avec Portainer ».
+
 **Sans VPS.** Le même serveur tourne sur ton Mac avec oMLX, sans internet ni clé
 d'API. Lance oMLX (port 8000) avec un modèle de code et
 `bge-m3`, puis, dans le clone :

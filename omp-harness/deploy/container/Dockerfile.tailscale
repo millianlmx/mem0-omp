@@ -1,0 +1,12 @@
+# La publication de la pile (docker-compose.yml) sur ton tailnet, sans rien installer
+# sur l'hôte : Tailscale en conteneur, en espace utilisateur, qui sert le harness en
+# HTTPS sur 443 et la mémoire sur 8443 — les mêmes adresses que `harness.sh up`.
+ARG TAILSCALE_IMAGE=docker.io/tailscale/tailscale:v1.102.5
+FROM ${TAILSCALE_IMAGE}
+COPY omp-harness/deploy/container/tailscale-serve.json /etc/omp-harness/tailscale-serve.json
+COPY omp-harness/deploy/container/stack-pairing /usr/local/bin/omp-harness-pairing
+ENV TS_SERVE_CONFIG=/etc/omp-harness/tailscale-serve.json \
+    TS_STATE_DIR=/var/lib/tailscale \
+    TS_SOCKET=/var/run/tailscale/tailscaled.sock \
+    TS_USERSPACE=true \
+    TS_AUTH_ONCE=true
