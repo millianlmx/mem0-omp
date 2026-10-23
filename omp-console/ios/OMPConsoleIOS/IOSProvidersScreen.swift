@@ -3,9 +3,9 @@ import ConsoleCore
 import SwiftUI
 
 /// « Fournisseurs et modèles » sur iOS : un client admin déclare les fournisseurs
-/// LLM du serveur de pipelines (une clé, ou un service compatible OpenAI comme
-/// l'Ollama du VPS) et choisit les modèles de chaque niveau. Ouvert depuis la
-/// feuille « Serveur ».
+/// LLM du serveur de pipelines (une clé, un service compatible OpenAI comme
+/// l'Ollama du VPS, ou un abonnement connecté dans Safari) et choisit les modèles
+/// de chaque niveau. Ouvert depuis la feuille « Serveur ».
 ///
 /// Le modèle et les brouillons sont ceux de l'app, les mots du noyau
 /// (`PipelineServerText`) : aucun libellé en dur ici (`design-ios/AC-5`).
@@ -94,6 +94,9 @@ struct IOSProvidersScreen: View {
             } header: {
                 Text(PipelineServerText.providersSection)
             }
+            if let logins = server.loginProviders {
+                loginsSection(logins)
+            }
         }
         .formStyle(.grouped)
         .navigationTitle(PipelineServerText.providersTitle)
@@ -101,10 +104,12 @@ struct IOSProvidersScreen: View {
         .refreshable {
             await server.refreshProviders()
             if let read = server.providerCatalog { drafts.loadChains(read) }
+            await server.refreshLogins()
         }
         .task {
             await server.refreshProviders()
             if let read = server.providerCatalog { drafts.loadChains(read) }
+            await server.refreshLogins()
         }
         .sheet(item: $drafts.provider) { _ in
             IOSProviderForm(server: server, drafts: drafts)
@@ -129,7 +134,9 @@ struct IOSProvidersScreen: View {
             Text(PipelineServerText.providerLine(
                 kind: provider.kind,
                 models: provider.models.count,
-                key: PipelineServerText.keyState(hasKey: provider.hasKey, hint: provider.keyHint)
+                key: provider.isSubscription
+                    ? PipelineServerText.subscriptionKey
+                    : PipelineServerText.keyState(hasKey: provider.hasKey, hint: provider.keyHint)
             ))
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -141,6 +148,125 @@ struct IOSProvidersScreen: View {
         }
         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// Les abonnements : ceux déjà connectés, le choix d'un autre, et la connexion en cours.
+    @ViewBuilder
+    private func loginsSection(_ logins: [HarnessLoginProvider]) -> some View {
+        let open = HarnessDrafts.connectable(logins)
+        Section {
+            Text(PipelineServerText.loginsHint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if let login = server.login {
+                loginFlow(login, name: logins.first { $0.id == login.provider }?.name ?? login.provider)
+            }
+            ForEach(logins.filter(\.authenticated)) { provider in
+                Button {
+                    Task { await server.startLogin(provider.id) }
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(provider.name)
+                        Text(PipelineServerText.loginState(connected: true))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .disabled(server.login?.isFinished == false || server.isSavingProviders)
+                .accessibilityHint(Text(PipelineServerText.loginReconnect))
+                .accessibilityIdentifier("ios.providers.logins.reconnect.\(provider.id)")
+            }
+            if open.isEmpty {
+                Text(PipelineServerText.noLoginProvider)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker(PipelineServerText.loginsSection, selection: loginChoice(logins)) {
+                    ForEach(open) { provider in
+                        Text(provider.name).tag(provider.id)
+                    }
+                }
+                .accessibilityIdentifier("ios.providers.logins.choice")
+                Button(PipelineServerText.loginConnect) {
+                    guard let chosen = drafts.chosenLogin(in: logins) else { return }
+                    Task { await server.startLogin(chosen) }
+                }
+                .disabled(server.login?.isFinished == false || server.isSavingProviders)
+                .accessibilityIdentifier("ios.providers.logins.connect")
+            }
+        } header: {
+            Text(PipelineServerText.loginsSection)
+        }
+    }
+
+    /// Une connexion : la page à ouvrir dans Safari, le code à rapporter, puis son issue.
+    @ViewBuilder
+    private func loginFlow(_ login: HarnessLogin, name: String) -> some View {
+        Text(PipelineServerText.loginTitle(name))
+            .font(.headline)
+        if login.phase == .starting {
+            Text(PipelineServerText.loginStarting)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        if !login.isFinished, let link = login.link {
+            Link(PipelineServerText.loginOpen, destination: link)
+                .accessibilityIdentifier("ios.providers.logins.open")
+            Text(PipelineServerText.loginOpenHint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        if login.awaitsCode {
+            TextField(PipelineServerText.loginCodeLabel, text: $drafts.loginCode, prompt: Text(PipelineServerText.loginCodePrompt), axis: .vertical)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("ios.providers.logins.code")
+            Button(PipelineServerText.loginSend) {
+                Task {
+                    if await server.answerLogin(drafts.loginCode) { drafts.loginCode = "" }
+                }
+            }
+            .disabled(drafts.loginCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || server.isSavingProviders)
+            .accessibilityIdentifier("ios.providers.logins.send")
+        }
+        if login.phase == .verifying {
+            Text(PipelineServerText.loginVerifying)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        switch login.phase {
+        case .done:
+            Text(PipelineServerText.loginDone)
+                .font(.callout)
+        case .failed:
+            Text(PipelineServerText.loginFailed(login.error ?? ""))
+                .font(.callout)
+                .iosBanner(tone: .attention)
+            Text(PipelineServerText.loginTerminalHint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .cancelled:
+            Text(PipelineServerText.loginCancelled)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        default:
+            EmptyView()
+        }
+        if login.isFinished {
+            Button(PipelineServerText.loginClose) { server.dismissLogin() }
+                .accessibilityIdentifier("ios.providers.logins.close")
+        } else {
+            Button(PipelineServerText.loginCancel, role: .destructive) {
+                Task { await server.cancelLogin() }
+            }
+            .accessibilityIdentifier("ios.providers.logins.cancel")
+        }
+    }
+
+    private func loginChoice(_ logins: [HarnessLoginProvider]) -> Binding<String> {
+        Binding(get: { drafts.chosenLogin(in: logins) ?? "" }, set: { drafts.loginProvider = $0 })
     }
 
     private func chainBinding(_ tier: String) -> Binding<String> {
@@ -197,21 +323,23 @@ struct IOSProviderForm: View {
                 } footer: {
                     if draft.isCompatible { Text(PipelineServerText.compatibleHint) }
                 }
-                Section {
-                    SecureField(
-                        PipelineServerText.keyLabel,
-                        text: field(\.apiKey),
-                        prompt: Text(draft.keyHint.map(PipelineServerText.keepKeyPrompt) ?? PipelineServerText.keyPrompt)
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .disabled(draft.removeKey)
-                    .accessibilityIdentifier("ios.provider.key")
-                    if draft.keyHint != nil {
-                        Toggle(PipelineServerText.removeKey, isOn: field(\.removeKey))
+                if !draft.isSubscription {
+                    Section {
+                        SecureField(
+                            PipelineServerText.keyLabel,
+                            text: field(\.apiKey),
+                            prompt: Text(draft.keyHint.map(PipelineServerText.keepKeyPrompt) ?? PipelineServerText.keyPrompt)
+                        )
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .disabled(draft.removeKey)
+                        .accessibilityIdentifier("ios.provider.key")
+                        if draft.keyHint != nil {
+                            Toggle(PipelineServerText.removeKey, isOn: field(\.removeKey))
+                        }
+                    } header: {
+                        Text(PipelineServerText.keyLabel)
                     }
-                } header: {
-                    Text(PipelineServerText.keyLabel)
                 }
                 Section {
                     TextField(PipelineServerText.capacityLabel, text: field(\.capacity))

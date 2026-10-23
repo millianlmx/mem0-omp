@@ -23,7 +23,7 @@ import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
-import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS } from "./providers.ts";
+import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
 
@@ -38,6 +38,7 @@ export const API_FEATURES = [
   "repos",
   "reload",
   "providers",
+  "providers-oauth",
   "retry",
   "revert",
   "accept-all",
@@ -209,7 +210,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       providers: orchestrator.providers.list(),
       models,
       modelsSource: source,
-      kinds: [...Object.keys(KNOWN_PROVIDERS), COMPATIBLE],
+      kinds: [...Object.keys(KNOWN_PROVIDERS), COMPATIBLE, OAUTH],
       apis: COMPATIBLE_APIS,
     };
   };
@@ -448,6 +449,27 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       orchestrator.providers.remove(call.match[1] as string, call.actor.by);
       send(call.res, 200, { removed: call.match[1] });
     }),
+    // Les connexions OAuth (abonnements) : omp les mène chez les runners, l'app relaie le lien
+    // et le code. Les identifiants ne passent jamais par ici.
+    route("GET", "/v1/oauth", "admin", async (call) =>
+      send(call.res, 200, {
+        providers: await orchestrator.logins.providers(),
+        login: orchestrator.logins.active(),
+      }),
+    ),
+    route("POST", "/v1/oauth/{name}/login", "admin", (call) =>
+      send(call.res, 201, { login: orchestrator.logins.start(call.match[1] as string, call.actor.by) }),
+    ),
+    route("GET", "/v1/oauth/logins/{id}", "admin", (call) =>
+      send(call.res, 200, { login: orchestrator.logins.view(call.match[1] as string) }),
+    ),
+    route("POST", "/v1/oauth/logins/{id}/answer", "admin", async (call) => {
+      const body = await readBody(call.req);
+      send(call.res, 200, { login: orchestrator.logins.answer(call.match[1] as string, text(body, "value")) });
+    }),
+    route("DELETE", "/v1/oauth/logins/{id}", "admin", async (call) =>
+      send(call.res, 200, { login: await orchestrator.logins.cancel(call.match[1] as string) }),
+    ),
     route("PUT", "/v1/models", "admin", async (call) => {
       const body = await readBody(call.req);
       if (body.models !== null && (typeof body.models !== "object" || Array.isArray(body.models)))

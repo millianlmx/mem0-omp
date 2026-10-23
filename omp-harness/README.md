@@ -586,7 +586,7 @@ la fois (le Mac, l'iPhone, un collègue, une CI).
 |---|---|
 | `viewer` | lire : boîte, runs, projets, audits, statistiques, flux |
 | `operator` | lire, créer runs, projets et audits, faire les gestes (escalades, décisions, validations, annulation, priorité) |
-| `admin` | tout, plus gérer les clients (`/v1/clients`), les fournisseurs LLM et les modèles (`/v1/providers`, `/v1/models`) |
+| `admin` | tout, plus gérer les clients (`/v1/clients`), les fournisseurs LLM, les abonnements et les modèles (`/v1/providers`, `/v1/oauth`, `/v1/models`) |
 
 Un client borné à des dépôts ne voit rien des autres : listes et flux filtrés, 404
 sur un run d'ailleurs, 403 à la création. Le jeton historique (`tokenFile`) reste le
@@ -640,6 +640,18 @@ au serveur :
   modèles (`{id, contextWindow?, maxTokens?}`) et, au besoin, une clé
   (`VPS_OLLAMA_API_KEY`). Ils sont écrits dans le `models.yml` des runners.
 
+- **les abonnements** (`oauth`) — Claude Pro/Max, ChatGPT Plus/Pro, Gemini, Z.AI… :
+  aucune clé, une connexion OAuth menée depuis les apps (section « Abonnements »). omp
+  la déroule chez les runners (`omp --mode rpc --profile pipeline`, même image et même
+  HOME qu'eux) et confie à l'app deux gestes : ouvrir le lien dans un navigateur, puis
+  coller le code d'autorisation ou l'URL de retour. Les identifiants restent dans le
+  HOME des runners : ils ne passent ni par le service, ni par l'API, ni par la base.
+  Un abonnement qu'aucune chaîne ne pourrait nommer (`openai-codex`…) est déclaré
+  `oauth` à la connexion ; `anthropic` (Claude Pro/Max) garde sa sorte. Une connexion
+  à la fois ; en isolation systemd, elle se fait au terminal
+  (`sudo -u omp-runner -H omp --profile pipeline`, puis `/login`). Les fournisseurs
+  qu'omp ne sait connecter qu'au terminal (GitHub Copilot) rendent son message.
+
 Puis les chaînes : pour chaque tier (`fast`, `standard`, `heavy`), la liste ordonnée
 des `fournisseur/modèle` à essayer (bascule sur le suivant après un rate limit, un 5xx ou une panne réseau ; seul de sa chaîne, un fournisseur est réessayé après son `retry-after`). Une
 capacité et un remplissage par minute (`capacity`, `refillPerMinute`) donnent au
@@ -691,6 +703,9 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
 | `PUT /v1/models` `{models: {fast, standard, heavy} \| null}` | admin | Les chaînes de modèles de chaque tier (`[{provider, model}]`) ; `null` revient à celles de la configuration. |
+| `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
+| `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
+| `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle

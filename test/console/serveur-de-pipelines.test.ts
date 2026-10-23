@@ -250,6 +250,19 @@ test("serveur-de-pipelines/AC-5 : les apps Mac et iOS ouvrent « Fournisseurs et
   ])
     assert.ok(model.includes(route), `le client appelle ${route}`);
   assert.match(model, /isAdmin: Bool \{ client\?\.role == "admin" \}/);
+  // Les abonnements (connexion OAuth) : chaque route du client est servie, en admin.
+  const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
+  for (const [client, method, sample] of [
+    ['path: "/v1/oauth"', "GET", "/v1/oauth"],
+    ['"POST", "/v1/oauth/\\(id)/login"', "POST", "/v1/oauth/openai-codex/login"],
+    ['"POST", "/v1/oauth/logins/\\(current.id)/answer"', "POST", "/v1/oauth/logins/abc/answer"],
+    ['"DELETE", "/v1/oauth/logins/\\(current.id)"', "DELETE", "/v1/oauth/logins/abc"],
+    ['path: "/v1/oauth/logins/\\(id)"', "GET", "/v1/oauth/logins/abc"],
+  ] as const) {
+    assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
+    const served = routes.find((route) => route.method === method && route.pattern.test(sample));
+    assert.equal(served?.role, "admin", `le serveur ne sert pas ${method} ${sample} aux admins`);
+  }
   for (const [sheet, screen] of [
     ["Sources/OMPConsole/Server/ServerSheet.swift", "ProvidersView"],
     ["ios/OMPConsoleIOS/IOSServerSheet.swift", "IOSProvidersScreen"],

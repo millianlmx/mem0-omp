@@ -71,6 +71,8 @@ export class RpcRunner {
   readonly #proc: RunnerProcess;
   readonly #onHostTool: HostToolHandler;
   readonly #onFrame: (frame: Frame) => void;
+  /** Un humain répond aux demandes d'UI (connexion OAuth) : elles vont à `onFrame` au lieu d'être annulées. */
+  readonly #interactive: boolean;
   readonly #requests = new Map<string, Pending>();
   readonly #prompts = new Map<string, Pending>();
   readonly #toolCalls = new Map<string, AbortController>();
@@ -82,10 +84,14 @@ export class RpcRunner {
   readonly readyPromise: Promise<void>;
   readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 
-  constructor(proc: RunnerProcess, handlers: { onHostTool: HostToolHandler; onFrame?: (frame: Frame) => void }) {
+  constructor(
+    proc: RunnerProcess,
+    handlers: { onHostTool: HostToolHandler; onFrame?: (frame: Frame) => void; interactive?: boolean },
+  ) {
     this.#proc = proc;
     this.#onHostTool = handlers.onHostTool;
     this.#onFrame = handlers.onFrame ?? (() => {});
+    this.#interactive = handlers.interactive ?? false;
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.#ready = { resolve: () => resolve(), reject };
     });
@@ -197,6 +203,7 @@ export class RpcRunner {
       return;
     }
     if (
+      !this.#interactive &&
       type === "extension_ui_request" &&
       id !== null &&
       typeof frame.method === "string" &&
@@ -232,6 +239,15 @@ export class RpcRunner {
       },
       ...(result.isError ? { isError: true } : {}),
     });
+  }
+
+  /** La réponse à une demande d'UI (`interactive`) : une valeur, ou `null` pour l'annuler. */
+  respondUi(id: string, value: string | null): void {
+    this.#write(
+      value === null
+        ? { type: "extension_ui_response", id, cancelled: true }
+        : { type: "extension_ui_response", id, value },
+    );
   }
 
   /** Attend la trame `ready`, ou échoue au délai. */

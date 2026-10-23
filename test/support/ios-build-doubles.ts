@@ -10,7 +10,11 @@
 // `uname`). Par défaut `xcrun` ne connaît aucun simulateur, donc l'assemblage
 // complet se réduit à la compilation générique, comme sur un poste sans
 // simulateur iOS 26 ; avec `FAUX_SIMULATEUR=<udid>`, il en annonce un sur un
-// runtime iOS 26 et journalise `simctl boot`/`bootstatus`.
+// runtime iOS 26 et journalise `simctl boot`/`bootstatus`. Le script lance
+// `simctl boot` en arrière-plan juste avant `xcodebuild test` : la doublure de
+// `xcodebuild test` attend (5 s au plus) la ligne du démarrage avant d'écrire la
+// sienne, pour que le journal dise l'ordre des lancements, pas celui de
+// l'ordonnanceur. Un démarrage lancé après `xcodebuild` reste journalisé après.
 //
 // Ce module n'est pas un fichier de test (pas de suffixe `.test.ts`) : seuls les
 // tests l'importent.
@@ -62,7 +66,13 @@ case "$2" in
 esac
 exit 0`,
     python3: `exec '${python}' "$@"`,
-    xcodebuild: `printf 'xcodebuild %s\\n' "$*" >> '${journal}'
+    xcodebuild: `if [ "$1" = test ] && [ -n "\${FAUX_SIMULATEUR:-}" ]; then
+  for _ in $(seq 1 100); do
+    grep -q '^xcrun simctl boot ' '${journal}' 2>/dev/null && break
+    sleep 0.05
+  done
+fi
+printf 'xcodebuild %s\\n' "$*" >> '${journal}'
 case "$1" in
   -showsdks)
     printf 'iOS SDKs:\\n'

@@ -19,6 +19,7 @@ import { assertTransition, isTerminal } from "./machine.ts";
 import { Notifier } from "./notify.ts";
 import type { Oracle } from "./oracle.ts";
 import type { Exec } from "./proc.ts";
+import { OAuthLogins } from "./oauth.ts";
 import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
@@ -63,6 +64,8 @@ export class HarnessContext {
   readonly log: (line: string) => void;
   /** Les fournisseurs et chaînes de modèles déclarés par l'API (admin). */
   readonly providers: ProviderRegistry;
+  /** Les connexions OAuth des fournisseurs, menées depuis les apps (admin). */
+  readonly logins: OAuthLogins;
   /** Les notifications sortantes (ntfy), abonnées au journal : chaque pièce n'a rien à faire pour notifier. */
   readonly notifier: Notifier;
   #overlay: string | null = null;
@@ -81,6 +84,13 @@ export class HarnessContext {
       config: this.config,
       store: this.store,
       scheduler: this.scheduler,
+      log: this.log,
+    });
+    this.logins = new OAuthLogins({
+      config: this.config,
+      spawn: this.spawn,
+      exec: this.exec,
+      providers: this.providers,
       log: this.log,
     });
     this.notifier = new Notifier({ config: this.config, store: this.store, log: this.log });

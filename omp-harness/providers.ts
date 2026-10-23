@@ -1,12 +1,15 @@
 // Les fournisseurs LLM déclarés par l'API — depuis les apps Mac et iOS — et les chaînes
 // de modèles de chaque tier.
 //
-// Deux sortes de fournisseurs :
+// Trois sortes de fournisseurs :
 // - les fournisseurs CONNUS d'omp (Anthropic, OpenAI, OpenRouter, Google, Mistral, xAI) :
 //   leur nom est celui d'omp, leur clé passe par la variable qu'omp lit déjà ;
 // - les fournisseurs COMPATIBLES OPENAI (Ollama, vLLM, oMLX, LiteLLM…) : un nom libre,
 //   une adresse, des modèles, et une clé `<NOM>_API_KEY` ; ils sont déclarés aux runners
-//   dans leur `models.yml` (omp résout `apiKey` par le nom de la variable).
+//   dans leur `models.yml` (omp résout `apiKey` par le nom de la variable) ;
+// - les fournisseurs OAUTH (abonnements : `openai-codex`, `google-gemini-cli`…) : le nom
+//   du fournisseur OAuth d'omp, ni adresse ni clé — omp lit les identifiants que la
+//   connexion (oauth.ts) a posés chez les runners. Déclarés pour figurer dans les chaînes.
 //
 // Les clés n'entrent jamais en base ni dans une réponse de l'API : elles vivent dans
 // `providersEnvFile` (0600, au service), que la session d'un runner lit (isolation
@@ -36,6 +39,9 @@ export const KNOWN_PROVIDERS: Readonly<Record<string, string>> = {
 
 /** La sorte d'un fournisseur compatible OpenAI ; les autres portent le nom de leur sorte. */
 export const COMPATIBLE = "openai-compatible";
+
+/** La sorte d'un fournisseur connecté par OAuth (oauth.ts), sans clé ni adresse. */
+export const OAUTH = "oauth";
 
 /** Les protocoles qu'un fournisseur compatible peut parler (le `api` de models.yml). */
 export const COMPATIBLE_APIS = ["openai-completions", "openai-responses", "anthropic-messages"] as const;
@@ -211,19 +217,21 @@ export class ProviderRegistry {
     const known = KNOWN_PROVIDERS[name] !== undefined;
     if (known && input.kind !== name)
       throw new HarnessError(400, `kind : « ${name} » est un fournisseur connu d'omp, sa sorte est « ${name} »`);
-    if (!known && input.kind !== COMPATIBLE) {
+    if (!known && input.kind !== COMPATIBLE && input.kind !== OAUTH) {
       throw new HarnessError(
         400,
-        `kind : ${Object.keys(KNOWN_PROVIDERS).join(", ")} (nom identique), ou ${COMPATIBLE}`,
+        `kind : ${Object.keys(KNOWN_PROVIDERS).join(", ")} (nom identique), ${COMPATIBLE} ou ${OAUTH}`,
       );
     }
+    if (input.kind === OAUTH && input.apiKey !== undefined && input.apiKey.trim() !== "")
+      throw new HarnessError(400, "apiKey : un fournisseur oauth n'a pas de clé, il se connecte depuis les apps");
     if (name === LOCAL_PROVIDER)
       throw new HarnessError(409, `« ${LOCAL_PROVIDER} » est réservé à harness.sh up --omlx`);
     const previous = this.#store.getProvider(name);
     let baseUrl: string | null = null;
     let api: string | null = null;
     let models: ProviderModel[] = [];
-    if (!known) {
+    if (input.kind === COMPATIBLE) {
       baseUrl = (input.baseUrl ?? previous?.baseUrl ?? "").trim();
       if (!/^https?:\/\/[^\s"]+$/.test(baseUrl))
         throw new HarnessError(400, "baseUrl : l'adresse http(s) du service compatible OpenAI (…/v1)");
@@ -280,6 +288,16 @@ export class ProviderRegistry {
     this.#changed({ provider: name, change: "put", by });
     this.#log(`fournisseur ${name} déclaré${by ? ` par ${by}` : ""}`);
     return this.list().find((view) => view.name === name) as ProviderView;
+  }
+
+  /**
+   * Après une connexion OAuth réussie : un fournisseur qu'aucune chaîne ne pourrait encore
+   * nommer (ni connu d'omp, ni déclaré) est déclaré en `oauth`. Rien d'autre ne change.
+   */
+  adoptOAuth(name: string, by: string | null): void {
+    if (KNOWN_PROVIDERS[name] !== undefined || !NAME_PATTERN.test(name) || name === LOCAL_PROVIDER) return;
+    if (this.list().some((view) => view.name === name)) return;
+    this.put(name, { kind: OAUTH }, by);
   }
 
   /** Retire un fournisseur déclaré par l'API (refusé tant qu'une chaîne le nomme). */
