@@ -286,7 +286,7 @@ launch_runner() {
     env_dir="$RUNNER_ENV_DIR"
     install -d -m 0700 -o root -g root -- "$env_dir"
     # systemd ne lit le fichier qu'au démarrage du runner : quelques minutes après, il ne sert plus.
-    find "$env_dir" -maxdepth 1 -type f -name 'omp-runner-*.env' -mmin +5 -delete 2>/dev/null || true
+    find "$env_dir" -maxdepth 1 -type f -name 'omp-runner-*.env*' -mmin +5 -delete 2>/dev/null || true
   fi
   env_file="$env_dir/$unit.env"
   env_tmp="$env_file.tmp"

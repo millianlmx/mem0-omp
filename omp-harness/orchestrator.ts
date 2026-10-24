@@ -516,13 +516,16 @@ export class Orchestrator {
           this.#budgetStops.set(live.runId, due);
           live.abort.abort();
         });
-        let outcome: StepOutcome;
+        let outcome: StepOutcome | null = null;
         try {
           outcome = await this.#steps.execute(live, run);
+        } catch (err) {
+          // Arrêtée par la veille, l'étape qui lève n'est pas un crash : la feature attend l'humain.
+          if (!this.#budgetStops.has(live.runId)) throw err;
         } finally {
           release();
         }
-        if (live.abort.signal.aborted) {
+        if (live.abort.signal.aborted || outcome === null) {
           const stopped = this.#budgetStops.get(live.runId);
           this.#budgetStops.delete(live.runId);
           if (stopped) {
