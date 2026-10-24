@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.6.0 — 2026-10-24
+
+- feat(harness): sauvegardes de la base, santé réelle, flux SSE bornés, process tués par groupe (#266) (1661f23)
+
 ## omp-harness 1.5.0 — 2026-10-24
 
 - feat(harness): contradicteur aux portes de /req et /specs, specs gelées pour l'auto-merge, revue chez un autre fournisseur (#264) (521b12d)
