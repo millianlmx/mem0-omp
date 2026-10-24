@@ -14,13 +14,15 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { usesParMajeure } from "../support/workflows.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 const CHECK_FILE = ".github/workflows/check.yml";
 const SIMULATION_FILE = ".github/workflows/release-simulation.yml";
 
-const readFile = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8");
+/** Un fichier du dépôt ; un workflow a ses `uses:` épinglés ramenés à leur majeure (test/support/workflows.ts). */
+const readFile = (file: string) => usesParMajeure(fs.readFileSync(path.join(ROOT, file), "utf8"));
 /** Le YAML sans ses lignes de commentaire. */
 const uncommented = (yaml: string) => yaml.replace(/^\s*#.*$\n?/gm, "");
 

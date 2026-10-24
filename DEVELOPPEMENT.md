@@ -55,7 +55,7 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 | `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
 | `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
 | `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
-| `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts` |
+| `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts`, `prerequis.ts` (sauts « prérequis absent », outils épinglés), `workflows.ts` (lecture des workflows aux `uses:` épinglés) |
 
 Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
 `scripts/test-files.sh` les découvre récursivement. Un helper utile à plusieurs
@@ -201,6 +201,20 @@ mettrait à jour. Dans `release-simulation`, la copie jetable change de chemin �
 chaque run : l'étape de simulation pose `CARGO_TARGET_DIR` sur
 `${{ runner.temp }}/cargo-target`, cible stable que le cache restaure et que
 `check.sh`, `swift-app.sh` et les tests `test/stack/*` honorent.
+
+**Garde-fous des workflows.** Chaque workflow déclare `permissions:` au premier
+niveau — `contents: read` pour `check.yml`, dont aucun job n'écrit avec le
+`GITHUB_TOKEN` —, chaque job porte un `timeout-minutes` (30 pour les jobs de
+`check.yml`, sous le budget `--merge-timeout 2100` de la release, 10 pour
+l'agrégateur), et chaque action est épinglée par le sha de son commit, sa
+version en commentaire (`uses: actions/cache@<sha> # v6.1.0`).
+`.github/dependabot.yml` tient chaque semaine ces épingles, la crate
+`mem0-stack/mem0-rs` et les images des Dockerfile et des compose à jour,
+mineures et correctifs groupés en une PR ; jamais npm, dont les outils sont
+installés à une version exacte par les scripts. Les gardes de `test/outillage`
+lisent un `uses:` épinglé par sa version majeure (`test/support/workflows.ts`) :
+un bump mineur passe, un bump majeur d'action les fait rougir et se relit avec
+elles.
 
 Ces jobs pilotent `check.sh` par quatre options, que l'on peut aussi passer en
 local — sans option, toutes les sections et toute la suite tournent :

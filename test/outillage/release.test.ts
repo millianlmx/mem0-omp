@@ -55,6 +55,7 @@ import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
+import { lireWorkflow } from "../support/workflows.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 // Assemblé, jamais littéral : test/outillage/docs.test.ts calcule la liste des fichiers du
@@ -1087,7 +1088,7 @@ function workflowStepScript(yaml: string, name: string): string {
 }
 
 test("release/AC-2 : la publication n'utilise que le jeton dédié, et reprend une PR existante", (t) => {
-  const yaml = fs.readFileSync(path.join(ROOT, WORKFLOW), "utf8");
+  const yaml = lireWorkflow("release.yml");
 
   // (1) Le workflow : une seule identité, et la garde AVANT le checkout.
   assert.ok(yaml.includes("token: ${{ secrets.RELEASE_TOKEN }}"), "le checkout porte le jeton dédié");

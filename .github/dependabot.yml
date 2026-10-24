@@ -1,0 +1,71 @@
+# Mises à jour des dépendances, une PR groupée par écosystème et par semaine.
+#
+# - github-actions : chaque `uses:` des workflows est épinglé par le sha de son
+#   commit, la version en commentaire (`@<sha> # v4.4.0`) ; Dependabot tient les
+#   deux à jour. Une montée MINEURE ou CORRECTIVE passe les gardes de
+#   test/outillage (elles jugent la version majeure, test/support/workflows.ts) ;
+#   une montée MAJEURE arrive seule, et ses gardes sont à relire avec elle.
+# - cargo : la crate mem0-stack/mem0-rs (son Cargo.lock).
+# - docker / docker-compose : les images de base des Dockerfile et les images
+#   tierces des fichiers compose.
+#
+# Pas d'écosystème npm : le dépôt n'a aucun lockfile, et les outils (Biome,
+# TypeScript, hôte OMP) sont installés à une version EXACTE par les scripts
+# (lint.sh, typecheck.sh, check.yml) — c'est là qu'on les monte.
+#
+# Préfixes `ci` et `chore` : des types qui ne déclenchent aucune release
+# (PUBLISHING.md § Release automatique).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions-mineures:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /mem0-stack/mem0-rs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      cargo-mineures:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /mem0-stack/mem0-rs
+      - /omp-harness/deploy/container
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      images-mineures:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /mem0-stack
+      - /omp-harness/deploy/container
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      compose-mineures:
+        update-types: [minor, patch]

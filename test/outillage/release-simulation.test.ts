@@ -27,6 +27,7 @@ import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
+import { usesParMajeure } from "../support/workflows.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 const WORKFLOW = ".github/workflows/release-simulation.yml";
@@ -700,8 +701,7 @@ test("release-simulation/AC-6 : le statut du job est celui que PUBLISHING.md dé
   // Les assertions de forme portent sur le YAML, pas sur la prose : les
   // commentaires expliquent justement les pièges (`paths:`, jeton, smoke) et
   // nomment donc les chaînes qui ne doivent PAS apparaître dans la configuration.
-  const yaml = fs
-    .readFileSync(path.join(ROOT, WORKFLOW), "utf8")
+  const yaml = usesParMajeure(fs.readFileSync(path.join(ROOT, WORKFLOW), "utf8"))
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n");
