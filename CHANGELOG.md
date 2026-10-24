@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-memory 4.1.0 — 2026-10-24
+
+- feat(memory,stack): dédup sensible aux valeurs, rappel avec disjoncteur, secrets masqués par le serveur, instantanés de mem0-rs (#268) (2487c3a)
+
 ## omp-harness 1.6.0 — 2026-10-24
 
 - feat(harness): sauvegardes de la base, santé réelle, flux SSE bornés, process tués par groupe (#266) (1661f23)
