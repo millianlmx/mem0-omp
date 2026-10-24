@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.5.0 — 2026-10-24
+
+- feat(harness): contradicteur aux portes de /req et /specs, specs gelées pour l'auto-merge, revue chez un autre fournisseur (#264) (521b12d)
+
 ## omp-harness 1.4.0 — 2026-10-24
 
 - feat(harness,console): monitoring des features — session OMP en direct, coût, alertes, frise, fichiers, tests, santé, Live Activities et widget iOS (#262) (1c948e4)
