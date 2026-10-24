@@ -1,15 +1,24 @@
 // Déduplication : fusion à l'écriture (findSimilar/planMerge) et nettoyage rétroactif (/mem0-dedupe).
-import { mem0, memoryLine, rows } from "./mem0Client.ts";
+import { RECALL_THRESHOLD } from "./config.ts";
+import { mem0, memoryLine, rows, semanticScore } from "./mem0Client.ts";
 
-// Dedup à l'écriture. Le `score` sur lequel on filtre est celui renvoyé par mem0,
-// donc le score COMBINÉ (sémantique + bm25 normalisé) / nombre de signaux : depuis
-// l'activation de fastembed il n'est plus un cosinus, et un texte qui reprend les
-// mêmes mots-clés qu'un souvenir voisin y monte très haut sans dire la même chose.
+// Dedup à l'écriture. Plancher sur le COSINUS BRUT (`score_details.semantic_score`,
+// demandé avec `explain`) dès que le serveur le renvoie : le `score` est le score
+// COMBINÉ (sémantique + bm25 normalisé), qu'un texte reprenant les mêmes mots-clés
+// qu'un souvenir voisin fait monter très haut sans dire la même chose (cf.
+// RECALL_THRESHOLD dans config.ts). Un doublon est au moins « pertinent » au sens
+// du rappel : le plancher part de RECALL_THRESHOLD et le dépasse, plus haut encore
+// sur les paragraphes, qui parlent tous un peu de l'architecture du même projet.
+// Le garde-fou qui porte réellement reste lexical : sans recouvrement de tokens,
+// pas de concaténation, quel que soit le score.
+export const DEDUP_SEMANTIC = Math.max(RECALL_THRESHOLD, 0.6);
+
+export const DEDUP_SEMANTIC_LONG = 0.7;
+
+// Repli sur le score combiné, pour un serveur qui ne renvoie pas `score_details`.
 // 0.55 attrape les reformulations ; DEDUP_SCORE_LONG relève le plancher sur les
-// paragraphes, où deux faits sans rapport atteignent facilement 0.60-0.79 juste
-// parce qu'ils parlent d'architecture du même projet (constaté deux fois en audit).
-// Le garde-fou qui porte réellement est lexical : sans recouvrement de tokens, pas
-// de concaténation, quel que soit le score.
+// paragraphes, où deux faits sans rapport atteignent facilement 0.60-0.79 en
+// combiné (constaté deux fois en audit).
 export const DEDUP_SCORE = 0.55;
 
 export const DEDUP_CANDIDATES = 5;
@@ -61,6 +70,70 @@ export function contentTokens(s: string): Set<string> {
   return new Set(foldForCompare(s).split(" ").filter((w) => w.length > 3));
 }
 
+// Négations, courtes ou non : « n'utilise pas X » et « utilise X » ont les mêmes
+// mots de contenu, et « pas »/« not »/« no » passent sous le filtre des 4 lettres.
+export const NEGATIONS: ReadonlySet<string> = new Set([
+  "n", "ne", "pas", "non", "ni", "jamais", "sans", "aucun", "aucune",
+  "not", "no", "nor", "never", "none", "without", "cannot",
+]);
+
+/**
+ * Jetons DISCRIMINANTS d'un fait : ceux que `contentTokens` écarte ou noie, mais
+ * qui en changent le sens — tout mot qui porte un chiffre (« 3 », « 20 », « v2 »,
+ * « 1.2.3 », « es2023 », « m3 »), et les négations. Sans eux, « timeout 3 s »
+ * couvrait « timeout 20 s » : le correctif était jugé déjà en mémoire, ou
+ * concaténé à l'ancienne valeur. Les unités (« s », « ms ») ne comptent pas : un
+ * même nombre écrit « 3 s » ou « 3 secondes » ne doit pas passer pour un écart.
+ */
+export function discriminantTokens(s: string): Set<string> {
+  const folded = s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const out = new Set<string>();
+  // Un nombre décimal ou une version garde ses séparateurs (`1.5`, `1,5` → `1.5`).
+  for (const m of folded.matchAll(/[a-z0-9]*\d[a-z0-9]*(?:[.,]\d+)*/g)) out.add(m[0].replace(/,/g, "."));
+  for (const w of folded.replace(/[^a-z0-9]+/g, " ").split(" ")) if (NEGATIONS.has(w)) out.add(w);
+  // Contraction anglaise (« don't », « isn't ») : le pliage n'en laisse qu'un « t ».
+  if (/n['’]t\b/.test(folded)) out.add("not");
+  return out;
+}
+
+/** Jetons comparés par la dédup : le contenu, plus les discriminants. */
+export function dedupTokens(s: string): Set<string> {
+  const tokens = contentTokens(s);
+  for (const t of discriminantTokens(s)) tokens.add(t);
+  return tokens;
+}
+
+/** Mots de contenu hors négations : ce qui dit de QUOI parle le fait. */
+function subjectTokens(s: string): Set<string> {
+  const tokens = contentTokens(s);
+  for (const n of NEGATIONS) tokens.delete(n);
+  return tokens;
+}
+
+const hasDigit = (t: string) => /\d/.test(t);
+
+/**
+ * Le fait entrant contredit-il l'existant ? Même sujet (l'un couvre l'autre à
+ * DEDUP_CONTAINED près, négations exclues), mais des valeurs qui divergent dans
+ * les DEUX sens — l'ancien en porte que le nouveau n'a plus, et inversement : un
+ * fait qui se contente d'ajouter un nombre complète, il ne contredit pas — ou une
+ * polarité qui s'inverse (une négation d'un seul côté).
+ */
+export function contradicts(incoming: string, existing: string): boolean {
+  const a = subjectTokens(incoming);
+  const b = subjectTokens(existing);
+  if (Math.max(coverage(a, b), coverage(b, a)) < DEDUP_CONTAINED) return false;
+  const da = discriminantTokens(incoming);
+  const db = discriminantTokens(existing);
+  const numbers = (x: Set<string>, y: Set<string>) => [...x].some((t) => hasDigit(t) && !y.has(t));
+  if (numbers(da, db) && numbers(db, da)) return true;
+  const negated = (x: Set<string>) => [...x].some((t) => NEGATIONS.has(t));
+  return negated(da) !== negated(db);
+}
+
 /** Part des tokens de `a` présents dans `b`, dans [0,1]. */
 export function coverage(a: Set<string>, b: Set<string>): number {
   if (a.size === 0) return 1;
@@ -108,6 +181,9 @@ export function planDedupe(entries: DedupeEntry[], threshold: number): DedupePai
       // Le score est conservé : c'est lui qui justifie la suppression à l'écran.
       const cov = coverage(other.tokens, head.tokens);
       if (cov < threshold) continue;
+      // Deux faits qui se contredisent (« 3 s » / « 20 s ») ne sont pas des
+      // doublons : supprimer l'un garderait peut-être la valeur périmée.
+      if (contradicts(other.text, head.text)) continue;
       pairs.push({ keep: head, drop: other, cov });
       absorbed.add(other.id);
     }
@@ -147,15 +223,20 @@ export function renderDedupePreview(pairs: DedupePair[], threshold: number): str
 }
 
 export async function findSimilar(text: string, scope: string): Promise<Similar | null> {
-  // Pas de plancher serveur ici : la dédup applique le sien sur le score renvoyé,
-  // et un filtrage en amont masquerait des candidats utiles.
-  const res = await mem0.search(text, scope, DEDUP_CANDIDATES).catch(() => null);
+  // Pas de plancher serveur ici : la dédup applique le sien, et un filtrage en
+  // amont masquerait des candidats utiles. `explain` donne le cosinus brut.
+  const res = await mem0.search(text, scope, DEDUP_CANDIDATES, undefined, true).catch(() => null);
   if (!res) return null;
-  const floor = text.length >= DEDUP_LONG_CHARS ? DEDUP_SCORE_LONG : DEDUP_SCORE;
+  const long = text.length >= DEDUP_LONG_CHARS;
+  const candidates = rows(res);
+  // Le cosinus brut dès qu'une ligne en porte un ; sinon (serveur sans `explain`)
+  // le score combiné, avec ses planchers d'avant.
+  const semantic = candidates.some((m) => semanticScore(m) !== null);
+  const floor = semantic ? (long ? DEDUP_SEMANTIC_LONG : DEDUP_SEMANTIC) : long ? DEDUP_SCORE_LONG : DEDUP_SCORE;
   let best: Similar | null = null;
-  for (const m of rows(res)) {
+  for (const m of candidates) {
     const id = m?.id;
-    const score = typeof m?.score === "number" ? m.score : 0;
+    const score = semantic ? (semanticScore(m) ?? 0) : typeof m?.score === "number" ? m.score : 0;
     if (!id || score < floor) continue;
     if (!best || score > best.score) best = { id: String(id), text: memoryLine(m), score };
   }
@@ -165,14 +246,22 @@ export async function findSimilar(text: string, scope: string): Promise<Similar 
 export type MergeOutcome =
   | { action: "insert" }
   | { action: "skip"; target: Similar }
-  | { action: "update"; target: Similar; merged: string };
+  // `superseded` : le nouveau texte REMPLACE l'existant parce qu'il le contredit
+  // (valeur ou polarité changée) — l'ancien texte est dans `target.text`.
+  | { action: "update"; target: Similar; merged: string; superseded?: boolean };
 
 /**
  * Décide quoi faire d'un fait entrant face au souvenir le plus proche.
  *
+ * - le nouveau contredit l'existant     → il le remplace (valeur corrigée) ;
  * - l'existant couvre déjà le nouveau  → on n'écrit rien ;
  * - le nouveau couvre déjà l'existant  → il le remplace (formulation plus complète) ;
  * - les deux apportent quelque chose   → concaténation, l'existant d'abord.
+ *
+ * Les couvertures portent sur `dedupTokens` : un nombre ou une négation que
+ * l'existant n'a pas empêche de juger le nouveau « déjà couvert ». La
+ * contradiction passe AVANT tout : concaténer « 3 s » et « 20 s » ferait affirmer
+ * les deux valeurs au même souvenir.
  *
  * La concaténation est délibérément mécanique : elle est relue par l'agent, qui
  * peut la réécrire avec `mem0_update`. Faire arbitrer un LLM local ici
@@ -180,8 +269,11 @@ export type MergeOutcome =
  */
 export function planMerge(text: string, similar: Similar | null): MergeOutcome {
   if (!similar) return { action: "insert" };
-  const incoming = contentTokens(text);
-  const existing = contentTokens(similar.text);
+  if (contradicts(text, similar.text)) {
+    return { action: "update", target: similar, merged: text.slice(0, MERGED_MAX_CHARS), superseded: true };
+  }
+  const incoming = dedupTokens(text);
+  const existing = dedupTokens(similar.text);
   if (coverage(incoming, existing) >= DEDUP_CONTAINED) return { action: "skip", target: similar };
   if (coverage(existing, incoming) >= DEDUP_CONTAINED) {
     return { action: "update", target: similar, merged: text.slice(0, MERGED_MAX_CHARS) };

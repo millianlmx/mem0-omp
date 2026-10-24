@@ -23,10 +23,17 @@ export function writeFileAtomic(file: string, content: string): void {
 // Garde-fou secrets — best-effort avant toute écriture. Pas une garantie.
 // Familles couvertes : clés `sk-` (historique, Anthropic `sk-ant-api03-`, OpenAI
 // `sk-proj-`), GitHub `ghp_`/`github_pat_`, AWS `AKIA…`, JWT, `Bearer …`,
-// affectations `mot-de-passe : …`, jetons Slack `xoxb-`/`xoxp-`, blocs PEM de
-// clé privée entiers, et identifiants des URL `scheme://user:pass@host` (règle
-// dédiée, appliquée APRÈS la boucle). Un motif qui ne correspond pas laisse le
-// secret en clair : c'est le sens de « pas une garantie ».
+// affectations `mot-de-passe : …`, jetons Slack `xoxa-`/`xoxb-`/`xoxe-`/`xoxp-`,
+// blocs PEM de clé privée entiers, clés Stripe `sk_`/`rk_`, PAT GitLab `glpat-`,
+// jetons Hugging Face `hf_` et npm `npm_`, clés d'API Google `AIza…`, et
+// identifiants des URL `scheme://user:pass@host` (règle dédiée, appliquée APRÈS
+// la boucle). Un motif qui ne correspond pas laisse le secret en clair : c'est le
+// sens de « pas une garantie ».
+//
+// Le serveur mem0-rs applique les MÊMES motifs, dans le même ordre, à chaque
+// écriture (mem0-stack/mem0-rs/src/redaction.rs) : il couvre les clients qui
+// écrivent sans passer par ce plugin. Un motif ajouté ici s'ajoute là-bas, et
+// les cas partagés de mem0-stack/mem0-rs/tests/redaction-cas.json jugent les deux.
 // ---------------------------------------------------------------------------
 
 export const SECRET_PATTERNS = [
@@ -42,11 +49,24 @@ export const SECRET_PATTERNS = [
   /sk-proj-[A-Za-z0-9_-]{16,}/g,
   // PAT GitHub fine-grained — gitleaks `github-fine-grained-pat` (`github_pat_\w{82}`).
   /github_pat_[A-Za-z0-9_]{16,}/g,
-  // Jetons Slack bot (`xoxb-`) et utilisateur (`xoxp-`) — doc Slack « Tokens » : sections chiffrées séparées par `-`.
-  /xox[bp]-[A-Za-z0-9-]{10,}/g,
+  // Jetons Slack bot (`xoxb-`), utilisateur (`xoxp-`), d'application (`xoxa-`) et de
+  // rafraîchissement (`xoxe-`) — doc Slack « Tokens » : sections séparées par `-`.
+  /xox[abep]-[A-Za-z0-9-]{10,}/g,
   // Bloc PEM de clé privée ENTIER : la paire BEGIN/END est exigée, aucune borne de corps
   // (déviation assumée de gitleaks `private-key` : faux positif indolore, sous-masquage non).
   /-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----/g,
+  // Clés Stripe secrète (`sk_`) et restreinte (`rk_`) — gitleaks `stripe-access-token`.
+  // La clé publiable `pk_` n'est pas un secret.
+  /[rs]k_(?:live|test|prod)_[A-Za-z0-9]{10,}/g,
+  // PAT GitLab — gitleaks `gitlab-pat` (`glpat-[\w-]{20}`).
+  /glpat-[A-Za-z0-9_-]{20,}/g,
+  // Jeton Hugging Face — gitleaks `huggingface-access-token` (`hf_` + 34 lettres) ;
+  // sans `_` dans le corps, un identifiant `hf_hub_download` reste intact.
+  /hf_[A-Za-z0-9]{30,}/g,
+  // Jeton npm — gitleaks `npm-access-token` (`npm_` + 36 alphanumériques).
+  /npm_[A-Za-z0-9]{36,}/g,
+  // Clé d'API Google — gitleaks `gcp-api-key` (`AIza[\w-]{35}`).
+  /AIza[A-Za-z0-9_-]{35,}/g,
 ];
 
 // Identifiants d'URL `scheme://user:pass@host`. Groupe 1 = schéma + `://`, conservé ;

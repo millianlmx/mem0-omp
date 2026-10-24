@@ -707,3 +707,54 @@ async fn recherche_validation_filtres_et_limite() {
     ajouter(s, json!({"text":"","agent_id":AGENT})).await;
     assert!(chercher(s, json!({"query":"cerise","threshold":0,"limit":10})).await.iter().all(|l| l["memory"] != ""));
 }
+
+/// Masquage serveur (redaction) : add, add_procedure et PUT n'écrivent, n'embarquent
+/// et ne renvoient que le texte masqué — les clients qui écrivent sans le plugin
+/// (oracle du harness, apps) sont couverts. Le jeton est assemblé à l'exécution :
+/// d'un seul tenant dans le source, la push protection de GitHub le refuserait.
+#[tokio::test(flavor = "multi_thread")]
+async fn redaction_add_procedure_et_put_masquent_les_secrets() {
+    let b = banc("redaction", "").await;
+    let s = &b.serveur;
+    let stripe = format!("{}{}{}", "sk", "_live_", "AbCdEfGhIjKlMnOpQrStUvWx");
+    let secret = format!("Clé de paiement {stripe} et password=S3cretValue123 en clair");
+    let masque = "Clé de paiement [REDACTED] et [REDACTED] en clair";
+
+    let r = ok(&s.appeler("POST", "/memory/add", Some(&json!({"text":secret,"agent_id":AGENT,"infer":false}))).await);
+    assert_eq!(r["results"][0]["memory"], masque);
+    let id = r["results"][0]["id"].as_str().unwrap().to_owned();
+    let l = ligne(&tous(s, "").await, &id).clone();
+    assert_eq!((l["memory"].as_str(), l["hash"].as_str()), (Some(masque), Some(md5_hex(masque).as_str())));
+    assert_eq!(historique(s, &id).await[0]["new_memory"], masque);
+
+    let steps = format!("1. Exporter STRIPE={stripe}\n2. Lancer");
+    let r = ok(&s.appeler("POST", "/memory/add_procedure", Some(&json!({"steps":steps,"agent_id":AGENT}))).await);
+    assert_eq!(r["results"][0]["memory"], "1. Exporter STRIPE=[REDACTED]\n2. Lancer");
+
+    ok(&s.appeler("PUT", &format!("/memory/{id}"), Some(&json!({"text":format!("Remplacé : {stripe}")}))).await);
+    assert_eq!(ligne(&tous(s, "").await, &id)["memory"], "Remplacé : [REDACTED]");
+
+    let fuites: Vec<String> =
+        b.faux.textes().into_iter().filter(|t| t.contains(&stripe) || t.contains("S3cretValue123")).collect();
+    assert!(fuites.is_empty(), "secret envoyé à l'embedder : {fuites:?}");
+}
+
+/// Corps au-delà de `CORPS_MAX` (1 Mio) : 413 en JSON `{"detail"}`, sans embedding
+/// ni écriture ; un corps sous la borne passe.
+#[tokio::test(flavor = "multi_thread")]
+async fn corps_au_dela_d_un_mio_refuse_en_413() {
+    let b = banc("corps-max", "").await;
+    let s = &b.serveur;
+    let entetes = [("content-type", "application/json")];
+    let trop = format!(r#"{{"text":"{}","infer":false}}"#, "a".repeat(1024 * 1024));
+    for (methode, chemin) in [("POST", "/memory/add"), ("POST", "/memory/search"), ("PUT", "/memory/inconnu")] {
+        let r = s.envoyer(methode, chemin, Some(&trop), &entetes).await;
+        assert_eq!((r.statut, r.content_type.as_str()), (413, "application/json"), "{methode} {chemin} : {}", r.texte);
+        assert_eq!(r.json(), json!({"detail":"corps de requête au-delà de 1048576 octets"}));
+    }
+    assert_eq!(b.faux.appels(), 0, "aucun embedding pour un corps refusé");
+    assert_eq!(tous(s, "").await["total"], 0);
+    let juste = format!(r#"{{"text":"{}","infer":false}}"#, "a".repeat(512 * 1024));
+    ok(&s.envoyer("POST", "/memory/add", Some(&juste), &entetes).await);
+    assert_eq!(tous(s, "").await["total"], 1);
+}

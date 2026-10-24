@@ -2,6 +2,9 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
+
+use crate::sauvegarde::Politique;
 
 pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
         mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]";
@@ -99,6 +102,8 @@ pub struct Config {
     /// Secret : jamais imprimé. Vide = aucun contrôle.
     pub http_token: String,
     pub installation_token: String,
+    /// Instantanés périodiques de la base (`MEM0_BACKUP_INTERVAL_HOURS`, `MEM0_BACKUP_KEEP`).
+    pub sauvegarde: Politique,
 }
 
 impl std::fmt::Debug for Config {
@@ -109,6 +114,7 @@ impl std::fmt::Debug for Config {
             .field("llm_model", &self.llm_model)
             .field("embedding_dims", &self.embedding_dims)
             .field("db_path", &self.db_path)
+            .field("sauvegarde", &self.sauvegarde)
             .finish_non_exhaustive()
     }
 }
@@ -132,6 +138,19 @@ fn env_ou(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str) -> St
     }
 }
 
+/// Entier décimal sans signe d'une variable (défaut si absente ou blanche) ;
+/// `Err(message)` sinon, ou s'il est sous `min`.
+fn entier_env(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str, min: u64) -> Result<u64, String> {
+    let brut = env_ou(lire, nom, defaut);
+    brut.parse::<u64>()
+        .ok()
+        .filter(|&v| v >= min && brut.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or_else(|| {
+            let attendu = if min == 0 { "un entier positif ou nul" } else { "un entier positif" };
+            format!("{nom} doit être {attendu} (reçu « {brut} »)")
+        })
+}
+
 /// Lit la configuration ; `Err(message)` = erreur fatale (code 1).
 pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String> {
     let dims_brut = env_ou(&lire, "EMBEDDING_DIMS", "1024");
@@ -149,6 +168,12 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
             PathBuf::from(home).join(".mem0").join("mem0-rs.db")
         }
     };
+    let heures = entier_env(&lire, "MEM0_BACKUP_INTERVAL_HOURS", "24", 0)?;
+    let garder = entier_env(&lire, "MEM0_BACKUP_KEEP", "7", 1)?;
+    let sauvegarde = Politique {
+        intervalle: Duration::from_secs(heures.saturating_mul(3600)),
+        garder: usize::try_from(garder).unwrap_or(usize::MAX),
+    };
     Ok(Config {
         base_url: env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1"),
         embed_model: env_ou(&lire, "OMLX_EMBED_MODEL", "bge-m3"),
@@ -158,6 +183,7 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         db_path,
         http_token: lire("MEM0_HTTP_TOKEN").unwrap_or_default(),
         installation_token: lire("OMP_INSTALLATION_TOKEN").unwrap_or_default(),
+        sauvegarde,
     })
 }
 
@@ -274,6 +300,25 @@ mod tests {
             assert_eq!(e, format!("EMBEDDING_DIMS doit être un entier positif (reçu « {v} »)"));
         }
         assert_eq!(lire_env(env(&[("HOME", "/h"), ("EMBEDDING_DIMS", " 8 ")])).unwrap().embedding_dims, 8);
+    }
+
+    #[test]
+    fn instantanes_defauts_coupure_et_refus() {
+        let jour = Duration::from_secs(24 * 3600);
+        let c = lire_env(env(&[("HOME", "/h")])).unwrap();
+        assert_eq!(c.sauvegarde, Politique { intervalle: jour, garder: 7 });
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_BACKUP_INTERVAL_HOURS", " 0 "), ("MEM0_BACKUP_KEEP", "3")])).unwrap();
+        assert_eq!(c.sauvegarde, Politique { intervalle: Duration::ZERO, garder: 3 });
+        for (nom, v, attendu) in [
+            ("MEM0_BACKUP_INTERVAL_HOURS", "-1", "un entier positif ou nul"),
+            ("MEM0_BACKUP_INTERVAL_HOURS", "1.5", "un entier positif ou nul"),
+            ("MEM0_BACKUP_INTERVAL_HOURS", "+2", "un entier positif ou nul"),
+            ("MEM0_BACKUP_KEEP", "0", "un entier positif"),
+            ("MEM0_BACKUP_KEEP", "sept", "un entier positif"),
+        ] {
+            let e = lire_env(env(&[("HOME", "/h"), (nom, v)])).unwrap_err();
+            assert_eq!(e, format!("{nom} doit être {attendu} (reçu « {v} »)"));
+        }
     }
 
     #[test]

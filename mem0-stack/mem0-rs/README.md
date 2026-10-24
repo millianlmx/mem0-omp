@@ -48,6 +48,8 @@ bruts).
 | `MEM0_DB_PATH` | `$HOME/.mem0/mem0-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque |
 | `MEM0_HTTP_TOKEN` | `""` | jeton exigé dans `X-Mem0-Token` ; vide = aucun contrôle ; jamais imprimé |
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
+| `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart visé entre deux instantanés de la base, en heures ; `0` les coupe ; entier positif ou nul, sinon code 1 (§ Instantanés) |
+| `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés ; entier positif, sinon code 1 |
 
 Les variables `QDRANT_*` ne sont pas lues par le serveur. `mem0-rs import` lit
 `QDRANT_API_KEY` (en-tête `api-key`, envoyé seulement si non vide ; jamais en
@@ -81,7 +83,8 @@ et `<db>-journal` peuvent apparaître à côté, plus le verrou `<db>.lock`) :
   l'invite d'extraction, comme la table `messages` de mem0.
 
 Chaque écriture calcule son embedding avant, puis écrit souvenir, vecteurs, termes et
-historique dans une seule transaction. Aucun autre fichier n'est créé (ni
+historique dans une seule transaction. Hors des instantanés de `backups/`
+(§ Instantanés), aucun autre fichier n'est créé (ni
 `~/.mem0/history.db`, ni journal sur disque). Retour arrière : supprimer le fichier.
 
 Exclusivité : au démarrage, après l'écoute et avant d'ouvrir la base, le serveur
@@ -89,6 +92,54 @@ prend un verrou `flock` exclusif sur `<db>.lock` (créé si besoin, jamais suppr
 et le garde jusqu'à son arrêt. Un second serveur sur la même base sort en code 1 :
 `MEM0_DB_PATH=<db> est déjà servie par un autre processus mem0-rs (verrou <db>.lock)`.
 Le verrou tombe avec le processus : il n'est jamais périmé.
+
+## Instantanés
+
+Une base, un fichier : sans copie, une fausse manœuvre ou un disque qui lâche
+emporte toute la mémoire. Le serveur prend donc des instantanés par `VACUUM INTO`
+dans `backups/`, à côté de `MEM0_DB_PATH` (`/data/backups/` dans le conteneur,
+`mem0-rs-data/backups/` sur l'hôte avec le compose) :
+
+- nom `<base sans extension>-AAAAMMJJTHHMMSSZ.db` (UTC), par exemple
+  `mem0-rs-20261024T070509Z.db` ; écrit d'abord en `.db.tmp`, renommé une fois
+  complet ;
+- toutes les `min(MEM0_BACKUP_INTERVAL_HOURS, 1 h)`, le serveur regarde l'instantané
+  le plus récent du dossier, et n'en prend un que s'il a au moins
+  `MEM0_BACKUP_INTERVAL_HOURS` (ou s'il n'y en a aucun) : le rythme survit aux
+  redémarrages. Le premier contrôle a lieu une période après le démarrage, jamais
+  au démarrage ;
+- après chaque instantané, seuls les `MEM0_BACKUP_KEEP` plus récents sont gardés ;
+  un fichier du dossier qui n'a pas la forme d'un nom d'instantané n'est jamais
+  touché ;
+- un échec (disque plein, dossier non inscriptible) est écrit sur stderr
+  (`mem0-rs : instantané impossible : …`) et n'arrête pas le serveur.
+
+Un instantané est une base mem0-rs complète (vecteurs, termes, historique) :
+pour restaurer, arrêter le serveur, remplacer `MEM0_DB_PATH` par la copie (et
+supprimer `<db>-wal` et `<db>-shm`), puis redémarrer.
+
+## Écarts assumés au Python
+
+Trois comportements n'existaient pas dans mem0-http et ne changent rien pour un
+client correct :
+
+- **Corps borné** : au-delà de 1 Mio (`CORPS_MAX`), toute route rend 413
+  `{"detail":"corps de requête au-delà de 1048576 octets"}`, sans embedding ni
+  écriture. Le Python lisait un corps sans borne en mémoire.
+- **Jeton comparé en temps constant** : la durée du contrôle de `X-Mem0-Token` ne
+  dépend plus de la position du premier octet faux.
+- **Masquage des secrets** : `add` (infer ou non), `add_procedure` et `PUT`
+  masquent les secrets du texte AVANT l'embedding, l'invite d'extraction et
+  l'écriture — le `hash` est celui du texte masqué. Les familles et leur ordre sont
+  ceux de `redact` du plugin (`omp-mem0-memory/write.ts`), jeton `[REDACTED]` :
+  `src/redaction.rs`, jugé avec le plugin sur les cas partagés de
+  `tests/redaction-cas.json`. Le plugin masquait déjà ce qu'il envoie ; le serveur
+  couvre les clients qui écrivent sans lui (oracle du harness, apps OMP Console).
+  `mem0-rs import` recopie la source verbatim, sans masquage.
+
+`PUT` et `DELETE` sur un id inconnu rendent toujours le 500 de starlette, comme le
+Python : c'est un cas du contrat boîte noire (`suppression`, AC-9), et l'API ne
+porte pas de portée sur ces deux routes.
 
 ## Import depuis mem0-http
 

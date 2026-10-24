@@ -23,12 +23,18 @@ type UpdateParams = { memory_id: string; text: string };
 type ForgetParams = { memory_id: string };
 
 // Toute écriture périme le cache local et le sommaire : ils seront rechargés au
-// tour suivant. Le chemin `skip` n'écrit rien, donc n'invalide rien.
+// tour suivant. Le chemin `skip` n'écrit rien, donc n'invalide rien — mais il
+// remet quand même le compteur du checkpoint à zéro (`noted`) : l'agent a fait
+// ce que le checkpoint lui demande, le fait se trouvait déjà en mémoire.
+function noted(st: SessionState): void {
+  st.explorationSinceLastWrite = 0;
+}
+
 function wrote(st: SessionState): void {
   st.adds += 1;
   st.mem = null;
   st.index = null;
-  st.explorationSinceLastWrite = 0;
+  noted(st);
 }
 
 export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
@@ -167,6 +173,7 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       const plan = planMerge(text, similar);
 
       if (plan.action === "skip") {
+        noted(stateOf(rt, ctx));
         return {
           content: [
             {
@@ -179,6 +186,24 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
             },
           ],
           details: plan.target,
+        };
+      }
+
+      if (plan.action === "update" && plan.superseded) {
+        const result = await mem0.update(plan.target.id, plan.merged);
+        wrote(stateOf(rt, ctx));
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Souvenir remplacé (similarité ${plan.target.score.toFixed(2)}) — [${plan.target.id}] : ton texte ` +
+                `change une valeur ou une négation de l'existant, il le remplace au lieu de s'y ajouter.\n` +
+                `Avant : ${plan.target.text}\nAprès : ${plan.merged}\n\n` +
+                `Si l'ancien texte portait autre chose qui reste vrai, réécris l'entrée avec mem0_update.`,
+            },
+          ],
+          details: result,
         };
       }
 
@@ -226,10 +251,9 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       ctx: ExtensionContext,
     ) {
       const result = await mem0.update(params.memory_id, redact(params.text));
-      // Le texte a changé : cache local et sommaire sont périmés.
-      const st = stateOf(rt, ctx);
-      st.mem = null;
-      st.index = null;
+      // Une réécriture est une écriture : cache local et sommaire périmés, et
+      // compteur du checkpoint remis à zéro comme après mem0_add.
+      wrote(stateOf(rt, ctx));
       return { content: [{ type: "text", text: `Souvenir [${params.memory_id}] réécrit.` }], details: result };
     },
   });

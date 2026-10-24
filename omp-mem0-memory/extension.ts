@@ -28,7 +28,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { pinToolResult } from "./attach.ts";
 import { checkBrief } from "./brief.ts";
-import { countToolResult, pickSessionStopNudge } from "./checkpoint.ts";
+import { checkpointToolResult, countToolResult, pickSessionStopNudge } from "./checkpoint.ts";
 import { runnerMode, sessionNudgeEnabled } from "./config.ts";
 import { registerMem0Commands } from "./commands.ts";
 import { phaseStopContext } from "./phases.ts";
@@ -80,17 +80,18 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     return handleRecall(rt, event, ctx);
   });
 
-  // --- Compteurs par outil + agrafage --------------------------------------
+  // --- Compteurs par outil + agrafage + checkpoint --------------------------
   //
   // Aucun appel réseau ici : le matching se fait sur le cache chargé au premier
-  // tour. Le souvenir est posé EN TÊTE et le contenu original conservé
-  // intégralement — l'outil n'est jamais amputé de son résultat.
+  // tour. Le souvenir, puis le checkpoint quand le seuil est franchi, sont posés
+  // EN TÊTE et le contenu original conservé intégralement — l'outil n'est
+  // jamais amputé de son résultat.
   pi.on("tool_result", async (event, ctx) => {
     if (event.isError) return;
     const st = stateOf(rt, ctx);
     countToolResult(st, event.toolName);
     if (runnerMode()) return;
-    return pinToolResult(st, event);
+    return checkpointToolResult(st, event, pinToolResult(st, event));
   });
 
   // --- Fin de session : UNE continuation, deux décisions -------------------

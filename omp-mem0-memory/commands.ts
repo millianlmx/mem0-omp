@@ -6,7 +6,7 @@ import { BRIEF_REF_PATH, BRIEF_VERSION, checkBrief } from "./brief.ts";
 import { discussionNudgeText, nudgeText } from "./checkpoint.ts";
 import { GLOBAL_SCOPE, MEM0_HTTP_URL } from "./config.ts";
 import {
-  contentTokens,
+  dedupTokens,
   DEDUPE_SWEEP_CONTAINED,
   DEDUP_CONTAINED,
   findSimilar,
@@ -201,7 +201,7 @@ export function registerMem0Commands(pi: ExtensionAPI, rt: Mem0Runtime): void {
       const entries: DedupeEntry[] = all
         .map((m) => ({ id: String(m?.id ?? ""), text: memoryLine(m) }))
         .filter((e) => e.id)
-        .map((e) => ({ ...e, tokens: contentTokens(e.text) }));
+        .map((e) => ({ ...e, tokens: dedupTokens(e.text) }));
 
       const actions = planDedupe(entries, threshold);
 

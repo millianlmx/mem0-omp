@@ -132,10 +132,25 @@ export type Mem0Runtime = {
   states: Map<string, SessionState>;
   /** Statut du provisionnement du brief déjà calculé, par racine de projet. */
   provisioned: Map<string, BriefStatus>;
+  /** Santé du service vue par le rappel : budget froid ou chaud, disjoncteur. */
+  service: ServiceHealth;
+};
+
+/**
+ * Ce que le rappel automatique sait du service, partagé par les sessions de
+ * l'instance : c'est le même service pour toutes.
+ */
+export type ServiceHealth = {
+  /** une recherche du rappel a abouti depuis le dernier échec : budget chaud. */
+  warm: boolean;
+  /** horodatage (ms) avant lequel le rappel n'appelle pas le service ; 0 = fermé. */
+  downUntil: number;
+  /** message du dernier échec, repris dans la notice du disjoncteur. */
+  lastError: string | null;
 };
 
 export function createRuntime(): Mem0Runtime {
-  return { states: new Map(), provisioned: new Map() };
+  return { states: new Map(), provisioned: new Map(), service: { warm: false, downUntil: 0, lastError: null } };
 }
 
 // Forme de `ctx` telle qu'elle a bougé entre versions d'OMP : ce que `stateOf`
