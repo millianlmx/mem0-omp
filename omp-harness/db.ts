@@ -9,6 +9,7 @@ import type { FailCause, StepKind, RunState } from "./machine.ts";
 import type { Verdict } from "./verdict.ts";
 import type { DecisionCategory } from "./decisions.ts";
 import type { TestScope } from "./heavy.ts";
+import type { SessionEntry } from "./session-feed.ts";
 
 export type RunRow = {
   id: string;
@@ -148,6 +149,42 @@ export type TestRunRow = {
   cached: boolean;
   attempts: number;
   at: number;
+};
+
+/** Une ligne de consommation : un message d'agent d'un run ou d'un audit. */
+export type UsageRow = {
+  runId: string | null;
+  auditId: string | null;
+  repo: string | null;
+  step: string | null;
+  provider: string | null;
+  model: string | null;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  at: number;
+};
+
+/** Une somme de consommation. */
+export type UsageTotals = {
+  messages: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+};
+
+/** Un jeton push d'une app : une Live Activity (d'un run) ou l'appareil (`device`). */
+export type PushTokenRow = {
+  token: string;
+  kind: "activity" | "device";
+  runId: string | null;
+  client: string | null;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type ProjectRow = { id: string; repo: string; title: string; status: "active" | "done"; createdAt: number };
@@ -361,6 +398,46 @@ export const MIGRATIONS: readonly string[] = [
    ALTER TABLE runs ADD COLUMN last_review_sha TEXT;
    ALTER TABLE escalations ADD COLUMN recommended TEXT;
    ALTER TABLE escalations ADD COLUMN answer_reason TEXT;`,
+  // Le monitoring : le direct des sessions (rejouable), la consommation de chaque message
+  // d'agent (coût, jetons, modèle), et les jetons push des apps (Live Activities iOS).
+  `CREATE TABLE session_entries (
+     owner TEXT NOT NULL,
+     seq INTEGER NOT NULL,
+     at INTEGER NOT NULL,
+     step TEXT,
+     kind TEXT NOT NULL,
+     text TEXT NOT NULL,
+     tool TEXT,
+     status TEXT,
+     detail TEXT,
+     PRIMARY KEY (owner, seq)
+   ) WITHOUT ROWID;
+   CREATE INDEX session_entries_at ON session_entries (at);
+   CREATE TABLE usage (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     run_id TEXT,
+     audit_id TEXT,
+     repo TEXT,
+     step TEXT,
+     provider TEXT,
+     model TEXT,
+     input INTEGER NOT NULL DEFAULT 0,
+     output INTEGER NOT NULL DEFAULT 0,
+     cache_read INTEGER NOT NULL DEFAULT 0,
+     cache_write INTEGER NOT NULL DEFAULT 0,
+     cost REAL NOT NULL DEFAULT 0,
+     at INTEGER NOT NULL
+   );
+   CREATE INDEX usage_run ON usage (run_id);
+   CREATE INDEX usage_at ON usage (at);
+   CREATE TABLE push_tokens (
+     token TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,
+     run_id TEXT,
+     client TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );`,
 ];
 
 type SqlValue = string | number | null;
@@ -566,6 +643,54 @@ function providerOf(row: Row): ProviderRow {
     updatedAt: num(row, "updated_at"),
     updatedBy: strOrNull(row, "updated_by"),
   };
+}
+
+function usageOf(row: Row): UsageRow {
+  return {
+    runId: strOrNull(row, "run_id"),
+    auditId: strOrNull(row, "audit_id"),
+    repo: strOrNull(row, "repo"),
+    step: strOrNull(row, "step"),
+    provider: strOrNull(row, "provider"),
+    model: strOrNull(row, "model"),
+    input: num(row, "input"),
+    output: num(row, "output"),
+    cacheRead: num(row, "cache_read"),
+    cacheWrite: num(row, "cache_write"),
+    cost: num(row, "cost"),
+    at: num(row, "at"),
+  };
+}
+
+/** Le modèle d'une ligne de consommation : `fournisseur/modèle`, ou ce qui en est connu. */
+export function modelKey(row: Pick<UsageRow, "provider" | "model">): string {
+  if (row.provider && row.model) return `${row.provider}/${row.model}`;
+  return row.model ?? row.provider ?? "?";
+}
+
+/** La somme d'une liste de lignes de consommation. */
+export function sumUsage(rows: readonly UsageRow[]): UsageTotals {
+  const total: UsageTotals = { messages: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  for (const row of rows) {
+    total.messages++;
+    total.input += row.input;
+    total.output += row.output;
+    total.cacheRead += row.cacheRead;
+    total.cacheWrite += row.cacheWrite;
+    total.cost += row.cost;
+  }
+  total.cost = Math.round(total.cost * 1e6) / 1e6;
+  return total;
+}
+
+/** Les sommes par clé (étape, modèle, jour…). */
+export function groupUsage(rows: readonly UsageRow[], key: (row: UsageRow) => string): Record<string, UsageTotals> {
+  const groups = new Map<string, UsageRow[]>();
+  for (const row of rows) {
+    const name = key(row);
+    groups.set(name, [...(groups.get(name) ?? []), row]);
+  }
+  return Object.fromEntries([...groups].map(([name, list]) => [name, sumUsage(list)]));
 }
 
 function projectOf(row: Row): ProjectRow {
@@ -1180,6 +1305,18 @@ export class Store {
     );
   }
 
+  /** Les événements d'un type, des dépôts que voit le lecteur (le journal garde `events.retentionDays`). */
+  eventsOfType(type: string, repos: RepoFilter = null): EventRow[] {
+    if (repos !== null && repos.length === 0) return [];
+    const where = ["type = ?"];
+    const params: SqlValue[] = [type];
+    if (repos !== null) {
+      where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      params.push(...repos);
+    }
+    return this.#all(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(eventOf);
+  }
+
   /** Le dernier identifiant du journal (0 s'il est vide) : le curseur d'un abonnement qui ne veut que la suite. */
   lastEventId(): number {
     return num(this.#get("SELECT COALESCE(MAX(id), 0) AS id FROM events") as Row, "id");
@@ -1383,6 +1520,155 @@ export class Store {
       this.#now(),
       by,
     );
+  }
+
+  // -- direct des sessions -----------------------------------------------------
+
+  putSessionEntry(owner: string, entry: SessionEntry): void {
+    this.#run(
+      `INSERT INTO session_entries (owner, seq, at, step, kind, text, tool, status, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (owner, seq) DO UPDATE SET text = excluded.text, status = excluded.status, detail = excluded.detail`,
+      owner,
+      entry.seq,
+      entry.at,
+      entry.step,
+      entry.kind,
+      entry.text,
+      entry.tool,
+      entry.status,
+      entry.detail,
+    );
+  }
+
+  sessionEntries(owner: string, before: number | null, limit: number): SessionEntry[] {
+    return this.#all(
+      `SELECT * FROM (SELECT * FROM session_entries WHERE owner = ? AND (? IS NULL OR seq < ?) ORDER BY seq DESC LIMIT ?)
+       ORDER BY seq`,
+      owner,
+      before,
+      before,
+      limit,
+    ).map((row) => ({
+      seq: num(row, "seq"),
+      at: num(row, "at"),
+      step: strOrNull(row, "step"),
+      kind: str(row, "kind") as SessionEntry["kind"],
+      text: str(row, "text"),
+      tool: strOrNull(row, "tool"),
+      status: strOrNull(row, "status") as SessionEntry["status"],
+      detail: strOrNull(row, "detail"),
+    }));
+  }
+
+  lastSessionSeq(owner: string): number {
+    return num(
+      this.#get("SELECT COALESCE(MAX(seq), 0) AS seq FROM session_entries WHERE owner = ?", owner) as Row,
+      "seq",
+    );
+  }
+
+  /** La rétention du direct, celle du journal : les entrées plus vieilles que `before` partent. */
+  pruneSessions(before: number): number {
+    return Number(this.#run("DELETE FROM session_entries WHERE at < ?", before).changes);
+  }
+
+  // -- consommation -----------------------------------------------------------
+
+  addUsage(row: Omit<UsageRow, "at">): void {
+    this.#run(
+      `INSERT INTO usage (run_id, audit_id, repo, step, provider, model, input, output, cache_read, cache_write, cost, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.runId,
+      row.auditId,
+      row.repo,
+      row.step,
+      row.provider,
+      row.model,
+      row.input,
+      row.output,
+      row.cacheRead,
+      row.cacheWrite,
+      row.cost,
+      this.#now(),
+    );
+  }
+
+  /** La consommation d'un run : son total, par étape et par modèle. */
+  runUsage(runId: string): {
+    total: UsageTotals;
+    byStep: Record<string, UsageTotals>;
+    byModel: Record<string, UsageTotals>;
+  } {
+    const rows = this.#all("SELECT * FROM usage WHERE run_id = ? ORDER BY id", runId).map(usageOf);
+    return {
+      total: sumUsage(rows),
+      byStep: groupUsage(rows, (row) => row.step ?? "?"),
+      byModel: groupUsage(rows, (row) => modelKey(row)),
+    };
+  }
+
+  /** Le coût d'un run, en dollars. */
+  runCost(runId: string): number {
+    return num(this.#get("SELECT COALESCE(SUM(cost), 0) AS cost FROM usage WHERE run_id = ?", runId) as Row, "cost");
+  }
+
+  /** Le coût de chaque run de la liste qui a consommé quelque chose. */
+  runCosts(runIds: readonly string[]): Record<string, number> {
+    if (runIds.length === 0) return {};
+    const rows = this.#all(
+      `SELECT run_id, SUM(cost) AS cost FROM usage WHERE run_id IN (${runIds.map(() => "?").join(", ")}) GROUP BY run_id`,
+      ...runIds,
+    );
+    return Object.fromEntries(rows.map((row) => [str(row, "run_id"), Math.round(num(row, "cost") * 1e6) / 1e6]));
+  }
+
+  /** Les lignes de consommation depuis `since` (ms), filtrées par dépôt. */
+  usageSince(since: number, repos: RepoFilter = null): UsageRow[] {
+    if (repos !== null && repos.length === 0) return [];
+    const where = ["at >= ?"];
+    const params: SqlValue[] = [since];
+    if (repos !== null) {
+      where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      params.push(...repos);
+    }
+    return this.#all(`SELECT * FROM usage WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(usageOf);
+  }
+
+  // -- jetons push ------------------------------------------------------------
+
+  putPushToken(input: Pick<PushTokenRow, "token" | "kind" | "runId" | "client">): void {
+    const at = this.#now();
+    this.#run(
+      `INSERT INTO push_tokens (token, kind, run_id, client, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (token) DO UPDATE SET kind = excluded.kind, run_id = excluded.run_id, client = excluded.client,
+       updated_at = excluded.updated_at`,
+      input.token,
+      input.kind,
+      input.runId,
+      input.client,
+      at,
+      at,
+    );
+  }
+
+  deletePushToken(token: string): void {
+    this.#run("DELETE FROM push_tokens WHERE token = ?", token);
+  }
+
+  /** Les jetons push : ceux des Live Activities d'un run, ou ceux des appareils (`runId` absent). */
+  listPushTokens(filter: { kind: PushTokenRow["kind"]; runId?: string }): PushTokenRow[] {
+    const rows =
+      filter.runId !== undefined
+        ? this.#all("SELECT * FROM push_tokens WHERE kind = ? AND run_id = ?", filter.kind, filter.runId)
+        : this.#all("SELECT * FROM push_tokens WHERE kind = ?", filter.kind);
+    return rows.map((row) => ({
+      token: str(row, "token"),
+      kind: str(row, "kind") as PushTokenRow["kind"],
+      runId: strOrNull(row, "run_id"),
+      client: strOrNull(row, "client"),
+      createdAt: num(row, "created_at"),
+      updatedAt: num(row, "updated_at"),
+    }));
   }
 
   // -- lectures des statistiques --------------------------------------------

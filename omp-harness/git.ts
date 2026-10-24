@@ -16,6 +16,9 @@ import { parseCheckpointTrailer } from "./decisions.ts";
 
 export type GitIdentity = { authorName: string; authorEmail: string };
 
+/** Un fichier changé : `added`/`removed` valent `null` pour un binaire. */
+export type FileChange = { path: string; status: string; added: number | null; removed: number | null };
+
 /** Le dossier des artefacts d'étape dans un worktree : exclu de git, ingéré par le service. */
 export const ARTIFACTS_DIR = ".harness";
 
@@ -341,6 +344,66 @@ export class Git {
     return [
       ...new Set([...changed, ...untracked].filter((file) => file !== "" && !file.startsWith(`${ARTIFACTS_DIR}/`))),
     ].sort();
+  }
+
+  /**
+   * Les fichiers changés de `from` à `to` (`to` absent : le répertoire de travail, non
+   * suivis compris) : lignes ajoutées et retirées (`null` pour un binaire) et état —
+   * `A` ajouté, `M` modifié, `D` supprimé, `R` renommé. Les artefacts d'étape n'y sont pas.
+   */
+  async changes(cwd: string, from: string, to: string | null = null): Promise<FileChange[]> {
+    const range = to === null ? [from] : [from, to];
+    const status = new Map<string, string>();
+    for (const line of (await this.run(cwd, ["diff", "--name-status", "--no-renames", ...range])).split("\n")) {
+      const [code, file] = line.split("\t");
+      if (code && file) status.set(file, code.charAt(0));
+    }
+    const changes: FileChange[] = [];
+    for (const line of (await this.run(cwd, ["diff", "--numstat", "--no-renames", ...range])).split("\n")) {
+      const [added, removed, file] = line.split("\t");
+      if (added === undefined || removed === undefined || !file || file.startsWith(`${ARTIFACTS_DIR}/`)) continue;
+      changes.push({
+        path: file,
+        status: status.get(file) ?? "M",
+        added: added === "-" ? null : Number(added),
+        removed: removed === "-" ? null : Number(removed),
+      });
+    }
+    if (to === null) {
+      for (const file of (await this.run(cwd, ["ls-files", "--others", "--exclude-standard"])).split("\n")) {
+        if (file === "" || file.startsWith(`${ARTIFACTS_DIR}/`)) continue;
+        let lines: number | null = null;
+        try {
+          const content = fs.readFileSync(path.join(cwd, file));
+          // Un binaire (octet nul) n'a pas de lignes ; sinon, les sauts de ligne, plus une dernière ligne sans saut.
+          const text = content.toString("utf8");
+          lines = content.includes(0) ? null : text.split("\n").length - (text.endsWith("\n") || text === "" ? 1 : 0);
+        } catch {
+          lines = null;
+        }
+        changes.push({ path: file, status: "A", added: lines, removed: 0 });
+      }
+    }
+    return changes.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  /** Les différences unifiées d'un fichier de `from` à `to` (`to` absent : le répertoire de travail, un fichier non suivi compris). */
+  async fileDiff(cwd: string, from: string, to: string | null, file: string): Promise<string> {
+    const range = to === null ? [from] : [from, to];
+    const tracked = await this.raw(cwd, ["diff", "--no-color", "--no-ext-diff", ...range, "--", file]);
+    if (tracked.code !== 0) throw new GitError(["diff", ...range, "--", file], tracked);
+    if (tracked.stdout !== "" || to !== null) return tracked.stdout;
+    // Un fichier non suivi : comparé à rien (git sort en 1 quand il y a des différences).
+    const untracked = await this.raw(cwd, [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-index",
+      "--",
+      "/dev/null",
+      file,
+    ]);
+    return untracked.code === 0 || untracked.code === 1 ? untracked.stdout : "";
   }
 
   /**

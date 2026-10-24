@@ -78,7 +78,7 @@ struct IOSSessionSheet: View {
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.runId == run.id ? server.session : nil
+        server.session?.target == .run(run.id) ? server.session : nil
     }
 
     private var entries: [HarnessSessionEntry] { feed?.entries ?? [] }

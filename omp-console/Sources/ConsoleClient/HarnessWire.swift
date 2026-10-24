@@ -394,12 +394,15 @@ public struct HarnessStats: Codable, Equatable, Sendable {
         public var cached: Int
         public var byOutcome: [String: Int]
         public var retried: Int
+        /// Les commandes instables (vertes après un rouge) ; absent d'un serveur plus ancien.
+        public var flaky: [HarnessFlakyTest]?
 
-        public init(total: Int = 0, cached: Int = 0, byOutcome: [String: Int] = [:], retried: Int = 0) {
+        public init(total: Int = 0, cached: Int = 0, byOutcome: [String: Int] = [:], retried: Int = 0, flaky: [HarnessFlakyTest]? = nil) {
             self.total = total
             self.cached = cached
             self.byOutcome = byOutcome
             self.retried = retried
+            self.flaky = flaky
         }
     }
 
@@ -433,8 +436,12 @@ public struct HarnessStats: Codable, Equatable, Sendable {
     public var escalations: [String: Int]
     public var audits: [String: Int]
     public var scheduler: Scheduler
+    /// La consommation des agents ; absente d'un serveur plus ancien.
+    public var usage: HarnessUsageStats?
+    /// La comparaison des modèles ; absente d'un serveur plus ancien.
+    public var models: [HarnessModelStats]?
 
-    public init(runs: Runs = Runs(), steps: [String: HarnessStepStats] = [:], tests: Tests = Tests(), decisions: [String: Int] = [:], escalations: [String: Int] = [:], audits: [String: Int] = [:], scheduler: Scheduler = Scheduler()) {
+    public init(runs: Runs = Runs(), steps: [String: HarnessStepStats] = [:], tests: Tests = Tests(), decisions: [String: Int] = [:], escalations: [String: Int] = [:], audits: [String: Int] = [:], scheduler: Scheduler = Scheduler(), usage: HarnessUsageStats? = nil, models: [HarnessModelStats]? = nil) {
         self.runs = runs
         self.steps = steps
         self.tests = tests
@@ -442,6 +449,8 @@ public struct HarnessStats: Codable, Equatable, Sendable {
         self.escalations = escalations
         self.audits = audits
         self.scheduler = scheduler
+        self.usage = usage
+        self.models = models
     }
 }
 
@@ -455,21 +464,27 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
     public var audits: [HarnessAudit]
     /// Le dernier événement du journal : le flux s'abonne à partir de là.
     public var cursor: Int
+    /// Les alertes en cours de la veille du serveur (agent muet, étape lente…).
+    public var alerts: [HarnessAlert]
+    /// Le coût de chaque feature listée qui a consommé quelque chose, en dollars.
+    public var costs: [String: Double]
 
-    public init(batches: [HarnessEscalationBatch] = [], awaiting: [HarnessRun] = [], decisions: [HarnessDecision] = [], runs: [HarnessRun] = [], audits: [HarnessAudit] = [], cursor: Int = 0) {
+    public init(batches: [HarnessEscalationBatch] = [], awaiting: [HarnessRun] = [], decisions: [HarnessDecision] = [], runs: [HarnessRun] = [], audits: [HarnessAudit] = [], cursor: Int = 0, alerts: [HarnessAlert] = [], costs: [String: Double] = [:]) {
         self.batches = batches
         self.awaiting = awaiting
         self.decisions = decisions
         self.runs = runs
         self.audits = audits
         self.cursor = cursor
+        self.alerts = alerts
+        self.costs = costs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case batches, awaiting, decisions, runs, audits, cursor
+        case batches, awaiting, decisions, runs, audits, cursor, alerts, costs
     }
 
-    /// Un serveur plus ancien n'écrit pas `audits` : la liste est alors vide.
+    /// Un serveur plus ancien n'écrit ni `audits`, ni `alerts`, ni `costs` : ils sont alors vides.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         batches = try container.decode([HarnessEscalationBatch].self, forKey: .batches)
@@ -478,7 +493,12 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
         runs = try container.decode([HarnessRun].self, forKey: .runs)
         audits = try container.decodeIfPresent([HarnessAudit].self, forKey: .audits) ?? []
         cursor = try container.decode(Int.self, forKey: .cursor)
+        alerts = try container.decodeIfPresent([HarnessAlert].self, forKey: .alerts) ?? []
+        costs = try container.decodeIfPresent([String: Double].self, forKey: .costs) ?? [:]
     }
+
+    /// Les alertes en cours d'une feature.
+    public func alerts(of runId: String) -> [HarnessAlert] { alerts.filter { $0.runId == runId } }
 
     /// Les runs dont les SPECS attendent la validation (avant /impl).
     public var specsAwaiting: [HarnessRun] { awaiting.filter(\.awaitsSpecs) }
@@ -525,10 +545,17 @@ public struct HarnessArtifact: Codable, Equatable, Sendable {
 public struct HarnessRunView: Codable, Equatable, Sendable {
     public var run: HarnessRun
     public var artifacts: [HarnessArtifact]
+    /// La consommation du run ; absente d'un serveur plus ancien.
+    public var usage: HarnessRunUsage?
+    public var budget: HarnessBudget?
+    public var alerts: [HarnessAlert]?
 
-    public init(run: HarnessRun, artifacts: [HarnessArtifact] = []) {
+    public init(run: HarnessRun, artifacts: [HarnessArtifact] = [], usage: HarnessRunUsage? = nil, budget: HarnessBudget? = nil, alerts: [HarnessAlert]? = nil) {
         self.run = run
         self.artifacts = artifacts
+        self.usage = usage
+        self.budget = budget
+        self.alerts = alerts
     }
 
     public func artifact(_ name: String) -> String? { artifacts.first { $0.name == name }?.content }

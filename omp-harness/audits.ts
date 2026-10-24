@@ -15,6 +15,7 @@ import { auditPrompt } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
+import { auditOwner } from "./session-feed.ts";
 
 export type AuditorHooks = {
   createProject: (
@@ -257,6 +258,7 @@ export class Auditor {
       {
         onHostTool: (name, args) => this.#hostTool(audit, live, name, args),
         event: (type, payload) => this.#ctx.event(type, null, { auditId: audit.id, ...payload }, audit.repo),
+        frame: (frame) => this.#ctx.sessions.frame(auditOwner(audit.id), "audit", frame),
       },
     );
     live.session = session;
@@ -402,6 +404,11 @@ export class Auditor {
       });
       if (requeued) this.#event(requeued);
     }
+  }
+
+  /** L'audit est analysé en ce moment (un agent peut écrire dans son direct). */
+  isLive(id: string): boolean {
+    return this.#live.has(id);
   }
 
   async stop(): Promise<void> {

@@ -23,6 +23,7 @@ import type { Store } from "./db.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Git } from "./git.ts";
+import type { TestOutputSink } from "./test-feed.ts";
 
 export type TestScope = "touched" | "full" | "check";
 
@@ -305,9 +306,16 @@ export class HeavyRunner {
   readonly #deps: HeavyDeps;
   readonly #flights = new Map<string, Flight>();
   #seq = 0;
+  /** Le récepteur de la sortie en direct des jobs (posé par le contexte du service). */
+  #output: TestOutputSink | null = null;
 
   constructor(deps: HeavyDeps) {
     this.#deps = deps;
+  }
+
+  /** Branche la sortie en direct des jobs. */
+  attachOutput(sink: TestOutputSink): void {
+    this.#output = sink;
   }
 
   /** La clé de cache de la scope sur l'arbre COURANT du worktree, ou `null` si rien à tester. */
@@ -451,6 +459,9 @@ export class HeavyRunner {
     for (;;) {
       attempts++;
       last = await this.#attempt(job, id, attempts, signal);
+      // Un rouge suivi d'un vert sur le même arbre : un test instable, compté dans les statistiques.
+      if (last.outcome === "pass" && failRetried)
+        store.appendEvent("heavy_flaky", job.runId, { scope: job.scope, command: id.command, repo: job.repo.name });
       if (last.outcome === "fail" && !failRetried) {
         failRetried = true;
         store.appendEvent("heavy_fail_retry", job.runId, {
@@ -496,6 +507,7 @@ export class HeavyRunner {
     const argv = heavyArgv(config, job.worktree, unit, id.command, id.env, job.repo);
     store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt, unit });
     const started = now();
+    const liveJob = this.#output?.start(job.runId, job.scope, attempt) ?? null;
     let result: ProcResult;
     try {
       result = await exec(argv.command, argv.args, {
@@ -505,6 +517,7 @@ export class HeavyRunner {
         timeoutMs: (config.heavy.timeoutSec + (config.heavy.isolation === "container" ? 0 : 30)) * 1000,
         maxBytes: OUTPUT_TAIL,
         signal,
+        ...(liveJob !== null ? { onOutput: (chunk: string) => this.#output?.append(liveJob, chunk) } : {}),
       });
     } finally {
       // Un client tué (délai, arrêt) laisse son unité ou son conteneur vivant : il part avec le slot.
@@ -513,6 +526,7 @@ export class HeavyRunner {
       slot.release();
     }
     const outcome = classify(result);
+    if (liveJob !== null) this.#output?.finish(liveJob, outcome);
     const output = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.slice(-OUTPUT_TAIL);
     store.appendEvent("heavy_done", job.runId, { scope: job.scope, attempt, outcome, exitCode: result.code });
     return {

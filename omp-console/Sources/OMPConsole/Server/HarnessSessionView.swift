@@ -45,7 +45,7 @@ struct HarnessSessionSheet: View {
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.runId == run.id ? server.session : nil
+        server.session?.target == .run(run.id) ? server.session : nil
     }
 
     /// L'état du direct : l'agent au travail (et son outil du moment), ou au repos ;

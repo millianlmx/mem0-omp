@@ -51,6 +51,7 @@ export const EVENT_TYPES = [
   "heavy_joined",
   "heavy_fail_retry",
   "heavy_skipped",
+  "heavy_flaky",
   // git et merge
   "rebased",
   "rebase_conflict",
@@ -68,12 +69,19 @@ export const EVENT_TYPES = [
   "providers_changed",
   // notifications sortantes (ntfy)
   "notify_failed",
+  // monitoring : veille, coût
+  "stalled",
+  "step_slow",
+  "fix_loop",
+  "budget_exceeded",
+  "alert_cleared",
   // éphémères
   "activity",
   "session",
+  "test_output",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** Les événements poussés en direct sans être écrits. */
-export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity", "session"]);
+export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity", "session", "test_output"]);

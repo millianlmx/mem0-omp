@@ -133,6 +133,44 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["hourglass"],
         click: null,
       };
+    case "stalled":
+      return {
+        title: `Agent muet — ${feature}`,
+        body: short(
+          `aucun signe de l'agent depuis ${typeof payload.minutes === "number" ? payload.minutes : "?"} min à l'étape ${text(payload.step, run?.step ?? "?")}${text(payload.tool) ? ` (outil ${text(payload.tool)})` : ""}`,
+        ),
+        priority: 4,
+        tags: ["hourglass_flowing_sand"],
+        click: null,
+      };
+    case "step_slow":
+      return {
+        title: `Étape lente — ${feature}`,
+        body: short(
+          `/${text(payload.step, "?")} dure depuis ${typeof payload.minutes === "number" ? payload.minutes : "?"} min (médiane ${typeof payload.medianMin === "number" ? payload.medianMin : "?"} min)`,
+        ),
+        priority: 3,
+        tags: ["snail"],
+        click: null,
+      };
+    case "fix_loop":
+      return {
+        title: `Boucle de corrections — ${feature}`,
+        body: short(`${typeof payload.fixes === "number" ? payload.fixes : "?"} corrections : la revue ne passe pas`),
+        priority: 3,
+        tags: ["repeat"],
+        click: null,
+      };
+    case "budget_exceeded":
+      return {
+        title: `Budget dépassé — ${feature}`,
+        body: short(
+          `${typeof payload.cost === "number" ? payload.cost.toFixed(2) : "?"} $ dépensés (plafond ${typeof payload.budget === "number" ? payload.budget.toFixed(2) : "?"} $)${payload.paused === true ? " — la feature attend ton accord" : ""}`,
+        ),
+        priority: 4,
+        tags: ["moneybag"],
+        click: null,
+      };
     case "notify_failed":
       return null;
     default:

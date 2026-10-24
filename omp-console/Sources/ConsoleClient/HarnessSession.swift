@@ -1,9 +1,10 @@
-// Le DIRECT de la session OMP d'une feature : ce que l'agent du serveur écrit, son
-// raisonnement et chaque outil qu'il lance, en temps réel. Le serveur garde les
-// dernières entrées de chaque run (`GET /v1/runs/{id}/session`) et pousse chaque
-// entrée nouvelle ou modifiée en événement éphémère `session` sur
-// `GET /v1/events?run=…&live=1` : une entrée de même `seq` REMPLACE la précédente (un
-// paragraphe qui s'allonge, un outil qui se termine).
+// Le DIRECT de la session OMP d'une feature (ou de l'analyse d'un audit) : ce que
+// l'agent du serveur écrit, son raisonnement et chaque outil qu'il lance, en temps
+// réel. Le serveur écrit la session en base (`GET /v1/runs/{id}/session`, page par page
+// avec `?before=`) et pousse chaque entrée nouvelle ou modifiée en événement éphémère
+// `session` sur `GET /v1/events?run=…&live=1` (`audit=…` pour un audit) : une entrée de
+// même `seq` REMPLACE la précédente (un paragraphe qui s'allonge, un outil qui se
+// termine). Le même flux porte la sortie des tests en direct (`test_output`).
 //
 // Aucun texte ici : les écrans traduisent `kind`, `status` et les codes des signaux
 // avec `PipelineServerText`.
@@ -63,43 +64,85 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
     public var isFailure: Bool { status == "error" }
 }
 
-/// La réponse de `GET /v1/runs/{id}/session`.
+/// Ce dont on suit le direct : une feature, ou l'analyse d'un audit.
+public enum HarnessSessionTarget: Equatable, Hashable, Sendable {
+    case run(String)
+    case audit(String)
+
+    public var id: String {
+        switch self {
+        case let .run(id), let .audit(id): id
+        }
+    }
+
+    /// Le chemin du tampon (`?before=` y remonte page par page).
+    func sessionPath(_ encoded: String) -> String {
+        switch self {
+        case .run: "/v1/runs/\(encoded)/session"
+        case .audit: "/v1/audits/\(encoded)/session"
+        }
+    }
+
+    /// Le filtre du flux d'événements.
+    func streamQuery(_ encoded: String) -> String {
+        switch self {
+        case .run: "run=\(encoded)"
+        case .audit: "audit=\(encoded)"
+        }
+    }
+}
+
+/// La réponse de `GET /v1/runs/{id}/session` (ou `/v1/audits/{id}/session`).
 public struct HarnessSessionView: Codable, Equatable, Sendable {
-    public var runId: String
-    /// Le run est conduit en ce moment par le serveur (un agent peut écrire).
+    public var runId: String?
+    public var auditId: String?
+    /// Le run (ou l'audit) est conduit en ce moment par le serveur (un agent peut écrire).
     public var live: Bool
     /// Le curseur du journal au moment de la lecture.
     public var cursor: Int
     public var entries: [HarnessSessionEntry]
+    /// Il reste des entrées plus anciennes (`?before=` la première seq) ; absent d'un serveur plus ancien.
+    public var more: Bool?
 
-    public init(runId: String, live: Bool, cursor: Int = 0, entries: [HarnessSessionEntry] = []) {
+    public init(runId: String? = nil, auditId: String? = nil, live: Bool, cursor: Int = 0, entries: [HarnessSessionEntry] = [], more: Bool? = nil) {
         self.runId = runId
+        self.auditId = auditId
         self.live = live
         self.cursor = cursor
         self.entries = entries
+        self.more = more
     }
 }
 
-/// Le direct suivi par l'app : une feature à la fois.
+/// Le direct suivi par l'app : une feature (ou un audit) à la fois.
 public struct HarnessSessionFeed: Equatable, Sendable {
-    /// Les entrées gardées par l'app (comme le serveur) : les plus anciennes partent.
-    public static let keep = 200
+    /// Les entrées gardées par l'app, pages antérieures comprises : les plus anciennes partent au-delà.
+    public static let keep = 2000
 
-    public var runId: String
+    public var target: HarnessSessionTarget
     /// Les entrées, dans l'ordre de leur `seq`.
     public private(set) var entries: [HarnessSessionEntry]
-    /// Le run est conduit en ce moment par le serveur.
+    /// Le run (ou l'audit) est conduit en ce moment par le serveur.
     public var isRunning: Bool
     /// Le tampon du serveur a été lu au moins une fois.
     public var isLoaded: Bool
+    /// Le serveur garde des entrées plus anciennes que la première reçue (une session se rejoue).
+    public var hasEarlier: Bool
+    /// Les derniers jobs de tests de la feature et leur sortie, en direct.
+    public var tests: [HarnessTestJob]
 
-    public init(runId: String, entries: [HarnessSessionEntry] = [], isRunning: Bool = false, isLoaded: Bool = false) {
-        self.runId = runId
+    public init(target: HarnessSessionTarget, entries: [HarnessSessionEntry] = [], isRunning: Bool = false, isLoaded: Bool = false, hasEarlier: Bool = false, tests: [HarnessTestJob] = []) {
+        self.target = target
         self.entries = []
         self.isRunning = isRunning
         self.isLoaded = isLoaded
+        self.hasEarlier = hasEarlier
+        self.tests = tests
         for entry in entries { apply(entry) }
     }
+
+    /// L'identifiant suivi (run ou audit).
+    public var targetId: String { target.id }
 
     /// Le tampon du serveur, qui fait foi (à l'ouverture et après une coupure).
     public mutating func load(_ view: HarnessSessionView) {
@@ -107,6 +150,7 @@ public struct HarnessSessionFeed: Equatable, Sendable {
         for entry in view.entries { apply(entry) }
         isRunning = view.live
         isLoaded = true
+        hasEarlier = view.more ?? false
     }
 
     /// Le tampon relu en cours de route (changement d'état du run) : ses entrées
@@ -115,6 +159,14 @@ public struct HarnessSessionFeed: Equatable, Sendable {
         for entry in view.entries { apply(entry) }
         isRunning = view.live
         isLoaded = true
+    }
+
+    /// Une page plus ancienne (`?before=`) : ses entrées passent devant, sans en retirer.
+    public mutating func prepend(_ view: HarnessSessionView) {
+        let known = Set(entries.map(\.seq))
+        entries = view.entries.filter { !known.contains($0.seq) } + entries
+        entries.sort { $0.seq < $1.seq }
+        hasEarlier = view.more ?? false
     }
 
     /// Une entrée reçue : elle remplace celle de même `seq`, sinon prend sa place dans l'ordre.
@@ -134,16 +186,22 @@ public struct HarnessSessionFeed: Equatable, Sendable {
 
     /// L'outil en cours, s'il y en a un : ce que l'agent fait à l'instant.
     public var current: HarnessSessionEntry? { entries.last(where: \.isRunning) }
+
+    /// Le job de tests en cours, s'il y en a un.
+    public var runningTest: HarnessTestJob? { tests.last(where: \.isRunning) }
 }
 
 extension HarnessRun {
-    /// La feature a un direct à suivre : un agent y travaille, va y travailler, attend
-    /// l'humain, ou vient d'échouer (son tampon dit pourquoi). Fusionnée ou arrêtée,
-    /// elle n'en a plus.
+    /// La feature a un direct à suivre — ou à rejouer : le serveur garde sa session, même
+    /// fusionnée ou arrêtée. Seule une feature encore en file n'a rien dit.
     public var canFollowSession: Bool {
-        guard let phase else { return false }
-        return phase != .merged && phase != .cancelled
+        phase != .queued || step != "req" || fixes > 0
     }
+}
+
+extension HarnessAudit {
+    /// L'analyse a un direct : en cours, ou à rejouer une fois rendue.
+    public var canFollowSession: Bool { state != "queued" }
 }
 
 /// Un événement du flux SSE : son nom et ses données brutes (la ligne `data:`).
@@ -166,6 +224,16 @@ public struct HarnessStreamEvent: Equatable, Sendable {
     public var runId: String? {
         (try? JSONDecoder().decode(RunEnvelope.self, from: data))?.runId
     }
+
+    /// Le morceau de sortie de tests que porte un événement `test_output` ; `nil` pour tout autre événement.
+    public var testOutput: HarnessTestOutput? {
+        guard name == "test_output" else { return nil }
+        return (try? JSONDecoder().decode(TestOutputEnvelope.self, from: data))?.payload
+    }
+}
+
+private struct TestOutputEnvelope: Decodable {
+    var payload: HarnessTestOutput
 }
 
 private struct SessionEnvelope: Decodable {

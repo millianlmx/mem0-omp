@@ -35,7 +35,7 @@ struct HarnessSessionTests {
     @Test("le tampon se décode tel que le serveur l'écrit ; une entrée de même seq remplace, une autre prend sa place dans l'ordre")
     func feedApplies() throws {
         let view = try JSONDecoder().decode(HarnessSessionView.self, from: Data(sessionJSON.utf8))
-        var feed = HarnessSessionFeed(runId: "r1")
+        var feed = HarnessSessionFeed(target: .run("r1"))
         feed.load(view)
         #expect(feed.isLoaded && feed.isRunning)
         #expect(feed.entries.map(\.seq) == [1, 2])
@@ -54,7 +54,7 @@ struct HarnessSessionTests {
 
     @Test("un relu en cours de route garde les entrées déjà reçues et met à jour l'état du run")
     func feedMerges() {
-        var feed = HarnessSessionFeed(runId: "r1", entries: [HarnessSessionEntry(seq: 5, kind: "text", text: "récente")], isRunning: true, isLoaded: true)
+        var feed = HarnessSessionFeed(target: .run("r1"), entries: [HarnessSessionEntry(seq: 5, kind: "text", text: "récente")], isRunning: true, isLoaded: true)
         feed.merge(HarnessSessionView(runId: "r1", live: false, entries: [HarnessSessionEntry(seq: 4, kind: "text", text: "ancienne")]))
         #expect(feed.entries.map(\.seq) == [4, 5])
         #expect(feed.isRunning == false)

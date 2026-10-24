@@ -440,7 +440,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `runner.retryBackoffSec` | `[120, 600, 1800]` | l'attente avant chaque relance d'une étape échouée ; sa longueur est le nombre de relances si `stepRetries` n'est pas déclaré. Quota, réseau, fournisseur, délai : la liste se consomme entière, même cause répétée ; contexte, runner, sortie manquante, inconnu : deux fois de suite ⇒ l'humain. Liste épuisée ⇒ l'humain (`retry` relance), jamais `failed` |
 | `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
-| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
+| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
 | `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
@@ -452,7 +452,13 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
 | `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
-| `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure) |
+| `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
+| `monitoring.runBudgetUsd`, `monitoring.pauseOnBudget` | `null`, `false` | le coût (en dollars, d'après omp) d'une feature au-delà duquel tu es prévenu (`budget_exceeded`) ; avec `pauseOnBudget`, la feature attend aussi ton accord avant sa prochaine étape |
+| `monitoring.stallMin`, `monitoring.stallToolMin` | `15`, `45` | les minutes sans un mot de l'agent avant l'alerte `stalled` (la seconde quand un outil tourne, une suite de tests par exemple) ; `null` : jamais |
+| `monitoring.slowFactor` | `2` | une étape plus longue que ce multiple de la médiane de son type alerte (`step_slow`) ; `null` : jamais |
+| `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
+| `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, les 2 dernières heures gardées en mémoire |
+| `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
