@@ -100,6 +100,8 @@ export class Orchestrator {
   /** Les tours automatiques n'ont lieu qu'après `start()` : la reprise des runs interrompus passe d'abord. */
   #started = false;
   #prunedAt = 0;
+  /** La fin du dernier tour de scheduling (ou le démarrage) : `GET /v1/health` en lit l'âge. */
+  #lastTickAt: number | null = null;
 
   /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
   readonly audits: Auditor;
@@ -168,6 +170,7 @@ export class Orchestrator {
     await this.#prepareRepos(this.#ctx.config.repos);
     await this.recover();
     this.#started = true;
+    this.#lastTickAt = Date.now();
     this.#stopMetrics = this.metrics.subscribe();
     this.#prune();
     this.#timer = setInterval(() => void this.tick(), this.#tickMs);
@@ -306,8 +309,14 @@ export class Orchestrator {
     if (this.#ticking || this.#stopping) return this.#ticking ?? Promise.resolve();
     this.#ticking = this.#tick().finally(() => {
       this.#ticking = null;
+      this.#lastTickAt = Date.now();
     });
     return this.#ticking;
+  }
+
+  /** La fin du dernier tour de scheduling, ou du démarrage ; `null` avant `start()`. */
+  get lastTickAt(): number | null {
+    return this.#lastTickAt;
   }
 
   async #tick(): Promise<void> {
