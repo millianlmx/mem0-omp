@@ -63,7 +63,7 @@ services:
   # Les embeddings de la mémoire quand `harness.sh up` n'en a pas reçu d'autres
   # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne.
   embeddings:
-    image: docker.io/ollama/ollama:0.12.6
+    image: docker.io/ollama/ollama:0.40.8
     restart: unless-stopped
     profiles: ["embeddings"]
     volumes:
