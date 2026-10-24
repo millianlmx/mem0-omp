@@ -47,7 +47,9 @@ export const mem0 = {
   // seule voie d'accès à un score non saturé par BM25. Le serveur d'avant ce champ
   // l'ignore (pydantic) : les lignes arrivent alors sans `score_details`, ce que
   // `selectRelevant` traite comme « aucun score » et que le rappel signale bruyamment.
-  search: (query: string, scope: string, limit: number, threshold?: number, explain = false) =>
+  // `budgetMs` : le rappel automatique passe le sien (froid ou chaud, cf.
+  // TIMEOUT) ; les autres appelants gardent le budget de recherche.
+  search: (query: string, scope: string, limit: number, threshold?: number, explain = false, budgetMs = TIMEOUT.search) =>
     mem0Fetch(
       "/memory/search",
       {
@@ -61,7 +63,7 @@ export const mem0 = {
           explain,
         }),
       },
-      TIMEOUT.search,
+      budgetMs,
     ),
 
   update: (id: string, text: string) =>
@@ -71,7 +73,8 @@ export const mem0 = {
       TIMEOUT.write,
     ),
 
-  getAll: (scope: string) => mem0Fetch(`/memory/all?agent_id=${encodeURIComponent(scope)}`),
+  getAll: (scope: string, budgetMs = TIMEOUT.other) =>
+    mem0Fetch(`/memory/all?agent_id=${encodeURIComponent(scope)}`, {}, budgetMs),
 
   delete: (id: string) => mem0Fetch(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

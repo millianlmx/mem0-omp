@@ -125,7 +125,12 @@ test("runner-mode/AC-2 : sans la variable, 20 explorations produisent rappel, ag
   const { repo, ctx } = mkSession();
   const { injected, pins, stop } = await simulate(app, ctx, 20);
   assert.ok(injected.includes("mem0-recall"), "un rappel est injecté");
-  assert.ok(injected.includes("mem0-checkpoint"), "le checkpoint tire au-delà de 15 explorations");
+  // Le checkpoint est posé au milieu du tour, en tête du résultat d'outil qui franchit le seuil.
+  const textes = pins.map((p) => (p as { content: Array<{ text?: string }> }).content[0]?.text ?? "");
+  assert.ok(
+    textes.some((t) => t.startsWith("[mem0 checkpoint]")),
+    "le checkpoint tire au-delà de 15 explorations",
+  );
   assert.ok(pins.length > 0, "le souvenir est agrafé aux grep");
   assert.ok(stop && typeof stop === "object" && "continue" in stop, "la relance de fin est émise");
   assert.ok(fs.existsSync(path.join(repo, ".omp", "mem0-brief.md")), "le brief est posé");
@@ -138,8 +143,8 @@ test("runner-mode/AC-3 : MEM0_MODE=runner — ni rappel, ni checkpoint, ni agraf
     const { repo, ctx } = mkSession();
     const callsBefore = calls;
     const { injected, pins, stop } = await simulate(app, ctx, 20);
-    assert.deepEqual(injected, [], "aucun custom_message mem0-recall/mem0-checkpoint");
-    assert.deepEqual(pins, [], "aucun épinglage");
+    assert.deepEqual(injected, [], "aucun custom_message mem0-recall");
+    assert.deepEqual(pins, [], "aucun épinglage ni checkpoint sur les résultats d'outils");
     assert.equal(stop, undefined, "aucune relance de fin");
     assert.equal(fs.existsSync(path.join(repo, ".omp", "mem0-brief.md")), false, "aucun brief posé");
     assert.equal(fs.existsSync(path.join(repo, "AGENTS.md")), false, "AGENTS.md intact");

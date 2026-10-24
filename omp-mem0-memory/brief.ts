@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { AUTOSETUP } from "./config.ts";
 import { projectId, rootOf } from "./state.ts";
 import type { Mem0Runtime } from "./state.ts";
+import { INDEX_MAX_ENTRIES } from "./summary.ts";
 import { writeFileAtomic } from "./write.ts";
 
 // ---------------------------------------------------------------------------
@@ -71,7 +72,25 @@ ${MARKER_CLOSE}`;
 // Directive réinjectée dans le system prompt à CHAQUE tour. Le bloc AGENTS.md
 // se noie dans un long contexte ; cette ligne-ci est reposée à chaque requête
 // provider, donc elle survit à la compaction et au bruit.
-export const SYSTEM_DIRECTIVE = `Mémoire mem0 : le sommaire de la mémoire du projet est dans ton contexte système, et les souvenirs pertinents pour la demande en cours sont injectés à chaque tour. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà. Un sujet absent du sommaire n'est pas en mémoire — explore, puis appelle mem0_add. Appelle mem0_search uniquement pour déplier une entrée du sommaire dont le rappel n'a pas donné le texte complet. Un fait par appel, autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige avec mem0_update. Un checkpoint peut t'être envoyé (message "mem0 checkpoint") quand tu explores trop sans écrire — c'est un signal d'écriture, pas d'erreur : appelle mem0_add immédiatement pour sauver ce que tu as appris. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà.`;
+//
+// Elle dit la même chose que le bloc AGENTS.md et le brief (« Quand chercher ») :
+// le rappel est calé sur la formulation de la demande, donc mem0_search dès que
+// le sujet en sort. La seule dispense est celle que le sommaire s'accorde
+// lui-même quand il n'est pas tronqué (en-tête de `buildIndex`) : au-delà de
+// INDEX_MAX_ENTRIES, il ne liste que les plus récents et le dit.
+export const SYSTEM_DIRECTIVE =
+  `Mémoire mem0 : le sommaire de la mémoire du projet est dans ton contexte système, et les souvenirs ` +
+  `pertinents pour la demande en cours sont injectés à chaque tour. Traite-les comme acquis : n'explore ` +
+  `pas le dépôt pour revérifier un point que la mémoire couvre déjà. Le rappel est calé sur la formulation ` +
+  `de la demande, et le sommaire ne montre que la première ligne de chaque souvenir — au-delà de ` +
+  `${INDEX_MAX_ENTRIES} souvenirs, seulement les plus récents, ce que son en-tête signale. Dès que le sujet se ` +
+  `déplace hors de ce que le rappel a injecté, appelle mem0_search AVANT d'explorer le dépôt, sauf si le ` +
+  `sommaire se déclare exhaustif et ne mentionne pas ce sujet ; mem0_search sert aussi à déplier une entrée ` +
+  `du sommaire. Ce que la mémoire ne couvre pas : explore, puis appelle mem0_add. Un fait par appel, ` +
+  `autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige ` +
+  `avec mem0_update. Un checkpoint peut t'être envoyé (message "mem0 checkpoint") quand tu explores trop ` +
+  `sans écrire — c'est un signal d'écriture, pas d'erreur : appelle mem0_add immédiatement pour sauver ce ` +
+  `que tu as appris.`;
 
 // Fichier de référence, lu à la demande par l'agent (divulgation progressive).
 export const BRIEF_REFERENCE = `${MARKER_OPEN}
