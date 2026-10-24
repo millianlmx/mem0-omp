@@ -23,6 +23,24 @@ Le dossier de données se crée AVANT `up` : tous les moteurs ne créent pas la
 source manquante d'un bind-mount. Si tu changes `MEM0_RS_DATA_DIR` dans `.env`,
 crée ce dossier-là.
 
+## Instantanés de la base
+
+mem0-rs prend lui-même des instantanés de sa base (`VACUUM INTO`) dans
+`backups/`, à l'intérieur du dossier de données : `mem0-rs-data/backups/` par
+défaut. Par défaut, un instantané par 24 h et les 7 plus récents gardés ; le
+compose transmet les deux réglages depuis `.env` :
+
+| Variable | Défaut | Effet |
+|---|---|---|
+| `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart entre deux instantanés, en heures ; `0` les coupe |
+| `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés |
+
+Le premier instantané d'une pile neuve arrive une heure après le démarrage.
+Restaurer : `podman compose stop mem0-rs`, copier l'instantané voulu sur
+`mem0-rs-data/mem0-rs.db` (en supprimant `mem0-rs.db-wal` et `mem0-rs.db-shm`),
+puis `podman compose start mem0-rs`. Le détail est dans
+[mem0-rs/README.md § Instantanés](mem0-rs/README.md#instantanés).
+
 ## Migrer une pile mem0-http existante
 
 À suivre AVANT de démarrer la nouvelle pile, l'ancienne (`mem0-qdrant` et
