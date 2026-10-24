@@ -23,6 +23,7 @@ export const TIMELINE_EVENTS: ReadonlySet<string> = new Set([
   "escalations",
   "escalation_answered",
   "specs_ready",
+  "challenge",
   "verdict",
   "decision_auto_timeout",
   "heavy_oom_retry",
@@ -54,6 +55,11 @@ function summaryOf(event: EventRow): string | null {
   if (event.type === "model_failover")
     return [text(payload.from), text(payload.to)].filter(Boolean).join(" → ") || null;
   if (event.type === "merged") return text(payload.sha)?.slice(0, 12) ?? null;
+  if (event.type === "challenge") {
+    if (payload.status === "failed") return `/${String(payload.step)} : contradicteur en échec`;
+    const disputed = Array.isArray(payload.disputes) ? payload.disputes.map(String) : [];
+    return `/${String(payload.step)} : ${String(payload.findings)} constat(s)${disputed.length > 0 ? `, désaccord ${disputed.join(", ")}` : ""}`;
+  }
   if (event.type === "escalations") return Array.isArray(payload.items) ? String(payload.items.length) : null;
   if (event.type === "budget_exceeded" && typeof payload.cost === "number") return `${payload.cost.toFixed(2)} $`;
   if ((event.type === "stalled" || event.type === "step_slow") && typeof payload.minutes === "number")

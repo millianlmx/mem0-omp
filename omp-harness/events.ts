@@ -39,6 +39,7 @@ export const EVENT_TYPES = [
   "escalations",
   "escalation_answered",
   "specs_ready",
+  "challenge",
   "review",
   "verdict",
   "decision_auto_timeout",

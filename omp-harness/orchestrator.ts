@@ -37,7 +37,7 @@ import { auditOwner } from "./session-feed.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
-import { StepExecutor, liveRun } from "./steps.ts";
+import { StepExecutor, challengeUnit, liveRun } from "./steps.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -247,6 +247,9 @@ export class Orchestrator {
     const { store, config, exec, git } = this.#ctx;
     for (const step of store.interruptRunningSteps()) {
       if (step.unit) await forceStop(config, exec, step.unit);
+      // Le contradicteur d'une étape de contrat a sa propre unité, absente de la ligne de l'étape.
+      if (step.kind === "req" || step.kind === "specs")
+        await forceStop(config, exec, challengeUnit(step.runId, step.id));
     }
     // Chaque worktree encore vivant est re-reconnu côté clone (jamais par son `.git`).
     for (const run of store.listRuns({ state: ["queued", "running", "escalated", "awaiting_human", "merging"] })) {
