@@ -62,6 +62,7 @@ Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
 fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
 
 ```bash
+npm run setup                                                   # une fois par clone ou worktree, réseau requis : les outils épinglés
 npm test                                                        # = bash scripts/check.sh --sections=tests (section ── Tests)
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/client-harness.test.ts   # un fichier
@@ -211,7 +212,12 @@ local — sans option, toutes les sections et toute la suite tournent :
 Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (secondes
 entières), pour lire dans un journal de CI où le temps part.
 
-À la racine du dépôt, `package.json` (privé, sans dépendance) donne quatre alias :
+À la racine du dépôt, `package.json` (privé, sans dépendance) donne cinq alias :
+`npm run setup` enchaîne les trois préparations qui exigent le réseau
+(`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare` et
+`bash scripts/mem0-http-contrat.sh --prepare`), à lancer une fois par clone ou
+par worktree — avant, un test qui dépend de Biome ou du TypeScript épinglé se saute
+par `prerequisAbsent` en nommant l'outil, et `--strict` (la CI) en fait un échec ;
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
 `bash scripts/typecheck.sh`, `npm test` lance `bash scripts/check.sh --sections=tests` et
 `npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh`.

@@ -51,6 +51,7 @@ import {
   type VersionEntry,
 } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
+import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 
@@ -1021,6 +1022,8 @@ test("release/AC-2 : la publication n'utilise que le jeton dédié, et reprend u
 
   // (3) Une PR bloquée par les statuts requis n'est pas perdue : le run suivant
   // réutilise la MÊME PR (même branche) et fusionne dès qu'elle est fusionnable.
+  // Le run repris lance check.sh après écriture : sans les outils épinglés, il rougirait avant la PR.
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const blocked = scenario(SCENARIOS?.blocked, t);
   if (blocked === null) return;
   const { repo, first, blocked: held, second } = blocked;
@@ -1085,6 +1088,7 @@ test("release-job-timeout-too-short/AC-2 : l'attente de fusion passée à releas
 // ---------------------------------------------------------------------------
 
 test("release/AC-1 : le commit de release atteint main par une PR auto-mergée, sans push direct", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.patch, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -1149,6 +1153,7 @@ test("release/AC-1 : le commit de release atteint main par une PR auto-mergée, 
 });
 
 test("release/AC-3 : la version publiée est exactement celle calculée par le job", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.patch, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -1180,6 +1185,7 @@ test("release/AC-3 : la version publiée est exactement celle calculée par le j
 });
 
 test("release/AC-4 : chaque publication écrit une entrée datée dans CHANGELOG.md, sur main", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.patch, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -1216,6 +1222,7 @@ test("release/AC-4 : chaque publication écrit une entrée datée dans CHANGELOG
 });
 
 test("notes de release : commandes d'installation, mise à jour, et rupture d'un bump majeur", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.major, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -1259,6 +1266,7 @@ test("notes de release : commandes d'installation, mise à jour, et rupture d'un
 });
 
 test("release/AC-5 : le rattrapage publie chaque version jamais publiée — tag, release, journal", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.backlog, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -1315,6 +1323,7 @@ test("release/AC-5 : le rattrapage publie chaque version jamais publiée — tag
 });
 
 test("release/AC-7 : un rejeu du même événement ne crée ni commit, ni tag, ni release", async (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.patch, t);
   if (built === null) return;
   const { repo, run } = built;

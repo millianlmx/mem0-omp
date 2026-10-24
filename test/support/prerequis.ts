@@ -10,6 +10,9 @@
 // scripts/test-files.sh ni `node --test` ne le lancent, seuls les tests
 // l'importent.
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Préfixe du message de saut que `check.sh --strict` reconnaît. */
 export const PREREQUIS_ABSENT = "prérequis absent : ";
@@ -35,4 +38,66 @@ export function prerequisAbsent(
     return;
   }
   assert.fail(`${message} (${exigence})`);
+}
+
+/** Racine absolue du dépôt (test/support/ → ../..), sans dépendre de repo.ts. */
+const RACINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** Les outils épinglés que `npm run setup` (les `--prepare` des scripts) installe dans le clone. */
+export type OutilEpingle = "biome" | "typescript";
+
+/**
+ * Où vit chaque outil épinglé et quelle version il doit porter. La version est
+ * LUE dans le script qui l'épingle (source unique) ; le dossier est celui que le
+ * script lui-même consulte — `MEM0_OMP_LINT_DIR` d'abord pour Biome, comme
+ * scripts/lint.sh.
+ */
+function outil(nom: OutilEpingle): { libelle: string; version: string; paquet: string; prepare: string } {
+  if (nom === "biome") {
+    const script = fs.readFileSync(path.join(RACINE, "scripts", "lint.sh"), "utf8");
+    const dossier = path.resolve(RACINE, process.env.MEM0_OMP_LINT_DIR || ".lint");
+    return {
+      libelle: "Biome",
+      version: /^BIOME_VERSION="([^"]+)"$/m.exec(script)?.[1] ?? "",
+      paquet: path.join(dossier, "node_modules", "@biomejs", "biome", "package.json"),
+      prepare: "bash scripts/lint.sh --prepare",
+    };
+  }
+  const script = fs.readFileSync(path.join(RACINE, "scripts", "typecheck.sh"), "utf8");
+  return {
+    libelle: "TypeScript",
+    version: /^TS_VERSION=(\S+)$/m.exec(script)?.[1] ?? "",
+    paquet: path.join(RACINE, ".typecheck", "typescript", "node_modules", "typescript", "package.json"),
+    prepare: "bash scripts/typecheck.sh --prepare",
+  };
+}
+
+/** La version que porte le paquet installé, `null` s'il manque ou est illisible. */
+function versionInstallee(paquet: string): string | null {
+  try {
+    const version = (JSON.parse(fs.readFileSync(paquet, "utf8")) as { version?: unknown }).version;
+    return typeof version === "string" ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saute le test (par `prerequisAbsent`, donc en échec nommé sous `check.sh
+ * --strict`) quand l'un des outils épinglés manque ou n'a pas la version du
+ * script : c'est l'état d'un clone neuf avant `npm run setup`, où la section
+ * lint ou types rougirait pour une raison étrangère au critère. Rend `true` si
+ * le test doit s'arrêter là. Un test dont l'objet est précisément le message
+ * « absent » de lint.sh ou typecheck.sh ne passe pas par ici.
+ */
+export function outilEpingleAbsent(t: { skip(message: string): void }, ...outils: OutilEpingle[]): boolean {
+  for (const nom of outils) {
+    const { libelle, version, paquet, prepare } = outil(nom);
+    const trouvee = versionInstallee(paquet);
+    if (trouvee !== null && trouvee === version) continue;
+    const etat = trouvee === null ? "absent" : `${trouvee} trouvé`;
+    prerequisAbsent(t, `${libelle} ${version} épinglé (${etat} ; npm run setup ou ${prepare})`, "section non éprouvée");
+    return true;
+  }
+  return false;
 }

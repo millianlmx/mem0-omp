@@ -24,7 +24,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LINT_TOOL_ENV, ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
-import { prerequisAbsent } from "../support/prerequis.ts";
+import { outilEpingleAbsent, prerequisAbsent } from "../support/prerequis.ts";
 import { readAttendus } from "../support/app-intents-doubles.ts";
 import {
   META_ACTIONS_REL,
@@ -257,6 +257,7 @@ test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
 });
 
 test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte est sans erreur", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const script = path.join(ROOT, "scripts/typecheck.sh");
   if (!fs.existsSync(script)) {
     prerequisAbsent(t, "scripts/typecheck.sh", "type-check non vérifié");
@@ -295,6 +296,7 @@ const HOST_TYPES_ABSENT = "types de l'hôte absents";
 const hostTypesAbsent = (out: string): boolean => out.includes(HOST_TYPES_ABSENT);
 
 test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait échouer check.sh en nommant le fichier", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   const target = path.join(dir, "omp-mem0-memory/brief.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
@@ -311,6 +313,7 @@ test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait éc
 });
 
 test("check/AC-2 : une erreur de type dans un fichier de test fait échouer check.sh en nommant le fichier", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   const target = path.join(dir, "test/memoire/dedupe.test.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
@@ -326,6 +329,7 @@ test("check/AC-2 : une erreur de type dans un fichier de test fait échouer chec
 });
 
 test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de configuration", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   fs.writeFileSync(path.join(dir, "omp-mem0-memory/zz-neuf.ts"), `export const q: number = "boom";\n`);
   fs.writeFileSync(path.join(dir, "test/zz-neuf.ts"), `export const q: number = "boom";\n`);
@@ -343,6 +347,7 @@ test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de
 });
 
 test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle refusée)", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   const target = path.join(dir, "omp-mem0-memory/brief.ts");
   fs.writeFileSync(
@@ -362,12 +367,15 @@ test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle ref
   assert.ok(output(bad).includes("error TS18047"), output(bad));
 });
 
-test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée inutilisable échoue", () => {
+test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée inutilisable échoue", (t) => {
   // (a) Les deux jobs de la matrice exportent les types et exécutent check.sh :
   // une erreur de type ne peut donc pas passer pour un « types absents ».
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
   assert.ok(workflow.includes("MEM0_OMP_HOST_TYPES="), workflow);
   assert.ok(workflow.includes("./scripts/check.sh"), workflow);
+
+  // Le volet (b) passe par le tsc épinglé : sans lui, typecheck.sh s'arrête avant les types.
+  if (outilEpingleAbsent(t, "typescript")) return;
 
   // (b) Une racine DÉCLARÉE fait autorité : inutilisable, elle échoue en la
   // nommant, sans retomber sur une autre racine ni sur la ligne de dégradation.
@@ -384,6 +392,7 @@ test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée i
 });
 
 test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.withResolvers)", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   const target = path.join(dir, "test/memoire/dedupe.test.ts");
   fs.writeFileSync(
@@ -405,6 +414,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
 });
 
 test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.sh", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
   for (const rel of ["omp-mem0-req/harness.ts", "omp-mem0-memory/dedupe.ts"]) {
     const target = path.join(dir, rel);
@@ -465,6 +475,7 @@ function unusedChecksProbe(): { status: number | null; out: string } {
 }
 
 test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans un plugin fait échouer le type-check en la nommant", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const { out } = unusedChecksProbe();
   if (hostTypesAbsent(out)) {
     t.skip("types de l'hôte absents — type-check non vérifié");
@@ -479,6 +490,7 @@ test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans 
 });
 
 test("tsconfig-missing-unused-checks/AC-2 : un paramètre jamais lu dans un plugin fait échouer le type-check en le nommant", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const { out } = unusedChecksProbe();
   if (hostTypesAbsent(out)) {
     t.skip("types de l'hôte absents — type-check non vérifié");
@@ -493,6 +505,7 @@ test("tsconfig-missing-unused-checks/AC-2 : un paramètre jamais lu dans un plug
 });
 
 test("tsconfig-missing-unused-checks/AC-3 : un case non vide qui retombe dans le suivant fait échouer le type-check en désignant ce case", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const { out } = unusedChecksProbe();
   if (hostTypesAbsent(out)) {
     t.skip("types de l'hôte absents — type-check non vérifié");
@@ -502,6 +515,7 @@ test("tsconfig-missing-unused-checks/AC-3 : un case non vide qui retombe dans le
 });
 
 test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous test/ fait échouer le type-check en la nommant", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const { out } = unusedChecksProbe();
   if (hostTypesAbsent(out)) {
     t.skip("types de l'hôte absents — type-check non vérifié");
@@ -516,6 +530,7 @@ test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous 
 });
 
 test("tsconfig-missing-unused-checks/AC-6 : une variable jamais lue rend la section type-check rouge et check.sh en échec", (t) => {
+  if (outilEpingleAbsent(t, "typescript")) return;
   const { status, out } = unusedChecksProbe();
   if (hostTypesAbsent(out)) {
     t.skip("types de l'hôte absents — type-check non vérifié");

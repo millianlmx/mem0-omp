@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
 
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/no-ts-lint-formatter.test.ts`. */
@@ -174,7 +175,8 @@ function sectionLines(stdout: string): string[] {
   return section;
 }
 
-test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.sh est verte", () => {
+test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.sh est verte", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   const r = runSection(ROOT);
   assert.equal(r.status, 0, output(r));
   const section = sectionLines(r.stdout);
@@ -184,7 +186,8 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });
 
-test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/ puis test/ rougit la section et désigne le fichier", () => {
+test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/ puis test/ rougit la section et désigne le fichier", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-lint.ts",
     "omp-harness/zz-faute-lint.ts",
@@ -203,7 +206,8 @@ test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harn
   }
 });
 
-test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/ puis test/ rougit la section", () => {
+test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/ puis test/ rougit la section", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-format.ts",
     "omp-harness/zz-faute-format.ts",
@@ -227,7 +231,8 @@ test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, 
   }
 });
 
-test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/ et test/ laissent la section verte", () => {
+test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/ et test/ laissent la section verte", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   const dir = repo.fresh();
   for (const rel of ["scripts/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
     fs.writeFileSync(path.join(dir, rel), `${LINT_FAULT}${FORMAT_FAULT}`);
@@ -238,7 +243,8 @@ test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-h
   assert.ok(!r.stdout.includes("zz-faute"), output(r));
 });
 
-test("no-ts-lint-formatter/AC-5 : lint.sh et la section lint de check.sh rendent leur verdict sans npm, npx, curl ni réseau", () => {
+test("no-ts-lint-formatter/AC-5 : lint.sh et la section lint de check.sh rendent leur verdict sans npm, npx, curl ni réseau", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   assertLintShOffline();
 
   const { bin, log } = stubBin("lint-section-reseau-");
@@ -306,7 +312,8 @@ test("no-ts-lint-formatter/AC-6 : outil absent ou d'une autre version ⇒ lint.s
   assert.ok(!section.some((line) => line.startsWith("  · ") || line.includes("✓")), output(missing));
 });
 
-test("no-ts-lint-formatter/AC-8 : une copie jetable, sans .lint/, passe sa section lint avec le Biome de la racine", () => {
+test("no-ts-lint-formatter/AC-8 : une copie jetable, sans .lint/, passe sa section lint avec le Biome de la racine", (t) => {
+  if (outilEpingleAbsent(t, "biome")) return;
   const dir = repo.fresh();
   assert.ok(!fs.existsSync(path.join(dir, ".lint")), "une copie jetable n'emporte pas .lint/");
   const r = runSection(dir);
