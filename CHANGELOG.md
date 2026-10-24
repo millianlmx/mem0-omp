@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.4.0 — 2026-10-24
+
+- feat(harness,console): monitoring des features — session OMP en direct, coût, alertes, frise, fichiers, tests, santé, Live Activities et widget iOS (#262) (1c948e4)
+
 ## omp-harness 1.3.1 — 2026-10-23
 
 - fix(harness): la connexion d'un abonnement démarre omp sans clé, et un refus d'omp nomme sa cause (#260) (4e906e2)
