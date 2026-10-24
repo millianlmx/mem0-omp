@@ -1,4 +1,4 @@
-// Tests du masquage des secrets (omp-mem0-memory/write.ts) — B-1, AC-1 à AC-8.
+// Tests du masquage des secrets (omp-mem0-memory/write.ts) — B-1, AC-1 à AC-10.
 //
 // Ce fichier existe parce que B-1 exige « chaque famille prouvée par un test » :
 // le masquage est un garde-fou destructif, où un sous-masquage est le bug et un
@@ -15,7 +15,10 @@
 // doc Slack « Tokens » (`xoxb-` bot / `xoxp-` user), RFC 3986 §3.2.1 (userinfo).
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { redact } from "../../omp-mem0-memory/write.ts";
+import { ROOT } from "../support/repo.ts";
 
 // Fixtures partagées, réutilisées par le test d'idempotence.
 const ANTHROPIC = "clé sk-ant-api03-AbCdEf0123456789_-XYZabcDEF fin";
@@ -60,12 +63,14 @@ test("redaction/AC-3 : jeton GitHub fine-grained github_pat_ masqué", () => {
   assert.equal(redact("github_pat_abc"), "github_pat_abc");
 });
 
-test("redaction/AC-4 : jetons Slack xoxb-/xoxp- masqués", () => {
+test("redaction/AC-4 : jetons Slack xoxb-/xoxp-/xoxa-/xoxe- masqués", () => {
   assert.equal(redact(SLACK_BOT), "[REDACTED]");
   assert.equal(redact(SLACK_USER), "[REDACTED]");
   assert.equal(redact(`${SLACK_BOT}, ${SLACK_USER}`), "[REDACTED], [REDACTED]");
-  // Préfixes hors périmètre (B-1) : `xoxa-` et un `xox` sans tiret restent intacts.
-  assert.equal(redact("xoxa-abcdefghij"), "xoxa-abcdefghij");
+  assert.equal(redact(["xoxa", "2", "abcdefghij"].join("-")), "[REDACTED]");
+  assert.equal(redact(["xoxe", "1", "abcdefghijklmnop"].join("-")), "[REDACTED]");
+  // Préfixe inconnu et `xox` sans tiret : intacts.
+  assert.equal(redact("xoxz-abcdefghij"), "xoxz-abcdefghij");
   assert.equal(redact("xox"), "xox");
 });
 
@@ -144,4 +149,64 @@ test("redaction/AC-8 : aucun sur-masquage", () => {
   for (const t of intacts) assert.equal(redact(t), t, `entrée altérée : ${t}`);
   // Entrée vide : aucune entrée ne provoque d'exception, la sortie reste inchangée.
   assert.equal(redact(""), "");
+});
+
+// Les jetons des familles ajoutées sont assemblés à l'exécution, pour la même raison
+// que les fixtures Slack : écrits d'un seul tenant, la push protection les refuserait.
+const corps32 = "AbCdEfGhIjKlMnOpQrStUvWxYz012345";
+
+test("redaction/AC-9 : clés Stripe, PAT GitLab, jetons Hugging Face et npm, clés d'API Google masqués", () => {
+  const secrets = [
+    ["sk", "live", corps32].join("_"),
+    ["sk", "test", "abcdefghij"].join("_"),
+    ["rk", "live", corps32].join("_"),
+    `${"glpat"}-abcdefghij_-0123456789`,
+    `${"hf"}_${corps32}xy`,
+    `${"npm"}_${corps32}6789`,
+    `${"AI"}zaSyA1234567890abcdefghijklmnopqrstuv`,
+  ];
+  for (const secret of secrets) {
+    assert.equal(redact(`avant ${secret} après`), "avant [REDACTED] après", secret.slice(0, 8));
+  }
+  // Sous la longueur minimale, ou hors famille : intacts.
+  const intacts = [
+    ["pk", "live", "abcdefghijkl"].join("_"), // clé publiable Stripe : pas un secret
+    ["sk", "live", "abcdefghi"].join("_"),
+    `${"glpat"}-abcdefghij`,
+    "hf_hub_download_and_cache_everything_now()",
+    `${"npm"}_${corps32}`,
+    `${"AI"}zaSyA1234567890abcdefghijklmnopqrst`,
+  ];
+  for (const t of intacts) assert.equal(redact(t), t, `entrée altérée : ${t}`);
+});
+
+type CasPartage = { nom: string; entree: string[]; attendu: string };
+
+test("redaction/AC-10 : les cas partagés avec mem0-rs rendent la même sortie que le masquage serveur", () => {
+  // Le même fichier est jugé par `cargo test` (mem0-stack/mem0-rs/src/redaction.rs) :
+  // deux implémentations, une seule liste de cas, donc des motifs tenus en phase.
+  const fichier = path.join(ROOT, "mem0-stack", "mem0-rs", "tests", "redaction-cas.json");
+  const { cas } = JSON.parse(fs.readFileSync(fichier, "utf8")) as { cas: CasPartage[] };
+  assert.ok(cas.length >= 40, `cas partagés : ${cas.length}`);
+  for (const c of cas) assert.equal(redact(c.entree.join("")), c.attendu, `cas « ${c.nom} »`);
+  // Chaque famille de SECRET_PATTERNS a au moins un cas masqué dans la liste.
+  const masques = cas.filter((c) => c.attendu.includes("[REDACTED]")).map((c) => c.entree.join(""));
+  for (const prefixe of [
+    "sk-",
+    "ghp_",
+    "AKIA",
+    "eyJ",
+    "Bearer",
+    "github_pat_",
+    "xoxa",
+    "xoxe",
+    "glpat-",
+    "hf_",
+    "npm_",
+  ]) {
+    assert.ok(
+      masques.some((m) => m.includes(prefixe)),
+      `aucun cas masqué pour ${prefixe}`,
+    );
+  }
 });

@@ -15,6 +15,7 @@ mod http;
 mod import;
 mod openai;
 mod recherche;
+mod redaction;
 mod validation;
 mod verrou;
 

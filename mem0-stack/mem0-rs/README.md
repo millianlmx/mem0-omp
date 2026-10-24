@@ -90,6 +90,29 @@ et le garde jusqu'à son arrêt. Un second serveur sur la même base sort en cod
 `MEM0_DB_PATH=<db> est déjà servie par un autre processus mem0-rs (verrou <db>.lock)`.
 Le verrou tombe avec le processus : il n'est jamais périmé.
 
+## Écarts assumés au Python
+
+Trois comportements n'existaient pas dans mem0-http et ne changent rien pour un
+client correct :
+
+- **Corps borné** : au-delà de 1 Mio (`CORPS_MAX`), toute route rend 413
+  `{"detail":"corps de requête au-delà de 1048576 octets"}`, sans embedding ni
+  écriture. Le Python lisait un corps sans borne en mémoire.
+- **Jeton comparé en temps constant** : la durée du contrôle de `X-Mem0-Token` ne
+  dépend plus de la position du premier octet faux.
+- **Masquage des secrets** : `add` (infer ou non), `add_procedure` et `PUT`
+  masquent les secrets du texte AVANT l'embedding, l'invite d'extraction et
+  l'écriture — le `hash` est celui du texte masqué. Les familles et leur ordre sont
+  ceux de `redact` du plugin (`omp-mem0-memory/write.ts`), jeton `[REDACTED]` :
+  `src/redaction.rs`, jugé avec le plugin sur les cas partagés de
+  `tests/redaction-cas.json`. Le plugin masquait déjà ce qu'il envoie ; le serveur
+  couvre les clients qui écrivent sans lui (oracle du harness, apps OMP Console).
+  `mem0-rs import` recopie la source verbatim, sans masquage.
+
+`PUT` et `DELETE` sur un id inconnu rendent toujours le 500 de starlette, comme le
+Python : c'est un cas du contrat boîte noire (`suppression`, AC-9), et l'API ne
+porte pas de portée sur ces deux routes.
+
 ## Import depuis mem0-http
 
 ```sh
