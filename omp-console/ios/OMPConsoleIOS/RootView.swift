@@ -92,6 +92,10 @@ struct RootView: View {
                 route = IOSTabs.adapt(route, compact: size == .compact)
             }
             .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: IOSTabs.shown(currentRoute)) { select($0) })
+            // Un toucher sur le widget d'écran d'accueil ouvre sa section (l'Accueil).
+            .onOpenURL { url in
+                if let section = HarnessWidgetLink.section(of: url) { select(section) }
+            }
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
             }

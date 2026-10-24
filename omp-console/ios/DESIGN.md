@@ -326,6 +326,10 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   (extension `OMPConsoleWidgets`, troisième cible du projet) : écran verrouillé et
   Dynamic Island, symbole et teinte doublés par le texte de l'état.
   `[garde: coque-ios/AC-1]`
+- Le widget d'écran d'accueil « Boîte du serveur » (même extension) reprend le badge
+  de l'Accueil en grand chiffre à chasse fixe, puis les features vivantes, celles qui
+  attendent l'humain d'abord, en orange ; sa date de lecture se lit en bas. Un
+  toucher ouvre l'Accueil. `[garde: coque-ios/AC-1]`
 
 ## Mémoire (feature `ios-memoire`)
 

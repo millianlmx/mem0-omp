@@ -373,8 +373,19 @@ exécuter une étape elle-même.
   l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
   ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
   app fermée, le serveur la tient à jour par APNs s'il a une clé (`apns` de sa
-  configuration, voir `omp-harness/README.md`). Une feature terminée clôt son
-  activité.
+  configuration, voir `omp-harness/README.md` § « Les Live Activities app fermée »).
+  Une feature terminée clôt son activité. Si iOS refuse le jeton push (capacité
+  absente), l'activité démarre quand même, mise à jour par l'app ouverte.
+- **Widget d'écran d'accueil (iPhone, iPad).** « Boîte du serveur », en petit, moyen
+  ou grand format : ce qui attend votre décision, le nombre de features en cours et
+  d'alertes, puis les features vivantes (celles qui vous attendent d'abord) avec leur
+  étape, leur alerte et leur coût. L'app partage avec l'extension un groupe d'apps
+  (`OMP_APP_GROUP`, `group.com.omp.console.ios` par défaut) : elle y dépose
+  l'instantané de chaque boîte relue et l'adresse du serveur, et copie le jeton dans
+  un article de trousseau du groupe ; le widget relit ainsi la boîte lui-même
+  (`GET /v1/inbox`) toutes les 15 minutes, app fermée, et montre le dernier
+  instantané, daté, sans réseau. Un toucher ouvre l'app sur l'Accueil
+  (`ompconsole://home`).
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois une section de catalogue ouverte, le catalogue. Une coupure
@@ -1788,8 +1799,13 @@ releases. Avec Xcode :
 2. Dans Xcode, choisir la cible `OMPConsoleIOS` et l'appareil dans le sélecteur de
    destination.
 3. Ouvrir l'onglet *Signing & Capabilities* de la cible, cocher *Automatically
-   manage signing*, puis choisir son **compte** (Team). Si l'identifiant de bundle
-   du dépôt (`com.omp.console.ios`) est déjà pris, en choisir un **unique**.
+   manage signing*, puis choisir son **compte** (Team) — un compte du programme
+   développeur : l'app déclare un groupe d'apps (widget) et les notifications push
+   (Live Activities), que Xcode enregistre seul. Faire de même pour la cible
+   `OMPConsoleWidgets`. Si l'identifiant de bundle du dépôt (`com.omp.console.ios`)
+   est déjà pris, en choisir un **unique**, pour les deux cibles
+   (`<id>` et `<id>.widgets`), et changer `OMP_APP_GROUP` du projet en
+   `group.<id>`.
 4. Lancer (⌘R). L'app s'installe et démarre.
 5. À la première exécution, approuver le certificat de développement sur
    l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.

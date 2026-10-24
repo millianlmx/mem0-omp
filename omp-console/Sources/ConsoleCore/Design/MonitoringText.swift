@@ -346,4 +346,31 @@ public enum MonitoringText {
     public static let activityStart = "Suivre sur l’écran verrouillé"
     public static let activityStop = "Ne plus suivre sur l’écran verrouillé"
     public static let activitySymbol = "lock.iphone"
+
+    // MARK: - Widget d'écran d'accueil
+
+    public static let widgetName = "Boîte du serveur"
+    public static let widgetDescription = "Ce qui attend votre décision et les features que le serveur conduit, avec leur étape."
+    public static let widgetNotConfigured = "Ouvrez OMP Console pour relier le serveur."
+    public static let widgetNothingPending = "Rien n’attend votre décision."
+    public static let widgetNoActive = "Aucune feature en cours."
+    public static let widgetPendingSymbol = "tray.full"
+
+    /// « 2 décisions attendent »
+    public static func widgetPending(_ count: Int) -> String {
+        count == 0 ? widgetNothingPending : (count == 1 ? "1 décision attend" : "\(count) décisions attendent")
+    }
+
+    /// « 3 features en cours »
+    public static func widgetActive(_ count: Int) -> String {
+        count == 1 ? "1 feature en cours" : "\(count) features en cours"
+    }
+
+    /// « 2 alertes »
+    public static func widgetAlerts(_ count: Int) -> String {
+        count == 1 ? "1 alerte" : "\(count) alertes"
+    }
+
+    /// « Lu à 14 h 05 »
+    public static func widgetUpdated(_ time: String) -> String { "Lu à \(time)" }
 }

@@ -40,13 +40,16 @@ final class IOSLiveActivityCenter: ObservableObject {
         guard isAvailable, !isFollowing(run.id) else { return }
         let attributes = OMPRunActivityAttributes(runId: run.id, title: run.title, repo: run.repo)
         let state = HarnessActivityState(run: run, inbox: model.inbox)
-        guard let activity = try? Activity.request(
-            attributes: attributes,
-            content: ActivityContent(state: state, staleDate: nil),
-            pushType: .token
-        ) else { return }
-        followed.insert(run.id)
-        listen(activity, with: model)
+        let content = ActivityContent(state: state, staleDate: nil)
+        // Avec un jeton push, le serveur la tient à jour app fermée ; sans la capacité
+        // « Push Notifications » (compte Apple gratuit, app re-signée), iOS refuse le
+        // jeton : l'activité démarre quand même, mise à jour par l'app ouverte.
+        if let activity = try? Activity.request(attributes: attributes, content: content, pushType: .token) {
+            followed.insert(run.id)
+            listen(activity, with: model)
+        } else if (try? Activity.request(attributes: attributes, content: content, pushType: nil)) != nil {
+            followed.insert(run.id)
+        }
     }
 
     func stop(_ runId: String) {

@@ -26,6 +26,8 @@ struct OMPConsoleIOSApp: App {
     @StateObject private var drafts = HarnessDrafts()
     /// Les Live Activities des features suivies sur l'écran verrouillé.
     @StateObject private var activities = IOSLiveActivityCenter()
+    /// Le widget d'écran d'accueil, nourri par le groupe d'apps.
+    @StateObject private var widgets = IOSWidgetBridge()
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -55,8 +57,13 @@ struct OMPConsoleIOSApp: App {
                 memoryRecipe: memoryRecipe
             )
             .environmentObject(activities)
-            // Chaque boîte relue et chaque outil du direct suivi tiennent les Live Activities à jour.
-            .onReceive(server.$inbox) { _ in activities.sync(with: server) }
+            // Chaque boîte relue et chaque outil du direct suivi tiennent les Live Activities
+            // et le widget d'écran d'accueil à jour ; un serveur relié ou oublié aussi.
+            .onReceive(server.$inbox) { _ in
+                activities.sync(with: server)
+                widgets.sync(with: server)
+            }
+            .onReceive(server.$address) { _ in widgets.sync(with: server) }
             .onReceive(server.$session) { _ in activities.sync(with: server) }
         }
         .commands { IOSKeyboardCommands() }

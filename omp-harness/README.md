@@ -810,3 +810,38 @@ l'iPhone suit une feature sur l'écran verrouillé (Live Activity, poussée par 
 quand `apns` est configuré). Le client est partagé
 (`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`
 § « Serveur de pipelines ».
+
+### Les Live Activities app fermée (APNs)
+
+L'iPhone peut suivre une feature sur l'écran verrouillé (« Suivre sur l'écran
+verrouillé », menu d'une feature). App ouverte, l'app met l'activité à jour elle-même ;
+app fermée, c'est le serveur qui la pousse par APNs, avec le jeton que l'app lui
+enregistre (`POST /v1/push/activities`). Il lui faut une clé d'Apple (compte du
+programme développeur) :
+
+1. Sur developer.apple.com, *Certificates, Identifiers & Profiles ▸ Keys ▸ +* :
+   cocher **Apple Push Notifications service (APNs)**, enregistrer, puis télécharger
+   la clé `AuthKey_<KEYID>.p8` (une seule fois possible). Noter son **Key ID**, et le
+   **Team ID** (en haut à droite du compte).
+2. Copier la clé sur le serveur, lisible par lui seul : dans le dossier de données
+   (`~/.omp-harness/apns.p8` en conteneurs, `OMP_HARNESS_ROOT` avec Portainer,
+   `/var/lib/omp-harness/apns.p8` avec systemd), `chmod 600`.
+3. Dans `config.json` :
+
+   ```json
+   "apns": {
+     "keyFile": "/chemin/absolu/apns.p8",
+     "keyId": "<Key ID>",
+     "teamId": "<Team ID>",
+     "topic": "com.omp.console.ios",
+     "sandbox": true
+   }
+   ```
+
+   `topic` est l'identifiant de bundle de l'app iOS (changé si tu l'as changé dans
+   Xcode). `sandbox` vaut `true` pour une app installée depuis Xcode, `false` pour
+   TestFlight ou l'App Store.
+4. `harness.sh restart` (ou `systemctl restart omp-harness`).
+
+Une activité dont le jeton est refusé par Apple est oubliée ; sans `apns`, rien ne
+part et l'activité ne bouge que l'app ouverte.
