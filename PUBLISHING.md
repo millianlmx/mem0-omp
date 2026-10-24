@@ -289,7 +289,12 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    plus les tests que les fichiers écrits concernent (`--tests-base=HEAD`) ;
    rouge ⇒ rien n'est committé ;
 3. **PR** — poussée de la branche, puis PR vers `main` ouverte avec le jeton dédié
-   (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée ;
+   (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée.
+   Toute autre PR ouverte d'une branche `release/*` du dépôt, laissée par un run
+   précédent (statuts jamais verts, budget d'attente épuisé), est alors périmée :
+   le job la ferme avec un commentaire qui nomme la PR courante et supprime sa
+   branche — de même quand plus rien n'est à publier ; `--dry-run` les liste sans
+   les fermer ;
 4. **Statuts requis** — le job attend que les trois statuts requis passent sur
    cette PR (`check (ubuntu-latest)`, `check (macos-latest)` et
    `release-simulation`, ce dernier rejouant la release sur l'arbre écrit, cf.

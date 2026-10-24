@@ -43,6 +43,7 @@ import {
   renderReleaseBody,
   repoFromRemote,
   SERVICES,
+  stalePullRequests,
   utcDate,
   versionTag,
   type Change,
@@ -499,8 +500,10 @@ function writeFakeGh(bin: string): void {
   const script = [
     "#!/usr/bin/env bash",
     "# Faux `gh` du harnais (voir test/outillage/release.test.ts) : journalise, simule la PR",
-    "# (list/create/view/merge) et la création de release. `pr merge` fabrique un",
-    "# vrai commit de fusion squash sur refs/heads/main du remote nu.",
+    "# (list/create/view/merge/close) et la création de release. `pr merge` fabrique un",
+    "# vrai commit de fusion squash sur refs/heads/main du remote nu. Les PR ouvertes",
+    "# sont les fichiers de $GH_STATE/open/ (nom = numéro, contenu = branche ; un",
+    "# fichier <n>.fourche en fait une PR de fourche) : `pr list` sans --head les rend.",
     "set -uo pipefail",
     "journal_args=\"${*//$'\\n'/ }\"",
     'printf \'%s\\n\' "$journal_args" >> "$GH_JOURNAL"',
@@ -508,7 +511,23 @@ function writeFakeGh(bin: string): void {
     'command="${1:-}"; sub="${2:-}"',
     'case "$command $sub" in',
     '  "pr list")',
-    '    if [ -f "$GH_STATE/number" ]; then printf \'[{"number":%s}]\\n\' "$(cat "$GH_STATE/number")"; else printf \'[]\\n\'; fi',
+    '    case " $* " in',
+    '      *" --head "*)',
+    '        if [ -f "$GH_STATE/number" ]; then printf \'[{"number":%s}]\\n\' "$(cat "$GH_STATE/number")"; else printf \'[]\\n\'; fi',
+    "        ;;",
+    "      *)",
+    "        sep=\"\"; printf '['",
+    '        for file in "$GH_STATE"/open/*; do',
+    '          [ -f "$file" ] || continue',
+    '          number="${file##*/}"',
+    '          case "$number" in *.*) continue ;; esac',
+    '          cross=false; [ -f "$file.fourche" ] && cross=true',
+    '          printf \'%s{"number":%s,"headRefName":"%s","isCrossRepository":%s}\' "$sep" "$number" "$(cat "$file")" "$cross"',
+    '          sep=","',
+    "        done",
+    "        printf ']\\n'",
+    "        ;;",
+    "    esac",
     "    ;;",
     '  "pr create")',
     '    prev=""',
@@ -517,6 +536,7 @@ function writeFakeGh(bin: string): void {
     '      prev="$arg"',
     "    done",
     "    printf '1' > \"$GH_STATE/number\"",
+    '    mkdir -p "$GH_STATE/open" && cp "$GH_STATE/head" "$GH_STATE/open/1"',
     '    printf \'https://%s/%s/pull/1\\n\' "$GH_HOST" "$GH_REPO"',
     "    ;;",
     '  "pr view")',
@@ -548,7 +568,13 @@ function writeFakeGh(bin: string): void {
     '    merged="$(git "${remote[@]}" commit-tree "$tree" -p "$parent" -m "$subject" -m "$body")"',
     '    git "${remote[@]}" update-ref refs/heads/main "$merged"',
     '    printf \'%s\' "$merged" > "$GH_STATE/merge-sha"',
+    '    rm -f "$GH_STATE/open/1"',
     "    printf 'merged %s\\n' \"$merged\"",
+    "    ;;",
+    '  "pr close")',
+    '    number="${3:-}"',
+    '    if [ ! -f "$GH_STATE/open/$number" ]; then printf \'PR #%s deja fermee\\n\' "$number" >&2; exit 1; fi',
+    '    rm -f "$GH_STATE/open/$number" "$GH_STATE/open/$number.fourche"',
     "    ;;",
     '  "release create")',
     '    tag="${3:-}"',
@@ -754,6 +780,17 @@ function readCalls(journal: string): Array<{ args: string; tag: string; notes: s
     });
 }
 
+/**
+ * Les appels à `gh` qui ÉCRIVENT (PR, fusion, fermeture, release) : la liste des
+ * PR ouvertes (`pr list`), que le moteur lit à chaque run pour fermer les PR de
+ * release périmées, n'en fait pas partie.
+ */
+function writingCalls(journal: string): string[] {
+  return readCalls(journal)
+    .map((call) => call.args)
+    .filter((args) => !args.startsWith("pr list "));
+}
+
 /** Les créations de release seulement : le journal porte aussi les appels de PR. */
 function releaseCalls(journal: string) {
   return readCalls(journal).filter((call) => call.tag !== "");
@@ -894,6 +931,66 @@ async function buildTagged(kind: string): Promise<Built> {
   return { repo, run: await runEngine(repo) };
 }
 
+/** Une PR ouverte du faux `gh` ; `pousser` crée aussi sa branche sur le remote nu. */
+function seedOpenPr(repo: Repo, number: number, head: string, options: { fourche?: boolean; pousser?: boolean } = {}) {
+  const open = path.join(repo.state, "open");
+  fs.mkdirSync(open, { recursive: true });
+  fs.writeFileSync(path.join(open, String(number)), head);
+  if (options.fourche) fs.writeFileSync(path.join(open, `${number}.fourche`), "");
+  if (options.pousser !== false) git(["push", "-q", "origin", `HEAD:refs/heads/${head}`], repo.dir);
+}
+
+/** Les numéros des PR encore ouvertes pour le faux `gh`, dans l'ordre. */
+function openPrs(repo: Repo): number[] {
+  const open = path.join(repo.state, "open");
+  if (!fs.existsSync(open)) return [];
+  return fs
+    .readdirSync(open)
+    .filter((name) => /^\d+$/.test(name))
+    .map(Number)
+    .sort((a, b) => a - b);
+}
+
+type StaleState = { open: number[]; heads: string[]; writes: string[] };
+type StaleBuilt = {
+  repo: Repo;
+  /** `--dry-run` avec deux PR de release périmées, une de fourche et une hors `release/`. */
+  dry: Run;
+  afterDry: StaleState;
+  /** Le vrai run : PR courante #1 ouverte, puis fusionnée. */
+  run: Run;
+  afterRun: StaleState;
+  /** Rejeu du même événement (plus rien à publier) après une PR périmée de plus (#11). */
+  empty: Run;
+  afterEmpty: StaleState;
+  /** Second rejeu : plus rien à fermer. */
+  again: Run;
+  afterAgain: StaleState;
+};
+
+function staleState(repo: Repo): StaleState {
+  return { open: openPrs(repo), heads: remoteHeads(repo.remote), writes: writingCalls(repo.journal) };
+}
+
+/** Le scénario des PR de release périmées : dry-run, vrai run, puis deux rejeux à plan vide. */
+async function buildStale(kind: string): Promise<StaleBuilt> {
+  const repo = makeRepo(kind, PATCH_STEPS);
+  seedOpenPr(repo, 7, "release/perimee-1");
+  seedOpenPr(repo, 8, "release/perimee-2");
+  seedOpenPr(repo, 9, "release/fourche", { fourche: true, pousser: false });
+  seedOpenPr(repo, 10, "feat/autre");
+  const dry = await runEngine(repo, { extra: ["--dry-run"] });
+  const afterDry = staleState(repo);
+  const run = await runEngine(repo);
+  const afterRun = staleState(repo);
+  git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], repo.dir);
+  seedOpenPr(repo, 11, "release/perimee-3");
+  const empty = await runEngine(repo);
+  const afterEmpty = staleState(repo);
+  const again = await runEngine(repo);
+  return { repo, dry, afterDry, run, afterRun, empty, afterEmpty, again, afterAgain: staleState(repo) };
+}
+
 // Les scénarios sont construits une seule fois, avant le premier test : chaque
 // test ne réclame que le sien, et les copies imbriquées (`MEM0_CHECK_DEPTH` ≠ 0)
 // n'en construisent aucun — sinon elles se rappelleraient elles-mêmes. Ils se
@@ -912,6 +1009,8 @@ type ScenarioSet = {
   service: Built;
   /** Dépôt vierge pour les cas d'arguments de `--simulate` : aucun run de moteur. */
   argCases: Repo;
+  /** Des PR de release laissées ouvertes par des runs précédents. */
+  stale: StaleBuilt;
 };
 
 async function buildScenarios(): Promise<ScenarioSet> {
@@ -921,7 +1020,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
       edits: [{ file: "omp-harness/README.md", append: "\nUne ligne.\n" }],
     },
   ]);
-  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun] = await Promise.all([
+  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun, stale] = await Promise.all([
     buildSimple("patch", PATCH_STEPS),
     buildSimple("docs", DOCS_STEPS),
     buildSimple("major", MAJOR_STEPS),
@@ -930,6 +1029,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
     buildBlocked("blocked"),
     buildNoToken("token"),
     runEngine(serviceRepo, { extra: ["--dry-run"] }),
+    buildStale("stale"),
   ]);
   return {
     patch,
@@ -941,6 +1041,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
     noToken,
     service: { repo: serviceRepo, run: serviceRun },
     argCases: makeRepo("args", PATCH_STEPS),
+    stale,
   };
 }
 
@@ -1330,7 +1431,7 @@ test("release/AC-7 : un rejeu du même événement ne crée ni commit, ni tag, n
   assert.equal(run.status, 0, output(run));
   const published = remoteGit(repo.remote, ["rev-parse", "main"]).trim();
   const tags = remoteTags(repo.remote);
-  const calls = readCalls(repo.journal).length;
+  const calls = writingCalls(repo.journal).length;
 
   // Un run ultérieur repart d'un checkout frais : il relit origin/main, où le
   // commit de fusion porte le trailer de l'événement.
@@ -1341,7 +1442,7 @@ test("release/AC-7 : un rejeu du même événement ne crée ni commit, ni tag, n
   assert.ok(!replay.stdout.includes("✓"), `aucun bump rejoué :\n${output(replay)}`);
   assert.equal(remoteGit(repo.remote, ["rev-parse", "main"]).trim(), published, "main inchangée");
   assert.deepEqual(remoteTags(repo.remote), tags, "aucun tag nouveau");
-  assert.equal(readCalls(repo.journal).length, calls, "aucun nouvel appel à gh");
+  assert.equal(writingCalls(repo.journal).length, calls, "aucun nouvel appel à gh qui écrive");
 
   // Le tag de la version cible déjà posé retire le plugin du plan (garde 2).
   const tagged = scenario(SCENARIOS?.tagged, t);
@@ -1350,7 +1451,7 @@ test("release/AC-7 : un rejeu du même événement ne crée ni commit, ni tag, n
   const target = versionTag(MEMORY.name, VERSIONS[MEMORY.name]?.patch ?? "");
   assert.ok(tagged.run.stdout.includes(`· ${MEMORY.name} : déjà publié (tag ${target})`), output(tagged.run));
   assert.ok(!tagged.run.stdout.includes("✓"), `plan vide attendu :\n${output(tagged.run)}`);
-  assert.equal(fs.readFileSync(tagged.repo.journal, "utf8").trim(), "", "aucune release");
+  assert.deepEqual(writingCalls(tagged.repo.journal), [], "aucune release");
   assert.equal(remoteGit(tagged.repo.remote, ["rev-parse", "main"]).trim(), tagged.repo.after, "aucun commit");
   assert.equal(changelogState(tagged.repo.dir), tagged.repo.changelogBefore, "journal inchangé");
 });
@@ -1368,7 +1469,14 @@ test("release/AC-8 : le plan complet s'imprime sans rien écrire (--dry-run)", (
   assert.ok(output(dry).includes("→ 4 version(s) à publier : 4 rattrapage, 0 bump"), output(dry));
   assert.ok(!output(dry).includes("✗"), output(dry));
 
-  assert.deepEqual(after, before, "aucune écriture : journal, versions, branche et tags inchangés");
+  // Le journal de `gh` ne gagne que la lecture des PR ouvertes (PR de release périmées).
+  assert.deepEqual(
+    { ...after, journal: "" },
+    { ...before, journal: "" },
+    "aucune écriture : versions, branche et tags inchangés",
+  );
+  const dryWrites = after.journal.split("\n").filter((line) => line.trim() !== "" && !line.startsWith("pr list "));
+  assert.deepEqual(dryWrites, [], "aucun appel à gh qui écrive");
   assert.equal(after.version, before.version, "aucun bump local");
   assert.equal(after.head, repo.after, "aucun commit local : la branche de release n'est pas créée");
   assert.deepEqual(after.heads, ["refs/heads/main"], "aucune branche de release");
@@ -1382,7 +1490,7 @@ test("plan vide : un merge sans fichier de plugin ne publie rien", (t) => {
   assert.equal(run.status, 0, output(run));
   assert.ok(run.stdout.includes(`· ${MEMORY.name} : inchangé (aucun fichier touché)`), output(run));
   assert.ok(run.stdout.includes(`· ${REQ.name} : inchangé (aucun fichier touché)`), output(run));
-  assert.equal(fs.readFileSync(repo.journal, "utf8").trim(), "", "aucun appel à gh");
+  assert.deepEqual(writingCalls(repo.journal), [], "aucun appel à gh qui écrive");
   assert.equal(remoteGit(repo.remote, ["rev-parse", "main"]).trim(), repo.after, "aucun commit de release");
   assert.deepEqual(
     remoteTags(repo.remote),
@@ -1473,4 +1581,123 @@ test("release/AC-10 : un service hors catalogue (omp-harness) est versionné com
   );
   assert.match(body, /harness\.sh up/);
   assert.doesNotMatch(body, /\/marketplace install omp-harness/);
+});
+
+// ---------------------------------------------------------------------------
+// PR de release périmées : chaque run recalcule le plan depuis main
+// ---------------------------------------------------------------------------
+
+/** Les fermetures de PR (`pr close <n>`) parmi les appels qui écrivent. */
+const closes = (writes: string[]) => writes.filter((call) => call.startsWith("pr close "));
+
+test("release/AC-11 : la PR de release courante ouverte, toute autre PR release/* du dépôt est fermée avec un commentaire qui la nomme et sa branche supprimée — ni fourche, ni autre branche", (t) => {
+  // La sélection est pure : branche `release/*` du dépôt, hors branche courante, et
+  // une réponse illisible n'est jamais lue comme « rien à fermer ».
+  const listed = JSON.stringify([
+    { number: 3, headRefName: "release/courante", isCrossRepository: false },
+    { number: 5, headRefName: "release/vieille", isCrossRepository: false },
+    { number: 4, headRefName: "release/fourche", isCrossRepository: true },
+    { number: 2, headRefName: "fix/release", isCrossRepository: false },
+  ]);
+  assert.deepEqual(
+    stalePullRequests(listed, "release/courante")?.map((pr) => pr.number),
+    [5],
+  );
+  assert.deepEqual(
+    stalePullRequests(listed, null)?.map((pr) => pr.number),
+    [3, 5],
+  );
+  assert.equal(stalePullRequests("pas du json", null), null);
+  assert.equal(stalePullRequests('{"number":1}', null), null);
+  assert.deepEqual(stalePullRequests("", null), []);
+
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
+  const built = scenario(SCENARIOS?.stale, t);
+  if (built === null) return;
+  const { run, afterRun } = built;
+  assert.equal(run.status, 0, output(run));
+
+  // Fermées APRÈS l'ouverture de la PR courante et AVANT l'attente de fusion.
+  const writes = afterRun.writes;
+  const created = writes.findIndex((call) => call.startsWith("pr create"));
+  const merged = writes.findIndex((call) => call.startsWith("pr merge"));
+  const closed = closes(writes);
+  assert.deepEqual(
+    closed.map((call) => call.split(" ")[2]),
+    ["7", "8"],
+    writes.join("\n"),
+  );
+  for (const call of closed) {
+    const at = writes.indexOf(call);
+    assert.ok(created !== -1 && created < at && at < merged, writes.join("\n"));
+    assert.ok(call.includes("--comment") && call.includes("remplacée par #1"), call);
+  }
+  assert.ok(
+    output(run).includes("· PR de release périmée #7 (release/perimee-1) fermée : remplacée par #1"),
+    output(run),
+  );
+
+  // Branches des PR fermées supprimées ; la PR de fourche et la PR hors release/ restent ouvertes.
+  assert.deepEqual(afterRun.open, [9, 10]);
+  assert.ok(!afterRun.heads.includes("refs/heads/release/perimee-1"), afterRun.heads.join(", "));
+  assert.ok(!afterRun.heads.includes("refs/heads/release/perimee-2"), afterRun.heads.join(", "));
+  assert.ok(afterRun.heads.includes("refs/heads/feat/autre"), afterRun.heads.join(", "));
+});
+
+test("release/AC-12 : plus rien à publier, toute PR de release encore ouverte est fermée ; un rejeu ne ferme plus rien", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
+  const built = scenario(SCENARIOS?.stale, t);
+  if (built === null) return;
+  const { empty, afterRun, afterEmpty, again, afterAgain } = built;
+  assert.equal(empty.status, 0, output(empty));
+  assert.ok(empty.stdout.includes("· merge déjà publié"), output(empty));
+  assert.ok(
+    output(empty).includes(
+      "· PR de release périmée #11 (release/perimee-3) fermée : plus rien n'est à publier depuis main",
+    ),
+    output(empty),
+  );
+  const fresh = afterEmpty.writes.slice(afterRun.writes.length);
+  assert.deepEqual(
+    closes(fresh).map((call) => call.split(" ")[2]),
+    ["11"],
+    fresh.join("\n"),
+  );
+  assert.deepEqual(
+    fresh.filter((call) => !call.startsWith("pr close ")),
+    [],
+    "aucune PR, fusion ni release au rejeu",
+  );
+  assert.ok(!afterEmpty.heads.includes("refs/heads/release/perimee-3"), afterEmpty.heads.join(", "));
+  assert.deepEqual(afterEmpty.open, [9, 10]);
+
+  // Idempotence : le second rejeu ne trouve plus rien à fermer.
+  assert.equal(again.status, 0, output(again));
+  assert.deepEqual(afterAgain.writes, afterEmpty.writes, "aucun nouvel appel à gh qui écrive");
+  assert.deepEqual(afterAgain.open, [9, 10]);
+  assert.ok(!output(again).includes("périmée #"), output(again));
+});
+
+test("release/AC-13 : `--dry-run` nomme les PR de release que le run fermerait, sans en fermer aucune", (t) => {
+  const built = scenario(SCENARIOS?.stale, t);
+  if (built === null) return;
+  const { repo, dry, afterDry } = built;
+  assert.equal(dry.status, 0, output(dry));
+  for (const [number, head] of [
+    [7, "release/perimee-1"],
+    [8, "release/perimee-2"],
+  ] as const) {
+    assert.ok(
+      output(dry).includes(
+        `· PR de release périmée #${number} (${head}) à fermer : remplacée par la PR de release/${repo.after}`,
+      ),
+      output(dry),
+    );
+  }
+  assert.ok(!output(dry).includes("#9 ") && !output(dry).includes("#10 "), output(dry));
+  assert.deepEqual(afterDry.writes, [], "aucun appel à gh qui écrive");
+  assert.deepEqual(afterDry.open, [7, 8, 9, 10]);
+  for (const head of ["release/perimee-1", "release/perimee-2", "feat/autre"]) {
+    assert.ok(afterDry.heads.includes(`refs/heads/${head}`), afterDry.heads.join(", "));
+  }
 });
