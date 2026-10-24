@@ -12,7 +12,8 @@
 //
 // Le flux `GET /v1/events` rejoue le journal depuis `Last-Event-ID` : un client qui
 // se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
-// (éphémère, jamais rejouée).
+// et le direct de leurs sessions (éphémères, jamais rejoués : `GET /v1/runs/{id}/session`
+// rend le tampon des dernières entrées d'un run).
 import { readFileSync } from "node:fs";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
@@ -43,6 +44,7 @@ export const API_FEATURES = [
   "revert",
   "accept-all",
   "answer-reason",
+  "session-feed",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -269,6 +271,9 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       const view = orchestrator.runView(call.match[1] as string, call.repos);
       send(call.res, 200, view, { ETag: `"${(view.run as { rev: number }).rev}"` });
     }),
+    route("GET", "/v1/runs/{id}/session", "viewer", (call) =>
+      send(call.res, 200, orchestrator.sessionView(call.match[1] as string, call.repos)),
+    ),
     route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
     ),

@@ -112,8 +112,9 @@ struct IOSHarnessRepoPicker: View {
 }
 
 /// Une feature : titre, état et étape, reprise différée ou dernier échec, corrections ;
-/// son menu demande l'arrêt, la relance (en échec ou arrêtée sur une attente) ou
-/// l'annulation d'une feature fusionnée, tous confirmés par `iosHarnessGestures`.
+/// son menu ouvre le direct de sa session, demande l'arrêt, la relance (en échec ou
+/// arrêtée sur une attente) ou l'annulation d'une feature fusionnée, ces trois gestes
+/// confirmés par `iosHarnessGestures`.
 struct IOSHarnessRunRow: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -135,6 +136,9 @@ struct IOSHarnessRunRow: View {
             }
         }
         .contextMenu {
+            if run.canFollowSession {
+                Button(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol) { drafts.sessionRun = run }
+            }
             if run.canRetry {
                 Button(PipelineServerText.retry) { drafts.retryRequest = run }
             }
@@ -728,6 +732,9 @@ private struct IOSHarnessGestures: ViewModifier {
             }
             .sheet(item: $drafts.refusal) { run in
                 refusalSheet(run)
+            }
+            .sheet(item: $drafts.sessionRun) { run in
+                IOSSessionSheet(server: server, run: run)
             }
             .confirmationDialog(
                 PipelineServerText.stopConfirm,

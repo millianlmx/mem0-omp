@@ -331,6 +331,16 @@ struct HarnessRunRow: View {
                 }
             }
             Spacer()
+            if run.canFollowSession {
+                Button {
+                    drafts.sessionRun = run
+                } label: {
+                    Label(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol)
+                }
+                .buttonStyle(.bordered)
+                .help(PipelineServerText.sessionTitle)
+                .accessibilityIdentifier("pipelines.session.open")
+            }
             if run.canRetry {
                 Button(PipelineServerText.retry) { drafts.retryRequest = run }
                     .buttonStyle(.bordered)
@@ -385,6 +395,9 @@ private struct HarnessGestures: ViewModifier {
             }
             .sheet(item: $drafts.refusal) { run in
                 refusalSheet(run)
+            }
+            .sheet(item: $drafts.sessionRun) { run in
+                HarnessSessionSheet(server: server, run: run)
             }
             .confirmationDialog(
                 PipelineServerText.stopConfirm,

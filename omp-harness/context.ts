@@ -24,6 +24,7 @@ import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
+import { SessionFeeds } from "./session-feed.ts";
 
 export type SpawnRunner = (
   command: string,
@@ -68,6 +69,8 @@ export class HarnessContext {
   readonly logins: OAuthLogins;
   /** Les notifications sortantes (ntfy), abonnées au journal : chaque pièce n'a rien à faire pour notifier. */
   readonly notifier: Notifier;
+  /** Le direct des sessions de runners : poussé en événements éphémères `session`, gardé en tampon borné. */
+  readonly sessions: SessionFeeds;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -95,6 +98,11 @@ export class HarnessContext {
     });
     this.notifier = new Notifier({ config: this.config, store: this.store, log: this.log });
     this.notifier.subscribe();
+    this.sessions = new SessionFeeds({
+      publish: (runId, entry) => this.event("session", runId, { entry }),
+      // Les clés que le service passe aux runners : masquées si l'agent les affiche.
+      secrets: () => Object.values(this.providers.runnerEnv()),
+    });
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */

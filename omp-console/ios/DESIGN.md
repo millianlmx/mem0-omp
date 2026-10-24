@@ -416,9 +416,9 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   dans son état courant ; « Arrêter la feature » est destructif et passe par une
   confirmation. Aucune action par balayage.
   `[garde: ios-gestes-et-retours-natifs/AC-5]`
-- Le texte des specs d'une feature et de la fiche d'un souvenir est
-  sélectionnable (sélection système et « Copier ») ; les libellés de boutons ne
-  le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
+- Le texte des specs d'une feature, de la fiche d'un souvenir et du direct d'une
+  session est sélectionnable (sélection système et « Copier ») ; les libellés de
+  boutons ne le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
 - Sur iPad avec pointeur, chaque rangée touchable de la Mémoire montre l'effet de
   survol système `.highlight` (`iosHoverEffect()`).
   `[garde: ios-gestes-et-retours-natifs/AC-10]`

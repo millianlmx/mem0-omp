@@ -60,6 +60,8 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var retryRequest: HarnessRun?
     /// La feature fusionnée dont l'annulation (commit inverse) attend confirmation.
     @Published public var revertRequest: HarnessRun?
+    /// La feature dont la feuille « Session en direct » est ouverte.
+    @Published public var sessionRun: HarnessRun?
     @Published public var forgetAsked = false
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false

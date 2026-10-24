@@ -131,6 +131,64 @@ public enum PipelineServerText {
         count == 0 ? nothingPending : (count == 1 ? "1 décision attend" : "\(count) décisions attendent")
     }
 
+    // MARK: - Direct d'une session
+
+    /// Le titre de la feuille et le geste qui l'ouvre, sur une feature.
+    public static let sessionTitle = "Session en direct"
+    /// Le symbole SF du geste « Session en direct ».
+    public static let sessionSymbol = "text.bubble"
+    public static let sessionWorking = "Un agent travaille sur cette feature."
+    public static let sessionIdle = "Aucun agent ne travaille sur cette feature en ce moment."
+    public static let sessionConnecting = "Connexion au direct…"
+    public static let sessionReconnecting = "Direct interrompu : reconnexion…"
+    public static let sessionEmpty = "Rien à montrer pour l’instant : le direct commence au prochain message de l’agent."
+    public static let sessionThinking = "Raisonnement"
+    public static let sessionResult = "Résultat"
+    public static let sessionFollowEnd = "Suivre la fin"
+    public static let sessionFollowEndSymbol = "arrow.down.to.line"
+
+    /// L'outil que l'agent emploie à l'instant.
+    public static func sessionNow(_ tool: String) -> String { "En cours : \(tool)" }
+
+    /// L'en-tête d'un groupe d'entrées : « Étape /impl ».
+    public static func sessionStep(_ label: String) -> String { "Étape \(label)" }
+
+    /// Un signal de la session, d'après son code serveur.
+    public static func sessionNotice(_ code: String) -> String {
+        switch code {
+        case "compaction": "L’agent compacte son contexte."
+        case "retry": "Erreur passagère du fournisseur : l’agent réessaie."
+        default: "Signal de la session"
+        }
+    }
+
+    /// L'état d'un outil, pour VoiceOver.
+    public static func toolStatus(_ raw: String?) -> String {
+        switch raw {
+        case "running": "en cours"
+        case "ok": "terminé"
+        case "error": "en échec"
+        default: "état inconnu"
+        }
+    }
+
+    /// « bash, en échec : npm test », la ligne d'un outil lue par VoiceOver.
+    public static func toolLine(tool: String, status: String?, text: String) -> String {
+        text.isEmpty ? "\(tool), \(toolStatus(status))" : "\(tool), \(toolStatus(status)) : \(text)"
+    }
+
+    /// Le symbole SF d'une entrée du direct, selon sa sorte et l'état d'un outil.
+    public static func sessionEntrySymbol(kind: String, status: String?) -> String {
+        switch (kind, status) {
+        case ("tool", "error"): "xmark.octagon"
+        case ("tool", "ok"): "checkmark.circle"
+        case ("tool", _): "gearshape"
+        case ("thinking", _): "brain"
+        case ("notice", _): "info.circle"
+        default: "text.bubble"
+        }
+    }
+
     // MARK: - États
 
     public static func state(_ raw: String) -> String {

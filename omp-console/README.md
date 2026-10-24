@@ -333,6 +333,18 @@ exécuter une étape elle-même.
   jours, taux de fusion, délai médian jusqu'à la fusion, corrections par fusion),
   étapes (nombre, échecs, durée médiane), tests (repris du cache, relancés après un
   manque de mémoire) et capacité du serveur (runners, slots lourds, mémoire libre).
+- **Session en direct.** Sur une feature qui n'est ni fusionnée ni arrêtée,
+  « Session en direct » (bouton de la rangée sur le Mac, menu contextuel sur iOS)
+  ouvre une feuille qui montre en temps réel la session OMP de l'agent du serveur :
+  ses paragraphes, son raisonnement (replié), chaque outil avec son intention ou sa
+  commande, son état et la fin de son résultat (replié), et les signaux de la
+  session (contexte compacté, réessai du fournisseur), groupés par étape. L'outil du
+  moment s'affiche en tête ; « Suivre la fin » garde la dernière entrée à l'écran.
+  La feuille lit le tampon du serveur (`GET /v1/runs/{id}/session`, ses 200
+  dernières entrées) puis suit `GET /v1/events?run={id}&live=1` : chaque événement
+  `session` remplace l'entrée de même `seq`. Une coupure est reprise, tampon relu ;
+  un refus (serveur trop ancien, feature inconnue) arrête le direct avec sa cause.
+  Le texte se sélectionne. Le serveur masque les secrets reconnus avant d'envoyer.
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois une section de catalogue ouverte, le catalogue. Une coupure
@@ -1398,6 +1410,7 @@ omp-console/
 │   ├── Server/                    les sections de Pilotage, servies par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun, Accueil, Pipelines, Projet, Audit, Statistiques
 │   │   ├── HarnessInboxSections.swift la boîte de l'humain et ses gestes
+│   │   ├── HarnessSessionView.swift   la feuille « Session en direct » d'une feature
 │   │   └── ServerSheet.swift      la feuille « Serveur » (adresse, jeton, oubli)
 │   ├── Files/                     la section Fichiers (git en lecture seule, arbre, diff, veille)
 │   ├── Terminal/                  la section Terminal (PTY, émulateur, rendu)
@@ -1416,6 +1429,7 @@ omp-console/
 │   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
 │   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
+│   ├── HarnessSession.swift       le direct de la session d'une feature (entrées, tampon, événements)
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
 │   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines
@@ -1468,7 +1482,8 @@ accès :
   (`IOSHarnessScreens.swift`) : les mêmes écrans que sur le Mac — résumé et boîte de
   l'humain, lancement d'une feature, d'un projet ou d'un audit, statistiques —, sur
   le même `HarnessModel` (voir « Serveur de pipelines »). Les listes se tirent pour
-  actualiser, et une feature en cours a son menu contextuel « Arrêter la feature ».
+  actualiser, et une feature en cours a son menu contextuel « Session en direct »
+  (`IOSSessionSheet.swift`) et « Arrêter la feature ».
 - **La mémoire du serveur** pour la section Mémoire (`MemoryAccess`, `MemoryReader`
   dans `ConsoleClient`) : son adresse va aux préférences, son jeton au trousseau.
   Sans elle, la Mémoire affiche « Mémoire non reliée » et « Relier le serveur », qui

@@ -1,0 +1,115 @@
+// Le direct de la session OMP d'une feature : le tampon du serveur
+// (`GET /v1/runs/{id}/session`), puis les entrées `session` du flux, qui remplacent
+// celles de même `seq` — sur la doublure de transport, sans réseau.
+
+@testable import ConsoleClient
+import ConsoleCore
+import Foundation
+import Testing
+
+private func reply(_ json: String, status: Int = 200) -> HarnessReply { HarnessReply(status: status, body: Data(json.utf8)) }
+
+private let sessionInbox = #"{"batches":[],"awaiting":[],"decisions":[],"runs":[],"cursor":7}"#
+
+/// Le tampon tel que le serveur l'écrit.
+private let sessionJSON = #"""
+{"runId":"r1","live":true,"cursor":9,"entries":[
+  {"seq":1,"at":1700000000000,"step":"impl","kind":"text","text":"Je lis les routes.","tool":null,"status":null,"detail":null},
+  {"seq":2,"at":1700000000500,"step":"impl","kind":"tool","text":"npm test","tool":"bash","status":"running","detail":null}
+]}
+"""#
+
+/// Un événement `session` tel que le flux l'écrit (éphémère : sans ligne `id:`).
+private func sessionEvent(_ entry: String) -> Data {
+    Data("event: session\ndata: {\"id\":0,\"at\":1,\"runId\":\"r1\",\"repo\":\"demo\",\"type\":\"session\",\"payload\":{\"entry\":\(entry)},\"ephemeral\":true}\n\n".utf8)
+}
+
+@MainActor
+private func sessionModel(_ transport: ScriptedHarnessTransport) -> HarnessModel {
+    HarnessModel(transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(), retryDelay: .seconds(3600), refreshDelay: .milliseconds(1))
+}
+
+@Suite("Serveur de pipelines — direct d’une session")
+@MainActor
+struct HarnessSessionTests {
+    @Test("le tampon se décode tel que le serveur l'écrit ; une entrée de même seq remplace, une autre prend sa place dans l'ordre")
+    func feedApplies() throws {
+        let view = try JSONDecoder().decode(HarnessSessionView.self, from: Data(sessionJSON.utf8))
+        var feed = HarnessSessionFeed(runId: "r1")
+        feed.load(view)
+        #expect(feed.isLoaded && feed.isRunning)
+        #expect(feed.entries.map(\.seq) == [1, 2])
+        #expect(feed.current?.tool == "bash")
+        feed.apply(HarnessSessionEntry(seq: 2, kind: "tool", text: "npm test", tool: "bash", status: "error", detail: "1 échec"))
+        #expect(feed.entries.count == 2)
+        #expect(feed.entries.last?.isFailure == true)
+        #expect(feed.current == nil, "l'outil terminé n'est plus en cours")
+        feed.apply(HarnessSessionEntry(seq: 4, kind: "text", text: "Je corrige."))
+        feed.apply(HarnessSessionEntry(seq: 3, kind: "thinking", text: "Le test attend une virgule."))
+        #expect(feed.entries.map(\.seq) == [1, 2, 3, 4])
+        for seq in 5...(HarnessSessionFeed.keep + 10) { feed.apply(HarnessSessionEntry(seq: seq, kind: "text", text: "\(seq)")) }
+        #expect(feed.entries.count == HarnessSessionFeed.keep)
+        #expect(feed.entries.first?.seq == 11, "les plus anciennes partent")
+    }
+
+    @Test("un relu en cours de route garde les entrées déjà reçues et met à jour l'état du run")
+    func feedMerges() {
+        var feed = HarnessSessionFeed(runId: "r1", entries: [HarnessSessionEntry(seq: 5, kind: "text", text: "récente")], isRunning: true, isLoaded: true)
+        feed.merge(HarnessSessionView(runId: "r1", live: false, entries: [HarnessSessionEntry(seq: 4, kind: "text", text: "ancienne")]))
+        #expect(feed.entries.map(\.seq) == [4, 5])
+        #expect(feed.isRunning == false)
+    }
+
+    @Test("le lecteur du flux rend nom et données ; seul un événement session porte une entrée")
+    func parsesSessionEvents() {
+        var parser = HarnessEventParser()
+        let half = sessionEvent(#"{"seq":3,"at":2,"step":"fix","kind":"text","text":"Ok","tool":null,"status":null,"detail":null}"#)
+        #expect(parser.consumeEvents(half.prefix(20)).isEmpty)
+        let events = parser.consumeEvents(half.dropFirst(20) + Data("id: 10\nevent: run_state\ndata: {\"runId\":\"r1\"}\n\n".utf8))
+        #expect(events.map(\.name) == ["session", "run_state"])
+        #expect(events.first?.sessionEntry?.text == "Ok")
+        #expect(events.first?.sessionEntry?.step == "fix")
+        #expect(events.last?.sessionEntry == nil)
+        #expect(events.last?.runId == "r1")
+    }
+
+    @Test("suivre une session ouvre le flux du run en direct depuis le curseur de la boîte, lit le tampon, puis applique chaque entrée")
+    func followsSession() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            call.path == "/v1/runs/r1/session" ? reply(sessionJSON) : reply(sessionInbox)
+        }
+        let model = sessionModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        transport.stream([
+            sessionEvent(#"{"seq":2,"at":2,"step":"impl","kind":"tool","text":"npm test","tool":"bash","status":"ok","detail":"12 tests verts"}"#),
+            sessionEvent(#"{"seq":3,"at":3,"step":"impl","kind":"text","text":"Tests verts.","tool":null,"status":null,"detail":null}"#),
+        ])
+        model.followSession(runId: "r1")
+        #expect(await eventually { model.session?.entries.count == 3 })
+        #expect(transport.calls.contains { $0.path == "/v1/events?run=r1&live=1&after=7" })
+        #expect(model.session?.entries.map(\.seq) == [1, 2, 3])
+        #expect(model.session?.entries[1].detail == "12 tests verts")
+        #expect(model.session?.isRunning == true)
+        #expect(model.sessionFailure == nil)
+        model.stopSession()
+        #expect(model.session == nil)
+        #expect(model.isSessionLive == false)
+    }
+
+    @Test("un serveur qui ne connaît pas le direct l'arrête, avec son motif, sans réessayer")
+    func unsupportedServer() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            call.path == "/v1/runs/r1/session" ? reply(#"{"error":"route inconnue"}"#, status: 404) : reply(sessionInbox)
+        }
+        let model = sessionModel(transport)
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        model.followSession(runId: "r1")
+        #expect(await eventually { model.sessionFailure != nil })
+        #expect(model.sessionFailure == .rejected("route inconnue"))
+        #expect(model.failure == nil, "l'échec du direct ne gagne pas les autres écrans")
+        model.stopSession()
+        #expect(model.sessionFailure == nil)
+    }
+}

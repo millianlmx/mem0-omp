@@ -204,8 +204,8 @@ function swipeFaults(all: Map<string, string>): string[] {
 // MARK: - AC-9, AC-10, AC-11, AC-12
 
 /** Les surfaces de texte sélectionnable (S-6), une pose chacune : les specs à
- *  valider de l'Accueil et la fiche d'un souvenir. */
-const SELECTABLE = [HARNESS, "IOSMemoryDetailView.swift"];
+ *  valider de l'Accueil, la fiche d'un souvenir et le direct d'une session. */
+const SELECTABLE = [HARNESS, "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {

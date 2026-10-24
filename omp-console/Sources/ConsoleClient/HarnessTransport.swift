@@ -172,8 +172,9 @@ public struct URLSessionHarnessTransport: HarnessTransport {
     }
 }
 
-/// Le lecteur du flux SSE du serveur : il ne rend que les NOMS des événements
-/// complets — l'app relit la boîte au lieu de rejouer chaque événement.
+/// Le lecteur du flux SSE du serveur. La boîte n'a besoin que des NOMS des
+/// événements complets (elle relit au lieu de rejouer chaque événement) ; le direct
+/// d'une session lit aussi leurs données.
 public struct HarnessEventParser: Sendable {
     private var buffer = Data()
 
@@ -182,19 +183,32 @@ public struct HarnessEventParser: Sendable {
     /// Ajoute des octets reçus ; rend les noms des événements complets, dans l'ordre.
     /// Un commentaire (`: ping`) n'est pas un événement.
     public mutating func consume(_ data: Data) -> [String] {
+        consumeEvents(data).map(\.name)
+    }
+
+    /// Ajoute des octets reçus ; rend les événements complets (nom et données), dans l'ordre.
+    public mutating func consumeEvents(_ data: Data) -> [HarnessStreamEvent] {
         buffer.append(data)
-        var names: [String] = []
+        var events: [HarnessStreamEvent] = []
         let separator = Data("\n\n".utf8)
         while let range = buffer.range(of: separator) {
             let frame = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             guard let text = String(data: frame, encoding: .utf8) else { continue }
             var name: String?
-            for line in text.split(separator: "\n") where line.hasPrefix("event:") {
-                name = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
+            var lines: [Substring] = []
+            for line in text.split(separator: "\n") {
+                if line.hasPrefix("event:") {
+                    name = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("data:") {
+                    let value = line.dropFirst("data:".count)
+                    lines.append(value.hasPrefix(" ") ? value.dropFirst() : value)
+                }
             }
-            if let name, !name.isEmpty { names.append(name) }
+            if let name, !name.isEmpty {
+                events.append(HarnessStreamEvent(name: name, data: Data(lines.joined(separator: "\n").utf8)))
+            }
         }
-        return names
+        return events
     }
 }

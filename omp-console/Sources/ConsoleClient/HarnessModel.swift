@@ -52,6 +52,13 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var loginProviders: [HarnessLoginProvider]?
     /// La connexion d'abonnement en cours, ou la dernière finie tant qu'elle n'est pas refermée.
     @Published public private(set) var login: HarnessLogin?
+    /// Le direct de la session suivie (`followSession`), ou `nil`.
+    @Published public private(set) var session: HarnessSessionFeed?
+    /// Le flux du direct est ouvert : les entrées arrivent en temps réel.
+    @Published public private(set) var isSessionLive = false
+    /// Ce qui a arrêté le direct pour de bon (feature inconnue, serveur trop ancien,
+    /// jeton refusé) ; une coupure du réseau, elle, est reprise sans bruit.
+    @Published public private(set) var sessionFailure: HarnessFailure?
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -75,6 +82,8 @@ public final class HarnessModel: ObservableObject {
     private var wantsProviders = false
     /// La relecture de la connexion d'abonnement en cours.
     private var loginTask: Task<Void, Never>?
+    /// Le flux du direct de la session suivie.
+    private var sessionTask: Task<Void, Never>?
 
     public init(
         transport: any HarnessTransport,
@@ -316,6 +325,83 @@ public final class HarnessModel: ObservableObject {
             try? await Task.sleep(for: retryDelay)
             if Task.isCancelled { return }
             await refresh()
+        }
+    }
+
+    // MARK: - Direct d'une session
+
+    /// Les événements du journal qui changent l'état du run suivi : le tampon est relu
+    /// pour savoir si un agent y travaille encore.
+    private static let sessionStateEvents: Set<String> = [
+        "run_state", "step_started", "step_done", "runner_started", "runner_stopped",
+    ]
+
+    /// Suit le direct de la session d'une feature : le tampon du serveur, puis chaque
+    /// entrée en temps réel. Une coupure est reprise après `retryDelay`, tampon relu.
+    /// Une seule feature à la fois : suivre une autre feature arrête la précédente.
+    public func followSession(runId: String) {
+        if session?.runId == runId, sessionTask != nil { return }
+        stopSession()
+        guard server != nil else { return }
+        session = HarnessSessionFeed(runId: runId)
+        sessionTask = Task { [weak self] in
+            await self?.sessionLoop(runId: runId)
+        }
+    }
+
+    /// Arrête le direct et l'oublie.
+    public func stopSession() {
+        sessionTask?.cancel()
+        sessionTask = nil
+        session = nil
+        isSessionLive = false
+        sessionFailure = nil
+    }
+
+    private func sessionLoop(runId: String) async {
+        guard let id = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+        while !Task.isCancelled {
+            guard let server else { return }
+            do {
+                // Le flux d'abord, le tampon ensuite : une entrée née entre les deux n'est
+                // jamais perdue (elle attend dans le flux et remplace celle du tampon).
+                let cursor = inbox?.cursor ?? 0
+                let stream = try await transport.events(
+                    HarnessCall(method: "GET", path: "/v1/events?run=\(id)&live=1&after=\(cursor)"),
+                    server: server
+                )
+                let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)/session"), on: server)
+                guard !Task.isCancelled else { return }
+                session?.load(view)
+                sessionFailure = nil
+                isSessionLive = true
+                var parser = HarnessEventParser()
+                for try await chunk in stream {
+                    var stale = false
+                    for event in parser.consumeEvents(chunk) {
+                        if let entry = event.sessionEntry {
+                            session?.apply(entry)
+                        } else if Self.sessionStateEvents.contains(event.name) {
+                            stale = true
+                        }
+                    }
+                    if stale, let fresh: HarnessSessionView = try? await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)/session"), on: server) {
+                        guard !Task.isCancelled else { return }
+                        session?.merge(fresh)
+                    }
+                }
+            } catch {
+                let failure = Self.failure(of: error)
+                // Seules les coupures se reprennent : un refus ne guérit pas en réessayant.
+                if failure != .unreachable, failure != .timedOut {
+                    isSessionLive = false
+                    if !Task.isCancelled { sessionFailure = failure }
+                    return
+                }
+            }
+            isSessionLive = false
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: retryDelay)
         }
     }
 

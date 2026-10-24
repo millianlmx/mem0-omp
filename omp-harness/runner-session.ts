@@ -31,6 +31,8 @@ export type SessionHooks = {
   onHostTool: HostToolHandler;
   /** Un événement de la session (runner lancé ou arrêté, bascule, délai) au nom de son propriétaire. */
   event: (type: EventType, payload: Record<string, unknown>) => void;
+  /** Chaque trame RPC du runner qui n'est pas un échange avec le service : le direct de la session. */
+  frame?: (frame: Record<string, unknown>) => void;
   /** Le modèle ou l'unité du runner ont changé (lancement, bascule, changement de tier). */
   runnerChanged?: (unit: string | null, model: string | null) => void;
   /** L'attente avant de réessayer le même fournisseur (tests : temps simulé) ; défaut : un vrai délai. */
@@ -156,6 +158,7 @@ export class RunnerSession {
         // L'activité des outils est ÉPHÉMÈRE : poussée en direct, jamais écrite au journal.
         if (frame.type === "tool_execution_start")
           this.#hooks.event("activity", { tool: frame.toolName, intent: frame.intent ?? null });
+        this.#hooks.frame?.(frame);
       },
     });
     this.#runner = runner;

@@ -11,6 +11,7 @@
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "error": { "message", "httpStatus" } }    termine le prompt en erreur
 //   { "sleep": 60000 }                          attend (une étape qui dure)
+//   { "frame": { "type": "…", … } }             émet une trame telle quelle (le direct de la session)
 // La dernière occurrence se répète. Le compteur d'occurrences vit dans FAKE_STATE
 // (il survit aux process : un nouveau runner reprend la suite du scénario).
 // La connexion OAuth (oauth.ts) : `loginProviders` est la liste que rend
@@ -29,6 +30,7 @@ type Action = {
   args?: Record<string, unknown>;
   error?: Record<string, unknown>;
   sleep?: number;
+  frame?: Record<string, unknown>;
 };
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
@@ -110,6 +112,7 @@ async function runPrompt(id: string, message: string): Promise<void> {
   log({ kind: "prompt", step: currentStep, nudge, message });
   for (const action of actions) {
     if (action.sleep) await new Promise((resolve) => setTimeout(resolve, action.sleep));
+    if (action.frame) out(action.frame);
     if (action.write) {
       fs.mkdirSync(path.dirname(action.write), { recursive: true });
       fs.writeFileSync(action.write, action.content ?? "");

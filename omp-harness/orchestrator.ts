@@ -137,6 +137,11 @@ export class Orchestrator {
     return this.#ctx.logins;
   }
 
+  /** Le direct des sessions de runners (tampon des dernières entrées de chaque run). */
+  get sessions(): HarnessContext["sessions"] {
+    return this.#ctx.sessions;
+  }
+
   // -- cycle de vie ---------------------------------------------------------
 
   /** Reprise après redémarrage, puis la boucle de scheduling. */
@@ -661,6 +666,20 @@ export class Orchestrator {
   /** La vue complète d'un run : étapes, décisions, escalades, tests, artefacts. */
   runView(runId: string, repos: RepoFilter = null): Record<string, unknown> {
     return runView(this.store, this.visibleRun(runId, repos), this.#live.has(runId));
+  }
+
+  /**
+   * Le direct de la session d'un run : ses dernières entrées, s'il est conduit en ce
+   * moment, et le curseur du journal d'où suivre la suite (`/v1/events?run=…&live=1&after=…`).
+   */
+  sessionView(runId: string, repos: RepoFilter = null): Record<string, unknown> {
+    const run = this.visibleRun(runId, repos);
+    return {
+      runId: run.id,
+      live: this.#live.has(run.id),
+      cursor: this.store.lastEventId(),
+      entries: this.#ctx.sessions.snapshot(run.id),
+    };
   }
 
   status(repos: RepoFilter = null): Record<string, unknown> {

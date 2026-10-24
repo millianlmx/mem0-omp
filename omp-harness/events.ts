@@ -2,9 +2,9 @@
 //
 // Un événement JOURNALISÉ est écrit dans la base, rejoué depuis `Last-Event-ID` et
 // déclenche une relecture chez les apps. Un événement ÉPHÉMÈRE (l'activité des
-// outils d'un runner) n'est jamais écrit : il n'est poussé qu'aux abonnés qui le
-// demandent (`GET /v1/events?live=1`), pour ne pas faire relire la boîte à chaque
-// appel d'outil.
+// outils d'un runner, le direct de sa session) n'est jamais écrit : il n'est poussé
+// qu'aux abonnés qui le demandent (`GET /v1/events?live=1`), pour ne pas faire
+// relire la boîte à chaque appel d'outil.
 
 export const EVENT_TYPES = [
   // runs
@@ -70,9 +70,10 @@ export const EVENT_TYPES = [
   "notify_failed",
   // éphémères
   "activity",
+  "session",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** Les événements poussés en direct sans être écrits. */
-export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity"]);
+export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity", "session"]);
