@@ -395,6 +395,38 @@ Les runs en cours reprennent à leur dernier point de reprise après le redémar
 - **NixOS** : `nix flake update mem0-omp`, puis `sudo nixos-rebuild switch`.
 - **En conteneurs** : `git pull`, puis `bash omp-harness/deploy/container/harness.sh up`.
 
+### Sauvegarder et restaurer la base
+
+Runs, décisions, escalades et journal vivent dans `harness.sqlite`, sous `dataDir`
+(`/var/lib/omp-harness/state` avec systemd, `~/.omp-harness/state` en conteneurs).
+Le service en prend lui-même des instantanés (`VACUUM INTO` : une copie cohérente,
+prise sans l'arrêter) dans `<dataDir>/backups` : `harness-periodique-<date>.sqlite`
+chaque jour, `harness-migration-<date>-v<n>.sqlite` avant chaque migration du
+schéma (`n` : la version d'avant). Réglages : `backups.*` (§ Configuration). Copie
+ce dossier hors du serveur si le disque compte.
+
+Pour restaurer, service arrêté (une restauration ramène la base à la date de la
+copie : ce qui a suivi est perdu, les worktrees et les branches restent) :
+
+```bash
+# avec systemd
+sudo systemctl stop omp-harness
+sudo rm -f /var/lib/omp-harness/state/harness.sqlite-wal /var/lib/omp-harness/state/harness.sqlite-shm
+sudo install -o omp-harness -g omp-harness -m 0600 \
+  /var/lib/omp-harness/state/backups/harness-periodique-<date>.sqlite /var/lib/omp-harness/state/harness.sqlite
+sudo systemctl start omp-harness
+
+# en conteneurs (docker, ou podman)
+docker compose -p omp-harness stop harness
+cd ~/.omp-harness/state
+rm -f harness.sqlite-wal harness.sqlite-shm
+cp backups/harness-periodique-<date>.sqlite harness.sqlite
+docker compose -p omp-harness start harness
+```
+
+Une copie d'avant migration se restaure de même, avec la version du service qui
+l'a écrite : une version plus récente la migre à nouveau au démarrage.
+
 ### Développer sans systemd
 
 Passe `runner.isolation` et `heavy.isolation` à `none` et `launcher` à `[]`, puis :
@@ -456,6 +488,10 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
 | `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
+| `backups.intervalHours`, `backups.keep` | `24`, `7` | un instantané de la base toutes les 24 h (le premier au démarrage si le dernier a plus d'un intervalle), les 7 derniers gardés ; `intervalHours: null` les coupe |
+| `backups.beforeMigration` | `true` | un instantané juste avant de migrer le schéma d'une base existante (les 7 derniers gardés) ; s'il échoue, le service refuse de migrer et ne démarre pas |
+| `backups.dir` | `null` (`<dataDir>/backups`) | le dossier des instantanés (0700, fichiers 0600) : un autre disque, ou un montage sauvegardé ailleurs |
+| `health.tickStaleSec`, `health.minFreeMiB` | `120`, `1024` | les seuils de `GET /v1/health` : le dernier tour du scheduling date de moins de 120 s, il reste au moins 1 Gio libre sous `dataDir` et `worktreesDir` ; au-delà, 503 |
 | `monitoring.runBudgetUsd`, `monitoring.pauseOnBudget` | `null`, `false` | le coût (en dollars, d'après omp) d'une feature au-delà duquel tu es prévenu (`budget_exceeded`) ; avec `pauseOnBudget`, la feature attend aussi ton accord avant sa prochaine étape |
 | `monitoring.stallMin`, `monitoring.stallToolMin` | `15`, `45` | les minutes sans un mot de l'agent avant l'alerte `stalled` (la seconde quand un outil tourne, une suite de tests par exemple) ; `null` : jamais |
 | `monitoring.slowFactor` | `2` | une étape plus longue que ce multiple de la médiane de son type alerte (`step_slow`) ; `null` : jamais |
@@ -723,6 +759,19 @@ service que s'il est régulier, n'est pas un lien et n'appartient pas à root.
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
 du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
+
+`GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
+`checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
+`health.tickStaleSec`) et `checks.disk` (`freeMiB`, le moins libre de `dataDir` et
+`worktreesDir`, borné par `health.minFreeMiB`). Au moindre échec il répond **503**
+avec `ok: false`, le corps gardant `api`, `version` et `features` : la sonde des
+piles compose (`healthcheck` du service `harness`) et toute supervision lisent le
+code, un client qui ne veut que la version lit le corps quel que soit le code.
+
+Le flux `GET /v1/events` est borné : un client qui ne lit plus est coupé dès que
+4 Mio l'attendent (il reprend par `Last-Event-ID`, rien n'est perdu), le jeton est
+relu à chaque ping (toutes les 15 s : un client révoqué perd aussi son flux ouvert)
+et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 
 | Route | Rôle | Effet |
 |---|---|---|

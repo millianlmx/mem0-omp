@@ -14,7 +14,8 @@
 // se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
 // et le direct de leurs sessions (éphémères, jamais rejoués : `GET /v1/runs/{id}/session`
 // rend le tampon des dernières entrées d'un run).
-import { readFileSync } from "node:fs";
+import { readFileSync, statfsSync } from "node:fs";
+import * as path from "node:path";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
@@ -70,6 +71,54 @@ export const HARNESS_VERSION: string = (() => {
 
 const MAX_BODY = 1024 * 1024;
 const PING_MS = 15_000;
+/** Les octets qu'un flux SSE peut garder en attente d'un client qui ne lit plus : au-delà, il est coupé. */
+const SSE_MAX_BUFFER = 4 * 1024 * 1024;
+/** Les événements relus par lot au rejeu ; la boucle d'événements respire entre deux lots. */
+const REPLAY_BATCH = 500;
+
+export type HealthCheck = { ok: boolean };
+
+/** Ce que `GET /v1/health` vérifie : la base lisible, le scheduling qui tourne, le disque qui n'est pas plein. */
+export type HealthChecks = {
+  db: HealthCheck;
+  /** `ageSec` : depuis la fin du dernier tour (`null` : service pas encore démarré). */
+  scheduler: HealthCheck & { ageSec: number | null };
+  /** `freeMiB` : le moins libre des systèmes de fichiers de `dataDir` et `worktreesDir`. */
+  disk: HealthCheck & { freeMiB: number | null };
+};
+
+/** Les Mio libres (pour un non-root) du système de fichiers de `dir`, ou de son plus proche parent existant. */
+function freeMiB(dir: string): number | null {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    try {
+      const stats = statfsSync(current);
+      return Math.floor((stats.bavail * stats.bsize) / (1024 * 1024));
+    } catch {
+      if (path.dirname(current) === current) return null;
+    }
+  }
+}
+
+/** Les vérifications de santé, sans jamais lever : un échec est un `ok: false`, jamais un détail interne. */
+export function healthChecks(orchestrator: Orchestrator, now = Date.now()): { ok: boolean; checks: HealthChecks } {
+  const { config, store } = orchestrator;
+  let db = true;
+  try {
+    store.db.prepare("SELECT id FROM runs LIMIT 1").get();
+  } catch {
+    db = false;
+  }
+  const last = orchestrator.lastTickAt;
+  const ageSec = last === null ? null : Math.max(0, Math.round((now - last) / 1000));
+  const free = [config.dataDir, config.worktreesDir].map(freeMiB);
+  const freeLeast = free.some((value) => value === null) ? null : Math.min(...(free as number[]));
+  const checks: HealthChecks = {
+    db: { ok: db },
+    scheduler: { ok: ageSec === null || ageSec <= config.health.tickStaleSec, ageSec },
+    disk: { ok: freeLeast !== null && freeLeast >= config.health.minFreeMiB, freeMiB: freeLeast },
+  };
+  return { ok: checks.db.ok && checks.scheduler.ok && checks.disk.ok, checks };
+}
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const json = JSON.stringify(body);
@@ -160,6 +209,19 @@ export function ifMatch(req: http.IncomingMessage): number | undefined {
   return value;
 }
 
+/** Attend que le client ait lu ce qui lui est envoyé (`drain`), ou qu'il soit parti. */
+function drained(res: http.ServerResponse): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = (): void => {
+      res.off("drain", done);
+      res.off("close", done);
+      resolve();
+    };
+    res.on("drain", done);
+    res.on("close", done);
+  });
+}
+
 function sseFrame(event: EventRow): string {
   // Un éphémère n'a pas d'`id:` : il ne déplace pas le curseur de reprise du client.
   return `${event.ephemeral ? "" : `id: ${event.id}\n`}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
@@ -172,6 +234,10 @@ export type HttpOptions = {
   /** Les clients nommés ; par défaut, le seul jeton historique. */
   clients?: ClientRegistry;
   version?: string;
+  /** La cadence des pings du flux SSE, et de la relecture du jeton de chaque flux ouvert. */
+  pingMs?: number;
+  /** Les octets en attente au-delà desquels un flux SSE est coupé (le client reprend par `Last-Event-ID`). */
+  sseMaxBuffer?: number;
 };
 
 type Call = {
@@ -556,7 +622,24 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
   const routes = apiRoutes(orchestrator, clients);
 
-  function events(req: http.IncomingMessage, res: http.ServerResponse, url: URL, repos: RepoFilter): void {
+  const pingMs = options.pingMs ?? PING_MS;
+  const maxBuffer = options.sseMaxBuffer ?? SSE_MAX_BUFFER;
+
+  /**
+   * Le flux d'un client. Trois bornes : un client qui ne lit plus est coupé dès que
+   * `maxBuffer` octets l'attendent (il reprend par `Last-Event-ID`, rien n'est perdu) ;
+   * le jeton est relu à chaque ping (un client révoqué, ou dont les droits ont changé,
+   * perd son flux) ; le rejeu va par lots, en rendant la main entre deux et en
+   * attendant que le client ait lu.
+   */
+  async function events(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL,
+    token: string,
+    client: Client,
+  ): Promise<void> {
+    const repos = repoFilter(client);
     const runId = url.searchParams.get("run");
     const auditId = url.searchParams.get("audit");
     const live = url.searchParams.get("live") === "1";
@@ -568,38 +651,80 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
+    // Les en-têtes partent tout de suite : le client sait son flux ouvert avant le premier événement.
+    res.flushHeaders();
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
       (repos === null || (event.repo !== null && repos.includes(event.repo)));
+    let closed = false;
+    let ping: NodeJS.Timeout | undefined;
+    let unsubscribe = (): void => {};
+    /** `cut` : coupé net, ce qui attend un client qui ne lit plus est libéré tout de suite ; sinon une fin propre. */
+    const close = (cut: boolean): void => {
+      if (closed) return;
+      closed = true;
+      clearInterval(ping);
+      unsubscribe();
+      if (cut) res.destroy();
+      else res.end();
+    };
     // Rejeu, puis le direct : l'abonnement est posé AVANT la lecture, le curseur écarte les doublons.
     const pending: EventRow[] = [];
     let replaying = true;
+    const push = (frame: string): void => {
+      if (closed) return;
+      res.write(frame);
+      // Le rejeu attend le client (plus bas) ; le direct, lui, n'attend personne : au-delà du plafond, le flux est coupé.
+      if (!replaying && res.writableLength > maxBuffer) close(true);
+    };
     const write = (event: EventRow): void => {
       if (!visible(event)) return;
       if (event.ephemeral) {
-        if (live && !replaying) res.write(sseFrame(event));
+        if (live && !replaying) push(sseFrame(event));
         return;
       }
       if (event.id <= cursor) return;
       cursor = event.id;
-      res.write(sseFrame(event));
+      push(sseFrame(event));
     };
-    const unsubscribe = store.onEvent((event) => (replaying ? pending.push(event) : write(event)));
-    for (
-      let batch = store.eventsSince(cursor, runId, 500, repos);
-      batch.length > 0;
-      batch = store.eventsSince(cursor, runId, 500, repos)
-    )
-      batch.forEach(write);
+    unsubscribe = store.onEvent((event) => (replaying ? pending.push(event) : write(event)));
+    req.on("close", () => close(true));
+    // Le curseur de lecture avance sur chaque ligne lue, visible ou non : un lot filtré
+    // (`audit=`) qui ne garde rien n'est pas relu indéfiniment.
+    let read = cursor;
+    for (;;) {
+      const batch = store.eventsSince(read, runId, REPLAY_BATCH, repos);
+      if (batch.length === 0) break;
+      for (const event of batch) {
+        write(event);
+        read = event.id;
+        // Un client qui lit lentement : on attend qu'il ait lu ce qui lui est envoyé.
+        if (res.writableNeedDrain) await drained(res);
+        if (closed) return;
+      }
+      // Entre deux lots, la main aux autres requêtes.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (closed) return;
+    }
     replaying = false;
     pending.filter((event) => !event.ephemeral).forEach(write);
-    const ping = setInterval(() => res.write(": ping\n\n"), PING_MS);
+    if (closed) return;
+    ping = setInterval(() => {
+      // La révocation (ou un changement de dépôts) vaut aussi pour un flux déjà ouvert.
+      let still: Client | null = null;
+      try {
+        still = clients.authenticate(token);
+      } catch {
+        still = null;
+      }
+      if (!still || still.name !== client.name || JSON.stringify(repoFilter(still)) !== JSON.stringify(repos)) {
+        close(false);
+        return;
+      }
+      push(": ping\n\n");
+    }, pingMs);
     ping.unref?.();
-    req.on("close", () => {
-      clearInterval(ping);
-      unsubscribe();
-    });
   }
 
   return (req, res) => {
@@ -613,23 +738,27 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           throw new HarnessError(400, "URL illisible");
         }
         if (req.method === "GET" && url.pathname === "/v1/health") {
-          send(res, 200, {
-            ok: true,
+          // 503 au moindre échec : la sonde du compose (et toute supervision) lit le code ; le corps garde la version.
+          const health = healthChecks(orchestrator);
+          send(res, health.ok ? 200 : 503, {
+            ok: health.ok,
             api: API_VERSION,
             version: options.version ?? HARNESS_VERSION,
             features: API_FEATURES,
+            checks: health.checks,
           });
           return;
         }
         const auth = req.headers.authorization ?? "";
-        const client = clients.authenticate(auth.startsWith("Bearer ") ? auth.slice(7) : "");
+        const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+        const client = clients.authenticate(token);
         if (!client) {
           send(res, 401, { error: "jeton absent ou invalide" });
           return;
         }
         const repos = repoFilter(client);
         if (req.method === "GET" && url.pathname === "/v1/events") {
-          events(req, res, url, repos);
+          await events(req, res, url, token, client);
           return;
         }
         let matchedPath = false;

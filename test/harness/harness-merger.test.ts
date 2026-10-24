@@ -229,3 +229,70 @@ test("harness-merger/AC-4 : le revert d'un run mergé pose un commit revert sur 
     await world.orchestrator.stop();
   }
 });
+
+test("harness-merger/AC-5 : un service arrêté après le squash sur main mais avant l'état écrit reconnaît au redémarrage le merge déjà fait — ni second commit, ni suite complète, main poussée", async () => {
+  const repo = harnessRepo();
+  const remote = bareRemote(repo, null);
+  const world = fakeWorld({}, { repo, patch: (config) => (config.repos[0]!.remote = "origin") });
+  const run = await mergingRun(world, "deja-merge");
+  // Le service précédent a posé le squash sur main puis s'est arrêté : le run est resté `merging`, rien n'est poussé.
+  const squash = await world.deps.git.squashMerge(
+    repo,
+    run.branch,
+    "main",
+    run.baseSha as string,
+    "Feature deja-merge",
+  );
+  await world.orchestrator.start();
+  try {
+    await waitFor(
+      () => world.store.getRun(run.id)?.state !== "merging",
+      () => String(world.store.getRun(run.id)?.state),
+    );
+    const done = world.store.getRun(run.id);
+    assert.equal(done?.state, "merged", done?.reason ?? "");
+    assert.equal(done?.mergeSha, squash, "le merge reconnu est celui déjà posé");
+    assert.equal(git(repo, "rev-parse", "main"), squash, "aucun second commit sur main");
+    assert.equal(git(repo, "rev-parse", "main^"), run.baseSha);
+    assert.equal(git(remote, "rev-parse", "main"), squash, "la poussée manquée est rattrapée");
+    const types = world.store.eventsSince(0, run.id).map((event) => event.type);
+    assert.ok(!types.includes("heavy_started"), "pas de suite complète : rien n'a été rebasé");
+    assert.equal(types.filter((type) => type === "merged").length, 1);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-merger/AC-6 : en mode gh, une PR fusionnée par GitHub pendant l'arrêt du service est reconnue au redémarrage sans rappeler gh", async () => {
+  const repo = harnessRepo();
+  bareRemote(repo, null);
+  const gh = fakeGh(() => "MERGED");
+  const world = fakeWorld(
+    {},
+    {
+      repo,
+      exec: gh.exec,
+      patch: (config) => {
+        config.repos[0]!.merge = "gh";
+        config.repos[0]!.remote = "origin";
+      },
+    },
+  );
+  const run = await mergingRun(world, "gh-pendant-arret");
+  // GitHub a fusionné la PR pendant l'arrêt : main du distant porte le squash, le clone ne l'a pas encore lu.
+  const squash = squashOnRemote(repo, run.branch);
+  git(repo, "update-ref", "refs/heads/main", run.baseSha as string);
+  await world.orchestrator.start();
+  try {
+    await waitFor(
+      () => world.store.getRun(run.id)?.state !== "merging",
+      () => String(world.store.getRun(run.id)?.state),
+    );
+    const done = world.store.getRun(run.id);
+    assert.equal(done?.state, "merged", done?.reason ?? "");
+    assert.equal(done?.mergeSha, squash);
+    assert.deepEqual(gh.calls, [], "aucune PR recréée ni refusionnée");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});

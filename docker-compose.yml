@@ -73,6 +73,14 @@ services:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/config.json:/etc/omp-harness/config.json:ro
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/harness:/run/secrets/omp-harness:ro
       - ${OMP_HARNESS_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    # La santé du service (`/v1/health` : base, scheduling, disque ; 503 au moindre
+    # échec). L'image a node, pas curl.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/v1/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # Déclare les dépôts d'OMP_HARNESS_REPOS ; un dépôt refusé est réessayé toutes les
   # 30 s, le temps de poser la clé de déploiement affichée dans ses journaux.

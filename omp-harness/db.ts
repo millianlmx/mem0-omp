@@ -794,15 +794,29 @@ export class Store {
   #depth = 0;
   #held: EventRow[] = [];
 
-  constructor(file: string, now: () => number = Date.now) {
+  /**
+   * `beforeMigrate` : appelé une fois avant de migrer une base qui a déjà un schéma
+   * (`from` > 0), la sauvegarde de main.ts ; s'il lève, rien n'est migré.
+   */
+  constructor(
+    file: string,
+    now: () => number = Date.now,
+    options: { beforeMigrate?: (db: DatabaseSync, from: number, to: number) => void } = {},
+  ) {
     this.db = new DatabaseSync(file);
     this.#now = now;
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    this.#migrate();
+    try {
+      this.#migrate(options.beforeMigrate);
+    } catch (err) {
+      this.db.close();
+      throw err;
+    }
   }
 
-  #migrate(): void {
+  #migrate(beforeMigrate?: (db: DatabaseSync, from: number, to: number) => void): void {
     const current = Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
+    if (current > 0 && current < MIGRATIONS.length) beforeMigrate?.(this.db, current, MIGRATIONS.length);
     for (let version = current; version < MIGRATIONS.length; version++) {
       this.transaction(() => {
         this.db.exec(MIGRATIONS[version] ?? "");
