@@ -25,6 +25,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
+import { lireWorkflow } from "../support/workflows.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
@@ -123,8 +124,7 @@ const MACOS_JOBS = ["macos-app-swift", "macos-app-ios", "macos-tests"];
 /** Les jobs macOS ne tournent qu'en pull_request ; l'agrégateur aussi, mais toujours (jamais « skipped »). */
 const PULL_REQUEST_IF = "github.event_name == 'pull_request'";
 const AGGREGATOR_IF = "${{ always() && github.event_name == 'pull_request' }}";
-const WORKFLOW_FILE = ".github/workflows/check.yml";
-const readWorkflow = () => fs.readFileSync(path.join(ROOT, WORKFLOW_FILE), "utf8");
+const readWorkflow = () => lireWorkflow("check.yml");
 
 /** Les jobs de check.yml, dans l'ordre du fichier : identifiant → texte du job. */
 function workflowJobs(workflow: string): Map<string, string> {
@@ -449,7 +449,7 @@ test("ci-macos-jobs-paralleles/AC-2 : check.yml et release-simulation.yml produi
   assert.ok(body, "commande de protection de branche absente de PUBLISHING.md");
   assert.equal(body[1], '"check (ubuntu-latest)","check (macos-latest)","release-simulation"');
 
-  const simulation = fs.readFileSync(path.join(ROOT, ".github/workflows/release-simulation.yml"), "utf8");
+  const simulation = lireWorkflow("release-simulation.yml");
   const produced = [...statusContexts(workflowJobs(readWorkflow())), ...statusContexts(workflowJobs(simulation))];
   for (const context of ["check (ubuntu-latest)", "check (macos-latest)", "release-simulation"]) {
     assert.equal(
@@ -675,6 +675,6 @@ test("ci-macos-jobs-paralleles/AC-10 : un push vers main n'annule jamais un run 
   // Hors pull_request : groupe unique par run (rien à remplacer) et pas d'annulation.
   assert.ok(block[1]?.endsWith("|| format('check-run-{0}', github.run_id) }}"));
   // Préfixe propre : aucun groupe partagé avec release-simulation.yml.
-  const simulation = fs.readFileSync(path.join(ROOT, ".github/workflows/release-simulation.yml"), "utf8");
+  const simulation = lireWorkflow("release-simulation.yml");
   assert.ok(!/group:.*check-/.test(simulation), simulation);
 });

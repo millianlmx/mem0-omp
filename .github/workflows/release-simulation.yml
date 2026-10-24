@@ -37,13 +37,13 @@ jobs:
     # Une copie du dépôt, une écriture, puis `check.sh` complet.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # `historyOfPlugin` parcourt l'historique de chaque `package.json` et la
           # garde d'idempotence lit `origin/main` : sans l'historique complet, le
           # plan est faux.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # L'ENVIRONNEMENT DU JOB DE RELEASE, pas celui de `check.yml` : ni Bun, ni
           # hôte OMP, ni `MEM0_OMP_REQUIRE_SMOKE`. Le verdict doit être celui de la
@@ -65,7 +65,7 @@ jobs:
       # registry/src (régénéré) ; pas de restore-keys. Le cache n'est sauvegardé
       # que par un job vert.
       - name: Cache cargo (mem0-rs)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index

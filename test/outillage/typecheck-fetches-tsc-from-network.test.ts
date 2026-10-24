@@ -15,6 +15,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { GIT_ENV, emptyGitRepo } from "../support/git.ts";
+import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { ROOT, childEnv, copyRepo as copyRepoAs, sharedRepo, tmpdir } from "../support/repo.ts";
 
 const TS_DIR = ".typecheck/typescript";
@@ -29,14 +30,14 @@ function copyRepo(): string {
   return copyRepoAs("typecheck-tsc-", { keepTest: (rel) => rel === "test/memoire/dedupe.test.ts" });
 }
 
-/** Le TypeScript 5.9.3 préparé dans ROOT, source de la doublure `npm install`. */
-function pinnedSource(): string {
-  const pkg = path.join(ROOT, TS_DIR, "node_modules", "typescript");
-  assert.ok(
-    fs.existsSync(path.join(pkg, "package.json")),
-    `TypeScript épinglé absent de ROOT/${TS_DIR} — lance ${PREPARE}`,
-  );
-  return fs.realpathSync(pkg);
+/**
+ * Le TypeScript 5.9.3 préparé dans ROOT, source de la doublure `npm install` ; `null`
+ * (test sauté par prerequisAbsent, échec nommé sous `check.sh --strict`) dans un
+ * clone où `npm run setup` n'a pas encore tourné.
+ */
+function pinnedSource(t: { skip(message: string): void }): string | null {
+  if (outilEpingleAbsent(t, "typescript")) return null;
+  return fs.realpathSync(path.join(ROOT, TS_DIR, "node_modules", "typescript"));
 }
 
 type Doubles = { env: Record<string, string>; npmLog: string; npxLog: string };
@@ -114,7 +115,7 @@ function plantMisaligned(copy: string): void {
 }
 
 test("typecheck-fetches-tsc-from-network/AC-1 : le tsc épinglé type-checke l'arbre sans réseau ni npm exec", (t) => {
-  pinnedSource();
+  if (pinnedSource(t) === null) return;
   const doubles = npmDoubles({
     npm_config_cache: tmpdir("typecheck-tsc-cache-"),
     npm_config_offline: "true",
@@ -178,10 +179,12 @@ for (const [label, plant] of [
   ["5.8.3", plantMisaligned],
 ] as const) {
   test(`typecheck-fetches-tsc-from-network/AC-5 : TypeScript ${label} ⇒ la commande citée le réinstalle et la section redevient ✓`, (t) => {
+    const pinned = pinnedSource(t);
+    if (pinned === null) return;
     const copy = copyRepo();
     plant(copy);
     const marker = path.join(tmpdir("typecheck-tsc-marker-"), "tsc-lance");
-    const doubles = npmDoubles({ PINNED_SRC: pinnedSource(), TSC_MARKER: marker });
+    const doubles = npmDoubles({ PINNED_SRC: pinned, TSC_MARKER: marker });
     const env = childEnv(doubles.env);
 
     const red = runTypesSection(copy, env);
@@ -213,7 +216,8 @@ for (const [label, plant] of [
 }
 
 test("typecheck-fetches-tsc-from-network/AC-2 : une erreur de type dans une copie jetable sort ✗ avec sa ligne error TS, par le tsc relié", (t) => {
-  const pinned = pinnedSource();
+  const pinned = pinnedSource(t);
+  if (pinned === null) return;
   const copy = copyRepo();
   // La copie n'emporte pas .typecheck/ : son TypeScript est le lien vers ROOT.
   assert.ok(fs.lstatSync(path.join(copy, TS_DIR)).isSymbolicLink(), "la copie ne relie pas le TypeScript épinglé");
@@ -239,8 +243,9 @@ test("typecheck-fetches-tsc-from-network/AC-2 : une erreur de type dans une copi
 });
 
 /** sharedRepo().fresh() garde et recrée le lien vers le TypeScript de ROOT sans jamais toucher la cible. */
-function sharedRepoKeepsPinnedLink(): void {
-  const pinned = pinnedSource();
+function sharedRepoKeepsPinnedLink(t: { skip(message: string): void }): void {
+  const pinned = pinnedSource(t);
+  if (pinned === null) return;
   const shared = sharedRepo("typecheck-tsc-partage-", { keepTest: () => false });
   const copy = shared.fresh();
   const link = path.join(copy, TS_DIR);

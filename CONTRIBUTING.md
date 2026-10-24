@@ -2,6 +2,8 @@
 
 Ces six règles ne sont pas des recommandations : chacune est jugée par le dépôt lui-même, par un test ou un script nommé ci-dessous.
 
+Un clone neuf se prépare une fois, réseau requis : `npm run setup` installe les outils épinglés (Biome, TypeScript, la Qdrant des tests d'import mem0-rs). Avant, les sections lint et types de `scripts/check.sh` rougissent, et les tests qui en dépendent se sautent en nommant ce qui manque.
+
 ## 1. Un fichier de test par slug, un id unique par critère
 
 Chaque critère d'acceptation est prouvé par un test titré `test("<slug>/AC-<n> : …")`. Un id qualifié `<slug>/AC-<n>` désigne un seul test, et tous les ids d'un même slug vivent dans un seul fichier `test/**/<slug>.test.ts`. Un id nu `AC-<n>` est interdit dans un titre de test. Le juge est `criteria/AC-13`, dans `test/outillage/criteria.test.ts`, qui parcourt les titres de tous les fichiers de test du dépôt.
@@ -34,3 +36,4 @@ Une pull request ordinaire ne monte jamais une version : le job `check` de la CI
 - [DEVELOPPEMENT.md § « CI et release »](DEVELOPPEMENT.md) : workflows CI et release.
 - [PUBLISHING.md](PUBLISHING.md) : publication et mise à jour.
 - [DEVELOPPEMENT.md](DEVELOPPEMENT.md) : l'arborescence du dépôt et le contrat du service mémoire.
+- [SECURITY.md](SECURITY.md) : signaler une vulnérabilité en privé, jamais en issue publique.

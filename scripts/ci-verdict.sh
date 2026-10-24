@@ -23,9 +23,14 @@
 #    `<slug>/AC-<n>`, ou le nom affiché entier) ou `fonction()` sans guillemets.
 #    Les jugements vont sur stderr ; stdout ne porte que les filtres
 #    `swift test --filter` des tests à relancer, un par ligne, sans doublon.
-#    Code 0 si tous sont au registre ; 1 si un seul n'y est pas, si aucun nom
-#    n'est donné ou si le registre est absent ou non conforme — stdout reste
-#    alors vide : aucune relance.
+#    Code 0 si tous sont au registre ; 1 si un seul n'y est pas, si son entrée
+#    est expirée, si aucun nom n'est donné ou si le registre est absent ou non
+#    conforme — stdout reste alors vide : aucune relance.
+#
+#    Chaque entrée porte `raison` (pourquoi le test est toléré) et `expire`
+#    (AAAA-MM-JJ, dernier jour UTC où la relance vaut) ; `issue` (le suivi) est
+#    facultative. Passé `expire`, l'entrée ne relance plus rien : le test doit
+#    être corrigé, ou l'entrée prolongée en le disant dans la PR.
 set -uo pipefail
 
 if [ "${1:-}" = "--instables" ]; then
@@ -36,11 +41,22 @@ if [ "${1:-}" = "--instables" ]; then
   fi
   registre="$(dirname "${BASH_SOURCE[0]}")/tests-instables-connus.json"
   python3 - "$registre" "$@" <<'PY'
-import json, re, sys
+import datetime, json, re, sys
 
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]*/AC-[0-9]+")
 FONCTION = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\(\)")
-CLES = {"identifiant", "filtre", "occurrence"}
+CLES = {"identifiant", "filtre", "occurrence", "raison", "expire"}
+FACULTATIVES = {"issue"}
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+def date_expiration(texte):
+    """La date `AAAA-MM-JJ` d'expiration, ou None si elle n'en est pas une."""
+    if not DATE.fullmatch(texte):
+        return None
+    try:
+        return datetime.date.fromisoformat(texte)
+    except ValueError:
+        return None
 
 def registre(chemin):
     """Les entrées du registre par identifiant, ou None s'il n'est pas conforme."""
@@ -53,9 +69,11 @@ def registre(chemin):
         return None
     entrees = {}
     for e in racine["tests"]:
-        if not isinstance(e, dict) or set(e) != CLES:
+        if not isinstance(e, dict) or not CLES <= set(e) <= CLES | FACULTATIVES:
             return None
-        if not all(isinstance(e[k], str) and e[k] for k in CLES):
+        if not all(isinstance(e[k], str) and e[k] for k in e):
+            return None
+        if date_expiration(e["expire"]) is None:
             return None
         ident = e["identifiant"]
         if not (SLUG.fullmatch(ident) or FONCTION.fullmatch(ident)) or ident in entrees:
@@ -75,12 +93,20 @@ if entrees is None:
     print("✗ registre des tests instables illisible : scripts/tests-instables-connus.json", file=sys.stderr)
     sys.exit(1)
 
+aujourdhui = datetime.datetime.now(datetime.timezone.utc).date()
 filtres, tous = [], True
 for nom in sys.argv[2:]:
     ident = identifiant(nom)
     e = entrees.get(ident)
     if e is None:
         print(f"  ✗ {ident} : absent du registre des tests instables", file=sys.stderr)
+        tous = False
+        continue
+    if date_expiration(e["expire"]) < aujourdhui:
+        print(
+            f"  ✗ {ident} : entrée du registre expirée le {e['expire']} ({e['raison']}) — corrige le test ou prolonge l'entrée",
+            file=sys.stderr,
+        )
         tous = False
         continue
     print(f"  ✓ {ident} : instable connu ({e['occurrence']})", file=sys.stderr)

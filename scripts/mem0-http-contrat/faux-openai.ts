@@ -57,7 +57,10 @@ export type RequeteEmbeddings = { entrees: string[] };
  */
 export function plonger(texte: string): number[] {
   const vecteur = new Array<number>(DIMENSIONS).fill(0);
-  const jetons = texte.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const jetons = texte
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
   for (const jeton of jetons) {
     vecteur[createHash("sha256").update(jeton, "utf8").digest().readUInt32BE(0) % DIMENSIONS] += 1;
   }
@@ -126,7 +129,8 @@ function embeddings(corps: Record<string, unknown>): { reponse: unknown; entrees
  */
 function scriptDe(messages: readonly unknown[]): ScriptChat {
   const dernier = messages.findLast(
-    (m): m is { role: unknown; content?: unknown } => m !== null && typeof m === "object" && "role" in m && m.role === "user",
+    (m): m is { role: unknown; content?: unknown } =>
+      m !== null && typeof m === "object" && "role" in m && m.role === "user",
   );
   const contenu = dernier?.content;
   const marqueurs = typeof contenu === "string" ? [...contenu.matchAll(/\[script:([a-z0-9-]+)\]/g)] : [];
@@ -141,7 +145,10 @@ function chat(corps: Record<string, unknown>, numero: number): { statut: number;
   if (!Array.isArray(messages)) throw new RequeteInvalide("faux OpenAI : messages absent (attendu un tableau)");
   const script = scriptDe(messages);
   if ("statut" in script) {
-    return { statut: script.statut, reponse: { error: { message: "faux OpenAI : erreur scriptée", type: "server_error" } } };
+    return {
+      statut: script.statut,
+      reponse: { error: { message: "faux OpenAI : erreur scriptée", type: "server_error" } },
+    };
   }
   return {
     statut: 200,

@@ -148,7 +148,7 @@ function finDeJournal(fichier: string, n: number): string[] {
 function messageErreur(e: unknown): string {
   if (!(e instanceof Error)) return String(e);
   if (e.name === "TimeoutError") return `délai de ${DELAI_REQUETE_MS / 1000} s dépassé`;
-  const cause = e.cause instanceof Error ? (("code" in e.cause && String(e.cause.code)) || e.cause.message) : "";
+  const cause = e.cause instanceof Error ? ("code" in e.cause && String(e.cause.code)) || e.cause.message : "";
   return cause ? `${e.message} (${cause})` : e.message;
 }
 
@@ -245,7 +245,9 @@ class Lanceur {
         signal: AbortSignal.timeout(DELAI_REQUETE_MS),
       });
     } catch (e) {
-      throw new Arret(CODES_SORTIE.refus, [`refus : GET /memory/all a échoué (${messageErreur(e)}) ; vacuité non prouvée`]);
+      throw new Arret(CODES_SORTIE.refus, [
+        `refus : GET /memory/all a échoué (${messageErreur(e)}) ; vacuité non prouvée`,
+      ]);
     }
     let total: unknown;
     try {
@@ -255,7 +257,9 @@ class Lanceur {
       total = undefined;
     }
     if (reponse.status !== 200 || typeof total !== "number") {
-      throw new Arret(CODES_SORTIE.refus, [`refus : GET /memory/all a répondu ${reponse.status} ; vacuité non prouvée`]);
+      throw new Arret(CODES_SORTIE.refus, [
+        `refus : GET /memory/all a répondu ${reponse.status} ; vacuité non prouvée`,
+      ]);
     }
     if (total !== 0) throw new Arret(CODES_SORTIE.refus, [refusNonVide(total)]);
   }
@@ -465,7 +469,8 @@ class Lanceur {
       await this.exigerVacuite(
         url,
         config.jetonExterne,
-        (n) => `refus : l'instance ${url} contient déjà ${n} souvenir(s) ; le contrat n'écrit que dans une instance vide`,
+        (n) =>
+          `refus : l'instance ${url} contient déjà ${n} souvenir(s) ; le contrat n'écrit que dans une instance vide`,
       );
     }
 
