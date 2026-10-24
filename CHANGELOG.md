@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.7.0 — 2026-10-24
+
+- feat(harness): runners systemd confinés à leur worktree, plafonds de dépense en cours d'étape et par jour, API durcie (#267) (4c56ce7)
+
 ## omp-mem0-memory 4.1.0 — 2026-10-24
 
 - feat(memory,stack): dédup sensible aux valeurs, rappel avec disjoncteur, secrets masqués par le serveur, instantanés de mem0-rs (#268) (2487c3a)
