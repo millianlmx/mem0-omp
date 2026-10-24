@@ -22,6 +22,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import type { Role } from "./auth.ts";
 import { ClientRegistry } from "./auth.ts";
+import { Backups, backupDir, pruneBackups, snapshot } from "./backup.ts";
 import { renderChecks, runChecks } from "./check.ts";
 import { loadConfig } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
@@ -65,7 +66,26 @@ export async function startHarness(
   const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(config.worktreesDir, { recursive: true });
-  const store = new Store(path.join(config.dataDir, "harness.sqlite"));
+  const backups = backupDir(config);
+  // Une migration ratée laisserait la base à mi-chemin : un instantané d'abord, sinon pas de migration.
+  const store = new Store(path.join(config.dataDir, "harness.sqlite"), Date.now, {
+    ...(config.backups.beforeMigration
+      ? {
+          beforeMigrate: (db, from, to) => {
+            const file = snapshot(db, backups, "migration", Date.now(), `v${from}`);
+            pruneBackups(backups, "migration", config.backups.keep);
+            log(`base sauvegardée avant sa migration v${from} → v${to} : ${file}`);
+          },
+        }
+      : {}),
+  });
+  const snapshots = new Backups({
+    db: store.db,
+    dir: backups,
+    intervalHours: config.backups.intervalHours,
+    keep: config.backups.keep,
+    log,
+  });
   const scheduler = new Scheduler({
     runnerSlots: config.runner.slots,
     heavySlots: config.heavy.slots,
@@ -90,6 +110,7 @@ export async function startHarness(
     log,
   });
   await orchestrator.start();
+  snapshots.start();
   const token = options.token ?? loadToken(config);
   const clients = new ClientRegistry(config.clientsFile, token);
   const server = http.createServer(createHandler({ orchestrator, clients }));
@@ -106,6 +127,7 @@ export async function startHarness(
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await orchestrator.stop();
+      snapshots.stop();
       store.close();
     },
   };
