@@ -24,8 +24,10 @@ import * as path from "node:path";
 
 import { SERVICES, bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
+import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
+import { usesParMajeure } from "../support/workflows.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 const WORKFLOW = ".github/workflows/release-simulation.yml";
@@ -497,6 +499,7 @@ function scenario<T>(value: T | undefined, t: Skipper): T | null {
 // ---------------------------------------------------------------------------
 
 test("release-simulation/AC-2 : une PR sans couplage de version sort verte, bump écrit et check.sh vert", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.green, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -522,6 +525,7 @@ test("release-simulation/AC-2 : une PR sans couplage de version sort verte, bump
 });
 
 test("release-simulation/AC-1 : une PR qui fige une version en dur fait échouer la simulation en nommant le test", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.coupled, t);
   if (built === null) return;
   const { check, run } = built;
@@ -546,6 +550,7 @@ test("release-simulation/AC-1 : une PR qui fige une version en dur fait échouer
 });
 
 test("release-simulation/AC-4 : la PR de release (arbre déjà bumpé) sort verte, sans fausse écriture", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.released, t);
   if (built === null) return;
   const { repo, run } = built;
@@ -696,8 +701,7 @@ test("release-simulation/AC-6 : le statut du job est celui que PUBLISHING.md dé
   // Les assertions de forme portent sur le YAML, pas sur la prose : les
   // commentaires expliquent justement les pièges (`paths:`, jeton, smoke) et
   // nomment donc les chaînes qui ne doivent PAS apparaître dans la configuration.
-  const yaml = fs
-    .readFileSync(path.join(ROOT, WORKFLOW), "utf8")
+  const yaml = usesParMajeure(fs.readFileSync(path.join(ROOT, WORKFLOW), "utf8"))
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n");

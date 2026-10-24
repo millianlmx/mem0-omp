@@ -55,13 +55,14 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 | `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
 | `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
 | `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
-| `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts` |
+| `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts`, `prerequis.ts` (sauts « prérequis absent », outils épinglés), `workflows.ts` (lecture des workflows aux `uses:` épinglés) |
 
 Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
 `scripts/test-files.sh` les découvre récursivement. Un helper utile à plusieurs
 fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
 
 ```bash
+npm run setup                                                   # une fois par clone ou worktree, réseau requis : les outils épinglés
 npm test                                                        # = bash scripts/check.sh --sections=tests (section ── Tests)
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/client-harness.test.ts   # un fichier
@@ -156,7 +157,11 @@ au registre `scripts/tests-instables-connus.json` (consulté par
 `scripts/ci-verdict.sh --instables`), il les relance une seule fois
 (`swift test --filter`) en les nommant. Tout autre échec reste rouge sans relance :
 test non listé, rouge pendant la relance, erreur de compilation, plantage, sortie
-illisible ou interruption. Le statut `check (macos-latest)`
+illisible ou interruption. Chaque entrée du registre porte `raison`, `expire`
+(`AAAA-MM-JJ`, dernier jour UTC où la relance vaut) et, facultative, `issue` :
+passé `expire`, l'entrée ne relance plus rien et
+`known-flaky-tests-registry/AC-11` rougit — le test se corrige, ou l'entrée se
+prolonge en le justifiant dans la PR. Le statut `check (macos-latest)`
 est celui d'un job **agrégateur** qui les attend, tourne même quand l'un d'eux
 échoue ou est annulé (`if: always()`), et ne réussit que si les trois résultats
 valent `success` (`scripts/ci-verdict.sh`) — jamais « skipped », qui compterait
@@ -197,6 +202,20 @@ chaque run : l'étape de simulation pose `CARGO_TARGET_DIR` sur
 `${{ runner.temp }}/cargo-target`, cible stable que le cache restaure et que
 `check.sh`, `swift-app.sh` et les tests `test/stack/*` honorent.
 
+**Garde-fous des workflows.** Chaque workflow déclare `permissions:` au premier
+niveau — `contents: read` pour `check.yml`, dont aucun job n'écrit avec le
+`GITHUB_TOKEN` —, chaque job porte un `timeout-minutes` (30 pour les jobs de
+`check.yml`, sous le budget `--merge-timeout 2100` de la release, 10 pour
+l'agrégateur), et chaque action est épinglée par le sha de son commit, sa
+version en commentaire (`uses: actions/cache@<sha> # v6.1.0`).
+`.github/dependabot.yml` tient chaque semaine ces épingles, la crate
+`mem0-stack/mem0-rs` et les images des Dockerfile et des compose à jour,
+mineures et correctifs groupés en une PR ; jamais npm, dont les outils sont
+installés à une version exacte par les scripts. Les gardes de `test/outillage`
+lisent un `uses:` épinglé par sa version majeure (`test/support/workflows.ts`) :
+un bump mineur passe, un bump majeur d'action les fait rougir et se relit avec
+elles.
+
 Ces jobs pilotent `check.sh` par quatre options, que l'on peut aussi passer en
 local — sans option, toutes les sections et toute la suite tournent :
 
@@ -211,7 +230,12 @@ local — sans option, toutes les sections et toute la suite tournent :
 Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (secondes
 entières), pour lire dans un journal de CI où le temps part.
 
-À la racine du dépôt, `package.json` (privé, sans dépendance) donne quatre alias :
+À la racine du dépôt, `package.json` (privé, sans dépendance) donne cinq alias :
+`npm run setup` enchaîne les trois préparations qui exigent le réseau
+(`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare` et
+`bash scripts/mem0-http-contrat.sh --prepare`), à lancer une fois par clone ou
+par worktree — avant, un test qui dépend de Biome ou du TypeScript épinglé se saute
+par `prerequisAbsent` en nommant l'outil, et `--strict` (la CI) en fait un échec ;
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
 `bash scripts/typecheck.sh`, `npm test` lance `bash scripts/check.sh --sections=tests` et
 `npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh`.
@@ -233,7 +257,7 @@ peut pas être fusionnée.
 
 La section `── Lint TypeScript` (id `lint`, juste après `types`) passe
 `scripts/lint.sh` : Biome, épinglé dans le script, vérifie à la fois les règles
-de lint et le format du TypeScript de `omp-mem0-req/` et `test/`, sans jamais
+de lint et le format du TypeScript de `omp-mem0-req/`, `omp-harness/`, `scripts/` et `test/`, sans jamais
 toucher au réseau. Prérequis, une fois par clone ou par worktree et avec le
 réseau : `bash scripts/lint.sh --prepare`, qui installe la version épinglée dans
 `.lint/` (ignoré par git). Un outil absent ou d'une autre version rougit la
@@ -242,7 +266,7 @@ désigne une installation préparée ailleurs : les `check.sh` imbriqués des te
 et la copie de `scripts/release-simulation.sh` réutilisent ainsi celle de la
 racine. Chaque job CI qui lance `check.sh` prépare l'outil juste avant. Pour
 corriger en local ce que la section signale :
-`.lint/node_modules/.bin/biome check --write omp-mem0-req test`.
+`.lint/node_modules/.bin/biome check --write omp-mem0-req omp-harness scripts test`.
 
 La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
 (`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du

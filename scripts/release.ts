@@ -4,6 +4,8 @@
 // versions jamais publiées, écrit les versions et `CHANGELOG.md`, puis publie
 // par une PR de bot auto-mergée : branche `release/<after>` → PR → attente des
 // statuts requis → fusion squash → tags → releases GitHub. Le tout idempotent.
+// Les PR `release/*` laissées ouvertes par un run précédent sont fermées dès que
+// la PR courante existe, ou quand plus rien n'est à publier.
 //
 // Lancé par `.github/workflows/release.yml` :
 //   node --experimental-strip-types scripts/release.ts --before <sha> --after <sha>
@@ -131,7 +133,7 @@ const SUBJECT = /^([A-Za-z]+)(\([^)]*\))?(!)?:/;
  */
 function footerBlock(body: string): string {
   const blocks = body.trim().split(/\n[ \t]*\n/);
-  return blocks.length === 0 ? "" : blocks[blocks.length - 1] ?? "";
+  return blocks.length === 0 ? "" : (blocks[blocks.length - 1] ?? "");
 }
 
 /** Texte du footer de rupture, aplati sur une ligne ; null si absent. */
@@ -141,7 +143,10 @@ export function breakingText(body: string): string | null {
   // de la ligne : un footer multi-lignes se lit d'un bloc, puis s'aplatit.
   const marker = /^BREAKING[ -]CHANGE(?::|\s+#)[ \t]*/m.exec(block);
   if (!marker) return null;
-  return block.slice(marker.index + marker[0].length).replace(/\s+/g, " ").trim();
+  return block
+    .slice(marker.index + marker[0].length)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -264,11 +269,7 @@ export function versionTag(name: string, version: string): string {
 }
 
 /** Les versions de `history` dont le tag n'existe pas encore sur le remote (S-4). */
-export function backlogOf(
-  name: string,
-  history: VersionEntry[],
-  existingTags: ReadonlySet<string>,
-): VersionEntry[] {
+export function backlogOf(name: string, history: VersionEntry[], existingTags: ReadonlySet<string>): VersionEntry[] {
   return history.filter((entry) => !existingTags.has(versionTag(name, entry.version)));
 }
 
@@ -310,9 +311,7 @@ export function planOf(
         tag: versionTag(plugin.name, entry.version),
         commit: entry.sha,
         date: entry.date,
-        level: maxLevel(
-          changes.map((change) => change.level).filter((level): level is Level => level !== null),
-        ),
+        level: maxLevel(changes.map((change) => change.level).filter((level): level is Level => level !== null)),
         changes,
         breaking: changes.filter((change) => change.level === "major"),
         previousTag: previous === undefined ? null : versionTag(plugin.name, previous.version),
@@ -329,9 +328,7 @@ export function planOf(
     }
     // Garde 1 : l'événement est déjà publié, son bump aussi — on ne le rejoue pas.
     if (published) continue;
-    const levels = plugin.sinceCurrent
-      .map((change) => change.level)
-      .filter((level): level is Level => level !== null);
+    const levels = plugin.sinceCurrent.map((change) => change.level).filter((level): level is Level => level !== null);
     if (levels.length === 0) {
       unchanged.push(plugin.name);
       continue;
@@ -408,10 +405,7 @@ export function insertChangelog(existing: string | null, entries: string[]): str
  * « Ce qui casse / quoi faire » n'apparaît QUE pour un bump majeur, et toujours
  * AVANT l'installation.
  */
-export function renderReleaseBody(
-  releases: Release[],
-  options: { ownerRepo: string; marketplace: string },
-): string {
+export function renderReleaseBody(releases: Release[], options: { ownerRepo: string; marketplace: string }): string {
   const sections = releases.map((release) => {
     const heading = release.previousTag
       ? `Changements depuis ${release.previousTag} :`
@@ -644,8 +638,7 @@ function historyOfPlugin(plugin: { name: string; dir: string }, main: string): P
     return changesBetween(commitsIn(range), plugin.dir);
   });
   const current = history[history.length - 1];
-  const sinceCurrent =
-    current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..${main}`]), plugin.dir);
+  const sinceCurrent = current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..${main}`]), plugin.dir);
 
   return { name: plugin.name, dir: plugin.dir, history, ranges, sinceCurrent };
 }
@@ -667,9 +660,7 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
     const tag = already.get(plugin.name);
     if (tag !== undefined) console.log(`· ${plugin.name} : déjà publié (tag ${tag})`);
     else if (bump !== undefined) {
-      console.log(
-        `✓ ${bump.name} : ${bump.level} ${bump.from} → ${bump.version} (${bump.changes.length} commit(s))`,
-      );
+      console.log(`✓ ${bump.name} : ${bump.level} ${bump.from} → ${bump.version} (${bump.changes.length} commit(s))`);
     } else if (!published) console.log(`· ${plugin.name} : inchangé (aucun fichier touché)`);
   }
   if (plan.releases.length > 0) {
@@ -683,7 +674,10 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
 /** Titre de la PR et sujet de la fusion : les versions bumpées, ou le journal seul. */
 function mergeTitle(plan: Plan): string {
   const bumped = plan.releases.filter((release) => release.kind === "bump");
-  const label = bumped.length > 0 ? bumped.map((release) => `${release.name} ${release.version}`).join(", ") : "journal des versions";
+  const label =
+    bumped.length > 0
+      ? bumped.map((release) => `${release.name} ${release.version}`).join(", ")
+      : "journal des versions";
   return `chore(release): ${label}`;
 }
 
@@ -707,7 +701,9 @@ function writeBumpedVersions(plan: Plan, catalog: Catalog): string[] {
     written.push(`${release.dir}/package.json`);
   }
 
-  const bumped = new Map(plan.releases.filter((release) => release.kind === "bump").map((release) => [release.name, release.version]));
+  const bumped = new Map(
+    plan.releases.filter((release) => release.kind === "bump").map((release) => [release.name, release.version]),
+  );
   for (const entry of catalog.plugins) {
     const target = bumped.get(entry.name);
     if (target !== undefined) entry.version = target;
@@ -770,12 +766,7 @@ function prNumberOf(raw: string): string {
 }
 
 /** La PR ouverte de la branche, réutilisée si elle existe déjà (relance). */
-async function openPullRequest(
-  branch: string,
-  title: string,
-  body: string,
-  ownerRepo: string,
-): Promise<string | null> {
+async function openPullRequest(branch: string, title: string, body: string, ownerRepo: string): Promise<string | null> {
   const listed = ghCall(
     ["pr", "list", "--repo", ownerRepo, "--head", branch, "--state", "open", "--json", "number"],
     `gh pr list --head ${branch}`,
@@ -813,6 +804,100 @@ async function openPullRequest(
   return number;
 }
 
+/** Une PR ouverte, telle que `gh pr list --json number,headRefName,isCrossRepository` la rend. */
+export type OpenPullRequest = { number: number; headRefName: string; isCrossRepository: boolean };
+
+/**
+ * Les PR de release PÉRIMÉES parmi les PR ouvertes : branche `release/*` de CE
+ * dépôt (jamais celle d'une fourche, qui ne nous appartient pas), autre que
+ * `keep` — la branche de la PR courante, `null` quand plus rien n'est à publier.
+ * Chaque run recalcule le plan depuis `main` : une PR de release laissée ouverte
+ * par un run précédent (statuts requis jamais verts, budget d'attente épuisé)
+ * porte un plan que le run courant remplace, et ne doit jamais être fusionnée.
+ * Une réponse illisible rend `null`.
+ */
+export function stalePullRequests(raw: string, keep: string | null): OpenPullRequest[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.trim() === "" ? "[]" : raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const open = parsed.filter(
+    (pr): pr is OpenPullRequest =>
+      typeof pr === "object" &&
+      pr !== null &&
+      typeof (pr as OpenPullRequest).number === "number" &&
+      typeof (pr as OpenPullRequest).headRefName === "string",
+  );
+  return open
+    .filter((pr) => pr.isCrossRepository !== true && pr.headRefName.startsWith("release/") && pr.headRefName !== keep)
+    .sort((a, b) => a.number - b.number);
+}
+
+/**
+ * Ferme les PR de release périmées (`stalePullRequests`), chacune avec un
+ * commentaire qui nomme ce qui la remplace, puis supprime sa branche : une
+ * branche `release/<sha>` n'appartient qu'au job de release. Idempotent — un
+ * rejeu ne liste que les PR encore ouvertes, et une branche déjà supprimée n'est
+ * qu'une ligne `·`. Jamais bloquant : la publication du plan courant ne dépend
+ * pas de ce ménage, donc un échec de `gh` ou de `git push --delete` est nommé
+ * sans faire échouer le run. `dryRun` : la liste s'imprime, rien n'est fermé.
+ */
+function closeStalePullRequests(
+  ownerRepo: string,
+  current: { branch: string; number: string | null } | null,
+  dryRun: boolean,
+): void {
+  const listed = run("gh", [
+    "pr",
+    "list",
+    "--repo",
+    ownerRepo,
+    "--state",
+    "open",
+    "--limit",
+    "200",
+    "--json",
+    "number,headRefName,isCrossRepository",
+  ]);
+  if (listed.missing || listed.code !== 0) {
+    const reason = listed.missing ? "gh indisponible" : listed.stderr.trim() || "échec sans message";
+    console.log(`· PR de release périmées non vérifiées (gh pr list : ${reason})`);
+    return;
+  }
+  const stale = stalePullRequests(listed.stdout, current?.branch ?? null);
+  if (stale === null) {
+    console.log(`· PR de release périmées non vérifiées (gh pr list illisible : ${listed.stdout.trim() || "vide"})`);
+    return;
+  }
+  const replacement =
+    current === null
+      ? "plus rien n'est à publier depuis main"
+      : `remplacée par ${current.number === null ? `la PR de ${current.branch}` : `#${current.number}`}`;
+  for (const pr of stale) {
+    if (dryRun) {
+      console.log(`· PR de release périmée #${pr.number} (${pr.headRefName}) à fermer : ${replacement}`);
+      continue;
+    }
+    const comment =
+      `Fermée par le job de release : ${replacement}. Chaque run recalcule le plan depuis main, ` +
+      `donc cette PR (${pr.headRefName}) est périmée et ne doit pas être fusionnée.`;
+    const closed = run("gh", ["pr", "close", String(pr.number), "--repo", ownerRepo, "--comment", comment]);
+    if (closed.missing || closed.code !== 0) {
+      const reason = closed.missing ? "gh indisponible" : closed.stderr.trim() || "échec sans message";
+      console.log(`· PR de release périmée #${pr.number} non fermée (${reason}) — à fermer à la main`);
+      continue;
+    }
+    console.log(`· PR de release périmée #${pr.number} (${pr.headRefName}) fermée : ${replacement}`);
+    const deleted = run("git", ["push", "origin", "--delete", pr.headRefName]);
+    if (deleted.code !== 0) {
+      console.log(`· branche ${pr.headRefName} non supprimée (${deleted.stderr.trim() || "échec sans message"})`);
+    }
+  }
+}
+
 /** Les états de `mergeStateStatus` qui autorisent la fusion (Doc-3). */
 const MERGEABLE = new Set(["CLEAN", "UNSTABLE", "HAS_HOOKS"]);
 
@@ -825,7 +910,15 @@ async function waitMergeable(number: string, ownerRepo: string, timeout: number)
   const deadline = Date.now() + timeout * 1000;
   let last = { status: "UNKNOWN", url: "" };
   for (;;) {
-    const view = run("gh", ["pr", "view", number, "--repo", ownerRepo, "--json", "state,mergeStateStatus,mergeCommit,url"]);
+    const view = run("gh", [
+      "pr",
+      "view",
+      number,
+      "--repo",
+      ownerRepo,
+      "--json",
+      "state,mergeStateStatus,mergeCommit,url",
+    ]);
     if (view.missing) {
       console.error("✗ gh indisponible (GH_TOKEN ?)");
       return false;
@@ -864,7 +957,20 @@ async function mergePullRequest(
 ): Promise<string | null> {
   // `--auto` est proscrit : `allow_auto_merge` vaut `false` sur ce dépôt.
   const merged = ghCall(
-    ["pr", "merge", number, "--repo", ownerRepo, "--squash", "--subject", title, "--body", body, "--match-head-commit", head],
+    [
+      "pr",
+      "merge",
+      number,
+      "--repo",
+      ownerRepo,
+      "--squash",
+      "--subject",
+      title,
+      "--body",
+      body,
+      "--match-head-commit",
+      head,
+    ],
     `gh pr merge ${number}`,
   );
   if (merged === null) return null;
@@ -889,13 +995,7 @@ async function mergePullRequest(
  * tags et les releases. Ordre imposé, jamais inversé : **commit → fusion → tags
  * → releases** (S-1). Rien n'est poussé sur `refs/heads/main` (G-1).
  */
-async function publish(
-  plan: Plan,
-  args: Args,
-  ownerRepo: string,
-  catalog: Catalog,
-  eventIso: string,
-): Promise<number> {
+async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catalog, eventIso: string): Promise<number> {
   const title = mergeTitle(plan);
   const body = mergeBody(plan, args.after);
   const branch = `release/${args.after}`;
@@ -925,14 +1025,15 @@ async function publish(
 
     const pushed = run("git", ["push", "origin", `HEAD:refs/heads/${branch}`]);
     if (pushed.code !== 0) {
-      console.error(
-        `✗ git push origin HEAD:refs/heads/${branch} : ${pushed.stderr.trim() || "échec sans message"}`,
-      );
+      console.error(`✗ git push origin HEAD:refs/heads/${branch} : ${pushed.stderr.trim() || "échec sans message"}`);
       return 1;
     }
 
     const number = await openPullRequest(branch, title, body, ownerRepo);
     if (number === null) return 1;
+    // La PR courante existe : les PR de release des runs précédents sont périmées,
+    // fermées AVANT l'attente — même si ce run échoue ensuite sur son budget.
+    closeStalePullRequests(ownerRepo, { branch, number }, false);
     if (!(await waitMergeable(number, ownerRepo, args.mergeTimeout))) return 1;
     mergeSha = await mergePullRequest(number, ownerRepo, head, title, body);
     if (mergeSha === null) return 1;
@@ -947,8 +1048,10 @@ async function publish(
     }
   } else {
     // Rien à écrire (rejeu après fusion, tags manquants) : ni branche, ni PR à
-    // ouvrir — mais l'état de main est relu avant de taguer.
+    // ouvrir — mais l'état de main est relu avant de taguer. Aucune PR n'est
+    // courante : toute PR de release encore ouverte est périmée.
     git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    closeStalePullRequests(ownerRepo, null, false);
   }
 
   // Tous les tags D'ABORD, en une seule poussée, puis les releases (S-1).
@@ -1057,7 +1160,17 @@ function simulate(plan: Plan, catalog: Catalog): number {
  * Mesuré le 2026-10-22 : un check.sh complet dans la copie de la simulation
  * durait 989 s, soit le statut requis le plus long d'une PR.
  */
-const RELEASE_CHECK_SECTIONS = ["catalogue", "noms", "plugins", "versions", "extension", "types", "lint", "smoke", "noyau"];
+const RELEASE_CHECK_SECTIONS = [
+  "catalogue",
+  "noms",
+  "plugins",
+  "versions",
+  "extension",
+  "types",
+  "lint",
+  "smoke",
+  "noyau",
+];
 
 /**
  * `check.sh` sur l'arbre écrit. Sa sortie est recopiée MÊME en vert : les durées
@@ -1155,8 +1268,15 @@ async function main(argv: string[]): Promise<number> {
   // Idempotence (1) : le trailer du commit de release marque l'événement publié.
   // --grep SANS pathspec : avec `-- .`, le commit de release (vide) est exclu.
   const published =
-    git(["log", "--fixed-strings", `--grep=Release-Event: ${args.after}`, "--format=%H", "-n", "1", args.main]).stdout.trim() !==
-    "";
+    git([
+      "log",
+      "--fixed-strings",
+      `--grep=Release-Event: ${args.after}`,
+      "--format=%H",
+      "-n",
+      "1",
+      args.main,
+    ]).stdout.trim() !== "";
   if (published) console.log("· merge déjà publié");
 
   let histories: PluginHistory[];
@@ -1172,9 +1292,18 @@ async function main(argv: string[]): Promise<number> {
   // La simulation s'exécute MÊME quand le plan est vide : c'est le cas de la PR
   // de release, dont l'arbre bumpé doit passer `check.sh` (S-1, AC-4).
   if (args.simulate) return simulate(plan, catalog);
-  if (plan.releases.length === 0) return 0;
-  // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé.
-  if (args.dryRun) return 0;
+  // Plus rien à publier : une PR de release encore ouverte est périmée (son plan
+  // est déjà sur main, ou remplacé). `--dry-run` la nomme sans la fermer.
+  if (plan.releases.length === 0) {
+    closeStalePullRequests(ownerRepo, null, args.dryRun);
+    return 0;
+  }
+  // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé — les
+  // PR de release que le run fermerait sont listées, aucune n'est fermée.
+  if (args.dryRun) {
+    closeStalePullRequests(ownerRepo, { branch: `release/${args.after}`, number: null }, true);
+    return 0;
+  }
 
   return await publish(plan, args, ownerRepo, catalog, eventIso);
 }

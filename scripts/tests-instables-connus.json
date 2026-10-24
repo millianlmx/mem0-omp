@@ -3,12 +3,16 @@
     {
       "identifiant": "visionneuse-de-session/AC-13",
       "filtre": "\\.watcherResumesOnAFileUnreadableAtArming\\(\\)",
-      "occurrence": "runs des PR #221 (×3) et #229, 2026-10-19/20 (FileWatcherTests.swift, fichier illisible à l'armement)"
+      "occurrence": "runs des PR #221 (×3) et #229, 2026-10-19/20 (FileWatcherTests.swift, fichier illisible à l'armement)",
+      "raison": "échec intermittent sur le runner macOS, cause non élucidée : le FileWatcher doit reprendre sur un fichier illisible à l'armement",
+      "expire": "2027-01-24"
     },
     {
       "identifiant": "terminal-integre/AC-9",
       "filtre": "\\.quittingTheAppKillsLiveTerminals\\(\\)",
-      "occurrence": "run 38432015514, tentative 1 (TerminalModelTests.swift, quitter l'app tue les terminaux vivants)"
+      "occurrence": "run 38432015514, tentative 1 (TerminalModelTests.swift, quitter l'app tue les terminaux vivants)",
+      "raison": "échec intermittent sur le runner macOS, cause non élucidée : quitter l'app doit tuer les terminaux vivants",
+      "expire": "2027-01-24"
     }
   ]
 }

@@ -48,14 +48,14 @@ jobs:
             echo "::error::secret RELEASE_TOKEN absent — le job de release ne peut pas publier. Crée-le (PUBLISHING.md, § Jeton de release), puis relance cette exécution."
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # `token` : l'identité DÉDIÉE. Ses push et sa PR déclenchent les
           # workflows (donc check.yml sur la PR de release) ; ceux du
           # GITHUB_TOKEN du dépôt n'en déclenchent aucun.
           token: ${{ secrets.RELEASE_TOKEN }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       # fetch-depth: 0 ne garantit pas les tags : on les demande explicitement,

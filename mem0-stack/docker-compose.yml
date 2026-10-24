@@ -37,6 +37,9 @@ services:
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
       # Optionnel : si définie, le plugin doit l'envoyer dans X-Mem0-Token.
       MEM0_HTTP_TOKEN: ${MEM0_HTTP_TOKEN:-}
+      # Instantanés de la base dans /data/backups (voir mem0-stack/README.md).
+      MEM0_BACKUP_INTERVAL_HOURS: ${MEM0_BACKUP_INTERVAL_HOURS:-24}
+      MEM0_BACKUP_KEEP: ${MEM0_BACKUP_KEEP:-7}
     healthcheck:
       # curl est installé dans l'image pour ça : le binaire n'a pas de
       # sous-commande santé.

@@ -34,8 +34,19 @@ export const MEM0_HTTP_TOKEN = TARGET.token;
 // échouer silencieusement toutes les écritures.
 // Le budget de recherche doit couvrir un premier appel à froid : l'embedding
 // local (oMLX) charge son modèle à la première requête de la session. 3 s
-// suffisaient à faire échouer TOUS les rappels en silence.
-export const TIMEOUT = { search: 20_000, write: 120_000, other: 10_000 };
+// suffisaient à faire échouer TOUS les rappels en silence. Ce budget long ne vaut
+// que pour un service FROID : une fois qu'une recherche du rappel a abouti, le
+// modèle est chargé et le rappel passe à `searchWarm`. Un service qui ne répond
+// plus en 5 s à chaud est en panne pour ce tour, pas en train de charger — et le
+// rappel repasse au budget froid après chaque échec (rechargement après une mise
+// en veille du modèle).
+export const TIMEOUT = { search: 20_000, searchWarm: 5_000, write: 120_000, other: 10_000 };
+
+// Disjoncteur du rappel : après un échec (service injoignable ou délai dépassé),
+// le rappel n'appelle plus le service pendant cette durée et injecte une notice
+// courte. Sans lui, chaque tour d'une panne payait le budget entier avant de
+// répondre — et l'hôte coupe un handler `before_agent_start` à 30 s.
+export const RECALL_BACKOFF_MS = 60_000;
 
 export const RECALL_LIMIT = 5; // souvenirs projet injectés par tour
 

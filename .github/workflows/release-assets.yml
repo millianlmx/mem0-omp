@@ -41,7 +41,7 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Le code du tag, jamais celui de main : l'app jointe est celle de la release.
           ref: refs/tags/${{ env.TAG }}

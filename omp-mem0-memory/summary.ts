@@ -22,8 +22,8 @@ export type Prepared = { id: string; text: string; tokens: Set<string>; updatedA
 export type MemoryCache = { entries: Prepared[]; df: Map<string, number> };
 
 /** Charge les souvenirs du projet et prépare le matching local. */
-export async function loadMemory(scope: string): Promise<MemoryCache | null> {
-  const all = rows(await mem0.getAll(scope).catch(() => null));
+export async function loadMemory(scope: string, budgetMs?: number): Promise<MemoryCache | null> {
+  const all = rows(await mem0.getAll(scope, budgetMs).catch(() => null));
   const entries: Prepared[] = all
     .filter((m) => m?.id)
     .map((m) => {

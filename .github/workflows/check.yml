@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Moindre privilège : aucun job n'écrit avec le GITHUB_TOKEN (ni commentaire, ni
+# statut, ni push). Le cache et l'artefact de l'app Mac passent par le jeton
+# d'exécution d'Actions, que ce bloc ne restreint pas.
+permissions:
+  contents: read
+
 # Version de l'hôte OMP installé par les jobs `check` et `macos-tests`, source
 # unique : elle entre aussi dans la clé du cache npm. Ce bloc précède
 # `concurrency` : les gardes de ce dernier lisent tout ce qui le suit jusqu'à
@@ -40,13 +46,17 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Plafond ≈ 4× le plus long run mesuré (médiane 385 s, max 458 s sur les 40
+    # derniers runs, 2026-10-24) : un job bloqué rend son runner au lieu d'attendre
+    # les 6 h par défaut.
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
@@ -64,7 +74,7 @@ jobs:
       # Le cache de contenu de npm (~/.npm), jamais node_modules : `npm install`
       # est toujours rejoué et revérifie l'arbre, seul le téléchargement est évité.
       - name: Cache npm (hôte OMP)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
           key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}
@@ -73,7 +83,7 @@ jobs:
       # registry/src (régénéré). Pas de restore-keys : une clé changée repart de
       # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
       - name: Cache cargo (mem0-rs)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -97,7 +107,7 @@ jobs:
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - name: Installer le TypeScript épinglé du type-check
         run: bash scripts/typecheck.sh --prepare
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.0"
       - name: Préparer le linter épinglé (Biome)
@@ -148,8 +158,11 @@ jobs:
   macos-app-swift:
     runs-on: macos-latest
     if: github.event_name == 'pull_request'
+    # Médiane 258 s, max 578 s (2026-10-24). 30 min tiennent sous l'attente de fusion
+    # que release.yml accorde à release.ts (`--merge-timeout 2100`).
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -171,7 +184,7 @@ jobs:
       # zéro, et cargo recompile toujours ce que les sources fraîches invalident.
       # Ici, la cible release de `cargo build --release` (scripts/swift-app.sh).
       - name: Cache cargo (mem0-rs)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -201,7 +214,7 @@ jobs:
         run: ditto -c -k --keepParent "omp-console/build/OMP Console.app" "omp-console/build/OMP-Console-macOS.zip"
       - name: Publier l'app Mac (artefact du run)
         if: steps.scope.outputs.run == '1'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: OMP-Console-macOS
           path: omp-console/build/OMP-Console-macOS.zip
@@ -212,8 +225,10 @@ jobs:
   macos-app-ios:
     runs-on: macos-latest
     if: github.event_name == 'pull_request'
+    # Médiane 186 s, max 688 s (2026-10-24) : même plafond que macos-app-swift.
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -260,13 +275,15 @@ jobs:
             sections: tests
     runs-on: macos-latest
     if: github.event_name == 'pull_request'
+    # Médiane 251 s, max 565 s par partie (2026-10-24) : même plafond.
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
@@ -284,7 +301,7 @@ jobs:
       # Le cache de contenu de npm (~/.npm), jamais node_modules : `npm install`
       # est toujours rejoué et revérifie l'arbre, seul le téléchargement est évité.
       - name: Cache npm (hôte OMP)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.npm
           key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}
@@ -296,7 +313,7 @@ jobs:
       # que si le diff retient un test de test/stack/*, rare.
       - name: Cache cargo (mem0-rs)
         if: matrix.part == '1/2'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -316,7 +333,7 @@ jobs:
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - name: Installer le TypeScript épinglé du type-check
         run: bash scripts/typecheck.sh --prepare
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.0"
       - name: Préparer le linter épinglé (Biome)
@@ -343,7 +360,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [macos-app-swift, macos-app-ios, macos-tests]
     if: ${{ always() && github.event_name == 'pull_request' }}
+    # Quelques secondes mesurées : ce job ne fait que lire trois résultats.
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Verdict des jobs macOS
         run: bash scripts/ci-verdict.sh macos-app-swift=${{ needs.macos-app-swift.result }} macos-app-ios=${{ needs.macos-app-ios.result }} macos-tests=${{ needs.macos-tests.result }}

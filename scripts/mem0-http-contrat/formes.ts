@@ -116,7 +116,7 @@ function verifier(route: string, forme: Forme, valeur: unknown, chemin: string, 
         typeFaux("array");
         return;
       }
-      valeur.forEach((element, i) => verifier(route, forme.element, element, `${chemin}[${i}]`, ecarts));
+      for (const [i, element] of valeur.entries()) verifier(route, forme.element, element, `${chemin}[${i}]`, ecarts);
       return;
     case "objet": {
       if (typeRecu(valeur) !== "object") {

@@ -1,15 +1,17 @@
 // Checkpoint d'exploration et relance d'écriture de fin de session (politique pure).
+import type { ToolResultEvent, ToolResultEventResult } from "@oh-my-pi/pi-coding-agent";
 import { EXPLORE_TOOLS, MUTATE_TOOLS } from "./config.ts";
 import type { SessionState } from "./state.ts";
 
 // ---------------------------------------------------------------------------
 // Checkpoint exploration — déclenche un rappel d'écriture quand l'agent explore
-// trop sans écrire. Une phase enregistrée active compresse le seuil.
+// trop sans écrire. Il est posé au MILIEU du tour, en tête du résultat de
+// l'outil qui franchit le seuil : `before_agent_start` ne tire qu'à la demande
+// suivante de l'utilisateur, souvent des dizaines de lectures plus tard, et le
+// checkpoint y prenait la place du rappel du tour.
 // ---------------------------------------------------------------------------
 
 export const CHECKPOINT_THRESHOLD_NORMAL = 15;
-
-export const CHECKPOINT_MESSAGE_TYPE = "mem0-checkpoint";
 
 // Session de pure discussion (needs, specs, archi) : aucune édition de fichier,
 // donc le nudge de fin fondé sur `mutations` ne tire jamais. Au-delà de ce
@@ -56,11 +58,7 @@ export function pickSessionStopNudge(input: {
   return null;
 }
 
-/**
- * Message de checkpoint, injecté dans le tour en cours. Le seuil est remis à zéro
- * par l'appelant : la décision « il est temps » reste au handler, qui seul
- * connaît l'idempotence du compteur.
- */
+/** Message de checkpoint, posé en tête du résultat d'outil qui franchit le seuil. */
 export function checkpointMessage(explorations: number): string {
   return (
     `[mem0 checkpoint] ${explorations} exploration(s) faites sans écriture. ` +
@@ -81,4 +79,23 @@ export function countToolResult(st: SessionState, toolName: string): void {
     st.explorations += 1;
     st.explorationSinceLastWrite += 1;
   }
+}
+
+/**
+ * Pose le checkpoint en tête du résultat d'outil quand le compteur d'exploration
+ * atteint le seuil, puis remet le compteur à zéro. `base` est le résultat déjà
+ * réécrit par l'agrafage, s'il y en a un : rien de ce qu'il porte n'est perdu.
+ * Rend `base` tel quel quand le seuil n'est pas atteint.
+ */
+export function checkpointToolResult(
+  st: SessionState,
+  event: ToolResultEvent,
+  base: ToolResultEventResult | undefined,
+): ToolResultEventResult | undefined {
+  if (st.explorationSinceLastWrite < CHECKPOINT_THRESHOLD_NORMAL) return base;
+  const explorations = st.explorationSinceLastWrite;
+  st.explorationSinceLastWrite = 0;
+  return {
+    content: [{ type: "text" as const, text: checkpointMessage(explorations) }, ...(base?.content ?? event.content)],
+  };
 }

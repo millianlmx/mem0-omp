@@ -75,6 +75,8 @@ test("package-json-without-scripts/AC-4 : le package.json racine est privé et n
     private: true,
     type: "module",
     scripts: {
+      setup:
+        "bash scripts/lint.sh --prepare && bash scripts/typecheck.sh --prepare && bash scripts/mem0-http-contrat.sh --prepare",
       check: "bash scripts/check.sh",
       typecheck: "bash scripts/typecheck.sh",
       test: "bash scripts/check.sh --sections=tests",

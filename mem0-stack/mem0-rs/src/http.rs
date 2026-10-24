@@ -23,10 +23,16 @@ use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
 use crate::openai::ClientChat;
 use crate::recherche::{self, Details, Refus};
+use crate::redaction::masquer;
 use crate::validation::{self, Rejet};
 
 /// Utilisateur fixe (repris de l'ancien mem0-http Python).
 pub const USER: &str = "moi";
+
+/// Taille maximale d'un corps de requête : 1 Mio. Écart assumé au Python (sans
+/// borne) : un souvenir tient en quelques Ko, et un corps sans borne est lu en
+/// entier en mémoire avant toute validation, jeton compris. Au-delà : 413.
+pub const CORPS_MAX: usize = 1024 * 1024;
 
 /// État partagé par les routes.
 pub struct Etat {
@@ -73,8 +79,18 @@ pub fn routeur(etat: Arc<Etat>) -> Router {
     .method_not_allowed_fallback(|| async {
         json(StatusCode::METHOD_NOT_ALLOWED, &json!({ "detail": "Method Not Allowed" }))
     })
-    .layer(DefaultBodyLimit::disable())
+    .layer(axum::middleware::map_response(corps_trop_gros_en_json))
+    .layer(DefaultBodyLimit::max(CORPS_MAX))
     .with_state(etat)
+}
+
+/// Le 413 de `DefaultBodyLimit` est en texte brut : il est rendu au format
+/// d'erreur des autres routes, `{"detail": …}`.
+async fn corps_trop_gros_en_json(reponse: Response) -> Response {
+    if reponse.status() != StatusCode::PAYLOAD_TOO_LARGE {
+        return reponse;
+    }
+    json(StatusCode::PAYLOAD_TOO_LARGE, &json!({ "detail": format!("corps de requête au-delà de {CORPS_MAX} octets") }))
 }
 
 /// Réponse JSON (`application/json`), ou 500 si la sérialisation échoue.
@@ -108,11 +124,22 @@ fn rejet(r: Rejet) -> Response {
 /// `None` si le jeton est bon (ou non exigé), sinon la réponse 401.
 fn controle_jeton(etat: &Etat, entetes: &HeaderMap) -> Option<Response> {
     if etat.http_token.is_empty()
-        || entetes.get("x-mem0-token").is_some_and(|v| v.as_bytes() == etat.http_token.as_bytes())
+        || entetes.get("x-mem0-token").is_some_and(|v| egal_temps_constant(v.as_bytes(), etat.http_token.as_bytes()))
     {
         return None;
     }
     Some(json(StatusCode::UNAUTHORIZED, &json!({ "detail": "bad or missing X-Mem0-Token" })))
+}
+
+/// Égalité d'octets dont la durée ne dépend pas de la position du premier écart :
+/// `==` s'arrête au premier octet différent, ce qui laisse deviner le jeton octet
+/// par octet en mesurant les réponses. Seule la longueur se lit au chronomètre.
+fn egal_temps_constant(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let ecart = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(ecart) == 0
 }
 
 fn content_type(entetes: &HeaderMap) -> Option<&[u8]> {
@@ -174,10 +201,13 @@ async fn add(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response
         return interne();
     };
     let tags = req.tags.filter(|t| !t.is_empty());
+    // Masquage des secrets avant tout usage du texte : embedding, invite
+    // d'extraction, message de session et souvenir ne voient que la version masquée.
+    let texte = masquer(&req.text);
     if req.infer {
-        ajouter_infere(&etat, req.text, agent_id, run_id, tags).await
+        ajouter_infere(&etat, texte, agent_id, run_id, tags).await
     } else {
-        ajouter(&etat, req.text, agent_id, run_id, tags).await
+        ajouter(&etat, texte, agent_id, run_id, tags).await
     }
 }
 
@@ -192,7 +222,7 @@ async fn add_procedure(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -
     let Ok(agent_id) = portee(Some(req.agent_id)) else {
         return interne();
     };
-    ajouter(&etat, req.steps, agent_id, None, None).await
+    ajouter(&etat, masquer(&req.steps), agent_id, None, None).await
 }
 
 /// add infer=false (S-3) : embedding, puis une transaction.
@@ -574,7 +604,8 @@ async fn update(State(etat): Partage, memory_id: String, entetes: HeaderMap, cor
         Ok(true) => {}
         _ => return interne(),
     }
-    let Ok(vecteur) = etat.embedder.plonger(&req.text).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
+    let texte = masquer(&req.text);
+    let Ok(vecteur) = etat.embedder.plonger(&texte).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
         return interne();
     };
     let tags = match req.tags {
@@ -583,8 +614,8 @@ async fn update(State(etat): Partage, memory_id: String, entetes: HeaderMap, cor
     };
     let ecrit = avec_base(&etat, move |conn| {
         let instant = horodatage::maintenant();
-        let hash = md5_hex(&req.text);
-        db::mettre_a_jour(conn, &memory_id, &req.text, &hash, &tags, &vecteur, &instant)
+        let hash = md5_hex(&texte);
+        db::mettre_a_jour(conn, &memory_id, &texte, &hash, &tags, &vecteur, &instant)
     })
     .await;
     match ecrit {
@@ -627,6 +658,16 @@ mod tests {
         assert_eq!(portee(Some("   ".into())), Err(()));
         assert_eq!(portee(Some("a b".into())), Err(()));
         assert_eq!(portee(Some("a\u{1f}b".into())), Err(()));
+    }
+
+    #[test]
+    fn jeton_compare_en_temps_constant() {
+        assert!(egal_temps_constant(b"", b""));
+        assert!(egal_temps_constant(b"s3cret", b"s3cret"));
+        assert!(!egal_temps_constant(b"s3cret", b"s3creT"));
+        assert!(!egal_temps_constant(b"Xs3cret", b"s3cret"));
+        assert!(!egal_temps_constant(b"s3cre", b"s3cret"));
+        assert!(!egal_temps_constant(b"", b"s"));
     }
 
     #[test]

@@ -122,7 +122,8 @@ export type FixtureRang = {
   graphe?: GrapheRang;
 };
 
-const estObjetJson = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const estObjetJson = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
 const estChaine = (v: unknown): v is string => typeof v === "string" && v !== "";
 const estEntierPositif = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
 
@@ -135,7 +136,10 @@ export function analyserFixtureRang(texte: string): FixtureRang {
   if (!estObjetJson(f)) throw new Error("objet JSON attendu");
   if (f.format !== 1) throw new Error(`format attendu 1, reçu ${JSON.stringify(f.format)}`);
   if (!estChaine(f.agent_id)) throw new Error("agent_id : chaîne non vide attendue");
-  if (!Array.isArray(f.corpus) || !f.corpus.every((s) => estObjetJson(s) && estChaine(s.cle) && typeof s.texte === "string")) {
+  if (
+    !Array.isArray(f.corpus) ||
+    !f.corpus.every((s) => estObjetJson(s) && estChaine(s.cle) && typeof s.texte === "string")
+  ) {
     throw new Error("corpus : liste de {cle, texte} attendue");
   }
   if (
@@ -329,7 +333,12 @@ type Resultats = { results: Souvenir[] };
 type Details = { semantic_score: number; bm25_score: number; max_possible_score: number; threshold: number };
 export type LigneExpliquee = Souvenir & { score: number; score_details: Details };
 type ResultatsExpliques = { results: LigneExpliquee[] };
-type Graphe = { total: number; threshold: number; top_k: number; edges: { source: string; target: string; score: number }[] };
+type Graphe = {
+  total: number;
+  threshold: number;
+  top_k: number;
+  edges: { source: string; target: string; score: number }[];
+};
 type Historique = {
   memory_id: string;
   old_memory: string | null;
@@ -385,7 +394,12 @@ async function modifier(ctx: Contexte, id: string, corps: Record<string, unknown
 }
 
 async function chercherExplique(ctx: Contexte, corps: Record<string, unknown>): Promise<ResultatsExpliques> {
-  return (await ctx.appeler({ methode: "POST", gabarit: "/memory/search", corps, forme: RECHERCHE_EXPLIQUEE })) as ResultatsExpliques;
+  return (await ctx.appeler({
+    methode: "POST",
+    gabarit: "/memory/search",
+    corps,
+    forme: RECHERCHE_EXPLIQUEE,
+  })) as ResultatsExpliques;
 }
 
 async function lireHistorique(ctx: Contexte, id: string): Promise<Historique> {
@@ -400,7 +414,13 @@ async function lireHistorique(ctx: Contexte, id: string): Promise<Historique> {
 const md5 = (texte: string): string => createHash("md5").update(texte, "utf8").digest("hex");
 
 /** Le souvenir d'id donné dans une liste de résultats, ou un écart consigné. */
-function trouver(ctx: Contexte, route: string, resultats: readonly Souvenir[], id: string, nom: string): Souvenir | null {
+function trouver(
+  ctx: Contexte,
+  route: string,
+  resultats: readonly Souvenir[],
+  id: string,
+  nom: string,
+): Souvenir | null {
   const s = resultats.find((r) => r.id === id) ?? null;
   ctx.constater(s !== null, `${route} : ${nom} (${id}) absent des résultats`);
   return s;
@@ -479,7 +499,10 @@ const GRAPHE_OUVERT: Groupe = {
           ctx.constater(g.total === 10, `${route} : total attendu 10, reçu ${g.total}`);
           ctx.constater(g.threshold === 0.75, `${route} : threshold attendu 0.75, reçu ${g.threshold}`);
           ctx.constater(g.top_k === 8, `${route} : top_k attendu 8, reçu ${g.top_k}`);
-          ctx.constater(g.edges.length === 9, `${route} : 9 arêtes attendues (H relié à chaque Lᵢ), reçu ${g.edges.length}`);
+          ctx.constater(
+            g.edges.length === 9,
+            `${route} : 9 arêtes attendues (H relié à chaque Lᵢ), reçu ${g.edges.length}`,
+          );
           const relies = new Set<string>();
           for (const [i, e] of g.edges.entries()) {
             const lieu = `edges[${i}] (${e.source} → ${e.target})`;
@@ -492,17 +515,26 @@ const GRAPHE_OUVERT: Groupe = {
               relies.add(autre);
             }
             ctx.constater(e.source < e.target, `${route} : ${lieu} n'a pas source < target`);
-            ctx.constater(e.score >= g.threshold, `${route} : ${lieu} a un score ${e.score} sous threshold ${g.threshold}`);
+            ctx.constater(
+              e.score >= g.threshold,
+              `${route} : ${lieu} a un score ${e.score} sous threshold ${g.threshold}`,
+            );
             const suivante = g.edges[i + 1];
             if (suivante !== undefined) {
               const ordonnee =
                 e.score > suivante.score ||
                 (e.score === suivante.score &&
                   (e.source < suivante.source || (e.source === suivante.source && e.target <= suivante.target)));
-              ctx.constater(ordonnee, `${route} : edges[${i}] et edges[${i + 1}] ne sont pas triées par (score décroissant, source, target)`);
+              ctx.constater(
+                ordonnee,
+                `${route} : edges[${i}] et edges[${i + 1}] ne sont pas triées par (score décroissant, source, target)`,
+              );
             }
           }
-          ctx.constater(relies.size === 9, `${route} : H relié à ${relies.size} Lᵢ distinctes, 9 attendues (degré > top_k)`);
+          ctx.constater(
+            relies.size === 9,
+            `${route} : H relié à ${relies.size} Lᵢ distinctes, 9 attendues (degré > top_k)`,
+          );
         },
       },
     ];
@@ -633,7 +665,10 @@ const HISTORIQUE_OUVERT: Groupe = {
           for (const [i, attendu] of attendus.entries()) {
             const entree: Record<string, unknown> = h[i];
             for (const [cle, valeur] of Object.entries(attendu)) {
-              ctx.constater(entree[cle] === valeur, `${route} : [${i}].${cle} attendu ${json(valeur)}, reçu ${json(entree[cle])}`);
+              ctx.constater(
+                entree[cle] === valeur,
+                `${route} : [${i}].${cle} attendu ${json(valeur)}, reçu ${json(entree[cle])}`,
+              );
             }
           }
           ctx.constater(
@@ -675,7 +710,10 @@ const LISTE_OUVERT: Groupe = {
           const r = await lister(ctx, agent);
           const nom = (id: string): string => Object.entries(ids).find(([, v]) => v === id)?.[0] ?? id;
           const ordre = r.results.map((s) => nom(s.id));
-          ctx.constater(isDeepStrictEqual(ordre, ["A", "C", "B"]), `${route} : ordre attendu [A, C, B], reçu [${ordre.join(", ")}]`);
+          ctx.constater(
+            isDeepStrictEqual(ordre, ["A", "C", "B"]),
+            `${route} : ordre attendu [A, C, B], reçu [${ordre.join(", ")}]`,
+          );
           ctx.constater(
             r.total === 3 && r.results.length === 3,
             `${route} : total (${r.total}) et nombre de résultats (${r.results.length}) attendus égaux à 3`,
@@ -758,7 +796,10 @@ const RECHERCHE_OUVERT: Groupe = {
               d.semantic_score >= 0.5,
               `${route} : results[${i}].score_details.semantic_score ${d.semantic_score} sous le seuil 0.5`,
             );
-            ctx.constater(d.threshold === 0.5, `${route} : results[${i}].score_details.threshold attendu 0.5, reçu ${d.threshold}`);
+            ctx.constater(
+              d.threshold === 0.5,
+              `${route} : results[${i}].score_details.threshold attendu 0.5, reçu ${d.threshold}`,
+            );
             const suivant = r.results[i + 1];
             if (suivant !== undefined) {
               ctx.constater(
@@ -812,7 +853,12 @@ const SUPPRESSION_OUVERT: Groupe = {
     {
       libelle: "AC-9 · DELETE d'un id inconnu rend 500",
       executer: async (ctx) => {
-        await ctx.appeler({ methode: "DELETE", gabarit: "/memory/{id}", chemin: `/memory/${randomUUID()}`, statut: 500 });
+        await ctx.appeler({
+          methode: "DELETE",
+          gabarit: "/memory/{id}",
+          chemin: `/memory/${randomUUID()}`,
+          statut: 500,
+        });
       },
     },
   ],
@@ -869,7 +915,10 @@ function exigerChat(ctx: Contexte, requete: RequeteChat, attendu: AttenduChat): 
   }
   const cles = Object.keys(corps).sort();
   const clesAttendues = ["max_tokens", "messages", "model", "response_format", "temperature", "top_p"];
-  ctx.constater(isDeepStrictEqual(cles, clesAttendues), `${CHAT} : clés attendues ${json(clesAttendues)}, reçu ${json(cles)}`);
+  ctx.constater(
+    isDeepStrictEqual(cles, clesAttendues),
+    `${CHAT} : clés attendues ${json(clesAttendues)}, reçu ${json(cles)}`,
+  );
   const parametres: [string, unknown][] = [
     ["model", MODELE_CHAT],
     ["max_tokens", 2000],
@@ -878,7 +927,10 @@ function exigerChat(ctx: Contexte, requete: RequeteChat, attendu: AttenduChat): 
     ["response_format", { type: "json_object" }],
   ];
   for (const [cle, valeur] of parametres) {
-    ctx.constater(isDeepStrictEqual(corps[cle], valeur), `${CHAT} : ${cle} attendu ${json(valeur)}, reçu ${json(corps[cle])}`);
+    ctx.constater(
+      isDeepStrictEqual(corps[cle], valeur),
+      `${CHAT} : ${cle} attendu ${json(valeur)}, reçu ${json(corps[cle])}`,
+    );
   }
   const messages = corps.messages;
   const conformes =
@@ -888,7 +940,13 @@ function exigerChat(ctx: Contexte, requete: RequeteChat, attendu: AttenduChat): 
     messages[0].role === "system" &&
     messages[1].role === "user";
   if (!conformes) {
-    ctx.constater(false, `${CHAT} : messages attendus [{role: system, content}, {role: user, content}], reçu ${json(messages)}`.slice(0, 400));
+    ctx.constater(
+      false,
+      `${CHAT} : messages attendus [{role: system, content}, {role: user, content}], reçu ${json(messages)}`.slice(
+        0,
+        400,
+      ),
+    );
     return;
   }
   const [systeme, invite] = messages as { role: string; content: unknown }[];
@@ -905,7 +963,10 @@ function exigerChat(ctx: Contexte, requete: RequeteChat, attendu: AttenduChat): 
 
   const dates = [...invite.content.matchAll(/\n\n## Observation Date\n([^\n]*)\n\n## Current Date\n([^\n]*)\n\n/g)];
   if (dates.length !== 1) {
-    ctx.constater(false, `${CHAT} : un seul bloc Observation Date / Current Date attendu dans l'invite, reçu ${dates.length}`);
+    ctx.constater(
+      false,
+      `${CHAT} : un seul bloc Observation Date / Current Date attendu dans l'invite, reçu ${dates.length}`,
+    );
     return;
   }
   const [bloc, d1, d2] = dates[0];
@@ -941,7 +1002,11 @@ function mesurerOpenAI(ctx: Contexte): { chat(): RequeteChat[]; embeddings(): st
   const e0 = ctx.requetesEmbeddings().length;
   return {
     chat: () => ctx.requetesChat().slice(n0),
-    embeddings: () => ctx.requetesEmbeddings().slice(e0).map((r) => r.entrees),
+    embeddings: () =>
+      ctx
+        .requetesEmbeddings()
+        .slice(e0)
+        .map((r) => r.entrees),
   };
 }
 
@@ -954,7 +1019,13 @@ async function ajouterInfere(
 ): Promise<Ajout | null> {
   const corps: Record<string, unknown> = { text: texte, agent_id: agent, infer: true };
   if (options.tags !== undefined) corps.tags = options.tags;
-  return (await ctx.appeler({ methode: "POST", gabarit: "/memory/add", corps, statut: options.statut, forme: AJOUT_INFER })) as Ajout | null;
+  return (await ctx.appeler({
+    methode: "POST",
+    gabarit: "/memory/add",
+    corps,
+    statut: options.statut,
+    forme: AJOUT_INFER,
+  })) as Ajout | null;
 }
 
 function exigerFaits(ctx: Contexte, r: Ajout | null, attendus: readonly string[]): void {
@@ -1018,12 +1089,18 @@ const INFER_OUVERT: Groupe = {
           for (const s of liste.results) {
             const nom = `« ${s.memory} »`;
             if (s.memory === FAITS_DEUX[0]) {
-              ctx.constater(s.attributed_to === "user", `${route} : ${nom} attributed_to attendu "user", reçu ${json(s.attributed_to)}`);
+              ctx.constater(
+                s.attributed_to === "user",
+                `${route} : ${nom} attributed_to attendu "user", reçu ${json(s.attributed_to)}`,
+              );
             } else {
               ctx.constater(!("attributed_to" in s), `${route} : ${nom} ne doit pas porter attributed_to`);
             }
             exigerMetadata(ctx, route, s, nom, { tags: "contrat,infer" });
-            ctx.constater(s.hash === md5(s.memory), `${route} : ${nom} hash attendu md5(memory) ${md5(s.memory)}, reçu ${s.hash}`);
+            ctx.constater(
+              s.hash === md5(s.memory),
+              `${route} : ${nom} hash attendu md5(memory) ${md5(s.memory)}, reçu ${s.hash}`,
+            );
             ctx.constater(
               s.created_at === s.updated_at,
               `${route} : ${nom} created_at ${s.created_at} et updated_at ${s.updated_at} attendus égaux`,
@@ -1038,8 +1115,14 @@ const INFER_OUVERT: Groupe = {
             exigerNombre(ctx, historique, `révision(s) de ${nom}`, h.length, 1);
             const ligne = h[0];
             if (ligne === undefined) continue;
-            ctx.constater(ligne.memory_id === s.id, `${historique} : memory_id attendu ${s.id}, reçu ${ligne.memory_id}`);
-            ctx.constater(ligne.new_memory === s.memory, `${historique} : new_memory attendu ${json(s.memory)}, reçu ${json(ligne.new_memory)}`);
+            ctx.constater(
+              ligne.memory_id === s.id,
+              `${historique} : memory_id attendu ${s.id}, reçu ${ligne.memory_id}`,
+            );
+            ctx.constater(
+              ligne.new_memory === s.memory,
+              `${historique} : new_memory attendu ${json(s.memory)}, reçu ${json(ligne.new_memory)}`,
+            );
             ctx.constater(
               ligne.created_at === s.created_at,
               `${historique} : created_at attendu celui du souvenir ${s.created_at}, reçu ${ligne.created_at}`,
@@ -1079,7 +1162,9 @@ const INFER_OUVERT: Groupe = {
           const existant = FAITS_DEUX[0];
           await ajouter(ctx, agent, existant);
           const m = mesurerOpenAI(ctx);
-          exigerFaits(ctx, await ajouterInfere(ctx, agent, "[script:doublon] Rappel des décisions"), ["Fait inédit du doublon"]);
+          exigerFaits(ctx, await ajouterInfere(ctx, agent, "[script:doublon] Rappel des décisions"), [
+            "Fait inédit du doublon",
+          ]);
           const liste = await lister(ctx, agent, LISTE_MIXTE);
           exigerNombre(ctx, "GET /memory/all", "souvenir(s)", liste.total, 2);
           const copies = liste.results.filter((s) => s.memory === existant).length;
@@ -1087,7 +1172,11 @@ const INFER_OUVERT: Groupe = {
           const chats = m.chat();
           exigerNombre(ctx, CHAT, "requête(s)", chats.length, 1);
           if (chats[0] !== undefined) {
-            exigerChat(ctx, chats[0], { texte: "[script:doublon] Rappel des décisions", derniers: [], existants: [existant] });
+            exigerChat(ctx, chats[0], {
+              texte: "[script:doublon] Rappel des décisions",
+              derniers: [],
+              existants: [existant],
+            });
           }
           const lot = m.embeddings()[1];
           const attendues = [existant, "Fait inédit du doublon"];
@@ -1102,7 +1191,10 @@ const INFER_OUVERT: Groupe = {
         executer: async (ctx) => {
           const agent = "contrat-infer-double";
           const m = mesurerOpenAI(ctx);
-          exigerFaits(ctx, await ajouterInfere(ctx, agent, "[script:double-interne] Liste répétée"), ["Fait répété", "Fait unique"]);
+          exigerFaits(ctx, await ajouterInfere(ctx, agent, "[script:double-interne] Liste répétée"), [
+            "Fait répété",
+            "Fait unique",
+          ]);
           exigerNombre(ctx, "GET /memory/all", "souvenir(s)", (await lister(ctx, agent, LISTE_INFER)).total, 2);
           const lot = m.embeddings()[1];
           const attendues = ["Fait répété", "Fait répété", "Fait unique"];
@@ -1124,12 +1216,19 @@ const INFER_OUVERT: Groupe = {
         },
       },
       {
-        libelle: "mem0-rs-extraction-llm AC-5 · réponse non-JSON, sans clé memory ou sans text : 200, results vide, aucun souvenir",
+        libelle:
+          "mem0-rs-extraction-llm AC-5 · réponse non-JSON, sans clé memory ou sans text : 200, results vide, aucun souvenir",
         executer: async (ctx) => {
           for (const nom of ["non-json", "sans-memoire", "element-sans-texte"]) {
             const agent = `contrat-infer-${nom}`;
             exigerFaits(ctx, await ajouterInfere(ctx, agent, `[script:${nom}] Réponse dégradée`), []);
-            exigerNombre(ctx, "GET /memory/all", `souvenir(s) (${nom})`, (await lister(ctx, agent, LISTE_INFER)).total, 0);
+            exigerNombre(
+              ctx,
+              "GET /memory/all",
+              `souvenir(s) (${nom})`,
+              (await lister(ctx, agent, LISTE_INFER)).total,
+              0,
+            );
           }
         },
       },
@@ -1191,13 +1290,24 @@ const INFER_OUVERT: Groupe = {
 // trace de la suppression, sous la forme du Python — joué contre les deux serveurs.
 
 /** Le nombre de révisions, puis les champs nommés de chacune. */
-function exigerRevisions(ctx: Contexte, route: string, h: Historique, attendus: readonly Record<string, unknown>[]): void {
-  ctx.constater(h.length === attendus.length, `${route} : ${attendus.length} révision(s) attendue(s), reçu ${h.length}`);
+function exigerRevisions(
+  ctx: Contexte,
+  route: string,
+  h: Historique,
+  attendus: readonly Record<string, unknown>[],
+): void {
+  ctx.constater(
+    h.length === attendus.length,
+    `${route} : ${attendus.length} révision(s) attendue(s), reçu ${h.length}`,
+  );
   for (const [i, attendu] of attendus.entries()) {
     const entree: Record<string, unknown> | undefined = h[i];
     if (entree === undefined) return;
     for (const [cle, valeur] of Object.entries(attendu)) {
-      ctx.constater(entree[cle] === valeur, `${route} : [${i}].${cle} attendu ${json(valeur)}, reçu ${json(entree[cle])}`);
+      ctx.constater(
+        entree[cle] === valeur,
+        `${route} : [${i}].${cle} attendu ${json(valeur)}, reçu ${json(entree[cle])}`,
+      );
     }
   }
 }
@@ -1216,7 +1326,8 @@ const NOYAU_OUVERT: Groupe = {
           const t = "Révision « AC-4 » : ligne 1\nligne 2 — fin";
           const id = await ajouter(ctx, agent, t);
           const s = trouver(ctx, tous, (await lister(ctx, agent)).results, id, "T");
-          if (s !== null) ctx.constater(s.hash === md5(t), `${tous} : hash de T attendu ${md5(t)} (md5), reçu ${s.hash}`);
+          if (s !== null)
+            ctx.constater(s.hash === md5(t), `${tous} : hash de T attendu ${md5(t)} (md5), reçu ${s.hash}`);
           exigerRevisions(ctx, historique, await lireHistorique(ctx, id), [
             { event: "ADD", old_memory: null, new_memory: t, is_deleted: false },
           ]);
@@ -1234,7 +1345,10 @@ const NOYAU_OUVERT: Groupe = {
           await modifier(ctx, id, { text: v2, tags: "beta" });
           const apres = trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V2");
           if (apres !== null) {
-            ctx.constater(apres.agent_id === agent, `${tous} : agent_id de V2 attendu ${json(agent)}, reçu ${json(apres.agent_id)}`);
+            ctx.constater(
+              apres.agent_id === agent,
+              `${tous} : agent_id de V2 attendu ${json(agent)}, reçu ${json(apres.agent_id)}`,
+            );
             ctx.constater(apres.role === "user", `${tous} : role de V2 attendu "user", reçu ${json(apres.role)}`);
             exigerMetadata(ctx, tous, apres, "V2", { tags: "beta" });
             ctx.constater(
@@ -1247,8 +1361,12 @@ const NOYAU_OUVERT: Groupe = {
             );
           }
           await modifier(ctx, id, { text: v2 });
-          exigerMetadata(ctx, tous, trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V2"), "V2", { tags: "beta" });
-          const nouveau = (await chercherExplique(ctx, { query: v2, agent_id: agent, explain: true })).results.find((r) => r.id === id);
+          exigerMetadata(ctx, tous, trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V2"), "V2", {
+            tags: "beta",
+          });
+          const nouveau = (await chercherExplique(ctx, { query: v2, agent_id: agent, explain: true })).results.find(
+            (r) => r.id === id,
+          );
           ctx.constater(
             nouveau !== undefined && nouveau.score_details.semantic_score >= 0.999,
             `${recherche} : V2 (${id}) ${nouveau === undefined ? "absent" : `rendu avec semantic_score ${nouveau.score_details.semantic_score}`} pour son nouveau texte (≥ 0.999 attendu)`,
@@ -1268,7 +1386,7 @@ const NOYAU_OUVERT: Groupe = {
       {
         libelle: "mem0-rs-noyau AC-6 · add_procedure conserve le texte octet pour octet",
         executer: async (ctx) => {
-          const steps = "# Procédure\r\n\n1. **Lancer** `cargo test`  \n\t- cas \"limite\" \\ fin 🚀\n";
+          const steps = '# Procédure\r\n\n1. **Lancer** `cargo test`  \n\t- cas "limite" \\ fin 🚀\n';
           const r = (await ctx.appeler({
             methode: "POST",
             gabarit: "/memory/add_procedure",
@@ -1285,9 +1403,9 @@ const NOYAU_OUVERT: Groupe = {
             [tous, (await lister(ctx, agent)).results.find((s) => s.id === ajoute.id)],
             [
               recherche,
-              (await chercherExplique(ctx, { query: "Procédure Lancer cargo test", agent_id: agent, explain: true })).results.find(
-                (s) => s.id === ajoute.id,
-              ),
+              (
+                await chercherExplique(ctx, { query: "Procédure Lancer cargo test", agent_id: agent, explain: true })
+              ).results.find((s) => s.id === ajoute.id),
             ],
           ];
           for (const [route, s] of lignes) {
@@ -1305,7 +1423,12 @@ const NOYAU_OUVERT: Groupe = {
         executer: async (ctx) => {
           const texte = "souvenir à supprimer zéphyr";
           const id = await ajouter(ctx, agent, texte);
-          await ctx.appeler({ methode: "DELETE", gabarit: "/memory/{id}", chemin: `/memory/${id}`, forme: SUPPRESSION });
+          await ctx.appeler({
+            methode: "DELETE",
+            gabarit: "/memory/{id}",
+            chemin: `/memory/${id}`,
+            forme: SUPPRESSION,
+          });
           ctx.constater(
             !(await lister(ctx, agent)).results.some((s) => s.id === id),
             `${tous} : souvenir supprimé (${id}) encore listé`,
@@ -1354,7 +1477,10 @@ const JETON_OUVERT: Groupe = {
         const journal = ctx.journal().filter((e) => e.phase === "ouvert");
         for (const route of ROUTES_MEMOIRE) {
           const acceptee = journal.some((e) => e.route === route && !e.jeton && e.statut !== 401);
-          ctx.constater(acceptee, `${route} : aucune requête sans X-Mem0-Token acceptée (statut ≠ 401) dans la phase ouvert`);
+          ctx.constater(
+            acceptee,
+            `${route} : aucune requête sans X-Mem0-Token acceptée (statut ≠ 401) dans la phase ouvert`,
+          );
         }
       },
     },
@@ -1431,8 +1557,16 @@ const JETON_JETON: Groupe = {
         await exigerRejets(ctx, null, CORPS_401);
         await exigerRejets(ctx, "contrat-jeton-faux", CORPS_401);
         const recus = ctx.compteursOpenAI().embeddings - avant;
-        ctx.constater(recus === 0, `faux OpenAI : ${recus} requête(s) embeddings reçue(s) pendant les rejets 401, 0 attendue`);
-        const liste = (await ctx.appeler({ methode: "GET", gabarit: "/memory/all", jeton: JETON, forme: LISTE })) as Liste;
+        ctx.constater(
+          recus === 0,
+          `faux OpenAI : ${recus} requête(s) embeddings reçue(s) pendant les rejets 401, 0 attendue`,
+        );
+        const liste = (await ctx.appeler({
+          methode: "GET",
+          gabarit: "/memory/all",
+          jeton: JETON,
+          forme: LISTE,
+        })) as Liste;
         ctx.constater(liste.total === 0, `GET /memory/all : total attendu 0 après les rejets 401, reçu ${liste.total}`);
       },
     },
@@ -1460,7 +1594,10 @@ const COUVERTURE: Groupe = {
       executer: async (ctx) => {
         const journal = ctx.journal();
         for (const route of ROUTES) {
-          ctx.constater(journal.some((e) => e.route === route), `couverture : route jamais exercée ${route}`);
+          ctx.constater(
+            journal.some((e) => e.route === route),
+            `couverture : route jamais exercée ${route}`,
+          );
         }
       },
     },
@@ -1530,7 +1667,9 @@ const RANG: Groupe = {
           const q = f.requetes.find((x) => x.cle === requete);
           const souvenir = f.corpus.find((s) => s.cle === cle);
           if (q === undefined || souvenir === undefined) {
-            throw new EchecCas([`rang : seuil_avant_fusion (${requete}, ${cle}) ne désigne pas une requête et un souvenir de la fixture`]);
+            throw new EchecCas([
+              `rang : seuil_avant_fusion (${requete}, ${cle}) ne désigne pas une requête et un souvenir de la fixture`,
+            ]);
           }
           const seuil = q.threshold ?? SEUIL_DEFAUT;
           const id = [...cles].find(([, c]) => c === cle)?.[0];
@@ -1539,7 +1678,10 @@ const RANG: Groupe = {
             `rang ${q.cle} : ${cle} rendu malgré threshold ${seuil}`,
           );
           const c = cosinus(q.query, souvenir.texte);
-          ctx.constater(c < seuil, `rang ${q.cle} : cosinus local de ${cle} = ${c}, non inférieur à threshold ${seuil}`);
+          ctx.constater(
+            c < seuil,
+            `rang ${q.cle} : cosinus local de ${cle} = ${c}, non inférieur à threshold ${seuil}`,
+          );
           const ligne = (await chercherExplique(ctx, corpsRechercheRang(f, q, true))).results.find((s) => s.id === id);
           ctx.constater(
             ligne !== undefined && ligne.score_details.bm25_score > 0,
@@ -1555,23 +1697,34 @@ const RANG: Groupe = {
           if (attendu === undefined) throw new EchecCas(["rang : fixture sans graphe"]);
           const g = (await ctx.appeler({ methode: "GET", gabarit: "/memory/graph", forme: GRAPHE })) as Graphe;
           for (const champ of ["total", "threshold", "top_k"] as const) {
-            ctx.constater(g[champ] === attendu[champ], `${route} : ${champ} attendu ${attendu[champ]}, reçu ${g[champ]}`);
+            ctx.constater(
+              g[champ] === attendu[champ],
+              `${route} : ${champ} attendu ${attendu[champ]}, reçu ${g[champ]}`,
+            );
           }
           const recues = new Map(aretesParCles(g.edges, nommer).map((a) => [`${a.a} — ${a.b}`, a.score]));
           const attendues = new Map(attendu.aretes.map((a) => [`${a.a} — ${a.b}`, a.score]));
           for (const [paire, score] of attendues) {
             const recu = recues.get(paire);
             if (recu === undefined) ctx.constater(false, `${route} : arête attendue ${paire} absente`);
-            else ctx.constater(Math.abs(recu - score) <= 1e-6, `${route} : arête ${paire} : score attendu ${score}, reçu ${recu}`);
+            else
+              ctx.constater(
+                Math.abs(recu - score) <= 1e-6,
+                `${route} : arête ${paire} : score attendu ${score}, reçu ${recu}`,
+              );
           }
-          for (const paire of recues.keys()) ctx.constater(attendues.has(paire), `${route} : arête inattendue ${paire}`);
+          for (const paire of recues.keys())
+            ctx.constater(attendues.has(paire), `${route} : arête inattendue ${paire}`);
           for (let i = 0; i + 1 < g.edges.length; i++) {
             const [e, suivante] = [g.edges[i], g.edges[i + 1]];
             const ordonnee =
               e.score > suivante.score ||
               (e.score === suivante.score &&
                 (e.source < suivante.source || (e.source === suivante.source && e.target <= suivante.target)));
-            ctx.constater(ordonnee, `${route} : edges[${i}] et edges[${i + 1}] ne sont pas triées par (score décroissant, source, target)`);
+            ctx.constater(
+              ordonnee,
+              `${route} : edges[${i}] et edges[${i + 1}] ne sont pas triées par (score décroissant, source, target)`,
+            );
           }
         },
       },

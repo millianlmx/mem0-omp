@@ -1,0 +1,399 @@
+{
+  "_": "Cas partagés du masquage des secrets : `redact` du plugin (omp-mem0-memory/write.ts) et `masquer` de mem0-rs (src/redaction.rs) rendent `attendu` pour chaque `entree`, fragments joints sans séparateur — un jeton n'est jamais écrit d'un seul tenant, la push protection de GitHub refuserait le push.",
+  "cas": [
+    {
+      "nom": "sk- historique",
+      "entree": [
+        "historique ",
+        "sk-",
+        "abcdefghijklmnop1234",
+        " fin"
+      ],
+      "attendu": "historique [REDACTED] fin"
+    },
+    {
+      "nom": "sk- trop court",
+      "entree": [
+        "sk-",
+        "abcdefghijklmno"
+      ],
+      "attendu": "sk-abcdefghijklmno"
+    },
+    {
+      "nom": "Anthropic",
+      "entree": [
+        "clé ",
+        "sk-ant-api03-",
+        "AbCdEf0123456789_-XYZabcDEF",
+        " fin"
+      ],
+      "attendu": "clé [REDACTED] fin"
+    },
+    {
+      "nom": "OpenAI projet",
+      "entree": [
+        "sk-proj-",
+        "AbCdEf0123456789_-XYZabcDEF"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "GitHub classique",
+      "entree": [
+        "ghp_",
+        "ABCDEFGHIJKLMNOPQRSTUVWX"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "GitHub fine-grained",
+      "entree": [
+        "jeton ",
+        "github_pat_",
+        "11ABCDEFG0123456789_abcdefghijklmnop",
+        " fin"
+      ],
+      "attendu": "jeton [REDACTED] fin"
+    },
+    {
+      "nom": "AWS",
+      "entree": [
+        "AKIA",
+        "IOSFODNN7EXAMPLE"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "JWT",
+      "entree": [
+        "eyJ",
+        "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Bearer",
+      "entree": [
+        "Authorization: ",
+        "Bearer",
+        " abcdefghijklmnopqrst"
+      ],
+      "attendu": "Authorization: [REDACTED]"
+    },
+    {
+      "nom": "Bearer casse",
+      "entree": [
+        "authorization: ",
+        "BEARER",
+        "\tabcdefghijklmnopqrst."
+      ],
+      "attendu": "authorization: [REDACTED]"
+    },
+    {
+      "nom": "affectation",
+      "entree": [
+        "pass",
+        "word=S3cretValue123"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "affectation guillemets",
+      "entree": [
+        "API_",
+        "KEY : \"S3cretValue123\" ensuite"
+      ],
+      "attendu": "[REDACTED]\" ensuite"
+    },
+    {
+      "nom": "affectation courte",
+      "entree": [
+        "tok",
+        "en=court"
+      ],
+      "attendu": "token=court"
+    },
+    {
+      "nom": "affectation passwd",
+      "entree": [
+        "PASS",
+        "WD:'abcdefgh' fin"
+      ],
+      "attendu": "[REDACTED]' fin"
+    },
+    {
+      "nom": "Slack bot",
+      "entree": [
+        "xox",
+        "b-123456789012-1234567890123-abcdefghijklmnopqrstuvwx"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Slack utilisateur",
+      "entree": [
+        "xox",
+        "p-111-222-333-",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Slack application",
+      "entree": [
+        "xox",
+        "a-2-abcdefghij"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Slack rafraîchissement",
+      "entree": [
+        "xox",
+        "e.xox",
+        "p-1-abcdefghijklmnop"
+      ],
+      "attendu": "xoxe.[REDACTED]"
+    },
+    {
+      "nom": "Slack préfixe inconnu",
+      "entree": [
+        "xox",
+        "z-abcdefghijkl"
+      ],
+      "attendu": "xoxz-abcdefghijkl"
+    },
+    {
+      "nom": "Stripe secrète",
+      "entree": [
+        "clé ",
+        "sk",
+        "_live_",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        " fin"
+      ],
+      "attendu": "clé [REDACTED] fin"
+    },
+    {
+      "nom": "Stripe test",
+      "entree": [
+        "sk",
+        "_test_",
+        "abcdefghij"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Stripe restreinte",
+      "entree": [
+        "rk",
+        "_live_",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "Stripe publiable",
+      "entree": [
+        "pk",
+        "_live_",
+        "abcdefghijkl"
+      ],
+      "attendu": "pk_live_abcdefghijkl"
+    },
+    {
+      "nom": "Stripe trop court",
+      "entree": [
+        "sk",
+        "_live_",
+        "abcdefghi"
+      ],
+      "attendu": "sk_live_abcdefghi"
+    },
+    {
+      "nom": "GitLab",
+      "entree": [
+        "gl",
+        "pat-",
+        "abcdefghij_-0123456789",
+        " fin"
+      ],
+      "attendu": "[REDACTED] fin"
+    },
+    {
+      "nom": "GitLab trop court",
+      "entree": [
+        "gl",
+        "pat-",
+        "abcdefghij"
+      ],
+      "attendu": "glpat-abcdefghij"
+    },
+    {
+      "nom": "Hugging Face",
+      "entree": [
+        "HF_TOKEN ",
+        "hf",
+        "_",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "xy"
+      ],
+      "attendu": "HF_TOKEN [REDACTED]"
+    },
+    {
+      "nom": "Hugging Face identifiant",
+      "entree": [
+        "hf",
+        "_hub_download_and_cache_everything_now()"
+      ],
+      "attendu": "hf_hub_download_and_cache_everything_now()"
+    },
+    {
+      "nom": "npm",
+      "entree": [
+        "//registry.npmjs.org/:_authToken ",
+        "npm",
+        "_",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "6789"
+      ],
+      "attendu": "//registry.npmjs.org/:_authToken [REDACTED]"
+    },
+    {
+      "nom": "npm trop court",
+      "entree": [
+        "npm",
+        "_",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      ],
+      "attendu": "npm_AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+    },
+    {
+      "nom": "Google",
+      "entree": [
+        "clé ",
+        "AI",
+        "za",
+        "SyA1234567890abcdefghijklmnopqrstuv",
+        " fin"
+      ],
+      "attendu": "clé [REDACTED] fin"
+    },
+    {
+      "nom": "Google trop court",
+      "entree": [
+        "AI",
+        "za",
+        "SyA1234567890abcdefghijklmnopqrst"
+      ],
+      "attendu": "AIzaSyA1234567890abcdefghijklmnopqrst"
+    },
+    {
+      "nom": "PEM RSA",
+      "entree": [
+        "avant\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxYz1234567890\n+qrStuv=\n-----END RSA ",
+        "PRIVATE KEY-----\napres"
+      ],
+      "attendu": "avant\n[REDACTED]\napres"
+    },
+    {
+      "nom": "PEM PGP",
+      "entree": [
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBG1234567890abcdef\n-----END PGP ",
+        "PRIVATE KEY BLOCK-----"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "PEM non terminé",
+      "entree": [
+        "avant\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxYz\napres"
+      ],
+      "attendu": "avant\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxYz\napres"
+    },
+    {
+      "nom": "URL",
+      "entree": [
+        "postgres://admin:",
+        "S3cretP4ss@db.example.com:5432/app"
+      ],
+      "attendu": "postgres://[REDACTED]@db.example.com:5432/app"
+    },
+    {
+      "nom": "URL sans utilisateur",
+      "entree": [
+        "redis://:",
+        "S3cretP4ss@cache.local:6379/0"
+      ],
+      "attendu": "redis://[REDACTED]@cache.local:6379/0"
+    },
+    {
+      "nom": "URL casse",
+      "entree": [
+        "HTTPS://user:",
+        "pass@HOST/X"
+      ],
+      "attendu": "HTTPS://[REDACTED]@HOST/X"
+    },
+    {
+      "nom": "URL et clé",
+      "entree": [
+        "https://user:",
+        "sk-ant-api03-",
+        "AbCdEf0123456789_-XYZabcDEF@host/x"
+      ],
+      "attendu": "https://[REDACTED]@host/x"
+    },
+    {
+      "nom": "deux URL",
+      "entree": [
+        "a://u1:p1@h1 b://u2:p2@h2"
+      ],
+      "attendu": "a://[REDACTED]@h1 b://[REDACTED]@h2"
+    },
+    {
+      "nom": "URL sans mot de passe",
+      "entree": [
+        "https://user@host/x mailto:user@host user:pass@host/x"
+      ],
+      "attendu": "https://user@host/x mailto:user@host user:pass@host/x"
+    },
+    {
+      "nom": "texte ordinaire",
+      "entree": [
+        "Le timeout de recherche passe à 20 s ; aucun secret, juste /tmp/x et task-1."
+      ],
+      "attendu": "Le timeout de recherche passe à 20 s ; aucun secret, juste /tmp/x et task-1."
+    },
+    {
+      "nom": "non-ASCII",
+      "entree": [
+        "mot de passe : é",
+        " ",
+        "token=étéétéété 😀 fin"
+      ],
+      "attendu": "mot de passe : é [REDACTED] 😀 fin"
+    },
+    {
+      "nom": "astral",
+      "entree": [
+        "secret=😀😀😀😀 fin"
+      ],
+      "attendu": "[REDACTED] fin"
+    },
+    {
+      "nom": "jeton stable",
+      "entree": [
+        "[REDACTED]"
+      ],
+      "attendu": "[REDACTED]"
+    },
+    {
+      "nom": "vide",
+      "entree": [
+        ""
+      ],
+      "attendu": ""
+    }
+  ]
+}

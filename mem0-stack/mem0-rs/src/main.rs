@@ -15,6 +15,8 @@ mod http;
 mod import;
 mod openai;
 mod recherche;
+mod redaction;
+mod sauvegarde;
 mod validation;
 mod verrou;
 
@@ -71,8 +73,12 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
     let embedder =
         embedder::Embedder::new(client.clone(), &cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims);
     let chat = openai::ClientChat::new(client, &cfg.base_url, &cfg.llm_model, &cfg.api_token);
+    let db = Arc::new(Mutex::new(conn));
+    if !cfg.sauvegarde.intervalle.is_zero() {
+        tokio::spawn(sauvegarde::boucle(Arc::clone(&db), cfg.db_path.clone(), cfg.sauvegarde));
+    }
     let etat = Arc::new(http::Etat {
-        db: Arc::new(Mutex::new(conn)),
+        db,
         embedder,
         chat,
         http_token: cfg.http_token.clone(),
