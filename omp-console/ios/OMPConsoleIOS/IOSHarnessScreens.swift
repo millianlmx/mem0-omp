@@ -112,11 +112,13 @@ struct IOSHarnessRepoPicker: View {
 }
 
 /// Une feature : titre, état et étape, reprise différée ou dernier échec, corrections ;
-/// son menu demande l'arrêt, la relance (en échec ou arrêtée sur une attente) ou
-/// l'annulation d'une feature fusionnée, tous confirmés par `iosHarnessGestures`.
+/// son menu ouvre le direct de sa session, la suit sur l'écran verrouillé (Live
+/// Activity), demande l'arrêt, la relance (en échec ou arrêtée sur une attente) ou
+/// l'annulation d'une feature fusionnée, ces trois gestes confirmés par `iosHarnessGestures`.
 struct IOSHarnessRunRow: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    @EnvironmentObject private var activities: IOSLiveActivityCenter
     let run: HarnessRun
 
     var body: some View {
@@ -133,8 +135,27 @@ struct IOSHarnessRunRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let cost = server.inbox?.costs[run.id] {
+                Label(MonitoringText.cost(cost), systemImage: MonitoringText.costSymbol)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(server.inbox?.alerts(of: run.id) ?? []) { alert in
+                Label(alert.line, systemImage: alert.symbol)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .contextMenu {
+            if run.canFollowSession {
+                Button(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol) { drafts.sessionRequest = HarnessSessionRequest(run: run) }
+            }
+            if activities.isAvailable, run.phase.map({ ![.merged, .failed, .cancelled].contains($0) }) ?? false {
+                Button(
+                    activities.isFollowing(run.id) ? MonitoringText.activityStop : MonitoringText.activityStart,
+                    systemImage: MonitoringText.activitySymbol
+                ) { activities.toggle(run, with: server) }
+            }
             if run.canRetry {
                 Button(PipelineServerText.retry) { drafts.retryRequest = run }
             }
@@ -184,6 +205,7 @@ struct IOSHarnessHomeScreen: View {
             } header: {
                 Text(PipelineServerText.pending(inbox.pendingCount))
             }
+            IOSAlertsSection(drafts: drafts, inbox: inbox)
             IOSHarnessInboxSections(server: server, drafts: drafts, inbox: inbox)
         }
     }
@@ -628,6 +650,12 @@ struct IOSHarnessAuditsScreen: View {
             }
             .disabled((drafts.picks[audit.id] ?? []).isEmpty || server.busyAudits.contains(audit.id))
         }
+        if audit.canFollowSession {
+            Button(MonitoringText.auditSessionTitle, systemImage: PipelineServerText.sessionSymbol) {
+                drafts.sessionRequest = HarnessSessionRequest(target: .audit(audit.id), title: audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
+            }
+            .accessibilityIdentifier("ios.audit.session")
+        }
         if audit.isOpen {
             Button(PipelineServerText.cancelAudit, role: .destructive) {
                 Task { await server.cancelAudit(audit.id) }
@@ -691,6 +719,16 @@ struct IOSHarnessStatsScreen: View {
                 } header: {
                     Text(PipelineServerText.statsTests)
                 }
+                if let usage = stats.usage {
+                    IOSUsageSection(usage: usage)
+                }
+                if let models = stats.models {
+                    IOSModelsSection(models: models)
+                }
+                if let flaky = stats.tests.flaky {
+                    IOSFlakySection(flaky: flaky)
+                }
+                IOSHealthSection(server: server)
                 Section {
                     LabeledContent(PipelineServerText.runners, value: PipelineServerText.slots(used: stats.scheduler.runner.used, capacity: stats.scheduler.runner.capacity))
                     LabeledContent(PipelineServerText.heavySlots, value: PipelineServerText.slots(used: stats.scheduler.heavy.used, capacity: stats.scheduler.heavy.capacity))
@@ -728,6 +766,9 @@ private struct IOSHarnessGestures: ViewModifier {
             }
             .sheet(item: $drafts.refusal) { run in
                 refusalSheet(run)
+            }
+            .sheet(item: $drafts.sessionRequest) { request in
+                IOSSessionSheet(server: server, request: request)
             }
             .confirmationDialog(
                 PipelineServerText.stopConfirm,

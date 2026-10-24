@@ -229,6 +229,7 @@ export class StepExecutor {
         onHostTool: (name, args, signal) => runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
         event: (type, payload) =>
           this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
+        frame: (frame) => this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame),
         runnerChanged: (unit, model) => {
           store.updateRun(live.runId, { model });
           if (live.step) store.setStepRunner(live.step.id, unit, model);

@@ -329,8 +329,28 @@ struct HarnessRunRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if let cost = server.inbox?.costs[run.id] {
+                    Label(MonitoringText.cost(cost), systemImage: MonitoringText.costSymbol)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(server.inbox?.alerts(of: run.id) ?? []) { alert in
+                    Label(alert.line, systemImage: alert.symbol)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
+            if run.canFollowSession {
+                Button {
+                    drafts.sessionRequest = HarnessSessionRequest(run: run)
+                } label: {
+                    Label(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol)
+                }
+                .buttonStyle(.bordered)
+                .help(PipelineServerText.sessionTitle)
+                .accessibilityIdentifier("pipelines.session.open")
+            }
             if run.canRetry {
                 Button(PipelineServerText.retry) { drafts.retryRequest = run }
                     .buttonStyle(.bordered)
@@ -385,6 +405,9 @@ private struct HarnessGestures: ViewModifier {
             }
             .sheet(item: $drafts.refusal) { run in
                 refusalSheet(run)
+            }
+            .sheet(item: $drafts.sessionRequest) { request in
+                HarnessSessionSheet(server: server, request: request)
             }
             .confirmationDialog(
                 PipelineServerText.stopConfirm,

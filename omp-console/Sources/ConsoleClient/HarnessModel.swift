@@ -52,6 +52,15 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var loginProviders: [HarnessLoginProvider]?
     /// La connexion d'abonnement en cours, ou la dernière finie tant qu'elle n'est pas refermée.
     @Published public private(set) var login: HarnessLogin?
+    /// Le direct de la session suivie (`followSession`), ou `nil`.
+    @Published public private(set) var session: HarnessSessionFeed?
+    /// Le flux du direct est ouvert : les entrées arrivent en temps réel.
+    @Published public private(set) var isSessionLive = false
+    /// Ce qui a arrêté le direct pour de bon (feature inconnue, serveur trop ancien,
+    /// jeton refusé) ; une coupure du réseau, elle, est reprise sans bruit.
+    @Published public private(set) var sessionFailure: HarnessFailure?
+    /// La santé du serveur au fil du temps, lue à la demande de l'écran des statistiques.
+    @Published public private(set) var metrics: HarnessMetrics?
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -75,6 +84,8 @@ public final class HarnessModel: ObservableObject {
     private var wantsProviders = false
     /// La relecture de la connexion d'abonnement en cours.
     private var loginTask: Task<Void, Never>?
+    /// Le flux du direct de la session suivie.
+    private var sessionTask: Task<Void, Never>?
 
     public init(
         transport: any HarnessTransport,
@@ -317,6 +328,163 @@ public final class HarnessModel: ObservableObject {
             if Task.isCancelled { return }
             await refresh()
         }
+    }
+
+    // MARK: - Direct d'une session
+
+    /// Les événements du journal qui changent l'état du run suivi : le tampon est relu
+    /// pour savoir si un agent y travaille encore.
+    private static let sessionStateEvents: Set<String> = [
+        "run_state", "step_started", "step_done", "runner_started", "runner_stopped",
+    ]
+
+    /// Suit le direct de la session d'une feature : le tampon du serveur, puis chaque
+    /// entrée en temps réel. Une coupure est reprise après `retryDelay`, tampon relu.
+    /// Une seule cible à la fois : en suivre une autre arrête la précédente.
+    public func followSession(runId: String) {
+        followSession(.run(runId))
+    }
+
+    /// Suit le direct de l'analyse d'un audit.
+    public func followSession(auditId: String) {
+        followSession(.audit(auditId))
+    }
+
+    public func followSession(_ target: HarnessSessionTarget) {
+        if session?.target == target, sessionTask != nil { return }
+        stopSession()
+        guard server != nil else { return }
+        session = HarnessSessionFeed(target: target)
+        sessionTask = Task { [weak self] in
+            await self?.sessionLoop(target)
+        }
+    }
+
+    /// Arrête le direct et l'oublie.
+    public func stopSession() {
+        sessionTask?.cancel()
+        sessionTask = nil
+        session = nil
+        isSessionLive = false
+        sessionFailure = nil
+    }
+
+    /// La page d'entrées qui précède la première reçue (une session se rejoue de bout en bout).
+    public func loadEarlierSession() async {
+        guard let server, let feed = session, feed.hasEarlier, let first = feed.entries.first,
+              let id = feed.targetId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else { return }
+        let call = HarnessCall(method: "GET", path: "\(feed.target.sessionPath(id))?before=\(first.seq)&limit=200")
+        guard let page: HarnessSessionView = try? await perform(call, on: server), session?.target == feed.target else { return }
+        session?.prepend(page)
+    }
+
+    private func sessionLoop(_ target: HarnessSessionTarget) async {
+        guard let id = target.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+        while !Task.isCancelled {
+            guard let server else { return }
+            do {
+                // Le flux d'abord, le tampon ensuite : une entrée née entre les deux n'est
+                // jamais perdue (elle attend dans le flux et remplace celle du tampon).
+                let cursor = inbox?.cursor ?? 0
+                let stream = try await transport.events(
+                    HarnessCall(method: "GET", path: "/v1/events?\(target.streamQuery(id))&live=1&after=\(cursor)"),
+                    server: server
+                )
+                let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id)), on: server)
+                guard !Task.isCancelled else { return }
+                session?.load(view)
+                // La sortie des derniers jobs de tests d'une feature (un serveur plus ancien n'en a pas).
+                if case .run = target,
+                   let tests: HarnessLiveTests = try? await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)/tests/live"), on: server) {
+                    session?.tests = tests.jobs
+                }
+                sessionFailure = nil
+                isSessionLive = true
+                var parser = HarnessEventParser()
+                for try await chunk in stream {
+                    var stale = false
+                    for event in parser.consumeEvents(chunk) {
+                        if let entry = event.sessionEntry {
+                            session?.apply(entry)
+                        } else if let output = event.testOutput {
+                            session?.tests.apply(output)
+                        } else if Self.sessionStateEvents.contains(event.name) {
+                            stale = true
+                        }
+                    }
+                    if stale, let fresh: HarnessSessionView = try? await perform(HarnessCall(method: "GET", path: target.sessionPath(id)), on: server) {
+                        guard !Task.isCancelled else { return }
+                        session?.merge(fresh)
+                    }
+                }
+            } catch {
+                let failure = Self.failure(of: error)
+                // Seules les coupures se reprennent : un refus ne guérit pas en réessayant.
+                if failure != .unreachable, failure != .timedOut {
+                    isSessionLive = false
+                    if !Task.isCancelled { sessionFailure = failure }
+                    return
+                }
+            }
+            isSessionLive = false
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: retryDelay)
+        }
+    }
+
+    // MARK: - Monitoring
+
+    /// La frise d'une feature, ou `nil` (serveur trop ancien, feature inconnue).
+    public func timeline(runId: String) async -> HarnessTimeline? {
+        await read("/v1/runs/\(Self.encoded(runId))/timeline")
+    }
+
+    /// Les fichiers touchés par une feature.
+    public func changes(runId: String) async -> HarnessChanges? {
+        await read("/v1/runs/\(Self.encoded(runId))/changes")
+    }
+
+    /// Les différences d'un fichier touché par une feature.
+    public func fileDiff(runId: String, path: String) async -> HarnessFileDiff? {
+        guard let query = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+        return await read("/v1/runs/\(Self.encoded(runId))/diff?path=\(query)")
+    }
+
+    /// La consommation, le budget et les alertes d'une feature (sa vue complète).
+    public func runDetail(runId: String) async -> HarnessRunView? {
+        await read("/v1/runs/\(Self.encoded(runId))")
+    }
+
+    /// Relit la santé du serveur (`GET /v1/metrics`) ; un serveur plus ancien la laisse `nil`.
+    public func refreshMetrics() async {
+        metrics = await read("/v1/metrics")
+    }
+
+    /// Enregistre le jeton push d'une Live Activity : le serveur la met à jour app fermée.
+    /// Rend `true` si le serveur pousse lui-même (APNs configuré).
+    @discardableResult
+    public func registerActivity(runId: String, token: String) async -> Bool {
+        guard let server else { return false }
+        let body = try? JSONEncoder().encode(ActivityTokenBody(runId: runId, token: token))
+        let reply: ActivityTokenReply? = try? await perform(HarnessCall(method: "POST", path: "/v1/push/activities", body: body), on: server)
+        return reply?.pushes ?? false
+    }
+
+    /// Oublie le jeton push d'une Live Activity terminée.
+    public func unregisterActivity(token: String) async {
+        guard let server, let id = token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        let _: HarnessAck? = try? await perform(HarnessCall(method: "DELETE", path: "/v1/push/activities/\(id)"), on: server)
+    }
+
+    /// Une lecture sans effet sur `failure` : les écrans du monitoring disent eux-mêmes qu'ils n'ont rien.
+    private func read<T: Decodable>(_ path: String) async -> T? {
+        guard let server else { return nil }
+        return try? await perform(HarnessCall(method: "GET", path: path), on: server)
+    }
+
+    private nonisolated static func encoded(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
     }
 
     /// Une relecture regroupée : une rafale d'événements ne coûte qu'un appel.
@@ -697,6 +865,15 @@ private struct ReverseBody: Encodable {
 private struct ValidateBody: Encodable {
     var approve: Bool
     var reason: String
+}
+
+private struct ActivityTokenBody: Encodable {
+    var runId: String
+    var token: String
+}
+
+private struct ActivityTokenReply: Decodable {
+    var pushes: Bool
 }
 
 private struct PriorityBody: Encodable {

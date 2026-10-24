@@ -12,7 +12,8 @@
 //
 // Le flux `GET /v1/events` rejoue le journal depuis `Last-Event-ID` : un client qui
 // se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
-// (éphémère, jamais rejouée).
+// et le direct de leurs sessions (éphémères, jamais rejoués : `GET /v1/runs/{id}/session`
+// rend le tampon des dernières entrées d'un run).
 import { readFileSync } from "node:fs";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
@@ -43,6 +44,16 @@ export const API_FEATURES = [
   "revert",
   "accept-all",
   "answer-reason",
+  "session-feed",
+  "session-replay",
+  "audit-session",
+  "usage",
+  "alerts",
+  "timeline",
+  "changes",
+  "live-tests",
+  "metrics",
+  "push-activities",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -204,6 +215,15 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     return audit;
   };
   const runId = (call: Call): string => orchestrator.visibleRun(call.match[1] as string, call.repos).id;
+  /** Une page du direct : `before` (la seq à partir de laquelle remonter) et `limit` (1 à 1000). */
+  const pageOf = (url: URL): { before: number | null; limit?: number } => {
+    const before = Number(url.searchParams.get("before"));
+    const limit = Number(url.searchParams.get("limit"));
+    return {
+      before: Number.isInteger(before) && before > 0 ? before : null,
+      ...(Number.isInteger(limit) && limit > 0 ? { limit: Math.min(limit, 1000) } : {}),
+    };
+  };
   const providersView = () => {
     const { models, source } = orchestrator.providers.chains();
     return {
@@ -269,6 +289,23 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       const view = orchestrator.runView(call.match[1] as string, call.repos);
       send(call.res, 200, view, { ETag: `"${(view.run as { rev: number }).rev}"` });
     }),
+    route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
+      send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
+    ),
+    route("GET", "/v1/runs/{id}/changes", "viewer", async (call) =>
+      send(call.res, 200, await orchestrator.changes(call.match[1] as string, call.repos)),
+    ),
+    route("GET", "/v1/runs/{id}/diff", "viewer", async (call) => {
+      const file = call.url.searchParams.get("path");
+      if (!file) throw new HarnessError(400, "path manquant");
+      send(call.res, 200, await orchestrator.fileDiff(call.match[1] as string, file, call.repos));
+    }),
+    route("GET", "/v1/runs/{id}/tests/live", "viewer", (call) =>
+      send(call.res, 200, orchestrator.liveTests(call.match[1] as string, call.repos)),
+    ),
+    route("GET", "/v1/runs/{id}/session", "viewer", (call) =>
+      send(call.res, 200, orchestrator.sessionView(call.match[1] as string, call.repos, pageOf(call.url))),
+    ),
     route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
     ),
@@ -342,7 +379,11 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
     // verdicts à valider, décisions prises seules, features en cours, et le
     // curseur du journal à partir duquel s'abonner au flux.
-    route("GET", "/v1/inbox", "viewer", (call) => send(call.res, 200, inboxOf(store, call.repos))),
+    route("GET", "/v1/inbox", "viewer", (call) => {
+      const inbox = inboxOf(store, call.repos);
+      const runs = (inbox.runs as { id: string }[]).map((run) => run.id);
+      send(call.res, 200, { ...inbox, alerts: orchestrator.monitor.alerts(call.repos), costs: store.runCosts(runs) });
+    }),
     // La relecture du matin : les décisions prises seules (par l'agent, ou à l'échéance d'une escalade), pas encore relues.
     route("GET", "/v1/decisions", "viewer", (call) => {
       const status = (call.url.searchParams.get("status") ?? "auto,auto_timeout").split(",").filter(isDecisionStatus);
@@ -394,6 +435,13 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("GET", "/v1/audits/{id}", "viewer", (call) =>
       send(call.res, 200, { audit: visibleAudit(call, call.match[1] as string) }),
     ),
+    route("GET", "/v1/audits/{id}/session", "viewer", (call) =>
+      send(
+        call.res,
+        200,
+        orchestrator.auditSessionView(visibleAudit(call, call.match[1] as string).id, pageOf(call.url)),
+      ),
+    ),
     // Les propositions retenues (index dans `proposals`) partent en projet.
     route("POST", "/v1/audits/{id}/launch", "operator", async (call) => {
       const audit = visibleAudit(call, call.match[1] as string);
@@ -411,6 +459,27 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         audit: await orchestrator.audits.cancel(visibleAudit(call, call.match[1] as string).id, call.actor),
       }),
     ),
+    // Le jeton push d'une Live Activity de l'app iOS, pour un run que le client voit.
+    route("POST", "/v1/push/activities", "viewer", async (call) => {
+      const body = await readBody(call.req);
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      const runId = typeof body.runId === "string" ? body.runId : "";
+      if (!/^[0-9a-f]{16,512}$/i.test(token)) throw new HarnessError(400, "token : hexadécimal attendu");
+      const run = orchestrator.visibleRun(runId, call.repos);
+      store.putPushToken({ token, kind: "activity", runId: run.id, client: call.client.name });
+      send(call.res, 201, { registered: true, pushes: orchestrator.config.apns !== null });
+    }),
+    route("DELETE", "/v1/push/activities/{name}", "viewer", (call) => {
+      store.deletePushToken(call.match[1] as string);
+      send(call.res, 200, { removed: true });
+    }),
+    route("GET", "/v1/metrics", "viewer", (call) => {
+      const since = Number(call.url.searchParams.get("since"));
+      send(call.res, 200, {
+        sampleSec: orchestrator.config.monitoring.sampleSec,
+        samples: orchestrator.metrics.samples(Number.isFinite(since) && since > 0 ? since : 0, call.repos),
+      });
+    }),
     route("GET", "/v1/stats", "viewer", (call) =>
       send(call.res, 200, {
         ...computeStats(store, Date.now(), call.repos),
@@ -489,6 +558,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
 
   function events(req: http.IncomingMessage, res: http.ServerResponse, url: URL, repos: RepoFilter): void {
     const runId = url.searchParams.get("run");
+    const auditId = url.searchParams.get("audit");
     const live = url.searchParams.get("live") === "1";
     const header = req.headers["last-event-id"];
     let cursor = Number((typeof header === "string" ? header : null) ?? url.searchParams.get("after") ?? "0") || 0;
@@ -500,6 +570,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     });
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
+      (auditId === null || event.payload.auditId === auditId) &&
       (repos === null || (event.repo !== null && repos.includes(event.repo)));
     // Rejeu, puis le direct : l'abonnement est posé AVANT la lecture, le curseur écarte les doublons.
     const pending: EventRow[] = [];

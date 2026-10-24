@@ -23,14 +23,17 @@ import type { DecisionRow, RepoFilter, RunRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { HumanLoop } from "./gestures.ts";
 import { newId } from "./ids.ts";
+import { changesOf, fileDiffOf, timelineOf } from "./inspect.ts";
+import { Metrics } from "./metrics.ts";
 import type { StepKind } from "./machine.ts";
-import { ACTIVE_STATES, crashed, nextAfter, recovered } from "./machine.ts";
+import { ACTIVE_STATES, crashed, nextAfter, pausedForBudget, recovered } from "./machine.ts";
 import type { FailCause } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
+import { auditOwner } from "./session-feed.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
@@ -97,10 +100,20 @@ export class Orchestrator {
 
   /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
   readonly audits: Auditor;
+  /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
+  readonly metrics: Metrics;
+  #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
     this.#ctx = new HarnessContext(deps);
     this.#tickMs = deps.tickMs ?? 1000;
+    this.metrics = new Metrics({
+      store: this.#ctx.store,
+      scheduler: this.#ctx.scheduler,
+      liveRuns: () => this.#live.size,
+      sampleSec: () => this.#ctx.config.monitoring.sampleSec,
+      keep: () => this.#ctx.config.monitoring.keep,
+    });
     this.#steps = new StepExecutor(this.#ctx, {
       createProject: (input, actor) => this.createProject(input, actor),
       followUp: async (input, actor) => this.createRun(input, actor),
@@ -137,6 +150,11 @@ export class Orchestrator {
     return this.#ctx.logins;
   }
 
+  /** Le direct des sessions de runners (tampon des dernières entrées de chaque run). */
+  get sessions(): HarnessContext["sessions"] {
+    return this.#ctx.sessions;
+  }
+
   // -- cycle de vie ---------------------------------------------------------
 
   /** Reprise après redémarrage, puis la boucle de scheduling. */
@@ -147,6 +165,7 @@ export class Orchestrator {
     await this.#prepareRepos(this.#ctx.config.repos);
     await this.recover();
     this.#started = true;
+    this.#stopMetrics = this.metrics.subscribe();
     this.#prune();
     this.#timer = setInterval(() => void this.tick(), this.#tickMs);
     this.#timer.unref?.();
@@ -205,6 +224,7 @@ export class Orchestrator {
   async stop(): Promise<void> {
     this.#stopping = true;
     if (this.#timer) clearInterval(this.#timer);
+    this.#stopMetrics?.();
     await this.#ticking;
     const lives = [...this.#live.values()];
     for (const live of lives) {
@@ -263,7 +283,9 @@ export class Orchestrator {
     const now = Date.now();
     if (now - this.#prunedAt < PRUNE_EVERY_MS) return;
     this.#prunedAt = now;
-    const pruned = this.store.pruneEvents(now - this.#ctx.config.events.retentionDays * 24 * 60 * 60 * 1000);
+    const before = now - this.#ctx.config.events.retentionDays * 24 * 60 * 60 * 1000;
+    const pruned = this.store.pruneEvents(before);
+    this.store.pruneSessions(before);
     if (pruned > 0)
       this.#ctx.log(`journal : ${pruned} événement(s) de plus de ${this.#ctx.config.events.retentionDays} j purgé(s)`);
   }
@@ -294,6 +316,23 @@ export class Orchestrator {
     }
     this.audits.tick();
     this.#admit();
+    this.#watch();
+    this.metrics.maybeSample();
+  }
+
+  /** La veille des runs conduits : agent muet, étape lente, boucle de corrections. */
+  #watch(): void {
+    try {
+      this.#ctx.monitor.watch(
+        [...this.#live.values()].map((live) => ({
+          runId: live.runId,
+          step: live.step ? { id: live.step.id, kind: live.step.kind, startedAt: live.step.startedAt } : null,
+          fixes: this.store.getRun(live.runId)?.fixes ?? 0,
+        })),
+      );
+    } catch (err) {
+      this.#ctx.log(`veille : ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** Les candidats de chaque dépôt : les runs repris d'abord, puis les nouveaux que les modules et `maxParallel` laissent partir. */
@@ -427,6 +466,16 @@ export class Orchestrator {
       while (!live.abort.signal.aborted) {
         run = store.getRun(live.runId) as RunRow;
         if (run.state !== "running" || run.step === null) break;
+        // Le plafond de coût atteint (`pauseOnBudget`) : l'humain accorde la suite avant l'étape.
+        const due = this.#ctx.monitor.pauseDue(run.id);
+        if (due) {
+          this.#ctx.transition(
+            run,
+            pausedForBudget({ step: run.step, fixes: run.fixes, attempts: run.attempts }, due.cost, due.threshold),
+            ["running"],
+          );
+          break;
+        }
         const outcome = await this.#steps.execute(live, run);
         if (live.abort.signal.aborted) break;
         run = store.getRun(live.runId) as RunRow;
@@ -616,6 +665,9 @@ export class Orchestrator {
 
   /** La relance par l'humain d'un run échoué ou en attente : même étape, tout de suite. */
   retry(runId: string, actor: Actor = SERVICE): Promise<RunRow> {
+    // Une feature arrêtée sur son budget : la relancer lui en accorde un de plus.
+    this.visibleRun(runId);
+    this.#ctx.monitor.acknowledgeBudget(runId, actor.by);
     return this.#human.retry(runId, actor);
   }
 
@@ -660,7 +712,66 @@ export class Orchestrator {
 
   /** La vue complète d'un run : étapes, décisions, escalades, tests, artefacts. */
   runView(runId: string, repos: RepoFilter = null): Record<string, unknown> {
-    return runView(this.store, this.visibleRun(runId, repos), this.#live.has(runId));
+    const view = runView(this.store, this.visibleRun(runId, repos), this.#live.has(runId));
+    return {
+      ...view,
+      usage: this.store.runUsage(runId),
+      budget: this.#ctx.monitor.budget(runId),
+      alerts: this.#ctx.monitor.alertsOf(runId),
+    };
+  }
+
+  /**
+   * Le direct de la session d'un run : ses dernières entrées, s'il est conduit en ce
+   * moment, et le curseur du journal d'où suivre la suite (`/v1/events?run=…&live=1&after=…`).
+   */
+  sessionView(
+    runId: string,
+    repos: RepoFilter = null,
+    page: { before?: number | null; limit?: number } = {},
+  ): Record<string, unknown> {
+    const run = this.visibleRun(runId, repos);
+    const { entries, more } = this.#ctx.sessions.page(run.id, page.before ?? null, page.limit);
+    return {
+      runId: run.id,
+      auditId: null,
+      live: this.#live.has(run.id),
+      cursor: this.store.lastEventId(),
+      entries,
+      more,
+    };
+  }
+
+  /** Le direct de l'analyse d'un audit, sous la même forme (`auditId` au lieu de `runId`). */
+  auditSessionView(auditId: string, page: { before?: number | null; limit?: number } = {}): Record<string, unknown> {
+    const { entries, more } = this.#ctx.sessions.page(auditOwner(auditId), page.before ?? null, page.limit);
+    return { runId: null, auditId, live: this.audits.isLive(auditId), cursor: this.store.lastEventId(), entries, more };
+  }
+
+  /** La frise d'un run : étapes, tests, décisions, événements marquants, coût par étape. */
+  timeline(runId: string, repos: RepoFilter = null): Record<string, unknown> {
+    return timelineOf(this.#ctx, this.visibleRun(runId, repos), this.#live.has(runId));
+  }
+
+  /** Les fichiers touchés par un run (worktree, sinon commit squash). */
+  changes(runId: string, repos: RepoFilter = null): Promise<Record<string, unknown>> {
+    return changesOf(this.#ctx, this.visibleRun(runId, repos));
+  }
+
+  /** Les différences d'un fichier touché par un run. */
+  fileDiff(runId: string, file: string, repos: RepoFilter = null): Promise<Record<string, unknown>> {
+    return fileDiffOf(this.#ctx, this.visibleRun(runId, repos), file);
+  }
+
+  /** La sortie des derniers jobs de tests d'un run, en cours compris. */
+  liveTests(runId: string, repos: RepoFilter = null): Record<string, unknown> {
+    const run = this.visibleRun(runId, repos);
+    return { runId: run.id, cursor: this.store.lastEventId(), jobs: this.#ctx.tests.jobs(run.id) };
+  }
+
+  /** La veille : coût, budget et alertes des features. */
+  get monitor(): HarnessContext["monitor"] {
+    return this.#ctx.monitor;
   }
 
   status(repos: RepoFilter = null): Record<string, unknown> {

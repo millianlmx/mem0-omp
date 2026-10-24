@@ -20,6 +20,8 @@ export type ProcOptions = {
   /** Un arrêt demandé : SIGTERM, puis SIGKILL si le process vit encore `killGraceMs` plus tard. */
   signal?: AbortSignal;
   killGraceMs?: number;
+  /** Chaque morceau de sortie (stdout ou stderr) dès qu'il arrive : la sortie en direct d'un job. */
+  onOutput?: (chunk: string) => void;
 };
 
 export type Exec = (command: string, args: string[], options?: ProcOptions) => Promise<ProcResult>;
@@ -62,11 +64,20 @@ export const execProcess: Exec = (command, args, options = {}) => {
     }
     return bytes;
   };
+  const live = (chunk: Buffer): void => {
+    try {
+      options.onOutput?.(chunk.toString("utf8"));
+    } catch {
+      /* un lecteur du direct qui échoue n'arrête pas le process */
+    }
+  };
   child.stdout.on("data", (chunk: Buffer) => {
     outBytes = keep(out, outBytes, chunk);
+    live(chunk);
   });
   child.stderr.on("data", (chunk: Buffer) => {
     errBytes = keep(err, errBytes, chunk);
+    live(chunk);
   });
   const timer = options.timeoutMs
     ? setTimeout(() => {

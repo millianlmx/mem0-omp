@@ -57,7 +57,40 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "run_failed",
   "project_done",
   "merged",
+  "stalled",
+  "budget_exceeded",
 ];
+
+/** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
+export type MonitoringConfig = {
+  /** Le coût (en dollars) d'une feature au-delà duquel l'humain est prévenu (`budget_exceeded`) ; `null` : jamais. */
+  runBudgetUsd: number | null;
+  /** Au-delà du budget, la feature attend l'humain avant sa prochaine étape au lieu de continuer. */
+  pauseOnBudget: boolean;
+  /** Les minutes sans trame d'un agent (aucun outil en cours) avant l'alerte `stalled` ; `null` : jamais. */
+  stallMin: number | null;
+  /** Les mêmes minutes quand un outil tourne (une suite de tests peut être longue) ; `null` : jamais. */
+  stallToolMin: number | null;
+  /** Une étape plus longue que `slowFactor` × la médiane de son type alerte (`step_slow`) ; `null` : jamais. */
+  slowFactor: number | null;
+  /** À partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais. */
+  fixLoop: number | null;
+  /** La santé du serveur : un point toutes les `sampleSec` secondes, les `keep` derniers gardés. */
+  sampleSec: number;
+  keep: number;
+};
+
+/** L'envoi des notifications push d'Apple (Live Activities de l'app iOS) : `null` les coupe. */
+export type ApnsConfig = {
+  /** La clé `.p8` d'Apple (fichier de l'hôte, 0600). */
+  keyFile: string;
+  keyId: string;
+  teamId: string;
+  /** L'identifiant de l'app iOS (`com.omp.console.ios`) : le sujet des pushes. */
+  topic: string;
+  /** `true` : la passerelle de développement (app installée depuis Xcode). */
+  sandbox: boolean;
+};
 
 export type RepoConfig = {
   /** Le nom par lequel l'API désigne le dépôt — jamais un chemin fourni par le client. */
@@ -222,6 +255,8 @@ export type HarnessConfig = {
   oracle: { url: string; token: string | null } | null;
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
+  monitoring: MonitoringConfig;
+  apns: ApnsConfig | null;
   repos: RepoConfig[];
 };
 
@@ -334,6 +369,17 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     memory: { runnerMode: true },
     oracle: null,
     events: { retentionDays: 30 },
+    monitoring: {
+      runBudgetUsd: null,
+      pauseOnBudget: false,
+      stallMin: 15,
+      stallToolMin: 45,
+      slowFactor: 2,
+      fixLoop: 2,
+      sampleSec: 15,
+      keep: 480,
+    },
+    apns: null,
     repos: [],
   };
 }
@@ -436,6 +482,22 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Array.isArray(config.notify.events) || config.notify.events.some((event) => typeof event !== "string"))
     fail("notify.events : liste de noms d'événements");
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
+  const monitoring = config.monitoring;
+  for (const key of ["runBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
+    const value = monitoring[key];
+    if (value !== null && !(typeof value === "number" && value > 0)) fail(`monitoring.${key} : nombre > 0, ou null`);
+  }
+  if (typeof monitoring.pauseOnBudget !== "boolean") fail("monitoring.pauseOnBudget : booléen");
+  if (!(monitoring.sampleSec >= 1)) fail("monitoring.sampleSec : secondes ≥ 1");
+  if (!(Number.isInteger(monitoring.keep) && monitoring.keep >= 1)) fail("monitoring.keep : entier ≥ 1");
+  if (config.apns !== null) {
+    const apns = config.apns;
+    if (!isRecord(apns)) fail("apns : { keyFile, keyId, teamId, topic, sandbox } ou null");
+    if (typeof apns.keyFile !== "string" || !path.isAbsolute(apns.keyFile)) fail("apns.keyFile : chemin absolu");
+    for (const key of ["keyId", "teamId", "topic"] as const)
+      if (typeof apns[key] !== "string" || apns[key].trim() === "") fail(`apns.${key} : texte non vide`);
+    if (typeof apns.sandbox !== "boolean") fail("apns.sandbox : booléen");
+  }
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);

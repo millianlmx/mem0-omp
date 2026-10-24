@@ -36,61 +36,73 @@ private func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) as
 
 /// Le vrai trousseau iOS, service `com.omp.console.ios.remote-api`, compte = UUID
 /// de l'appareil.
+///
+/// `accessGroup` partage l'article avec l'extension de widgets (le groupe d'apps sert
+/// de groupe d'accès au trousseau) ; `readableWhileLocked` le laisse lisible après le
+/// premier déverrouillage, pour un widget qui se relit écran verrouillé.
 public struct KeychainTokenStore: TokenStore {
     public static let defaultService = "com.omp.console.ios.remote-api"
 
     public let service: String
+    public let accessGroup: String?
+    public let readableWhileLocked: Bool
 
-    public init(service: String = KeychainTokenStore.defaultService) {
+    public init(service: String = KeychainTokenStore.defaultService, accessGroup: String? = nil, readableWhileLocked: Bool = false) {
         self.service = service
+        self.accessGroup = accessGroup
+        self.readableWhileLocked = readableWhileLocked
     }
 
     public func save(_ token: String, for deviceId: String) async throws {
-        let service = self.service
+        let base = query(account: deviceId)
         try await offMain {
-            try Self.saveSync(token: token, service: service, account: deviceId)
+            try Self.saveSync(token: token, base: base)
         }
     }
 
     public func token(for deviceId: String) async throws -> String? {
-        let service = self.service
+        let base = query(account: deviceId)
         return try await offMain {
-            try Self.tokenSync(service: service, account: deviceId)
+            try Self.tokenSync(base: base)
         }
     }
 
     public func remove(deviceId: String) async throws {
-        let service = self.service
+        let base = query(account: deviceId)
         try await offMain {
-            try Self.removeSync(service: service, account: deviceId)
+            try Self.removeSync(base: base)
         }
     }
 
     // MARK: - Appels bloquants
 
-    private static func query(service: String, account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
+    /// La requête d'un article, en valeurs `Sendable` (elle traverse vers la file utilitaire).
+    private func query(account: String) -> [String: String] {
+        var query = [
+            kSecClass as String: kSecClassGenericPassword as String,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessible as String: (readableWhileLocked
+                ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                : kSecAttrAccessibleWhenUnlockedThisDeviceOnly) as String,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
     }
 
-    private static func saveSync(token: String, service: String, account: String) throws {
-        let base = query(service: service, account: account)
+    private static func saveSync(token: String, base: [String: String]) throws {
         let data = Data(token.utf8)
         var status = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var add = base
+            var add: [String: Any] = base
             add[kSecValueData as String] = data
             status = SecItemAdd(add as CFDictionary, nil)
         }
         guard status == errSecSuccess else { throw TokenStoreFailure(status: status) }
     }
 
-    private static func tokenSync(service: String, account: String) throws -> String? {
-        var search = query(service: service, account: account)
+    private static func tokenSync(base: [String: String]) throws -> String? {
+        var search: [String: Any] = base
         search[kSecReturnData as String] = true
         search[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -102,8 +114,8 @@ public struct KeychainTokenStore: TokenStore {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func removeSync(service: String, account: String) throws {
-        let status = SecItemDelete(query(service: service, account: account) as CFDictionary)
+    private static func removeSync(base: [String: String]) throws {
+        let status = SecItemDelete(base as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw TokenStoreFailure(status: status)
         }

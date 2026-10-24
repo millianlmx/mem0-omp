@@ -24,6 +24,10 @@ import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
+import { Monitor } from "./monitor.ts";
+import { SessionFeeds } from "./session-feed.ts";
+import { ActivityPusher } from "./push.ts";
+import { TestFeeds } from "./test-feed.ts";
 
 export type SpawnRunner = (
   command: string,
@@ -68,6 +72,14 @@ export class HarnessContext {
   readonly logins: OAuthLogins;
   /** Les notifications sortantes (ntfy), abonnées au journal : chaque pièce n'a rien à faire pour notifier. */
   readonly notifier: Notifier;
+  /** Le direct des sessions de runners : poussé en événements éphémères `session`, gardé en tampon borné. */
+  readonly sessions: SessionFeeds;
+  /** La veille : coût et budget des features, alertes (agent muet, étape lente, boucle de corrections). */
+  readonly monitor: Monitor;
+  /** La sortie en direct des jobs de tests (événements éphémères `test_output`, derniers jobs en mémoire). */
+  readonly tests: TestFeeds;
+  /** Les Live Activities de l'app iOS, mises à jour par APNs (`config.apns`). */
+  readonly push: ActivityPusher;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -95,6 +107,43 @@ export class HarnessContext {
     });
     this.notifier = new Notifier({ config: this.config, store: this.store, log: this.log });
     this.notifier.subscribe();
+    this.sessions = new SessionFeeds({
+      store: this.store,
+      // Le direct d'un run porte son id ; celui d'un audit (`audit:<id>`) porte l'audit et son dépôt.
+      publish: (owner, entry) => {
+        if (!owner.startsWith("audit:")) {
+          this.event("session", owner, { entry });
+          return;
+        }
+        const auditId = owner.slice("audit:".length);
+        this.event("session", null, { auditId, entry }, this.store.getAudit(auditId)?.repo ?? null);
+      },
+      // Les clés que le service passe aux runners : masquées si l'agent les affiche.
+      secrets: () => Object.values(this.providers.runnerEnv()),
+      onUsage: (owner, step, usage) => this.monitor.recordUsage(owner, step, usage),
+    });
+    this.monitor = new Monitor({
+      store: this.store,
+      config: () => this.config,
+      event: (type, runId, payload, repo) => this.event(type, runId, payload, repo ?? null),
+      sessions: this.sessions,
+    });
+    this.tests = new TestFeeds({ publish: (runId, payload) => this.event("test_output", runId, payload) });
+    this.heavy.attachOutput(this.tests);
+    this.push = new ActivityPusher({
+      store: this.store,
+      config: () => this.config.apns,
+      content: (run) => ({
+        state: run.state,
+        step: run.step,
+        tool: this.sessions.activity(run.id)?.tool ?? null,
+        alert: this.monitor.alertsOf(run.id)[0]?.kind ?? null,
+        cost: Math.round(this.store.runCost(run.id) * 100) / 100,
+        updatedAt: run.updatedAt,
+      }),
+      log: this.log,
+    });
+    this.push.subscribe();
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */

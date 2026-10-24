@@ -16,13 +16,13 @@ test("harness-store/AC-1 : la base se crée migrée, en WAL, et une réouverture
   const dir = tmpdir("harness-store-");
   const file = path.join(dir, "h.sqlite");
   const first = new Store(file);
-  assert.equal(first.schemaVersion, 6);
+  assert.equal(first.schemaVersion, MIGRATIONS.length);
   first.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "harness/a" });
   assert.equal((first.db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
   first.close();
   const again = new Store(file);
   assert.equal(again.getRun("r1")?.title, "A");
-  assert.equal(again.schemaVersion, 6);
+  assert.equal(again.schemaVersion, MIGRATIONS.length);
   again.close();
 });
 
@@ -201,7 +201,7 @@ test("harness-store/AC-9 : la migration de l'autonomie est idempotente — un ru
             VALUES ('r1', 1, 'schema', 'Q ?', '["a","b"]', 'ctx', 'open', 1)`);
   old.close();
   const db = new Store(file);
-  assert.equal(db.schemaVersion, 6);
+  assert.equal(db.schemaVersion, MIGRATIONS.length);
   const run = db.getRun("r1");
   assert.deepEqual([run?.notBefore, run?.mergeRetries, run?.lastFailCause, run?.lastReviewSha], [null, 0, null, null]);
   const [escalation] = db.listEscalations({ runId: "r1" });
@@ -209,7 +209,7 @@ test("harness-store/AC-9 : la migration de l'autonomie est idempotente — un ru
   db.close();
   // Réouvrir ne remigre pas et garde tout.
   const again = new Store(file);
-  assert.equal(again.schemaVersion, 6);
+  assert.equal(again.schemaVersion, MIGRATIONS.length);
   assert.equal(again.listEscalations({ runId: "r1" }).length, 1);
   again.close();
 });

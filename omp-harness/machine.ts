@@ -231,6 +231,17 @@ function afterFailure(
   });
 }
 
+/**
+ * Le plafond de coût atteint (`monitoring.pauseOnBudget`) : avant sa prochaine étape, la
+ * feature attend l'humain, qui la relance (`retry`) pour lui accorder un budget de plus.
+ */
+export function pausedForBudget(cursor: RunCursor, cost: number, threshold: number): Transition {
+  return to("awaiting_human", cursor.step, cursor, {
+    attempts: cursor.attempts,
+    reason: `budget dépassé : ${cost.toFixed(2)} $ pour un plafond de ${threshold.toFixed(2)} $ — relance la feature pour continuer`,
+  });
+}
+
 /** La relance par l'humain d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
 export function retried(cursor: RunCursor): Transition {
   return to("queued", cursor.step, cursor, { attempts: 0, notBefore: null, reason: "relancé par l'humain" });

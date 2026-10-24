@@ -313,6 +313,23 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 - Une proposition d'audit retenue porte la coche du symbole système, et le trait
   « sélectionné » pour VoiceOver ; aucun caractère « ✓ ».
   `[garde: ios-finitions-composants/AC-2]`
+- « Session en direct » (menu contextuel d'une feature, bouton d'un audit) ouvre une
+  feuille « page » à onglets segmentés — Direct, Fichiers, Tests, Frise — dans une
+  liste groupée native ; les différences d'un fichier se poussent dans la pile de la
+  feuille. Tous ses mots viennent de `MonitoringText` et `PipelineServerText`.
+  `[garde: design-ios/AC-5]`
+- Les alertes de la veille du serveur sont en tête de l'Accueil, en orange, et chaque
+  rangée de feature porte son coût et ses alertes ; Statistiques ajoute la
+  consommation, les modèles, les tests instables et la santé du serveur. Toute durée
+  y garde ses chiffres à chasse fixe. `[garde: ios-finitions-composants/AC-6]`
+- « Suivre sur l'écran verrouillé » démarre la Live Activity de la feature
+  (extension `OMPConsoleWidgets`, troisième cible du projet) : écran verrouillé et
+  Dynamic Island, symbole et teinte doublés par le texte de l'état.
+  `[garde: coque-ios/AC-1]`
+- Le widget d'écran d'accueil « Boîte du serveur » (même extension) reprend le badge
+  de l'Accueil en grand chiffre à chasse fixe, puis les features vivantes, celles qui
+  attendent l'humain d'abord, en orange ; sa date de lecture se lit en bas. Un
+  toucher ouvre l'Accueil. `[garde: coque-ios/AC-1]`
 
 ## Mémoire (feature `ios-memoire`)
 
@@ -416,9 +433,9 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   dans son état courant ; « Arrêter la feature » est destructif et passe par une
   confirmation. Aucune action par balayage.
   `[garde: ios-gestes-et-retours-natifs/AC-5]`
-- Le texte des specs d'une feature et de la fiche d'un souvenir est
-  sélectionnable (sélection système et « Copier ») ; les libellés de boutons ne
-  le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
+- Le texte des specs d'une feature, de la fiche d'un souvenir et du direct d'une
+  session est sélectionnable (sélection système et « Copier ») ; les libellés de
+  boutons ne le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
 - Sur iPad avec pointeur, chaque rangée touchable de la Mémoire montre l'effet de
   survol système `.highlight` (`iosHoverEffect()`).
   `[garde: ios-gestes-et-retours-natifs/AC-10]`

@@ -333,6 +333,59 @@ exécuter une étape elle-même.
   jours, taux de fusion, délai médian jusqu'à la fusion, corrections par fusion),
   étapes (nombre, échecs, durée médiane), tests (repris du cache, relancés après un
   manque de mémoire) et capacité du serveur (runners, slots lourds, mémoire libre).
+- **Session en direct.** Sur une feature, « Session en direct » (bouton de la
+  rangée sur le Mac, menu contextuel sur iOS) ouvre une feuille à quatre onglets :
+  - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
+    paragraphes, son raisonnement (replié), chaque outil avec son intention ou sa
+    commande, son état et la fin de son résultat (replié), et les signaux de la
+    session (contexte compacté, réessai du fournisseur), groupés par étape. L'outil
+    et le job de tests du moment, les alertes et le coût s'affichent en tête ;
+    « Suivre la fin » garde la dernière entrée à l'écran. La session est écrite en
+    base par le serveur : une feature finie se rejoue, « Afficher les entrées
+    précédentes » remonte page par page (`?before=`). La feuille lit
+    `GET /v1/runs/{id}/session` puis suit `GET /v1/events?run={id}&live=1` : chaque
+    événement `session` remplace l'entrée de même `seq`. Une coupure est reprise,
+    tampon relu ; un refus (serveur trop ancien, feature inconnue) arrête le direct
+    avec sa cause. Le serveur masque les secrets reconnus avant d'envoyer ;
+  - **Fichiers** : les fichiers touchés (`GET /v1/runs/{id}/changes`, du dossier de
+    la feature, sinon de sa version fusionnée), relus quand un outil se termine ; le
+    choix d'un fichier montre ses différences (`/diff?path=`) ;
+  - **Tests** : la sortie des derniers jobs de tests, en direct (`test_output` sur
+    le même flux, `/tests/live` à l'ouverture) ;
+  - **Frise** : les étapes sur l'axe du temps (Swift Charts), les événements
+    marquants, les décisions, les tests et le coût par étape (`/timeline`).
+
+  Un audit a son « Analyse en direct » (`GET /v1/audits/{id}/session`, flux filtré
+  par `audit=`). Le texte se sélectionne partout.
+- **Alertes et coût.** La veille du serveur (agent muet, étape lente, boucle de
+  corrections, budget dépassé) s'affiche en tête de l'Accueil — chaque alerte ouvre
+  le direct de sa feature — et sur la rangée de la feature, avec son coût
+  (`alerts` et `costs` de `GET /v1/inbox`).
+- **Statistiques du monitoring.** En plus des compteurs : la consommation des agents
+  (depuis le début, sur 7 jours, jour par jour), la comparaison des modèles
+  (étapes, échecs, durée médiane, implémentations corrigées, features fusionnées,
+  coût), les tests instables et la santé du serveur (`GET /v1/metrics` : agents et
+  tests occupés, file d'attente, mémoire libre, limites de débit), relue au rythme
+  du serveur tant que l'écran est ouvert.
+- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu
+  contextuel d'une feature, démarre sa Live Activity (extension
+  `ios/OMPConsoleWidgets`) : état, étape, outil du moment, alerte et coût, sur
+  l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
+  ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
+  app fermée, le serveur la tient à jour par APNs s'il a une clé (`apns` de sa
+  configuration, voir `omp-harness/README.md` § « Les Live Activities app fermée »).
+  Une feature terminée clôt son activité. Si iOS refuse le jeton push (capacité
+  absente), l'activité démarre quand même, mise à jour par l'app ouverte.
+- **Widget d'écran d'accueil (iPhone, iPad).** « Boîte du serveur », en petit, moyen
+  ou grand format : ce qui attend votre décision, le nombre de features en cours et
+  d'alertes, puis les features vivantes (celles qui vous attendent d'abord) avec leur
+  étape, leur alerte et leur coût. L'app partage avec l'extension un groupe d'apps
+  (`OMP_APP_GROUP`, `group.com.omp.console.ios` par défaut) : elle y dépose
+  l'instantané de chaque boîte relue et l'adresse du serveur, et copie le jeton dans
+  un article de trousseau du groupe ; le widget relit ainsi la boîte lui-même
+  (`GET /v1/inbox`) toutes les 15 minutes, app fermée, et montre le dernier
+  instantané, daté, sans réseau. Un toucher ouvre l'app sur l'Accueil
+  (`ompconsole://home`).
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois une section de catalogue ouverte, le catalogue. Une coupure
@@ -1398,6 +1451,8 @@ omp-console/
 │   ├── Server/                    les sections de Pilotage, servies par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun, Accueil, Pipelines, Projet, Audit, Statistiques
 │   │   ├── HarnessInboxSections.swift la boîte de l'humain et ses gestes
+│   │   ├── HarnessSessionView.swift   la feuille « Session en direct » d'une feature ou d'un audit
+│   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
 │   │   └── ServerSheet.swift      la feuille « Serveur » (adresse, jeton, oubli)
 │   ├── Files/                     la section Fichiers (git en lecture seule, arbre, diff, veille)
 │   ├── Terminal/                  la section Terminal (PTY, émulateur, rendu)
@@ -1416,16 +1471,19 @@ omp-console/
 │   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
 │   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
+│   ├── HarnessSession.swift       le direct de la session d'une feature ou d'un audit (entrées, pages, événements)
+│   ├── HarnessMonitoring.swift    le contrat du monitoring (coût, alertes, frise, fichiers, tests, santé, modèles)
+│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
-│   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines
+│   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines et du monitoring
 │   ├── Memory/                    la lecture des réponses de la mémoire et le noyau du graphe
 │   ├── Files/MarkdownDocument.swift  le rendu Markdown en blocs
 │   ├── Setup/SetupText.swift      les mots de la préparation
 │   └── Support/                   JSON, chemins, URL
 ├── Tests/OMPConsoleTests/         la suite Swift Testing de la coque
 ├── Tests/ConsoleClientTests/      la suite hermétique des clients distants
-├── ios/                           l'app iOS/iPadOS (voir « Coque iOS »)
+├── ios/                           l'app iOS/iPadOS et son extension de widgets (voir « Coque iOS »)
 ├── Bundle/Info.plist              le plist du bundle .app (et `Bundle/AppIcon.icns`)
 └── build/                         artefacts (bundle .app, captures), ignorés par git
 ```
@@ -1468,7 +1526,9 @@ accès :
   (`IOSHarnessScreens.swift`) : les mêmes écrans que sur le Mac — résumé et boîte de
   l'humain, lancement d'une feature, d'un projet ou d'un audit, statistiques —, sur
   le même `HarnessModel` (voir « Serveur de pipelines »). Les listes se tirent pour
-  actualiser, et une feature en cours a son menu contextuel « Arrêter la feature ».
+  actualiser, et une feature en cours a son menu contextuel « Session en direct »
+  (`IOSSessionSheet.swift`), « Suivre sur l'écran verrouillé »
+  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`) et « Arrêter la feature ».
 - **La mémoire du serveur** pour la section Mémoire (`MemoryAccess`, `MemoryReader`
   dans `ConsoleClient`) : son adresse va aux préférences, son jeton au trousseau.
   Sans elle, la Mémoire affiche « Mémoire non reliée » et « Relier le serveur », qui
@@ -1739,8 +1799,13 @@ releases. Avec Xcode :
 2. Dans Xcode, choisir la cible `OMPConsoleIOS` et l'appareil dans le sélecteur de
    destination.
 3. Ouvrir l'onglet *Signing & Capabilities* de la cible, cocher *Automatically
-   manage signing*, puis choisir son **compte** (Team). Si l'identifiant de bundle
-   du dépôt (`com.omp.console.ios`) est déjà pris, en choisir un **unique**.
+   manage signing*, puis choisir son **compte** (Team) — un compte du programme
+   développeur : l'app déclare un groupe d'apps (widget) et les notifications push
+   (Live Activities), que Xcode enregistre seul. Faire de même pour la cible
+   `OMPConsoleWidgets`. Si l'identifiant de bundle du dépôt (`com.omp.console.ios`)
+   est déjà pris, en choisir un **unique**, pour les deux cibles
+   (`<id>` et `<id>.widgets`), et changer `OMP_APP_GROUP` du projet en
+   `group.<id>`.
 4. Lancer (⌘R). L'app s'installe et démarre.
 5. À la première exécution, approuver le certificat de développement sur
    l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.

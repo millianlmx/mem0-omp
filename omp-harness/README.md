@@ -440,7 +440,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `runner.retryBackoffSec` | `[120, 600, 1800]` | l'attente avant chaque relance d'une étape échouée ; sa longueur est le nombre de relances si `stepRetries` n'est pas déclaré. Quota, réseau, fournisseur, délai : la liste se consomme entière, même cause répétée ; contexte, runner, sortie manquante, inconnu : deux fois de suite ⇒ l'humain. Liste épuisée ⇒ l'humain (`retry` relance), jamais `failed` |
 | `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
-| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
+| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
 | `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
@@ -452,7 +452,13 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
 | `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
-| `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure) |
+| `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
+| `monitoring.runBudgetUsd`, `monitoring.pauseOnBudget` | `null`, `false` | le coût (en dollars, d'après omp) d'une feature au-delà duquel tu es prévenu (`budget_exceeded`) ; avec `pauseOnBudget`, la feature attend aussi ton accord avant sa prochaine étape |
+| `monitoring.stallMin`, `monitoring.stallToolMin` | `15`, `45` | les minutes sans un mot de l'agent avant l'alerte `stalled` (la seconde quand un outil tourne, une suite de tests par exemple) ; `null` : jamais |
+| `monitoring.slowFactor` | `2` | une étape plus longue que ce multiple de la médiane de son type alerte (`step_slow`) ; `null` : jamais |
+| `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
+| `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, les 2 dernières heures gardées en mémoire |
+| `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -696,6 +702,7 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `GET /v1/repos` | viewer | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`). |
 | `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). |
 | `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`), étapes, décisions, escalades (avec `recommended`, `options`, `context`), tests, artefacts. |
+| `GET /v1/runs/{id}/session` | viewer | Le direct de la session du runner : les dernières entrées gardées en mémoire (`entries`, 200 au plus par run, pour les 32 derniers runs, perdues au redémarrage), `live` (le run est conduit en ce moment) et `cursor`, le curseur du journal d'où suivre la suite par `GET /v1/events?run={id}&live=1&after={cursor}`. |
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. |
 | `POST /v1/runs/{id}/decisions/{n}/accept` · `POST /v1/runs/{id}/decisions/accept` | operator | Accepter une décision prise seule, ou toutes celles du run d'un geste (`{accepted: n}`). |
 | `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | operator | Renverser : correction sur l'état courant, ou revert des commits de N et de ses dépendantes si des décisions en découlent (retour dur au checkpoint N seulement si ce revert entre en conflit). Run mergé : revert du squash sur `main` puis run de suite. Raison dans l'oracle. |
@@ -718,7 +725,7 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) : éphémère, sans `id:`, jamais rejoué. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture.
@@ -793,6 +800,48 @@ code d'appairage (`harness.sh pair`) collé une fois dans la feuille « Serveur 
 l'adresse publiée par Tailscale et le jeton du service. Sur l'iPhone, la section
 Mémoire lit la mémoire de ce serveur, dont le même code porte l'adresse. Elles
 suivent `GET /v1/events` et relisent la boîte à chaque événement ; une coupure garde
-la dernière boîte, signalée hors ligne. Le client est partagé
+la dernière boîte, signalée hors ligne. « Session en direct », sur une feature, lit
+`GET /v1/runs/{id}/session` puis suit ses événements `session` : ce que l'agent écrit,
+son raisonnement et chaque outil, avec son résultat, en temps réel — et, en onglets,
+les fichiers touchés et leurs différences, la sortie des tests en direct et la frise.
+L'Accueil montre les alertes de la veille et le coût des features ; Statistiques, la
+consommation, la comparaison des modèles, les tests instables et la santé du serveur ;
+l'iPhone suit une feature sur l'écran verrouillé (Live Activity, poussée par APNs
+quand `apns` est configuré). Le client est partagé
 (`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`
 § « Serveur de pipelines ».
+
+### Les Live Activities app fermée (APNs)
+
+L'iPhone peut suivre une feature sur l'écran verrouillé (« Suivre sur l'écran
+verrouillé », menu d'une feature). App ouverte, l'app met l'activité à jour elle-même ;
+app fermée, c'est le serveur qui la pousse par APNs, avec le jeton que l'app lui
+enregistre (`POST /v1/push/activities`). Il lui faut une clé d'Apple (compte du
+programme développeur) :
+
+1. Sur developer.apple.com, *Certificates, Identifiers & Profiles ▸ Keys ▸ +* :
+   cocher **Apple Push Notifications service (APNs)**, enregistrer, puis télécharger
+   la clé `AuthKey_<KEYID>.p8` (une seule fois possible). Noter son **Key ID**, et le
+   **Team ID** (en haut à droite du compte).
+2. Copier la clé sur le serveur, lisible par lui seul : dans le dossier de données
+   (`~/.omp-harness/apns.p8` en conteneurs, `OMP_HARNESS_ROOT` avec Portainer,
+   `/var/lib/omp-harness/apns.p8` avec systemd), `chmod 600`.
+3. Dans `config.json` :
+
+   ```json
+   "apns": {
+     "keyFile": "/chemin/absolu/apns.p8",
+     "keyId": "<Key ID>",
+     "teamId": "<Team ID>",
+     "topic": "com.omp.console.ios",
+     "sandbox": true
+   }
+   ```
+
+   `topic` est l'identifiant de bundle de l'app iOS (changé si tu l'as changé dans
+   Xcode). `sandbox` vaut `true` pour une app installée depuis Xcode, `false` pour
+   TestFlight ou l'App Store.
+4. `harness.sh restart` (ou `systemctl restart omp-harness`).
+
+Une activité dont le jeton est refusé par Apple est oubliée ; sans `apns`, rien ne
+part et l'activité ne bouge que l'app ouverte.
