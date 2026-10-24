@@ -157,7 +157,11 @@ au registre `scripts/tests-instables-connus.json` (consulté par
 `scripts/ci-verdict.sh --instables`), il les relance une seule fois
 (`swift test --filter`) en les nommant. Tout autre échec reste rouge sans relance :
 test non listé, rouge pendant la relance, erreur de compilation, plantage, sortie
-illisible ou interruption. Le statut `check (macos-latest)`
+illisible ou interruption. Chaque entrée du registre porte `raison`, `expire`
+(`AAAA-MM-JJ`, dernier jour UTC où la relance vaut) et, facultative, `issue` :
+passé `expire`, l'entrée ne relance plus rien et
+`known-flaky-tests-registry/AC-11` rougit — le test se corrige, ou l'entrée se
+prolonge en le justifiant dans la PR. Le statut `check (macos-latest)`
 est celui d'un job **agrégateur** qui les attend, tourne même quand l'un d'eux
 échoue ou est annulé (`if: always()`), et ne réussit que si les trois résultats
 valent `success` (`scripts/ci-verdict.sh`) — jamais « skipped », qui compterait

@@ -45,6 +45,8 @@ test("known-flaky-tests-registry/AC-7 : le mode agrégateur rend le même verdic
 });
 
 const SLUG = /^[a-z0-9][a-z0-9-]*\/AC-[0-9]+$/;
+/** Les clés qu'exige chaque entrée du registre ; `issue` (le suivi) est la seule facultative. */
+const CLES_REQUISES = ["identifiant", "filtre", "occurrence", "raison", "expire"];
 const FONCTION = /^[A-Za-z_][A-Za-z0-9_]*\(\)$/;
 
 /** Les sources Swift des cibles de test d'omp-console. */
@@ -62,8 +64,10 @@ test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests i
   assert.deepEqual(Object.keys(registre), ["tests"]);
   assert.ok(Array.isArray(registre.tests), "tests doit être un tableau");
   for (const entree of registre.tests) {
-    assert.deepEqual(Object.keys(entree).sort(), ["filtre", "identifiant", "occurrence"], JSON.stringify(entree));
-    for (const cle of ["identifiant", "filtre", "occurrence"]) {
+    const cles = Object.keys(entree);
+    for (const cle of CLES_REQUISES) assert.ok(cles.includes(cle), `${cle} absente : ${JSON.stringify(entree)}`);
+    for (const cle of cles) {
+      assert.ok([...CLES_REQUISES, "issue"].includes(cle), `clé inconnue ${cle} : ${JSON.stringify(entree)}`);
       assert.equal(typeof entree[cle], "string", `${cle} : ${JSON.stringify(entree)}`);
       assert.notEqual(entree[cle], "", `${cle} vide : ${JSON.stringify(entree)}`);
     }
@@ -134,8 +138,43 @@ const HORS_REGISTRE = "✗ au moins un test en échec n'est pas au registre des 
 const montage = montageAppIntents();
 
 /** Un registre de recette, posé dans la copie jetable : les relances s'y éprouvent. */
-const REGISTRE_FIXTURE =
-  '{\n  "tests": [\n    {\n      "identifiant": "duplicateHeaderIsBadRequest()",\n      "filtre": "RemoteVersionTests/duplicateHeaderIsBadRequest\\\\(\\\\)",\n      "occurrence": "run 38475731796, tentative 1 (PR feat/siri-iphone-pilotage-pipelines, 2026-10-13)"\n    },\n    {\n      "identifiant": "trailingSpaceIsAcceptedAfterTrim()",\n      "filtre": "RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\\\(\\\\)",\n      "occurrence": "run 39239142987, tentative 2 (PR feat/ci-without-cache, 2026-10-19)"\n    },\n    {\n      "identifiant": "api-distante-du-console/AC-1",\n      "filtre": "\\\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\\\(\\\\)",\n      "occurrence": "run 38563190542, tentative 1 (PR feat/arbitre-corpus-et-deduction, 2026-10-14)"\n    }\n  ]\n}';
+const REGISTRE_FIXTURE = JSON.stringify(
+  {
+    tests: [
+      {
+        identifiant: "duplicateHeaderIsBadRequest()",
+        filtre: "RemoteVersionTests/duplicateHeaderIsBadRequest\\(\\)",
+        occurrence: "run 38475731796, tentative 1 (PR feat/siri-iphone-pilotage-pipelines, 2026-10-13)",
+        raison: "recette : en-tête dupliqué",
+        expire: "2999-12-31",
+      },
+      {
+        identifiant: "trailingSpaceIsAcceptedAfterTrim()",
+        filtre: "RemoteVersionTests/trailingSpaceIsAcceptedAfterTrim\\(\\)",
+        occurrence: "run 39239142987, tentative 2 (PR feat/ci-without-cache, 2026-10-19)",
+        raison: "recette : espace final",
+        expire: "2999-12-31",
+        issue: "#0",
+      },
+      {
+        identifiant: "api-distante-du-console/AC-1",
+        filtre: "\\.theAPIIsAnnouncedAndServesOnlyLocalSources\\(\\)",
+        occurrence: "run 38563190542, tentative 1 (PR feat/arbitre-corpus-et-deduction, 2026-10-14)",
+        raison: "recette : annonce Bonjour",
+        expire: "2999-12-31",
+      },
+      {
+        identifiant: "expiredFlakyTest()",
+        filtre: "RemoteVersionTests/expiredFlakyTest\\(\\)",
+        occurrence: "run 1, tentative 1 (recette)",
+        raison: "recette : entrée expirée",
+        expire: "2020-01-01",
+      },
+    ],
+  },
+  null,
+  2,
+);
 fs.writeFileSync(path.join(montage.copie, "scripts", "tests-instables-connus.json"), `${REGISTRE_FIXTURE}\n`);
 
 /** Le mode `--instables` de la copie jetable, qui lit `REGISTRE_FIXTURE`. */
@@ -341,4 +380,65 @@ test("known-flaky-tests-registry/AC-9 : ces tests tournent dans la section tests
   const ids = /^SECTION_IDS="([^"]*)"$/m.exec(check)?.[1];
   // `lint` vient de no-ts-lint-formatter, pas de cette feature.
   assert.equal(ids, "catalogue noms plugins versions extension types lint rust smoke tests noyau app-swift app-ios");
+});
+
+// ── Expiration des entrées (raison, expire, issue facultative) ──
+
+/** `--instables` contre un registre arbitraire : le vrai script, copié à côté de ce registre. */
+function verdictAvecRegistre(registre: unknown, ...args: string[]) {
+  const scripts = path.join(tmpdir("registre-instables-"), "scripts");
+  fs.mkdirSync(scripts);
+  fs.copyFileSync(path.join(ROOT, "scripts", "ci-verdict.sh"), path.join(scripts, "ci-verdict.sh"));
+  fs.writeFileSync(path.join(scripts, "tests-instables-connus.json"), `${JSON.stringify(registre)}\n`);
+  return spawnSync("bash", [path.join(scripts, "ci-verdict.sh"), "--instables", ...args], { encoding: "utf8" });
+}
+
+test("known-flaky-tests-registry/AC-10 : une entrée expirée ne relance plus rien — verdict rouge sans relance qui nomme la date et la raison", () => {
+  const r = lancerSwiftApp({ sortie: essaiRouge("expiredFlakyTest()"), code: 1 });
+  assertRougeSansRelance(r, "AC-10");
+  assert.ok(
+    r.sortie.includes(
+      "  ✗ expiredFlakyTest() : entrée du registre expirée le 2020-01-01 (recette : entrée expirée) — corrige le test ou prolonge l'entrée\n",
+    ),
+    trace(r),
+  );
+
+  const mode = verdictFixture("--instables", "expiredFlakyTest()");
+  assert.equal(mode.status, 1, output(mode));
+  assert.equal(mode.stdout, "", "aucun filtre de relance");
+
+  // Une entrée sans raison, sans expiration, à la date illisible ou à la clé
+  // inconnue rend le registre non conforme : aucune relance, pour aucun test.
+  const valide = JSON.parse(REGISTRE_FIXTURE).tests[0] as Record<string, string>;
+  const { raison: _raison, ...sansRaison } = valide;
+  const { expire: _expire, ...sansExpire } = valide;
+  for (const [label, entree] of [
+    ["sans raison", sansRaison],
+    ["sans expire", sansExpire],
+    ["date illisible", { ...valide, expire: "2027-02-30" }],
+    ["date au mauvais format", { ...valide, expire: "24/01/2027" }],
+    ["clé inconnue", { ...valide, proprietaire: "x" }],
+  ] as const) {
+    const non = verdictAvecRegistre({ tests: [entree] }, valide.identifiant!);
+    assert.equal(non.status, 1, `${label} : ${output(non)}`);
+    assert.equal(non.stdout, "", label);
+    assert.ok(non.stderr.includes("✗ registre des tests instables illisible"), `${label} : ${output(non)}`);
+  }
+  const ok = verdictAvecRegistre({ tests: [valide] }, valide.identifiant!);
+  assert.equal(ok.status, 0, output(ok));
+});
+
+test("known-flaky-tests-registry/AC-11 : chaque entrée du registre réel porte sa raison et une expiration non dépassée — passé cette date, ce test rougit", () => {
+  const registre = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/tests-instables-connus.json"), "utf8")) as {
+    tests: Array<Record<string, string>>;
+  };
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  for (const entree of registre.tests) {
+    assert.ok((entree.raison ?? "").trim().length > 0, `raison absente : ${entree.identifiant}`);
+    assert.match(entree.expire ?? "", /^\d{4}-\d{2}-\d{2}$/, `expire de ${entree.identifiant}`);
+    assert.ok(
+      entree.expire! >= aujourdhui,
+      `${entree.identifiant} : entrée expirée le ${entree.expire} — corrige le test, ou prolonge l'entrée en le justifiant`,
+    );
+  }
 });
