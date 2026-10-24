@@ -239,7 +239,7 @@ peut pas être fusionnée.
 
 La section `── Lint TypeScript` (id `lint`, juste après `types`) passe
 `scripts/lint.sh` : Biome, épinglé dans le script, vérifie à la fois les règles
-de lint et le format du TypeScript de `omp-mem0-req/` et `test/`, sans jamais
+de lint et le format du TypeScript de `omp-mem0-req/`, `omp-harness/`, `scripts/` et `test/`, sans jamais
 toucher au réseau. Prérequis, une fois par clone ou par worktree et avec le
 réseau : `bash scripts/lint.sh --prepare`, qui installe la version épinglée dans
 `.lint/` (ignoré par git). Un outil absent ou d'une autre version rougit la
@@ -248,7 +248,7 @@ désigne une installation préparée ailleurs : les `check.sh` imbriqués des te
 et la copie de `scripts/release-simulation.sh` réutilisent ainsi celle de la
 racine. Chaque job CI qui lance `check.sh` prépare l'outil juste avant. Pour
 corriger en local ce que la section signale :
-`.lint/node_modules/.bin/biome check --write omp-mem0-req test`.
+`.lint/node_modules/.bin/biome check --write omp-mem0-req omp-harness scripts test`.
 
 La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
 (`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du

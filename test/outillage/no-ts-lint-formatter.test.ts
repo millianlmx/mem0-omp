@@ -147,7 +147,7 @@ const repo = sharedRepo("lint-", { keepTest: () => false });
 
 const LINT_FAULT = "export function f(): void {\n  debugger;\n}\n";
 const FORMAT_FAULT = "export const  a = 1;\n";
-const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, test/)";
+const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, scripts/, test/)";
 const UNAVAILABLE_LINE = "  ✗ linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)";
 
 /** `scripts/check.sh --sections=lint` dans `cwd`, avec le Biome de la racine. */
@@ -186,11 +186,12 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });
 
-test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/ puis test/ rougit la section et désigne le fichier", (t) => {
+test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/, scripts/ puis test/ rougit la section et désigne le fichier", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-lint.ts",
     "omp-harness/zz-faute-lint.ts",
+    "scripts/zz-faute-lint.ts",
     "test/support/zz-faute-lint.ts",
   ]) {
     const dir = repo.fresh();
@@ -206,11 +207,12 @@ test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harn
   }
 });
 
-test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/ puis test/ rougit la section", (t) => {
+test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/, scripts/ puis test/ rougit la section", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-format.ts",
     "omp-harness/zz-faute-format.ts",
+    "scripts/zz-faute-format.ts",
     "test/support/zz-faute-format.ts",
   ]) {
     const dir = repo.fresh();
@@ -231,10 +233,10 @@ test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, 
   }
 });
 
-test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/ et test/ laissent la section verte", (t) => {
+test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/, scripts/ et test/ laissent la section verte", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   const dir = repo.fresh();
-  for (const rel of ["scripts/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
+  for (const rel of ["omp-console/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
     fs.writeFileSync(path.join(dir, rel), `${LINT_FAULT}${FORMAT_FAULT}`);
   }
   const r = runSection(dir);

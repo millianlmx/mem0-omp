@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Lint + format du TypeScript de omp-mem0-req/ et test/ par un Biome ÉPINGLÉ
-# (feature no-ts-lint-formatter, spec S-1). Le périmètre et les règles vivent
-# dans biome.jsonc.
+# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, scripts/ et test/
+# par un Biome ÉPINGLÉ (feature no-ts-lint-formatter, spec S-1). Le périmètre et
+# les règles vivent dans biome.jsonc.
 #
 #   bash scripts/lint.sh             vérifie l'outil, puis `biome ci` — hors réseau ;
 #   bash scripts/lint.sh --prepare   installe Biome dans le dossier de l'outil

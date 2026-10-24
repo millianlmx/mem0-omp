@@ -64,9 +64,7 @@ function hostCandidates(): string[] {
 }
 
 const candidates = hostCandidates();
-const host = candidates.find((dir) =>
-  fs.existsSync(path.join(dir, "@oh-my-pi", "pi-coding-agent", "src", "index.ts")),
-);
+const host = candidates.find((dir) => fs.existsSync(path.join(dir, "@oh-my-pi", "pi-coding-agent", "src", "index.ts")));
 if (!host) {
   console.log(`✗ hôte OMP introuvable (${candidates.join(", ")})`);
   process.exit(2);
@@ -104,9 +102,7 @@ const server = Bun.serve({
     if (url.pathname === "/health") return Response.json({ ok: true, service: "stub" });
     if (url.pathname === "/memory/all") {
       const scope = url.searchParams.get("agent_id") ?? "";
-      return Response.json(
-        scope === "_global" ? [] : [{ id: "smoke-1", memory: "souvenir de fumée (fixture)" }],
-      );
+      return Response.json(scope === "_global" ? [] : [{ id: "smoke-1", memory: "souvenir de fumée (fixture)" }]);
     }
     if (url.pathname === "/memory/search") {
       return Response.json([
@@ -130,9 +126,7 @@ process.env.MEM0_HTTP_URL = STUB_URL;
 // l'exécution (env, ./node_modules, $BUN_INSTALL) — un import statique figerait
 // un seul chemin, et le spécifieur de paquet avec `.ts` bloque Bun.
 const HOST_PKG = path.join(host, "@oh-my-pi", "pi-coding-agent");
-const { createAgentSession, SessionManager } = (await import(
-  path.join(HOST_PKG, "src", "index.ts")
-)) as {
+const { createAgentSession, SessionManager } = (await import(path.join(HOST_PKG, "src", "index.ts"))) as {
   createAgentSession: (options: Record<string, unknown>) => Promise<{
     session: HostSession;
     extensionsResult: { extensions: Array<{ path?: string }>; errors?: unknown[] };
@@ -225,10 +219,7 @@ const INVOCATIONS: Record<string, Invocation> = {
       const handled = await within("/mem0-status", () => session.prompt("/mem0-status"));
       const text = notes.join(" | ");
       const verdict =
-        !handled &&
-        text.includes("ok=true") &&
-        text.includes("1 souvenir(s) · global 0") &&
-        text.includes(STUB_URL);
+        !handled && text.includes("ok=true") && text.includes("1 souvenir(s) · global 0") && text.includes(STUB_URL);
       verdict
         ? ok(`/mem0-status invoqué — « ${text} »`)
         : bad(`/mem0-status : handled=${handled}, notes=${text || "(aucune)"}`);

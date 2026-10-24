@@ -424,15 +424,16 @@ fi
 if section_on lint; then
 echo "── Lint TypeScript"
 
-# Lint + format du TypeScript de omp-mem0-req/ et test/ par le Biome épinglé de
-# scripts/lint.sh (périmètre et règles : biome.jsonc). Jamais sautée : un outil
+# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, scripts/ et test/
+# par le Biome épinglé de scripts/lint.sh (périmètre et règles : biome.jsonc).
+# Jamais sautée : un outil
 # absent ou d'une autre version (code 3) est un échec qui nomme la commande
 # d'installation. Aucun réseau ici — seul `lint.sh --prepare` télécharge.
 lint_out="$(bash scripts/lint.sh 2>&1)"
 lint_status=$?
 [ -n "$lint_out" ] && printf '%s\n' "$lint_out"
 case "$lint_status" in
-  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, test/)" ;;
+  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, scripts/, test/)" ;;
   3) fail "linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)" ;;
   *)
     lint_paths="$(printf '%s\n' "$lint_out" | grep -oE '^[^[:space:]:]+\.(ts|jsonc)' | awk '!seen[$0]++' | tr '\n' ' ')"
