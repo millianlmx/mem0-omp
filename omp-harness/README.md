@@ -802,6 +802,11 @@ Mémoire lit la mémoire de ce serveur, dont le même code porte l'adresse. Elle
 suivent `GET /v1/events` et relisent la boîte à chaque événement ; une coupure garde
 la dernière boîte, signalée hors ligne. « Session en direct », sur une feature, lit
 `GET /v1/runs/{id}/session` puis suit ses événements `session` : ce que l'agent écrit,
-son raisonnement et chaque outil, avec son résultat, en temps réel. Le client est partagé
+son raisonnement et chaque outil, avec son résultat, en temps réel — et, en onglets,
+les fichiers touchés et leurs différences, la sortie des tests en direct et la frise.
+L'Accueil montre les alertes de la veille et le coût des features ; Statistiques, la
+consommation, la comparaison des modèles, les tests instables et la santé du serveur ;
+l'iPhone suit une feature sur l'écran verrouillé (Live Activity, poussée par APNs
+quand `apns` est configuré). Le client est partagé
 (`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`
 § « Serveur de pipelines ».

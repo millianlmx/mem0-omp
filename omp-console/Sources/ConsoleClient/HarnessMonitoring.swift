@@ -7,6 +7,7 @@
 //
 // Aucun texte ici : les écrans traduisent les codes avec `PipelineServerText`.
 
+import ConsoleCore
 import Foundation
 
 // MARK: - Coût
@@ -144,6 +145,28 @@ public struct HarnessTimelineStep: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// L'issue d'une étape, telle qu'une frise la colore.
+public enum HarnessStepPhase: Sendable {
+    case running, done, failed, escalated, other
+}
+
+extension HarnessTimelineStep {
+    public var phase: HarnessStepPhase {
+        switch status {
+        case "running": .running
+        case "done": .done
+        case "failed": .failed
+        case "escalated": .escalated
+        default: .other
+        }
+    }
+}
+
+extension HarnessTestJob {
+    /// Le job s'est terminé au vert.
+    public var passed: Bool { outcome == "pass" }
+}
+
 /// Un job de tests sur la frise.
 public struct HarnessTimelineTest: Codable, Equatable, Sendable {
     public var at: Double
@@ -224,6 +247,9 @@ public struct HarnessChanges: Codable, Equatable, Sendable {
     public var files: [HarnessFileChange]
     public var added: Int
     public var removed: Int
+
+    /// Les fichiers touchés (le nom que lit l'app iOS, qui n'a pas de section « Fichiers »).
+    public var touched: [HarnessFileChange] { files }
 }
 
 /// Les différences d'un fichier (`GET /v1/runs/{id}/diff?path=…`).
@@ -397,4 +423,77 @@ public struct HarnessFlakyTest: Codable, Equatable, Sendable, Identifiable {
     public var lastAt: Double
 
     public var id: String { "\(repo)/\(command)" }
+}
+
+// MARK: - Lecture
+
+extension HarnessAlert {
+    /// L'alerte en une ligne, d'après sa sorte et ce qu'elle dit d'elle-même.
+    public var line: String {
+        switch sort {
+        case .stalled:
+            MonitoringText.alertStalled(minutes: detail.minutes, tool: detail.tool)
+        case .stepSlow:
+            MonitoringText.alertSlow(step: HarnessRun.label(forStep: detail.step ?? ""), minutes: detail.minutes, medianMin: detail.medianMin)
+        case .fixLoop:
+            MonitoringText.alertFixLoop(fixes: detail.fixes)
+        case .budgetExceeded:
+            MonitoringText.alertBudget(cost: detail.cost, threshold: detail.threshold, paused: detail.paused ?? false)
+        case nil:
+            MonitoringText.alertUnknown
+        }
+    }
+
+    public var symbol: String { MonitoringText.alertSymbol(kind) }
+}
+
+extension HarnessTimeline {
+    /// « /impl · terminée · 4 min · claude-sonnet » : une étape de la frise en une ligne.
+    public func line(for step: HarnessTimelineStep) -> String {
+        MonitoringText.stepLine(
+            label: HarnessRun.label(forStep: step.kind),
+            status: step.status,
+            duration: PipelineServerText.duration(duration(of: step)),
+            model: step.model
+        )
+    }
+
+    /// « 2. /specs » : la ligne d'une étape sur l'axe du graphique.
+    public func chartLabel(position: Int, step: HarnessTimelineStep) -> String {
+        MonitoringText.chartStep(position: position, label: HarnessRun.label(forStep: step.kind))
+    }
+
+    /// Le coût d'une étape, ou rien si elle n'a rien coûté.
+    public func costLine(for step: HarnessTimelineStep) -> String {
+        costByStep[step.kind].map(MonitoringText.cost) ?? ""
+    }
+}
+
+extension HarnessModelStats {
+    /// « 12 étapes · 1 en échec · médiane 4 min »
+    public var stepsLine: String {
+        MonitoringText.modelSteps(steps: steps, failed: failed, median: medianSec.map(PipelineServerText.duration))
+    }
+
+    /// « 25 % corrigées · 3 fusionnées · 1,20 $ »
+    public var outcomeLine: String {
+        MonitoringText.modelOutcome(corrected: correctedRate.map(PipelineServerText.percent), merged: mergedRuns, cost: cost)
+    }
+}
+
+extension HarnessFlakyTest {
+    /// « demo · Suite complète · 3 fois, dernière le 24/10/2026 »
+    public var line: String {
+        MonitoringText.flakyRow(
+            repo: repo,
+            scope: scope,
+            count: count,
+            last: Date(timeIntervalSince1970: lastAt / 1000).formatted(date: .numeric, time: .omitted)
+        )
+    }
+}
+
+extension HarnessFileChange {
+    /// « modifié · +12 −3 »
+    public var line: String { MonitoringText.fileLine(status: status, added: added, removed: removed) }
 }

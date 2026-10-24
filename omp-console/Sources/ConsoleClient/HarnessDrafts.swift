@@ -60,8 +60,8 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var retryRequest: HarnessRun?
     /// La feature fusionnée dont l'annulation (commit inverse) attend confirmation.
     @Published public var revertRequest: HarnessRun?
-    /// La feature dont la feuille « Session en direct » est ouverte.
-    @Published public var sessionRun: HarnessRun?
+    /// Le direct ouvert en feuille : celui d'une feature, ou de l'analyse d'un audit.
+    @Published public var sessionRequest: HarnessSessionRequest?
     @Published public var forgetAsked = false
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false
@@ -236,5 +236,28 @@ public final class HarnessDrafts: ObservableObject {
             answers[item.id] = nil
             reasons[item.id] = nil
         }
+    }
+}
+
+/// L'ouverture d'un direct : sa cible et le titre de sa feuille.
+public struct HarnessSessionRequest: Identifiable, Equatable, Sendable {
+    public var target: HarnessSessionTarget
+    public var title: String
+
+    public init(target: HarnessSessionTarget, title: String) {
+        self.target = target
+        self.title = title
+    }
+
+    public init(run: HarnessRun) {
+        self.init(target: .run(run.id), title: run.title)
+    }
+
+    public var id: HarnessSessionTarget { target }
+
+    /// La feature suivie, si c'en est une (fichiers, tests et frise n'existent que pour elle).
+    public var runId: String? {
+        if case let .run(id) = target { return id }
+        return nil
     }
 }

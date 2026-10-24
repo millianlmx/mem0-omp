@@ -313,6 +313,19 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 - Une proposition d'audit retenue porte la coche du symbole système, et le trait
   « sélectionné » pour VoiceOver ; aucun caractère « ✓ ».
   `[garde: ios-finitions-composants/AC-2]`
+- « Session en direct » (menu contextuel d'une feature, bouton d'un audit) ouvre une
+  feuille « page » à onglets segmentés — Direct, Fichiers, Tests, Frise — dans une
+  liste groupée native ; les différences d'un fichier se poussent dans la pile de la
+  feuille. Tous ses mots viennent de `MonitoringText` et `PipelineServerText`.
+  `[garde: design-ios/AC-5]`
+- Les alertes de la veille du serveur sont en tête de l'Accueil, en orange, et chaque
+  rangée de feature porte son coût et ses alertes ; Statistiques ajoute la
+  consommation, les modèles, les tests instables et la santé du serveur. Toute durée
+  y garde ses chiffres à chasse fixe. `[garde: ios-finitions-composants/AC-6]`
+- « Suivre sur l'écran verrouillé » démarre la Live Activity de la feature
+  (extension `OMPConsoleWidgets`, troisième cible du projet) : écran verrouillé et
+  Dynamic Island, symbole et teinte doublés par le texte de l'état.
+  `[garde: coque-ios/AC-1]`
 
 ## Mémoire (feature `ios-memoire`)
 

@@ -135,6 +135,7 @@ struct HarnessHomeView: View {
             } header: {
                 Text(server.address ?? "")
             }
+            HarnessAlertsSection(drafts: drafts, inbox: inbox)
             HarnessInboxSections(server: server, drafts: drafts, inbox: inbox)
         }
         .accessibilityIdentifier("home.harness")
@@ -339,6 +340,15 @@ struct HarnessAuditsView: View {
                 proposalLabel(proposal)
             }
         }
+        if audit.canFollowSession {
+            Button {
+                drafts.sessionRequest = HarnessSessionRequest(target: .audit(audit.id), title: audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
+            } label: {
+                Label(MonitoringText.auditSessionTitle, systemImage: PipelineServerText.sessionSymbol)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("audit.session.open")
+        }
         if audit.isOpen {
             HStack {
                 if audit.isProposed {
@@ -415,6 +425,16 @@ struct HarnessStatsView: View {
                 } header: {
                     Text(PipelineServerText.statsTests)
                 }
+                if let usage = stats.usage {
+                    HarnessUsageSection(usage: usage)
+                }
+                if let models = stats.models {
+                    HarnessModelsSection(models: models)
+                }
+                if let flaky = stats.tests.flaky {
+                    HarnessFlakySection(flaky: flaky)
+                }
+                HarnessHealthSection(server: server)
                 Section {
                     row(PipelineServerText.runners, PipelineServerText.slots(used: stats.scheduler.runner.used, capacity: stats.scheduler.runner.capacity))
                     row(PipelineServerText.heavySlots, PipelineServerText.slots(used: stats.scheduler.heavy.used, capacity: stats.scheduler.heavy.capacity))

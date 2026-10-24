@@ -333,18 +333,48 @@ exécuter une étape elle-même.
   jours, taux de fusion, délai médian jusqu'à la fusion, corrections par fusion),
   étapes (nombre, échecs, durée médiane), tests (repris du cache, relancés après un
   manque de mémoire) et capacité du serveur (runners, slots lourds, mémoire libre).
-- **Session en direct.** Sur une feature qui n'est ni fusionnée ni arrêtée,
-  « Session en direct » (bouton de la rangée sur le Mac, menu contextuel sur iOS)
-  ouvre une feuille qui montre en temps réel la session OMP de l'agent du serveur :
-  ses paragraphes, son raisonnement (replié), chaque outil avec son intention ou sa
-  commande, son état et la fin de son résultat (replié), et les signaux de la
-  session (contexte compacté, réessai du fournisseur), groupés par étape. L'outil du
-  moment s'affiche en tête ; « Suivre la fin » garde la dernière entrée à l'écran.
-  La feuille lit le tampon du serveur (`GET /v1/runs/{id}/session`, ses 200
-  dernières entrées) puis suit `GET /v1/events?run={id}&live=1` : chaque événement
-  `session` remplace l'entrée de même `seq`. Une coupure est reprise, tampon relu ;
-  un refus (serveur trop ancien, feature inconnue) arrête le direct avec sa cause.
-  Le texte se sélectionne. Le serveur masque les secrets reconnus avant d'envoyer.
+- **Session en direct.** Sur une feature, « Session en direct » (bouton de la
+  rangée sur le Mac, menu contextuel sur iOS) ouvre une feuille à quatre onglets :
+  - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
+    paragraphes, son raisonnement (replié), chaque outil avec son intention ou sa
+    commande, son état et la fin de son résultat (replié), et les signaux de la
+    session (contexte compacté, réessai du fournisseur), groupés par étape. L'outil
+    et le job de tests du moment, les alertes et le coût s'affichent en tête ;
+    « Suivre la fin » garde la dernière entrée à l'écran. La session est écrite en
+    base par le serveur : une feature finie se rejoue, « Afficher les entrées
+    précédentes » remonte page par page (`?before=`). La feuille lit
+    `GET /v1/runs/{id}/session` puis suit `GET /v1/events?run={id}&live=1` : chaque
+    événement `session` remplace l'entrée de même `seq`. Une coupure est reprise,
+    tampon relu ; un refus (serveur trop ancien, feature inconnue) arrête le direct
+    avec sa cause. Le serveur masque les secrets reconnus avant d'envoyer ;
+  - **Fichiers** : les fichiers touchés (`GET /v1/runs/{id}/changes`, du dossier de
+    la feature, sinon de sa version fusionnée), relus quand un outil se termine ; le
+    choix d'un fichier montre ses différences (`/diff?path=`) ;
+  - **Tests** : la sortie des derniers jobs de tests, en direct (`test_output` sur
+    le même flux, `/tests/live` à l'ouverture) ;
+  - **Frise** : les étapes sur l'axe du temps (Swift Charts), les événements
+    marquants, les décisions, les tests et le coût par étape (`/timeline`).
+
+  Un audit a son « Analyse en direct » (`GET /v1/audits/{id}/session`, flux filtré
+  par `audit=`). Le texte se sélectionne partout.
+- **Alertes et coût.** La veille du serveur (agent muet, étape lente, boucle de
+  corrections, budget dépassé) s'affiche en tête de l'Accueil — chaque alerte ouvre
+  le direct de sa feature — et sur la rangée de la feature, avec son coût
+  (`alerts` et `costs` de `GET /v1/inbox`).
+- **Statistiques du monitoring.** En plus des compteurs : la consommation des agents
+  (depuis le début, sur 7 jours, jour par jour), la comparaison des modèles
+  (étapes, échecs, durée médiane, implémentations corrigées, features fusionnées,
+  coût), les tests instables et la santé du serveur (`GET /v1/metrics` : agents et
+  tests occupés, file d'attente, mémoire libre, limites de débit), relue au rythme
+  du serveur tant que l'écran est ouvert.
+- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu
+  contextuel d'une feature, démarre sa Live Activity (extension
+  `ios/OMPConsoleWidgets`) : état, étape, outil du moment, alerte et coût, sur
+  l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
+  ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
+  app fermée, le serveur la tient à jour par APNs s'il a une clé (`apns` de sa
+  configuration, voir `omp-harness/README.md`). Une feature terminée clôt son
+  activité.
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois une section de catalogue ouverte, le catalogue. Une coupure
@@ -1410,7 +1440,8 @@ omp-console/
 │   ├── Server/                    les sections de Pilotage, servies par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun, Accueil, Pipelines, Projet, Audit, Statistiques
 │   │   ├── HarnessInboxSections.swift la boîte de l'humain et ses gestes
-│   │   ├── HarnessSessionView.swift   la feuille « Session en direct » d'une feature
+│   │   ├── HarnessSessionView.swift   la feuille « Session en direct » d'une feature ou d'un audit
+│   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
 │   │   └── ServerSheet.swift      la feuille « Serveur » (adresse, jeton, oubli)
 │   ├── Files/                     la section Fichiers (git en lecture seule, arbre, diff, veille)
 │   ├── Terminal/                  la section Terminal (PTY, émulateur, rendu)
@@ -1429,17 +1460,19 @@ omp-console/
 │   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
 │   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
-│   ├── HarnessSession.swift       le direct de la session d'une feature (entrées, tampon, événements)
+│   ├── HarnessSession.swift       le direct de la session d'une feature ou d'un audit (entrées, pages, événements)
+│   ├── HarnessMonitoring.swift    le contrat du monitoring (coût, alertes, frise, fichiers, tests, santé, modèles)
+│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
-│   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines
+│   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines et du monitoring
 │   ├── Memory/                    la lecture des réponses de la mémoire et le noyau du graphe
 │   ├── Files/MarkdownDocument.swift  le rendu Markdown en blocs
 │   ├── Setup/SetupText.swift      les mots de la préparation
 │   └── Support/                   JSON, chemins, URL
 ├── Tests/OMPConsoleTests/         la suite Swift Testing de la coque
 ├── Tests/ConsoleClientTests/      la suite hermétique des clients distants
-├── ios/                           l'app iOS/iPadOS (voir « Coque iOS »)
+├── ios/                           l'app iOS/iPadOS et son extension de widgets (voir « Coque iOS »)
 ├── Bundle/Info.plist              le plist du bundle .app (et `Bundle/AppIcon.icns`)
 └── build/                         artefacts (bundle .app, captures), ignorés par git
 ```
@@ -1483,7 +1516,8 @@ accès :
   l'humain, lancement d'une feature, d'un projet ou d'un audit, statistiques —, sur
   le même `HarnessModel` (voir « Serveur de pipelines »). Les listes se tirent pour
   actualiser, et une feature en cours a son menu contextuel « Session en direct »
-  (`IOSSessionSheet.swift`) et « Arrêter la feature ».
+  (`IOSSessionSheet.swift`), « Suivre sur l'écran verrouillé »
+  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`) et « Arrêter la feature ».
 - **La mémoire du serveur** pour la section Mémoire (`MemoryAccess`, `MemoryReader`
   dans `ConsoleClient`) : son adresse va aux préférences, son jeton au trousseau.
   Sans elle, la Mémoire affiche « Mémoire non reliée » et « Relier le serveur », qui

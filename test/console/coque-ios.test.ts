@@ -241,12 +241,13 @@ function pbxprojFaults(root: string): string[] {
   const groupPattern =
     /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{\s*isa = PBXFileSystemSynchronizedRootGroup;[\s\S]*?path = ([A-Za-z0-9_]+);/g;
   for (const match of syncSection.matchAll(groupPattern)) groupIds.set(match[1], match[2]);
-  for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests"]) {
+  for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests", "OMPConsoleWidgets"]) {
     if (![...groupIds.values()].includes(expected)) faults.push(`groupe synchronisé ${expected} absent`);
   }
 
   const targets = nativeTargets(text);
-  if (targets.length !== 2) faults.push(`${targets.length} cibles natives (2 attendues)`);
+  // L'app, ses tests et l'extension de widgets (Live Activities).
+  if (targets.length !== 3) faults.push(`${targets.length} cibles natives (3 attendues)`);
   for (const [id, name] of groupIds) {
     const owner = targets.find((t) => t.groups.includes(id));
     if (owner === undefined) faults.push(`groupe synchronisé ${name} rattaché à aucune cible`);
@@ -260,7 +261,7 @@ function pbxprojFaults(root: string): string[] {
   for (const section of ["PBXSourcesBuildPhase"]) {
     const body = text.split(`/* Begin ${section} section */`)[1]?.split(`/* End ${section} section */`)[0] ?? "";
     const phases = body.match(/isa = PBXSourcesBuildPhase;[\s\S]*?runOnlyForDeploymentPostprocessing = 0;/g) ?? [];
-    if (phases.length !== 2) faults.push(`${phases.length} phases ${section} (2 attendues)`);
+    if (phases.length !== 3) faults.push(`${phases.length} phases ${section} (3 attendues)`);
     for (const phase of phases) {
       if (!/files = \(\s*\)/.test(phase)) faults.push(`une phase ${section} liste des fichiers (files non vide)`);
     }

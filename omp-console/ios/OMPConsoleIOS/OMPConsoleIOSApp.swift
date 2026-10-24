@@ -24,6 +24,8 @@ struct OMPConsoleIOSApp: App {
     @StateObject private var memory: MemoryAccess
     @StateObject private var server: HarnessModel
     @StateObject private var drafts = HarnessDrafts()
+    /// Les Live Activities des features suivies sur l'écran verrouillé.
+    @StateObject private var activities = IOSLiveActivityCenter()
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -52,6 +54,10 @@ struct OMPConsoleIOSApp: App {
                 state: initialState,
                 memoryRecipe: memoryRecipe
             )
+            .environmentObject(activities)
+            // Chaque boîte relue et chaque outil du direct suivi tiennent les Live Activities à jour.
+            .onReceive(server.$inbox) { _ in activities.sync(with: server) }
+            .onReceive(server.$session) { _ in activities.sync(with: server) }
         }
         .commands { IOSKeyboardCommands() }
     }
