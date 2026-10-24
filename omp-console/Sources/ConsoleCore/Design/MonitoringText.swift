@@ -346,14 +346,4 @@ public enum MonitoringText {
     public static let activityStart = "Suivre sur l’écran verrouillé"
     public static let activityStop = "Ne plus suivre sur l’écran verrouillé"
     public static let activitySymbol = "lock.iphone"
-    public static let activityHint = "L’étape et l’outil en cours s’affichent sur l’écran verrouillé et dans la Dynamic Island."
-    public static let widgetName = "Features en cours"
-    public static let widgetDescription = "Ce qui attend votre décision et les features que le serveur conduit."
-    public static let widgetEmpty = "Rien n’attend votre décision."
-    public static let widgetNotConfigured = "Ouvrez OMP Console pour relier le serveur."
-
-    /// « 2 décisions attendent · 3 en cours »
-    public static func widgetLine(pending: Int, active: Int) -> String {
-        "\(pending == 1 ? "1 décision attend" : "\(pending) décisions attendent") · \(active) en cours"
-    }
 }
