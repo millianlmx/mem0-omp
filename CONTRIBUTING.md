@@ -36,3 +36,4 @@ Une pull request ordinaire ne monte jamais une version : le job `check` de la CI
 - [DEVELOPPEMENT.md § « CI et release »](DEVELOPPEMENT.md) : workflows CI et release.
 - [PUBLISHING.md](PUBLISHING.md) : publication et mise à jour.
 - [DEVELOPPEMENT.md](DEVELOPPEMENT.md) : l'arborescence du dépôt et le contrat du service mémoire.
+- [SECURITY.md](SECURITY.md) : signaler une vulnérabilité en privé, jamais en issue publique.
