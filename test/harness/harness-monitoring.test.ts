@@ -286,7 +286,7 @@ test("harness-monitoring/AC-5 : la veille lève une alerte par cause — agent m
   ];
   now += 14 * 60_000;
   monitor.watch(watched());
-  assert.deepEqual(events, [], "14 min : rien");
+  assert.equal(events.length, 0, "14 min : rien");
   now += 6 * 60_000;
   monitor.watch(watched());
   monitor.watch(watched());
