@@ -25,9 +25,10 @@ import { HumanLoop } from "./gestures.ts";
 import { newId } from "./ids.ts";
 import { changesOf, fileDiffOf, timelineOf } from "./inspect.ts";
 import { Metrics } from "./metrics.ts";
+import type { BudgetDue } from "./monitor.ts";
 import type { StepKind } from "./machine.ts";
-import { ACTIVE_STATES, crashed, nextAfter, pausedForBudget, recovered } from "./machine.ts";
-import type { FailCause } from "./machine.ts";
+import { ACTIVE_STATES, crashed, heldForDailyBudget, nextAfter, pausedForBudget, recovered } from "./machine.ts";
+import type { FailCause, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
@@ -88,6 +89,8 @@ export class Orchestrator {
   readonly #live = new Map<string, LiveRun & { slot: Slot }>();
   /** Le dernier refus d'admission annoncé par run : un refus n'est écrit qu'une fois, pas à chaque tour. */
   readonly #refused = new Map<string, string>();
+  /** Les runs dont la veille a arrêté l'étape sur leur plafond de coût, et ce plafond. */
+  readonly #budgetStops = new Map<string, BudgetDue>();
   /** Les runs dont les modules sont en cours de déduction : pas candidats avant. */
   readonly #inferring = new Set<string>();
   readonly #tickMs: number;
@@ -397,6 +400,21 @@ export class Orchestrator {
       activeByGroup.get(c.group) ?? 0,
       c.run.createdAt,
     ];
+    // Le plafond journalier du serveur atteint : personne ne part, chacun sait pourquoi (une fois).
+    const daily = candidates.length > 0 ? this.#ctx.monitor.dailyBudgetDue() : null;
+    if (daily) {
+      const detail = `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
+      for (const candidate of candidates) {
+        if (this.#refused.get(candidate.run.id)?.split(":")[0] === "daily_budget") continue;
+        this.#ctx.event("admission_refused", candidate.run.id, {
+          reason: "daily_budget",
+          detail,
+          waiting: candidates.length,
+        });
+        this.#refused.set(candidate.run.id, `daily_budget: ${detail}`);
+      }
+      return;
+    }
     while (candidates.length > 0) {
       candidates.sort((a, b) => compareRanks(rank(a), rank(b)));
       const next = candidates.shift() as Candidate;
@@ -479,8 +497,41 @@ export class Orchestrator {
           );
           break;
         }
-        const outcome = await this.#steps.execute(live, run);
-        if (live.abort.signal.aborted) break;
+        // Le plafond journalier du serveur : la feature rend son slot avant l'étape, l'admission la retient.
+        const daily = this.#ctx.monitor.dailyBudgetDue();
+        if (daily) {
+          this.#ctx.transition(
+            run,
+            heldForDailyBudget(
+              { step: run.step, fixes: run.fixes, attempts: run.attempts },
+              daily.spent,
+              daily.ceiling,
+            ),
+            ["running"],
+          );
+          break;
+        }
+        // Pendant l'étape, la veille l'arrête dès que son coût franchit le plafond (`pauseOnBudget`).
+        const release = this.#ctx.monitor.guard(run.id, (due) => {
+          this.#budgetStops.set(live.runId, due);
+          live.abort.abort();
+        });
+        let outcome: StepOutcome;
+        try {
+          outcome = await this.#steps.execute(live, run);
+        } finally {
+          release();
+        }
+        if (live.abort.signal.aborted) {
+          const stopped = this.#budgetStops.get(live.runId);
+          this.#budgetStops.delete(live.runId);
+          if (stopped) {
+            run = store.getRun(live.runId) as RunRow;
+            const cursor = { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts };
+            this.#ctx.transition(run, pausedForBudget(cursor, stopped.cost, stopped.threshold), ["running"]);
+          }
+          break;
+        }
         run = store.getRun(live.runId) as RunRow;
         const transition = nextAfter(
           { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts, lastFailCause: run.lastFailCause },

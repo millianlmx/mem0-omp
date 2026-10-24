@@ -1612,6 +1612,11 @@ export class Store {
     return num(this.#get("SELECT COALESCE(SUM(cost), 0) AS cost FROM usage WHERE run_id = ?", runId) as Row, "cost");
   }
 
+  /** Ce que tout le serveur a dépensé depuis `since` (runs et audits). */
+  costSince(since: number): number {
+    return num(this.#get("SELECT COALESCE(SUM(cost), 0) AS cost FROM usage WHERE at >= ?", since) as Row, "cost");
+  }
+
   /** Le coût de chaque run de la liste qui a consommé quelque chose. */
   runCosts(runIds: readonly string[]): Record<string, number> {
     if (runIds.length === 0) return {};

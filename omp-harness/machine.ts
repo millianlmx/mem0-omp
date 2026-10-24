@@ -245,6 +245,18 @@ export function pausedForBudget(cursor: RunCursor, cost: number, threshold: numb
   });
 }
 
+/**
+ * Le plafond journalier du serveur atteint (`monitoring.dailyBudgetUsd`) : avant sa prochaine
+ * étape, la feature rend son slot et retourne en file, où l'admission la retient jusqu'à
+ * minuit UTC ou un plafond relevé. Elle reprend seule, à la même étape.
+ */
+export function heldForDailyBudget(cursor: RunCursor, spent: number, ceiling: number): Transition {
+  return to("queued", cursor.step, cursor, {
+    attempts: cursor.attempts,
+    reason: `plafond journalier atteint : ${spent.toFixed(2)} $ dépensés aujourd'hui (UTC) pour ${ceiling.toFixed(2)} $ — reprise à minuit UTC ou plafond relevé`,
+  });
+}
+
 /** La relance par l'humain d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
 export function retried(cursor: RunCursor): Transition {
   return to("queued", cursor.step, cursor, { attempts: 0, notBefore: null, reason: "relancé par l'humain" });

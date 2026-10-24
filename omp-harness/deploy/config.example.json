@@ -64,9 +64,19 @@
   "challenge": { "steps": ["req", "specs"], "tier": "heavy" },
   "oracle": { "url": "http://127.0.0.1:8321", "token": null },
   "events": { "retentionDays": 30 },
+  "monitoring": { "runBudgetUsd": null, "pauseOnBudget": false, "dailyBudgetUsd": null },
   "notify": {
     "url": "https://ntfy.sh/<topic>",
-    "events": ["escalations", "specs_ready", "verdict", "run_failed", "project_done", "merged"]
+    "events": [
+      "escalations",
+      "specs_ready",
+      "verdict",
+      "run_failed",
+      "project_done",
+      "merged",
+      "budget_exceeded",
+      "daily_budget_reached"
+    ]
   },
   "memory": { "runnerMode": true },
   "repos": [
