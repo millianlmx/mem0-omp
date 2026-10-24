@@ -58,8 +58,10 @@
     "autoMergeRisk": "medium",
     "escalationTimeoutSec": 3600,
     "mergeRetries": 3,
-    "mergeWaitSec": 7200
+    "mergeWaitSec": 7200,
+    "crossProvider": true
   },
+  "challenge": { "steps": ["req", "specs"], "tier": "heavy" },
   "oracle": { "url": "http://127.0.0.1:8321", "token": null },
   "events": { "retentionDays": 30 },
   "notify": {

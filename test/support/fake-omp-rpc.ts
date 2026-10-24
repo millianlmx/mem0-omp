@@ -6,7 +6,7 @@
 // à la place du binaire `omp`, avec les arguments que le service a construits.
 //
 // Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`,
-// `fix`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
+// `fix`, `contradicteur`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "error": { "message", "httpStatus" } }    termine le prompt en erreur
@@ -56,7 +56,7 @@ function occurrence(step: string): Action[] {
 function stepOf(message: string): string | null {
   const first = message.split("\n")[0] ?? "";
   if (first.startsWith("# /impl --fix")) return "fix";
-  const match = /^# \/(req|specs|impl|review|audit)\b/.exec(first);
+  const match = /^# \/(req|specs|impl|review|audit|contradicteur)\b/.exec(first);
   return match ? (match[1] as string) : null;
 }
 

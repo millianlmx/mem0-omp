@@ -122,6 +122,50 @@ export function parseAcIds(specsMd: string): string[] {
   return ids;
 }
 
+/** Le texte d'une ligne de critère, sans puce ni gras, espaces resserrés : ce qui fait son contrat. */
+function criterionText(line: string): string {
+  return line
+    .replace(/^\s*(?:[-*]\s*)?/, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Chaque `AC-n` de specs.md (première ligne qui commence par l'id) et son texte. */
+export function parseAcLines(specsMd: string): Map<string, string> {
+  const lines = new Map<string, string>();
+  for (const line of specsMd.split("\n")) {
+    const match = AC_ID.exec(line);
+    if (match && !lines.has(match[1])) lines.set(match[1], criterionText(line));
+  }
+  return lines;
+}
+
+/** Un critère qui a bougé depuis la validation des specs : `validated` null = ajouté, `current` null = retiré. */
+export type CriterionDrift = { id: string; validated: string | null; current: string | null };
+
+/**
+ * Les critères des specs VALIDÉES que la suite du run a retirés ou réécrits, puis ceux
+ * qu'elle a ajoutés. /impl peut corriger une spec ambiguë ; il ne peut pas, sans
+ * l'humain, affaiblir le contrat sur lequel l'auto-merge juge.
+ */
+export function criteriaDrift(validatedMd: string, currentMd: string): CriterionDrift[] {
+  const validated = parseAcLines(validatedMd);
+  const current = parseAcLines(currentMd);
+  const drift: CriterionDrift[] = [];
+  for (const [id, text] of validated) {
+    const now = current.get(id) ?? null;
+    if (now !== text) drift.push({ id, validated: text, current: now });
+  }
+  for (const [id, text] of current) if (!validated.has(id)) drift.push({ id, validated: null, current: text });
+  return drift;
+}
+
+/** Une ligne lisible par critère qui a bougé : `AC-2 réécrit`, `AC-3 retiré`, `AC-4 ajouté`. */
+export function driftLabel(drift: CriterionDrift): string {
+  return `${drift.id} ${drift.current === null ? "retiré" : drift.validated === null ? "ajouté" : "réécrit"}`;
+}
+
 /** Les faits que le SERVICE établit, indépendamment de ce que dit la revue. */
 export type MergeEvidence = {
   /** Le résultat de la suite complète sur l'arbre courant (cache heavy). */
@@ -129,8 +173,10 @@ export type MergeEvidence = {
   diffLines: number;
   maxDiffLines: number;
   openEscalations: number;
-  /** Les `AC-n` de specs.md : chacun doit figurer dans `criteria` en `pass`. */
+  /** Les `AC-n` des specs validées et ceux ajoutés depuis : chacun doit figurer dans `criteria` en `pass`. */
   acIds: string[];
+  /** Les critères qui ont bougé depuis la validation des specs (`criteriaDrift`). */
+  specsDrift: CriterionDrift[];
   /** Le risque maximal que l'auto-merge accepte (`review.autoMergeRisk`). */
   autoMergeRisk: "low" | "medium";
   /** Les fichiers que git voit modifiés depuis la base : la revue doit tous les avoir lus. */
@@ -146,8 +192,9 @@ const RISK_RANK: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
 
 /**
  * Auto-merge si tout est établi : aucun bloquant, risque sous le plafond, suite
- * complète verte, petite PR, aucune escalade ouverte, confiance forte, chaque AC de
- * specs.md prouvé `pass` par la revue, et tous les fichiers touchés relus. Sinon
+ * complète verte, petite PR, aucune escalade ouverte, confiance forte, chaque AC des
+ * specs validées prouvé `pass` par la revue, aucun d'eux retiré ou réécrit depuis, et
+ * tous les fichiers touchés relus. Sinon
  * l'humain lit le verdict — et le code quand la revue doute (confiance faible ou
  * points non vérifiés).
  */
@@ -165,6 +212,9 @@ export function mergeDecision(verdict: Verdict, evidence: MergeEvidence): MergeD
   const unproven = verdict.criteria.filter((c) => evidence.acIds.includes(c.id) && c.status !== "pass");
   if (unproven.length > 0)
     reasons.push(`critère(s) non prouvé(s) : ${unproven.map((c) => `${c.id} ${c.status}`).join(", ")}`);
+  const weakened = evidence.specsDrift.filter((drift) => drift.validated !== null);
+  if (weakened.length > 0)
+    reasons.push(`critère(s) validé(s) modifié(s) depuis /specs : ${weakened.map(driftLabel).join(", ")}`);
   const unread = evidence.touchedFiles.filter((file) => !verdict.files.includes(file));
   if (unread.length > 0) reasons.push(`fichier(s) touchés non relus : ${unread.join(", ")}`);
   const unverifiedAc = verdict.unverified.filter((item) => /\bAC-\d+\b/.test(item));

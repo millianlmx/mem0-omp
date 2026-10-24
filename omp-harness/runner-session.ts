@@ -59,6 +59,22 @@ export function modelLabel(model: ModelChoice | null): string | null {
   return model ? `${model.provider}/${model.model}` : null;
 }
 
+/** Le fournisseur d'un libellé `fournisseur/modèle` (celui des étapes en base), ou `null`. */
+export function providerOfLabel(label: string | null): string | null {
+  const slash = label?.indexOf("/") ?? -1;
+  return label && slash > 0 ? label.slice(0, slash) : null;
+}
+
+/**
+ * Où commencer la chaîne pour un regard indépendant : le premier modèle d'un AUTRE
+ * fournisseur que `avoid`, sinon le début (un seul fournisseur : on fait avec).
+ */
+export function chainStart(chain: readonly ModelChoice[], avoid: string | null): number {
+  if (avoid === null) return 0;
+  const index = chain.findIndex((choice) => choice.provider !== avoid);
+  return index < 0 ? 0 : index;
+}
+
 /** L'erreur d'un prompt avec sa cause et le délai demandé par le fournisseur. */
 function annotate(error: PromptError): PromptError & { cause: PromptErrorCause; retryAfterMs: number | null } {
   return { ...error, cause: error.cause ?? classifyPromptError(error), retryAfterMs: parseRetryAfter(error) };
@@ -112,12 +128,22 @@ export class RunnerSession {
     return modelLabel(this.#model);
   }
 
+  get provider(): string | null {
+    return this.#model?.provider ?? null;
+  }
+
   /**
    * Un runner prêt pour `tier` : celui qui vit déjà (review ⇄ fix garde sa
    * conversation, seul le modèle suit le tier), sinon un nouveau, sous `unit`.
-   * Rend `true` si le runner a été réutilisé.
+   * `avoidProvider` : un runner NEUF commence sa chaîne au premier modèle d'un autre
+   * fournisseur (le contradicteur, la revue). Rend `true` si le runner a été réutilisé.
    */
-  async open(tier: Tier, unit: string, signal: AbortSignal): Promise<boolean> {
+  async open(
+    tier: Tier,
+    unit: string,
+    signal: AbortSignal,
+    options: { avoidProvider?: string | null } = {},
+  ): Promise<boolean> {
     const { config, scheduler } = this.#ctx;
     if (this.#runner?.alive) {
       if (this.#tier !== tier) {
@@ -130,7 +156,8 @@ export class RunnerSession {
       }
       return true;
     }
-    const pick = await scheduler.waitModel(tier, modelChain(config, tier), 0, signal);
+    const chain = modelChain(config, tier);
+    const pick = await scheduler.waitModel(tier, chain, chainStart(chain, options.avoidProvider ?? null), signal);
     this.#tier = tier;
     this.#model = pick?.choice ?? null;
     this.#modelIndex = pick?.index ?? 0;

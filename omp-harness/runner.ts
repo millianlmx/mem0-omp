@@ -12,6 +12,7 @@
 // ses clés.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { FINDING_KINDS, MAX_FINDINGS, SEVERITIES } from "./challenge.ts";
 import { launch } from "./config.ts";
 import type { HarnessConfig, ModelChoice } from "./config.ts";
 import type { StepKind } from "./machine.ts";
@@ -439,13 +440,51 @@ const AUDIT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const CHALLENGE_TOOL: HostToolDefinition = {
+  name: "challenge_report",
+  label: "Harness — constats du contradicteur",
+  description:
+    "Rend les constats du contradicteur, une fois, à la fin (la liste peut être vide). Chaque constat vise un id de l'artefact (`B-n`, `AC-n`, `S-n`) ou rien, " +
+    "dit son type et sa gravité (`bloquant` : le résultat ne serait pas ce que le demandeur voulait ; `majeur` : un trou que les tests ne verraient pas ; `mineur` : pour mémoire), " +
+    "cite l'extrait qui le PROUVE (`evidence`, obligatoire) et propose une correction.",
+  parameters: {
+    type: "object",
+    properties: {
+      findings: {
+        type: "array",
+        maxItems: MAX_FINDINGS,
+        items: {
+          type: "object",
+          properties: {
+            target: { type: "string", description: "B-n, AC-n ou S-n ; vide pour l'artefact entier." },
+            kind: { type: "string", enum: [...FINDING_KINDS] },
+            severity: { type: "string", enum: [...SEVERITIES] },
+            claim: { type: "string" },
+            evidence: {
+              type: "string",
+              description: "L'extrait de la demande, de l'artefact ou du dépôt (fichier:ligne).",
+            },
+            suggestion: { type: "string" },
+          },
+          required: ["target", "kind", "severity", "claim", "evidence", "suggestion"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["findings"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
- * Les outils hôtes d'une étape (ou de l'audit, qui ne décide ni ne teste rien) :
- * `checkpoint` et `set_modules` partout, `split_feature` en specs et impl, `run_tests`
- * dès /impl, `review_verdict` en revue seulement.
+ * Les outils hôtes d'une étape (ou de l'audit et du contradicteur, qui ne décident ni
+ * ne testent rien) : `checkpoint` et `set_modules` partout, `split_feature` en specs et
+ * impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
  */
-export function hostToolsFor(step: StepKind | "audit"): HostToolDefinition[] {
+export function hostToolsFor(step: StepKind | "audit" | "challenge"): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
+  if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
