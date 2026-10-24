@@ -10,6 +10,9 @@
 //
 // Le fichier (`clientsFile`, 0600) est relu à chaque changement de date : un client
 // ajouté ou révoqué par la ligne de commande vaut tout de suite, sans redémarrage.
+// Un fichier illisible (édité à la main, JSON cassé) ne casse pas l'API : le dernier
+// jeu de clients lu reste en vigueur et l'erreur est journalisée une fois par version
+// du fichier.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -49,14 +52,25 @@ export function canSeeRepo(client: Client, repo: string): boolean {
 export class ClientRegistry {
   readonly #file: string | null;
   readonly #legacy: Buffer | null;
+  readonly #log: (line: string) => void;
   #clients: StoredClient[] = [];
+  /** L'erreur de lecture de la version courante du fichier (`null` : lue) : aucune écriture par-dessus. */
+  #broken: string | null = null;
   /** La signature du fichier lu (date et taille) : relu dès qu'elle change. */
   #seen = "";
 
-  /** `file` : le fichier des clients (`null` : seul le jeton historique) ; `legacyToken` : le client `admin`. */
-  constructor(file: string | null, legacyToken: string | null = null) {
+  /**
+   * `file` : le fichier des clients (`null` : seul le jeton historique) ; `legacyToken` : le
+   * client `admin` ; `log` : où dire qu'un fichier illisible a été ignoré.
+   */
+  constructor(
+    file: string | null,
+    legacyToken: string | null = null,
+    log: (line: string) => void = (line) => console.error(`[omp-harness] ${line}`),
+  ) {
     this.#file = file;
     this.#legacy = legacyToken ? digest(legacyToken) : null;
+    this.#log = log;
     this.#reload();
   }
 
@@ -68,11 +82,25 @@ export class ClientRegistry {
     } catch {
       this.#clients = [];
       this.#seen = "";
+      this.#broken = null;
       return;
     }
     const seen = `${stat.mtimeMs}:${stat.size}:${stat.ino}`;
     if (seen === this.#seen) return;
-    const parsed = JSON.parse(fs.readFileSync(this.#file, "utf8")) as Partial<ClientsFile>;
+    // Cette version du fichier est jugée une fois : lue, ou ignorée (et dite) jusqu'à la suivante.
+    this.#seen = seen;
+    let parsed: Partial<ClientsFile>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(this.#file, "utf8")) as Partial<ClientsFile>;
+      if (parsed === null || typeof parsed !== "object") throw new Error("la racine doit être un objet");
+    } catch (err) {
+      this.#broken = err instanceof Error ? err.message : String(err);
+      this.#log(
+        `clients : ${this.#file} illisible, ${this.#clients.length} client(s) de la dernière lecture gardé(s) — ${this.#broken}`,
+      );
+      return;
+    }
+    this.#broken = null;
     this.#clients = Array.isArray(parsed.clients)
       ? parsed.clients.filter(
           (entry) =>
@@ -82,7 +110,12 @@ export class ClientRegistry {
             ROLES.includes(entry.role),
         )
       : [];
-    this.#seen = seen;
+  }
+
+  /** Relu, et réécrivable : réécrire un fichier illisible effacerait les clients qu'il déclare. */
+  #reloadForWrite(): void {
+    this.#reload();
+    if (this.#broken !== null) throw new Error(`${this.#file} illisible, corrige-le d'abord : ${this.#broken}`);
   }
 
   #write(): void {
@@ -122,7 +155,7 @@ export class ClientRegistry {
 
   /** Crée un client et rend son jeton, montré UNE fois (seule son empreinte est gardée). */
   add(name: string, role: Role, repos: string[] | "*"): { client: Client; token: string } {
-    this.#reload();
+    this.#reloadForWrite();
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name))
       throw new Error(`nom de client invalide : ${name} (lettres, chiffres, . _ -)`);
     if (name === LEGACY_CLIENT || this.#clients.some((client) => client.name === name))
@@ -145,7 +178,7 @@ export class ClientRegistry {
 
   /** Révoque un client : son jeton cesse de valoir à la requête suivante. */
   revoke(name: string): boolean {
-    this.#reload();
+    this.#reloadForWrite();
     const before = this.#clients.length;
     this.#clients = this.#clients.filter((client) => client.name !== name);
     if (this.#clients.length === before) return false;

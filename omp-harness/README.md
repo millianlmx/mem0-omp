@@ -462,7 +462,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
 | `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, les 2 dernières heures gardées en mémoire |
 | `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
-| `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement |
+| `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
 omp-harness`) relit la configuration et recharge les dépôts : un dépôt ajouté sert
@@ -757,7 +757,9 @@ du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
-insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture.
+insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
+erreur imprévue rend 500 `erreur interne (réf. <8 hex>)` : sa cause (qui peut citer un
+chemin ou une commande) ne va qu'au journal du service, sous la même référence.
 
 ## Architecture
 
@@ -846,7 +848,8 @@ quand `apns` est configuré). Le client est partagé
 L'iPhone peut suivre une feature sur l'écran verrouillé (« Suivre sur l'écran
 verrouillé », menu d'une feature). App ouverte, l'app met l'activité à jour elle-même ;
 app fermée, c'est le serveur qui la pousse par APNs, avec le jeton que l'app lui
-enregistre (`POST /v1/push/activities`). Il lui faut une clé d'Apple (compte du
+enregistre (`POST /v1/push/activities` ; `DELETE /v1/push/activities/{jeton}` ne retire
+que les jetons du client qui appelle, tous pour un admin). Il lui faut une clé d'Apple (compte du
 programme développeur) :
 
 1. Sur developer.apple.com, *Certificates, Identifiers & Profiles ▸ Keys ▸ +* :

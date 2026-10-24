@@ -1651,8 +1651,13 @@ export class Store {
     );
   }
 
-  deletePushToken(token: string): void {
-    this.#run("DELETE FROM push_tokens WHERE token = ?", token);
+  /** Retire un jeton push ; `client` non nul : seulement s'il est à ce client. Rend `true` si un jeton est parti. */
+  deletePushToken(token: string, client: string | null = null): boolean {
+    const result =
+      client === null
+        ? this.#run("DELETE FROM push_tokens WHERE token = ?", token)
+        : this.#run("DELETE FROM push_tokens WHERE token = ? AND client = ?", token, client);
+    return Number(result.changes) > 0;
   }
 
   /** Les jetons push : ceux des Live Activities d'un run, ou ceux des appareils (`runId` absent). */

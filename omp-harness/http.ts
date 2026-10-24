@@ -14,6 +14,7 @@
 // se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
 // et le direct de leurs sessions (éphémères, jamais rejoués : `GET /v1/runs/{id}/session`
 // rend le tampon des dernières entrées d'un run).
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
@@ -172,6 +173,8 @@ export type HttpOptions = {
   /** Les clients nommés ; par défaut, le seul jeton historique. */
   clients?: ClientRegistry;
   version?: string;
+  /** Le journal du service : la cause d'une erreur interne y va, jamais dans la réponse. */
+  log?: (line: string) => void;
 };
 
 type Call = {
@@ -469,9 +472,10 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       store.putPushToken({ token, kind: "activity", runId: run.id, client: call.client.name });
       send(call.res, 201, { registered: true, pushes: orchestrator.config.apns !== null });
     }),
+    // Un client ne retire que SES jetons (un admin, tous) ; un jeton d'un autre est laissé sans le dire.
     route("DELETE", "/v1/push/activities/{name}", "viewer", (call) => {
-      store.deletePushToken(call.match[1] as string);
-      send(call.res, 200, { removed: true });
+      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      send(call.res, 200, { removed: store.deletePushToken(call.match[1] as string, owner) });
     }),
     route("GET", "/v1/metrics", "viewer", (call) => {
       const since = Number(call.url.searchParams.get("since"));
@@ -555,6 +559,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const store = orchestrator.store;
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
   const routes = apiRoutes(orchestrator, clients);
+  const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
 
   function events(req: http.IncomingMessage, res: http.ServerResponse, url: URL, repos: RepoFilter): void {
     const runId = url.searchParams.get("run");
@@ -653,7 +658,15 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           return;
         }
         if (err instanceof HarnessError) send(res, err.status, { error: err.message });
-        else send(res, 500, { error: err instanceof Error ? err.message : String(err) });
+        else {
+          // Une erreur imprévue peut citer un chemin, une commande ou un secret : elle reste au
+          // journal, la réponse n'en porte que la référence.
+          const ref = randomBytes(4).toString("hex");
+          log(
+            `${req.method} ${req.url} : erreur interne ${ref} — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+          );
+          send(res, 500, { error: `erreur interne (réf. ${ref})` });
+        }
       }
     })().catch(() => {
       if (!res.headersSent) send(res, 500, { error: "erreur interne" });
