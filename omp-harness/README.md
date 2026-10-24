@@ -768,6 +768,11 @@ avec `ok: false`, le corps gardant `api`, `version` et `features` : la sonde des
 piles compose (`healthcheck` du service `harness`) et toute supervision lisent le
 code, un client qui ne veut que la version lit le corps quel que soit le code.
 
+Le flux `GET /v1/events` est borné : un client qui ne lit plus est coupé dès que
+4 Mio l'attendent (il reprend par `Last-Event-ID`, rien n'est perdu), le jeton est
+relu à chaque ping (toutes les 15 s : un client révoqué perd aussi son flux ouvert)
+et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
+
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
