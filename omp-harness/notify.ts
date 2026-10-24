@@ -171,6 +171,16 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["moneybag"],
         click: null,
       };
+    case "daily_budget_reached":
+      return {
+        title: "Plafond journalier atteint",
+        body: short(
+          `${typeof payload.spent === "number" ? payload.spent.toFixed(2) : "?"} $ dépensés aujourd'hui (plafond ${typeof payload.ceiling === "number" ? payload.ceiling.toFixed(2) : "?"} $) — plus aucune étape ne démarre avant minuit UTC ou un plafond relevé`,
+        ),
+        priority: 4,
+        tags: ["moneybag"],
+        click: null,
+      };
     case "notify_failed":
       return null;
     default:

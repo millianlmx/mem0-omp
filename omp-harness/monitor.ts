@@ -5,8 +5,11 @@
 // La consommation de chaque message d'agent (jetons, coût, modèle) arrive du direct
 // des sessions (`message_end`) et part en base (`usage`). Au-delà de
 // `monitoring.runBudgetUsd`, l'humain est prévenu une fois (`budget_exceeded`) ; avec
-// `pauseOnBudget`, la feature attend aussi son accord avant sa prochaine étape, et une
-// relance lui accorde un budget de plus.
+// `pauseOnBudget`, la feature attend aussi son accord — l'étape en cours est arrêtée dès
+// que son coût franchit le plafond, sans attendre sa fin —, et une relance lui accorde un
+// budget de plus. `monitoring.dailyBudgetUsd` plafonne la dépense de tout le serveur sur
+// le jour UTC : atteint, plus rien ne démarre jusqu'à minuit UTC (`daily_budget_reached`,
+// une fois par jour).
 //
 // À chaque tour de l'orchestrateur, `watch` relit les runs conduits : une alerte
 // naît une fois (événement journalisé, notifié selon `notify.events`), vit dans
@@ -41,6 +44,13 @@ const MEDIANS_TTL_MS = 10 * 60 * 1000;
 const MEDIAN_MIN_SAMPLES = 3;
 
 const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+/** Le plafond atteint par un run : son coût et le seuil franchi. */
+export type BudgetDue = { cost: number; threshold: number };
+
+/** Le plafond journalier atteint : la dépense du jour UTC, le plafond, le jour et l'instant où il se rouvre. */
+export type DailyBudgetDue = { spent: number; ceiling: number; day: string; resetsAt: number };
 
 export type MonitorDeps = {
   store: Store;
@@ -66,6 +76,8 @@ export class Monitor {
   readonly #deps: MonitorDeps;
   readonly #now: () => number;
   readonly #alerts = new Map<string, Map<AlertKind, RunAlert>>();
+  /** L'arrêt de l'étape en cours de chaque run gardé (`guard`) : ce que la veille appelle au plafond. */
+  readonly #guards = new Map<string, (due: BudgetDue) => void>();
   #medians: { at: number; byKind: Map<string, number> } | null = null;
 
   constructor(deps: MonitorDeps) {
@@ -107,8 +119,8 @@ export class Monitor {
     return { cost, budget, threshold: round2(acknowledged + budget) };
   }
 
-  /** Le plafond atteint qui doit arrêter la feature avant sa prochaine étape (`pauseOnBudget`), sinon `null`. */
-  pauseDue(runId: string): { cost: number; threshold: number } | null {
+  /** Le plafond atteint qui doit arrêter la feature (`pauseOnBudget`), sinon `null`. */
+  pauseDue(runId: string): BudgetDue | null {
     if (!this.#deps.config().monitoring.pauseOnBudget) return null;
     const { cost, threshold } = this.budget(runId);
     return threshold !== null && cost >= threshold ? { cost, threshold } : null;
@@ -122,15 +134,58 @@ export class Monitor {
     this.#clear(runId, "budget_exceeded");
   }
 
+  /**
+   * Garde l'étape en cours d'un run : si son coût franchit le plafond (`pauseOnBudget`)
+   * pendant qu'elle tourne, `stop` est appelé une fois. Rend de quoi lever la garde.
+   */
+  guard(runId: string, stop: (due: BudgetDue) => void): () => void {
+    this.#guards.set(runId, stop);
+    return () => {
+      if (this.#guards.get(runId) === stop) this.#guards.delete(runId);
+    };
+  }
+
   #checkBudget(runId: string): void {
     const { cost, budget, threshold } = this.budget(runId);
     if (budget === null || threshold === null || cost < threshold) return;
     const { store } = this.#deps;
     const warned = store.getSetting<number>(`budget-warned:${runId}`);
-    if (warned !== null && warned >= threshold) return;
-    store.setSetting(`budget-warned:${runId}`, threshold, null);
-    const paused = this.#deps.config().monitoring.pauseOnBudget;
-    this.#raise(runId, "budget_exceeded", { cost, budget, threshold, paused });
+    if (warned === null || warned < threshold) {
+      store.setSetting(`budget-warned:${runId}`, threshold, null);
+      const paused = this.#deps.config().monitoring.pauseOnBudget;
+      this.#raise(runId, "budget_exceeded", { cost, budget, threshold, paused });
+    }
+    this.#enforce(runId);
+  }
+
+  /** L'étape gardée d'un run au-delà de son plafond (`pauseOnBudget`) : arrêtée, une fois. */
+  #enforce(runId: string): void {
+    const stop = this.#guards.get(runId);
+    if (!stop) return;
+    const due = this.pauseDue(runId);
+    if (!due) return;
+    this.#guards.delete(runId);
+    stop(due);
+  }
+
+  /**
+   * Le plafond journalier du serveur (`dailyBudgetUsd`) s'il est atteint sur le jour UTC
+   * courant, sinon `null`. La première fois de chaque jour, `daily_budget_reached` part.
+   */
+  dailyBudgetDue(): DailyBudgetDue | null {
+    const ceiling = this.#deps.config().monitoring.dailyBudgetUsd;
+    if (ceiling === null) return null;
+    const now = this.#now();
+    const start = now - (now % DAY_MS);
+    const spent = round2(this.#deps.store.costSince(start));
+    if (spent < ceiling) return null;
+    const due = { spent, ceiling, day: new Date(start).toISOString().slice(0, 10), resetsAt: start + DAY_MS };
+    const { store } = this.#deps;
+    if (store.getSetting<string>("daily-budget-warned") !== due.day) {
+      store.setSetting("daily-budget-warned", due.day, null);
+      this.#deps.event("daily_budget_reached", null, { ...due, resetsAt: new Date(due.resetsAt).toISOString() });
+    }
+    return due;
   }
 
   // -- veille des runs conduits -------------------------------------------------
@@ -141,6 +196,8 @@ export class Monitor {
     const now = this.#now();
     const live = new Set(runs.map((run) => run.runId));
     for (const run of runs) {
+      // Un plafond franchi sans nouveau message (configuration relue, plafond abaissé).
+      if (run.step !== null) this.#enforce(run.runId);
       this.#watchStall(run, now, monitoring.stallMin, monitoring.stallToolMin);
       this.#watchSlow(run, now, monitoring.slowFactor);
       if (monitoring.fixLoop !== null && run.fixes >= monitoring.fixLoop) {

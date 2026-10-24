@@ -120,6 +120,7 @@ let
   launcherConf = ''
     # Généré par le module NixOS — lu, jamais sourcé, par le lanceur root.
     WORKTREES_ROOT=/var/lib/omp-harness/worktrees
+    REPOS_ROOT=/var/lib/omp-harness/repos
     WRITABLE_ROOTS=/var/lib/omp-harness/worktrees /var/cache/omp-harness /var/lib/omp-heavy
     HEAVY_USER=omp-heavy
     RUNNER_USER=omp-runner
@@ -128,6 +129,8 @@ let
     RUNNER_SLICE=omp-harness-runners.slice
     OMP_BIN=${cfg.ompBin}
     RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+    RUNNER_ENV_DIR=/run/omp-harness-launcher
+    RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
     PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
     HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
@@ -417,6 +420,12 @@ in
         MemoryMax = "1G";
         OOMScoreAdjust = -900;
         ManagedOOMPreference = "omit";
+        # Le durcissement de deploy/omp-harness.service : espaces de montage seulement. Pas de
+        # NoNewPrivileges (sudo), ni d'option à base de seccomp, qui l'imposerait sous User=.
+        ProtectSystem = "full";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectControlGroups = true;
       };
     };
 

@@ -187,6 +187,8 @@ export class Auditor {
   tick(): void {
     for (const audit of this.#ctx.store.listAudits(["queued"])) {
       if (this.#live.has(audit.id)) continue;
+      // Le plafond journalier du serveur atteint : l'analyse attend en file (minuit UTC, ou plafond relevé).
+      if (this.#ctx.monitor.dailyBudgetDue()) return;
       const slot = this.#ctx.scheduler.tryAcquire("runner", audit.id);
       if ("refused" in slot) return;
       const live: LiveAudit = { abort: new AbortController(), session: null, proposals: null, done: Promise.resolve() };

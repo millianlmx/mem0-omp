@@ -2,10 +2,11 @@
 // pipeline (LSP, DAP et noyau Python éteints), en mode RPC — et les outils hôtes
 // que le service lui prête selon l'étape.
 //
-// Le runner part dans une SCOPE systemd (il garde ses tuyaux stdio avec le service) :
-// MemoryMax=1G dans la tranche des runners. Une scope ne porte pas `OOMScoreAdjust=`
-// (propriété d'exécution) : `choom -n 300` le pose sur le process lui-même — relever
-// son propre score n'exige aucun privilège.
+// En isolation `systemd`, le runner est un SERVICE transitoire (`--wait --pipe` : il garde
+// ses tuyaux stdio avec le service) : MemoryMax=1G et OOMScoreAdjust=300 dans la tranche
+// des runners. Le lanceur root y impose l'user des runners et le bac à sable : son seul
+// worktree inscriptible, son seul clone lisible (les autres worktrees et clones masqués),
+// le reste du système en lecture seule, sans élévation — l'équivalent du conteneur.
 //
 // En isolation `container`, c'est un conteneur frère (`run -i`, stdio gardés), aux
 // mêmes plafonds, qui ne monte que son worktree, le clone en lecture, son HOME et
@@ -52,7 +53,7 @@ export function containerUser(config: HarnessConfig): string {
   return config.container.user ?? `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
 }
 
-/** Arrête de force l'unité d'un runner ou d'un job : la scope systemd, ou le conteneur. */
+/** Arrête de force l'unité d'un runner ou d'un job : le service systemd transitoire, ou le conteneur. */
 export async function forceStop(
   config: HarnessConfig,
   exec: Exec,
@@ -60,7 +61,7 @@ export async function forceStop(
   isolation = config.runner.isolation,
 ): Promise<void> {
   if (isolation === "systemd") {
-    const stop = launch(config, ["--stop", `${unit}.scope`]);
+    const stop = launch(config, ["--stop", `${unit}.service`]);
     await exec(stop.command, stop.args, { timeoutMs: 15_000 });
   } else if (isolation === "container") {
     const stop = engine(config, ["rm", "--force", unit]);
@@ -101,7 +102,7 @@ export type RunnerSpec = {
   overlay: string;
   model: ModelChoice | null;
   scope: string;
-  /** Le clone du dépôt (le gitdir du worktree y vit) : monté en lecture, requis en isolation `container`. */
+  /** Le clone du dépôt (le gitdir du worktree y vit) : monté en lecture, seul clone visible (requis en `container`). */
   repo?: string;
   /** L'adresse de la mémoire vue du runner. */
   oracleUrl?: string | null;
@@ -176,22 +177,29 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
+  // Sans lanceur, rien ne poserait l'user, les clés ni le bac à sable du runner : il
+  // tournerait en root. `--check` signale déjà la configuration ; ici, on refuse.
+  if (config.launcher.length === 0)
+    throw new Error("isolation systemd : un runner passe par le lanceur root (`launcher` est vide)");
   return launch(config, [
-    "--scope",
-    "--quiet",
+    "--wait",
+    "--pipe",
     "--collect",
+    "--service-type=exec",
     `--unit=${spec.unit}`,
+    "--quiet",
     `--slice=${config.runner.slice}`,
+    `--working-directory=${spec.cwd}`,
     "-p",
     `MemoryMax=${config.runner.memoryMax}`,
+    "-p",
+    `OOMScoreAdjust=${config.runner.oomScoreAdjust}`,
+    // Le clone (le gitdir du worktree) : le lanceur le rend visible en lecture, et lui seul.
+    ...(spec.repo ? ["-p", `BindReadOnlyPaths=${spec.repo}`] : []),
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
     ...Object.entries(runnerMemoryEnv(spec.scope, config.memory.runnerMode)).map(
       ([key, value]) => `--setenv=${key}=${value}`,
     ),
-    "--",
-    "choom",
-    "-n",
-    String(config.runner.oomScoreAdjust),
     "--",
     ...omp,
   ]);

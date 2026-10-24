@@ -222,7 +222,7 @@ test("harness-monitoring/AC-3 : chaque message d'agent laisse sa consommation �
 test("harness-monitoring/AC-4 : au-delà du budget, l'humain est prévenu une fois ; avec `pauseOnBudget`, la feature l'attend avant sa prochaine étape et une relance lui accorde un budget de plus", async () => {
   const pricey = [{ frame: { type: "message_end", message: assistant("besoins cernés", usage(1.5)) } }, ...OK.req];
   const world = fakeWorld(
-    { req: [pricey], specs: [OK.specs], impl: [OK.impl], review: [OK.review] },
+    { req: [pricey, OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] },
     {
       patch: (config) => {
         config.monitoring.runBudgetUsd = 1;
@@ -238,7 +238,8 @@ test("harness-monitoring/AC-4 : au-delà du budget, l'humain est prévenu une fo
       () => `${world.store.getRun(run.id)?.state} — ${world.store.getRun(run.id)?.reason}`,
     );
     const paused = world.store.getRun(run.id);
-    assert.equal(paused?.step, "specs", "arrêtée AVANT l'étape suivante");
+    // Le message qui franchit le plafond arrête l'étape en cours (harness-plafond-cout/AC-1).
+    assert.equal(paused?.step, "req", "arrêtée sans aller plus loin");
     assert.match(paused?.reason ?? "", /budget dépassé : 1\.50 \$ pour un plafond de 1\.00 \$/);
     const warned = world.store.eventsOfType("budget_exceeded");
     assert.equal(warned.length, 1, "un seul avertissement");
@@ -762,6 +763,7 @@ test("harness-monitoring/AC-12 : la configuration du monitoring et d'APNs est va
   assert.deepEqual(base.monitoring, {
     runBudgetUsd: null,
     pauseOnBudget: false,
+    dailyBudgetUsd: null,
     stallMin: 15,
     stallToolMin: 45,
     slowFactor: 2,

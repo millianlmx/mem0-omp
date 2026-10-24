@@ -112,8 +112,8 @@ export async function startHarness(
   await orchestrator.start();
   snapshots.start();
   const token = options.token ?? loadToken(config);
-  const clients = new ClientRegistry(config.clientsFile, token);
-  const server = http.createServer(createHandler({ orchestrator, clients }));
+  const clients = new ClientRegistry(config.clientsFile, token, log);
+  const server = http.createServer(createHandler({ orchestrator, clients, log }));
   await new Promise<void>((resolve) => server.listen(config.listen.port, config.listen.host, resolve));
   log(
     `omp-harness ${HARNESS_VERSION} à l'écoute sur ${config.listen.host}:${(server.address() as { port: number }).port} — ${config.repos.length} dépôt(s), ${clients.list().length} client(s)`,

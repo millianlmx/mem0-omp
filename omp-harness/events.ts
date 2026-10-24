@@ -75,6 +75,7 @@ export const EVENT_TYPES = [
   "step_slow",
   "fix_loop",
   "budget_exceeded",
+  "daily_budget_reached",
   "alert_cleared",
   // éphémères
   "activity",

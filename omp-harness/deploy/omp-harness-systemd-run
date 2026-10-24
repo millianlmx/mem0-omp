@@ -6,10 +6,13 @@
 # l'environnement à zéro (ni BASH_ENV, ni LD_*, ni PATH de l'appelant). Il n'exécute que les TROIS
 # lignes que le service construit, après les avoir validées mot à mot :
 #
-#   --scope …  -- choom -n N -- OMP_BIN … un runner : scope MemoryMax, relancé sous
-#                                        RUNNER_USER (jamais root, jamais le service),
-#                                        avec les clés de RUNNER_ENV_FILE (root seul)
-#                                        puis celles déclarées par l'API (*_API_KEY)
+#   --wait --pipe … --unit=omp-runner-… -- OMP_BIN …
+#                                        un runner : service transitoire forcé
+#                                        User=RUNNER_USER (jamais root, jamais le service),
+#                                        son seul worktree inscriptible, son seul clone
+#                                        lisible (les autres masqués), avec les clés de
+#                                        RUNNER_ENV_FILE (root seul) puis celles déclarées
+#                                        par l'API (*_API_KEY)
 #   --wait --pipe …  -- HEAVY_SHELL -c CMD un job heavy : service transitoire forcé
 #                                        User=HEAVY_USER, PrivateNetwork=yes,
 #                                        chemins inscriptibles sous WRITABLE_ROOTS
@@ -31,6 +34,8 @@ export PATH
 cd /
 
 WORKTREES_ROOT=/var/lib/omp-harness/worktrees
+# Les clones des dépôts : masqués pour un runner, sauf le sien (en lecture).
+REPOS_ROOT=/var/lib/omp-harness/repos
 WRITABLE_ROOTS="/var/lib/omp-harness/worktrees /var/cache/omp-harness /var/lib/omp-heavy"
 HEAVY_USER=omp-heavy
 RUNNER_USER=omp-runner
@@ -39,6 +44,10 @@ HEAVY_SLICE=omp-harness-heavy.slice
 RUNNER_SLICE=omp-harness-runners.slice
 OMP_BIN=/usr/local/bin/omp
 RUNNER_ENV_FILE=/etc/omp-harness/runner.env
+# Les fichiers d'environnement des runners (root 0700), lus par systemd à leur démarrage.
+RUNNER_ENV_DIR=/run/omp-harness-launcher
+# Ce qu'un runner ne doit jamais voir, ajouté par le lanceur lui-même.
+RUNNER_HIDDEN="/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private"
 # Les fournisseurs déclarés par l'API (écrits par le service, pas par root) : leurs clés
 # et le models.yml des fournisseurs compatibles OpenAI.
 PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
@@ -59,6 +68,9 @@ if [ -r "$CONF" ]; then
   while IFS='=' read -r key value; do
     case "$key" in
       WORKTREES_ROOT) WORKTREES_ROOT="$value" ;;
+      REPOS_ROOT) REPOS_ROOT="$value" ;;
+      RUNNER_ENV_DIR) RUNNER_ENV_DIR="$value" ;;
+      RUNNER_HIDDEN) RUNNER_HIDDEN="$value" ;;
       WRITABLE_ROOTS) WRITABLE_ROOTS="$value" ;;
       HEAVY_USER) HEAVY_USER="$value" ;;
       RUNNER_USER) RUNNER_USER="$value" ;;
@@ -174,6 +186,179 @@ unit_id_re='^[A-Za-z0-9_-]+$'
 # Un chemin que systemd et bash lisent pareil : absolu, sans espace, guillemet, joker, %, préfixe - ou +.
 path_re='^/[A-Za-z0-9._/-]+$'
 name_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+# Le dossier d'une feature : un nom, ou `_audit-<id>` (le worktree d'un audit).
+feature_re='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
+
+# Une valeur posée dans le fichier d'environnement d'un runner, entre apostrophes (systemd
+# la lit telle quelle) : une paire de guillemets englobante est ôtée, et une valeur qui
+# garderait un guillemet, une apostrophe, `\`, `$` ou un accent grave est écartée.
+env_value() {
+  local value="$1"
+  case "$value" in \"*\" | \'*\') [ "${#value}" -ge 2 ] && value="${value:1:${#value}-2}" ;; esac
+  [[ "$value" =~ ^[^\'\"\\\$\`[:cntrl:]]*$ ]] || return 1
+  printf "'%s'" "$value"
+}
+
+# Un runner : un service transitoire (stdio gardés par --pipe) qui ne voit que SON
+# worktree en écriture et SON clone en lecture — les autres worktrees et clones sont
+# masqués (tmpfs en lecture seule) —, le reste du système en lecture seule, sans
+# élévation. Le service ne choisit que la place du worktree, du clone et les limites ;
+# l'user, le groupe, le bac à sable et les clés sont posés ici.
+#
+#   --wait --pipe --collect --service-type=exec --unit=omp-runner-ID --quiet --slice=…
+#   --working-directory=WORKTREES_ROOT/<dépôt>/<feature> -p MemoryMax=X -p OOMScoreAdjust=N
+#   [-p BindReadOnlyPaths=<clone>] [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE=…]…
+#   -- OMP_BIN …
+#
+# Les clés (runner.env, puis les *_API_KEY de l'API, puis la scope mémoire) partent dans
+# un fichier root 0600 de RUNNER_ENV_DIR que systemd lit au démarrage (EnvironmentFile=) :
+# jamais sur la ligne de commande ni dans les propriétés de l'unité, lisibles de tous.
+launch_runner() {
+  [ "$#" -ge 14 ] || refuse "ligne de runner trop courte"
+  [ "$1" = "--wait" ] && [ "$2" = "--pipe" ] && [ "$3" = "--collect" ] && [ "$4" = "--service-type=exec" ] \
+    || refuse "options de runner inattendues"
+  unit="${5#--unit=}"
+  [ "$5" = "--unit=$unit" ] && [[ "$unit" =~ ^omp-runner- ]] && [[ "${unit#omp-runner-}" =~ $unit_id_re ]] \
+    || refuse "unité de runner invalide : $5"
+  [ "$6" = "--quiet" ] || refuse "--quiet attendu (reçu $6)"
+  [ "$7" = "--slice=$RUNNER_SLICE" ] || refuse "tranche de runner invalide : $7"
+  # Exactement WORKTREES_ROOT/<dépôt>/<feature>, canonique (un audit : `_audit-<id>`).
+  cwd="${8#--working-directory=}"
+  [ "$8" = "--working-directory=$cwd" ] && [[ "$cwd" =~ $path_re ]] || refuse "répertoire illisible : $8"
+  rel="${cwd#"$WORKTREES_ROOT"/}"
+  repo="${rel%%/*}"
+  feature="${rel#*/}"
+  [ "$rel" != "$cwd" ] && [ "$repo" != "$rel" ] && [[ "$repo" =~ $name_re ]] && [[ "$feature" =~ $feature_re ]] \
+    || refuse "répertoire hors des worktrees : $8"
+  [ "$(canon "$cwd")" = "$(canon "$WORKTREES_ROOT")/$rel" ] || refuse "répertoire non canonique : $8"
+  [ "$9" = "-p" ] || refuse "propriété attendue"
+  memory="${10#MemoryMax=}"
+  [ "${10}" = "MemoryMax=$memory" ] && [[ "$memory" =~ $size_re ]] || refuse "MemoryMax invalide : ${10}"
+  [ "${11}" = "-p" ] || refuse "propriété attendue"
+  oom="${12#OOMScoreAdjust=}"
+  [ "${12}" = "OOMScoreAdjust=$oom" ] && [[ "$oom" =~ ^[0-9]+$ ]] && [ "$oom" -le 1000 ] \
+    || refuse "OOMScoreAdjust invalide : ${12}"
+  shift 12
+  # Le clone du dépôt (le gitdir du worktree y vit) : rendu visible EN LECTURE. Sous
+  # REPOS_ROOT, c'est exactement REPOS_ROOT/<dépôt> ; ailleurs, il est déjà visible en
+  # lecture seule (ProtectSystem=strict) et rien n'est à monter.
+  clone=""
+  if [ "${1:-}" = "-p" ] && [[ "${2:-}" == BindReadOnlyPaths=* ]]; then
+    clone="${2#BindReadOnlyPaths=}"
+    [[ "$clone" =~ $path_re ]] || refuse "clone illisible : $2"
+    # Lexicalement canonique, où qu'il soit : ni `.`, ni `..`, ni `//`, ni `/` final.
+    if [[ "$clone" =~ (^|/)\.\.?(/|$) ]] || [[ "$clone" == *//* ]] || [[ "$clone" == */ ]]; then
+      refuse "clone non canonique : $2"
+    fi
+    if within "$clone" "$WORKTREES_ROOT"; then refuse "clone dans les worktrees : $2"; fi
+    if within "$clone" "$REPOS_ROOT"; then
+      crel="${clone#"$REPOS_ROOT"/}"
+      [ "$crel" != "$clone" ] && [[ "$crel" =~ $name_re ]] || refuse "clone hors de REPOS_ROOT/<dépôt> : $2"
+      [ "$(canon "$clone")" = "$(canon "$REPOS_ROOT")/$crel" ] || refuse "clone non canonique : $2"
+    else
+      clone=""
+    fi
+    shift 2
+  fi
+  # La mémoire du projet du runner : quatre variables, liste FERMÉE, valeurs simples.
+  memory_env=()
+  while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
+    assignment="${1#--setenv=}"
+    name="${assignment%%=*}"
+    value="${assignment#*=}"
+    case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE) ;; *) refuse "variable de runner non permise : $name" ;; esac
+    [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
+    memory_env+=("$name=$value")
+    shift
+  done
+  [ "${1:-}" = "--" ] || refuse "-- attendu avant $OMP_BIN"
+  shift
+  [ "${1:-}" = "$OMP_BIN" ] || refuse "le runner doit être $OMP_BIN (reçu ${1:-rien})"
+  home=$(getent passwd "$RUNNER_USER" | cut -d: -f6 || true)
+  [ -n "$home" ] || [ "$DRY_RUN" = "1" ] || refuse "user de runner inconnu : $RUNNER_USER"
+  HOME="${home:-/nonexistent}"
+
+  # Le fichier d'environnement ; en essai, dans un dossier jetable, imprimé (`envfile:`) puis effacé.
+  if [ "$DRY_RUN" = "1" ]; then
+    env_dir=$(mktemp -d)
+    trap 'rm -rf -- "$env_dir"' EXIT
+  else
+    env_dir="$RUNNER_ENV_DIR"
+    install -d -m 0700 -o root -g root -- "$env_dir"
+    # systemd ne lit le fichier qu'au démarrage du runner : quelques minutes après, il ne sert plus.
+    find "$env_dir" -maxdepth 1 -type f -name 'omp-runner-*.env*' -mmin +5 -delete 2>/dev/null || true
+  fi
+  env_file="$env_dir/$unit.env"
+  env_tmp="$env_file.tmp"
+  (umask 077 && : > "$env_tmp")
+  # Le PATH du lanceur : celui qu'un runner avait sous une scope.
+  printf 'PATH=%s\n' "$(env_value "$PATH")" >> "$env_tmp"
+  # Les clés des fournisseurs LLM et l'adresse de la mémoire : lues (jamais sourcées)
+  # dans un fichier root, pour le runner seul.
+  if [ -r "$RUNNER_ENV_FILE" ]; then
+    while IFS= read -r line; do
+      [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+      case "${BASH_REMATCH[1]}" in BASH_ENV | ENV | LD_* | PATH | HOME | USER | LOGNAME | SHELL) continue ;; esac
+      key="${BASH_REMATCH[1]}"
+      if quoted=$(env_value "${BASH_REMATCH[2]}"); then
+        printf '%s=%s\n' "$key" "$quoted" >> "$env_tmp"
+      else
+        echo "omp-harness-systemd-run : $key de $RUNNER_ENV_FILE ignorée (guillemet, \\, \$ ou accent grave)" >&2
+      fi
+    done < "$RUNNER_ENV_FILE"
+  fi
+  # Les clés déclarées par l'API : seulement des `*_API_KEY` aux valeurs simples. Elles
+  # passent après runner.env et l'emportent (root garde la main sur tout le reste).
+  if service_file "$PROVIDERS_ENV_FILE"; then
+    while IFS= read -r line; do
+      # 8 à 512 caractères ; la borne haute hors du motif : le regex BSD refuse `{8,512}` (RE_DUP_MAX 255).
+      [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,})$ ]] && [ "${#BASH_REMATCH[2]}" -le 512 ] || continue
+      printf "%s='%s'\n" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$env_tmp"
+      if [ "$DRY_RUN" = "1" ]; then printf 'providerenv:%s\n' "${BASH_REMATCH[1]}"; fi
+    done < "$PROVIDERS_ENV_FILE"
+  fi
+  # Le models.yml des fournisseurs compatibles, posé sous le profil du runner, ÉCRIT PAR
+  # le runner lui-même (runuser) : root n'écrit jamais dans un HOME qui ne lui est pas.
+  profile=""
+  previous=""
+  for arg in "$@"; do
+    if [ "$previous" = "--profile" ]; then profile="$arg"; fi
+    previous="$arg"
+  done
+  if [ -n "$profile" ] && service_file "$PROVIDERS_MODELS_FILE"; then
+    [[ "$profile" =~ $unit_id_re ]] || refuse "profil invalide : $profile"
+    models_dir="$HOME/.omp/profiles/$profile/agent"
+    if [ "$DRY_RUN" = "1" ]; then
+      printf 'models:%s\n' "$models_dir/models.yml"
+    else
+      runuser -u "$RUNNER_USER" -- /bin/sh -c 'umask 077 && mkdir -p -- "$1" && cat > "$1/models.yml.tmp" && mv -f -- "$1/models.yml.tmp" "$1/models.yml"' \
+        sh "$models_dir" < "$PROVIDERS_MODELS_FILE" || refuse "models.yml du runner non posé"
+    fi
+  fi
+  # La scope du run passe en dernier : elle vaut pour ce run, pas pour tous.
+  for assignment in "${memory_env[@]}"; do
+    printf "%s='%s'\n" "${assignment%%=*}" "${assignment#*=}" >> "$env_tmp"
+    # `if` et non `&&` : sous `set -e`, une boucle dont la dernière commande échoue arrêterait le lanceur.
+    if [ "$DRY_RUN" = "1" ]; then printf 'env:%s\n' "$assignment"; fi
+  done
+  mv -f -- "$env_tmp" "$env_file"
+  if [ "$DRY_RUN" = "1" ]; then
+    while IFS= read -r line; do printf 'envfile:%s\n' "$line"; done < "$env_file"
+  fi
+
+  # Imposé par le lanceur, jamais par l'appelant : l'user, le bac à sable, ce qui est masqué.
+  hidden=()
+  for path in $RUNNER_HIDDEN; do hidden+=("-$path"); done
+  sandbox=(-p "User=$RUNNER_USER" -p "Group=$WORK_GROUP" -p "UMask=0002"
+    -p "NoNewPrivileges=yes" -p "PrivateTmp=yes" -p "PrivateDevices=yes"
+    -p "ProtectSystem=strict" -p "ProtectHome=yes" -p "ProtectKernelTunables=yes"
+    -p "ProtectKernelModules=yes" -p "ProtectControlGroups=yes"
+    -p "TemporaryFileSystem=$WORKTREES_ROOT:ro $REPOS_ROOT:ro" -p "BindPaths=$cwd")
+  if [ -n "$clone" ]; then sandbox+=(-p "BindReadOnlyPaths=$clone"); fi
+  sandbox+=(-p "ReadWritePaths=-$HOME" -p "InaccessiblePaths=${hidden[*]}" -p "EnvironmentFile=$env_file")
+  run systemd-run --wait --pipe --collect --service-type=exec "--unit=$unit" --quiet "--slice=$RUNNER_SLICE" \
+    "--working-directory=$cwd" -p "MemoryMax=$memory" -p "OOMScoreAdjust=$oom" "${sandbox[@]}" -- "$@"
+}
 
 [ "$#" -ge 1 ] || refuse "aucun argument"
 
@@ -184,86 +369,9 @@ case "$1" in
     run systemctl stop -- "$2"
     ;;
 
-  --scope)
-    # --scope --quiet --collect --unit=omp-runner-ID --slice=… -p MemoryMax=X
-    #   [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE=…]… -- choom -n N -- OMP_BIN …
-    [ "$#" -ge 12 ] || refuse "ligne de runner trop courte"
-    [ "$2" = "--quiet" ] && [ "$3" = "--collect" ] || refuse "options de scope inattendues"
-    unit="${4#--unit=}"
-    [ "$4" = "--unit=$unit" ] && [[ "$unit" =~ ^omp-runner- ]] && [[ "${unit#omp-runner-}" =~ $unit_id_re ]] || refuse "unité de runner invalide : $4"
-    [ "$5" = "--slice=$RUNNER_SLICE" ] || refuse "tranche de runner invalide : $5"
-    [ "$6" = "-p" ] || refuse "propriété attendue"
-    memory="${7#MemoryMax=}"
-    [ "$7" = "MemoryMax=$memory" ] && [[ "$memory" =~ $size_re ]] || refuse "MemoryMax invalide : $7"
-    shift 7
-    # La mémoire du projet du runner : quatre variables, liste FERMÉE, valeurs simples.
-    memory_env=()
-    while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
-      assignment="${1#--setenv=}"
-      name="${assignment%%=*}"
-      value="${assignment#*=}"
-      case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE) ;; *) refuse "variable de runner non permise : $name" ;; esac
-      [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
-      memory_env+=("$name=$value")
-      shift
-    done
-    [ "${1:-}" = "--" ] && [ "${2:-}" = "choom" ] && [ "${3:-}" = "-n" ] || refuse "le runner doit passer par choom"
-    [[ "${4:-}" =~ ^[0-9]+$ ]] && [ "$4" -le 1000 ] || refuse "score OOM invalide : ${4:-rien}"
-    [ "${5:-}" = "--" ] || refuse "choom -n N -- attendu"
-    oom="$4"
-    shift 5
-    [ "${1:-}" = "$OMP_BIN" ] || refuse "le runner doit être $OMP_BIN (reçu ${1:-rien})"
-    home=$(getent passwd "$RUNNER_USER" | cut -d: -f6 || true)
-    [ -n "$home" ] || [ "$DRY_RUN" = "1" ] || refuse "user de runner inconnu : $RUNNER_USER"
-    export HOME="${home:-/nonexistent}" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER"
-    # Les clés des fournisseurs LLM et l'adresse de la mémoire : lues (jamais sourcées)
-    # dans un fichier root, pour le runner seul.
-    if [ -r "$RUNNER_ENV_FILE" ]; then
-      while IFS= read -r line; do
-        [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
-        case "${BASH_REMATCH[1]}" in BASH_ENV | ENV | LD_* | PATH | HOME | USER | LOGNAME | SHELL) continue ;; esac
-        export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
-      done < "$RUNNER_ENV_FILE"
-    fi
-    # Les clés déclarées par l'API : seulement des `*_API_KEY` aux valeurs simples. Elles
-    # passent après runner.env et l'emportent (root garde la main sur tout le reste).
-    if service_file "$PROVIDERS_ENV_FILE"; then
-      while IFS= read -r line; do
-        # 8 à 512 caractères ; la borne haute hors du motif : le regex BSD refuse `{8,512}` (RE_DUP_MAX 255).
-        [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,})$ ]] && [ "${#BASH_REMATCH[2]}" -le 512 ] || continue
-        export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
-        if [ "$DRY_RUN" = "1" ]; then printf 'providerenv:%s\n' "${BASH_REMATCH[1]}"; fi
-      done < "$PROVIDERS_ENV_FILE"
-    fi
-    # Le models.yml des fournisseurs compatibles, posé sous le profil du runner, ÉCRIT PAR
-    # le runner lui-même (runuser) : root n'écrit jamais dans un HOME qui ne lui est pas.
-    profile=""
-    previous=""
-    for arg in "$@"; do
-      if [ "$previous" = "--profile" ]; then profile="$arg"; fi
-      previous="$arg"
-    done
-    if [ -n "$profile" ] && service_file "$PROVIDERS_MODELS_FILE"; then
-      [[ "$profile" =~ $unit_id_re ]] || refuse "profil invalide : $profile"
-      models_dir="$HOME/.omp/profiles/$profile/agent"
-      if [ "$DRY_RUN" = "1" ]; then
-        printf 'models:%s\n' "$models_dir/models.yml"
-      else
-        runuser -u "$RUNNER_USER" -- /bin/sh -c 'umask 077 && mkdir -p -- "$1" && cat > "$1/models.yml.tmp" && mv -f -- "$1/models.yml.tmp" "$1/models.yml"' \
-          sh "$models_dir" < "$PROVIDERS_MODELS_FILE" || refuse "models.yml du runner non posé"
-      fi
-    fi
-    # La scope du run passe APRÈS runner.env : elle vaut pour ce run, pas pour tous.
-    for assignment in "${memory_env[@]}"; do
-      export "${assignment?}"
-      # `if` et non `&&` : sous `set -e`, une boucle dont la dernière commande échoue arrêterait le lanceur.
-      if [ "$DRY_RUN" = "1" ]; then printf 'env:%s\n' "$assignment"; fi
-    done
-    run systemd-run --scope --quiet --collect "--unit=$unit" "--slice=$RUNNER_SLICE" -p "MemoryMax=$memory" \
-      "--uid=$RUNNER_USER" "--gid=$WORK_GROUP" -- choom -n "$oom" -- "$@"
-    ;;
-
   --wait)
+    # Un runner (son unité le dit) : sa forme propre, validée à part.
+    if [[ "${5:-}" == --unit=omp-runner-* ]]; then launch_runner "$@"; fi
     # Un job heavy : chaque mot est vérifié jusqu'à `--`, puis exactement HEAVY_SHELL -c CMD.
     final=()
     seen_user=0 seen_network=0 seen_memory=0 seen_nnp=0 seen_unit=0 seen_slice=0 seen_cwd=0

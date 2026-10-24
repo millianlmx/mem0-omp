@@ -1626,6 +1626,11 @@ export class Store {
     return num(this.#get("SELECT COALESCE(SUM(cost), 0) AS cost FROM usage WHERE run_id = ?", runId) as Row, "cost");
   }
 
+  /** Ce que tout le serveur a dépensé depuis `since` (runs et audits). */
+  costSince(since: number): number {
+    return num(this.#get("SELECT COALESCE(SUM(cost), 0) AS cost FROM usage WHERE at >= ?", since) as Row, "cost");
+  }
+
   /** Le coût de chaque run de la liste qui a consommé quelque chose. */
   runCosts(runIds: readonly string[]): Record<string, number> {
     if (runIds.length === 0) return {};
@@ -1665,8 +1670,13 @@ export class Store {
     );
   }
 
-  deletePushToken(token: string): void {
-    this.#run("DELETE FROM push_tokens WHERE token = ?", token);
+  /** Retire un jeton push ; `client` non nul : seulement s'il est à ce client. Rend `true` si un jeton est parti. */
+  deletePushToken(token: string, client: string | null = null): boolean {
+    const result =
+      client === null
+        ? this.#run("DELETE FROM push_tokens WHERE token = ?", token)
+        : this.#run("DELETE FROM push_tokens WHERE token = ? AND client = ?", token, client);
+    return Number(result.changes) > 0;
   }
 
   /** Les jetons push : ceux des Live Activities d'un run, ou ceux des appareils (`runId` absent). */

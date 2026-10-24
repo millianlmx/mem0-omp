@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 DEST=/opt/omp-harness
 
-for tool in node git curl sha256sum ssh-keygen systemd-run systemctl choom sudo visudo; do
+for tool in node git curl sha256sum ssh-keygen systemd-run systemctl sudo visudo; do
   command -v "$tool" >/dev/null || { echo "✗ $tool est requis" >&2; exit 1; }
 done
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=6)?0:1)' \

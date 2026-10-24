@@ -64,14 +64,24 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "merged",
   "stalled",
   "budget_exceeded",
+  "daily_budget_reached",
 ];
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
 export type MonitoringConfig = {
   /** Le coût (en dollars) d'une feature au-delà duquel l'humain est prévenu (`budget_exceeded`) ; `null` : jamais. */
   runBudgetUsd: number | null;
-  /** Au-delà du budget, la feature attend l'humain avant sa prochaine étape au lieu de continuer. */
+  /**
+   * Au-delà du budget, la feature attend l'humain au lieu de continuer : l'étape en cours
+   * est arrêtée dès que le coût la franchit (une étape peut durer `stepTimeoutSec`).
+   */
   pauseOnBudget: boolean;
+  /**
+   * Le plafond de dépense de TOUT le serveur sur un jour UTC (runs et audits, en dollars) :
+   * atteint, aucune nouvelle étape ni analyse ne part avant minuit UTC ou un plafond relevé
+   * (`daily_budget_reached`) ; les étapes en cours finissent. `null` : aucun plafond.
+   */
+  dailyBudgetUsd: number | null;
   /** Les minutes sans trame d'un agent (aucun outil en cours) avant l'alerte `stalled` ; `null` : jamais. */
   stallMin: number | null;
   /** Les mêmes minutes quand un outil tourne (une suite de tests peut être longue) ; `null` : jamais. */
@@ -401,6 +411,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     monitoring: {
       runBudgetUsd: null,
       pauseOnBudget: false,
+      dailyBudgetUsd: null,
       stallMin: 15,
       stallToolMin: 45,
       slowFactor: 2,
@@ -529,7 +540,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("notify.events : liste de noms d'événements");
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
   const monitoring = config.monitoring;
-  for (const key of ["runBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
+  for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];
     if (value !== null && !(typeof value === "number" && value > 0)) fail(`monitoring.${key} : nombre > 0, ou null`);
   }
