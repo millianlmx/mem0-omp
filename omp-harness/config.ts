@@ -274,6 +274,12 @@ export type HarnessConfig = {
    * `keep` derniers de chaque sorte gardés, dans `dir` (`null` : `<dataDir>/backups`).
    */
   backups: { dir: string | null; intervalHours: number | null; keep: number; beforeMigration: boolean };
+  /**
+   * Les seuils de `GET /v1/health` : le dernier tour du scheduling date de moins de
+   * `tickStaleSec` secondes, il reste au moins `minFreeMiB` Mio libres sous `dataDir`
+   * et `worktreesDir`.
+   */
+  health: { tickStaleSec: number; minFreeMiB: number };
   monitoring: MonitoringConfig;
   apns: ApnsConfig | null;
   repos: RepoConfig[];
@@ -391,6 +397,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     oracle: null,
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true },
+    health: { tickStaleSec: 120, minFreeMiB: 1024 },
     monitoring: {
       runBudgetUsd: null,
       pauseOnBudget: false,
@@ -440,13 +447,15 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.heavy.slots) || config.heavy.slots < 1) fail("heavy.slots doit être ≥ 1");
   if (!(config.runner.stepTimeoutSec >= 1)) fail("runner.stepTimeoutSec doit être ≥ 1");
   if (!(config.events.retentionDays > 0)) fail("events.retentionDays doit être > 0");
-  const { backups } = config;
+  const { backups, health } = config;
   if (backups.dir !== null && (typeof backups.dir !== "string" || !path.isAbsolute(backups.dir)))
     fail("backups.dir : chemin absolu, ou null");
   if (backups.intervalHours !== null && !(typeof backups.intervalHours === "number" && backups.intervalHours > 0))
     fail("backups.intervalHours : heures > 0, ou null");
   if (!(Number.isInteger(backups.keep) && backups.keep >= 1)) fail("backups.keep : entier ≥ 1");
   if (typeof backups.beforeMigration !== "boolean") fail("backups.beforeMigration : booléen");
+  if (!(health.tickStaleSec > 0)) fail("health.tickStaleSec : secondes > 0");
+  if (!(health.minFreeMiB >= 0)) fail("health.minFreeMiB : Mio ≥ 0");
   sizeMiB(config.runner.memoryMax);
   sizeMiB(config.heavy.memoryMax);
   if (!/^\d+%$/.test(config.heavy.cpuQuota)) fail("heavy.cpuQuota doit être un pourcentage (300%)");

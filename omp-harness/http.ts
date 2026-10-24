@@ -14,7 +14,8 @@
 // se reconnecte ne perd aucun événement. `live=1` y ajoute l'activité des runners
 // et le direct de leurs sessions (éphémères, jamais rejoués : `GET /v1/runs/{id}/session`
 // rend le tampon des dernières entrées d'un run).
-import { readFileSync } from "node:fs";
+import { readFileSync, statfsSync } from "node:fs";
+import * as path from "node:path";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
@@ -70,6 +71,50 @@ export const HARNESS_VERSION: string = (() => {
 
 const MAX_BODY = 1024 * 1024;
 const PING_MS = 15_000;
+
+export type HealthCheck = { ok: boolean };
+
+/** Ce que `GET /v1/health` vérifie : la base lisible, le scheduling qui tourne, le disque qui n'est pas plein. */
+export type HealthChecks = {
+  db: HealthCheck;
+  /** `ageSec` : depuis la fin du dernier tour (`null` : service pas encore démarré). */
+  scheduler: HealthCheck & { ageSec: number | null };
+  /** `freeMiB` : le moins libre des systèmes de fichiers de `dataDir` et `worktreesDir`. */
+  disk: HealthCheck & { freeMiB: number | null };
+};
+
+/** Les Mio libres (pour un non-root) du système de fichiers de `dir`, ou de son plus proche parent existant. */
+function freeMiB(dir: string): number | null {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    try {
+      const stats = statfsSync(current);
+      return Math.floor((stats.bavail * stats.bsize) / (1024 * 1024));
+    } catch {
+      if (path.dirname(current) === current) return null;
+    }
+  }
+}
+
+/** Les vérifications de santé, sans jamais lever : un échec est un `ok: false`, jamais un détail interne. */
+export function healthChecks(orchestrator: Orchestrator, now = Date.now()): { ok: boolean; checks: HealthChecks } {
+  const { config, store } = orchestrator;
+  let db = true;
+  try {
+    store.db.prepare("SELECT id FROM runs LIMIT 1").get();
+  } catch {
+    db = false;
+  }
+  const last = orchestrator.lastTickAt;
+  const ageSec = last === null ? null : Math.max(0, Math.round((now - last) / 1000));
+  const free = [config.dataDir, config.worktreesDir].map(freeMiB);
+  const freeLeast = free.some((value) => value === null) ? null : Math.min(...(free as number[]));
+  const checks: HealthChecks = {
+    db: { ok: db },
+    scheduler: { ok: ageSec === null || ageSec <= config.health.tickStaleSec, ageSec },
+    disk: { ok: freeLeast !== null && freeLeast >= config.health.minFreeMiB, freeMiB: freeLeast },
+  };
+  return { ok: checks.db.ok && checks.scheduler.ok && checks.disk.ok, checks };
+}
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const json = JSON.stringify(body);
@@ -613,11 +658,14 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           throw new HarnessError(400, "URL illisible");
         }
         if (req.method === "GET" && url.pathname === "/v1/health") {
-          send(res, 200, {
-            ok: true,
+          // 503 au moindre échec : la sonde du compose (et toute supervision) lit le code ; le corps garde la version.
+          const health = healthChecks(orchestrator);
+          send(res, health.ok ? 200 : 503, {
+            ok: health.ok,
             api: API_VERSION,
             version: options.version ?? HARNESS_VERSION,
             features: API_FEATURES,
+            checks: health.checks,
           });
           return;
         }
