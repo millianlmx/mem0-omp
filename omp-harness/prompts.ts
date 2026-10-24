@@ -3,9 +3,12 @@
 //
 // Fil de traçabilité : B-n (besoin) → AC-n (B-m) (critère, co-signé par son besoin)
 // → S-n (AC-…) (spec) → test nommé avec l'id AC-n → table AC par AC du verdict.
+import type { Finding } from "./challenge.ts";
+import { MAX_FINDINGS } from "./challenge.ts";
+import type { ChallengeStep } from "./config.ts";
 import type { StepKind } from "./machine.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
-import type { Verdict } from "./verdict.ts";
+import type { CriterionDrift, Verdict } from "./verdict.ts";
 
 /** Le fichier d'artefact que chaque étape DOIT écrire (la revue rend son verdict par outil). */
 export const STEP_ARTIFACT: Record<StepKind, string | null> = {
@@ -39,6 +42,8 @@ export type PromptContext = {
   decisions: string[];
   /** Le rebase sur main a échoué : le service a fusionné main, ces fichiers sont en conflit. */
   conflicts: string[];
+  /** Les critères qui ont bougé depuis la validation des specs (review). */
+  specsDrift: CriterionDrift[];
 };
 
 const POLICY = `## Politique de décision (non négociable)
@@ -67,7 +72,18 @@ const TESTABLE_SPEC = "Une spec qui ne permet pas d'écrire le test avant le cod
 function reviewBody(ctx: PromptContext): string {
   const head = `# /review — revue de « ${ctx.title} »
 
-Lis \`${ART}/req.md\`, \`${ART}/specs.md\` et \`${ART}/impl.md\` : la revue juge le code contre les critères AC-n (B-m), pas contre une impression.`;
+Lis \`${ART}/req.md\` et \`${ART}/specs.md\`, puis le diff : la revue juge le code contre les critères AC-n (B-m), pas contre une impression. Forme ton jugement critère par critère sur le code et les tests AVANT d'ouvrir \`${ART}/impl.md\` : le compte rendu de l'implémenteur ne prouve rien, il sert seulement à repérer ce qu'il dit avoir laissé de côté.`;
+  const drift =
+    ctx.specsDrift.length === 0
+      ? ""
+      : `\n\n## Critères modifiés depuis la validation des specs
+Le contrat validé fait foi : la table \`criteria\` couvre CHAQUE critère ci-dessous, jugé sur son texte validé. Un critère retiré ou réécrit qui affaiblit le besoin est un bloquant.
+${ctx.specsDrift
+  .map(
+    (item) =>
+      `- ${item.id} — validé : ${item.validated ?? "(absent : ajouté pendant l'implémentation)"}\n  actuel : ${item.current ?? "(retiré de specs.md)"}`,
+  )
+  .join("\n")}`;
   const scope =
     ctx.sinceSha === null
       ? `Première revue : relis le diff COMPLET, \`git diff ${ctx.baseSha}\` (base = main), critère par critère.
@@ -75,7 +91,7 @@ Lis \`${ART}/req.md\`, \`${ART}/specs.md\` et \`${ART}/impl.md\` : la revue juge
       : `Revue INCRÉMENTALE : relis le diff depuis \`${ctx.sinceSha}\` (\`git diff ${ctx.sinceSha}\`), c'est la correction ; vérifie chaque bloquant levé par la revue précédente, un par un, avec sa preuve :
 ${bullets(ctx.previousBlockers) ?? "- (aucun bloquant transmis : relis `.harness/fix.md`)"}
 - \`run_tests\` avec \`scope: touched\` d'abord ; la suite \`scope: full\` seulement s'il ne reste plus AUCUN bloquant.`;
-  return `${head}
+  return `${head}${drift}
 
 ${scope}
 - Ne modifie PAS le code pendant la revue : un bloquant part en correction.
@@ -177,8 +193,79 @@ export function stepPrompt(ctx: PromptContext): string {
   return parts.filter((part) => part !== "").join("\n");
 }
 
+const CHALLENGE_LOOKS_FOR: Record<ChallengeStep, string> = {
+  req: `- une LECTURE CONCURRENTE : la demande admet une autre interprétation plausible que req.md écarte sans le dire (\`ambiguite\`) ;
+- un besoin implicite de la demande ou de l'oracle qui manque (\`besoin_manquant\`), ou un besoin que personne n'a demandé (\`hors_demande\`) ;
+- un critère qui ne prouve pas son besoin : pas observable, trop large, satisfait par une implémentation qui raterait le besoin (\`critere_faible\`) ;
+- une contradiction avec une décision de l'oracle ou avec le dépôt (\`contradiction\`).`,
+  specs: `- un besoin B-n de req.md dont le SENS n'est pas couvert, même si un critère le cite (\`besoin_manquant\`) ;
+- un critère ou une spec qu'une implémentation fausse satisferait encore (\`critere_faible\`) ;
+- un cas limite ou d'erreur laissé ouvert (\`cas_manquant\`), une spec qu'aucun test ne peut trancher (\`non_testable\`) ;
+- une spec qui sort des besoins, du hors-périmètre ou d'une décision de l'oracle (\`derive\`) ;
+- un relevé du dépôt faux — cite le \`fichier:ligne\` réel (\`contradiction\`).`,
+};
+
+/**
+ * Le prompt du contradicteur : un agent neuf relit l'artefact d'une étape pour le prendre
+ * en défaut, en lecture seule, et rend ses constats par \`challenge_report\`.
+ */
+export function challengePrompt(ctx: {
+  step: ChallengeStep;
+  title: string;
+  request: string;
+  memories: string | null;
+}): string {
+  const artifact = STEP_ARTIFACT[ctx.step] as string;
+  const reads = ctx.step === "specs" ? `\`${ART}/req.md\` puis \`${ART}/specs.md\`` : `\`${ART}/req.md\``;
+  return [
+    `# /contradicteur — relecture de \`${artifact}\` de « ${ctx.title} »
+
+Un autre agent vient d'écrire \`${ART}/${artifact}\`. Ton rôle : le prendre en défaut AVANT que la suite du run ne le prenne pour acquis. Tu ne l'as pas écrit, tu n'as rien à défendre.
+Lis la demande d'origine, la section Oracle et ${reads} ; lis le code juste assez pour vérifier une affirmation. LECTURE SEULE : ne modifie AUCUN fichier (le service jetterait tes modifications).
+
+Cherche, du plus grave au moins grave :
+${CHALLENGE_LOOKS_FOR[ctx.step]}
+
+Gravité : \`bloquant\` = livré tel quel, le résultat ne serait pas ce que le demandeur voulait ; \`majeur\` = un trou réel que les tests ne verraient pas ; \`mineur\` = à noter, sans risque pour le résultat. Pas de remarque de forme, de style ou de goût : un constat sans conséquence sur le résultat n'en est pas un, et aucun constat vaut mieux qu'un constat inventé.
+
+Termine par \`challenge_report\`, une fois : au plus ${MAX_FINDINGS} constats, les plus graves d'abord ; chacun vise son id (\`B-n\`, \`AC-n\`, \`S-n\`, ou vide), cite l'extrait qui le PROUVE (\`evidence\`) et propose une correction (\`suggestion\`). Une liste vide est une réponse honnête.`,
+    section("Demande d'origine", ctx.request),
+    section("Oracle (rappel du service)", ctx.memories),
+    `\n- \`progress\` à chaque passage relu, une phrase. N'utilise JAMAIS \`ask\`.\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+/** Un constat tel que l'auteur le lit : id, gravité, type, cible, preuve et suggestion. */
+function findingLines(finding: Finding): string {
+  return [
+    `- **${finding.id}** (${finding.severity}, ${finding.kind}${finding.target ? `, ${finding.target}` : ""}) : ${finding.claim}`,
+    `  - preuve : ${finding.evidence}`,
+    ...(finding.suggestion ? [`  - suggestion : ${finding.suggestion}`] : []),
+  ].join("\n");
+}
+
+/** La réponse de l'auteur au contradicteur : corriger ou réfuter chaque constat, dans l'artefact. */
+export function challengeAnswerPrompt(ctx: { step: ChallengeStep; title: string; findings: Finding[] }): string {
+  const artifact = `${ART}/${STEP_ARTIFACT[ctx.step] as string}`;
+  return `# /${ctx.step} — réponse au contradicteur de « ${ctx.title} »
+
+Un contradicteur (un autre agent, dans un contexte neuf) a relu \`${artifact}\`. Pour CHAQUE constat ci-dessous : corrige l'artefact s'il a raison, réfute-le avec les faits s'il a tort. Ne cède pas par complaisance, ne t'entête pas : seul compte le résultat pour le demandeur.
+- Une lecture de la demande que ni elle ni l'oracle ne tranchent : tranche-la par \`decision\` (\`category: clarification\`, l'option la plus réversible) et reporte le choix dans l'artefact.
+- Termine \`${artifact}\` par la section \`## Contradicteur\` : une ligne par constat, \`C-n : corrigé — ce qui a changé\` ou \`C-n : réfuté — pourquoi, avec les faits\`.
+- L'artefact garde son format (mêmes sections, mêmes règles qu'à l'étape) ; ne modifie AUCUN autre fichier.
+- Un constat bloquant que tu réfutes part à l'humain avec ta réfutation : il arbitrera avant /impl.
+
+## Constats
+${ctx.findings.map(findingLines).join("\n")}
+
+${POLICY}
+`;
+}
+
 /** La relance unique d'une étape qui n'a pas rendu son artefact ou son verdict. */
-export function nudgePrompt(step: StepKind, missing: string): string {
+export function nudgePrompt(step: StepKind | "contradicteur", missing: string): string {
   return `L'étape /${step} n'est pas terminée : ${missing}. Termine-la maintenant, sans rien rouvrir.`;
 }
 

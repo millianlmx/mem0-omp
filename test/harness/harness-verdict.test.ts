@@ -23,6 +23,7 @@ const evidence: MergeEvidence = {
   maxDiffLines: 300,
   openEscalations: 0,
   acIds: ["AC-1", "AC-2"],
+  specsDrift: [],
   autoMergeRisk: "medium",
   touchedFiles: ["a.ts", "b.ts"],
 };

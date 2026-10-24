@@ -8,8 +8,26 @@
 //
 // Une étape interrompue (délai, fournisseur, runner mort) laisse un commit WIP et une
 // consigne de reprise : la tentative suivante repart du travail fait, pas de zéro.
+//
+// Les étapes de contrat (/req, /specs) passent, avant leur clôture, devant le
+// contradicteur (challenge.ts). Les specs closes sont GELÉES (`SPECS_BASELINE`) : la revue
+// et l'auto-merge jugent sur leurs critères, pas sur ceux que /impl aurait réécrits.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { Answer, ChallengeRecord, Finding } from "./challenge.ts";
+import {
+  CHALLENGE_ARTIFACT,
+  CHALLENGE_STATE,
+  disputes,
+  openDisputes,
+  parseAnswers,
+  parseFindings,
+  readRecords,
+  renderRecords,
+  toAnswer,
+  unanswered,
+} from "./challenge.ts";
+import type { ChallengeStep } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import { SERVICE } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
@@ -22,15 +40,29 @@ import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
 import { stepTier } from "./machine.ts";
 import type { NewProjectInput } from "./orchestrator.ts";
 import { parseModulesSection } from "./planner.ts";
-import { STEP_ARTIFACT, nudgePrompt, stepPrompt } from "./prompts.ts";
+import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
 import { briefOfReq, renderMemories } from "./oracle.ts";
-import type { PromptError } from "./rpc.ts";
+import type { PromptError, PromptResult } from "./rpc.ts";
 import { RunnerExited } from "./rpc.ts";
 import { hostToolsFor, runnerUnit } from "./runner.ts";
-import { RunnerSession, STEP_TIMEOUT_PREFIX } from "./runner-session.ts";
+import { RunnerSession, STEP_TIMEOUT_PREFIX, providerOfLabel } from "./runner-session.ts";
 import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
-import type { MergeDecision, Verdict } from "./verdict.ts";
-import { mergeDecision, parseAcIds } from "./verdict.ts";
+import type { CriterionDrift, MergeDecision, Verdict } from "./verdict.ts";
+import { criteriaDrift, mergeDecision, parseAcIds } from "./verdict.ts";
+
+/** Les specs telles qu'à la clôture de /specs (et donc à leur validation) : artefact interne. */
+export const SPECS_BASELINE = "_specs.baseline.md";
+
+/** L'unité du runner contradicteur d'une étape (l'arrêt forcé la retrouve au redémarrage). */
+export function challengeUnit(runId: string, stepId: number): string {
+  return `${runnerUnit(runId, stepId)}-contradicteur`;
+}
+
+/** Ce que le passage du contradicteur laisse à l'étape : rien à redire, un artefact cassé, ou un prompt interrompu. */
+type ChallengeEnd =
+  | { kind: "ok" }
+  | { kind: "missing"; reason: string }
+  | { kind: "interrupted"; result: PromptResult };
 
 /** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage, suite). */
 export type StepHooks = {
@@ -162,17 +194,22 @@ export function specsCoverageGap(reqMd: string, specsMd: string): string | null 
 }
 
 /**
- * Les specs ont besoin d'un regard humain avant /impl (porte « auto ») : un découpage
- * proposé, des modules absents, une décision irréversible dans le texte, ou la première
- * feature d'un projet (elle fixe le cadre des suivantes).
+ * Pourquoi les specs ont besoin d'un regard humain avant /impl (porte « auto ») : un
+ * découpage proposé, des modules absents, une décision irréversible dans le texte, ou la
+ * première feature d'un projet (elle fixe le cadre des suivantes). Vide : aucune raison.
  */
+export function gateReasons(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): string[] {
+  const irreversible = detectIrreversible(specsMd);
+  return [
+    ...(parseSplitSection(specsMd).length > 0 ? ["découpage proposé"] : []),
+    ...(parseModulesSection(specsMd).length === 0 ? ["modules vides"] : []),
+    ...(irreversible !== null ? [`geste irréversible (${irreversible})`] : []),
+    ...(run.projectId !== null && run.projectOrder === 0 ? ["première feature d'un projet"] : []),
+  ];
+}
+
 export function gateNeeded(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): boolean {
-  return (
-    parseSplitSection(specsMd).length > 0 ||
-    parseModulesSection(specsMd).length === 0 ||
-    detectIrreversible(specsMd) !== null ||
-    (run.projectId !== null && run.projectOrder === 0)
-  );
+  return gateReasons(run, specsMd).length > 0;
 }
 
 /** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
@@ -293,6 +330,8 @@ export class StepExecutor {
         stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
         runnerUnit(run.id, stepRow.id),
         live.abort.signal,
+        // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
+        step === "review" && config.review.crossProvider ? { avoidProvider: this.#implementerProvider(run.id) } : {},
       );
       await session.setHostTools(hostToolsFor(step));
 
@@ -313,6 +352,7 @@ export class StepExecutor {
         resume: store.instructions(run.id),
         decisions: this.#decisionLines(run.id),
         conflicts: live.conflicts,
+        specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
       });
       store.setInstructions(run.id, null);
       live.conflicts = [];
@@ -353,6 +393,22 @@ export class StepExecutor {
         store.finishStep(stepRow.id, "failed", missing);
         return { kind: "failed", cause: "missing_output", reason: missing, retryable: true };
       }
+      const challenged = await this.#challenge(live, run, stepRow, headBefore, dirtyBefore, deadlineAt);
+      if (challenged.kind === "interrupted") {
+        const error = challenged.result.error;
+        const status = challenged.result.status === "aborted" ? "aborted" : "error";
+        return await this.#interrupted(
+          run,
+          stepRow,
+          failCauseOf(status, error),
+          error?.message ?? (status === "aborted" ? "prompt interrompu" : "erreur du runner"),
+          error?.retryable !== false,
+        );
+      }
+      if (challenged.kind === "missing") {
+        store.finishStep(stepRow.id, "failed", challenged.reason);
+        return { kind: "failed", cause: "missing_output", reason: challenged.reason, retryable: true };
+      }
       return await this.#close(live, run, stepRow);
     } catch (err) {
       if (live.abort.signal.aborted) {
@@ -363,6 +419,193 @@ export class StepExecutor {
       await session.stop();
       return await this.#interrupted(run, stepRow, err instanceof RunnerExited ? "runner" : "other", reason, true);
     }
+  }
+
+  /**
+   * Le contradicteur d'une étape de contrat. L'auteur rend son runner (un run, un slot,
+   * un runner), un agent neuf relit l'artefact en lecture seule, puis l'auteur — sur un
+   * runner neuf — corrige ou réfute chaque constat dans l'artefact. Un contradicteur en
+   * panne DÉGRADE l'étape (événement `challenge` en échec), il ne la bloque jamais.
+   */
+  async #challenge(
+    live: LiveRun,
+    run: RunRow,
+    stepRow: StepRow,
+    headBefore: string,
+    dirtyBefore: boolean,
+    deadlineAt: number,
+  ): Promise<ChallengeEnd> {
+    const { config, store, git } = this.#ctx;
+    const step = run.step as StepKind;
+    if ((step !== "req" && step !== "specs") || !config.challenge.steps.includes(step)) return { kind: "ok" };
+    const worktree = run.worktree as string;
+    const author = this.session(live, run);
+    const authorModel = author.model;
+    // Le travail de l'auteur est à l'abri (base et commit) avant que le contradicteur n'ouvre le worktree.
+    this.#ingest(run, stepRow.id);
+    if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
+    await author.stop();
+    const critic = await this.#runCritic(live, run, stepRow, step, author.provider, deadlineAt);
+    // Ce que le contradicteur a pu écrire est jeté ; les artefacts de l'auteur reviennent de la base.
+    if (await git.isDirty(worktree)) await git.resetTo(worktree, "HEAD");
+    this.#materialize(run);
+    if (critic.kind === "failed") {
+      this.#ctx.event("challenge", run.id, { step, status: "failed", reason: critic.reason });
+      return { kind: "ok" };
+    }
+
+    const pending = toAnswer(critic.findings);
+    let answers = new Map<string, Answer>();
+    if (pending.length > 0) {
+      const session = this.session(live, run);
+      await session.open(
+        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        `${runnerUnit(run.id, stepRow.id)}-reponse`,
+        live.abort.signal,
+      );
+      await session.setHostTools(hostToolsFor(step));
+      const missingAnswer = async (): Promise<string | null> => {
+        const broken = await this.#missingOutput(live, run, headBefore, dirtyBefore);
+        if (broken !== null) return broken;
+        const ids = unanswered(pending, parseAnswers(this.#artifactNow(run, step)));
+        return ids.length === 0
+          ? null
+          : `${ids.join(", ")} sans réponse dans la section \`## Contradicteur\` de \`${ARTIFACTS_DIR}/${STEP_ARTIFACT[step] as string}\` (\`C-n : corrigé — …\` ou \`C-n : réfuté — …\`)`;
+      };
+      let result = await session.prompt(
+        challengeAnswerPrompt({ step, title: run.title, findings: pending }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      let missing = result.status === "completed" ? await missingAnswer() : null;
+      if (result.status === "completed" && missing !== null) {
+        result = await session.prompt(nudgePrompt(step, missing), live.abort.signal, deadlineAt);
+        missing = result.status === "completed" ? await missingAnswer() : null;
+      }
+      if (result.status !== "completed") return { kind: "interrupted", result };
+      // Une réponse absente compte comme un refus (désaccord) ; un artefact cassé fait échouer l'étape.
+      const broken = await this.#missingOutput(live, run, headBefore, dirtyBefore);
+      if (broken !== null) return { kind: "missing", reason: broken };
+      answers = parseAnswers(this.#artifactNow(run, step));
+    }
+    const record: ChallengeRecord = {
+      step,
+      model: critic.model,
+      authorModel,
+      findings: critic.findings,
+      answers: Object.fromEntries([...answers].filter(([id]) => critic.findings.some((f) => f.id === id))),
+      disputes: disputes(critic.findings, answers),
+    };
+    store.transaction(() => {
+      const records = { ...readRecords(store.getArtifact(run.id, CHALLENGE_STATE)), [step]: record };
+      store.putArtifact(run.id, CHALLENGE_STATE, JSON.stringify(records), stepRow.id);
+      store.putArtifact(run.id, CHALLENGE_ARTIFACT, renderRecords(records), stepRow.id);
+      this.#ctx.event("challenge", run.id, {
+        step,
+        status: "done",
+        model: record.model,
+        authorModel,
+        findings: record.findings.length,
+        answered: pending.length,
+        disputes: record.disputes,
+      });
+    });
+    return { kind: "ok" };
+  }
+
+  /** Le contradicteur lui-même : un runner neuf, en lecture seule, qui rend ses constats ou échoue. */
+  async #runCritic(
+    live: LiveRun,
+    run: RunRow,
+    stepRow: StepRow,
+    step: ChallengeStep,
+    avoidProvider: string | null,
+    deadlineAt: number,
+  ): Promise<{ kind: "done"; findings: Finding[]; model: string | null } | { kind: "failed"; reason: string }> {
+    const { config, oracle } = this.#ctx;
+    const repo = this.#ctx.repo(run.repo);
+    const report: { findings: Finding[] | null } = { findings: null };
+    const critic = new RunnerSession(
+      this.#ctx,
+      { repo, cwd: run.worktree as string },
+      {
+        onHostTool: async (name, args) => {
+          switch (name) {
+            case "progress": {
+              const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
+              this.#ctx.event("progress", run.id, { step, by: "contradicteur", message });
+              return { text: "noté" };
+            }
+            case "oracle_recall":
+              return {
+                text: renderMemories(
+                  await oracle.recall(repo.scope, typeof args.query === "string" ? args.query : run.title),
+                ),
+              };
+            case "challenge_report": {
+              const parsed = parseFindings(args);
+              if (!parsed.ok) return { text: `constats refusés : ${parsed.error}`, isError: true };
+              report.findings = parsed.findings;
+              return { text: `${parsed.findings.length} constat(s) enregistré(s). Termine ton tour.` };
+            }
+            default:
+              return { text: `outil inconnu : ${name}`, isError: true };
+          }
+        },
+        event: (type, payload) => this.#ctx.event(type, run.id, { ...payload, step, by: "contradicteur" }),
+        frame: (frame) => this.#ctx.sessions.frame(run.id, step, frame),
+      },
+    );
+    try {
+      await critic.open(config.challenge.tier, challengeUnit(run.id, stepRow.id), live.abort.signal, {
+        avoidProvider,
+      });
+      await critic.setHostTools(hostToolsFor("challenge"));
+      const memories = renderMemories(await oracle.recall(repo.scope, `${run.title}\n${run.request}`));
+      let result = await critic.prompt(
+        challengePrompt({ step, title: run.title, request: run.request, memories }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && report.findings === null)
+        result = await critic.prompt(
+          nudgePrompt(
+            "contradicteur",
+            "les constats n'ont pas été rendus par `challenge_report` (une liste vide si rien à redire)",
+          ),
+          live.abort.signal,
+          deadlineAt,
+        );
+      if (result.status !== "completed")
+        return { kind: "failed", reason: result.error?.message ?? "contradicteur interrompu" };
+      if (report.findings === null)
+        return { kind: "failed", reason: "les constats n'ont pas été rendus par `challenge_report`" };
+      return { kind: "done", findings: report.findings, model: critic.model };
+    } catch (err) {
+      if (live.abort.signal.aborted) throw err;
+      return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+    } finally {
+      await critic.stop();
+    }
+  }
+
+  /** L'artefact d'une étape tel que le runner l'a laissé dans le worktree. */
+  #artifactNow(run: RunRow, step: StepKind): string {
+    const artifact = STEP_ARTIFACT[step];
+    return artifact === null ? "" : (readArtifact(expectedDir(run.worktree as string, ARTIFACTS_DIR), artifact) ?? "");
+  }
+
+  /** Le fournisseur de la dernière implémentation (ou correction) du run, d'après ses étapes. */
+  #implementerProvider(runId: string): string | null {
+    const steps = this.#ctx.store.listSteps(runId).filter((row) => row.kind === "impl" || row.kind === "fix");
+    return providerOfLabel(steps.findLast((row) => row.model !== null)?.model ?? null);
+  }
+
+  /** Les critères qui ont bougé depuis les specs gelées ; rien si le run n'en a pas (ancien run). */
+  #specsDrift(runId: string): CriterionDrift[] {
+    const { store } = this.#ctx;
+    const validated = store.getArtifact(runId, SPECS_BASELINE);
+    return validated === null ? [] : criteriaDrift(validated, store.getArtifact(runId, "specs.md") ?? "");
   }
 
   /**
@@ -492,15 +735,19 @@ export class StepExecutor {
           "besoins",
         ]);
     }
-    let gate: boolean | null = null;
-    if (step === "specs") gate = await this.#closeSpecs(run);
+    let gate: string[] | null = null;
+    if (step === "specs") gate = await this.#closeSpecs(run, stepRow.id);
     if (step === "impl") await this.#closeImpl(run);
     if (await git.mergeInProgress(worktree))
       await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
     else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
 
     const escalations = store.listEscalations({ runId: run.id, status: "open", stepId: stepRow.id }).length;
-    let outcome: StepOutcome = { kind: "done", escalations, ...(gate !== null ? { gateNeeded: gate } : {}) };
+    let outcome: StepOutcome = {
+      kind: "done",
+      escalations,
+      ...(gate !== null ? { gateNeeded: gate.length > 0, gateReasons: gate } : {}),
+    };
     let review: { verdict: Verdict; merge: MergeDecision; head: string } | null = null;
     if (step === "review") {
       // La revue a pu rebaser à la main (conflits) : la base suit main si elle la contient.
@@ -518,13 +765,18 @@ export class StepExecutor {
             `suite complète rouge : ${live.lastFull ? failSummary(live.lastFull) : "voir le dernier résultat heavy"}`,
           ],
         };
-      const acIds = parseAcIds(store.getArtifact(run.id, "specs.md") ?? "");
+      // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
+      const current = store.getArtifact(run.id, "specs.md") ?? "";
+      const acIds = [
+        ...new Set([...parseAcIds(store.getArtifact(run.id, SPECS_BASELINE) ?? current), ...parseAcIds(current)]),
+      ];
       const merge = mergeDecision(verdict, {
         fullTests,
         diffLines: await git.diffLines(worktree, base, config.review.diffCount),
         maxDiffLines: config.review.maxDiffLines,
         openEscalations: escalations,
         acIds,
+        specsDrift: this.#specsDrift(run.id),
         autoMergeRisk: config.review.autoMergeRisk,
         touchedFiles: await git.touchedFiles(worktree, base),
       });
@@ -550,16 +802,20 @@ export class StepExecutor {
         step,
         stepId: stepRow.id,
         escalations,
-        ...(gate !== null ? { gateNeeded: gate } : {}),
+        ...(gate !== null ? { gateNeeded: gate.length > 0 } : {}),
       });
     });
     return outcome;
   }
 
-  /** Fin de /specs : modules posés, découpage parti en projet ; rend `gateNeeded`. */
-  async #closeSpecs(run: RunRow): Promise<boolean> {
+  /**
+   * Fin de /specs : specs gelées, modules posés, découpage parti en projet ; rend les
+   * raisons de la porte humaine (désaccords avec le contradicteur compris).
+   */
+  async #closeSpecs(run: RunRow, stepId: number): Promise<string[]> {
     const { store } = this.#ctx;
     const specs = store.getArtifact(run.id, "specs.md") ?? "";
+    store.putArtifact(run.id, SPECS_BASELINE, specs, stepId);
     const modules = parseModulesSection(specs);
     if (modules.length > 0) {
       store.transaction(() => {
@@ -582,7 +838,11 @@ export class StepExecutor {
         features: runs.map((row) => ({ id: row.id, title: row.title, modules: row.modules })),
       });
     }
-    return gateNeeded(run, specs);
+    const disputed = openDisputes(readRecords(store.getArtifact(run.id, CHALLENGE_STATE)));
+    return [
+      ...gateReasons(run, specs),
+      ...(disputed.length > 0 ? [`désaccord avec le contradicteur (${disputed.join(", ")})`] : []),
+    ];
   }
 
   /** Fin de /impl : un `## Reste` non vide devient un run de suite. */
@@ -618,7 +878,10 @@ export class StepExecutor {
     }
   }
 
-  /** Les artefacts écrits par le runner, versés dans la base (source de vérité) — liens et fichiers spéciaux ignorés. */
+  /**
+   * Les artefacts écrits par le runner, versés dans la base (source de vérité) — liens et
+   * fichiers spéciaux ignorés, comme le rapport du contradicteur, que seul le service écrit.
+   */
   #ingest(run: RunRow, stepId: number): void {
     const dir = expectedDir(run.worktree as string, ARTIFACTS_DIR);
     let names: string[];
@@ -632,7 +895,7 @@ export class StepExecutor {
     const { store } = this.#ctx;
     store.transaction(() => {
       for (const name of names) {
-        if (!/^[\w.-]+\.md$/.test(name) || name.startsWith("_")) continue;
+        if (!/^[\w.-]+\.md$/.test(name) || name.startsWith("_") || name === CHALLENGE_ARTIFACT) continue;
         const content = readArtifact(dir, name);
         if (content === null) continue;
         if (store.getArtifact(run.id, name) !== content) store.putArtifact(run.id, name, content, stepId);

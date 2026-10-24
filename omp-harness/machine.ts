@@ -54,8 +54,8 @@ export type FailCause =
 export type StepOutcome =
   /**
    * L'étape a rendu ce qu'elle devait ; `escalations` = escalades ouvertes en fin
-   * d'étape ; `gateNeeded` (specs) = la relecture humaine vaut la peine ;
-   * `criteriaMissing` (review) = critères d'acceptation sans verdict.
+   * d'étape ; `gateNeeded` (specs) = la relecture humaine vaut la peine, `gateReasons`
+   * dit pourquoi ; `criteriaMissing` (review) = critères d'acceptation sans verdict.
    */
   | {
       kind: "done";
@@ -63,6 +63,7 @@ export type StepOutcome =
       merge?: MergeDecision;
       blockers?: number;
       gateNeeded?: boolean;
+      gateReasons?: string[];
       criteriaMissing?: string[];
     }
   | { kind: "failed"; reason: string; retryable: boolean; cause: FailCause };
@@ -142,7 +143,9 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
         return to("awaiting_human", "specs", cursor, {
           reason:
             limits.specsGate === "auto"
-              ? "specs à valider avant /impl (découpage, modules ou geste irréversible)"
+              ? (outcome.gateReasons ?? []).length > 0
+                ? `specs à valider avant /impl : ${(outcome.gateReasons ?? []).join(" ; ")}`
+                : "specs à valider avant /impl (découpage, modules ou geste irréversible)"
               : "specs à valider avant /impl",
         });
       }

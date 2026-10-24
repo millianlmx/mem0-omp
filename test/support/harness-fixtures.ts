@@ -63,8 +63,9 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   config.heavy.isolation = "none";
   config.listen.port = 0;
   config.git = { authorName: "Harness", authorEmail: "harness@example.com" };
-  // Les scénarios vont de /req au merge d'une traite ; la porte des specs a ses propres tests.
+  // Les scénarios vont de /req au merge d'une traite ; la porte des specs et le contradicteur ont leurs propres tests.
   config.review.specsGate = false;
+  config.challenge.steps = [];
   // Une relance immédiate, une seule : les scénarios d'échec restent courts (le backoff a ses propres tests).
   config.runner.retryBackoffSec = [0];
   config.runner.stepRetries = 1;

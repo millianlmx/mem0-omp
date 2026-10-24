@@ -21,6 +21,7 @@ function ctx(patch: Partial<PromptContext>): PromptContext {
     resume: null,
     decisions: [],
     conflicts: [],
+    specsDrift: [],
     ...patch,
   };
 }
@@ -74,9 +75,10 @@ test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la 
   }
 });
 
-test("harness-prompts/AC-4 : /review lit req, specs et impl, rend une table AC par AC ; complète à la 1re passe, incrémentale ensuite (diff depuis le sha, bloquants relus, full seulement sans bloquant)", () => {
+test("harness-prompts/AC-4 : /review lit req et specs puis le diff, impl.md seulement après son jugement, rend une table AC par AC ; complète à la 1re passe, incrémentale ensuite (diff depuis le sha, bloquants relus, full seulement sans bloquant)", () => {
   const first = stepPrompt(ctx({ step: "review" }));
-  assert.match(first, /Lis `\.harness\/req\.md`, `\.harness\/specs\.md` et `\.harness\/impl\.md`/);
+  assert.match(first, /Lis `\.harness\/req\.md` et `\.harness\/specs\.md`, puis le diff/);
+  assert.match(first, /AVANT d'ouvrir `\.harness\/impl\.md`/);
   assert.match(first, /diff COMPLET, `git diff abc123`/);
   assert.match(first, /`scope: full`/);
   assert.match(first, /table `criteria` AC par AC/);

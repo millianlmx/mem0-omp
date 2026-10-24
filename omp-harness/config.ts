@@ -28,6 +28,11 @@ export const DEFAULT_STEP_TIERS: Readonly<Record<StepKind, Tier>> = {
   review: "heavy",
 };
 
+/** Les étapes qu'un contradicteur peut relire : celles qui écrivent le contrat (besoins, specs). */
+export type ChallengeStep = "req" | "specs";
+
+export const CHALLENGE_STEPS: readonly ChallengeStep[] = ["req", "specs"];
+
 /** Un modèle d'un fournisseur : la liste ordonnée d'un tier est sa chaîne de bascule. */
 export type ModelChoice = { provider: string; model: string };
 
@@ -235,7 +240,8 @@ export type HarnessConfig = {
    * tranchée sur la recommandation de l'agent (`null` : jamais). `mergeRetries` : les
    * merges arrêtés tolérés avant l'humain. `mergePollSec` / `mergeWaitSec` : en mode
    * `gh`, la cadence de relecture de la PR après `gh pr merge --auto` et l'attente
-   * maximale de sa fusion (les checks requis de la branche protégée).
+   * maximale de sa fusion (les checks requis de la branche protégée). `crossProvider` :
+   * la revue tourne de préférence chez un autre fournisseur que celui qui a implémenté.
    */
   review: {
     fixCap: number;
@@ -247,7 +253,14 @@ export type HarnessConfig = {
     mergeRetries: number;
     mergePollSec: number;
     mergeWaitSec: number;
+    crossProvider: boolean;
   };
+  /**
+   * Le contradicteur : en fin de /req et de /specs, un agent neuf (autre contexte, autre
+   * fournisseur si la chaîne en a un) relit l'artefact pour le prendre en défaut ;
+   * l'auteur corrige ou réfute chaque point. `steps` vide le coupe.
+   */
+  challenge: { steps: ChallengeStep[]; tier: Tier };
   /** Les notifications sortantes (ntfy ou webhook) : `url` null = aucune ; `events` = les types envoyés. */
   notify: { url: string | null; events: string[] };
   /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
@@ -364,7 +377,9 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       mergeRetries: 3,
       mergePollSec: 60,
       mergeWaitSec: 7200,
+      crossProvider: true,
     },
+    challenge: { steps: [...CHALLENGE_STEPS], tier: "heavy" },
     notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS] },
     memory: { runnerMode: true },
     oracle: null,
@@ -478,6 +493,14 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("review.mergeRetries doit être un entier ≥ 0");
   if (!(config.review.mergePollSec > 0)) fail("review.mergePollSec : secondes > 0");
   if (!(config.review.mergeWaitSec > 0)) fail("review.mergeWaitSec : secondes > 0");
+  if (typeof config.review.crossProvider !== "boolean") fail("review.crossProvider : booléen");
+  if (
+    !Array.isArray(config.challenge.steps) ||
+    config.challenge.steps.some((step) => !(CHALLENGE_STEPS as readonly string[]).includes(step))
+  )
+    fail(`challenge.steps : liste parmi ${CHALLENGE_STEPS.join(" | ")}`);
+  if (!(TIERS as readonly string[]).includes(config.challenge.tier))
+    fail(`challenge.tier : tier inconnu (${TIERS.join(" | ")})`);
   if (config.notify.url !== null && typeof config.notify.url !== "string") fail("notify.url : URL ou null");
   if (!Array.isArray(config.notify.events) || config.notify.events.some((event) => typeof event !== "string"))
     fail("notify.events : liste de noms d'événements");
