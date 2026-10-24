@@ -771,7 +771,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Pipeline Service** : machine à états, reprise au checkpoint, relances différées | `machine.ts`, `context.ts`, `orchestrator.ts`, `steps.ts` | Machine pure, table des transitions (`TRANSITIONS`) : toute écriture d'état passe par `context.transition`, en compare-and-swap, avec ses événements dans la même transaction. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. Une étape qui échoue pour une cause relançable est remise en file avec `notBefore = maintenant + runner.retryBackoffSec[tentative]`. Les causes qui se résolvent en attendant (`rate_limit`, `network`, `provider`, `server_error`, `timeout`) consomment toute la liste, même répétées ; les autres (`context`, `runner`, `missing_output`, `other`) passent à l'humain dès deux échecs de suite. Liste épuisée ⇒ `awaiting_human` avec la cause (l'humain relance par `retry`) ; `failed` est réservé au non relançable. Un correcteur qui ne change rien conteste : la revue repart dans un runner neuf, et la seconde contestation passe à l'humain. Un run `failed` ou `awaiting_human` se relance (`retry`) à son étape. |
 | **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel` ; un run dont `notBefore` n'est pas passé, ou dont les modules sont encore en déduction, n'est pas candidat. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. À chaque tour, les escalades ouvertes depuis plus de `review.escalationTimeoutSec` sont tranchées sur la recommandation de l'agent. |
 | **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans le texte de la feature et ses souvenirs de besoins (tag `besoins`) — pour un run seul aussi, avant son admission —, puis précisés par la section `## Modules` des specs ou l'outil `set_modules`. Les modules connus sont les dossiers jusqu'à deux niveaux, les fichiers de la racine, et les fichiers `.ts` d'un dossier plat (plus de 8). Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation ; un merge arrêté est relancé seul (`review.mergeRetries`, 5/15/60 min). |
-| **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance, bascule | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans une scope `MemoryMax=1G` sous `choom -n 300`. Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Chaque erreur de prompt est classée (`classifyPromptError` : `rate_limit` — 429/529 et messages de quota —, `server_error` 5xx, `network`, `context`, `other`) ; une cause de `runner.failoverOn` fait passer au fournisseur suivant de la chaîne (`set_model`, même conversation) ; chaîne à un seul fournisseur (ou tous à sec) ⇒ attente du `retry-after` du fournisseur (sinon 60 s), bornée par l'échéance, puis réessai du même, 3 fois au plus (`provider_retry`). L'erreur rendue à l'étape porte `cause` et `retryAfterMs`. Le runner de la revue reste vivant pendant review → fix (cache de prompt) ; fix → review repart à neuf. Les autres meurent en fin d'étape ou à l'escalade. |
+| **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance, bascule | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans un service transitoire (`systemd-run --wait --pipe`, stdio gardés) `MemoryMax=1G`, `OOMScoreAdjust=300`, qui n'écrit que dans son worktree et ne lit que son clone (§ Sécurité). Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Chaque erreur de prompt est classée (`classifyPromptError` : `rate_limit` — 429/529 et messages de quota —, `server_error` 5xx, `network`, `context`, `other`) ; une cause de `runner.failoverOn` fait passer au fournisseur suivant de la chaîne (`set_model`, même conversation) ; chaîne à un seul fournisseur (ou tous à sec) ⇒ attente du `retry-after` du fournisseur (sinon 60 s), bornée par l'échéance, puis réessai du même, 3 fois au plus (`provider_retry`). L'erreur rendue à l'étape porte `cause` et `retryAfterMs`. Le runner de la revue reste vivant pendant review → fix (cache de prompt) ; fix → review repart à neuf. Les autres meurent en fin d'étape ou à l'escalade. |
 | **Merges** : un dépôt à la fois, jamais « merged » avant `main` | `merger.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. Mode `gh` : `gh pr merge --squash --auto`, puis `gh pr view` toutes les `mergePollSec` jusqu'à la fusion constatée (borne `mergeWaitSec`). Mode `local` : un push refusé ⇒ `awaiting_human` « push refusé : … », réseau ⇒ réessayé. Merge arrêté ⇒ `queued` avec `notBefore` (5/15/60 min), compté dans `mergeRetries`. `revert(run)` : `git revert` du squash dans un worktree jetable, push (ou PR `--auto`), événement `reverted`, run de suite. |
 | **Notifications** : ntfy, fire-and-forget | `notify.ts`, `context.ts` | Abonné au journal (`store.onEvent`) : chaque événement de `notify.events` part en `POST notify.url` avec `Title`/`Priority`/`Tags`/`Click`. Le titre est français et court (« Question — <feature> », « Verdict à valider — … », « Mergé — … »). Une erreur est journalisée (`notify_failed`) au plus une fois par heure, jamais levée. |
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision` (`options` obligatoires, 2 à 4, `chosen` parmi elles). Une décision réversible — ou une `clarification` de produit/UX — devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
@@ -789,9 +789,36 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 
 ## Sécurité et écarts assumés au schéma
 
-- **Heavy en service transitoire, pas en `--scope`.** Une scope ne porte ni
-  `User=` ni `PrivateNetwork=`. Le job part donc en `systemd-run --wait --pipe` :
-  mêmes limites cgroup, plus l'isolation demandée.
+- **Runners et heavy en services transitoires, pas en `--scope`.** Une scope ne
+  porte ni `User=`, ni `PrivateNetwork=`, ni bac à sable de fichiers. Runner et job
+  partent donc en `systemd-run --wait --pipe` : mêmes limites cgroup, stdio gardés,
+  plus l'isolation demandée.
+- **Un runner systemd vaut un conteneur.** Sans bac à sable, les worktrees (créés en
+  `UMask=0002`, inscriptibles par `omp-work`) et les clones étaient lisibles et
+  inscriptibles d'un dépôt à l'autre : un agent du dépôt A pouvait écrire dans le
+  worktree vivant du dépôt B, qui s'auto-merge, par-dessus le cloisonnement des
+  clients. Le lanceur impose donc au runner `User=omp-runner`, `NoNewPrivileges`,
+  `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, masque
+  tous les worktrees et tous les clones (`TemporaryFileSystem=… :ro`) puis rend son
+  seul worktree en écriture (`BindPaths`) et son seul clone en lecture
+  (`BindReadOnlyPaths`, `REPOS_ROOT/<dépôt>` : `/var/lib/omp-harness/repos/<dépôt>`),
+  et cache l'état du service, la mémoire et les sockets de l'hôte (`RUNNER_HIDDEN`).
+  Seul son HOME s'ajoute en écriture. Ses clés (`runner.env`, puis les `*_API_KEY` de
+  l'API, puis la scope mémoire) passent par un fichier root 0600 de
+  `/run/omp-harness-launcher` que systemd lit au démarrage (`EnvironmentFile=`) :
+  jamais sur la ligne de commande ni dans les propriétés de l'unité, que tout user
+  local lit. Sans lanceur (`launcher: []`), un runner systemd est refusé plutôt que
+  lancé en root.
+- **Le service durci sans casser sudo.** `NoNewPrivileges` reste éteint (sudo vers le
+  lanceur). Sous `User=`, systemd ne pose un filtre seccomp qu'avec
+  `NoNewPrivileges=yes`, qu'il impose alors : `ProtectKernel*`, `PrivateDevices`,
+  `RestrictAddressFamilies`, `LockPersonality`, `RestrictRealtime`,
+  `RestrictSUIDSGID` (qui interdirait de plus le setgid des dossiers de worktrees)
+  sont donc écartés. Restent les espaces de montage : `ProtectSystem=full`,
+  `ProtectHome`, `PrivateTmp`, `ProtectControlGroups` (systemd-run demande les unités
+  à PID 1, il n'écrit pas les cgroups). `strict` est écarté : le lanceur, lancé dans
+  cet espace, écrit sous `/run` et dans le HOME des runners, et les dossiers de
+  données se déplacent par la configuration.
 - **Les outils du runner sont des outils hôtes RPC.** `decision`, `progress`,
   `oracle_recall`, `checkpoint` et `set_modules` à toutes les étapes,
   `split_feature` en /specs et /impl, `run_tests` (`touched` | `full` | `check`) dès
@@ -810,8 +837,10 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
   - les chemins doivent être absolus et rester sous les racines déclarées ;
   - le lanceur ajoute lui-même `ProtectHome` et masque, par `InaccessiblePaths`,
     l'état du service, les logins des runners et les sockets de l'hôte ;
-  - côté runner, la commande est épinglée sur `OMP_BIN`, et il est relancé sous
-    `omp-runner` avec les clés de `/etc/omp-harness/runner.env`, que root seul lit.
+  - côté runner, la commande est épinglée sur `OMP_BIN`, le worktree est exactement
+    `WORKTREES_ROOT/<dépôt>/<feature>` et le clone `REPOS_ROOT/<dépôt>`, et le
+    lanceur pose lui-même l'user `omp-runner`, le bac à sable et les clés de
+    `/etc/omp-harness/runner.env`, que root seul lit.
 
   Il refuse tout le reste (code 64). Sa configuration est lue ligne à ligne,
   jamais exécutée.

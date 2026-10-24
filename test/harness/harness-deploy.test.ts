@@ -61,7 +61,7 @@ test("harness-deploy/AC-2 : un OOM tue un job heavy (800) avant un runner (300),
   const runner = launcherArgs(
     runnerArgv(config, { unit: "omp-runner-r1-1", cwd: WT, overlay: "/o.json", model: null, scope: "mon-produit" }),
   );
-  assert.deepEqual(runner.slice(runner.indexOf("choom"), runner.indexOf("choom") + 3), ["choom", "-n", "300"]);
+  assert.ok(runner.includes("OOMScoreAdjust=300"), "un runner (300) passe après un job heavy (800)");
   assert.equal(directive(read("omp-harness-runners.slice"), "ManagedOOMPreference"), "avoid");
   assert.equal(directive(read("omp-harness-heavy.slice"), "ManagedOOMMemoryPressure"), "kill");
   assert.equal(directive(read("zram-generator.conf").replace(/ = /g, "="), "zram-size"), "8192");
@@ -96,12 +96,15 @@ test("harness-deploy/AC-3 : le lanceur root accepte exactement les lignes que le
   );
   assert.equal(runner.code, 0, runner.err);
   const line = runner.out.trimEnd().split("\n");
-  assert.ok(line.includes("--uid=omp-runner"), "le runner tourne sous son user, jamais sous root ni sous le service");
-  assert.ok(line.includes("--gid=omp-work"));
+  assert.ok(line.includes("User=omp-runner"), "le runner tourne sous son user, jamais sous root ni sous le service");
+  assert.ok(line.includes("Group=omp-work"));
   assert.ok(line.includes("--mode") && line.includes("rpc"));
 
-  const stop = launcher(["--stop", "omp-runner-r1-2.scope"]);
-  assert.deepEqual([stop.code, stop.out.trim().split("\n")], [0, ["systemctl", "stop", "--", "omp-runner-r1-2.scope"]]);
+  const stop = launcher(["--stop", "omp-runner-r1-2.service"]);
+  assert.deepEqual(
+    [stop.code, stop.out.trim().split("\n")],
+    [0, ["systemctl", "stop", "--", "omp-runner-r1-2.service"]],
+  );
 });
 
 test("harness-deploy/AC-4 : le lanceur refuse toute ligne qui élargirait les droits — root, réseau, chemins, propriétés, unités étrangères", () => {
@@ -131,42 +134,15 @@ test("harness-deploy/AC-4 : le lanceur refuse toute ligne qui élargirait les dr
     assert.match(result.err, /refusé/);
   }
   assert.equal(launcher(["--stop", "sshd.service"]).code, 64);
-  assert.equal(
-    launcher([
-      "--scope",
-      "--quiet",
-      "--collect",
-      "--unit=omp-runner-x",
-      "--slice=other.slice",
-      "-p",
-      "MemoryMax=1G",
-      "--",
-      "choom",
-      "-n",
-      "300",
-      "--",
-      "omp",
-    ]).code,
-    64,
+  // Côté runner : ni une autre tranche, ni un runner en scope (sans bac à sable), ni une unité de heavy.
+  const runner = launcherArgs(
+    runnerArgv(config, { unit: "omp-runner-x", cwd: WT, overlay: "/o.json", model: null, scope: "mon-produit" }),
   );
-  assert.equal(
-    launcher([
-      "--scope",
-      "--quiet",
-      "--collect",
-      "--unit=omp-runner-x",
-      "--slice=omp-harness-runners.slice",
-      "-p",
-      "MemoryMax=1G",
-      "--",
-      "bash",
-      "-n",
-      "300",
-      "--",
-      "omp",
-    ]).code,
-    64,
-  );
+  const swapRunner = (from: string, to: string) => runner.map((arg) => (arg === from ? to : arg));
+  assert.equal(launcher(runner).code, 0);
+  assert.equal(launcher(swapRunner("--slice=omp-harness-runners.slice", "--slice=other.slice")).code, 64);
+  assert.equal(launcher(["--scope", "--quiet", "--collect", ...runner.slice(4)]).code, 64);
+  assert.equal(launcher(swapRunner("--unit=omp-runner-x", "--unit=omp-heavy-x")).code, 64);
   assert.equal(launcher([]).code, 64);
 });
 

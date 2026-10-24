@@ -26,6 +26,23 @@ MemoryMax=1G
 OOMScoreAdjust=-900
 ManagedOOMPreference=omit
 # Pas de NoNewPrivileges : le lanceur root passe par sudo (seule élévation permise).
+# Le durcissement s'en tient donc aux espaces de montage, que sudo et le lanceur root
+# (lancés DANS cet espace) traversent sans perte : le système (/usr, /boot, /etc) en
+# lecture seule, les HOME de /home, /root et /run/user invisibles, un /tmp à soi, les
+# cgroups en lecture (systemd-run demande les unités à PID 1, il ne les écrit pas).
+# ProtectSystem=strict est écarté : le lanceur écrit les fichiers d'environnement des
+# runners sous /run et leur models.yml dans le HOME des runners, et dataDir, worktreesDir
+# et les clones se déplacent par la configuration.
+# Écartés aussi, tous à base de seccomp : ProtectKernelTunables/Modules/Logs,
+# PrivateDevices, RestrictAddressFamilies, LockPersonality, RestrictRealtime,
+# RestrictSUIDSGID, SystemCallFilter. Sous User=, sans CAP_SYS_ADMIN, systemd ne pose
+# un filtre seccomp qu'avec NoNewPrivileges=yes, qu'il impose alors : sudo cesserait
+# d'élever. (RestrictSUIDSGID interdirait de plus le bit setgid des dossiers des
+# worktrees, que le service pose lui-même.)
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
 
 [Install]
 WantedBy=multi-user.target

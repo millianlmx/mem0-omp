@@ -1,4 +1,4 @@
-// Feature harness-runner : un runner OMP par étape — scope systemd plafonnée à 1 Go,
+// Feature harness-runner : un runner OMP par étape — service systemd transitoire plafonné à 1 Go,
 // OOM score 300, profil pipeline (LSP / DAP / noyau éteints), mode RPC, outils hôtes par étape.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,10 +23,10 @@ function at(step: Parameters<typeof hostToolsFor>[0], name: string, ...keys: str
   return node;
 }
 
-test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranche des runners) sous choom 300, en mode RPC sans UI", () => {
+test("harness-runner/AC-1 : un runner part en service systemd transitoire par le lanceur root (stdio gardés, MemoryMax=1G, OOMScoreAdjust=300, tranche des runners, son clone en lecture), en mode RPC sans UI", () => {
   const config = testConfig("/srv/repo", (c) => {
     c.runner.isolation = "systemd";
-    c.launcher = [];
+    c.launcher = ["sudo", "-n", "/usr/local/libexec/omp-harness-systemd-run"];
   });
   const { command, args } = runnerArgv(config, {
     unit: "omp-runner-r1-3",
@@ -36,11 +36,23 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
     scope: "demo-scope",
     repo: "/var/lib/omp-harness/repos/mon-produit",
   });
-  assert.equal(command, "systemd-run");
+  assert.equal(command, "sudo");
   const line = args.join(" ");
   assert.match(
     line,
-    /^--scope --quiet --collect --unit=omp-runner-r1-3 --slice=omp-harness-runners\.slice -p MemoryMax=1G --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 --setenv=MEM0_MODE=runner -- choom -n 300 -- omp /,
+    /^-n \/usr\/local\/libexec\/omp-harness-systemd-run --wait --pipe --collect --service-type=exec --unit=omp-runner-r1-3 --quiet --slice=omp-harness-runners\.slice --working-directory=\/w\/feat -p MemoryMax=1G -p OOMScoreAdjust=300 -p BindReadOnlyPaths=\/var\/lib\/omp-harness\/repos\/mon-produit --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 --setenv=MEM0_MODE=runner -- omp /,
+  );
+  // Sans lanceur, rien ne poserait l'user ni le bac à sable : refusé plutôt qu'un runner root.
+  assert.throws(
+    () =>
+      runnerArgv(
+        testConfig("/srv/repo", (c) => {
+          c.runner.isolation = "systemd";
+          c.launcher = [];
+        }),
+        { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope" },
+      ),
+    /lanceur root/,
   );
   for (const flag of [
     "--mode rpc",
@@ -68,7 +80,6 @@ test("harness-runner/AC-1 : un runner part en scope systemd (MemoryMax=1G, tranc
   const classic = runnerArgv(
     testConfig("/srv/repo", (c) => {
       c.runner.isolation = "systemd";
-      c.launcher = [];
       c.memory.runnerMode = false;
     }),
     { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope", repo: "/srv/repo" },
