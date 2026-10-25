@@ -1,5 +1,10 @@
 # Journal des versions
 
+## omp-harness 1.7.1 — 2026-10-25
+
+- fix(harness): les fichiers d'un run fusionné se lisent dans son commit, jamais dans le worktree en cours de retrait (#286) (4613318)
+- refactor(harness): découper db.ts en un fichier par domaine (#282) (11468d8)
+
 ## omp-harness 1.7.0 — 2026-10-24
 
 - feat(harness): runners systemd confinés à leur worktree, plafonds de dépense en cours d'étape et par jour, API durcie (#267) (4c56ce7)
