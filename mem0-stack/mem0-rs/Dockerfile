@@ -4,11 +4,21 @@
 # haut de tout Cargo.lock) et le gcc/make de buildpack-deps. aws-lc-sys (hors
 # FIPS), libsqlite3-sys `bundled`, sqlite-vec et ring n'ont besoin que d'un
 # compilateur C : ni CMake, ni clang, ni OpenSSL, donc aucun apt-get ici.
+#
+# Les dépendances sont compilées dans leur propre couche, qui ne dépend que de
+# Cargo.toml et Cargo.lock : une modification du code ne recompile plus que la
+# crate, pas ses ~200 dépendances. La couche se construit sur un main.rs vide,
+# retiré ensuite avec ce que cargo a produit pour lui (le `touch` force cargo à
+# recompiler le vrai main.rs, plus vieux que l'artefact factice). Rien de propre
+# à BuildKit (pas de `--mount=type=cache`) : Docker et podman la cachent pareil.
 FROM rust:1.89-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src target/release/mem0-rs target/release/deps/mem0_rs-* target/release/.fingerprint/mem0-rs-*
 COPY src ./src
-RUN cargo build --release --locked
+RUN touch src/main.rs && cargo build --release --locked
 
 # Étape d'exécution : même Debian que l'étape de build, donc même glibc.
 # curl sert le healthcheck du compose (le binaire n'a pas de sous-commande
