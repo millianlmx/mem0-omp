@@ -418,7 +418,6 @@
 "Modèles choisis depuis les apps" = "Models chosen from the apps";
 "Modèles de la configuration du serveur" = "Models from the server configuration";
 "Modèles par niveau" = "Models per Tier";
-"Motif : %@" = "Reason: %@";
 "Mémoire" = "Memory";
 "Mémoire disponible" = "Available memory";
 "Mémoire du serveur injoignable." = "Server memory unreachable.";
@@ -700,3 +699,13 @@
 "élément" = "item";
 "éléments" = "items";
 "état inconnu" = "unknown state";
+"Contexte" = "Context";
+"Options" = "Options";
+"Pourquoi l’agent recommande cette option" = "Why the agent recommends this option";
+"Pourquoi l’agent a retenu cette option" = "Why the agent chose this option";
+"Recommandée" = "Recommended";
+"Retenue" = "Chosen";
+"Demande d’origine" = "Original request";
+"Touche : %@" = "Touches: %@";
+"L’agent n’a pas décrit la situation : lisez la demande d’origine." = "The agent did not describe the situation: read the original request.";
+"Question %lld sur %lld" = "Question %lld of %lld";

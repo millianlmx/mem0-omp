@@ -77,8 +77,8 @@ test("harness-notify/AC-1 : une escalade journalisée part en POST ntfy (Title, 
     const [post] = ntfy.received;
     assert.equal(
       post?.headers.title,
-      `=?UTF-8?B?${Buffer.from("Question — Export CSV", "utf8").toString("base64")}?=`,
-      "le tiret cadratin sort du Latin-1 : titre encodé RFC 2047, que ntfy décode",
+      `=?UTF-8?B?${Buffer.from(`Question — ${run.repo} · Export CSV`, "utf8").toString("base64")}?=`,
+      "le tiret cadratin sort du Latin-1 : titre encodé RFC 2047, que ntfy décode ; le dépôt précède la feature",
     );
     assert.equal(headerValue("Run failed - x"), "Run failed - x", "un titre ASCII part tel quel");
     assert.equal(post?.headers.priority, "4");

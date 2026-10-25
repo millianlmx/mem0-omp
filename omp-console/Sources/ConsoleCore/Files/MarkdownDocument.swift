@@ -103,6 +103,16 @@ public enum MarkdownDocument {
         return blocks(from: runs[...])
     }
 
+    /// Une ligne Markdown rendue en ligne (gras, italique, `code`, liens) : une
+    /// question, une option, un impact. Les sauts de ligne restent ; un échec de
+    /// parse rend le texte brut.
+    public static func inline(_ markdown: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: markdown,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(markdown)
+    }
+
     // MARK: - Lecture de la pile d'intentions
 
     private struct MarkdownRun {

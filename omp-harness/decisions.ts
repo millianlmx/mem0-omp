@@ -12,6 +12,10 @@
 //
 // « clarification » : une question de produit ou d'UX que le besoin ne tranche pas.
 // Réversible par nature : l'agent choisit, checkpoint, et l'humain relit (inbox).
+//
+// Le lecteur pilote plusieurs projets à la fois et lit la question hors de la session :
+// chaque décision porte son `context` (la situation, autoportante, en Markdown) et,
+// pour une escalade, l'impact de chaque option (`impacts`, dans l'ordre des options).
 
 export type DecisionCategory = "reversible" | "clarification" | "schema" | "public_api" | "deletion";
 
@@ -30,6 +34,9 @@ export const IRREVERSIBLE: readonly IrreversibleCategory[] = ["schema", "public_
 /** Entre deux et quatre options : une seule n'est pas un choix, cinq noient la réponse. */
 export const OPTIONS_MIN = 2;
 export const OPTIONS_MAX = 4;
+
+/** Un contexte plus court ne dit pas la situation : c'est une étiquette, pas une explication. */
+export const CONTEXT_MIN = 40;
 
 /** Les motifs SÛRS d'irréversibilité : étroits par construction, un faux positif coûte une escalade. */
 const PATTERNS: { category: IrreversibleCategory; pattern: RegExp }[] = [
@@ -57,6 +64,10 @@ export type DecisionInput = {
   options: string[];
   chosen: string;
   rationale: string;
+  /** La situation qui pose la question, lisible sans la session (Markdown). */
+  context: string;
+  /** Ce qu'emporte chaque option, dans l'ordre de `options` ; vide si l'agent ne l'a pas dit. */
+  impacts: string[];
   category: DecisionCategory;
   /** Les numéros des décisions du run dont ce choix découle. */
   dependsOn: number[];
@@ -116,10 +127,23 @@ function dependsOnOf(value: unknown): number[] | null {
   return seqs.sort((a, b) => a - b);
 }
 
+/** Les impacts, un par option ; `null` si la liste n'en est pas une ou ne suit pas les options. */
+function impactsOf(value: unknown, options: readonly string[]): string[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  const items: unknown[] = value;
+  const impacts = items.map((item) => (typeof item === "string" ? item.trim() : ""));
+  if (impacts.length !== options.length || impacts.some((item) => item === "")) return null;
+  return impacts;
+}
+
 /** Valide l'appel `decision` d'un runner et dit ce que le service en fait. */
 export function planDecision(raw: unknown): DecisionParse {
   if (!isRecord(raw))
-    return { ok: false, error: "arguments attendus : { question, options, chosen, rationale, category, dependsOn? }" };
+    return {
+      ok: false,
+      error: "arguments attendus : { question, context, options, impacts?, chosen, rationale, category, dependsOn? }",
+    };
   const question = typeof raw.question === "string" ? raw.question.trim() : "";
   if (question === "") return { ok: false, error: "question est requise" };
   const options = Array.isArray(raw.options)
@@ -133,14 +157,30 @@ export function planDecision(raw: unknown): DecisionParse {
   if (!options.includes(chosen)) return { ok: false, error: "chosen doit reprendre une des options mot pour mot" };
   const rationale = typeof raw.rationale === "string" ? raw.rationale.trim() : "";
   if (rationale === "") return { ok: false, error: "rationale est requise : une décision sans raison sera rouverte" };
+  const context = typeof raw.context === "string" ? raw.context.trim() : "";
+  if (context.length < CONTEXT_MIN)
+    return {
+      ok: false,
+      error:
+        "context est requis : la situation en quelques phrases (la feature, l'endroit du code, ce qui pose la question, l'enjeu), lisible par quelqu'un qui n'a pas suivi la session",
+    };
   const category = categoryOf(raw.category);
   if (category === null) return { ok: false, error: `category : ${DECISION_CATEGORIES.join(" | ")}` };
+  const impacts = impactsOf(raw.impacts, options);
+  if (impacts === null)
+    return { ok: false, error: "impacts : une conséquence par option, non vide, dans l'ordre des options" };
   const dependsOn = dependsOnOf(raw.dependsOn);
   if (dependsOn === null)
     return { ok: false, error: "dependsOn : la liste des numéros (#N) des décisions dont ce choix découle" };
-  const input: DecisionInput = { question, options, chosen, rationale, category, dependsOn };
+  const input: DecisionInput = { question, options, chosen, rationale, context, impacts, category, dependsOn };
   const declared = irreversibleOf(category);
+  if (declared !== null && impacts.length === 0)
+    return {
+      ok: false,
+      error: "impacts est requis pour une escalade : l'humain tranche entre des conséquences, pas entre des libellés",
+    };
   if (declared !== null) return { ok: true, plan: { kind: "escalate", input, category: declared, hardened: false } };
+  // Le contexte décrit la situation, pas le choix : il n'entre pas dans la détection (faux positifs).
   const detected = detectIrreversible([question, chosen, rationale].join("\n"));
   if (detected)
     return {

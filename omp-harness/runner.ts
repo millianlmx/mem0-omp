@@ -238,8 +238,24 @@ const DECISION_TOOL: HostToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      question: { type: "string", description: "La question, autoportante." },
+      question: { type: "string", description: "La question, autoportante, en une phrase." },
+      context: {
+        type: "string",
+        description:
+          "La situation, en Markdown (paragraphes courts, listes, `code` en ligne ; ni titres ni tableaux) : l'humain pilote " +
+          "plusieurs projets à la fois et lit cette question hors de la session, sans le code sous les yeux. Dis la feature " +
+          "et ce qu'elle doit livrer, l'endroit du code concerné (fichiers, symboles), ce qui pose la question (ce que les " +
+          "specs ou l'existant ne tranchent pas) et l'enjeu. Explique tout terme propre au projet.",
+      },
       options: { ...STRINGS, minItems: 2, maxItems: 4, description: "Les options envisagées (2 à 4), mot pour mot." },
+      impacts: {
+        ...STRINGS,
+        minItems: 2,
+        maxItems: 4,
+        description:
+          "Ce qu'emporte chaque option, dans l'ordre de `options` (une phrase chacune : ce qui change, ce qu'il en coûte, " +
+          "ce qui devient difficile à défaire). REQUIS pour une escalade ; recommandé pour une clarification.",
+      },
       chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
       rationale: {
         type: "string",
@@ -254,7 +270,7 @@ const DECISION_TOOL: HostToolDefinition = {
           "un choix qui tiendrait quelle que soit l'issue des autres n'en déclare aucune.",
       },
     },
-    required: ["question", "options", "chosen", "rationale", "category"],
+    required: ["question", "context", "options", "chosen", "rationale", "category"],
     additionalProperties: false,
   },
   loadMode: "essential",

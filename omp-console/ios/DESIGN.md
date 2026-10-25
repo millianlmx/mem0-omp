@@ -326,6 +326,10 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 - L'Accueil est la boîte de l'humain : specs à valider (rendues par
   `IOSMarkdownView`), verdicts, questions en lot, décisions renversables, audits
   à trier, puis les features en cours. `[garde: ios-souvenir-markdown-altere/AC-4]`
+- Chaque question de l'Accueil (escalade, décision prise seule, specs, verdict)
+  est située par `IOSQuestionPlaceView` (dépôt › feature › étape, demande
+  d'origine repliée), sa situation rendue par `IOSContextView`, ses options par
+  `IOSChoiceRow` avec leur impact. `[garde: questions-en-contexte/AC-7]`
 - Une feature se lit en une rangée : son titre, puis la pastille de son état et
   de son étape (`IOSStatusChip`, ton qui double le mot). `[garde: design-ios/AC-2]`
 - Un lancement (feature, projet, audit) choisit son dépôt dans un `Picker`

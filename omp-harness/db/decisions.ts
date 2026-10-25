@@ -17,6 +17,10 @@ export type DecisionRow = {
   options: string[];
   chosen: string;
   rationale: string;
+  /** La situation donnée par l'agent (Markdown) ; `null` sur une décision antérieure. */
+  context: string | null;
+  /** Ce qu'emporte chaque option, dans l'ordre de `options` ; vide si l'agent ne l'a pas dit. */
+  impacts: string[];
   category: DecisionCategory;
   status: DecisionStatus;
   checkpointSha: string | null;
@@ -37,7 +41,12 @@ export type EscalationRow = {
   category: DecisionCategory;
   question: string;
   options: string[];
+  /** La situation donnée par l'agent (Markdown) ; sur une escalade antérieure, sa raison. */
   context: string;
+  /** Pourquoi l'agent recommande `recommended` ; `null` sur une escalade antérieure. */
+  rationale: string | null;
+  /** Ce qu'emporte chaque option, dans l'ordre de `options`. */
+  impacts: string[];
   /** L'option que l'agent aurait prise (celle de l'auto-décision à l'échéance). */
   recommended: string | null;
   status: "open" | "answered";
@@ -60,6 +69,8 @@ function decisionOf(row: Row): DecisionRow {
     options: json<string[]>(row, "options", []),
     chosen: str(row, "chosen"),
     rationale: str(row, "rationale"),
+    context: strOrNull(row, "context"),
+    impacts: json<string[]>(row, "impacts", []),
     category: str(row, "category") as DecisionCategory,
     status: str(row, "status") as DecisionStatus,
     checkpointSha: strOrNull(row, "checkpoint_sha"),
@@ -81,6 +92,8 @@ function escalationOf(row: Row): EscalationRow {
     question: str(row, "question"),
     options: json<string[]>(row, "options", []),
     context: str(row, "context"),
+    rationale: strOrNull(row, "rationale"),
+    impacts: json<string[]>(row, "impacts", []),
     recommended: strOrNull(row, "recommended"),
     status: str(row, "status") as "open" | "answered",
     answer: strOrNull(row, "answer"),
@@ -96,8 +109,17 @@ export class DecisionStore extends StepStore {
   addDecision(
     input: Omit<
       DecisionRow,
-      "id" | "seq" | "status" | "reversalOption" | "reversalReason" | "decidedBy" | "createdAt" | "decidedAt"
-    >,
+      | "id"
+      | "seq"
+      | "status"
+      | "reversalOption"
+      | "reversalReason"
+      | "decidedBy"
+      | "createdAt"
+      | "decidedAt"
+      | "context"
+      | "impacts"
+    > & { context?: string | null; impacts?: string[] },
     status: "auto" | "auto_timeout" = "auto",
   ): DecisionRow {
     return this.transaction(() => {
@@ -106,8 +128,8 @@ export class DecisionStore extends StepStore {
           .next,
       );
       const result = this.execute(
-        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, category, status, checkpoint_sha, depends_on, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, context, impacts, category, status, checkpoint_sha, depends_on, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.runId,
         input.stepId,
         next,
@@ -115,6 +137,8 @@ export class DecisionStore extends StepStore {
         JSON.stringify(input.options),
         input.chosen,
         input.rationale,
+        input.context ?? null,
+        JSON.stringify(input.impacts ?? []),
         input.category,
         status,
         input.checkpointSha,
@@ -208,16 +232,20 @@ export class DecisionStore extends StepStore {
   addEscalation(
     input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context"> & {
       recommended?: string | null;
+      rationale?: string | null;
+      impacts?: string[];
     },
   ): EscalationRow {
     const result = this.execute(
-      "INSERT INTO escalations (run_id, step_id, category, question, options, context, recommended, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+      "INSERT INTO escalations (run_id, step_id, category, question, options, context, rationale, impacts, recommended, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)",
       input.runId,
       input.stepId,
       input.category,
       input.question,
       JSON.stringify(input.options),
       input.context,
+      input.rationale ?? null,
+      JSON.stringify(input.impacts ?? []),
       input.recommended ?? null,
       this.now(),
     );

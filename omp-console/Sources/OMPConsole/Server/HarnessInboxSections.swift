@@ -3,6 +3,10 @@
 // décisions prises seules (accepter ou renverser) et les features en cours. L'Accueil
 // la pose sous son résumé.
 //
+// Chaque question est SITUÉE avant d'être posée (`HarnessQuestionViews`) : dépôt ›
+// feature › étape, demande d'origine, situation décrite par l'agent, puis chaque
+// option avec ce qu'elle emporte. Les textes de l'agent sont rendus en Markdown.
+//
 // Le modèle (`HarnessModel`) et les brouillons (`HarnessDrafts`) viennent du client
 // partagé, comme dans l'app iOS ; les mots viennent de `PipelineServerText`. Aucun
 // `@State` (macros absentes sous les Command Line Tools) : l'état d'écran vit dans
@@ -74,7 +78,7 @@ struct HarnessInboxSections: View {
                 emptyRow
             }
             ForEach(inbox.decisions) { decision in
-                decisionView(decision, run: inbox.run(decision.runId))
+                decisionView(decision)
                     .disabled(!server.canAct)
             }
             ForEach(inbox.decisionRunIds, id: \.self) { runId in
@@ -113,38 +117,49 @@ struct HarnessInboxSections: View {
     // MARK: - À trancher
 
     private func batchView(_ batch: HarnessEscalationBatch) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(batch.run?.title ?? batch.id)
-                .font(.headline)
-            ForEach(batch.items) { item in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(PipelineServerText.category(item.category))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                    Text(item.question)
-                        .textSelection(.enabled)
-                    if let context = item.shownContext {
-                        Text(context)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let recommended = item.recommended {
-                        Text(PipelineServerText.recommended(recommended))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        ForEach(item.options, id: \.self) { option in
-                            Button {
-                                drafts.answers[item.id] = option
-                            } label: {
-                                Label(option, systemImage: drafts.answer(for: item) == option ? PipelineServerText.chosenSymbol : PipelineServerText.optionSymbol)
-                            }
-                            .buttonStyle(.bordered)
+        VStack(alignment: .leading, spacing: 14) {
+            if let first = batch.items.first {
+                HarnessQuestionPlaceView(place: inbox.question(first, in: batch))
+            }
+            ForEach(Array(batch.items.enumerated()), id: \.element.id) { index, item in
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(PipelineServerText.category(item.category))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        if batch.items.count > 1 {
+                            Text(PipelineServerText.questionIndex(index + 1, of: batch.items.count))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
+                    }
+                    Text(MarkdownDocument.inline(item.question))
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    HarnessContextView(context: item.shownContext)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(PipelineServerText.optionsTitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(item.choices) { choice in
+                            HarnessChoiceRow(
+                                choice: choice,
+                                badge: PipelineServerText.recommendedBadge,
+                                selected: drafts.answer(for: item) == choice.option
+                            ) {
+                                drafts.answers[item.id] = choice.option
+                            }
+                        }
+                    }
+                    if let rationale = item.shownRationale {
+                        HarnessReasonView(title: PipelineServerText.whyRecommended, text: rationale)
                     }
                     TextField(PipelineServerText.answerPlaceholder, text: answerBinding(item))
                     TextField(PipelineServerText.reasonOptional, text: reasonBinding(item.id))
+                }
+                if index < batch.items.count - 1 {
+                    Divider()
                 }
             }
             HStack {
@@ -168,7 +183,7 @@ struct HarnessInboxSections: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
     /// La saisie d'une réponse : l'option recommandée tant que rien n'est tapé.
@@ -184,16 +199,16 @@ struct HarnessInboxSections: View {
 
     private func specsView(_ run: HarnessRun) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(run.title)
-                .font(.headline)
+            HarnessQuestionPlaceView(place: inbox.question(run))
             if let specs = drafts.specs[run.id] {
+                // Les specs rendues (titres, listes de critères, tableaux, code), pas
+                // leur source : elles se lisent comme un document.
                 ScrollView {
-                    Text(specs)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
+                    MarkdownBlocksView(blocks: MarkdownDocument.blocks(specs))
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, 8)
                 }
-                .frame(maxHeight: 320)
+                .frame(maxHeight: 420)
             } else {
                 Button(PipelineServerText.readSpecs) {
                     Task {
@@ -221,14 +236,12 @@ struct HarnessInboxSections: View {
 
     private func verdictView(_ run: HarnessRun) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(run.title)
-                .font(.headline)
+            HarnessQuestionPlaceView(place: inbox.question(run))
             if let verdict = run.verdict {
                 Text(PipelineServerText.risk(verdict.risk))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(verdict.isLowRisk ? Color.green : Color.orange)
-                Text(verdict.summary)
-                    .textSelection(.enabled)
+                MarkdownBlocksView(markdown: verdict.summary)
                 verdictList(PipelineServerText.blockers, verdict.blockers)
                 verdictList(PipelineServerText.risks, verdict.risks)
                 verdictList(PipelineServerText.unverified, verdict.unverified)
@@ -269,8 +282,9 @@ struct HarnessInboxSections: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                 ForEach(items, id: \.self) { item in
-                    Text("· " + item)
+                    Text(MarkdownDocument.inline("· " + item))
                         .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -278,23 +292,32 @@ struct HarnessInboxSections: View {
 
     // MARK: - Décisions prises seules
 
-    private func decisionView(_ decision: HarnessDecision, run: HarnessRun?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let run {
-                Text(run.title)
+    private func decisionView(_ decision: HarnessDecision) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HarnessQuestionPlaceView(place: inbox.question(decision))
+            HStack(alignment: .firstTextBaseline) {
+                Text(PipelineServerText.category(decision.category))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if let status = PipelineServerText.decisionStatus(decision.status) {
+                    Text(status)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+                }
             }
-            Text(PipelineServerText.decisionLine(seq: decision.seq, question: decision.question, chosen: decision.chosen))
+            Text(MarkdownDocument.inline(decision.question))
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-            Text(PipelineServerText.rationale(decision.rationale))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let status = PipelineServerText.decisionStatus(decision.status) {
-                Text(status)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+            if let context = decision.shownContext {
+                HarnessContextView(context: context)
             }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(decision.choices) { choice in
+                    HarnessChoiceRow(choice: choice, badge: PipelineServerText.chosenBadge, selected: choice.isPreferred)
+                }
+            }
+            HarnessReasonView(title: PipelineServerText.whyChosen, text: decision.rationale)
             HStack {
                 Button(PipelineServerText.accept) {
                     Task { await server.accept(runId: decision.runId, seq: decision.seq) }
@@ -305,7 +328,7 @@ struct HarnessInboxSections: View {
             }
             .disabled(server.busy.contains(decision.runId))
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 
@@ -491,7 +514,7 @@ private struct HarnessGestures: ViewModifier {
         NavigationStack {
             Form {
                 Section {
-                    Text(decision.question)
+                    Text(MarkdownDocument.inline(decision.question))
                         .font(.headline)
                     if !decision.alternatives.isEmpty {
                         Picker(PipelineServerText.reverseOption, selection: $drafts.reversalOption) {

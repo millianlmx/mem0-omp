@@ -76,19 +76,38 @@ public enum PipelineServerText {
 
     // MARK: - Lignes
 
-    /// « n° 3 · Séparateur CSV → virgule »
-    public static func decisionLine(seq: Int, question: String, chosen: String) -> String {
-        L10n.format("n° %lld · %@ → %@", seq, question, chosen)
-    }
-
-    /// Le motif donné par l'agent.
-    public static func rationale(_ text: String) -> String { L10n.format("Motif : %@", text) }
-
     /// La proposition de l'agent, pour une escalade.
     public static func proposal(_ text: String) -> String { L10n.format("Proposé par l’agent : %@", text) }
 
     /// L'option recommandée par l'agent, pour une escalade.
     public static func recommended(_ text: String) -> String { L10n.format("Recommandé : %@", text) }
+
+    // MARK: - Questions situées
+
+    /// Le fil d'Ariane d'une question : « mem0-omp › Export CSV › /impl ».
+    public static func trail(_ parts: [String]) -> String { parts.joined(separator: " › ") }
+    public static let trailSymbol = "folder"
+    public static let contextTitle = L10n.text("Contexte")
+    public static let contextSymbol = "text.alignleft"
+    public static let optionsTitle = L10n.text("Options")
+    /// La raison de l'agent : pourquoi il recommande une option (escalade).
+    public static let whyRecommended = L10n.text("Pourquoi l’agent recommande cette option")
+    /// La raison de l'agent : pourquoi il a retenu une option (décision prise seule).
+    public static let whyChosen = L10n.text("Pourquoi l’agent a retenu cette option")
+    public static let recommendedBadge = L10n.text("Recommandée")
+    public static let chosenBadge = L10n.text("Retenue")
+    public static let originalRequest = L10n.text("Demande d’origine")
+    public static let requestSymbol = "text.quote"
+    /// « Touche : src/export, src/db »
+    public static func touches(_ modules: [String]) -> String {
+        L10n.format("Touche : %@", modules.joined(separator: ", "))
+    }
+    /// Une question d'un serveur antérieur, ou d'un agent qui n'a rien dit de la situation.
+    public static let noContext = L10n.text("L’agent n’a pas décrit la situation : lisez la demande d’origine.")
+    /// Le nombre de questions d'un lot, quand il y en a plusieurs : « Question 2 sur 3 ».
+    public static func questionIndex(_ index: Int, of count: Int) -> String {
+        L10n.format("Question %lld sur %lld", index, count)
+    }
 
     /// « Tout accepter : Export CSV », quand plusieurs features ont des décisions à relire.
     public static func acceptAllLine(_ title: String) -> String { L10n.format("Tout accepter : %@", title) }

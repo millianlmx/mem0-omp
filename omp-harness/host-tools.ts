@@ -151,7 +151,9 @@ async function decisionTool(
       question: plan.input.question,
       options: plan.input.options,
       recommended: plan.input.chosen,
-      context: plan.input.rationale,
+      context: plan.input.context,
+      rationale: plan.input.rationale,
+      impacts: plan.input.impacts,
     });
     ctx.event("escalation", run.id, {
       id: item.id,
@@ -185,6 +187,8 @@ async function checkpointDecision(
     options: input.options,
     chosen: input.chosen,
     rationale,
+    context: input.context,
+    impacts: input.impacts,
     category: input.category,
     checkpointSha: null,
     dependsOn: input.dependsOn,

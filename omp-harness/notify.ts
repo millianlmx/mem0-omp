@@ -43,7 +43,8 @@ export function headerValue(value: string): string {
 
 /** Le message d'un événement, ou `null` si cet événement n'a rien à dire à l'humain. */
 export function notificationFor(event: EventRow, run: RunRow | null): Notification | null {
-  const feature = run?.title ?? event.runId ?? "";
+  // Le dépôt d'abord : l'humain suit plusieurs projets, une notification doit dire lequel.
+  const feature = run ? `${run.repo} · ${run.title}` : (event.runId ?? "");
   const payload = event.payload;
   switch (event.type) {
     case "escalations": {

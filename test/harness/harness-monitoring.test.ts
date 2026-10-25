@@ -341,7 +341,7 @@ test("harness-monitoring/AC-5 : la veille lève une alerte par cause — agent m
     { id: 1, at: now, runId: "r1", repo: "demo", type: "stalled", payload: { minutes: 20, step: "impl", tool: null } },
     run,
   );
-  assert.equal(note?.title, "Agent muet — A");
+  assert.equal(note?.title, `Agent muet — ${run?.repo} · A`);
   assert.match(note?.body ?? "", /20 min à l'étape impl/);
   assert.equal(
     notificationFor(
@@ -355,7 +355,7 @@ test("harness-monitoring/AC-5 : la veille lève une alerte par cause — agent m
       },
       run,
     )?.title,
-    "Budget dépassé — A",
+    `Budget dépassé — ${run?.repo} · A`,
   );
   store.close();
 });
