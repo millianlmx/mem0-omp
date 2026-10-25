@@ -15,6 +15,8 @@ import { defaultConfig, validateConfig } from "../../omp-harness/config.ts";
 import { Store } from "../../omp-harness/db.ts";
 import type { EventRow } from "../../omp-harness/db.ts";
 import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
+import type { HarnessContext } from "../../omp-harness/context.ts";
+import { changesOf } from "../../omp-harness/inspect.ts";
 import { Metrics } from "../../omp-harness/metrics.ts";
 import { Monitor } from "../../omp-harness/monitor.ts";
 import { notificationFor } from "../../omp-harness/notify.ts";
@@ -804,4 +806,31 @@ test("harness-monitoring/AC-12 : la configuration du monitoring et d'APNs est va
     "push-activities",
   ])
     assert.ok((API_FEATURES as readonly string[]).includes(feature), feature);
+});
+
+test("harness-monitoring/AC-13 : un run fusionné se lit dans son commit squash, même tant que son worktree n'est pas encore retiré", async () => {
+  // Le worktree d'un run fusionné part en arrière-plan juste après le merge : tant
+  // qu'il existe, le lire rendait une erreur (dossier en cours de retrait) ou les
+  // fichiers du worktree au lieu de ceux du commit fusionné.
+  const lus: { cwd: string; from: string; to: string | null }[] = [];
+  const ctx = {
+    repo: () => ({ path: "/depots/demo" }),
+    git: {
+      trustWorktree: async () => {},
+      changes: async (cwd: string, from: string, to: string | null) => {
+        lus.push({ cwd, from, to });
+        return [{ path: "src/api/export.ts", status: "A", added: 1, removed: 0 }];
+      },
+    },
+  } as unknown as HarnessContext;
+  const run = { id: "r1", repo: "demo", worktree: "/worktrees/r1", baseSha: "b".repeat(40), mergeSha: "m".repeat(40) };
+  const changes = await changesOf(ctx, run as Parameters<typeof changesOf>[1]);
+  assert.equal(changes.source, "merge");
+  assert.deepEqual(lus, [{ cwd: "/depots/demo", from: `${"m".repeat(40)}^`, to: "m".repeat(40) }]);
+
+  // Pas encore fusionné : le worktree, depuis la base.
+  lus.length = 0;
+  const live = await changesOf(ctx, { ...run, mergeSha: null } as Parameters<typeof changesOf>[1]);
+  assert.equal(live.source, "worktree");
+  assert.deepEqual(lus, [{ cwd: "/worktrees/r1", from: "b".repeat(40), to: null }]);
 });
