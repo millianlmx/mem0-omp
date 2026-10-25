@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.9.0 — 2026-10-25
+
+- feat(harness,console): l'Accueil devient un tableau de bord — KPIs et graphiques (#293) (c8a0683)
+
 ## omp-mem0-req 2.1.0 — 2026-10-25
 
 - feat(harness,console): questions situées — contexte, impacts et Markdown rendu (#292) (1db5015)
