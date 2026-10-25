@@ -359,7 +359,9 @@ test("harness-steps/AC-14 : une décision irréversible déjà tranchée par l'h
     tool: "decision",
     args: {
       question,
+      context: "Les exports ont leur propre table ; la clé primaire se choisit avant la première migration.",
       options: ["entier auto-incrémenté", "uuid"],
+      impacts: ["clés devinables, tri naturel", "clés opaques, index plus gros"],
       chosen: "entier auto-incrémenté",
       rationale: "plus simple",
       category: "schema",
@@ -401,7 +403,9 @@ test("harness-steps/AC-14 : une décision irréversible déjà tranchée par l'h
     const escalations = without.store.listEscalations({ runId: run.id });
     assert.equal(escalations.length, 1);
     assert.equal(escalations[0]?.recommended, "entier auto-incrémenté");
-    assert.equal(escalations[0]?.context, "plus simple");
+    assert.match(escalations[0]?.context ?? "", /^Les exports ont leur propre table/);
+    assert.equal(escalations[0]?.rationale, "plus simple");
+    assert.deepEqual(escalations[0]?.impacts, ["clés devinables, tri naturel", "clés opaques, index plus gros"]);
     assert.equal(without.store.listDecisions({ runId: run.id }).length, 0);
   } finally {
     await without.orchestrator.stop();
@@ -414,6 +418,7 @@ test("harness-steps/AC-15 : une clarification est un checkpoint (jamais une esca
       tool: "decision",
       args: {
         question: "Séparateur par défaut ?",
+        context: "L'export CSV n'a pas de séparateur dans la demande ; Excel français attend un point-virgule.",
         options: ["virgule", "point-virgule"],
         chosen: "virgule",
         rationale: "standard",

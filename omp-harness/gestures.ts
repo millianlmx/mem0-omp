@@ -248,6 +248,8 @@ export class HumanLoop {
             options: item.options,
             chosen,
             rationale,
+            context: item.context,
+            impacts: item.impacts,
             category: item.category,
             checkpointSha: null,
             dependsOn: [],

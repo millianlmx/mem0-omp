@@ -139,10 +139,20 @@ const HUMAN_REVIEW = [
   },
 ];
 
+const CONTEXT = "La feature exporte les factures en CSV ; `src/export.ts` doit dater chaque export.";
+
 function decide(question: string, options: string[], dependsOn: number[] = []) {
   return {
     tool: "decision",
-    args: { question, options, chosen: options[0], rationale: "le plus réversible", category: "reversible", dependsOn },
+    args: {
+      question,
+      context: CONTEXT,
+      options,
+      chosen: options[0],
+      rationale: "le plus réversible",
+      category: "reversible",
+      dependsOn,
+    },
   };
 }
 
@@ -275,7 +285,9 @@ test("harness-pipeline/AC-4 : une décision irréversible n'est pas appliquée ;
     tool: "decision",
     args: {
       question,
+      context: CONTEXT,
       options: ["ajouter une colonne", "table séparée"],
+      impacts: ["une migration de la table existante", "une jointure de plus à chaque lecture"],
       chosen: "ajouter une colonne",
       rationale: "simple",
       category: "schema",
@@ -291,6 +303,7 @@ test("harness-pipeline/AC-4 : une décision irréversible n'est pas appliquée ;
           tool: "decision",
           args: {
             question: "Purger l'historique ?",
+            context: CONTEXT,
             options: ["oui", "non"],
             chosen: "oui",
             rationale: "supprimer les données de l'historique",

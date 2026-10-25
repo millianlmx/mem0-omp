@@ -16,8 +16,12 @@ const base = {
   options: ["exportedAt", "exportDate"],
   chosen: "exportedAt",
   rationale: "convention camelCase",
+  context: "L'export CSV ajoute un champ de date à `Invoice` ; le reste du modèle est en camelCase.",
   category: "reversible",
 };
+
+/** Une escalade bien formée : la situation et l'impact de chaque option. */
+const escalation = { ...base, impacts: ["un nom aligné sur `createdAt`", "un nom nouveau dans le modèle"] };
 
 test("harness-decisions/AC-1 : une décision réversible valide devient un checkpoint", () => {
   const parsed = planDecision(base);
@@ -26,7 +30,7 @@ test("harness-decisions/AC-1 : une décision réversible valide devient un check
 
 test("harness-decisions/AC-2 : schéma, API publique et suppression déclarés partent en escalade", () => {
   for (const category of ["schema", "public_api", "deletion"]) {
-    const parsed = planDecision({ ...base, category });
+    const parsed = planDecision({ ...escalation, category });
     assert.ok(
       parsed.ok && parsed.plan.kind === "escalate" && parsed.plan.category === category && !parsed.plan.hardened,
     );

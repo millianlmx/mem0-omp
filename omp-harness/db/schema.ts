@@ -219,4 +219,12 @@ export const MIGRATIONS: readonly string[] = [
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    );`,
+  // Les questions se lisent hors de la session : la situation donnée par l'agent et
+  // l'impact de chaque option, sur les décisions comme sur les escalades. Le
+  // `context` d'une escalade était sa raison : il devient la situation, la raison
+  // a sa colonne (`NULL` sur une escalade antérieure, dont le contexte EST la raison).
+  `ALTER TABLE decisions ADD COLUMN context TEXT;
+   ALTER TABLE decisions ADD COLUMN impacts TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE escalations ADD COLUMN rationale TEXT;
+   ALTER TABLE escalations ADD COLUMN impacts TEXT NOT NULL DEFAULT '[]';`,
 ];

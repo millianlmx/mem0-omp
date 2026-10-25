@@ -28,10 +28,20 @@ async function until(world: FakeWorld, runId: string, states: string[], timeoutM
   );
 }
 
+const CONTEXT = "La feature exporte les factures en CSV ; `src/export.ts` doit dater chaque export.";
+
 function decide(question: string, options: string[], dependsOn: number[] = []) {
   return {
     tool: "decision",
-    args: { question, options, chosen: options[0], rationale: "le plus réversible", category: "reversible", dependsOn },
+    args: {
+      question,
+      context: CONTEXT,
+      options,
+      chosen: options[0],
+      rationale: "le plus réversible",
+      category: "reversible",
+      dependsOn,
+    },
   };
 }
 
@@ -40,7 +50,11 @@ function escalate(
   category: "schema" | "deletion",
   options = ["ajouter une colonne", "table séparée"],
 ) {
-  return { tool: "decision", args: { question, options, chosen: options[0], rationale: "simple", category } };
+  const impacts = options.map((option) => `${option} : ce qui change`);
+  return {
+    tool: "decision",
+    args: { question, context: CONTEXT, options, impacts, chosen: options[0], rationale: "simple", category },
+  };
 }
 
 const MEDIUM_REVIEW = [
