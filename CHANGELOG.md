@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-memory 4.2.0 — 2026-10-25
+
+- feat(memory): rappel borné en caractères, souvenirs longs rognés en le disant (#289) (4ec8b4c)
+
 ## omp-harness 1.7.1 — 2026-10-25
 
 - fix(harness): les fichiers d'un run fusionné se lisent dans son commit, jamais dans le worktree en cours de retrait (#286) (4613318)
