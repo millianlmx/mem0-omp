@@ -43,6 +43,8 @@ pub struct Etat {
     /// Secret : jamais imprimé. Vide = aucun contrôle.
     pub http_token: String,
     pub installation_token: String,
+    /// Fusion de la recherche quand la requête n'en demande pas, et `k` de la RRF.
+    pub recherche: recherche::Reglage,
 }
 
 type Partage = State<Arc<Etat>>;
@@ -437,7 +439,7 @@ async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Respo
         return interne();
     };
     let explain = req.explain;
-    let requete = match recherche::preparer(req, USER, agent_id) {
+    let requete = match recherche::preparer(req, USER, agent_id, etat.recherche) {
         Ok(r) => r,
         Err(Refus::Interne) => return interne(),
         Err(Refus::FiltresAvances) => {

@@ -615,6 +615,131 @@ async fn ac11_threshold_ecarte_le_souvenir_lexical_avant_la_fusion() {
     assert!(l["score_details"]["semantic_score"].as_f64().unwrap() < 0.5);
 }
 
+/// Corpus de la RRF : 61 souvenirs `alpha beta …` (cosinus ≈ 0.82 avec la
+/// requête `alpha_beta`, que le faux embedder découpe en `alpha` + `beta`) mais
+/// sans le terme BM25 `alpha_beta` (fastembed garde `_` dans le mot), puis UN
+/// souvenir qui porte `alpha_beta` noyé dans 20 mots (cosinus ≈ 0.30). Seul le BM25
+/// le trouve : il est hors des `max(limit*4, 60)` candidats sémantiques. Rend son id.
+async fn semer_hors_candidats(s: &Serveur) -> String {
+    for i in 0..61 {
+        ajouter(s, json!({"text":format!("alpha beta remplissage{i}"),"agent_id":AGENT})).await;
+    }
+    let lexical = "alpha_beta un deux trois quatre cinq six sept huit neuf dix onze douze treize quatorze \
+                   quinze seize dix-sept dix-huit";
+    assert!(cosinus("alpha_beta", lexical) < 0.5 && cosinus("alpha_beta", "alpha beta remplissage0") > 0.5);
+    ajouter(s, json!({"text":lexical,"agent_id":AGENT})).await
+}
+
+fn ids(r: &[Value]) -> Vec<&str> {
+    r.iter().map(|l| l["id"].as_str().unwrap()).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rrf_par_requete_classe_l_union_des_candidats() {
+    let b = banc("rrf-requete", "").await;
+    let s = &b.serveur;
+    let cible = semer_hors_candidats(s).await;
+    let corps = |extra: Value| {
+        let mut c = json!({"query":"alpha_beta","agent_id":AGENT,"limit":10,"threshold":0,"explain":true});
+        c.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        c
+    };
+
+    // Défaut (additive, parité mem0) : le hit BM25 hors candidats n'est jamais classé.
+    let additive = chercher(s, corps(json!({}))).await;
+    assert_eq!(additive.len(), 10);
+    assert!(!ids(&additive).contains(&cible.as_str()));
+    assert_eq!(chercher(s, corps(json!({"fusion":"additive"}))).await, additive);
+    assert_eq!(chercher(s, corps(json!({"fusion":null}))).await, additive);
+
+    // RRF : premier BM25 (1/61), à égalité avec le premier sémantique ; l'ordre
+    // dense (cosinus plus haut) départage : deuxième.
+    let rrf = chercher(s, corps(json!({"fusion":"rrf"}))).await;
+    assert_eq!(rrf.len(), 10);
+    assert_eq!(ids(&rrf)[1], cible);
+    let k = 60.0;
+    for (i, l) in rrf.iter().enumerate() {
+        assert_eq!(cles(l), CLES_RECHERCHE, "{l}");
+        let d = &l["score_details"];
+        assert_eq!(cles(d), CLES_DETAILS);
+        assert_eq!(d["entity_boost"], 0.0);
+        assert_eq!(d["threshold"], 0.0);
+        assert_eq!(d["max_possible_score"].as_f64().unwrap(), 2.0 / (k + 1.0));
+        let (brut, fin) = (d["raw_score"].as_f64().unwrap(), d["final_score"].as_f64().unwrap());
+        assert_eq!(fin, brut / (2.0 / (k + 1.0)));
+        assert!((0.0..=1.0).contains(&fin));
+        assert_eq!(l["score"], d["final_score"]);
+        let attendu = cosinus("alpha_beta", l["memory"].as_str().unwrap());
+        assert!((d["semantic_score"].as_f64().unwrap() - attendu).abs() <= 1e-6);
+        // Rang sémantique des remplissages : i+1 avant la cible, i après.
+        if l["id"] != cible.as_str() {
+            let rang = if i == 0 { 1.0 } else { i as f64 };
+            assert_eq!(brut, 1.0 / (k + rang), "ligne {i}");
+            assert_eq!(d["bm25_score"], 0.0);
+        } else {
+            assert_eq!(brut, 1.0 / (k + 1.0));
+            assert!(d["bm25_score"].as_f64().unwrap() > 0.0);
+        }
+    }
+    assert!(rrf.windows(2).all(|w| w[0]["score"].as_f64() >= w[1]["score"].as_f64()));
+
+    // Le seuil juge le cosinus AVANT la fusion : la cible (≈ 0.30) sort à 0.5.
+    let haut = chercher(s, corps(json!({"fusion":"rrf","threshold":0.5}))).await;
+    assert!(!ids(&haut).contains(&cible.as_str()));
+    assert!(haut.iter().all(|l| l["score_details"]["semantic_score"].as_f64().unwrap() >= 0.5));
+
+    // Sans explain : forme par défaut inchangée.
+    let nu = chercher(s, json!({"query":"alpha_beta","agent_id":AGENT,"fusion":"rrf"})).await;
+    assert_eq!(cles(&nu[0]), CLES_RECHERCHE[..10]);
+
+    // Valeur hors du littéral : 422 avant tout embedding.
+    let appels = b.faux.appels();
+    let r = s.appeler("POST", "/memory/search", Some(&json!({"query":"x","fusion":"RRF"}))).await;
+    assert_eq!(r.statut, 422, "{}", r.texte);
+    assert_eq!(
+        r.json(),
+        json!({"detail":[{"type":"literal_error","loc":["body","fusion"],"msg":"Input should be 'additive' or 'rrf'","input":"RRF","ctx":{"expected":"'additive' or 'rrf'"}}]})
+    );
+    assert_eq!(b.faux.appels(), appels);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rrf_par_configuration_du_serveur() {
+    let faux = FauxOpenAI::demarrer().await;
+    let dossier = Dossier::nouveau("rrf-config");
+    let lancement = Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" };
+    let s = Serveur::demarrer_avec(&lancement, &[("MEM0_SEARCH_FUSION", "rrf"), ("MEM0_RRF_K", "10")]).await;
+    assert!(s.journal().contains("recherche rrf-k10"), "{}", s.journal());
+    let cible = semer_hors_candidats(&s).await;
+    let corps = json!({"query":"alpha_beta","agent_id":AGENT,"limit":10,"threshold":0,"explain":true});
+    let rrf = chercher(&s, corps.clone()).await;
+    assert_eq!(ids(&rrf)[1], cible);
+    assert!(rrf.iter().all(|l| l["score_details"]["max_possible_score"].as_f64() == Some(2.0 / 11.0)));
+    // La requête peut revenir à l'additive.
+    let mut additive = corps;
+    additive["fusion"] = json!("additive");
+    assert!(!ids(&chercher(&s, additive).await).contains(&cible.as_str()));
+    drop(s);
+
+    // Valeurs refusées : code 1 et message, avant toute écoute.
+    for (nom, valeur, message) in [
+        ("MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « hybride »)"),
+        ("MEM0_RRF_K", "0", "MEM0_RRF_K doit être un entier positif (reçu « 0 »)"),
+    ] {
+        let sortie = std::process::Command::new(env!("CARGO_BIN_EXE_mem0-rs"))
+            .args(["--port", "1"])
+            .env_remove("MEM0_SEARCH_FUSION")
+            .env_remove("MEM0_RRF_K")
+            .env("MEM0_DB_PATH", dossier.chemin.join("refus.db"))
+            .env(nom, valeur)
+            .output()
+            .unwrap();
+        assert_eq!(sortie.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&sortie.stderr).contains(message), "{sortie:?}");
+    }
+    assert!(!dossier.chemin.join("refus.db").exists());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ac15_graphe_noeud_central_9_voisins() {
     let b = banc("ac15", "").await;

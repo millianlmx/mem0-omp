@@ -41,6 +41,18 @@ Restaurer : `podman compose stop mem0-rs`, copier l'instantané voulu sur
 puis `podman compose start mem0-rs`. Le détail est dans
 [mem0-rs/README.md § Instantanés](mem0-rs/README.md#instantanés).
 
+## Fusion de la recherche
+
+Le compose transmet aussi depuis `.env` le classement de `POST /memory/search` :
+
+| Variable | Défaut | Effet |
+|---|---|---|
+| `MEM0_SEARCH_FUSION` | `additive` | `additive` (classement de mem0 2.2.1) ou `rrf` (Reciprocal Rank Fusion) |
+| `MEM0_RRF_K` | `60` | constante `k` de la RRF |
+
+Le choix, ses raisons et le banc de mesure qui les compare (`mem0-rs banc`) sont
+dans [mem0-rs/README.md § Recherche hybride](mem0-rs/README.md#recherche-hybride).
+
 ## Migrer une pile mem0-http existante
 
 À suivre AVANT de démarrer la nouvelle pile, l'ancienne (`mem0-qdrant` et

@@ -7,6 +7,8 @@
 
 use serde_json::{Map, Number, Value, json};
 
+use crate::recherche::Fusion;
+
 /// Rejet d'un corps.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rejet {
@@ -50,6 +52,10 @@ pub struct SearchRequest {
     pub filters: Option<Map<String, Value>>,
     pub threshold: Option<f64>,
     pub explain: bool,
+    /// `Literal["additive", "rrf"] | None = None` : absent ou `null` → la fusion
+    /// du serveur (`MEM0_SEARCH_FUSION`). Champ propre à mem0-rs, que l'ancien
+    /// Python ignorait comme tout champ inconnu.
+    pub fusion: Option<Fusion>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -283,6 +289,15 @@ fn valider_dict(v: &Value) -> Result<Map<String, Value>, ErreurChamp> {
     }
 }
 
+const LITERAL_FUSION: ErreurChamp = ("literal_error", "Input should be 'additive' or 'rrf'");
+/// `ctx` de l'erreur `literal_error` de pydantic pour `fusion`.
+const LITERAL_FUSION_ATTENDU: &str = "'additive' or 'rrf'";
+
+/// `Literal["additive", "rrf"]` : la chaîne exacte, sans coercition.
+fn valider_fusion(v: &Value) -> Result<Fusion, ErreurChamp> {
+    v.as_str().and_then(Fusion::lire).ok_or(LITERAL_FUSION)
+}
+
 /// Lecteur de champs qui accumule les erreurs dans l'ordre des appels.
 struct Champs<'a> {
     objet: &'a Map<String, Value>,
@@ -295,7 +310,15 @@ impl<'a> Champs<'a> {
     }
 
     fn noter<T>(&mut self, nom: &str, v: &Value, r: Result<T, ErreurChamp>) -> Option<T> {
-        r.map_err(|(t, m)| self.erreurs.push(erreur(t, &[nom], m, v.clone()))).ok()
+        r.map_err(|(t, m)| {
+            let mut e = erreur(t, &[nom], m, v.clone());
+            // pydantic joint à `literal_error` les valeurs attendues.
+            if (t, m) == LITERAL_FUSION {
+                e["ctx"] = json!({ "expected": LITERAL_FUSION_ATTENDU });
+            }
+            self.erreurs.push(e);
+        })
+        .ok()
     }
 
     /// Champ requis.
@@ -374,6 +397,7 @@ pub fn search(content_type: Option<&[u8]>, corps: &[u8]) -> Result<SearchRequest
     let filters = c.optionnel("filters", valider_dict);
     let threshold = c.optionnel("threshold", valider_float);
     let explain = c.defaut("explain", false, valider_bool);
+    let fusion = c.optionnel("fusion", valider_fusion);
     let modele = (|| {
         Some(SearchRequest {
             query: query?,
@@ -382,6 +406,7 @@ pub fn search(content_type: Option<&[u8]>, corps: &[u8]) -> Result<SearchRequest
             filters: filters?,
             threshold: threshold?,
             explain: explain?,
+            fusion: fusion?,
         })
     })();
     c.fin(modele)
@@ -639,6 +664,34 @@ mod tests {
         assert_eq!(locs, ["query", "agent_id", "limit", "filters", "threshold", "explain"]);
         let cles: Vec<&String> = d[0].as_object().unwrap().keys().collect();
         assert_eq!(cles, ["type", "loc", "msg", "input"]);
+    }
+
+    #[test]
+    fn fusion_literal_ou_absente() {
+        let f = |corps: &str| search_json(corps).unwrap().fusion;
+        assert_eq!(f(r#"{"query":"x"}"#), None);
+        assert_eq!(f(r#"{"query":"x","fusion":null}"#), None);
+        assert_eq!(f(r#"{"query":"x","fusion":"rrf"}"#), Some(Fusion::Rrf));
+        assert_eq!(f(r#"{"query":"x","fusion":"additive"}"#), Some(Fusion::Additive));
+        // Ni coercition ni casse : pydantic compare la chaîne exacte.
+        for v in [r#""RRF""#, r#"" rrf""#, r#""""#, "1", "true", "[]", r#"{"k":60}"#] {
+            let d = detail(search_json(&format!(r#"{{"query":"x","fusion":{v}}}"#)));
+            assert_eq!(
+                d,
+                json!([{
+                    "type": "literal_error",
+                    "loc": ["body", "fusion"],
+                    "msg": "Input should be 'additive' or 'rrf'",
+                    "input": serde_json::from_str::<Value>(v).unwrap(),
+                    "ctx": { "expected": "'additive' or 'rrf'" },
+                }]),
+                "{v}"
+            );
+        }
+        // Déclaré après explain : son erreur vient en dernier.
+        let d = detail(search_json(r#"{"fusion":"x","explain":[],"query":"q"}"#));
+        let locs: Vec<&str> = d.as_array().unwrap().iter().map(|e| e["loc"][1].as_str().unwrap()).collect();
+        assert_eq!(locs, ["explain", "fusion"]);
     }
 
     #[test]

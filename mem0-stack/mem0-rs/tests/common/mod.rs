@@ -246,10 +246,19 @@ pub struct Serveur {
 impl Serveur {
     /// Lance le binaire sur un port libre et attend que /health réponde.
     pub async fn demarrer(l: &Lancement<'_>) -> Serveur {
+        Serveur::demarrer_avec(l, &[]).await
+    }
+
+    /// [`Serveur::demarrer`] avec des variables d'environnement en plus. La
+    /// fusion de recherche héritée du poste (`MEM0_SEARCH_FUSION`, `MEM0_RRF_K`)
+    /// est retirée : seules celles de `env` comptent.
+    pub async fn demarrer_avec(l: &Lancement<'_>, env: &[(&str, &str)]) -> Serveur {
         for _ in 0..5 {
             let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
             let mut enfant = Command::new(env!("CARGO_BIN_EXE_mem0-rs"))
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+                .env_remove("MEM0_SEARCH_FUSION")
+                .env_remove("MEM0_RRF_K")
                 .env("OMLX_BASE_URL", l.embedder_url)
                 .env("OMLX_API_TOKEN", JETON_OMLX)
                 .env("OMLX_LLM_MODEL", MODELE_CHAT)
@@ -257,6 +266,7 @@ impl Serveur {
                 .env("MEM0_DB_PATH", l.base)
                 .env("MEM0_HTTP_TOKEN", l.jeton)
                 .env("OMP_INSTALLATION_TOKEN", l.installation)
+                .envs(env.iter().copied())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())

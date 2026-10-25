@@ -21,6 +21,7 @@ mem0 1.x n'est pas reproduit.
 cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked
 mem0-stack/mem0-rs/target/debug/mem0-rs [--host <adresse>] [--port <port>]
 mem0-stack/mem0-rs/target/debug/mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]
+mem0-stack/mem0-rs/target/debug/mem0-rs banc [--corpus <fichier>] [--embedder local|openai] [--k <k,…>] [--seuil <x>] [--repetitions <n>] [--json]
 ```
 
 - Défauts : `--host 127.0.0.1`, `--port 8321`.
@@ -28,6 +29,8 @@ mem0-stack/mem0-rs/target/debug/mem0-rs import --history-db <chemin> [--qdrant-u
 - Erreur de configuration, de base ou d'écoute : message sur stderr, code 1.
 - SIGTERM ou SIGINT : arrêt propre (les requêtes en cours finissent), code 0.
 - `import` (premier argument) : import depuis mem0-http, voir § Import depuis mem0-http.
+- `banc` (premier argument) : banc de mesure des classements de la recherche, voir
+  § Banc de mesure.
 
 Vérifications : `cargo test --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked`
 et `cargo clippy --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked --all-targets -- -D warnings`.
@@ -50,6 +53,8 @@ bruts).
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
 | `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart visé entre deux instantanés de la base, en heures ; `0` les coupe ; entier positif ou nul, sinon code 1 (§ Instantanés) |
 | `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés ; entier positif, sinon code 1 |
+| `MEM0_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (mem0 2.2.1) ou `rrf` ; sinon code 1 (§ Recherche hybride) |
+| `MEM0_RRF_K` | `60` | constante `k` de la RRF ; entier positif, sinon code 1 |
 
 Les variables `QDRANT_*` ne sont pas lues par le serveur. `mem0-rs import` lit
 `QDRANT_API_KEY` (en-tête `api-key`, envoyé seulement si non vide ; jamais en
@@ -246,6 +251,137 @@ anglaise, TF BM25 (k=1.2, b=0.75, avg_len=256), indice `|murmur3_x86_32|`.
 `GET /memory/graph` reproduit `graph_edges` de l'ancien mem0-http Python : seuil 0.75,
 8 meilleurs voisins par souvenir, voisinages réunis, tri (score décroissant, source,
 target).
+
+### Fusion : additive (défaut) ou RRF
+
+Le classement se choisit par requête, avec le champ `"fusion"` du corps (`"additive"`
+ou `"rrf"` ; absent ou `null` : le défaut du serveur), ou pour tout le serveur avec
+`MEM0_SEARCH_FUSION` (défaut `additive`). Une autre valeur du champ rend 422
+`literal_error` (`ctx.expected` : `'additive' or 'rrf'`), avant tout embedding. Le
+champ est propre à mem0-rs : un client qui ne l'envoie pas — le plugin — garde
+exactement le classement de mem0 2.2.1, et l'ancien Python l'ignorait comme tout
+champ inconnu.
+
+- **`additive`** (défaut) : les étapes 3 à 5 ci-dessus. C'est la parité que prouve
+  `scripts/mem0-http-contrat/rang.json` ; elle ne bouge pas.
+- **`rrf`** : Reciprocal Rank Fusion (Cormack, Clarke et Büttcher, SIGIR 2009),
+  `score = Σ 1/(k + rang)` sur le rang sémantique et le rang BM25, `k` valant
+  `MEM0_RRF_K` (60 par défaut, la valeur de l'article) :
+  1. Candidats : l'UNION des `max(limit*4, 60)` premiers du classement sémantique
+     et des `max(limit*4, 60)` premiers hits BM25. Un souvenir que seul le BM25
+     trouve (identifiant, nom de fichier, code d'erreur noyé dans un long texte)
+     entre dans le classement avec son vrai cosinus : sqlite-vec calcule le cosinus
+     de tout le scope, aucun score ne manque. L'additive ne le fait pas : mem0 n'y
+     classe que les candidats sémantiques, et la parité l'interdit.
+  2. Seuil : `threshold` juge le cosinus brut AVANT la fusion, comme pour
+     l'additive. Un candidat sous le seuil sort des deux classements, et les rangs
+     se comptent parmi les candidats gardés. Deux raisons : `threshold` garde un seul
+     sens pour le client (un plancher de cosinus, que le plugin règle à
+     `RECALL_THRESHOLD` et que le contrat vérifie sur `score_details.semantic_score`),
+     et un score RRF n'a pas d'échelle absolue (au plus `2/(k+1)`, soit 0,033 pour
+     k = 60) : un seuil sur lui ne voudrait rien dire.
+  3. Rangs ordinaux à partir de 1 (deux cosinus égaux ont deux rangs, départagés
+     par l'id) ; un classement où le souvenir n'est pas ne contribue pas. Tri
+     décroissant, et à score égal l'ordre dense (cosinus le plus haut, puis id).
+     Troncature à `limit`, puis retrait des textes vides, comme l'additive.
+  4. `score_details` garde ses 7 clés et leurs types, que le contrat boîte noire
+     vérifie à l'identique : `semantic_score` = cosinus brut, `bm25_score` = BM25
+     normalisé (0 hors des hits), `entity_boost` = 0, `raw_score` = la somme RRF,
+     `max_possible_score` = `1/(k+1)`, doublé dès qu'un hit BM25 existe (même règle
+     que l'additive), et `final_score` = `score` = `raw_score/max_possible_score`,
+     dans [0, 1].
+
+Effet sur le plugin : le rappel envoie `threshold` 0.55 puis re-trie ce qu'il reçoit
+sur `semantic_score`. La fusion décide donc QUELS souvenirs entrent dans son lot
+(`RECALL_POOL`), pas l'ordre final qu'il injecte ; et un hit BM25 seul sous 0.55 de
+cosinus reste écarté par le seuil, quelle que soit la fusion.
+
+La ligne « à l'écoute » du démarrage nomme la stratégie par défaut
+(`recherche additive`, `recherche rrf-k60`).
+
+## Banc de mesure
+
+```sh
+cargo run --release --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked -- banc
+```
+
+`mem0-rs banc` charge un corpus étiqueté dans une base mem0-rs jetable (dossier
+temporaire supprimé à la fin), joue chaque requête avec chaque stratégie par le
+chemin réel de `/memory/search` (`recherche::executer` : SQLite, sqlite-vec, FTS5,
+fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
+`--json`.
+
+- **Stratégies** : `semantique` (cosinus seul), `bm25` (hits BM25 seuls),
+  `additive`, puis `rrf-k<k>` pour chaque `k` de `--k` (défaut `10,60`). Les deux
+  classements seuls sont des témoins du banc, pas des valeurs de `fusion`.
+- **Métriques**, moyennes sur les requêtes, profondeur 10 : Recall@5 et Recall@10
+  (part des pertinents retrouvés), MRR@10 (inverse du rang du premier pertinent),
+  nDCG@10 (gain `2^grade − 1`, remise `log2(rang + 1)`), puis nDCG@10 par catégorie
+  de requête.
+- **Latence** : p50 et p95, en ms, de `recherche::executer` seul (l'embedding de la
+  requête est calculé une fois, avant, et n'est pas chronométré), sur
+  `--repetitions` passes (défaut 5) de chaque requête. Toutes les stratégies font
+  les mêmes lectures (cosinus de tout le scope, hits BM25) : leurs écarts de latence
+  sont du bruit, seule une régression du chemin commun se verrait.
+- **`--seuil`** : `threshold` des recherches, 0 par défaut (on mesure le classement,
+  pas le plancher).
+- **Corpus** : `src/banc/corpus.json`, intégré au binaire (`--corpus <fichier>` pour
+  un autre, au même format). 150 souvenirs de développement en français et en
+  anglais, 52 requêtes en trois catégories — `lexicale` (identifiant, nom de
+  fichier, code d'erreur : `SQLITE_BUSY`, `recall.ts`, `E0502`…), `paraphrase`
+  (reformulation sans les mots du souvenir), `mixte` — chacune avec ses souvenirs
+  pertinents gradués (2 : répond, 1 : utile).
+- **Embedder** : `--embedder local` (défaut) est un plongeur déterministe, hors
+  ligne (`src/banc/plongeur.rs`) : mots normalisés, trigrammes de caractères et
+  concepts d'un petit lexique bilingue de développement, hachés puis normalisés en
+  L2. Il porte un peu de signal sémantique mais n'est pas un modèle de langue : ni
+  ordre des mots, ni paraphrase hors de son lexique, et ce lexique a été écrit avec
+  le corpus, ce qui flatte le classement sémantique. Ses chiffres comparent les
+  stratégies entre elles et détectent une régression (la suite de tests le joue) ;
+  ils ne prédisent pas la qualité réelle. `--embedder openai` mesure avec le vrai
+  modèle, par les mêmes variables que le serveur (`OMLX_BASE_URL`,
+  `OMLX_EMBED_MODEL`, `OMLX_API_TOKEN`, `EMBEDDING_DIMS`) :
+  `OMLX_BASE_URL=http://127.0.0.1:8000/v1 mem0-rs banc --embedder openai` contre
+  oMLX et bge-m3.
+
+Codes : 0 succès ; 1 corpus invalide (id en double, pertinent inconnu, grade hors
+de 1..3…), embedder ou base en échec ; 2 usage.
+
+Mesure du 2026-10-25, embedder local, build release, `banc --k 10,60,100` :
+
+| stratégie | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | p50 (ms) | p95 (ms) |
+|---|---:|---:|---:|---:|---:|---:|
+| semantique | 0.891 | 0.949 | 0.868 | 0.872 | 1.69 | 5.80 |
+| bm25 | 0.686 | 0.728 | 0.783 | 0.729 | 1.43 | 2.42 |
+| additive | 0.833 | 0.885 | 0.871 | 0.841 | 1.46 | 3.27 |
+| rrf-k10 | 0.833 | 0.910 | 0.878 | 0.849 | 1.51 | 5.53 |
+| rrf-k60 | 0.824 | 0.910 | 0.873 | 0.845 | 1.53 | 5.58 |
+| rrf-k100 | 0.824 | 0.910 | 0.873 | 0.845 | 1.52 | 2.19 |
+
+| nDCG@10 | lexicale (18) | mixte (17) | paraphrase (17) |
+|---|---:|---:|---:|
+| semantique | 0.867 | 0.918 | 0.833 |
+| bm25 | 0.937 | 0.845 | 0.392 |
+| additive | 0.958 | 0.860 | 0.699 |
+| rrf-k10 | 0.958 | 0.883 | 0.701 |
+| rrf-k60 | 0.958 | 0.875 | 0.696 |
+| rrf-k100 | 0.958 | 0.875 | 0.696 |
+
+Lecture :
+
+- Sur les requêtes lexicales, les deux fusions battent chaque classement seul : le
+  BM25 apporte ce que l'embedding dilue.
+- La RRF passe devant l'additive en Recall@10 (0.910 contre 0.885), en MRR@10 et en
+  nDCG@10, surtout sur les requêtes mixtes : ce sont les hits BM25 hors des
+  candidats sémantiques, que seule la RRF classe.
+- Sur les paraphrases, le BM25 seul s'effondre et tire les deux fusions sous le
+  sémantique seul ; avec ce plongeur, le sémantique seul reste premier au total —
+  ce que son lexique, écrit avec le corpus, rend attendu.
+- `k` bouge peu : 60 et 100 donnent le même classement ici, 10 gagne un peu sur les
+  mixtes.
+
+Le défaut reste `additive`, pour la parité. Passer à `rrf` se décide sur une mesure
+avec le vrai embedder (`--embedder openai`), pas sur ce tableau.
 
 ## entity_boost
 

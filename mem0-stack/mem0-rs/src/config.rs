@@ -4,10 +4,12 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
 use crate::sauvegarde::Politique;
 
 pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
-        mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]";
+        mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]
+        mem0-rs banc [--corpus <fichier>] [--embedder local|openai] [--k <k,…>] [--seuil <x>] [--repetitions <n>] [--json]";
 
 /// Adresse d'écoute demandée en ligne de commande.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +106,8 @@ pub struct Config {
     pub installation_token: String,
     /// Instantanés périodiques de la base (`MEM0_BACKUP_INTERVAL_HOURS`, `MEM0_BACKUP_KEEP`).
     pub sauvegarde: Politique,
+    /// Fusion de la recherche hybride (`MEM0_SEARCH_FUSION`, `MEM0_RRF_K`).
+    pub recherche: Reglage,
 }
 
 impl std::fmt::Debug for Config {
@@ -115,6 +119,7 @@ impl std::fmt::Debug for Config {
             .field("embedding_dims", &self.embedding_dims)
             .field("db_path", &self.db_path)
             .field("sauvegarde", &self.sauvegarde)
+            .field("recherche", &self.recherche)
             .finish_non_exhaustive()
     }
 }
@@ -174,6 +179,12 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         intervalle: Duration::from_secs(heures.saturating_mul(3600)),
         garder: usize::try_from(garder).unwrap_or(usize::MAX),
     };
+    let fusion_brute = env_ou(&lire, "MEM0_SEARCH_FUSION", "additive");
+    let fusion = Fusion::lire(&fusion_brute)
+        .ok_or_else(|| format!("MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « {fusion_brute} »)"))?;
+    let rrf_k = entier_env(&lire, "MEM0_RRF_K", &RRF_K_PAR_DEFAUT.to_string(), 1)?;
+    let rrf_k = u32::try_from(rrf_k)
+        .map_err(|_| format!("MEM0_RRF_K doit être un entier positif d'au plus {} (reçu « {rrf_k} »)", u32::MAX))?;
     Ok(Config {
         base_url: env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1"),
         embed_model: env_ou(&lire, "OMLX_EMBED_MODEL", "bge-m3"),
@@ -184,6 +195,7 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         http_token: lire("MEM0_HTTP_TOKEN").unwrap_or_default(),
         installation_token: lire("OMP_INSTALLATION_TOKEN").unwrap_or_default(),
         sauvegarde,
+        recherche: Reglage { fusion, rrf_k },
     })
 }
 
@@ -264,12 +276,13 @@ mod tests {
     }
 
     #[test]
-    fn usage_a_deux_lignes() {
+    fn usage_a_trois_lignes() {
         assert_eq!(
             USAGE.lines().collect::<Vec<_>>(),
             [
                 "usage : mem0-rs [--host <adresse>] [--port <port>]",
                 "        mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]",
+                "        mem0-rs banc [--corpus <fichier>] [--embedder local|openai] [--k <k,…>] [--seuil <x>] [--repetitions <n>] [--json]",
             ]
         );
     }
@@ -319,6 +332,26 @@ mod tests {
             let e = lire_env(env(&[("HOME", "/h"), (nom, v)])).unwrap_err();
             assert_eq!(e, format!("{nom} doit être {attendu} (reçu « {v} »)"));
         }
+    }
+
+    #[test]
+    fn fusion_de_recherche_defauts_et_refus() {
+        let c = lire_env(env(&[("HOME", "/h")])).unwrap();
+        assert_eq!(c.recherche, Reglage { fusion: Fusion::Additive, rrf_k: 60 });
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", " rrf "), ("MEM0_RRF_K", "10")])).unwrap();
+        assert_eq!(c.recherche, Reglage { fusion: Fusion::Rrf, rrf_k: 10 });
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", "  "), ("MEM0_RRF_K", "")])).unwrap();
+        assert_eq!(c.recherche, Reglage::default());
+        for v in ["RRF", "reciprocal", "additive,rrf"] {
+            let e = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", v)])).unwrap_err();
+            assert_eq!(e, format!("MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « {v} »)"));
+        }
+        for v in ["0", "-1", "6.5", "soixante"] {
+            let e = lire_env(env(&[("HOME", "/h"), ("MEM0_RRF_K", v)])).unwrap_err();
+            assert_eq!(e, format!("MEM0_RRF_K doit être un entier positif (reçu « {v} »)"));
+        }
+        let e = lire_env(env(&[("HOME", "/h"), ("MEM0_RRF_K", "4294967296")])).unwrap_err();
+        assert_eq!(e, "MEM0_RRF_K doit être un entier positif d'au plus 4294967295 (reçu « 4294967296 »)");
     }
 
     #[test]
