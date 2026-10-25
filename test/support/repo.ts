@@ -58,6 +58,16 @@ const EXCLUDED_SEGMENTS: Record<string, true> = {
   target: true,
 };
 
+/** Les sous-arbres qui sont eux-mêmes des dépôts complets (worktrees d'agents, cf.
+ * .gitignore) : recopiés, ils multiplieraient la copie et ses fichiers de test. */
+const EXCLUDED_PATHS = [path.join(".claude", "worktrees")];
+
+/** Vrai si `rel` (chemin relatif au dépôt) n'entre pas dans une copie jetable. */
+export function excludedFromCopy(rel: string): boolean {
+  if (EXCLUDED_PATHS.some((excluded) => rel === excluded || rel.startsWith(`${excluded}${path.sep}`))) return true;
+  return rel.split(path.sep).some((segment) => EXCLUDED_SEGMENTS[segment] === true || segment.startsWith(".build"));
+}
+
 /**
  * Le Biome épinglé des `check.sh` imbriqués (section `lint`) : celui que
  * `bash scripts/lint.sh --prepare` a posé dans `<ROOT>/.lint`, ou le dossier que
@@ -93,9 +103,7 @@ export function copyRepoInto(dir: string, options: CopyOptions = {}): void {
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => EXCLUDED_SEGMENTS[segment] === true || segment.startsWith(".build"))) {
-        return false;
-      }
+      if (excludedFromCopy(rel)) return false;
       if (rel === RECURSIVE_TEST) return false;
       if (rel.startsWith(`test${path.sep}`) && rel.endsWith(".test.ts")) return keep(rel.split(path.sep).join("/"));
       return true;

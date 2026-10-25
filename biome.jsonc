@@ -2,7 +2,17 @@
   // Biome (version épinglée dans scripts/lint.sh) : lint + format du TypeScript de omp-mem0-req/, omp-harness/, scripts/ et test/ seulement.
   "root": true,
   "vcs": { "enabled": false },
-  "files": { "includes": ["omp-mem0-req/**/*.ts", "omp-harness/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"] },
+  // `!!` : les worktrees d'agents (.claude/worktrees/, des dépôts complets) ne sont même pas parcourus — sinon
+  // leur propre biome.jsonc est refusé comme seconde racine.
+  "files": {
+    "includes": [
+      "omp-mem0-req/**/*.ts",
+      "omp-harness/**/*.ts",
+      "scripts/**/*.ts",
+      "test/**/*.ts",
+      "!!**/.claude/worktrees"
+    ]
+  },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120, "lineEnding": "lf" },
   "javascript": {
     "formatter": {

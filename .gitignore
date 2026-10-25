@@ -15,6 +15,9 @@ node_modules/
 
 # Contrat de pipeline /req→/specs→/impl→/review — artefact transitoire par feature
 .omp/pipeline/
+# Worktrees des agents de Claude Code (un dépôt complet chacun) : ni commités, ni
+# parcourus par les tests qui lisent le dépôt, ni recopiés dans leurs copies jetables
+.claude/worktrees/
 __pycache__/
 
 # Artefacts de build de la coque Swift : produits SwiftPM et bundle .app assemblé

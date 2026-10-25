@@ -36,6 +36,7 @@
 // Un plugin du catalogue sans vérification d'invocation connue est un ÉCHEC, pas
 // un silence : AC-2 exige qu'une commande ou un outil de CHAQUE plugin soit
 // invoqué. Ajouter un plugin au catalogue impose donc d'étendre INVOCATIONS.
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -50,14 +51,17 @@ const TIMEOUT_MS = 60_000;
 // 1. Résolution de l'hôte AVANT toute autre chose
 // ---------------------------------------------------------------------------
 //
-// L'ordre est celui de scripts/typecheck.sh:5-8, avec MEM0_OMP_HOST_MODULES en
-// tête (posée par la CI). Elle doit être résolue avant de remplacer HOME, sinon
-// le repli `$BUN_INSTALL` (défaut `~/.bun`) désignerait le faux HOME.
+// L'ordre est celui de scripts/typecheck.sh, avec MEM0_OMP_HOST_MODULES en
+// tête (posée par la CI), puis l'hôte épinglé de scripts/omp-host.sh. Elle doit
+// être résolue avant de remplacer HOME, sinon le cache de l'hôte épinglé et le
+// repli `$BUN_INSTALL` (défaut `~/.bun`) désigneraient le faux HOME.
 const HOME_INITIAL = process.env.HOME ?? os.homedir();
 
 function hostCandidates(): string[] {
   const out: string[] = [];
   if (process.env.MEM0_OMP_HOST_MODULES) out.push(process.env.MEM0_OMP_HOST_MODULES);
+  const pinned = spawnSync("bash", [path.join(ROOT, "scripts", "omp-host.sh"), "--path"], { encoding: "utf8" });
+  if (pinned.status === 0 && pinned.stdout.trim()) out.push(pinned.stdout.trim());
   out.push(path.join(ROOT, "node_modules"));
   out.push(path.join(process.env.BUN_INSTALL ?? path.join(HOME_INITIAL, ".bun"), "install", "global", "node_modules"));
   return out;
