@@ -10,6 +10,7 @@
 // Aucun de ces textes n'est un message de la session servie : ceux-là viennent de
 // `ServiceSessionModel.userMessage`.
 
+import ConsoleCore
 import Foundation
 
 enum TerminalViewText {
@@ -17,18 +18,18 @@ enum TerminalViewText {
 
     /// Le titre de la scène, et celui de la fenêtre tant qu'aucun répertoire
     /// n'est choisi ; ensuite, la fenêtre porte le nom du répertoire.
-    static let windowTitle = "Terminal"
-    static let pickerTitle = "Choisir un répertoire"
-    static let chooseTarget = "Choisir un dossier…"
-    static let relaunch = "Relancer"
-    static let launchOmp = "Lancer OMP"
-    static let open = "Ouvrir"
-    static let cancel = "Annuler"
-    static let retry = "Réessayer"
+    static let windowTitle = L10n.text("Terminal")
+    static let pickerTitle = L10n.text("Choisir un répertoire")
+    static let chooseTarget = L10n.text("Choisir un dossier…")
+    static let relaunch = L10n.text("Relancer")
+    static let launchOmp = L10n.text("Lancer OMP")
+    static let open = L10n.text("Ouvrir")
+    static let cancel = L10n.text("Annuler")
+    static let retry = L10n.text("Réessayer")
 
     /// Le programme au premier plan, en tête du sous-titre : le shell, ou `omp`
     /// une fois lancé depuis la barre d'outils.
-    static let shellKind = "Interpréteur"
+    static let shellKind = L10n.text("Interpréteur")
     static let ompKind = "OMP"
 
     // MARK: - États de la fenêtre (S-10)
@@ -36,27 +37,27 @@ enum TerminalViewText {
     /// État initial : aucun process, rien à afficher tant qu'un répertoire n'est pas
     /// choisi. Le second libellé est celui de l'état `listing` de S-10 : la feuille
     /// est ouverte et le catalogue se charge, la fenêtre le dit.
-    static let chooseHint = "Choisissez un répertoire…"
-    static let listing = "Recherche des dossiers de features…"
-    static let starting = "Lancement de l’interpréteur…"
-    static let running = "L’interpréteur est actif."
+    static let chooseHint = L10n.text("Choisissez un répertoire…")
+    static let listing = L10n.text("Recherche des dossiers de features…")
+    static let starting = L10n.text("Lancement de l’interpréteur…")
+    static let running = L10n.text("L’interpréteur est actif.")
 
     /// La zone sans shell ni projet choisi (S-1 de mac-etats-vides-sans-issue) :
     /// elle porte l'action « Choisir un projet… ». Aucun raccourci nommé.
-    static let noProjectTitle = "Aucun projet ouvert"
-    static let noProjectDescription = "Choisissez le projet dans lequel ouvrir un terminal."
+    static let noProjectTitle = L10n.text("Aucun projet ouvert")
+    static let noProjectDescription = L10n.text("Choisissez le projet dans lequel ouvrir un terminal.")
 
     /// La zone sans shell, projet choisi (S-4) : le projet dont la feuille
     /// listera les répertoires.
     static func projectNamed(_ name: String) -> String {
-        "Projet « \(name) »"
+        L10n.format("Projet « %@ »", name)
     }
 
     /// L'état en un mot, pour le sous-titre de la fenêtre.
-    static let stateStarting = "Démarrage…"
-    static let stateRunning = "Actif"
-    static let stateExited = "Terminé"
-    static let stateFailed = "Échec"
+    static let stateStarting = L10n.text("Démarrage…")
+    static let stateRunning = L10n.text("Actif")
+    static let stateExited = L10n.text("Terminé")
+    static let stateFailed = L10n.text("Échec")
 
     /// Le sous-titre : « Shell · Actif », « omp · Actif » ; vide tant qu'aucun
     /// shell n'a été lancé.
@@ -67,20 +68,20 @@ enum TerminalViewText {
 
     /// La fin du shell : le code de sortie n'apprend rien à l'utilisateur, la
     /// relance est l'unique geste utile.
-    static let exited = "L’interpréteur s’est terminé. Relancez-le pour continuer."
+    static let exited = L10n.text("L’interpréteur s’est terminé. Relancez-le pour continuer.")
 
     // MARK: - Messages d'échec (table unique, S-10)
 
     static func cwdMissing(_ path: String) -> String {
-        "Répertoire introuvable : \(path)."
+        L10n.format("Répertoire introuvable : %@.", path)
     }
 
     static func executableMissing(_ path: String) -> String {
-        "Exécutable introuvable : \(path)."
+        L10n.format("Exécutable introuvable : %@.", path)
     }
 
     /// La phrase affichée (S-7) : la cause en mots, puis le geste.
-    static let ptyUnavailable = "Le terminal n’a pas pu s’ouvrir : le Mac refuse d’en créer un de plus pour l’instant. Fermez des fenêtres de terminal inutiles, puis relancez."
+    static let ptyUnavailable = L10n.text("Le terminal n’a pas pu s’ouvrir : le Mac refuse d’en créer un de plus pour l’instant. Fermez des fenêtres de terminal inutiles, puis relancez.")
 
     /// Le brut copié par « Copier le diagnostic » (S-7).
     static func ptyUnavailableDiagnostic(code: Int32) -> String {
@@ -88,15 +89,15 @@ enum TerminalViewText {
     }
 
     static func writeFailed(_ code: Int32) -> String {
-        "Écriture impossible vers le terminal (erreur \(code))."
+        L10n.format("Écriture impossible vers le terminal (erreur %lld).", Int(code))
     }
 
-    static let notRunning = "Aucun terminal actif."
+    static let notRunning = L10n.text("Aucun terminal actif.")
 
     // MARK: - Feuille de choix (S-2, BR-4)
 
-    static let noProject = "Aucun projet ouvert : choisissez d’abord un dossier dans la section « Session OMP »."
-    static let loadingTargets = "Recherche des dossiers de features…"
-    static let emptyTargets = "Aucun dossier de feature dans ce projet."
-    static let targetPath = "Répertoire"
+    static let noProject = L10n.text("Aucun projet ouvert : choisissez d’abord un dossier dans la section « Session OMP ».")
+    static let loadingTargets = L10n.text("Recherche des dossiers de features…")
+    static let emptyTargets = L10n.text("Aucun dossier de feature dans ce projet.")
+    static let targetPath = L10n.text("Répertoire")
 }

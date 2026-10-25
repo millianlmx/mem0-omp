@@ -172,11 +172,17 @@ xcrun simctl boot "$udid" >/dev/null 2>&1 &
 boot_pid=$!
 
 echo "  · tests de l'app iOS sur le simulateur $udid (compilation incluse)"
+# Les tests tournent EN FRANÇAIS, quelle que soit la langue du simulateur : l'app
+# est localisée en anglais (feature localisation-apps), et ses tests figent des
+# phrases françaises. `-testLanguage`/`-testRegion` lancent l'hôte de test avec
+# cette langue, comme le fait la TestAction du schéma (`language = "fr"`).
 if ! xcodebuild test \
   -project "$PROJECT" \
   -scheme "$SCHEME" \
   -configuration Debug \
   -destination "platform=iOS Simulator,id=$udid" \
+  -testLanguage fr \
+  -testRegion FR \
   -derivedDataPath "$DERIVED" \
   CODE_SIGNING_ALLOWED=NO; then
   wait "$boot_pid" 2>/dev/null

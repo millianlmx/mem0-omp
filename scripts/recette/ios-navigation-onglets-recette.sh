@@ -471,7 +471,8 @@ def swipe(udid, x0, y0, x1, y1):
 
 def launch(udid, name, *args):
     log = os.path.abspath(f"{out}/logs/{name}.log")
-    run("xcrun", "simctl", "launch", "--terminate-running-process", f"--stderr={log}", udid, BUNDLE, *args)
+    run("xcrun", "simctl", "launch", "--terminate-running-process", f"--stderr={log}", udid, BUNDLE, *args,
+        "-AppleLanguages", "(fr)")
     time.sleep(2)
 
 

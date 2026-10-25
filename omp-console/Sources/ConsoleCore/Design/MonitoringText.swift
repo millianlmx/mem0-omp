@@ -5,47 +5,52 @@
 //
 // Fichier de VOCABULAIRE (`*Text.swift`) : typographie française (’, espace
 // insécable avant ; : ! ?, « » avec espaces insécables) et glossaire GLOSSAIRE.md.
+// Chaque phrase passe par `L10n` : sa clé est le texte français, sa traduction
+// anglaise vit dans `Resources/en.lproj/Localizable.strings` (localisation-apps).
+
+import Foundation
 
 public enum MonitoringText {
     // MARK: - Onglets du direct
 
-    public static let tabLive = "Direct"
-    public static let tabFiles = "Fichiers"
-    public static let tabTests = "Tests"
-    public static let tabTimeline = "Frise"
-    public static let loadEarlier = "Afficher les entrées précédentes"
-    public static let auditSessionTitle = "Analyse en direct"
+    public static let tabLive = L10n.text("Direct")
+    public static let tabFiles = L10n.text("Fichiers")
+    public static let tabTests = L10n.text("Tests")
+    public static let tabTimeline = L10n.text("Frise")
+    public static let loadEarlier = L10n.text("Afficher les entrées précédentes")
+    public static let auditSessionTitle = L10n.text("Analyse en direct")
     public static let refreshSymbol = "arrow.clockwise"
-    public static let refresh = "Actualiser"
+    public static let refresh = L10n.text("Actualiser")
 
     // MARK: - Coût
 
-    public static let costLabel = "Coût"
+    public static let costLabel = L10n.text("Coût")
     public static let costSymbol = "dollarsign.circle"
-    public static let usageTitle = "Consommation des agents"
-    public static let usageHint = "Le coût que les fournisseurs annoncent à omp, message par message ; un fournisseur qui ne dit rien de son prix compte pour zéro."
-    public static let usageTotal = "Depuis le début"
-    public static let usageWeek = "7 derniers jours"
-    public static let usageByDay = "Par jour"
-    public static let usageNone = "Aucune consommation relevée."
-    public static let usageDayAxis = "Jour"
+    public static let usageTitle = L10n.text("Consommation des agents")
+    public static let usageHint = L10n.text("Le coût que les fournisseurs annoncent à omp, message par message ; un fournisseur qui ne dit rien de son prix compte pour zéro.")
+    public static let usageTotal = L10n.text("Depuis le début")
+    public static let usageWeek = L10n.text("7 derniers jours")
+    public static let usageByDay = L10n.text("Par jour")
+    public static let usageNone = L10n.text("Aucune consommation relevée.")
+    public static let usageDayAxis = L10n.text("Jour")
 
     /// « 0,42 $ »
     public static func cost(_ value: Double) -> String {
         let cents = Int((value * 100).rounded())
         let units = cents / 100
         let rest = abs(cents % 100)
-        return "\(units),\(rest < 10 ? "0" : "")\(rest) $"
+        let separator = ConsoleFormat.locale.decimalSeparator ?? ","
+        return L10n.format("%@ $", "\(units)\(separator)\(rest < 10 ? "0" : "")\(rest)")
     }
 
     /// « 12 345 jetons »
     public static func tokens(_ count: Int) -> String {
-        "\(grouped(count)) \(count == 1 ? "jeton" : "jetons")"
+        "\(grouped(count)) \(count == 1 ? L10n.text("jeton") : L10n.text("jetons"))"
     }
 
     /// « 0,42 $ sur 1,00 $ »
     public static func budgetLine(cost value: Double, threshold: Double) -> String {
-        "\(cost(value)) sur \(cost(threshold))"
+        L10n.format("%@ sur %@", cost(value), cost(threshold))
     }
 
     /// « 1,20 $ · 45 000 jetons »
@@ -56,9 +61,10 @@ public enum MonitoringText {
     /// Un nombre en groupes de trois chiffres séparés d'une espace insécable.
     public static func grouped(_ value: Int) -> String {
         let digits = String(abs(value))
+        let separator = ConsoleFormat.locale.groupingSeparator == "," ? "," : " "
         var out = ""
         for (index, character) in digits.enumerated() {
-            if index > 0, (digits.count - index) % 3 == 0 { out.append(" ") }
+            if index > 0, (digits.count - index) % 3 == 0 { out.append(separator) }
             out.append(character)
         }
         return value < 0 ? "-\(out)" : out
@@ -66,39 +72,40 @@ public enum MonitoringText {
 
     // MARK: - Alertes
 
-    public static let alertsTitle = "Alertes"
-    public static let alertsHint = "La veille du serveur : un agent muet, une étape anormalement longue, une boucle de corrections ou un budget dépassé."
+    public static let alertsTitle = L10n.text("Alertes")
+    public static let alertsHint = L10n.text("La veille du serveur : un agent muet, une étape anormalement longue, une boucle de corrections ou un budget dépassé.")
 
     /// « Agent muet depuis 20 min (outil run_tests) »
     public static func alertStalled(minutes: Int?, tool: String?) -> String {
-        let base = "Agent muet depuis \(minutes.map { "\($0) min" } ?? "longtemps")"
+        let base = minutes.map { L10n.format("Agent muet depuis %lld min", $0) } ?? L10n.text("Agent muet depuis longtemps")
         guard let tool, !tool.isEmpty else { return base }
-        return "\(base) (outil \(tool))"
+        return L10n.format("%@ (outil %@)", base, tool)
     }
 
     /// « Étape /impl lente : 25 min (médiane 10 min) »
     public static func alertSlow(step: String, minutes: Int?, medianMin: Int?) -> String {
-        var line = "Étape \(step) lente"
-        if let minutes { line += " : \(minutes) min" }
-        if let medianMin { line += " (médiane \(medianMin) min)" }
+        var line = L10n.format("Étape %@ lente", step)
+        if let minutes { line += L10n.format(" : %lld min", minutes) }
+        if let medianMin { line += L10n.format(" (médiane %lld min)", medianMin) }
         return line
     }
 
     /// « 3 corrections : la revue ne passe pas »
     public static func alertFixLoop(fixes: Int?) -> String {
-        "\(fixes.map { $0 == 1 ? "1 correction" : "\($0) corrections" } ?? "Plusieurs corrections") : la revue ne passe pas"
+        let fixLine = fixes.map { $0 == 1 ? L10n.text("1 correction") : L10n.format("%lld corrections", $0) }
+        return L10n.format("%@ : la revue ne passe pas", fixLine ?? L10n.text("Plusieurs corrections"))
     }
 
     /// « Budget dépassé : 1,50 $ (plafond 1,00 $) — la feature attend votre relance »
     public static func alertBudget(cost value: Double?, threshold: Double?, paused: Bool) -> String {
-        var line = "Budget dépassé"
-        if let value { line += " : \(cost(value))" }
-        if let threshold { line += " (plafond \(cost(threshold)))" }
-        if paused { line += " — la feature attend votre relance" }
+        var line = L10n.text("Budget dépassé")
+        if let value { line += L10n.format(" : %@", cost(value)) }
+        if let threshold { line += L10n.format(" (plafond %@)", cost(threshold)) }
+        if paused { line += L10n.text(" — la feature attend votre relance") }
         return line
     }
 
-    public static let alertUnknown = "Alerte du serveur"
+    public static let alertUnknown = L10n.text("Alerte du serveur")
 
     /// Le symbole SF d'une alerte, d'après son code serveur.
     public static func alertSymbol(_ kind: String) -> String {
@@ -113,15 +120,15 @@ public enum MonitoringText {
 
     // MARK: - Frise
 
-    public static let timelineTitle = "Frise"
-    public static let timelineSteps = "Étapes"
-    public static let timelineEvents = "Événements marquants"
-    public static let timelineTests = "Tests"
-    public static let timelineDecisions = "Décisions de l’agent"
-    public static let timelineEmpty = "Aucune étape pour l’instant."
-    public static let timelineUnavailable = "La frise n’est pas lisible : le serveur est peut-être trop ancien."
-    public static let timelineTimeAxis = "Heure"
-    public static let timelineStepAxis = "Étape"
+    public static let timelineTitle = L10n.text("Frise")
+    public static let timelineSteps = L10n.text("Étapes")
+    public static let timelineEvents = L10n.text("Événements marquants")
+    public static let timelineTests = L10n.text("Tests")
+    public static let timelineDecisions = L10n.text("Décisions de l’agent")
+    public static let timelineEmpty = L10n.text("Aucune étape pour l’instant.")
+    public static let timelineUnavailable = L10n.text("La frise n’est pas lisible : le serveur est peut-être trop ancien.")
+    public static let timelineTimeAxis = L10n.text("Heure")
+    public static let timelineStepAxis = L10n.text("Étape")
 
     /// « /impl · terminée · 4 min · claude-sonnet »
     public static func stepLine(label: String, status: String, duration: String, model: String?) -> String {
@@ -130,47 +137,47 @@ public enum MonitoringText {
 
     public static func stepStatus(_ raw: String) -> String {
         switch raw {
-        case "running": "en cours"
-        case "done": "terminée"
-        case "failed": "en échec"
-        case "escalated": "escaladée"
-        case "interrupted": "interrompue"
-        default: "état inconnu"
+        case "running": L10n.text("en cours")
+        case "done": L10n.text("terminée")
+        case "failed": L10n.text("en échec")
+        case "escalated": L10n.text("escaladée")
+        case "interrupted": L10n.text("interrompue")
+        default: L10n.text("état inconnu")
         }
     }
 
     /// Le libellé d'un événement de la frise, d'après son type serveur.
     public static func event(_ type: String) -> String {
         switch type {
-        case MonitoringCodes.created: "Feature créée"
-        case MonitoringCodes.stepTimeout: "Délai d’étape dépassé"
-        case MonitoringCodes.retried: "Relancée"
-        case MonitoringCodes.rateLimited: "Limite de débit"
-        case MonitoringCodes.modelFailover: "Bascule de modèle"
-        case MonitoringCodes.providerRetry: "Nouvel essai du fournisseur"
-        case MonitoringCodes.providerError: "Erreur du fournisseur"
-        case MonitoringCodes.escalations: "Questions posées"
-        case MonitoringCodes.escalationAnswered: "Question répondue"
-        case MonitoringCodes.specsReady: "Specs prêtes"
-        case MonitoringCodes.verdict: "Verdict rendu"
-        case MonitoringCodes.decisionAutoTimeout: "Tranchée à l’échéance"
-        case MonitoringCodes.heavyOomRetry: "Tests relancés (mémoire)"
-        case MonitoringCodes.heavyFailRetry: "Tests relancés après un rouge"
-        case MonitoringCodes.heavyFlaky: "Tests instables"
-        case MonitoringCodes.rebased: "Remise à jour sur la branche principale"
-        case MonitoringCodes.rebaseConflict: "Conflit avec la branche principale"
-        case MonitoringCodes.mergeQueued: "Fusion demandée"
-        case MonitoringCodes.mergeRetry: "Fusion relancée"
-        case MonitoringCodes.merged: "Fusionnée"
-        case MonitoringCodes.pushFailed: "Envoi au dépôt distant refusé"
-        case MonitoringCodes.reverted: "Annulée"
-        case MonitoringCodes.stalled: "Agent muet"
-        case MonitoringCodes.stepSlow: "Étape lente"
-        case MonitoringCodes.fixLoop: "Boucle de corrections"
-        case MonitoringCodes.budgetExceeded: "Budget dépassé"
-        case MonitoringCodes.failed: "Échec"
-        case MonitoringCodes.recovered: "Reprise après un redémarrage"
-        default: "Événement"
+        case MonitoringCodes.created: L10n.text("Feature créée")
+        case MonitoringCodes.stepTimeout: L10n.text("Délai d’étape dépassé")
+        case MonitoringCodes.retried: L10n.text("Relancée")
+        case MonitoringCodes.rateLimited: L10n.text("Limite de débit")
+        case MonitoringCodes.modelFailover: L10n.text("Bascule de modèle")
+        case MonitoringCodes.providerRetry: L10n.text("Nouvel essai du fournisseur")
+        case MonitoringCodes.providerError: L10n.text("Erreur du fournisseur")
+        case MonitoringCodes.escalations: L10n.text("Questions posées")
+        case MonitoringCodes.escalationAnswered: L10n.text("Question répondue")
+        case MonitoringCodes.specsReady: L10n.text("Specs prêtes")
+        case MonitoringCodes.verdict: L10n.text("Verdict rendu")
+        case MonitoringCodes.decisionAutoTimeout: L10n.text("Tranchée à l’échéance")
+        case MonitoringCodes.heavyOomRetry: L10n.text("Tests relancés (mémoire)")
+        case MonitoringCodes.heavyFailRetry: L10n.text("Tests relancés après un rouge")
+        case MonitoringCodes.heavyFlaky: L10n.text("Tests instables")
+        case MonitoringCodes.rebased: L10n.text("Remise à jour sur la branche principale")
+        case MonitoringCodes.rebaseConflict: L10n.text("Conflit avec la branche principale")
+        case MonitoringCodes.mergeQueued: L10n.text("Fusion demandée")
+        case MonitoringCodes.mergeRetry: L10n.text("Fusion relancée")
+        case MonitoringCodes.merged: L10n.text("Fusionnée")
+        case MonitoringCodes.pushFailed: L10n.text("Envoi au dépôt distant refusé")
+        case MonitoringCodes.reverted: L10n.text("Annulée")
+        case MonitoringCodes.stalled: L10n.text("Agent muet")
+        case MonitoringCodes.stepSlow: L10n.text("Étape lente")
+        case MonitoringCodes.fixLoop: L10n.text("Boucle de corrections")
+        case MonitoringCodes.budgetExceeded: L10n.text("Budget dépassé")
+        case MonitoringCodes.failed: L10n.text("Échec")
+        case MonitoringCodes.recovered: L10n.text("Reprise après un redémarrage")
+        default: L10n.text("Événement")
         }
     }
 
@@ -188,7 +195,7 @@ public enum MonitoringText {
 
     /// « n° 3 · Séparateur → virgule »
     public static func decisionLine(seq: Int, question: String, chosen: String) -> String {
-        "n° \(seq) · \(question) → \(chosen)"
+        L10n.format("n° %lld · %@ → %@", seq, question, chosen)
     }
 
     /// « 2. /specs » : une étape sur l'axe de la frise (une étape refaite a sa propre ligne).
@@ -199,20 +206,20 @@ public enum MonitoringText {
 
     // MARK: - Fichiers touchés
 
-    public static let changesTitle = "Fichiers touchés"
-    public static let changesEmpty = "Aucun fichier touché pour l’instant."
-    public static let changesUnavailable = "Les fichiers ne sont pas lisibles : le serveur est peut-être trop ancien."
-    public static let fileBinary = "binaire"
-    public static let diffTruncated = "Différences coupées : le fichier est trop long."
-    public static let diffUnavailable = "Les différences de ce fichier ne sont pas lisibles."
-    public static let diffChoose = "Choisissez un fichier pour lire ses différences."
+    public static let changesTitle = L10n.text("Fichiers touchés")
+    public static let changesEmpty = L10n.text("Aucun fichier touché pour l’instant.")
+    public static let changesUnavailable = L10n.text("Les fichiers ne sont pas lisibles : le serveur est peut-être trop ancien.")
+    public static let fileBinary = L10n.text("binaire")
+    public static let diffTruncated = L10n.text("Différences coupées : le fichier est trop long.")
+    public static let diffUnavailable = L10n.text("Les différences de ce fichier ne sont pas lisibles.")
+    public static let diffChoose = L10n.text("Choisissez un fichier pour lire ses différences.")
 
     /// D'où viennent les fichiers : le dossier de la feature, ou la version fusionnée.
     public static func changesSource(_ raw: String?) -> String {
         switch raw {
-        case MonitoringCodes.sourceWorkingCopy: "Dossier de la feature, depuis sa base"
-        case MonitoringCodes.sourceMerge: "Version fusionnée dans la branche principale"
-        default: "Rien à lire"
+        case MonitoringCodes.sourceWorkingCopy: L10n.text("Dossier de la feature, depuis sa base")
+        case MonitoringCodes.sourceMerge: L10n.text("Version fusionnée dans la branche principale")
+        default: L10n.text("Rien à lire")
         }
     }
 
@@ -224,7 +231,8 @@ public enum MonitoringText {
 
     /// « 4 fichiers · +120 −8 »
     public static func changesSummary(count: Int, added: Int, removed: Int) -> String {
-        "\(count == 1 ? "1 fichier" : "\(count) fichiers") · +\(added) −\(removed)"
+        let files = count == 1 ? L10n.text("1 fichier") : L10n.format("%lld fichiers", count)
+        return "\(files) · +\(added) −\(removed)"
     }
 
     /// « modifié · +12 −3 »
@@ -234,52 +242,53 @@ public enum MonitoringText {
 
     public static func fileStatus(_ code: String) -> String {
         switch code {
-        case "A": "ajouté"
-        case "D": "supprimé"
-        case "R": "renommé"
-        default: "modifié"
+        case "A": L10n.text("ajouté")
+        case "D": L10n.text("supprimé")
+        case "R": L10n.text("renommé")
+        default: L10n.text("modifié")
         }
     }
 
     // MARK: - Tests
 
-    public static let testsTitle = "Tests en direct"
-    public static let testsEmpty = "Aucun test lancé pour l’instant."
-    public static let testRunning = "En cours…"
-    public static let flakyTitle = "Tests instables"
-    public static let flakyHint = "Verts après un rouge sur le même arbre : un échec qui ne dit rien du code."
-    public static let flakyNone = "Aucun test instable relevé."
+    public static let testsTitle = L10n.text("Tests en direct")
+    public static let testsEmpty = L10n.text("Aucun test lancé pour l’instant.")
+    public static let testRunning = L10n.text("En cours…")
+    public static let flakyTitle = L10n.text("Tests instables")
+    public static let flakyHint = L10n.text("Verts après un rouge sur le même arbre : un échec qui ne dit rien du code.")
+    public static let flakyNone = L10n.text("Aucun test instable relevé.")
 
     public static func testScope(_ raw: String) -> String {
         switch raw {
-        case "touched": "Tests touchés"
-        case "full": "Suite complète"
-        case "check": "Vérification"
-        default: "Tests"
+        case "touched": L10n.text("Tests touchés")
+        case "full": L10n.text("Suite complète")
+        case "check": L10n.text("Vérification")
+        default: L10n.text("Tests")
         }
     }
 
     public static func testOutcome(_ raw: String?) -> String {
         switch raw {
         case nil: testRunning
-        case "pass": "Vert"
-        case "fail": "Rouge"
-        case "oom": "Mémoire dépassée"
-        case "timeout": "Délai dépassé"
-        case "error": "Lancement impossible"
-        case "aborted": "Arrêté"
-        default: "Issue inconnue"
+        case "pass": L10n.text("Vert")
+        case "fail": L10n.text("Rouge")
+        case "oom": L10n.text("Mémoire dépassée")
+        case "timeout": L10n.text("Délai dépassé")
+        case "error": L10n.text("Lancement impossible")
+        case "aborted": L10n.text("Arrêté")
+        default: L10n.text("Issue inconnue")
         }
     }
 
     /// « Suite complète · essai 2 · Vert »
     public static func testLine(scope: String, attempt: Int, outcome: String?) -> String {
-        "\(testScope(scope)) · essai \(attempt) · \(testOutcome(outcome))"
+        L10n.format("%@ · essai %lld · %@", testScope(scope), attempt, testOutcome(outcome))
     }
 
     /// « 3 fois, dernière le 24/10 »
     public static func flakyLine(count: Int, last: String) -> String {
-        "\(count == 1 ? "1 fois" : "\(count) fois"), dernière le \(last)"
+        let times = count == 1 ? L10n.text("1 fois") : L10n.format("%lld fois", count)
+        return L10n.format("%@, dernière le %@", times, last)
     }
 
     /// « demo · Suite complète · 3 fois, dernière le 24/10/2026 »
@@ -298,79 +307,81 @@ public enum MonitoringText {
 
     // MARK: - Santé du serveur
 
-    public static let healthTitle = "Santé du serveur"
-    public static let healthAgents = "Agents occupés"
-    public static let healthTests = "Tests occupés"
-    public static let healthWaiting = "En attente"
-    public static let healthMemory = "Mémoire libre"
-    public static let healthQueue = "Features en file"
-    public static let healthIncidents = "Limites de débit et bascules"
-    public static let healthTimeAxis = "Heure"
-    public static let healthValueAxis = "Nombre"
+    public static let healthTitle = L10n.text("Santé du serveur")
+    public static let healthAgents = L10n.text("Agents occupés")
+    public static let healthTests = L10n.text("Tests occupés")
+    public static let healthWaiting = L10n.text("En attente")
+    public static let healthMemory = L10n.text("Mémoire libre")
+    public static let healthQueue = L10n.text("Features en file")
+    public static let healthIncidents = L10n.text("Limites de débit et bascules")
+    public static let healthTimeAxis = L10n.text("Heure")
+    public static let healthValueAxis = L10n.text("Nombre")
 
     /// « Pas encore de relevé : le serveur en prend un toutes les 15 s. »
     public static func healthEmpty(sampleSec: Int) -> String {
-        "Pas encore de relevé : le serveur en prend un toutes les \(sampleSec) s."
+        L10n.format("Pas encore de relevé : le serveur en prend un toutes les %lld s.", sampleSec)
     }
 
     /// « 2 sur 5 · 1 en attente »
     public static func slotsLine(used: Int, capacity: Int, waiting: Int) -> String {
-        waiting > 0 ? "\(used) sur \(capacity) · \(waiting) en attente" : "\(used) sur \(capacity)"
+        waiting > 0
+            ? L10n.format("%lld sur %lld · %lld en attente", used, capacity, waiting)
+            : L10n.format("%lld sur %lld", used, capacity)
     }
 
     // MARK: - Modèles
 
-    public static let modelsTitle = "Modèles"
-    public static let modelsHint = "Chaque modèle sur ses étapes : échecs, durée médiane, implémentations renvoyées en correction, features fusionnées et coût."
-    public static let modelsNone = "Aucune étape conduite par un modèle connu."
+    public static let modelsTitle = L10n.text("Modèles")
+    public static let modelsHint = L10n.text("Chaque modèle sur ses étapes : échecs, durée médiane, implémentations renvoyées en correction, features fusionnées et coût.")
+    public static let modelsNone = L10n.text("Aucune étape conduite par un modèle connu.")
 
     /// « 12 étapes · 1 en échec · médiane 4 min »
     public static func modelSteps(steps: Int, failed: Int, median: String?) -> String {
-        var parts = [steps == 1 ? "1 étape" : "\(steps) étapes"]
-        if failed > 0 { parts.append("\(failed) en échec") }
-        if let median { parts.append("médiane \(median)") }
+        var parts = [steps == 1 ? L10n.text("1 étape") : L10n.format("%lld étapes", steps)]
+        if failed > 0 { parts.append(L10n.format("%lld en échec", failed)) }
+        if let median { parts.append(L10n.format("médiane %@", median)) }
         return parts.joined(separator: " · ")
     }
 
     /// « 25 % corrigées · 3 fusionnées · 1,20 $ »
     public static func modelOutcome(corrected: String?, merged: Int, cost value: Double) -> String {
         var parts: [String] = []
-        if let corrected { parts.append("\(corrected) corrigées") }
-        parts.append(merged == 1 ? "1 fusionnée" : "\(merged) fusionnées")
+        if let corrected { parts.append(L10n.format("%@ corrigées", corrected)) }
+        parts.append(merged == 1 ? L10n.text("1 fusionnée") : L10n.format("%lld fusionnées", merged))
         parts.append(cost(value))
         return parts.joined(separator: " · ")
     }
 
     // MARK: - Live Activity (iPhone)
 
-    public static let activityStart = "Suivre sur l’écran verrouillé"
-    public static let activityStop = "Ne plus suivre sur l’écran verrouillé"
+    public static let activityStart = L10n.text("Suivre sur l’écran verrouillé")
+    public static let activityStop = L10n.text("Ne plus suivre sur l’écran verrouillé")
     public static let activitySymbol = "lock.iphone"
 
     // MARK: - Widget d'écran d'accueil
 
-    public static let widgetName = "Boîte du serveur"
-    public static let widgetDescription = "Ce qui attend votre décision et les features que le serveur conduit, avec leur étape."
-    public static let widgetNotConfigured = "Ouvrez OMP Console pour relier le serveur."
-    public static let widgetNothingPending = "Rien n’attend votre décision."
-    public static let widgetNoActive = "Aucune feature en cours."
+    public static let widgetName = L10n.text("Boîte du serveur")
+    public static let widgetDescription = L10n.text("Ce qui attend votre décision et les features que le serveur conduit, avec leur étape.")
+    public static let widgetNotConfigured = L10n.text("Ouvrez OMP Console pour relier le serveur.")
+    public static let widgetNothingPending = L10n.text("Rien n’attend votre décision.")
+    public static let widgetNoActive = L10n.text("Aucune feature en cours.")
     public static let widgetPendingSymbol = "tray.full"
 
     /// « 2 décisions attendent »
     public static func widgetPending(_ count: Int) -> String {
-        count == 0 ? widgetNothingPending : (count == 1 ? "1 décision attend" : "\(count) décisions attendent")
+        count == 0 ? widgetNothingPending : (count == 1 ? L10n.text("1 décision attend") : L10n.format("%lld décisions attendent", count))
     }
 
     /// « 3 features en cours »
     public static func widgetActive(_ count: Int) -> String {
-        count == 1 ? "1 feature en cours" : "\(count) features en cours"
+        count == 1 ? L10n.text("1 feature en cours") : L10n.format("%lld features en cours", count)
     }
 
     /// « 2 alertes »
     public static func widgetAlerts(_ count: Int) -> String {
-        count == 1 ? "1 alerte" : "\(count) alertes"
+        count == 1 ? L10n.text("1 alerte") : L10n.format("%lld alertes", count)
     }
 
     /// « Lu à 14 h 05 »
-    public static func widgetUpdated(_ time: String) -> String { "Lu à \(time)" }
+    public static func widgetUpdated(_ time: String) -> String { L10n.format("Lu à %@", time) }
 }

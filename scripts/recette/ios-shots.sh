@@ -205,7 +205,7 @@ shoot() {
   xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
   xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
   for section in "${sections[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" >/dev/null 2>&1
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" -AppleLanguages "(fr)" >/dev/null 2>&1
     sleep 2
     shot="$SHOTS/$label-$section-$appearance$suffix.png"
     if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
@@ -261,7 +261,7 @@ shoot_memoire() {
     log="$RECIPE_LOGS/$label-$appearance-$recipe.log"
     rm -f "$log"
     xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
-      -section memory -memoire.recipe "$recipe" >/dev/null 2>&1
+      -section memory -memoire.recipe "$recipe" -AppleLanguages "(fr)" >/dev/null 2>&1
     reached=""
     for _ in $(seq 1 40); do
       if grep -q "memoire-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi

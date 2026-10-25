@@ -187,7 +187,9 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
 - **ConsoleCore** — la **cible partagée macOS/iOS** : le vocabulaire figé des
   sections (`ConsoleSection`), les mots du serveur de pipelines
   (`PipelineServerText`), la lecture des réponses de la mémoire (`MemoryWire`), le
-  noyau du graphe de la mémoire et le rendu Markdown (`MarkdownDocument`). Aucune
+  noyau du graphe de la mémoire et le rendu Markdown (`MarkdownDocument`), et la
+  langue des écrans (`L10n`, avec sa seule ressource : la table anglaise
+  `Resources/en.lproj/Localizable.strings`). Aucune
   dépendance (ni interne, ni externe) : elle se compile seule
   (`swift build --target ConsoleCore`) et n'importe ni AppKit ni UIKit — la
   section « Noyau partagé » de `scripts/check.sh` le tient.
@@ -578,6 +580,12 @@ vérifie la signature (`codesign --verify --strict`). Sous une plateforme
 autre que macOS, il annonce « non exécuté » et sort en code 2 sans rien compiler.
 Sans l'icns, il sort en code 1 avec `✗ icône absente :
 omp-console/Bundle/AppIcon.icns (bash scripts/app-icon.sh)`, sans bundle signé.
+Il recopie aussi, avant la signature, les textes anglais : le bundle de ressources
+SwiftPM `omp-console_ConsoleCore.bundle` rendu à côté du binaire (sa table
+`en.lproj/Localizable.strings`), dans `Contents/Resources`, où le cherche
+`Bundle.module`, et `omp-console/Bundle/en.lproj` (la description du réseau local
+en anglais). Sans ce bundle de ressources, il échoue sans bundle (`✗ bundle de
+ressources introuvable`) : l'app planterait au premier texte lu en anglais.
 
 **Signature : une identité d'équipe, sinon Siri ne répond pas.** Mesuré le
 2026-10-14 (macOS 26) : `linkd`, le registre des App Intents, refuse tout processus
@@ -1434,6 +1442,32 @@ notion, sauf les termes conservés (« pipeline », « feature », « PR », /re
 avant ; : ! ? et dans « », …). La garde
 `test/console/typographie-et-glossaire-francais.test.ts` le vérifie.
 
+Les deux apps parlent **français**, leur langue de développement, et **anglais**
+sur un appareil (ou une langue d'app choisie dans les Réglages) réglé en anglais
+(feature `localisation-apps`). Chaque texte d'un `*Text.swift` passe par `L10n`
+(`Sources/ConsoleCore/Design/L10n.swift`) : `L10n.text("Tous les projets")`, ou
+`L10n.format("Résultats pour « %@ »", query)` pour une phrase à trous (`%@` texte,
+`%lld` entier). La clé est la phrase française ; sa traduction vit dans UNE table,
+`Sources/ConsoleCore/Resources/en.lproj/Localizable.strings`, ressource de
+`ConsoleCore` embarquée par les deux apps (le français n'a pas de table : une clé
+se rend telle quelle). Ajouter un texte, c'est écrire sa phrase française derrière
+`L10n` et sa ligne anglaise dans la table : la garde
+`test/console/localisation-apps.test.ts` rougit sur une clé sans traduction, une
+entrée orpheline, un trou perdu ou un texte visible laissé hors de `L10n`.
+
+La langue est décidée une fois par processus : celle que retient le bundle
+principal (`preferredLocalizations`) s'il se déclare localisé
+(`CFBundleLocalizations` = fr, en dans `Bundle/Info.plist`, le plist de l'app iOS
+et celui du widget), le français sinon — un lanceur de tests ne se déclare pas
+localisé, et les suites Swift, qui figent des phrases françaises, tournent donc en
+français sur toute machine (`scripts/ios-build.sh` passe aussi `-testLanguage fr`).
+Durées, dates et nombres suivent la langue (`ConsoleFormat.locale` : `fr_FR` en
+français, la locale anglaise de l'appareil ou `en_US` en anglais). Restent en
+français à dessein : les phrases Siri et les titres des App Intents (littéraux
+extraits au build, figés par `scripts/app-intents/attendus.json`), le détail
+technique des diagnostics copiables (joint tel quel à un signalement), les
+identifiants d'accessibilité `ios.…` et les noms de commande (/req, /specs…).
+
 ## Structure du paquet
 
 ```
@@ -1480,11 +1514,12 @@ omp-console/
 │   ├── Memory/                    la lecture des réponses de la mémoire et le noyau du graphe
 │   ├── Files/MarkdownDocument.swift  le rendu Markdown en blocs
 │   ├── Setup/SetupText.swift      les mots de la préparation
-│   └── Support/                   JSON, chemins, URL
+│   ├── Support/                   JSON, chemins, URL
+│   └── Resources/en.lproj/Localizable.strings  la table anglaise des textes des deux apps (`L10n`)
 ├── Tests/OMPConsoleTests/         la suite Swift Testing de la coque
 ├── Tests/ConsoleClientTests/      la suite hermétique des clients distants
 ├── ios/                           l'app iOS/iPadOS et son extension de widgets (voir « Coque iOS »)
-├── Bundle/Info.plist              le plist du bundle .app (et `Bundle/AppIcon.icns`)
+├── Bundle/Info.plist              le plist du bundle .app (et `Bundle/AppIcon.icns`, `Bundle/en.lproj/InfoPlist.strings`)
 └── build/                         artefacts (bundle .app, captures), ignorés par git
 ```
 

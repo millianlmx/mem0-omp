@@ -8,12 +8,14 @@
 // `IOSKeyboardCommands` la lit par `KeyEquivalent(IOSKeyboardText.…Key)`. Aucun
 // import de SwiftUI : une touche reste un simple `Character`.
 
+import ConsoleCore
+
 /// Les mots et les touches des commandes clavier de l'iPad.
 enum IOSKeyboardText {
     /// La commande qui relit les données de l'écran courant (⌘R).
-    static let refresh = "Actualiser"
+    static let refresh = L10n.text("Actualiser")
     /// La commande qui active le champ de recherche de l'écran courant (⌘F).
-    static let search = "Rechercher"
+    static let search = L10n.text("Rechercher")
 
     /// La touche de « Actualiser », avec ⌘.
     static let refreshKey: Character = "r"

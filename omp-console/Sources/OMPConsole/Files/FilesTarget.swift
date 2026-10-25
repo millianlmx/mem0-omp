@@ -86,7 +86,7 @@ enum TargetCatalog {
         var targets = [
             FilesTarget(
                 path: primary,
-                label: "\((primary as NSString).lastPathComponent) (dépôt principal)",
+                label: L10n.format("%@ (dépôt principal)", (primary as NSString).lastPathComponent),
                 branch: nil,
                 isPrimary: true,
                 base: .head

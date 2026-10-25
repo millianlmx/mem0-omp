@@ -16,12 +16,12 @@ enum IOSShellText {
 
     /// Le libellé du dernier onglet de l'iPhone et le titre de navigation de sa
     /// liste, qui pousse les sections rangées sous « Plus ».
-    static let plusTitle = "Plus"
+    static let plusTitle = L10n.text("Plus")
     /// Le symbole SF de l'onglet « Plus ».
     static let plusSymbol = "ellipsis"
 
     /// Le mot qui suit le nombre d'un badge visible dans le libellé d'un onglet.
-    static let rowPending = "en attente"
+    static let rowPending = L10n.text("en attente")
 
     /// Le libellé d'accessibilité d'un onglet de section : le titre, suivi du badge
     /// QUAND il est visible (`badge > 0`).

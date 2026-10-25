@@ -275,7 +275,7 @@ releve() {
 
   # 1. Lancement ; le journal est sous le dépôt (simctl refuse /tmp).
   xcrun simctl launch --terminate-running-process --stderr="$journal" "$SIM" "$BUNDLE_ID" \
-    -section "$surface" ${args[@]+"${args[@]}"} >/dev/null 2>&1 || true
+    -section "$surface" ${args[@]+"${args[@]}"} -AppleLanguages "(fr)" >/dev/null 2>&1 || true
 
   # 2. Le signal de PRÊT, quand la surface en annonce un : pas de sommeil fixe.
   if [ -n "$signal" ]; then

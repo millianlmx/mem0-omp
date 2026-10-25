@@ -17,47 +17,47 @@ import ConsoleCore
 enum IOSMemoryText {
     /// L'état vide de l'app quand le serveur n'est pas joignable : on ne peut PAS
     /// affirmer que la mémoire est vide (on ne l'a pas lue), donc on le dit.
-    static let noData = "Aucune donnée reçue du serveur pour l’instant."
+    static let noData = L10n.text("Aucune donnée reçue du serveur pour l’instant.")
 
     /// Aucun projet : la mémoire du serveur n'a encore aucun souvenir.
-    static let noProjectDetail = "La mémoire du serveur n’a encore aucun souvenir."
+    static let noProjectDetail = L10n.text("La mémoire du serveur n’a encore aucun souvenir.")
 
     /// Le menu du projet lu (les portées de la mémoire, la plus récente en tête).
-    static let projectMenu = "Choisir le projet"
+    static let projectMenu = L10n.text("Choisir le projet")
     static let projectSymbol = "folder"
 
     /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
-    static let loadingMore = "Chargement des souvenirs suivants…"
+    static let loadingMore = L10n.text("Chargement des souvenirs suivants…")
 
     /// Le titre de la barre de la fiche d'un souvenir (feuilles-ios-presentation-et-depots, S-6).
-    static let detailTitle = "Souvenir"
+    static let detailTitle = L10n.text("Souvenir")
     /// Le bouton qui ferme la fiche.
-    static let close = "Fermer"
+    static let close = L10n.text("Fermer")
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
     /// Le graphe partiel : des lignes ont été retirées à l'une des deux bornes.
-    static let graphPartial = "Graphe partiel : tous les souvenirs n’ont pas été servis."
+    static let graphPartial = L10n.text("Graphe partiel : tous les souvenirs n’ont pas été servis.")
 
     /// La route graphe est absente du serveur mémoire : la cause et le remède, sans
     /// adresse, sans JSON ni code HTTP.
     static let graphServiceOutdated =
-        "Graphe indisponible : serveur mémoire trop ancien.\nMettez à jour le serveur, puis réessayez."
+        L10n.text("Graphe indisponible : serveur mémoire trop ancien.\nMettez à jour le serveur, puis réessayez.")
 
     /// Le titre du bloc de liens de la fiche.
-    static let links = "Liens"
+    static let links = L10n.text("Liens")
 
     /// Les natures d'un lien, en mots de l'app (le noyau n'en nomme aucune). Une
     /// proximité se dit par `proximityLabel(_:)`, jamais par son score.
-    static let linkTag = "Étiquette"
-    static let linkManual = "Manuel"
+    static let linkTag = L10n.text("Étiquette")
+    static let linkManual = L10n.text("Manuel")
 
     /// Une proximité sémantique en clair, sans chiffre : ≥ 0,90 « Très proche »,
     /// ≥ 0,80 « Proche », sinon (dont un score absent, 0, ou NaN) « Assez proche ».
     static func proximityLabel(_ score: Double) -> String {
-        if score >= 0.90 { return "Très proche" }
-        if score >= 0.80 { return "Proche" }
-        return "Assez proche"
+        if score >= 0.90 { return L10n.text("Très proche") }
+        if score >= 0.80 { return L10n.text("Proche") }
+        return L10n.text("Assez proche")
     }
 
     /// Le libellé d'une ligne de lien : sa nature en clair, puis l'autre extrémité.
@@ -74,29 +74,29 @@ enum IOSMemoryText {
     // MARK: - Le graphe parcouru par VoiceOver (ios-statistiques-et-graphe-accessibles, S-5)
 
     /// Le titre d'un souvenir dont le texte est vide.
-    static let untitledMemory = "Souvenir sans titre"
+    static let untitledMemory = L10n.text("Souvenir sans titre")
 
     /// L'élément d'un souvenir : son titre, puis son nombre de liens affichés.
     static func graphMemoryLabel(title: String, links: Int) -> String {
-        guard links > 0 else { return title + ", aucun lien" }
-        return title + ", " + ConsoleFormat.count(links, "lien", "liens")
+        guard links > 0 else { return L10n.format("%@, aucun lien", title) }
+        return title + ", " + ConsoleFormat.count(links, L10n.text("lien"), L10n.text("liens"))
     }
 
     /// L'élément d'un nœud-étiquette : `#étiquette`, sa nature, puis le nombre de
     /// souvenirs affichés qui la portent.
     static func graphTagLabel(tag: String, memories: Int) -> String {
-        MemoryText.tagLabel(tag) + ", étiquette, " + ConsoleFormat.count(memories, "souvenir", "souvenirs")
+        L10n.format("%@, étiquette, %@", MemoryText.tagLabel(tag), ConsoleFormat.count(memories, L10n.text("souvenir"), L10n.text("souvenirs")))
     }
 
     /// « Affiche », jamais « Ouvre » : en tête de phrase, la garde anti-tutoiement
     /// lit « Ouvre » comme un impératif tutoyé (décision du 2026-10-11).
-    static let graphMemoryHint = "Affiche la fiche du souvenir."
-    static let graphTagHint = "Affiche seulement les souvenirs de cette étiquette."
-    static let graphShowAllHint = "Revient au graphe entier."
+    static let graphMemoryHint = L10n.text("Affiche la fiche du souvenir.")
+    static let graphTagHint = L10n.text("Affiche seulement les souvenirs de cette étiquette.")
+    static let graphShowAllHint = L10n.text("Revient au graphe entier.")
 
     /// Le libellé du contenu donné à la demande (rotor « Plus de contenu ») : les
     /// titres des extrémités liées à un souvenir.
-    static let graphLinkedTitles = "Liés à"
+    static let graphLinkedTitles = L10n.text("Liés à")
 
     // MARK: - La recette `-memoire.recipe` (BR-7)
 

@@ -7,6 +7,7 @@
 // messages d'ici ; aucun ne recompose l'erreur d'un autre cru.
 
 import ConsoleClient
+import ConsoleCore
 
 /// La cause distinguable d'une lecture de la mémoire échouée.
 enum IOSMemoryFailure: Equatable {
@@ -40,32 +41,32 @@ enum IOSMemoryErrorText {
     static func cause(_ failure: IOSMemoryFailure) -> String {
         switch failure {
         case .unreachable:
-            "Mémoire du serveur injoignable."
+            L10n.text("Mémoire du serveur injoignable.")
         case .timedOut:
-            "Délai dépassé : la mémoire a mis trop de temps à répondre."
+            L10n.text("Délai dépassé : la mémoire a mis trop de temps à répondre.")
         case .serviceUnavailable:
-            "Mémoire indisponible sur le serveur."
+            L10n.text("Mémoire indisponible sur le serveur.")
         case .refused:
-            "Le serveur a refusé le jeton de la mémoire."
+            L10n.text("Le serveur a refusé le jeton de la mémoire.")
         case .serviceOutdated:
             IOSMemoryText.graphServiceOutdated
         case .generic:
-            "La mémoire du serveur a rencontré une erreur."
+            L10n.text("La mémoire du serveur a rencontré une erreur.")
         }
     }
 
     static func remedy(_ failure: IOSMemoryFailure) -> String {
         switch failure {
         case .unreachable:
-            "Vérifiez que cet appareil est sur votre tailnet et que le serveur est démarré, puis réessayez."
+            L10n.text("Vérifiez que cet appareil est sur votre tailnet et que le serveur est démarré, puis réessayez.")
         case .timedOut:
-            "Réessayez dans un instant."
+            L10n.text("Réessayez dans un instant.")
         case .generic:
-            "Réessayez dans un instant. Si l’erreur persiste, consultez les journaux du serveur."
+            L10n.text("Réessayez dans un instant. Si l’erreur persiste, consultez les journaux du serveur.")
         case .serviceUnavailable:
-            "Vérifiez que le serveur est démarré, puis réessayez."
+            L10n.text("Vérifiez que le serveur est démarré, puis réessayez.")
         case .refused:
-            "Collez de nouveau le code d’appairage affiché par le serveur dans la feuille Serveur."
+            L10n.text("Collez de nouveau le code d’appairage affiché par le serveur dans la feuille Serveur.")
         case .serviceOutdated:
             ""
         }

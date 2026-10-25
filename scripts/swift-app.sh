@@ -469,6 +469,28 @@ if [ ! -f "$ICON" ]; then
 fi
 cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
 
+# 3 bis bis) les textes anglais (feature localisation-apps). La compilation rend, à
+#    côté du binaire, le bundle de ressources SwiftPM de ConsoleCore
+#    (`omp-console_ConsoleCore.bundle`, qui porte `en.lproj/Localizable.strings`) :
+#    il est recopié dans Contents/Resources, premier endroit où le cherche
+#    `Bundle.module` (l'accesseur généré essaie `Bundle.main.resourceURL` d'abord).
+#    Absent, le premier texte lu ferait planter l'app (`fatalError` de
+#    l'accesseur) : l'assemblage échoue alors sans bundle. Suit la description
+#    d'usage du réseau local en anglais (`omp-console/Bundle/en.lproj`). Tout est
+#    copié AVANT la signature, qui scelle les ressources.
+RESOURCE_BUNDLE="omp-console_ConsoleCore.bundle"
+if [ ! -d "$bin_dir/$RESOURCE_BUNDLE" ]; then
+  echec_sans_bundle "bundle de ressources introuvable : $bin_dir/$RESOURCE_BUNDLE (les textes traduits de ConsoleCore)"
+fi
+for resources in "$bin_dir"/omp-console_*.bundle; do
+  cp -R "$resources" "$BUNDLE/Contents/Resources/"
+done
+if [ -z "$(find "$BUNDLE/Contents/Resources/$RESOURCE_BUNDLE" -path '*/en.lproj/Localizable.strings' -type f 2>/dev/null)" ]; then
+  echec_sans_bundle "table anglaise absente du bundle : Contents/Resources/$RESOURCE_BUNDLE/…/en.lproj/Localizable.strings"
+fi
+cp -R "$PKG/Bundle/en.lproj" "$BUNDLE/Contents/Resources/en.lproj"
+echo "  ✓ textes anglais embarqués (Contents/Resources/$RESOURCE_BUNDLE, Contents/Resources/en.lproj)"
+
 # 3 ter) le service mémoire : le binaire mem0-rs compilé en 2 bis, en
 #    `Contents/Resources/mem0-rs` (0755). Il est signé LUI-MÊME, par la même
 #    identité que le bundle, avant lui : la signature du bundle scelle alors un code
@@ -493,6 +515,15 @@ if ! codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Resources/mem0-rs" >/
   exit 1
 fi
 echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
+# Les bundles de ressources SwiftPM recopiés en 3 bis bis sont signés eux aussi,
+# par la même identité, comme Xcode signe ceux d'un paquet : la signature du
+# bundle les scelle alors comme du code imbriqué déjà signé.
+for resources in "$BUNDLE/Contents/Resources"/omp-console_*.bundle; do
+  if ! codesign --force --sign "$IDENTITY" "$resources" >/dev/null 2>&1; then
+    echo "✗ signature de $(basename "$resources") échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$resources\")"
+    exit 1
+  fi
+done
 
 echo "  ✓ bundle assemblé ($BUNDLE)"
 

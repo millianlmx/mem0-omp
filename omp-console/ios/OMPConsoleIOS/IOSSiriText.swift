@@ -6,13 +6,14 @@
 
 import AppIntents
 import ConsoleClient
+import ConsoleCore
 
 /// Les mots de l’intent témoin.
 enum IOSSiriText {
-    static let unconfigured = "Aucun serveur relié"
-    static let unreachable = "Serveur relié, injoignable"
+    static let unconfigured = L10n.text("Aucun serveur relié")
+    static let unreachable = L10n.text("Serveur relié, injoignable")
     static func connected(pending: Int) -> String {
-        pending == 0 ? "Relié au serveur, rien en attente" : "Relié au serveur, \(pending) en attente"
+        pending == 0 ? L10n.text("Relié au serveur, rien en attente") : L10n.format("Relié au serveur, %lld en attente", pending)
     }
 }
 

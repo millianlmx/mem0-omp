@@ -12,7 +12,7 @@ extension SetupText {
     /// OMP est le seul composant que l'app installe.
     static func componentsWord(_ missing: [ComponentID]) -> String {
         guard let component = missing.first else { return componentsAllInstalled }
-        return "\(component.name) manquant"
+        return L10n.format("%@ manquant", component.name)
     }
 
     /// Le détail d'une étape en cours. Le téléchargement d'OMP affiche son
@@ -21,22 +21,22 @@ extension SetupText {
     static func stepDetail(_ step: SetupStep) -> String {
         switch step {
         case .omp(let downloaded, let total):
-            if total <= 0 { return "Téléchargement d’OMP…" }
-            return "Téléchargement d’OMP — \(percent(downloaded, total)) %"
+            if total <= 0 { return L10n.text("Téléchargement d’OMP…") }
+            return L10n.format("Téléchargement d’OMP — %lld %%", percent(downloaded, total))
         case .ompInstall:
-            return "Installation d’OMP…"
+            return L10n.text("Installation d’OMP…")
         case .migrationStart:
-            return "Démarrage de l’ancienne mémoire…"
+            return L10n.text("Démarrage de l’ancienne mémoire…")
         case .migrationImport:
-            return "Reprise des souvenirs de l’ancienne mémoire…"
+            return L10n.text("Reprise des souvenirs de l’ancienne mémoire…")
         case .migrationStop:
-            return "Arrêt de l’ancienne mémoire…"
+            return L10n.text("Arrêt de l’ancienne mémoire…")
         case .agent:
-            return "Démarrage du service mémoire…"
+            return L10n.text("Démarrage du service mémoire…")
         case .health:
-            return "Attente de la mémoire…"
+            return L10n.text("Attente de la mémoire…")
         case .prerequisites:
-            return "Vérification des prérequis…"
+            return L10n.text("Vérification des prérequis…")
         }
     }
 
@@ -56,13 +56,13 @@ extension SetupText {
     static func failureDiagnostic(_ failure: SetupFailure, logPath: String = AppPaths.standard().mem0Log.path) -> String {
         switch failure {
         case .components(.unsupportedMac):
-            return "Ce Mac n’est pas pris en charge (arm64 requis)."
+            return L10n.text("Ce Mac n’est pas pris en charge (arm64 requis).")
         case .components(.network(let component, _)):
-            return "Pas de réseau : « \(component) » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
+            return L10n.format("Pas de réseau : « %@ » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.", component)
         case .components(.checksum(let component)):
-            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
+            return L10n.format("« %@ » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", component)
         case .components(.install(let component, let detail)):
-            return "L’installation de « \(component) » a échoué : \(detail)"
+            return L10n.format("L’installation de « %@ » a échoué : %@", component, detail)
         case .migration(.podmanMissing(let path)):
             return "podman introuvable : \(path)"
         case .migration(.machineFailed(let detail)):
@@ -149,13 +149,13 @@ extension SetupText {
     static func failureSummary(_ failure: SetupFailure) -> String {
         switch failure {
         case .components(.unsupportedMac):
-            return "Ce Mac n’est pas pris en charge (arm64 requis)."
+            return L10n.text("Ce Mac n’est pas pris en charge (arm64 requis).")
         case .components(.network(let component, _)):
-            return "Pas de réseau : « \(component) » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
+            return L10n.format("Pas de réseau : « %@ » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.", component)
         case .components(.checksum(let component)):
-            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
+            return L10n.format("« %@ » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", component)
         case .components(.install(let component, _)):
-            return "L’installation de « \(component) » a échoué."
+            return L10n.format("L’installation de « %@ » a échoué.", component)
         case .migration, .agent:
             return failureMessage(failure)
         }
@@ -171,7 +171,7 @@ extension SetupText {
         case .components(.unsupportedMac), .components(.checksum):
             return nil
         case .agent(.portConflict(_, let owner)):
-            return "Geste : \(owner.gesture)"
+            return L10n.format("Geste : %@", owner.gesture)
         case .components(.network(_, let detail)), .components(.install(_, let detail)),
              .migration(.machineFailed(let detail)), .migration(.qdrantUnreachable(let detail)),
              .migration(.historyCopyFailed(let detail)), .migration(.stopFailed(let detail)),
@@ -202,8 +202,8 @@ extension SetupText {
             .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
             .map { "\($0.key) (\($0.value))" }
             .joined(separator: ", ")
-        let total = ConsoleFormat.count(report.totalRejected, "élément", "éléments")
-        return "L’import a laissé de côté \(total) : \(groups)."
+        let total = ConsoleFormat.count(report.totalRejected, L10n.text("élément"), L10n.text("éléments"))
+        return L10n.format("L’import a laissé de côté %@ : %@.", total, groups)
     }
 
     /// Le détail repliable des rejets : une ligne par élément laissé de côté.
@@ -219,9 +219,9 @@ extension SetupText {
         guard dismissed else { return nil }
         switch state {
         case .preparing(let step):
-            return "Préparation en cours — \(stepDetail(step))"
+            return L10n.format("Préparation en cours — %@", stepDetail(step))
         case .failed(let failure):
-            return "Préparation incomplète. \(failureConsequence(failure))"
+            return L10n.format("Préparation incomplète. %@", failureConsequence(failure))
         case .awaitingSwitch:
             return bannerAwaitingSwitch
         case .idle, .ready:

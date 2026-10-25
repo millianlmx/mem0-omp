@@ -381,8 +381,8 @@ const IDENTITY_MARKERS = [
   "localNetworkMessageSpeaksToTheUser",
   "launchScreenUsesSystemBackground",
 ] as const;
-/** Les puces du nom et de la région, dans la section précédente, qui restent telles quelles. */
-const KEPT_MARKERS = ["homeScreenNameIsOMPConsole", "appIsFrenchOnly"] as const;
+/** Les puces du nom et des langues (localisation-apps), dans la section précédente, qui restent telles quelles. */
+const KEPT_MARKERS = ["homeScreenNameIsOMPConsole", "appIsLocalizedInEnglish"] as const;
 
 /** Les puces d'un texte Markdown : une ligne « - » puis ses suites indentées de 2 espaces (règle de `design-ios`). */
 function bullets(lines: string[]): string[][] {

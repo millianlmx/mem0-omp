@@ -1,0 +1,7 @@
+/*
+ * Les clés de l'Info.plist de l'app Mac, en anglais (feature localisation-apps).
+ * scripts/swift-app.sh copie ce dossier dans Contents/Resources ; en français,
+ * langue de développement, les valeurs de omp-console/Bundle/Info.plist font foi.
+ */
+
+"NSLocalNetworkUsageDescription" = "OMP Console reaches your pipeline server and your memory when they are on your local network.";

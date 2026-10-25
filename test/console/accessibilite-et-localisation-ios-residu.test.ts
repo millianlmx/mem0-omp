@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { ROOT, tmpdir } from "../support/repo.ts";
-import { stripComments } from "../support/swift-source.ts";
+import { declaredTexts, stripComments } from "../support/swift-source.ts";
 
 const APP = path.join("omp-console", "ios", "OMPConsoleIOS");
 const CORE = path.join("omp-console", "Sources", "ConsoleCore");
@@ -105,10 +105,11 @@ function meaningfulFaults(sources: Sources): string[] {
       "IOSHarnessScreens : « Ajouter une feature » n'a plus Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol) pour libellé",
     );
   }
-  const text = get(sources, PIPELINE_TEXT);
-  if (!text.includes('public static let open = "Serveur"'))
-    faults.push("PipelineServerText.open n'est plus « Serveur »");
-  if (!text.includes('public static let addFeature = "Ajouter une feature"'))
+  // La clé de `L10n.text` est le libellé français (localisation-apps) : il est lu
+  // sous ses deux formes, littéral nu ou localisé.
+  const words = declaredTexts(get(sources, PIPELINE_TEXT));
+  if (words.get("open") !== "Serveur") faults.push("PipelineServerText.open n'est plus « Serveur »");
+  if (words.get("addFeature") !== "Ajouter une feature")
     faults.push("PipelineServerText.addFeature n'est plus « Ajouter une feature »");
   return faults;
 }
@@ -374,75 +375,10 @@ test("accessibilite-et-localisation-ios-residu/AC-5 : Se connecter, Réessayer e
   );
 });
 
-// ── AC-6 : app française seulement (S-5) ───────────────────────────────────────
-
-/** Les `.lproj`, `.xcstrings` et `.strings` sous `omp-console/ios`, chemins relatifs. */
-function localizationArtifacts(): string[] {
-  const found: string[] = [];
-  const walk = (rel: string): void => {
-    for (const entry of fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true })) {
-      const child = path.join(rel, entry.name);
-      if (/\.(lproj|xcstrings|strings)$/.test(entry.name)) found.push(child);
-      else if (entry.isDirectory()) walk(child);
-    }
-  };
-  walk(path.join("omp-console", "ios"));
-  return found;
-}
-
-function languageFaults(sources: Sources, artifacts: string[]): string[] {
-  const faults: string[] = [];
-  const pbxproj = get(sources, PBXPROJ);
-  const regions = [...pbxproj.matchAll(/^\s*developmentRegion = ([^;]+);$/gm)].map((m) => m[1]);
-  if (regions.length !== 1 || regions[0] !== "fr") {
-    faults.push(`developmentRegion doit valoir fr une seule fois (lu : ${regions.join(", ") || "absent"})`);
-  }
-  const known = pbxproj.match(/^\s*knownRegions = \(([^)]*)\);$/m);
-  const knownList = known
-    ? known[1]
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
-  if (knownList.join(",") !== "fr,Base")
-    faults.push(`knownRegions doit valoir (fr, Base) (lu : ${knownList.join(", ") || "absent"})`);
-  if (/CFBundleLocalizations/.test(pbxproj) || /CFBundleLocalizations/.test(get(sources, INFO_PLIST))) {
-    faults.push("CFBundleLocalizations ne doit pas être déclaré");
-  }
-  for (const artifact of artifacts) faults.push(`fichier de localisation interdit : ${artifact}`);
-  return faults;
-}
-
-test("accessibilite-et-localisation-ios-residu/AC-6 : l'app iOS est française seulement (developmentRegion fr, aucune région en)", () => {
-  const sources = repoSources();
-  const artifacts = localizationArtifacts();
-  assert.deepEqual(languageFaults(sources, artifacts), []);
-
-  const english = plant(sources, PBXPROJ, "developmentRegion = fr;", "developmentRegion = en;");
-  assert.ok(
-    languageFaults(english, artifacts).some((f) => f.startsWith("developmentRegion")),
-    "developmentRegion en doit faire rougir la garde",
-  );
-  const known = plant(sources, PBXPROJ, /(knownRegions = \(\s*)fr,/, "$1en,\n\t\t\t\tfr,");
-  assert.ok(
-    languageFaults(known, artifacts).some((f) => f.startsWith("knownRegions")),
-    "une région en doit faire rougir la garde",
-  );
-  const plist = plant(
-    sources,
-    INFO_PLIST,
-    "<dict>",
-    "<dict>\n\t<key>CFBundleLocalizations</key>\n\t<array><string>en</string></array>",
-  );
-  assert.ok(
-    languageFaults(plist, artifacts).some((f) => f.includes("CFBundleLocalizations")),
-    "CFBundleLocalizations doit faire rougir la garde",
-  );
-  assert.ok(
-    languageFaults(sources, [path.join(APP, "en.lproj")]).some((f) => f.includes("en.lproj")),
-    "un .lproj doit faire rougir la garde",
-  );
-});
+// ── AC-6 : retiré ──────────────────────────────────────────────────────────────
+// L'app iOS n'est plus « française seulement » : elle est localisée en anglais
+// (feature localisation-apps). Ses régions, ses CFBundleLocalizations et sa table
+// anglaise sont gardés par `test/console/localisation-apps.test.ts`.
 
 // ── AC-7 : nom « OMP Console » sous l'icône (S-6) ──────────────────────────────
 
