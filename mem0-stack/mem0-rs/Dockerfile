@@ -11,7 +11,7 @@
 # retiré ensuite avec ce que cargo a produit pour lui (le `touch` force cargo à
 # recompiler le vrai main.rs, plus vieux que l'artefact factice). Rien de propre
 # à BuildKit (pas de `--mount=type=cache`) : Docker et podman la cachent pareil.
-FROM rust:1.89-bookworm AS build
+FROM rust:1.98-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs \
