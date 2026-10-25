@@ -97,6 +97,18 @@ export const PHASE_THRESHOLD = 0.4;
 
 export const RECALL_LINE_CHARS = 100; // aperçu d'un souvenir dans le transcript, une ligne
 
+// Budget du bloc de rappel, en caractères de texte de souvenir. Un souvenir n'a pas
+// de longueur maximale (une procédure `kind: "procedure"` est stockée telle quelle) :
+// sans borne, cinq souvenirs longs posaient plusieurs milliers de tokens à CHAQUE
+// tour, et un seul pouvait évincer les quatre autres de l'attention du modèle. Un
+// souvenir est rogné à RECALL_ITEM_CHARS, en le disant (mem0_search le rend entier) ;
+// le bloc s'arrête quand le suivant ferait dépasser RECALL_BLOCK_CHARS, le premier
+// passant toujours. Un souvenir laissé hors du bloc n'est pas compté comme montré :
+// il pourra l'être à un tour suivant.
+export const RECALL_ITEM_CHARS = 1200;
+
+export const RECALL_BLOCK_CHARS = 4000;
+
 export const RECALL_MESSAGE_TYPE = "mem0-recall";
 
 // Le bloc de rappel est visible par défaut : un rappel muet ne se distingue pas d'un rappel absent.

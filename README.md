@@ -214,6 +214,8 @@ Chaque projet a sa propre mémoire. À chaque tour, l'agent reçoit les souvenir
 utiles à ta demande, et il écrit lui-même ce qui restera vrai. Le sommaire de la
 mémoire est exhaustif tant qu'il n'est pas tronqué (60 entrées) ; au-delà, il dit
 ce qui manque et l'agent cherche avec `mem0_search`.
+Le rappel d'un tour tient en 4 000 caractères : un souvenir plus long que
+1 200 caractères y est rogné, et `mem0_search` le rend entier.
 
 Le nom du projet vient du manifeste (`package.json`, `pyproject.toml`,
 `Cargo.toml`…), sinon du dossier. `/mem0-status` affiche celui qui est retenu.
