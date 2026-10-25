@@ -6,6 +6,18 @@ import type { RepoFilter, RunRow, Store } from "./db.ts";
 import { isTerminal } from "./machine.ts";
 
 /**
+ * Une question avec l'étape qui l'a posée (`req`, `specs`, `impl`…) : les apps la
+ * situent (dépôt › feature › étape) sans relire la vue du run.
+ */
+function withStep<T extends { stepId: number }>(store: Store, items: readonly T[]): (T & { step: string | null })[] {
+  const kinds = new Map<number, string | null>();
+  return items.map((item) => {
+    if (!kinds.has(item.stepId)) kinds.set(item.stepId, store.getStep(item.stepId)?.kind ?? null);
+    return { ...item, step: kinds.get(item.stepId) ?? null };
+  });
+}
+
+/**
  * La boîte de l'humain, d'un seul appel : escalades batchées, validations, décisions prises
  * seules, features en cours, audits. `pendingCount` compte ce qui BLOQUE un run (escalades
  * ouvertes, runs en attente de validation) ; les décisions `auto`/`auto_timeout` sont à
@@ -16,12 +28,12 @@ export function inboxOf(store: Store, repos: RepoFilter = null): Record<string, 
   const byId = new Map(runs.map((run) => [run.id, run]));
   const byRun = new Map<string, unknown[]>();
   let openEscalations = 0;
-  for (const item of store.listEscalations({ status: "open", repos })) {
+  for (const item of withStep(store, store.listEscalations({ status: "open", repos }))) {
     openEscalations += 1;
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
   }
   const awaiting = runs.filter((run) => run.state === "awaiting_human");
-  const decisions = store.listDecisions({ status: ["auto", "auto_timeout"], repos });
+  const decisions = withStep(store, store.listDecisions({ status: ["auto", "auto_timeout"], repos }));
   const referenced = new Set([...byRun.keys(), ...decisions.map((decision) => decision.runId)]);
   return {
     pendingCount: openEscalations + awaiting.length,
@@ -41,7 +53,7 @@ export function escalationBatches(
   repos: RepoFilter = null,
 ): Record<string, unknown> {
   const byRun = new Map<string, unknown[]>();
-  for (const item of store.listEscalations({ status, repos }))
+  for (const item of withStep(store, store.listEscalations({ status, repos })))
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
   return { batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })) };
 }

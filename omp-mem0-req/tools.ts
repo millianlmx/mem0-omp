@@ -83,9 +83,11 @@ export function renderRun(view: RunView): string {
       ? ["(aucune)"]
       : open.flatMap((item) => [
           `- #${item.id} (${item.category}) ${item.question}`,
-          `  options : ${item.options.join(" | ") || "—"}`,
-          `  recommandée : ${item.recommended ?? "—"}`,
-          ...(item.context ? [`  contexte : ${truncate(item.context, 600)}`] : []),
+          ...(item.impacts.length === item.options.length && item.options.length > 0
+            ? item.options.map((option, index) => `  - option « ${option} » : ${item.impacts[index]}`)
+            : [`  options : ${item.options.join(" | ") || "—"}`]),
+          `  recommandée : ${item.recommended ?? "—"}${item.rationale ? ` — ${item.rationale}` : ""}`,
+          ...(item.context ? [`  contexte : ${truncate(item.context, 1200)}`] : []),
         ])),
     "",
     "## Verdict",

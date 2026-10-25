@@ -250,7 +250,7 @@ struct IOSHarnessInboxSections: View {
         }
         Section {
             if inbox.decisions.isEmpty { empty }
-            ForEach(inbox.decisions) { decision in decisionView(decision, run: inbox.run(decision.runId)).disabled(!server.canAct) }
+            ForEach(inbox.decisions) { decision in decisionView(decision).disabled(!server.canAct) }
             ForEach(inbox.decisionRunIds, id: \.self) { runId in
                 Button(inbox.decisionRunIds.count == 1 ? PipelineServerText.acceptAll : PipelineServerText.acceptAllLine(inbox.run(runId)?.title ?? runId)) {
                     Task { await server.acceptAllDecisions(runId: runId) }
@@ -279,36 +279,40 @@ struct IOSHarnessInboxSections: View {
         Text(PipelineServerText.nothingPending).foregroundStyle(.secondary)
     }
 
+    /// Un lot d'escalades : la place de la feature, puis chaque question avec sa
+    /// situation et l'impact de chaque option.
     private func batchView(_ batch: HarnessEscalationBatch) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(batch.run?.title ?? batch.id)
-                .font(.headline)
-            ForEach(batch.items) { item in
-                VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 14) {
+            if let first = batch.items.first {
+                IOSQuestionPlaceView(place: inbox.question(first, in: batch))
+            }
+            ForEach(Array(batch.items.enumerated()), id: \.element.id) { index, item in
+                VStack(alignment: .leading, spacing: 10) {
                     Text(PipelineServerText.category(item.category))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.orange)
-                    Text(item.question)
-                    if let context = item.shownContext {
-                        Text(context)
+                    if batch.items.count > 1 {
+                        Text(PipelineServerText.questionIndex(index + 1, of: batch.items.count))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if let recommended = item.recommended {
-                        Text(PipelineServerText.recommended(recommended))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(item.options, id: \.self) { option in
-                        Button {
-                            drafts.answers[item.id] = option
-                        } label: {
-                            Label(
-                                option,
-                                systemImage: drafts.answer(for: item) == option ? PipelineServerText.chosenSymbol : PipelineServerText.optionSymbol
-                            )
+                    Text(MarkdownDocument.inline(item.question))
+                        .font(.headline)
+                    IOSContextView(context: item.shownContext)
+                    Text(PipelineServerText.optionsTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(item.choices) { choice in
+                        IOSChoiceRow(
+                            choice: choice,
+                            badge: PipelineServerText.recommendedBadge,
+                            selected: drafts.answer(for: item) == choice.option
+                        ) {
+                            drafts.answers[item.id] = choice.option
                         }
-                        .buttonStyle(.borderless)
+                    }
+                    if let rationale = item.shownRationale {
+                        IOSReasonView(title: PipelineServerText.whyRecommended, text: rationale)
                     }
                     // La réponse présélectionnée est l'option recommandée, tant que rien n'est tapé.
                     TextField(PipelineServerText.answerPlaceholder, text: Binding(
@@ -320,6 +324,7 @@ struct IOSHarnessInboxSections: View {
                         set: { drafts.reasons[item.id] = $0 }
                     ))
                 }
+                .padding(.top, index > 0 ? 8 : 0)
             }
             Button(PipelineServerText.answer) {
                 let answers = drafts.answers(for: batch)
@@ -347,8 +352,7 @@ struct IOSHarnessInboxSections: View {
 
     private func specsView(_ run: HarnessRun) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(run.title)
-                .font(.headline)
+            IOSQuestionPlaceView(place: inbox.question(run))
             if let specs = drafts.specs[run.id] {
                 IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))
                     .textSelection(.enabled)
@@ -377,13 +381,12 @@ struct IOSHarnessInboxSections: View {
 
     private func verdictView(_ run: HarnessRun) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(run.title)
-                .font(.headline)
+            IOSQuestionPlaceView(place: inbox.question(run))
             if let verdict = run.verdict {
                 Text(PipelineServerText.risk(verdict.risk))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(verdict.isLowRisk ? Color.green : Color.orange)
-                Text(verdict.summary)
+                IOSMarkdownView(blocks: MarkdownDocument.blocks(verdict.summary))
                 list(PipelineServerText.blockers, verdict.blockers)
                 list(PipelineServerText.risks, verdict.risks)
                 list(PipelineServerText.unverified, verdict.unverified)
@@ -424,29 +427,35 @@ struct IOSHarnessInboxSections: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                 ForEach(items, id: \.self) { item in
-                    Text(IOSShellText.bullet(item))
+                    Text(MarkdownDocument.inline(IOSShellText.bullet(item)))
                         .font(.callout)
                 }
             }
         }
     }
 
-    private func decisionView(_ decision: HarnessDecision, run: HarnessRun?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let run {
-                Text(run.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            Text(PipelineServerText.decisionLine(seq: decision.seq, question: decision.question, chosen: decision.chosen))
-            Text(PipelineServerText.rationale(decision.rationale))
-                .font(.caption)
+    /// Une décision prise seule : sa place, sa situation, l'option retenue parmi les
+    /// autres (avec leurs impacts) et la raison de l'agent.
+    private func decisionView(_ decision: HarnessDecision) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            IOSQuestionPlaceView(place: inbox.question(decision))
+            Text(PipelineServerText.category(decision.category))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             if let status = PipelineServerText.decisionStatus(decision.status) {
                 Text(status)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
             }
+            Text(MarkdownDocument.inline(decision.question))
+                .font(.headline)
+            if let context = decision.shownContext {
+                IOSContextView(context: context)
+            }
+            ForEach(decision.choices) { choice in
+                IOSChoiceRow(choice: choice, badge: PipelineServerText.chosenBadge, selected: choice.isPreferred)
+            }
+            IOSReasonView(title: PipelineServerText.whyChosen, text: decision.rationale)
             HStack {
                 Button(PipelineServerText.accept) {
                     Task { await server.accept(runId: decision.runId, seq: decision.seq) }
@@ -850,7 +859,7 @@ private struct IOSHarnessGestures: ViewModifier {
         NavigationStack {
             Form {
                 Section {
-                    Text(decision.question)
+                    Text(MarkdownDocument.inline(decision.question))
                         .font(.headline)
                     if !decision.alternatives.isEmpty {
                         Picker(PipelineServerText.reverseOption, selection: $drafts.reversalOption) {

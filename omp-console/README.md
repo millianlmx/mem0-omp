@@ -286,7 +286,13 @@ exécuter une étape elle-même.
   cause puis son remède.
 - **Accueil** — le résumé de la boîte de l'humain (`GET /v1/inbox`) : ce qui
   attend une décision (questions à trancher, specs à valider, verdicts à valider,
-  décisions à relire, audits à trier), puis le détail, en sections :
+  décisions à relire, audits à trier), puis le détail, en sections. Chaque
+  question est **située** avant d'être posée, parce qu'elle se lit au milieu de
+  plusieurs projets : le fil dépôt › feature › étape qui l'a posée, la demande
+  d'origine (repliée, avec les modules touchés), la situation décrite par l'agent
+  (`context`), puis chaque option avec ce qu'elle emporte (`impacts`) et la raison
+  de l'agent. Les textes de l'agent, les specs et les verdicts sont rendus en
+  Markdown (titres, listes, code, tableaux), jamais montrés en source :
   - **À trancher** : les escalades d'une feature, répondues en un seul geste
     (`POST /v1/runs/{id}/escalations`) ; la feature reprend quand toutes ont leur
     réponse. Chaque réponse part de l'option que l'agent recommande (`recommended`) ;

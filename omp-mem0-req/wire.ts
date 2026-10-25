@@ -61,6 +61,10 @@ export type EscalationSummary = {
   options: string[];
   recommended: string | null;
   context: string;
+  /** Pourquoi l'agent recommande `recommended` ; `null` d'un serveur antérieur. */
+  rationale: string | null;
+  /** Ce qu'emporte chaque option, dans l'ordre de `options` ; vide d'un serveur antérieur. */
+  impacts: string[];
   answer: string | null;
 };
 
@@ -138,6 +142,8 @@ export function parseRunView(raw: unknown): RunView | null {
       options: strList(item, "options"),
       recommended: strOrNull(item, "recommended"),
       context: str(item, "context"),
+      rationale: strOrNull(item, "rationale"),
+      impacts: strList(item, "impacts"),
       answer: strOrNull(item, "answer"),
     })),
     verdict: parseVerdict(run.verdict),

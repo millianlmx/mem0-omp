@@ -189,11 +189,17 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
     public var options: [String]
     public var chosen: String
     public var rationale: String
+    /// La situation donnée par l'agent, en Markdown ; `nil` d'un serveur antérieur.
+    public var context: String?
+    /// Ce qu'emporte chaque option, dans l'ordre de `options` ; vide si l'agent ne l'a pas dit.
+    public var impacts: [String]
+    /// L'étape qui a pris la décision (`req`, `specs`, `impl`…) ; `nil` d'un serveur antérieur.
+    public var step: String?
     public var category: String
     public var status: String
     public var createdAt: Double
 
-    public init(id: Int, runId: String, seq: Int, question: String, options: [String], chosen: String, rationale: String, category: String = "reversible", status: String = "auto", createdAt: Double = 0) {
+    public init(id: Int, runId: String, seq: Int, question: String, options: [String], chosen: String, rationale: String, context: String? = nil, impacts: [String] = [], step: String? = nil, category: String = "reversible", status: String = "auto", createdAt: Double = 0) {
         self.id = id
         self.runId = runId
         self.seq = seq
@@ -201,9 +207,42 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
         self.options = options
         self.chosen = chosen
         self.rationale = rationale
+        self.context = context
+        self.impacts = impacts
+        self.step = step
         self.category = category
         self.status = status
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, runId, seq, question, options, chosen, rationale, context, impacts, step, category, status, createdAt
+    }
+
+    /// Un serveur antérieur n'écrit ni `context`, ni `impacts`, ni `step` : `nil` et vide.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        runId = try container.decode(String.self, forKey: .runId)
+        seq = try container.decode(Int.self, forKey: .seq)
+        question = try container.decode(String.self, forKey: .question)
+        options = try container.decode([String].self, forKey: .options)
+        chosen = try container.decode(String.self, forKey: .chosen)
+        rationale = try container.decode(String.self, forKey: .rationale)
+        context = try container.decodeIfPresent(String.self, forKey: .context)
+        impacts = try container.decodeIfPresent([String].self, forKey: .impacts) ?? []
+        step = try container.decodeIfPresent(String.self, forKey: .step)
+        category = try container.decode(String.self, forKey: .category)
+        status = try container.decode(String.self, forKey: .status)
+        createdAt = try container.decode(Double.self, forKey: .createdAt)
+    }
+
+    /// Le contexte donné par l'agent, s'il en a donné un.
+    public var shownContext: String? { HarnessQuestion.shown(context) }
+
+    /// Chaque option avec son impact, dans l'ordre de l'agent ; l'option retenue est marquée.
+    public var choices: [HarnessChoice] {
+        HarnessChoice.of(options: options, impacts: impacts, preferred: chosen)
     }
 
     /// La décision a été tranchée par le serveur à l'échéance d'une escalade restée sans réponse.
@@ -223,10 +262,17 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
     public var options: [String]
     /// L'option que l'agent aurait choisie : la réponse présélectionnée dans les apps.
     public var recommended: String?
+    /// La situation donnée par l'agent, en Markdown. Sur un serveur antérieur : sa raison.
     public var context: String?
+    /// Pourquoi l'agent recommande `recommended` ; `nil` d'un serveur antérieur.
+    public var rationale: String?
+    /// Ce qu'emporte chaque option, dans l'ordre de `options` ; vide d'un serveur antérieur.
+    public var impacts: [String]
+    /// L'étape qui a posé la question (`req`, `specs`, `impl`…) ; `nil` d'un serveur antérieur.
+    public var step: String?
     public var status: String
 
-    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, status: String = "open") {
+    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, rationale: String? = nil, impacts: [String] = [], step: String? = nil, status: String = "open") {
         self.id = id
         self.runId = runId
         self.category = category
@@ -234,14 +280,18 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         self.options = options
         self.recommended = recommended
         self.context = context
+        self.rationale = rationale
+        self.impacts = impacts
+        self.step = step
         self.status = status
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runId, category, question, options, recommended, context, status
+        case id, runId, category, question, options, recommended, context, rationale, impacts, step, status
     }
 
-    /// Un serveur antérieur n'écrit ni `recommended`, ni `options`, ni `context` : `nil` et vide.
+    /// Un serveur antérieur n'écrit ni `recommended`, ni `options`, ni `context`, ni
+    /// `rationale`, ni `impacts`, ni `step` : `nil` et vide.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
@@ -251,13 +301,48 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         options = try container.decodeIfPresent([String].self, forKey: .options) ?? []
         recommended = try container.decodeIfPresent(String.self, forKey: .recommended)
         context = try container.decodeIfPresent(String.self, forKey: .context)
+        rationale = try container.decodeIfPresent(String.self, forKey: .rationale)
+        impacts = try container.decodeIfPresent([String].self, forKey: .impacts) ?? []
+        step = try container.decodeIfPresent(String.self, forKey: .step)
         status = try container.decode(String.self, forKey: .status)
     }
 
     /// Le contexte donné par l'agent, s'il en a donné un.
-    public var shownContext: String? {
-        guard let context, !context.isEmpty else { return nil }
-        return context
+    public var shownContext: String? { HarnessQuestion.shown(context) }
+
+    /// La raison de la recommandation, si l'agent l'a séparée du contexte.
+    public var shownRationale: String? { HarnessQuestion.shown(rationale) }
+
+    /// Chaque option avec son impact, dans l'ordre de l'agent ; la recommandée est marquée.
+    public var choices: [HarnessChoice] {
+        HarnessChoice.of(options: options, impacts: impacts, preferred: recommended)
+    }
+}
+
+/// Une option d'une question, avec ce qu'elle emporte.
+public struct HarnessChoice: Equatable, Sendable, Identifiable {
+    public var option: String
+    /// Ce qu'emporte l'option, si l'agent l'a dit.
+    public var impact: String?
+    /// L'option recommandée (escalade) ou retenue (décision).
+    public var isPreferred: Bool
+
+    public init(option: String, impact: String? = nil, isPreferred: Bool = false) {
+        self.option = option
+        self.impact = impact
+        self.isPreferred = isPreferred
+    }
+
+    public var id: String { option }
+
+    /// Les options dans l'ordre de l'agent, chacune avec son impact quand la liste
+    /// les suit une à une (sinon aucun : un impact mal aligné tromperait le lecteur).
+    static func of(options: [String], impacts: [String], preferred: String?) -> [HarnessChoice] {
+        let aligned = impacts.count == options.count
+        return options.enumerated().map { index, option in
+            let impact = aligned ? HarnessQuestion.shown(impacts[index]) : nil
+            return HarnessChoice(option: option, impact: impact, isPreferred: option == preferred)
+        }
     }
 }
 
