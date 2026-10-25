@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-mem0-req 2.1.0 — 2026-10-25
+
+- feat(harness,console): questions situées — contexte, impacts et Markdown rendu (#292) (1db5015)
+
+## omp-harness 1.8.0 — 2026-10-25
+
+- feat(harness,console): questions situées — contexte, impacts et Markdown rendu (#292) (1db5015)
+
 ## omp-mem0-memory 4.2.0 — 2026-10-25
 
 - feat(memory): rappel borné en caractères, souvenirs longs rognés en le disant (#289) (4ec8b4c)
