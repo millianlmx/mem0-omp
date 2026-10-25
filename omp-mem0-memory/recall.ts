@@ -19,6 +19,8 @@ import {
   RECALL_POOL,
   RECALL_THRESHOLD,
   RECALL_BACKOFF_MS,
+  RECALL_BLOCK_CHARS,
+  RECALL_ITEM_CHARS,
   TIMEOUT,
 } from "./config.ts";
 import { mem0, memoryLine, rows, selectRelevant } from "./mem0Client.ts";
@@ -156,6 +158,59 @@ function head(m: unknown): RecallHead {
     id: String(id ?? "?"),
     head: clip(memoryLine(m).split("\n")[0]!.trim(), RECALL_LINE_CHARS),
   };
+}
+
+/** Un souvenir retenu pour le bloc de rappel : sa ligne brute, et le texte posé (rogné au besoin). */
+export type RecalledMemory = { row: any; id: string | undefined; text: string };
+
+/** Marque d'un souvenir rogné : le texte entier reste à un appel. */
+export const RECALL_CUT_MARK = " … [rogné : mem0_search le rend entier]";
+
+/** Le texte d'un souvenir dans le bloc, rogné à `max` caractères marque comprise. */
+export function recallText(memory: string, max: number = RECALL_ITEM_CHARS): string {
+  if (memory.length <= max) return memory;
+  return memory.slice(0, Math.max(0, max - RECALL_CUT_MARK.length)).trimEnd() + RECALL_CUT_MARK;
+}
+
+/**
+ * Ce que le bloc de rappel pose ce tour-ci, projet d'abord puis global :
+ * - un souvenir déjà montré est écarté, sauf le meilleur résultat projet du tour ;
+ * - chaque texte est rogné à `itemChars` ;
+ * - le bloc s'arrête au premier souvenir qui ferait dépasser `blockChars` (le premier
+ *   passe toujours) ; ceux qui restent dehors ne sont PAS marqués comme montrés.
+ * `injected` reçoit l'identifiant de chaque souvenir posé.
+ */
+export function budgetRecall(
+  project: readonly any[],
+  global: readonly any[],
+  injected: Set<string>,
+  itemChars: number = RECALL_ITEM_CHARS,
+  blockChars: number = RECALL_BLOCK_CHARS,
+): { project: RecalledMemory[]; global: RecalledMemory[] } {
+  const key = (m: any) => (m?.id ? String(m.id) : memoryLine(m));
+  const out = { project: [] as RecalledMemory[], global: [] as RecalledMemory[] };
+  let used = 0;
+  let full = false;
+  const take = (list: readonly any[], keepTop: boolean, into: RecalledMemory[]) => {
+    const seenNow = new Set<string>();
+    list.forEach((m, i) => {
+      const id = key(m);
+      const shown = injected.has(id) || seenNow.has(id);
+      seenNow.add(id);
+      if (full || (shown && !(keepTop && i === 0))) return;
+      const text = recallText(memoryLine(m), itemChars);
+      if (used > 0 && used + text.length > blockChars) {
+        full = true;
+        return;
+      }
+      used += text.length;
+      into.push({ row: m, id: m?.id === undefined || m?.id === null ? undefined : String(m.id), text });
+    });
+  };
+  take(project, true, out.project);
+  take(global, false, out.global);
+  for (const m of [...out.project, ...out.global]) injected.add(key(m.row));
+  return out;
 }
 
 /** Notice du disjoncteur : courte, et sans rien affirmer sur le contenu de la mémoire. */
@@ -331,17 +386,13 @@ export async function handleRecall(
 
     // Un souvenir déjà posé est dans le contexte : le reposer dilue le nouveau.
     // Exception sur le meilleur résultat du tour — il peut être loin derrière ou
-    // avoir été compacté, et c'est celui dont l'agent a besoin maintenant.
-    const fresh = (res: unknown, keepTop: boolean) =>
-      rows(res).filter((m, i) => {
-        const id = m?.id ? String(m.id) : memoryLine(m);
-        const seen = st.injected.has(id);
-        st.injected.add(id);
-        return keepTop && i === 0 ? true : !seen;
-      });
-
-    const projectMems = fresh(project.kept, true);
-    const globalMems = fresh(global.kept, false);
+    // avoir été compacté, et c'est celui dont l'agent a besoin maintenant. Puis le
+    // budget du bloc ; seuls les souvenirs effectivement posés sont comptés comme montrés.
+    const { project: projectMems, global: globalMems } = budgetRecall(
+      rows(project.kept),
+      rows(global.kept),
+      st.injected,
+    );
 
     // Cas vide : autrefois silencieux. C'est le signal qui déclenche l'écriture.
     if (!projectMems.length && !globalMems.length) {
@@ -358,10 +409,10 @@ export async function handleRecall(
         `pour les revérifier, cite l'id quand tu t'en sers :`,
     ];
     if (projectMems.length) {
-      parts.push(projectMems.map((m) => `- [${m.id ?? "?"}] ${memoryLine(m)}`).join("\n"));
+      parts.push(projectMems.map((m) => `- [${m.id ?? "?"}] ${m.text}`).join("\n"));
     }
     if (globalMems.length) {
-      parts.push("Préférences transverses :", globalMems.map((m) => `- ${memoryLine(m)}`).join("\n"));
+      parts.push("Préférences transverses :", globalMems.map((m) => `- ${m.text}`).join("\n"));
     }
     parts.push(
       "Ce qui n'apparaît pas ci-dessus n'est pas en mémoire sur cette demande : explore, puis " +
@@ -372,7 +423,7 @@ export async function handleRecall(
 
     return recallMessage(
       parts.join("\n\n"),
-      { status: "hit", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: projectMems.map(head), global: globalMems.map(head) },
+      { status: "hit", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: projectMems.map((m) => head(m.row)), global: globalMems.map((m) => head(m.row)) },
     );
   } catch (err) {
     console.warn(`[mem0] recall indisponible : ${(err as Error).message}`);
