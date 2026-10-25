@@ -65,6 +65,9 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var forgetAsked = false
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false
+    /// La section de la boîte où une tuile du tableau de bord fait défiler l'Accueil ;
+    /// remise à `nil` une fois le défilement fait.
+    @Published public var homeAnchor: HarnessHomeAnchor?
     /// Le dépôt visé par les lancements (feature, projet, audit).
     @Published public var repo = ""
     /// Une feature à lancer.

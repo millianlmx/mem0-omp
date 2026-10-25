@@ -41,6 +41,7 @@ struct HarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toDecideHint)
         }
+        .id(HarnessHomeAnchor.toDecide.rawValue)
 
         Section {
             if inbox.specsAwaiting.isEmpty {
@@ -55,6 +56,7 @@ struct HarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.specsToValidateHint)
         }
+        .id(HarnessHomeAnchor.specs.rawValue)
 
         Section {
             if inbox.verdictsAwaiting.isEmpty {
@@ -69,6 +71,7 @@ struct HarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toValidateHint)
         }
+        .id(HarnessHomeAnchor.verdicts.rawValue)
 
         Section {
             if inbox.decisions.isEmpty {
@@ -90,6 +93,7 @@ struct HarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toReviewHint)
         }
+        .id(HarnessHomeAnchor.decisions.rawValue)
 
         Section {
             if inbox.active.isEmpty {
@@ -102,6 +106,7 @@ struct HarnessInboxSections: View {
         } header: {
             Text(PipelineServerText.inProgress)
         }
+        .id(HarnessHomeAnchor.active.rawValue)
     }
 
     private var emptyRow: some View {

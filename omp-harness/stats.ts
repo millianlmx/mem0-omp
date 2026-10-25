@@ -55,6 +55,8 @@ export function computeStats(store: Store, now = Date.now(), repos: RepoFilter =
       /** De la création au merge, en secondes. */
       medianLeadSec: median(merged.map((run) => Math.round((run.updatedAt - run.createdAt) / 1000))),
       fixesPerMerged: merged.length === 0 ? null : merged.reduce((sum, run) => sum + run.fixes, 0) / merged.length,
+      byDay: runsByDay(runs, now),
+      byRepo: runsByRepo(runs, now),
     },
     steps: byKind,
     tests: {
@@ -98,17 +100,64 @@ function dayOf(at: number): string {
   return new Date(at).toISOString().slice(0, 10);
 }
 
+/** Le nombre de jours des séries quotidiennes (tableau de bord de l'Accueil). */
+export const SERIES_DAYS = 14;
+
+/** Les `SERIES_DAYS` derniers jours (UTC), du plus ancien à aujourd'hui. */
+function lastDays(now: number): string[] {
+  return Array.from({ length: SERIES_DAYS }, (_, index) => dayOf(now - (SERIES_DAYS - 1 - index) * DAY_MS));
+}
+
+/**
+ * Les runs jour par jour, sur les `SERIES_DAYS` derniers jours, chaque jour présent (zéro
+ * compris) : créés, et mergés ou échoués ce jour-là (l'instant de leur dernière écriture).
+ */
+function runsByDay(runs: ReturnType<Store["listRuns"]>, now: number): Record<string, unknown>[] {
+  const days = lastDays(now);
+  const series = new Map(days.map((day) => [day, { day, created: 0, merged: 0, failed: 0 }]));
+  for (const run of runs) {
+    const created = series.get(dayOf(run.createdAt));
+    if (created) created.created++;
+    if (run.state !== "merged" && run.state !== "failed") continue;
+    const ended = series.get(dayOf(run.updatedAt));
+    if (ended) ended[run.state]++;
+  }
+  return [...series.values()];
+}
+
+/** Les runs de chaque dépôt : en tout, en cours (ni terminés ni annulés), mergés, échoués, mergés sur 7 jours. */
+function runsByRepo(runs: ReturnType<Store["listRuns"]>, now: number): Record<string, unknown> {
+  const repos: Record<
+    string,
+    { total: number; active: number; merged: number; failed: number; mergedLast7Days: number }
+  > = {};
+  for (const run of runs) {
+    const repo = repos[run.repo] ?? { total: 0, active: 0, merged: 0, failed: 0, mergedLast7Days: 0 };
+    repos[run.repo] = repo;
+    repo.total++;
+    if (run.state === "merged") {
+      repo.merged++;
+      if (now - run.updatedAt <= 7 * DAY_MS) repo.mergedLast7Days++;
+    } else if (run.state === "failed") repo.failed++;
+    else if (run.state !== "cancelled") repo.active++;
+  }
+  return repos;
+}
+
 /** Ce que les agents ont consommé : en tout, sur 7 jours, jour par jour (14 derniers), par dépôt. */
 function usageStats(rows: UsageRow[], now: number): Record<string, unknown> {
-  const recent = rows.filter((row) => now - row.at <= 14 * DAY_MS);
+  const recent = rows.filter((row) => now - row.at <= SERIES_DAYS * DAY_MS);
+  const week = rows.filter((row) => now - row.at <= 7 * DAY_MS);
   const byDay = groupUsage(recent, (row) => dayOf(row.at));
   return {
     total: sumUsage(rows),
-    last7Days: sumUsage(rows.filter((row) => now - row.at <= 7 * DAY_MS)),
+    last7Days: sumUsage(week),
     byDay: Object.entries(byDay)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([day, totals]) => ({ day, ...totals })),
     byRepo: groupUsage(rows, (row) => row.repo ?? "?"),
+    /** Le coût de chaque dépôt sur 7 jours : ce que l'Accueil compare. */
+    byRepoLast7Days: groupUsage(week, (row) => row.repo ?? "?"),
   };
 }
 

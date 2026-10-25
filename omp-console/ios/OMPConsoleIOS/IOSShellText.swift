@@ -36,12 +36,6 @@ enum IOSShellText {
 
     static let serverSymbol = "server.rack"
     static let weakVerdictSymbol = "eyeglasses"
-    static let escalationSymbol = "questionmark.bubble"
-    static let specsSymbol = "doc.text.magnifyingglass"
-    static let verdictSymbol = "checkmark.seal"
-    static let decisionSymbol = "arrow.uturn.backward.circle"
-    static let auditSymbol = "checklist"
-    static let activeSymbol = "gearshape.2"
     static let addSymbol = "plus"
     static let pickedSymbol = "checkmark.circle.fill"
     static let unpickedSymbol = "circle"

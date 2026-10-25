@@ -394,6 +394,8 @@ public struct HarnessUsageStats: Codable, Equatable, Sendable {
     /// Les 14 derniers jours qui ont consommé quelque chose.
     public var byDay: [Day]
     public var byRepo: [String: HarnessUsageTotals]
+    /// Le coût de chaque dépôt sur 7 jours ; absent d'un serveur plus ancien.
+    public var byRepoLast7Days: [String: HarnessUsageTotals]?
 }
 
 /// Un modèle, dans la comparaison des statistiques.

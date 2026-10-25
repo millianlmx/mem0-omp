@@ -17,6 +17,7 @@ import SwiftUI
 struct IOSHarnessScreen<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let section: ConsoleSection
     let catalog: Bool
     @ViewBuilder let content: () -> Content
@@ -29,17 +30,28 @@ struct IOSHarnessScreen<Content: View>: View {
             } else if !server.isConfigured {
                 notConfigured
             } else {
-                List {
-                    if let failure = server.failure {
-                        Text(failure.message)
-                            .font(.callout)
-                            .iosBanner(tone: .attention)
-                            .iosBareListRow()
+                // Une tuile du tableau de bord de l'Accueil demande une section de la
+                // boîte (`homeAnchor`) : la liste y défile, puis oublie la demande.
+                ScrollViewReader { proxy in
+                    List {
+                        if let failure = server.failure {
+                            Text(failure.message)
+                                .font(.callout)
+                                .iosBanner(tone: .attention)
+                                .iosBareListRow()
+                        }
+                        content()
                     }
-                    content()
+                    .iosGroupedList()
+                    .refreshable { await reload() }
+                    .onChange(of: drafts.homeAnchor) { _, anchor in
+                        guard let anchor else { return }
+                        withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion)) {
+                            proxy.scrollTo(anchor.rawValue, anchor: .top)
+                        }
+                        drafts.homeAnchor = nil
+                    }
                 }
-                .iosGroupedList()
-                .refreshable { await reload() }
             }
         }
         .navigationTitle(section.title)
@@ -183,28 +195,16 @@ struct IOSHarnessRunRow: View {
 
 // MARK: - Accueil
 
+/// L'Accueil : le tableau de bord d'abord (KPIs et graphiques, pour comprendre d'un
+/// coup d'œil ce qui se passe sur tous les projets), puis les alertes et la boîte.
 struct IOSHarnessHomeScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: false) {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true) {
             let inbox = server.inbox ?? HarnessInbox()
-            Section {
-                Label(
-                    server.isLive ? PipelineServerText.live : PipelineServerText.offline,
-                    systemImage: server.isLive ? PipelineServerText.liveSymbol : PipelineServerText.offlineSymbol
-                )
-                .foregroundStyle(.secondary)
-                Label(PipelineServerText.escalationCount(inbox.batches.reduce(0) { $0 + $1.items.count }), systemImage: IOSShellText.escalationSymbol)
-                Label(PipelineServerText.specsCount(inbox.specsAwaiting.count), systemImage: IOSShellText.specsSymbol)
-                Label(PipelineServerText.verdictCount(inbox.verdictsAwaiting.count), systemImage: IOSShellText.verdictSymbol)
-                Label(PipelineServerText.decisionCount(inbox.decisions.count), systemImage: IOSShellText.decisionSymbol)
-                Label(PipelineServerText.auditCount(inbox.auditsProposed.count), systemImage: IOSShellText.auditSymbol)
-                Label(PipelineServerText.activeCount(inbox.active.count), systemImage: IOSShellText.activeSymbol)
-            } header: {
-                Text(PipelineServerText.pending(inbox.pendingCount))
-            }
+            IOSDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
             IOSAlertsSection(drafts: drafts, inbox: inbox)
             IOSHarnessInboxSections(server: server, drafts: drafts, inbox: inbox)
         }
@@ -232,6 +232,7 @@ struct IOSHarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toDecideHint)
         }
+        .id(HarnessHomeAnchor.toDecide.rawValue)
         Section {
             if inbox.specsAwaiting.isEmpty { empty }
             ForEach(inbox.specsAwaiting) { run in specsView(run).disabled(!server.canAct) }
@@ -240,6 +241,7 @@ struct IOSHarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.specsToValidateHint)
         }
+        .id(HarnessHomeAnchor.specs.rawValue)
         Section {
             if inbox.verdictsAwaiting.isEmpty { empty }
             ForEach(inbox.verdictsAwaiting) { run in verdictView(run).disabled(!server.canAct) }
@@ -248,6 +250,7 @@ struct IOSHarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toValidateHint)
         }
+        .id(HarnessHomeAnchor.verdicts.rawValue)
         Section {
             if inbox.decisions.isEmpty { empty }
             ForEach(inbox.decisions) { decision in decisionView(decision).disabled(!server.canAct) }
@@ -263,6 +266,7 @@ struct IOSHarnessInboxSections: View {
         } footer: {
             Text(PipelineServerText.toReviewHint)
         }
+        .id(HarnessHomeAnchor.decisions.rawValue)
         Section {
             if inbox.active.isEmpty {
                 Text(PipelineServerText.nothingInProgress).foregroundStyle(.secondary)
@@ -273,6 +277,7 @@ struct IOSHarnessInboxSections: View {
         } header: {
             Text(PipelineServerText.inProgress)
         }
+        .id(HarnessHomeAnchor.active.rawValue)
     }
 
     private var empty: some View {
