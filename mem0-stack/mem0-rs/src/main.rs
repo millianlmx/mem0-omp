@@ -3,7 +3,9 @@
 //! `mem0-rs [--host <adresse>] [--port <port>]` ; configuration par variables
 //! d'environnement (S-1). Codes de sortie : 0 arrêt propre, 1 erreur, 2 usage.
 //! `mem0-rs import …` : import depuis mem0-http (module [`import`]).
+//! `mem0-rs banc …` : banc de mesure des fusions de la recherche (module [`banc`]).
 
+mod banc;
 mod bm25;
 mod config;
 mod db;
@@ -30,6 +32,9 @@ async fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1).peekable();
     if args.next_if(|a| a == "import").is_some() {
         return import::executer(args).await;
+    }
+    if args.next_if(|a| a == "banc").is_some() {
+        return banc::executer(args).await;
     }
     let Ok(ecoute) = config::lire_arguments(args) else {
         eprintln!("{}", config::USAGE);
@@ -83,13 +88,15 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         chat,
         http_token: cfg.http_token.clone(),
         installation_token: cfg.installation_token.clone(),
+        recherche: cfg.recherche,
     });
     eprintln!(
-        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {})",
+        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {}, recherche {})",
         env!("CARGO_PKG_VERSION"),
         cfg.embed_model,
         cfg.base_url,
-        cfg.llm_model
+        cfg.llm_model,
+        cfg.recherche.strategie(None)
     );
     axum::serve(listener, http::routeur(etat))
         .with_graceful_shutdown(signal_d_arret())

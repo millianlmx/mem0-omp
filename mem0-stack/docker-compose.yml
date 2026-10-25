@@ -40,6 +40,10 @@ services:
       # Instantanés de la base dans /data/backups (voir mem0-stack/README.md).
       MEM0_BACKUP_INTERVAL_HOURS: ${MEM0_BACKUP_INTERVAL_HOURS:-24}
       MEM0_BACKUP_KEEP: ${MEM0_BACKUP_KEEP:-7}
+      # Fusion de la recherche hybride : additive (défaut, classement de mem0)
+      # ou rrf (voir mem0-stack/mem0-rs/README.md § Recherche hybride).
+      MEM0_SEARCH_FUSION: ${MEM0_SEARCH_FUSION:-additive}
+      MEM0_RRF_K: ${MEM0_RRF_K:-60}
     healthcheck:
       # curl est installé dans l'image pour ça : le binaire n'a pas de
       # sous-commande santé.

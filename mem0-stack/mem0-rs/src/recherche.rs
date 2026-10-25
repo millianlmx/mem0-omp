@@ -1,6 +1,12 @@
 //! Recherche hybride (S-5) : reproduction de `Memory._search_vector_store`
 //! (mem0/memory/main.py:3330-3431) et de `mem0/utils/scoring.py` de mem0ai
 //! 2.2.1 (D-1). entity_boost y est inactif (spaCy absent) : il vaut toujours 0.
+//!
+//! Deux fusions des classements sémantique et BM25 : l'additive de mem0 (défaut,
+//! parité de `scripts/mem0-http-contrat/rang.json`) et la Reciprocal Rank Fusion
+//! ([`classer_rrf`]), choisie par `MEM0_SEARCH_FUSION` ou par le champ `fusion`
+//! d'une requête. Le banc de mesure ([`crate::banc`]) éprouve aussi les deux
+//! classements seuls ([`Strategie::Semantique`], [`Strategie::Bm25`]).
 
 use std::collections::HashMap;
 
@@ -17,6 +23,79 @@ use crate::validation::SearchRequest;
 const SEUIL_PAR_DEFAUT: f64 = 0.1;
 /// Plancher du sur-échantillonnage `max(limit*4, 60)`.
 const CANDIDATS_MIN: usize = 60;
+
+/// `k` de la RRF par défaut (Cormack, Clarke et Büttcher, SIGIR 2009).
+pub const RRF_K_PAR_DEFAUT: u32 = 60;
+
+/// Fusion demandée au serveur (`MEM0_SEARCH_FUSION`) ou par une requête (`fusion`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fusion {
+    /// mem0 2.2.1 : `min((cosinus + BM25 sigmoïde)/max_possible, 1)` sur les
+    /// candidats sémantiques. Défaut.
+    Additive,
+    /// Reciprocal Rank Fusion : `Σ 1/(k + rang)` sur l'union des candidats
+    /// sémantiques et BM25.
+    Rrf,
+}
+
+impl Fusion {
+    pub fn lire(nom: &str) -> Option<Fusion> {
+        match nom {
+            "additive" => Some(Fusion::Additive),
+            "rrf" => Some(Fusion::Rrf),
+            _ => None,
+        }
+    }
+}
+
+/// Réglage de la recherche lu dans l'environnement : la fusion par défaut et le
+/// `k` de la RRF (qu'une requête `"fusion":"rrf"` reprend aussi).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reglage {
+    pub fusion: Fusion,
+    pub rrf_k: u32,
+}
+
+impl Default for Reglage {
+    fn default() -> Self {
+        Reglage { fusion: Fusion::Additive, rrf_k: RRF_K_PAR_DEFAUT }
+    }
+}
+
+impl Reglage {
+    /// La stratégie d'une requête : son champ `fusion` s'il est donné, sinon le défaut.
+    pub fn strategie(self, demandee: Option<Fusion>) -> Strategie {
+        match demandee.unwrap_or(self.fusion) {
+            Fusion::Additive => Strategie::Additive,
+            Fusion::Rrf => Strategie::Rrf { k: self.rrf_k },
+        }
+    }
+}
+
+/// Le classement appliqué aux candidats. HTTP n'expose que les deux fusions ; les
+/// deux classements seuls servent de témoins au banc de mesure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strategie {
+    /// Cosinus seul, ordre dense.
+    Semantique,
+    /// BM25 seul : les hits, score brut décroissant.
+    Bm25,
+    /// Fusion additive de mem0.
+    Additive,
+    /// Reciprocal Rank Fusion de constante `k`.
+    Rrf { k: u32 },
+}
+
+impl std::fmt::Display for Strategie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Strategie::Semantique => f.write_str("semantique"),
+            Strategie::Bm25 => f.write_str("bm25"),
+            Strategie::Additive => f.write_str("additive"),
+            Strategie::Rrf { k } => write!(f, "rrf-k{k}"),
+        }
+    }
+}
 
 /// Refus d'une recherche avant tout embedding et toute lecture.
 #[derive(Debug, PartialEq)]
@@ -40,11 +119,19 @@ pub struct Requete {
     /// Filtres d'égalité après la fusion de `scope_filters` : `None` = une valeur
     /// (nombre entier, booléen) qui ne correspond à aucun champ texte.
     filtres: Vec<(String, Option<String>)>,
+    /// Le classement : champ `fusion` de la requête, sinon le défaut du serveur.
+    pub strategie: Strategie,
 }
 
 /// Validation et fusion des filtres (S-5, étapes 1-2). `agent_id` est déjà
-/// passé par le contrôle des identifiants de portée (S-2).
-pub fn preparer(req: SearchRequest, user_id: &str, agent_id: Option<String>) -> Result<Requete, Refus> {
+/// passé par le contrôle des identifiants de portée (S-2) ; `reglage` donne la
+/// fusion quand la requête n'en demande pas.
+pub fn preparer(
+    req: SearchRequest,
+    user_id: &str,
+    agent_id: Option<String>,
+    reglage: Reglage,
+) -> Result<Requete, Refus> {
     let query = strip_python(&req.query);
     let threshold = req.threshold.unwrap_or(SEUIL_PAR_DEFAUT);
     if query.is_empty() || !(0.0..=1.0).contains(&threshold) || req.limit < 0 {
@@ -81,6 +168,7 @@ pub fn preparer(req: SearchRequest, user_id: &str, agent_id: Option<String>) -> 
         limit: usize::try_from(req.limit).unwrap_or(usize::MAX),
         threshold,
         filtres,
+        strategie: reglage.strategie(req.fusion),
     })
 }
 
@@ -193,6 +281,84 @@ pub fn classer(candidats: &[Candidat], bm25_actif: bool, threshold: f64, limit: 
     classes
 }
 
+/// Contribution RRF d'un rang (1 = premier) : `1/(k + rang)`.
+pub fn rrf(k: u32, rang: usize) -> f64 {
+    1.0 / (f64::from(k) + rang as f64)
+}
+
+/// Un candidat de la RRF. Les candidats sont donnés dans l'ordre dense complet
+/// (cosinus décroissant, puis id croissant), qui sert aussi à départager les
+/// ex-aequo.
+#[derive(Debug, Clone, Copy)]
+pub struct CandidatRrf {
+    pub cosinus: f64,
+    /// Parmi les `max(limit*4, 60)` premiers du classement sémantique.
+    pub dense: bool,
+    /// Position dans le classement BM25 (0 = premier hit) et score normalisé ;
+    /// `None` hors des hits BM25 retenus.
+    pub bm25: Option<(usize, f64)>,
+    /// `memory` vide : retiré après la troncature.
+    pub vide: bool,
+}
+
+/// Reciprocal Rank Fusion : (indice du candidat, détails), au plus `limit`.
+///
+/// 1. Le seuil s'applique au cosinus brut AVANT la fusion, comme pour
+///    l'additive : un candidat sous `threshold` sort des DEUX classements, et les
+///    rangs se comptent parmi les candidats gardés.
+/// 2. Score brut `Σ 1/(k + rang)`, sur le rang sémantique (candidats `dense`,
+///    dans l'ordre donné) et sur le rang BM25 (position BM25 croissante) ; un
+///    classement où le candidat n'est pas ne contribue pas. Rangs ordinaux à
+///    partir de 1 : deux cosinus égaux ont deux rangs distincts, départagés par
+///    l'id comme l'ordre dense.
+/// 3. Tri stable décroissant : à score égal, l'ordre dense (cosinus le plus
+///    haut, puis id croissant). Troncature à `limit`, puis retrait des vides.
+///
+/// `score_details` garde ses 7 clés : `raw_score` est la somme RRF,
+/// `max_possible_score` celle d'un candidat premier partout (`1/(k+1)`, doublé
+/// dès qu'un hit BM25 existe, même hors seuil, comme l'additive), et
+/// `final_score` = `raw_score/max_possible_score`, dans [0, 1].
+pub fn classer_rrf(
+    candidats: &[CandidatRrf],
+    bm25_actif: bool,
+    k: u32,
+    threshold: f64,
+    limit: usize,
+) -> Vec<(usize, Details)> {
+    let gardes: Vec<usize> = (0..candidats.len()).filter(|&i| candidats[i].cosinus >= threshold).collect();
+    let mut brut = vec![0.0f64; candidats.len()];
+    for (rang, &i) in gardes.iter().filter(|&&i| candidats[i].dense).enumerate() {
+        brut[i] += rrf(k, rang + 1);
+    }
+    let mut lexicaux: Vec<(usize, usize)> =
+        gardes.iter().filter_map(|&i| Some((candidats[i].bm25?.0, i))).collect();
+    lexicaux.sort_unstable();
+    for (rang, &(_, i)) in lexicaux.iter().enumerate() {
+        brut[i] += rrf(k, rang + 1);
+    }
+    let max_possible = rrf(k, 1) * if bm25_actif { 2.0 } else { 1.0 };
+    let mut classes: Vec<(usize, Details)> = gardes
+        .into_iter()
+        .map(|i| {
+            let c = &candidats[i];
+            let details = Details {
+                semantic_score: c.cosinus,
+                bm25_score: c.bm25.map_or(0.0, |(_, s)| s),
+                entity_boost: 0.0,
+                raw_score: brut[i],
+                max_possible_score: max_possible,
+                final_score: (brut[i] / max_possible).min(1.0),
+                threshold,
+            };
+            (i, details)
+        })
+        .collect();
+    classes.sort_by(|a, b| b.1.final_score.total_cmp(&a.1.final_score));
+    classes.truncate(limit);
+    classes.retain(|(i, _)| !candidats[*i].vide);
+    classes
+}
+
 /// Une ligne de résultat.
 #[derive(Debug)]
 pub struct Resultat {
@@ -200,50 +366,120 @@ pub struct Resultat {
     pub details: Details,
 }
 
-/// Étapes 4-8 de S-5, sur l'embedding `vecteur` de la requête.
-pub fn executer(conn: &Connection, r: &Requete, vecteur: &[f32]) -> rusqlite::Result<Vec<Resultat>> {
-    let interne = r.limit.saturating_mul(4).max(CANDIDATS_MIN);
-    let agent = r.agent_id.as_deref();
-
-    // Candidats sémantiques : cosinus décroissant, puis id croissant.
-    let mut denses: Vec<(Souvenir, f64)> =
-        db::cosinus(conn, &r.user_id, agent, vecteur)?.into_iter().filter(|(s, _)| correspond(s, &r.filtres)).collect();
-    denses.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
-    denses.truncate(interne);
-
-    // Hits BM25 du scope : score brut > 0 décroissant, puis id croissant.
+/// Hits BM25 du scope (S-5, étape 4) : score brut > 0 décroissant, puis id
+/// croissant, les `interne` premiers, avec leur score normalisé par la sigmoïde.
+fn hits_bm25(conn: &Connection, r: &Requete, interne: usize) -> rusqlite::Result<Vec<(String, f64)>> {
     let creux = bm25::encoder(&r.query);
     let indices: Vec<u32> = creux.iter().map(|&(i, _)| i).collect();
-    let mut bm25_scores: HashMap<String, f64> = HashMap::new();
-    if !indices.is_empty() {
-        let (total, documents) = db::statistiques_idf(conn, &indices)?;
-        let idf: HashMap<u32, f64> = documents.into_iter().map(|(i, n)| (i, idf(total, n))).collect();
-        let mut hits: Vec<(String, f64)> = db::porteurs(conn, &r.user_id, agent, &indices)?
-            .into_iter()
-            .filter(|(s, _)| correspond(s, &r.filtres))
-            .map(|(s, document)| (s.id, score_bm25(&creux, &document, &idf)))
-            .filter(|(_, brut)| *brut > 0.0)
-            .collect();
-        hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        hits.truncate(interne);
-        let mots = r.query.split(blanc_python).filter(|m| !m.is_empty()).count();
-        let (milieu, pente) = parametres_bm25(mots);
-        bm25_scores = hits.into_iter().map(|(id, brut)| (id, normaliser_bm25(brut, milieu, pente))).collect();
+    if indices.is_empty() {
+        return Ok(Vec::new());
     }
-
-    let candidats: Vec<Candidat> = denses
-        .iter()
-        .map(|(s, cos)| Candidat {
-            cosinus: *cos,
-            bm25: bm25_scores.get(&s.id).copied().unwrap_or(0.0),
-            vide: s.memory.is_empty(),
-        })
+    let (total, documents) = db::statistiques_idf(conn, &indices)?;
+    let idf: HashMap<u32, f64> = documents.into_iter().map(|(i, n)| (i, idf(total, n))).collect();
+    let mut hits: Vec<(String, f64)> = db::porteurs(conn, &r.user_id, r.agent_id.as_deref(), &indices)?
+        .into_iter()
+        .filter(|(s, _)| correspond(s, &r.filtres))
+        .map(|(s, document)| (s.id, score_bm25(&creux, &document, &idf)))
+        .filter(|(_, brut)| *brut > 0.0)
         .collect();
-    let classes = classer(&candidats, !bm25_scores.is_empty(), r.threshold, r.limit);
+    hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    hits.truncate(interne);
+    let mots = r.query.split(blanc_python).filter(|m| !m.is_empty()).count();
+    let (milieu, pente) = parametres_bm25(mots);
+    Ok(hits.into_iter().map(|(id, brut)| (id, normaliser_bm25(brut, milieu, pente))).collect())
+}
+
+/// Étapes 4-8 de S-5, sur l'embedding `vecteur` de la requête, avec la
+/// stratégie de la requête.
+///
+/// Candidats : l'additive (parité mem0) et le sémantique seul ne classent que
+/// les `max(limit*4, 60)` premiers du classement sémantique. La RRF classe
+/// l'UNION de ces candidats et des hits BM25 retenus : un souvenir que seul le
+/// BM25 trouve (identifiant, nom de fichier) entre dans le classement avec son
+/// vrai cosinus, que le seuil juge comme les autres. Le BM25 seul classe ses hits.
+pub fn executer(conn: &Connection, r: &Requete, vecteur: &[f32]) -> rusqlite::Result<Vec<Resultat>> {
+    let interne = r.limit.saturating_mul(4).max(CANDIDATS_MIN);
+
+    // Classement sémantique complet du scope : cosinus décroissant, puis id croissant.
+    let mut denses: Vec<(Souvenir, f64)> = db::cosinus(conn, &r.user_id, r.agent_id.as_deref(), vecteur)?
+        .into_iter()
+        .filter(|(s, _)| correspond(s, &r.filtres))
+        .collect();
+    denses.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
+    let hits = hits_bm25(conn, r, interne)?;
+    let tete = interne.min(denses.len());
+    // Position de chaque id dans le classement sémantique complet (RRF et BM25 seul).
+    let positions = || -> HashMap<&str, usize> { denses.iter().enumerate().map(|(p, (s, _))| (s.id.as_str(), p)).collect() };
+
+    // (position dans `denses`, détails), dans l'ordre rendu.
+    let classes: Vec<(usize, Details)> = match r.strategie {
+        Strategie::Additive | Strategie::Semantique => {
+            let bm25_actif = r.strategie == Strategie::Additive && !hits.is_empty();
+            let scores: HashMap<&str, f64> =
+                if bm25_actif { hits.iter().map(|(id, s)| (id.as_str(), *s)).collect() } else { HashMap::new() };
+            let candidats: Vec<Candidat> = denses[..tete]
+                .iter()
+                .map(|(s, cos)| Candidat {
+                    cosinus: *cos,
+                    bm25: scores.get(s.id.as_str()).copied().unwrap_or(0.0),
+                    vide: s.memory.is_empty(),
+                })
+                .collect();
+            classer(&candidats, bm25_actif, r.threshold, r.limit)
+        }
+        Strategie::Rrf { k } => {
+            let position = positions();
+            let rang_bm25: HashMap<usize, (usize, f64)> = hits
+                .iter()
+                .enumerate()
+                .filter_map(|(rang, (id, s))| Some((*position.get(id.as_str())?, (rang, *s))))
+                .collect();
+            let mut retenues: Vec<usize> = (0..tete).chain(rang_bm25.keys().copied().filter(|&p| p >= tete)).collect();
+            retenues.sort_unstable();
+            let candidats: Vec<CandidatRrf> = retenues
+                .iter()
+                .map(|&p| CandidatRrf {
+                    cosinus: denses[p].1,
+                    dense: p < tete,
+                    bm25: rang_bm25.get(&p).copied(),
+                    vide: denses[p].0.memory.is_empty(),
+                })
+                .collect();
+            classer_rrf(&candidats, !hits.is_empty(), k, r.threshold, r.limit)
+                .into_iter()
+                .map(|(i, d)| (retenues[i], d))
+                .collect()
+        }
+        Strategie::Bm25 => {
+            let position = positions();
+            let mut classes: Vec<(usize, Details)> = hits
+                .iter()
+                .filter_map(|(id, s)| {
+                    let p = *position.get(id.as_str())?;
+                    let cosinus = denses[p].1;
+                    (cosinus >= r.threshold).then_some((
+                        p,
+                        Details {
+                            semantic_score: cosinus,
+                            bm25_score: *s,
+                            entity_boost: 0.0,
+                            raw_score: *s,
+                            max_possible_score: 1.0,
+                            final_score: *s,
+                            threshold: r.threshold,
+                        },
+                    ))
+                })
+                .collect();
+            classes.truncate(r.limit);
+            classes.retain(|(p, _)| !denses[*p].0.memory.is_empty());
+            classes
+        }
+    };
     let mut denses: Vec<Option<Souvenir>> = denses.into_iter().map(|(s, _)| Some(s)).collect();
     Ok(classes
         .into_iter()
-        .filter_map(|(i, details)| Some(Resultat { souvenir: denses[i].take()?, details }))
+        .filter_map(|(p, details)| Some(Resultat { souvenir: denses[p].take()?, details }))
         .collect())
 }
 
@@ -261,11 +497,114 @@ mod tests {
             filters: o.get("filters").and_then(Value::as_object).cloned(),
             threshold: o.get("threshold").and_then(Value::as_f64),
             explain: false,
+            fusion: o.get("fusion").and_then(Value::as_str).and_then(Fusion::lire),
         }
     }
 
     fn cand(cosinus: f64, bm25: f64) -> Candidat {
         Candidat { cosinus, bm25, vide: false }
+    }
+
+    /// Candidat RRF : `bm25` = position BM25 (0 = premier hit), score normalisé 0.5.
+    fn rrf_cand(cosinus: f64, dense: bool, bm25: Option<usize>) -> CandidatRrf {
+        CandidatRrf { cosinus, dense, bm25: bm25.map(|p| (p, 0.5)), vide: false }
+    }
+
+    fn ordre(r: &[(usize, Details)]) -> Vec<usize> {
+        r.iter().map(|(i, _)| *i).collect()
+    }
+
+    #[test]
+    fn rrf_somme_des_inverses_de_rang() {
+        // Ordre dense : 0, 1, 2 ; ordre BM25 : 2, 0 ; 3 est un hit BM25 hors candidats sémantiques.
+        let c = [
+            rrf_cand(0.9, true, Some(1)),
+            rrf_cand(0.8, true, None),
+            rrf_cand(0.7, true, Some(0)),
+            rrf_cand(0.2, false, Some(2)),
+        ];
+        let r = classer_rrf(&c, true, 60, 0.0, 10);
+        let brut = |i: usize| r.iter().find(|(j, _)| *j == i).unwrap().1.raw_score;
+        assert_eq!(brut(0), 1.0 / 61.0 + 1.0 / 62.0);
+        assert_eq!(brut(1), 1.0 / 62.0);
+        assert_eq!(brut(2), 1.0 / 63.0 + 1.0 / 61.0);
+        assert_eq!(brut(3), 1.0 / 63.0);
+        // 0 (rangs 1 et 2) devant 2 (rangs 3 et 1) : 1/61 + 1/62 > 1/63 + 1/61.
+        assert_eq!(ordre(&r), [0, 2, 1, 3]);
+        for (i, d) in &r {
+            assert_eq!(d.max_possible_score, 2.0 / 61.0);
+            assert_eq!(d.final_score, d.raw_score / d.max_possible_score, "{i}");
+            assert_eq!(d.entity_boost, 0.0);
+            assert_eq!(d.threshold, 0.0);
+        }
+        assert_eq!(r[0].1.semantic_score, 0.9);
+        assert_eq!(r[0].1.bm25_score, 0.5);
+        assert_eq!(r[2].1.bm25_score, 0.0);
+        // Premier des deux classements : final_score = 1.
+        let seul = classer_rrf(&[rrf_cand(0.5, true, Some(0))], true, 60, 0.0, 10);
+        assert_eq!(seul[0].1.final_score, 1.0);
+        // Sans hit BM25, le maximum est 1/(k+1) ; k change l'échelle.
+        let sans = classer_rrf(&[rrf_cand(0.5, true, None), rrf_cand(0.4, true, None)], false, 1, 0.0, 10);
+        assert_eq!(sans[0].1.max_possible_score, 0.5);
+        assert_eq!((sans[0].1.final_score, sans[1].1.final_score), (1.0, (1.0 / 3.0) / 0.5));
+        assert_eq!(rrf(60, 1), 1.0 / 61.0);
+    }
+
+    #[test]
+    fn rrf_ex_aequo_departages_par_l_ordre_dense() {
+        // 0 : premier sémantique seul ; 1 : premier BM25 seul (hors candidats
+        // sémantiques). Même score 1/61 : l'ordre dense (cosinus plus haut) gagne.
+        let c = [rrf_cand(0.6, true, None), rrf_cand(0.1, false, Some(0))];
+        let r = classer_rrf(&c, true, 60, 0.0, 10);
+        assert_eq!(r[0].1.raw_score, r[1].1.raw_score);
+        assert_eq!(ordre(&r), [0, 1]);
+        // Rangs ordinaux : deux cosinus égaux ont deux rangs distincts (ordre donné).
+        let c = [rrf_cand(0.5, true, None), rrf_cand(0.5, true, None)];
+        let r = classer_rrf(&c, false, 60, 0.0, 10);
+        assert_eq!((r[0].1.raw_score, r[1].1.raw_score), (1.0 / 61.0, 1.0 / 62.0));
+        assert_eq!(ordre(&r), [0, 1]);
+    }
+
+    #[test]
+    fn rrf_seuil_avant_fusion_et_rangs_recomptes() {
+        // 0 est sous le seuil : il sort des DEUX classements, et 1 devient premier
+        // sémantique, 2 premier BM25.
+        let c = [rrf_cand(0.29, true, Some(0)), rrf_cand(0.6, true, None), rrf_cand(0.3, true, Some(1))];
+        let r = classer_rrf(&c, true, 60, 0.3, 10);
+        assert_eq!(ordre(&r), [2, 1]);
+        assert_eq!(r[0].1.raw_score, 1.0 / 62.0 + 1.0 / 61.0);
+        assert_eq!(r[1].1.raw_score, 1.0 / 61.0);
+        // Le hit écarté compte quand même pour max_possible (BM25 actif).
+        assert!(r.iter().all(|(_, d)| d.max_possible_score == 2.0 / 61.0 && d.threshold == 0.3));
+    }
+
+    #[test]
+    fn rrf_troncature_puis_retrait_des_vides() {
+        let mut c = [rrf_cand(0.9, true, None), rrf_cand(0.8, true, None), rrf_cand(0.7, true, None)];
+        c[1].vide = true;
+        assert_eq!(ordre(&classer_rrf(&c, false, 60, 0.0, 2)), [0]);
+        assert!(classer_rrf(&c, false, 60, 0.0, 0).is_empty());
+    }
+
+    #[test]
+    fn strategie_de_la_requete_sinon_du_serveur() {
+        let defaut = Reglage::default();
+        assert_eq!(defaut, Reglage { fusion: Fusion::Additive, rrf_k: 60 });
+        assert_eq!(defaut.strategie(None), Strategie::Additive);
+        assert_eq!(defaut.strategie(Some(Fusion::Rrf)), Strategie::Rrf { k: 60 });
+        let rrf = Reglage { fusion: Fusion::Rrf, rrf_k: 7 };
+        assert_eq!(rrf.strategie(None), Strategie::Rrf { k: 7 });
+        assert_eq!(rrf.strategie(Some(Fusion::Additive)), Strategie::Additive);
+        let p = |v: Value, r: Reglage| preparer(requete(v), "moi", None, r).unwrap().strategie;
+        assert_eq!(p(json!({"query":"x"}), defaut), Strategie::Additive);
+        assert_eq!(p(json!({"query":"x","fusion":"rrf"}), defaut), Strategie::Rrf { k: 60 });
+        assert_eq!(p(json!({"query":"x"}), rrf), Strategie::Rrf { k: 7 });
+        assert_eq!(
+            [Strategie::Semantique, Strategie::Bm25, Strategie::Additive, Strategie::Rrf { k: 10 }].map(|s| s.to_string()),
+            ["semantique", "bm25", "additive", "rrf-k10"]
+        );
+        assert_eq!(Fusion::lire("rrf"), Some(Fusion::Rrf));
+        assert_eq!(Fusion::lire("Rrf"), None);
     }
 
     #[test]
@@ -327,7 +666,7 @@ mod tests {
 
     #[test]
     fn validation_500_et_filtres_501() {
-        let p = |v: Value| preparer(requete(v), "moi", None).map(|_| ());
+        let p = |v: Value| preparer(requete(v), "moi", None, Reglage::default()).map(|_| ());
         assert_eq!(p(json!({"query":" \u{1c}\t"})), Err(Refus::Interne));
         assert_eq!(p(json!({"query":"x","threshold":1.5})), Err(Refus::Interne));
         assert_eq!(p(json!({"query":"x","threshold":-0.1})), Err(Refus::Interne));
@@ -341,8 +680,13 @@ mod tests {
         }
         // La portée écrase un opérateur du client sur user_id.
         assert_eq!(p(json!({"query":"x","filters":{"user_id":{"in":["a"]}}})), Ok(()));
-        let r = preparer(requete(json!({"query":"  a b  ","filters":{"agent_id":"x","run_id":3}})), "moi", Some("ag".into()))
-            .unwrap();
+        let r = preparer(
+            requete(json!({"query":"  a b  ","filters":{"agent_id":"x","run_id":3}})),
+            "moi",
+            Some("ag".into()),
+            Reglage::default(),
+        )
+        .unwrap();
         assert_eq!(r.query, "a b");
         assert_eq!(r.threshold, 0.1);
         assert_eq!(
