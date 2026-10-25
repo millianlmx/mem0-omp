@@ -127,10 +127,6 @@ public enum PipelineServerText {
 
     public static func fixes(_ count: Int) -> String { count == 1 ? L10n.text("1 correction") : L10n.format("%lld corrections", count) }
 
-    public static func pending(_ count: Int) -> String {
-        count == 0 ? nothingPending : (count == 1 ? L10n.text("1 décision attend") : L10n.format("%lld décisions attendent", count))
-    }
-
     // MARK: - Direct d'une session
 
     /// Le titre de la feuille et le geste qui l'ouvre, sur une feature.
@@ -244,17 +240,11 @@ public enum PipelineServerText {
     public static let specsToValidateHint = L10n.text("Les specs sont écrites : la feature attend votre accord avant /impl.")
     public static let verdictsToValidate = L10n.text("Verdicts à valider")
 
-    /// Les compteurs du résumé de l'accueil.
+    /// « 1 feature », « 3 features » : un compteur et son nom.
     public static func countLine(_ count: Int, one: String, many: String) -> String {
         count == 1 ? "1 \(one)" : "\(count) \(many)"
     }
 
-    public static func escalationCount(_ count: Int) -> String { countLine(count, one: L10n.text("question à trancher"), many: L10n.text("questions à trancher")) }
-    public static func specsCount(_ count: Int) -> String { countLine(count, one: L10n.text("specs à valider"), many: L10n.text("specs à valider")) }
-    public static func verdictCount(_ count: Int) -> String { countLine(count, one: L10n.text("verdict à valider"), many: L10n.text("verdicts à valider")) }
-    public static func decisionCount(_ count: Int) -> String { countLine(count, one: L10n.text("décision à relire"), many: L10n.text("décisions à relire")) }
-    public static func activeCount(_ count: Int) -> String { countLine(count, one: L10n.text("feature en cours"), many: L10n.text("features en cours")) }
-    public static func auditCount(_ count: Int) -> String { countLine(count, one: L10n.text("audit à trier"), many: L10n.text("audits à trier")) }
 
     // MARK: - Specs
 

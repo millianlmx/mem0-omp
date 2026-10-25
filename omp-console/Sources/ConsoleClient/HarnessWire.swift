@@ -372,20 +372,61 @@ public struct HarnessStepStats: Codable, Equatable, Sendable {
 /// Les statistiques du serveur (`GET /v1/stats`).
 public struct HarnessStats: Codable, Equatable, Sendable {
     public struct Runs: Codable, Equatable, Sendable {
+        /// Un jour de la série : runs créés, et mergés ou échoués ce jour-là.
+        public struct Day: Codable, Equatable, Sendable, Identifiable {
+            /// Le jour UTC, `2026-10-24`.
+            public var day: String
+            public var created: Int
+            public var merged: Int
+            public var failed: Int
+
+            public init(day: String, created: Int = 0, merged: Int = 0, failed: Int = 0) {
+                self.day = day
+                self.created = created
+                self.merged = merged
+                self.failed = failed
+            }
+
+            public var id: String { day }
+        }
+
+        /// Les runs d'un dépôt.
+        public struct Repo: Codable, Equatable, Sendable {
+            public var total: Int
+            public var active: Int
+            public var merged: Int
+            public var failed: Int
+            public var mergedLast7Days: Int
+
+            public init(total: Int = 0, active: Int = 0, merged: Int = 0, failed: Int = 0, mergedLast7Days: Int = 0) {
+                self.total = total
+                self.active = active
+                self.merged = merged
+                self.failed = failed
+                self.mergedLast7Days = mergedLast7Days
+            }
+        }
+
         public var total: Int
         public var byState: [String: Int]
         public var mergedLast7Days: Int
         public var mergeRate: Double?
         public var medianLeadSec: Double?
         public var fixesPerMerged: Double?
+        /// Les 14 derniers jours, chacun présent ; absent d'un serveur plus ancien.
+        public var byDay: [Day]?
+        /// Par dépôt ; absent d'un serveur plus ancien.
+        public var byRepo: [String: Repo]?
 
-        public init(total: Int = 0, byState: [String: Int] = [:], mergedLast7Days: Int = 0, mergeRate: Double? = nil, medianLeadSec: Double? = nil, fixesPerMerged: Double? = nil) {
+        public init(total: Int = 0, byState: [String: Int] = [:], mergedLast7Days: Int = 0, mergeRate: Double? = nil, medianLeadSec: Double? = nil, fixesPerMerged: Double? = nil, byDay: [Day]? = nil, byRepo: [String: Repo]? = nil) {
             self.total = total
             self.byState = byState
             self.mergedLast7Days = mergedLast7Days
             self.mergeRate = mergeRate
             self.medianLeadSec = medianLeadSec
             self.fixesPerMerged = fixesPerMerged
+            self.byDay = byDay
+            self.byRepo = byRepo
         }
     }
 

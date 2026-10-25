@@ -318,6 +318,11 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   (omp-harness) directement, par `HarnessModel` : un seul modèle pour l'app, tenu
   à jour par le flux d'événements du serveur, relu en tirant la liste.
   `[garde: design-ios/AC-1]`
+- L'Accueil ouvre sur le tableau de bord (`IOSDashboardSections`) : des tuiles
+  de KPI (`IOSDashboardKPI`, cartes élevées), puis quatre sections tracées —
+  ce qui vous attend par projet, le débit, le coût des agents, la santé —
+  teintées par `IOSDataPalette`, chaque graphique en `minHeight`.
+  `[garde: accueil-tableau-de-bord/AC-3]`
 - L'Accueil est la boîte de l'humain : specs à valider (rendues par
   `IOSMarkdownView`), verdicts, questions en lot, décisions renversables, audits
   à trier, puis les features en cours. `[garde: ios-souvenir-markdown-altere/AC-4]`

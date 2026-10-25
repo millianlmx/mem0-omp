@@ -284,9 +284,22 @@ exécuter une étape elle-même.
   mêmes brouillons de lancement. Sans serveur relié, chacune montre le même appel à
   le relier ; l'échec du dernier échange s'affiche en tête de section, avec sa
   cause puis son remède.
-- **Accueil** — le résumé de la boîte de l'humain (`GET /v1/inbox`) : ce qui
-  attend une décision (questions à trancher, specs à valider, verdicts à valider,
-  décisions à relire, audits à trier), puis le détail, en sections :
+- **Accueil** — un **tableau de bord** d'abord, pour comprendre d'un coup d'œil ce
+  qui se passe sur tous les projets (`GET /v1/inbox` et `GET /v1/stats`) :
+  - des **tuiles de KPI** : ce qui bloque (à traiter), les décisions à relire, les
+    features en cours, la plus vieille attente, les fusions et le taux de fusion de
+    la semaine, le délai médian, le coût des agents sur 7 jours, les alertes et les
+    audits à trier. Les tuiles « À traiter », « À relire » et « En cours » font
+    défiler l'Accueil jusqu'à leur section de la boîte ;
+  - quatre **graphiques** (Swift Charts), deux par ligne quand la fenêtre le
+    permet : **Ce qui vous attend** (une barre par projet, empilée par sorte),
+    **Débit** (fusionnées et échouées jour par jour sur 14 jours, les lancées en
+    courbe, puis les features en cours par étape), **Coût des agents** (jour par
+    jour, puis par projet sur 7 jours) et **Santé** (la part d'échecs par étape,
+    l'occupation des agents et des jobs de tests, les tests instables). Face à un
+    serveur sans séries, les blocs le disent au lieu d'échouer.
+
+  Puis la boîte de l'humain, en sections :
   - **À trancher** : les escalades d'une feature, répondues en un seul geste
     (`POST /v1/runs/{id}/escalations`) ; la feature reprend quand toutes ont leur
     réponse. Chaque réponse part de l'option que l'agent recommande (`recommended`) ;

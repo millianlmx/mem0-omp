@@ -24,6 +24,15 @@ enum IOSDataPalette {
     /// La série « Tokens reçus » du graphique « Tokens par feature ».
     static let receivedTokens: UIColor = .systemGreen
 
+    /// Les sortes d'attente du tableau de bord de l'Accueil (questions, specs, verdicts,
+    /// décisions), dans cet ordre : des teintes d'identité, jamais celles d'un état.
+    static let waitingKinds: [UIColor] = [.systemBlue, .systemPurple, .systemTeal, .systemPink]
+    /// Les issues des features du tableau de bord : fusionnée, échouée (teintes d'état,
+    /// toujours nommées par la légende), puis la courbe des lancées.
+    static let outcomes: [UIColor] = [.systemGreen, .systemRed, .systemGray]
+    /// Le coût des agents, au tableau de bord comme en Statistiques.
+    static let cost: UIColor = .systemIndigo
+
     /// Les teintes des portées du graphe, dans cet ordre. Chacune diffère entre
     /// clair et sombre, et entre contraste normal et accru dans les deux
     /// apparences (vérifié par `paletteAdaptsToAppearanceAndContrast` sur le SDK

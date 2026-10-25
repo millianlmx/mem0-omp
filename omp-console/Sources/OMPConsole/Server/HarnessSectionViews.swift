@@ -28,15 +28,24 @@ struct HarnessSection<Content: View>: View {
             } else if !server.isConfigured {
                 notConfigured
             } else {
-                Form {
-                    if let failure = server.failure {
-                        Section {
-                            HarnessFailureLabel(failure: failure)
+                // Une tuile du tableau de bord de l'Accueil demande une section de la
+                // boîte (`homeAnchor`) : le formulaire y défile, puis oublie la demande.
+                ScrollViewReader { proxy in
+                    Form {
+                        if let failure = server.failure {
+                            Section {
+                                HarnessFailureLabel(failure: failure)
+                            }
                         }
+                        content()
                     }
-                    content()
+                    .formStyle(.grouped)
+                    .onChange(of: drafts.homeAnchor) { _, anchor in
+                        guard let anchor else { return }
+                        withAnimation { proxy.scrollTo(anchor.rawValue, anchor: .top) }
+                        drafts.homeAnchor = nil
+                    }
                 }
-                .formStyle(.grouped)
             }
         }
         .toolbar {
@@ -111,38 +120,20 @@ struct HarnessRepoPicker: View {
 
 // MARK: - Accueil
 
+/// L'Accueil : le tableau de bord d'abord (KPIs et graphiques, pour comprendre d'un
+/// coup d'œil ce qui se passe sur tous les projets), puis les alertes et la boîte.
 struct HarnessHomeView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: false) {
+        HarnessSection(server: server, drafts: drafts, catalog: true) {
             let inbox = server.inbox ?? HarnessInbox()
-            Section {
-                Label(
-                    server.isLive ? PipelineServerText.live : PipelineServerText.offline,
-                    systemImage: server.isLive ? PipelineServerText.liveSymbol : PipelineServerText.offlineSymbol
-                )
-                .foregroundStyle(.secondary)
-                Text(PipelineServerText.pending(inbox.pendingCount))
-                    .font(.headline)
-                summaryLine(PipelineServerText.escalationCount(inbox.batches.reduce(0) { $0 + $1.items.count }), symbol: "questionmark.bubble")
-                summaryLine(PipelineServerText.specsCount(inbox.specsAwaiting.count), symbol: "doc.text.magnifyingglass")
-                summaryLine(PipelineServerText.verdictCount(inbox.verdictsAwaiting.count), symbol: "checkmark.seal")
-                summaryLine(PipelineServerText.decisionCount(inbox.decisions.count), symbol: "arrow.uturn.backward.circle")
-                summaryLine(PipelineServerText.auditCount(inbox.auditsProposed.count), symbol: "checklist")
-                summaryLine(PipelineServerText.activeCount(inbox.active.count), symbol: "gearshape.2")
-            } header: {
-                Text(server.address ?? "")
-            }
+            HarnessDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
             HarnessAlertsSection(drafts: drafts, inbox: inbox)
             HarnessInboxSections(server: server, drafts: drafts, inbox: inbox)
         }
         .accessibilityIdentifier("home.harness")
-    }
-
-    private func summaryLine(_ text: String, symbol: String) -> some View {
-        Label(text, systemImage: symbol)
     }
 }
 
