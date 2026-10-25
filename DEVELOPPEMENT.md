@@ -379,9 +379,11 @@ flux en six étapes et la commande de protection de branche aussi.
 
 Chaque release publiée déclenche ensuite `.github/workflows/release-assets.yml` :
 deux jobs macOS construisent OMP Console depuis le tag (`scripts/release-assets.sh
-mac|ios`) et joignent à la release `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`
-(non signée), avec leurs `.sha256`. Le détail : `PUBLISHING.md` § Apps jointes aux
-releases.
+mac|ios`) et joignent à la release `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`,
+avec leurs `.sha256` : app Mac signée Developer ID et notarisée, IPA signée, quand
+les secrets de signature existent ; sinon app Mac ad hoc et IPA non signée, avec
+un `⚠` dans le journal. Les secrets et le détail : `PUBLISHING.md` § Apps jointes
+aux releases.
 
 ## L'API d'extension d'OMP à surveiller
 

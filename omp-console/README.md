@@ -711,10 +711,13 @@ jobs CI `macos-app-swift` et `macos-app-ios`.
 
 ## Ouvrir l'app
 
-Sans compiler : chaque release GitHub du dépôt porte `OMP-Console-macOS.zip`, signé
-ad hoc. Retire la quarantaine avant de l'ouvrir (`xattr -dr com.apple.quarantine
-"OMP Console.app"`) ; Siri n'en exécute aucun intent (voir § « Assembler le bundle
-`.app` »).
+Sans compiler : chaque release GitHub du dépôt porte `OMP-Console-macOS.zip`.
+Quand le dépôt a ses secrets de signature, l'app est signée Developer ID et
+notarisée : elle s'ouvre au double-clic. Sinon, le journal du job de release le
+signale par un `⚠` et l'app est signée ad hoc : retire la quarantaine avant de
+l'ouvrir (`xattr -dr com.apple.quarantine "OMP Console.app"`) ; Siri n'en exécute
+alors aucun intent (voir § « Assembler le bundle `.app` »). Le détail, et les
+secrets à créer : `PUBLISHING.md` § « Apps jointes aux releases ».
 
 Double-cliquez `omp-console/build/OMP Console.app`, ou :
 
@@ -1790,9 +1793,10 @@ Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation
 dépôt et ne bloque rien.
 
 Sans Xcode, chaque release GitHub du dépôt porte `OMP-Console-iOS.ipa`, construite
-en Release mais **non signée** : elle s'installe après re-signature avec ton compte
-Apple (Sideloadly, AltStore). Le détail : `PUBLISHING.md` § Apps jointes aux
-releases. Avec Xcode :
+en Release. Quand le dépôt a ses secrets de signature iOS, elle est signée et
+s'installe directement sur les appareils inscrits dans ses profils ; sinon elle est
+**non signée** et s'installe après re-signature avec ton compte Apple (Sideloadly,
+AltStore). Le détail : `PUBLISHING.md` § Apps jointes aux releases. Avec Xcode :
 
 1. Brancher l'**appareil** à ce Mac et l'activer (sur l'appareil : *Réglages ▸
    Confidentialité et sécurité ▸ **Mode développeur***, puis redémarrer).
