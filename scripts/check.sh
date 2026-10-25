@@ -525,7 +525,9 @@ echo "── Plugins réels (OMP)"
 # la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) ou
 # --strict : là, un prérequis manquant est un échec, jamais un skip silencieux.
 smoke_host=""
-for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
+# L'hôte épinglé de la CI préparé par `bash scripts/omp-host.sh --prepare` vient
+# juste après la variable de la CI : le poste charge les plugins dans le même OMP.
+for candidate in "${MEM0_OMP_HOST_MODULES:-}" "$(bash scripts/omp-host.sh --path 2>/dev/null)" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
   if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
     smoke_host="$candidate"
     break

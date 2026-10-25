@@ -2,7 +2,7 @@
 
 Ces six règles ne sont pas des recommandations : chacune est jugée par le dépôt lui-même, par un test ou un script nommé ci-dessous.
 
-Un clone neuf se prépare une fois, réseau requis : `npm run setup` installe les outils épinglés (Biome, TypeScript, la Qdrant des tests d'import mem0-rs). Avant, les sections lint et types de `scripts/check.sh` rougissent, et les tests qui en dépendent se sautent en nommant ce qui manque.
+Un clone neuf se prépare une fois, réseau requis : `npm run setup` installe les outils épinglés (Biome, TypeScript, l'hôte OMP de la CI, la Qdrant des tests d'import mem0-rs). Avant, les sections lint et types de `scripts/check.sh` rougissent, et les tests qui en dépendent se sautent en nommant ce qui manque.
 
 ## 1. Un fichier de test par slug, un id unique par critère
 

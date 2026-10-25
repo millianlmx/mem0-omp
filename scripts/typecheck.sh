@@ -19,9 +19,11 @@
 #      a. MEM0_OMP_HOST_TYPES (posée par la CI) — déclarée, elle fait AUTORITÉ :
 #         si elle n'apporte pas @oh-my-pi, on échoue en la nommant plutôt que de
 #         retomber en silence sur une autre racine (le succès silencieux d'AC-5) ;
-#      b. l'installation globale de bun ($BUN_INSTALL/install/global/node_modules) ;
-#      c. `npm root -g`, s'il contient @oh-my-pi ;
-#      d. sinon la ligne « types de l'hôte absents » et sortie 0 — jamais un ✓.
+#      b. l'hôte épinglé de la CI, préparé dans le cache par
+#         `bash scripts/omp-host.sh --prepare` (étape de `npm run setup`) ;
+#      c. l'installation globale de bun ($BUN_INSTALL/install/global/node_modules) ;
+#      d. `npm root -g`, s'il contient @oh-my-pi ;
+#      e. sinon la ligne « types de l'hôte absents » et sortie 0 — jamais un ✓.
 #   3. deux programmes, dans cet ordre :
 #      - tsconfig.json       — les sources des deux plugins, en lib ES2023 ;
 #      - tsconfig.test.json  — test/**, en lib ES2024 (hérite du socle).
@@ -105,6 +107,8 @@ if [ -n "${MEM0_OMP_HOST_TYPES:-}" ]; then
     echo "  ✗ MEM0_OMP_HOST_TYPES=${MEM0_OMP_HOST_TYPES} ne fournit pas les types de l'hôte (@oh-my-pi absent)"
     exit 1
   fi
+elif PINNED="$(bash scripts/omp-host.sh --path 2>/dev/null)"; then
+  ROOT="$PINNED"
 elif [ -d "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules" ]; then
   ROOT="${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"
 else

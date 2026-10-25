@@ -71,18 +71,24 @@ const HOST_TYPES_ABSENT = "types de l'hôte absents";
 
 test("package-json-without-scripts/AC-4 : le package.json racine est privé et ne porte que les alias vers scripts/", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.deepEqual(manifest, {
-    private: true,
-    type: "module",
-    scripts: {
-      setup:
-        "bash scripts/lint.sh --prepare && bash scripts/typecheck.sh --prepare && bash scripts/mem0-http-contrat.sh --prepare",
-      check: "bash scripts/check.sh",
-      typecheck: "bash scripts/typecheck.sh",
-      test: "bash scripts/check.sh --sections=tests",
-      "test:touched": "bash scripts/test-touched.sh",
+  const { setup, ...aliases } = manifest.scripts ?? {};
+  assert.deepEqual(
+    { ...manifest, scripts: aliases },
+    {
+      private: true,
+      type: "module",
+      scripts: {
+        check: "bash scripts/check.sh",
+        typecheck: "bash scripts/typecheck.sh",
+        test: "bash scripts/check.sh --sections=tests",
+        "test:touched": "bash scripts/test-touched.sh",
+      },
     },
-  });
+  );
+  // `setup` enchaîne les `--prepare` des scripts : sa liste exacte est jugée par npm-run-setup/AC-1.
+  for (const etape of String(setup).split(" && ")) {
+    assert.match(etape, /^bash scripts\/[a-z0-9-]+\.sh --prepare$/, `étape de setup hors de scripts/ : ${etape}`);
+  }
 });
 
 test("package-json-without-scripts/AC-3 : npm run check -- --sections=<id> ne lance que la section demandée, comme check.sh", () => {

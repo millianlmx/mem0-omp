@@ -27,6 +27,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/ci-scope.sh                dit si le diff d'une PR impose de compiler l'app Mac ou l'app iOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois
 ├── scripts/typecheck.sh               type-check des plugins et de test/ (tsc épinglé)
+├── scripts/omp-host.sh                l'hôte OMP épinglé de la CI, préparé dans le cache (types et smoke)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/swift-app.sh               tests release puis bundle .app de l'app Mac
@@ -231,11 +232,17 @@ Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (sec
 entières), pour lire dans un journal de CI où le temps part.
 
 À la racine du dépôt, `package.json` (privé, sans dépendance) donne cinq alias :
-`npm run setup` enchaîne les trois préparations qui exigent le réseau
-(`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare` et
-`bash scripts/mem0-http-contrat.sh --prepare`), à lancer une fois par clone ou
-par worktree — avant, un test qui dépend de Biome ou du TypeScript épinglé se saute
-par `prerequisAbsent` en nommant l'outil, et `--strict` (la CI) en fait un échec ;
+`npm run setup` enchaîne les quatre préparations qui exigent le réseau
+(`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare`,
+`bash scripts/omp-host.sh --prepare` et `bash scripts/mem0-http-contrat.sh --prepare`),
+à lancer une fois par clone ou par worktree — avant, un test qui dépend de Biome ou
+du TypeScript épinglé se saute par `prerequisAbsent` en nommant l'outil, et
+`--strict` (la CI) en fait un échec. `omp-host.sh` installe l'hôte OMP que la CI
+installe (`OMP_HOST_VERSION` et `OMP_HOST_TYPES_NODE`, lus dans l'`env:` de
+`check.yml`), environ 2 Go, une fois par machine dans
+`${XDG_CACHE_HOME:-~/.cache}/mem0-omp/omp-host-<version>-types-node-<version>/` :
+sans variable de la CI, le type-check et la section « Plugins réels » le
+trouvent avant bun ou npm global, et jugent donc contre le même hôte que la CI ;
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
 `bash scripts/typecheck.sh`, `npm test` lance `bash scripts/check.sh --sections=tests` et
 `npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh`.
