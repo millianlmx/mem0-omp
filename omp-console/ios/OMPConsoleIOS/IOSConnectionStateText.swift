@@ -5,23 +5,25 @@
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`, garde design-ios/AC-5). Aucune
 // phrase ne cite un numéro de version, une adresse ou un endpoint.
 
+import ConsoleCore
+
 enum IOSConnectionStateText {
     // --- « mémoire non reliée » -----------------------------------------------
 
-    static let title = "Mémoire non reliée"
-    static let connect = "Relier le serveur"
+    static let title = L10n.text("Mémoire non reliée")
+    static let connect = L10n.text("Relier le serveur")
 
     /// La phrase de cause, une par situation réelle.
     static func cause(_ cause: IOSDisconnectCause) -> String {
         switch cause {
         case .unpaired:
-            "Collez le code d’appairage affiché par le serveur dans la feuille Serveur : il porte aussi sa mémoire."
+            L10n.text("Collez le code d’appairage affiché par le serveur dans la feuille Serveur : il porte aussi sa mémoire.")
         }
     }
 
     // --- « lecture des réglages » ---------------------------------------------
 
-    static let connectingTitle = "Lecture des réglages…"
+    static let connectingTitle = L10n.text("Lecture des réglages…")
 }
 
 /// Les identifiants d'accessibilité des deux composants (tous préfixés

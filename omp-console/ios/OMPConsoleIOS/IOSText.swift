@@ -9,8 +9,10 @@
 // `"-"`, un nom de symbole SF) — tout libellé en dur dans une vue fait rougir la
 // garde.
 
+import ConsoleCore
+
 enum IOSText {
     /// Le message du bandeau d'erreur, quand l'écran est ouvert par le crochet de
     /// recette `-ios.state error` (S-3).
-    static let recipeError = "Impossible de lire les données de cet écran."
+    static let recipeError = L10n.text("Impossible de lire les données de cet écran.")
 }

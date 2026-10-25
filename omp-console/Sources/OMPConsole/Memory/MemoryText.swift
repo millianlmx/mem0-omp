@@ -19,7 +19,7 @@ extension MemoryText {
     /// Le détail sélectionnable de l'état « étranger » (BR-9) : l'adresse observée,
     /// le propriétaire et le geste exact, une ligne chacun.
     static func foreignOwnershipDetail(_ ownership: ForeignOwnership) -> String {
-        "\(ownership.address)\nTenu par \(ownership.owner).\nGeste : \(ownership.gesture)"
+        L10n.format("%@\nTenu par %@.\nGeste : %@", ownership.address, ownership.owner, ownership.gesture)
     }
 
     /// Le diagnostic copiable d'oMLX injoignable (S-6 de

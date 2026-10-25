@@ -23,14 +23,14 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
     /// Libellé affiché dans la barre latérale, et titre de la fenêtre.
     public var title: String {
         switch self {
-        case .home: "Accueil"
-        case .kanban: "Pipelines"
-        case .project: "Projet"
-        case .audit: "Audit"
-        case .terminal: "Terminal"
-        case .files: "Fichiers"
-        case .memory: "Mémoire"
-        case .stats: "Statistiques"
+        case .home: L10n.text("Accueil")
+        case .kanban: L10n.text("Pipelines")
+        case .project: L10n.text("Projet")
+        case .audit: L10n.text("Audit")
+        case .terminal: L10n.text("Terminal")
+        case .files: L10n.text("Fichiers")
+        case .memory: L10n.text("Mémoire")
+        case .stats: L10n.text("Statistiques")
         }
     }
 
@@ -64,8 +64,8 @@ public enum ConsoleSectionGroup: CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .pilotage: "Pilotage"
-        case .consultation: "Consultation"
+        case .pilotage: L10n.text("Pilotage")
+        case .consultation: L10n.text("Consultation")
         }
     }
 

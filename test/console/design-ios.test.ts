@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, listTestFiles, sharedRepo } from "../support/repo.ts";
-import { stripComments, swiftFiles } from "../support/swift-source.ts";
+import { declaredTexts, stripComments, swiftFiles } from "../support/swift-source.ts";
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
@@ -127,8 +127,9 @@ function provisionalFaults(root: string): string[] {
   if (!fs.existsSync(file)) return ["IOSText.swift absent"];
   const text = code(file);
   const faults: string[] = [];
-  const declared = new Map<string, string>();
-  for (const [, name, value] of text.matchAll(/static let (\w+)\s*=\s*"([^"]*)"/g)) declared.set(name, value);
+  // Un message se déclare `static let x = L10n.text("…")` (localisation-apps) : la
+  // clé est le texte français, lu sous ses deux formes par `declaredTexts`.
+  const declared = declaredTexts(text);
   for (const [name, value] of Object.entries(PROVISIONAL)) {
     if (declared.get(name) !== value) {
       faults.push(`IOSText.${name} ne vaut pas « ${value} »`);
@@ -239,7 +240,7 @@ function screenFaults(root: string): string[] {
     if (!appFile(root, word.file).includes(word.constant)) faults.push(`${word.file} ne cite pas ${word.constant}`);
     const core = coreCode(root, word.core);
     const member = word.constant.split(".")[1];
-    if (!core.includes(`static let ${member} = "${word.message}"`)) {
+    if (declaredTexts(core).get(member) !== word.message) {
       faults.push(`${word.core} ne déclare pas ${member} = « ${word.message} »`);
     }
   }

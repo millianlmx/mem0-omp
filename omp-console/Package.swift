@@ -12,6 +12,11 @@ import PackageDescription
 
 let package = Package(
     name: "omp-console",
+    // Le français est la langue de développement des deux apps : les clés de
+    // `L10n` sont des phrases françaises, et seule la table anglaise existe
+    // (`ConsoleCore/Resources/en.lproj`, feature localisation-apps). SwiftPM exige
+    // cette langue dès qu'une cible porte une ressource localisée.
+    defaultLocalization: "fr",
     platforms: [.macOS(.v26), .iOS(.v26)],
     // Les PRODUITS vending du paquet. `ConsoleCore` est celui que consomme l'app
     // iOS par référence de paquet locale : sans produit déclaré, Xcode ne trouve
@@ -35,7 +40,12 @@ let package = Package(
         // compilable seule (`swift build --target ConsoleCore`) et réutilisable
         // par un autre paquet (la coque iOS). Ses déclarations sont `public`,
         // jamais `package` — `package` serait invisible depuis un autre paquet.
-        .target(name: "ConsoleCore", path: "Sources/ConsoleCore"),
+        //
+        // Sa SEULE ressource est la table anglaise des textes des deux apps
+        // (`Resources/en.lproj/Localizable.strings`, lue par `L10n`) : son bundle
+        // `omp-console_ConsoleCore.bundle` est embarqué par l'app iOS (Xcode) et
+        // copié dans `Contents/Resources` de l'app Mac par scripts/swift-app.sh.
+        .target(name: "ConsoleCore", path: "Sources/ConsoleCore", resources: [.process("Resources")]),
         // Cible PARTAGÉE macOS/iOS des clients du serveur du VPS : son serveur de
         // pipelines, son code d'appairage, sa mémoire (lue directement par l'app
         // iOS) et le trousseau. Les deux apps sont indépendantes : aucune ne parle à

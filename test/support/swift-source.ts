@@ -148,13 +148,48 @@ export const INTERPOLATION_MARK = "\uFFFC";
 
 /**
  * Une unité de texte d'un source Swift : sa ligne (1 = première), le littéral tel
- * qu'écrit, son texte (échappements résolus, interpolation → INTERPOLATION_MARK)
- * et la constante `let <nom> =` qu'il initialise, s'il en initialise une.
+ * qu'écrit, son texte (échappements résolus, interpolation → INTERPOLATION_MARK),
+ * la constante `let <nom> =` qu'il initialise, s'il en initialise une, et l'appel
+ * `L10n.text(` ou `L10n.format(` dont il est la clé (`"text"`, `"format"`), sinon
+ * `null` (feature localisation-apps).
  */
-export type TextUnit = { line: number; raw: string; text: string; constant: string | null };
+export type TextUnit = {
+  line: number;
+  raw: string;
+  text: string;
+  constant: string | null;
+  localized: "text" | "format" | null;
+};
 
-const CONSTANT = /\blet\s+([A-Za-z_]\w*)\s*(?::[^=]*)?=\s*$/;
+const LOCALIZED_CALL = /\bL10n\.(text|format)\(\s*$/;
+
+// `let x = "…"`, ou sa forme localisée `let x = L10n.text("…")` (localisation-apps) :
+// la clé de `L10n.text` est la phrase française, la constante reste la même.
+const CONSTANT = /\blet\s+([A-Za-z_]\w*)\s*(?::[^=]*)?=\s*(?:L10n\.text\(\s*)?$/;
 const SIMPLE_ESCAPES: Record<string, string> = { "0": "\0", "\\": "\\", t: "\t", n: "\n", r: "\r", '"': '"', "'": "'" };
+
+/** Le texte d'un littéral simple tel qu'écrit (sans guillemets), échappements simples résolus. */
+export function unescapeSwift(raw: string): string {
+  return raw.replace(/\\(.)/g, (whole, c: string) => SIMPLE_ESCAPES[c] ?? whole);
+}
+
+/**
+ * Les constantes TEXTE d'un source Swift (commentaires retirés par l'appelant ou
+ * non) : `let <nom> = "…"` ou sa forme localisée `let <nom> = L10n.text("…")`
+ * (feature localisation-apps), le littéral sur la même ligne ou la suivante —
+ * nom → texte, échappements simples résolus. La clé de `L10n.text` EST la phrase
+ * française : une garde qui fige un mot le lit ainsi sous ses deux formes. Un
+ * littéral interpolé n'est pas une constante texte ; la première déclaration
+ * d'un nom l'emporte.
+ */
+export function declaredTexts(source: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const declaration = /\blet\s+([A-Za-z_]\w*)\s*(?::\s*String\s*)?=\s*(?:L10n\.text\(\s*)?"((?:[^"\\\n]|\\[^(])*)"/g;
+  for (const [, name, raw] of source.matchAll(declaration)) {
+    if (!out.has(name)) out.set(name, unescapeSwift(raw));
+  }
+  return out;
+}
 
 /**
  * Découpe un source Swift en unités de texte : une par littéral simple, une par
@@ -200,6 +235,8 @@ export function swiftTextUnits(source: string): TextUnit[] {
     const open = i;
     const lineStart = source.lastIndexOf("\n", open - 1) + 1;
     const constant = CONSTANT.exec(source.slice(lineStart, open))?.[1] ?? null;
+    const call = LOCALIZED_CALL.exec(source.slice(lineStart, open))?.[1];
+    const localized = call === "text" || call === "format" ? call : null;
     let hashes = 0;
     while (source[i + hashes] === "#") hashes += 1;
     const multi = source.startsWith('"""', i + hashes);
@@ -274,6 +311,7 @@ export function swiftTextUnits(source: string): TextUnit[] {
         raw: source.slice(current.start, current.end),
         text: current.text,
         constant,
+        localized,
       });
       return;
     }
@@ -286,7 +324,7 @@ export function swiftTextUnits(source: string): TextUnit[] {
       let text = piece.text;
       if (raw.startsWith(indent)) raw = raw.slice(indent.length);
       if (text.startsWith(indent)) text = text.slice(indent.length);
-      out.push({ line: lineAt(piece.start), raw, text, constant });
+      out.push({ line: lineAt(piece.start), raw, text, constant, localized });
     }
   };
 

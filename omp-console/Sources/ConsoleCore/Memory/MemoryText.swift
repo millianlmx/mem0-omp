@@ -8,41 +8,41 @@ import Foundation
 
 public enum MemoryText {
     // Barre d'outils
-    public static let searchPrompt = "Rechercher dans la mémoire"
-    public static let summaryButton = "Sommaire"
-    public static let summaryHelp = "Revenir au sommaire de la mémoire"
-    public static let refresh = "Rafraîchir"
-    public static let refreshHelp = "Recharger la mémoire du projet (⌘R)"
+    public static let searchPrompt = L10n.text("Rechercher dans la mémoire")
+    public static let summaryButton = L10n.text("Sommaire")
+    public static let summaryHelp = L10n.text("Revenir au sommaire de la mémoire")
+    public static let refresh = L10n.text("Rafraîchir")
+    public static let refreshHelp = L10n.text("Recharger la mémoire du projet (⌘R)")
 
     // États
-    public static let noProjectTitle = "Aucun projet ouvert"
-    public static let noProjectDescription = "Choisissez le projet dont vous voulez consulter la mémoire."
-    public static let unavailableTitle = "Mémoire indisponible"
-    public static let unavailableDescription = "Le service de mémoire ne répond pas. Vérifiez qu’il est démarré, puis réessayez."
-    public static let retry = "Réessayer"
-    public static let loading = "Chargement de la mémoire du projet…"
-    public static let emptySummaryTitle = "Aucun souvenir"
-    public static let noResultTitle = "Aucun résultat"
-    public static let noMatch = "La mémoire du projet ne contient aucun souvenir correspondant."
-    public static let belowThreshold = "Aucun souvenir n’est assez proche de cette recherche."
-    public static let searchUnsupportedTitle = "Recherche impossible"
-    public static let noSemanticScore = "Ce service de mémoire ne sait pas classer les souvenirs par pertinence."
-    public static let nothingSelected = "Sélectionnez un souvenir pour le lire."
-    public static let emptyRow = "Souvenir vide."
+    public static let noProjectTitle = L10n.text("Aucun projet ouvert")
+    public static let noProjectDescription = L10n.text("Choisissez le projet dont vous voulez consulter la mémoire.")
+    public static let unavailableTitle = L10n.text("Mémoire indisponible")
+    public static let unavailableDescription = L10n.text("Le service de mémoire ne répond pas. Vérifiez qu’il est démarré, puis réessayez.")
+    public static let retry = L10n.text("Réessayer")
+    public static let loading = L10n.text("Chargement de la mémoire du projet…")
+    public static let emptySummaryTitle = L10n.text("Aucun souvenir")
+    public static let noResultTitle = L10n.text("Aucun résultat")
+    public static let noMatch = L10n.text("La mémoire du projet ne contient aucun souvenir correspondant.")
+    public static let belowThreshold = L10n.text("Aucun souvenir n’est assez proche de cette recherche.")
+    public static let searchUnsupportedTitle = L10n.text("Recherche impossible")
+    public static let noSemanticScore = L10n.text("Ce service de mémoire ne sait pas classer les souvenirs par pertinence.")
+    public static let nothingSelected = L10n.text("Sélectionnez un souvenir pour le lire.")
+    public static let emptyRow = L10n.text("Souvenir vide.")
 
     // Erreurs (S-6.4) : détail secondaire de l'indisponibilité, jamais un titre.
-    public static let tokenRefused = "jeton refusé (401)"
-    public static let unreadableResponse = "réponse illisible"
+    public static let tokenRefused = L10n.text("jeton refusé (401)")
+    public static let unreadableResponse = L10n.text("réponse illisible")
 
     // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
 
     // Quelqu'un répond à l'adresse du service SANS porter le jeton d'installation
     // de l'app : la section Mémoire le NOMME au lieu de rendre un état disponible.
-    public static let foreignTitle = "Ce n’est pas la pile d’OMP Console"
-    public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port."
+    public static let foreignTitle = L10n.text("Ce n’est pas la pile d’OMP Console")
+    public static let foreignDescription = L10n.text("Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port.")
     /// Le message d'erreur du client quand `/health` répond sans notre jeton (S-4) :
     /// il alimente le détail de l'état « indisponible ».
-    public static let foreignService = "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent."
+    public static let foreignService = L10n.text("Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent.")
 
     // MARK: - Nettoyage de l'ancien moteur (omp-console-sans-podman S-6, AC-10)
 
@@ -51,14 +51,14 @@ public enum MemoryText {
     // supprimer, SEULEMENT après confirmation. Le brut (commande, chemin, détail)
     // ne vit que dans le diagnostic copiable (`podmanCleanupDiagnostic`, coque).
     public static let podmanCleanupMessage =
-        "L’ancienne mémoire n’est plus utilisée, mais son moteur de conteneurs occupe encore de la place sur ce Mac."
-    public static let podmanCleanupRemove = "Supprimer l’ancien moteur…"
-    public static let podmanCleanupConfirmTitle = "Supprimer l’ancien moteur de conteneurs ?"
+        L10n.text("L’ancienne mémoire n’est plus utilisée, mais son moteur de conteneurs occupe encore de la place sur ce Mac.")
+    public static let podmanCleanupRemove = L10n.text("Supprimer l’ancien moteur…")
+    public static let podmanCleanupConfirmTitle = L10n.text("Supprimer l’ancien moteur de conteneurs ?")
     public static let podmanCleanupConfirmMessage =
-        "Sa machine virtuelle, ses images et le moteur installé par OMP Console seront supprimés. Vos souvenirs restent servis par la mémoire actuelle, et la copie de l’ancienne base est conservée."
-    public static let podmanCleanupProgress = "Suppression de l’ancien moteur…"
+        L10n.text("Sa machine virtuelle, ses images et le moteur installé par OMP Console seront supprimés. Vos souvenirs restent servis par la mémoire actuelle, et la copie de l’ancienne base est conservée.")
+    public static let podmanCleanupProgress = L10n.text("Suppression de l’ancien moteur…")
     public static let podmanCleanupFailed =
-        "La suppression de l’ancien moteur a échoué : il occupe toujours de la place. Réessayez ; si l’échec revient, copiez le diagnostic pour le signaler."
+        L10n.text("La suppression de l’ancien moteur a échoué : il occupe toujours de la place. Réessayez ; si l’échec revient, copiez le diagnostic pour le signaler.")
 
     // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
 
@@ -70,17 +70,17 @@ public enum MemoryText {
     /// la conséquence, puis le geste. L'URL sondée vit dans le diagnostic copiable
     /// (`omlxUnreachableDiagnostic(url:)`, coque).
     public static let omlxUnreachable =
-        "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
+        L10n.text("oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez.")
 
     /// oMLX répond 401/403 : la clé configurée est refusée, la recherche ne peut
     /// pas obtenir ses embeddings. Ni code, ni nom de variable à l'écran.
     public static let omlxUnauthorized =
-        "oMLX refuse la clé d’accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d’accès d’oMLX dans la configuration de la mémoire, puis rafraîchissez."
+        L10n.text("oMLX refuse la clé d’accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d’accès d’oMLX dans la configuration de la mémoire, puis rafraîchissez.")
 
     /// Une écriture du graphe (création, modification, suppression) a échoué : la
     /// réponse brute du service reste dans le diagnostic copiable.
     public static let saveFailed =
-        "La modification n’a pas été enregistrée : la mémoire n’a pas répondu comme prévu. Réessayez ; si l’échec revient, copiez le diagnostic."
+        L10n.text("La modification n’a pas été enregistrée : la mémoire n’a pas répondu comme prévu. Réessayez ; si l’échec revient, copiez le diagnostic.")
 
     /// L'adresse du service et la DERNIÈRE erreur (S-6.3), en détail secondaire de
     /// « Mémoire indisponible » : une ligne chacune, pour qu'aucune ne disparaisse.
@@ -90,51 +90,51 @@ public enum MemoryText {
 
     /// « 1 souvenir », « 829 souvenirs » : un vrai pluriel.
     public static func summaryCount(_ n: Int) -> String {
-        ConsoleFormat.count(n, "souvenir", "souvenirs")
+        ConsoleFormat.count(n, L10n.text("souvenir"), L10n.text("souvenirs"))
     }
 
     public static func emptySummary(_ scope: String) -> String {
-        "Aucun souvenir dans la mémoire du projet « \(scope) »."
+        L10n.format("Aucun souvenir dans la mémoire du projet « %@ ».", scope)
     }
 
     /// Le rappel de la requête au-dessus d'une liste de résultats de recherche.
     public static func searchResults(_ query: String) -> String {
-        "Résultats pour « \(query) »"
+        L10n.format("Résultats pour « %@ »", query)
     }
 
     public static func unexpectedStatus(code: Int, detail: String) -> String {
-        "réponse \(code) du service (\(detail))"
+        L10n.format("réponse %lld du service (%@)", code, detail)
     }
 
     // MARK: - Mode graphe (S-1, S-2, S-5, S-6, S-7)
 
     // La bascule nomme le mode à ATTEINDRE : en liste elle dit « Graphe », en
     // graphe elle dit « Liste ».
-    public static let graphButton = "Graphe"
-    public static let graphHelp = "Afficher les souvenirs de tous les projets en graphe"
-    public static let listButton = "Liste"
-    public static let listHelp = "Revenir à la liste du projet courant"
+    public static let graphButton = L10n.text("Graphe")
+    public static let graphHelp = L10n.text("Afficher les souvenirs de tous les projets en graphe")
+    public static let listButton = L10n.text("Liste")
+    public static let listHelp = L10n.text("Revenir à la liste du projet courant")
 
-    public static let graphLoading = "Chargement du graphe des souvenirs…"
-    public static let emptyGraphDescription = "La mémoire du service ne contient aucun souvenir."
-    public static let graphNoMatch = "Aucun souvenir du service ne correspond à cette recherche."
+    public static let graphLoading = L10n.text("Chargement du graphe des souvenirs…")
+    public static let emptyGraphDescription = L10n.text("La mémoire du service ne contient aucun souvenir.")
+    public static let graphNoMatch = L10n.text("Aucun souvenir du service ne correspond à cette recherche.")
 
-    public static let projectMenu = "Projet"
-    public static let allProjects = "Tous les projets"
-    public static let tagMenu = "Étiquette"
-    public static let allTags = "Toutes les étiquettes"
+    public static let projectMenu = L10n.text("Projet")
+    public static let allProjects = L10n.text("Tous les projets")
+    public static let tagMenu = L10n.text("Étiquette")
+    public static let allTags = L10n.text("Toutes les étiquettes")
     /// La portée d'une ligne sans `agent_id` : elle reste affichée, jamais perdue.
-    public static let noProjectScope = "Sans projet"
+    public static let noProjectScope = L10n.text("Sans projet")
 
-    public static let zoomIn = "Agrandir"
-    public static let zoomInHelp = "Agrandir (⌘+)"
-    public static let zoomOut = "Réduire"
-    public static let zoomOutHelp = "Réduire (⌘−)"
-    public static let recenter = "Recentrer"
-    public static let recenterHelp = "Recadrer le graphe sur l’écran (⌘0)"
+    public static let zoomIn = L10n.text("Agrandir")
+    public static let zoomInHelp = L10n.text("Agrandir (⌘+)")
+    public static let zoomOut = L10n.text("Réduire")
+    public static let zoomOutHelp = L10n.text("Réduire (⌘−)")
+    public static let recenter = L10n.text("Recentrer")
+    public static let recenterHelp = L10n.text("Recadrer le graphe sur l’écran (⌘0)")
 
-    public static let createMemory = "Nouveau souvenir"
-    public static let createMemoryHelp = "Écrire un souvenir dans un projet"
+    public static let createMemory = L10n.text("Nouveau souvenir")
+    public static let createMemoryHelp = L10n.text("Écrire un souvenir dans un projet")
 
     /// Le libellé d'un nœud-étiquette, réutilisé par `tagList` (une seule formule
     /// pour `#étiquette`).
@@ -145,12 +145,12 @@ public enum MemoryText {
     /// Le bandeau de compte du graphe : « 1 892 souvenirs · 17 projets · 2 liens
     /// manuels » — chaque segment absent est omis.
     public static func graphCount(memories: Int, projects: Int, links: Int) -> String {
-        var segments = [ConsoleFormat.count(memories, "souvenir", "souvenirs")]
+        var segments = [ConsoleFormat.count(memories, L10n.text("souvenir"), L10n.text("souvenirs"))]
         if projects > 0 {
-            segments.append(ConsoleFormat.count(projects, "projet", "projets"))
+            segments.append(ConsoleFormat.count(projects, L10n.text("projet"), L10n.text("projets")))
         }
         if links > 0 {
-            segments.append(ConsoleFormat.count(links, "lien manuel", "liens manuels"))
+            segments.append(ConsoleFormat.count(links, L10n.text("lien manuel"), L10n.text("liens manuels")))
         }
         return segments.joined(separator: separator)
     }
@@ -163,33 +163,33 @@ public enum MemoryText {
 
     // MARK: - Écriture depuis le graphe (S-8, S-9, S-10, S-11)
 
-    public static let edit = "Modifier…"
-    public static let editHelp = "Corriger le texte et les étiquettes de ce souvenir"
-    public static let editTitle = "Modifier le souvenir"
-    public static let delete = "Supprimer…"
-    public static let deleteHelp = "Supprimer ce souvenir de la mémoire"
-    public static let deleteConfirmTitle = "Supprimer ce souvenir ?"
-    public static let deleteConfirmMessage = "Le souvenir disparaît de la mémoire du service ; ses liens manuels sont supprimés."
-    public static let deleteConfirm = "Supprimer"
-    public static let cancel = "Annuler"
-    public static let save = "Enregistrer"
+    public static let edit = L10n.text("Modifier…")
+    public static let editHelp = L10n.text("Corriger le texte et les étiquettes de ce souvenir")
+    public static let editTitle = L10n.text("Modifier le souvenir")
+    public static let delete = L10n.text("Supprimer…")
+    public static let deleteHelp = L10n.text("Supprimer ce souvenir de la mémoire")
+    public static let deleteConfirmTitle = L10n.text("Supprimer ce souvenir ?")
+    public static let deleteConfirmMessage = L10n.text("Le souvenir disparaît de la mémoire du service ; ses liens manuels sont supprimés.")
+    public static let deleteConfirm = L10n.text("Supprimer")
+    public static let cancel = L10n.text("Annuler")
+    public static let save = L10n.text("Enregistrer")
 
-    public static let createTitle = "Nouveau souvenir"
-    public static let textLabel = "Texte"
-    public static let tagsLabel = "Étiquettes"
-    public static let tagsPlaceholder = "séparées par des virgules"
-    public static let textPlaceholder = "Écrire un souvenir…"
-    public static let noKnownProject = "Aucun projet connu — la mémoire est vide."
+    public static let createTitle = L10n.text("Nouveau souvenir")
+    public static let textLabel = L10n.text("Texte")
+    public static let tagsLabel = L10n.text("Étiquettes")
+    public static let tagsPlaceholder = L10n.text("séparées par des virgules")
+    public static let textPlaceholder = L10n.text("Écrire un souvenir…")
+    public static let noKnownProject = L10n.text("Aucun projet connu — la mémoire est vide.")
 
-    public static let manualLinks = "Liens manuels"
-    public static let linkTo = "Relier à…"
-    public static let linkTitle = "Relier à un souvenir"
-    public static let linkFilter = "Filtrer par texte"
-    public static let noCandidate = "Aucun souvenir à relier."
-    public static let detach = "Détacher"
-    public static let noManualLink = "Aucun lien manuel."
-    public static let linkNotSaved = "Le lien n’a pas pu être enregistré sur le disque."
-    public static let link = "Relier"
+    public static let manualLinks = L10n.text("Liens manuels")
+    public static let linkTo = L10n.text("Relier à…")
+    public static let linkTitle = L10n.text("Relier à un souvenir")
+    public static let linkFilter = L10n.text("Filtrer par texte")
+    public static let noCandidate = L10n.text("Aucun souvenir à relier.")
+    public static let detach = L10n.text("Détacher")
+    public static let noManualLink = L10n.text("Aucun lien manuel.")
+    public static let linkNotSaved = L10n.text("Le lien n’a pas pu être enregistré sur le disque.")
+    public static let link = L10n.text("Relier")
 
     // MARK: - Ligne de la liste et détail (omp-console-redesign S-18 R7)
 
@@ -198,12 +198,12 @@ public enum MemoryText {
 
     // Le détail : titre, ligne de contexte, texte rendu, puis les données
     // techniques repliées sous « Détails techniques ».
-    public static let copy = "Copier"
-    public static let copyHelp = "Copier le texte du souvenir"
-    public static let technicalDetails = "Détails techniques"
-    public static let identifierLabel = "Identifiant"
-    public static let scopeLabel = "Portée"
-    public static let scoreLabel = "Pertinence"
+    public static let copy = L10n.text("Copier")
+    public static let copyHelp = L10n.text("Copier le texte du souvenir")
+    public static let technicalDetails = L10n.text("Détails techniques")
+    public static let identifierLabel = L10n.text("Identifiant")
+    public static let scopeLabel = L10n.text("Portée")
+    public static let scoreLabel = L10n.text("Pertinence")
 
     /// La ligne de contexte d'un souvenir, dans la liste comme dans le détail :
     /// date relative à `nowMs` (`ConsoleFormat.relative`), puis étiquettes
@@ -372,8 +372,9 @@ public enum MemoryText {
     /// sous Swift 6) et lit les formes avec et sans fraction de seconde.
     private static let timestampStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
-    /// « 0,55 » : un seuil se lit en français, jamais « 0.55 ».
+    /// « 0,55 » : un seuil se lit avec le séparateur décimal de la langue de l'app
+    /// (« 0,55 » en français, « 0.55 » en anglais).
     public static func decimal(_ value: Double) -> String {
-        String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+        String(format: "%.2f", value).replacingOccurrences(of: ".", with: ConsoleFormat.locale.decimalSeparator ?? ",")
     }
 }

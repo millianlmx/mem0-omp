@@ -518,7 +518,7 @@ def launch(udid, name, args):
     if os.path.exists(log):
         os.remove(log)
     cmd = ("xcrun", "simctl", "launch", "--terminate-running-process", f"--stderr={log}",
-           udid, BUNDLE, "-home.welcomeSeen", "YES", *args)
+           udid, BUNDLE, "-home.welcomeSeen", "YES", *args, "-AppleLanguages", "(fr)")
     code, _ = run(*cmd, timeout=60)
     if code != 0:
         # Un lancement raté : réinstallation, puis un nouvel essai.

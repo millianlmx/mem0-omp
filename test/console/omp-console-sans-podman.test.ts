@@ -29,7 +29,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT, tmpdir } from "../support/repo.ts";
-import { SWIFT_CONST_VALUES_SNIPPET, writeXcodeDoubles } from "../support/swift-app-doubles.ts";
+import {
+  SWIFT_CONST_VALUES_SNIPPET,
+  SWIFT_RESOURCE_BUNDLE_SNIPPET,
+  writeXcodeDoubles,
+} from "../support/swift-app-doubles.ts";
 
 function doublure(bin: string, nom: string, corps: string): void {
   const fichier = path.join(bin, nom);
@@ -91,6 +95,7 @@ case "$*" in
     mkdir -p "$scratch/out/Products/Release"
     printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
     chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ${SWIFT_RESOURCE_BUNDLE_SNIPPET}
     ;;
 esac`,
   );

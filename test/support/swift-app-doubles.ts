@@ -32,6 +32,18 @@ export const CONST_VALUES_REL =
  */
 export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" --build-system swiftbuild "*" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
 
+/** La table anglaise du bundle de ressources de ConsoleCore, relative au dossier des produits (feature localisation-apps). */
+export const RESOURCE_STRINGS_REL = "omp-console_ConsoleCore.bundle/Contents/Resources/en.lproj/Localizable.strings";
+
+/**
+ * Ligne bash à placer dans toute doublure `swift` qui pose le binaire OMPConsole,
+ * APRÈS le calcul de `$scratch` : elle pose aussi, à côté de lui, le bundle de
+ * ressources de ConsoleCore et sa table anglaise, comme la vraie compilation —
+ * scripts/swift-app.sh refuse d'assembler sans eux. `FAUX_SANS_RESSOURCES=1` les
+ * omet (une compilation qui ne les aurait pas rendus).
+ */
+export const SWIFT_RESOURCE_BUNDLE_SNIPPET = `[ -n "\${FAUX_SANS_RESSOURCES:-}" ] || { mkdir -p "$(dirname "$scratch/out/Products/Release/${RESOURCE_STRINGS_REL}")" && printf '"Tous les projets" = "All Projects";\\n' > "$scratch/out/Products/Release/${RESOURCE_STRINGS_REL}"; }`;
+
 /**
  * Le `extract.actionsdata` de l'état livré, dérivé de la liste attendue
  * (scripts/app-intents/attendus.json) : sortie par défaut du processeur doublé.
@@ -202,6 +214,7 @@ case "$*" in
     mkdir -p "$scratch/out/Products/Release"
     printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
     chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ${SWIFT_RESOURCE_BUNDLE_SNIPPET}
     ;;
 esac
 if [ "$1" = "test" ] && [ -n "\${FAUX_SWIFT_TEST:-}" ]; then
@@ -263,6 +276,7 @@ fi`,
     "FAUX_IDENTITE",
     "FAUX_EQUIPE",
     "FAUX_SWIFT_TEST",
+    "FAUX_SANS_RESSOURCES",
     "OMP_CODESIGN_IDENTITY",
     "DEVELOPER_DIR",
   ]) {

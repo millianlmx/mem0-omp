@@ -4,10 +4,11 @@
 // code HTTP) ne s'affiche jamais : il se COPIE, pour être joint à un signalement.
 // Mots propres au Mac : iOS n'a pas ce bouton, il ne montre que la phrase.
 
+import ConsoleCore
 import Foundation
 
 enum DiagnosticText {
-    static let copy = "Copier le diagnostic"
-    static let copied = "Diagnostic copié"
-    static let copyHelp = "Copier le détail technique, à joindre à un signalement"
+    static let copy = L10n.text("Copier le diagnostic")
+    static let copied = L10n.text("Diagnostic copié")
+    static let copyHelp = L10n.text("Copier le détail technique, à joindre à un signalement")
 }

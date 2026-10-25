@@ -22,10 +22,22 @@ public struct ConsoleStatus: Equatable, Sendable, Codable {
     }
 }
 
-/// Durées, tokens et dates des écrans, en français (Doc-10). Les chaînes rendues
-/// par Foundation ne sont jamais figées en test.
+/// Durées, tokens et dates des écrans, dans la langue de l'app (Doc-10,
+/// localisation-apps). Les chaînes rendues par Foundation ne sont jamais figées en
+/// test, sauf en français, la langue de développement.
 public enum ConsoleFormat {
-    public static let locale = Locale(identifier: "fr_FR")
+    /// La locale des formateurs : celle de la langue effective (`L10n.language`).
+    public static let locale: Locale = ConsoleFormat.formatLocale(for: L10n.language)
+
+    /// La locale d'une langue des écrans. Le français garde `fr_FR`, quelle que soit
+    /// la région de l'appareil : c'est la forme que l'app a toujours rendue et que
+    /// ses tests figent. L'anglais suit la locale de l'appareil quand elle est
+    /// anglaise (« en_GB » garde ses dates), `en_US` sinon.
+    public static func formatLocale(for language: String, current: Locale = .current) -> Locale {
+        guard language != L10n.developmentLanguage else { return Locale(identifier: "fr_FR") }
+        if L10n.languageCode(current.identifier) == language { return current }
+        return Locale(identifier: language == "en" ? "en_US" : language)
+    }
 
     /// « 14 min », « 3 h et 32 min », « 45 s » : à la minute dès qu'un écart
     /// dépasse la minute (une durée qui défile à la seconde est du bruit, audit
@@ -46,9 +58,16 @@ public enum ConsoleFormat {
     }
 
     /// « 1 souvenir », « 829 souvenirs », « 0 feature » : un vrai pluriel, jamais
-    /// « souvenir(s) ». En français, 0 et 1 prennent le singulier.
-    public static func count(_ n: Int, _ singular: String, _ plural: String) -> String {
-        "\(n.formatted(.number.locale(locale))) \(abs(n) <= 1 ? singular : plural)"
+    /// « souvenir(s) ». En français, 0 et 1 prennent le singulier ; en anglais,
+    /// 1 seulement (« 0 memories »). Les deux mots arrivent déjà traduits.
+    public static func count(_ n: Int, _ singular: String, _ plural: String, language: String = L10n.language) -> String {
+        let number = n.formatted(.number.locale(formatLocale(for: language)))
+        return "\(number) \(takesSingular(n, language: language) ? singular : plural)"
+    }
+
+    /// Le nombre `n` prend-il le singulier dans `language` ?
+    public static func takesSingular(_ n: Int, language: String = L10n.language) -> Bool {
+        language == L10n.developmentLanguage ? abs(n) <= 1 : abs(n) == 1
     }
 
     /// Le dossier personnel de CETTE machine : celui de l'utilisateur sur macOS,

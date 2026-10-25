@@ -148,18 +148,34 @@ marqueur `[test: <fonction>]` (une fonction de
   un nom de symbole (« Search Document »). Un symbole porteur de sens sans texte
   visible porte un libellé français (le bouton du serveur, `Label` de
   `PipelineServerText.open`). `[capture: iphone-home-light]`
-- L'app est française seulement : `developmentRegion = fr` et
-  `knownRegions = (fr, Base)` dans le projet, aucun `.lproj`, `.xcstrings` ni
-  `CFBundleLocalizations`. Les libellés fournis par iOS (« Masquer la barre
-  latérale », « Coller », bouton retour) restent en français sur un appareil
-  réglé en anglais. `[test: appIsFrenchOnly]`
+- L'app parle français, sa langue de développement, et anglais sur un appareil
+  (ou une langue d'app, Réglages › OMP Console) réglé en anglais — décision du
+  2026-10-25, qui remplace « française seulement » (feature `localisation-apps`).
+  Le projet garde `developmentRegion = fr` et déclare `knownRegions = (fr, en,
+  Base)` ; l'app et son widget déclarent `CFBundleLocalizations` (fr, en). Les
+  libellés fournis par iOS (« Masquer la barre latérale », « Coller », bouton
+  retour) suivent la même langue. `[test: appIsLocalizedInEnglish]`
+  `[garde: localisation-apps/AC-4]`
+- Chaque libellé passe par `L10n` (`ConsoleCore/Design/L10n.swift`) : sa clé est
+  la phrase française du `*Text.swift`, sa traduction vit dans la table anglaise
+  unique `ConsoleCore/Resources/en.lproj/Localizable.strings`, embarquée dans
+  l'app avec le bundle de ressources de `ConsoleCore`. Restent en français à
+  dessein : les phrases Siri et le titre de l'intent (littéraux App Intents figés
+  par `scripts/app-intents/attendus.json`) et les identifiants d'accessibilité
+  `ios.…`. `[test: englishTableIsEmbedded]` `[garde: localisation-apps/AC-1]`
+  `[garde: localisation-apps/AC-3]`
+- Les tests de l'app tournent en français quel que soit le simulateur :
+  `scripts/ios-build.sh` passe `-testLanguage fr -testRegion FR` et la
+  TestAction du schéma fixe `language = "fr"`. Les recettes simulateur de
+  `scripts/recette/` lancent l'app avec `-AppleLanguages (fr)`.
+  `[garde: localisation-apps/AC-6]`
 - L'icône est légendée « OMP Console » (`INFOPLIST_KEY_CFBundleDisplayName`, Debug
   et Release de la cible app) ; `PRODUCT_NAME` et le bundle restent inchangés,
   pour ne pas perdre l'appairage. `[test: homeScreenNameIsOMPConsole]`
 
 ## Identité de l'app (feature ios-identite-app)
 
-Le nom sous l'icône et la région `fr` sont décrits dans la section précédente ;
+Le nom sous l'icône et les langues de l'app sont décrits dans la section précédente ;
 cette section porte ce que l'utilisateur voit avant le premier écran.
 
 - L'icône d'OMP Console a un seul dessin, produit par `bash scripts/app-icon.sh`

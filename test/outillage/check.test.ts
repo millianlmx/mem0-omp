@@ -30,6 +30,7 @@ import {
   META_ACTIONS_REL,
   SONDE_ACTIONSDATA,
   SWIFT_CONST_VALUES_SNIPPET,
+  SWIFT_RESOURCE_BUNDLE_SNIPPET,
   montageAppIntents,
   signaturesDuBundle,
   writeXcodeDoubles,
@@ -644,6 +645,7 @@ case "$*" in
     mkdir -p "$scratch/out/Products/Release"
     printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
     chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ${SWIFT_RESOURCE_BUNDLE_SNIPPET}
     ;;
 esac`,
   );

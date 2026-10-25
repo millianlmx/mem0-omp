@@ -498,7 +498,7 @@ def pt(v):
 def launch(udid, name, args):
     log = os.path.abspath(f"{out}/logs/{name}.log")
     cmd = ("xcrun", "simctl", "launch", "--terminate-running-process", f"--stderr={log}",
-           udid, BUNDLE, *args, "-home.welcomeSeen", "YES")
+           udid, BUNDLE, *args, "-home.welcomeSeen", "YES", "-AppleLanguages", "(fr)")
     code, _ = run(*cmd, timeout=60)
     if code != 0:
         # Un lancement raté : réinstallation, puis un nouvel essai.
