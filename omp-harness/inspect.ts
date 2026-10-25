@@ -124,21 +124,27 @@ export function timelineOf(ctx: HarnessContext, run: RunRow, live: boolean): Rec
   };
 }
 
-/** Où lire les fichiers d'un run : son worktree depuis sa base, sinon son commit squash ; `null` s'il n'a rien. */
+/**
+ * Où lire les fichiers d'un run : son commit squash s'il est fusionné, sinon son
+ * worktree depuis sa base ; `null` s'il n'a rien. Le commit passe d'abord : le
+ * worktree d'un run fusionné est retiré en arrière-plan juste après le merge, et le
+ * lire pendant ce retrait rendait une erreur, ou les fichiers d'un dossier qui
+ * disparaît.
+ */
 async function sourceOf(
   ctx: HarnessContext,
   run: RunRow,
 ): Promise<{ cwd: string; from: string; to: string | null; source: "worktree" | "merge" } | null> {
   const repo = ctx.repo(run.repo);
+  if (run.mergeSha !== null) return { cwd: repo.path, from: `${run.mergeSha}^`, to: run.mergeSha, source: "merge" };
   if (run.worktree !== null && run.baseSha !== null) {
     try {
       await ctx.git.trustWorktree(repo.path, run.worktree);
       return { cwd: run.worktree, from: run.baseSha, to: null, source: "worktree" };
     } catch {
-      /* worktree retiré (feature fusionnée ou arrêtée) : son commit squash, s'il y en a un */
+      /* worktree retiré (feature arrêtée) : rien à lire */
     }
   }
-  if (run.mergeSha !== null) return { cwd: repo.path, from: `${run.mergeSha}^`, to: run.mergeSha, source: "merge" };
   return null;
 }
 
