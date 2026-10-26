@@ -44,12 +44,16 @@ const CONSOLIDATION = {
   models: [{ name: "pieges", content: "- cgroup délégué sous podman", sources: ["f1"] }],
 };
 
-/** Un monde dont l'oracle est déclaré et rend `facts` faits nouveaux ; les rêves sont examinés à chaque tour. */
+/**
+ * Un monde dont l'oracle est déclaré et rend `facts` faits nouveaux. Le dépôt est examiné
+ * au premier tour, puis plus avant une heure : le dossier factice ne change pas, un
+ * réexamen à chaque tour relancerait un second rêve pendant les assertions.
+ */
 function dreamWorld(scenario: Record<string, unknown>, facts = 6): FakeWorld {
   const world = fakeWorld(scenario, {
     patch: (config) => {
       config.oracle = { url: "http://127.0.0.1:9", token: null };
-      config.dreams.checkMinutes = 0.0001;
+      config.dreams.checkMinutes = 60;
     },
   });
   world.oracle.dossier = dossier(facts);
