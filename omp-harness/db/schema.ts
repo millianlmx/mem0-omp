@@ -227,4 +227,10 @@ export const MIGRATIONS: readonly string[] = [
    ALTER TABLE decisions ADD COLUMN impacts TEXT NOT NULL DEFAULT '[]';
    ALTER TABLE escalations ADD COLUMN rationale TEXT;
    ALTER TABLE escalations ADD COLUMN impacts TEXT NOT NULL DEFAULT '[]';`,
+  // Le détail des sessions : l'appel d'un outil en une ligne et sa fin, ses arguments
+  // complets et sa sortie entière (ou le texte entier d'un long paragraphe), lus à part.
+  `ALTER TABLE session_entries ADD COLUMN call TEXT;
+   ALTER TABLE session_entries ADD COLUMN ended_at INTEGER;
+   ALTER TABLE session_entries ADD COLUMN args TEXT;
+   ALTER TABLE session_entries ADD COLUMN output TEXT;`,
 ];

@@ -357,9 +357,13 @@ exécuter une étape elle-même.
 - **Session en direct.** Sur une feature, « Session en direct » (bouton de la
   rangée sur le Mac, menu contextuel sur iOS) ouvre une feuille à quatre onglets :
   - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
-    paragraphes, son raisonnement (replié), chaque outil avec son intention ou sa
-    commande, son état et la fin de son résultat (replié), et les signaux de la
-    session (contexte compacté, réessai du fournisseur), groupés par étape. L'outil
+    paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
+    son intention, sa commande, son état, sa durée et la fin de son résultat
+    (replié), et les signaux de la session (contexte compacté, réessai du
+    fournisseur), groupés par étape. « Détails » (un toucher sur iOS) ouvre un
+    outil en entier : son appel, ses arguments complets et sa sortie entière,
+    relue tant qu'il tourne (`GET /v1/runs/{id}/session/{seq}`) ; un paragraphe
+    trop long pour le direct s'y lit en entier. L'outil
     et le job de tests du moment, les alertes et le coût s'affichent en tête ;
     « Suivre la fin » garde la dernière entrée à l'écran. La session est écrite en
     base par le serveur : une feature finie se rejoue, « Afficher les entrées

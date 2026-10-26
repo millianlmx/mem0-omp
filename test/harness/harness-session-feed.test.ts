@@ -2,6 +2,8 @@
 // RPC du runner deviennent des entrées compactes (paragraphe, raisonnement, outil,
 // signal), poussées en événements éphémères `session` et gardées dans un tampon borné
 // que `GET /v1/runs/{id}/session` rend aux apps qui ouvrent le direct en cours de route.
+// Le détail d'une entrée (arguments et sortie complets d'un outil, texte entier d'un
+// long paragraphe) se lit à part : `GET /v1/runs/{id}/session/{seq}`.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -13,12 +15,15 @@ import { EPHEMERAL_EVENTS } from "../../omp-harness/events.ts";
 import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
 import type { SessionEntry } from "../../omp-harness/session-feed.ts";
 import {
+  SESSION_ARGS_MAX,
   SESSION_DETAIL_MAX,
   SESSION_KEEP,
+  SESSION_OUTPUT_MAX,
   SESSION_RUNS,
   SESSION_TEXT_MAX,
   SESSION_THROTTLE_MS,
   SessionFeeds,
+  argsText,
   redact,
 } from "../../omp-harness/session-feed.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
@@ -334,6 +339,151 @@ test("harness-session-feed/AC-7 : chaque champ que le client Swift décode exist
     const [entry] = view.entries as Record<string, unknown>[];
     assert.ok(entry, "le tampon porte l'entrée");
     covers(entry, "HarnessSessionEntry");
+    // Le détail d'une entrée, au chemin que le client construit (`entryPath` : `<tampon>/<seq>`).
+    assert.match(
+      fs.readFileSync(path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessSession.swift"), "utf8"),
+      /"\\\(sessionPath\(encoded\)\)\/\\\(seq\)"/,
+    );
+    const detail = (await (
+      await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/runs/r1/session/${entry.seq}`, {
+        headers: { Authorization: `Bearer ${"t".repeat(64)}` },
+      })
+    ).json()) as Record<string, unknown>;
+    covers(detail, "HarnessSessionDetail");
+    covers(detail.entry as Record<string, unknown>, "HarnessSessionEntry");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("harness-session-feed/AC-8 : un outil garde son appel à côté de son intention, et son détail porte ses arguments complets et sa sortie entière, bornés par leur début et leur fin", () => {
+  const { feed, sent, advance } = feeds(["valeur-connue-123456"]);
+  const content = `ligne 1\nligne 2 valeur-connue-123456\n${"y".repeat(SESSION_ARGS_MAX)}`;
+  feed.frame("r1", "impl", {
+    type: "tool_execution_start",
+    toolCallId: "c1",
+    toolName: "bash",
+    intent: "Lancer les tests",
+    args: { command: "npm test -- --grep export", timeout: 120 },
+  });
+  feed.frame("r1", "impl", {
+    type: "tool_execution_start",
+    toolCallId: "c2",
+    toolName: "write",
+    args: { path: "src/export.ts", content },
+  });
+  const [bash, write] = feed.snapshot("r1");
+  assert.deepEqual(
+    [bash?.text, bash?.call, bash?.hasDetails, bash?.endedAt],
+    ["Lancer les tests", "npm test -- --grep export", true, null],
+    "l'intention reste le texte, la commande est l'appel",
+  );
+  assert.equal(write?.call, "src/export.ts");
+  // Une commande qui tourne : sa sortie s'écrit dans l'entrée, au plus une fois par intervalle, et entière dans son détail.
+  advance(SESSION_THROTTLE_MS);
+  const partial = (text: string) => ({ content: [{ type: "text", text }] });
+  feed.frame("r1", "impl", { type: "tool_execution_update", toolCallId: "c1", partialResult: partial("1 passing") });
+  feed.frame("r1", "impl", {
+    type: "tool_execution_update",
+    toolCallId: "c1",
+    partialResult: partial("1 passing\n2 passing"),
+  });
+  assert.equal(sent.filter((entry) => entry.seq === bash?.seq && entry.detail === "1 passing").length, 1);
+  assert.equal(sent.at(-1)?.detail, "1 passing", "avant l'intervalle, la suite attend");
+  assert.deepEqual(feed.details("r1", bash?.seq ?? 0)?.details, {
+    args: "command: npm test -- --grep export\ntimeout: 120",
+    output: "1 passing\n2 passing",
+  });
+  assert.equal(feed.details("r1", bash?.seq ?? 0)?.entry.status, "running");
+  advance(1_500);
+  const long = `DEBUT${"x".repeat(SESSION_OUTPUT_MAX * 3)}OPENROUTER_API_KEY=sk-or-v1-0123456789abcdefghij FIN`;
+  feed.frame("r1", "impl", { type: "tool_execution_end", toolCallId: "c1", result: partial(long), isError: true });
+  const done = feed.details("r1", bash?.seq ?? 0);
+  assert.deepEqual([done?.entry.status, done?.entry.endedAt], ["error", 3_000]);
+  const output = done?.details.output ?? "";
+  assert.ok(
+    output.startsWith("DEBUT") && output.endsWith("OPENROUTER_API_KEY=•••• FIN"),
+    "le début et la fin sont gardés, masqués",
+  );
+  assert.match(output, /\n… \d+ caractères omis …\n/);
+  assert.ok(output.length <= SESSION_OUTPUT_MAX + 64);
+  assert.ok((done?.entry.detail ?? "").endsWith("FIN"), "l'entrée compacte garde la fin du résultat");
+  // Les arguments : une valeur sur plusieurs lignes sous sa clé, bornée, masquée.
+  const args = feed.details("r1", write?.seq ?? 0)?.details.args ?? "";
+  assert.ok(args.startsWith("path: src/export.ts\ncontent:\nligne 1\nligne 2 ••••\n"));
+  assert.ok(args.length <= SESSION_ARGS_MAX + 64);
+  assert.equal(argsText({}), null);
+  assert.equal(argsText({ edits: [{ old: "a" }] }), 'edits: [\n  {\n    "old": "a"\n  }\n]');
+  // Un paragraphe plus long que son entrée : son texte entier dans son détail.
+  feed.frame("r1", "impl", { type: "message_end", message: assistant(`DEBUT${"a".repeat(SESSION_TEXT_MAX)}FIN`) });
+  const paragraph = feed.snapshot("r1").at(-1);
+  assert.equal(paragraph?.hasDetails, true);
+  assert.equal(feed.details("r1", paragraph?.seq ?? 0)?.details.output?.slice(0, 5), "DEBUT");
+  feed.frame("r1", "impl", { type: "message_end", message: assistant("Court.") });
+  assert.equal(feed.snapshot("r1").at(-1)?.hasDetails, false, "un paragraphe entier dans son entrée n'a pas de détail");
+  assert.equal(feed.details("r1", 999), null);
+});
+
+test("harness-session-feed/AC-9 : `GET /v1/runs/{id}/session/{seq}` rend une entrée et son détail, gardés en base au-delà d'un redémarrage, aux seuls clients du dépôt ; la page n'en porte que le signal", async () => {
+  assert.ok((API_FEATURES as readonly string[]).includes("session-details"));
+  const world = fakeWorld({});
+  world.store.createRun({ id: "r1", repo: "demo", slug: "a", title: "A", request: "a", branch: "harness/a" });
+  const clients = new ClientRegistry(path.join(tmpdir("harness-clients-"), "clients.json"), "t".repeat(64));
+  const narrow = clients.add("ipad", "viewer", ["demo"]).token;
+  const elsewhere = clients.add("autre", "viewer", ["autre"]).token;
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = (route: string, token: string) =>
+    fetch(`${url}${route}`, { headers: { Authorization: `Bearer ${token}` } });
+  try {
+    const feed = world.orchestrator.sessions;
+    feed.frame("r1", "impl", {
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      intent: "Lancer les tests",
+      args: { command: "npm test" },
+    });
+    feed.frame("r1", "impl", {
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: { content: [{ type: "text", text: "12 passing\n0 failing" }] },
+    });
+    const page = (await (await get("/v1/runs/r1/session", narrow)).json()) as { entries: Record<string, unknown>[] };
+    assert.deepEqual(
+      page.entries.map((entry) => [entry.call, entry.hasDetails, "args" in entry, "output" in entry]),
+      [["npm test", true, false, false]],
+      "la page porte l'appel et le signal, jamais le détail",
+    );
+    const response = await get("/v1/runs/r1/session/1", narrow);
+    assert.equal(response.status, 200);
+    const view = (await response.json()) as { runId: string; entry: SessionEntry; args: string; output: string };
+    assert.deepEqual(
+      [view.runId, view.entry.seq, view.entry.status, view.args, view.output],
+      ["r1", 1, "ok", "command: npm test", "12 passing\n0 failing"],
+    );
+    assert.equal((await get("/v1/runs/r1/session/2", narrow)).status, 404, "une entrée inconnue");
+    assert.equal((await get("/v1/runs/r1/session/1", elsewhere)).status, 404, "un run d'un autre dépôt n'existe pas");
+    // Un redémarrage : un nouveau tampon sur la même base relit l'entrée et son détail.
+    const reborn = new SessionFeeds({ publish: () => {}, store: world.store });
+    assert.deepEqual(reborn.details("r1", 1)?.details, { args: "command: npm test", output: "12 passing\n0 failing" });
+    assert.equal(reborn.page("r1").entries[0]?.hasDetails, true);
+    // L'analyse d'un audit, sous la même forme.
+    const audit = world.orchestrator.audits.create("demo", "");
+    feed.frame(`audit:${audit.id}`, null, {
+      type: "tool_execution_start",
+      toolCallId: "a1",
+      toolName: "read",
+      args: { path: "README.md" },
+    });
+    const audited = (await (await get(`/v1/audits/${audit.id}/session/1`, narrow)).json()) as {
+      auditId: string;
+      args: string;
+    };
+    assert.deepEqual([audited.auditId, audited.args], [audit.id, "path: README.md"]);
+    assert.equal((await get(`/v1/audits/${audit.id}/session/1`, elsewhere)).status, 404);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

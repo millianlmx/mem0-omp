@@ -10,6 +10,10 @@ import SwiftUI
 // et sa frise, dans des onglets. Ouverte depuis le menu contextuel d'une feature
 // (`IOSHarnessRunRow`) ou d'un audit.
 //
+// Chaque outil montre sa commande (son appel), même quand l'agent a donné son
+// intention ; un toucher ouvre son détail — arguments complets et sortie entière,
+// relus tant qu'il tourne. Un paragraphe trop long pour le direct s'ouvre en entier.
+//
 // Le modèle suit un direct à la fois (`HarnessModel.followSession`) : la feuille
 // l'ouvre à son apparition et l'arrête à sa fermeture. Une session finie se rejoue
 // page par page. « Suivre la fin » garde la dernière entrée à l'écran, d'un saut sous
@@ -35,6 +39,11 @@ enum IOSSessionTab: Hashable, CaseIterable {
 struct IOSDiffTarget: Hashable {
     let runId: String
     let path: String
+}
+
+/// Une entrée du direct dont on lit le détail (destination de navigation).
+struct IOSSessionEntryTarget: Hashable {
+    let seq: Int
 }
 
 struct IOSSessionSheet: View {
@@ -84,6 +93,9 @@ struct IOSSessionSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: IOSDiffTarget.self) { target in
                 IOSDiffScreen(server: server, target: target)
+            }
+            .navigationDestination(for: IOSSessionEntryTarget.self) { target in
+                IOSSessionDetailScreen(server: server, target: request.target, seq: target.seq)
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -153,8 +165,16 @@ struct IOSSessionSheet: View {
         ForEach(groups, id: \.first?.seq) { group in
             Section {
                 ForEach(group) { entry in
-                    IOSSessionEntryRow(entry: entry)
-                        .id(entry.seq)
+                    Group {
+                        if entry.canOpenDetails {
+                            NavigationLink(value: IOSSessionEntryTarget(seq: entry.seq)) {
+                                IOSSessionEntryRow(entry: entry, opens: true)
+                            }
+                        } else {
+                            IOSSessionEntryRow(entry: entry, opens: false)
+                        }
+                    }
+                    .id(entry.seq)
                 }
             } header: {
                 if let step = group.first?.step {
@@ -226,32 +246,43 @@ struct IOSSessionSheet: View {
     }
 }
 
-/// Une entrée du direct : un paragraphe, un raisonnement replié, un outil (son état,
-/// son intention, son résultat replié) ou un signal.
+/// Une entrée du direct : un paragraphe rendu en Markdown, un raisonnement replié, un
+/// outil (son état, son intention, sa commande, sa durée, son résultat replié) ou un
+/// signal. `opens` : la rangée ouvre le détail de l'entrée (lien de navigation) — le
+/// résultat et le raisonnement s'y lisent en entier, la rangée ne les replie pas.
 struct IOSSessionEntryRow: View {
     let entry: HarnessSessionEntry
+    let opens: Bool
 
     var body: some View {
         switch entry.sort {
         case .tool:
             tool
         case .thinking:
-            DisclosureGroup {
-                Text(entry.text)
-                    .italic()
-                    .foregroundStyle(.secondary)
-            } label: {
-                Label(PipelineServerText.sessionThinking, systemImage: PipelineServerText.sessionEntrySymbol(kind: entry.kind, status: nil))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            if opens {
+                thinkingLabel
+            } else {
+                DisclosureGroup {
+                    Text(entry.text)
+                        .italic()
+                        .foregroundStyle(.secondary)
+                } label: {
+                    thinkingLabel
+                }
             }
         case .notice:
             Label(PipelineServerText.sessionNotice(entry.text), systemImage: PipelineServerText.sessionEntrySymbol(kind: entry.kind, status: nil))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         case .text:
-            Text(Self.markdown(entry.text))
+            IOSMarkdownView(blocks: MarkdownDocument.blocks(entry.text))
         }
+    }
+
+    private var thinkingLabel: some View {
+        Label(PipelineServerText.sessionThinking, systemImage: PipelineServerText.sessionEntrySymbol(kind: entry.kind, status: nil))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     private var tool: some View {
@@ -268,13 +299,24 @@ struct IOSSessionEntryRow: View {
                 .accessibilityHidden(true)
                 Text(entry.tool ?? "")
                     .font(.subheadline.monospaced().weight(.semibold))
+                if let duration = entry.durationMs {
+                    Text(PipelineServerText.sessionDuration(ms: duration))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
             if !entry.text.isEmpty {
                 Text(entry.text)
                     .font(.footnote.monospaced())
                     .foregroundStyle(.secondary)
             }
-            if let detail = entry.detail {
+            if let call = entry.distinctCall {
+                Text(call)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            if !opens, let detail = entry.detail {
                 DisclosureGroup(PipelineServerText.sessionResult) {
                     Text(detail)
                         .font(.caption.monospaced())
@@ -286,11 +328,133 @@ struct IOSSessionEntryRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(PipelineServerText.toolLine(tool: entry.tool ?? "", status: entry.status, text: entry.text))
     }
+}
 
-    /// Le texte de l'agent en Markdown en ligne (gras, code, liens), sauts de ligne gardés.
-    static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
+// MARK: - Détail d'une entrée
+
+/// Le détail d'une entrée du direct : pour un outil, son état, son appel, ses arguments
+/// complets et sa sortie entière — relus à chaque version de l'entrée tant qu'il
+/// tourne —, pour un long paragraphe ou raisonnement, son texte entier. Le texte se
+/// sélectionne par la pose de la feuille.
+struct IOSSessionDetailScreen: View {
+    @ObservedObject var server: HarnessModel
+    let target: HarnessSessionTarget
+    let seq: Int
+    @State private var detail: HarnessSessionDetail?
+    @State private var loaded = false
+
+    var body: some View {
+        List {
+            if let detail, let entry {
+                if entry.isTool {
+                    Section {
+                        statusRow(entry)
+                        if let step = entry.step {
+                            Text(PipelineServerText.sessionStep(HarnessRun.label(forStep: step)))
+                                .foregroundStyle(.secondary)
+                        }
+                        if let duration = entry.durationMs {
+                            Text(PipelineServerText.sessionDuration(ms: duration))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let call = entry.call {
+                        Section {
+                            code(call)
+                        } header: {
+                            Text(PipelineServerText.sessionCall)
+                        }
+                    }
+                    if let args = detail.args {
+                        Section {
+                            code(args)
+                        } header: {
+                            Text(PipelineServerText.sessionArguments)
+                        }
+                    }
+                    Section {
+                        if let output = detail.output {
+                            code(output, failure: entry.isFailure)
+                        } else {
+                            Text(PipelineServerText.sessionNoOutput)
+                                .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text(PipelineServerText.sessionOutput)
+                    }
+                } else if entry.isThinking {
+                    Section {
+                        Text(detail.output ?? entry.text)
+                            .italic()
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Section {
+                        IOSMarkdownView(blocks: MarkdownDocument.blocks(detail.output ?? entry.text))
+                    }
+                }
+            } else if loaded {
+                Section {
+                    Text(PipelineServerText.sessionDetailUnavailable)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    ProgressView()
+                }
+            }
+        }
+        .iosGroupedList()
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: live) {
+            // Une rafale de versions (une commande qui écrit) ne coûte qu'une lecture.
+            if loaded { try? await Task.sleep(for: .milliseconds(300)) }
+            guard !Task.isCancelled else { return }
+            if let fresh = await server.sessionDetail(target, seq: seq) { detail = fresh }
+            loaded = true
+        }
+    }
+
+    /// L'entrée telle que le direct la tient : chacune de ses versions relit le détail.
+    private var live: HarnessSessionEntry? {
+        guard server.session?.target == target else { return nil }
+        return server.session?.entries.last { $0.seq == seq }
+    }
+
+    private var entry: HarnessSessionEntry? { live ?? detail?.entry }
+
+    private var title: String {
+        guard let entry else { return PipelineServerText.sessionDetails }
+        switch entry.sort {
+        case .tool: return entry.tool ?? PipelineServerText.sessionDetails
+        case .thinking: return PipelineServerText.sessionThinking
+        case .text, .notice: return PipelineServerText.sessionFullText
+        }
+    }
+
+    private func statusRow(_ entry: HarnessSessionEntry) -> some View {
+        HStack(spacing: 8) {
+            Group {
+                if entry.isRunning {
+                    ProgressView()
+                } else {
+                    Image(systemName: PipelineServerText.sessionEntrySymbol(kind: entry.kind, status: entry.status))
+                        .foregroundStyle(entry.isFailure ? Color.red : Color.green)
+                }
+            }
+            .accessibilityHidden(true)
+            Text(PipelineServerText.toolStatus(entry.status))
+        }
+    }
+
+    /// Un texte d'outil tel quel, en chasse fixe.
+    private func code(_ text: String, failure: Bool = false) -> some View {
+        Text(text)
+            .font(.footnote.monospaced())
+            .foregroundStyle(failure ? Color.red : Color.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

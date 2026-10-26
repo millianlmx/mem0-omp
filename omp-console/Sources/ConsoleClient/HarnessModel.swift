@@ -379,6 +379,12 @@ public final class HarnessModel: ObservableObject {
         session?.prepend(page)
     }
 
+    /// Une entrée du direct et son détail (arguments complets et sortie entière d'un outil,
+    /// texte entier d'un long paragraphe), ou `nil` (entrée oubliée, serveur trop ancien).
+    public func sessionDetail(_ target: HarnessSessionTarget, seq: Int) async -> HarnessSessionDetail? {
+        await read(target.entryPath(Self.encoded(target.id), seq: seq))
+    }
+
     private func sessionLoop(_ target: HarnessSessionTarget) async {
         guard let id = target.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
         while !Task.isCancelled {

@@ -49,6 +49,7 @@ export const API_FEATURES = [
   "session-feed",
   "session-replay",
   "audit-session",
+  "session-details",
   "usage",
   "alerts",
   "timeline",
@@ -375,6 +376,9 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("GET", "/v1/runs/{id}/session", "viewer", (call) =>
       send(call.res, 200, orchestrator.sessionView(call.match[1] as string, call.repos, pageOf(call.url))),
     ),
+    route("GET", "/v1/runs/{id}/session/{n}", "viewer", (call) =>
+      send(call.res, 200, orchestrator.sessionEntryView(call.match[1] as string, Number(call.match[2]), call.repos)),
+    ),
     route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
     ),
@@ -509,6 +513,13 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         call.res,
         200,
         orchestrator.auditSessionView(visibleAudit(call, call.match[1] as string).id, pageOf(call.url)),
+      ),
+    ),
+    route("GET", "/v1/audits/{id}/session/{n}", "viewer", (call) =>
+      send(
+        call.res,
+        200,
+        orchestrator.auditSessionEntryView(visibleAudit(call, call.match[1] as string).id, Number(call.match[2])),
       ),
     ),
     // Les propositions retenues (index dans `proposals`) partent en projet.

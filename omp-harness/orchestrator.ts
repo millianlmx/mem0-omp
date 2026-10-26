@@ -814,6 +814,27 @@ export class Orchestrator {
     return { runId: null, auditId, live: this.audits.isLive(auditId), cursor: this.store.lastEventId(), entries, more };
   }
 
+  /**
+   * Une entrée du direct d'un run et son détail : pour un outil, ses arguments complets
+   * (`args`) et sa sortie entière (`output`, celle qui s'écrit s'il tourne encore) ;
+   * pour un long paragraphe, son texte entier (`output`). 404 si l'entrée est inconnue.
+   */
+  sessionEntryView(runId: string, seq: number, repos: RepoFilter = null): Record<string, unknown> {
+    const run = this.visibleRun(runId, repos);
+    return { runId: run.id, auditId: null, ...this.#sessionEntry(run.id, seq) };
+  }
+
+  /** Une entrée du direct de l'analyse d'un audit et son détail. */
+  auditSessionEntryView(auditId: string, seq: number): Record<string, unknown> {
+    return { runId: null, auditId, ...this.#sessionEntry(auditOwner(auditId), seq) };
+  }
+
+  #sessionEntry(owner: string, seq: number): Record<string, unknown> {
+    const found = this.#ctx.sessions.details(owner, seq);
+    if (!found) throw new HarnessError(404, `entrée de session inconnue : ${seq}`);
+    return { entry: found.entry, args: found.details.args, output: found.details.output };
+  }
+
   /** La frise d'un run : étapes, tests, décisions, événements marquants, coût par étape. */
   timeline(runId: string, repos: RepoFilter = null): Record<string, unknown> {
     return timelineOf(this.#ctx, this.visibleRun(runId, repos), this.#live.has(runId));

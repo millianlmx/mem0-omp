@@ -6,6 +6,10 @@
 // même `seq` REMPLACE la précédente (un paragraphe qui s'allonge, un outil qui se
 // termine). Le même flux porte la sortie des tests en direct (`test_output`).
 //
+// Le DÉTAIL d'une entrée se lit à part, quand on l'ouvre (`GET /v1/runs/{id}/session/{seq}`) :
+// les arguments complets d'un outil et sa sortie entière — celle qui s'écrit pour une
+// commande en cours —, ou le texte entier d'un paragraphe trop long pour son entrée.
+//
 // Aucun texte ici : les écrans traduisent `kind`, `status` et les codes des signaux
 // avec `PipelineServerText`.
 
@@ -37,10 +41,17 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
     public var tool: String?
     /// `running`, `ok` ou `error` pour un outil.
     public var status: String?
-    /// La fin du résultat d'un outil terminé.
+    /// La fin du résultat d'un outil terminé (ou de sa sortie en cours d'écriture).
     public var detail: String?
+    /// L'appel d'un outil en une ligne (sa commande, son chemin…), même quand `text` porte son intention ;
+    /// absent d'un serveur plus ancien.
+    public var call: String?
+    /// L'instant où l'outil s'est terminé, en millisecondes depuis 1970.
+    public var endedAt: Double?
+    /// Le détail de l'entrée se lit à part (`HarnessModel.sessionDetail`) ; absent d'un serveur plus ancien.
+    public var hasDetails: Bool?
 
-    public init(seq: Int, at: Double = 0, step: String? = nil, kind: String, text: String, tool: String? = nil, status: String? = nil, detail: String? = nil) {
+    public init(seq: Int, at: Double = 0, step: String? = nil, kind: String, text: String, tool: String? = nil, status: String? = nil, detail: String? = nil, call: String? = nil, endedAt: Double? = nil, hasDetails: Bool? = nil) {
         self.seq = seq
         self.at = at
         self.step = step
@@ -49,6 +60,9 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
         self.tool = tool
         self.status = status
         self.detail = detail
+        self.call = call
+        self.endedAt = endedAt
+        self.hasDetails = hasDetails
     }
 
     public var id: Int { seq }
@@ -62,6 +76,40 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
     /// Un outil lancé, pas encore terminé.
     public var isRunning: Bool { isTool && status == "running" }
     public var isFailure: Bool { status == "error" }
+    /// Le détail de l'entrée peut s'ouvrir.
+    public var canOpenDetails: Bool { hasDetails == true }
+
+    /// L'appel de l'outil quand il dit autre chose que le texte de l'entrée (son intention) ; `nil` sinon.
+    public var distinctCall: String? {
+        guard let call, !call.isEmpty, call != text else { return nil }
+        return call
+    }
+
+    /// La durée d'un outil terminé, en millisecondes.
+    public var durationMs: Double? {
+        guard let endedAt, at > 0, endedAt >= at else { return nil }
+        return endedAt - at
+    }
+}
+
+/// La réponse de `GET /v1/runs/{id}/session/{seq}` (ou `/v1/audits/{id}/session/{seq}`) :
+/// une entrée et son détail.
+public struct HarnessSessionDetail: Codable, Equatable, Sendable {
+    public var runId: String?
+    public var auditId: String?
+    public var entry: HarnessSessionEntry
+    /// Les arguments complets d'un outil, une ligne `clé: valeur` par argument.
+    public var args: String?
+    /// La sortie entière d'un outil (celle qui s'écrit s'il tourne encore), ou le texte entier d'un paragraphe.
+    public var output: String?
+
+    public init(runId: String? = nil, auditId: String? = nil, entry: HarnessSessionEntry, args: String? = nil, output: String? = nil) {
+        self.runId = runId
+        self.auditId = auditId
+        self.entry = entry
+        self.args = args
+        self.output = output
+    }
 }
 
 /// Ce dont on suit le direct : une feature, ou l'analyse d'un audit.
@@ -81,6 +129,11 @@ public enum HarnessSessionTarget: Equatable, Hashable, Sendable {
         case .run: "/v1/runs/\(encoded)/session"
         case .audit: "/v1/audits/\(encoded)/session"
         }
+    }
+
+    /// Le chemin du détail d'une entrée.
+    func entryPath(_ encoded: String, seq: Int) -> String {
+        "\(sessionPath(encoded))/\(seq)"
     }
 
     /// Le filtre du flux d'événements.
