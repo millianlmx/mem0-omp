@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.11.0 — 2026-10-26
+
+- feat(harness,console): une session OMP se lit comme dans OMP — rendu des outils, sous-agents en direct, JSON brut replié (#298) (af14c18)
+
 ## omp-harness 1.10.0 — 2026-10-26
 
 - feat(harness,console): détail d'une session en cours — commandes, arguments et sorties complets (#296) (b37d70c)
