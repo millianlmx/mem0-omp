@@ -1,8 +1,8 @@
-<!-- mem0:brief v5 -->
+<!-- mem0:brief v6 -->
 # Brief mémoire — règles complètes
 
 Généré par le plugin `omp-mem0-memory`. Tu peux éditer ce fichier : il ne sera pas
-réécrit tant que le marqueur de version en tête reste `v5`.
+réécrit tant que le marqueur de version en tête reste `v6`.
 
 ## Quand chercher
 
@@ -70,8 +70,29 @@ Relis toujours la fusion renvoyée. Si elle est bancale (deux faits distincts co
 information perdue), réécris l'entrée avec `mem0_update` — c'est prévu pour ça.
 Passe `dedupe: false` seulement quand tu sais que le fait doit vivre séparément.
 
+## Relier les souvenirs
+
+Un souvenir isolé se retrouve mal : le correctif d'un bug ne ressemble pas à son
+symptôme, une nouvelle convention ne dit pas laquelle elle remplace. `mem0_link`
+pose un lien entre deux ids (rendus par `mem0_search`, `mem0_add` et le rappel) :
+
+- `cause` — la source explique la cible (une décision a provoqué un bug, un
+  correctif répond à un symptôme) ;
+- `remplace` — la source rend la cible obsolète (une convention, une valeur ou une
+  décision a changé) ;
+- `contredit` — les deux s'opposent et l'utilisateur doit trancher ;
+- `precise` — la source détaille la cible ;
+- `voir` — un renvoi utile.
+
+Le rappel et `mem0_search` affichent les liens sous chaque souvenir (`↳ remplacé
+par [id] …`). Pendant que le projet est au repos, la mémoire **rêve** : elle propose
+de fusionner les doublons, consolide les faits en *observations* (marquées
+`[observation · N preuves]`) et réécrit des *mental models* posés en tête de session.
+`/mem0-dream` montre le journal et les propositions à accepter ou refuser.
+
 ## Quand un souvenir est faux
 
-Le dépôt gagne toujours. Si un souvenir contredit le code réel, il est périmé :
+Si un souvenir plus récent en remplace un autre, relie-les (`remplace`) plutôt que
+d'effacer l'histoire d'une décision. Le dépôt gagne toujours. Si un souvenir contredit le code réel, il est périmé :
 réécris-le avec `mem0_update`, ou supprime-le avec `mem0_forget` s'il est
 simplement faux.

@@ -13,7 +13,7 @@ import { writeFileAtomic } from "./write.ts";
 // autonome une fois copiée dans ~/.omp/extensions/.
 // ---------------------------------------------------------------------------
 
-export const BRIEF_VERSION = "v5";
+export const BRIEF_VERSION = "v6";
 
 export const BRIEF_REF_PATH = path.join(".omp", "mem0-brief.md");
 
@@ -58,6 +58,10 @@ Le dépôt fait toujours autorité contre un souvenir : s'il le contredit, le so
 est périmé — corrige-le (\`mem0_update\`) ou supprime-le (\`mem0_forget\`), ne
 travaille pas dessus.
 
+**Relie** (\`mem0_link\`) un souvenir à celui qu'il touche : la \`cause\` d'un bug,
+le souvenir qu'un autre \`remplace\`, \`contredit\` ou \`precise\`. Le rappel et la
+recherche ramènent alors l'un avec l'autre (lignes \`↳\`).
+
 - **Checkpoint automatique** — au-delà de 15 explorations (read, grep, glob, lsp)
   sans écriture avec \`mem0_add\`, un message "mem0 checkpoint" t'est envoyé.
   C'est un appel à écrire : tu as collecté des informations durables, enregistre-les
@@ -88,7 +92,8 @@ export const SYSTEM_DIRECTIVE =
   `sommaire se déclare exhaustif et ne mentionne pas ce sujet ; mem0_search sert aussi à déplier une entrée ` +
   `du sommaire. Ce que la mémoire ne couvre pas : explore, puis appelle mem0_add. Un fait par appel, ` +
   `autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige ` +
-  `avec mem0_update. Un checkpoint peut t'être envoyé (message "mem0 checkpoint") quand tu explores trop ` +
+  `avec mem0_update. Quand deux souvenirs se touchent (une cause, un remplacement), relie-les avec ` +
+  `mem0_link. Un checkpoint peut t'être envoyé (message "mem0 checkpoint") quand tu explores trop ` +
   `sans écrire — c'est un signal d'écriture, pas d'erreur : appelle mem0_add immédiatement pour sauver ce ` +
   `que tu as appris.`;
 
@@ -165,9 +170,30 @@ Relis toujours la fusion renvoyée. Si elle est bancale (deux faits distincts co
 information perdue), réécris l'entrée avec \`mem0_update\` — c'est prévu pour ça.
 Passe \`dedupe: false\` seulement quand tu sais que le fait doit vivre séparément.
 
+## Relier les souvenirs
+
+Un souvenir isolé se retrouve mal : le correctif d'un bug ne ressemble pas à son
+symptôme, une nouvelle convention ne dit pas laquelle elle remplace. \`mem0_link\`
+pose un lien entre deux ids (rendus par \`mem0_search\`, \`mem0_add\` et le rappel) :
+
+- \`cause\` — la source explique la cible (une décision a provoqué un bug, un
+  correctif répond à un symptôme) ;
+- \`remplace\` — la source rend la cible obsolète (une convention, une valeur ou une
+  décision a changé) ;
+- \`contredit\` — les deux s'opposent et l'utilisateur doit trancher ;
+- \`precise\` — la source détaille la cible ;
+- \`voir\` — un renvoi utile.
+
+Le rappel et \`mem0_search\` affichent les liens sous chaque souvenir (\`↳ remplacé
+par [id] …\`). Pendant que le projet est au repos, la mémoire **rêve** : elle propose
+de fusionner les doublons, consolide les faits en *observations* (marquées
+\`[observation · N preuves]\`) et réécrit des *mental models* posés en tête de session.
+\`/mem0-dream\` montre le journal et les propositions à accepter ou refuser.
+
 ## Quand un souvenir est faux
 
-Le dépôt gagne toujours. Si un souvenir contredit le code réel, il est périmé :
+Si un souvenir plus récent en remplace un autre, relie-les (\`remplace\`) plutôt que
+d'effacer l'histoire d'une décision. Le dépôt gagne toujours. Si un souvenir contredit le code réel, il est périmé :
 réécris-le avec \`mem0_update\`, ou supprime-le avec \`mem0_forget\` s'il est
 simplement faux.
 `;

@@ -23,9 +23,10 @@ import {
   RECALL_ITEM_CHARS,
   TIMEOUT,
 } from "./config.ts";
+import { buildModelsBlock, modelsOf, observationMark, renderLinks, textResolver } from "./liens.ts";
 import { mem0, memoryLine, rows, selectRelevant } from "./mem0Client.ts";
 import { projectId, stateOf } from "./state.ts";
-import type { Mem0Runtime } from "./state.ts";
+import type { Mem0Runtime, SessionState } from "./state.ts";
 import { buildIndex, loadMemory } from "./summary.ts";
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,30 @@ export function budgetRecall(
   return out;
 }
 
+/**
+ * Les mental models du projet (`GET /memory/models`), demandés une fois par session et
+ * jamais attendus : le bloc entre au prompt système du tour où il est arrivé. Un serveur
+ * sans cette route (404) ou sans modèle écrit laisse le bloc vide ; un échec réseau le
+ * fait redemander au tour suivant.
+ */
+export function requestModels(st: SessionState, scope: string, budgetMs: number = TIMEOUT.other): void {
+  if (st.modelsRequested) return;
+  st.modelsRequested = true;
+  mem0.models(scope, budgetMs).then(
+    (body) => {
+      st.models = buildModelsBlock(scope, modelsOf(body));
+    },
+    (err) => {
+      if (!/mem0-http 404/.test((err as Error).message)) st.modelsRequested = false;
+    },
+  );
+}
+
+/** Le prompt système du tour : directive, mental models puis sommaire, reposés à chaque tour. */
+function systemPromptOf(base: readonly string[], st: SessionState): string[] {
+  return [...base, SYSTEM_DIRECTIVE, ...(st.models ? [st.models] : []), ...(st.index ? [st.index] : [])];
+}
+
 /** Notice du disjoncteur : courte, et sans rien affirmer sur le contenu de la mémoire. */
 export function outageNotice(error: string, remainingMs: number): string {
   return (
@@ -259,7 +284,7 @@ export async function handleRecall(
   // Disjoncteur ouvert : aucun appel au service, ni cache ni recherche. Le
   // sommaire déjà chargé reste posé — il ne dépend pas du service.
   if (service.downUntil > now) {
-    const systemPrompt = [...event.systemPrompt, SYSTEM_DIRECTIVE, ...(st.index ? [st.index] : [])];
+    const systemPrompt = systemPromptOf(event.systemPrompt, st);
     if (!wantsRecall) return { systemPrompt };
     const error = service.lastError ?? "aucune réponse";
     const details: RecallDetails = {
@@ -293,6 +318,8 @@ export async function handleRecall(
   // Cache + sommaire : une fois par session, retentés au tour suivant en cas
   // d'échec. Sans cache, pas d'agrafage — l'exploration se déroule normalement.
   const loading = st.mem === null ? loadMemory(scope, Math.max(budget, TIMEOUT.other)) : null;
+  // Rattrapage des hôtes où `session_start` ne remonte pas : dès le deuxième tour.
+  if (st.turns > 1) requestModels(st, scope);
 
   let recallError: string | undefined;
   // Les échecs sont tracés — un rappel muet a caché le problème trop longtemps.
@@ -300,7 +327,7 @@ export async function handleRecall(
   // décision de pertinence n'est possible (le `score` renvoyé est saturé par BM25).
   const searches = wantsRecall
     ? Promise.all([
-        mem0.search(prompt.slice(0, 800), scope, RECALL_POOL, RECALL_THRESHOLD, true, budget).catch((err) => {
+        mem0.search(prompt.slice(0, 800), scope, RECALL_POOL, RECALL_THRESHOLD, true, budget, true).catch((err) => {
           recallError = (err as Error).message;
           console.warn(`[mem0] recall projet indisponible : ${recallError}`);
           return null;
@@ -318,7 +345,7 @@ export async function handleRecall(
   // La directive et le sommaire sont reposés à chaque tour : un message se
   // dilue dans un long contexte et ne survit pas à la compaction, le system
   // prompt si.
-  const systemPrompt = [...event.systemPrompt, SYSTEM_DIRECTIVE, ...(st.index ? [st.index] : [])];
+  const systemPrompt = systemPromptOf(event.systemPrompt, st);
 
   if (!results) return { systemPrompt };
   const [projectRes, globalRes] = results;
@@ -409,7 +436,14 @@ export async function handleRecall(
         `pour les revérifier, cite l'id quand tu t'en sers :`,
     ];
     if (projectMems.length) {
-      parts.push(projectMems.map((m) => `- [${m.id ?? "?"}] ${m.text}`).join("\n"));
+      // Les liens d'un souvenir posé (cause, remplacé par, contredit…) suivent sa ligne :
+      // un souvenir remplacé ne se lit plus sans ce qui le remplace.
+      const textOf = textResolver(rows(projectRes), st.mem?.entries ?? []);
+      parts.push(
+        projectMems
+          .map((m) => [`- [${m.id ?? "?"}] ${observationMark(m.row)}${m.text}`, ...renderLinks(m.row, textOf)].join("\n"))
+          .join("\n"),
+      );
     }
     if (globalMems.length) {
       parts.push("Préférences transverses :", globalMems.map((m) => `- ${m.text}`).join("\n"));

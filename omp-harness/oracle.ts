@@ -19,6 +19,29 @@ export type FetchLike = (
   text: () => Promise<string>;
 }>;
 
+/**
+ * Le dossier de consolidation d'une portée (`GET /memory/dream/dossier` de mem0-rs) :
+ * ce que la session de rêve lit. Les champs non lus par le harness restent opaques.
+ */
+export type DreamDossier = {
+  horizon_us: number;
+  since: string | null;
+  due: boolean;
+  new_facts: { id: string; memory: string; updated_at: string }[];
+  [key: string]: unknown;
+};
+
+/** Ce que mem0-rs a écrit d'une consolidation (`POST /memory/dream/consolidation`). */
+export type ConsolidationReport = {
+  dream: string;
+  observations_added: number;
+  observations_refined: number;
+  observations_removed: number;
+  causes: number;
+  models: number;
+  horizon_us: number;
+};
+
 export interface Oracle {
   recall(scope: string, query: string, limit?: number): Promise<Memory[]>;
   /** Les décisions tranchées par l'humain (souvenirs `harness,decision`) qui répondent à `question`. */
@@ -26,6 +49,13 @@ export interface Oracle {
   retain(scope: string, text: string, tags?: string[]): Promise<boolean>;
   /** Le service répond-il (`GET /health`, `ok: true`) ? */
   health(): Promise<boolean>;
+  /** Le dossier de rêve de la portée ; `null` : service injoignable ou sans cette route. */
+  dreamDossier(scope: string): Promise<DreamDossier | null>;
+  /**
+   * Rend la consolidation d'une portée ; le service la valide puis l'applique d'un bloc.
+   * Rejette avec la raison du refus (corps invalide, id inconnu, service injoignable).
+   */
+  consolidate(scope: string, consolidation: Record<string, unknown>): Promise<ConsolidationReport>;
 }
 
 /** Les étiquettes d'une ligne mem0 : `tags` (chaîne « a,b » ou liste), sinon `metadata.tags`. */
@@ -109,6 +139,39 @@ export class HttpOracle implements Oracle {
     }
   }
 
+  async #get(route: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    try {
+      const response = await this.#fetch(`${this.#config.url.replace(/\/$/, "")}${route}`, {
+        method: "GET",
+        headers: this.#config.token ? { "X-Mem0-Token": this.#config.token } : {},
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`mem0 ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async dreamDossier(scope: string): Promise<DreamDossier | null> {
+    try {
+      const body = (await this.#get(`/memory/dream/dossier?agent_id=${encodeURIComponent(scope)}`)) as DreamDossier;
+      return typeof body?.horizon_us === "number" && Array.isArray(body.new_facts) ? body : null;
+    } catch (err) {
+      this.#log(`oracle injoignable (dossier de rêve) : ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  async consolidate(scope: string, consolidation: Record<string, unknown>): Promise<ConsolidationReport> {
+    return (await this.#post("/memory/dream/consolidation", {
+      ...consolidation,
+      agent_id: scope,
+    })) as ConsolidationReport;
+  }
+
   async health(): Promise<boolean> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
@@ -166,6 +229,10 @@ export const NO_ORACLE: Oracle = {
   recallDecisions: async () => [],
   retain: async () => false,
   health: async () => false,
+  dreamDossier: async () => null,
+  consolidate: async () => {
+    throw new Error("aucun oracle configuré");
+  },
 };
 
 /**

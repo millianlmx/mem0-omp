@@ -2,7 +2,8 @@
 
 La voie MANUELLE du service mémoire : un seul conteneur, `mem0-rs` (le binaire
 Rust de `mem0-rs/`, image multi-étapes), publié sur `127.0.0.1:8321`, avec le
-contrat HTTP des 9 routes et l'en-tête `X-Mem0-Token`. Sa base SQLite
+contrat HTTP des 9 routes (plus les routes du graphe et du rêve, propres à mem0-rs)
+et l'en-tête `X-Mem0-Token`. Sa base SQLite
 `mem0-rs.db` vit dans un dossier de l'hôte, `MEM0_RS_DATA_DIR` (`./mem0-rs-data`
 par défaut, relatif à ce dossier). oMLX tourne en natif sur le Mac, hors
 conteneur.
@@ -47,11 +48,29 @@ Le compose transmet aussi depuis `.env` le classement de `POST /memory/search` :
 
 | Variable | Défaut | Effet |
 |---|---|---|
-| `MEM0_SEARCH_FUSION` | `additive` | `additive` (classement de mem0 2.2.1) ou `rrf` (Reciprocal Rank Fusion) |
+| `MEM0_SEARCH_FUSION` | `additive` | `additive` (classement de mem0 2.2.1), `rrf` (Reciprocal Rank Fusion) ou `graphe` (RRF plus le graphe de liens de la mémoire) |
 | `MEM0_RRF_K` | `60` | constante `k` de la RRF |
 
 Le choix, ses raisons et le banc de mesure qui les compare (`mem0-rs banc`) sont
 dans [mem0-rs/README.md § Recherche hybride](mem0-rs/README.md#recherche-hybride).
+
+## Rêve de la mémoire
+
+Quand un projet est calme, mem0-rs entretient sa mémoire : il réindexe, fait juger
+par le LLM (`OMLX_LLM_MODEL`) les souvenirs très proches et en tire des liens et des
+**propositions** (doublon, remplacement, contradiction, oubli) — jamais des
+suppressions : on les accepte ou refuse avec `/mem0-dream` dans omp. La consolidation
+en observations et en mental models est menée par le harness, sur une session omp.
+Le compose transmet les réglages depuis `.env` :
+
+| Variable | Défaut | Effet |
+|---|---|---|
+| `MEM0_DREAM_INTERVAL_MINUTES` | `60` | période du rêve de fond, en minutes ; `0` le coupe |
+| `MEM0_DREAM_QUIET_MINUTES` | `10` | un projet ne rêve qu'après ce délai sans écriture |
+| `MEM0_DREAM_PAIRS` | `20` | paires jugées par le LLM au plus par rêve ; `0` : aucun appel au LLM |
+| `MEM0_DREAM_FORGET_DAYS` | `180` | jours sans rappel ni lien avant une proposition d'oubli ; `0` : jamais |
+
+Le détail est dans [mem0-rs/README.md § Rêve](mem0-rs/README.md#rêve).
 
 ## Migrer une pile mem0-http existante
 

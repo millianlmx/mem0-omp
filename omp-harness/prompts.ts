@@ -275,6 +275,32 @@ export const FAILOVER_PROMPT =
   "Reprends exactement où tu t'es arrêté : le fournisseur précédent a atteint sa limite de débit, tu tournes maintenant sur un autre modèle.";
 
 /**
+ * Le prompt du rêve d'un dépôt (phases 3 et 4 de la mémoire) : lecture seule, le dossier
+ * du service mémoire en JSON (sans `horizon_us`, que le harness garde), consolidation
+ * rendue par `dream_consolidate`.
+ */
+export function dreamPrompt(ctx: { repo: string; dossier: Record<string, unknown> }): string {
+  const { horizon_us: _horizon, ...dossier } = ctx.dossier;
+  return [
+    `# /reve — consolidation de la mémoire de « ${ctx.repo} »
+
+Tu rêves pour la mémoire du projet, en LECTURE SEULE : ne modifie AUCUN fichier. Le dossier ci-dessous vient du service mémoire : les faits nouveaux depuis la dernière consolidation (\`new_facts\`), les faits qui leur sont reliés (\`context\`), les observations existantes avec leurs preuves, et les mental models.
+
+1. **Observations.** Une observation est une croyance durable fondée sur des faits : une préférence, une convention, une décision et sa raison, un piège récurrent. Pour chaque fait nouveau : affine l'observation qu'il touche (même \`id\`, texte réécrit qui garde l'évolution — « utilisait X, est passé à Y » — et \`evidence\` complète), crée-en une quand deux faits ou plus convergent, ou ne fais rien. Pas d'observation sur un fait isolé et éphémère. \`evidence\` ne cite que des ids de faits du dossier. Une observation que les faits ne soutiennent plus va dans \`obsolete\`.
+2. **Causes.** Quand un fait en explique un autre (un bug causé par une décision, un correctif par un symptôme), rends \`{source: la cause, target: l'effet, reason}\`.
+3. **Mental models.** Pour chaque modèle \`stale: true\`, réécris \`content\` : une page Markdown courte qui répond à sa \`question\` d'après les faits et observations, en gardant ce qui reste vrai de l'ancien contenu. Un modèle à jour, ou sans matière, n'est pas rendu.
+
+Le dépôt fait autorité : vérifie dans le worktree ce qui te paraît douteux ; un fait que le code contredit n'entre dans aucune observation ni aucun modèle. \`oracle_recall\` cherche d'autres souvenirs du projet. Écris dans la langue des souvenirs.
+
+Termine par \`dream_consolidate\`, une fois. Un refus du service revient avec sa raison : corrige et rappelle l'outil.`,
+    section("Dossier (service mémoire)", `\`\`\`json\n${JSON.stringify(dossier, null, 2)}\n\`\`\``),
+    `\n- \`progress\` à chaque phase, une phrase. N'utilise JAMAIS \`ask\`.\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+/**
  * Le prompt de l'audit d'un dépôt : lecture seule, propositions par `audit_propose`.
  * `inFlight` (runs ouverts du dépôt) et `delivered` (souvenirs « Feature mergée ») évitent
  * de proposer ce qui est déjà en cours ou livré.

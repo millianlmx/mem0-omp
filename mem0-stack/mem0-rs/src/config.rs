@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
+use crate::reve;
 use crate::sauvegarde::Politique;
 
 pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
@@ -108,6 +109,9 @@ pub struct Config {
     pub sauvegarde: Politique,
     /// Fusion de la recherche hybride (`MEM0_SEARCH_FUSION`, `MEM0_RRF_K`).
     pub recherche: Reglage,
+    /// Rêve de fond (`MEM0_DREAM_INTERVAL_MINUTES`, `MEM0_DREAM_QUIET_MINUTES`,
+    /// `MEM0_DREAM_PAIRS`, `MEM0_DREAM_FORGET_DAYS`).
+    pub reve: reve::Reglage,
 }
 
 impl std::fmt::Debug for Config {
@@ -120,6 +124,7 @@ impl std::fmt::Debug for Config {
             .field("db_path", &self.db_path)
             .field("sauvegarde", &self.sauvegarde)
             .field("recherche", &self.recherche)
+            .field("reve", &self.reve)
             .finish_non_exhaustive()
     }
 }
@@ -181,10 +186,19 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
     };
     let fusion_brute = env_ou(&lire, "MEM0_SEARCH_FUSION", "additive");
     let fusion = Fusion::lire(&fusion_brute)
-        .ok_or_else(|| format!("MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « {fusion_brute} »)"))?;
+        .ok_or_else(|| format!("MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « {fusion_brute} »)"))?;
     let rrf_k = entier_env(&lire, "MEM0_RRF_K", &RRF_K_PAR_DEFAUT.to_string(), 1)?;
     let rrf_k = u32::try_from(rrf_k)
         .map_err(|_| format!("MEM0_RRF_K doit être un entier positif d'au plus {} (reçu « {rrf_k} »)", u32::MAX))?;
+    let minutes = |nom: &str, defaut: &str, min: u64| -> Result<std::time::Duration, String> {
+        Ok(Duration::from_secs(entier_env(&lire, nom, defaut, min)?.saturating_mul(60)))
+    };
+    let reve = reve::Reglage {
+        intervalle: minutes("MEM0_DREAM_INTERVAL_MINUTES", "60", 0)?,
+        calme: minutes("MEM0_DREAM_QUIET_MINUTES", "10", 0)?,
+        paires: usize::try_from(entier_env(&lire, "MEM0_DREAM_PAIRS", "20", 0)?).unwrap_or(usize::MAX),
+        oubli_jours: entier_env(&lire, "MEM0_DREAM_FORGET_DAYS", "180", 0)?,
+    };
     Ok(Config {
         base_url: env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1"),
         embed_model: env_ou(&lire, "OMLX_EMBED_MODEL", "bge-m3"),
@@ -196,6 +210,7 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         installation_token: lire("OMP_INSTALLATION_TOKEN").unwrap_or_default(),
         sauvegarde,
         recherche: Reglage { fusion, rrf_k },
+        reve,
     })
 }
 
@@ -344,7 +359,7 @@ mod tests {
         assert_eq!(c.recherche, Reglage::default());
         for v in ["RRF", "reciprocal", "additive,rrf"] {
             let e = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", v)])).unwrap_err();
-            assert_eq!(e, format!("MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « {v} »)"));
+            assert_eq!(e, format!("MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « {v} »)"));
         }
         for v in ["0", "-1", "6.5", "soixante"] {
             let e = lire_env(env(&[("HOME", "/h"), ("MEM0_RRF_K", v)])).unwrap_err();
@@ -352,6 +367,30 @@ mod tests {
         }
         let e = lire_env(env(&[("HOME", "/h"), ("MEM0_RRF_K", "4294967296")])).unwrap_err();
         assert_eq!(e, "MEM0_RRF_K doit être un entier positif d'au plus 4294967295 (reçu « 4294967296 »)");
+    }
+
+    #[test]
+    fn reve_defauts_coupure_et_refus() {
+        let c = lire_env(env(&[("HOME", "/h")])).unwrap();
+        assert_eq!(c.reve, reve::Reglage::default());
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", "graphe")])).unwrap();
+        assert_eq!(c.recherche.fusion, Fusion::Graphe);
+        let c = lire_env(env(&[
+            ("HOME", "/h"),
+            ("MEM0_DREAM_INTERVAL_MINUTES", "0"),
+            ("MEM0_DREAM_QUIET_MINUTES", "2"),
+            ("MEM0_DREAM_PAIRS", "0"),
+            ("MEM0_DREAM_FORGET_DAYS", "0"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.reve,
+            reve::Reglage { intervalle: Duration::ZERO, calme: Duration::from_secs(120), paires: 0, oubli_jours: 0 }
+        );
+        for nom in ["MEM0_DREAM_INTERVAL_MINUTES", "MEM0_DREAM_QUIET_MINUTES", "MEM0_DREAM_PAIRS", "MEM0_DREAM_FORGET_DAYS"] {
+            let e = lire_env(env(&[("HOME", "/h"), (nom, "-1")])).unwrap_err();
+            assert_eq!(e, format!("{nom} doit être un entier positif ou nul (reçu « -1 »)"));
+        }
     }
 
     #[test]

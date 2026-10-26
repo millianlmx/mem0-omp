@@ -492,6 +492,18 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         throw new HarnessError(404, `projet inconnu : ${call.match[1]}`);
       send(call.res, 200, { project, runs: store.listRuns({ projectId: project.id }) });
     }),
+    route("GET", "/v1/dreams", "viewer", (call) =>
+      send(call.res, 200, { dreams: orchestrator.dreams.list(call.repos) }),
+    ),
+    // Un rêve demandé : le dépôt est examiné au prochain tour, sans seuil de faits ni attente du repos.
+    route("POST", "/v1/dreams", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const repo = text(body, "repo");
+      requireRepo(call, repo);
+      orchestrator.dreams.request(repo, call.actor);
+      void orchestrator.tick();
+      send(call.res, 202, { repo, requested: true });
+    }),
     route("GET", "/v1/audits", "viewer", (call) => send(call.res, 200, { audits: store.listAudits([], call.repos) })),
     route("POST", "/v1/audits", "operator", async (call) => {
       const body = await readBody(call.req);

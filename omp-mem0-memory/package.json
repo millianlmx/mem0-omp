@@ -1,7 +1,7 @@
 {
   "name": "omp-mem0-memory",
   "version": "4.2.0",
-  "description": "Mémoire mem0 (Qdrant + oMLX) native pour OMP : brief posé automatiquement par projet, /mem0-init pour amorcer un dépôt existant, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, écriture par l'agent, scope par projet — worktrees git compris (une feature menée dans son worktree partage la mémoire du dépôt).",
+  "description": "Mémoire mem0 (Qdrant + oMLX) native pour OMP : brief posé automatiquement par projet, /mem0-init pour amorcer un dépôt existant, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, écriture et liaison par l'agent (mem0_link), rêve de la mémoire (/mem0-dream, mental models en tête de session), scope par projet — worktrees git compris (une feature menée dans son worktree partage la mémoire du dépôt).",
   "license": "MIT",
   "author": "MillianLMX",
   "homepage": "https://github.com/millianlmx/mem0-omp",

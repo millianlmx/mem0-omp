@@ -8,16 +8,21 @@
 mod banc;
 mod bm25;
 mod config;
+mod consolidation;
 mod db;
 mod embedder;
+mod entites;
 mod extraction;
 mod graphe;
 mod horodatage;
 mod http;
+mod http_liens;
 mod import;
+mod liens;
 mod openai;
 mod recherche;
 mod redaction;
+mod reve;
 mod sauvegarde;
 mod validation;
 mod verrou;
@@ -82,6 +87,9 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
     if !cfg.sauvegarde.intervalle.is_zero() {
         tokio::spawn(sauvegarde::boucle(Arc::clone(&db), cfg.db_path.clone(), cfg.sauvegarde));
     }
+    if !cfg.reve.intervalle.is_zero() {
+        tokio::spawn(reve::boucle(Arc::clone(&db), chat.clone(), cfg.reve));
+    }
     let etat = Arc::new(http::Etat {
         db,
         embedder,
@@ -89,6 +97,7 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         http_token: cfg.http_token.clone(),
         installation_token: cfg.installation_token.clone(),
         recherche: cfg.recherche,
+        reve: cfg.reve,
     });
     eprintln!(
         "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {}, recherche {})",

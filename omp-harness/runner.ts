@@ -464,6 +464,55 @@ const AUDIT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const DREAM_TOOL: HostToolDefinition = {
+  name: "dream_consolidate",
+  label: "Harness — consolidation de la mémoire",
+  description:
+    "Rend la consolidation du rêve, une fois, à la fin (les listes peuvent être vides). Le service mémoire la valide : " +
+    "un refus revient en erreur avec sa raison, corrige et rappelle l'outil. `observations` : croyances fondées sur des faits " +
+    "(`id` d'une observation existante pour l'affiner, absent pour en créer une ; `evidence` = ids de FAITS, jamais d'observations). " +
+    "`obsolete` : ids d'observations que les faits ne soutiennent plus. `causes` : `source` explique `target`. " +
+    "`models` : les mental models périmés, réécrits (`name` du dossier, `content` en Markdown, `sources` = ids qui l'étayent).",
+  parameters: {
+    type: "object",
+    properties: {
+      observations: {
+        type: "array",
+        maxItems: 50,
+        items: {
+          type: "object",
+          properties: { id: { type: "string" }, text: { type: "string" }, evidence: STRINGS },
+          required: ["text", "evidence"],
+          additionalProperties: false,
+        },
+      },
+      obsolete: STRINGS,
+      causes: {
+        type: "array",
+        maxItems: 50,
+        items: {
+          type: "object",
+          properties: { source: { type: "string" }, target: { type: "string" }, reason: { type: "string" } },
+          required: ["source", "target", "reason"],
+          additionalProperties: false,
+        },
+      },
+      models: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, content: { type: "string" }, sources: STRINGS },
+          required: ["name", "content", "sources"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["observations", "obsolete", "causes", "models"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const CHALLENGE_TOOL: HostToolDefinition = {
   name: "challenge_report",
   label: "Harness — constats du contradicteur",
@@ -502,12 +551,13 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /**
- * Les outils hôtes d'une étape (ou de l'audit et du contradicteur, qui ne décident ni
- * ne testent rien) : `checkpoint` et `set_modules` partout, `split_feature` en specs et
- * impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
+ * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
+ * décident ni ne testent rien) : `checkpoint` et `set_modules` partout, `split_feature`
+ * en specs et impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
  */
-export function hostToolsFor(step: StepKind | "audit" | "challenge"): HostToolDefinition[] {
+export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream"): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
+  if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);

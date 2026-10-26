@@ -49,7 +49,17 @@ export const mem0 = {
   // `selectRelevant` traite comme « aucun score » et que le rappel signale bruyamment.
   // `budgetMs` : le rappel automatique passe le sien (froid ou chaud, cf.
   // TIMEOUT) ; les autres appelants gardent le budget de recherche.
-  search: (query: string, scope: string, limit: number, threshold?: number, explain = false, budgetMs = TIMEOUT.search) =>
+  // `links` : chaque ligne porte ses liens typés (mem0-rs v4) ; le champ n'est envoyé
+  // que demandé, et un serveur qui ne le connaît pas l'ignore (pydantic, comme `explain`).
+  search: (
+    query: string,
+    scope: string,
+    limit: number,
+    threshold?: number,
+    explain = false,
+    budgetMs = TIMEOUT.search,
+    links = false,
+  ) =>
     mem0Fetch(
       "/memory/search",
       {
@@ -61,10 +71,31 @@ export const mem0 = {
           threshold: threshold ?? null,
           filters: null,
           explain,
+          ...(links ? { links: true } : {}),
         }),
       },
       budgetMs,
     ),
+
+  // Mémoire liée et rêve (mem0-rs v4) : routes absentes d'un serveur plus ancien (404).
+  link: (source: string, target: string, type: string, reason?: string) =>
+    mem0Fetch(
+      "/memory/link",
+      { method: "POST", body: JSON.stringify({ source, target, type, ...(reason ? { reason } : {}) }) },
+      TIMEOUT.other,
+    ),
+
+  models: (scope: string, budgetMs = TIMEOUT.other) =>
+    mem0Fetch(`/memory/models?agent_id=${encodeURIComponent(scope)}`, {}, budgetMs),
+
+  dreamJournal: (scope: string) => mem0Fetch(`/memory/dream?agent_id=${encodeURIComponent(scope)}`),
+
+  // Le rêve local juge des paires au LLM du serveur : le budget d'une écriture.
+  dreamNow: (scope: string) =>
+    mem0Fetch("/memory/dream", { method: "POST", body: JSON.stringify({ agent_id: scope }) }, TIMEOUT.write),
+
+  decide: (id: string, decision: "accept" | "reject") =>
+    mem0Fetch("/memory/dream/proposal", { method: "POST", body: JSON.stringify({ id, decision }) }),
 
   update: (id: string, text: string) =>
     mem0Fetch(
