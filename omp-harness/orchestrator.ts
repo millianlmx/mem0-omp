@@ -832,7 +832,8 @@ export class Orchestrator {
   #sessionEntry(owner: string, seq: number): Record<string, unknown> {
     const found = this.#ctx.sessions.details(owner, seq);
     if (!found) throw new HarnessError(404, `entrée de session inconnue : ${seq}`);
-    return { entry: found.entry, args: found.details.args, output: found.details.output };
+    const { args, output, result, view } = found.details;
+    return { entry: found.entry, args, output, result, view };
   }
 
   /** La frise d'un run : étapes, tests, décisions, événements marquants, coût par étape. */

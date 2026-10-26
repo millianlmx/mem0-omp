@@ -139,6 +139,49 @@ struct HarnessSessionTests {
         #expect(await model.sessionDetail(.run("r1"), seq: 9) == nil)
     }
 
+    @Test("le rendu d'un outil se décode tel que le serveur l'écrit : blocs, différences, commande, fiches des sous-agents")
+    func decodesToolView() throws {
+        let json = #"""
+        {"runId":"r1","auditId":null,
+         "entry":{"seq":4,"at":1,"step":"impl","kind":"tool","text":"Explorer","tool":"task","status":"running","detail":null,"call":"Scout, Tests","endedAt":null,"hasDetails":true,
+                  "agents":[{"id":"0-Scout","name":"Scout","agent":"scout","status":"running","task":"Lister les routes","activity":"bash · rg router"},
+                            {"id":"1-Tests","name":"","agent":"task","status":"pending","task":"Lister les tests","activity":null}]},
+         "args":"{\n  \"context\": \"x\"\n}","output":null,"result":null,
+         "view":{"headline":"Scout, Tests","agents":null,"blocks":[
+           {"kind":"text","role":"context","title":null,"format":"markdown","text":"Le **contexte**","fields":null,"items":null,"agents":null},
+           {"kind":"text","role":"changes","title":null,"format":"diff","text":"@@ -1 +1 @@\n-a\n+b\n c","fields":null,"items":null,"agents":null},
+           {"kind":"text","role":"command","title":null,"format":"command","text":"npm test","fields":null,"items":null,"agents":null},
+           {"kind":"fields","role":null,"title":null,"format":null,"text":null,"fields":[{"key":"exit","value":"1"}],"items":null,"agents":null},
+           {"kind":"agents","role":"agents","title":null,"format":null,"text":null,"fields":null,"items":null,"agents":[
+             {"id":"0-Scout","name":"Scout","agent":"scout","status":"running","task":"Lister","activity":"bash · rg router","recent":[{"tool":"read","text":"a.ts","error":false}],"output":null,"error":null,"durationMs":3000,"tokens":1200,"cost":0.01,"model":"anthropic/claude"}]},
+           {"kind":"carte","role":"inconnu","title":"x","format":"hologramme","text":"y","fields":null,"items":null,"agents":null}
+         ]}}
+        """#
+        let detail = try JSONDecoder().decode(HarnessSessionDetail.self, from: Data(json.utf8))
+        #expect(detail.hasRendering)
+        let view = try #require(detail.view)
+        #expect(view.blocks.map(\.sort) == [.text, .text, .text, .fields, .agents, .text], "une sorte inconnue est du texte")
+        #expect(view.blocks[0].textFormat == .markdown)
+        #expect(view.blocks[1].diffLines.map(\.kind) == [.hunk, .removed, .added, .context])
+        #expect(view.blocks[2].displayText == "$ npm test", "une commande porte l'invite du shell")
+        #expect(view.showsHeadline, "le premier bloc n'est pas une commande : l'appel s'affiche en tête")
+        #expect(view.blocks[5].textFormat == .plain, "une forme inconnue est du texte simple")
+        let card = try #require(view.blocks[4].agents?.first)
+        #expect(card.state == .running)
+        #expect(card.currentActivity == "bash · rg router")
+        #expect(card.recent == [HarnessAgentCall(tool: "read", text: "a.ts")])
+        let lines = try #require(detail.entry.agents)
+        #expect(lines.map(\.label) == ["Scout", "task"], "sans nom, un sous-agent se nomme par son type")
+        #expect(lines.map(\.summary) == ["bash · rg router", "Lister les tests"])
+        #expect(lines.map(\.state) == [.running, .pending])
+        #expect(HarnessAgentLine(id: "x", name: "", agent: "scout", status: "endormi", task: "").state == .unknown)
+        let command = HarnessToolView(headline: "npm test", blocks: [HarnessToolBlock(kind: "text", role: "command", format: "command", text: "npm test")])
+        #expect(!command.showsHeadline, "une commande déjà montrée par son bloc ne se répète pas en tête")
+        #expect(HarnessToolView(headline: "src/a.ts", blocks: [HarnessToolBlock(kind: "text", role: "changes", format: "diff", text: "+a")]).showsHeadline)
+        let old = HarnessSessionDetail(entry: HarnessSessionEntry(seq: 1, kind: "tool", text: "npm test"), args: "command: npm test", output: "ok")
+        #expect(!old.hasRendering, "un serveur 1.10 n'a pas de rendu : l'app montre arguments et sortie")
+    }
+
     @Test("un serveur qui ne connaît pas le direct l'arrête, avec son motif, sans réessayer")
     func unsupportedServer() async {
         let transport = ScriptedHarnessTransport()

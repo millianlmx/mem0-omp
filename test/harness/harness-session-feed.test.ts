@@ -23,7 +23,6 @@ import {
   SESSION_TEXT_MAX,
   SESSION_THROTTLE_MS,
   SessionFeeds,
-  argsText,
   redact,
 } from "../../omp-harness/session-feed.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
@@ -391,10 +390,11 @@ test("harness-session-feed/AC-8 : un outil garde son appel à côté de son inte
   });
   assert.equal(sent.filter((entry) => entry.seq === bash?.seq && entry.detail === "1 passing").length, 1);
   assert.equal(sent.at(-1)?.detail, "1 passing", "avant l'intervalle, la suite attend");
-  assert.deepEqual(feed.details("r1", bash?.seq ?? 0)?.details, {
-    args: "command: npm test -- --grep export\ntimeout: 120",
-    output: "1 passing\n2 passing",
-  });
+  const runningDetails = feed.details("r1", bash?.seq ?? 0)?.details;
+  assert.deepEqual(
+    [JSON.parse(runningDetails?.args ?? "null"), runningDetails?.output],
+    [{ command: "npm test -- --grep export", timeout: 120 }, "1 passing\n2 passing"],
+  );
   assert.equal(feed.details("r1", bash?.seq ?? 0)?.entry.status, "running");
   advance(1_500);
   const long = `DEBUT${"x".repeat(SESSION_OUTPUT_MAX * 3)}OPENROUTER_API_KEY=sk-or-v1-0123456789abcdefghij FIN`;
@@ -409,12 +409,10 @@ test("harness-session-feed/AC-8 : un outil garde son appel à côté de son inte
   assert.match(output, /\n… \d+ caractères omis …\n/);
   assert.ok(output.length <= SESSION_OUTPUT_MAX + 64);
   assert.ok((done?.entry.detail ?? "").endsWith("FIN"), "l'entrée compacte garde la fin du résultat");
-  // Les arguments : une valeur sur plusieurs lignes sous sa clé, bornée, masquée.
+  // Les arguments bruts : le JSON de l'appel, borné, masqué.
   const args = feed.details("r1", write?.seq ?? 0)?.details.args ?? "";
-  assert.ok(args.startsWith("path: src/export.ts\ncontent:\nligne 1\nligne 2 ••••\n"));
+  assert.ok(args.startsWith('{\n  "path": "src/export.ts",\n  "content": "ligne 1\\nligne 2 ••••\\n'));
   assert.ok(args.length <= SESSION_ARGS_MAX + 64);
-  assert.equal(argsText({}), null);
-  assert.equal(argsText({ edits: [{ old: "a" }] }), 'edits: [\n  {\n    "old": "a"\n  }\n]');
   // Un paragraphe plus long que son entrée : son texte entier dans son détail.
   feed.frame("r1", "impl", { type: "message_end", message: assistant(`DEBUT${"a".repeat(SESSION_TEXT_MAX)}FIN`) });
   const paragraph = feed.snapshot("r1").at(-1);
@@ -462,13 +460,17 @@ test("harness-session-feed/AC-9 : `GET /v1/runs/{id}/session/{seq}` rend une ent
     const view = (await response.json()) as { runId: string; entry: SessionEntry; args: string; output: string };
     assert.deepEqual(
       [view.runId, view.entry.seq, view.entry.status, view.args, view.output],
-      ["r1", 1, "ok", "command: npm test", "12 passing\n0 failing"],
+      ["r1", 1, "ok", '{\n  "command": "npm test"\n}', "12 passing\n0 failing"],
     );
     assert.equal((await get("/v1/runs/r1/session/2", narrow)).status, 404, "une entrée inconnue");
     assert.equal((await get("/v1/runs/r1/session/1", elsewhere)).status, 404, "un run d'un autre dépôt n'existe pas");
     // Un redémarrage : un nouveau tampon sur la même base relit l'entrée et son détail.
     const reborn = new SessionFeeds({ publish: () => {}, store: world.store });
-    assert.deepEqual(reborn.details("r1", 1)?.details, { args: "command: npm test", output: "12 passing\n0 failing" });
+    const reread = reborn.details("r1", 1)?.details;
+    assert.deepEqual(
+      [reread?.args, reread?.output, reread?.view?.headline],
+      ['{\n  "command": "npm test"\n}', "12 passing\n0 failing", "npm test"],
+    );
     assert.equal(reborn.page("r1").entries[0]?.hasDetails, true);
     // L'analyse d'un audit, sous la même forme.
     const audit = world.orchestrator.audits.create("demo", "");
@@ -482,7 +484,7 @@ test("harness-session-feed/AC-9 : `GET /v1/runs/{id}/session/{seq}` rend une ent
       auditId: string;
       args: string;
     };
-    assert.deepEqual([audited.auditId, audited.args], [audit.id, "path: README.md"]);
+    assert.deepEqual([audited.auditId, audited.args], [audit.id, '{\n  "path": "README.md"\n}']);
     assert.equal((await get(`/v1/audits/${audit.id}/session/1`, elsewhere)).status, 404);
   } finally {
     server.closeAllConnections();

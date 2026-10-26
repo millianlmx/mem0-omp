@@ -7,8 +7,11 @@
 // termine). Le même flux porte la sortie des tests en direct (`test_output`).
 //
 // Le DÉTAIL d'une entrée se lit à part, quand on l'ouvre (`GET /v1/runs/{id}/session/{seq}`) :
-// les arguments complets d'un outil et sa sortie entière — celle qui s'écrit pour une
-// commande en cours —, ou le texte entier d'un paragraphe trop long pour son entrée.
+// le RENDU lisible d'un outil (`view` : des blocs de texte, de champs, de listes et de
+// fiches de sous-agents, comme OMP l'affiche), sa sortie entière et son JSON brut —
+// ceux qui s'écrivent pour un outil en cours —, ou le texte entier d'un paragraphe
+// trop long pour son entrée. Un appel `task` porte aussi ses sous-agents en une ligne
+// dans l'entrée (`agents`), mis à jour en direct.
 //
 // Aucun texte ici : les écrans traduisent `kind`, `status` et les codes des signaux
 // avec `PipelineServerText`.
@@ -50,8 +53,10 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
     public var endedAt: Double?
     /// Le détail de l'entrée se lit à part (`HarnessModel.sessionDetail`) ; absent d'un serveur plus ancien.
     public var hasDetails: Bool?
+    /// Les sous-agents d'un appel `task`, en une ligne chacun ; absent pour tout autre outil.
+    public var agents: [HarnessAgentLine]?
 
-    public init(seq: Int, at: Double = 0, step: String? = nil, kind: String, text: String, tool: String? = nil, status: String? = nil, detail: String? = nil, call: String? = nil, endedAt: Double? = nil, hasDetails: Bool? = nil) {
+    public init(seq: Int, at: Double = 0, step: String? = nil, kind: String, text: String, tool: String? = nil, status: String? = nil, detail: String? = nil, call: String? = nil, endedAt: Double? = nil, hasDetails: Bool? = nil, agents: [HarnessAgentLine]? = nil) {
         self.seq = seq
         self.at = at
         self.step = step
@@ -63,6 +68,7 @@ public struct HarnessSessionEntry: Codable, Equatable, Sendable, Identifiable {
         self.call = call
         self.endedAt = endedAt
         self.hasDetails = hasDetails
+        self.agents = agents
     }
 
     public var id: Int { seq }
@@ -98,18 +104,231 @@ public struct HarnessSessionDetail: Codable, Equatable, Sendable {
     public var runId: String?
     public var auditId: String?
     public var entry: HarnessSessionEntry
-    /// Les arguments complets d'un outil, une ligne `clé: valeur` par argument.
+    /// Les arguments d'un outil en JSON brut (un serveur 1.10 : une ligne `clé: valeur` par argument).
     public var args: String?
     /// La sortie entière d'un outil (celle qui s'écrit s'il tourne encore), ou le texte entier d'un paragraphe.
     public var output: String?
+    /// Le résultat d'un outil en JSON brut ; absent d'un serveur plus ancien.
+    public var result: String?
+    /// Le rendu lisible de l'outil ; absent d'un serveur plus ancien (l'app montre alors `args` et `output`).
+    public var view: HarnessToolView?
 
-    public init(runId: String? = nil, auditId: String? = nil, entry: HarnessSessionEntry, args: String? = nil, output: String? = nil) {
+    public init(runId: String? = nil, auditId: String? = nil, entry: HarnessSessionEntry, args: String? = nil, output: String? = nil, result: String? = nil, view: HarnessToolView? = nil) {
         self.runId = runId
         self.auditId = auditId
         self.entry = entry
         self.args = args
         self.output = output
+        self.result = result
+        self.view = view
     }
+
+    /// Le serveur a rendu l'outil : le JSON brut se replie sous son rendu.
+    public var hasRendering: Bool { !(view?.blocks.isEmpty ?? true) }
+}
+
+/// Le rendu d'un appel d'outil : son appel en une ligne et ses blocs, dans l'ordre.
+public struct HarnessToolView: Codable, Equatable, Sendable {
+    /// L'appel en une ligne : la commande, le chemin, le motif, les sous-agents…
+    public var headline: String
+    public var blocks: [HarnessToolBlock]
+    /// Les sous-agents d'un appel `task`, en une ligne chacun.
+    public var agents: [HarnessAgentLine]?
+
+    public init(headline: String, blocks: [HarnessToolBlock], agents: [HarnessAgentLine]? = nil) {
+        self.headline = headline
+        self.blocks = blocks
+        self.agents = agents
+    }
+
+    /// L'appel s'affiche en tête du rendu, sauf quand son premier bloc le montre déjà (une commande).
+    public var showsHeadline: Bool { !headline.isEmpty && blocks.first?.role != "command" }
+}
+
+/// Les sortes de blocs d'un rendu.
+public enum HarnessToolBlockKind: String, Sendable {
+    /// Un texte, sous une forme (`format`).
+    case text
+    /// Des paires clé-valeur courtes.
+    case fields
+    /// Une liste.
+    case list
+    /// Les fiches des sous-agents.
+    case agents
+}
+
+/// Les formes d'un bloc de texte.
+public enum HarnessToolTextFormat: String, Sendable {
+    /// De la prose de l'agent, en Markdown.
+    case markdown
+    /// Une sortie, un fichier : en chasse fixe, tel quel.
+    case code
+    /// Des différences : lignes `+` en vert, `-` en rouge.
+    case diff
+    /// Une commande shell.
+    case command
+    /// Du texte simple.
+    case plain
+}
+
+/// Un bloc du rendu : un texte, des champs, une liste ou des fiches de sous-agents.
+/// Son `role` est un code que l'app traduit (`command`, `content`, `changes`…) ; à défaut,
+/// son `title` vient des données (une clé JSON) et s'affiche tel quel.
+public struct HarnessToolBlock: Codable, Equatable, Sendable {
+    public var kind: String
+    public var role: String?
+    public var title: String?
+    public var format: String?
+    public var text: String?
+    public var fields: [HarnessToolField]?
+    public var items: [String]?
+    public var agents: [HarnessAgentView]?
+
+    public init(kind: String, role: String? = nil, title: String? = nil, format: String? = nil, text: String? = nil, fields: [HarnessToolField]? = nil, items: [String]? = nil, agents: [HarnessAgentView]? = nil) {
+        self.kind = kind
+        self.role = role
+        self.title = title
+        self.format = format
+        self.text = text
+        self.fields = fields
+        self.items = items
+        self.agents = agents
+    }
+
+    /// La sorte du bloc ; une sorte inconnue de cette version de l'app est du texte.
+    public var sort: HarnessToolBlockKind { HarnessToolBlockKind(rawValue: kind) ?? .text }
+
+    /// La forme d'un texte ; une forme inconnue est du texte simple.
+    public var textFormat: HarnessToolTextFormat { format.flatMap(HarnessToolTextFormat.init(rawValue:)) ?? .plain }
+
+    /// Le bloc rend une erreur de l'outil.
+    public var isError: Bool { role == "error" }
+
+    /// Le texte tel qu'il s'affiche : une commande précédée de l'invite du shell.
+    public var displayText: String {
+        let text = text ?? ""
+        return textFormat == .command ? "$ \(text)" : text
+    }
+
+    /// Les lignes de différences d'un bloc `diff` : ajouts, retraits, en-têtes de bloc, contexte.
+    public var diffLines: [HarnessDiffLine] {
+        (text ?? "").split(separator: "\n", omittingEmptySubsequences: false).enumerated().map { index, raw in
+            let line = String(raw)
+            return HarnessDiffLine(id: index, kind: Self.diffKind(line), text: line.isEmpty ? " " : line)
+        }
+    }
+
+    static func diffKind(_ line: String) -> HarnessDiffLine.Kind {
+        if line.hasPrefix("@@") || line.hasPrefix("+++") || line.hasPrefix("---") { return .hunk }
+        if line.hasPrefix("+") { return .added }
+        if line.hasPrefix("-") { return .removed }
+        return .context
+    }
+}
+
+/// Une paire clé-valeur d'un bloc de champs.
+public struct HarnessToolField: Codable, Equatable, Sendable {
+    public var key: String
+    public var value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+}
+
+/// L'état d'un sous-agent.
+public enum HarnessAgentStatus: String, Sendable {
+    case pending, running, completed, failed, aborted
+    /// Un état inconnu de cette version de l'app.
+    case unknown
+}
+
+/// Un sous-agent en une ligne : qui il est, où il en est, ce qu'il fait à l'instant.
+public struct HarnessAgentLine: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    /// Son type (`task`, `scout`, `reviewer`…).
+    public var agent: String
+    /// `pending`, `running`, `completed`, `failed` ou `aborted`.
+    public var status: String
+    public var task: String
+    /// Son outil du moment et son intention, ou sa dernière intention.
+    public var activity: String?
+
+    public init(id: String, name: String, agent: String, status: String, task: String, activity: String? = nil) {
+        self.id = id
+        self.name = name
+        self.agent = agent
+        self.status = status
+        self.task = task
+        self.activity = activity
+    }
+
+    /// Son nom, ou son type s'il n'en a pas.
+    public var label: String { name.isEmpty ? agent : name }
+
+    public var state: HarnessAgentStatus { HarnessAgentStatus(rawValue: status) ?? .unknown }
+
+    /// Ce que dit sa ligne sous son nom : ce qu'il fait à l'instant, sinon sa mission.
+    public var summary: String { activity ?? task }
+}
+
+/// Un appel d'outil d'un sous-agent, en une ligne.
+public struct HarnessAgentCall: Codable, Equatable, Sendable {
+    public var tool: String
+    public var text: String
+    public var error: Bool
+
+    public init(tool: String, text: String, error: Bool = false) {
+        self.tool = tool
+        self.text = text
+        self.error = error
+    }
+}
+
+/// La fiche d'un sous-agent : sa mission, ce qu'il fait, ses derniers outils, ce qu'il a rendu.
+public struct HarnessAgentView: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var agent: String
+    public var status: String
+    /// Sa mission, entière (Markdown).
+    public var task: String
+    public var activity: String?
+    /// Ses derniers appels d'outils, du plus ancien au plus récent.
+    public var recent: [HarnessAgentCall]
+    /// Ce qu'il a rendu (Markdown), ou la fin de sa sortie en cours.
+    public var output: String?
+    public var error: String?
+    public var durationMs: Double?
+    public var tokens: Double?
+    public var cost: Double?
+    public var model: String?
+
+    public init(id: String, name: String, agent: String, status: String, task: String, activity: String? = nil, recent: [HarnessAgentCall] = [], output: String? = nil, error: String? = nil, durationMs: Double? = nil, tokens: Double? = nil, cost: Double? = nil, model: String? = nil) {
+        self.id = id
+        self.name = name
+        self.agent = agent
+        self.status = status
+        self.task = task
+        self.activity = activity
+        self.recent = recent
+        self.output = output
+        self.error = error
+        self.durationMs = durationMs
+        self.tokens = tokens
+        self.cost = cost
+        self.model = model
+    }
+
+    /// Son nom, ou son type s'il n'en a pas.
+    public var label: String { name.isEmpty ? agent : name }
+
+    public var state: HarnessAgentStatus { HarnessAgentStatus(rawValue: status) ?? .unknown }
+
+    /// Ce qu'il fait à l'instant, tant qu'il travaille.
+    public var currentActivity: String? { state == .running ? activity : nil }
 }
 
 /// Ce dont on suit le direct : une feature, ou l'analyse d'un audit.

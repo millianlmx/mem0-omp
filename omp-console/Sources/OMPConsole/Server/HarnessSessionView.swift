@@ -9,8 +9,10 @@
 // la dernière entrée à l'écran tant qu'il est coché.
 //
 // Chaque outil montre sa commande (son appel), même quand l'agent a donné son
-// intention ; « Détails » ouvre ses arguments complets et sa sortie entière, relus
-// tant qu'il tourne. Un paragraphe trop long pour le direct s'ouvre en entier.
+// intention, et un appel de sous-agents montre chacun d'eux en une ligne, en direct.
+// « Détails » ouvre le rendu lisible de l'outil (`HarnessToolBlocksView`) — relu tant
+// qu'il tourne —, son JSON brut replié dessous. Un paragraphe trop long pour le direct
+// s'ouvre en entier.
 
 import ConsoleClient
 import ConsoleCore
@@ -280,7 +282,14 @@ struct HarnessSessionEntryRow: View {
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
-                if let detail = entry.detail {
+                if let agents = entry.agents, !agents.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(agents) { agent in
+                            HarnessAgentLineView(agent: agent)
+                        }
+                    }
+                    .padding(.top, 2)
+                } else if let detail = entry.detail {
                     DisclosureGroup(PipelineServerText.sessionResult) {
                         Text(detail)
                             .font(.caption.monospaced())
@@ -303,9 +312,10 @@ struct HarnessSessionEntryRow: View {
     }
 }
 
-/// Le détail d'une entrée du direct : pour un outil, son appel, ses arguments complets
-/// et sa sortie entière — relus à chaque version de l'entrée tant qu'il tourne —, pour
-/// un long paragraphe ou raisonnement, son texte entier.
+/// Le détail d'une entrée du direct : pour un outil, son rendu lisible et son JSON brut
+/// replié — relus à chaque version de l'entrée tant qu'il tourne —, pour un long
+/// paragraphe ou raisonnement, son texte entier. Un serveur sans rendu (1.10) montre
+/// l'appel, les arguments et la sortie.
 struct HarnessSessionDetailSheet: View {
     @ObservedObject var server: HarnessModel
     let target: HarnessSessionTarget
@@ -313,6 +323,7 @@ struct HarnessSessionDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var detail: HarnessSessionDetail?
     @State private var loaded = false
+    @State private var showsRaw = false
 
     var body: some View {
         NavigationStack {
@@ -364,7 +375,33 @@ struct HarnessSessionDetailSheet: View {
     private var content: some View {
         if let detail, let entry {
             header(entry)
-            if entry.isTool {
+            if entry.isTool, detail.hasRendering, let view = detail.view {
+                if view.showsHeadline {
+                    Text(view.headline)
+                        .font(.title3.monospaced())
+                        .textSelection(.enabled)
+                }
+                // L'intention de l'agent, quand elle dit autre chose que l'appel.
+                if entry.distinctCall != nil {
+                    Text(entry.text)
+                        .foregroundStyle(.secondary)
+                }
+                HarnessToolBlocksView(blocks: view.blocks)
+                if detail.args != nil || detail.result != nil {
+                    DisclosureGroup(PipelineServerText.sessionRawJSON, isExpanded: $showsRaw) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let args = detail.args {
+                                section(PipelineServerText.sessionRawArguments) { code(args) }
+                            }
+                            if let result = detail.result {
+                                section(PipelineServerText.sessionRawResult) { code(result) }
+                            }
+                        }
+                        .padding(.top, 6)
+                    }
+                    .accessibilityIdentifier("session.detail.raw")
+                }
+            } else if entry.isTool {
                 if let call = entry.call {
                     section(PipelineServerText.sessionCall) { code(call) }
                 }

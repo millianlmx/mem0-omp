@@ -171,6 +171,76 @@ public enum PipelineServerText {
     public static let sessionNoOutput = L10n.text("Aucune sortie pour l’instant.")
     public static let sessionDetailUnavailable = L10n.text("Détail indisponible : le serveur ne garde plus cette entrée, ou il est trop ancien pour la détailler.")
 
+    // MARK: - Rendu d'un outil
+
+    /// Le dépliant du JSON brut, sous le rendu lisible d'un outil.
+    public static let sessionRawJSON = L10n.text("JSON brut")
+    public static let sessionRawArguments = L10n.text("Arguments (JSON)")
+    public static let sessionRawResult = L10n.text("Résultat (JSON)")
+    public static let sessionAgentsSymbol = "person.2"
+    /// Les rubriques de la fiche d'un sous-agent.
+    public static let sessionAgentTask = L10n.text("Mission")
+    public static let sessionAgentNow = L10n.text("En ce moment")
+    public static let sessionAgentRecent = L10n.text("Derniers outils")
+    public static let sessionAgentOutput = L10n.text("Ce qu’il a rendu")
+
+    /// Le titre d'un bloc du rendu, d'après son rôle serveur ; `nil` pour un rôle inconnu
+    /// de cette version de l'app (le bloc garde alors son titre tiré des données).
+    public static func toolBlockRole(_ role: String) -> String? {
+        switch role {
+        case "command": L10n.text("Commande")
+        case "content": L10n.text("Contenu")
+        case "changes": L10n.text("Modifications")
+        case "output": sessionOutput
+        case "error": L10n.text("Erreur")
+        case "result": sessionResult
+        case "arguments": sessionArguments
+        case "context": L10n.text("Contexte partagé")
+        case "agents": L10n.text("Sous-agents")
+        case "todos": L10n.text("Tâches")
+        default: nil
+        }
+    }
+
+    /// L'état d'un sous-agent.
+    public static func agentStatus(_ raw: String) -> String {
+        switch raw {
+        case "pending": L10n.text("en attente")
+        case "running": L10n.text("en cours")
+        case "completed": L10n.text("terminé")
+        case "failed": L10n.text("en échec")
+        case "aborted": L10n.text("interrompu")
+        default: L10n.text("état inconnu")
+        }
+    }
+
+    /// Le symbole SF de l'état d'un sous-agent.
+    public static func agentStatusSymbol(_ raw: String) -> String {
+        switch raw {
+        case "pending": "clock"
+        case "running": "gearshape"
+        case "completed": "checkmark.circle"
+        case "failed": "xmark.octagon"
+        case "aborted": "stop.circle"
+        default: "questionmark.circle"
+        }
+    }
+
+    /// « scout · en cours » : le type d'un sous-agent et son état.
+    public static func agentHeader(agent: String, status: String) -> String {
+        L10n.format("%@ · %@", agent, agentStatus(status))
+    }
+
+    /// « 3 s · 1 200 jetons · 0,01 $ » : la durée, les jetons et le coût d'un sous-agent ; `nil` s'il n'en dit rien.
+    public static func agentMetrics(durationMs: Double?, tokens: Double?, cost: Double?) -> String? {
+        let parts = [
+            durationMs.map { ConsoleFormat.duration(ms: $0) },
+            tokens.flatMap { $0 > 0 ? MonitoringText.tokens(Int($0)) : nil },
+            cost.flatMap { $0 > 0 ? MonitoringText.cost($0) : nil },
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// La durée d'un outil terminé.
     public static func sessionDuration(ms: Double) -> String { L10n.format("Durée : %@", ConsoleFormat.duration(ms: ms)) }
 

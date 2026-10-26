@@ -11,8 +11,10 @@ import SwiftUI
 // (`IOSHarnessRunRow`) ou d'un audit.
 //
 // Chaque outil montre sa commande (son appel), même quand l'agent a donné son
-// intention ; un toucher ouvre son détail — arguments complets et sortie entière,
-// relus tant qu'il tourne. Un paragraphe trop long pour le direct s'ouvre en entier.
+// intention, et un appel de sous-agents montre chacun d'eux en une ligne, en direct.
+// Un toucher ouvre son détail — son rendu lisible (`IOSToolBlockSections`), relu tant
+// qu'il tourne, et son JSON brut replié dessous. Un paragraphe trop long pour le
+// direct s'ouvre en entier.
 //
 // Le modèle suit un direct à la fois (`HarnessModel.followSession`) : la feuille
 // l'ouvre à son apparition et l'arrête à sa fermeture. Une session finie se rejoue
@@ -316,7 +318,13 @@ struct IOSSessionEntryRow: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
-            if !opens, let detail = entry.detail {
+            if let agents = entry.agents, !agents.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(agents) { agent in
+                        IOSAgentLineView(agent: agent)
+                    }
+                }
+            } else if !opens, let detail = entry.detail {
                 DisclosureGroup(PipelineServerText.sessionResult) {
                     Text(detail)
                         .font(.caption.monospaced())
@@ -342,6 +350,7 @@ struct IOSSessionDetailScreen: View {
     let seq: Int
     @State private var detail: HarnessSessionDetail?
     @State private var loaded = false
+    @State private var showsRaw = false
 
     var body: some View {
         List {
@@ -359,6 +368,39 @@ struct IOSSessionDetailScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+                if entry.isTool, detail.hasRendering, let view = detail.view {
+                    if view.showsHeadline || entry.distinctCall != nil {
+                        Section {
+                            if view.showsHeadline {
+                                code(view.headline)
+                            }
+                            // L'intention de l'agent, quand elle dit autre chose que l'appel.
+                            if entry.distinctCall != nil {
+                                Text(entry.text)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    IOSToolBlockSections(blocks: view.blocks)
+                    if detail.args != nil || detail.result != nil {
+                        Section {
+                            DisclosureGroup(PipelineServerText.sessionRawJSON, isExpanded: $showsRaw) {
+                                if let args = detail.args {
+                                    Text(PipelineServerText.sessionRawArguments)
+                                        .font(.subheadline.weight(.semibold))
+                                    code(args)
+                                }
+                                if let result = detail.result {
+                                    Text(PipelineServerText.sessionRawResult)
+                                        .font(.subheadline.weight(.semibold))
+                                    code(result)
+                                }
+                            }
+                            .accessibilityIdentifier("ios.session.detail.raw")
+                        }
+                    }
+                } else if entry.isTool {
                     if let call = entry.call {
                         Section {
                             code(call)
