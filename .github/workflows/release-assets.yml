@@ -1,8 +1,11 @@
 name: release-assets
 
 # Chaque release publiée reçoit les apps OMP Console : le bundle macOS
-# (OMP-Console-macOS.zip) et l'app iOS (OMP-Console-iOS.ipa, non signée), chacune
-# avec son empreinte .sha256. Les releases sont créées par le job de release avec le
+# (OMP-Console-macOS.zip) et l'app iOS (OMP-Console-iOS.ipa), chacune avec son
+# empreinte .sha256. Quand les secrets de signature existent, l'app Mac est signée
+# Developer ID et notarisée, l'IPA signée ; sans eux (fork, ou secrets pas encore
+# créés), l'app Mac reste signée ad hoc et l'IPA non signée (PUBLISHING.md § Apps
+# jointes aux releases). Les releases sont créées par le job de release avec le
 # jeton dédié (RELEASE_TOKEN) : contrairement à celles du GITHUB_TOKEN, elles
 # déclenchent ce workflow. `workflow_dispatch` rejoint une release déjà publiée
 # (rattrapage, ou un job tombé).
@@ -28,7 +31,9 @@ jobs:
   app:
     name: app (${{ matrix.app }})
     runs-on: macos-latest
-    timeout-minutes: 45
+    # Compilation (cargo, SwiftPM ou xcodebuild) puis, pour l'app Mac signée,
+    # jusqu'à 30 min d'attente de la notarisation.
+    timeout-minutes: 60
     # Seul ce job écrit : `gh release upload` exige contents: write.
     permissions:
       contents: write
@@ -45,8 +50,30 @@ jobs:
         with:
           # Le code du tag, jamais celui de main : l'app jointe est celle de la release.
           ref: refs/tags/${{ env.TAG }}
+      # Les secrets de signature ne vont qu'à cette étape, et chacun au seul job de
+      # son app : le job iOS ne reçoit pas le certificat Mac, ni l'inverse. Absents,
+      # ils valent '' et le script garde le mode non signé.
       - name: Construire l'app
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ matrix.app == 'mac' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ matrix.app == 'mac' && secrets.MACOS_DEVELOPER_ID_P12_PASSWORD || '' }}
+          NOTARY_API_KEY_ID: ${{ matrix.app == 'mac' && secrets.NOTARY_API_KEY_ID || '' }}
+          NOTARY_API_ISSUER_ID: ${{ matrix.app == 'mac' && secrets.NOTARY_API_ISSUER_ID || '' }}
+          NOTARY_API_KEY_P8_BASE64: ${{ matrix.app == 'mac' && secrets.NOTARY_API_KEY_P8_BASE64 || '' }}
+          IOS_SIGNING_P12_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_SIGNING_P12_BASE64 || '' }}
+          IOS_SIGNING_P12_PASSWORD: ${{ matrix.app == 'ios' && secrets.IOS_SIGNING_P12_PASSWORD || '' }}
+          IOS_PROFILE_APP_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_PROFILE_APP_BASE64 || '' }}
+          IOS_PROFILE_WIDGETS_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_PROFILE_WIDGETS_BASE64 || '' }}
+          IOS_TEAM_ID: ${{ matrix.app == 'ios' && secrets.IOS_TEAM_ID || '' }}
+          # Variable de dépôt, pas un secret : ad-hoc (défaut) ou development.
+          IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD }}
         run: bash scripts/release-assets.sh ${{ matrix.app }}
+      # Le trousseau temporaire et les profils installés partent même après un échec
+      # ou une annulation ; le script les retire déjà en sortie, cette étape couvre
+      # l'arrêt brutal.
+      - name: Nettoyer la signature
+        if: always()
+        run: bash scripts/release-assets.sh nettoyer
       # --clobber : un rejeu remplace les fichiers déjà joints au lieu d'échouer.
       - name: Joindre à la release
         env:

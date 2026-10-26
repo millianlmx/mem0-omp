@@ -383,25 +383,117 @@ la release (`gh release upload --clobber`) :
 
 | Fichier | Contenu |
 |---|---|
-| `OMP-Console-macOS.zip` | le bundle `OMP Console.app`, assemblé par `scripts/swift-app.sh --no-tests` (les tests ont tourné sur la PR) |
-| `OMP-Console-iOS.ipa` | l'app iOS en Release pour un appareil, **non signée** |
+| `OMP-Console-macOS.zip` | le bundle `OMP Console.app`, assemblé par `scripts/swift-app.sh --no-tests` (les tests ont tourné sur la PR) ; **signé Developer ID et notarisé** quand les secrets Mac existent, signé ad hoc sinon |
+| `OMP-Console-iOS.ipa` | l'app iOS en Release pour un appareil ; **signée** quand les secrets iOS existent, **non signée** sinon |
 | `<fichier>.sha256` | l'empreinte de chacun (`shasum -a 256 -c`) |
 
-Le dépôt n'a ni certificat ni profil Apple, ce qui a deux conséquences :
+Le mode de chaque app se choisit par la présence de ses secrets : **tous** posés,
+l'app est signée ; **aucun** (un fork, ou des secrets pas encore créés), le job
+garde le mode non signé et le dit par une ligne `⚠` dans son journal ; un jeu
+**partiel** fait échouer le job en nommant les secrets manquants.
+`bash scripts/release-assets.sh --plan mac|ios` affiche, sur tout OS, le mode que
+donneraient les variables d'environnement courantes, sans rien construire.
 
-- **Mac** : le bundle est signé ad hoc. macOS le met en quarantaine au
-  téléchargement : `xattr -dr com.apple.quarantine "OMP Console.app"` avant de
-  l'ouvrir. Siri et Raccourcis n'en exécutent aucun intent (il faut une identité
-  d'équipe, cf. `omp-console/README.md` § « Assembler le bundle `.app` »).
-- **iOS** : l'IPA s'installe après re-signature avec ton compte Apple (Sideloadly,
-  AltStore), ou compile l'app avec Xcode (`omp-console/README.md` § « Installer sur
-  un appareil réel »).
+Les secrets ne sont passés qu'à l'étape de construction, et chacun au seul job de
+son app : le job iOS ne reçoit pas le certificat Mac, ni l'inverse. Le certificat
+est importé dans un trousseau temporaire, au mot de passe aléatoire masqué dans le
+journal ; une étape `if: always()` (`scripts/release-assets.sh nettoyer`) le
+retire avec les profils installés, même après un échec ou une annulation.
 
 Les releases sont créées avec le jeton dédié, et c'est ce qui déclenche le
 workflow : un événement du jeton du dépôt n'en déclencherait aucun. Le
 téléversement, lui, passe par le jeton du run, limité à ce job
 (`contents: write`). Une release déjà publiée se complète à la main :
 **Actions › release-assets › Run workflow**, avec son tag.
+
+### Secrets de l'app Mac
+
+Settings → **Secrets and variables** → **Actions** → **New repository secret**,
+cinq fois :
+
+| Secret | Contenu |
+|---|---|
+| `MACOS_DEVELOPER_ID_P12_BASE64` | le certificat **Developer ID Application** et sa clé privée, exportés en `.p12`, encodés en base64 |
+| `MACOS_DEVELOPER_ID_P12_PASSWORD` | le mot de passe choisi à l'export du `.p12` |
+| `NOTARY_API_KEY_ID` | l'identifiant (10 caractères) d'une clé d'API App Store Connect |
+| `NOTARY_API_ISSUER_ID` | l'« Issuer ID » (un UUID) de ces clés d'API |
+| `NOTARY_API_KEY_P8_BASE64` | le fichier `AuthKey_<id>.p8` de cette clé, encodé en base64 |
+
+- **Le certificat** : developer.apple.com → Certificates, Identifiers & Profiles →
+  Certificates → **+** → *Developer ID Application* (seul le titulaire du compte,
+  rôle *Account Holder*, peut le créer). Une fois installé dans Trousseaux
+  d'accès, clic droit sur le certificat → *Exporter* → format `.p12`, avec un mot
+  de passe ; puis `base64 -i DeveloperID.p12 | pbcopy` et colle le résultat dans
+  le secret. Un certificat *Apple Development* ne se notarise pas : le job le
+  refuse en le disant.
+- **La clé d'API** : App Store Connect → Utilisateurs et accès → **Intégrations**
+  → Clés d'API App Store Connect → Clés d'équipe → **+**, accès **Developer** (le
+  minimum que la notarisation accepte). L'Issuer ID est affiché en tête de la
+  page ; le `.p8` ne se télécharge qu'**une** fois :
+  `base64 -i AuthKey_<id>.p8 | pbcopy`. Une clé d'API plutôt qu'un identifiant Apple et un mot de passe
+  d'app : elle se révoque seule, sans toucher au compte.
+
+Le job importe le certificat, laisse `scripts/swift-app.sh` signer avec lui, puis
+re-signe `mem0-rs` et le bundle avec le runtime renforcé (`--options runtime`) et
+un horodatage Apple (`--timestamp`), sans aucun entitlement (l'app n'est pas
+sandboxée, ne charge aucune bibliothèque d'une autre équipe et n'a pas de JIT).
+Il soumet le bundle à Apple (`xcrun notarytool submit --wait`), agrafe le ticket
+(`xcrun stapler staple`), le vérifie (`xcrun stapler validate`,
+`spctl --assess --type execute`) et joint l'archive du bundle **agrafé**. Un refus d'Apple fait
+échouer le job avec le journal de `notarytool log`, qui nomme chaque fichier
+refusé et la cause.
+
+### Secrets de l'app iOS
+
+| Secret | Contenu |
+|---|---|
+| `IOS_SIGNING_P12_BASE64` | le certificat **Apple Distribution** (méthode ad-hoc) ou **Apple Development** (méthode development) et sa clé privée, en `.p12` encodé en base64 |
+| `IOS_SIGNING_P12_PASSWORD` | le mot de passe de ce `.p12` |
+| `IOS_PROFILE_APP_BASE64` | le profil de provisionnement de `com.omp.console.ios`, encodé en base64 |
+| `IOS_PROFILE_WIDGETS_BASE64` | celui de `com.omp.console.ios.widgets`, l'extension de widgets embarquée dans l'app |
+| `IOS_TEAM_ID` | l'identifiant d'équipe (10 caractères, developer.apple.com → Membership details) |
+
+Et une **variable** de dépôt (onglet *Variables*, pas un secret),
+`IOS_EXPORT_METHOD` : `ad-hoc` (défaut si elle est absente) ou `development`. Elle
+doit correspondre au type du certificat et des deux profils.
+
+- **Le certificat** : comme celui du Mac (Certificates → **+** → *Apple
+  Distribution* ou *Apple Development*, export `.p12`, `base64 -i`).
+- **Les profils** : Identifiers → **+** → App IDs, un pour `com.omp.console.ios`
+  (capacités *App Groups* avec `group.com.omp.console.ios`, et *Push
+  Notifications*) et un pour `com.omp.console.ios.widgets` (*App Groups*) ; puis
+  Devices pour enregistrer les UDID des appareils cibles ; puis Profiles → **+** →
+  *Ad Hoc* (ou *iOS App Development*), un profil par App ID, avec le certificat
+  ci-dessus et les appareils. Télécharge chaque `.mobileprovision` et encode-le :
+  `base64 -i OMP.mobileprovision | pbcopy`.
+
+Aucune équipe n'est écrite dans le projet Xcode : le job passe la signature
+manuelle en réglages de ligne de commande, archive (`xcodebuild archive`), exporte
+(`xcodebuild -exportArchive` avec un `ExportOptions.plist` qui associe chaque
+bundle à son profil) et vérifie la signature de l'IPA produite.
+
+Un profil expire au bout d'un an, un certificat de distribution aussi, un
+certificat Developer ID au bout de cinq : à son renouvellement, remplace le secret
+correspondant, puis rejoue la release (**Actions › release-assets › Run
+workflow**).
+
+### Ce que reçoivent les utilisateurs
+
+- **Mac, notarisée** : l'archive se décompresse et l'app s'ouvre au double-clic,
+  sans avertissement de Gatekeeper ni manipulation, même hors ligne (le ticket
+  est agrafé). Signée par une identité d'équipe, elle satisfait aussi Siri et
+  Raccourcis.
+- **Mac, ad hoc** (sans secrets) : macOS la met en quarantaine au
+  téléchargement : `xattr -dr com.apple.quarantine "OMP Console.app"` avant de
+  l'ouvrir. Siri et Raccourcis n'en exécutent aucun intent (il faut une identité
+  d'équipe, cf. `omp-console/README.md` § « Assembler le bundle `.app` »).
+- **iOS, signée** : l'IPA s'installe directement sur les appareils inscrits dans
+  les profils (Finder ou Apple Configurator, glisser l'IPA sur l'appareil ; ou
+  `xcrun devicectl device install app`). Un appareil absent du profil la refuse :
+  ajoute son UDID, régénère les profils et remplace les secrets.
+- **iOS, non signée** (sans secrets) : l'IPA s'installe après re-signature avec ton
+  compte Apple (Sideloadly, AltStore), ou compile l'app avec Xcode
+  (`omp-console/README.md` § « Installer sur un appareil réel »).
 
 ## Simulation de release
 
