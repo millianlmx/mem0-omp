@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.10.0 — 2026-10-26
+
+- feat(harness,console): détail d'une session en cours — commandes, arguments et sorties complets (#296) (b37d70c)
+
 ## omp-harness 1.9.0 — 2026-10-25
 
 - feat(harness,console): l'Accueil devient un tableau de bord — KPIs et graphiques (#293) (c8a0683)
