@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-mem0-memory 4.3.0 — 2026-10-26
+
+- feat(memory,stack,harness): mémoire liée et rêve de la mémoire, inspirés de Hindsight (#299) (be59fa3)
+
+## omp-harness 1.12.0 — 2026-10-26
+
+- feat(memory,stack,harness): mémoire liée et rêve de la mémoire, inspirés de Hindsight (#299) (be59fa3)
+
 ## omp-harness 1.11.0 — 2026-10-26
 
 - feat(harness,console): une session OMP se lit comme dans OMP — rendu des outils, sous-agents en direct, JSON brut replié (#298) (af14c18)
