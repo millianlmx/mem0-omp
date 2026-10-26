@@ -293,9 +293,7 @@ pub async fn rever_portee(
         let mut conn = verrou()?;
         let ids = liens::a_reindexer(&conn, Some(portee), REINDEXATION_MAX).map_err(base)?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(base)?;
-        for id in &ids {
-            liens::indexer(&tx, id, &debut.iso).map_err(base)?;
-        }
+        liens::indexer_lot(&tx, &ids.iter().map(String::as_str).collect::<Vec<_>>(), &debut.iso).map_err(base)?;
         tx.commit().map_err(base)?;
         rapport.reindexed = ids.len();
     }
