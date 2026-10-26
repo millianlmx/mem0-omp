@@ -161,6 +161,18 @@ public enum PipelineServerText {
     public static let sessionResult = L10n.text("Résultat")
     public static let sessionFollowEnd = L10n.text("Suivre la fin")
     public static let sessionFollowEndSymbol = "arrow.down.to.line"
+    /// Le geste qui ouvre le détail d'une entrée : arguments et sortie complets d'un outil, texte entier.
+    public static let sessionDetails = L10n.text("Détails")
+    public static let sessionDetailsSymbol = "doc.text.magnifyingglass"
+    public static let sessionCall = L10n.text("Appel")
+    public static let sessionArguments = L10n.text("Arguments")
+    public static let sessionOutput = L10n.text("Sortie")
+    public static let sessionFullText = L10n.text("Texte entier")
+    public static let sessionNoOutput = L10n.text("Aucune sortie pour l’instant.")
+    public static let sessionDetailUnavailable = L10n.text("Détail indisponible : le serveur ne garde plus cette entrée, ou il est trop ancien pour la détailler.")
+
+    /// La durée d'un outil terminé.
+    public static func sessionDuration(ms: Double) -> String { L10n.format("Durée : %@", ConsoleFormat.duration(ms: ms)) }
 
     /// L'outil que l'agent emploie à l'instant.
     public static func sessionNow(_ tool: String) -> String { L10n.format("En cours : %@", tool) }

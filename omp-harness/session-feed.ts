@@ -17,6 +17,12 @@
 // (`audit:<id>`). Les SESSION_RUNS derniers propriétaires gardent en mémoire leur état
 // en cours (paragraphe qui s'écrit, outils lancés, dernière trame).
 //
+// Le DÉTAIL d'une entrée se lit à part (`GET /v1/runs/{id}/session/{seq}`) : pour un
+// outil, ses arguments complets et sa sortie entière — en cours d'écriture pour une
+// commande qui tourne (`tool_execution_update`) —, pour un paragraphe trop long pour
+// l'entrée, son texte entier. Il ne part jamais dans le flux : une entrée le signale
+// par `hasDetails`, l'app le lit quand on l'ouvre.
+//
 // Tout texte est borné et passe par `redact` : une commande ou une sortie d'outil
 // peut contenir une clé, et le direct est lisible par tout client du dépôt.
 
@@ -35,8 +41,20 @@ export type SessionEntry = {
   text: string;
   tool: string | null;
   status: SessionEntryStatus | null;
-  /** La fin du résultat d'un outil terminé. */
+  /** La fin du résultat d'un outil terminé (ou de sa sortie en cours d'écriture). */
   detail: string | null;
+  /** L'appel d'un outil en une ligne (sa commande, son chemin…), même quand `text` porte son intention. */
+  call: string | null;
+  /** L'instant où l'outil s'est terminé. */
+  endedAt: number | null;
+  /** Le détail de l'entrée se lit à part : arguments et sortie complets, ou texte entier. */
+  hasDetails: boolean;
+};
+
+/** Le détail d'une entrée : les arguments complets d'un outil et sa sortie entière, ou le texte entier d'un paragraphe. */
+export type SessionDetails = {
+  args: string | null;
+  output: string | null;
 };
 
 /** Les entrées gardées par run. */
@@ -49,6 +67,12 @@ export const SESSION_TEXT_MAX = 4000;
 export const SESSION_DETAIL_MAX = 600;
 /** L'intervalle minimal entre deux envois d'un même paragraphe qui s'allonge. */
 export const SESSION_THROTTLE_MS = 500;
+/** La longueur maximale des arguments complets d'un outil (le début et la fin sont gardés). */
+export const SESSION_ARGS_MAX = 32_000;
+/** La longueur maximale de la sortie entière d'un outil ou du texte entier d'un paragraphe (début et fin gardés). */
+export const SESSION_OUTPUT_MAX = 64_000;
+/** Les détails gardés en mémoire par run quand le service n'a pas de base (la base les garde tous). */
+export const SESSION_DETAILS_KEEP = 64;
 /** La durée pendant laquelle les secrets connus sont gardés avant d'être relus. */
 const SECRETS_TTL_MS = 30_000;
 
@@ -126,6 +150,22 @@ function argsLine(args: unknown): string {
   return json === "{}" ? "" : json;
 }
 
+/**
+ * Les arguments complets d'un outil, lisibles : une ligne `clé: valeur` par argument,
+ * une valeur sur plusieurs lignes (un fichier écrit, un remplacement) sous sa clé,
+ * telle quelle ; le reste en JSON. `null` sans arguments.
+ */
+export function argsText(args: unknown): string | null {
+  const object = record(args);
+  if (!object) return args === undefined || args === null ? null : JSON.stringify(args, null, 2);
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(object)) {
+    if (typeof value === "string") lines.push(value.includes("\n") ? `${key}:\n${value}` : `${key}: ${value}`);
+    else lines.push(`${key}: ${JSON.stringify(value, null, 2)}`);
+  }
+  return lines.length === 0 ? null : lines.join("\n");
+}
+
 /** Le texte d'un résultat d'outil (`{ content: [{ type: "text", text }] }`, ou une chaîne). */
 function resultText(result: unknown): string {
   if (typeof result === "string") return result;
@@ -142,6 +182,13 @@ function resultText(result: unknown): string {
 
 type Paragraph = { entry: SessionEntry; sentAt: number; sent: string };
 
+/**
+ * Un outil lancé : son entrée, ses arguments complets et sa sortie en cours d'écriture,
+ * BRUTE (bornée et masquée à la lecture seulement : une commande bavarde envoie des
+ * dizaines de trames par seconde).
+ */
+type RunningTool = { entry: SessionEntry; args: string | null; partial: string | null; sentAt: number };
+
 type Feed = {
   seq: number;
   entries: SessionEntry[];
@@ -149,7 +196,9 @@ type Feed = {
   text: Paragraph | null;
   thinking: Paragraph | null;
   /** Les outils lancés et pas encore terminés, par `toolCallId`. */
-  tools: Map<string, SessionEntry>;
+  tools: Map<string, RunningTool>;
+  /** Les détails des dernières entrées, par `seq` (sans base seulement). */
+  details: Map<number, SessionDetails>;
   /** La dernière trame utile du runner (la veille des sessions muettes). */
   lastAt: number;
 };
@@ -172,6 +221,10 @@ export type SessionStore = {
   /** Les `limit` entrées qui précèdent `before` (toutes si `null`), de la plus ancienne à la plus récente. */
   sessionEntries(owner: string, before: number | null, limit: number): SessionEntry[];
   lastSessionSeq(owner: string): number;
+  /** Le détail d'une entrée déjà écrite (ses champs `null` ne remplacent rien). */
+  putSessionDetails(owner: string, seq: number, details: SessionDetails): void;
+  /** Une entrée et son détail ; `null` si elle n'existe pas. */
+  sessionEntry(owner: string, seq: number): { entry: SessionEntry; details: SessionDetails } | null;
 };
 
 export type SessionFeedOptions = {
@@ -252,12 +305,39 @@ export class SessionFeeds {
     return { entries: entries.map((entry) => ({ ...(fresh.get(entry.seq) ?? entry) })), more };
   }
 
+  /**
+   * Une entrée et son détail : arguments complets et sortie entière d'un outil (celle
+   * qui s'écrit pour un outil en cours), texte entier d'un paragraphe ; `null` si
+   * l'entrée est inconnue (ou trop ancienne pour un service sans base).
+   */
+  details(owner: string, seq: number): { entry: SessionEntry; details: SessionDetails } | null {
+    const feed = this.#feeds.get(owner);
+    const running = feed ? [...feed.tools.values()].find((tool) => tool.entry.seq === seq) : undefined;
+    if (running)
+      return {
+        entry: { ...running.entry },
+        details: { args: running.args, output: this.#bounded(running.partial, SESSION_OUTPUT_MAX) },
+      };
+    const fresh = feed?.entries.find((entry) => entry.seq === seq);
+    if (this.#store) {
+      let stored: { entry: SessionEntry; details: SessionDetails } | null = null;
+      try {
+        stored = this.#store.sessionEntry(owner, seq);
+      } catch {
+        stored = null;
+      }
+      if (stored) return { entry: { ...(fresh ?? stored.entry) }, details: stored.details };
+    }
+    if (!fresh) return null;
+    return { entry: { ...fresh }, details: feed?.details.get(seq) ?? { args: null, output: null } };
+  }
+
   /** La dernière trame utile d'un propriétaire et l'outil en cours, s'il en a un ; `null` s'il n'a rien dit. */
   activity(owner: string): { at: number; tool: string | null } | null {
     const feed = this.#feeds.get(owner);
     if (!feed) return null;
     const running = [...feed.tools.values()].at(-1);
-    return { at: feed.lastAt, tool: running ? (running.tool ?? "") : null };
+    return { at: feed.lastAt, tool: running ? (running.entry.tool ?? "") : null };
   }
 
   /** Une trame RPC du runner de `owner`, à l'étape `step` ; les trames sans intérêt pour le direct sont ignorées. */
@@ -295,25 +375,53 @@ export class SessionFeeds {
       const feed = this.#feed(owner);
       this.#settle(owner, feed);
       const intent = typeof frame.intent === "string" && frame.intent.trim() !== "" ? frame.intent : null;
+      const call = head(this.#clean(argsLine(frame.args)), 240);
+      const args = this.#bounded(argsText(frame.args), SESSION_ARGS_MAX);
       const entry = this.#add(owner, step, "tool", {
-        text: head(this.#clean(intent ?? argsLine(frame.args)), 240),
+        text: intent !== null ? head(this.#clean(intent), 240) : call,
         tool: typeof frame.toolName === "string" ? frame.toolName : null,
         status: "running",
+        call: call === "" ? null : call,
+        hasDetails: true,
       });
+      this.#keepDetails(owner, feed, entry.seq, { args, output: null });
       const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
-      if (id !== null) feed.tools.set(id, entry);
+      if (id !== null) feed.tools.set(id, { entry, args, partial: null, sentAt: this.#now() });
+      return;
+    }
+    if (type === "tool_execution_update") {
+      // La sortie d'un outil qui tourne (une commande longue) : sa fin dans l'entrée, au plus une fois par intervalle.
+      const feed = this.#feeds.get(owner);
+      const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
+      const running = id !== null ? feed?.tools.get(id) : undefined;
+      if (!feed || !running) return;
+      feed.lastAt = this.#now();
+      const output = resultText(frame.partialResult);
+      if (output.trim() === "") return;
+      running.partial = output;
+      const now = this.#now();
+      if (now - running.sentAt < SESSION_THROTTLE_MS) return;
+      running.sentAt = now;
+      running.entry.detail = this.#tailOf(output);
+      this.#emit(owner, running.entry);
       return;
     }
     if (type === "tool_execution_end") {
       const feed = this.#feeds.get(owner);
       const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
-      const entry = id !== null ? feed?.tools.get(id) : undefined;
-      if (!feed || !entry || id === null) return;
+      const running = id !== null ? feed?.tools.get(id) : undefined;
+      if (!feed || !running || id === null) return;
+      const { entry } = running;
       feed.lastAt = this.#now();
       feed.tools.delete(id);
       entry.status = frame.isError === true ? "error" : "ok";
-      const detail = this.#clean(tail(resultText(frame.result), SESSION_DETAIL_MAX + 256)).trim();
-      entry.detail = detail === "" ? null : tail(detail, SESSION_DETAIL_MAX);
+      entry.endedAt = this.#now();
+      const output = resultText(frame.result);
+      entry.detail = this.#tailOf(output);
+      this.#keepDetails(owner, feed, entry.seq, {
+        args: running.args,
+        output: this.#bounded(output, SESSION_OUTPUT_MAX),
+      });
       this.#emit(owner, entry);
       return;
     }
@@ -337,6 +445,21 @@ export class SessionFeeds {
     if (thinking !== null && thinking.trim() !== "")
       feed.thinking = this.#write(owner, step, feed.thinking, "thinking", thinking, final);
     if (text !== null && text.trim() !== "") feed.text = this.#write(owner, step, feed.text, "text", text, final);
+    // Un paragraphe plus long que son entrée : son texte entier part dans son détail, à la fin du message.
+    if (final) {
+      for (const [paragraph, raw] of [
+        [feed.thinking, parts?.thinking ?? null],
+        [feed.text, parts?.text ?? null],
+      ] as const) {
+        if (!paragraph || raw === null || raw.length <= SESSION_TEXT_MAX) continue;
+        paragraph.entry.hasDetails = true;
+        this.#keepDetails(owner, feed, paragraph.entry.seq, {
+          args: null,
+          output: this.#bounded(raw, SESSION_OUTPUT_MAX),
+        });
+        this.#emit(owner, paragraph.entry);
+      }
+    }
   }
 
   /** Écrit le texte d'un paragraphe (créé au premier mot) et le pousse si l'envoi est dû. */
@@ -379,7 +502,13 @@ export class SessionFeeds {
     owner: string,
     step: string | null,
     kind: SessionEntryKind,
-    fields: { text: string; tool?: string | null; status?: SessionEntryStatus | null },
+    fields: {
+      text: string;
+      tool?: string | null;
+      status?: SessionEntryStatus | null;
+      call?: string | null;
+      hasDetails?: boolean;
+    },
   ): SessionEntry {
     const feed = this.#feed(owner);
     feed.lastAt = this.#now();
@@ -392,6 +521,9 @@ export class SessionFeeds {
       tool: fields.tool ?? null,
       status: fields.status ?? null,
       detail: null,
+      call: fields.call ?? null,
+      endedAt: null,
+      hasDetails: fields.hasDetails ?? false,
     };
     feed.entries.push(entry);
     if (feed.entries.length > SESSION_KEEP) feed.entries.splice(0, feed.entries.length - SESSION_KEEP);
@@ -421,7 +553,15 @@ export class SessionFeeds {
     } catch {
       seq = 0;
     }
-    feed = { seq, entries: [], text: null, thinking: null, tools: new Map(), lastAt: this.#now() };
+    feed = {
+      seq,
+      entries: [],
+      text: null,
+      thinking: null,
+      tools: new Map(),
+      details: new Map(),
+      lastAt: this.#now(),
+    };
     this.#feeds.set(owner, feed);
     while (this.#feeds.size > SESSION_RUNS) {
       const oldest = this.#feeds.keys().next().value;
@@ -429,6 +569,48 @@ export class SessionFeeds {
       this.#feeds.delete(oldest);
     }
     return feed;
+  }
+
+  /**
+   * Le détail d'une entrée déjà écrite : en base (qui le garde avec l'entrée), sinon en
+   * mémoire, pour les SESSION_DETAILS_KEEP dernières entrées.
+   */
+  #keepDetails(owner: string, feed: Feed, seq: number, details: SessionDetails): void {
+    if (this.#store) {
+      try {
+        this.#store.putSessionDetails(owner, seq, details);
+      } catch {
+        /* une base occupée : le détail manque, l'entrée reste */
+      }
+      return;
+    }
+    feed.details.delete(seq);
+    feed.details.set(seq, details);
+    while (feed.details.size > SESSION_DETAILS_KEEP) {
+      const oldest = feed.details.keys().next().value;
+      if (oldest === undefined) break;
+      feed.details.delete(oldest);
+    }
+  }
+
+  /** La fin d'une sortie d'outil pour l'entrée compacte, masquée ; `null` si elle est vide. */
+  #tailOf(output: string): string | null {
+    const detail = this.#clean(tail(output, SESSION_DETAIL_MAX + 256)).trim();
+    return detail === "" ? null : tail(detail, SESSION_DETAIL_MAX);
+  }
+
+  /**
+   * Un texte complet, masqué et borné à `max` : au-delà, son début et sa fin, le milieu
+   * remplacé par une ligne qui dit combien manque. Chaque bout est masqué avec une
+   * marge : un secret à cheval sur la coupe tombe hors du texte gardé.
+   */
+  #bounded(text: string | null, max: number): string | null {
+    if (text === null || text.trim() === "") return null;
+    if (text.length <= max) return this.#clean(text);
+    const half = Math.floor(max / 2);
+    const start = this.#clean(text.slice(0, half + 256)).slice(0, half);
+    const end = this.#clean(text.slice(text.length - half - 256));
+    return `${start}\n… ${text.length - 2 * half} caractères omis …\n${end.slice(end.length - half)}`;
   }
 
   #clean(text: string): string {
