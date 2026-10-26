@@ -138,48 +138,149 @@ fn lire_souvenir(conn: &Connection, id: &str) -> rusqlite::Result<Option<Ligne>>
     .optional()
 }
 
+/// (rowid, id, vecteur) des souvenirs d'une portée.
+type Vecteurs = Vec<(i64, String, Vec<f32>)>;
+
+/// Les vecteurs (normalisés L2, float32) des souvenirs de la portée
+/// `user_id`/`agent_id` : (rowid, id, vecteur), dans l'ordre des rowid.
+///
+/// Un SEUL parcours de `memory_vec`, filtré en mémoire par les rowid de la portée :
+/// lire `memory_vec` par rowid (une jointure, ou une sous-requête `WHERE rowid = ?`)
+/// la parcourt à chaque lecture, et l'indexation devenait cubique — mesuré : 0.3 s
+/// pour migrer 200 souvenirs, 459 s pour 1 000.
+fn vecteurs_portee(conn: &Connection, user_id: &str, agent_id: Option<&str>) -> rusqlite::Result<Vecteurs> {
+    let ids: HashMap<i64, String> = conn
+        .prepare_cached("SELECT rowid, id FROM memories WHERE user_id = ?1 AND agent_id IS ?2")?
+        .query_map(params![user_id, agent_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut vecteurs = Vec::with_capacity(ids.len());
+    let mut st = conn.prepare_cached("SELECT rowid, embedding FROM memory_vec")?;
+    let mut lignes = st.query([])?;
+    while let Some(r) = lignes.next()? {
+        let rowid: i64 = r.get(0)?;
+        let Some(id) = ids.get(&rowid) else { continue };
+        let blob: Vec<u8> = r.get(1)?;
+        let vecteur = blob.as_chunks::<4>().0.iter().map(|o| f32::from_le_bytes(*o)).collect();
+        vecteurs.push((rowid, id.clone(), vecteur));
+    }
+    vecteurs.sort_by_key(|(rowid, _, _)| *rowid);
+    Ok(vecteurs)
+}
+
+/// Produit scalaire de deux vecteurs normalisés (le cosinus de Qdrant et de
+/// `vec_distance_cosine`), accumulé en float64 ; 0 si les dimensions diffèrent.
+fn cosinus(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let c: f64 = a.iter().zip(b).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
+    if c.is_finite() { c } else { 0.0 }
+}
+
 /// Recalcule les entités et les voisins sémantiques du souvenir `id`, puis note
 /// son hash dans `indexes`. Les liens typés et les preuves ne bougent pas.
 /// Rien si le souvenir n'existe pas.
 pub fn indexer(conn: &Connection, id: &str, instant_iso: &str) -> rusqlite::Result<()> {
-    let Some((rowid, texte, hash, user_id, agent_id)) = lire_souvenir(conn, id)? else {
-        return Ok(());
+    indexer_lot(conn, &[id], instant_iso)
+}
+
+/// Voisins candidats que la recherche KNN de sqlite-vec rend pour UNE écriture,
+/// toutes portées confondues (le filtre de portée vient après) : large, pour qu'une
+/// autre portée ne masque pas les voisins de celle du souvenir.
+const VOISINS_KNN: usize = 512;
+
+/// Lot à partir duquel [`indexer_lot`] lit une fois tous les vecteurs de la
+/// portée plutôt que de lancer une recherche KNN par souvenir.
+const LOT_PARCOURS: usize = 16;
+
+/// Les voisins de cosinus ≥ [`SEUIL_SEMANTIQUE`] du souvenir `rowid` dans sa portée,
+/// par la recherche KNN de `vec0` (mesuré : 10 ms pour 3 000 souvenirs, contre
+/// 0,4 ms PAR LIGNE pour une lecture par rowid).
+fn voisins_knn(
+    conn: &Connection,
+    rowid: i64,
+    user_id: &str,
+    agent_id: Option<&str>,
+) -> rusqlite::Result<Vec<(String, f64)>> {
+    let moi: Option<Vec<u8>> =
+        conn.query_row("SELECT embedding FROM memory_vec WHERE rowid = ?1", [rowid], |r| r.get(0)).optional()?;
+    let Some(moi) = moi else {
+        return Ok(Vec::new());
     };
-    conn.execute("DELETE FROM souvenir_entites WHERE memory_id = ?1", [id])?;
-    for e in entites::extraire(&texte) {
-        conn.execute(
-            "INSERT INTO entites (cle, forme, genre) VALUES (?1, ?2, ?3) ON CONFLICT (cle) DO NOTHING",
-            params![e.cle, e.forme, e.genre.nom()],
-        )?;
-        conn.execute(
-            "INSERT OR IGNORE INTO souvenir_entites (memory_id, entite) SELECT ?1, id FROM entites WHERE cle = ?2",
-            params![id, e.cle],
-        )?;
-    }
-    conn.execute("DELETE FROM liens WHERE type = ?1 AND (source = ?2 OR cible = ?2)", params![SEMANTIQUE, id])?;
-    let mut voisins: Vec<(String, f64)> = conn
-        .prepare_cached(
-            "SELECT m.id, 1.0 - vec_distance_cosine(v.embedding, (SELECT embedding FROM memory_vec WHERE rowid = ?1))
-             FROM memories m JOIN memory_vec v ON v.rowid = m.rowid
-             WHERE m.user_id = ?2 AND m.agent_id IS ?3 AND m.rowid != ?1",
-        )?
-        .query_map(params![rowid, user_id, agent_id], |r| {
-            let cos: Option<f64> = r.get(1)?;
-            Ok((r.get(0)?, cos.filter(|c| c.is_finite()).unwrap_or(0.0)))
-        })?
+    let candidats: Vec<(i64, f64)> = conn
+        .prepare_cached("SELECT rowid, distance FROM memory_vec WHERE embedding MATCH ?1 AND k = ?2")?
+        .query_map(params![moi, VOISINS_KNN as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    voisins.retain(|(_, c)| *c >= SEUIL_SEMANTIQUE);
-    voisins.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    voisins.truncate(VOISINS_MAX);
-    for (autre, cos) in voisins {
-        let (a, b) = if id < autre.as_str() { (id, autre.as_str()) } else { (autre.as_str(), id) };
-        conn.execute(
-            "INSERT OR REPLACE INTO liens (source, cible, type, poids, origine, raison, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'calcul', NULL, ?5)",
-            params![a, b, SEMANTIQUE, cos, instant_iso],
-        )?;
+    let mut dans_portee =
+        conn.prepare_cached("SELECT id FROM memories WHERE rowid = ?1 AND user_id = ?2 AND agent_id IS ?3")?;
+    let mut voisins = Vec::new();
+    for (autre, distance) in candidats {
+        let cos = 1.0 - distance;
+        if autre == rowid || !cos.is_finite() || cos < SEUIL_SEMANTIQUE {
+            continue;
+        }
+        if let Some(id) = dans_portee.query_row(params![autre, user_id, agent_id], |r| r.get(0)).optional()? {
+            voisins.push((id, cos));
+        }
     }
-    conn.execute("INSERT OR REPLACE INTO indexes (memory_id, hash) VALUES (?1, ?2)", params![id, hash])?;
+    Ok(voisins)
+}
+
+/// [`indexer`] pour plusieurs souvenirs (migration, import, rêve). À partir de
+/// [`LOT_PARCOURS`] souvenirs, les vecteurs d'une portée sont lus une fois pour tout
+/// le lot ; en deçà, chaque souvenir passe par la recherche KNN. Un id inconnu est
+/// ignoré.
+pub fn indexer_lot(conn: &Connection, ids: &[&str], instant_iso: &str) -> rusqlite::Result<()> {
+    let parcours = ids.len() >= LOT_PARCOURS;
+    let mut portees: HashMap<(String, Option<String>), Vecteurs> = HashMap::new();
+    for &id in ids {
+        let Some((rowid, texte, hash, user_id, agent_id)) = lire_souvenir(conn, id)? else {
+            continue;
+        };
+        conn.execute("DELETE FROM souvenir_entites WHERE memory_id = ?1", [id])?;
+        for e in entites::extraire(&texte) {
+            conn.execute(
+                "INSERT INTO entites (cle, forme, genre) VALUES (?1, ?2, ?3) ON CONFLICT (cle) DO NOTHING",
+                params![e.cle, e.forme, e.genre.nom()],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO souvenir_entites (memory_id, entite) SELECT ?1, id FROM entites WHERE cle = ?2",
+                params![id, e.cle],
+            )?;
+        }
+        conn.execute("DELETE FROM liens WHERE type = ?1 AND (source = ?2 OR cible = ?2)", params![SEMANTIQUE, id])?;
+        let mut voisins: Vec<(String, f64)> = if parcours {
+            let cle = (user_id, agent_id);
+            if !portees.contains_key(&cle) {
+                let vecteurs = vecteurs_portee(conn, &cle.0, cle.1.as_deref())?;
+                portees.insert(cle.clone(), vecteurs);
+            }
+            let portee = &portees[&cle];
+            match portee.iter().find(|(r, _, _)| *r == rowid) {
+                Some((_, _, moi)) => portee
+                    .iter()
+                    .filter(|(r, _, _)| *r != rowid)
+                    .map(|(_, autre, v)| (autre.clone(), cosinus(moi, v)))
+                    .filter(|(_, c)| *c >= SEUIL_SEMANTIQUE)
+                    .collect(),
+                None => Vec::new(),
+            }
+        } else {
+            voisins_knn(conn, rowid, &user_id, agent_id.as_deref())?
+        };
+        voisins.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        voisins.truncate(VOISINS_MAX);
+        for (autre, cos) in voisins {
+            let autre = autre.as_str();
+            let (a, b) = if id < autre { (id, autre) } else { (autre, id) };
+            conn.execute(
+                "INSERT OR REPLACE INTO liens (source, cible, type, poids, origine, raison, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'calcul', NULL, ?5)",
+                params![a, b, SEMANTIQUE, cos, instant_iso],
+            )?;
+        }
+        conn.execute("INSERT OR REPLACE INTO indexes (memory_id, hash) VALUES (?1, ?2)", params![id, hash])?;
+    }
     Ok(())
 }
 

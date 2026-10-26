@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { repoDefaults } from "../../omp-harness/config.ts";
 import { defaultConfig } from "../../omp-harness/config.ts";
 import { Scheduler } from "../../omp-harness/scheduler.ts";
+import { Store } from "../../omp-harness/db.ts";
 import type { Slot } from "../../omp-harness/scheduler.ts";
 import { OK, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
@@ -188,4 +189,21 @@ test("harness-fairness/AC-6 : un dépôt ajouté à chaud (SIGHUP) sert tout de 
   } finally {
     await world.orchestrator.stop();
   }
+});
+
+test("harness-fairness/AC-7 : des runs créés à la même milliseconde gardent leur ordre de création, quel que soit leur id", () => {
+  const store = new Store(":memory:", () => 1_700_000_000_000);
+  // Des ids qui trient à l'envers de la création : seul l'ordre d'insertion départage.
+  const ids = ["rz", "rm", "ra"];
+  for (const id of ids) {
+    store.createRun({ id, repo: "demo", slug: id, title: id, request: id, branch: `b/${id}` });
+  }
+  assert.deepEqual(
+    store.listRunsDue(Date.now()).map((run) => run.id),
+    ids,
+  );
+  assert.deepEqual(
+    store.listRuns({ state: ["queued"] }).map((run) => run.id),
+    ids,
+  );
 });

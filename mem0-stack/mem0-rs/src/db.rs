@@ -217,9 +217,7 @@ fn migrer(conn: &mut Connection) -> rusqlite::Result<()> {
     let instant = horodatage::maintenant();
     let ids: Vec<String> =
         tx.prepare("SELECT id FROM memories ORDER BY updated_at_us, id")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-    for id in &ids {
-        liens::indexer(&tx, id, &instant.iso)?;
-    }
+    liens::indexer_lot(&tx, &ids.iter().map(String::as_str).collect::<Vec<_>>(), &instant.iso)?;
     tx.execute("UPDATE meta SET valeur = ?1 WHERE cle = 'schema_version'", [SCHEMA_VERSION])?;
     tx.execute(
         "INSERT OR REPLACE INTO meta (cle, valeur) VALUES ('rappels_depuis_us', ?1)",
@@ -926,9 +924,8 @@ pub fn importer<'a>(
         inserer_importe(&tx, s)?;
     }
     let instant = horodatage::maintenant();
-    for s in &ecritures.souvenirs {
-        liens::indexer(&tx, &s.id, &instant.iso)?;
-    }
+    let importes: Vec<&str> = ecritures.souvenirs.iter().map(|s| s.id.as_str()).collect();
+    liens::indexer_lot(&tx, &importes, &instant.iso)?;
     for r in &ecritures.revisions {
         tx.execute(
             "INSERT INTO history (id, memory_id, old_memory, new_memory, event, created_at, updated_at, is_deleted, actor_id, role)
@@ -1257,6 +1254,49 @@ mod tests {
         assert_eq!(liens.len(), 1);
         assert_eq!((liens[0].source.as_str(), liens[0].target.as_str(), liens[0].type_.as_str()), ("a", "b", "semantique"));
         assert!(crate::liens::a_reindexer(&conn, None, 10).unwrap().is_empty());
+    }
+
+    /// memoire-liee : la migration v3 → v4 d'une base de 1 500 souvenirs d'une même
+    /// portée tient en quelques secondes. Régression : les voisins se lisaient par une
+    /// jointure sur `memory_vec` qui la parcourt à chaque ligne — 459 s pour 1 000
+    /// souvenirs, et une app qui attend `/health` 30 s au plus.
+    #[test]
+    fn migration_v3_vers_v4_en_temps_borne() {
+        let base = Temp::new();
+        let n = 1500;
+        {
+            let mut conn = ouvrir(&base.0, 8).unwrap();
+            let tx = conn.transaction().unwrap();
+            let i = instant(0);
+            for k in 0..n {
+                let id = format!("s{k:04}");
+                // Vecteurs distincts, quelques-uns voisins (cosinus élevé avec le suivant).
+                let v: Vec<f32> = (0..8).map(|d| ((k * 7 + d * 13) % 17) as f32 + if d == k % 8 { 5.0 } else { 0.0 }).collect();
+                let s = NouveauSouvenir {
+                    id: &id,
+                    memory: "le bug de recall.ts",
+                    hash: &id,
+                    user_id: "moi",
+                    agent_id: Some("p"),
+                    run_id: None,
+                    role: Some("user"),
+                    attributed_to: None,
+                    tags: None,
+                    instant: &i,
+                };
+                inserer(&tx, &s, &v, &termes(s.memory).unwrap()).unwrap();
+            }
+            tx.execute_batch("DROP TABLE indexes; UPDATE meta SET valeur = '3' WHERE cle = 'schema_version';").unwrap();
+            tx.commit().unwrap();
+        }
+        let debut = std::time::Instant::now();
+        let conn = ouvrir(&base.0, 8).unwrap();
+        let duree = debut.elapsed();
+        assert!(duree < std::time::Duration::from_secs(15), "migration de {n} souvenirs : {duree:?}");
+        assert!(crate::liens::a_reindexer(&conn, None, 1).unwrap().is_empty());
+        let liens: i64 = conn.query_row("SELECT count(*) FROM liens WHERE type = 'semantique'", [], |r| r.get(0)).unwrap();
+        assert!(liens > 0, "des voisins sémantiques sont posés");
+        eprintln!("migration de {n} souvenirs : {duree:?}, {liens} liens sémantiques");
     }
 
     /// memoire-liee : supprimer un souvenir retire ses liens et ses entités.

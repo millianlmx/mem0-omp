@@ -204,13 +204,18 @@ export class RunStore extends StoreCore {
       params.push(filter.projectId);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-    return this.selectAll(`SELECT * FROM runs ${clause} ORDER BY project_order, created_at, id`, ...params).map(runOf);
+    return this.selectAll(`SELECT * FROM runs ${clause} ORDER BY project_order, created_at, rowid`, ...params).map(
+      runOf,
+    );
   }
 
-  /** Les runs en file dont l'heure est venue : `not_before` absent ou passé. */
+  /**
+   * Les runs en file dont l'heure est venue : `not_before` absent ou passé. À la même
+   * milliseconde, l'ordre d'insertion (`rowid`) départage : la fin d'un id est aléatoire.
+   */
   listRunsDue(now: number): RunRow[] {
     return this.selectAll(
-      "SELECT * FROM runs WHERE state = 'queued' AND (not_before IS NULL OR not_before <= ?) ORDER BY project_order, created_at, id",
+      "SELECT * FROM runs WHERE state = 'queued' AND (not_before IS NULL OR not_before <= ?) ORDER BY project_order, created_at, rowid",
       now,
     ).map(runOf);
   }
