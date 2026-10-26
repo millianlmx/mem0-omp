@@ -18,13 +18,21 @@
 // en cours (paragraphe qui s'écrit, outils lancés, dernière trame).
 //
 // Le DÉTAIL d'une entrée se lit à part (`GET /v1/runs/{id}/session/{seq}`) : pour un
-// outil, ses arguments complets et sa sortie entière — en cours d'écriture pour une
-// commande qui tourne (`tool_execution_update`) —, pour un paragraphe trop long pour
-// l'entrée, son texte entier. Il ne part jamais dans le flux : une entrée le signale
-// par `hasDetails`, l'app le lit quand on l'ouvre.
+// outil, son RENDU lisible (`view`, voir `tool-view.ts` : la commande, les
+// différences, les fiches des sous-agents…), sa sortie entière et son JSON brut —
+// en cours d'écriture pour un outil qui tourne (`tool_execution_update`) —, pour un
+// paragraphe trop long pour l'entrée, son texte entier. Il ne part jamais dans le
+// flux : une entrée le signale par `hasDetails`, l'app le lit quand on l'ouvre.
+//
+// Deux exceptions au rendu « outil » : un outil-MESSAGE (`progress`, l'agent qui dit
+// où il en est) devient un paragraphe de l'agent ; un appel `task` porte ses
+// sous-agents en une ligne chacun (`agents`), mis à jour en direct.
 //
 // Tout texte est borné et passe par `redact` : une commande ou une sortie d'outil
 // peut contenir une clé, et le direct est lisible par tout client du dépôt.
+
+import type { AgentLine, ToolView } from "./tool-view.ts";
+import { cleanDeep, messageOf, rawJson, resultText, toolView } from "./tool-view.ts";
 
 export type SessionEntryKind = "text" | "thinking" | "tool" | "notice";
 
@@ -49,13 +57,23 @@ export type SessionEntry = {
   endedAt: number | null;
   /** Le détail de l'entrée se lit à part : arguments et sortie complets, ou texte entier. */
   hasDetails: boolean;
+  /** Les sous-agents d'un appel `task`, en une ligne chacun (leur état, ce qu'ils font) ; `null` pour tout autre entrée. */
+  agents: AgentLine[] | null;
 };
 
-/** Le détail d'une entrée : les arguments complets d'un outil et sa sortie entière, ou le texte entier d'un paragraphe. */
+/**
+ * Le détail d'une entrée. Pour un outil : `view`, son rendu lisible ; `args` et
+ * `result`, le JSON brut de ses arguments et de son résultat ; `output`, le texte de
+ * sa sortie. Pour un long paragraphe : son texte entier dans `output`.
+ */
 export type SessionDetails = {
   args: string | null;
   output: string | null;
+  result: string | null;
+  view: ToolView | null;
 };
+
+const NO_DETAILS: SessionDetails = { args: null, output: null, result: null, view: null };
 
 /** Les entrées gardées par run. */
 export const SESSION_KEEP = 200;
@@ -138,56 +156,26 @@ const isAssistant = (frame: Frame): boolean => {
   return role === undefined || role === "assistant";
 };
 
-/** Les arguments d'un outil en une ligne : le champ parlant s'il y en a un, sinon le JSON. */
-function argsLine(args: unknown): string {
-  const object = record(args);
-  if (!object) return "";
-  for (const key of ["command", "path", "file_path", "pattern", "query", "url", "name"]) {
-    const value = object[key];
-    if (typeof value === "string" && value.trim() !== "") return value;
-  }
-  const json = JSON.stringify(object);
-  return json === "{}" ? "" : json;
-}
-
-/**
- * Les arguments complets d'un outil, lisibles : une ligne `clé: valeur` par argument,
- * une valeur sur plusieurs lignes (un fichier écrit, un remplacement) sous sa clé,
- * telle quelle ; le reste en JSON. `null` sans arguments.
- */
-export function argsText(args: unknown): string | null {
-  const object = record(args);
-  if (!object) return args === undefined || args === null ? null : JSON.stringify(args, null, 2);
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(object)) {
-    if (typeof value === "string") lines.push(value.includes("\n") ? `${key}:\n${value}` : `${key}: ${value}`);
-    else lines.push(`${key}: ${JSON.stringify(value, null, 2)}`);
-  }
-  return lines.length === 0 ? null : lines.join("\n");
-}
-
-/** Le texte d'un résultat d'outil (`{ content: [{ type: "text", text }] }`, ou une chaîne). */
-function resultText(result: unknown): string {
-  if (typeof result === "string") return result;
-  const content = record(result)?.content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => {
-      const block = record(part);
-      return block?.type === "text" && typeof block.text === "string" ? block.text : "";
-    })
-    .filter((text) => text !== "")
-    .join("\n");
-}
-
 type Paragraph = { entry: SessionEntry; sentAt: number; sent: string };
 
 /**
- * Un outil lancé : son entrée, ses arguments complets et sa sortie en cours d'écriture,
- * BRUTE (bornée et masquée à la lecture seulement : une commande bavarde envoie des
- * dizaines de trames par seconde).
+ * Un outil lancé : son entrée, ses arguments et son résultat partiel BRUTS (rendus,
+ * bornés et masqués à la lecture seulement : une commande bavarde envoie des dizaines
+ * de trames par seconde).
  */
-type RunningTool = { entry: SessionEntry; args: string | null; partial: string | null; sentAt: number };
+type RunningTool = { entry: SessionEntry; args: unknown; partial: unknown; sentAt: number };
+
+/**
+ * Le résultat final d'un appel `task`, complété de la dernière progression vue en
+ * direct : le résultat ne porte que le rendu des sous-agents, la progression gardait
+ * leurs derniers outils.
+ */
+function withProgress(result: unknown, partial: unknown): unknown {
+  const details = record(record(result)?.details);
+  const progress = record(record(partial)?.details)?.progress;
+  if (!details || details.progress !== undefined || !Array.isArray(progress)) return result;
+  return { ...(record(result) as Frame), details: { ...details, progress } };
+}
 
 type Feed = {
   seq: number;
@@ -199,6 +187,8 @@ type Feed = {
   tools: Map<string, RunningTool>;
   /** Les détails des dernières entrées, par `seq` (sans base seulement). */
   details: Map<number, SessionDetails>;
+  /** Les appels d'outils-messages (`progress`) déjà montrés en paragraphe : leur fin est ignorée. */
+  messages: Set<string>;
   /** La dernière trame utile du runner (la veille des sessions muettes). */
   lastAt: number;
 };
@@ -313,11 +303,7 @@ export class SessionFeeds {
   details(owner: string, seq: number): { entry: SessionEntry; details: SessionDetails } | null {
     const feed = this.#feeds.get(owner);
     const running = feed ? [...feed.tools.values()].find((tool) => tool.entry.seq === seq) : undefined;
-    if (running)
-      return {
-        entry: { ...running.entry },
-        details: { args: running.args, output: this.#bounded(running.partial, SESSION_OUTPUT_MAX) },
-      };
+    if (running) return { entry: { ...running.entry }, details: this.#toolDetails(running, false, false) };
     const fresh = feed?.entries.find((entry) => entry.seq === seq);
     if (this.#store) {
       let stored: { entry: SessionEntry; details: SessionDetails } | null = null;
@@ -329,7 +315,7 @@ export class SessionFeeds {
       if (stored) return { entry: { ...(fresh ?? stored.entry) }, details: stored.details };
     }
     if (!fresh) return null;
-    return { entry: { ...fresh }, details: feed?.details.get(seq) ?? { args: null, output: null } };
+    return { entry: { ...fresh }, details: feed?.details.get(seq) ?? NO_DETAILS };
   }
 
   /** La dernière trame utile d'un propriétaire et l'outil en cours, s'il en a un ; `null` s'il n'a rien dit. */
@@ -374,54 +360,75 @@ export class SessionFeeds {
     if (type === "tool_execution_start") {
       const feed = this.#feed(owner);
       this.#settle(owner, feed);
+      const tool = typeof frame.toolName === "string" ? frame.toolName : null;
+      const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
+      // Un outil-message : l'agent parle à l'humain, son message est un paragraphe.
+      const message = messageOf(tool, frame.args);
+      if (message !== null) {
+        if (id !== null) feed.messages.add(id);
+        if (message.trim() !== "")
+          this.#add(owner, step, "text", {
+            text: tail(this.#clean(tail(message, SESSION_TEXT_MAX + 256)), SESSION_TEXT_MAX),
+          });
+        return;
+      }
       const intent = typeof frame.intent === "string" && frame.intent.trim() !== "" ? frame.intent : null;
-      const call = head(this.#clean(argsLine(frame.args)), 240);
-      const args = this.#bounded(argsText(frame.args), SESSION_ARGS_MAX);
+      const view = toolView({ tool, args: frame.args, result: null, done: false, isError: false });
+      const call = head(this.#clean(view.headline), 240);
       const entry = this.#add(owner, step, "tool", {
         text: intent !== null ? head(this.#clean(intent), 240) : call,
-        tool: typeof frame.toolName === "string" ? frame.toolName : null,
+        tool,
         status: "running",
         call: call === "" ? null : call,
         hasDetails: true,
+        agents: view.agents ? this.#lines(view.agents) : null,
       });
-      this.#keepDetails(owner, feed, entry.seq, { args, output: null });
-      const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
-      if (id !== null) feed.tools.set(id, { entry, args, partial: null, sentAt: this.#now() });
+      const running: RunningTool = { entry, args: frame.args, partial: null, sentAt: this.#now() };
+      this.#keepDetails(owner, feed, entry.seq, this.#toolDetails(running, false, false));
+      if (id !== null) feed.tools.set(id, running);
       return;
     }
     if (type === "tool_execution_update") {
-      // La sortie d'un outil qui tourne (une commande longue) : sa fin dans l'entrée, au plus une fois par intervalle.
+      // Un outil qui tourne (une commande longue, des sous-agents) : sa sortie et ses
+      // sous-agents dans l'entrée, au plus une fois par intervalle.
       const feed = this.#feeds.get(owner);
       const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
       const running = id !== null ? feed?.tools.get(id) : undefined;
       if (!feed || !running) return;
       feed.lastAt = this.#now();
-      const output = resultText(frame.partialResult);
-      if (output.trim() === "") return;
-      running.partial = output;
+      if (frame.partialResult === undefined || frame.partialResult === null) return;
+      running.partial = frame.partialResult;
       const now = this.#now();
       if (now - running.sentAt < SESSION_THROTTLE_MS) return;
       running.sentAt = now;
-      running.entry.detail = this.#tailOf(output);
+      running.entry.detail = this.#tailOf(resultText(frame.partialResult));
+      const view = toolView({
+        tool: running.entry.tool,
+        args: running.args,
+        result: running.partial,
+        done: false,
+        isError: false,
+      });
+      if (view.agents) running.entry.agents = this.#lines(view.agents);
       this.#emit(owner, running.entry);
       return;
     }
     if (type === "tool_execution_end") {
       const feed = this.#feeds.get(owner);
       const id = typeof frame.toolCallId === "string" ? frame.toolCallId : null;
+      if (feed && id !== null && feed.messages.delete(id)) return;
       const running = id !== null ? feed?.tools.get(id) : undefined;
       if (!feed || !running || id === null) return;
       const { entry } = running;
       feed.lastAt = this.#now();
       feed.tools.delete(id);
-      entry.status = frame.isError === true ? "error" : "ok";
+      const isError = frame.isError === true;
+      entry.status = isError ? "error" : "ok";
       entry.endedAt = this.#now();
-      const output = resultText(frame.result);
-      entry.detail = this.#tailOf(output);
-      this.#keepDetails(owner, feed, entry.seq, {
-        args: running.args,
-        output: this.#bounded(output, SESSION_OUTPUT_MAX),
-      });
+      entry.detail = this.#tailOf(resultText(frame.result));
+      const details = this.#toolDetails(running, true, isError, frame.result);
+      if (details.view?.agents) entry.agents = details.view.agents;
+      this.#keepDetails(owner, feed, entry.seq, details);
       this.#emit(owner, entry);
       return;
     }
@@ -454,7 +461,7 @@ export class SessionFeeds {
         if (!paragraph || raw === null || raw.length <= SESSION_TEXT_MAX) continue;
         paragraph.entry.hasDetails = true;
         this.#keepDetails(owner, feed, paragraph.entry.seq, {
-          args: null,
+          ...NO_DETAILS,
           output: this.#bounded(raw, SESSION_OUTPUT_MAX),
         });
         this.#emit(owner, paragraph.entry);
@@ -508,6 +515,7 @@ export class SessionFeeds {
       status?: SessionEntryStatus | null;
       call?: string | null;
       hasDetails?: boolean;
+      agents?: AgentLine[] | null;
     },
   ): SessionEntry {
     const feed = this.#feed(owner);
@@ -524,6 +532,7 @@ export class SessionFeeds {
       call: fields.call ?? null,
       endedAt: null,
       hasDetails: fields.hasDetails ?? false,
+      agents: fields.agents ?? null,
     };
     feed.entries.push(entry);
     if (feed.entries.length > SESSION_KEEP) feed.entries.splice(0, feed.entries.length - SESSION_KEEP);
@@ -560,6 +569,7 @@ export class SessionFeeds {
       thinking: null,
       tools: new Map(),
       details: new Map(),
+      messages: new Set(),
       lastAt: this.#now(),
     };
     this.#feeds.set(owner, feed);
@@ -591,6 +601,27 @@ export class SessionFeeds {
       if (oldest === undefined) break;
       feed.details.delete(oldest);
     }
+  }
+
+  /**
+   * Le détail d'un outil : son rendu, sa sortie et son JSON brut, bornés et masqués.
+   * `done` : le résultat est final.
+   */
+  #toolDetails(running: RunningTool, done: boolean, isError: boolean, final?: unknown): SessionDetails {
+    const result = final === undefined ? running.partial : final;
+    const shown = final === undefined ? result : withProgress(final, running.partial);
+    const view = toolView({ tool: running.entry.tool, args: running.args, result: shown, done, isError });
+    return {
+      args: this.#bounded(rawJson(running.args), SESSION_ARGS_MAX),
+      output: this.#bounded(resultText(result), SESSION_OUTPUT_MAX),
+      result: this.#bounded(rawJson(result), SESSION_OUTPUT_MAX),
+      view: cleanDeep(view, (text) => this.#clean(text)),
+    };
+  }
+
+  /** Les sous-agents en une ligne chacun, masqués. */
+  #lines(agents: AgentLine[]): AgentLine[] {
+    return cleanDeep(agents, (text) => this.#clean(text));
   }
 
   /** La fin d'une sortie d'outil pour l'entrée compacte, masquée ; `null` si elle est vide. */

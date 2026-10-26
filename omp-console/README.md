@@ -360,10 +360,15 @@ exécuter une étape elle-même.
     paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
     son intention, sa commande, son état, sa durée et la fin de son résultat
     (replié), et les signaux de la session (contexte compacté, réessai du
-    fournisseur), groupés par étape. « Détails » (un toucher sur iOS) ouvre un
-    outil en entier : son appel, ses arguments complets et sa sortie entière,
-    relue tant qu'il tourne (`GET /v1/runs/{id}/session/{seq}`) ; un paragraphe
-    trop long pour le direct s'y lit en entier. L'outil
+    fournisseur), groupés par étape. Un message d'avancement de l'agent
+    (`progress`) se lit comme ses paragraphes ; un appel de sous-agents montre
+    chacun d'eux en une ligne — son état, ce qu'il fait — en direct. « Détails »
+    (un toucher sur iOS) ouvre le rendu de l'outil, comme dans le terminal d'OMP :
+    la commande, les différences d'une édition, le contenu écrit, la sortie, les
+    champs et listes des outils du serveur, et la fiche de chaque sous-agent (sa
+    mission, ce qu'il fait, ses derniers outils, ce qu'il a rendu), relu tant
+    qu'il tourne (`GET /v1/runs/{id}/session/{seq}`) ; le JSON brut se déplie
+    dessous. Un paragraphe trop long pour le direct s'y lit en entier. L'outil
     et le job de tests du moment, les alertes et le coût s'affichent en tête ;
     « Suivre la fin » garde la dernière entrée à l'écran. La session est écrite en
     base par le serveur : une feature finie se rejoue, « Afficher les entrées

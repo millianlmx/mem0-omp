@@ -233,4 +233,9 @@ export const MIGRATIONS: readonly string[] = [
    ALTER TABLE session_entries ADD COLUMN ended_at INTEGER;
    ALTER TABLE session_entries ADD COLUMN args TEXT;
    ALTER TABLE session_entries ADD COLUMN output TEXT;`,
+  // Le rendu des sessions : les sous-agents d'un appel `task` en une ligne chacun
+  // (l'entrée compacte), le rendu lisible d'un outil et son résultat en JSON brut (son détail).
+  `ALTER TABLE session_entries ADD COLUMN agents TEXT;
+   ALTER TABLE session_entries ADD COLUMN result TEXT;
+   ALTER TABLE session_entries ADD COLUMN view TEXT;`,
 ];

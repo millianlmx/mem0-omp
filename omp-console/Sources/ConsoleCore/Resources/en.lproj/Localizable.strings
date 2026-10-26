@@ -43,6 +43,7 @@
 " (médiane %lld min)" = " (median %lld min)";
 " (plafond %@)" = " (cap %@)";
 " — la feature attend votre relance" = " — the feature is waiting for you to restart it";
+"%@ · %@" = "%@ · %@";
 "%@ (dépôt principal)" = "%@ (main repository)";
 "%@ (outil %@)" = "%@ (tool %@)";
 "%@ corrigées" = "%@ sent back for fixes";
@@ -119,6 +120,7 @@
 "Appel" = "Call";
 "Approfondi" = "Thorough";
 "Arguments" = "Arguments";
+"Arguments (JSON)" = "Arguments (JSON)";
 "Arrêt de l’ancienne mémoire…" = "Stopping the old memory…";
 "Arrêter cette feature ?" = "Stop this feature?";
 "Arrêter la feature" = "Stop Feature";
@@ -175,6 +177,7 @@
 "Ce nom est réservé au serveur oMLX du Mac : choisissez-en un autre." = "This name is reserved for the Mac’s oMLX server: choose another one.";
 "Ce n’est pas la pile d’OMP Console" = "This Isn’t OMP Console’s Stack";
 "Ce qui attend votre décision et les features que le serveur conduit, avec leur étape." = "What awaits your decision and the features the server is running, with their step.";
+"Ce qu’il a rendu" = "What it returned";
 "Ce service de mémoire ne sait pas classer les souvenirs par pertinence." = "This memory service can’t rank memories by relevance.";
 "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent." = "This service isn’t OMP Console’s stack: its installation token is missing or different.";
 "Certains abonnements ne se connectent qu’au terminal du serveur : lancez-y omp avec le profil des agents, puis la commande de connexion." = "Some subscriptions only connect from the server’s terminal: run omp there with the agents’ profile, then the login command.";
@@ -212,6 +215,7 @@
 "Collez de nouveau le code d’appairage affiché par le serveur dans la feuille Serveur." = "Paste the pairing code shown by the server into the Server sheet again.";
 "Collez le code d’appairage affiché par le serveur dans la feuille Serveur : il porte aussi sa mémoire." = "Paste the pairing code shown by the server into the Server sheet: it also carries its memory.";
 "Collez le code ou l’adresse" = "Paste the code or the address";
+"Commande" = "Command";
 "Comparé au départ de la branche" = "Compared to the start of the branch";
 "Comparé à la dernière version validée" = "Compared to the last committed version";
 "Compatible OpenAI" = "OpenAI-compatible";
@@ -229,6 +233,7 @@
 "Consommation des agents" = "Agent Usage";
 "Consultation" = "Browse";
 "Contenu" = "Content";
+"Contexte partagé" = "Shared context";
 "Copier" = "Copy";
 "Copier le diagnostic" = "Copy Diagnostic";
 "Copier le détail technique, à joindre à un signalement" = "Copy the technical details, to attach to a report";
@@ -240,6 +245,7 @@
 "Demande" = "Request";
 "Depuis le début" = "All Time";
 "Dernier échec : %@" = "Last failure: %@";
+"Derniers outils" = "Recent tools";
 "Des décisions irréversibles que les agents n’ont pas prises. La feature reprend quand toutes ont leur réponse." = "Irreversible decisions the agents didn’t make. The feature resumes once they all have an answer.";
 "Détail indisponible : le serveur ne garde plus cette entrée, ou il est trop ancien pour la détailler." = "Details unavailable: the server no longer keeps this entry, or is too old to detail it.";
 "Détails" = "Details";
@@ -269,6 +275,7 @@
 "Durée : %@" = "Duration: %@";
 "Effacer la clé déclarée" = "Clear the Declared Key";
 "En attente" = "Waiting";
+"En ce moment" = "Right now";
 "En cours" = "In progress";
 "En cours : %@" = "Now: %@";
 "En cours…" = "Running…";
@@ -279,6 +286,7 @@
 "Envoi au dépôt distant refusé" = "Push to the remote repository refused";
 "Envoyer" = "Send";
 "Envoyer le code" = "Send Code";
+"Erreur" = "Error";
 "Erreur du fournisseur" = "Provider error";
 "Erreur passagère du fournisseur : l’agent réessaie." = "Transient provider error: the agent is retrying.";
 "Escaladée" = "Escalated";
@@ -320,6 +328,7 @@
 "Jeton d’accès" = "Access token";
 "Jobs de tests" = "Test jobs";
 "Jour" = "Day";
+"JSON brut" = "Raw JSON";
 "La bascule n’a pas pu être enregistrée : la nouvelle mémoire ne démarre pas." = "The switch couldn’t be saved: the new memory isn’t starting.";
 "La clé compte au moins 8 caractères, sans espace." = "The key has at least 8 characters, with no spaces.";
 "La commande en cours dans le Terminal s’arrêtera." = "The command running in the Terminal will stop.";
@@ -414,6 +423,7 @@
 "Messages Anthropic" = "Anthropic Messages";
 "Migration de la mémoire" = "Memory Migration";
 "Mises à jour en direct" = "Live updates";
+"Mission" = "Assignment";
 "Modifications" = "Changes";
 "Modifier" = "Edit";
 "Modifier le souvenir" = "Edit Memory";
@@ -523,6 +533,7 @@
 "Reprise à %@" = "Resumes at %@";
 "Requêtes d’avance" = "Burst requests";
 "Requêtes par minute" = "Requests per minute";
+"Résultat (JSON)" = "Result (JSON)";
 "Retirer" = "Remove";
 "Retirer ce fournisseur ?" = "Remove this provider?";
 "Revenir au sommaire de la mémoire" = "Back to the memory summary";
@@ -569,6 +580,7 @@
 "Sommaire" = "Summary";
 "Sortie" = "Output";
 "Source" = "Source";
+"Sous-agents" = "Subagents";
 "Souvenir" = "Memory";
 "Souvenir sans titre" = "Untitled memory";
 "Souvenir vide." = "Empty memory.";
@@ -589,6 +601,7 @@
 "Supprimer…" = "Delete…";
 "Supprimé" = "Deleted";
 "Sélectionnez un souvenir pour le lire." = "Select a memory to read it.";
+"Tâches" = "Tasks";
 "Taux de fusion" = "Merge rate";
 "Terminal" = "Terminal";
 "Terminé" = "Done";
