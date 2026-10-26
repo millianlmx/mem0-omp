@@ -1323,7 +1323,9 @@ de l'app (`http://localhost:8321`). Le jeton vient de `MEM0_HTTP_TOKEN`, sinon d
 fichier quand l'adresse en vient aussi (vide par défaut, envoyé en en-tête
 `X-Mem0-Token` seulement s'il est non vide). Une adresse hors de ce Mac (la mémoire
 partagée du serveur de pipelines) est acceptée sans le jeton d'installation, et la
-sonde oMLX de ce Mac ne s'y applique pas : ses vecteurs sont calculés sur le serveur. Le bundle porte
+sonde oMLX de ce Mac ne s'y applique pas : ses vecteurs sont calculés sur le serveur. La
+préparation n'y démarre pas l'agent mem0-rs de l'app : elle le décharge et retire son
+plist (`MemoryAgent.ensureStopped`), la base locale restant sur le disque. Le bundle porte
 `NSAppTransportSecurity` → `NSAllowsLocalNetworking` : sous macOS 14, ATS refuse par
 défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vide**
 est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour

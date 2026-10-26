@@ -204,6 +204,32 @@ final class MemoryAgent {
         try await awaitHealth(token: token, jobPid: status.pid, progress: progress)
     }
 
+    // MARK: - L'arrêt
+
+    /// Décharge le job s'il est chargé, puis retire son plist (memoire-du-serveur) :
+    /// quand la mémoire est celle d'un serveur, l'agent de l'app n'a rien à servir,
+    /// et un plist laissé sur le disque le ferait relancer par launchd à la session
+    /// suivante (`RunAtLoad`). La base reste sur le disque : repasser à la mémoire
+    /// de l'app la retrouve. Rend vrai si un job était chargé.
+    @discardableResult
+    func ensureStopped() async throws -> Bool {
+        let status = await printService()
+        if status.loaded {
+            try await bootoutAndWait()
+        }
+        if fileManager.fileExists(atPath: plistURL.path) {
+            do {
+                try fileManager.removeItem(at: plistURL)
+            } catch {
+                throw MemoryAgentError.plistWriteFailed(
+                    path: plistURL.path,
+                    detail: Self.bounded(error.localizedDescription)
+                )
+            }
+        }
+        return status.loaded
+    }
+
     // MARK: - Le plist
 
     /// Le dictionnaire EXACT du job (S-2) : toutes valeurs chaînes sauf booléens.

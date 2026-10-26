@@ -52,6 +52,22 @@ enum SetupState: Equatable, Sendable {
     case awaitingSwitch(ImportReport)
 }
 
+/// La mémoire que la préparation doit servir (memoire-du-serveur).
+enum MemoryHosting: Equatable, Sendable {
+    /// L'agent mem0-rs de l'app, sur ce Mac.
+    case local
+    /// La mémoire d'un serveur (`~/.omp/mem0.json` ou `MEM0_HTTP_URL` hors de ce
+    /// Mac, posé par l'appairage) : le plugin, l'écran mémoire et les runners du
+    /// serveur lisent tous celle-là, l'agent de l'app n'a rien à servir.
+    case server(URL)
+
+    /// Relu à chaque préparation : un appairage fait pendant la session compte.
+    static func resolve(environment: [String: String]) -> MemoryHosting {
+        let config = MemoryServiceConfig.fromEnvironment(environment)
+        return config.isRemote ? .server(config.baseURL) : .local
+    }
+}
+
 /// Quand la feuille de préparation est due : en cours ou en échec et pas
 /// ignorée, ou OMP absent (feuille bloquante, ignorée ou non). Pure, donc figée
 /// par les tests sans rendre de vue.
@@ -167,7 +183,13 @@ final class SetupModel: ObservableObject {
             switchOver: { report, progress in
                 try await legacy.switchOver(forced: true, report: report, progress: progress)
             },
-            ensureAgent: { progress in try await agent.ensureRunning(progress: progress) },
+            // Mémoire d'un serveur : l'agent de l'app est arrêté plutôt que démarré.
+            ensureAgent: { progress in
+                switch MemoryHosting.resolve(environment: environment) {
+                case .local: try await agent.ensureRunning(progress: progress)
+                case .server: try await agent.ensureStopped()
+                }
+            },
             probeOMLX: {
                 let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
                 return await OMLXProbe.status(config: config, session: session)
