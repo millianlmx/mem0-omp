@@ -32,8 +32,8 @@ import { checkpointToolResult, countToolResult, pickSessionStopNudge } from "./c
 import { runnerMode, sessionNudgeEnabled } from "./config.ts";
 import { registerMem0Commands } from "./commands.ts";
 import { phaseStopContext } from "./phases.ts";
-import { handleRecall, registerRecallRenderer } from "./recall.ts";
-import { createRuntime, forgetInjected, stateOf } from "./state.ts";
+import { handleRecall, registerRecallRenderer, requestModels } from "./recall.ts";
+import { createRuntime, forgetInjected, projectId, stateOf } from "./state.ts";
 import { registerMem0Tools } from "./tools.ts";
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
@@ -48,7 +48,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   registerRecallRenderer(pi);
   registerMem0Tools(pi, rt);
 
-  // Les 9 commandes : la surface (nom + description, recopiée dans le
+  // Les 10 commandes : la surface (nom + description, recopiée dans le
   // catalogue marketplace) et le corps vivent ensemble dans commands.ts.
   registerMem0Commands(pi, rt);
 
@@ -64,6 +64,9 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (runnerMode()) return;
     try { checkBrief(rt, ctx); } catch { /* jamais bloquant */ }
+    // Les mental models (connaissance consolidée par le rêve) : demandés sans attendre,
+    // posés au prompt système dès qu'ils arrivent.
+    requestModels(stateOf(rt, ctx), projectId(ctx.cwd));
   });
 
   // Après une compaction ou un changement de branche, les souvenirs déjà posés
@@ -138,6 +141,7 @@ export * from "./checkpoint.ts";
 export * from "./commands.ts";
 export * from "./config.ts";
 export * from "./dedupe.ts";
+export * from "./liens.ts";
 export * from "./mem0Client.ts";
 export * from "./phases.ts";
 export * from "./purge.ts";

@@ -217,6 +217,14 @@ ce qui manque et l'agent cherche avec `mem0_search`.
 Le rappel d'un tour tient en 4 000 caractères : un souvenir plus long que
 1 200 caractères y est rogné, et `mem0_search` le rend entier.
 
+Les souvenirs sont **reliés**. L'agent relie avec `mem0_link` un bug à sa cause, une
+convention à celle qu'elle remplace ; le rappel et la recherche montrent ces liens
+sous chaque souvenir. Et la mémoire **rêve** quand le projet est au repos : elle
+propose de fusionner les doublons, consolide les faits en observations et réécrit
+une synthèse du projet (architecture, conventions, décisions, pièges, préférences)
+que l'agent lit en tête de session. Rien n'est supprimé sans ton accord :
+`/mem0-dream` montre les propositions.
+
 Le nom du projet vient du manifeste (`package.json`, `pyproject.toml`,
 `Cargo.toml`…), sinon du dossier. `/mem0-status` affiche celui qui est retenu.
 
@@ -226,6 +234,7 @@ Le nom du projet vient du manifeste (`package.json`, `pyproject.toml`,
 | `/mem0-init` | Amorce la mémoire d'un dépôt existant. |
 | `/mem0-save` | Fait écrire maintenant ce que la session a appris. |
 | `/mem0-dedupe` | Repère les doublons (rien n'est supprimé sans `--apply`). |
+| `/mem0-dream` | Journal du rêve de la mémoire et propositions à accepter ou refuser. |
 
 <details>
 <summary>Variables d'environnement</summary>

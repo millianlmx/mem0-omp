@@ -2,7 +2,7 @@
 
 Conventions de contribution : [CONTRIBUTING.md](CONTRIBUTING.md).
 
-<!-- mem0:brief v5 -->
+<!-- mem0:brief v6 -->
 ## Mémoire du projet
 
 Une mémoire persistante (mem0) est branchée sur ce projet. Un rappel automatique
@@ -34,6 +34,10 @@ fusionnée. Relis-la : si la fusion est mauvaise, réécris l'entrée avec
 Le dépôt fait toujours autorité contre un souvenir : s'il le contredit, le souvenir
 est périmé — corrige-le (`mem0_update`) ou supprime-le (`mem0_forget`), ne
 travaille pas dessus.
+
+**Relie** (`mem0_link`) un souvenir à celui qu'il touche : la `cause` d'un bug,
+le souvenir qu'un autre `remplace`, `contredit` ou `precise`. Le rappel et la
+recherche ramènent alors l'un avec l'autre (lignes `↳`).
 
 - **Checkpoint automatique** — au-delà de 15 explorations (read, grep, glob, lsp)
   sans écriture avec `mem0_add`, un message "mem0 checkpoint" t'est envoyé.

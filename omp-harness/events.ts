@@ -62,10 +62,11 @@ export const EVENT_TYPES = [
   "push_failed",
   "reverted",
   "revert_failed",
-  // projets et audits
+  // projets, audits et rêves de la mémoire
   "project_created",
   "project_done",
   "audit_state",
+  "dream_state",
   // configuration du serveur
   "providers_changed",
   // notifications sortantes (ntfy)

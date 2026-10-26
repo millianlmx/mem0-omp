@@ -99,6 +99,14 @@ export type SessionState = {
   mem: MemoryCache | null;
   /** sommaire rendu, reconstruit en même temps que le cache. */
   index: string | null;
+  /**
+   * bloc des mental models du projet (connaissance consolidée par le rêve), posé en
+   * prompt système avant le sommaire ; `null` si aucun n'est écrit ou si le serveur
+   * n'en a pas. `modelsRequested` : lu une fois par session (au `session_start`, sinon
+   * au deuxième tour), sans jamais faire attendre un tour ; redemandé après un échec réseau.
+   */
+  models: string | null;
+  modelsRequested: boolean;
   /** compteurs : instrumentation (/mem0-status) et déclenchement du nudge (session_stop). */
   mutations: number; // edit/write réussis
   explorations: number; // read/grep/glob/lsp réussis
@@ -182,6 +190,8 @@ export function stateOf(rt: Mem0Runtime, ctx: ExtensionContext | undefined): Ses
       pinnedQueries: new Set(),
       mem: null,
       index: null,
+      models: null,
+      modelsRequested: false,
       mutations: 0,
       explorations: 0,
       recalls: 0,

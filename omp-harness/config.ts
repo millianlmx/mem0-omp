@@ -276,6 +276,15 @@ export type HarnessConfig = {
   /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
   memory: { runnerMode: boolean };
   oracle: { url: string; token: string | null } | null;
+  /**
+   * Le rêve de la mémoire (dreams.ts) : la consolidation des faits du projet en
+   * observations et en mental models, confiée à une session omp sur `tier`. Chaque dépôt
+   * est examiné au plus toutes les `checkMinutes` minutes (`null` : rêves coupés), quand
+   * aucun de ses runs n'est en cours ; la session ne part que s'il y a au moins `minFacts`
+   * faits nouveaux, ou un fait nouveau qui attend depuis `maxDelayHours` heures. Sans
+   * oracle, rien.
+   */
+  dreams: { checkMinutes: number | null; minFacts: number; maxDelayHours: number; tier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
   /**
@@ -405,6 +414,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS] },
     memory: { runnerMode: true },
     oracle: null,
+    dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true },
     health: { tickStaleSec: 120, minFreeMiB: 1024 },
@@ -539,6 +549,13 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Array.isArray(config.notify.events) || config.notify.events.some((event) => typeof event !== "string"))
     fail("notify.events : liste de noms d'événements");
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
+  const { dreams } = config;
+  if (dreams.checkMinutes !== null && !(typeof dreams.checkMinutes === "number" && dreams.checkMinutes > 0))
+    fail("dreams.checkMinutes : minutes > 0, ou null");
+  if (!(Number.isInteger(dreams.minFacts) && dreams.minFacts >= 1)) fail("dreams.minFacts : entier ≥ 1");
+  if (!(typeof dreams.maxDelayHours === "number" && dreams.maxDelayHours > 0))
+    fail("dreams.maxDelayHours : heures > 0");
+  if (!(TIERS as readonly string[]).includes(dreams.tier)) fail(`dreams.tier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
   for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];

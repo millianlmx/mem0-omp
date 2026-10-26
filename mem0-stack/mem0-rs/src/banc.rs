@@ -38,6 +38,7 @@ use crate::config;
 use crate::db;
 use crate::embedder::Embedder;
 use crate::horodatage;
+use crate::liens;
 use crate::openai;
 use crate::recherche::{self, Reglage, Strategie};
 use crate::validation::SearchRequest;
@@ -130,7 +131,20 @@ pub struct Corpus {
     #[allow(dead_code, reason = "documentation du corpus, lue par les humains")]
     pub description: String,
     pub souvenirs: Vec<SouvenirCorpus>,
+    /// Liens typés posés entre souvenirs, comme par un agent (`POST /memory/link`) :
+    /// le bras graphe de la fusion `graphe` les suit.
+    #[serde(default)]
+    pub liens: Vec<LienCorpus>,
     pub requetes: Vec<RequeteCorpus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LienCorpus {
+    pub source: String,
+    pub cible: String,
+    #[serde(rename = "type")]
+    pub type_: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +180,14 @@ pub fn lire_corpus(texte: &str) -> Result<Corpus, String> {
         }
         if !ids.insert(s.id.as_str()) {
             return Err(format!("corpus : souvenir {} en double", s.id));
+        }
+    }
+    for l in &corpus.liens {
+        if !ids.contains(l.source.as_str()) || !ids.contains(l.cible.as_str()) || l.source == l.cible {
+            return Err(format!("corpus : lien {} → {} : souvenir inconnu ou boucle", l.source, l.cible));
+        }
+        if !liens::TYPES_AGENT.contains(&l.type_.as_str()) {
+            return Err(format!("corpus : lien {} → {} : type {} inconnu", l.source, l.cible, l.type_));
         }
     }
     let mut requetes = HashSet::new();
@@ -286,6 +308,7 @@ impl Drop for Jetable {
 pub fn strategies(k: &[u32]) -> Vec<Strategie> {
     let mut s = vec![Strategie::Semantique, Strategie::Bm25, Strategie::Additive];
     s.extend(k.iter().map(|&k| Strategie::Rrf { k }));
+    s.extend(k.iter().map(|&k| Strategie::Graphe { k }));
     s
 }
 
@@ -355,6 +378,19 @@ async fn jouer(a: &Arguments) -> Result<Rapport, String> {
         };
         db::ajouter(&mut conn, &nouveau, v).map_err(sqlite)?;
     }
+    let instant = horodatage::maintenant();
+    for l in &corpus.liens {
+        let lien = liens::Lien {
+            source: l.source.clone(),
+            target: l.cible.clone(),
+            type_: l.type_.clone(),
+            weight: 1.0,
+            origin: "agent".to_owned(),
+            reason: None,
+            created_at: instant.iso.clone(),
+        };
+        liens::lier(&conn, &lien).map_err(sqlite)?;
+    }
 
     let mut resultats = Vec::new();
     for strategie in strategies(&a.k) {
@@ -369,6 +405,7 @@ async fn jouer(a: &Arguments) -> Result<Rapport, String> {
                 threshold: Some(a.seuil),
                 explain: true,
                 fusion: None,
+                liens: false,
             };
             let mut r = recherche::preparer(req, crate::http::USER, Some(AGENT.to_owned()), Reglage::default())
                 .map_err(|e| format!("requête {} refusée : {e:?}", q.id))?;
@@ -533,7 +570,8 @@ mod tests {
         assert!((100..=200).contains(&c.souvenirs.len()), "{} souvenirs", c.souvenirs.len());
         assert!((40..=60).contains(&c.requetes.len()), "{} requêtes", c.requetes.len());
         let categories: HashSet<&str> = c.requetes.iter().map(|q| q.categorie.as_str()).collect();
-        assert_eq!(categories, HashSet::from(["lexicale", "paraphrase", "mixte"]));
+        assert_eq!(categories, HashSet::from(["lexicale", "paraphrase", "mixte", "liee"]));
+        assert!(!c.liens.is_empty());
     }
 
     #[test]
@@ -551,6 +589,17 @@ mod tests {
             (base(r#"[{"id":"a","texte":"x"},{"id":"a","texte":"y"}]"#, &q(r#"{"a":1}"#)), "en double"),
             (base("[]", "[]"), "vides"),
             (r#"{"format":2,"souvenirs":[],"requetes":[]}"#.to_owned(), "format 2"),
+            (
+                format!(r#"{{"format":1,"souvenirs":{s},"liens":[{{"source":"a","cible":"z","type":"cause"}}],"requetes":{}}}"#, q(r#"{"a":1}"#)),
+                "souvenir inconnu",
+            ),
+            (
+                format!(
+                    r#"{{"format":1,"souvenirs":[{{"id":"a","texte":"x"}},{{"id":"b","texte":"y"}}],"liens":[{{"source":"a","cible":"b","type":"semantique"}}],"requetes":{}}}"#,
+                    q(r#"{"a":1}"#)
+                ),
+                "type semantique inconnu",
+            ),
             (r#"{"format":1,"souvenirs":[],"requetes":[],"x":1}"#.to_owned(), "illisible"),
         ] {
             let e = lire_corpus(&corpus).unwrap_err();
@@ -561,6 +610,6 @@ mod tests {
     #[test]
     fn strategies_mesurees() {
         let noms: Vec<String> = strategies(&[10, 60]).iter().map(ToString::to_string).collect();
-        assert_eq!(noms, ["semantique", "bm25", "additive", "rrf-k10", "rrf-k60"]);
+        assert_eq!(noms, ["semantique", "bm25", "additive", "rrf-k10", "rrf-k60", "graphe-k10", "graphe-k60"]);
     }
 }

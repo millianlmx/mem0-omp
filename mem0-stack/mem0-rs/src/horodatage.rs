@@ -38,6 +38,11 @@ fn depuis(t: OffsetDateTime) -> Instant {
     Instant { iso, micros }
 }
 
+/// L'instant de `micros` microsecondes Unix, au même format que [`maintenant`].
+pub fn iso_depuis_micros(micros: i64) -> String {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(micros) * 1000).map_or_else(|_| String::new(), |t| depuis(t).iso)
+}
+
 /// Microsecondes Unix d'une date de la source (import, S-5) :
 /// `AAAA-MM-JJTHH:MM:SS`, puis facultativement `.` et 1 à 6 chiffres (complétés
 /// à droite jusqu'à 6), puis un fuseau facultatif `Z` ou `±HH:MM` ; sans fuseau,
@@ -123,6 +128,13 @@ mod tests {
         assert_eq!(micros_depuis_iso("2026-10-12T10:00:00.123456+00:00"), Some(base + 123_456));
         assert_eq!(micros_depuis_iso("2026-10-12T10:00:00.000007Z"), Some(base + 7));
         assert_eq!(micros_depuis_iso("1970-01-01T00:00:00"), Some(0));
+    }
+
+    #[test]
+    fn iso_depuis_micros_aller_retour() {
+        let i = depuis(date(2026, 10, 12, 10, 0, 0, 123_456_000));
+        assert_eq!(iso_depuis_micros(i.micros), i.iso);
+        assert_eq!(micros_depuis_iso(&iso_depuis_micros(i.micros)), Some(i.micros));
     }
 
     #[test]

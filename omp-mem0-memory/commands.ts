@@ -1,5 +1,5 @@
-// Les 9 commandes de l'extension : état et amorçage mémoire, brief, dédup, purge des
-// procédures, relance d'écriture, phases.
+// Les 10 commandes de l'extension : état et amorçage mémoire, brief, dédup, purge des
+// procédures, relance d'écriture, rêve de la mémoire, phases.
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { initPrompt, scanStack } from "./bootstrap.ts";
 import { BRIEF_REF_PATH, BRIEF_VERSION, checkBrief } from "./brief.ts";
@@ -15,6 +15,7 @@ import {
   renderDedupePreview,
 } from "./dedupe.ts";
 import type { DedupeEntry } from "./dedupe.ts";
+import { renderDreamJournal } from "./liens.ts";
 import { mem0, mem0Fetch, memoryLine, rows } from "./mem0Client.ts";
 import { DEFAULT_PHASES, mutatePhases, phaseWriteError, phases } from "./phases.ts";
 import { planPurge, renderPurgePreview } from "./purge.ts";
@@ -22,7 +23,7 @@ import { projectId, rootOf, stateOf } from "./state.ts";
 import type { Mem0Runtime } from "./state.ts";
 
 /**
- * Les 9 commandes, chacune avec sa description — recopiée dans le tableau
+ * Les 10 commandes, chacune avec sa description — recopiée dans le tableau
  * `commands` du catalogue marketplace, que scripts/check.sh compare à ces
  * appels. `pi` sert à mem0-init et mem0-save, qui démarrent un tour.
  */
@@ -335,6 +336,57 @@ export function registerMem0Commands(pi: ExtensionAPI, rt: Mem0Runtime): void {
       st.nudged = true;
       await ctx.waitForIdle?.();
       pi.sendUserMessage(st.mutations > 0 ? nudgeText(st.mutations) : discussionNudgeText(st.substantiveTurns));
+    },
+  });
+
+  pi.registerCommand("mem0-dream", {
+    description:
+      "Rêve de la mémoire : derniers rêves et propositions en attente (doublons, remplacements, " +
+      "contradictions, oublis). accept <id> ou reject <id> pour trancher, now pour rêver tout de suite",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const scope = projectId(ctx.cwd);
+      const [verb = "", id = ""] = String(args ?? "").trim().split(/\s+/);
+      const absent = (err: unknown) =>
+        /mem0-http 404/.test((err as Error).message)
+          ? "le service mémoire n'a pas de rêve (mem0-rs v4 requis)"
+          : (err as Error).message;
+      try {
+        if (verb === "accept" || verb === "reject") {
+          if (!id) {
+            ctx.ui.notify(`[mem0] /mem0-dream ${verb} <id> : l'id de la proposition manque.`, "warning");
+            return;
+          }
+          const r = await mem0.decide(id, verb);
+          if (r?.deleted) {
+            const st = stateOf(rt, ctx);
+            st.mem = null;
+            st.index = null;
+          }
+          ctx.ui.notify(
+            `[mem0] Proposition ${id} ${verb === "accept" ? "acceptée" : "refusée"}` +
+              (r?.deleted ? " : le souvenir proposé est supprimé (son historique reste)." : "."),
+            "info",
+          );
+          return;
+        }
+        if (verb === "now") {
+          const r = await mem0.dreamNow(scope);
+          const d = (rows(r?.dreams)[0] ?? {}) as Record<string, unknown>;
+          const errors = Array.isArray(d.errors) ? (d.errors as string[]) : [];
+          ctx.ui.notify(
+            `[mem0] Rêve de "${scope}" : ${d.reindexed ?? 0} réindexé(s), ${d.pairs_judged ?? 0} paire(s) jugée(s), ` +
+              `${d.links ?? 0} lien(s), ${d.proposals ?? 0} proposition(s), ${d.orphans_removed ?? 0} observation(s) orpheline(s) retirée(s)` +
+              (errors.length ? ` · ${errors.join(" ; ")}` : ""),
+            errors.length ? "warning" : "info",
+          );
+        } else if (verb !== "") {
+          ctx.ui.notify("[mem0] /mem0-dream [now | accept <id> | reject <id>]", "warning");
+          return;
+        }
+        ctx.ui.notify(renderDreamJournal(await mem0.dreamJournal(scope)), "info");
+      } catch (err) {
+        ctx.ui.notify(`[mem0] rêve indisponible : ${absent(err)}`, "error");
+      }
     },
   });
 

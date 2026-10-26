@@ -21,6 +21,8 @@ use crate::embedder::Embedder;
 use crate::extraction::{self, Lecture};
 use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
+use crate::http_liens;
+use crate::liens;
 use crate::openai::ClientChat;
 use crate::recherche::{self, Details, Refus};
 use crate::redaction::masquer;
@@ -45,9 +47,11 @@ pub struct Etat {
     pub installation_token: String,
     /// Fusion de la recherche quand la requête n'en demande pas, et `k` de la RRF.
     pub recherche: recherche::Reglage,
+    /// Réglage du rêve local, que `POST /memory/dream` applique aussi.
+    pub reve: crate::reve::Reglage,
 }
 
-type Partage = State<Arc<Etat>>;
+pub(crate) type Partage = State<Arc<Etat>>;
 
 /// Le routeur complet.
 ///
@@ -62,6 +66,13 @@ pub fn routeur(etat: Arc<Etat>) -> Router {
         ("/memory/search", post(search)),
         ("/memory/all", get(all)),
         ("/memory/graph", get(graph)),
+        // memoire-liee et reve-memoire : routes propres à mem0-rs.
+        ("/memory/link", post(http_liens::lier)),
+        ("/memory/unlink", post(http_liens::delier)),
+        ("/memory/links", get(http_liens::liens_portee)),
+        ("/memory/entities", get(http_liens::entites)),
+        ("/memory/models", get(http_liens::modeles)),
+        ("/memory/dream", get(http_liens::journal).post(http_liens::rever)),
     ] {
         let id = chemin.trim_start_matches("/memory/");
         r = r.route(
@@ -77,6 +88,10 @@ pub fn routeur(etat: Arc<Etat>) -> Router {
             .delete(|e: Partage, Path(id): Path<String>, h: HeaderMap| delete(e, id, h)),
     )
     .route("/memory/{memory_id}/history", get(history))
+    .route("/memory/{memory_id}/links", get(http_liens::liens_souvenir))
+    .route("/memory/dream/dossier", get(http_liens::dossier))
+    .route("/memory/dream/consolidation", post(http_liens::consolider))
+    .route("/memory/dream/proposal", post(http_liens::decider))
     .fallback(|| async { json(StatusCode::NOT_FOUND, &json!({ "detail": "Not Found" })) })
     .method_not_allowed_fallback(|| async {
         json(StatusCode::METHOD_NOT_ALLOWED, &json!({ "detail": "Method Not Allowed" }))
@@ -96,7 +111,7 @@ async fn corps_trop_gros_en_json(reponse: Response) -> Response {
 }
 
 /// Réponse JSON (`application/json`), ou 500 si la sérialisation échoue.
-fn json(statut: StatusCode, corps: &impl Serialize) -> Response {
+pub(crate) fn json(statut: StatusCode, corps: &impl Serialize) -> Response {
     match serde_json::to_vec(corps) {
         Ok(octets) => {
             (statut, [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], octets).into_response()
@@ -106,7 +121,7 @@ fn json(statut: StatusCode, corps: &impl Serialize) -> Response {
 }
 
 /// 500 de starlette `ServerErrorMiddleware`.
-fn interne() -> Response {
+pub(crate) fn interne() -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))],
@@ -124,7 +139,7 @@ fn rejet(r: Rejet) -> Response {
 }
 
 /// `None` si le jeton est bon (ou non exigé), sinon la réponse 401.
-fn controle_jeton(etat: &Etat, entetes: &HeaderMap) -> Option<Response> {
+pub(crate) fn controle_jeton(etat: &Etat, entetes: &HeaderMap) -> Option<Response> {
     if etat.http_token.is_empty()
         || entetes.get("x-mem0-token").is_some_and(|v| egal_temps_constant(v.as_bytes(), etat.http_token.as_bytes()))
     {
@@ -150,7 +165,7 @@ fn content_type(entetes: &HeaderMap) -> Option<&[u8]> {
 
 /// Identifiant de portée (S-2) : `null`/`""` → absent ; trim Python ; vide après
 /// trim ou blanc interne → `Err` (500).
-fn portee(valeur: Option<String>) -> Result<Option<String>, ()> {
+pub(crate) fn portee(valeur: Option<String>) -> Result<Option<String>, ()> {
     match valeur.as_deref() {
         None | Some("") => Ok(None),
         Some(brut) => {
@@ -161,7 +176,7 @@ fn portee(valeur: Option<String>) -> Result<Option<String>, ()> {
 }
 
 /// Exécute `f` sur la connexion, hors du runtime async.
-async fn avec_base<T, F>(etat: &Etat, f: F) -> Result<T, ()>
+pub(crate) async fn avec_base<T, F>(etat: &Etat, f: F) -> Result<T, ()>
 where
     T: Send + 'static,
     F: FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
@@ -439,6 +454,7 @@ async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Respo
         return interne();
     };
     let explain = req.explain;
+    let avec_liens = req.liens;
     let requete = match recherche::preparer(req, USER, agent_id, etat.recherche) {
         Ok(r) => r,
         Err(Refus::Interne) => return interne(),
@@ -452,13 +468,23 @@ async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Respo
     let Ok(vecteur) = etat.embedder.plonger(&requete.query).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
         return interne();
     };
-    let Ok(resultats) = avec_base(&etat, move |conn| recherche::executer(conn, &requete, &vecteur)).await else {
+    let lu = avec_base(&etat, move |conn| {
+        let resultats = recherche::executer(conn, &requete, &vecteur)?;
+        let ids: Vec<&str> = resultats.iter().map(|r| r.souvenir.id.as_str()).collect();
+        // Un rappel de plus pour chaque souvenir rendu (le rêve en tient compte).
+        liens::noter_rappels(conn, &ids, horodatage::maintenant().micros)?;
+        let vus = if avec_liens { Some(liens::liens_vus(conn, &ids)?) } else { None };
+        Ok((resultats, vus))
+    })
+    .await;
+    let Ok((resultats, vus)) = lu else {
         return interne();
     };
     let results: Vec<Ligne<'_>> = resultats
         .iter()
         .map(|r| Ligne {
             score: Some(r.details.final_score),
+            links: vus.as_ref().map(|v| v.get(&r.souvenir.id).map_or(&[][..], Vec::as_slice)),
             score_details: explain.then_some(&r.details),
             ..Ligne::de(&r.souvenir)
         })
@@ -512,6 +538,9 @@ struct Ligne<'a> {
     role: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attributed_to: Option<&'a serde_json::Value>,
+    /// Liens typés de la ligne, avec `links: true` seulement (memoire-liee).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    links: Option<&'a [liens::LienVu]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     score_details: Option<&'a Details>,
 }
@@ -532,6 +561,7 @@ impl<'a> Ligne<'a> {
             run_id: s.run_id.as_deref(),
             role: s.role.as_deref(),
             attributed_to: s.attributed_to.as_ref(),
+            links: None,
             score_details: None,
         }
     }

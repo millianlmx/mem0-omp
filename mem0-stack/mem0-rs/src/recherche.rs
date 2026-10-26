@@ -7,8 +7,13 @@
 //! ([`classer_rrf`]), choisie par `MEM0_SEARCH_FUSION` ou par le champ `fusion`
 //! d'une requête. Le banc de mesure ([`crate::banc`]) éprouve aussi les deux
 //! classements seuls ([`Strategie::Semantique`], [`Strategie::Bm25`]).
+//!
+//! La fusion `graphe` (memoire-liee) ajoute un troisième classement à la RRF :
+//! les souvenirs atteints depuis les meilleurs candidats par le graphe de la
+//! mémoire ([`crate::liens`]) — entités partagées, voisins sémantiques, liens
+//! typés —, que ni l'embedding ni le BM25 ne trouvent ([`bras_graphe`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -17,6 +22,8 @@ use serde_json::Value;
 use crate::bm25::{self, VecteurCreux};
 use crate::config::{blanc_python, strip_python};
 use crate::db::{self, Souvenir};
+use crate::entites;
+use crate::liens::{self, SEMANTIQUE};
 use crate::validation::SearchRequest;
 
 /// `threshold=None` de mem0 (main.py:3331-3332).
@@ -36,6 +43,8 @@ pub enum Fusion {
     /// Reciprocal Rank Fusion : `Σ 1/(k + rang)` sur l'union des candidats
     /// sémantiques et BM25.
     Rrf,
+    /// RRF sur trois classements : sémantique, BM25 et graphe ([`bras_graphe`]).
+    Graphe,
 }
 
 impl Fusion {
@@ -43,6 +52,7 @@ impl Fusion {
         match nom {
             "additive" => Some(Fusion::Additive),
             "rrf" => Some(Fusion::Rrf),
+            "graphe" => Some(Fusion::Graphe),
             _ => None,
         }
     }
@@ -68,6 +78,7 @@ impl Reglage {
         match demandee.unwrap_or(self.fusion) {
             Fusion::Additive => Strategie::Additive,
             Fusion::Rrf => Strategie::Rrf { k: self.rrf_k },
+            Fusion::Graphe => Strategie::Graphe { k: self.rrf_k },
         }
     }
 }
@@ -84,6 +95,8 @@ pub enum Strategie {
     Additive,
     /// Reciprocal Rank Fusion de constante `k`.
     Rrf { k: u32 },
+    /// RRF de constante `k` sur les classements sémantique, BM25 et graphe.
+    Graphe { k: u32 },
 }
 
 impl std::fmt::Display for Strategie {
@@ -93,6 +106,7 @@ impl std::fmt::Display for Strategie {
             Strategie::Bm25 => f.write_str("bm25"),
             Strategie::Additive => f.write_str("additive"),
             Strategie::Rrf { k } => write!(f, "rrf-k{k}"),
+            Strategie::Graphe { k } => write!(f, "graphe-k{k}"),
         }
     }
 }
@@ -359,6 +373,166 @@ pub fn classer_rrf(
     classes
 }
 
+/// Un candidat de la fusion `graphe`, avec son rang (à partir de 1) dans chacun
+/// des trois classements où il figure. Les candidats sont donnés dans l'ordre
+/// dense complet, qui départage les ex-aequo.
+#[derive(Debug, Clone, Copy)]
+pub struct CandidatGraphe {
+    pub cosinus: f64,
+    pub rang_dense: Option<usize>,
+    /// Rang BM25 et score normalisé.
+    pub bm25: Option<(usize, f64)>,
+    /// Rang dans le classement du graphe et score de graphe.
+    pub graphe: Option<(usize, f64)>,
+    pub vide: bool,
+}
+
+/// RRF à trois classements : (indice du candidat, détails), au plus `limit`.
+///
+/// Les rangs arrivent déjà calculés : le seuil a écarté du sémantique et du BM25
+/// les candidats sous `threshold` (comme la RRF), mais pas du graphe — un
+/// souvenir relié à un bon candidat entre même si son cosinus avec la requête est
+/// faible, c'est l'objet du bras. Un candidat sans aucun rang ne sort pas.
+///
+/// `score_details` garde ses 7 clés : `entity_boost` porte le score de graphe,
+/// `raw_score` la somme RRF, `max_possible_score` celle d'un candidat premier
+/// partout (`1/(k+1)` par classement actif : le sémantique toujours, le BM25 dès
+/// qu'il a un hit, le graphe dès qu'il atteint un souvenir), `final_score` le
+/// rapport des deux, dans [0, 1].
+pub fn classer_graphe(
+    candidats: &[CandidatGraphe],
+    bm25_actif: bool,
+    graphe_actif: bool,
+    k: u32,
+    threshold: f64,
+    limit: usize,
+) -> Vec<(usize, Details)> {
+    let actifs = 1.0 + f64::from(u8::from(bm25_actif)) + f64::from(u8::from(graphe_actif));
+    let max_possible = rrf(k, 1) * actifs;
+    let mut classes: Vec<(usize, Details)> = candidats
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.rang_dense.is_some() || c.bm25.is_some() || c.graphe.is_some())
+        .map(|(i, c)| {
+            let brut = c.rang_dense.map_or(0.0, |r| rrf(k, r))
+                + c.bm25.map_or(0.0, |(r, _)| rrf(k, r))
+                + c.graphe.map_or(0.0, |(r, _)| rrf(k, r));
+            let details = Details {
+                semantic_score: c.cosinus,
+                bm25_score: c.bm25.map_or(0.0, |(_, s)| s),
+                entity_boost: c.graphe.map_or(0.0, |(_, s)| s),
+                raw_score: brut,
+                max_possible_score: max_possible,
+                final_score: (brut / max_possible).min(1.0),
+                threshold,
+            };
+            (i, details)
+        })
+        .collect();
+    classes.sort_by(|a, b| b.1.final_score.total_cmp(&a.1.final_score));
+    classes.truncate(limit);
+    classes.retain(|(i, _)| !candidats[*i].vide);
+    classes
+}
+
+/// Meilleurs candidats d'où part le bras graphe, par classement (sémantique et BM25).
+pub const SEMENCES: usize = 10;
+/// Longueur du classement du graphe : chacun de ses souvenirs reçoit une voix de
+/// la RRF, un classement plus long ajouterait des voix au bruit.
+pub const GRAPHE_MAX: usize = 10;
+/// Score de graphe minimal pour entrer dans le classement du graphe. Sans
+/// cross-encoder derrière la fusion (Hindsight en a un), une voix donnée à un
+/// voisin faible déclasse les bons candidats que seul le sémantique trouve :
+/// mesuré au banc, un plancher de 0.7 ne garde que les connexions fortes (lien
+/// typé ou voisin très proche de la meilleure semence, deux entités de la
+/// requête) et laisse intacts les classements lexical, mixte et paraphrase.
+pub const GRAPHE_PLANCHER: f64 = 0.7;
+
+/// Une entité portée par plus de `max(ENTITE_FREQUENTE_MIN, n/4)` souvenirs de la
+/// portée ne relie rien (le nom du projet, `mem0`) : elle est ignorée.
+const ENTITE_FREQUENTE_MIN: usize = 3;
+
+/// Score de graphe des souvenirs atteints depuis `semences` (ids dans l'ordre
+/// de leur meilleur rang, avec ce rang, dans la portée de `r`) et depuis les
+/// entités de la requête. L'activation d'une semence décroît avec son rang
+/// (`1/rang`) et se propage d'un saut ; pour un souvenir `m` :
+///
+/// `tanh(0.5·q) + max_semence [ 1/rang · (sém + typé + 0.5·tanh(0.5·s)) ]`
+///
+/// - `q` : entités de la requête que `m` porte ;
+/// - `sém` : poids du lien `semantique` entre `m` et la semence ;
+/// - `typé` : poids du lien typé (cause, remplace, contredit, precise, voir,
+///   preuve) entre `m` et la semence, borné à 1 ;
+/// - `s` : entités que `m` partage avec la semence.
+///
+/// Les signaux d'une même semence s'ajoutent (des preuves convergentes classent
+/// plus haut) et `tanh` sature les comptes d'entités, comme le score de graphe de
+/// Hindsight. `dans_portee` dit si un id est candidat (portée et filtres).
+pub fn bras_graphe(
+    conn: &Connection,
+    r: &Requete,
+    semences: &[(&str, usize)],
+    dans_portee: &dyn Fn(&str) -> bool,
+    taille_portee: usize,
+) -> rusqlite::Result<HashMap<String, f64>> {
+    let ids: Vec<&str> = semences.iter().map(|&(id, _)| id).collect();
+    let activation: HashMap<&str, f64> = semences.iter().map(|&(id, rang)| (id, 1.0 / rang.max(1) as f64)).collect();
+    // (m, semence) → (sém, typé, entités partagées)
+    let mut signaux: HashMap<(String, &str), (f64, f64, usize)> = HashMap::new();
+    for l in liens::liens_touchant(conn, &ids)? {
+        for (semence, m) in [(&l.source, &l.target), (&l.target, &l.source)] {
+            let Some((&semence, _)) = activation.get_key_value(semence.as_str()) else { continue };
+            if m == semence || !dans_portee(m) {
+                continue;
+            }
+            let poids = l.weight.clamp(0.0, 1.0);
+            let v = signaux.entry((m.clone(), semence)).or_default();
+            if l.type_ == SEMANTIQUE {
+                v.0 = v.0.max(poids);
+            } else {
+                v.1 = v.1.max(poids);
+            }
+        }
+    }
+    let frequente = ENTITE_FREQUENTE_MIN.max(taille_portee / 4);
+    let requete: HashSet<String> = entites::extraire(&r.query).into_iter().map(|e| e.cle).collect();
+    let des_semences = liens::entites_de(conn, &ids)?;
+    let toutes: HashSet<String> = requete.iter().cloned().chain(des_semences.values().flatten().cloned()).collect();
+    let porteurs = liens::porteurs_entites(conn, &r.user_id, r.agent_id.as_deref(), &toutes)?;
+    let utile = |cle: &String| porteurs.get(cle).is_some_and(|p| p.len() <= frequente);
+    let mut q: HashMap<String, usize> = HashMap::new();
+    for cle in requete.iter().filter(|c| utile(c)) {
+        for m in &porteurs[cle] {
+            if dans_portee(m) {
+                *q.entry(m.clone()).or_default() += 1;
+            }
+        }
+    }
+    for (semence, cles) in &des_semences {
+        let Some((&semence, _)) = activation.get_key_value(semence.as_str()) else { continue };
+        for cle in cles.iter().filter(|c| utile(c)) {
+            for m in &porteurs[cle] {
+                if m != semence && dans_portee(m) {
+                    signaux.entry((m.clone(), semence)).or_default().2 += 1;
+                }
+            }
+        }
+    }
+    let mut scores: HashMap<String, f64> =
+        q.iter().map(|(m, &n)| (m.clone(), (0.5 * n as f64).tanh())).collect();
+    let mut propage: HashMap<String, f64> = HashMap::new();
+    for ((m, semence), (sem, type_, partages)) in signaux {
+        let v = activation[semence] * (sem + type_ + 0.5 * (0.5 * partages as f64).tanh());
+        let meilleur = propage.entry(m).or_insert(0.0);
+        *meilleur = meilleur.max(v);
+    }
+    for (m, v) in propage {
+        *scores.entry(m).or_insert(0.0) += v;
+    }
+    scores.retain(|_, s| *s > 0.0);
+    Ok(scores)
+}
+
 /// Une ligne de résultat.
 #[derive(Debug)]
 pub struct Resultat {
@@ -450,6 +624,61 @@ pub fn executer(conn: &Connection, r: &Requete, vecteur: &[f32]) -> rusqlite::Re
                 .map(|(i, d)| (retenues[i], d))
                 .collect()
         }
+        Strategie::Graphe { k } => {
+            let position = positions();
+            let gardes = |p: usize| denses[p].1 >= r.threshold;
+            // Semences : les meilleurs du sémantique et du BM25, au-dessus du seuil,
+            // chacune avec son meilleur rang dans les deux classements.
+            let mut semences: Vec<(&str, usize)> = Vec::new();
+            let denses_gardes = (0..tete).filter(|&p| gardes(p)).take(SEMENCES).map(|p| denses[p].0.id.as_str());
+            let hits_gardes = hits
+                .iter()
+                .filter(|(id, _)| position.get(id.as_str()).is_some_and(|&p| gardes(p)))
+                .take(SEMENCES)
+                .map(|(id, _)| id.as_str());
+            for (rang, id) in denses_gardes.enumerate().chain(hits_gardes.enumerate()) {
+                match semences.iter_mut().find(|(s, _)| *s == id) {
+                    Some(s) => s.1 = s.1.min(rang + 1),
+                    None => semences.push((id, rang + 1)),
+                }
+            }
+            let dans_portee = |id: &str| position.contains_key(id);
+            let scores = bras_graphe(conn, r, &semences, &dans_portee, denses.len())?;
+            let mut graphe: Vec<(usize, f64)> =
+                scores.iter().filter_map(|(id, s)| Some((*position.get(id.as_str())?, *s))).collect();
+            graphe.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            graphe.retain(|&(_, score)| score >= GRAPHE_PLANCHER);
+            graphe.truncate(GRAPHE_MAX);
+            let rang_graphe: HashMap<usize, (usize, f64)> =
+                graphe.iter().enumerate().map(|(rang, &(p, s))| (p, (rang + 1, s))).collect();
+            let rang_dense: HashMap<usize, usize> =
+                (0..tete).filter(|&p| gardes(p)).enumerate().map(|(rang, p)| (p, rang + 1)).collect();
+            let rang_bm25: HashMap<usize, (usize, f64)> = hits
+                .iter()
+                .filter_map(|(id, s)| Some((*position.get(id.as_str())?, *s)))
+                .filter(|&(p, _)| gardes(p))
+                .enumerate()
+                .map(|(rang, (p, s))| (p, (rang + 1, s)))
+                .collect();
+            let mut retenues: Vec<usize> =
+                rang_dense.keys().chain(rang_bm25.keys()).chain(rang_graphe.keys()).copied().collect();
+            retenues.sort_unstable();
+            retenues.dedup();
+            let candidats: Vec<CandidatGraphe> = retenues
+                .iter()
+                .map(|&p| CandidatGraphe {
+                    cosinus: denses[p].1,
+                    rang_dense: rang_dense.get(&p).copied(),
+                    bm25: rang_bm25.get(&p).copied(),
+                    graphe: rang_graphe.get(&p).copied(),
+                    vide: denses[p].0.memory.is_empty(),
+                })
+                .collect();
+            classer_graphe(&candidats, !hits.is_empty(), !graphe.is_empty(), k, r.threshold, r.limit)
+                .into_iter()
+                .map(|(i, d)| (retenues[i], d))
+                .collect()
+        }
         Strategie::Bm25 => {
             let position = positions();
             let mut classes: Vec<(usize, Details)> = hits
@@ -498,6 +727,7 @@ mod tests {
             threshold: o.get("threshold").and_then(Value::as_f64),
             explain: false,
             fusion: o.get("fusion").and_then(Value::as_str).and_then(Fusion::lire),
+            liens: false,
         }
     }
 
@@ -586,6 +816,38 @@ mod tests {
         assert!(classer_rrf(&c, false, 60, 0.0, 0).is_empty());
     }
 
+    fn graphe_cand(cosinus: f64, dense: Option<usize>, bm25: Option<usize>, graphe: Option<(usize, f64)>) -> CandidatGraphe {
+        CandidatGraphe { cosinus, rang_dense: dense, bm25: bm25.map(|r| (r, 0.5)), graphe, vide: false }
+    }
+
+    #[test]
+    fn graphe_trois_classements_et_entity_boost() {
+        // 0 : premier dense et premier BM25 ; 1 : deuxième dense ; 2 : atteint par
+        // le graphe seul (cosinus sous le seuil : gardé quand même) ; 3 : aucun rang.
+        let c = [
+            graphe_cand(0.9, Some(1), Some(1), None),
+            graphe_cand(0.8, Some(2), None, Some((2, 0.8))),
+            graphe_cand(0.1, None, None, Some((1, 1.2))),
+            graphe_cand(0.05, None, None, None),
+        ];
+        let r = classer_graphe(&c, true, true, 60, 0.3, 10);
+        assert_eq!(ordre(&r), [0, 1, 2]);
+        let max = 3.0 / 61.0;
+        assert!(r.iter().all(|(_, d)| d.max_possible_score == max && d.threshold == 0.3));
+        assert_eq!(r[0].1.raw_score, 2.0 / 61.0);
+        assert_eq!(r[0].1.entity_boost, 0.0);
+        assert_eq!(r[1].1.raw_score, 1.0 / 62.0 + 1.0 / 62.0);
+        assert_eq!(r[1].1.entity_boost, 0.8);
+        assert_eq!((r[2].1.raw_score, r[2].1.entity_boost, r[2].1.semantic_score), (1.0 / 61.0, 1.2, 0.1));
+        // Sans BM25 ni graphe actifs, le maximum est celui du seul sémantique.
+        let seul = classer_graphe(&[graphe_cand(0.5, Some(1), None, None)], false, false, 60, 0.0, 10);
+        assert_eq!((seul[0].1.max_possible_score, seul[0].1.final_score), (1.0 / 61.0, 1.0));
+        // Troncature puis retrait des vides.
+        let mut c = [graphe_cand(0.9, Some(1), None, None), graphe_cand(0.8, Some(2), None, None)];
+        c[0].vide = true;
+        assert!(classer_graphe(&c, false, false, 60, 0.0, 1).is_empty());
+    }
+
     #[test]
     fn strategie_de_la_requete_sinon_du_serveur() {
         let defaut = Reglage::default();
@@ -600,9 +862,12 @@ mod tests {
         assert_eq!(p(json!({"query":"x","fusion":"rrf"}), defaut), Strategie::Rrf { k: 60 });
         assert_eq!(p(json!({"query":"x"}), rrf), Strategie::Rrf { k: 7 });
         assert_eq!(
-            [Strategie::Semantique, Strategie::Bm25, Strategie::Additive, Strategie::Rrf { k: 10 }].map(|s| s.to_string()),
-            ["semantique", "bm25", "additive", "rrf-k10"]
+            [Strategie::Semantique, Strategie::Bm25, Strategie::Additive, Strategie::Rrf { k: 10 }, Strategie::Graphe { k: 7 }]
+                .map(|s| s.to_string()),
+            ["semantique", "bm25", "additive", "rrf-k10", "graphe-k7"]
         );
+        assert_eq!(defaut.strategie(Some(Fusion::Graphe)), Strategie::Graphe { k: 60 });
+        assert_eq!(Fusion::lire("graphe"), Some(Fusion::Graphe));
         assert_eq!(Fusion::lire("rrf"), Some(Fusion::Rrf));
         assert_eq!(Fusion::lire("Rrf"), None);
     }

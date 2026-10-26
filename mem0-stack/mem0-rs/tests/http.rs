@@ -698,7 +698,7 @@ async fn rrf_par_requete_classe_l_union_des_candidats() {
     assert_eq!(r.statut, 422, "{}", r.texte);
     assert_eq!(
         r.json(),
-        json!({"detail":[{"type":"literal_error","loc":["body","fusion"],"msg":"Input should be 'additive' or 'rrf'","input":"RRF","ctx":{"expected":"'additive' or 'rrf'"}}]})
+        json!({"detail":[{"type":"literal_error","loc":["body","fusion"],"msg":"Input should be 'additive', 'rrf' or 'graphe'","input":"RRF","ctx":{"expected":"'additive', 'rrf' or 'graphe'"}}]})
     );
     assert_eq!(b.faux.appels(), appels);
 }
@@ -723,7 +723,7 @@ async fn rrf_par_configuration_du_serveur() {
 
     // Valeurs refusées : code 1 et message, avant toute écoute.
     for (nom, valeur, message) in [
-        ("MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « hybride »)"),
+        ("MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « hybride »)"),
         ("MEM0_RRF_K", "0", "MEM0_RRF_K doit être un entier positif (reçu « 0 »)"),
     ] {
         let sortie = std::process::Command::new(env!("CARGO_BIN_EXE_mem0-rs"))

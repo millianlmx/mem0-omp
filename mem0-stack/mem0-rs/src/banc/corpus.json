@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "description": "Corpus étiqueté du banc de mesure de mem0-rs : souvenirs de développement en français et en anglais (serveur mémoire, plugin, conventions du dépôt, harness, préférences, boutique web, pipeline de données, outillage), et requêtes de trois catégories : lexicale (identifiant, fichier, code d'erreur), paraphrase (reformulation sans les mots du souvenir), mixte. Grade 2 : répond directement ; grade 1 : utile ou partiel.",
+  "description": "Corpus étiqueté du banc de mesure de mem0-rs : souvenirs de développement en français et en anglais (serveur mémoire, plugin, conventions du dépôt, harness, préférences, boutique web, pipeline de données, outillage), des liens typés posés comme par un agent, et requêtes de quatre catégories : lexicale (identifiant, fichier, code d'erreur), paraphrase (reformulation sans les mots du souvenir), mixte, liee (la réponse est reliée au souvenir que la requête évoque, par un lien ou une entité, sans lui ressembler). Grade 2 : répond directement ; grade 1 : utile ou partiel.",
   "souvenirs": [
     { "id": "s001", "texte": "mem0-rs écoute par défaut sur le port 8321 et seulement sur 127.0.0.1." },
     { "id": "s002", "texte": "Au démarrage, mem0-rs prend un verrou flock exclusif sur <base>.lock ; un second serveur sur la même base sort en code 1." },
@@ -152,6 +152,31 @@
     { "id": "s148", "texte": "Un souvenir extrait par add infer=true n'a pas de champ role, mais garde attributed_to." },
     { "id": "s149", "texte": "Le dossier mem0-rs-data doit être créé (mkdir -p) avant compose up : tous les moteurs ne le créent pas." },
     { "id": "s150", "texte": "doctor.sh vérifie que le conteneur mem0-rs répond et que la dimension des embeddings est cohérente." }
+,
+    { "id": "s151", "texte": "Le rappel automatique ralentissait chaque tour de 20 s quand mem0-rs était froid." },
+    { "id": "s152", "texte": "Cause racine : recall.ts attendait l'embedding de la requête sans budget de temps ; correctif : budget de 5 s puis disjoncteur de 60 s." },
+    { "id": "s153", "texte": "Décision : chaque étape d'un run passe par systemd-run pour rester confinée à son worktree." },
+    { "id": "s154", "texte": "Bug : omp-harness-systemd-run échouait sous podman rootless, faute de cgroup délégué ; correctif : Delegate=yes dans omp-harness.slice." },
+    { "id": "s155", "texte": "MEM0_RRF_K règle la constante k de la fusion RRF ; 60 par défaut, la valeur de l'article." },
+    { "id": "s156", "texte": "Mesure : avec MEM0_RRF_K=10, les requêtes mixtes gagnent un peu en nDCG@10 sur le corpus du banc." },
+    { "id": "s157", "texte": "Ancienne convention : tous les tests vivaient dans un seul fichier test/all.test.ts." },
+    { "id": "s158", "texte": "Convention actuelle : un fichier de test par slug, rangé dans le dossier de ce qu'il éprouve." },
+    { "id": "s159", "texte": "Le service mémoire doit rester joignable depuis les conteneurs des runners." },
+    { "id": "s160", "texte": "Précision : les runners joignent mem0-rs par host.containers.internal:8321, jamais par localhost." },
+    { "id": "s161", "texte": "Préférence : l'utilisateur veut des messages de commit en anglais." },
+    { "id": "s162", "texte": "Correction de l'utilisateur : les commits s'écrivent en français, comme toute la documentation du dépôt." },
+    { "id": "s163", "texte": "Le découpage de db.ts en un fichier par domaine réduit les conflits de merge entre runners." },
+    { "id": "s164", "texte": "Piège connu de db.ts découpé : schema.ts doit être importé avant tout autre module du dossier." },
+    { "id": "s165", "texte": "La procédure de publication passe par scripts/release.ts, qui ouvre la PR de release." },
+    { "id": "s166", "texte": "Les secrets de signature Apple (Developer ID, notarisation) ne sont lus par release-assets.sh que s'ils existent." }
+  ],
+  "liens": [
+    { "source": "s152", "cible": "s151", "type": "cause" },
+    { "source": "s153", "cible": "s154", "type": "cause" },
+    { "source": "s158", "cible": "s157", "type": "remplace" },
+    { "source": "s160", "cible": "s159", "type": "precise" },
+    { "source": "s162", "cible": "s161", "type": "contredit" },
+    { "source": "s165", "cible": "s166", "type": "voir" }
   ],
   "requetes": [
     { "id": "q01", "categorie": "lexicale", "texte": "MEM0_BACKUP_KEEP", "pertinents": { "s004": 2, "s005": 1 } },
@@ -205,6 +230,14 @@
     { "id": "q49", "categorie": "mixte", "texte": "dates UTC et fuseau de Paris dans le pipeline", "pertinents": { "s105": 2, "s147": 1 } },
     { "id": "q50", "categorie": "mixte", "texte": "graph edges neighbours threshold", "pertinents": { "s021": 2 } },
     { "id": "q51", "categorie": "mixte", "texte": "filtres avancés de la recherche en 501", "pertinents": { "s141": 2 } },
-    { "id": "q52", "categorie": "mixte", "texte": "masquage redact write.ts", "pertinents": { "s035": 2, "s014": 1 } }
+    { "id": "q52", "categorie": "mixte", "texte": "masquage redact write.ts", "pertinents": { "s035": 2, "s014": 1 } },
+    { "id": "q53", "categorie": "liee", "texte": "pourquoi le rappel automatique était-il si lent", "pertinents": { "s152": 2, "s151": 1 } },
+    { "id": "q54", "categorie": "liee", "texte": "pourquoi chaque étape est confinée et quel problème cela a causé", "pertinents": { "s153": 2, "s154": 2 } },
+    { "id": "q55", "categorie": "liee", "texte": "quelle valeur choisir pour la constante de la fusion par rang réciproque", "pertinents": { "s156": 2, "s155": 2 } },
+    { "id": "q56", "categorie": "liee", "texte": "où mettre les tests, dans all.test.ts ?", "pertinents": { "s158": 2, "s157": 1 } },
+    { "id": "q57", "categorie": "liee", "texte": "les runners doivent pouvoir joindre le service mémoire", "pertinents": { "s160": 2, "s159": 1 } },
+    { "id": "q58", "categorie": "liee", "texte": "l'utilisateur veut des commits en anglais", "pertinents": { "s162": 2, "s161": 1 } },
+    { "id": "q59", "categorie": "liee", "texte": "pourquoi avoir découpé la base du harness en plusieurs fichiers", "pertinents": { "s163": 2, "s164": 2 } },
+    { "id": "q60", "categorie": "liee", "texte": "comment on publie une nouvelle version", "pertinents": { "s165": 2, "s166": 1 } }
   ]
 }

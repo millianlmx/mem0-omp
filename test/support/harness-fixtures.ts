@@ -12,7 +12,7 @@ import type { HarnessConfig } from "../../omp-harness/config.ts";
 import { Store } from "../../omp-harness/db.ts";
 import { Git } from "../../omp-harness/git.ts";
 import { HeavyRunner } from "../../omp-harness/heavy.ts";
-import type { Oracle, Memory } from "../../omp-harness/oracle.ts";
+import type { ConsolidationReport, DreamDossier, Oracle, Memory } from "../../omp-harness/oracle.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
 import type { OrchestratorDeps, SpawnRunner } from "../../omp-harness/orchestrator.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
@@ -102,6 +102,30 @@ export class MemoryOracle implements Oracle {
   healthy = true;
   async health(): Promise<boolean> {
     return this.healthy;
+  }
+  /** Le dossier de rêve rendu à chaque portée ; `null` : service sans dossier. */
+  dossier: DreamDossier | null = null;
+  readonly dossiers: string[] = [];
+  async dreamDossier(scope: string): Promise<DreamDossier | null> {
+    this.dossiers.push(scope);
+    return this.dossier;
+  }
+  /** Les consolidations reçues ; `refuse` : la raison d'un refus du service. */
+  readonly consolidations: { scope: string; body: Record<string, unknown> }[] = [];
+  refuse: string | null = null;
+  async consolidate(scope: string, body: Record<string, unknown>): Promise<ConsolidationReport> {
+    if (this.refuse !== null) throw new Error(this.refuse);
+    this.consolidations.push({ scope, body });
+    const count = (key: string) => (Array.isArray(body[key]) ? (body[key] as unknown[]).length : 0);
+    return {
+      dream: `reve-${this.consolidations.length}`,
+      observations_added: count("observations"),
+      observations_refined: 0,
+      observations_removed: count("obsolete"),
+      causes: count("causes"),
+      models: count("models"),
+      horizon_us: Number(body.horizon_us ?? 0),
+    };
   }
 }
 

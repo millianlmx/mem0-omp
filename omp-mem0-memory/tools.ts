@@ -1,7 +1,9 @@
-// Les 4 tools mem0 offerts au modèle : recherche, écriture, réécriture, suppression.
+// Les 5 tools mem0 offerts au modèle : recherche, écriture, liaison, réécriture, suppression.
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { GLOBAL_SCOPE, SEARCH_POOL_MAX, SEARCH_THRESHOLD } from "./config.ts";
 import { findSimilar, planMerge } from "./dedupe.ts";
+import { LINK_TYPES, observationMark, renderLinks, textResolver } from "./liens.ts";
+import type { LinkType } from "./liens.ts";
 import { mem0, memoryId, memoryLine, rows, selectRelevant } from "./mem0Client.ts";
 import { projectId, stateOf } from "./state.ts";
 import type { Mem0Runtime, SessionState } from "./state.ts";
@@ -20,6 +22,7 @@ type AddParams = {
   infer?: boolean;
 };
 type UpdateParams = { memory_id: string; text: string };
+type LinkParams = { source: string; target: string; type: LinkType; reason?: string };
 type ForgetParams = { memory_id: string };
 
 // Toute écriture périme le cache local et le sommaire : ils seront rechargés au
@@ -40,7 +43,7 @@ function wrote(st: SessionState): void {
 export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
   const { z } = pi.zod;
 
-  // `loadMode: "essential"` sur les quatre tools. Sans ça, OMP les monte en
+  // `loadMode: "essential"` sur les cinq tools. Sans ça, OMP les monte en
   // devices xd:// (les tools d'extension sont "discoverable" par défaut) : le
   // modèle doit alors écrire ses arguments dans le `content` du tool write, et
   // se trompe régulièrement d'enveloppe — d'où les
@@ -82,7 +85,15 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       const limit = Math.min(params.limit ?? 6, 50);
       // Sur-échantillonnage : le serveur classe par score combiné, donc sans marge
       // les souvenirs à fort cosinus rétrogradés hors du top servi seraient perdus.
-      const result = await mem0.search(params.query, scope, Math.min(limit * 4, SEARCH_POOL_MAX), SEARCH_THRESHOLD, true);
+      const result = await mem0.search(
+        params.query,
+        scope,
+        Math.min(limit * 4, SEARCH_POOL_MAX),
+        SEARCH_THRESHOLD,
+        true,
+        undefined,
+        true,
+      );
       const sel = selectRelevant(rows(result), SEARCH_THRESHOLD, limit);
       // Des candidats mais aucun cosinus : le service tourne sans `explain`. Ne rien
       // rendre du pool courant (il n'est pas trié sémantiquement) et le dire.
@@ -98,8 +109,15 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
           details: { candidates: sel.candidates, scored: sel.scored, floor: SEARCH_THRESHOLD, kept: [] },
         };
       }
+      // Chaque souvenir rendu porte ses liens (cause, remplacé par, preuve…) : un
+      // souvenir remplacé ou contredit se lit avec ce qui le corrige.
+      const textOf = textResolver(rows(result), stateOf(rt, ctx).mem?.entries ?? []);
       const text = sel.kept.length
-        ? sel.kept.map((m) => `- [${memoryId(m)}] ${memoryLine(m)}`).join("\n")
+        ? sel.kept
+            .map((m) =>
+              [`- [${memoryId(m)}] ${observationMark(m)}${memoryLine(m)}`, ...renderLinks(m, textOf)].join("\n"),
+            )
+            .join("\n")
         : "Aucun souvenir pertinent.";
       return {
         content: [{ type: "text", text }],
@@ -227,6 +245,47 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       const result = await mem0.add(text, scope, { tags: params.tags, infer: params.infer === true });
       wrote(stateOf(rt, ctx));
       return { content: [{ type: "text", text: `Enregistré dans "${scope}".` }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "mem0_link",
+    label: "mem0 · link",
+    loadMode: "essential",
+    description:
+      "Relie deux souvenirs par leurs ids, pour que le rappel et la recherche ramènent l'un avec " +
+      "l'autre. À appeler quand tu viens d'écrire (ou de lire) un souvenir qui en touche un autre : " +
+      "`cause` (source explique target : un bug et la décision qui l'a provoqué, un correctif et son " +
+      "symptôme), `remplace` (source rend target obsolète), `contredit`, `precise` (source détaille " +
+      "target), `voir` (renvoi utile). Une phrase de raison aide le prochain agent.",
+    parameters: z.object({
+      source: z.string().describe("id du souvenir d'origine"),
+      target: z.string().describe("id du souvenir visé"),
+      type: z.enum([...LINK_TYPES]).describe("cause | remplace | contredit | precise | voir"),
+      reason: z.string().optional().describe("Pourquoi ce lien, en une phrase"),
+    }),
+    async execute(
+      _id: string,
+      params: LinkParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      try {
+        const result = await mem0.link(params.source, params.target, params.type, params.reason ? redact(params.reason) : undefined);
+        noted(stateOf(rt, ctx));
+        return {
+          content: [{ type: "text", text: `Lien posé : [${params.source}] ${params.type} [${params.target}].` }],
+          details: result,
+        };
+      } catch (err) {
+        const message = (err as Error).message;
+        // 404 : id inconnu, ou serveur sans graphe de liens (mem0-http, mem0-rs v3).
+        const hint = /mem0-http 404/.test(message)
+          ? " Vérifie les deux ids (mem0_search les rend) ; un serveur antérieur à mem0-rs v4 n'a pas de liens."
+          : "";
+        return { content: [{ type: "text", text: `Lien non posé : ${message}.${hint}` }], details: { error: message } };
+      }
     },
   });
 

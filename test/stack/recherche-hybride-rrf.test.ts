@@ -153,8 +153,8 @@ test("recherche-hybride-rrf/AC-3 : une fusion ou un k invalides arrêtent mem0-r
   const dossier = tmpdir("mem0-rs-rrf-refus-");
   const base = path.join(dossier, "refus.db");
   for (const [nom, valeur, message] of [
-    ["MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « hybride »)"],
-    ["MEM0_SEARCH_FUSION", "RRF", "MEM0_SEARCH_FUSION doit valoir additive ou rrf (reçu « RRF »)"],
+    ["MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « hybride »)"],
+    ["MEM0_SEARCH_FUSION", "RRF", "MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « RRF »)"],
     ["MEM0_RRF_K", "0", "MEM0_RRF_K doit être un entier positif (reçu « 0 »)"],
     ["MEM0_RRF_K", "6.5", "MEM0_RRF_K doit être un entier positif (reçu « 6.5 »)"],
   ] as const) {
@@ -205,7 +205,7 @@ test("recherche-hybride-rrf/AC-4 : mem0-rs banc mesure hors ligne chaque straté
   assert.equal(r.corpus.source, "(intégré)");
   assert.ok(r.corpus.souvenirs >= 100 && r.corpus.souvenirs <= 200, `${r.corpus.souvenirs} souvenirs`);
   assert.ok(r.corpus.requetes >= 40 && r.corpus.requetes <= 60, `${r.corpus.requetes} requêtes`);
-  assert.deepEqual(cles(r.corpus.categories), ["lexicale", "mixte", "paraphrase"]);
+  assert.deepEqual(cles(r.corpus.categories), ["lexicale", "liee", "mixte", "paraphrase"]);
   assert.equal(
     Object.values(r.corpus.categories).reduce((a, b) => a + b, 0),
     r.corpus.requetes,
@@ -214,7 +214,7 @@ test("recherche-hybride-rrf/AC-4 : mem0-rs banc mesure hors ligne chaque straté
   assert.deepEqual([r.profondeur, r.seuil, r.repetitions], [10, 0, 1]);
   assert.deepEqual(
     r.strategies.map((s) => s.strategie),
-    ["semantique", "bm25", "additive", "rrf-k10", "rrf-k60"],
+    ["semantique", "bm25", "additive", "rrf-k10", "rrf-k60", "graphe-k10", "graphe-k60"],
   );
   for (const s of r.strategies) {
     assert.deepEqual(cles(s), ["strategie", ...CLES_MESURES, "latence_ms", "categories"], s.strategie);
@@ -290,9 +290,14 @@ test("recherche-hybride-rrf/AC-6 : le README de mem0-rs suit le code : variables
   // Le champ `fusion` accepte exactement les valeurs que le README annonce.
   const validation = fs.readFileSync(path.join(CRATE, "src", "validation.rs"), "utf8");
   const litteral = /LITERAL_FUSION_ATTENDU: &str = "([^"]+)";/.exec(validation)?.[1];
-  assert.equal(litteral, "'additive' or 'rrf'");
+  assert.equal(litteral, "'additive', 'rrf' or 'graphe'");
   const recherche = section(readme, "Recherche hybride");
-  assert.ok(recherche.includes('`"fusion"`') && recherche.includes('`"additive"`') && recherche.includes('`"rrf"`'));
+  assert.ok(
+    recherche.includes('`"fusion"`') &&
+      recherche.includes('`"additive"`') &&
+      recherche.includes('`"rrf"`') &&
+      recherche.includes('`"graphe"`'),
+  );
 
   // Le gabarit de la pile propose les deux réglages.
   const exemple = fs.readFileSync(path.join(ROOT, "mem0-stack", ".env.example"), "utf8");

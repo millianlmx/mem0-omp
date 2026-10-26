@@ -5,6 +5,7 @@
 // - `merger.ts`       les merges, en file par dépôt ;
 // - `gestures.ts`     la boucle humaine (escalades, décisions, validations, annulation) ;
 // - `audits.ts`       les audits de dépôt ;
+// - `dreams.ts`       le rêve de la mémoire (consolidation des faits d'un dépôt au repos) ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -15,6 +16,7 @@
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Auditor } from "./audits.ts";
+import { Dreamer } from "./dreams.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
@@ -105,6 +107,8 @@ export class Orchestrator {
 
   /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
   readonly audits: Auditor;
+  /** Le rêve de la mémoire : consolidation des faits d'un dépôt au repos, par un runner. */
+  readonly dreams: Dreamer;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   #stopMetrics: (() => void) | null = null;
@@ -135,6 +139,7 @@ export class Orchestrator {
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
+    this.dreams = new Dreamer(this.#ctx);
   }
 
   get store(): HarnessContext["store"] {
@@ -239,6 +244,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.dreams.stop();
     await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -285,6 +291,7 @@ export class Orchestrator {
       });
     }
     await this.audits.recover();
+    await this.dreams.recover();
   }
 
   /** La rétention du journal : au démarrage, puis au plus une fois par heure. */
@@ -331,6 +338,8 @@ export class Orchestrator {
     }
     this.audits.tick();
     this.#admit();
+    // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
+    this.dreams.tick();
     this.#watch();
     this.metrics.maybeSample();
   }

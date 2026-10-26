@@ -52,10 +52,13 @@ pub struct SearchRequest {
     pub filters: Option<Map<String, Value>>,
     pub threshold: Option<f64>,
     pub explain: bool,
-    /// `Literal["additive", "rrf"] | None = None` : absent ou `null` → la fusion
-    /// du serveur (`MEM0_SEARCH_FUSION`). Champ propre à mem0-rs, que l'ancien
-    /// Python ignorait comme tout champ inconnu.
+    /// `Literal["additive", "rrf", "graphe"] | None = None` : absent ou `null` →
+    /// la fusion du serveur (`MEM0_SEARCH_FUSION`). Champ propre à mem0-rs, que
+    /// l'ancien Python ignorait comme tout champ inconnu.
     pub fusion: Option<Fusion>,
+    /// `links: bool = False` : chaque ligne porte ses liens typés (memoire-liee).
+    /// Champ propre à mem0-rs : sans lui, la forme des lignes ne change pas.
+    pub liens: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -289,11 +292,11 @@ fn valider_dict(v: &Value) -> Result<Map<String, Value>, ErreurChamp> {
     }
 }
 
-const LITERAL_FUSION: ErreurChamp = ("literal_error", "Input should be 'additive' or 'rrf'");
+const LITERAL_FUSION: ErreurChamp = ("literal_error", "Input should be 'additive', 'rrf' or 'graphe'");
 /// `ctx` de l'erreur `literal_error` de pydantic pour `fusion`.
-const LITERAL_FUSION_ATTENDU: &str = "'additive' or 'rrf'";
+const LITERAL_FUSION_ATTENDU: &str = "'additive', 'rrf' or 'graphe'";
 
-/// `Literal["additive", "rrf"]` : la chaîne exacte, sans coercition.
+/// `Literal["additive", "rrf", "graphe"]` : la chaîne exacte, sans coercition.
 fn valider_fusion(v: &Value) -> Result<Fusion, ErreurChamp> {
     v.as_str().and_then(Fusion::lire).ok_or(LITERAL_FUSION)
 }
@@ -398,6 +401,7 @@ pub fn search(content_type: Option<&[u8]>, corps: &[u8]) -> Result<SearchRequest
     let threshold = c.optionnel("threshold", valider_float);
     let explain = c.defaut("explain", false, valider_bool);
     let fusion = c.optionnel("fusion", valider_fusion);
+    let liens = c.defaut("links", false, valider_bool);
     let modele = (|| {
         Some(SearchRequest {
             query: query?,
@@ -407,6 +411,7 @@ pub fn search(content_type: Option<&[u8]>, corps: &[u8]) -> Result<SearchRequest
             threshold: threshold?,
             explain: explain?,
             fusion: fusion?,
+            liens: liens?,
         })
     })();
     c.fin(modele)
@@ -681,9 +686,9 @@ mod tests {
                 json!([{
                     "type": "literal_error",
                     "loc": ["body", "fusion"],
-                    "msg": "Input should be 'additive' or 'rrf'",
+                    "msg": "Input should be 'additive', 'rrf' or 'graphe'",
                     "input": serde_json::from_str::<Value>(v).unwrap(),
-                    "ctx": { "expected": "'additive' or 'rrf'" },
+                    "ctx": { "expected": "'additive', 'rrf' or 'graphe'" },
                 }]),
                 "{v}"
             );

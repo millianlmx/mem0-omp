@@ -6,6 +6,13 @@ l'ancien mem0-http Python (mem0ai 2.2.1) avec le même contrat : port
 stockage tient dans un seul fichier SQLite. Les embeddings et l'extraction viennent
 d'une API OpenAI-compatible (oMLX).
 
+Au-delà de ce contrat, la mémoire est **liée** et **rêve** (§ Graphe de liens, § Rêve) :
+chaque souvenir porte ses entités et ses voisins, un agent relie deux souvenirs (une
+cause, un remplacement), la recherche peut suivre ces liens (fusion `graphe`), et un
+travail de fond juge les souvenirs trop proches, consolide les faits en observations et
+en mental models. Ces routes sont propres à mem0-rs : un client de l'ancien contrat ne
+voit aucune différence.
+
 `add` avec `infer=true` (y compris quand `infer` est omis) reproduit le chemin
 additif de mem0 2.2.1 : un seul appel `chat/completions` (invite d'extraction
 additive avec les `custom_instructions` de l'ancien mem0-http Python, réponse lue comme
@@ -53,8 +60,12 @@ bruts).
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
 | `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart visé entre deux instantanés de la base, en heures ; `0` les coupe ; entier positif ou nul, sinon code 1 (§ Instantanés) |
 | `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés ; entier positif, sinon code 1 |
-| `MEM0_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (mem0 2.2.1) ou `rrf` ; sinon code 1 (§ Recherche hybride) |
-| `MEM0_RRF_K` | `60` | constante `k` de la RRF ; entier positif, sinon code 1 |
+| `MEM0_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (mem0 2.2.1), `rrf` ou `graphe` ; sinon code 1 (§ Recherche hybride) |
+| `MEM0_RRF_K` | `60` | constante `k` de la RRF (et de la fusion `graphe`) ; entier positif, sinon code 1 |
+| `MEM0_DREAM_INTERVAL_MINUTES` | `60` | période du rêve de fond, en minutes ; `0` le coupe (`POST /memory/dream` reste) ; entier positif ou nul, sinon code 1 (§ Rêve) |
+| `MEM0_DREAM_QUIET_MINUTES` | `10` | une portée ne rêve que si aucun souvenir n'y a été écrit depuis ce délai ; entier positif ou nul |
+| `MEM0_DREAM_PAIRS` | `20` | paires de souvenirs jugées par le LLM au plus, par rêve et par portée ; `0` : aucun appel au LLM ; entier positif ou nul |
+| `MEM0_DREAM_FORGET_DAYS` | `180` | jours sans rappel ni lien avant une proposition d'oubli ; `0` : jamais ; entier positif ou nul |
 
 Les variables `QDRANT_*` ne sont pas lues par le serveur. `mem0-rs import` lit
 `QDRANT_API_KEY` (en-tête `api-key`, envoyé seulement si non vide ; jamais en
@@ -66,10 +77,13 @@ il n'utilise aucune variable `OMLX_*` et n'appelle jamais l'embedder.
 Un seul fichier SQLite, `MEM0_DB_PATH` (journal WAL : seuls `<db>-wal`, `<db>-shm`
 et `<db>-journal` peuvent apparaître à côté, plus le verrou `<db>.lock`) :
 
-- `meta` : `schema_version` (`3`) et `embedding_dims`. Relancer la base avec une
-  autre `EMBEDDING_DIMS` est refusé (code 1), sans toucher au fichier. Une base v1
-  ou v2 est refusée (`schema_version 2 inconnue (attendue 3)`, code 1), sans
-  migration : supprimer le fichier et réimporter.
+- `meta` : `schema_version` (`4`), `embedding_dims` et `rappels_depuis_us` (depuis
+  quand les rappels sont comptés). Relancer la base avec une autre `EMBEDDING_DIMS`
+  est refusé (code 1), sans toucher au fichier. Une base **v3** est migrée à
+  l'ouverture, en une transaction : les tables du graphe sont créées et chaque
+  souvenir est indexé (entités, voisins) ; rien de ce qu'elle contient n'est réécrit.
+  Une base v1 ou v2 est refusée (`schema_version 2 inconnue (attendue 4)`, code 1),
+  sans migration : supprimer le fichier et réimporter.
 - `memories` : les souvenirs (texte, hash md5, portée, rôle — NULL pour un souvenir
   extrait —, `attributed_to` en JSON compact, `metadata`, étiquettes, dates) et leur
   vecteur creux BM25 (`sparse`, JSON `[[indice,poids],…]`). `metadata` (objet JSON
@@ -86,9 +100,17 @@ et `<db>-journal` peuvent apparaître à côté, plus le verrou `<db>.lock`) :
 - `messages` : les textes des `add` infer=true rendus en 200, par portée (les 10
   plus récents sont gardés) ; ils alimentent la section `Last k Messages` de
   l'invite d'extraction, comme la table `messages` de mem0.
+- Graphe (schéma v4, § Graphe de liens) : `entites` et `souvenir_entites` (les
+  entités de chaque souvenir), `liens` (`source`, `cible`, `type`, poids, origine,
+  raison), `indexes` (le hash du texte indexé), `rappels` (combien de fois une
+  recherche a rendu un souvenir, et quand).
+- Rêve (§ Rêve) : `paires_jugees`, `propositions`, `reves` (le journal),
+  `modeles` (les mental models, avec leur version précédente) et `consolidations`
+  (le filigrane de chaque portée).
 
-Chaque écriture calcule son embedding avant, puis écrit souvenir, vecteurs, termes et
-historique dans une seule transaction. Hors des instantanés de `backups/`
+Chaque écriture calcule son embedding avant, puis écrit souvenir, vecteurs, termes,
+historique et index (entités, voisins sémantiques) dans une seule transaction ; une
+suppression retire aussi les liens, entités et rappels du souvenir. Hors des instantanés de `backups/`
 (§ Instantanés), aucun autre fichier n'est créé (ni
 `~/.mem0/history.db`, ni journal sur disque). Retour arrière : supprimer le fichier.
 
@@ -252,12 +274,13 @@ anglaise, TF BM25 (k=1.2, b=0.75, avg_len=256), indice `|murmur3_x86_32|`.
 8 meilleurs voisins par souvenir, voisinages réunis, tri (score décroissant, source,
 target).
 
-### Fusion : additive (défaut) ou RRF
+### Fusion : additive (défaut), RRF ou graphe
 
-Le classement se choisit par requête, avec le champ `"fusion"` du corps (`"additive"`
-ou `"rrf"` ; absent ou `null` : le défaut du serveur), ou pour tout le serveur avec
-`MEM0_SEARCH_FUSION` (défaut `additive`). Une autre valeur du champ rend 422
-`literal_error` (`ctx.expected` : `'additive' or 'rrf'`), avant tout embedding. Le
+Le classement se choisit par requête, avec le champ `"fusion"` du corps (`"additive"`,
+`"rrf"` ou `"graphe"` ; absent ou `null` : le défaut du serveur), ou pour tout le
+serveur avec `MEM0_SEARCH_FUSION` (défaut `additive`). Une autre valeur du champ rend
+422 `literal_error` (`ctx.expected` : `'additive', 'rrf' or 'graphe'`), avant tout
+embedding. Le
 champ est propre à mem0-rs : un client qui ne l'envoie pas — le plugin — garde
 exactement le classement de mem0 2.2.1, et l'ancien Python l'ignorait comme tout
 champ inconnu.
@@ -291,6 +314,31 @@ champ inconnu.
      que l'additive), et `final_score` = `score` = `raw_score/max_possible_score`,
      dans [0, 1].
 
+- **`graphe`** (memoire-liee) : la RRF à trois classements, le troisième étant celui du
+  graphe de la mémoire (§ Graphe de liens) — ce que l'embedding et le BM25 ne
+  trouvent pas parce que le souvenir ne ressemble pas à la requête, mais qu'il est
+  **relié** à ce qu'elle évoque (le correctif d'un symptôme, la convention qui en
+  remplace une autre).
+  1. Semences : les 10 premiers du sémantique et les 10 premiers hits BM25 au-dessus
+     du seuil, chacune avec son meilleur rang `r`.
+  2. Score de graphe d'un souvenir `m` de la portée, inspiré de Hindsight
+     (`tanh` sature les comptes d'entités, les signaux s'ajoutent) :
+     `tanh(0.5·q) + max_semence [ 1/r · (sém + typé + 0.5·tanh(0.5·s)) ]`, où `q`
+     compte les entités de la requête que `m` porte, `sém` et `typé` sont les poids
+     des liens `semantique` et typés (`cause`, `remplace`, `contredit`, `precise`,
+     `voir`, `preuve`) entre `m` et la semence, `s` les entités partagées avec elle.
+     Une entité portée par plus de `max(3, n/4)` souvenirs (`n` : taille de la
+     portée) ne relie rien : le nom du projet n'est pas un lien.
+  3. Le classement du graphe ne garde que les scores ≥ 0.7 (`GRAPHE_PLANCHER`), les
+     10 meilleurs : sans cross-encoder derrière la fusion, une voix donnée à un voisin
+     faible déclasse les bons candidats que seul le sémantique trouve (mesuré).
+  4. `threshold` ne filtre que les classements sémantique et BM25 : un souvenir
+     atteint par le graphe entre même sous le seuil — c'est l'objet du bras —, et
+     `score_details.semantic_score` garde son vrai cosinus.
+  5. `score_details` garde ses 7 clés : `entity_boost` porte le score de graphe,
+     `max_possible_score` vaut `1/(k+1)` par classement actif (le sémantique
+     toujours, le BM25 dès un hit, le graphe dès qu'il atteint un souvenir).
+
 Effet sur le plugin : le rappel envoie `threshold` 0.55 puis re-trie ce qu'il reçoit
 sur `semantic_score`. La fusion décide donc QUELS souvenirs entrent dans son lot
 (`RECALL_POOL`), pas l'ordre final qu'il injecte ; et un hit BM25 seul sous 0.55 de
@@ -312,8 +360,9 @@ fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
 `--json`.
 
 - **Stratégies** : `semantique` (cosinus seul), `bm25` (hits BM25 seuls),
-  `additive`, puis `rrf-k<k>` pour chaque `k` de `--k` (défaut `10,60`). Les deux
-  classements seuls sont des témoins du banc, pas des valeurs de `fusion`.
+  `additive`, puis `rrf-k<k>` et `graphe-k<k>` pour chaque `k` de `--k` (défaut
+  `10,60`). Les deux classements seuls sont des témoins du banc, pas des valeurs de
+  `fusion`.
 - **Métriques**, moyennes sur les requêtes, profondeur 10 : Recall@5 et Recall@10
   (part des pertinents retrouvés), MRR@10 (inverse du rang du premier pertinent),
   nDCG@10 (gain `2^grade − 1`, remise `log2(rang + 1)`), puis nDCG@10 par catégorie
@@ -326,11 +375,13 @@ fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
 - **`--seuil`** : `threshold` des recherches, 0 par défaut (on mesure le classement,
   pas le plancher).
 - **Corpus** : `src/banc/corpus.json`, intégré au binaire (`--corpus <fichier>` pour
-  un autre, au même format). 150 souvenirs de développement en français et en
-  anglais, 52 requêtes en trois catégories — `lexicale` (identifiant, nom de
-  fichier, code d'erreur : `SQLITE_BUSY`, `recall.ts`, `E0502`…), `paraphrase`
-  (reformulation sans les mots du souvenir), `mixte` — chacune avec ses souvenirs
-  pertinents gradués (2 : répond, 1 : utile).
+  un autre, au même format). 166 souvenirs de développement en français et en
+  anglais, 6 liens typés posés comme par un agent (`liens`, facultatif), 60 requêtes
+  en quatre catégories — `lexicale` (identifiant, nom de fichier, code d'erreur :
+  `SQLITE_BUSY`, `recall.ts`, `E0502`…), `paraphrase` (reformulation sans les mots
+  du souvenir), `mixte`, `liee` (la réponse est reliée au souvenir que la requête
+  évoque, par un lien ou une entité, sans lui ressembler) — chacune avec ses
+  souvenirs pertinents gradués (2 : répond, 1 : utile).
 - **Embedder** : `--embedder local` (défaut) est un plongeur déterministe, hors
   ligne (`src/banc/plongeur.rs`) : mots normalisés, trigrammes de caractères et
   concepts d'un petit lexique bilingue de développement, hachés puis normalisés en
@@ -347,41 +398,145 @@ fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
 Codes : 0 succès ; 1 corpus invalide (id en double, pertinent inconnu, grade hors
 de 1..3…), embedder ou base en échec ; 2 usage.
 
-Mesure du 2026-10-25, embedder local, build release, `banc --k 10,60,100` :
+Mesure du 2026-10-26, embedder local, build release, `banc --k 10,60,100` :
 
 | stratégie | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | p50 (ms) | p95 (ms) |
 |---|---:|---:|---:|---:|---:|---:|
-| semantique | 0.891 | 0.949 | 0.868 | 0.872 | 1.69 | 5.80 |
-| bm25 | 0.686 | 0.728 | 0.783 | 0.729 | 1.43 | 2.42 |
-| additive | 0.833 | 0.885 | 0.871 | 0.841 | 1.46 | 3.27 |
-| rrf-k10 | 0.833 | 0.910 | 0.878 | 0.849 | 1.51 | 5.53 |
-| rrf-k60 | 0.824 | 0.910 | 0.873 | 0.845 | 1.53 | 5.58 |
-| rrf-k100 | 0.824 | 0.910 | 0.873 | 0.845 | 1.52 | 2.19 |
+| semantique | 0.856 | 0.939 | 0.856 | 0.825 | 1.83 | 2.93 |
+| bm25 | 0.664 | 0.708 | 0.766 | 0.676 | 1.58 | 2.07 |
+| additive | 0.789 | 0.867 | 0.846 | 0.783 | 1.64 | 2.45 |
+| rrf-k10 | 0.797 | 0.897 | 0.856 | 0.792 | 1.81 | 2.54 |
+| rrf-k60 | 0.797 | 0.881 | 0.847 | 0.782 | 1.57 | 2.30 |
+| rrf-k100 | 0.789 | 0.881 | 0.846 | 0.781 | 1.66 | 3.01 |
+| graphe-k10 | 0.814 | 0.914 | 0.856 | 0.821 | 2.39 | 4.16 |
+| graphe-k60 | 0.814 | 0.889 | 0.847 | 0.808 | 2.20 | 3.14 |
+| graphe-k100 | 0.806 | 0.889 | 0.846 | 0.807 | 2.89 | 3.92 |
 
-| nDCG@10 | lexicale (18) | mixte (17) | paraphrase (17) |
-|---|---:|---:|---:|
-| semantique | 0.867 | 0.918 | 0.833 |
-| bm25 | 0.937 | 0.845 | 0.392 |
-| additive | 0.958 | 0.860 | 0.699 |
-| rrf-k10 | 0.958 | 0.883 | 0.701 |
-| rrf-k60 | 0.958 | 0.875 | 0.696 |
-| rrf-k100 | 0.958 | 0.875 | 0.696 |
+| nDCG@10 | lexicale (18) | liee (8) | mixte (17) | paraphrase (17) |
+|---|---:|---:|---:|---:|
+| semantique | 0.842 | 0.590 | 0.915 | 0.827 |
+| bm25 | 0.896 | 0.453 | 0.840 | 0.386 |
+| additive | 0.917 | 0.525 | 0.857 | 0.687 |
+| rrf-k10 | 0.917 | 0.538 | 0.883 | 0.689 |
+| rrf-k60 | 0.917 | 0.495 | 0.872 | 0.684 |
+| rrf-k100 | 0.917 | 0.495 | 0.872 | 0.682 |
+| graphe-k10 | 0.917 | 0.757 | 0.883 | 0.689 |
+| graphe-k60 | 0.917 | 0.690 | 0.872 | 0.684 |
+| graphe-k100 | 0.917 | 0.690 | 0.872 | 0.682 |
 
 Lecture :
 
 - Sur les requêtes lexicales, les deux fusions battent chaque classement seul : le
   BM25 apporte ce que l'embedding dilue.
-- La RRF passe devant l'additive en Recall@10 (0.910 contre 0.885), en MRR@10 et en
+- La RRF passe devant l'additive en Recall@10 (0.897 contre 0.867), en MRR@10 et en
   nDCG@10, surtout sur les requêtes mixtes : ce sont les hits BM25 hors des
   candidats sémantiques, que seule la RRF classe.
-- Sur les paraphrases, le BM25 seul s'effondre et tire les deux fusions sous le
-  sémantique seul ; avec ce plongeur, le sémantique seul reste premier au total —
-  ce que son lexique, écrit avec le corpus, rend attendu.
-- `k` bouge peu : 60 et 100 donnent le même classement ici, 10 gagne un peu sur les
-  mixtes.
+- La fusion `graphe` laisse intactes les catégories lexicale, mixte et paraphrase
+  (le plancher de 0.7 ne laisse voter que les connexions fortes) et porte les
+  requêtes `liee` de 0.538 à 0.757 en nDCG@10 (k = 10) : la réponse n'y ressemble
+  pas à la requête, elle est reliée à ce qu'elle évoque.
+- Sur les paraphrases, le BM25 seul s'effondre et tire les fusions sous le
+  sémantique seul ; avec ce plongeur, le sémantique seul reste premier sur les
+  paraphrases et les mixtes — ce que son lexique, écrit avec le corpus, rend attendu.
+- `k` bouge peu : 60 et 100 donnent presque le même classement ici, 10 gagne un peu.
 
-Le défaut reste `additive`, pour la parité. Passer à `rrf` se décide sur une mesure
-avec le vrai embedder (`--embedder openai`), pas sur ce tableau.
+Le défaut reste `additive`, pour la parité. Passer à `rrf` ou à `graphe` se décide sur
+une mesure avec le vrai embedder (`--embedder openai`), pas sur ce tableau ; et le
+bras graphe ne vaut que ce que valent les liens de la base (posés par les agents et
+par le rêve).
+
+## Graphe de liens
+
+Schéma v4 (memoire-liee). Chaque écriture indexe le souvenir, dans sa transaction :
+
+- **Entités** (`src/entites.rs`) : extraction déterministe, sans modèle ni
+  bibliothèque NLP, de ce qu'un souvenir de développement nomme sans ambiguïté —
+  fichiers (clé : le nom de base, `src/recherche.rs` et `recherche.rs` partagent
+  `recherche.rs`), routes (`/memory/search`), identifiants de code (snake_case,
+  camelCase, PascalCase à majuscule interne, kebab-case avec chiffre ou trois parts,
+  texte entre accents graves), constantes et codes d'erreur (`MEM0_DB_PATH`,
+  `E0502`), noms propres en milieu de phrase (`Qdrant`). Au plus 32 par souvenir.
+- **Voisins sémantiques** : les 8 souvenirs de même portée de cosinus ≥ 0.75 (les
+  constantes de `GET /memory/graph`), stockés en liens `semantique`
+  (`source < cible`).
+
+Les liens typés sont posés par un agent ou par le rêve : `cause` (la source explique
+la cible), `remplace` (la source rend la cible obsolète), `contredit`, `precise`,
+`voir` ; `preuve` relie une observation aux faits qui la fondent. Un lien porte son
+poids (1 pour un agent), son origine (`agent`, `reve`, `calcul`), une raison et sa date.
+
+Routes (jeton exigé comme partout ; erreurs propres à mem0-rs : 422
+`{"detail": "<raison>"}` pour un corps invalide, 404 pour un id inconnu) :
+
+| Route | Rôle |
+|---|---|
+| `POST /memory/link` `{source, target, type, reason?}` | pose un lien (`type` parmi `cause`, `remplace`, `contredit`, `precise`, `voir`) ; rend `{"link": …}` |
+| `POST /memory/unlink` `{source, target, type}` | retire un lien ; `{"removed": bool}` |
+| `GET /memory/links?agent_id=…[&semantic=true]` | les liens de la portée (typés ; `semantique` en plus avec `semantic=true`) |
+| `GET /memory/{id}/links` | les liens typés d'un souvenir vus depuis lui (`direction` `out` ou `in`), avec le texte de l'autre bout, et ses entités |
+| `GET /memory/entities?agent_id=…` | les entités de la portée, les plus portées d'abord |
+
+`POST /memory/search` avec `"links": true` ajoute à chaque ligne, après
+`attributed_to`, `links` : ses liens typés (`id` de l'autre bout, `type`,
+`direction`, `weight`, `origin`, `reason`). Sans ce champ, la forme des lignes ne
+change pas. Chaque recherche compte un rappel pour chaque souvenir rendu (table
+`rappels`, lue par le rêve).
+
+`GET /memory/graph` garde son contrat (cosinus calculé à la volée, voisinages
+réunis) : la route typée est `GET /memory/links`.
+
+## Rêve
+
+Le rêve de la mémoire (reve-memoire) : un travail de fond, hors du chemin des
+requêtes, quand une portée est calme. Il n'efface et ne réécrit **jamais** un souvenir
+écrit par un agent : il ajoute des objets dérivés (liens, observations, mental
+models, propositions), et toute suppression passe par une décision humaine.
+
+**Rêve local** (`src/reve.rs`), dans mem0-rs, sur son propre LLM (`OMLX_LLM_MODEL`) :
+toutes les `MEM0_DREAM_INTERVAL_MINUTES`, chaque portée qui a changé depuis son
+dernier rêve et qu'aucune écriture n'a touchée depuis `MEM0_DREAM_QUIET_MINUTES` :
+
+1. **Rejouer** — réindexe les souvenirs dont l'index manque ou ne suit plus le texte.
+2. **Comparer** — chaque paire de faits de cosinus ≥ 0.85 pas encore jugée avec ces
+   textes (au plus `MEM0_DREAM_PAIRS`) passe au LLM, qui répond `doublon`,
+   `remplace`, `contredit`, `precise` ou `distinct`. `precise` pose un lien ;
+   `contredit` pose un lien et ouvre une proposition ; `doublon` et `remplace`
+   ouvrent une proposition de suppression de l'ancien (un remplacement pose aussi
+   le lien `remplace`). Le verrou de la base n'est jamais tenu pendant l'appel.
+3. **Oublier doucement** — une observation qui a perdu toutes ses preuves est
+   retirée ; un fait ni rappelé, ni relié, ni preuve depuis `MEM0_DREAM_FORGET_DAYS`
+   jours devient une proposition d'oubli (pas avant qu'une fenêtre entière se soit
+   écoulée depuis la création ou la migration de la base).
+4. **Journal** — une ligne `reves` par portée et par rêve.
+
+**Consolidation** (phases 3 et 4) : elle demande un modèle qui raisonne sur toute une
+portée. Le harness la confie à une session omp (`omp-harness/dreams.ts`), dont les
+modèles sont déjà configurés pour les runs : il lit le dossier, le fait raisonner, et
+rend le résultat, que mem0-rs valide puis applique en une transaction.
+
+- **Observation** : un souvenir (`metadata.memory_type = "observation"`, étiquette
+  `observation`, `metadata.preuves` = nombre de preuves), croyance durable fondée sur
+  des faits reliés par des liens `preuve`, **affinée** plutôt qu'écrasée quand un
+  fait nouveau la précise ou la contredit (son historique garde chaque version).
+  Elle se cherche comme un souvenir.
+- **Mental model** : la réponse permanente à une question fixe sur le projet
+  (`carte`, `conventions`, `decisions`, `pieges`, `preferences`), réécrite seulement
+  quand sa portée a changé (`stale`), son contenu précédent gardé. Le plugin la pose
+  au prompt système en tête de session.
+- **Filigrane** : jusqu'où les faits d'une portée sont consolidés ; un dossier ne
+  rend que les faits plus récents (60 au plus ; le suivant prend la suite).
+
+| Route | Rôle |
+|---|---|
+| `GET /memory/dream?agent_id=…` | les 10 derniers rêves de la portée (`local`, `consolidation`) et ses propositions ouvertes, avec le texte des souvenirs cités |
+| `POST /memory/dream` `{agent_id?}` | un rêve local maintenant (toutes les portées sans `agent_id`), sans attendre le calme ; rend les rapports |
+| `POST /memory/dream/proposal` `{id, decision: "accept" \| "reject"}` | accepter applique la suppression proposée (historisée comme toute suppression) ; 409 si déjà décidée |
+| `GET /memory/dream/dossier?agent_id=…` | le dossier de consolidation : `horizon_us`, `since`, `due`, `new_facts` et `context` (faits reliés, avec entités et liens), `observations` (avec leurs preuves et `stale`), `models` |
+| `POST /memory/dream/consolidation` | `{agent_id, horizon_us, observations: [{id?, text, evidence}], obsolete, causes: [{source, target, reason?}], models: [{name, content, sources}]}` : validé (422 avec la raison : preuve qui n'est pas un fait de la portée, observation inconnue, modèle inconnu…), revalidé sous le verrou après l'embedding, appliqué en une transaction, journalisé |
+| `GET /memory/models?agent_id=…` | les mental models de la portée : `name`, `question`, `content`, `sources`, `updated_at`, `stale` |
+
+Les textes écrits par le rêve (observations, raisons, mental models) passent par le
+même masquage des secrets que les écritures.
 
 ## entity_boost
 
@@ -402,9 +557,10 @@ conviendrait pas au corpus français). Le chemin, dans mem0ai 2.2.1 :
 - `mem0/utils/lemmatization.py:31` : sans spaCy, `lemmatize_for_bm25` rend le texte
   inchangé, donc `text_lemmatized` = le texte du souvenir.
 
-mem0-rs ne le reproduit donc pas : `entity_boost` vaut toujours `0.0` et
-`max_possible_score` vaut 1 (aucun hit BM25) ou 2. Aucune bibliothèque NLP n'est
-utilisée.
+mem0-rs ne le reproduit donc pas : avec les fusions `additive` et `rrf`,
+`entity_boost` vaut toujours `0.0` et `max_possible_score` vaut 1 (aucun hit BM25) ou
+2. Aucune bibliothèque NLP n'est utilisée. La fusion `graphe` réutilise la clé pour son
+score de graphe, que les entités lexicales du schéma v4 nourrissent (§ Graphe de liens).
 
 ## Dépendances
 

@@ -14,9 +14,13 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::bm25::{self, VecteurCreux};
-use crate::horodatage::Instant;
+use crate::horodatage::{self, Instant};
+use crate::liens;
 
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
+/// Version dont une base est migrée à l'ouverture (tables du schéma v4 ajoutées,
+/// souvenirs indexés), sans rien perdre ni réécrire de ce qu'elle contient.
+pub const VERSION_MIGRABLE: &str = "3";
 
 /// Nombre de messages gardés par scope de session dans `messages` (storage.py).
 pub const MESSAGES_PAR_PORTEE: usize = 10;
@@ -66,18 +70,31 @@ pub fn ouvrir(path: &Path, dims: usize) -> Result<Connection, ErreurOuverture> {
         std::fs::create_dir_all(parent).map_err(|e| autre(&e))?;
     }
     let mut conn = Connection::open(path).map_err(|e| autre(&e))?;
-    let existe = verifier_meta(&conn, dims)?;
+    let etat = verifier_meta(&conn, dims)?;
     pragmas(&conn).map_err(ErreurOuverture::Autre)?;
-    if !existe {
-        creer_schema(&mut conn, dims).map_err(|e| autre(&e))?;
+    match etat {
+        EtatBase::Vierge => creer_schema(&mut conn, dims).map_err(|e| autre(&e))?,
+        EtatBase::AMigrer => migrer(&mut conn).map_err(|e| autre(&format!("migration v3 → v4 : {e}")))?,
+        EtatBase::AJour => {}
     }
     Ok(conn)
 }
 
+/// Ce que [`verifier_meta`] a trouvé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EtatBase {
+    /// Aucune table : base à créer.
+    Vierge,
+    /// Base de version [`SCHEMA_VERSION`].
+    AJour,
+    /// Base de version [`VERSION_MIGRABLE`] : [`ouvrir`] la migre.
+    AMigrer,
+}
+
 /// Contrôle d'une base ouverte, commun à [`ouvrir`] et [`ouvrir_simulation`] :
-/// `Ok(true)` si c'est une base mem0-rs de version [`SCHEMA_VERSION`] et de
-/// dimension `dims`, `Ok(false)` si elle est vierge (aucune table).
-pub fn verifier_meta(conn: &Connection, dims: usize) -> Result<bool, ErreurOuverture> {
+/// une base mem0-rs de version [`SCHEMA_VERSION`] (ou [`VERSION_MIGRABLE`]) et de
+/// dimension `dims`, ou une base vierge (aucune table).
+pub fn verifier_meta(conn: &Connection, dims: usize) -> Result<EtatBase, ErreurOuverture> {
     let autre = |e: &dyn std::fmt::Display| ErreurOuverture::Autre(e.to_string());
     let tables: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")
@@ -85,7 +102,7 @@ pub fn verifier_meta(conn: &Connection, dims: usize) -> Result<bool, ErreurOuver
         .map_err(|e| autre(&e))?;
     if !tables.iter().any(|t| t == "meta") {
         return if tables.is_empty() {
-            Ok(false)
+            Ok(EtatBase::Vierge)
         } else {
             Err(ErreurOuverture::Autre("ce n'est pas une base mem0-rs (table meta absente)".to_owned()))
         };
@@ -96,17 +113,21 @@ pub fn verifier_meta(conn: &Connection, dims: usize) -> Result<bool, ErreurOuver
             .map_err(|e| autre(&e))
     };
     let version = lire("schema_version")?;
-    if version.as_deref() != Some(SCHEMA_VERSION) {
-        return Err(ErreurOuverture::Autre(format!(
-            "schema_version {} inconnue (attendue {SCHEMA_VERSION})",
-            version.as_deref().unwrap_or("absente")
-        )));
-    }
+    let etat = match version.as_deref() {
+        Some(SCHEMA_VERSION) => EtatBase::AJour,
+        Some(VERSION_MIGRABLE) => EtatBase::AMigrer,
+        _ => {
+            return Err(ErreurOuverture::Autre(format!(
+                "schema_version {} inconnue (attendue {SCHEMA_VERSION})",
+                version.as_deref().unwrap_or("absente")
+            )));
+        }
+    };
     let stockee = lire("embedding_dims")?.unwrap_or_default();
     if stockee != dims.to_string() {
         return Err(ErreurOuverture::Dims { stockee, demandee: dims });
     }
-    Ok(true)
+    Ok(etat)
 }
 
 /// Ouvre la base EXISTANTE `path` pour `--dry-run` (S-8), en lecture seule et
@@ -126,7 +147,9 @@ pub fn ouvrir_simulation(path: &Path, dims: usize) -> Result<Option<Connection>,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
-    Ok(verifier_meta(&conn, dims)?.then_some(conn))
+    // Une base v3 se lit telle quelle : la simulation ne lit que memories, history
+    // et messages, que la migration ne touche pas.
+    Ok((verifier_meta(&conn, dims)? != EtatBase::Vierge).then_some(conn))
 }
 
 fn pragmas(conn: &Connection) -> Result<(), String> {
@@ -177,11 +200,40 @@ fn creer_schema(conn: &mut Connection, dims: usize) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS messages_portee ON messages (session_scope, created_at);"
     ))?;
+    tx.execute_batch(liens::SCHEMA_V4)?;
     tx.execute(
-        "INSERT INTO meta (cle, valeur) VALUES ('schema_version', ?1), ('embedding_dims', ?2)",
-        params![SCHEMA_VERSION, dims.to_string()],
+        "INSERT INTO meta (cle, valeur) VALUES ('schema_version', ?1), ('embedding_dims', ?2), ('rappels_depuis_us', ?3)",
+        params![SCHEMA_VERSION, dims.to_string(), horodatage::maintenant().micros.to_string()],
     )?;
     tx.commit()
+}
+
+/// Migration v3 → v4, en UNE transaction : les tables du schéma v4, puis
+/// l'indexation (entités, voisins sémantiques) de chaque souvenir existant. Rien
+/// de ce que la base contient n'est réécrit ; une erreur n'écrit rien.
+fn migrer(conn: &mut Connection) -> rusqlite::Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(liens::SCHEMA_V4)?;
+    let instant = horodatage::maintenant();
+    let ids: Vec<String> =
+        tx.prepare("SELECT id FROM memories ORDER BY updated_at_us, id")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    for id in &ids {
+        liens::indexer(&tx, id, &instant.iso)?;
+    }
+    tx.execute("UPDATE meta SET valeur = ?1 WHERE cle = 'schema_version'", [SCHEMA_VERSION])?;
+    tx.execute(
+        "INSERT OR REPLACE INTO meta (cle, valeur) VALUES ('rappels_depuis_us', ?1)",
+        [instant.micros.to_string()],
+    )?;
+    tx.commit()
+}
+
+/// Depuis quand les rappels sont comptés (création de la base ou migration v4),
+/// en microsecondes Unix ; 0 si inconnu.
+pub fn rappels_depuis_us(conn: &Connection) -> rusqlite::Result<i64> {
+    let brut: Option<String> =
+        conn.query_row("SELECT valeur FROM meta WHERE cle = 'rappels_depuis_us'", [], |r| r.get(0)).optional()?;
+    Ok(brut.and_then(|v| v.parse().ok()).unwrap_or(0))
 }
 
 /// Vecteur normalisé L2 en float32, en BLOB little-endian (D-5, D-7).
@@ -194,7 +246,7 @@ fn blob_normalise(vecteur: &[f32]) -> Vec<u8> {
 /// Termes BM25 de `texte` (S-6) : le vecteur creux en JSON `[[indice,poids],…]`
 /// (colonne `memories.sparse`) et ses indices en jetons FTS5 `t<indice>`
 /// (colonne `memory_terms.terms`), chacun une seule fois.
-fn termes(texte: &str) -> rusqlite::Result<(String, String)> {
+pub(crate) fn termes(texte: &str) -> rusqlite::Result<(String, String)> {
     let creux = bm25::encoder(texte);
     let json = serde_json::to_string(&creux).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     Ok((json, jetons_fts(creux.iter().map(|&(i, _)| i), " ")))
@@ -299,9 +351,26 @@ fn inserer(
 pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) -> rusqlite::Result<()> {
     let termes = termes(s.memory)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    inserer(&tx, s, vecteur, &termes)?;
+    ajouter_dans(&tx, s, vecteur, &termes, None)?;
+    tx.commit()
+}
+
+/// [`ajouter`] dans une transaction ouverte, avec `metadata` (objet JSON compact)
+/// s'il est donné : souvenir, vecteur, termes, révision ADD et index (entités,
+/// voisins sémantiques).
+pub(crate) fn ajouter_dans(
+    tx: &rusqlite::Transaction<'_>,
+    s: &NouveauSouvenir<'_>,
+    vecteur: &[f32],
+    termes: &(String, String),
+    metadata: Option<&str>,
+) -> rusqlite::Result<()> {
+    inserer(tx, s, vecteur, termes)?;
+    if metadata.is_some() {
+        tx.execute("UPDATE memories SET metadata = ?1 WHERE id = ?2", params![metadata, s.id])?;
+    }
     historiser(
-        &tx,
+        tx,
         &Revision {
             memory_id: s.id,
             old_memory: None,
@@ -313,7 +382,7 @@ pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) 
             role: s.role,
         },
     )?;
-    tx.commit()
+    liens::indexer(tx, s.id, &s.instant.iso)
 }
 
 /// Un fait retenu par add infer=true (S-4), prêt à écrire.
@@ -408,6 +477,7 @@ pub fn ajouter_infere(
                 role: None,
             },
         )?;
+        liens::indexer(&tx, &f.id, &f.instant.iso)?;
     }
     inserer_message(&tx, message)?;
     tx.commit()
@@ -448,8 +518,27 @@ pub fn mettre_a_jour(
     vecteur: &[f32],
     instant: &Instant,
 ) -> rusqlite::Result<bool> {
-    let (sparse, terms) = termes(texte)?;
+    let termes = termes(texte)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !mettre_a_jour_dans(&tx, id, texte, hash, tags, vecteur, instant, &termes)? {
+        return Ok(false);
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+/// [`mettre_a_jour`] dans une transaction ouverte ; réindexe le souvenir.
+#[allow(clippy::too_many_arguments, reason = "les champs d'un PUT, plus la transaction et les termes déjà calculés")]
+pub(crate) fn mettre_a_jour_dans(
+    tx: &rusqlite::Transaction<'_>,
+    id: &str,
+    texte: &str,
+    hash: &str,
+    tags: &Tags,
+    vecteur: &[f32],
+    instant: &Instant,
+    (sparse, terms): &(String, String),
+) -> rusqlite::Result<bool> {
     let actuel: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
             "SELECT rowid, memory, created_at, role FROM memories WHERE id = ?1",
@@ -477,7 +566,7 @@ pub fn mettre_a_jour(
     )?;
     tx.execute("UPDATE memory_terms SET terms = ?1 WHERE rowid = ?2", params![terms, rowid])?;
     historiser(
-        &tx,
+        tx,
         &Revision {
             memory_id: id,
             old_memory: Some(&ancien),
@@ -489,13 +578,23 @@ pub fn mettre_a_jour(
             role: role.as_deref(),
         },
     )?;
-    tx.commit()?;
+    liens::indexer(tx, id, &instant.iso)?;
     Ok(true)
 }
 
 /// Supprime le souvenir `id` (souvenir, vecteur, termes) ; `false` s'il n'existe pas.
 pub fn supprimer(conn: &mut Connection, id: &str, instant: &Instant) -> rusqlite::Result<bool> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !supprimer_dans(&tx, id, instant)? {
+        return Ok(false);
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+/// [`supprimer`] dans une transaction ouverte ; retire aussi ce que le souvenir
+/// laisse dans le graphe ([`liens::desindexer`]).
+pub(crate) fn supprimer_dans(tx: &rusqlite::Transaction<'_>, id: &str, instant: &Instant) -> rusqlite::Result<bool> {
     let actuel: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
             "SELECT rowid, memory, created_at, role FROM memories WHERE id = ?1",
@@ -510,7 +609,7 @@ pub fn supprimer(conn: &mut Connection, id: &str, instant: &Instant) -> rusqlite
     tx.execute("DELETE FROM memory_terms WHERE rowid = ?1", [rowid])?;
     tx.execute("DELETE FROM memories WHERE rowid = ?1", [rowid])?;
     historiser(
-        &tx,
+        tx,
         &Revision {
             memory_id: id,
             old_memory: Some(&texte),
@@ -522,7 +621,7 @@ pub fn supprimer(conn: &mut Connection, id: &str, instant: &Instant) -> rusqlite
             role: role.as_deref(),
         },
     )?;
-    tx.commit()?;
+    liens::desindexer(tx, id, &instant.iso)?;
     Ok(true)
 }
 
@@ -826,6 +925,10 @@ pub fn importer<'a>(
     for s in &ecritures.souvenirs {
         inserer_importe(&tx, s)?;
     }
+    let instant = horodatage::maintenant();
+    for s in &ecritures.souvenirs {
+        liens::indexer(&tx, &s.id, &instant.iso)?;
+    }
     for r in &ecritures.revisions {
         tx.execute(
             "INSERT INTO history (id, memory_id, old_memory, new_memory, event, created_at, updated_at, is_deleted, actor_id, role)
@@ -978,7 +1081,7 @@ mod tests {
         let Err(ErreurOuverture::Autre(raison)) = ouvrir(&base.0, DIMS) else {
             panic!("une base v1 doit être refusée");
         };
-        assert_eq!(raison, "schema_version 1 inconnue (attendue 3)");
+        assert_eq!(raison, "schema_version 1 inconnue (attendue 4)");
         assert_eq!(std::fs::read(&base.0).unwrap(), avant);
     }
 
@@ -1051,19 +1154,19 @@ mod tests {
         let Err(ErreurOuverture::Autre(raison)) = ouvrir(&base.0, DIMS) else {
             panic!("une base v2 doit être refusée");
         };
-        assert_eq!(raison, "schema_version 2 inconnue (attendue 3)");
+        assert_eq!(raison, "schema_version 2 inconnue (attendue 4)");
         assert_eq!(std::fs::read(&base.0).unwrap(), avant);
     }
 
     /// mem0-rs-migration S-11 (pré-requis de AC-1..AC-3) : `memories.metadata`
     /// après `attributed_to`, `sparse` nullable.
     #[test]
-    fn ac1_ac5_base_neuve_en_v3() {
+    fn ac1_ac5_base_neuve_en_v4() {
         let base = Temp::new();
         let conn = ouvrir(&base.0, DIMS).unwrap();
         let version: String =
             conn.query_row("SELECT valeur FROM meta WHERE cle = 'schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, "3");
+        assert_eq!(version, "4");
         let colonnes = |table: &str| -> Vec<(String, bool)> {
             conn.prepare(&format!("PRAGMA table_info({table})"))
                 .unwrap()
@@ -1111,8 +1214,64 @@ mod tests {
             .unwrap();
         assert_eq!(index, "CREATE INDEX messages_portee ON messages (session_scope, created_at)");
         drop(conn);
-        // Une base v3 se rouvre.
+        // Une base v4 se rouvre.
         ouvrir(&base.0, DIMS).unwrap();
+    }
+
+    /// memoire-liee : une base v3 est migrée à l'ouverture, sans perte — tables du
+    /// schéma v4 créées, souvenirs indexés (entités, voisins sémantiques), rien
+    /// d'autre réécrit ; la simulation la lit sans la migrer.
+    #[test]
+    fn migration_v3_vers_v4_indexe_sans_rien_perdre() {
+        let base = Temp::new();
+        {
+            let mut conn = ouvrir(&base.0, DIMS).unwrap();
+            ajouter_simple(&mut conn, "a", Some("p"), None, &[1.0, 0.0, 0.0]);
+            ajouter_simple(&mut conn, "b", Some("p"), None, &[0.9, 0.1, 0.0]);
+            conn.execute("UPDATE memories SET memory = 'le bug de recall.ts' WHERE id = 'a'", []).unwrap();
+            // Retour à une base v3 : tables du schéma v4 retirées.
+            for table in ["entites", "souvenir_entites", "liens", "indexes", "rappels", "paires_jugees", "propositions", "reves", "modeles", "consolidations"] {
+                conn.execute_batch(&format!("DROP TABLE {table}")).unwrap();
+            }
+            conn.execute("UPDATE meta SET valeur = '3' WHERE cle = 'schema_version'", []).unwrap();
+            conn.execute("DELETE FROM meta WHERE cle = 'rappels_depuis_us'", []).unwrap();
+        }
+        let simulation = ouvrir_simulation(&base.0, DIMS).unwrap().expect("base v3 lisible en simulation");
+        assert_eq!(connaissances(&simulation).unwrap().ids, ["a", "b"].map(String::from).into());
+        drop(simulation);
+        let conn = ouvrir(&base.0, DIMS).unwrap();
+        let version: String =
+            conn.query_row("SELECT valeur FROM meta WHERE cle = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, "4");
+        assert!(rappels_depuis_us(&conn).unwrap() > 0);
+        assert_eq!(tous(&conn, "moi", Some("p")).unwrap().len(), 2);
+        let entites: Vec<String> = conn
+            .prepare("SELECT e.cle FROM souvenir_entites se JOIN entites e ON e.id = se.entite WHERE se.memory_id = 'a'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(entites, ["recall.ts"]);
+        let liens = crate::liens::liens_touchant(&conn, &["a"]).unwrap();
+        assert_eq!(liens.len(), 1);
+        assert_eq!((liens[0].source.as_str(), liens[0].target.as_str(), liens[0].type_.as_str()), ("a", "b", "semantique"));
+        assert!(crate::liens::a_reindexer(&conn, None, 10).unwrap().is_empty());
+    }
+
+    /// memoire-liee : supprimer un souvenir retire ses liens et ses entités.
+    #[test]
+    fn suppression_retire_liens_et_entites() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        ajouter_simple(&mut conn, "a", Some("p"), None, &[1.0, 0.0, 0.0]);
+        ajouter_simple(&mut conn, "b", Some("p"), None, &[1.0, 0.05, 0.0]);
+        // Hors portée : jamais voisin.
+        ajouter_simple(&mut conn, "c", Some("q"), None, &[1.0, 0.0, 0.0]);
+        assert_eq!(crate::liens::liens_touchant(&conn, &["a"]).unwrap().len(), 1);
+        assert!(crate::liens::liens_touchant(&conn, &["c"]).unwrap().is_empty());
+        assert!(supprimer(&mut conn, "b", &instant(9)).unwrap());
+        assert!(crate::liens::liens_touchant(&conn, &["a", "b"]).unwrap().is_empty());
     }
 
     /// Ligne écrite comme l'import (BR-2) : `sparse` NULL, `metadata` donnée,
