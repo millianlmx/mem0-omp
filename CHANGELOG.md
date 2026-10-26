@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.12.1 — 2026-10-26
+
+- fix(mem0-rs,console): migration v4 en temps linéaire, et pas d'agent mem0-rs local quand la mémoire est celle du serveur (#302) (052b858)
+
 ## omp-mem0-memory 4.3.0 — 2026-10-26
 
 - feat(memory,stack,harness): mémoire liée et rêve de la mémoire, inspirés de Hindsight (#299) (be59fa3)
