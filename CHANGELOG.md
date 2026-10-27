@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.12.2 — 2026-10-27
+
+- fix(harness,console): étapes qui se closent, questions qui s'envoient, mem0_add dans chaque runner (#304) (092b397)
+
 ## omp-harness 1.12.1 — 2026-10-26
 
 - fix(mem0-rs,console): migration v4 en temps linéaire, et pas d'agent mem0-rs local quand la mémoire est celle du serveur (#302) (052b858)
