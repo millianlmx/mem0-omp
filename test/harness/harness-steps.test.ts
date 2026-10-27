@@ -445,15 +445,15 @@ test("harness-steps/AC-15 : une clarification est un checkpoint (jamais une esca
   }
 });
 
-test("harness-steps/AC-16 : set_modules pose les modules du run pendant l'étape ; checkpoint commite l'état courant", async () => {
+test("harness-steps/AC-16 : set_modules pose les modules du run pendant l'étape ; save_checkpoint commite l'état courant", async () => {
   const world = fakeWorld({
     req: [OK.req],
     specs: [
       [
         { tool: "set_modules", args: { paths: ["src/db", "./docs/"] } },
         { write: "src/db/notes.txt", content: "brouillon\n" },
-        { tool: "checkpoint", args: { message: "schéma esquissé" } },
-        { tool: "checkpoint", args: { message: "rien de neuf" } },
+        { tool: "save_checkpoint", args: { message: "schéma esquissé" } },
+        { tool: "save_checkpoint", args: { message: "rien de neuf" } },
         { sleep: 60_000 },
       ],
     ],
@@ -462,7 +462,7 @@ test("harness-steps/AC-16 : set_modules pose les modules du run pendant l'étape
   try {
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
     await waitFor(
-      () => world.log().filter((entry) => entry.kind === "tool" && entry.tool === "checkpoint").length === 2,
+      () => world.log().filter((entry) => entry.kind === "tool" && entry.tool === "save_checkpoint").length === 2,
       () => stateOf(world, run.id),
     );
     const live = world.store.getRun(run.id);
@@ -472,7 +472,7 @@ test("harness-steps/AC-16 : set_modules pose les modules du run pendant l'étape
     assert.ok(
       world.store.eventsSince(0, run.id).some((item) => item.type === "modules" && item.payload.by === "runner"),
     );
-    const tools = world.log().filter((entry) => entry.kind === "tool" && entry.tool === "checkpoint");
+    const tools = world.log().filter((entry) => entry.kind === "tool" && entry.tool === "save_checkpoint");
     assert.match(String(tools[0]?.result), /^checkpoint [0-9a-f]{12} posé$/);
     assert.match(String(tools[1]?.result), /^rien à committer : HEAD [0-9a-f]{12}$/);
     const worktree = live?.worktree ?? "";

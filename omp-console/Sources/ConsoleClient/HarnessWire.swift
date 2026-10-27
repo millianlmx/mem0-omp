@@ -357,6 +357,11 @@ public struct HarnessEscalationBatch: Codable, Equatable, Sendable, Identifiable
     }
 
     public var id: String { run?.id ?? items.first?.runId ?? "" }
+
+    /// Le serveur ne prend les réponses qu'à la fin de l'étape (run `escalated`) : avant,
+    /// l'agent termine ce qui n'en dépend pas, et un envoi serait refusé (409). Sans le
+    /// run, rien ne permet d'en juger : le lot reste ouvert.
+    public var acceptsAnswers: Bool { run.map { $0.state == "escalated" } ?? true }
 }
 
 /// Une proposition d'audit : une faiblesse à corriger ou une feature à construire.

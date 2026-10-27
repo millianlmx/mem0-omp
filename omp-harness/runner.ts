@@ -13,6 +13,7 @@
 // ses clés.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { FINDING_KINDS, MAX_FINDINGS, SEVERITIES } from "./challenge.ts";
 import { launch } from "./config.ts";
 import type { HarnessConfig, ModelChoice } from "./config.ts";
@@ -35,6 +36,33 @@ export function writePipelineOverlay(dataDir: string): string {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(PIPELINE_SETTINGS, null, 2)}\n`);
   return file;
+}
+
+/**
+ * Le plugin mémoire, partie de la pile : chaque runner le charge, sans qu'on le déclare.
+ * Il vit à côté du harness dans toutes les installations (le dépôt, `/opt/omp-harness`,
+ * les images du service et des runners, NixOS) ; sans lui, les prompts d'étape
+ * demanderaient un `mem0_add` absent.
+ */
+export const MEMORY_EXTENSION = fileURLToPath(new URL("../omp-mem0-memory/extension.ts", import.meta.url));
+
+/** Un chemin d'extension qui désigne le plugin mémoire (`…/omp-mem0-memory/extension.ts`). */
+function isMemoryExtension(file: string): boolean {
+  return path.basename(file) === "extension.ts" && path.basename(path.dirname(file)) === "omp-mem0-memory";
+}
+
+/** Le plugin mémoire que chargent les runners : celui que la configuration déclare encore, sinon celui de la pile. */
+export function memoryExtension(config: HarnessConfig): string {
+  return config.runner.extensions.find(isMemoryExtension) ?? MEMORY_EXTENSION;
+}
+
+/**
+ * Les extensions d'un runner : le plugin mémoire d'abord, toujours, puis celles de la
+ * configuration. Un plugin mémoire déclaré à un autre chemin est pris tel quel, jamais doublé.
+ */
+export function runnerExtensions(config: HarnessConfig): string[] {
+  const declared = config.runner.extensions;
+  return declared.some(isMemoryExtension) ? [...declared] : [MEMORY_EXTENSION, ...declared];
 }
 
 /** Le nom d'unité d'un runner : retrouvable (et arrêtable) après un redémarrage du service. */
@@ -173,7 +201,7 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "--cwd",
     spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
-    ...config.runner.extensions.flatMap((extension) => ["-e", extension]),
+    ...runnerExtensions(config).flatMap((extension) => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
@@ -276,8 +304,11 @@ const DECISION_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+// Jamais `checkpoint` : OMP lit tout résultat d'outil de ce nom comme son checkpoint
+// de contexte et exige ensuite un `rewind` que le runner n'a pas — l'étape ne se
+// clôt plus.
 const CHECKPOINT_TOOL: HostToolDefinition = {
-  name: "checkpoint",
+  name: "save_checkpoint",
   label: "Harness — checkpoint",
   description:
     "Commite l'état courant du worktree (commit WIP par le service) et rend son `sha`. Appelle-le après chaque incrément cohérent : un délai ou une relance repart de là.",
@@ -552,7 +583,7 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
- * décident ni ne testent rien) : `checkpoint` et `set_modules` partout, `split_feature`
+ * décident ni ne testent rien) : `save_checkpoint` et `set_modules` partout, `split_feature`
  * en specs et impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
  */
 export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream"): HostToolDefinition[] {

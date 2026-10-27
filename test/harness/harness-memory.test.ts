@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { DEFAULT_LAUNCHER, loadConfig } from "../../omp-harness/config.ts";
 import { Git } from "../../omp-harness/git.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
-import { runnerArgv } from "../../omp-harness/runner.ts";
+import { MEMORY_EXTENSION, runnerArgv, runnerExtensions } from "../../omp-harness/runner.ts";
 import { projectScope } from "../../omp-harness/scope.ts";
 import { projectId } from "../../omp-mem0-memory/state.ts";
 import { OK, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
@@ -51,7 +51,7 @@ test("harness-memory/AC-1 : la scope d'un dépôt est celle que le plugin mémoi
   assert.equal(await projectScope(client, empty, "main"), "outil");
 });
 
-test("harness-memory/AC-2 : chaque runner charge le plugin mémoire dans la scope du projet, sans écrire dans le dépôt ni relancer en fin de session", async () => {
+test("harness-memory/AC-2 : chaque runner charge le plugin mémoire, sans qu'on le déclare, dans la scope du projet, sans écrire dans le dépôt ni relancer en fin de session", async () => {
   const { bare } = namedProject("mon-produit");
   const world = fakeWorld(
     { req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] },
@@ -59,7 +59,6 @@ test("harness-memory/AC-2 : chaque runner charge le plugin mémoire dans la scop
       repo: bare,
       patch: (config) => {
         (config.repos[0] as { scope: string }).scope = "";
-        config.runner.extensions = ["/opt/omp-harness/omp-mem0-memory/extension.ts"];
         config.oracle = { url: "http://127.0.0.1:8321", token: "jeton-mem0" };
       },
     },
@@ -87,7 +86,11 @@ test("harness-memory/AC-2 : chaque runner charge le plugin mémoire dans la scop
         HARNESS_TOKEN: null,
       });
       const argv = start.argv as string[];
-      assert.equal(argv[argv.indexOf("-e") + 1], "/opt/omp-harness/omp-mem0-memory/extension.ts");
+      assert.deepEqual(
+        argv.flatMap((arg, index) => (argv[index - 1] === "-e" ? [arg] : [])),
+        [MEMORY_EXTENSION],
+        "le plugin mémoire, une fois, sans déclaration",
+      );
     }
     // Le knowledge-updater écrit dans la même scope.
     await waitFor(
@@ -130,10 +133,7 @@ test("harness-memory/AC-3 : derrière le lanceur root, la scope passe par trois 
     false,
     "le lanceur exporte lui-même, systemd-run ne les voit pas",
   );
-  assert.ok(
-    out.includes("-e") && out.includes("/opt/omp-harness/omp-mem0-memory/extension.ts"),
-    "le plugin mémoire est chargé",
-  );
+  assert.ok(out.includes("-e") && out.includes(MEMORY_EXTENSION), "le plugin mémoire est chargé");
   const swap = (from: string, to: string) => args.map((arg) => (arg === from ? to : arg));
   for (const forged of [
     "--setenv=MEM0_HTTP_URL=http://ailleurs",
@@ -177,7 +177,16 @@ test("harness-memory/AC-4 : mem0-rs tourne sur le VPS sous son propre user, durc
     "le plugin mémoire est installé à côté du service",
   );
   const config = loadConfig(path.join(DEPLOY, "config.example.json"));
-  assert.deepEqual(config.runner.extensions, ["/opt/omp-harness/omp-mem0-memory/extension.ts"]);
+  // Le plugin mémoire fait partie de la pile : à côté du harness, chargé sans être déclaré,
+  // jamais doublé quand une configuration le déclare encore, en tête des autres extensions.
+  assert.deepEqual(config.runner.extensions, [], "la configuration n'a plus à le déclarer");
+  assert.equal(MEMORY_EXTENSION, path.join(ROOT, "omp-mem0-memory", "extension.ts"));
+  assert.deepEqual(runnerExtensions(config), [MEMORY_EXTENSION]);
+  const declared = (extensions: string[]) => runnerExtensions({ ...config, runner: { ...config.runner, extensions } });
+  assert.deepEqual(declared(["/opt/omp-harness/omp-mem0-memory/extension.ts"]), [
+    "/opt/omp-harness/omp-mem0-memory/extension.ts",
+  ]);
+  assert.deepEqual(declared(["/opt/autre/extension.ts"]), [MEMORY_EXTENSION, "/opt/autre/extension.ts"]);
   assert.equal(config.repos[0]?.scope, "", "scope non déclarée : celle du manifeste");
   assert.ok(fs.existsSync(path.join(ROOT, "omp-mem0-memory", "extension.ts")));
   assert.equal(harnessRepo !== undefined, true);

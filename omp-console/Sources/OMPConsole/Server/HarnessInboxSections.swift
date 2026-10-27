@@ -162,6 +162,12 @@ struct HarnessInboxSections: View {
                     Divider()
                 }
             }
+            // Une question posée en cours d'étape se lit et se prépare, mais ne part qu'à sa fin.
+            if !batch.acceptsAnswers {
+                Label(PipelineServerText.answerAfterStep, systemImage: "hourglass")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Button(PipelineServerText.answer) {
                     let answers = drafts.answers(for: batch)
@@ -182,6 +188,7 @@ struct HarnessInboxSections: View {
                     .disabled(server.busy.contains(batch.id))
                 }
             }
+            .disabled(!batch.acceptsAnswers)
         }
         .padding(.vertical, 6)
     }

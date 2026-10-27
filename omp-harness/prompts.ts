@@ -54,7 +54,7 @@ const POLICY = `## Politique de décision (non négociable)
 - Irréversible = schéma de données, API publique, suppression (données, fichiers d'utilisateurs). Appelle \`decision\` avec la catégorie correspondante, N'APPLIQUE PAS le choix, contourne, et termine tout ce qui n'en dépend pas : les escalades partent ensemble à la fin de l'étape.
 - L'humain pilote plusieurs projets à la fois et lit chaque \`decision\` hors de la session, sans le code sous les yeux : \`context\` lui dit la situation en quelques phrases autoportantes (la feature et ce qu'elle doit livrer, les fichiers ou symboles en jeu, ce que ni les specs ni l'existant ne tranchent, l'enjeu), sans jargon du projet non expliqué. Une escalade donne aussi \`impacts\` : ce qu'emporte chaque option, dans l'ordre des options. Markdown simple seulement (paragraphes courts, listes, \`code\` en ligne).
 - Une décision tranchée par l'humain (section Oracle) s'impose : ne la rouvre pas.
-- \`checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera.
+- \`save_checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera.
 - \`progress\` à chaque jalon franchi, une phrase.
 - En fin d'étape, \`mem0_add\` pour les SEULS pièges durables que tu as rencontrés (un fait autoportant par appel) ; rien de trivial ni de temporaire.`;
 
@@ -113,7 +113,7 @@ ${blockers}
 ${extra}
 - Vérifie avec \`run_tests\` (\`scope: touched\`) ; un test nommé avec l'id AC-n prouve chaque correction.
 - Écris \`${ART}/fix.md\` : pour chaque bloquant, la levée et sa PREUVE (fichier:ligne, test). Un bloquant que tu contestes y est expliqué, avec les faits.
-- \`checkpoint\` après chaque bloquant levé. La revue reprendra ensuite sur le diff depuis ton point de départ.`;
+- \`save_checkpoint\` après chaque bloquant levé. La revue reprendra ensuite sur le diff depuis ton point de départ.`;
 }
 
 const BODY: Record<StepKind, (ctx: PromptContext) => string> = {
@@ -159,10 +159,10 @@ Lis \`${ART}/req.md\` et \`${ART}/specs.md\` (le relevé du dépôt t'évite de 
 - Aucun stub, aucun TODO, aucun « à faire plus tard » : ce qui est livré est complet.
 - Une spec ambiguë ou fausse ⇒ corrige \`${ART}/specs.md\` (et cite la S-n modifiée dans impl.md) plutôt que d'implémenter à côté.
 - \`set_modules\` dès que les chemins touchés sont connus, s'ils diffèrent de specs.md.
-- \`checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
+- \`save_checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
 - Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
-- Ne commite pas toi-même : \`checkpoint\` et la fin d'étape commitent.
+- Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
 
 Termine par \`${ART}/impl.md\` avec exactement ces sections :
 ## Fait

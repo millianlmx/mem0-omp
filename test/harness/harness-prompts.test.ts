@@ -57,13 +57,13 @@ test("harness-prompts/AC-2 : /specs exige le relevé du dépôt, la documentatio
   }
 });
 
-test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la correction des specs ambiguës, checkpoint, set_modules, split_feature au-delà du plafond et « ## Reste »", () => {
+test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la correction des specs ambiguës, save_checkpoint, set_modules, split_feature au-delà du plafond et « ## Reste »", () => {
   const prompt = stepPrompt(ctx({ step: "impl" }));
   for (const expected of [
     /NOMMÉ avec son id \(`AC-n`/,
     /Aucun stub, aucun TODO/,
     /spec ambiguë.*corrige `\.harness\/specs\.md`.*plutôt que d'implémenter à côté/,
-    /`checkpoint` après chaque incrément cohérent/,
+    /`save_checkpoint` après chaque incrément cohérent/,
     /`set_modules` dès que les chemins/,
     /< 300 lignes de code\. Au-delà.*`split_feature`/,
     /## Fait/,

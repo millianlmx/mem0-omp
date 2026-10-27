@@ -120,18 +120,22 @@ test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais ja
   });
 });
 
-test("harness-runner/AC-4 : les outils hôtes suivent l'étape — checkpoint et set_modules partout, split_feature en specs et impl, run_tests dès /impl (full seulement en revue), review_verdict seulement en revue", () => {
+test("harness-runner/AC-4 : les outils hôtes suivent l'étape — save_checkpoint et set_modules partout, split_feature en specs et impl, run_tests dès /impl (full seulement en revue), review_verdict seulement en revue", () => {
   const names = (step: Parameters<typeof hostToolsFor>[0]) =>
     hostToolsFor(step)
       .map((tool) => tool.name)
       .sort();
-  const common = ["checkpoint", "decision", "oracle_recall", "progress", "set_modules"];
+  const common = ["decision", "oracle_recall", "progress", "save_checkpoint", "set_modules"];
   assert.deepEqual(names("req"), common);
   assert.deepEqual(names("specs"), [...common, "split_feature"].sort());
   assert.deepEqual(names("impl"), [...common, "run_tests", "split_feature"].sort());
   assert.deepEqual(names("fix"), [...common, "run_tests"].sort());
   assert.deepEqual(names("review"), [...common, "review_verdict", "run_tests"].sort());
   assert.deepEqual(names("audit"), ["audit_propose", "oracle_recall", "progress"]);
+  // OMP prend un résultat d'outil `checkpoint` pour son checkpoint de contexte et exige
+  // alors un `rewind` absent du runner : aucun outil hôte ne porte ces noms.
+  for (const step of ["req", "specs", "impl", "fix", "review", "audit", "challenge", "dream"] as const)
+    for (const name of names(step)) assert.ok(!["checkpoint", "rewind"].includes(name), `${step} : ${name}`);
   assert.deepEqual(at("impl", "run_tests", "properties", "scope", "enum"), ["touched", "check"]);
   assert.deepEqual(at("fix", "run_tests", "properties", "scope", "enum"), ["touched", "check"]);
   assert.deepEqual(at("review", "run_tests", "properties", "scope", "enum"), ["touched", "full", "check"]);
@@ -150,7 +154,7 @@ test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le ser
   assert.ok(Array.isArray(categories) && categories.includes("clarification"));
   assert.equal(at("req", "decision", "properties", "options", "minItems"), 2);
   assert.equal(at("req", "decision", "properties", "options", "maxItems"), 4);
-  assert.deepEqual(at("req", "checkpoint", "required"), ["message"]);
+  assert.deepEqual(at("req", "save_checkpoint", "required"), ["message"]);
   assert.deepEqual(at("req", "set_modules", "required"), ["paths"]);
   assert.deepEqual(at("specs", "split_feature", "required"), ["features"]);
   assert.deepEqual(at("specs", "split_feature", "properties", "features", "items", "required"), [

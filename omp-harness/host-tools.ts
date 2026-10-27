@@ -1,5 +1,5 @@
 // Les outils hôtes d'un run : ce que le runner appelle et que le SERVICE exécute
-// (`progress`, `oracle_recall`, `decision`, `checkpoint`, `set_modules`, `split_feature`,
+// (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
 // `run_tests`, `review_verdict`). Le runner n'a ni la base ni le jeton de l'API : tout
 // passe par ici.
 import type { HarnessContext } from "./context.ts";
@@ -80,7 +80,7 @@ export async function runHostTool(
     }
     case "decision":
       return decisionTool(ctx, run, step, args);
-    case "checkpoint":
+    case "save_checkpoint":
       return checkpointTool(ctx, run, step, args);
     case "set_modules":
       return setModulesTool(ctx, run, step, args);
@@ -216,7 +216,7 @@ async function checkpointDecision(
   };
 }
 
-/** `checkpoint { message }` : un commit WIP de l'état courant, pour qu'une interruption ne perde rien. */
+/** `save_checkpoint { message }` : un commit WIP de l'état courant, pour qu'une interruption ne perde rien. */
 async function checkpointTool(
   ctx: HarnessContext,
   run: RunRow,

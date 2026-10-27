@@ -11,7 +11,7 @@ import { modelChain } from "./config.ts";
 import type { Git } from "./git.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { Exec } from "./proc.ts";
-import { engine } from "./runner.ts";
+import { engine, memoryExtension } from "./runner.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -59,6 +59,26 @@ async function checkOmp(config: HarnessConfig, exec: Exec): Promise<CheckLine> {
     label: "omp",
     detail: `${config.ompBin} ne répond pas à --version`,
     fix: "Debian : relance `sudo bash omp-harness/deploy/install.sh` (il pose omp). NixOS : `services.omp-harness.ompPackage`.",
+  };
+}
+
+/** Le plugin mémoire, partie de la pile : sans lui, les runners n'ont pas `mem0_add`. */
+async function checkMemoryPlugin(config: HarnessConfig, exec: Exec): Promise<CheckLine> {
+  const file = memoryExtension(config);
+  // En conteneur, les runners le lisent dans leur image : c'est là qu'on le cherche.
+  const contained = config.runner.isolation === "container";
+  const probe = engine(config, ["run", "--rm", "--entrypoint=test", config.container.runnerImage, "-f", file]);
+  const found = contained
+    ? (await exec(probe.command, probe.args, { timeoutMs: 120_000 }).catch(() => null))?.code === 0
+    : fs.existsSync(file);
+  if (found) return { status: "ok", label: "plugin mémoire", detail: file };
+  return {
+    status: "fail",
+    label: "plugin mémoire",
+    detail: `${file} introuvable${contained ? ` dans ${config.container.runnerImage}` : ""} : les agents n'auraient pas \`mem0_add\``,
+    fix: contained
+      ? "Reconstruis les images : `bash omp-harness/deploy/container/harness.sh up`."
+      : "Installe `omp-mem0-memory` à côté de `omp-harness` (Debian : relance `sudo bash omp-harness/deploy/install.sh`).",
   };
 }
 
@@ -239,7 +259,7 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean):
 export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise<CheckLine[]> {
   const contained = config.runner.isolation === "container" || config.heavy.isolation === "container";
   const lines: CheckLine[] = contained ? await checkEngine(config, deps.exec) : [];
-  lines.push(await checkOmp(config, deps.exec));
+  lines.push(await checkOmp(config, deps.exec), await checkMemoryPlugin(config, deps.exec));
   const launcher = checkLauncher(config);
   if (launcher) lines.push(launcher);
   lines.push(

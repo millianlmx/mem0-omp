@@ -11,8 +11,7 @@
     "slots": 5,
     "memoryMax": "1G",
     "retryBackoffSec": [120, 600, 1800],
-    "failoverOn": ["rate_limit", "server_error", "network"],
-    "extensions": ["/opt/omp-harness/omp-mem0-memory/extension.ts"]
+    "failoverOn": ["rate_limit", "server_error", "network"]
   },
   "heavy": {
     "isolation": "container",
