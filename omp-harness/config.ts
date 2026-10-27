@@ -187,8 +187,8 @@ export type HarnessConfig = {
      */
     stepTimeoutSec: number;
     /**
-     * Les extensions chargées par chaque runner (`-e`) — d'abord le plugin mémoire
-     * `omp-mem0-memory/extension.ts` : rappel automatique dans la mémoire du projet.
+     * Les extensions chargées par chaque runner (`-e`) EN PLUS du plugin mémoire
+     * (`omp-mem0-memory/extension.ts`), que la pile charge toujours (`runnerExtensions`).
      */
     extensions: string[];
   };

@@ -54,6 +54,7 @@ test("harness-check/AC-1 : une installation complète passe — omp, modèles, o
     report,
   );
   assert.match(report, /✓ omp : omp\/18\.6\.0/);
+  assert.match(report, /✓ plugin mémoire : .*omp-mem0-memory\/extension\.ts/);
   assert.match(report, /✓ modèles : req heavy, specs heavy, impl standard/);
   assert.match(report, /✓ dépôt demo — écriture sur origin : authentifiée/);
   assert.equal(git(remote, "for-each-ref", "--format=%(refname)"), before, "l'essai à blanc ne pousse rien");
@@ -63,6 +64,7 @@ test("harness-check/AC-2 : chaque manque est un ✗ avec son geste — omp absen
   const { clone } = cloneWithRemote();
   const config = testConfig(clone, (c) => {
     c.ompBin = "/nonexistent/omp";
+    c.runner.extensions = ["/nonexistent/omp-mem0-memory/extension.ts"];
     c.oracle = { url: "http://127.0.0.1:8321", token: null };
     (c.repos[0] as { remote: string | null }).remote = "nulle-part";
     c.repos.push({
@@ -73,7 +75,13 @@ test("harness-check/AC-2 : chaque manque est un ✗ avec son geste — omp absen
   });
   const lines = await runChecks(config, deps(config, false));
   const failed = lines.filter((line) => line.status === "fail").map((line) => line.label);
-  assert.deepEqual(failed, ["omp", "mémoire (oracle)", "dépôt demo — lecture de nulle-part", "dépôt absent — clone"]);
+  assert.deepEqual(failed, [
+    "omp",
+    "plugin mémoire",
+    "mémoire (oracle)",
+    "dépôt demo — lecture de nulle-part",
+    "dépôt absent — clone",
+  ]);
   const report = renderChecks(lines);
   assert.match(report, /→ Debian : relance `sudo bash omp-harness\/deploy\/install\.sh`/);
   assert.match(
@@ -81,6 +89,7 @@ test("harness-check/AC-2 : chaque manque est un ✗ avec son geste — omp absen
     /→ Ajoute \/var\/lib\/omp-harness\/\.ssh\/id_ed25519\.pub comme clé de déploiement AVEC écriture/,
   );
   assert.match(report, /→ sudo -u omp-harness git clone --bare <url> /);
+  assert.match(report, /✗ plugin mémoire : \/nonexistent\/omp-mem0-memory\/extension\.ts introuvable/);
   // Sans modèles déclarés : un avertissement, pas un échec.
   assert.equal(lines.find((line) => line.label === "modèles")?.status, "warn");
 });

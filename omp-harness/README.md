@@ -625,8 +625,9 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   `main` (`package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis
   `.xcodeproj`), avec la même table que le plugin (`omp-mem0-memory/state.ts`).
   `GET /v1/status` l'affiche par dépôt.
-- **Agents branchés.** Chaque agent charge le plugin mémoire (`runner.extensions`)
-  avec `MEM0_PROJECT_ID=<portée>`, `MEM0_AUTOSETUP=0` (rien n'est écrit dans le
+- **Agents branchés.** Chaque agent charge le plugin mémoire : il fait partie de la
+  pile, toujours chargé sans déclaration (`runner.extensions` n'ajoute que d'autres
+  extensions). Il tourne avec `MEM0_PROJECT_ID=<portée>`, `MEM0_AUTOSETUP=0` (rien n'est écrit dans le
   dépôt, donc rien dans la PR), `MEM0_NUDGE=0` et, avec `memory.runnerMode`
   (vrai par défaut), `MEM0_MODE=runner` : ni rappel par tour ni épinglage — la
   section Oracle du prompt est la seule source, et les outils `mem0_*` restent pour

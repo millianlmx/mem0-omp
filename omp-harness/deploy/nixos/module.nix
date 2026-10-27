@@ -59,7 +59,6 @@ let
     worktreesDir = "/var/lib/omp-harness/worktrees";
     ompBin = cfg.ompBin;
     launcher = [ "/run/wrappers/bin/sudo" "-n" launcherBin ];
-    runner.extensions = [ "${src}/omp-mem0-memory/extension.ts" ];
     heavy = {
       user = "omp-heavy";
       inherit shell;
