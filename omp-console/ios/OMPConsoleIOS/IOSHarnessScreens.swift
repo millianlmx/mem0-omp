@@ -331,6 +331,12 @@ struct IOSHarnessInboxSections: View {
                 }
                 .padding(.top, index > 0 ? 8 : 0)
             }
+            // Une question posée en cours d'étape se lit et se prépare, mais ne part qu'à sa fin.
+            if !batch.acceptsAnswers {
+                Label(PipelineServerText.answerAfterStep, systemImage: "hourglass")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             Button(PipelineServerText.answer) {
                 let answers = drafts.answers(for: batch)
                 let reasons = drafts.reasons(for: batch)
@@ -339,7 +345,7 @@ struct IOSHarnessInboxSections: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!drafts.canAnswer(batch) || server.busy.contains(batch.id))
+            .disabled(!batch.acceptsAnswers || !drafts.canAnswer(batch) || server.busy.contains(batch.id))
             // Un seul geste : toutes les escalades du lot reçoivent la recommandation de l'agent.
             if let recommended = HarnessDrafts.recommendedAnswers(for: batch) {
                 Button(PipelineServerText.acceptRecommended) {
@@ -348,7 +354,7 @@ struct IOSHarnessInboxSections: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(server.busy.contains(batch.id))
+                .disabled(!batch.acceptsAnswers || server.busy.contains(batch.id))
                 .accessibilityIdentifier("ios.home.acceptRecommended")
             }
         }

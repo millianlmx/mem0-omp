@@ -223,6 +223,17 @@ struct HarnessModelTests {
         #expect(HarnessDrafts.recommendedAnswers(for: HarnessEscalationBatch(run: nil, items: [])) == nil)
     }
 
+    @Test("un lot ne se répond qu'une fois son étape close : run escalated, ou run inconnu")
+    func batchAcceptsAnswersOnlyWhenEscalated() {
+        let item = HarnessEscalation(id: 7, runId: "r1", category: "schema", question: "Où ?", options: ["colonne", "table"], recommended: "colonne")
+        let run = HarnessRun(id: "r1", repo: "demo", slug: "export", title: "Export", request: "", state: "running", step: "req", fixes: 0, modules: [])
+        #expect(HarnessEscalationBatch(run: run, items: [item]).acceptsAnswers == false, "l'étape tourne encore : le serveur refuserait")
+        var escalated = run
+        escalated.state = "escalated"
+        #expect(HarnessEscalationBatch(run: escalated, items: [item]).acceptsAnswers)
+        #expect(HarnessEscalationBatch(run: nil, items: [item]).acceptsAnswers)
+    }
+
     @Test("une réponse porte sa raison quand il y en a une ; sans raison, le corps est celui d'avant")
     func answersCarryReasons() async throws {
         let transport = ScriptedHarnessTransport()

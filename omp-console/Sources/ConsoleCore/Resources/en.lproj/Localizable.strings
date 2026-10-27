@@ -560,6 +560,7 @@
 "Répertoire" = "Directory";
 "Répertoire introuvable : %@." = "Directory not found: %@.";
 "Répondre" = "Answer";
+"Réponse possible à la fin de l’étape : l’agent termine d’abord ce qui n’en dépend pas." = "You can answer once the step ends: the agent first finishes what doesn’t depend on it.";
 "Réponses OpenAI" = "OpenAI Responses";
 "Résultat" = "Result";
 "Résultats pour « %@ »" = "Results for “%@”";

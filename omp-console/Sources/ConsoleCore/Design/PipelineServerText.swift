@@ -61,6 +61,8 @@ public enum PipelineServerText {
     public static let stopConfirm = L10n.text("Arrêter cette feature ?")
     public static let stopMessage = L10n.text("Le travail en cours s’arrête. La branche reste, pour inspection.")
     public static let acceptRecommended = L10n.text("Accepter les recommandations")
+    /// Une question posée pendant l'étape : le serveur n'en prend la réponse qu'une fois l'étape close.
+    public static let answerAfterStep = L10n.text("Réponse possible à la fin de l’étape : l’agent termine d’abord ce qui n’en dépend pas.")
     public static let reasonOptional = L10n.text("Raison (facultatif)")
     public static let acceptAll = L10n.text("Tout accepter")
     public static let retry = L10n.text("Relancer")
