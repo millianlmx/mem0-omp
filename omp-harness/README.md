@@ -517,7 +517,7 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
   que /impl ne relise pas le dépôt), des spécifications `S-n (AC-…)` assez précises
   pour écrire le test avant le code, une section `## Modules` obligatoire et un
   `## Découpage` (`split_feature` au-delà du plafond de diff). /impl nomme chaque
-  test avec son `AC-n`, pose un `checkpoint` après chaque incrément cohérent,
+  test avec son `AC-n`, pose un `save_checkpoint` après chaque incrément cohérent,
   corrige `specs.md` plutôt que d'implémenter à côté d'une spec ambiguë, et note
   dans `## Reste` ce qui n'est pas livré.
 - **Ce que le service vérifie en fin d'étape** (`steps.ts`). /specs : `## Modules`
@@ -895,7 +895,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
   cet espace, écrit sous `/run` et dans le HOME des runners, et les dossiers de
   données se déplacent par la configuration.
 - **Les outils du runner sont des outils hôtes RPC.** `decision`, `progress`,
-  `oracle_recall`, `checkpoint` et `set_modules` à toutes les étapes,
+  `oracle_recall`, `save_checkpoint` et `set_modules` à toutes les étapes,
   `split_feature` en /specs et /impl, `run_tests` (`touched` | `full` | `check`) dès
   /impl et `review_verdict` en revue sont déclarés par `set_host_tools` et exécutés
   par le service. Le runner n'a ni accès à la base ni jeton d'API, et rien n'est à

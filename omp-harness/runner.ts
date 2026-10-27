@@ -276,8 +276,11 @@ const DECISION_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+// Jamais `checkpoint` : OMP lit tout résultat d'outil de ce nom comme son checkpoint
+// de contexte et exige ensuite un `rewind` que le runner n'a pas — l'étape ne se
+// clôt plus.
 const CHECKPOINT_TOOL: HostToolDefinition = {
-  name: "checkpoint",
+  name: "save_checkpoint",
   label: "Harness — checkpoint",
   description:
     "Commite l'état courant du worktree (commit WIP par le service) et rend son `sha`. Appelle-le après chaque incrément cohérent : un délai ou une relance repart de là.",
@@ -552,7 +555,7 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
- * décident ni ne testent rien) : `checkpoint` et `set_modules` partout, `split_feature`
+ * décident ni ne testent rien) : `save_checkpoint` et `set_modules` partout, `split_feature`
  * en specs et impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
  */
 export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream"): HostToolDefinition[] {
