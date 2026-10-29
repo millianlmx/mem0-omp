@@ -7,7 +7,8 @@
 #
 # Le dossier produit se charge tel quel dans Chrome : chrome://extensions → mode
 # développeur → « Charger l'extension non empaquetée ». La version est celle de
-# omp-chrome/manifest.json.
+# omp-chrome/package.json (montée par le job de release, jamais à la main) ;
+# omp-chrome/manifest.json n'en porte pas.
 #
 # Codes : 0 construite et vérifiée (chaque fichier cité par le manifeste existe, chaque
 # import relatif désigne un fichier construit), 1 faute de construction, 2 usage.

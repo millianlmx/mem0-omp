@@ -395,8 +395,10 @@ deux jobs macOS construisent OMP Console depuis le tag (`scripts/release-assets.
 mac|ios`) et joignent à la release `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`,
 avec leurs `.sha256` : app Mac signée Developer ID et notarisée, IPA signée, quand
 les secrets de signature existent ; sinon app Mac ad hoc et IPA non signée, avec
-un `⚠` dans le journal. Les secrets et le détail : `PUBLISHING.md` § Apps jointes
-aux releases.
+un `⚠` dans le journal. Un troisième job, Linux, construit l'extension Chrome
+(`scripts/release-assets.sh chrome`) et joint `omp-chrome.zip` : sa version est celle
+de `omp-chrome/package.json`, que le job de release monte comme celle d'un service.
+Les secrets et le détail : `PUBLISHING.md` § Apps jointes aux releases.
 
 ## L'API d'extension d'OMP à surveiller
 

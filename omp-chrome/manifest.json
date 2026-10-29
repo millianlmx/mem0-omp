@@ -1,7 +1,6 @@
 {
   "manifest_version": 3,
   "name": "OMP Poste de travail",
-  "version": "0.1.0",
   "description": "Observe votre travail dans Chrome, agit pour l'agent OMP dans une fenêtre à part et transcrit les meetings sur ce Mac. Demande toujours votre approbation avant d'envoyer un message.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "tabs", "scripting", "idle", "alarms", "offscreen", "tabCapture", "activeTab"],

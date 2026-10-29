@@ -103,21 +103,74 @@ test("release-assets/AC-3 : hors macOS ou sans Xcode utilisable, « non exécut�
   assert.match(unknown.stderr, /usage : scripts\/release-assets\.sh mac\|ios/);
 });
 
-test("release-assets/AC-4 : le workflow suit chaque release publiée, construit les deux apps depuis le tag et les joint à la release", () => {
+test("release-assets/AC-4 : le workflow suit chaque release publiée, construit les deux apps et l'extension depuis le tag et les joint à la release", () => {
   const on = WORKFLOW.split(/^permissions:/m)[0] ?? "";
   assert.match(on, /^ {2}release:\n {4}types: \[published\]$/m);
   assert.match(on, /^ {2}workflow_dispatch:$/m, "une release déjà publiée se complète à la main");
   // Lecture seule par défaut ; seul le job qui téléverse écrit.
   assert.match(WORKFLOW, /^permissions:\n {2}contents: read$/m);
   const job = WORKFLOW.split(/^jobs:$/m)[1] ?? "";
-  assert.match(job, /^ {4}runs-on: macos-latest$/m);
+  // Les apps sur macOS, l'extension (node seul) sur Linux.
+  assert.match(job, /^ {4}runs-on: \$\{\{ matrix\.app == 'chrome' && 'ubuntu-latest' \|\| 'macos-latest' \}\}$/m);
   assert.match(job, /^ {6}contents: write$/m);
-  assert.match(job, /^ {8}app: \[mac, ios\]$/m);
+  assert.match(job, /^ {8}app: \[mac, ios, chrome\]$/m);
   assert.match(job, /^ {6}fail-fast: false$/m);
+  // Le node du runner Linux n'a pas forcément stripTypeScriptTypes : l'étape le pose, pour l'extension seule.
+  assert.match(
+    job,
+    /actions\/setup-node@[0-9a-f]{40} # v\d[^\n]*\n {8}if: matrix\.app == 'chrome'\n {8}with:\n {10}node-version: "22"/,
+  );
+  // Aucun secret de signature ne va au job de l'extension.
+  for (const [, name = "", app = ""] of job.matchAll(
+    /^ {10}([A-Z_0-9]+): \$\{\{ matrix\.app == '(\w+)' && secrets\./gm,
+  )) {
+    assert.notEqual(app, "chrome", `${name} irait au job chrome`);
+  }
   assert.match(job, /ref: refs\/tags\/\$\{\{ env\.TAG \}\}/, "le code du tag, jamais celui de main");
   const build = job.indexOf("bash scripts/release-assets.sh ${{ matrix.app }}");
   const upload = job.indexOf('gh release upload "$TAG" omp-console/build/release-assets/* --clobber');
   assert.ok(build !== -1 && upload > build, "construction, puis téléversement");
   // Le tag passe par l'environnement, jamais interpolé dans le shell.
   assert.doesNotMatch(job, /run:.*\$\{\{ (github\.event\.release\.tag_name|inputs\.tag) \}\}/);
+});
+
+test("release-assets/AC-5 : l'extension Chrome s'archive sur tout OS, manifest.json à la racine, à la version de omp-chrome/package.json, avec son empreinte", () => {
+  // Linux, sans Xcode : l'extension ne dépend ni de l'un ni de l'autre.
+  const box = sandbox({ uname: "echo Linux", xcodebuild: "exit 1" });
+  for (const rel of [
+    "scripts/chrome-extension.sh",
+    "scripts/chrome-extension/build.ts",
+    "omp-chrome/manifest.json",
+    "omp-chrome/package.json",
+  ]) {
+    fs.mkdirSync(path.dirname(path.join(box.dir, rel)), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, rel), path.join(box.dir, rel));
+  }
+  fs.cpSync(path.join(ROOT, "omp-chrome", "src"), path.join(box.dir, "omp-chrome", "src"), { recursive: true });
+  const pkgFile = path.join(box.dir, "omp-chrome", "package.json");
+  fs.writeFileSync(pkgFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(pkgFile, "utf8")), version: "3.4.5" }));
+
+  const run = box.run(["chrome"]);
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  const listed = entries(path.join(box.out, "omp-chrome.zip"));
+  assert.ok(listed.includes("manifest.json"), "manifest.json à la racine de l'archive");
+  assert.ok(listed.includes("background.js") && listed.includes("page/agent.js"), listed.join(", "));
+  assert.deepEqual(
+    listed.filter((entry) => entry.endsWith(".ts") || entry.startsWith("omp-chrome/")),
+    [],
+    "ni source TypeScript ni dossier intermédiaire",
+  );
+  const manifest = spawnSync("unzip", ["-p", path.join(box.out, "omp-chrome.zip"), "manifest.json"], {
+    encoding: "utf8",
+  });
+  assert.equal(JSON.parse(manifest.stdout).version, "3.4.5");
+  assert.ok(checksumOk(box.out, "omp-chrome.zip"), "l'empreinte vérifie l'archive");
+
+  // Une extension qui ne se construit pas ne laisse aucune archive à téléverser.
+  fs.rmSync(path.join(box.out), { recursive: true, force: true });
+  fs.writeFileSync(path.join(box.dir, "omp-chrome", "src", "lib", "zz-enum.ts"), "export enum E { A }\n");
+  const broken = box.run(["chrome"]);
+  assert.equal(broken.status, 1, broken.stdout);
+  assert.match(broken.stderr, /construction de l'extension Chrome échouée/);
+  assert.equal(fs.existsSync(path.join(box.out, "omp-chrome.zip")), false);
 });

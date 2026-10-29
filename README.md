@@ -239,15 +239,18 @@ bash omp-harness/deploy/container/harness.sh approver   # sur le serveur ; un no
 Colle ce code dans la feuille **Serveur** de l'app, sur le Mac comme sur l'iPhone.
 omp (`/pair`) et l'extension le refusent : garde-leur le code de `harness.sh pair`.
 
-Pour installer l'extension, dans le clone :
+Pour installer l'extension, prends `omp-chrome.zip` dans la dernière
+[release](https://github.com/millianlmx/mem0-omp/releases) et décompresse-le
+(`shasum -a 256 -c omp-chrome.zip.sha256` le vérifie). Ou construis-la dans le clone :
 
 ```bash
 bash scripts/chrome-extension.sh        # construit omp-chrome/dist
 ```
 
 Puis, dans Chrome : `chrome://extensions`, **Mode développeur**, **Charger
-l'extension non empaquetée**, et choisis `omp-chrome/dist`. Dans les réglages de
-l'extension, colle le code d'appairage `omp1:…` et autorise le micro.
+l'extension non empaquetée**, et choisis le dossier décompressé (ou
+`omp-chrome/dist`). Dans les réglages de l'extension, colle le code d'appairage
+`omp1:…` et autorise le micro.
 
 La transcription se fait sur ton Mac, par [oMLX](https://github.com/jundot/omlx)
 avec un modèle Whisper chargé (par exemple `whisper-large-v3-turbo`). L'extension

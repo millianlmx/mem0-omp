@@ -716,9 +716,10 @@ test("poste-extension/AC-10 : scripts/chrome-extension.sh produit une extension 
     .map((entry) => path.relative(out, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
     .sort();
   const manifest = JSON.parse(read("manifest.json"));
-  const source = JSON.parse(fs.readFileSync(path.join(ROOT, "omp-chrome", "manifest.json"), "utf8"));
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "omp-chrome", "package.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, source.version);
+  // La version construite est celle du porteur que bumpe la release, jamais une seconde source.
+  assert.equal(manifest.version, pkg.version);
   assert.match(manifest.version, /^\d+(\.\d+){0,3}$/);
   for (const permission of REQUIRED_PERMISSIONS) assert.ok(manifest.permissions.includes(permission), permission);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
@@ -784,7 +785,12 @@ test("poste-extension/AC-10 : scripts/chrome-extension.sh produit une extension 
 test("poste-extension/AC-11 : une syntaxe non effaçable ou un import vers un fichier absent fait échouer la construction sans toucher la précédente", () => {
   // Un arbre jetable : le script, sa logique et les sources de l'extension.
   const tree = tmpdir("poste-extension-arbre-");
-  for (const rel of ["scripts/chrome-extension.sh", "scripts/chrome-extension/build.ts", "omp-chrome/manifest.json"]) {
+  for (const rel of [
+    "scripts/chrome-extension.sh",
+    "scripts/chrome-extension/build.ts",
+    "omp-chrome/manifest.json",
+    "omp-chrome/package.json",
+  ]) {
     fs.mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
     fs.copyFileSync(path.join(ROOT, rel), path.join(tree, rel));
   }
@@ -1136,4 +1142,47 @@ test("poste-extension/AC-17 : un éditable ou un champ de saisie ne se nomme jam
   );
   assert.equal(labelOf(named, doc), "À");
   assert.equal(labelOf(new FakeElement("div", { role: "button" }, { text: "Envoyer" }), doc), "Envoyer");
+});
+
+test("poste-extension/AC-19 : la version construite suit omp-chrome/package.json, que bumpe la release ; une seconde source ou une version illisible fait échouer la construction", () => {
+  const tree = tmpdir("poste-extension-version-");
+  for (const rel of [
+    "scripts/chrome-extension.sh",
+    "scripts/chrome-extension/build.ts",
+    "omp-chrome/manifest.json",
+    "omp-chrome/package.json",
+  ]) {
+    fs.mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, rel), path.join(tree, rel));
+  }
+  fs.cpSync(path.join(ROOT, "omp-chrome", "src"), path.join(tree, "omp-chrome", "src"), { recursive: true });
+  const pkgFile = path.join(tree, "omp-chrome", "package.json");
+  const manifestFile = path.join(tree, "omp-chrome", "manifest.json");
+  const setVersion = (version: unknown) => {
+    const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
+    pkg.version = version;
+    fs.writeFileSync(pkgFile, `${JSON.stringify(pkg, null, 2)}\n`);
+  };
+  const out = path.join(tree, "sortie");
+
+  // Ce qu'écrit le job de release (scripts/release.ts) : la seule version du package.json.
+  setVersion("0.7.3");
+  const bumped = build(out, tree);
+  assert.equal(bumped.status, 0, `${bumped.stdout}${bumped.stderr}`);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, "manifest.json"), "utf8")).version, "0.7.3");
+
+  for (const version of ["1.2.3-beta", "70000.0.0", "01.2", 3]) {
+    setVersion(version);
+    const run = build(out, tree);
+    assert.equal(run.status, 1, `version ${String(version)} acceptée`);
+    assert.match(run.stderr, /omp-chrome\/package\.json : version .* illisible par Chrome/);
+  }
+  setVersion("0.7.3");
+
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, version: "9.9.9" }));
+  const twoSources = build(out, tree);
+  assert.equal(twoSources.status, 1);
+  assert.match(twoSources.stderr, /manifest\.json porte une version : elle vit dans omp-chrome\/package\.json/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, "manifest.json"), "utf8")).version, "0.7.3");
 });

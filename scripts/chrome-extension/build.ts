@@ -5,7 +5,9 @@
 //      que de la syntaxe effaçable (`erasableSyntaxOnly`, `import type`) ;
 //   2. les spécificateurs relatifs `./x.ts` sont réécrits en `./x.js` (les sources
 //      importent en `.ts` pour node --test et tsc ; Chrome charge les `.js`) ;
-//   3. HTML et CSS sont copiés, `manifest.json` aussi, et les icônes PNG sont dessinées ;
+//   3. HTML et CSS sont copiés, `manifest.json` aussi — sa `version` est celle de
+//      omp-chrome/package.json, la seule que le job de release monte —, et les icônes
+//      PNG sont dessinées ;
 //   4. le résultat est vérifié : chaque fichier que cite le manifeste existe, chaque
 //      import relatif d'un `.js` désigne un fichier construit, aucun `.ts` n'y survit.
 // Toute faute sort 1 avec une ligne `✗ …` ; rien n'est laissé à moitié écrit dans la sortie.
@@ -136,6 +138,28 @@ function verify(dir: string, files: readonly string[]): void {
   }
 }
 
+/** Chrome n'accepte que 1 à 4 entiers d'au plus 65535, séparés par des points. */
+const CHROME_VERSION = /^(0|[1-9]\d{0,4})(\.(0|[1-9]\d{0,4})){0,3}$/;
+
+/**
+ * Le manifeste construit : celui de omp-chrome/manifest.json, qui ne porte PAS de
+ * version, plus la version de omp-chrome/package.json (le porteur que bumpe
+ * scripts/release.ts). Deux sources divergeraient au premier bump.
+ */
+function builtManifest(): string {
+  const source = JSON.parse(fs.readFileSync(path.join(EXTENSION, "manifest.json"), "utf8")) as Record<string, unknown>;
+  if ("version" in source)
+    throw new BuildError(
+      "omp-chrome/manifest.json porte une version : elle vit dans omp-chrome/package.json, seule montée par la release",
+    );
+  const pkg = JSON.parse(fs.readFileSync(path.join(EXTENSION, "package.json"), "utf8")) as { version?: unknown };
+  const version = pkg.version;
+  if (typeof version !== "string" || !CHROME_VERSION.test(version) || version.split(".").some((n) => Number(n) > 65535))
+    throw new BuildError(`omp-chrome/package.json : version « ${String(version)} » illisible par Chrome`);
+  const { manifest_version, name, ...rest } = source;
+  return `${JSON.stringify({ manifest_version, name, version, ...rest }, null, 2)}\n`;
+}
+
 /** Construit dans un dossier voisin, vérifie, puis remplace `out` d'un coup. */
 function build(out: string): number {
   if (fs.existsSync(out) && fs.readdirSync(out).length > 0 && !fs.existsSync(path.join(out, "manifest.json"))) {
@@ -170,7 +194,7 @@ function build(out: string): number {
         throw new BuildError(`${path.relative(ROOT, file)} : type de fichier inattendu dans omp-chrome/src`);
       }
     }
-    write("manifest.json", fs.readFileSync(path.join(EXTENSION, "manifest.json")));
+    write("manifest.json", builtManifest());
     for (const size of [16, 32, 48, 128]) write(`icons/icon-${size}.png`, icon(size));
     verify(staging, files);
     fs.rmSync(out, { recursive: true, force: true });
