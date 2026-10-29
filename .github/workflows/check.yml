@@ -56,7 +56,7 @@ jobs:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
@@ -283,7 +283,7 @@ jobs:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
