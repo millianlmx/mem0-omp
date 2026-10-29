@@ -1,5 +1,17 @@
 # Journal des versions
 
+## omp-mem0-req 2.2.0 — 2026-10-29
+
+- feat(harness,chrome,req,console): le poste de travail — extension Chrome, agent 24/24, profil et journal des décisions (#306) (95bdf42)
+
+## omp-harness 1.13.0 — 2026-10-29
+
+- feat(harness,chrome,req,console): le poste de travail — extension Chrome, agent 24/24, profil et journal des décisions (#306) (95bdf42)
+
+## omp-chrome 0.1.0 — 2026-10-29
+
+- feat(harness,chrome,req,console): le poste de travail — extension Chrome, agent 24/24, profil et journal des décisions (#306) (95bdf42)
+
 ## omp-harness 1.12.2 — 2026-10-27
 
 - fix(harness,console): étapes qui se closent, questions qui s'envoient, mem0_add dans chaque runner (#304) (092b397)
