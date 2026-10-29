@@ -51,7 +51,7 @@ jobs:
     # les 6 h par défaut.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
@@ -162,7 +162,7 @@ jobs:
     # que release.yml accorde à release.ts (`--merge-timeout 2100`).
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -228,7 +228,7 @@ jobs:
     # Médiane 186 s, max 688 s (2026-10-24) : même plafond que macos-app-swift.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -278,7 +278,7 @@ jobs:
     # Médiane 251 s, max 565 s par partie (2026-10-24) : même plafond.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
@@ -363,6 +363,6 @@ jobs:
     # Quelques secondes mesurées : ce job ne fait que lire trois résultats.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verdict des jobs macOS
         run: bash scripts/ci-verdict.sh macos-app-swift=${{ needs.macos-app-swift.result }} macos-app-ios=${{ needs.macos-app-ios.result }} macos-tests=${{ needs.macos-tests.result }}
