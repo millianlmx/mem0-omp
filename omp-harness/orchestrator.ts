@@ -6,6 +6,8 @@
 // - `gestures.ts`     la boucle humaine (escalades, décisions, validations, annulation) ;
 // - `audits.ts`       les audits de dépôt ;
 // - `dreams.ts`       le rêve de la mémoire (consolidation des faits d'un dépôt au repos) ;
+// - `workstation.ts`  le poste de travail (extension Chrome, file d'actions, profil) et
+//   `workstation-agent.ts` son agent 24/24 ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -41,6 +43,8 @@ import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
 import { StepExecutor, challengeUnit, liveRun } from "./steps.ts";
+import { Workstation } from "./workstation.ts";
+import { WorkstationAgent } from "./workstation-agent.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -109,6 +113,10 @@ export class Orchestrator {
   readonly audits: Auditor;
   /** Le rêve de la mémoire : consolidation des faits d'un dépôt au repos, par un runner. */
   readonly dreams: Dreamer;
+  /** Le poste de travail : observation, file d'actions de l'extension, meetings, profil. */
+  readonly workstation: Workstation;
+  /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
+  readonly workstationAgent: WorkstationAgent;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   #stopMetrics: (() => void) | null = null;
@@ -140,6 +148,8 @@ export class Orchestrator {
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
     this.dreams = new Dreamer(this.#ctx);
+    this.workstation = new Workstation(this.#ctx);
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
   }
 
   get store(): HarnessContext["store"] {
@@ -245,6 +255,9 @@ export class Orchestrator {
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
     await this.dreams.stop();
+    // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
+    this.workstation.close();
+    await this.workstationAgent.stop();
     await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -292,6 +305,7 @@ export class Orchestrator {
     }
     await this.audits.recover();
     await this.dreams.recover();
+    await this.workstationAgent.recover();
   }
 
   /** La rétention du journal : au démarrage, puis au plus une fois par heure. */
@@ -337,6 +351,11 @@ export class Orchestrator {
       this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
+    try {
+      this.workstationAgent.tick();
+    } catch (err) {
+      this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`);
+    }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();

@@ -113,6 +113,9 @@ Au premier lancement, l'app installe omp. Clique sur **Serveur** dans la barre
 d'outils et colle le code d'appairage : l'app, omp et la mémoire de ce Mac sont
 reliés au serveur. Le détail : [omp-console/README.md](omp-console/README.md).
 
+Pour que l'app approuve les envois du poste de travail, appaire-la avec le code
+approbateur de `harness.sh approver` (§ « Le poste de travail »).
+
 L'app n'installe pas les plugins : c'est l'étape 3, « Les plugins dans omp ».
 
 ### Sans Mac : la pile conteneur
@@ -188,7 +191,8 @@ Puis sur le Mac, dans un de tes dépôts :
 - **L'iPhone.** L'app iOS se construit avec Xcode (le code est dans
   `omp-console/ios/`) : [omp-console/README.md](omp-console/README.md) § « Coque
   iOS ». Elle prend le même code d'appairage et joint le serveur seule, Mac
-  éteint.
+  éteint ; pour qu'elle approuve les envois du poste, colle-lui plutôt le code de
+  `harness.sh approver`.
 - **Des souvenirs déjà sur le Mac ?** Copie-les sur le serveur avant d'y écrire :
   [omp-harness/README.md](omp-harness/README.md) § « La mémoire du projet ».
 - **Mettre à jour.** Le serveur : `git pull` puis `harness.sh up`, sans rien
@@ -207,6 +211,69 @@ Puis sur le Mac, dans un de tes dépôts :
 Pour répondre au serveur, parle à l'agent en clair : « valide », « réponds B »,
 « relance », « annule ». Ou fais-le dans l'app, onglet **Accueil**, sur Mac comme
 sur iPhone. omp te demande toujours ton accord avant de lancer une feature.
+
+## Le poste de travail
+
+L'extension Chrome `omp-chrome` donne au serveur des yeux et des mains dans ton
+navigateur. Elle observe comment tu travailles, transcrit tes meetings et exécute
+les actions que l'agent lui demande. Après quelques heures d'observation (8 h par
+défaut), l'agent 24/24 du serveur commence à faire seul les petites tâches
+répétitives. Tu consultes le profil qu'il a établi et le journal de ses décisions
+dans l'app, section **Poste**, sur Mac comme sur iPhone.
+
+**Une règle ne se règle pas.** Avant d'envoyer un message à quelqu'un d'autre que
+toi, l'agent te demande toujours la permission, quel que soit le mode. L'envoi
+attend ton accord dans l'app (**Accueil** et **Poste**). Sans réponse, il expire et
+vaut refus. Un message dont tous les destinataires figurent dans tes adresses part
+sans attendre.
+
+**Seules les apps approuvent.** Le code d'appairage ordinaire est lu par omp et par
+l'extension : une session omp pourrait s'en servir pour s'approuver elle-même. Les
+approbations, les refus et les réglages du poste exigent donc le **code approbateur**,
+que seul le serveur imprime :
+
+```bash
+bash omp-harness/deploy/container/harness.sh approver   # sur le serveur ; un nouvel appel invalide l'ancien code
+```
+
+Colle ce code dans la feuille **Serveur** de l'app, sur le Mac comme sur l'iPhone.
+omp (`/pair`) et l'extension le refusent : garde-leur le code de `harness.sh pair`.
+
+Pour installer l'extension, dans le clone :
+
+```bash
+bash scripts/chrome-extension.sh        # construit omp-chrome/dist
+```
+
+Puis, dans Chrome : `chrome://extensions`, **Mode développeur**, **Charger
+l'extension non empaquetée**, et choisis `omp-chrome/dist`. Dans les réglages de
+l'extension, colle le code d'appairage `omp1:…` et autorise le micro.
+
+La transcription se fait sur ton Mac, par [oMLX](https://github.com/jundot/omlx)
+avec un modèle Whisper chargé (par exemple `whisper-large-v3-turbo`). L'extension
+refuse toute adresse de transcription qui n'est pas locale. L'audio ne quitte jamais
+le Mac, seul le texte part au serveur. Sur l'onglet du meeting, ouvre l'extension
+puis **Transcrire cet onglet**. Ta voix (le micro) et celle des autres (l'onglet)
+sont transcrites séparément dès l'activation, et c'est à toi de prévenir les
+participants.
+
+| Autonomie | Ce que fait l'agent 24/24 |
+|---|---|
+| Auto (défaut) | Observe jusqu'au seuil d'heures observées, puis agit. |
+| Observer | Rien : le profil continue de s'établir. |
+| Proposer | Chaque action qu'il envisage attend ton accord. |
+| Agir | Fait seul les petites actions, dans sa propre fenêtre de Chrome. |
+
+Ce que l'extension ne voit jamais : ce que tu tapes (seuls l'action et le libellé
+du champ sont notés), les champs de mot de passe, les sites que tu exclus dans ses
+réglages. L'observation se met en pause depuis l'extension ou depuis l'app, et le
+serveur oublie les observations au bout de 30 jours.
+
+Dans une session omp, les outils `workstation_status`, `workstation_profile`,
+`workstation_activity`, `workstation_meetings`, `workstation_journal` et
+`workstation_act` font agir l'agent sur le poste et lui font écouter ce qui s'y
+passe. Le détail du serveur : [omp-harness/README.md](omp-harness/README.md)
+§ « Le poste de travail ».
 
 ## La mémoire
 

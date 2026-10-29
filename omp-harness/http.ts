@@ -21,7 +21,8 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { DecisionStatus, EventRow, RepoFilter } from "./db.ts";
+import type { ActionState, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
+import { ACTION_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
@@ -29,6 +30,8 @@ import type { ModelChains, ProviderInput } from "./providers.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
+import type { Workstation } from "./workstation.ts";
+import { MAX_WAIT_SEC, parseActionInput } from "./workstation.ts";
 
 export const API_VERSION = 1;
 
@@ -57,6 +60,7 @@ export const API_FEATURES = [
   "live-tests",
   "metrics",
   "push-activities",
+  "workstation",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -70,6 +74,10 @@ export const HARNESS_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
+
+/** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
+export const APPROVER_ONLY =
+  "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
 
 const MAX_BODY = 1024 * 1024;
 const PING_MS = 15_000;
@@ -303,6 +311,38 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       kinds: [...Object.keys(KNOWN_PROVIDERS), COMPATIBLE, OAUTH],
       apis: COMPATIBLE_APIS,
     };
+  };
+  /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
+  const workstationOf = (call: Call): Workstation => {
+    if (call.repos !== null) throw new HarnessError(403, "le poste est réservé au propriétaire");
+    if (!orchestrator.workstation.enabled)
+      throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
+    return orchestrator.workstation;
+  };
+  /**
+   * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
+   * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
+   * lit ne doit pas pouvoir trancher ses propres envois.
+   */
+  const approverOf = (call: Call): Workstation => {
+    const workstation = workstationOf(call);
+    if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
+    return workstation;
+  };
+  /** `?wait=` : les secondes d'un long-poll, bornées à 30 ; absent ou illisible : aucune attente. */
+  const waitOf = (url: URL): number => {
+    const wait = Number(url.searchParams.get("wait"));
+    return Number.isFinite(wait) && wait > 0 ? Math.min(wait, MAX_WAIT_SEC) : 0;
+  };
+  /** Un signal levé quand le client part avant la réponse : un long-poll s'arrête alors sans rien louer. */
+  const departure = (res: http.ServerResponse): AbortSignal => {
+    const abort = new AbortController();
+    res.on("close", () => abort.abort());
+    return abort.signal;
+  };
+  const limitOf = (url: URL, fallback: number, max: number): number => {
+    const limit = Number(url.searchParams.get("limit"));
+    return Number.isInteger(limit) && limit > 0 ? Math.min(limit, max) : fallback;
   };
 
   return [
@@ -579,10 +619,113 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
+    // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
+    route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),
+    route("PUT", "/v1/workstation/settings", "operator", async (call) => {
+      const workstation = approverOf(call);
+      send(call.res, 200, workstation.updateSettings(await readBody(call.req), call.actor));
+    }),
+    route("POST", "/v1/workstation/observations", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      send(call.res, 200, { stored: workstation.recordObservations(await readBody(call.req)) });
+    }),
+    route("GET", "/v1/workstation/observations", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      const since = Number(call.url.searchParams.get("since"));
+      send(call.res, 200, {
+        observations: workstation.listObservations({
+          since: Number.isFinite(since) && since > 0 ? since : 0,
+          limit: limitOf(call.url, 500, 500),
+        }),
+      });
+    }),
+    // Le long-poll de l'extension : 200 `{ action }` (passée `running`), ou 204 après l'attente.
+    route("GET", "/v1/workstation/next", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      const signal = departure(call.res);
+      const version = call.req.headers["x-omp-extension"];
+      const action = await workstation.next(waitOf(call.url), signal, typeof version === "string" ? version : null);
+      if (action) send(call.res, 200, { action });
+      else if (!signal.aborted) {
+        call.res.writeHead(204, { "Cache-Control": "no-store" });
+        call.res.end();
+      }
+    }),
+    route("POST", "/v1/workstation/actions", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      const input = parseActionInput(await readBody(call.req));
+      send(call.res, 201, { action: workstation.createAction(input, "session", call.actor.by) });
+    }),
+    route("GET", "/v1/workstation/actions", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      const states = (call.url.searchParams.get("state") ?? "").split(",").filter((state) => state !== "");
+      if (states.some((state) => !(ACTION_STATES as readonly string[]).includes(state)))
+        throw new HarnessError(400, `state : ${ACTION_STATES.join(" | ")}`);
+      const before = Number(call.url.searchParams.get("before"));
+      send(call.res, 200, {
+        actions: workstation.listActions({
+          states: states as ActionState[],
+          limit: limitOf(call.url, 50, 200),
+          ...(Number.isInteger(before) && before > 0 ? { before } : {}),
+        }),
+      });
+    }),
+    // `?wait=` : rend dès que l'action quitte la file et l'extension (l'image d'une capture, en mémoire seulement).
+    route("GET", "/v1/workstation/actions/{n}", "viewer", async (call) => {
+      const workstation = workstationOf(call);
+      const signal = departure(call.res);
+      const view = await workstation.waitAction(Number(call.match[1]), waitOf(call.url), signal);
+      if (!signal.aborted) send(call.res, 200, view);
+    }),
+    route("POST", "/v1/workstation/actions/{n}/result", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      send(call.res, 200, { action: workstation.submitResult(Number(call.match[1]), await readBody(call.req)) });
+    }),
+    route("POST", "/v1/workstation/actions/{n}/approve", "operator", (call) =>
+      send(call.res, 200, { action: approverOf(call).approve(Number(call.match[1]), call.actor) }),
+    ),
+    route("POST", "/v1/workstation/actions/{n}/refuse", "operator", async (call) => {
+      const workstation = approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, {
+        action: workstation.refuse(Number(call.match[1]), text(body, "reason", false), call.actor),
+      });
+    }),
+    route("GET", "/v1/workstation/profile", "viewer", (call) => send(call.res, 200, workstationOf(call).profileView())),
+    route("POST", "/v1/workstation/profile/rebuild", "operator", (call) => {
+      workstationOf(call).profileRequested = true;
+      void orchestrator.tick();
+      send(call.res, 202, { queued: true });
+    }),
+    route("POST", "/v1/workstation/meetings", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      send(call.res, 201, { meeting: workstation.createMeeting(await readBody(call.req)) });
+    }),
+    route("POST", "/v1/workstation/meetings/{id}/segments", "operator", async (call) => {
+      const workstation = workstationOf(call);
+      send(call.res, 200, { stored: workstation.addSegments(call.match[1] as string, await readBody(call.req)) });
+    }),
+    route("POST", "/v1/workstation/meetings/{id}/end", "operator", (call) => {
+      const meeting = workstationOf(call).endMeeting(call.match[1] as string);
+      void orchestrator.tick();
+      send(call.res, 200, { meeting });
+    }),
+    route("GET", "/v1/workstation/meetings", "viewer", (call) =>
+      send(call.res, 200, { meetings: workstationOf(call).listMeetings(limitOf(call.url, 50, 200)) }),
+    ),
+    route("GET", "/v1/workstation/meetings/{id}", "viewer", (call) =>
+      send(call.res, 200, workstationOf(call).meetingView(call.match[1] as string)),
+    ),
     // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
     route("GET", "/v1/clients", "admin", (call) => send(call.res, 200, { clients: clients.list() })),
     route("POST", "/v1/clients", "admin", async (call) => {
       const body = await readBody(call.req);
+      // L'approbateur du poste ne se frappe qu'en ligne de commande sur le serveur.
+      if ("approver" in body)
+        throw new HarnessError(
+          400,
+          "approver : un approbateur ne se crée qu'en ligne de commande sur le serveur (harness.sh approver)",
+        );
       const role = text(body, "role", false) || "operator";
       if (!(ROLES as readonly string[]).includes(role)) throw new HarnessError(400, `role : ${ROLES.join(" | ")}`);
       const repos = body.repos === undefined || body.repos === "*" ? "*" : stringList(body.repos, "repos");

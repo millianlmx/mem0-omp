@@ -10,6 +10,9 @@ node_modules/
 .typecheck/
 # Biome épinglé de scripts/lint.sh (installé par `bash scripts/lint.sh --prepare`)
 .lint/
+# Extension Chrome construite par scripts/chrome-extension.sh (et son dossier de construction transitoire)
+omp-chrome/dist/
+omp-chrome/dist.construction-*/
 *.log
 .DS_Store
 

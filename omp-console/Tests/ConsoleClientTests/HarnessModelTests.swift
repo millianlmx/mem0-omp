@@ -12,6 +12,7 @@ final class ScriptedHarnessTransport: HarnessTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var handler: @Sendable (HarnessCall) -> HarnessReply = { _ in HarnessReply(status: 404, body: Data()) }
     private var recorded: [HarnessCall] = []
+    private var bearers: [String] = []
     private var chunks: [Data] = []
 
     func respond(_ handler: @escaping @Sendable (HarnessCall) -> HarnessReply) {
@@ -24,10 +25,13 @@ final class ScriptedHarnessTransport: HarnessTransport, @unchecked Sendable {
     }
 
     var calls: [HarnessCall] { lock.withLock { recorded } }
+    /// Le jeton porté par chaque appel (`Authorization: Bearer`), dans l'ordre.
+    var tokens: [String] { lock.withLock { bearers } }
 
     func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
         let handler: @Sendable (HarnessCall) -> HarnessReply = lock.withLock {
             recorded.append(call)
+            bearers.append(server.token)
             return self.handler
         }
         return handler(call)
@@ -78,6 +82,14 @@ private func makeModel(_ transport: ScriptedHarnessTransport, preferences: InMem
 }
 
 private func ok(_ json: String) -> HarnessReply { HarnessReply(status: 200, body: Data(json.utf8)) }
+
+/// Un code `omp1:` tel que l'écrit `harness.sh` : base64url, sans bourrage.
+private func pairingCode(_ lines: [String]) -> String {
+    "omp1:" + Data(lines.joined(separator: "\n").utf8).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
 
 /// Attend qu'une condition du fil principal devienne vraie, au plus `timeout` secondes.
 @MainActor
@@ -405,6 +417,60 @@ struct HarnessModelTests {
 
         #expect(await model.configure(address: "omp1:aHR0cDovLzEyNy4wLjAuMTo4NzkwCmpldG9uCgo", token: ""))
         #expect(HarnessPairing.sharedSettings(home: home)?.address == "http://127.0.0.1:8790")
+    }
+
+    @Test("un code approbateur (5e ligne, harness.sh approver) porte le jeton approbateur ; un code ordinaire n'en a pas")
+    func decodesApproverCode() {
+        let ordinary = ["https://vps.tailnet.ts.net", "ordinaire", "https://vps.tailnet.ts.net:8443", "memoire"]
+        let approver = String(repeating: "c", count: 64)
+        // Le format de `harness.sh approver` : printf termine par un saut de ligne.
+        let decoded = HarnessPairing.decode(pairingCode(ordinary + [approver, ""]))
+        #expect(decoded == HarnessPairing(
+            address: "https://vps.tailnet.ts.net", token: "ordinaire",
+            memoryAddress: "https://vps.tailnet.ts.net:8443", memoryToken: "memoire",
+            approverToken: approver
+        ))
+        #expect(decoded?.appToken == approver)
+        // Quatre lignes, ou une 5e ligne vide : un code ordinaire, inchangé.
+        for lines in [ordinary, ordinary + [""]] {
+            let plain = HarnessPairing.decode(pairingCode(lines))
+            #expect(plain?.approverToken == nil)
+            #expect(plain?.token == "ordinaire")
+            #expect(plain?.appToken == "ordinaire")
+        }
+        #expect(HarnessPairing.decode(pairingCode(ordinary + ["jeton avec espace"])) == nil)
+    }
+
+    @Test("un code approbateur met le jeton approbateur au trousseau et n'écrit que l'ordinaire dans ~/.omp (comme l'app Mac)")
+    func approverCodeStaysInKeychain() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("harness-approver-\(UUID().uuidString)")
+        let transport = ScriptedHarnessTransport()
+        transport.respond { _ in ok(inboxJSON) }
+        let tokens = InMemoryTokenStore()
+        let model = HarnessModel(
+            transport: transport, preferences: InMemoryClientPreferences(), tokens: tokens,
+            retryDelay: .seconds(3600), refreshDelay: .milliseconds(1),
+            onPaired: { try? $0.writeShared(home: home) }
+        )
+        let approver = String(repeating: "c", count: 64)
+        let code = pairingCode(["https://vps.tailnet.ts.net", "ordinaire", "https://vps.tailnet.ts.net:8443", "memoire", approver, ""])
+        #expect(await model.configure(address: code, token: ""))
+        #expect(await tokens.knownTokens[HarnessModel.tokenAccount] == approver, "le trousseau garde le jeton approbateur")
+        let bearers = transport.tokens
+        let allApprover = !bearers.isEmpty && bearers.allSatisfy { $0 == approver }
+        #expect(allApprover, "les appels de l'app portent l'approbateur")
+
+        let shared = try #require(HarnessPairing.sharedSettings(home: home))
+        #expect(shared.token == "ordinaire", "omp lit le jeton ordinaire")
+        for name in ["harness.json", "mem0.json"] {
+            let text = try String(contentsOf: home.appendingPathComponent(".omp/\(name)"), encoding: .utf8)
+            #expect(!text.contains(approver), "\(name) ne contient jamais le jeton approbateur")
+        }
+
+        // Un code ordinaire : comportement inchangé, le même jeton partout.
+        let plain = makeModel(transport, tokens: tokens)
+        #expect(await plain.configure(address: pairingCode(["https://vps.tailnet.ts.net", "ordinaire", "", ""]), token: ""))
+        #expect(await tokens.knownTokens[HarnessModel.tokenAccount] == "ordinaire")
     }
 
     @Test("un modèle neuf retrouve le serveur enregistré ; l'oublier efface adresse et jeton")

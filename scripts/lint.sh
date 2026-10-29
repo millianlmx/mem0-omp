@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, scripts/ et test/
+# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ et test/
 # par un Biome ÉPINGLÉ (feature no-ts-lint-formatter, spec S-1). Le périmètre et
 # les règles vivent dans biome.jsonc.
 #

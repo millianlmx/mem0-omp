@@ -15,7 +15,7 @@ enum IOSSection {
     }
 
     /// Les sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
-    /// groupe, comme la barre de `RootView`. Les raccourcis ⌘1…⌘6 suivent cet
+    /// groupe, comme la barre de `RootView`. Les raccourcis ⌘1…⌘7 suivent cet
     /// ordre ; si la barre latérale change, ils la suivent.
     static var sidebarOrder: [ConsoleSection] {
         ConsoleSectionGroup.allCases.flatMap(sections(of:))

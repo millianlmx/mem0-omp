@@ -581,15 +581,189 @@ const CHALLENGE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+/** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
+export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service";
+
+const NULLABLE_STRING = { type: ["string", "null"] } as const;
+
+const WORKSTATION_ACT_TOOL: HostToolDefinition = {
+  name: "workstation_act",
+  label: "Poste — action dans le navigateur",
+  description:
+    "Fait UNE petite action dans le navigateur de l'utilisateur, par l'extension du poste, dans TA fenêtre (les onglets ouverts par `open`). " +
+    "`rationale` est OBLIGATOIRE : pourquoi cette action — elle est journalisée et relue par l'humain. Tu attends le résultat (30 s au plus). " +
+    "Un geste qui enverrait un message à quelqu'un d'autre que l'utilisateur est retenu pour SON approbation : le résultat le dit, n'insiste pas et ne réessaie pas. " +
+    "Paramètres par `kind` : tabs {} (un onglet par ligne « tabId · titre · url ») ; open { url } ; navigate { tabId, url } ; snapshot { tabId } (texte et éléments `ref`) ; " +
+    "click { tabId, ref } ; type { tabId, ref, text, submit? } ; key { tabId, ref?, key } (Enter, Escape, Tab, flèches, Backspace) ; scroll { tabId, dy } ; " +
+    "screenshot { tabId } (l'image n'est pas transmise ici : préfère snapshot) ; wait { ms ≤ 10000 } ; close { tabId }.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        enum: ["tabs", "open", "navigate", "snapshot", "click", "type", "key", "scroll", "screenshot", "wait", "close"],
+      },
+      params: { type: "object", description: "Les paramètres de `kind` (voir la description)." },
+      rationale: { type: "string", description: "Pourquoi cette action, en une ou deux phrases autoportantes." },
+    },
+    required: ["kind", "params", "rationale"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_DECISION_TOOL: HostToolDefinition = {
+  name: "workstation_decision",
+  label: "Poste — décision journalisée",
+  description:
+    "Journalise une décision SANS geste dans le navigateur : ce que tu as choisi de faire ou de ne pas faire, et pourquoi (l'humain relit le journal). Rien n'est exécuté.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: { type: "string", description: "La décision, en une phrase." },
+      rationale: { type: "string", description: "Pourquoi." },
+    },
+    required: ["summary", "rationale"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_ACTIVITY_TOOL: HostToolDefinition = {
+  name: "workstation_activity",
+  label: "Poste — activité récente",
+  description:
+    "L'activité récente de l'utilisateur observée dans son navigateur (visites, interactions sans valeur saisie).",
+  parameters: {
+    type: "object",
+    properties: {
+      sinceMin: {
+        type: "integer",
+        minimum: 1,
+        maximum: 10080,
+        description: "Depuis combien de minutes (60 par défaut).",
+      },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_MEETINGS_TOOL: HostToolDefinition = {
+  name: "workstation_meetings",
+  label: "Poste — meetings",
+  description: "Les derniers meetings transcrits : résumé et besoins exprimés par les clients.",
+  parameters: { type: "object", properties: {}, additionalProperties: false },
+  loadMode: "essential",
+};
+
+const WORKSTATION_PROFILE_TOOL: HostToolDefinition = {
+  name: "workstation_profile_write",
+  label: "Poste — profil",
+  description:
+    "Écrit la NOUVELLE version complète du profil de l'utilisateur, une fois, à la fin (elle remplace la précédente, qui reste en historique). " +
+    "N'écris que ce que l'observation, les meetings ou le profil précédent montrent ; `null` quand un champ d'un besoin est inconnu.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: { type: "string", description: "Le portrait de travail en quelques phrases." },
+      habits: { ...STRINGS, description: "Les habitudes observées, une phrase chacune." },
+      tools: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, usage: { type: "string" } },
+          required: ["name", "usage"],
+          additionalProperties: false,
+        },
+      },
+      schedule: { type: "string", description: "Les horaires et le rythme de travail." },
+      repetitiveTasks: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            frequency: { type: "string" },
+            steps: STRINGS,
+            automatable: { type: "boolean" },
+          },
+          required: ["title", "frequency", "steps", "automatable"],
+          additionalProperties: false,
+        },
+      },
+      clientNeeds: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            need: { type: "string" },
+            who: NULLABLE_STRING,
+            meetingId: NULLABLE_STRING,
+            at: { type: ["integer", "null"] },
+          },
+          required: ["need", "who", "meetingId", "at"],
+          additionalProperties: false,
+        },
+      },
+      preferences: STRINGS,
+    },
+    required: ["summary", "habits", "tools", "schedule", "repetitiveTasks", "clientNeeds", "preferences"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
+  name: "workstation_meeting_digest",
+  label: "Poste — digest de meeting",
+  description:
+    "Rend le digest du meeting, une fois, à la fin : le résumé et les besoins exprimés (qui, échéance si dite, la citation qui le prouve).",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: { type: "string" },
+      needs: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            need: { type: "string" },
+            who: NULLABLE_STRING,
+            due: NULLABLE_STRING,
+            quote: { type: "string", description: "L'extrait du transcript, mot pour mot." },
+          },
+          required: ["need", "who", "due", "quote"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["summary", "needs"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
- * décident ni ne testent rien) : `save_checkpoint` et `set_modules` partout, `split_feature`
- * en specs et impl, `run_tests` dès /impl, `review_verdict` en revue seulement.
+ * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
+ * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
+ * `review_verdict` en revue seulement.
  */
-export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream"): HostToolDefinition[] {
+export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream" | WorkstationJob): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
+  if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
+  if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
+  if (step === "poste-service")
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_ACT_TOOL,
+      WORKSTATION_DECISION_TOOL,
+      WORKSTATION_ACTIVITY_TOOL,
+      WORKSTATION_MEETINGS_TOOL,
+    ];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));

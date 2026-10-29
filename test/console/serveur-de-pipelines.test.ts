@@ -9,7 +9,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { apiRoutes, createHandler } from "../../omp-harness/http.ts";
+import { APPROVER_ONLY, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -283,4 +283,182 @@ test("serveur-de-pipelines/AC-5 : les apps Mac et iOS ouvrent « Fournisseurs et
     );
     assert.ok(source.includes("server.saveChains(nil)"), `${form} : retour aux modèles du serveur`);
   }
+});
+
+test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par le client Swift est servie, au rôle du contrat, et aucune n'approuve sans geste", () => {
+  const model = fs.readFileSync(path.join(CLIENT, "WorkstationModel.swift"), "utf8");
+  const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
+  const calls: [string, string, string, string][] = [
+    ['path: "/v1/workstation")', "GET", "/v1/workstation", "viewer"],
+    ['"/v1/workstation/actions?state=awaiting_approval&limit=', "GET", "/v1/workstation/actions", "viewer"],
+    ['"/v1/workstation/actions?limit=', "GET", "/v1/workstation/actions", "viewer"],
+    ['"/v1/workstation/profile")', "GET", "/v1/workstation/profile", "viewer"],
+    ['"/v1/workstation/meetings?limit=', "GET", "/v1/workstation/meetings", "viewer"],
+    ['"/v1/workstation/actions/\\(seq)/approve"', "POST", "/v1/workstation/actions/9/approve", "operator"],
+    ['"/v1/workstation/actions/\\(seq)/refuse"', "POST", "/v1/workstation/actions/9/refuse", "operator"],
+    ['method: "PUT", path: "/v1/workstation/settings"', "PUT", "/v1/workstation/settings", "operator"],
+    ['method: "POST", path: "/v1/workstation/profile/rebuild"', "POST", "/v1/workstation/profile/rebuild", "operator"],
+  ];
+  for (const [client, method, sample, role] of calls) {
+    assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
+    const served = routes.find((route) => route.method === method && route.pattern.test(sample));
+    assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
+  }
+  // L'approbation n'est appelée que par un geste de l'humain : dans les deux apps, un
+  // `Button` et lui seul porte `approve(shown:` — avec l'action affichée, dont l'`updatedAt`
+  // part en If-Match ; le modèle ne l'appelle jamais lui-même.
+  const code = (source: string) =>
+    source
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+  assert.ok(
+    code(model).includes("func approve(shown action: WorkstationAction)"),
+    "le modèle approuve l'action affichée",
+  );
+  assert.equal(code(model).split("approve(shown:").length - 1, 0, "le modèle n'approuve que sur appel");
+  for (const view of [
+    "Sources/OMPConsole/Server/WorkstationViews.swift",
+    "ios/OMPConsoleIOS/IOSWorkstationScreen.swift",
+  ]) {
+    const source = code(read("omp-console", view));
+    const uses = [...source.matchAll(/approve\(shown:/g)].map((match) => source.slice(0, match.index));
+    assert.equal(uses.length, 1, `${view} : une seule approbation, celle du bouton`);
+    assert.match(
+      uses[0] ?? "",
+      /Button\(WorkstationText\.approve\) \{\s*Task \{ await workstation\.$/,
+      `${view} : l'approbation vient d'un bouton`,
+    );
+    assert.ok(source.includes("approve(shown: action)"), `${view} : l'approbation porte l'action affichée`);
+  }
+});
+
+/** Une valeur JSON qui doit être un objet : vérifiée, puis rendue comme telle. */
+function object(value: unknown, label: string): Record<string, unknown> {
+  assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), `${label} : objet attendu`);
+  return Object.fromEntries(Object.entries(value));
+}
+
+/** Le premier objet d'une liste JSON non vide. */
+function firstOf(value: unknown, label: string): Record<string, unknown> {
+  assert.ok(Array.isArray(value) && value.length > 0, `${label} : liste non vide attendue`);
+  return object(value[0], `${label}[0]`);
+}
+
+test("serveur-de-pipelines/AC-7 : chaque champ du poste de travail décodé par le client Swift existe dans le JSON RÉEL du serveur", async () => {
+  const token = "t".repeat(64);
+  const world = fakeWorld({});
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const call = async (method: string, route: string, body?: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      return { status: response.status, json: text ? object(JSON.parse(text), route) : {} };
+    };
+    // L'extension se présente (en ligne), observe, puis rend un envoi à approuver.
+    assert.equal((await call("GET", "/v1/workstation/next?wait=0")).status, 204);
+    const at = Date.now();
+    const observed = await call("POST", "/v1/workstation/observations", {
+      tz: -60,
+      events: [{ kind: "visit", at, url: "https://mail.google.com/mail", title: "Boîte", durationMs: 60_000 }],
+    });
+    assert.equal(observed.status, 200, JSON.stringify(observed.json));
+    const created = await call("POST", "/v1/workstation/actions", {
+      kind: "click",
+      params: { tabId: 1, ref: "e1" },
+      rationale: "Répondre à Paul",
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    const seq = object(created.json.action, "action").seq;
+    assert.equal(typeof seq, "number", "la file rend le numéro de l'action");
+    assert.equal((await call("GET", "/v1/workstation/next?wait=0")).status, 200);
+    const parked = await call("POST", `/v1/workstation/actions/${seq}/result`, {
+      outcome: "needs_approval",
+      approval: { summary: "Envoyer un message à Paul", recipients: ["paul@exemple.fr"], preview: "Bonjour Paul" },
+    });
+    assert.equal(parked.status, 200, JSON.stringify(parked.json));
+    world.store.addWorkstationProfile({
+      summary: "Commercial",
+      habits: ["Mails le matin"],
+      tools: [{ name: "Gmail", usage: "clients" }],
+      schedule: "9 h – 18 h",
+      repetitiveTasks: [{ title: "Relancer", frequency: "lundi", steps: ["a"], automatable: true }],
+      clientNeeds: [{ need: "Devis", who: "Paul", meetingId: null, at }],
+      preferences: ["Vouvoiement"],
+    });
+    const meeting = await call("POST", "/v1/workstation/meetings", {
+      title: "Point",
+      url: "https://meet.google.com/x",
+      startedAt: at,
+    });
+    assert.equal(meeting.status, 201, JSON.stringify(meeting.json));
+
+    const wire = fs.readFileSync(path.join(CLIENT, "WorkstationWire.swift"), "utf8");
+    const status = (await call("GET", "/v1/workstation")).json;
+    covers(status, swiftFields(wire, "WorkstationStatus"), "WorkstationStatus");
+    covers(object(status.autonomy, "autonomy"), swiftFields(wire, "WorkstationAutonomy"), "WorkstationAutonomy");
+    const pending = (await call("GET", "/v1/workstation/actions?state=awaiting_approval&limit=200")).json;
+    const action = firstOf(pending.actions, "actions");
+    assert.equal(action.state, "awaiting_approval");
+    covers(action, swiftFields(wire, "WorkstationAction"), "WorkstationAction");
+    covers(object(action.approval, "approval"), swiftFields(wire, "WorkstationApproval"), "WorkstationApproval");
+    const reply = (await call("GET", "/v1/workstation/profile")).json;
+    covers(reply, swiftFields(wire, "WorkstationProfileReply"), "WorkstationProfileReply");
+    const profile = object(reply.profile, "profile");
+    covers(profile, swiftFields(wire, "WorkstationProfile"), "WorkstationProfile");
+    covers(firstOf(profile.tools, "tools"), swiftFields(wire, "WorkstationTool"), "WorkstationTool");
+    covers(
+      firstOf(profile.repetitiveTasks, "repetitiveTasks"),
+      swiftFields(wire, "WorkstationTask"),
+      "WorkstationTask",
+    );
+    covers(
+      firstOf(profile.clientNeeds, "clientNeeds"),
+      swiftFields(wire, "WorkstationClientNeed"),
+      "WorkstationClientNeed",
+    );
+    const stats = object(reply.stats, "stats");
+    covers(stats, swiftFields(wire, "WorkstationProfileStats"), "WorkstationProfileStats");
+    covers(firstOf(stats.topSites, "topSites"), swiftFields(wire, "WorkstationTopSite"), "WorkstationTopSite");
+    assert.ok(Array.isArray(stats.activeHours) && stats.activeHours.length === 24, "24 heures actives");
+    const meetings = (await call("GET", "/v1/workstation/meetings?limit=20")).json;
+    covers(firstOf(meetings.meetings, "meetings"), swiftFields(wire, "WorkstationMeeting"), "WorkstationMeeting");
+    // Les états et sortes que l'app nomme sont ceux du contrat du serveur.
+    const states = [
+      ...wire
+        .slice(wire.indexOf("enum WorkstationActionState"), wire.indexOf("enum WorkstationAutonomySetting"))
+        .matchAll(/case (\w+)(?: = "(\w+)")?$/gm),
+    ].map(([, name, raw]) => raw ?? name);
+    assert.deepEqual(states, ["queued", "running", "awaiting_approval", "done", "failed", "refused", "expired"]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await world.orchestrator.stop();
+  }
+});
+
+test("serveur-de-pipelines/AC-8 : le client Swift reconnaît le refus APPROVER_ONLY du serveur, et n'écrit jamais le jeton approbateur dans ~/.omp", () => {
+  const model = read("omp-console", "Sources", "ConsoleClient", "HarnessModel.swift");
+  const marker = /static let approverOnlyMarker = "([^"]+)"/.exec(model)?.[1];
+  assert.ok(marker, "HarnessModel.approverOnlyMarker introuvable");
+  assert.ok(APPROVER_ONLY.includes(marker), `le 403 du serveur ne contient plus ${JSON.stringify(marker)}`);
+  assert.match(
+    model,
+    /let rawToken = pairing\?\.appToken \?\? tokenInput/,
+    "configure() appelle le serveur avec le jeton approbateur du code",
+  );
+
+  const pairing = read("omp-console", "Sources", "ConsoleClient", "HarnessPairing.swift");
+  const writer = pairing.slice(
+    pairing.indexOf("public func writeShared"),
+    pairing.indexOf("private static func writePrivate"),
+  );
+  assert.ok(writer.length > 0, "writeShared introuvable");
+  assert.doesNotMatch(writer, /approverToken|appToken/, "~/.omp ne reçoit que le jeton ordinaire");
 });

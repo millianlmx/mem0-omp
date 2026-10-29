@@ -1,0 +1,148 @@
+:root {
+  color-scheme: light dark;
+  --accent: #2f6fde;
+  --danger: #c62828;
+  --ok: #2e7d32;
+  --warn: #b26a00;
+  --muted: #6b6b6b;
+  --line: #d6d6d6;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --muted: #a0a0a0;
+    --line: #3a3a3a;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+}
+
+body.popup {
+  width: 320px;
+}
+
+body.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1 {
+  font-size: 17px;
+  margin: 0 0 12px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+section {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+label {
+  display: block;
+  margin: 8px 0 4px;
+  font-weight: 600;
+}
+
+label.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 400;
+}
+
+input[type="text"],
+input[type="url"],
+input[type="password"],
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: transparent;
+  color: inherit;
+}
+
+textarea {
+  min-height: 72px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+button {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.state {
+  font-weight: 600;
+}
+
+.state::before {
+  content: "●";
+  margin-right: 6px;
+}
+
+.state.online::before {
+  color: var(--ok);
+}
+
+.state.offline::before,
+.state.unauthorized::before {
+  color: var(--danger);
+}
+
+.state.paused::before,
+.state.unpaired::before,
+.state.connecting::before {
+  color: var(--warn);
+}
+
+.message {
+  margin: 6px 0 0;
+}
+
+.message.error {
+  color: var(--danger);
+}
+
+.message.success {
+  color: var(--ok);
+}

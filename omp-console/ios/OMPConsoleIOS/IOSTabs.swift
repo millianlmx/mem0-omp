@@ -16,11 +16,16 @@ struct IOSTabRoute: Equatable {
 /// Le routage pur entre onglets et sections de la coque iOS : sans état, sans
 /// UIKit, dérivé de `IOSSection`. L'iPhone (largeur compacte) montre quatre
 /// sections — Accueil, Pipelines, Projet, Audit — puis « Plus », qui pousse
-/// Statistiques et Mémoire ; l'iPad (largeur régulière) montre toutes les sections
-/// dans la barre latérale, sans « Plus ».
+/// Statistiques, Poste et Mémoire ; l'iPad (largeur régulière) montre toutes les
+/// sections dans la barre latérale, sans « Plus ».
+///
+/// Le Poste est sous « Plus » : la barre d'onglets de l'iPhone garde quatre
+/// sections et « Plus » (cinq onglets au plus, HIG Tab bars). Ses envois à
+/// approuver ne s'y perdent pas : ils remontent sur l'Accueil, et l'onglet « Plus »
+/// porte leur badge.
 enum IOSTabs {
     /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste.
-    static let plusSections: [ConsoleSection] = [.stats, .memory]
+    static let plusSections: [ConsoleSection] = [.stats, .workstation, .memory]
 
     /// Les sections DÉCLARÉES dans le groupe, dans l'ordre de déclaration du
     /// `TabView` : l'ordre de la barre latérale, quelle que soit la largeur.
@@ -44,6 +49,13 @@ enum IOSTabs {
         case let .section(section): compact && plusSections.contains(section)
         case .plus: !compact
         }
+    }
+
+    /// Le badge de l'onglet « Plus » : en compact, la somme des badges des sections
+    /// qu'il range (un envoi à approuver du Poste ne s'y cache pas) ; en régulier,
+    /// « Plus » est masqué et chaque section porte le sien.
+    static func plusBadge(compact: Bool, badge: (ConsoleSection) -> Int) -> Int {
+        compact ? plusSections.reduce(0) { $0 + badge($1) } : 0
     }
 
     /// Ramène une route à ce que la classe de taille peut afficher. En compact, une

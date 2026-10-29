@@ -1,11 +1,17 @@
-// Les huit sections de la coque, dans l'ordre d'affichage de la barre latérale,
+// Les neuf sections de la coque, dans l'ordre d'affichage de la barre latérale,
 // rangées en deux groupes : « Pilotage » (Accueil, Pipelines, Projet, Audit,
-// Statistiques — servis par le serveur de pipelines du VPS) et « Consultation »
-// (Terminal, Fichiers, Mémoire — locaux). TOUT vit dans la fenêtre principale.
+// Statistiques, Poste — servis par le serveur de pipelines du VPS) et
+// « Consultation » (Terminal, Fichiers, Mémoire — locaux). TOUT vit dans la
+// fenêtre principale.
+//
+// Le Poste (le poste de travail observé par l'extension Chrome et l'agent 24/24)
+// est en Pilotage : il est servi par le même serveur, et l'humain y POSE des
+// gestes (approuver ou refuser un envoi, régler l'autonomie, mettre en pause) —
+// ce n'est pas une simple consultation.
 //
 // Un enum plutôt qu'un tableau de vues : la section est l'identité PARTAGÉE entre
 // la liste, le détail, les tests et les features métier. L'ordre de déclaration
-// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘8,
+// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘9,
 // donc il n'existe pas de seconde liste à tenir synchronisée.
 
 public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -14,6 +20,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
     case project
     case audit
     case stats
+    case workstation
     case terminal
     case files
     case memory
@@ -31,6 +38,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .files: L10n.text("Fichiers")
         case .memory: L10n.text("Mémoire")
         case .stats: L10n.text("Statistiques")
+        case .workstation: L10n.text("Poste")
         }
     }
 
@@ -45,13 +53,14 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .files: "doc.text"
         case .memory: "brain"
         case .stats: "chart.bar"
+        case .workstation: "desktopcomputer"
         }
     }
 
     /// Le groupe de la barre latérale.
     public var group: ConsoleSectionGroup {
         switch self {
-        case .home, .kanban, .project, .audit, .stats: .pilotage
+        case .home, .kanban, .project, .audit, .stats, .workstation: .pilotage
         case .terminal, .files, .memory: .consultation
         }
     }

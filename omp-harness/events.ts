@@ -78,6 +78,13 @@ export const EVENT_TYPES = [
   "budget_exceeded",
   "daily_budget_reached",
   "alert_cleared",
+  // le poste de travail (repo null : seuls les clients qui voient tous les dépôts les reçoivent)
+  "workstation_action",
+  "workstation_approval",
+  "workstation_profile",
+  "workstation_meeting",
+  "workstation_settings",
+  "workstation_shift",
   // éphémères
   "activity",
   "session",

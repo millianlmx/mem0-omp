@@ -2,11 +2,11 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// L'aiguillage UNIQUE section → écran de l'app iOS : les cinq sections de
-/// pilotage (Accueil, Pipelines, Projet, Audit, Statistiques) sont servies par le
-/// serveur de pipelines du VPS (`HarnessModel`), Mémoire par la mémoire du même
-/// serveur (`MemoryAccess`) — l'un et l'autre joints directement, sans Mac.
-/// Chaque écran porte son propre cadre.
+/// L'aiguillage UNIQUE section → écran de l'app iOS : les six sections de
+/// pilotage (Accueil, Pipelines, Projet, Audit, Statistiques, Poste) sont servies
+/// par le serveur de pipelines du VPS (`HarnessModel`, qui porte aussi le poste de
+/// travail), Mémoire par la mémoire du même serveur (`MemoryAccess`) — l'un et
+/// l'autre joints directement, sans Mac. Chaque écran porte son propre cadre.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
@@ -23,6 +23,7 @@ struct IOSSectionView: View {
         case .project: IOSHarnessProjectsScreen(server: server, drafts: drafts)
         case .audit: IOSHarnessAuditsScreen(server: server, drafts: drafts)
         case .stats: IOSHarnessStatsScreen(server: server, drafts: drafts)
+        case .workstation: IOSWorkstationScreen(server: server, workstation: server.workstation, drafts: drafts)
         case .memory, .terminal, .files:
             // Terminal et Fichiers ne sont jamais atteints (`IOSSection.all`).
             // « Relier le serveur » de l'écran Mémoire ouvre la feuille Serveur.

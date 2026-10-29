@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>OMP Poste — réglages</title>
+    <link rel="stylesheet" href="../ui.css" />
+  </head>
+  <body class="page">
+    <header>
+      <h1>Poste de travail — réglages</h1>
+      <span class="muted" id="version"></span>
+    </header>
+
+    <section>
+      <h2>État</h2>
+      <div class="state connecting" id="state">Lecture de l'état…</div>
+      <p class="muted" id="state-detail"></p>
+      <p class="muted">
+        L'extension observe les sites où vous travaillez et les gestes que vous y faites (jamais ce que vous
+        saisissez, jamais les mots de passe) et exécute dans une fenêtre à part les actions que le serveur lui
+        confie. Avant tout envoi d'un message à quelqu'un d'autre que vous, elle s'arrête et demande votre
+        approbation dans OMP Console : sans réponse, rien ne part.
+      </p>
+    </section>
+
+    <section>
+      <h2>Appairage avec le serveur</h2>
+      <p class="muted" id="pairing-current">Non appairée.</p>
+      <label for="pairing-code">Code d'appairage (donné par <code>harness.sh pair</code>)</label>
+      <textarea id="pairing-code" placeholder="omp1:…" spellcheck="false" autocomplete="off"></textarea>
+      <button type="button" id="pair">Appairer</button>
+      <button type="button" class="secondary" id="test">Tester la connexion</button>
+      <button type="button" class="secondary" id="unpair">Oublier l'appairage</button>
+      <p class="message" id="pairing-message" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Transcription locale (oMLX)</h2>
+      <p class="muted">
+        L'audio des meetings est transcrit sur ce Mac par oMLX ; il n'est jamais enregistré ni envoyé ailleurs,
+        seul le texte part au serveur. L'adresse doit donc être locale.
+      </p>
+      <label for="stt-url">Adresse d'oMLX</label>
+      <input type="url" id="stt-url" placeholder="http://127.0.0.1:8000" spellcheck="false" />
+      <label for="stt-key">Clé d'API (facultative)</label>
+      <input type="password" id="stt-key" autocomplete="off" />
+      <label for="stt-model">Modèle de transcription</label>
+      <input type="text" id="stt-model" spellcheck="false" />
+      <button type="button" id="stt-save">Enregistrer</button>
+      <button type="button" class="secondary" id="micro">Autoriser le micro…</button>
+      <p class="message" id="stt-message" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Sites exclus</h2>
+      <p class="muted">
+        Un site par ligne (par exemple <code>banque.fr</code>, qui exclut aussi ses sous-domaines) : rien n'y est
+        observé et l'agent n'y agit pas.
+      </p>
+      <textarea id="excluded" spellcheck="false"></textarea>
+      <button type="button" id="excluded-save">Enregistrer</button>
+      <p class="message" id="excluded-message" role="status"></p>
+    </section>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

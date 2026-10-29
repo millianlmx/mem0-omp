@@ -62,12 +62,24 @@ export function resolveTarget(
  */
 export type Pairing = { url: string; token: string; mem0Url: string; mem0Token: string };
 
-export function decodePairing(code: string): Pairing | null {
+/**
+ * Le refus d'un code approbateur (`harness.sh approver`, une 5e ligne : le jeton qui
+ * approuve les envois du poste). Il est réservé aux apps : écrit dans `~/.omp`, il
+ * serait lisible par toute session omp, qui pourrait s'approuver elle-même.
+ */
+export const APPROVER_CODE_REFUSAL = "code des apps : utilisez `harness.sh pair`";
+
+/** Un code ordinaire, `{ refusal }` pour un code approbateur, `null` pour un texte illisible. */
+export function decodePairing(code: string): Pairing | { refusal: string } | null {
   const match = /^omp1:([A-Za-z0-9_-]+=*)$/.exec(code.trim());
   if (!match) return null;
-  const [url = "", token = "", mem0Url = "", mem0Token = ""] = Buffer.from(match[1] as string, "base64url")
+  const [url = "", token = "", mem0Url = "", mem0Token = "", approverToken = ""] = Buffer.from(
+    match[1] as string,
+    "base64url",
+  )
     .toString("utf8")
     .split("\n");
+  if (approverToken !== "") return { refusal: APPROVER_CODE_REFUSAL };
   if (!/^https?:\/\/\S+$/.test(url) || !/^\S+$/.test(token)) return null;
   if (mem0Url !== "" && !/^https?:\/\/\S+$/.test(mem0Url)) return null;
   return { url: url.replace(/\/+$/, ""), token, mem0Url: mem0Url.replace(/\/+$/, ""), mem0Token };

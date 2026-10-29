@@ -60,6 +60,13 @@ public enum HarnessFailure: Error, Equatable, Sendable {
     case forbidden(String)
     /// Un autre client a changé la feature depuis la dernière lecture : le geste n'a pas eu lieu.
     case stale
+    /// L'envoi à approuver a changé depuis que l'humain l'a vu (poste de travail, 412 ou
+    /// 428) : rien n'a été approuvé, la liste vient d'être relue.
+    case approvalChanged
+    /// Approuver, refuser ou régler le poste exige le jeton APPROBATEUR (`harness.sh
+    /// approver`) : ce jeton-ci est ordinaire (403 du serveur). Les gestes restent offerts,
+    /// le serveur seul décide.
+    case approverOnly
     /// Une réponse que cette version de l'app ne sait pas lire.
     case unreadable
 }

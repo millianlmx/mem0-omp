@@ -7,6 +7,7 @@
 #   sudo omp-harness-client add <nom> [viewer|operator|admin] [dépôt,…|*]
 #   sudo omp-harness-client list
 #   sudo omp-harness-client revoke <nom>
+#   sudo omp-harness-client approver   (re)crée app-approbateur, le seul client qui approuve le poste
 set -eu
 # sudo remet l'environnement à zéro : ces réglages ne servent qu'aux tests.
 AS="${OMP_HARNESS_AS-sudo -u omp-harness -H}"
@@ -15,18 +16,20 @@ MAIN="${OMP_HARNESS_MAIN:-/opt/omp-harness/omp-harness/main.ts}"
 CONFIG="${OMP_HARNESS_CONFIG:-/etc/omp-harness/config.json}"
 
 usage() {
-  sed -n '7,9p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '7,10p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 64
 }
 
 run() {
   # shellcheck disable=SC2086 # AS est une commande et ses arguments
-  exec $AS "$NODE" --experimental-strip-types --disable-warning=ExperimentalWarning "$MAIN" --config "$CONFIG" "$@"
+  $AS "$NODE" --experimental-strip-types --disable-warning=ExperimentalWarning "$MAIN" --config "$CONFIG" "$@"
 }
 
 case "${1:-}" in
   add) [ -n "${2:-}" ] || usage; run --add-client "$2" --role "${3:-operator}" --repos "${4:-*}" ;;
   list) run --list-clients ;;
   revoke) [ -n "${2:-}" ] || usage; run --revoke-client "$2" ;;
+  # Le jeton seul sur stdout : la 5e ligne du code approbateur (voir harness.sh approver).
+  approver) run --revoke-client app-approbateur >/dev/null 2>&1 || true; run --add-client app-approbateur --approver ;;
   *) usage ;;
 esac

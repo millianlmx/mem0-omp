@@ -4,7 +4,8 @@ import SwiftUI
 
 // Les écrans de pilotage de l'app iOS, tous servis par le serveur de pipelines du
 // VPS (omp-harness), joint directement : Accueil (résumé et boîte de l'humain),
-// Pipelines (features : lancer, suivre, arrêter), Projet, Audit et Statistiques.
+// Pipelines (features : lancer, suivre, arrêter), Projet, Audit et Statistiques. Le
+// Poste (poste de travail) passe par le même cadre, dans `IOSWorkstationScreen.swift`.
 //
 // Un seul `HarnessModel` et un seul `HarnessDrafts` pour l'app (posés par
 // `OMPConsoleIOSApp`) : le flux d'événements tient chaque écran à jour. Les mots
@@ -13,14 +14,32 @@ import SwiftUI
 
 /// Le cadre commun : relier le serveur s'il ne l'est pas, sinon la liste groupée,
 /// avec l'échec du dernier échange en tête, le tirer-pour-actualiser et le bouton
-/// du serveur en barre.
+/// du serveur en barre. `reloadAlso` relit en plus ce qui n'est pas dans la boîte
+/// (le poste de travail).
 struct IOSHarnessScreen<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let section: ConsoleSection
     let catalog: Bool
+    let reloadAlso: (@MainActor () async -> Void)?
     @ViewBuilder let content: () -> Content
+
+    init(
+        server: HarnessModel,
+        drafts: HarnessDrafts,
+        section: ConsoleSection,
+        catalog: Bool,
+        reloadAlso: (@MainActor () async -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.server = server
+        self.drafts = drafts
+        self.section = section
+        self.catalog = catalog
+        self.reloadAlso = reloadAlso
+        self.content = content
+    }
 
     var body: some View {
         Group {
@@ -69,6 +88,7 @@ struct IOSHarnessScreen<Content: View>: View {
             if catalog { await server.refreshCatalog() }
         }
         .iosHarnessGestures(server: server, drafts: drafts)
+        .iosWorkstationGestures(workstation: server.workstation, drafts: drafts)
         // ⌘R relit l'écran comme le geste « tirer pour actualiser ».
         .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: section, isEnabled: server.isConfigured) {
             Task { await reload() }
@@ -80,6 +100,7 @@ struct IOSHarnessScreen<Content: View>: View {
     private func reload() async {
         await server.refresh()
         if catalog { await server.refreshCatalog() }
+        await reloadAlso?()
     }
 
     private var notConfigured: some View {
@@ -195,15 +216,17 @@ struct IOSHarnessRunRow: View {
 
 // MARK: - Accueil
 
-/// L'Accueil : le tableau de bord d'abord (KPIs et graphiques, pour comprendre d'un
-/// coup d'œil ce qui se passe sur tous les projets), puis les alertes et la boîte.
+/// L'Accueil : les envois du poste de travail qui attendent l'approbation d'abord
+/// (ils expirent, et le Poste est rangé sous « Plus » sur iPhone), puis le tableau
+/// de bord (KPIs et graphiques), les alertes et la boîte.
 struct IOSHarnessHomeScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true) {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true, reloadAlso: { await server.workstation.refresh() }) {
             let inbox = server.inbox ?? HarnessInbox()
+            IOSWorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
             IOSDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
             IOSAlertsSection(drafts: drafts, inbox: inbox)
             IOSHarnessInboxSections(server: server, drafts: drafts, inbox: inbox)

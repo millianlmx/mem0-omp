@@ -18,10 +18,12 @@ func selectingASectionChangesTheCurrentOne() {
 @Test("audit-panel-in-omp-console-mac/S-9 : Pilotage regroupe les sections du serveur de pipelines, Consultation les sections locales")
 func pilotageGroupsTheServerSections() {
     #expect(ConsoleSection.allCases == [
-        .home, .kanban, .project, .audit, .stats, .terminal, .files, .memory,
+        .home, .kanban, .project, .audit, .stats, .workstation, .terminal, .files, .memory,
     ])
     #expect(ConsoleSection.audit.title == "Audit")
     #expect(ConsoleSection.audit.systemImage == "checklist")
-    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .stats])
+    #expect(ConsoleSection.workstation.title == "Poste")
+    #expect(ConsoleSection.workstation.systemImage == "desktopcomputer")
+    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .stats, .workstation])
     #expect(ConsoleSectionGroup.consultation.sections == [.terminal, .files, .memory])
 }

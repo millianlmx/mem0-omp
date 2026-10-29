@@ -92,6 +92,24 @@ public final class HarnessDrafts: ObservableObject {
     /// finale) en cours de saisie.
     @Published public var loginProvider = ""
     @Published public var loginCode = ""
+    /// L'envoi du poste de travail dont on saisit le refus, et sa raison facultative.
+    @Published public var workstationRefusal: WorkstationAction?
+    @Published public var workstationRefusalReason = ""
+    /// Les adresses et pseudos de l'utilisateur en cours de saisie (une par ligne) ;
+    /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
+    @Published public var workstationIdentities: String?
+
+    /// Ouvre la saisie du refus d'un envoi, raison vide.
+    public func beginWorkstationRefusal(_ action: WorkstationAction) {
+        workstationRefusalReason = ""
+        workstationRefusal = action
+    }
+
+    /// Les adresses saisies diffèrent de celles du serveur : « Enregistrer » est permis.
+    public func identitiesChanged(from status: WorkstationStatus?) -> Bool {
+        guard let text = workstationIdentities else { return false }
+        return WorkstationModel.identities(from: text) != (status?.selfIdentities ?? [])
+    }
 
     public init() {}
 

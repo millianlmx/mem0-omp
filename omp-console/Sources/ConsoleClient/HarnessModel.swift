@@ -61,6 +61,9 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var sessionFailure: HarnessFailure?
     /// La santé du serveur au fil du temps, lue à la demande de l'écran des statistiques.
     @Published public private(set) var metrics: HarnessMetrics?
+    /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
+    /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
+    public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
 
     private let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -168,12 +171,14 @@ public final class HarnessModel: ObservableObject {
 
     /// Configure un serveur : l'adresse et le jeton ne sont enregistrés qu'après une
     /// boîte effectivement lue (une faute de frappe ne s'enregistre pas).
-    /// Un code d'appairage (`omp1:…`) collé dans l'adresse porte l'adresse et le jeton.
+    /// Un code d'appairage (`omp1:…`) collé dans l'adresse porte l'adresse et le jeton ;
+    /// un code approbateur (`harness.sh approver`) donne à l'app son jeton APPROBATEUR,
+    /// gardé au seul trousseau (`onPaired` n'écrit ailleurs que le jeton ordinaire).
     @discardableResult
     public func configure(address rawAddress: String, token tokenInput: String) async -> Bool {
         let pairing = HarnessPairing.decode(rawAddress)
         let raw = pairing?.address ?? rawAddress
-        let rawToken = pairing?.token ?? tokenInput
+        let rawToken = pairing?.appToken ?? tokenInput
         guard let normalized = Self.normalizedAddress(raw), let url = URL(string: normalized) else {
             failure = .invalidAddress
             return false
@@ -196,6 +201,7 @@ public final class HarnessModel: ObservableObject {
             client = nil
             clientAsked = false
             failure = nil
+            workstation.reset()
             if let pairing { onPaired(pairing) }
             await readClient()
             return true
@@ -224,6 +230,7 @@ public final class HarnessModel: ObservableObject {
         loginProviders = nil
         login = nil
         failure = nil
+        workstation.reset()
         preferences.set(nil, forKey: Self.addressKey)
         try? await tokens.remove(deviceId: Self.tokenAccount)
     }
@@ -317,7 +324,11 @@ public final class HarnessModel: ObservableObject {
                 isLive = true
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
-                    if !parser.consume(chunk).isEmpty { scheduleRefresh() }
+                    let names = parser.consume(chunk)
+                    if !names.isEmpty {
+                        scheduleRefresh()
+                        workstation.receive(names)
+                    }
                 }
             } catch {
                 if let failure = error as? HarnessFailure, failure == .unauthorized { self.failure = failure }
@@ -827,9 +838,20 @@ public final class HarnessModel: ObservableObject {
     // MARK: - Échange
 
     private func perform<T: Decodable>(_ call: HarnessCall, on server: HarnessServer) async throws -> T {
-        let reply = try await transport.send(call, server: server)
+        try Self.decoded(try await transport.send(call, server: server))
+    }
+
+    /// Un échange d'un modèle voisin (le poste de travail) avec le serveur relié : même
+    /// transport, même jeton. La réponse brute, quel que soit son statut.
+    func exchange(_ call: HarnessCall) async throws -> HarnessReply {
+        guard let server else { throw HarnessFailure.unreachable }
+        return try await transport.send(call, server: server)
+    }
+
+    /// Le corps décodé d'une réponse réussie (200, 201, 202), sinon l'échec qu'elle dit.
+    nonisolated static func decoded<T: Decodable>(_ reply: HarnessReply) throws -> T {
         switch reply.status {
-        case 200, 201:
+        case 200, 201, 202:
             guard let value = try? JSONDecoder().decode(T.self, from: reply.body) else { throw HarnessFailure.unreadable }
             return value
         case 401:
@@ -838,6 +860,9 @@ public final class HarnessModel: ObservableObject {
             throw HarnessFailure.stale
         case 403:
             let message = (try? JSONDecoder().decode(HarnessErrorBody.self, from: reply.body))?.error ?? ""
+            // Le refus d'un geste d'approbateur (`APPROVER_ONLY` d'omp-harness/http.ts) a
+            // son échec propre : il dit comment obtenir le code approbateur.
+            if message.contains(approverOnlyMarker) { throw HarnessFailure.approverOnly }
             throw HarnessFailure.forbidden(message)
         default:
             let message = (try? JSONDecoder().decode(HarnessErrorBody.self, from: reply.body))?.error ?? ""
@@ -845,7 +870,11 @@ public final class HarnessModel: ObservableObject {
         }
     }
 
-    private static func failure(of error: Error) -> HarnessFailure {
+    /// Le fragment qui reconnaît `APPROVER_ONLY` (omp-harness/http.ts) dans un 403 ; la
+    /// garde serveur-de-pipelines vérifie qu'il y figure toujours.
+    nonisolated static let approverOnlyMarker = "seul l'appareil approbateur"
+
+    nonisolated static func failure(of error: Error) -> HarnessFailure {
         (error as? HarnessFailure) ?? .unreachable
     }
 }

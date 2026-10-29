@@ -16,6 +16,7 @@ mem0-omp/                              racine = marketplace OMP
 │   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
 ├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS
+├── omp-chrome/                        l'extension Chrome du poste de travail (MV3 : observation, actions de l'agent, transcription locale)
 ├── mem0-stack/                        la pile conteneur du service mémoire
 │   └── mem0-rs/                       le serveur mémoire (Rust + SQLite)
 ├── test/                              la suite node --test
@@ -26,7 +27,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/ci-verdict.sh              verdict de l'agrégateur macOS de la CI
 ├── scripts/ci-scope.sh                dit si le diff d'une PR impose de compiler l'app Mac ou l'app iOS
 ├── scripts/tests-instables-connus.json   tests Swift instables connus, relancés une fois
-├── scripts/typecheck.sh               type-check des plugins et de test/ (tsc épinglé)
+├── scripts/chrome-extension.sh        construit l'extension Chrome dans omp-chrome/dist/ (node seul, sans dépendance)
+├── scripts/typecheck.sh               type-check des plugins, de test/ et de l'extension Chrome (tsc épinglé)
 ├── scripts/omp-host.sh                l'hôte OMP épinglé de la CI, préparé dans le cache (types et smoke)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
@@ -53,6 +55,7 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 | `test/memoire/` | le plugin `omp-mem0-memory` (rappel, brief, outils mem0) |
 | `test/req/` | le plugin `omp-mem0-req`, client du harness |
 | `test/harness/` | le harness du VPS : machine à états, orchestrateur, API, heavy, git, déploiement |
+| `test/extension/` | l'extension Chrome `omp-chrome` : modules purs (appairage, observation, garde d'envoi, snapshot, STT) et construction |
 | `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
 | `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
 | `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
@@ -119,11 +122,14 @@ vivent dans `scripts/recette/`.
 ## CI et release
 
 Chaque PR passe `./scripts/check.sh` sur Ubuntu **et** sur macOS. Le type-check y
-couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` :
-`tsconfig.json` pour les plugins (lib ES2023, donc une API ES2024 comme
-`Promise.withResolvers` y fait échouer le job) et `tsconfig.test.json` pour la
-suite (lib ES2024). Les deux programmes appliquent `strict`, `noUnusedLocals`,
-`noUnusedParameters` et `noFallthroughCasesInSwitch` : une variable, un import ou
+couvre les sources des **deux** plugins, `test/` et l'extension Chrome — trois
+programmes `tsc` : `tsconfig.json` pour les plugins (lib ES2023, donc une API ES2024
+comme `Promise.withResolvers` y fait échouer le job), `tsconfig.test.json` pour la
+suite (lib ES2024) et `omp-chrome/tsconfig.json` pour l'extension (lib ES2023 + DOM,
+sans types node ; `verbatimModuleSyntax` et `erasableSyntaxOnly`, pour que
+`scripts/chrome-extension.sh` efface les types sans compilateur). Les trois
+programmes appliquent `strict`, `noUnusedLocals`, `noUnusedParameters` et
+`noFallthroughCasesInSwitch` : une variable, un import ou
 un paramètre jamais lu (préfixe `_` pour un paramètre imposé par une signature)
 et un `case` non vide qui retombe dans le suivant font échouer le job. Ce `tsc`
 est TypeScript 5.9.3, installé une fois dans `.typecheck/typescript` (gitignoré)

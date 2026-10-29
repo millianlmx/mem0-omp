@@ -152,8 +152,8 @@ function allIOSSources(root: string): { file: string; code: string }[] {
 const RETIRED_WAITING = "Cet écran arrive dans un prochain segment.";
 
 /**
- * Les vingt chaînes littérales interdites dans les sources de l'APP iOS : les
- * dix `rawValue` et les dix libellés. Recopiées ICI (jamais dans le code de
+ * Les vingt-deux chaînes littérales interdites dans les sources de l'APP iOS : les
+ * onze `rawValue` et les onze libellés. Recopiées ICI (jamais dans le code de
  * l'app) : c'est la garde d'AC-2.
  */
 const SECTION_LITERALS = [
@@ -167,6 +167,7 @@ const SECTION_LITERALS = [
   "files",
   "memory",
   "stats",
+  "workstation",
   "Accueil",
   "Pipelines",
   "Projet",
@@ -177,6 +178,7 @@ const SECTION_LITERALS = [
   "Fichiers",
   "Mémoire",
   "Statistiques",
+  "Poste",
 ];
 
 /** Les jetons interdits dans les sources de l'app iOS (S-8). */
@@ -359,7 +361,7 @@ function navigationFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques des six écrans et de l'argument de lancement (coque-ios/AC-4). */
+/** Les manques des sept écrans et de l'argument de lancement (coque-ios/AC-4). */
 function waitingFaults(root: string): string[] {
   const faults: string[] = [];
   const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
@@ -559,7 +561,7 @@ test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView",
   );
 });
 
-test("coque-ios/AC-4 : les six écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
+test("coque-ios/AC-4 : les sept écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();

@@ -109,8 +109,13 @@ export class HarnessContext {
     this.notifier.subscribe();
     this.sessions = new SessionFeeds({
       store: this.store,
-      // Le direct d'un run porte son id ; celui d'un audit (`audit:<id>`) porte l'audit et son dépôt.
+      // Le direct d'un run porte son id ; celui d'un audit (`audit:<id>`) porte l'audit et son
+      // dépôt ; celui d'un job du poste (`workstation:<job>`) n'a pas de dépôt (propriétaire seul).
       publish: (owner, entry) => {
+        if (owner.startsWith("workstation:")) {
+          this.event("session", null, { workstation: owner.slice("workstation:".length), entry }, null);
+          return;
+        }
         if (!owner.startsWith("audit:")) {
           this.event("session", owner, { entry });
           return;

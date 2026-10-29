@@ -141,14 +141,16 @@ let
     exec /run/wrappers/bin/sudo -u omp-harness -H ${pkgs.bash}/bin/sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; PATH=${lib.makeBinPath [ pkgs.git pkgs.openssh pkgs.gh ]}:$PATH exec ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json --check'
   '';
 
-  # `sudo omp-harness-client add|list|revoke …` : les clients du harness, en omp-harness (auth.ts).
+  # `sudo omp-harness-client add|list|revoke|approver …` : les clients du harness, en omp-harness (auth.ts).
   client = pkgs.writeShellScriptBin "omp-harness-client" ''
-    run() { exec /run/wrappers/bin/sudo -u omp-harness -H ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json "$@"; }
+    run() { /run/wrappers/bin/sudo -u omp-harness -H ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json "$@"; }
     case "''${1:-}" in
       add) [ -n "''${2:-}" ] || exit 64; run --add-client "$2" --role "''${3:-operator}" --repos "''${4:-*}" ;;
       list) run --list-clients ;;
       revoke) [ -n "''${2:-}" ] || exit 64; run --revoke-client "$2" ;;
-      *) echo "usage : omp-harness-client add <nom> [viewer|operator|admin] [dépôt,…|*] | list | revoke <nom>" >&2; exit 64 ;;
+      # (re)crée app-approbateur, le seul client qui approuve le poste : son jeton seul sur stdout.
+      approver) run --revoke-client app-approbateur >/dev/null 2>&1 || true; run --add-client app-approbateur --approver ;;
+      *) echo "usage : omp-harness-client add <nom> [viewer|operator|admin] [dépôt,…|*] | list | revoke <nom> | approver" >&2; exit 64 ;;
     esac
   '';
 

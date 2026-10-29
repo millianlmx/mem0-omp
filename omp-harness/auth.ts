@@ -8,6 +8,13 @@
 // Le jeton historique (`tokenFile`, `HARNESS_TOKEN`) reste le client `admin` sur tous
 // les dépôts : le code d'appairage déjà distribué continue de marcher.
 //
+// Un client `approver` (admin sur tous les dépôts) est le seul qui approuve, refuse ou
+// règle le poste de travail : le jeton du code d'appairage ordinaire est lisible par
+// toute session omp du Mac (`~/.omp/harness.json`) et par l'extension, qui ne doivent
+// pas pouvoir s'approuver elles-mêmes. Il ne se crée qu'en ligne de commande sur le
+// serveur (`main.ts --add-client <nom> --approver`, `harness.sh approver`), jamais par
+// l'API. Le jeton historique n'est jamais approbateur.
+//
 // Le fichier (`clientsFile`, 0600) est relu à chaque changement de date : un client
 // ajouté ou révoqué par la ligne de commande vaut tout de suite, sans redémarrage.
 // Un fichier illisible (édité à la main, JSON cassé) ne casse pas l'API : le dernier
@@ -21,8 +28,8 @@ export type Role = "viewer" | "operator" | "admin";
 
 export const ROLES: readonly Role[] = ["viewer", "operator", "admin"];
 
-/** Un client tel que l'API le montre (jamais son jeton). */
-export type Client = { name: string; role: Role; repos: string[] | "*"; createdAt: number };
+/** Un client tel que l'API le montre (jamais son jeton). `approver` : il tranche les envois du poste. */
+export type Client = { name: string; role: Role; repos: string[] | "*"; createdAt: number; approver: boolean };
 
 type StoredClient = Client & { tokenSha256: string };
 
@@ -30,6 +37,8 @@ type ClientsFile = { clients: StoredClient[] };
 
 /** Le nom du client du jeton historique. */
 export const LEGACY_CLIENT = "admin";
+
+const LEGACY: Client = { name: LEGACY_CLIENT, role: "admin", repos: "*", createdAt: 0, approver: false };
 
 function digest(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
@@ -102,13 +111,16 @@ export class ClientRegistry {
     }
     this.#broken = null;
     this.#clients = Array.isArray(parsed.clients)
-      ? parsed.clients.filter(
-          (entry) =>
-            typeof entry?.name === "string" &&
-            typeof entry.tokenSha256 === "string" &&
-            /^[0-9a-f]{64}$/.test(entry.tokenSha256) &&
-            ROLES.includes(entry.role),
-        )
+      ? parsed.clients
+          .filter(
+            (entry) =>
+              typeof entry?.name === "string" &&
+              typeof entry.tokenSha256 === "string" &&
+              /^[0-9a-f]{64}$/.test(entry.tokenSha256) &&
+              ROLES.includes(entry.role),
+          )
+          // Un fichier d'avant les approbateurs : aucun client ne l'est.
+          .map((entry) => ({ ...entry, approver: entry.approver === true }))
       : [];
   }
 
@@ -136,8 +148,7 @@ export class ClientRegistry {
     this.#reload();
     const given = digest(token);
     let found: Client | null = null;
-    if (this.#legacy && timingSafeEqual(given, this.#legacy))
-      found = { name: LEGACY_CLIENT, role: "admin", repos: "*", createdAt: 0 };
+    if (this.#legacy && timingSafeEqual(given, this.#legacy)) found = { ...LEGACY };
     for (const client of this.#clients) {
       // Pas de sortie anticipée : chaque empreinte est comparée.
       if (timingSafeEqual(given, Buffer.from(client.tokenSha256, "hex")) && found === null) found = publicOf(client);
@@ -147,14 +158,14 @@ export class ClientRegistry {
 
   list(): Client[] {
     this.#reload();
-    return [
-      ...(this.#legacy ? [{ name: LEGACY_CLIENT, role: "admin" as const, repos: "*" as const, createdAt: 0 }] : []),
-      ...this.#clients.map(publicOf),
-    ];
+    return [...(this.#legacy ? [{ ...LEGACY }] : []), ...this.#clients.map(publicOf)];
   }
 
-  /** Crée un client et rend son jeton, montré UNE fois (seule son empreinte est gardée). */
-  add(name: string, role: Role, repos: string[] | "*"): { client: Client; token: string } {
+  /**
+   * Crée un client et rend son jeton, montré UNE fois (seule son empreinte est gardée).
+   * `approver` : réservé à la ligne de commande du serveur, admin sur tous les dépôts.
+   */
+  add(name: string, role: Role, repos: string[] | "*", approver = false): { client: Client; token: string } {
     this.#reloadForWrite();
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name))
       throw new Error(`nom de client invalide : ${name} (lettres, chiffres, . _ -)`);
@@ -163,12 +174,15 @@ export class ClientRegistry {
     if (!ROLES.includes(role)) throw new Error(`rôle inconnu : ${role} (${ROLES.join(" | ")})`);
     if (repos !== "*" && (repos.length === 0 || repos.some((repo) => !/^[a-z0-9][a-z0-9._-]*$/i.test(repo))))
       throw new Error("repos : « * » ou une liste de noms de dépôts");
+    if (approver && (role !== "admin" || repos !== "*"))
+      throw new Error("un approbateur est admin sur tous les dépôts");
     const token = randomBytes(32).toString("hex");
     const client: StoredClient = {
       name,
       role,
       repos,
       createdAt: Date.now(),
+      approver,
       tokenSha256: digest(token).toString("hex"),
     };
     this.#clients = [...this.#clients, client];
@@ -188,5 +202,11 @@ export class ClientRegistry {
 }
 
 function publicOf(client: StoredClient): Client {
-  return { name: client.name, role: client.role, repos: client.repos, createdAt: client.createdAt };
+  return {
+    name: client.name,
+    role: client.role,
+    repos: client.repos,
+    createdAt: client.createdAt,
+    approver: client.approver,
+  };
 }

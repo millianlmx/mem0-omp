@@ -1,5 +1,5 @@
 // Le socle du Store : la connexion SQLite, les migrations, les transactions et
-// l'annonce des événements aux abonnés. Les couches de domaine (runs.ts → push.ts)
+// l'annonce des événements aux abonnés. Les couches de domaine (runs.ts → workstation.ts)
 // en héritent et ne passent que par ses requêtes protégées.
 import { DatabaseSync } from "node:sqlite";
 import type { EventRow } from "./journal.ts";

@@ -233,6 +233,11 @@ export function auditOwner(auditId: string): string {
   return `audit:${auditId}`;
 }
 
+/** Le propriétaire du direct d'un job du poste de travail (`poste-service`…). */
+export function workstationOwner(job: string): string {
+  return `workstation:${job}`;
+}
+
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 

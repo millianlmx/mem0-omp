@@ -3,21 +3,21 @@ import Testing
 
 @testable import OMPConsoleIOS
 
-/// Les preuves Swift des critères de la coque iOS : la dérivation des six
+/// Les preuves Swift des critères de la coque iOS : la dérivation des sept
 /// sections, la résolution de l'argument de lancement et l'exclusion des deux
 /// sections hors périmètre. Le préfixe de slug rend chaque critère retrouvable
 /// par `grep` (invariant du dépôt).
 @Suite("coque-ios — sections de l'app iOS")
 struct SectionTests {
-    @Test("coque-ios/AC-2 : les six sections sont allCases moins deux, dans l'ordre de allCases")
-    func sixSections() {
-        #expect(IOSSection.all == [.home, .kanban, .project, .audit, .stats, .memory])
+    @Test("coque-ios/AC-2 : les sept sections sont allCases moins deux, dans l'ordre de allCases")
+    func sevenSections() {
+        #expect(IOSSection.all == [.home, .kanban, .project, .audit, .stats, .workstation, .memory])
         #expect(IOSSection.all.count == ConsoleSection.allCases.count - 2)
     }
 
-    @Test("coque-ios/AC-3 : chaque groupe ne montre que ses sections des six, dans l'ordre")
+    @Test("coque-ios/AC-3 : chaque groupe ne montre que ses sections des sept, dans l'ordre")
     func groupedSections() {
-        #expect(IOSSection.sections(of: .pilotage) == [.home, .kanban, .project, .audit, .stats])
+        #expect(IOSSection.sections(of: .pilotage) == [.home, .kanban, .project, .audit, .stats, .workstation])
         #expect(IOSSection.sections(of: .consultation) == [.memory])
     }
 
@@ -41,6 +41,6 @@ struct SectionTests {
     func excludedSections() {
         let excluded = ConsoleSection.allCases.filter { !IOSSection.all.contains($0) }
         #expect(excluded == [.terminal, .files])
-        #expect(IOSSection.all.count == 6)
+        #expect(IOSSection.all.count == 7)
     }
 }

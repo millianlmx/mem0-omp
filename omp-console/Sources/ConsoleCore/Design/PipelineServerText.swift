@@ -16,6 +16,8 @@ public enum PipelineServerText {
     public static let setupTitle = L10n.text("Relier le serveur")
     public static let setupExplanation =
         L10n.text("Le serveur conduit les features de bout en bout sur le VPS. Collez le code d’appairage qu’affiche harness.sh pair : il porte l’adresse, le jeton et la mémoire du serveur. À défaut, saisissez l’adresse publiée par Tailscale et le jeton d’accès.")
+    /// Le code de `harness.sh approver` : le seul qui fait de cette app l'approbatrice du poste.
+    public static let approverExplanation = L10n.text("Le code approbateur (harness.sh approver) permet en plus à cette app d’approuver les envois du poste.")
     public static let addressLabel = L10n.text("Code d’appairage ou adresse")
     public static let addressPrompt = L10n.text("omp1:… ou vps.exemple.ts.net")
     public static let tokenLabel = L10n.text("Jeton d’accès")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Type-check des DEUX plugins et de test/ contre les types de l'hôte OMP
+# Type-check des DEUX plugins, de test/ et de l'extension Chrome (omp-chrome/) contre les types de l'hôte OMP
 # (specs S-1..S-5 / lot BR-1 ; tsc épinglé local : typecheck-fetches-tsc-from-network).
 #
 #   bash scripts/typecheck.sh             type-check, SANS réseau
@@ -24,10 +24,12 @@
 #      c. l'installation globale de bun ($BUN_INSTALL/install/global/node_modules) ;
 #      d. `npm root -g`, s'il contient @oh-my-pi ;
 #      e. sinon la ligne « types de l'hôte absents » et sortie 0 — jamais un ✓.
-#   3. deux programmes, dans cet ordre :
-#      - tsconfig.json       — les sources des deux plugins, en lib ES2023 ;
-#      - tsconfig.test.json  — test/**, en lib ES2024 (hérite du socle).
-#      Les deux tournent SANS court-circuit : la sortie de chacun est transmise
+#   3. trois programmes, dans cet ordre :
+#      - tsconfig.json             — les sources des deux plugins, en lib ES2023 ;
+#      - tsconfig.test.json        — test/**, en lib ES2024 (hérite du socle) ;
+#      - omp-chrome/tsconfig.json  — l'extension Chrome, en lib ES2023 + DOM, sans
+#        types node ni de l'hôte (API chrome.* : omp-chrome/src/chrome.d.ts).
+#      Les trois tournent SANS court-circuit : la sortie de chacun est transmise
 #      telle quelle (chemins `fichier.ts(l,c): error TSxxxx`), et le script sort
 #      non nul dès qu'un seul a échoué.
 set -u
@@ -135,4 +137,5 @@ echo "  · tsc : $TSC (TypeScript $TS_VERSION)"
 STATUS=0
 node "$TSC" -p tsconfig.json || STATUS=1
 node "$TSC" -p tsconfig.test.json || STATUS=1
+node "$TSC" -p omp-chrome/tsconfig.json || STATUS=1
 exit "$STATUS"
