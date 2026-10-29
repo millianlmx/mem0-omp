@@ -64,8 +64,15 @@ function listScreenFaults(name: string, source: string): string[] {
 }
 
 /** Les feuilles en formulaire groupé natif (S-7) : la fiche d'un souvenir, la
- *  feuille du serveur, et les feuilles de refus et de renversement du serveur. */
-const GROUPED_SHEETS = ["IOSMemoryDetailView.swift", "IOSServerSheet.swift", "IOSHarnessScreens.swift"];
+ *  feuille du serveur, les feuilles de refus et de renversement du serveur, et
+ *  celle du refus d'un envoi du Poste (dont l'écran, rendu dans le cadre commun
+ *  des écrans du serveur, ne porte lui non plus ni panneau, ni carte, ni filet). */
+const GROUPED_SHEETS = [
+  "IOSMemoryDetailView.swift",
+  "IOSServerSheet.swift",
+  "IOSHarnessScreens.swift",
+  "IOSWorkstationScreen.swift",
+];
 
 /**
  * AC-3 : une feuille de la Mémoire ou du serveur est un `Form` groupé natif —
@@ -94,6 +101,7 @@ const TITLES: Record<string, number> = {
   "IOSMemoryScreen.swift": 1,
   "IOSMemoryDetailView.swift": 1,
   "IOSServerSheet.swift": 1,
+  "IOSWorkstationScreen.swift": 1,
 };
 
 /**

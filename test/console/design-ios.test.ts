@@ -18,8 +18,8 @@ import { declaredTexts, stripComments, swiftFiles } from "../support/swift-sourc
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
 
-/** Les six sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
-const SECTIONS = ["home", "kanban", "project", "audit", "stats", "memory"];
+/** Les sept sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
+const SECTIONS = ["home", "kanban", "project", "audit", "stats", "workstation", "memory"];
 
 /** Les deux apparences de la matrice de captures. */
 const APPEARANCES = ["light", "dark"];
@@ -208,6 +208,13 @@ const SECTION_WORDS: Record<string, SectionWord> = {
     constant: "PipelineServerText.noStats",
     core: "Design/PipelineServerText.swift",
   },
+  workstation: {
+    screen: "IOSWorkstationScreen",
+    file: "IOSWorkstationScreen.swift",
+    message: "Aucun envoi n’attend votre accord.",
+    constant: "WorkstationText.noApproval",
+    core: "Design/WorkstationText.swift",
+  },
   memory: {
     screen: "IOSMemoryScreen",
     file: "IOSMemoryScreen.swift",
@@ -226,7 +233,7 @@ function structBody(source: string, name: string): string {
   return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
 }
 
-/** Les manques des six écrans : aiguillage, mots partagés, cadre, composants employés. */
+/** Les manques des sept écrans : aiguillage, mots partagés, cadre, composants employés. */
 function screenFaults(root: string): string[] {
   const faults: string[] = [];
   const view = appFile(root, "IOSSectionView.swift");
@@ -245,12 +252,12 @@ function screenFaults(root: string): string[] {
     }
   }
 
-  // Les cinq écrans de pilotage passent par le MÊME cadre, qui porte le bandeau
+  // Les six écrans de pilotage passent par le MÊME cadre, qui porte le bandeau
   // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
   const harness = appFile(root, "IOSHarnessScreens.swift");
   for (const section of SECTIONS.filter((s) => s !== "memory")) {
-    const screen = SECTION_WORDS[section].screen;
-    const body = structBody(harness, screen);
+    const { screen, file } = SECTION_WORDS[section];
+    const body = structBody(appFile(root, file), screen);
     if (body === "") faults.push(`${screen} absent`);
     else if (!body.includes("IOSHarnessScreen(")) faults.push(`${screen} ne passe pas par le cadre IOSHarnessScreen`);
   }
@@ -281,7 +288,7 @@ function screenFaults(root: string): string[] {
   return faults;
 }
 
-/** Les noms des captures produites (S-6, AC-6) : 48 écrans + 12 graphe. */
+/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -471,7 +478,7 @@ function macOSFaults(root: string): string[] {
 // ---------------------------------------------------------------------------
 // Les tests, un par critère.
 
-test("design-ios/AC-1 : les six écrans portent le kit (surfaces, pastille, métriques)", () => {
+test("design-ios/AC-1 : les sept écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -483,7 +490,7 @@ test("design-ios/AC-1 : les six écrans portent le kit (surfaces, pastille, mét
   );
 });
 
-test("design-ios/AC-2 : aucun composant orphelin — les six sections rendent le bandeau d'erreur", () => {
+test("design-ios/AC-2 : aucun composant orphelin — les sept sections rendent le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -540,7 +547,7 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 60, "la matrice attendue fait 60 noms");
+  assert.equal(expectedShotNames().length, 68, "la matrice attendue fait 68 noms");
 
   const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");

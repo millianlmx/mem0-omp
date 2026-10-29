@@ -395,7 +395,12 @@ test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing`
     assert.equal(untouched.status, 0, untouched.stderr);
     assert.equal(ts.serveLog(), "");
     const kept = /omp1:[A-Za-z0-9_-]+/.exec(untouched.stdout)?.[0];
-    assert.equal(decodePairing(kept ?? "")?.url, "https://vps.tail1234.ts.net:444");
+    assert.deepEqual(decodePairing(kept ?? ""), {
+      url: "https://vps.tail1234.ts.net:444",
+      token: "harness-token",
+      mem0Url: "https://vps.tail1234.ts.net:8444",
+      mem0Token: "mem0-token",
+    });
   } finally {
     ts.close();
   }

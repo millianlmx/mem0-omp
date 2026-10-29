@@ -1,7 +1,8 @@
 // Les sections de pilotage de la coque, toutes servies par le serveur de pipelines
 // du VPS (omp-harness) — le seul moteur : Accueil (résumé et boîte de l'humain),
 // Pipelines (features : lancer, suivre, arrêter), Projet (projets : lancer, suivre),
-// Audit (audits : lancer, trier les propositions) et Statistiques.
+// Audit (audits : lancer, trier les propositions) et Statistiques. Le Poste (poste
+// de travail) passe par le même cadre, dans `WorkstationViews.swift`.
 //
 // Un seul `HarnessModel` et un seul `HarnessDrafts` pour toute la fenêtre (posés par
 // `OMPConsoleApp`) : le flux d'événements tient chaque section à jour. Sans
@@ -14,11 +15,27 @@ import SwiftUI
 
 /// Le cadre commun : relier le serveur s'il ne l'est pas, sinon le contenu, avec
 /// l'échec du dernier échange en tête et l'actualisation en barre d'outils.
+/// `reload` relit en plus ce qui n'est pas dans la boîte (le poste de travail).
 struct HarnessSection<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     let catalog: Bool
+    let reload: (@MainActor () async -> Void)?
     @ViewBuilder let content: () -> Content
+
+    init(
+        server: HarnessModel,
+        drafts: HarnessDrafts,
+        catalog: Bool,
+        reload: (@MainActor () async -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.server = server
+        self.drafts = drafts
+        self.catalog = catalog
+        self.reload = reload
+        self.content = content
+    }
 
     var body: some View {
         Group {
@@ -54,6 +71,7 @@ struct HarnessSection<Content: View>: View {
                     Task {
                         await server.refresh()
                         if catalog { await server.refreshCatalog() }
+                        await reload?()
                     }
                 } label: {
                     Label(PipelineServerText.refresh, systemImage: "arrow.clockwise")
@@ -75,6 +93,7 @@ struct HarnessSection<Content: View>: View {
             if catalog { await server.refreshCatalog() }
         }
         .harnessGestures(server: server, drafts: drafts)
+        .workstationGestures(workstation: server.workstation, drafts: drafts)
     }
 
     private var notConfigured: some View {
@@ -120,15 +139,17 @@ struct HarnessRepoPicker: View {
 
 // MARK: - Accueil
 
-/// L'Accueil : le tableau de bord d'abord (KPIs et graphiques, pour comprendre d'un
-/// coup d'œil ce qui se passe sur tous les projets), puis les alertes et la boîte.
+/// L'Accueil : les envois du poste de travail qui attendent l'approbation d'abord
+/// (ils expirent), puis le tableau de bord (KPIs et graphiques, pour comprendre d'un
+/// coup d'œil ce qui se passe sur tous les projets), les alertes et la boîte.
 struct HarnessHomeView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true) {
+        HarnessSection(server: server, drafts: drafts, catalog: true, reload: { await server.workstation.refresh() }) {
             let inbox = server.inbox ?? HarnessInbox()
+            WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
             HarnessDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
             HarnessAlertsSection(drafts: drafts, inbox: inbox)
             HarnessInboxSections(server: server, drafts: drafts, inbox: inbox)

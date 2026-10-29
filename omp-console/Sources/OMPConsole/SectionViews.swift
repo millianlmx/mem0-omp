@@ -1,7 +1,7 @@
 // Interface de la coque : les vues de section, et le SEUL aiguillage section → vue.
-// Les sections de pilotage (Accueil, Pipelines, Projet, Audit, Statistiques) sont
-// servies par le serveur de pipelines du VPS ; Terminal, Fichiers et Mémoire sont
-// locaux.
+// Les sections de pilotage (Accueil, Pipelines, Projet, Audit, Statistiques, Poste)
+// sont servies par le serveur de pipelines du VPS ; Terminal, Fichiers et Mémoire
+// sont locaux.
 //
 // Aucun attribut macro SwiftUI n'est employé ici (`@State`, `@Preview`, …) :
 // sous les Command Line Tools seuls, ces macros échouent à la compilation (D3).
@@ -52,6 +52,15 @@ struct StatsSectionView: ConsoleSectionView {
     var body: some View { HarnessStatsView(server: server, drafts: drafts) }
 }
 
+/// Le poste de travail : extension Chrome, agent 24/24, envois à approuver, profil,
+/// journal des décisions et réunions — servi par le même serveur.
+struct WorkstationSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.workstation
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    var body: some View { WorkstationView(server: server, workstation: server.workstation, drafts: drafts) }
+}
+
 struct TerminalSectionView: ConsoleSectionView {
     static let section = ConsoleSection.terminal
     @ObservedObject var model: TerminalConsoleModel
@@ -88,6 +97,7 @@ struct SectionDetail: View {
         case .project: ProjectSectionView(server: server, drafts: drafts)
         case .audit: AuditSectionView(server: server, drafts: drafts)
         case .stats: StatsSectionView(server: server, drafts: drafts)
+        case .workstation: WorkstationSectionView(server: server, drafts: drafts)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)

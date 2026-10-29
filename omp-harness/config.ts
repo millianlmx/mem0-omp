@@ -65,7 +65,31 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "stalled",
   "budget_exceeded",
   "daily_budget_reached",
+  "workstation_approval",
 ];
+
+/**
+ * Le poste de travail (workstation.ts) : l'extension Chrome observe et agit dans le
+ * navigateur, l'agent 24/24 du serveur y fait de petites actions. `enabled: false` coupe
+ * les routes `/v1/workstation*` (404) et les jobs de l'agent.
+ */
+export type WorkstationConfig = {
+  enabled: boolean;
+  /** Les heures d'observation après lesquelles l'autonomie `auto` passe de `observe` à `act`. */
+  thresholdHours: number;
+  /** Observations et segments de transcript plus vieux sont purgés. */
+  retentionDays: number;
+  /** Une action louée par l'extension sans résultat au-delà de ce délai passe `failed`. */
+  actionTimeoutSec: number;
+  /** Une action en attente d'approbation au-delà de ce délai passe `expired` (vaut refus, jamais approuvée). */
+  approvalTtlHours: number;
+  /** Le repos entre deux services de l'agent 24/24 (minutes). */
+  shiftEveryMin: number;
+  /** Les actions (décisions comprises) qu'un service dépose au plus. */
+  shiftMaxActions: number;
+  /** Le profil est resynthétisé au plus toutes les `profileEveryHours` heures, s'il y a du neuf. */
+  profileEveryHours: number;
+};
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
 export type MonitoringConfig = {
@@ -301,6 +325,7 @@ export type HarnessConfig = {
   health: { tickStaleSec: number; minFreeMiB: number };
   monitoring: MonitoringConfig;
   apns: ApnsConfig | null;
+  workstation: WorkstationConfig;
   repos: RepoConfig[];
 };
 
@@ -430,11 +455,21 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       keep: 480,
     },
     apns: null,
+    workstation: {
+      enabled: true,
+      thresholdHours: 8,
+      retentionDays: 30,
+      actionTimeoutSec: 60,
+      approvalTtlHours: 24,
+      shiftEveryMin: 30,
+      shiftMaxActions: 20,
+      profileEveryHours: 6,
+    },
     repos: [],
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -564,6 +599,17 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (typeof monitoring.pauseOnBudget !== "boolean") fail("monitoring.pauseOnBudget : booléen");
   if (!(monitoring.sampleSec >= 1)) fail("monitoring.sampleSec : secondes ≥ 1");
   if (!(Number.isInteger(monitoring.keep) && monitoring.keep >= 1)) fail("monitoring.keep : entier ≥ 1");
+  const workstation = config.workstation;
+  if (!isRecord(workstation)) fail("workstation : objet attendu");
+  if (typeof workstation.enabled !== "boolean") fail("workstation.enabled : booléen");
+  for (const key of ["thresholdHours", "retentionDays", "approvalTtlHours", "profileEveryHours"] as const)
+    if (!(typeof workstation[key] === "number" && workstation[key] > 0)) fail(`workstation.${key} : nombre > 0`);
+  if (!(typeof workstation.actionTimeoutSec === "number" && workstation.actionTimeoutSec >= 1))
+    fail("workstation.actionTimeoutSec : secondes ≥ 1");
+  if (!(typeof workstation.shiftEveryMin === "number" && workstation.shiftEveryMin >= 1))
+    fail("workstation.shiftEveryMin : minutes ≥ 1");
+  if (!(Number.isInteger(workstation.shiftMaxActions) && workstation.shiftMaxActions >= 1))
+    fail("workstation.shiftMaxActions : entier ≥ 1");
   if (config.apns !== null) {
     const apns = config.apns;
     if (!isRecord(apns)) fail("apns : { keyFile, keyId, teamId, topic, sandbox } ou null");

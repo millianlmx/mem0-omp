@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>OMP Poste</title>
+    <link rel="stylesheet" href="../ui.css" />
+  </head>
+  <body class="popup">
+    <header>
+      <h1>Poste de travail</h1>
+      <span class="muted" id="version"></span>
+    </header>
+    <section aria-live="polite">
+      <div class="state connecting" id="state">Connexion…</div>
+      <p class="muted" id="state-detail"></p>
+    </section>
+    <section>
+      <label class="toggle"><input type="checkbox" id="observe" /> Observer mon travail</label>
+      <p class="muted" id="observe-detail"></p>
+    </section>
+    <section>
+      <button type="button" id="meeting">Transcrire cet onglet</button>
+      <p class="muted" id="meeting-detail">
+        L'audio de l'onglet et votre micro sont transcrits sur ce Mac ; seul le texte part au serveur.
+      </p>
+      <p class="message" id="meeting-message" role="status"></p>
+    </section>
+    <section>
+      <button type="button" class="secondary" id="options">Réglages</button>
+    </section>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

@@ -15,6 +15,8 @@ extension HarnessFailure {
         case .rejected(let motive): PipelineServerText.rejected(motive)
         case .forbidden(let motive): PipelineServerText.forbidden(motive)
         case .stale: PipelineServerText.stale
+        case .approvalChanged: WorkstationText.approvalChanged
+        case .approverOnly: WorkstationText.approverOnly
         case .unreadable: PipelineServerText.unreadable
         }
     }

@@ -14,18 +14,18 @@ import Testing
 @MainActor
 @Suite("ipad-clavier-et-largeur-de-lecture — clavier de l'iPad")
 struct IOSKeyboardTests {
-    @Test("ipad-clavier-et-largeur-de-lecture/AC-4 : ⌘1…⌘6 suivent l'ordre affiché par la barre latérale")
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-4 : ⌘1…⌘7 suivent l'ordre affiché par la barre latérale")
     func keyboardShortcutsFollowTheSidebar() {
         let sidebar = ConsoleSectionGroup.allCases.flatMap(IOSSection.sections(of:))
         #expect(IOSSection.sidebarOrder == sidebar)
-        #expect(IOSKeyboard.sections.map(\.section) == [.home, .kanban, .project, .audit, .stats, .memory])
-        #expect(IOSKeyboard.sections.map(\.shortcut.key) == ["1", "2", "3", "4", "5", "6"])
+        #expect(IOSKeyboard.sections.map(\.section) == [.home, .kanban, .project, .audit, .stats, .workstation, .memory])
+        #expect(IOSKeyboard.sections.map(\.shortcut.key) == ["1", "2", "3", "4", "5", "6", "7"])
         for entry in IOSKeyboard.sections {
             #expect(entry.shortcut.title == entry.section.title)
         }
     }
 
-    @Test("ipad-clavier-et-largeur-de-lecture/AC-9 : la barre des menus liste les huit commandes en français, avec ⌘")
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-9 : la barre des menus liste les neuf commandes en français, avec ⌘")
     func keyboardShortcutsAreFrenchAndCommandOnly() {
         let expected: [(title: String, key: Character)] = [
             (ConsoleSection.home.title, "1"),
@@ -33,11 +33,12 @@ struct IOSKeyboardTests {
             (ConsoleSection.project.title, "3"),
             (ConsoleSection.audit.title, "4"),
             (ConsoleSection.stats.title, "5"),
-            (ConsoleSection.memory.title, "6"),
+            (ConsoleSection.workstation.title, "6"),
+            (ConsoleSection.memory.title, "7"),
             ("Actualiser", "r"),
             ("Rechercher", "f"),
         ]
-        #expect(IOSKeyboard.all.count == 8)
+        #expect(IOSKeyboard.all.count == 9)
         #expect(IOSKeyboard.all.map(\.title) == expected.map(\.title))
         #expect(IOSKeyboard.all.map(\.key) == expected.map(\.key))
         #expect(IOSKeyboard.modifiers == .command)

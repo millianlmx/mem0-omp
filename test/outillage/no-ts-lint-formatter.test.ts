@@ -186,11 +186,12 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });
 
-test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/, scripts/ puis test/ rougit la section et désigne le fichier", (t) => {
+test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section et désigne le fichier", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-lint.ts",
     "omp-harness/zz-faute-lint.ts",
+    "omp-chrome/src/zz-faute-lint.ts",
     "scripts/zz-faute-lint.ts",
     "test/support/zz-faute-lint.ts",
   ]) {
@@ -207,11 +208,12 @@ test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harn
   }
 });
 
-test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/, scripts/ puis test/ rougit la section", (t) => {
+test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
     "omp-mem0-req/zz-faute-format.ts",
     "omp-harness/zz-faute-format.ts",
+    "omp-chrome/src/zz-faute-format.ts",
     "scripts/zz-faute-format.ts",
     "test/support/zz-faute-format.ts",
   ]) {
@@ -233,7 +235,7 @@ test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, 
   }
 });
 
-test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/, scripts/ et test/ laissent la section verte", (t) => {
+test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ et test/ laissent la section verte", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   const dir = repo.fresh();
   for (const rel of ["omp-console/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
@@ -375,6 +377,7 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
   const suppressed = [
     ...walk(path.join(ROOT, "omp-mem0-req")),
     ...walk(path.join(ROOT, "omp-harness")),
+    ...walk(path.join(ROOT, "omp-chrome")),
     ...walk(path.join(ROOT, "test")),
   ]
     .filter((file) => file.endsWith(".ts") && fs.readFileSync(file, "utf8").includes(marker))

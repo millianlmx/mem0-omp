@@ -6,14 +6,22 @@ import Foundation
 
 /// `omp1:` puis, en base64url, quatre lignes : l'adresse du harness, son jeton,
 /// l'adresse de la mémoire partagée et son jeton (ces deux dernières vides quand
-/// le serveur n'en publie pas).
+/// le serveur n'en publie pas). Le code APPROBATEUR (`harness.sh approver`) porte
+/// une 5e ligne : le jeton approbateur, le seul qui approuve, refuse ou règle le poste.
 public struct HarnessPairing: Equatable, Sendable {
     public var address: String
+    /// Le jeton ORDINAIRE (ligne 2) : celui que lisent omp et l'extension.
     public var token: String
     public var memoryAddress: String
     public var memoryToken: String
+    /// Le jeton approbateur (ligne 5), `nil` pour un code ordinaire. Il ne quitte jamais
+    /// le trousseau de l'app : `writeShared` ne l'écrit pas.
+    public var approverToken: String?
 
     public static let prefix = "omp1:"
+
+    /// Le jeton des appels de l'app : l'approbateur quand le code en porte un.
+    public var appToken: String { approverToken ?? token }
 
     /// Le code décodé, ou `nil` si le texte n'en est pas un.
     public static func decode(_ raw: String) -> HarnessPairing? {
@@ -27,7 +35,12 @@ public struct HarnessPairing: Equatable, Sendable {
         let lines = decoded.components(separatedBy: "\n")
         let field = { (index: Int) in index < lines.count ? lines[index] : "" }
         guard let address = HarnessModel.normalizedAddress(field(0)), !field(1).isEmpty, !field(1).contains(" ") else { return nil }
-        return HarnessPairing(address: address, token: field(1), memoryAddress: field(2), memoryToken: field(3))
+        let approver = field(4)
+        guard !approver.contains(" ") else { return nil }
+        return HarnessPairing(
+            address: address, token: field(1), memoryAddress: field(2), memoryToken: field(3),
+            approverToken: approver.isEmpty ? nil : approver
+        )
     }
 
     /// `~/.omp/harness.json` (`{ "url", "token" }`), écrit par `/pair` ou `harness.sh
@@ -44,7 +57,8 @@ public struct HarnessPairing: Equatable, Sendable {
 
     /// Écrit l'appairage là où le lisent les plugins d'omp et l'app (comme `/pair`) :
     /// `~/.omp/harness.json`, dont les correspondances `repos` sont gardées, et
-    /// `~/.omp/mem0.json` quand le code porte une mémoire. En 0600.
+    /// `~/.omp/mem0.json` quand le code porte une mémoire. En 0600. Le jeton écrit est
+    /// TOUJOURS l'ordinaire : toute session omp lit ce fichier, l'approbateur n'y entre pas.
     public func writeShared(home: URL) throws {
         let directory = home.appendingPathComponent(".omp", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -114,13 +114,22 @@ const LEVELS: Record<Level, number> = { patch: 1, minor: 2, major: 3 };
  * Les SERVICES : versionnés et publiés comme un plugin (historique, bump, tag
  * `<nom>-v<version>`, `CHANGELOG.md`, release), mais absents du catalogue — ils
  * ne s'installent pas par `/marketplace`. Un service dont le `package.json` manque
- * sur la référence `main` est ignoré.
+ * sur la référence `main` est ignoré. L'extension Chrome du poste de travail en est
+ * un : son `package.json` porte la version que scripts/chrome-extension.sh écrit
+ * dans le manifeste, et `omp-chrome.zip` est joint à chaque release
+ * (.github/workflows/release-assets.yml).
  */
 export const SERVICES: ReadonlyArray<{ name: string; dir: string; install: string }> = [
   {
     name: "omp-harness",
     dir: "omp-harness",
     install: "bash omp-harness/deploy/container/harness.sh up   # ou omp-harness/README.md § « Installer le serveur »",
+  },
+  {
+    name: "omp-chrome",
+    dir: "omp-chrome",
+    install:
+      "bash scripts/chrome-extension.sh   # ou omp-chrome.zip joint à cette release, décompressé ; puis chrome://extensions → « Charger l'extension non empaquetée »",
   },
 ];
 

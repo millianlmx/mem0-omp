@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Construit les apps jointes à chaque release GitHub (.github/workflows/release-assets.yml).
+# Construit les fichiers joints à chaque release GitHub (.github/workflows/release-assets.yml).
 #
 #   scripts/release-assets.sh mac          → OMP-Console-macOS.zip (le bundle .app)
 #   scripts/release-assets.sh ios          → OMP-Console-iOS.ipa
+#   scripts/release-assets.sh chrome       → omp-chrome.zip (l'extension Chrome du poste
+#                                            de travail, construite par
+#                                            scripts/chrome-extension.sh ; tout OS,
+#                                            node ≥ 22.13, aucun secret)
 #   scripts/release-assets.sh --plan mac|ios
 #                                          → le mode de signature que prendrait la
 #                                            construction, lu des seules variables
@@ -13,7 +17,8 @@
 #                                            du workflow ; sans rien à retirer, code 0)
 #
 # Chaque fichier est écrit dans omp-console/build/release-assets/ (ignoré par git),
-# à côté de son empreinte `<fichier>.sha256`.
+# à côté de son empreinte `<fichier>.sha256` — l'extension aussi : le workflow
+# téléverse ce seul dossier.
 #
 # Deux modes par app, choisis par la présence des secrets (variables
 # d'environnement du même nom, passées par le workflow à la seule étape de
@@ -92,6 +97,13 @@ valeur() {
   printf '%s' "${!nom:-}"
 }
 
+# L'empreinte, nommée par le seul nom du fichier : `shasum -c` la vérifie à côté du
+# fichier téléchargé.
+empreinte() {
+  (cd "$OUT" && shasum -a 256 "$1" > "$1.sha256")
+  echo "  ✓ $OUT/$1 (+ .sha256)"
+}
+
 # Le mode de signature de <app> : « signe » si tous ses secrets sont posés,
 # « non-signe » si aucun ne l'est. Un jeu partiel sort en 1 en nommant les
 # manquants : c'est une configuration à finir, pas un fork.
@@ -161,7 +173,7 @@ nettoyer_signature() {
 
 app="${1:-}"
 case "$app" in
-  mac | ios) ;;
+  mac | ios | chrome) ;;
   --plan)
     case "${2:-}" in
       mac | ios) plan "$2" ;;
@@ -182,10 +194,33 @@ case "$app" in
     exit 0
     ;;
   *)
-    echo "✗ usage : scripts/release-assets.sh mac|ios (ou --plan mac|ios, ou nettoyer)" >&2
+    echo "✗ usage : scripts/release-assets.sh mac|ios|chrome (ou --plan mac|ios, ou nettoyer)" >&2
     exit 1
     ;;
 esac
+
+# L'extension Chrome : ni Xcode ni signature, elle se construit sur tout OS. L'archive
+# porte manifest.json à sa racine : c'est la forme qu'attend le Chrome Web Store, et
+# décompressée, celle que prend « Charger l'extension non empaquetée ».
+if [ "$app" = chrome ]; then
+  ZIP_CHROME="omp-chrome.zip"
+  mkdir -p "$OUT" || exit 1
+  STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE"' EXIT
+  if ! bash "$ROOT/scripts/chrome-extension.sh" "$STAGE/omp-chrome"; then
+    echo "✗ construction de l'extension Chrome échouée (scripts/chrome-extension.sh)" >&2
+    exit 1
+  fi
+  rm -f "$OUT/$ZIP_CHROME"
+  if ! (cd "$STAGE/omp-chrome" && zip -qrX "$OUT/$ZIP_CHROME" .); then
+    echo "✗ archive de l'extension Chrome échouée (zip)" >&2
+    exit 1
+  fi
+  VERSION="$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version))' "$STAGE/omp-chrome/manifest.json")"
+  echo "  ✓ extension Chrome $VERSION"
+  empreinte "$ZIP_CHROME"
+  exit 0
+fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "· non exécuté : les apps ne se construisent que sous macOS ($(uname -s) détecté)"
@@ -217,13 +252,6 @@ fin() {
   return 0
 }
 trap fin EXIT
-
-# L'empreinte, nommée par le seul nom du fichier : `shasum -c` la vérifie à côté du
-# fichier téléchargé.
-empreinte() {
-  (cd "$OUT" && shasum -a 256 "$1" > "$1.sha256")
-  echo "  ✓ $OUT/$1 (+ .sha256)"
-}
 
 # Masque une valeur dérivée d'un secret dans les journaux d'Actions.
 masquer() {

@@ -1,0 +1,23 @@
+{
+  // Troisième programme de scripts/typecheck.sh : l'extension Chrome, en lib ES2023 + DOM,
+  // sans types node ni de l'hôte OMP (les API chrome.* sont déclarées dans src/chrome.d.ts).
+  // verbatimModuleSyntax + erasableSyntaxOnly : ce que tsc accepte, stripTypeScriptTypes
+  // (scripts/chrome-extension.sh) sait l'effacer — un type s'importe par `import type`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src/**/*.ts"]
+}

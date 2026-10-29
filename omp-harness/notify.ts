@@ -182,6 +182,21 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["moneybag"],
         click: null,
       };
+    case "workstation_approval": {
+      // Un envoi à quelqu'un d'autre que toi, ou une action de l'agent en `propose` : rien ne part sans ton geste.
+      const recipients = Array.isArray(payload.recipients)
+        ? payload.recipients.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      return {
+        title: "Poste — approbation demandée",
+        body: short(
+          `${text(payload.summary, "une action attend ton accord")}${recipients.length > 0 ? ` (à ${recipients.join(", ")})` : ""}`,
+        ),
+        priority: 4,
+        tags: ["raised_hand"],
+        click: null,
+      };
+    }
     case "notify_failed":
       return null;
     default:

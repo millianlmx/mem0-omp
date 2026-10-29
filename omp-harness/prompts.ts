@@ -8,6 +8,7 @@ import { MAX_FINDINGS } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
 import type { StepKind } from "./machine.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
+import type { WorkstationJob } from "./runner.ts";
 import type { CriterionDrift, Verdict } from "./verdict.ts";
 
 /** Le fichier d'artefact que chaque étape DOIT écrire (la revue rend son verdict par outil). */
@@ -266,7 +267,7 @@ ${POLICY}
 }
 
 /** La relance unique d'une étape qui n'a pas rendu son artefact ou son verdict. */
-export function nudgePrompt(step: StepKind | "contradicteur", missing: string): string {
+export function nudgePrompt(step: StepKind | "contradicteur" | WorkstationJob, missing: string): string {
   return `L'étape /${step} n'est pas terminée : ${missing}. Termine-la maintenant, sans rien rouvrir.`;
 }
 
@@ -336,6 +337,98 @@ Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus util
         .join("\n\n"),
     ),
     `\n- \`progress\` à chaque partie du dépôt parcourue, une phrase. N'utilise JAMAIS \`ask\`.\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+const WORKSTATION_NO_ASK = "N'utilise JAMAIS `ask` : personne ne répond pendant ce travail. Ne modifie aucun fichier.";
+
+/**
+ * La synthèse du profil de travail : statistiques du service, échantillon d'observations,
+ * meetings digérés et profil précédent ; le profil complet rendu par `workstation_profile_write`.
+ */
+export function workstationProfilePrompt(ctx: {
+  stats: string;
+  observations: string | null;
+  meetings: string | null;
+  previous: string | null;
+}): string {
+  return [
+    `# /poste-profil — profil de travail de l'utilisateur
+
+Établis le PROFIL DE TRAVAIL de l'utilisateur d'après ce que l'extension du poste a observé dans son navigateur (visites et interactions, jamais les valeurs saisies), les meetings transcrits et le profil précédent. Tu n'agis sur rien.
+
+Rends-le par \`workstation_profile_write\`, une fois, à la fin : la version COMPLÈTE, qui remplace la précédente. Garde du profil précédent ce que les nouvelles données ne contredisent pas ; n'écris rien que les données ne montrent pas.
+- \`habits\` : ce qui revient (horaires, sites ouverts ensemble, ordre des tâches).
+- \`tools\` : les sites et applications web utilisés, et pour quoi.
+- \`schedule\` : le rythme de travail, d'après les heures actives (heure locale de l'utilisateur).
+- \`repetitiveTasks\` : les enchaînements récurrents décrits en tâches ; \`automatable: true\` seulement si une suite de petites actions réversibles dans le navigateur suffit, sans envoyer de message à personne.
+- \`clientNeeds\` : les besoins exprimés par les clients dans les meetings (\`meetingId\` et \`at\` quand ils sont connus, \`null\` sinon).
+- \`preferences\` : ce que l'utilisateur préfère ou évite.`,
+    section("Statistiques (calculées par le service)", ctx.stats),
+    section("Observations récentes (échantillon, de la plus ancienne à la plus récente)", ctx.observations),
+    section("Meetings digérés", ctx.meetings),
+    section("Profil précédent", ctx.previous ?? "(aucun : c'est le premier profil)"),
+    `\n- \`progress\` à chaque partie lue, une phrase. ${WORKSTATION_NO_ASK}\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+/** Le digest d'un meeting terminé : résumé et besoins, rendus par `workstation_meeting_digest`. */
+export function workstationDigestPrompt(ctx: { title: string; url: string; transcript: string }): string {
+  return [
+    `# /poste-digest — meeting « ${ctx.title} »
+
+Voici la transcription automatique d'un meeting (${ctx.url}) : « moi » est l'utilisateur, « autres » ses interlocuteurs. Rends, par \`workstation_meeting_digest\`, une fois :
+- \`summary\` : le déroulé, les décisions prises et ce qui reste ouvert, en quelques phrases ;
+- \`needs\` : chaque besoin ou demande exprimé par un client ou un interlocuteur — \`who\` s'il est nommé, \`due\` si une échéance est dite (\`null\` sinon), \`quote\` l'extrait mot pour mot qui le prouve. Liste vide si personne n'a rien demandé.
+
+Une transcription automatique contient des erreurs : ne déduis pas ce qui n'est pas dit. Tu n'agis sur rien.`,
+    section("Transcription (minutes depuis le début)", ctx.transcript),
+    `\n${WORKSTATION_NO_ASK}\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+/**
+ * Un service de l'agent 24/24 : de petites actions réversibles dans SA fenêtre du
+ * navigateur, chaque choix journalisé avec sa raison, jamais d'insistance sur une action
+ * qui attend l'approbation humaine, et l'arrêt dès qu'il n'y a plus rien d'utile.
+ */
+export function workstationShiftPrompt(ctx: {
+  autonomy: "propose" | "act";
+  maxActions: number;
+  profile: string | null;
+  activity: string | null;
+  pending: string | null;
+  journal: string | null;
+  needs: string | null;
+}): string {
+  const mode =
+    ctx.autonomy === "propose"
+      ? "Autonomie `propose` : chaque action que tu déposes attend l'approbation de l'utilisateur avant de partir ; dépose seulement ce qui vaut son attention."
+      : "Autonomie `act` : tes actions partent seules, sauf un envoi de message à autrui, toujours retenu pour l'approbation de l'utilisateur.";
+  return [
+    `# /poste-service — service de l'agent du poste de travail
+
+Tu es l'agent 24/24 du poste de travail de l'utilisateur : tu l'assistes dans son navigateur, par l'extension du poste, avec de PETITES actions utiles tirées de son profil, de son activité et des besoins de ses clients. ${mode}
+
+## Règles (non négociables)
+- Tu n'agis QUE dans ta fenêtre : les onglets que tu ouvres par \`open\`. Ne touche jamais aux onglets de travail de l'utilisateur.
+- De petites actions RÉVERSIBLES seulement : lire, ouvrir, chercher, préparer un brouillon. Jamais de suppression, de paiement, d'achat, de publication, ni de changement de réglage ou de mot de passe.
+- Chaque choix est journalisé avec sa raison : le \`rationale\` de chaque \`workstation_act\`, et \`workstation_decision\` pour ce que tu choisis de faire ou de ne pas faire sans geste.
+- Envoyer un message à quelqu'un d'autre que l'utilisateur exige SON approbation : la garde du poste le retient et le résultat le dit. N'insiste JAMAIS sur une action qui attend l'approbation : ne la redépose pas, ne la contourne pas (autre site, autre bouton, autre formulaire).
+- ${ctx.maxActions} actions au plus dans ce service (décisions comprises). Arrête-toi dès qu'il n'y a plus rien d'utile : un service sans action est un bon service. Termine par une phrase qui dit ce que tu as fait, ou pourquoi rien.
+- ${WORKSTATION_NO_ASK}`,
+    section("Profil de l'utilisateur", ctx.profile ?? "(pas encore établi : observe plus que tu n'agis)"),
+    section("Activité récente", ctx.activity),
+    section("En attente d'approbation — n'insiste pas", ctx.pending),
+    section("Journal récent", ctx.journal),
+    section("Besoins des clients (meetings)", ctx.needs),
+    "\n- `progress` à chaque jalon, une phrase.\n",
   ]
     .filter((part) => part !== "")
     .join("\n");

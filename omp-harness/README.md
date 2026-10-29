@@ -45,9 +45,10 @@ bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.
    **Serveur** de l'app.
 
 Relancé, `up` met à jour et redémarre sans toucher aux secrets ni à la
-configuration. `harness.sh pair` réaffiche le code. `harness.sh client add <nom>`
-crée un client de plus et affiche SON code (voir « Plusieurs clients, plusieurs
-projets »).
+configuration. `harness.sh pair` réaffiche le code. `harness.sh approver` affiche le
+**code approbateur** des apps, le seul qui approuve les envois du poste (voir « Le
+poste de travail »). `harness.sh client add <nom>` crée un client de plus et affiche
+SON code (voir « Plusieurs clients, plusieurs projets »).
 
 `add` clone le dépôt en nu, éprouve l'écriture sur son distant (un essai à blanc),
 devine ses commandes de test d'après ses manifestes (`package.json`, `Cargo.toml`,
@@ -475,7 +476,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `runner.retryBackoffSec` | `[120, 600, 1800]` | l'attente avant chaque relance d'une étape échouée ; sa longueur est le nombre de relances si `stepRetries` n'est pas déclaré. Quota, réseau, fournisseur, délai : la liste se consomme entière, même cause répétée ; contexte, runner, sortie manquante, inconnu : deux fois de suite ⇒ l'humain. Liste épuisée ⇒ l'humain (`retry` relance), jamais `failed` |
 | `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
-| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé, plafond journalier atteint | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
+| `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé, plafond journalier atteint, approbation demandée par le poste (`workstation_approval`) | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
 | `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
 | `dreams.checkMinutes` | `60` | le rêve de la mémoire (§ La mémoire du projet) : chaque dépôt au repos (aucun run en cours) est examiné au plus toutes les N minutes ; `null` coupe les rêves. Sans `oracle`, rien |
 | `dreams.minFacts`, `dreams.maxDelayHours` | `5`, `24` | la session de rêve ne part que s'il y a au moins `minFacts` faits nouveaux en mémoire, ou un fait nouveau qui attend depuis `maxDelayHours` heures ; `POST /v1/dreams` passe outre |
@@ -502,6 +503,13 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
 | `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, les 2 dernières heures gardées en mémoire |
 | `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
+| `workstation.enabled` | `true` | le poste de travail (§ « Le poste de travail ») ; `false` : les routes `/v1/workstation*` rendent 404 et l'agent 24/24 ne tourne pas |
+| `workstation.thresholdHours` | `8` | les heures d'observation (temps actif cumulé) après lesquelles l'autonomie `auto` passe d'`observe` à `act` ; un réglage posé depuis une app prime |
+| `workstation.retentionDays` | `30` | observations et segments de transcript plus vieux sont purgés, et le `result` des actions plus vieilles vidé (`null`) (au plus une fois par heure) ; le temps observé cumulé, les meetings résumés, le profil et les lignes du journal des actions restent |
+| `workstation.actionTimeoutSec` | `60` | une action louée par l'extension sans résultat au-delà passe `failed` (« l'extension n'a pas rendu le résultat ») |
+| `workstation.approvalTtlHours` | `24` | une action en attente d'approbation au-delà passe `expired` — vaut refus, jamais approuvée ; une action restée en file aussi longtemps expire aussi |
+| `workstation.shiftEveryMin`, `workstation.shiftMaxActions` | `30`, `20` | le repos entre deux services de l'agent 24/24 (qui dure au plus ce repos, borné par `runner.stepTimeoutSec`), et les actions qu'un service dépose au plus, décisions comprises |
+| `workstation.profileEveryHours` | `6` | le profil est resynthétisé au plus toutes les 6 h, seulement s'il y a de nouvelles observations (le premier : 6 h après la première observation) ; `POST /v1/workstation/profile/rebuild` le demande tout de suite |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -696,6 +704,10 @@ la fois (le Mac, l'iPhone, un collègue, une CI).
 Un client borné à des dépôts ne voit rien des autres : listes et flux filtrés, 404
 sur un run d'ailleurs, 403 à la création. Le jeton historique (`tokenFile`) reste le
 client `admin` sur tous les dépôts : les codes d'appairage déjà distribués marchent.
+Le drapeau `approver` (rendu par `GET /v1/clients` et `/v1/me`) marque l'approbateur
+du poste ; il ne se pose qu'en ligne de commande (`main.ts --add-client <nom>
+--approver`, admin sur tous les dépôts) et `POST /v1/clients` refuse tout champ
+`approver` (400). Le jeton historique n'est jamais approbateur.
 
 ```bash
 bash omp-harness/deploy/container/harness.sh client add ipad viewer mon-produit   # son code d'appairage
@@ -705,6 +717,7 @@ bash omp-harness/deploy/container/harness.sh client revoke ipad
 sudo omp-harness-client add ipad viewer mon-produit
 sudo omp-harness-client list
 sudo omp-harness-client revoke ipad
+sudo omp-harness-client approver   # (re)crée app-approbateur : son jeton seul, la 5e ligne du code approbateur
 ```
 
 Le fichier ne garde que l'empreinte SHA-256 de chaque jeton ; une révocation vaut à
@@ -780,6 +793,107 @@ Une clé déclarée ici passe après `runner.env` (écrit par root) et l'emporte
 autres variables de `runner.env` restent à root. Le lanceur ne lit un fichier du
 service que s'il est régulier, n'est pas un lien et n'appartient pas à root.
 
+## Le poste de travail
+
+Une extension Chrome (`omp-chrome/`) observe le travail dans le navigateur et y
+exécute des actions ; le serveur est leur **relais unique**. L'extension tire ses
+actions par long-poll (`GET /v1/workstation/next`), les outils OMP `workstation_*`
+(sur le Mac) et l'agent 24/24 du serveur les déposent dans une file, les apps lisent
+profil et journal et approuvent. Tout le poste est au **propriétaire** : un client
+restreint à des dépôts reçoit 403 « le poste est réservé au propriétaire » sur chaque
+route, et ses événements (`repo` nul) ne vont qu'aux clients qui voient tous les dépôts.
+
+**L'observation.** Des lots de 500 visites et interactions au plus, avec le décalage
+horaire du navigateur (`tz`, `getTimezoneOffset`). Le serveur réduit chaque URL à
+l'origine et au chemin (ni query ni fragment), borne les libellés à 120 caractères et
+passe titres, libellés, transcripts et aperçus par le masquage des secrets du direct
+des sessions. En pause, l'observation et les transcripts sont refusés (409) et aucune
+action ne part. Les statistiques du profil sont calculées sur ce qui est gardé : les
+sites par temps de visite, les secondes actives par heure **locale** de l'utilisateur,
+les enchaînements de pages (hôte et chemin, identifiants ramenés à `:id`) vus au moins
+trois fois.
+
+**La file des actions est le journal des décisions.** Chaque action porte son
+`rationale`, obligatoire ; une `decision` y est écrite `done` sans jamais partir.
+L'extension doit être en ligne (un contact depuis moins de 60 s, ou un long-poll en
+cours). Le long-poll loue la plus ancienne action (`running`) ; un dépôt le réveille
+tout de suite, et un client qui part met fin à l'attente sans rien louer.
+
+**L'autonomie.** `auto` (défaut) reste en `observe` tant que le temps observé n'a pas
+atteint `thresholdHours`, puis passe `act`. En `observe`, l'agent 24/24 ne tourne pas
+(le profil, si). En `propose`, chaque action qu'il dépose attend l'approbation
+humaine. En `act`, il agit seul — la garde d'envoi reste entière. Les réglages
+(`autonomy`, `selfIdentities`, `paused`, `thresholdHours`) vivent dans la table
+`settings` et priment sur la configuration.
+
+**La garde d'envoi (invariant).** Un message à quelqu'un d'autre que l'utilisateur ne
+part jamais sans son accord. L'extension classe chaque geste qui enverrait et rend
+`needs_approval` au lieu de l'exécuter ; le serveur ne remet l'action en file
+(`approved: true`) que sur `POST …/approve` d'un client humain, ou si **tous** les
+destinataires extraits (liste non vide) sont l'utilisateur lui-même (`selfIdentities`,
+sans casse ni espaces). Sinon l'action attend (`awaiting_approval`, événement
+`workstation_approval`, notification ntfy). Aucune échéance n'approuve : après
+`approvalTtlHours`, l'action passe `expired`, qui vaut refus. Aucun outil d'agent —
+ni ceux du serveur, ni ceux du plugin — n'approuve ni ne refuse.
+
+**L'empreinte d'envoi.** Avec `needs_approval`, l'extension rend `approval.fingerprint` :
+le SHA-256 hex (64 caractères) de l'onglet, du titre, des destinataires et du texte complet
+qui partirait. Le serveur la garde telle quelle (autre chose → 400 ; absente → `null`) et la
+rend partout où l'action est rendue, `GET /next` compris ; l'extension n'exécute un envoi
+approuvé que si elle recalcule la même. Une action de l'agent en autonomie `propose`
+attend avec `approval.summary` = la description du geste (« Cliquer sur e2 dans l'onglet
+123 », « Saisir « … » dans e1 (l'onglet 4) », « Ouvrir https://… »), `preview` = le texte
+saisi pour `type` (sinon ""), `recipients: []` et `fingerprint: null` : son approbation
+n'autorise aucun envoi (un geste d'envoi repasse `needs_approval` avec sa vraie empreinte) ;
+la raison reste dans `rationale`.
+
+**L'approbation liée à ce que l'humain a vu.** `POST …/approve` exige `If-Match:
+"<updatedAt>"`, l'`updatedAt` de l'action affichée : absent → 428, différent → 412 (relire
+l'envoi) ; `refuse` l'accepte facultatif (412 s'il est fourni et différent). Le geste est un
+compare-and-swap sur l'état ET la révision, et `updatedAt` croît strictement à chaque
+écriture : de deux approbations simultanées, une seule gagne (l'autre : 409 ou 412).
+
+**Le jeton approbateur.** Le jeton du code `omp1:` ordinaire est partagé : omp l'écrit
+dans `~/.omp/harness.json` et l'extension le garde dans `chrome.storage`, deux endroits
+qu'une session omp avec un shell peut lire. `POST …/approve`, `POST …/refuse` et
+`PUT /v1/workstation/settings` exigent donc un client `approver`, sinon 403 « seul
+l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut
+approuver, refuser ou régler le poste » (vérifié après l'accès propriétaire, avant
+If-Match). `harness.sh approver` (re)crée le client `app-approbateur` (admin, tous les
+dépôts ; l'ancien code cesse de valoir) et imprime le **code approbateur** : le format
+`omp1:` avec une 5e ligne — `url`, jeton ordinaire, adresse de la mémoire, son jeton,
+jeton approbateur ; les quatre premières lignes sont celles de `harness.sh pair`. Les
+apps gardent le jeton approbateur au trousseau et écrivent le jeton ordinaire dans
+`~/.omp/harness.json` ; omp `/pair` et l'extension refusent ce code (« code des apps :
+utilisez `harness.sh pair` »). Sous systemd, `sudo omp-harness-client approver` n'imprime
+que le jeton approbateur. Risque résiduel : qui a la main sur le serveur (un shell sur
+le VPS, ou un serveur local sur le Mac) peut frapper un approbateur.
+
+**Les meetings orphelins.** Un meeting `live` sans segment ni mise à jour depuis 30 min
+(`ORPHAN_MEETING_MS`, workstation.ts) — l'onglet fermé ou le navigateur quitté sans
+`…/end` — passe `ended` au tour suivant, et son digest part comme d'habitude.
+
+**Les jobs de l'agent 24/24** (`workstation-agent.ts`), menés à chaque tour comme les
+audits (slots runner, plafond journalier, arrêt et reprise) :
+
+| Job | Quand | Outils hôtes | Issue |
+|---|---|---|---|
+| `poste-profil` | toutes les `profileEveryHours` s'il y a du neuf, ou sur `POST …/profile/rebuild` | `workstation_profile_write`, `progress` | une nouvelle version du profil (`workstation_profile`), l'ancienne gardée |
+| `poste-digest` | à la fin d'un meeting (`POST …/end`) | `workstation_meeting_digest`, `progress` | `digested` (résumé, besoins des clients) ou `failed` ; sans transcript, `digested` sans runner |
+| `poste-service` | toutes les `shiftEveryMin`, autonomie `propose` ou `act`, extension en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_activity`, `workstation_meetings`, `progress` | au plus `shiftMaxActions` actions d'origine `agent` ; l'issue et le nombre d'actions journalisés (`workstation_shift`) ; une pause ou le retour en `observe` l'arrête |
+
+`workstation_act` attend le résultat 30 s au plus ; une action retenue pour
+approbation rend « en attente de l'approbation de l'humain : ne réessaie pas ». Une
+capture d'écran n'est rendue qu'à l'appelant qui attend (`GET …/actions/{n}?wait=`),
+jamais écrite en base ni transmise à l'agent du serveur.
+
+Ces jobs n'ont pas de dépôt : ils tournent sur un dépôt synthétique. Le « clone » est
+`<dataDir>/workstation`, un dossier vide hors des worktrees — monté en lecture seule
+en isolation `container`, ignoré par le lanceur `systemd` (hors de `REPOS_ROOT`). Le
+répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
+`<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
+ne touche à la mémoire d'aucun projet.
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -823,7 +937,17 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries du tableau de bord de l'Accueil : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
-| `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister, créer (le jeton n'est rendu qu'à la création), révoquer. |
+| `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
+| `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
+| `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-tête `X-OMP-Extension: <version>`) : 200 `{action}` passée `running`, ou 204. |
+| `POST /v1/workstation/actions` `{kind, params, rationale}` · `GET /v1/workstation/actions?state=a,b&limit=&before=` | operator · viewer | Déposer une action (201, origine `session`) : `rationale` vide, `kind` inconnu ou `params` invalides → 400 ; extension hors ligne ou poste en pause → 409 (sauf `decision`, écrite `done`). Le journal, récent d'abord (`limit` ≤ 200). Événement `workstation_action` à chaque état. |
+| `GET /v1/workstation/actions/{n}?wait=` | viewer | Une action ; `wait` (≤ 30 s) rend dès qu'elle n'est plus `queued` ni `running`, avec `image` (JPEG base64) si l'extension en a rendu une — gardée en mémoire 5 min, jamais en base. |
+| `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). |
+| `POST /v1/workstation/actions/{n}/approve` · `POST /v1/workstation/actions/{n}/refuse` `{reason?}` | operator (approbateur) | Le geste humain sur une action `awaiting_approval` (409 sinon), par le seul client `approver` (403 sinon) : `queued` avec `approved: true`, ou `refused`. `approve` exige `If-Match: "<updatedAt>"` (absent 428, périmé 412) ; `refuse` l'accepte facultatif (périmé 412). |
+| `GET /v1/workstation/profile` · `POST /v1/workstation/profile/rebuild` | viewer · operator | Le dernier profil (`null` avant le premier) et les statistiques (`observedSeconds`, `since`, `topSites`, `activeHours`, `sequences`) ; demander une synthèse tout de suite (202 `{queued: true}`). |
+| `POST /v1/workstation/meetings` `{title, url, startedAt}` · `POST /v1/workstation/meetings/{id}/segments` `{segments}` · `POST /v1/workstation/meetings/{id}/end` | operator | Ouvrir un meeting (201), lui ajouter 200 segments au plus (`{at, speaker: moi \| autres, text}`, 409 s'il est fini ou en pause), le finir (son digest part au tour suivant). Événement `workstation_meeting`. |
+| `GET /v1/workstation/meetings?limit=` · `GET /v1/workstation/meetings/{id}` | viewer | Les meetings, récents d'abord (`state` : `live`, `ended`, `digested`, `failed` ; `summary`, `needs`, `segments`) ; un meeting et son transcript. |
+| `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
 | `PUT /v1/models` `{models: {fast, standard, heavy} \| null}` | admin | Les chaînes de modèles de chaque tier (`[{provider, model}]`) ; `null` revient à celles de la configuration. |
@@ -860,6 +984,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Contradicteur** (ajout) | `challenge.ts`, `steps.ts`, `runner-session.ts` | En fin de /req et /specs : l'auteur rend son runner (un run, un slot, un runner), un runner neuf (`<unité>-contradicteur`, arrêtée aussi à la reprise après redémarrage) relit l'artefact avec `progress`, `oracle_recall` et `challenge_report` seulement ; ses écritures sont jetées (`resetTo` sur le commit de l'auteur, artefacts remis depuis la base). L'auteur répond sur un runner neuf (`<unité>-reponse`). Les passages sont gardés en base (`_contradicteur.json`, invisible) et rendus dans `contradicteur.md`, que seul le service écrit. |
 | **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules, `evidence` fichier:ligne obligatoire pour une faiblesse, `dependsOn` par titre — résolu en index, refusé s'il est inconnu, se cite ou boucle —, `impact`, `effort`) par l'outil hôte `audit_propose` ; l'appel est refusé avec la raison tant que ces règles ne tiennent pas. Le prompt reçoit les runs ouverts du dépôt et les souvenirs « Feature mergée » (rappel `feature mergée <dépôt>`) pour ne pas proposer de doublon. Une analyse qui échoue (runner, réseau, échéance) repart une fois, runner et worktree neufs, avant `failed` ; pas quand le modèle a répondu sans proposer. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project, dans l'ordre topologique de `dependsOn`. |
 | **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
+| **Poste de travail** (ajout) | `workstation.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), meetings, profil versionné. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
 | **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Répondre aux escalades (avec une raison, qui part dans l'oracle avec les options et le contexte), relancer un run échoué ou en attente (`retry`), accepter une décision ou toutes d'un geste, renverser une décision. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service **reverte** les commits de N et de ses dépendantes (du checkpoint N au checkpoint de la première survivante postérieure, sinon HEAD) : le travail indépendant d'après reste dans l'arbre, les checkpoints tiennent ; si ce revert entre en conflit, retour dur au checkpoint N et les indépendantes sont réappliquées par consigne. Un run déjà mergé : revert du commit squash sur `main`, puis un run de suite qui porte l'option (si le revert ne passe pas — push refusé —, événement `revert_failed` et run de suite seul). Sans réponse humaine passé `review.escalationTimeoutSec`, chaque escalade ouverte (jamais une suppression, ni une escalade sans recommandation) reçoit l'option recommandée : décision `auto_timeout` avec son checkpoint, renversable comme les autres, événement `decision_auto_timeout`, souvenir tagué `harness,decision,auto_timeout`, et le run reprend. |
 

@@ -28,7 +28,7 @@ mem0-omp/                              ← racine du dépôt = marketplace
 ├── .github/workflows/check.yml        ← la CI des PR
 ├── .github/workflows/release-simulation.yml  ← répète la release sur le commit de fusion de la PR
 ├── .github/workflows/release.yml      ← le job de release au merge sur main
-└── .github/workflows/release-assets.yml  ← joint les apps Mac et iOS à chaque release publiée
+└── .github/workflows/release-assets.yml  ← joint les apps Mac et iOS et l'extension Chrome à chaque release publiée
 ```
 
 Deux fichiers font tout le travail, et ce sont ceux qu'on rate le plus souvent :
@@ -313,6 +313,10 @@ catalogue : son `omp-harness/package.json` est bumpé d'après les commits qui t
 `omp-harness/`, tagué `omp-harness-v<version>` et publié avec une note qui renvoie à
 son installation (`harness.sh up`), jamais à `/marketplace`. Sa version ne se monte
 pas plus à la main que celle d'un plugin, et `/v1/health` la rend aux clients.
+L'extension Chrome `omp-chrome/` aussi : `omp-chrome/package.json` porte sa version,
+bumpée d'après les commits qui touchent `omp-chrome/` et taguée `omp-chrome-v<version>`.
+`scripts/chrome-extension.sh` l'écrit dans le manifeste construit ;
+`omp-chrome/manifest.json` n'en porte pas, et la construction échoue s'il en porte une.
 
 ```bash
 # Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :
@@ -378,13 +382,15 @@ déclencherait aucun run.
 
 Chaque release publiée, quel que soit le composant, déclenche
 `.github/workflows/release-assets.yml` : deux jobs macOS construisent OMP Console
-depuis le code du tag avec `scripts/release-assets.sh mac|ios`, puis la joignent à
-la release (`gh release upload --clobber`) :
+depuis le code du tag avec `scripts/release-assets.sh mac|ios`, un job Linux
+construit l'extension Chrome avec `scripts/release-assets.sh chrome`, puis chacun
+joint son fichier à la release (`gh release upload --clobber`) :
 
 | Fichier | Contenu |
 |---|---|
 | `OMP-Console-macOS.zip` | le bundle `OMP Console.app`, assemblé par `scripts/swift-app.sh --no-tests` (les tests ont tourné sur la PR) ; **signé Developer ID et notarisé** quand les secrets Mac existent, signé ad hoc sinon |
 | `OMP-Console-iOS.ipa` | l'app iOS en Release pour un appareil ; **signée** quand les secrets iOS existent, **non signée** sinon |
+| `omp-chrome.zip` | l'extension Chrome construite par `scripts/chrome-extension.sh`, `manifest.json` à la racine : décompressée, elle se charge par `chrome://extensions` → **Charger l'extension non empaquetée** ; telle quelle, c'est l'archive qu'attend le Chrome Web Store. Aucun secret, aucune signature |
 | `<fichier>.sha256` | l'empreinte de chacun (`shasum -a 256 -c`) |
 
 Le mode de chaque app se choisit par la présence de ses secrets : **tous** posés,

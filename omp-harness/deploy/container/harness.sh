@@ -7,6 +7,8 @@
 #                                                    (gardé d'un up à l'autre ; up --anthropic : retour)
 #   bash omp-harness/deploy/container/harness.sh add <url>  ajoute un dépôt (te guide pour sa clé de déploiement)
 #   bash omp-harness/deploy/container/harness.sh pair       réaffiche le code d'appairage
+#   bash omp-harness/deploy/container/harness.sh approver   le code approbateur des apps (Mac et iPhone) : le seul
+#                                                    qui approuve les envois du poste (recréé, l'ancien cesse de valoir)
 #   bash omp-harness/deploy/container/harness.sh client add <nom> [viewer|operator|admin] [dépôt,…]
 #                                                    un client de plus (un iPad, un collègue) et son code d'appairage
 #   bash omp-harness/deploy/container/harness.sh client list | client revoke <nom>
@@ -413,20 +415,44 @@ cmd_add() {
 
 # -------------------------------------------------------------------------- pair
 
-# `omp1:` puis, en base64url, quatre lignes : le harness, son jeton, la mémoire et
-# son jeton. Lu par `/pair` (omp) et par la feuille Serveur de l'app.
+# Les quatre lignes du code d'appairage : le harness, son jeton, la mémoire et son jeton.
+pairing_lines() {
+  printf '%s\n%s\n%s\n%s\n' \
+    "$(setting URL "$ROOT/published.env")" "$(cat "$ROOT/state/token")" \
+    "$(setting MEM0_URL "$ROOT/published.env")" "$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+}
+
+# base64url sans remplissage, sur une seule ligne.
+base64url() { base64 | tr -d '\n=' | tr '+/' '-_'; }
+
+# `omp1:` puis, en base64url, les quatre lignes. Lu par `/pair` (omp), l'extension du
+# poste et la feuille Serveur de l'app.
 cmd_pair() {
   [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : $SELF up"
   local code
-  code="$(printf '%s\n%s\n%s\n%s\n' \
-    "$(setting URL "$ROOT/published.env")" "$(cat "$ROOT/state/token")" \
-    "$(setting MEM0_URL "$ROOT/published.env")" "$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")" |
-    base64 | tr -d '\n=' | tr '+/' '-_')"
+  code="$(pairing_lines | base64url)"
   echo "Code d'appairage (secret : il donne accès au harness et à la mémoire) :"
   echo
   echo "  omp1:$code"
   echo
   echo "Sur ton Mac : dans omp, /pair omp1:… — ou colle-le dans l'app, feuille Serveur (Mac et iPhone)."
+}
+
+# Le code approbateur : les quatre lignes du code d'appairage, puis le jeton du client
+# `app-approbateur`, le seul qui approuve, refuse ou règle le poste. Le client est
+# recréé à chaque appel : le code précédent cesse de valoir. omp `/pair` et l'extension
+# le refusent, pour que ce jeton n'entre jamais dans ~/.omp ni dans le navigateur.
+cmd_approver() {
+  [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : $SELF up"
+  local token code
+  harness_main --revoke-client app-approbateur >/dev/null 2>&1 || true
+  token="$(harness_main --add-client app-approbateur --approver)" || exit 1
+  code="$({ pairing_lines; printf '%s\n' "$token"; } | base64url)"
+  echo "Code approbateur (secret : il approuve les envois du poste ; il ne sera plus affiché) :"
+  echo
+  echo "  omp1:$code"
+  echo
+  echo "Colle-le dans OMP Console, feuille Serveur (Mac et iPhone) — jamais dans omp ni dans l'extension, qui le refusent."
 }
 
 # ------------------------------------------------------------------------ clients
@@ -447,7 +473,7 @@ cmd_client() {
       fi
       local code
       code="$(printf '%s\n%s\n%s\n%s\n' "$(setting URL "$ROOT/published.env")" "$token" "$mem0_url" "$mem0_token" |
-        base64 | tr -d '\n=' | tr '+/' '-_')"
+        base64url)"
       echo "Code d'appairage de $name (secret ; il ne sera plus affiché) :"
       echo
       echo "  omp1:$code"
@@ -506,6 +532,7 @@ case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   add) shift; cmd_add "$@" ;;
   pair) cmd_pair ;;
+  approver) cmd_approver ;;
   client) shift; cmd_client "$@" ;;
   reload) cmd_reload ;;
   check) compose run --rm --no-deps harness omp-harness-check ;;
@@ -518,5 +545,5 @@ case "${1:-}" in
   restart) compose restart ;;
   start) cmd_start ;;
   down) compose down ;;
-  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

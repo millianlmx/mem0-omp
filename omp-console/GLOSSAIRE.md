@@ -32,6 +32,7 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `Podman` | nom propre ou norme | « Installation de Podman… » |
 | `Git` | nom propre ou norme | « Ce dossier n’est pas un dépôt Git. » |
 | `Apple` | nom propre ou norme | « Les outils de développement d’Apple sont introuvables » |
+| `Chrome` | nom propre ou norme | « L’extension Chrome ne s’est encore jamais connectée » |
 | `Mac` | nom propre ou norme | « Oublier ce Mac » |
 | `macOS` | nom propre ou norme | « avec les mêmes bornes que sur macOS » |
 | `iPhone` | nom propre ou norme | « Rangées de l’Accueil écrasées sur iPhone » |

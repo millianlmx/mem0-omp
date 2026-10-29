@@ -238,4 +238,73 @@ export const MIGRATIONS: readonly string[] = [
   `ALTER TABLE session_entries ADD COLUMN agents TEXT;
    ALTER TABLE session_entries ADD COLUMN result TEXT;
    ALTER TABLE session_entries ADD COLUMN view TEXT;`,
+  // Le poste de travail : l'observation du navigateur (visites, interactions sans valeur,
+  // décalage horaire du lot), les meetings et leurs segments transcrits, la file des
+  // actions de l'extension — qui est aussi le journal des décisions de l'agent —, les
+  // versions du profil établi et les services de l'agent 24/24.
+  `CREATE TABLE workstation_observations (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     kind TEXT NOT NULL,
+     url TEXT NOT NULL,
+     title TEXT NOT NULL,
+     duration_ms INTEGER NOT NULL DEFAULT 0,
+     action TEXT,
+     target TEXT,
+     tz INTEGER NOT NULL DEFAULT 0,
+     received_at INTEGER NOT NULL
+   );
+   CREATE INDEX workstation_observations_at ON workstation_observations (at);
+   CREATE TABLE workstation_meetings (
+     id TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     url TEXT NOT NULL,
+     started_at INTEGER NOT NULL,
+     ended_at INTEGER,
+     state TEXT NOT NULL,
+     summary TEXT,
+     needs TEXT NOT NULL DEFAULT '[]',
+     segments INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX workstation_meetings_state ON workstation_meetings (state, started_at);
+   CREATE TABLE workstation_segments (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     meeting_id TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     speaker TEXT NOT NULL,
+     text TEXT NOT NULL
+   );
+   CREATE INDEX workstation_segments_meeting ON workstation_segments (meeting_id, at);
+   CREATE INDEX workstation_segments_at ON workstation_segments (at);
+   CREATE TABLE workstation_actions (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     origin TEXT NOT NULL,
+     by TEXT,
+     kind TEXT NOT NULL,
+     params TEXT NOT NULL DEFAULT '{}',
+     rationale TEXT NOT NULL,
+     state TEXT NOT NULL,
+     approved INTEGER NOT NULL DEFAULT 0,
+     approval TEXT,
+     result TEXT,
+     error TEXT,
+     leased_at INTEGER
+   );
+   CREATE INDEX workstation_actions_state ON workstation_actions (state, seq);
+   CREATE TABLE workstation_profiles (
+     version INTEGER PRIMARY KEY,
+     updated_at INTEGER NOT NULL,
+     profile TEXT NOT NULL
+   );
+   CREATE TABLE workstation_shifts (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     started_at INTEGER NOT NULL,
+     ended_at INTEGER NOT NULL,
+     outcome TEXT NOT NULL,
+     actions INTEGER NOT NULL DEFAULT 0
+   );`,
 ];

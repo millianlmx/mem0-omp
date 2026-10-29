@@ -2,11 +2,11 @@
 // y est refusé (D5).
 //
 // UNE scène : la fenêtre principale à barre latérale. Les sections de pilotage
-// (Accueil, Pipelines, Projet, Audit, Statistiques) sont servies par le serveur
-// de pipelines du VPS (omp-harness) ; Terminal, Fichiers et Mémoire sont locaux.
-// L'app reste utilisable en plein écran : aucune fenêtre annexe.
+// (Accueil, Pipelines, Projet, Audit, Statistiques, Poste) sont servies par le
+// serveur de pipelines du VPS (omp-harness) ; Terminal, Fichiers et Mémoire sont
+// locaux. L'app reste utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ les huit sections (⌘1…⌘8).
+// Barre des menus : Présentation ▸ les neuf sections (⌘1…⌘9).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
 // l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
@@ -25,7 +25,8 @@ import SwiftUI
 struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
     /// Le serveur de pipelines du VPS : UN modèle et UN jeu de brouillons pour la
-    /// fenêtre, partagés par les cinq sections de pilotage.
+    /// fenêtre, partagés par les six sections de pilotage (le poste de travail est
+    /// porté par ce même modèle, `server.workstation`).
     /// Un code d'appairage collé ici relie aussi omp et la mémoire de ce Mac (`~/.omp`).
     @StateObject private var server = HarnessModel.live(
         fallback: { HarnessPairing.sharedSettings(home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) },
@@ -83,6 +84,7 @@ struct OMPConsoleApp: App {
                 model: model,
                 server: server,
                 drafts: drafts,
+                workstation: server.workstation,
                 filesModel: filesModel,
                 quit: appDelegate.quit,
                 memoryModel: memoryModel,
@@ -105,7 +107,7 @@ struct OMPConsoleApp: App {
     }
 }
 
-/// Menu Présentation ▸ les huit sections (⌘1…⌘8), dans l'ordre de la barre
+/// Menu Présentation ▸ les neuf sections (⌘1…⌘9), dans l'ordre de la barre
 /// latérale : ramène la fenêtre principale, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel

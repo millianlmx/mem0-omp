@@ -5,7 +5,7 @@ import SwiftUI
 /// La racine UNIQUE de l'app iOS : une barre d'onglets native (`TabView`, style
 /// `.sidebarAdaptable`) porte les deux tailles d'écran. En largeur compacte
 /// (iPhone) elle montre quatre onglets en bas — Accueil, Pipelines, Projet, Audit —
-/// puis « Plus », qui pousse Statistiques et Mémoire dans sa propre pile ; en
+/// puis « Plus », qui pousse Statistiques, Poste et Mémoire dans sa propre pile ; en
 /// largeur régulière (iPad) elle s'ouvre en barre latérale groupée (Pilotage,
 /// Consultation). Chaque onglet a sa `NavigationStack`. Le routage onglet ↔
 /// section est pur (`IOSTabs`).
@@ -13,13 +13,16 @@ import SwiftUI
 /// Elle REÇOIT les deux accès de `OMPConsoleIOSApp`, tous deux au serveur du VPS
 /// et posés par le même code d'appairage : ses pipelines (lus au lancement, flux
 /// ouvert) et sa mémoire. Aucun Mac. L'onglet Accueil porte le badge de ce qui
-/// attend l'humain, l'onglet Audit celui des audits à trier.
+/// attend l'humain, l'onglet Audit celui des audits à trier, le Poste celui des
+/// envois à approuver — et, sur iPhone, l'onglet « Plus » celui des sections qu'il range.
 struct RootView: View {
     @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
     @ObservedObject var memory: MemoryAccess
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// Le poste de travail du même serveur (`server.workstation`) : son badge.
+    @ObservedObject var workstation: WorkstationModel
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -37,6 +40,7 @@ struct RootView: View {
         self.memory = memory
         self.server = server
         self.drafts = drafts
+        self.workstation = server.workstation
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
         self.memoryRecipe = memoryRecipe
@@ -58,7 +62,9 @@ struct RootView: View {
                     plusList.navigationDestination(for: ConsoleSection.self) { sectionScreen($0) }
                 }
             }
+            .badge(plusBadge)
             .hidden(IOSTabs.isHidden(.plus, compact: isCompact))
+            .accessibilityLabel(IOSShellText.sectionRowLabel(IOSShellText.plusTitle, badge: plusBadge))
             .accessibilityIdentifier("ios.tab.plus")
         }
         .tabViewStyle(.sidebarAdaptable)
@@ -104,6 +110,11 @@ struct RootView: View {
                 await server.load()
                 server.startLive()
             }
+            // L'état du poste et ses envois à approuver (badges, Accueil), relus à chaque
+            // serveur relié ; le flux de la boîte les tient ensuite à jour.
+            .task(id: server.address) {
+                await workstation.refresh()
+            }
             // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
             // boîte fraîche : ce qui a changé pendant l'absence se voit tout de suite.
             .onChange(of: scenePhase) { _, phase in
@@ -112,6 +123,7 @@ struct RootView: View {
                 Task {
                     await server.refresh()
                     server.startLive()
+                    await workstation.refresh()
                 }
             }
     }
@@ -148,6 +160,7 @@ struct RootView: View {
                 Label(section.title, systemImage: IOSSection.systemImage(of: section))
             }
             .accessibilityIdentifier("ios.plus." + section.rawValue)
+            .badge(badge(for: section))
         }
         .navigationTitle(IOSShellText.plusTitle)
     }
@@ -157,13 +170,19 @@ struct RootView: View {
     }
 
     /// Le badge d'une section : ce qui attend l'humain sur l'Accueil, les audits à
-    /// trier sur Audit.
+    /// trier sur Audit, les envois à approuver sur Poste.
     private func badge(for section: ConsoleSection) -> Int {
+        if section == .workstation { return workstation.pendingCount }
         guard let inbox = server.inbox else { return 0 }
         switch section {
         case .home: return inbox.pendingCount
         case .audit: return inbox.auditsProposed.count
         default: return 0
         }
+    }
+
+    /// Le badge de « Plus » sur iPhone : la somme de ceux des sections qu'il range.
+    private var plusBadge: Int {
+        IOSTabs.plusBadge(compact: isCompact) { badge(for: $0) }
     }
 }

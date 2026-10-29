@@ -287,10 +287,10 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 22 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 23 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 22, `22 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  assert.equal(scoped.length, 23, `23 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
     assert.ok(
       scoped.some((file) => file.startsWith(`${base}/`)),

@@ -4,8 +4,9 @@
 // qui y pose le verre (Liquid Glass, aucun fond maison).
 //
 // Organisation : barre latérale groupée « Pilotage » / « Consultation », badge des
-// attentes du serveur de pipelines sur l'Accueil et des audits à trier sur Audit,
-// et au PIED de la barre latérale le badge d'état des composants embarqués (S-2) ;
+// attentes du serveur de pipelines sur l'Accueil, des audits à trier sur Audit et
+// des envois à approuver sur Poste, et au PIED de la barre latérale le badge d'état
+// des composants embarqués (S-2) ;
 // titre de fenêtre = la section courante, jamais le nom de l'app (HIG Toolbars) ;
 // TOUT vit dans cette fenêtre. Deux feuilles : la préparation des composants
 // (bloquante tant qu'OMP manque) et la configuration du serveur de pipelines.
@@ -23,6 +24,8 @@ struct ConsoleRootView: View {
     /// Le serveur de pipelines du VPS et les brouillons de ses écrans.
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// Le poste de travail du même serveur (`server.workstation`) : son badge.
+    @ObservedObject var workstation: WorkstationModel
     @ObservedObject var filesModel: FilesModel
     /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
     /// la feuille de préparation bloquante y passe, comme ⌘Q.
@@ -66,8 +69,9 @@ struct ConsoleRootView: View {
     }
 
     /// Le badge d'une section : ce qui attend l'humain sur l'Accueil, les audits à
-    /// trier sur Audit.
+    /// trier sur Audit, les envois à approuver sur Poste.
     private func badge(for section: ConsoleSection) -> Int {
+        if section == .workstation { return workstation.pendingCount }
         guard let inbox = server.inbox else { return 0 }
         switch section {
         case .home: return inbox.pendingCount
@@ -126,6 +130,11 @@ struct ConsoleRootView: View {
         .task {
             await server.load()
             server.startLive()
+        }
+        // L'état du poste et ses envois à approuver (badge, Accueil), relus à chaque
+        // serveur relié ; le flux de la boîte les tient ensuite à jour.
+        .task(id: server.address) {
+            await workstation.refresh()
         }
         .frame(minWidth: 760, minHeight: 480)
     }

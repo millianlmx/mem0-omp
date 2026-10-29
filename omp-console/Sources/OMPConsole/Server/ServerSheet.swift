@@ -43,6 +43,8 @@ struct ServerSheet: View {
                     Section {
                         Text(PipelineServerText.setupExplanation)
                             .foregroundStyle(.secondary)
+                        Text(PipelineServerText.approverExplanation)
+                            .foregroundStyle(.secondary)
                         TextField(PipelineServerText.addressLabel, text: $drafts.address, prompt: Text(PipelineServerText.addressPrompt))
                             .accessibilityIdentifier("server.address")
                         SecureField(PipelineServerText.tokenLabel, text: $drafts.token)

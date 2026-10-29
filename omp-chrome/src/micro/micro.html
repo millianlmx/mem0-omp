@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>OMP Poste — micro</title>
+    <link rel="stylesheet" href="../ui.css" />
+  </head>
+  <body class="page">
+    <h1>Autoriser le micro</h1>
+    <p>
+      Pendant une transcription de meeting, votre micro est enregistré comme « moi » et l'audio de l'onglet comme
+      « autres ». Le document qui enregistre tourne en arrière-plan et ne peut pas demander l'autorisation lui-même :
+      accordez-la ici, une fois pour toutes.
+    </p>
+    <p class="muted">L'audio est transcrit sur ce Mac ; il n'est jamais enregistré ni envoyé au serveur.</p>
+    <button type="button" id="ask">Autoriser le micro</button>
+    <p class="message" id="result" role="status"></p>
+    <script type="module" src="micro.js"></script>
+  </body>
+</html>

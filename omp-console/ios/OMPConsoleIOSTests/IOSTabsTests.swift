@@ -22,9 +22,9 @@ struct IOSTabsTests {
         #expect(IOSTabs.compactTabs == declared)
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Statistiques et Mémoire, et elles seules")
+    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Statistiques, Poste et Mémoire, et elles seules")
     func plusListsTheOtherSections() {
-        #expect(IOSTabs.plusSections == [.stats, .memory])
+        #expect(IOSTabs.plusSections == [.stats, .workstation, .memory])
         let tabSections: [ConsoleSection] = IOSTabs.compactTabs.compactMap {
             if case let .section(section) = $0 { section } else { nil }
         }
@@ -56,6 +56,7 @@ struct IOSTabsTests {
             .project: IOSTabRoute(tab: .section(.project), plusPath: []),
             .audit: IOSTabRoute(tab: .section(.audit), plusPath: []),
             .stats: IOSTabRoute(tab: .plus, plusPath: [.stats]),
+            .workstation: IOSTabRoute(tab: .plus, plusPath: [.workstation]),
             .memory: IOSTabRoute(tab: .plus, plusPath: [.memory]),
         ]
         #expect(Set(expected.keys) == Set(IOSSection.all))
@@ -75,6 +76,7 @@ struct IOSTabsTests {
             .project: .pilotage,
             .audit: .pilotage,
             .stats: .pilotage,
+            .workstation: .pilotage,
             .memory: .consultation,
         ]
         #expect(Set(expected.keys) == Set(IOSSection.all))
@@ -132,7 +134,7 @@ struct IOSTabsTests {
         }
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘6 sélectionnent l'entrée de la barre latérale de l'iPad")
+    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘7 sélectionnent l'entrée de la barre latérale de l'iPad")
     func keyboardSelectsTheSidebarEntry() {
         let start = IOSTabRoute(tab: .section(.home), plusPath: [])
         for (index, entry) in IOSKeyboard.sections.enumerated() {
@@ -142,5 +144,15 @@ struct IOSTabsTests {
             #expect(entry.shortcut.key == Character(String(index + 1)))
         }
         #expect(IOSKeyboard.sections.map(\.section) == IOSSection.sidebarOrder)
+    }
+
+    @Test("poste-de-travail : sur iPhone, « Plus » porte les envois à approuver du Poste qu'il range ; sur iPad, les sections portent le leur")
+    func plusBadgeCarriesTheWorkstationApprovals() {
+        let badges: [ConsoleSection: Int] = [.home: 4, .audit: 1, .workstation: 2]
+        let badge = { (section: ConsoleSection) in badges[section] ?? 0 }
+        #expect(IOSTabs.isHidden(.section(.workstation), compact: true))
+        #expect(IOSTabs.plusBadge(compact: true, badge: badge) == 2, "Accueil et Audit gardent leur propre onglet")
+        #expect(IOSTabs.plusBadge(compact: false, badge: badge) == 0, "« Plus » est masqué sur iPad")
+        #expect(IOSTabs.plusBadge(compact: true) { _ in 0 } == 0)
     }
 }

@@ -22,6 +22,7 @@ import {
 } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
 import { registerHarnessTools } from "./tools.ts";
+import { registerWorkstationTools } from "./workstation.ts";
 
 export { LAUNCH_APPROVAL } from "./tools.ts";
 
@@ -94,6 +95,7 @@ async function guarded(ctx: Ctx, tag: string, fn: () => Promise<void>): Promise<
 export default function reqExtension(pi: ExtensionAPI) {
   const follower = createFollower(pi);
   registerHarnessTools(pi, { onLaunched: (resolved, runs) => follower.start(resolved, runs) });
+  registerWorkstationTools(pi);
   pi.on("session_shutdown", () => follower.stop());
 
   pi.registerCommand("req", {
@@ -184,6 +186,14 @@ export default function reqExtension(pi: ExtensionAPI) {
       if (!pairing) {
         ctx.ui?.notify?.(
           "[pair] code illisible : copie la ligne `omp1:…` qu'affiche `harness.sh pair` sur le serveur.",
+          "error",
+        );
+        return;
+      }
+      // Le code approbateur (`harness.sh approver`) : son jeton n'entre jamais dans ~/.omp.
+      if ("refusal" in pairing) {
+        ctx.ui?.notify?.(
+          `[pair] ${pairing.refusal} — ce code-ci se colle dans OMP Console. Rien n'a été écrit.`,
           "error",
         );
         return;

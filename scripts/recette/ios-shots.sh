@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produit les captures de la coque iOS (S-6, BR-4) : d'abord QUARANTE-HUIT, six écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord CINQUANTE-SIX, sept écrans en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
 # défaut puis en Dynamic Type maximum ; puis le groupe de recette du graphe Mémoire.
 #
@@ -38,10 +38,10 @@ SHOTS="$ROOT/omp-console/build/ios-shots"
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
-# Les six sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
+# Les sept sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
 # jamais un libellé affiché : la liste des sections de l'app est filtrée du type
 # partagé, et ce script de développement se contente des valeurs brutes.
-sections=(home kanban project audit stats memory)
+sections=(home kanban project audit stats workstation memory)
 
 # Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
 # Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
@@ -216,23 +216,23 @@ shoot() {
   done
 }
 
-# Passage 1 — six écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
-# à la taille de texte par défaut : 24 captures.
+# Passage 1 — sept écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# à la taille de texte par défaut : 28 captures.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
   shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
 done
 
-# Passage 2 — six écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
-# MAXIMUM : 24 captures `-ax`.
+# Passage 2 — sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# MAXIMUM : 28 captures `-ax`.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
   shoot ipad "$ipad" "$appearance" "$TEXT_AX" "-ax"
 done
 
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "48" ]; then
-  echo "  ✗ $count captures produites (48 attendues)" >&2
+if [ "$count" != "56" ]; then
+  echo "  ✗ $count captures produites (56 attendues)" >&2
   exit 1
 fi
 
@@ -290,11 +290,11 @@ for appearance in light dark; do
 done
 
 # Le second groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 48 écrans est 60.
+# le total avec les 56 écrans est 68.
 reset_simulators
 total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$total" != "60" ]; then
-  echo "  ✗ $total captures produites (60 attendues : 48 écrans + 12 graphe)" >&2
+if [ "$total" != "68" ]; then
+  echo "  ✗ $total captures produites (68 attendues : 56 écrans + 12 graphe)" >&2
   exit 1
 fi
 

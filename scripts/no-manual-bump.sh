@@ -49,7 +49,7 @@ import json, subprocess, sys
 base, head = sys.argv[1], sys.argv[2]
 CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"]
 # Les services versionnés hors catalogue (scripts/release.ts, SERVICES).
-SERVICES = ["omp-harness/package.json"]
+SERVICES = ["omp-harness/package.json", "omp-chrome/package.json"]
 SUFFIX = ("le bump appartient au job de release : retire ce changement de la PR "
           "(PUBLISHING.md, § Mettre à jour)")
 

@@ -6,8 +6,9 @@
 //     tests et le déclare dans le fichier de configuration (codes : repos.ts).
 //   … --models <omlx/<modèle>|anthropic> [--omlx-url <url>] [--omlx-context <n>] : les
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
-//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] : un client
-//     de plus (son jeton s'affiche une fois) ; --revoke-client <nom> ; --list-clients.
+//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] : un
+//     client de plus (son jeton s'affiche une fois ; --approver : l'approbateur du poste,
+//     admin sur tous les dépôts) ; --revoke-client <nom> ; --list-clients.
 //
 // Le jeton historique vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en
 // 0600 au premier démarrage) : c'est le client `admin`. Les autres clients vivent
@@ -138,6 +139,60 @@ function argValue(argv: string[], flag: string): string | null {
   return index >= 0 ? (argv[index + 1] ?? null) : null;
 }
 
+export type CommandOutput = { status: number; stdout: string; stderr: string };
+
+/**
+ * `--add-client` / `--revoke-client` / `--list-clients` sur le registre. Le jeton d'un
+ * client ajouté sort seul sur stdout (scriptable : harness.sh en fait un code
+ * d'appairage), le reste sur stderr. `--approver` est la SEULE façon de créer
+ * l'approbateur du poste : l'API ne le peut pas.
+ */
+export function clientCommand(argv: string[], registry: ClientRegistry): CommandOutput {
+  try {
+    const clientName = argValue(argv, "--add-client");
+    if (clientName !== null) {
+      const approver = argv.includes("--approver");
+      const role = argValue(argv, "--role") ?? (approver ? "admin" : "operator");
+      const repos = argValue(argv, "--repos") ?? "*";
+      const { client, token } = registry.add(
+        clientName,
+        role as Role,
+        repos === "*"
+          ? "*"
+          : repos
+              .split(",")
+              .map((name) => name.trim())
+              .filter(Boolean),
+        approver,
+      );
+      const scope = client.repos === "*" ? "tous" : client.repos.join(", ");
+      return {
+        status: 0,
+        stdout: `${token}\n`,
+        stderr: `✓ client ${client.name} (${client.role}, dépôts : ${scope}${client.approver ? ", approbateur du poste" : ""}) — son jeton ne sera plus affiché :\n`,
+      };
+    }
+    if (argv.includes("--revoke-client")) {
+      const name = argValue(argv, "--revoke-client") ?? "";
+      const revoked = registry.revoke(name);
+      return {
+        status: revoked ? 0 : 1,
+        stdout: revoked ? `✓ client ${name} révoqué\n` : `✗ client inconnu : ${name}\n`,
+        stderr: "",
+      };
+    }
+    const lines = registry
+      .list()
+      .map(
+        (client) =>
+          `${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}${client.approver ? "\tapprobateur" : ""}\n`,
+      );
+    return { status: 0, stdout: lines.join(""), stderr: "" };
+  } catch (err) {
+    return { status: 1, stdout: "", stderr: `✗ ${err instanceof Error ? err.message : String(err)}\n` };
+  }
+}
+
 const isMain =
   process.argv[1] !== undefined && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
 
@@ -169,41 +224,11 @@ if (isMain) {
     console.log(`✓ ${setModels(file, config, models, url ? { baseUrl: url, contextWindow: context } : undefined)}`);
     process.exit(0);
   }
-  const clientName = argValue(process.argv, "--add-client");
-  if (clientName !== null || process.argv.includes("--revoke-client") || process.argv.includes("--list-clients")) {
-    const registry = new ClientRegistry(config.clientsFile);
-    try {
-      if (clientName !== null) {
-        const repos = argValue(process.argv, "--repos") ?? "*";
-        const { client, token } = registry.add(
-          clientName,
-          (argValue(process.argv, "--role") ?? "operator") as Role,
-          repos === "*"
-            ? "*"
-            : repos
-                .split(",")
-                .map((name) => name.trim())
-                .filter(Boolean),
-        );
-        // Le jeton seul sur stdout (scriptable : harness.sh en fait un code d'appairage), le reste sur stderr.
-        console.error(
-          `✓ client ${client.name} (${client.role}, dépôts : ${client.repos === "*" ? "tous" : client.repos.join(", ")}) — son jeton ne sera plus affiché :`,
-        );
-        console.log(token);
-      } else if (process.argv.includes("--revoke-client")) {
-        const name = argValue(process.argv, "--revoke-client") ?? "";
-        const revoked = registry.revoke(name);
-        console.log(revoked ? `✓ client ${name} révoqué` : `✗ client inconnu : ${name}`);
-        process.exit(revoked ? 0 : 1);
-      } else {
-        for (const client of registry.list())
-          console.log(`${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}`);
-      }
-    } catch (err) {
-      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
-    }
-    process.exit(0);
+  if (["--add-client", "--revoke-client", "--list-clients"].some((flag) => process.argv.includes(flag))) {
+    const output = clientCommand(process.argv, new ClientRegistry(config.clientsFile));
+    process.stderr.write(output.stderr);
+    process.stdout.write(output.stdout);
+    process.exit(output.status);
   }
   if (process.argv.includes("--check")) {
     if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)

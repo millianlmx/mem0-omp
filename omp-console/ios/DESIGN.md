@@ -37,18 +37,22 @@ marqueur `[test: <fonction>]` (une fonction de
   `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Projet, Audit,
   « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
   `[test: compactTabsAreFourSectionsThenPlus]`
-- L'onglet « Plus » est une liste titrée « Plus » qui pousse Statistiques et
-  Mémoire ; leur bouton retour ramène à la liste. `[test: plusListsTheOtherSections]`
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Statistiques, Poste et
+  Mémoire ; leur bouton retour ramène à la liste. Le Poste y est rangé pour garder
+  cinq onglets à l'iPhone ; ses envois à approuver ne s'y cachent pas : chaque
+  rangée de « Plus » porte son badge, l'onglet « Plus » leur somme, et l'Accueil
+  montre ces envois en tête. `[test: plusListsTheOtherSections]`
+  `[test: plusBadgeCarriesTheWorkstationApprovals]`
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
-  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques —
-  servis par le serveur de pipelines du VPS) puis Consultation (Mémoire, servie par
-  la mémoire du même serveur) ; la barre d'onglets du haut n'apparaît que lorsqu'on masque la
-  barre latérale. `[test: groupedSections]`
+  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Statistiques,
+  Poste — servis par le serveur de pipelines du VPS) puis Consultation (Mémoire,
+  servie par la mémoire du même serveur) ; la barre d'onglets du haut n'apparaît que
+  lorsqu'on masque la barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
-  Statistiques et Mémoire sous « Plus », et inversement.
+  Statistiques, Poste et Mémoire sous « Plus », et inversement.
   `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Statistiques et
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Statistiques, Poste et
   Mémoire s'ouvrent déjà poussées dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
 - L'app ne parle qu'au serveur du VPS, jamais à un Mac : les écrans de pilotage
@@ -63,12 +67,12 @@ marqueur `[test: <fonction>]` (une fonction de
   la rangée qui porte sa propre surface, `iosCard()` pour une carte,
   `iosBanner(tone:)` pour un bandeau, `iosPanel()` pour le panneau d'une surface
   hors liste. `[garde: design-ios/AC-1]`
-- Un écran en liste — Accueil, Pipelines, Projet, Audit, Statistiques, Mémoire
-  (mode Liste) — est une `List` de style `.insetGrouped`, posée par
+- Un écran en liste — Accueil, Pipelines, Projet, Audit, Statistiques, Poste,
+  Mémoire (mode Liste) — est une `List` de style `.insetGrouped`, posée par
   `iosGroupedList()` : fond `systemGroupedBackground` jusqu'aux bords de l'écran,
   rangées en `secondarySystemGroupedBackground`, en-têtes de section et
   séparateurs du système, aucun `Divider()` tracé à la main, aucun panneau autour
-  des groupes. Les cinq écrans de pilotage partagent un seul cadre,
+  des groupes. Les six écrans de pilotage partagent un seul cadre,
   `IOSHarnessScreen`. `[garde: design-ios/AC-2]` `[capture: iphone-*-dark]`
 - Une carte n'existe que là où le contenu est une carte. C'est la carte élevée,
   `iosCard(raised: true)` : fond `secondarySystemGroupedBackground`, distinct du
@@ -133,9 +137,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
-- Clavier de l'iPad : ⌘1…⌘6 ouvrent les sections dans l'ordre affiché par la
-  barre latérale (Accueil, Pipelines, Projet, Audit, Statistiques, Mémoire), ⌘R
-  relit l'écran courant, ⌘F active la recherche de l'écran qui en a une. Les huit
+- Clavier de l'iPad : ⌘1…⌘7 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Audit, Statistiques, Poste, Mémoire), ⌘R
+  relit l'écran courant, ⌘F active la recherche de l'écran qui en a une. Les neuf
   commandes vivent dans la barre des menus de l'iPad (menu Présentation) avec
   leur libellé français, toutes avec ⌘ seul : ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
   `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
@@ -441,7 +445,10 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 - La feuille du serveur de pipelines (`IOSServerSheet`) est un `Form` groupé : le
   code d'appairage (ou l'adresse et le jeton), « Relier », « Oublier ce serveur », et
   l'échec du dernier échange en bandeau, par `HarnessFailure.message`. Un code
-  accepté relie aussi la mémoire du serveur.
+  accepté relie aussi la mémoire du serveur. Une phrase dit que le code approbateur
+  (`harness.sh approver`) permet en plus d'approuver les envois du poste ; sans lui,
+  le refus du serveur (`HarnessFailure.approverOnly`) s'affiche sur les envois à
+  approuver et sous l'autonomie du Poste.
   `[garde: ios-erreurs-serveur-lisibles/AC-8]`
 
 ## Gestes et retours natifs (feature `ios-gestes-et-retours-natifs`)
