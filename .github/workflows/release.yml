@@ -55,7 +55,7 @@ jobs:
           # GITHUB_TOKEN du dépôt n'en déclenchent aucun.
           token: ${{ secrets.RELEASE_TOKEN }}
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # fetch-depth: 0 ne garantit pas les tags : on les demande explicitement,

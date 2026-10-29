@@ -54,7 +54,7 @@ jobs:
           # Le code du tag, jamais celui de main : l'app jointe est celle de la release.
           ref: refs/tags/${{ env.TAG }}
       # scripts/chrome-extension.sh exige node ≥ 22.13 (stripTypeScriptTypes de node:module).
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.app == 'chrome'
         with:
           node-version: "22"
