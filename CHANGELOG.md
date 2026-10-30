@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-chrome 0.1.1 — 2026-10-30
+
+- fix(chrome): la base OpenAI d'oMLX (…/v1) acceptée, oMLX vérifié avant tout meeting (#308) (37445fc)
+
 ## omp-mem0-req 2.2.0 — 2026-10-29
 
 - feat(harness,chrome,req,console): le poste de travail — extension Chrome, agent 24/24, profil et journal des décisions (#306) (95bdf42)
