@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.13.1 — 2026-10-30
+
+- fix(harness,console): l'audit pilote ses features, /impl sans diff passe en revue, le merge ne rejoue plus un conflit résolu (#310) (7e9dc12)
+
 ## omp-chrome 0.1.1 — 2026-10-30
 
 - fix(chrome): la base OpenAI d'oMLX (…/v1) acceptée, oMLX vérifié avant tout meeting (#308) (37445fc)
