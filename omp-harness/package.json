@@ -1,6 +1,6 @@
 {
   "name": "omp-harness",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "private": true,
   "type": "module",
   "description": "Le serveur de pipelines (Pipeline Service) : runs, projets, audits, boucle humaine, plusieurs clients.",
