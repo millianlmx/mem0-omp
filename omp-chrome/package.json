@@ -1,6 +1,6 @@
 {
   "name": "omp-chrome",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "L'extension Chrome du poste de travail : observation, actions de l'agent dans une fenêtre à part, transcription des meetings par oMLX local. Construite par scripts/chrome-extension.sh, jointe à chaque release.",
