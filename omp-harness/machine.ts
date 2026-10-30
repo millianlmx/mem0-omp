@@ -102,6 +102,58 @@ export const MERGE_BACKOFF_MS: readonly number[] = [300_000, 900_000, 3_600_000]
 
 const NEXT: Record<"req" | "specs" | "impl", StepKind> = { req: "specs", specs: "impl", impl: "review" };
 
+/**
+ * Le début de la raison de chaque attente de l'humain qui n'est pas une panne : la
+ * transition l'écrit, `humanWaitOf` la relit (le pilote d'un audit en déduit ses gestes).
+ */
+export const WAIT_REASON = {
+  specs: "specs à valider avant /impl",
+  verdict: "validation humaine",
+  fixCap: "plafond de corrections atteint",
+  contest: "le correcteur conteste les bloquants une seconde fois",
+  budget: "budget dépassé",
+} as const;
+
+/** La raison de porte des specs qui réserve leur validation à l'humain (steps.ts `gateReasons`). */
+export const IRREVERSIBLE_GATE = "geste irréversible";
+
+/**
+ * Ce qu'un run `awaiting_human` attend : des specs à valider (`irreversible` si elles
+ * portent un geste irréversible), un verdict à valider, un arbitrage entre revue et
+ * correction, un budget à accorder, ou une relance après une panne (`failure` : échecs
+ * répétés, merge arrêté ou impossible).
+ */
+export type HumanWait = "specs" | "irreversible" | "verdict" | "arbitration" | "budget" | "failure";
+
+export function humanWaitOf(run: { state: RunState; step: StepKind | null; reason: string | null }): HumanWait | null {
+  if (run.state !== "awaiting_human") return null;
+  const reason = run.reason ?? "";
+  if (reason.startsWith(WAIT_REASON.budget)) return "budget";
+  if (run.step === "specs" && reason.startsWith(WAIT_REASON.specs))
+    return reason.includes(`${IRREVERSIBLE_GATE} (`) ? "irreversible" : "specs";
+  if (reason.startsWith(WAIT_REASON.verdict)) return "verdict";
+  if (reason.startsWith(WAIT_REASON.fixCap) || reason.startsWith(WAIT_REASON.contest)) return "arbitration";
+  return "failure";
+}
+
+/** La fin de la raison d'un merge arrêté au plafond de ses tentatives (`afterMergeStopped`). */
+export const MERGE_CAP = "plafond de tentatives de merge atteint";
+
+/**
+ * L'étape d'où repart un run arrêté au plafond de ses merges, ou `null` s'il n'en est pas
+ * un. Une ligne écrite avant que l'étape soit gardée (`step` null) se lit dans sa raison.
+ */
+export function mergeStopOf(run: {
+  state: RunState;
+  step: StepKind | null;
+  reason: string | null;
+}): "review" | "fix" | null {
+  const reason = run.reason ?? "";
+  if (run.state !== "awaiting_human" || !reason.endsWith(MERGE_CAP)) return null;
+  if (run.step === "review" || run.step === "fix") return run.step;
+  return reason.startsWith("suite complète") ? "fix" : "review";
+}
+
 function to(
   state: RunState,
   step: StepKind | null,
@@ -144,9 +196,9 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
           reason:
             limits.specsGate === "auto"
               ? (outcome.gateReasons ?? []).length > 0
-                ? `specs à valider avant /impl : ${(outcome.gateReasons ?? []).join(" ; ")}`
-                : "specs à valider avant /impl (découpage, modules ou geste irréversible)"
-              : "specs à valider avant /impl",
+                ? `${WAIT_REASON.specs} : ${(outcome.gateReasons ?? []).join(" ; ")}`
+                : `${WAIT_REASON.specs} (découpage, modules ou ${IRREVERSIBLE_GATE})`
+              : WAIT_REASON.specs,
         });
       }
       return to("running", NEXT[step], cursor, { reason: "/specs terminé" });
@@ -166,14 +218,16 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
           });
         }
         return to("awaiting_human", null, cursor, {
-          reason: `plafond de corrections atteint (${limits.fixCap}) avec ${blockers} bloquant(s)`,
+          reason: `${WAIT_REASON.fixCap} (${limits.fixCap}) avec ${blockers} bloquant(s)`,
         });
       }
       const merge = outcome.merge;
       if (merge?.auto) return to("merging", null, cursor, { reason: "verdict bas risque et tests verts — auto-merge" });
       return to("awaiting_human", null, cursor, {
         reason:
-          merge && !merge.auto ? `validation humaine : ${merge.reasons.join(" ; ")}` : "validation humaine requise",
+          merge && !merge.auto
+            ? `${WAIT_REASON.verdict} : ${merge.reasons.join(" ; ")}`
+            : `${WAIT_REASON.verdict} requise`,
       });
     }
   }
@@ -203,7 +257,7 @@ function afterFailure(
   if (step === "fix" && outcome.cause === "missing_output") {
     if (cursor.lastFailCause === "missing_output") {
       return to("awaiting_human", "fix", cursor, {
-        reason: `le correcteur conteste les bloquants une seconde fois : ${outcome.reason}`,
+        reason: `${WAIT_REASON.contest} : ${outcome.reason}`,
       });
     }
     return to("running", "review", cursor, {
@@ -241,7 +295,7 @@ function afterFailure(
 export function pausedForBudget(cursor: RunCursor, cost: number, threshold: number): Transition {
   return to("awaiting_human", cursor.step, cursor, {
     attempts: cursor.attempts,
-    reason: `budget dépassé : ${cost.toFixed(2)} $ pour un plafond de ${threshold.toFixed(2)} $ — relance la feature pour continuer`,
+    reason: `${WAIT_REASON.budget} : ${cost.toFixed(2)} $ pour un plafond de ${threshold.toFixed(2)} $ — relance la feature pour continuer`,
   });
 }
 
@@ -257,9 +311,9 @@ export function heldForDailyBudget(cursor: RunCursor, spent: number, ceiling: nu
   });
 }
 
-/** La relance par l'humain d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
-export function retried(cursor: RunCursor): Transition {
-  return to("queued", cursor.step, cursor, { attempts: 0, notBefore: null, reason: "relancé par l'humain" });
+/** La relance par l'humain (ou `who`) d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
+export function retried(cursor: RunCursor, who = "l'humain"): Transition {
+  return to("queued", cursor.step, cursor, { attempts: 0, notBefore: null, reason: `relancé par ${who}` });
 }
 
 /** La reprise d'un run escaladé, une fois TOUTES ses escalades répondues : même étape, nouveau runner. */
@@ -277,16 +331,26 @@ export function reworkAfterReversal(cursor: RunCursor, step: StepKind, seq: numb
   return to("queued", step, cursor, { reason: `décision ${seq} renversée — correction sur l'état courant` });
 }
 
-/** La validation humaine d'un verdict : accepter → merge, refuser → une correction (hors plafond). */
-export function afterHumanValidation(cursor: RunCursor, approve: boolean, reason: string): Transition {
-  if (approve) return to("merging", null, cursor, { reason: reason || "validé par l'humain" });
-  return to("queued", "fix", cursor, { fixes: cursor.fixes + 1, reason: `refusé par l'humain : ${reason}` });
+/** La validation humaine d'un verdict : accepter → merge, refuser → une correction (hors plafond). `who` : qui tranche. */
+export function afterHumanValidation(
+  cursor: RunCursor,
+  approve: boolean,
+  reason: string,
+  who = "l'humain",
+): Transition {
+  if (approve) return to("merging", null, cursor, { reason: reason || `validé par ${who}` });
+  return to("queued", "fix", cursor, { fixes: cursor.fixes + 1, reason: `refusé par ${who} : ${reason}` });
 }
 
-/** La validation humaine des specs : accepter → /impl, refuser → /specs refait avec la raison. */
-export function afterSpecsValidation(cursor: RunCursor, approve: boolean, reason: string): Transition {
-  if (approve) return to("queued", "impl", cursor, { reason: reason || "specs validées par l'humain" });
-  return to("queued", "specs", cursor, { reason: `specs refusées par l'humain : ${reason}` });
+/** La validation humaine des specs : accepter → /impl, refuser → /specs refait avec la raison. `who` : qui tranche. */
+export function afterSpecsValidation(
+  cursor: RunCursor,
+  approve: boolean,
+  reason: string,
+  who = "l'humain",
+): Transition {
+  if (approve) return to("queued", "impl", cursor, { reason: reason || `specs validées par ${who}` });
+  return to("queued", "specs", cursor, { reason: `specs refusées par ${who} : ${reason}` });
 }
 
 /** Un état d'où le run peut encore bouger. */
@@ -342,10 +406,22 @@ export function afterMergeStopped(
   now: number,
 ): Transition {
   const at = { step, fixes: cursor.fixes, attempts: 0 };
+  // Au plafond, l'étape est gardée : la validation ou la relance de l'humain y reprend.
   if (cursor.mergeRetries >= limits.mergeRetries)
-    return to("awaiting_human", null, at, { reason: `${reason} — plafond de tentatives de merge atteint` });
+    return to("awaiting_human", step, at, { reason: `${reason} — ${MERGE_CAP}` });
   const wait = MERGE_BACKOFF_MS[Math.min(cursor.mergeRetries, MERGE_BACKOFF_MS.length - 1)] ?? 0;
   return to("queued", step, at, { notBefore: now + wait, reason });
+}
+
+/**
+ * La validation d'un run arrêté au plafond de ses merges : refaire le même merge buterait
+ * sur la même cause. Il repart à l'étape qui la lève (revue : conflit ; correction :
+ * suite rouge), tout de suite ; le geste remet `mergeRetries` à zéro.
+ */
+export function resumeAfterMergeStop(cursor: RunCursor, who = "l'humain"): Transition {
+  return to("queued", cursor.step, cursor, {
+    reason: `validé par ${who} — le merge arrêté repart par /${cursor.step === "fix" ? "impl --fix" : "review"}`,
+  });
 }
 
 /** Le merge est fait dans git : l'état suit, toujours. */

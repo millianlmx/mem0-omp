@@ -51,8 +51,10 @@ export type HarnessDeps = {
 /**
  * Qui fait un geste : le nom du client authentifié (`null` : le service lui-même ou
  * un appel interne), et la révision du run qu'il a lue (`If-Match`) s'il en donne une.
+ * `pilot` : le geste vient du pilote d'un audit (pilot.ts), pas d'un humain — ses
+ * refus ne deviennent pas des corrections humaines dans l'oracle.
  */
-export type Actor = { by: string | null; rev?: number };
+export type Actor = { by: string | null; rev?: number; pilot?: boolean };
 
 export const SERVICE: Actor = { by: null };
 

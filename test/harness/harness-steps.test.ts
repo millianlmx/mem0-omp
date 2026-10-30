@@ -52,13 +52,21 @@ test("harness-steps/AC-1 : `## Découpage` se lit puce par puce (titre — deman
   assert.equal(sectionBody("## A\nx\n", /^b/i), null);
 });
 
-test("harness-steps/AC-2 : `## Reste` d'impl.md : vide, absent ou « aucun » ⇒ rien à suivre", () => {
+test("harness-steps/AC-2 : `## Reste` d'impl.md : vide, absent, « aucun » ou « Rien : … » ⇒ rien à suivre", () => {
   assert.equal(parseRemaining("## Fait\nAC-1\n## Reste\n"), "");
   assert.equal(parseRemaining("## Fait\nAC-1\n"), "");
   assert.equal(parseRemaining("## Fait\nAC-1\n## Reste\naucun\n"), "");
+  assert.equal(parseRemaining("## Reste\nRien : toutes les specs S-1 à S-20 sont livrées.\n"), "");
+  assert.equal(parseRemaining("## Reste\nRien à livrer dans cette branche.\n"), "");
+  assert.equal(parseRemaining("## Reste\nAucune — tout est fait\n"), "");
   assert.equal(
     parseRemaining("## Fait\nAC-1\n## Reste\n- la pagination\n- les tests du tri\n"),
     "- la pagination\n- les tests du tri",
+  );
+  // « Aucun » qui ouvre une phrase de reste n'est pas un reste vide.
+  assert.equal(
+    parseRemaining("## Reste\nAucun test UI écrit : B-4 attend un Mac\n"),
+    "Aucun test UI écrit : B-4 attend un Mac",
   );
 });
 
@@ -511,6 +519,54 @@ test("harness-steps/AC-17 : run_tests scope:check lance une commande nommée du 
       world.store.listTestRuns(run.id).map((item) => `${item.scope}:${item.outcome}`),
       ["check:pass", "full:pass", "full:pass"],
     );
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-steps/AC-18 : un /impl sans diff dont `## Fait` dit où le code est déjà livré passe en revue, sans run de suite", async () => {
+  const impl = [
+    {
+      write: ".harness/impl.md",
+      content: "## Fait\nAC-1 → déjà livré par src/api (test harness/AC-1)\n## Reste\n- le test UI, qui exige un Mac\n",
+    },
+  ];
+  const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [impl], review: [OK.review] });
+  await world.orchestrator.start();
+  try {
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
+    await until(world, run.id, ["merged", "failed", "awaiting_human"]);
+    const steps = world.store.listSteps(run.id);
+    assert.deepEqual(
+      steps.filter((step) => step.kind === "impl").map((step) => step.status),
+      ["done"],
+    );
+    assert.ok(
+      steps.some((step) => step.kind === "review"),
+      stateOf(world, run.id),
+    );
+    assert.equal(world.store.eventsSince(0, run.id).filter((event) => event.type === "follow_up").length, 0);
+    assert.equal(world.store.listRuns().filter((row) => row.title.startsWith("Suite de")).length, 0);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-steps/AC-19 : un /impl sans diff ni `## Fait` reste une sortie manquante (missing_output)", async () => {
+  const impl = [{ write: ".harness/impl.md", content: "## Fait\n## Reste\n- tout\n" }];
+  const world = fakeWorld(
+    { req: [OK.req], specs: [OK.specs], impl: [impl] },
+    { patch: (config) => (config.runner.stepRetries = 0) },
+  );
+  await world.orchestrator.start();
+  try {
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
+    await waitFor(
+      () => world.store.getRun(run.id)?.lastFailCause === "missing_output",
+      () => stateOf(world, run.id),
+    );
+    const failed = world.store.listSteps(run.id).find((step) => step.kind === "impl" && step.status === "failed");
+    assert.match(failed?.summary ?? "", /`## Fait`/);
   } finally {
     await world.orchestrator.stop();
   }

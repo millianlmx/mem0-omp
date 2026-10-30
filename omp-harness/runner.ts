@@ -495,6 +495,33 @@ const AUDIT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const PILOT_TOOL: HostToolDefinition = {
+  name: "pilot_act",
+  label: "Harness — geste du pilote",
+  description:
+    "Rend TA décision sur le run qui attend, une fois : le service l'applique par le même geste que l'humain. " +
+    "`approve` : valide les specs (→ /impl) ou le verdict (→ merge). `refuse` : renvoie les specs à /specs ou le code en correction — `reason` est alors la consigne, précise et vérifiable. " +
+    "`retry` : relance l'étape en panne — `instructions` dit ce qu'elle doit faire autrement. `cancel` : abandonne la feature (la branche est gardée). " +
+    "`defer` : laisse la décision à l'humain — `reason` est la question, avec ta recommandation. Seuls les gestes listés dans le prompt sont permis.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["approve", "refuse", "retry", "cancel", "defer"] },
+      reason: {
+        type: "string",
+        description: "Pourquoi ce geste, en une ou deux phrases qui citent les faits (journalisé, lu par l'humain).",
+      },
+      instructions: {
+        type: ["string", "null"],
+        description: "Avec `retry` : la consigne pour l'étape relancée. Sinon null.",
+      },
+    },
+    required: ["action", "reason", "instructions"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const DREAM_TOOL: HostToolDefinition = {
   name: "dream_consolidate",
   label: "Harness — consolidation de la mémoire",
@@ -750,8 +777,11 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
  * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
  * `review_verdict` en revue seulement.
  */
-export function hostToolsFor(step: StepKind | "audit" | "challenge" | "dream" | WorkstationJob): HostToolDefinition[] {
+export function hostToolsFor(
+  step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
+): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
+  if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];

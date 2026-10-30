@@ -6,7 +6,7 @@
 import type { Finding } from "./challenge.ts";
 import { MAX_FINDINGS } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
-import type { StepKind } from "./machine.ts";
+import type { HumanWait, StepKind } from "./machine.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
 import type { WorkstationJob } from "./runner.ts";
 import type { CriterionDrift, Verdict } from "./verdict.ts";
@@ -164,6 +164,7 @@ Lis \`${ART}/req.md\` et \`${ART}/specs.md\` (le relevé du dépôt t'évite de 
 - Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
 - Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
+- Le code demandé est DÉJÀ dans le dépôt (livré avant) ? N'invente pas de diff : \`## Fait\` dit, critère par critère, le fichier et le test qui le livrent déjà ; la revue le vérifie.
 
 Termine par \`${ART}/impl.md\` avec exactement ces sections :
 ## Fait
@@ -267,7 +268,7 @@ ${POLICY}
 }
 
 /** La relance unique d'une étape qui n'a pas rendu son artefact ou son verdict. */
-export function nudgePrompt(step: StepKind | "contradicteur" | WorkstationJob, missing: string): string {
+export function nudgePrompt(step: StepKind | "contradicteur" | "pilote" | WorkstationJob, missing: string): string {
   return `L'étape /${step} n'est pas terminée : ${missing}. Termine-la maintenant, sans rien rouvrir.`;
 }
 
@@ -337,6 +338,89 @@ Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus util
         .join("\n\n"),
     ),
     `\n- \`progress\` à chaque partie du dépôt parcourue, une phrase. N'utilise JAMAIS \`ask\`.\n`,
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+/** Ce que le run attend, dit au pilote. */
+const PILOT_WAIT: Record<HumanWait, string> = {
+  specs: "ses specs attendent une validation avant /impl",
+  irreversible: "ses specs portent un geste irréversible : la validation revient à l'humain",
+  verdict: "son verdict de revue attend une validation avant le merge",
+  arbitration: "la revue et la correction ne s'accordent pas : il faut arbitrer",
+  budget: "son budget est atteint : seul l'humain en accorde un autre",
+  failure: "une étape est en panne, ou le merge est arrêté",
+};
+
+export type PilotPromptContext = {
+  repo: string;
+  focus: string;
+  title: string;
+  request: string;
+  wait: HumanWait;
+  /** La raison écrite par le service sur le run. */
+  reason: string;
+  /** Les gestes permis pour cette attente. */
+  allowed: readonly string[];
+  baseSha: string | null;
+  /** La proposition de l'audit dont la feature descend (titre, demande, preuves). */
+  proposal: string | null;
+  verdict: Verdict | null;
+  /** Les artefacts du run (specs.md, impl.md…), déjà coupés. */
+  artifacts: { name: string; content: string }[];
+  decisions: string[];
+  /** Les autres features pilotées par cet audit et leur état. */
+  siblings: string[];
+  /** Les gestes déjà faits par le pilote sur ce run. */
+  history: string[];
+  memories: string | null;
+};
+
+/**
+ * Le prompt du pilote d'un audit : un run de l'audit attend l'humain ; le pilote, qui a le
+ * contexte de l'audit, tranche ce qui est réversible par `pilot_act`, ou le laisse à l'humain.
+ */
+export function pilotPrompt(ctx: PilotPromptContext): string {
+  const focus = ctx.focus.trim() === "" ? "le dépôt entier" : ctx.focus.trim();
+  const verdict =
+    ctx.verdict === null
+      ? null
+      : [
+          `Risque : ${ctx.verdict.risk} — ${ctx.verdict.summary}`,
+          ctx.verdict.blockers.length > 0 ? `Bloquants :\n${ctx.verdict.blockers.map((b) => `- ${b}`).join("\n")}` : "",
+          ctx.verdict.unverified.length > 0
+            ? `Non vérifié :\n${ctx.verdict.unverified.map((u) => `- ${u}`).join("\n")}`
+            : "",
+          `Critères :\n${ctx.verdict.criteria.map((c) => `- ${c.id} : ${c.status}${c.test ? ` (${c.test})` : ""}`).join("\n")}`,
+        ]
+          .filter((part) => part !== "")
+          .join("\n");
+  return [
+    `# /pilote — « ${ctx.title} »
+
+Tu pilotes, à la place de l'humain, les features lancées par l'audit de « ${ctx.repo} » (focus : ${focus}). Celle-ci attend une décision : ${PILOT_WAIT[ctx.wait]}.
+Raison du service : ${ctx.reason}
+
+Tu as le contexte de l'audit : décide, au lieu de renvoyer la question. Le répertoire courant est le HEAD du run, en LECTURE SEULE (ne modifie AUCUN fichier) : \`git diff ${ctx.baseSha ?? "main"}..HEAD\` montre son travail, le code et les tests se lisent. Vérifie dans le code ce que les artefacts affirment.
+
+Gestes permis : ${ctx.allowed.map((a) => `\`${a}\``).join(", ")}.
+- \`approve\` : les critères d'acceptation sont livrés et prouvés par des tests nommés ; ou ce qui reste non vérifié ne peut pas l'être sur le runner (outillage absent, comme Xcode sur Linux) et le code comme ses tests se lisent justes — dis-le dans \`reason\`. La taille du diff seule n'est pas une raison de refuser ni de déférer.
+- \`refuse\` : un critère n'est pas livré, ou un bloquant est réel ; \`reason\` est la consigne de correction, précise et vérifiable.
+- \`retry\` : la cause de la panne peut changer avec une consigne (\`instructions\`) : code déjà livré, conflit à résoudre, piste à abandonner. Ne relance jamais à l'identique ce qui a déjà échoué.
+- \`cancel\` : la feature est sans objet (déjà livrée ailleurs, doublon d'une autre feature de l'audit) ou ne peut pas aboutir sur ce serveur. La branche reste.
+- \`defer\` : seulement si la décision exige l'humain : un choix de produit sans critère, un accès que tu n'as pas, un doute sur l'irréversibilité. \`reason\` pose la question avec ta recommandation.
+
+Termine par \`pilot_act\`, une fois.`,
+    section("Demande de la feature", ctx.request),
+    section("Proposition de l'audit", ctx.proposal),
+    section("Verdict de la dernière revue", verdict),
+    ...ctx.artifacts.map((artifact) => section(`Artefact ${ART}/${artifact.name}`, artifact.content)),
+    section("Décisions du run (elles tiennent)", ctx.decisions.map((d) => `- ${d}`).join("\n")),
+    section("Autres features de l'audit", ctx.siblings.map((s) => `- ${s}`).join("\n")),
+    section("Tes gestes précédents sur ce run", ctx.history.map((h) => `- ${h}`).join("\n")),
+    section("Oracle (rappel du service)", ctx.memories),
+    `\n- \`progress\` à chaque vérification, une phrase. N'utilise JAMAIS \`ask\` : personne ne répond pendant ce travail.\n`,
   ]
     .filter((part) => part !== "")
     .join("\n");

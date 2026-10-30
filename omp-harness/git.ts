@@ -306,6 +306,25 @@ export class Git {
     await this.raw(worktree, ["merge", "-q", "--no-ff", "--no-commit", ref]);
   }
 
+  /**
+   * Fusionne `ref` dans la branche du worktree et commite la fusion ; un conflit est
+   * abandonné, l'arbre rendu tel qu'avant, et ses fichiers rendus. Déjà à jour : rien.
+   */
+  async mergeCommit(
+    worktree: string,
+    ref: string,
+    message: string,
+  ): Promise<{ ok: true; head: string } | { ok: false; conflicts: string[] }> {
+    await this.mergeNoCommit(worktree, ref);
+    const conflicts = await this.unmergedFiles(worktree);
+    if (conflicts.length > 0) {
+      await this.raw(worktree, ["merge", "--abort"]);
+      return { ok: false, conflicts };
+    }
+    if (await this.mergeInProgress(worktree)) await this.commitAll(worktree, message);
+    return { ok: true, head: await this.revParse(worktree, "HEAD") };
+  }
+
   /** Les checkpoints de `base..HEAD`, par numéro de décision (remappage après rebase). */
   async checkpoints(worktree: string, base: string, runId: string): Promise<Map<number, string>> {
     const log = await this.run(worktree, ["log", "--format=%H%x00%B%x01", `${base}..HEAD`]);

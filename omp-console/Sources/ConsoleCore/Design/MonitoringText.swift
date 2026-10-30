@@ -177,6 +177,7 @@ public enum MonitoringText {
         case MonitoringCodes.budgetExceeded: L10n.text("Budget dépassé")
         case MonitoringCodes.failed: L10n.text("Échec")
         case MonitoringCodes.recovered: L10n.text("Reprise après un redémarrage")
+        case MonitoringCodes.pilot: L10n.text("Pilote de l’audit")
         default: L10n.text("Événement")
         }
     }
@@ -189,6 +190,7 @@ public enum MonitoringText {
         case MonitoringCodes.rateLimited, MonitoringCodes.providerRetry, MonitoringCodes.providerError, MonitoringCodes.modelFailover: "bolt.horizontal"
         case MonitoringCodes.escalations, MonitoringCodes.escalationAnswered, MonitoringCodes.specsReady, MonitoringCodes.verdict, MonitoringCodes.decisionAutoTimeout: "person.crop.circle.badge.questionmark"
         case MonitoringCodes.stalled, MonitoringCodes.stepSlow, MonitoringCodes.fixLoop, MonitoringCodes.budgetExceeded: alertSymbol(type)
+        case MonitoringCodes.pilot: "steeringwheel"
         default: "circle.fill"
         }
     }

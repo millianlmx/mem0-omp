@@ -66,6 +66,7 @@ export const EVENT_TYPES = [
   "project_created",
   "project_done",
   "audit_state",
+  "pilot",
   "dream_state",
   // configuration du serveur
   "providers_changed",

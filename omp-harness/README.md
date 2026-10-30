@@ -481,6 +481,8 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `dreams.checkMinutes` | `60` | le rêve de la mémoire (§ La mémoire du projet) : chaque dépôt au repos (aucun run en cours) est examiné au plus toutes les N minutes ; `null` coupe les rêves. Sans `oracle`, rien |
 | `dreams.minFacts`, `dreams.maxDelayHours` | `5`, `24` | la session de rêve ne part que s'il y a au moins `minFacts` faits nouveaux en mémoire, ou un fait nouveau qui attend depuis `maxDelayHours` heures ; `POST /v1/dreams` passe outre |
 | `dreams.tier` | `"standard"` | le niveau de modèle de la session de rêve |
+| `pilot.actionsPerRun` | `3` | le pilote d'un audit lancé (§ Une feature, pas à pas) : au plus N gestes par run, puis l'humain ; `0` coupe le pilote |
+| `pilot.tier` | `"heavy"` | le niveau de modèle de la session du pilote |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
 | `runner.slots`, `heavy.slots` | `5`, `2` | agents et jobs de tests simultanés |
@@ -533,8 +535,13 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
   `S-k (AC-m)` valent une relance, puis un échec `missing_output`. Un `## Découpage`
   qui liste des features (`- titre — demande — modules`) devient un projet
   « Découpage de « … » » (une seule fois, même si tu refais /specs), le run
-  courant garde sa part. /impl : un `## Reste` non vide ouvre un run de suite
-  « Suite de « … » » sur les mêmes modules (une seule fois).
+  courant garde sa part. /impl : un diff vide n'est pas une panne si `## Fait`
+  dit, critère par critère, où le code est déjà livré (par un run précédent) ; la
+  revue en juge. Sans diff ni `## Fait`, c'est un échec `missing_output`. Un
+  `## Reste` non vide ouvre un run de suite « Suite de « … » » sur les mêmes
+  modules (une seule fois), sauf si /impl n'a rien changé : la suite referait la
+  même chose. Un `## Reste` qui commence par « Rien », « Aucun » ou « Néant » suivi
+  de `:`, d'un point, d'un tiret ou de « à … » ne demande rien.
 - **Interruption.** Une étape coupée (échéance, fournisseur, réseau, runner mort)
   laisse un commit `wip(<étape>): interrompu (tentative N)` et la tentative
   suivante reçoit la consigne de repartir de `git diff <base>` et de l'artefact,
@@ -611,18 +618,39 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
 - **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
   non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
   preuve.
-- **Merge.** Rebase sur `main`, squash, puis push sur le distant. Un push refusé par le
+- **Merge.** Rebase sur `main`, squash, puis push sur le distant. Si le rebase bute (une
+  branche qui a déjà fusionné `main` en revue rejoue au rebase ses conflits résolus),
+  `main` est fusionnée dans la branche ; seul un conflit nouveau arrête le merge. Un push refusé par le
   dépôt (branche protégée, droit manquant) n'est **pas** un merge : le run attend
   l'humain avec la raison (« push refusé : … », événement `push_failed`) ; une
   coupure réseau est réessayée trois fois avant. En mode `gh`, la PR est posée en
   `--auto` et le run reste `merging` jusqu'à ce que GitHub l'ait fusionnée. Un merge
   arrêté (conflit, suite rouge, fusion non constatée) repart seul après 5, 15 puis
-  60 min (`review.mergeRetries`). Mergée mais mauvaise ? `POST /v1/runs/{id}/revert` :
+  60 min (`review.mergeRetries`). Au plafond, le run t'attend à son étape : le valider
+  ou le relancer le renvoie en revue (conflit) ou en correction (suite rouge), avec de
+  nouvelles tentatives, au lieu de rejouer le même merge. Mergée mais mauvaise ? `POST /v1/runs/{id}/revert` :
   le commit squash est défait sur `main` (poussé, ou PR de revert en mode `gh`),
   événement `reverted`, et un run de suite reprend la feature. L'oracle garde de chaque
   feature mergée son résumé, ses modules, ses risques résiduels, ce que la revue n'a pas
   vérifié et ses décisions — celles prises seules marquées « (choix de l'agent, non
   validé) ».
+- **Pilote d'un audit** (`pilot.ts`). Une fois un audit lancé, chaque run de son
+  projet, de ses runs de suite et de ses projets de découpage qui attend l'humain est
+  d'abord confié à une session (`pilot.tier`) qui a le contexte de l'audit : son
+  focus, la proposition d'origine, le verdict, `specs.md`, `impl.md`, les décisions
+  du run et l'état des autres features. Elle lit le HEAD du run dans un worktree
+  détaché, en lecture seule, et rend sa décision par l'outil hôte `pilot_act`, que le
+  service applique par le geste de l'humain, sous l'auteur `pilote:<audit>` et à la
+  révision lue. Specs, verdict et arbitrage entre revue et correction : `approve`,
+  `refuse` (la raison devient la consigne), `cancel` ou `defer`. Panne (échecs
+  répétés, merge arrêté ou impossible) : `retry` avec une consigne pour l'étape
+  relancée, `cancel` ou `defer`. Restent à l'humain, sans session : les escalades
+  (`schema`, `public_api`, `deletion`), les specs qui portent un geste irréversible,
+  le budget dépassé, et toute attente d'un run sur lequel le pilote a déjà fait
+  `pilot.actionsPerRun` gestes. Chaque issue est un événement `pilot` sur la frise,
+  gardé avec la révision traitée : une attente ne se pilote qu'une fois. Seul un
+  `defer` notifie. Un refus du pilote n'entre pas dans l'oracle comme une correction
+  humaine.
 
 ## La mémoire du projet
 
@@ -954,7 +982,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
@@ -983,6 +1011,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Validation des specs** (ajout) | `machine.ts`, `gestures.ts` | `review.specsGate` (`"auto"` par défaut) : après /specs, le run attend l'humain — toujours (`true`), jamais (`false`), ou seulement si les specs découpent, laissent les modules vides, touchent à l'irréversible, ouvrent un projet ou laissent un désaccord avec le contradicteur (`"auto"`, raisons dans celle du run) —, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
 | **Contradicteur** (ajout) | `challenge.ts`, `steps.ts`, `runner-session.ts` | En fin de /req et /specs : l'auteur rend son runner (un run, un slot, un runner), un runner neuf (`<unité>-contradicteur`, arrêtée aussi à la reprise après redémarrage) relit l'artefact avec `progress`, `oracle_recall` et `challenge_report` seulement ; ses écritures sont jetées (`resetTo` sur le commit de l'auteur, artefacts remis depuis la base). L'auteur répond sur un runner neuf (`<unité>-reponse`). Les passages sont gardés en base (`_contradicteur.json`, invisible) et rendus dans `contradicteur.md`, que seul le service écrit. |
 | **/audit** (ajout) | `audits.ts` | Un runner lit `main` dans un worktree détaché, sans rien commiter, et rend jusqu'à 10 propositions (faiblesse ou feature, modules, `evidence` fichier:ligne obligatoire pour une faiblesse, `dependsOn` par titre — résolu en index, refusé s'il est inconnu, se cite ou boucle —, `impact`, `effort`) par l'outil hôte `audit_propose` ; l'appel est refusé avec la raison tant que ces règles ne tiennent pas. Le prompt reçoit les runs ouverts du dépôt et les souvenirs « Feature mergée » (rappel `feature mergée <dépôt>`) pour ne pas proposer de doublon. Une analyse qui échoue (runner, réseau, échéance) repart une fois, runner et worktree neufs, avant `failed` ; pas quand le modèle a répondu sans proposer. L'humain choisit : les propositions retenues partent en projet, planifié comme un /project, dans l'ordre topologique de `dependsOn`. |
+| **Pilote d'un audit** (ajout) | `pilot.ts`, `machine.ts` (`humanWaitOf`), `gestures.ts` | Un audit lancé pilote les runs qui en descendent (son projet, puis les `follow_up` et `split` du journal). Un run `awaiting_human` de cette lignée, à une révision pas encore traitée, part dans une session (une à la fois par audit, même slot runner et même plafond journalier que les audits) qui rend `pilot_act` ; le geste passe par `HumanLoop` avec `{by: "pilote:<audit>", rev, pilot: true}` : 412 ou 409 si l'humain a agi entre-temps, et rien n'est écrit. Les gestes permis dépendent de l'attente lue dans la raison du run (`humanWaitOf`). Un geste du pilote ne va pas dans l'oracle comme une correction humaine. |
 | **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), meetings, profil versionné. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
