@@ -52,7 +52,7 @@ import {
   takeSnapshot,
 } from "../../omp-chrome/src/lib/snapshot.ts";
 import { sha256Hex } from "../../omp-chrome/src/lib/sha256.ts";
-import { transcribe, transcriptionRequest, validateSttUrl } from "../../omp-chrome/src/lib/stt.ts";
+import { checkStt, transcribe, transcriptionRequest, validateSttUrl } from "../../omp-chrome/src/lib/stt.ts";
 import { hostOf, isExcludedHost, parseExcludedSites, stripUrl } from "../../omp-chrome/src/lib/url.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
@@ -692,6 +692,43 @@ test("poste-extension/AC-9 : un segment part en multipart à l'oMLX local (file,
     assert.equal(calls.length, before, `${remote} : aucun appel`);
   }
   assert.deepEqual(validateSttUrl("http://[::1]:8000/"), { ok: true, url: "http://[::1]:8000" });
+});
+
+test("poste-extension/AC-20 : la base OpenAI d'oMLX (…/v1) vise la bonne route, et un oMLX mal réglé est refusé avant le meeting", async () => {
+  // La base copiée du tableau de bord d'oMLX : sans normalisation, `/v1/v1/…` rendait un 404
+  // non journalisé et le meeting finissait à 0 segment.
+  assert.deepEqual(validateSttUrl("http://127.0.0.1:8000/v1/"), { ok: true, url: "http://127.0.0.1:8000" });
+  assert.deepEqual(validateSttUrl("http://localhost:9000/omlx/v1"), { ok: true, url: "http://localhost:9000/omlx" });
+  const audio = new Blob([new Uint8Array([1])], { type: "audio/webm" });
+  const stt = { url: "http://127.0.0.1:8000/v1", key: "cle", model: "mlx-community/whisper-large-v3-turbo-4bit" };
+  assert.equal(transcriptionRequest(stt, audio, "s.webm").url, "http://127.0.0.1:8000/v1/audio/transcriptions");
+
+  const served = { data: [{ id: "LFM2.5-1.2B" }, { id: "whisper-large-v3-turbo-4bit" }, { id: "bge-m3" }] };
+  const seen: { url: string; auth: unknown }[] = [];
+  const omlx = (status: number, body: unknown = served) =>
+    (async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), auth: (init?.headers as Record<string, string> | undefined)?.Authorization });
+      return new Response(JSON.stringify(body), { status });
+    }) as typeof fetch;
+
+  // oMLX sert le modèle sous son nom de dossier ; l'identifiant préfixé de l'organisation vaut aussi.
+  await checkStt(stt, omlx(200));
+  await checkStt({ ...stt, model: "whisper-large-v3-turbo-4bit" }, omlx(200));
+  assert.deepEqual(seen[0], { url: "http://127.0.0.1:8000/v1/models", auth: "Bearer cle" });
+
+  await assert.rejects(
+    checkStt({ ...stt, model: "mlx-community/whisper-large-v3-turbo" }, omlx(200)),
+    /ne sert pas le modèle « mlx-community\/whisper-large-v3-turbo » ; modèles servis : whisper-large-v3-turbo-4bit$/,
+  );
+  await assert.rejects(checkStt({ ...stt, key: "" }, omlx(401, {})), /refuse la clé d'API \(401\)/);
+  await assert.rejects(checkStt(stt, omlx(404, {})), /pas d'API oMLX à http:\/\/127\.0\.0\.1:8000 \(404\)/);
+  const down = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as typeof fetch;
+  await assert.rejects(checkStt(stt, down), /oMLX injoignable à http:\/\/127\.0\.0\.1:8000 \(Failed to fetch\)/);
+  const calls = seen.length;
+  await assert.rejects(checkStt({ ...stt, url: "http://192.168.1.20:8000" }, omlx(200)), /ne quitte jamais le Mac/);
+  assert.equal(seen.length, calls, "adresse distante : aucun appel");
 });
 
 function build(out: string, cwd = ROOT) {

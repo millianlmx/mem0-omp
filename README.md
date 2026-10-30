@@ -253,9 +253,14 @@ l'extension non empaquetée**, et choisis le dossier décompressé (ou
 `omp1:…` et autorise le micro.
 
 La transcription se fait sur ton Mac, par [oMLX](https://github.com/jundot/omlx)
-avec un modèle Whisper chargé (par exemple `whisper-large-v3-turbo`). L'extension
-refuse toute adresse de transcription qui n'est pas locale. L'audio ne quitte jamais
-le Mac, seul le texte part au serveur. Sur l'onglet du meeting, ouvre l'extension
+avec un modèle Whisper chargé. Dans les réglages de l'extension, donne l'adresse
+d'oMLX (la base `http://127.0.0.1:8000/v1` de son tableau de bord convient), sa clé
+d'API s'il en exige une, et le modèle tel que le liste `GET /v1/models` (par exemple
+`whisper-large-v3-turbo-4bit`). **Enregistrer** vérifie qu'oMLX répond, accepte la
+clé et sert ce modèle ; sinon, **Transcrire cet onglet** refuse de démarrer et dit
+quoi corriger. Une erreur en cours de meeting passe l'icône de l'extension à `ERR`.
+L'extension refuse toute adresse de transcription qui n'est pas locale. L'audio ne
+quitte jamais le Mac, seul le texte part au serveur. Sur l'onglet du meeting, ouvre l'extension
 puis **Transcrire cet onglet**. Ta voix (le micro) et celle des autres (l'onglet)
 sont transcrites séparément dès l'activation, et c'est à toi de prévenir les
 participants.
