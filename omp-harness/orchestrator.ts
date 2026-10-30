@@ -19,6 +19,7 @@
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
+import { AuditPilot } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
@@ -111,6 +112,8 @@ export class Orchestrator {
 
   /** Les audits de dépôt : même scheduler, mêmes runners, propositions lancées en projet. */
   readonly audits: Auditor;
+  /** Le pilote des audits lancés : il tranche à la place de l'humain ce qui est réversible. */
+  readonly pilot: AuditPilot;
   /** Le rêve de la mémoire : consolidation des faits d'un dépôt au repos, par un runner. */
   readonly dreams: Dreamer;
   /** Le poste de travail : observation, file d'actions de l'extension, meetings, profil. */
@@ -147,6 +150,11 @@ export class Orchestrator {
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
+    this.pilot = new AuditPilot(this.#ctx, {
+      validate: (runId, approve, reason, actor) => this.#human.validate(runId, approve, reason, actor),
+      retry: (runId, actor, instructions) => this.#human.retry(runId, actor, instructions),
+      cancel: (runId, actor) => this.#human.cancel(runId, actor),
+    });
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
@@ -254,6 +262,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.pilot.stop();
     await this.dreams.stop();
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
@@ -304,6 +313,7 @@ export class Orchestrator {
       });
     }
     await this.audits.recover();
+    await this.pilot.recover();
     await this.dreams.recover();
     await this.workstationAgent.recover();
   }
@@ -351,6 +361,11 @@ export class Orchestrator {
       this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
+    try {
+      this.pilot.tick();
+    } catch (err) {
+      this.#ctx.log(`pilote des audits : ${err instanceof Error ? err.message : String(err)}`);
+    }
     try {
       this.workstationAgent.tick();
     } catch (err) {

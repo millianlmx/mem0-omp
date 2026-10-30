@@ -42,6 +42,7 @@ export const TIMELINE_EVENTS: ReadonlySet<string> = new Set([
   "budget_exceeded",
   "run_failed",
   "recovered",
+  "pilot",
 ]);
 
 /** Les différences d'un fichier rendues au plus (au-delà, coupées). */
@@ -55,6 +56,7 @@ function summaryOf(event: EventRow): string | null {
   if (event.type === "model_failover")
     return [text(payload.from), text(payload.to)].filter(Boolean).join(" → ") || null;
   if (event.type === "merged") return text(payload.sha)?.slice(0, 12) ?? null;
+  if (event.type === "pilot") return [text(payload.action), text(payload.reason)].filter(Boolean).join(" — ") || null;
   if (event.type === "challenge") {
     if (payload.status === "failed") return `/${String(payload.step)} : contradicteur en échec`;
     const disputed = Array.isArray(payload.disputes) ? payload.disputes.map(String) : [];

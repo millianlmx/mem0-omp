@@ -470,6 +470,7 @@
 "Pas encore de relevé : le serveur en prend un toutes les %lld s." = "No sample yet: the server takes one every %lld s.";
 "Pertinence" = "Relevance";
 "Pilotage" = "Control";
+"Pilote de l’audit" = "Audit pilot";
 "Pipelines" = "Pipelines";
 "Plus" = "More";
 "Plusieurs corrections" = "Several fixes";

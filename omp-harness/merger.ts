@@ -122,10 +122,17 @@ export class Merger {
         return;
       }
       if (main !== run.baseSha) {
+        // Un rebase qui bute ne vaut pas conflit : une branche qui porte déjà une fusion de
+        // main (conflits résolus en revue) rejoue au rebase ses commits d'avant la fusion,
+        // donc les mêmes conflits, à chaque tentative. Une fusion de main ne rejoue rien :
+        // elle ne bute que sur un conflit nouveau.
         const rebased = await git.rebase(worktree, main);
+        const updated = rebased.ok
+          ? rebased
+          : await git.mergeCommit(worktree, main, `merge: main dans ${run.branch} (avant merge)`);
         // Conflit : retour en revue, qui fusionne main et fait résoudre les conflits.
-        if (!rebased.ok)
-          return this.#stopped(run, "review", `conflit avec main avant merge : ${rebased.conflicts.join(", ")}`);
+        if (!updated.ok)
+          return this.#stopped(run, "review", `conflit avec main avant merge : ${updated.conflicts.join(", ")}`);
         await this.#ctx.remapCheckpoints(run.id, worktree, main);
         run = store.updateRun(run.id, { baseSha: main });
         const result = await heavy.run({

@@ -37,7 +37,7 @@ import type { HeavyResult } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
-import { stepTier } from "./machine.ts";
+import { IRREVERSIBLE_GATE, stepTier } from "./machine.ts";
 import type { NewProjectInput } from "./orchestrator.ts";
 import { parseModulesSection } from "./planner.ts";
 import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
@@ -153,10 +153,14 @@ export function parseSplitSection(specsMd: string): SplitFeature[] {
   return features;
 }
 
-/** Le `## Reste` d'impl.md : ce que l'implémentation n'a pas fait, ou `""`. */
+/**
+ * Le `## Reste` d'impl.md : ce que l'implémentation n'a pas fait, ou `""`. Une section
+ * qui commence par « rien », « aucun » ou « néant » (seul, ou suivi de `:`, `.`, un tiret
+ * ou « à … » : « Rien : tout est livré », « Rien à livrer ») ne demande rien.
+ */
 export function parseRemaining(implMd: string): string {
   const body = sectionBody(implMd, /^reste/i) ?? "";
-  return /^(aucun|rien|néant|n[ée]ant|-|—)\s*\.?$/i.test(body) ? "" : body;
+  return /^(?:(?:aucune?|rien|n[ée]ant)(?:\s*$|\s*[.:—–-]|\s+à\s)|[-—]\s*$)/i.test(body) ? "" : body;
 }
 
 /** Les identifiants `P-n` en tête de ligne d'un texte, dans l'ordre, dédoublonnés. */
@@ -203,7 +207,7 @@ export function gateReasons(run: Pick<RunRow, "projectId" | "projectOrder">, spe
   return [
     ...(parseSplitSection(specsMd).length > 0 ? ["découpage proposé"] : []),
     ...(parseModulesSection(specsMd).length === 0 ? ["modules vides"] : []),
-    ...(irreversible !== null ? [`geste irréversible (${irreversible})`] : []),
+    ...(irreversible !== null ? [`${IRREVERSIBLE_GATE} (${irreversible})`] : []),
     ...(run.projectId !== null && run.projectOrder === 0 ? ["première feature d'un projet"] : []),
   ];
 }
@@ -705,8 +709,12 @@ export class StepExecutor {
       const unresolved = await this.#unresolvedConflicts(worktree);
       if (unresolved.length > 0) return `des marqueurs de conflit restent dans ${unresolved.join(", ")}`;
     }
-    if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0)
-      return "aucun fichier du dépôt n'a changé";
+    // Un /impl sans diff n'est pas une panne quand le code est déjà là (livré par un run
+    // précédent) : `## Fait` le dit, critère par critère, et la revue en juge.
+    if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0) {
+      if ((sectionBody(content ?? "", /^fait/i) ?? "") === "")
+        return "aucun fichier du dépôt n'a changé, et `## Fait` d'impl.md ne dit pas où chaque critère est déjà livré";
+    }
     if (
       step === "fix" &&
       !dirtyBefore &&
@@ -737,7 +745,7 @@ export class StepExecutor {
     }
     let gate: string[] | null = null;
     if (step === "specs") gate = await this.#closeSpecs(run, stepRow.id);
-    if (step === "impl") await this.#closeImpl(run);
+    if (step === "impl") await this.#closeImpl(run, worktree);
     if (await git.mergeInProgress(worktree))
       await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
     else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
@@ -845,11 +853,19 @@ export class StepExecutor {
     ];
   }
 
-  /** Fin de /impl : un `## Reste` non vide devient un run de suite. */
-  async #closeImpl(run: RunRow): Promise<void> {
-    const { store } = this.#ctx;
+  /**
+   * Fin de /impl : un `## Reste` non vide devient un run de suite — sauf si cette
+   * implémentation n'a rien changé : une suite referait la même chose (un reste qui exige
+   * un outillage absent du runner se rouvrirait sans fin). La revue et le pilote le voient.
+   */
+  async #closeImpl(run: RunRow, worktree: string): Promise<void> {
+    const { store, git } = this.#ctx;
     const remaining = parseRemaining(store.getArtifact(run.id, "impl.md") ?? "");
     if (remaining === "") return;
+    if (run.baseSha !== null && (await git.touchedFiles(worktree, run.baseSha)).length === 0) {
+      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de run de suite pour son « ## Reste »`);
+      return;
+    }
     const alreadyFollowed = store.eventsSince(0, run.id).some((event) => event.type === "follow_up");
     if (alreadyFollowed) return;
     const followUp = await this.#hooks.followUp(

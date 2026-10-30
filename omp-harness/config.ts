@@ -66,6 +66,7 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "budget_exceeded",
   "daily_budget_reached",
   "workstation_approval",
+  "pilot",
 ];
 
 /**
@@ -309,6 +310,12 @@ export type HarnessConfig = {
    * oracle, rien.
    */
   dreams: { checkMinutes: number | null; minFacts: number; maxDelayHours: number; tier: Tier };
+  /**
+   * Le pilote des audits (pilot.ts) : chaque run d'un audit lancé qui attend l'humain est
+   * d'abord confié à une session sur `tier`, au plus `actionsPerRun` fois par run (`0` :
+   * pilote coupé) ; au-delà, l'humain.
+   */
+  pilot: { actionsPerRun: number; tier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
   /**
@@ -440,6 +447,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     memory: { runnerMode: true },
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
+    pilot: { actionsPerRun: 3, tier: "heavy" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true },
     health: { tickStaleSec: 120, minFreeMiB: 1024 },
@@ -591,6 +599,10 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(typeof dreams.maxDelayHours === "number" && dreams.maxDelayHours > 0))
     fail("dreams.maxDelayHours : heures > 0");
   if (!(TIERS as readonly string[]).includes(dreams.tier)) fail(`dreams.tier : tier inconnu (${TIERS.join(" | ")})`);
+  if (!(Number.isInteger(config.pilot.actionsPerRun) && config.pilot.actionsPerRun >= 0))
+    fail("pilot.actionsPerRun : entier ≥ 0");
+  if (!(TIERS as readonly string[]).includes(config.pilot.tier))
+    fail(`pilot.tier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
   for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];

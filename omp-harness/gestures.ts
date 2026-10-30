@@ -10,17 +10,20 @@
 //   tiennent dans UNE transaction : un arrêt au milieu ne laisse rien à moitié fait.
 // L'auteur de chaque geste est gardé (`by`) dans la base et dans le journal.
 import type { Actor, HarnessContext } from "./context.ts";
-import type { DecisionRow, EscalationRow, RunRow } from "./db.ts";
+import type { DecisionRow, EscalationRow, RunPatch, RunRow } from "./db.ts";
 import { checkpointMessage, dependentsOf } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
 import type { StepKind } from "./machine.ts";
 import {
   CANCELLABLE,
+  MERGE_CAP,
   afterHumanValidation,
   afterSpecsValidation,
   cancelled,
   isTerminal,
+  mergeStopOf,
   resumeAfterEscalations,
+  resumeAfterMergeStop,
   resumeAtCheckpoint,
   retried,
   reworkAfterReversal,
@@ -56,6 +59,11 @@ const TIMEOUT_REASON = "échéance de";
 
 function byOf(actor: Actor): { by?: string } {
   return actor.by ? { by: actor.by } : {};
+}
+
+/** Qui tranche, dans la raison écrite sur le run. */
+function whoOf(actor: Actor): string {
+  return actor.pilot ? "le pilote de l'audit" : "l'humain";
 }
 
 function list(seqs: readonly number[]): string {
@@ -589,31 +597,43 @@ export class HumanLoop {
     const specs = run.step === "specs";
     if (!approve) {
       if (why === "") throw new HarnessError(400, "un refus porte sa raison");
-      await oracle.retain(
-        this.#ctx.repo(run.repo).scope,
-        `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`,
-        ["harness", "correction"],
-      );
+      // Un refus du pilote n'est pas une correction humaine : l'oracle ne le rappellera pas comme tel.
+      if (!actor.pilot)
+        await oracle.retain(
+          this.#ctx.repo(run.repo).scope,
+          `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`,
+          ["harness", "correction"],
+        );
     }
     const current = this.#ctx.run(runId);
     const cursor = { step: current.step ?? "review", fixes: current.fixes, attempts: 0 };
+    const who = whoOf(actor);
+    // Un merge arrêté au plafond : le valider rejouerait le même merge, qui buterait pareil.
+    const stop = mergeStopOf(current);
     const transition =
-      current.step === "specs"
-        ? afterSpecsValidation(cursor, approve, why)
-        : afterHumanValidation(cursor, approve, why);
-    const patch =
-      !approve && current.step !== "specs"
-        ? { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null }
-        : {};
+      approve && stop !== null
+        ? resumeAfterMergeStop({ ...cursor, step: stop }, who)
+        : current.step === "specs"
+          ? afterSpecsValidation(cursor, approve, why, who)
+          : afterHumanValidation(cursor, approve, why, who);
+    const patch: RunPatch =
+      approve && stop !== null
+        ? this.#mergeStopPatch(current)
+        : !approve && current.step !== "specs"
+          ? { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null }
+          : {};
     const moved = store.transaction(() => {
       const next = this.#ctx.transition(current, transition, ["awaiting_human"], { patch, actor: { by: actor.by } });
-      if (next && !approve)
+      if (next && approve && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(current, stop));
+      if (next && !approve) {
+        const author = who.charAt(0).toUpperCase() + who.slice(1);
         store.addInstructions(
           runId,
           current.step === "specs"
-            ? `L'humain a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`
-            : `L'humain a refusé le verdict : ${why}`,
+            ? `${author} a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`
+            : `${author} a refusé le verdict : ${why}`,
         );
+      }
       return next;
     });
     if (!moved) throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
@@ -621,20 +641,46 @@ export class HumanLoop {
     return this.#ctx.run(runId);
   }
 
-  /** Relance un run échoué ou en attente : même étape, compteur de tentatives à zéro, tout de suite. */
-  retry(runId: string, actor: Actor): Promise<RunRow> {
+  /** La cause qui a arrêté le merge, sans la mention du plafond. */
+  #mergeStopReason(run: RunRow): string {
+    return (run.reason ?? "").replace(` — ${MERGE_CAP}`, "");
+  }
+
+  /** Un run repris après un merge arrêté : de nouvelles tentatives, la cause en bloquant (comme le merger). */
+  #mergeStopPatch(run: RunRow): RunPatch {
+    return {
+      mergeRetries: 0,
+      verdict: run.verdict ? { ...run.verdict, blockers: [this.#mergeStopReason(run)] } : null,
+    };
+  }
+
+  #mergeStopInstructions(run: RunRow, step: "review" | "fix"): string {
+    return `Le merge a été arrêté : ${this.#mergeStopReason(run)}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`;
+  }
+
+  /**
+   * Relance un run échoué ou en attente : même étape, compteur de tentatives à zéro, tout
+   * de suite. `instructions` : la consigne que l'étape relancée recevra.
+   */
+  retry(runId: string, actor: Actor, instructions = ""): Promise<RunRow> {
     return this.#serial(runId, async () => {
       const { store } = this.#ctx;
       const run = this.#fresh(runId, actor);
       if (run.state !== "failed" && run.state !== "awaiting_human")
         throw new HarnessError(409, `seul un run échoué ou en attente se relance (état ${run.state})`);
+      const stop = mergeStopOf(run);
       const moved = store.transaction(() => {
         const next = this.#ctx.transition(
           run,
-          retried({ step: run.step ?? "review", fixes: run.fixes, attempts: run.attempts }),
+          retried({ step: stop ?? run.step ?? "review", fixes: run.fixes, attempts: run.attempts }, whoOf(actor)),
           ["failed", "awaiting_human"],
-          { patch: { notBefore: null, lastFailCause: null }, actor: { by: actor.by } },
+          {
+            patch: { notBefore: null, lastFailCause: null, ...(stop !== null ? this.#mergeStopPatch(run) : {}) },
+            actor: { by: actor.by },
+          },
         );
+        if (next && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(run, stop));
+        if (next && instructions.trim() !== "") store.addInstructions(runId, instructions.trim());
         if (next) this.#ctx.event("retried", runId, { from: run.state, step: next.step, ...byOf(actor) });
         return next;
       });

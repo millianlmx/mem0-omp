@@ -81,6 +81,16 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         click: null,
       };
     }
+    // Le pilote d'un audit ne notifie que ce qu'il laisse à l'humain : ses autres gestes se lisent sur la frise.
+    case "pilot":
+      if (payload.action !== "defer") return null;
+      return {
+        title: `Le pilote te laisse la main — ${feature}`,
+        body: short(text(payload.reason, "décision réservée à l'humain")),
+        priority: 4,
+        tags: ["raising_hand"],
+        click: null,
+      };
     case "run_failed":
       return {
         title: `Run échoué — ${feature}`,

@@ -63,6 +63,7 @@
   "challenge": { "steps": ["req", "specs"], "tier": "heavy" },
   "oracle": { "url": "http://127.0.0.1:8321", "token": null },
   "dreams": { "checkMinutes": 60, "minFacts": 5, "maxDelayHours": 24, "tier": "standard" },
+  "pilot": { "actionsPerRun": 3, "tier": "heavy" },
   "events": { "retentionDays": 30 },
   "monitoring": { "runBudgetUsd": null, "pauseOnBudget": false, "dailyBudgetUsd": null },
   "notify": {
@@ -75,7 +76,8 @@
       "project_done",
       "merged",
       "budget_exceeded",
-      "daily_budget_reached"
+      "daily_budget_reached",
+      "pilot"
     ]
   },
   "memory": { "runnerMode": true },

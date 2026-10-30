@@ -239,7 +239,8 @@ test("harness-machine/AC-8 : toute transition passe par la table — le merge, l
   const later = afterMergeStopped({ fixes: 1, mergeRetries: 1 }, "review", "conflit", { mergeRetries: 2 }, 0);
   assert.equal(later.notBefore, MERGE_BACKOFF_MS[1]);
   const capped = afterMergeStopped({ fixes: 2, mergeRetries: 2 }, "review", "conflit", { mergeRetries: 2 }, 0);
-  assert.deepEqual([capped.state, capped.step], ["awaiting_human", null]);
+  // Au plafond, l'étape est gardée : la validation ou la relance y reprend.
+  assert.deepEqual([capped.state, capped.step], ["awaiting_human", "review"]);
   assert.match(capped.reason, /plafond de tentatives de merge/);
   assert.deepEqual([afterMerged({ fixes: 1 }).state, afterMerged({ fixes: 1 }).step], ["merged", null]);
   assert.match(afterMergeFailed({ fixes: 0 }, "push refusé").reason, /merge impossible : push refusé/);

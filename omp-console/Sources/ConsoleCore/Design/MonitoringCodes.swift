@@ -29,6 +29,7 @@ public enum MonitoringCodes {
     public static let reverted = "reverted"
     public static let failed = "run_failed"
     public static let recovered = "recovered"
+    public static let pilot = "pilot"
 
     // MARK: - Alertes
 

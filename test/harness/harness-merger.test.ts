@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { execProcess } from "../../omp-harness/proc.ts";
 import type { Exec, ProcResult } from "../../omp-harness/proc.ts";
 import type { RunRow } from "../../omp-harness/db.ts";
-import { fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
+import { commitOnMain, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -295,4 +295,88 @@ test("harness-merger/AC-6 : en mode gh, une PR fusionnée par GitHub pendant l'a
   } finally {
     await world.orchestrator.stop();
   }
+});
+
+test("harness-merger/AC-7 : une branche qui a déjà fusionné main (conflit résolu en revue) merge quand main avance ailleurs — le rebase qui rejouerait le conflit cède à une fusion", async () => {
+  const repo = harnessRepo();
+  const world = fakeWorld({}, { repo });
+  const run = await mergingRun(world, "deja-fusionne");
+  const worktree = run.worktree as string;
+  const shared = path.join(worktree, "src", "api", "routes.ts");
+  // La branche et main modifient le même fichier ; la revue a fusionné main et résolu le conflit.
+  fs.writeFileSync(shared, "// côté branche\n");
+  await world.deps.git.commitAll(worktree, "feat: routes côté branche");
+  const conflicting = commitOnMain(repo, "src/api/routes.ts", "// côté main\n");
+  await world.deps.git.mergeNoCommit(worktree, conflicting);
+  fs.writeFileSync(shared, "// résolu\n");
+  await world.deps.git.commitAll(worktree, "merge: main dans harness/deja-fusionne (conflits résolus en revue)");
+  world.store.updateRun(run.id, { baseSha: conflicting });
+  // Puis main avance sur un autre fichier : un rebase rejouerait « côté branche » sur « côté main ».
+  commitOnMain(repo, "docs/autre.md", "# autre\n");
+  await world.orchestrator.start();
+  try {
+    await waitFor(
+      () => world.store.getRun(run.id)?.state !== "merging",
+      () => `${world.store.getRun(run.id)?.state} — ${world.store.getRun(run.id)?.reason}`,
+    );
+    const done = world.store.getRun(run.id);
+    assert.equal(done?.state, "merged", done?.reason ?? "");
+    assert.equal(done?.mergeRetries, 0);
+    assert.equal(git(repo, "show", "main:src/api/routes.ts"), "// résolu");
+    assert.equal(git(repo, "show", "main:docs/autre.md"), "# autre");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-merger/AC-8 : valider ou relancer un run arrêté au plafond de ses merges le renvoie à l'étape qui lève la cause, tentatives remises à zéro — jamais le même merge", async () => {
+  const world = fakeWorld({});
+  const stopped = (id: string, step: "review" | "fix" | null, cause: string) => {
+    world.store.createRun({
+      id,
+      repo: "demo",
+      slug: id,
+      title: `Feature ${id}`,
+      request: "x",
+      branch: `harness/${id}`,
+      state: "awaiting_human",
+      step,
+    });
+    world.store.updateRun(id, {
+      mergeRetries: 3,
+      reason: `${cause} — plafond de tentatives de merge atteint`,
+      verdict: {
+        risk: "low",
+        summary: "ok",
+        blockers: [],
+        risks: [],
+        files: [],
+        unverified: [],
+        criteria: [],
+        confidence: "strong",
+      },
+    });
+  };
+  stopped("conflit", "review", "conflit avec main avant merge : src/api/routes.ts");
+  // Une ligne d'avant le correctif : l'étape n'était pas gardée, elle se lit dans la raison.
+  stopped("rouge", null, "suite complète fail après rebase sur main");
+  stopped("relance", "review", "conflit avec main avant merge : src/db/schema.ts");
+
+  await world.orchestrator.validate("conflit", true, "", { by: "admin" });
+  const conflict = world.store.getRun("conflit");
+  assert.deepEqual([conflict?.state, conflict?.step, conflict?.mergeRetries], ["queued", "review", 0]);
+  assert.match(conflict?.reason ?? "", /le merge arrêté repart par \/review/);
+  assert.deepEqual(conflict?.verdict?.blockers, ["conflit avec main avant merge : src/api/routes.ts"]);
+  assert.match(
+    world.store.instructions("conflit") ?? "",
+    /Le merge a été arrêté : conflit avec main.*Reprends la revue/,
+  );
+
+  await world.orchestrator.validate("rouge", true, "", { by: "admin" });
+  assert.deepEqual([world.store.getRun("rouge")?.state, world.store.getRun("rouge")?.step], ["queued", "fix"]);
+
+  await world.orchestrator.retry("relance", { by: "admin" });
+  const retried = world.store.getRun("relance");
+  assert.deepEqual([retried?.state, retried?.step, retried?.mergeRetries], ["queued", "review", 0]);
+  assert.match(world.store.instructions("relance") ?? "", /Le merge a été arrêté : conflit avec main/);
 });
