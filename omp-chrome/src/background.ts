@@ -29,7 +29,7 @@ import {
   sanitizeVisit,
   takeBatch,
 } from "./lib/observation.ts";
-import { validateSttUrl } from "./lib/stt.ts";
+import { checkStt } from "./lib/stt.ts";
 import { stripUrl } from "./lib/url.ts";
 import { loadSettings, saveSettings } from "./store.ts";
 
@@ -264,9 +264,14 @@ function startMeeting(request: { tabId: number; title: string; url: string }): P
     const settings = await loadSettings();
     if (settings.pairing === null)
       return { ok: false, error: "extension non appairée : collez le code omp1: dans les réglages" };
-    const stt = validateSttUrl(settings.stt.url);
-    if (!stt.ok) return { ok: false, error: `transcription : ${stt.error}` };
     if ((await readMeeting()) !== null) return { ok: false, error: "une transcription est déjà en cours" };
+    // Une adresse, une clé ou un modèle faux ne se verraient sinon qu'à chaque segment, dans
+    // ce popup, et le meeting finirait à « 0 segment transcrit » : on refuse d'emblée.
+    try {
+      await checkStt(settings.stt);
+    } catch (error) {
+      return { ok: false, error: `transcription impossible : ${message(error)} (réglages de l'extension)` };
+    }
     const startedAt = Date.now();
     let meetingId: string;
     try {
@@ -348,9 +353,13 @@ function stopMeeting(): Promise<Reply> {
   });
 }
 
+/** Une erreur de segment : gardée pour le popup et signalée sur l'icône, popup fermé. */
 async function meetingError(error: string): Promise<void> {
   const meeting = await readMeeting();
-  if (meeting !== null) await chrome.storage.session.set({ meeting: { ...meeting, error } });
+  if (meeting === null) return;
+  await chrome.storage.session.set({ meeting: { ...meeting, error } });
+  await chrome.action.setBadgeText({ text: "ERR" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#e65100" });
 }
 
 // ── Statut (popup) ────────────────────────────────────────────────────────

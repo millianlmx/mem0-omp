@@ -38,11 +38,13 @@
       <h2>Transcription locale (oMLX)</h2>
       <p class="muted">
         L'audio des meetings est transcrit sur ce Mac par oMLX ; il n'est jamais enregistré ni envoyé ailleurs,
-        seul le texte part au serveur. L'adresse doit donc être locale.
+        seul le texte part au serveur. L'adresse doit donc être locale ; la base copiée du tableau de bord d'oMLX
+        (<code>http://127.0.0.1:8000/v1</code>) convient. Enregistrer vérifie qu'oMLX répond, accepte la clé et sert
+        le modèle.
       </p>
       <label for="stt-url">Adresse d'oMLX</label>
       <input type="url" id="stt-url" placeholder="http://127.0.0.1:8000" spellcheck="false" />
-      <label for="stt-key">Clé d'API (facultative)</label>
+      <label for="stt-key">Clé d'API (celle des réglages d'oMLX, si elle en exige une)</label>
       <input type="password" id="stt-key" autocomplete="off" />
       <label for="stt-model">Modèle de transcription</label>
       <input type="text" id="stt-model" spellcheck="false" />

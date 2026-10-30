@@ -5,7 +5,7 @@ import { element } from "../dom.ts";
 import { harnessCall } from "../lib/harness.ts";
 import type { PopupStatus } from "../lib/messages.ts";
 import { decodePairing } from "../lib/pairing.ts";
-import { validateSttUrl } from "../lib/stt.ts";
+import { checkStt, validateSttUrl } from "../lib/stt.ts";
 import { parseExcludedSites } from "../lib/url.ts";
 import { ask, loadSettings, saveSettings } from "../store.ts";
 
@@ -138,9 +138,16 @@ element("stt-save", HTMLButtonElement).addEventListener("click", () => {
     return;
   }
   void (async () => {
-    await saveSettings({ stt: { url: checked.url, key: sttKey.value.trim(), model } });
-    say("stt-message", "Transcription enregistrée.", "success");
+    const stt = { url: checked.url, key: sttKey.value.trim(), model };
+    await saveSettings({ stt });
     await changed();
+    say("stt-message", "Transcription enregistrée ; vérification d'oMLX…");
+    try {
+      await checkStt(stt);
+      say("stt-message", "Transcription enregistrée : oMLX répond et sert ce modèle.", "success");
+    } catch (error) {
+      say("stt-message", `Enregistrée, mais les meetings ne seront pas transcrits : ${errorText(error)}.`, "error");
+    }
   })();
 });
 
