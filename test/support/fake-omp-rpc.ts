@@ -10,6 +10,7 @@
 // `poste-service`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
+//   { "parallel": [{ "tool", "args" }, …] }     appelle ces outils hôtes ensemble (un tour à plusieurs outils)
 //   { "error": { "message", "httpStatus" } }    termine le prompt en erreur
 //   { "sleep": 60000 }                          attend (une étape qui dure)
 //   { "frame": { "type": "…", … } }             émet une trame telle quelle (le direct de la session)
@@ -32,6 +33,7 @@ type Action = {
   error?: Record<string, unknown>;
   sleep?: number;
   frame?: Record<string, unknown>;
+  parallel?: { tool: string; args?: Record<string, unknown> }[];
 };
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
@@ -124,6 +126,13 @@ async function runPrompt(id: string, message: string): Promise<void> {
     if (action.tool) {
       const result = await callTool(action.tool, action.args ?? {});
       log({ kind: "tool", step: currentStep, tool: action.tool, result });
+    }
+    if (action.parallel) {
+      const calls = action.parallel;
+      const results = await Promise.all(calls.map((call) => callTool(call.tool, call.args ?? {})));
+      for (const [i, call] of calls.entries()) {
+        log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i] });
+      }
     }
     if (action.error) {
       out({

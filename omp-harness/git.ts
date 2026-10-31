@@ -8,6 +8,14 @@
 // `--git-dir` explicite, retrouvé dans le dossier d'administration du CLONE (que le
 // groupe ne peut pas écrire, `core.sharedRepository=0640`), et chaque appel force
 // hooks et fsmonitor à rien.
+//
+// Les gestes qui écrivent l'index ou HEAD d'un worktree (commit, reset, rebase, revert,
+// merge, worktree add/remove) passent un par un, dans une file par worktree : les
+// outils hôtes d'un runner tournent en parallèle (deux `decision` d'un même tour), et
+// la fin d'étape, la boucle humaine ou le merge écrivent dans le même worktree. Un
+// verrou `*.lock` tenu par un autre git est attendu (`LOCK_WAIT_MS`) ; plus vieux que
+// `STALE_LOCK_MS`, c'est le reste d'un git tué (SIGKILL au bout de `GIT_TIMEOUT_MS`,
+// arrêt du service) : retiré, journalisé, et le geste repart.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -34,10 +42,49 @@ const HARDENING = [
   "protocol.ext.allow=never",
 ];
 
+/** Le délai de tout git du service : au-delà, SIGKILL (proc.ts), et son verrou reste derrière lui. */
+const GIT_TIMEOUT_MS = 120_000;
+
+/** L'attente d'un verrou tenu par un git vivant, avant d'échouer. */
+export const LOCK_WAIT_MS = 10_000;
+
+/** Un verrou plus vieux n'a plus de git vivant derrière lui : bien au-delà de `GIT_TIMEOUT_MS`. */
+export const STALE_LOCK_MS = 5 * 60_000;
+
+/** La pause entre deux essais sur un verrou : doublée à chaque essai, plafonnée. */
+const LOCK_PAUSE_MS = 50;
+const LOCK_PAUSE_MAX_MS = 1000;
+
+/**
+ * Le verrou qu'un git a trouvé pris (`Unable to create '/….lock': File exists`), ou
+ * `null`. git écrit le chemin absolu ; un message traduit n'a pas « File exists » :
+ * le verrou encore là le dit.
+ */
+function heldLock(stderr: string): string | null {
+  const lock = /'(\/[^'\n]+\.lock)'/.exec(stderr)?.[1];
+  if (lock === undefined) return null;
+  return /File exists/.test(stderr) || fs.existsSync(lock) ? lock : null;
+}
+
+/** Ce que les tests remplacent : l'horloge et la pause des essais sur un verrou, le journal. */
+export type GitOptions = {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  log?: (line: string) => void;
+};
+
+/** Un rebase ou une fusion : la nouvelle HEAD, ou les fichiers en conflit (geste abandonné). */
+type Moved = { ok: true; head: string } | { ok: false; conflicts: string[] };
+
+/** Un revert de plage : son commit, ou les fichiers en conflit (geste abandonné). */
+type Reverted = { ok: true; sha: string } | { ok: false; conflicts: string[] };
+
 export class GitError extends Error {
   readonly result: ProcResult;
-  constructor(args: string[], result: ProcResult) {
-    super(`git ${args.join(" ")} : ${(result.stderr || result.stdout).trim().slice(0, 500)}`);
+  constructor(args: string[], result: ProcResult, detail: string | null = null) {
+    super(
+      `git ${args.join(" ")} : ${detail ? `${detail} — ` : ""}${(result.stderr || result.stdout).trim().slice(0, 500)}`,
+    );
     this.result = result;
   }
 }
@@ -65,10 +112,18 @@ export class Git {
   readonly #identity: GitIdentity;
   /** Worktree (chemin résolu) → son gitdir, lu côté clone au moment où on le reconnaît. */
   readonly #worktrees = new Map<string, string>();
+  /** Worktree → la fin de sa file de gestes en écriture. */
+  readonly #queues = new Map<string, Promise<void>>();
+  readonly #now: () => number;
+  readonly #sleep: (ms: number) => Promise<void>;
+  readonly #log: (line: string) => void;
 
-  constructor(exec: Exec, identity: GitIdentity) {
+  constructor(exec: Exec, identity: GitIdentity, options: GitOptions = {}) {
     this.#exec = exec;
     this.#identity = identity;
+    this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#log = options.log ?? ((line) => console.error(`[omp-harness] ${line}`));
   }
 
   #env(extra: Record<string, string> = {}): Record<string, string> {
@@ -86,6 +141,9 @@ export class Git {
       GIT_COMMITTER_NAME: this.#identity.authorName,
       GIT_COMMITTER_EMAIL: this.#identity.authorEmail,
       GIT_TERMINAL_PROMPT: "0",
+      // `status` (isDirty) ne prend pas le verrou de l'index au passage. `diff`, qui l'ignore, ne le
+      // prend qu'en le trouvant libre : un geste en écriture qui le croise l'attend (`#rawLocked`).
+      GIT_OPTIONAL_LOCKS: "0",
       ...extra,
     };
   }
@@ -94,7 +152,11 @@ export class Git {
   raw(cwd: string, args: string[], env: Record<string, string> = {}): Promise<ProcResult> {
     const gitDir = this.#worktrees.get(path.resolve(cwd));
     const located = gitDir ? ["--git-dir", gitDir, "--work-tree", cwd] : [];
-    return this.#exec("git", [...HARDENING, ...located, ...args], { cwd, env: this.#env(env), timeoutMs: 120_000 });
+    return this.#exec("git", [...HARDENING, ...located, ...args], {
+      cwd,
+      env: this.#env(env),
+      timeoutMs: GIT_TIMEOUT_MS,
+    });
   }
 
   /**
@@ -152,6 +214,82 @@ export class Git {
     return result.stdout.replace(/\n$/, "");
   }
 
+  /**
+   * `act` seul sur `worktree` : ses gestes en écriture passent un par un, dans l'ordre
+   * d'appel. La file est prise dès l'appel (avant tout `await`) : deux décisions
+   * numérotées dans l'ordre committent dans l'ordre.
+   */
+  async #exclusive<T>(worktree: string, act: () => Promise<T>): Promise<T> {
+    // Le gitdir côté clone une fois le worktree reconnu : deux écritures du même chemin n'ont qu'une file.
+    const key = this.#worktrees.get(path.resolve(worktree)) ?? path.resolve(worktree);
+    const before = this.#queues.get(key) ?? Promise.resolve();
+    let release = () => {};
+    const done = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = before.then(() => done);
+    this.#queues.set(key, tail);
+    try {
+      await before;
+      return await act();
+    } finally {
+      release();
+      if (this.#queues.get(key) === tail) this.#queues.delete(key);
+    }
+  }
+
+  /**
+   * Un git en écriture : un verrou tenu par un autre git est attendu (pause croissante,
+   * `LOCK_WAIT_MS` au plus) ; un verrou périmé est retiré, une fois par verrou. Rend la
+   * dernière issue, sans lever.
+   */
+  async #rawLocked(cwd: string, args: string[]): Promise<ProcResult> {
+    const start = this.#now();
+    const cleared = new Set<string>();
+    let pause = LOCK_PAUSE_MS;
+    for (;;) {
+      const result = await this.raw(cwd, args);
+      const lock = result.code === 0 ? null : heldLock(result.stderr);
+      if (lock === null) return result;
+      if (!cleared.has(lock) && this.#clearStale(lock)) {
+        cleared.add(lock);
+        continue;
+      }
+      const left = LOCK_WAIT_MS - (this.#now() - start);
+      if (left <= 0) return result;
+      await this.#sleep(Math.min(pause, left));
+      pause = Math.min(pause * 2, LOCK_PAUSE_MAX_MS);
+    }
+  }
+
+  /** `#rawLocked` qui DOIT réussir ; un verrou encore tenu au bout de l'attente est nommé dans l'erreur. */
+  async #runLocked(cwd: string, args: string[]): Promise<string> {
+    const result = await this.#rawLocked(cwd, args);
+    if (result.code === 0) return result.stdout.replace(/\n$/, "");
+    const lock = heldLock(result.stderr);
+    throw new GitError(
+      args,
+      result,
+      lock ? `verrou ${lock} tenu par un autre git au-delà de ${LOCK_WAIT_MS / 1000} s` : null,
+    );
+  }
+
+  /** Retire `lock` s'il est plus vieux que `STALE_LOCK_MS` ; `false` s'il est frais ou déjà parti. */
+  #clearStale(lock: string): boolean {
+    let age: number;
+    try {
+      age = this.#now() - fs.statSync(lock).mtimeMs;
+    } catch {
+      return false;
+    }
+    if (age <= STALE_LOCK_MS) return false;
+    fs.rmSync(lock, { force: true });
+    this.#log(
+      `verrou git périmé retiré (${Math.round(age / 1000)} s, aucun git du service ne dure plus de ${GIT_TIMEOUT_MS / 1000} s) : ${lock}`,
+    );
+    return true;
+  }
+
   revParse(cwd: string, ref: string): Promise<string> {
     return this.run(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
   }
@@ -178,26 +316,30 @@ export class Git {
       await this.trustWorktree(repo, worktree);
       return;
     }
-    // Le parent n'est pas inscriptible par le groupe : un runner ne peut ni renommer ni remplacer son worktree.
-    fs.mkdirSync(path.dirname(worktree), { recursive: true, mode: 0o2750 });
-    fs.chmodSync(path.dirname(worktree), 0o2750);
-    const exists =
-      branch !== null && (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
-    const args =
-      branch === null
-        ? ["worktree", "add", "--detach", worktree, base]
-        : exists
-          ? ["worktree", "add", worktree, branch]
-          : ["worktree", "add", "-b", branch, worktree, base];
-    await this.run(repo, args);
+    await this.#exclusive(worktree, async () => {
+      // Le parent n'est pas inscriptible par le groupe : un runner ne peut ni renommer ni remplacer son worktree.
+      fs.mkdirSync(path.dirname(worktree), { recursive: true, mode: 0o2750 });
+      fs.chmodSync(path.dirname(worktree), 0o2750);
+      const exists =
+        branch !== null && (await this.raw(repo, ["rev-parse", "--verify", `refs/heads/${branch}`])).code === 0;
+      const args =
+        branch === null
+          ? ["worktree", "add", "--detach", worktree, base]
+          : exists
+            ? ["worktree", "add", worktree, branch]
+            : ["worktree", "add", "-b", branch, worktree, base];
+      await this.#runLocked(repo, args);
+    });
     await this.excludeArtifacts(repo);
     await this.trustWorktree(repo, worktree);
   }
 
-  async removeWorktree(repo: string, worktree: string, branch: string | null): Promise<void> {
-    await this.raw(repo, ["worktree", "remove", "--force", worktree]);
-    this.#worktrees.delete(path.resolve(worktree));
-    if (branch) await this.raw(repo, ["branch", "-D", branch]);
+  removeWorktree(repo: string, worktree: string, branch: string | null): Promise<void> {
+    return this.#exclusive(worktree, async () => {
+      await this.#rawLocked(repo, ["worktree", "remove", "--force", worktree]);
+      this.#worktrees.delete(path.resolve(worktree));
+      if (branch) await this.#rawLocked(repo, ["branch", "-D", branch]);
+    });
   }
 
   /**
@@ -230,30 +372,37 @@ export class Git {
   }
 
   /** Commit WIP de tout le répertoire de travail (vide permis : un checkpoint existe toujours). */
-  async commitAll(worktree: string, message: string): Promise<string> {
-    await this.run(worktree, ["add", "-A", "--", "."]);
-    await this.run(worktree, ["commit", "--allow-empty", "--no-verify", "-q", "-m", message]);
+  commitAll(worktree: string, message: string): Promise<string> {
+    return this.#exclusive(worktree, () => this.#commitAll(worktree, message));
+  }
+
+  async #commitAll(worktree: string, message: string): Promise<string> {
+    await this.#runLocked(worktree, ["add", "-A", "--", "."]);
+    await this.#runLocked(worktree, ["commit", "--allow-empty", "--no-verify", "-q", "-m", message]);
     return this.revParse(worktree, "HEAD");
   }
 
   /** Retour dur à un checkpoint : fichiers suivis ET non suivis (hors ignorés et artefacts). */
-  async resetTo(worktree: string, sha: string): Promise<void> {
-    await this.run(worktree, ["reset", "--hard", "-q", sha]);
+  resetTo(worktree: string, sha: string): Promise<void> {
+    return this.#exclusive(worktree, () => this.#resetTo(worktree, sha));
+  }
+
+  async #resetTo(worktree: string, sha: string): Promise<void> {
+    await this.#runLocked(worktree, ["reset", "--hard", "-q", sha]);
     await this.run(worktree, ["clean", "-fdq", "-e", `/${ARTIFACTS_DIR}/`]);
   }
 
   /** Rebase sur `onto` ; un conflit est abandonné et ses fichiers rendus. */
-  async rebase(
-    worktree: string,
-    onto: string,
-  ): Promise<{ ok: true; head: string } | { ok: false; conflicts: string[] }> {
-    const result = await this.raw(worktree, ["rebase", "-q", onto]);
-    if (result.code === 0) return { ok: true, head: await this.revParse(worktree, "HEAD") };
-    const conflicts = (await this.raw(worktree, ["diff", "--name-only", "--diff-filter=U"])).stdout
-      .split("\n")
-      .filter(Boolean);
-    await this.raw(worktree, ["rebase", "--abort"]);
-    return { ok: false, conflicts };
+  rebase(worktree: string, onto: string): Promise<Moved> {
+    return this.#exclusive(worktree, async (): Promise<Moved> => {
+      const result = await this.#rawLocked(worktree, ["rebase", "-q", onto]);
+      if (result.code === 0) return { ok: true, head: await this.revParse(worktree, "HEAD") };
+      const conflicts = (await this.raw(worktree, ["diff", "--name-only", "--diff-filter=U"])).stdout
+        .split("\n")
+        .filter(Boolean);
+      await this.#rawLocked(worktree, ["rebase", "--abort"]);
+      return { ok: false, conflicts };
+    });
   }
 
   /**
@@ -261,34 +410,32 @@ export class Git {
    * sans commit intermédiaire ; les commits vides sont sautés), puis UN commit. Un
    * conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus.
    */
-  async revertRange(
-    worktree: string,
-    fromExclusive: string,
-    toInclusive: string,
-  ): Promise<{ ok: true; sha: string } | { ok: false; conflicts: string[] }> {
-    const shas = (await this.run(worktree, ["rev-list", `${fromExclusive}..${toInclusive}`]))
-      .split("\n")
-      .filter(Boolean);
-    const head = await this.revParse(worktree, "HEAD");
-    for (const sha of shas) {
-      // Un checkpoint vide (commit --allow-empty) n'a rien à défaire : git refuse de le reverter.
-      if ((await this.raw(worktree, ["diff-tree", "--quiet", "--root", sha])).code === 0) continue;
-      const result = await this.raw(worktree, ["revert", "--no-commit", "--no-edit", sha]);
-      if (result.code === 0) continue;
-      const conflicts = await this.unmergedFiles(worktree);
-      await this.raw(worktree, ["revert", "--abort"]);
-      await this.resetTo(worktree, head);
-      return { ok: false, conflicts };
-    }
-    await this.run(worktree, [
-      "commit",
-      "--allow-empty",
-      "--no-verify",
-      "-q",
-      "-m",
-      `revert: ${fromExclusive.slice(0, 7)}..${(await this.revParse(worktree, toInclusive)).slice(0, 7)}`,
-    ]);
-    return { ok: true, sha: await this.revParse(worktree, "HEAD") };
+  revertRange(worktree: string, fromExclusive: string, toInclusive: string): Promise<Reverted> {
+    return this.#exclusive(worktree, async (): Promise<Reverted> => {
+      const shas = (await this.run(worktree, ["rev-list", `${fromExclusive}..${toInclusive}`]))
+        .split("\n")
+        .filter(Boolean);
+      const head = await this.revParse(worktree, "HEAD");
+      for (const sha of shas) {
+        // Un checkpoint vide (commit --allow-empty) n'a rien à défaire : git refuse de le reverter.
+        if ((await this.raw(worktree, ["diff-tree", "--quiet", "--root", sha])).code === 0) continue;
+        const result = await this.#rawLocked(worktree, ["revert", "--no-commit", "--no-edit", sha]);
+        if (result.code === 0) continue;
+        const conflicts = await this.unmergedFiles(worktree);
+        await this.#rawLocked(worktree, ["revert", "--abort"]);
+        await this.#resetTo(worktree, head);
+        return { ok: false, conflicts };
+      }
+      await this.#runLocked(worktree, [
+        "commit",
+        "--allow-empty",
+        "--no-verify",
+        "-q",
+        "-m",
+        `revert: ${fromExclusive.slice(0, 7)}..${(await this.revParse(worktree, toInclusive)).slice(0, 7)}`,
+      ]);
+      return { ok: true, sha: await this.revParse(worktree, "HEAD") };
+    });
   }
 
   /** Une fusion est-elle en cours (MERGE_HEAD) ? */
@@ -302,27 +449,29 @@ export class Git {
   }
 
   /** Fusionne `ref` sans commit : les conflits restent dans les fichiers, à résoudre sans git. */
-  async mergeNoCommit(worktree: string, ref: string): Promise<void> {
-    await this.raw(worktree, ["merge", "-q", "--no-ff", "--no-commit", ref]);
+  mergeNoCommit(worktree: string, ref: string): Promise<void> {
+    return this.#exclusive(worktree, () => this.#mergeNoCommit(worktree, ref));
+  }
+
+  async #mergeNoCommit(worktree: string, ref: string): Promise<void> {
+    await this.#rawLocked(worktree, ["merge", "-q", "--no-ff", "--no-commit", ref]);
   }
 
   /**
    * Fusionne `ref` dans la branche du worktree et commite la fusion ; un conflit est
    * abandonné, l'arbre rendu tel qu'avant, et ses fichiers rendus. Déjà à jour : rien.
    */
-  async mergeCommit(
-    worktree: string,
-    ref: string,
-    message: string,
-  ): Promise<{ ok: true; head: string } | { ok: false; conflicts: string[] }> {
-    await this.mergeNoCommit(worktree, ref);
-    const conflicts = await this.unmergedFiles(worktree);
-    if (conflicts.length > 0) {
-      await this.raw(worktree, ["merge", "--abort"]);
-      return { ok: false, conflicts };
-    }
-    if (await this.mergeInProgress(worktree)) await this.commitAll(worktree, message);
-    return { ok: true, head: await this.revParse(worktree, "HEAD") };
+  mergeCommit(worktree: string, ref: string, message: string): Promise<Moved> {
+    return this.#exclusive(worktree, async (): Promise<Moved> => {
+      await this.#mergeNoCommit(worktree, ref);
+      const conflicts = await this.unmergedFiles(worktree);
+      if (conflicts.length > 0) {
+        await this.#rawLocked(worktree, ["merge", "--abort"]);
+        return { ok: false, conflicts };
+      }
+      if (await this.mergeInProgress(worktree)) await this.#commitAll(worktree, message);
+      return { ok: true, head: await this.revParse(worktree, "HEAD") };
+    });
   }
 
   /** Les checkpoints de `base..HEAD`, par numéro de décision (remappage après rebase). */

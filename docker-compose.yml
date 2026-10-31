@@ -10,6 +10,9 @@
 #   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
 #   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
 #   OMLX_BASE_URL          un serveur d'embeddings à toi ; sinon l'Ollama de la pile
+#   OMLX_CHAT_BASE_URL     le serveur de chat du rêve de la mémoire (OMLX_LLM_MODEL) ;
+#                          défaut : OMLX_BASE_URL, coupé (off) avec l'Ollama de la pile
+#   OMLX_CHAT_API_TOKEN    sa clé ; défaut : OMLX_API_TOKEN
 #   OMP_HARNESS_TAILNET_PORT       le port https du harness sur le tailnet (443)
 #   OMP_HARNESS_TAILNET_MEM0_PORT  celui de la mémoire (8443)
 #   OMP_HARNESS_TAILSCALE_SERVE=0  ne touche pas au `tailscale serve` de l'hôte
@@ -47,6 +50,9 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OMLX_BASE_URL: ${OMLX_BASE_URL:-}
       OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
+      OMLX_CHAT_BASE_URL: ${OMLX_CHAT_BASE_URL:-}
+      OMLX_CHAT_API_TOKEN: ${OMLX_CHAT_API_TOKEN:-}
+      OMLX_LLM_MODEL: ${OMLX_LLM_MODEL:-qwen3-8b}
       OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
     volumes:
@@ -124,6 +130,9 @@ services:
   embeddings:
     image: docker.io/ollama/ollama:0.12.6
     restart: unless-stopped
+    environment:
+      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de mem0.
+      OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/ollama:/root/.ollama
 

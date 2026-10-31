@@ -105,10 +105,20 @@ async fn health_sans_jeton_et_installation() {
     })
     .await;
     let r = s.envoyer("GET", "/health", None, &[]).await;
-    assert_eq!(ok(&r), json!({"ok":true,"mem0":concat!("mem0-rs ", env!("CARGO_PKG_VERSION")),"user":"moi","installation":"inst-42"}));
-    assert_eq!(cles(&r.json()), ["ok", "mem0", "user", "installation"]);
+    let reve = json!({"enabled": true, "chat": "on", "last_run_at": null, "last_error": null});
+    assert_eq!(
+        ok(&r),
+        json!({"ok":true,"mem0":concat!("mem0-rs ", env!("CARGO_PKG_VERSION")),"user":"moi","dream":reve,"installation":"inst-42"})
+    );
+    assert_eq!(cles(&r.json()), ["ok", "mem0", "user", "dream", "installation"]);
     let b = banc("health-vide", "").await;
-    assert_eq!(b.serveur.envoyer("GET", "/health", None, &[]).await.texte, format!(r#"{{"ok":true,"mem0":"mem0-rs {}","user":"moi"}}"#, env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        b.serveur.envoyer("GET", "/health", None, &[]).await.texte,
+        format!(
+            r#"{{"ok":true,"mem0":"mem0-rs {}","user":"moi","dream":{{"enabled":true,"chat":"on","last_run_at":null,"last_error":null}}}}"#,
+            env!("CARGO_PKG_VERSION")
+        )
+    );
     assert_eq!(faux.appels(), 0);
     let journal = s.journal();
     assert!(journal.contains("à l'écoute sur http://127.0.0.1:"), "{journal}");

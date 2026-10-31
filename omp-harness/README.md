@@ -67,6 +67,7 @@ dans `config.json` (voir « Configuration »), puis `harness.sh reload` (les dé
 | Variable de `up` | Effet |
 |---|---|
 | `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `mem0.env`) ; avec `--omlx`, celui des agents aussi |
+| `OMLX_CHAT_BASE_URL` | Le serveur de chat du rêve de la mémoire (première installation ; ensuite, `mem0.env`) ; défaut : `OMLX_BASE_URL`, `off` (coupé) avec l'Ollama intégré, qui n'a pas de modèle de chat |
 | `OMLX_API_TOKEN`, `OMLX_CONTEXT_WINDOW` | Avec `--omlx` : la clé d'oMLX, et la fenêtre de contexte du modèle (131072) |
 | `OMP_HARNESS_TAILSCALE=0` | Ne publie rien : le service reste sur `127.0.0.1` |
 | `OMP_HARNESS_ENGINE` | `docker` ou `podman` (défaut : podman s'il est installé) |
@@ -187,6 +188,7 @@ Les autres variables, facultatives :
 | `OMP_HARNESS_ROOT` | `/var/lib/omp-harness` | les données, sur l'hôte |
 | `OMP_HARNESS_SECRETS` | `/var/lib/omp-harness-secrets` | les secrets, sur l'hôte (les clés LLM n'y sont lues que par les runners) |
 | `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
+| `OMLX_CHAT_BASE_URL`, `OMLX_CHAT_API_TOKEN`, `OMLX_LLM_MODEL` | `OMLX_BASE_URL` ; `off` avec l'Ollama de la pile | le serveur de chat du rêve de la mémoire, sa clé et son modèle (`qwen3-8b`) |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
@@ -377,10 +379,11 @@ main : `sudo tailscale serve --bg --https=443 http://127.0.0.1:8790`.
 
 **Les embeddings.** `embeddings.enable` (vrai par défaut) déclare `services.ollama` sur
 `127.0.0.1:11434`, qui télécharge `bge-m3` au premier démarrage ; mem0-rs y est
-pointé. `embeddings.llmModel = "qwen3:1.7b";` ajoute un modèle de chat pour
-l'extraction de souvenirs (`infer`), que ni le harness ni le plugin ne demandent par
-défaut. `embeddings.enable = false;` et `mem0.environment.OMLX_BASE_URL` désignent un
-serveur ailleurs.
+pointé. Sans modèle de chat, le chat de la mémoire est coupé (`OMLX_CHAT_BASE_URL=off`) :
+le rêve ne compare pas les souvenirs. `embeddings.llmModel = "qwen3:1.7b";` ajoute un
+modèle de chat pour le rêve et l'extraction de souvenirs (`infer`), que ni le harness
+ni le plugin ne demandent par défaut. `embeddings.enable = false;` et
+`mem0.environment.OMLX_BASE_URL` désignent un serveur ailleurs.
 
 `omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
 (root seul, jamais dans le store) avec le jeton de la mémoire ; un `OMLX_API_TOKEN`
@@ -674,6 +677,15 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   sous `omp-mem0` avec systemd (base en `/var/lib/omp-mem0`, 0700), hors du budget
   des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
   voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
+- **Lente n'est pas injoignable.** Une lecture (rappel, santé, dossier) abandonne à
+  8 s : elle est sur le chemin des prompts. Une écriture a 30 s par essai et se retente
+  (attente de 2 s, doublée, 4 essais) si mem0-rs tarde, coupe la connexion ou répond
+  429/5xx ; une connexion refusée, un nom introuvable ou un autre 4xx la perdent tout
+  de suite. Aucun geste ne l'attend. Chaque écriture perdue est journalisée une fois
+  (« oracle lent | injoignable … (écriture perdue après N essais) ») et comptée dans
+  `oracle.lostWrites` de `GET /v1/status` (`count`, `lastAt`, `lastError`) ; `--check`
+  ne sonde que `/health`. L'Ollama des embeddings garde son modèle chargé
+  (`OLLAMA_KEEP_ALIVE=-1`) : un rechargement à froid suffisait à dépasser le délai.
 
 **Le rêve de la mémoire** (`dreams.ts`). Quand un dépôt est au repos, le service lit
 le dossier de consolidation de sa portée dans mem0-rs (`GET /memory/dream/dossier` :
@@ -943,7 +955,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
-| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur. |
+| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
 | `GET /v1/repos` | viewer | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`). |
 | `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). |
 | `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`), étapes, décisions, escalades (avec `recommended`, `options`, `context`, `rationale`, `impacts`), tests, artefacts. |
@@ -1003,7 +1015,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Notifications** : ntfy, fire-and-forget | `notify.ts`, `context.ts` | Abonné au journal (`store.onEvent`) : chaque événement de `notify.events` part en `POST notify.url` avec `Title`/`Priority`/`Tags`/`Click`. Le titre est français et court (« Question — <feature> », « Verdict à valider — … », « Mergé — … »). Une erreur est journalisée (`notify_failed`) au plus une fois par heure, jamais levée. |
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision` (`options` obligatoires, 2 à 4, `chosen` parmi elles ; `context`, la situation lisible hors de la session, obligatoire ; `impacts`, une conséquence par option, obligatoires pour une escalade). Une décision réversible — ou une `clarification` de produit/UX — devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
 | **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, dédoublonnage, OOM | `heavy.ts`, `proc.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env ; seul un VERT y entre, un rouge frais est relancé une fois (`heavy_fail_retry`) et jamais resservi. Deux appels de même clé partagent un seul process (`heavy_joined`) ; l'arrêt d'un appelant le désabonne, le dernier parti tue le job (SIGTERM puis SIGKILL, unité arrêtée, slot rendu). Scope `touched` : `tests.pattern` filtre les fichiers, aucun retenu ⇒ vert « rien lancé » (`heavy_skipped`) ; scope `check` : une commande nommée de `repos[].checks`, une clé de cache par nom. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
-| **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build, revert ciblé | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Le tree hash du cache heavy part d'une copie de l'index du worktree (git ne relit que ce qui a changé). `diffLines(mode)` : `code` ignore `test/**`, `*.test.*`, `Tests/`, `*.md`, `CHANGELOG*`, `package.json`, `*.lock` — ce qui compte face à `review.maxDiffLines` (`review.diffCount`). `revertRange(de, à)` défait une plage de commits en un seul commit `revert: …` (checkpoints vides sautés) ; un conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus — le renversement d'une décision ne perd plus le travail indépendant. |
+| **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build, revert ciblé | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Le tree hash du cache heavy part d'une copie de l'index du worktree (git ne relit que ce qui a changé). `diffLines(mode)` : `code` ignore `test/**`, `*.test.*`, `Tests/`, `*.md`, `CHANGELOG*`, `package.json`, `*.lock` — ce qui compte face à `review.maxDiffLines` (`review.diffCount`). `revertRange(de, à)` défait une plage de commits en un seul commit `revert: …` (checkpoints vides sautés) ; un conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus — le renversement d'une décision ne perd plus le travail indépendant. Les gestes qui écrivent l'index ou HEAD d'un worktree (commit, reset, rebase, revert, fusion, worktree add/remove) passent un par un, dans une file par worktree : deux `decision` d'un même tour, la fin d'étape, la boucle humaine et le merge ne se marchent plus dessus ; `status` ne prend pas le verrou de l'index au passage (`GIT_OPTIONAL_LOCKS=0`). Un verrou `*.lock` tenu par un autre git est attendu 10 s, puis le geste échoue en le nommant ; plus vieux que 5 min (aucun git du service ne vit plus de 120 s), c'est le reste d'un git tué : retiré, journalisé, et le geste repart. |
 | **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par toutes les étapes et /project (`recall`), et par les escalades (`recallDecisions` : les souvenirs `harness,decision` seulement, filtrés ici car mem0-rs ne filtre les étiquettes que par égalité stricte). En écriture : les besoins `B-n` du compte rendu (`briefOfReq`, ≤ 500 car.), chaque feature mergée (knowledge-updater : résumé, modules, risques, non vérifié, décisions) et chaque décision humaine **avec sa raison**, sa catégorie, ses options et son contexte. Rendu au prompt avec l'étiquette principale et la date courte. Injoignable, il dégrade sans bloquer. |
 | **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review → fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur une cause de `runner.failoverOn`, `set_model` fait passer le **même** runner au fournisseur suivant. |
 | **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`, avec la table AC par AC (`criteria`) et une `confidence` obligatoires. Auto-merge si aucun bloquant, risque ≤ `review.autoMergeRisk`, suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner), diff ≤ `review.maxDiffLines`, aucune escalade ouverte, confiance forte, chaque `AC-n` des specs gelées à la clôture de /specs (`_specs.baseline.md`), et de ceux ajoutés depuis, en `pass`, aucun critère gelé retiré ou réécrit (`criteriaDrift`), et tous les fichiers touchés (git) relus par la revue. Un point non vérifié ne bloque que s'il cite un `AC-n`. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |

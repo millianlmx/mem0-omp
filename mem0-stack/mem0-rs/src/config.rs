@@ -100,6 +100,11 @@ pub struct Config {
     /// Secret : jamais imprimé.
     pub api_token: String,
     pub llm_model: String,
+    /// Base du chat (rêve, add infer=true) : `OMLX_CHAT_BASE_URL`, défaut
+    /// `OMLX_BASE_URL` ; `None` = chat coupé (`off`).
+    pub chat_base_url: Option<String>,
+    /// Secret : jamais imprimé. `OMLX_CHAT_API_TOKEN`, défaut `OMLX_API_TOKEN`.
+    pub chat_api_token: String,
     pub embedding_dims: usize,
     pub db_path: PathBuf,
     /// Secret : jamais imprimé. Vide = aucun contrôle.
@@ -120,6 +125,7 @@ impl std::fmt::Debug for Config {
             .field("base_url", &self.base_url)
             .field("embed_model", &self.embed_model)
             .field("llm_model", &self.llm_model)
+            .field("chat_base_url", &self.chat_base_url)
             .field("embedding_dims", &self.embedding_dims)
             .field("db_path", &self.db_path)
             .field("sauvegarde", &self.sauvegarde)
@@ -161,6 +167,9 @@ fn entier_env(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str, m
         })
 }
 
+/// Valeur d'`OMLX_CHAT_BASE_URL` qui coupe le chat.
+pub const CHAT_COUPE: &str = "off";
+
 /// Lit la configuration ; `Err(message)` = erreur fatale (code 1).
 pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String> {
     let dims_brut = env_ou(&lire, "EMBEDDING_DIMS", "1024");
@@ -199,10 +208,15 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         paires: usize::try_from(entier_env(&lire, "MEM0_DREAM_PAIRS", "20", 0)?).unwrap_or(usize::MAX),
         oubli_jours: entier_env(&lire, "MEM0_DREAM_FORGET_DAYS", "180", 0)?,
     };
+    let base_url = env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1");
+    let api_token = env_ou(&lire, "OMLX_API_TOKEN", "not-needed");
+    let chat_base_url = env_ou(&lire, "OMLX_CHAT_BASE_URL", &base_url);
     Ok(Config {
-        base_url: env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1"),
+        chat_base_url: (!chat_base_url.eq_ignore_ascii_case(CHAT_COUPE)).then_some(chat_base_url),
+        chat_api_token: env_ou(&lire, "OMLX_CHAT_API_TOKEN", &api_token),
+        base_url,
         embed_model: env_ou(&lire, "OMLX_EMBED_MODEL", "bge-m3"),
-        api_token: env_ou(&lire, "OMLX_API_TOKEN", "not-needed"),
+        api_token,
         llm_model: env_ou(&lire, "OMLX_LLM_MODEL", "qwen3-8b"),
         embedding_dims,
         db_path,
@@ -319,6 +333,29 @@ mod tests {
         assert_eq!(c.http_token, "");
         let c = lire_env(env(&[("HOME", "/h"), ("MEM0_HTTP_TOKEN", " t ")])).unwrap();
         assert_eq!(c.http_token, " t ");
+    }
+
+    #[test]
+    fn chat_herite_de_la_base_ou_coupe() {
+        let c = lire_env(env(&[("HOME", "/h"), ("OMLX_BASE_URL", "http://e/v1"), ("OMLX_API_TOKEN", "k")])).unwrap();
+        assert_eq!((c.chat_base_url.as_deref(), c.chat_api_token.as_str()), (Some("http://e/v1"), "k"));
+        let c = lire_env(env(&[("HOME", "/h")])).unwrap();
+        assert_eq!((c.chat_base_url.as_deref(), c.chat_api_token.as_str()), (Some("http://host.containers.internal:8000/v1"), "not-needed"));
+        let c = lire_env(env(&[
+            ("HOME", "/h"),
+            ("OMLX_BASE_URL", "http://e/v1"),
+            ("OMLX_CHAT_BASE_URL", " http://c/v1 "),
+            ("OMLX_CHAT_API_TOKEN", "kc"),
+        ]))
+        .unwrap();
+        assert_eq!((c.base_url.as_str(), c.api_token.as_str()), ("http://e/v1", "not-needed"));
+        assert_eq!((c.chat_base_url.as_deref(), c.chat_api_token.as_str()), (Some("http://c/v1"), "kc"));
+        for coupe in ["off", " OFF "] {
+            let c = lire_env(env(&[("HOME", "/h"), ("OMLX_CHAT_BASE_URL", coupe)])).unwrap();
+            assert_eq!(c.chat_base_url, None, "{coupe:?}");
+        }
+        let c = lire_env(env(&[("HOME", "/h"), ("OMLX_CHAT_BASE_URL", "   ")])).unwrap();
+        assert_eq!(c.chat_base_url.as_deref(), Some("http://host.containers.internal:8000/v1"), "blanche : héritée");
     }
 
     #[test]

@@ -3,21 +3,28 @@
 //
 // Lu par /req, /specs et /project ; écrit par le knowledge-updater (fin de run) et
 // par chaque correction humaine. Un oracle injoignable DÉGRADE le harness (rappel
-// vide, écriture perdue et journalisée) sans jamais le bloquer.
+// vide, écriture perdue, journalisée et comptée) sans jamais le bloquer. Un oracle
+// LENT n'est pas injoignable : une écriture y est retentée, une lecture abandonne vite.
 
 export type Memory = { id: string; text: string; score: number | null; tags: string[]; createdAt: string | null };
 
 export type OracleConfig = { url: string; token: string | null };
 
-export type FetchLike = (
-  url: string,
-  init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
-) => Promise<{
+/** Les écritures perdues depuis le démarrage du service : combien, la dernière et sa raison. */
+export type LostWrites = { count: number; lastAt: string | null; lastError: string | null };
+
+/** Ce que l'oracle lit d'une réponse de `fetch`. */
+export type FetchResponse = {
   ok: boolean;
   status: number;
   json: () => Promise<unknown>;
   text: () => Promise<string>;
-}>;
+};
+
+export type FetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
+) => Promise<FetchResponse>;
 
 /**
  * Le dossier de consolidation d'une portée (`GET /memory/dream/dossier` de mem0-rs) :
@@ -56,6 +63,8 @@ export interface Oracle {
    * Rejette avec la raison du refus (corps invalide, id inconnu, service injoignable).
    */
   consolidate(scope: string, consolidation: Record<string, unknown>): Promise<ConsolidationReport>;
+  /** Les écritures abandonnées depuis le démarrage (rien de perdu : `count` à 0). */
+  lostWrites(): LostWrites;
 }
 
 /** Les étiquettes d'une ligne mem0 : `tags` (chaîne « a,b » ou liste), sinon `metadata.tags`. */
@@ -103,53 +112,110 @@ export function memoriesOf(body: unknown): Memory[] {
   return out;
 }
 
+/** Un refus HTTP de mem0-rs, avec son statut : 429 et 5xx se retentent, un autre 4xx non. */
+class OracleHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, body: string) {
+    super(`mem0 ${status}: ${body.slice(0, 200)}`);
+    this.status = status;
+  }
+}
+
+/** Le délai d'un essai écoulé : le service est lent, pas injoignable. */
+class OracleTimeout extends Error {}
+
+/**
+ * Connexion coupée en route : passagère, retentée. Tout autre code (ECONNREFUSED,
+ * ENOTFOUND, EAI_AGAIN…) dit que personne n'écoute : retenter n'y changerait rien.
+ */
+const CUT: Record<string, true> = {
+  ECONNRESET: true,
+  EPIPE: true,
+  ETIMEDOUT: true,
+  ECONNABORTED: true,
+  UND_ERR_SOCKET: true,
+  UND_ERR_CONNECT_TIMEOUT: true,
+  UND_ERR_HEADERS_TIMEOUT: true,
+  UND_ERR_BODY_TIMEOUT: true,
+};
+
+type Failure = { kind: "lent" | "coupé" | "en erreur" | "injoignable"; retry: boolean; message: string };
+
+/** Le cas d'un échec : `fetch` (undici) porte le code système dans `cause.code`. */
+function failureOf(err: unknown): Failure {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    err instanceof OracleTimeout ||
+    (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError"))
+  )
+    return { kind: "lent", retry: true, message };
+  if (err instanceof OracleHttpError)
+    return { kind: "en erreur", retry: err.status === 429 || err.status >= 500, message };
+  const cause = err instanceof Error ? (err.cause as { code?: unknown } | undefined) : undefined;
+  const code = cause?.code ?? (err as { code?: unknown } | null)?.code;
+  const coded = typeof code === "string" && !message.includes(code) ? `${message} (${code})` : message;
+  if (typeof code === "string" && CUT[code] === true) return { kind: "coupé", retry: true, message: coded };
+  return { kind: "injoignable", retry: false, message: coded };
+}
+
+export type HttpOracleOptions = {
+  fetch?: FetchLike;
+  log?: (line: string) => void;
+  /** Le délai d'une lecture (rappel, santé, dossier) : elles sont sur le chemin des prompts. */
+  timeoutMs?: number;
+  /** Le délai d'un essai d'écriture : mem0-rs y plonge le texte, son modèle d'embedding peut se recharger. */
+  writeTimeoutMs?: number;
+  /** Les essais d'une écriture, le premier compris. */
+  writeAttempts?: number;
+  /** L'attente avant le 2e essai, doublée à chaque essai suivant. */
+  backoffMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
+};
+
 export class HttpOracle implements Oracle {
   readonly #config: OracleConfig;
   readonly #fetch: FetchLike;
   readonly #log: (line: string) => void;
   readonly #timeoutMs: number;
+  readonly #writeTimeoutMs: number;
+  readonly #writeAttempts: number;
+  readonly #backoffMs: number;
+  readonly #sleep: (ms: number) => Promise<void>;
+  readonly #now: () => Date;
+  #lost: LostWrites = { count: 0, lastAt: null, lastError: null };
 
-  constructor(
-    config: OracleConfig,
-    options: { fetch?: FetchLike; log?: (line: string) => void; timeoutMs?: number } = {},
-  ) {
+  constructor(config: OracleConfig, options: HttpOracleOptions = {}) {
     this.#config = config;
     this.#fetch = options.fetch ?? (globalThis.fetch as unknown as FetchLike);
     this.#log = options.log ?? (() => {});
     this.#timeoutMs = options.timeoutMs ?? 8000;
+    this.#writeTimeoutMs = options.writeTimeoutMs ?? 30_000;
+    this.#writeAttempts = Math.max(1, options.writeAttempts ?? 4);
+    this.#backoffMs = options.backoffMs ?? 2000;
+    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#now = options.now ?? (() => new Date());
   }
 
-  async #post(route: string, body: Record<string, unknown>): Promise<unknown> {
+  /** Une requête bornée à `timeoutMs` ; un délai écoulé lève `OracleTimeout`, un statut d'échec `OracleHttpError`. */
+  async #request(route: string, timeoutMs: number, body?: Record<string, unknown>): Promise<unknown> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.#fetch(`${this.#config.url.replace(/\/$/, "")}${route}`, {
-        method: "POST",
+        method: body ? "POST" : "GET",
         headers: {
-          "Content-Type": "application/json",
+          ...(body ? { "Content-Type": "application/json" } : {}),
           ...(this.#config.token ? { "X-Mem0-Token": this.#config.token } : {}),
         },
-        body: JSON.stringify(body),
+        ...(body ? { body: JSON.stringify(body) } : {}),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`mem0 ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      if (!response.ok) throw new OracleHttpError(response.status, await response.text());
       return await response.json();
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async #get(route: string): Promise<unknown> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
-    try {
-      const response = await this.#fetch(`${this.#config.url.replace(/\/$/, "")}${route}`, {
-        method: "GET",
-        headers: this.#config.token ? { "X-Mem0-Token": this.#config.token } : {},
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`mem0 ${response.status}: ${(await response.text()).slice(0, 200)}`);
-      return await response.json();
+    } catch (err) {
+      if (controller.signal.aborted) throw new OracleTimeout(`pas de réponse en ${timeoutMs / 1000} s`);
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -157,47 +223,49 @@ export class HttpOracle implements Oracle {
 
   async dreamDossier(scope: string): Promise<DreamDossier | null> {
     try {
-      const body = (await this.#get(`/memory/dream/dossier?agent_id=${encodeURIComponent(scope)}`)) as DreamDossier;
+      const body = (await this.#request(
+        `/memory/dream/dossier?agent_id=${encodeURIComponent(scope)}`,
+        this.#timeoutMs,
+      )) as DreamDossier;
       return typeof body?.horizon_us === "number" && Array.isArray(body.new_facts) ? body : null;
     } catch (err) {
-      this.#log(`oracle injoignable (dossier de rêve) : ${err instanceof Error ? err.message : String(err)}`);
+      const failure = failureOf(err);
+      this.#log(`oracle ${failure.kind} (dossier de rêve) : ${failure.message}`);
       return null;
     }
   }
 
+  /** Une écriture d'un bloc : le délai d'une écriture, un seul essai (un refus revient au modèle, qui rappelle). */
   async consolidate(scope: string, consolidation: Record<string, unknown>): Promise<ConsolidationReport> {
-    return (await this.#post("/memory/dream/consolidation", {
+    return (await this.#request("/memory/dream/consolidation", this.#writeTimeoutMs, {
       ...consolidation,
       agent_id: scope,
     })) as ConsolidationReport;
   }
 
   async health(): Promise<boolean> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
-      const response = await this.#fetch(`${this.#config.url.replace(/\/$/, "")}/health`, {
-        method: "GET",
-        headers: this.#config.token ? { "X-Mem0-Token": this.#config.token } : {},
-        signal: controller.signal,
-      });
-      if (!response.ok) return false;
-      const body = (await response.json()) as { ok?: unknown };
+      const body = (await this.#request("/health", this.#timeoutMs)) as { ok?: unknown };
       return body?.ok === true;
     } catch {
       return false;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
   async recall(scope: string, query: string, limit = 8): Promise<Memory[]> {
     try {
       return memoriesOf(
-        await this.#post("/memory/search", { query, agent_id: scope, limit, threshold: null, filters: null }),
+        await this.#request("/memory/search", this.#timeoutMs, {
+          query,
+          agent_id: scope,
+          limit,
+          threshold: null,
+          filters: null,
+        }),
       );
     } catch (err) {
-      this.#log(`oracle injoignable (rappel) : ${err instanceof Error ? err.message : String(err)}`);
+      const failure = failureOf(err);
+      this.#log(`oracle ${failure.kind} (rappel) : ${failure.message}`);
       return [];
     }
   }
@@ -212,14 +280,43 @@ export class HttpOracle implements Oracle {
     return memories.filter(isDecisionMemory).slice(0, limit);
   }
 
+  /**
+   * Lent (délai écoulé), coupé en route ou en erreur passagère (429, 5xx) : retentée
+   * avec une attente doublée à chaque essai. Injoignable ou refusée (autre 4xx) :
+   * perdue tout de suite. Une écriture perdue est journalisée une fois et comptée.
+   * Peut durer plusieurs minutes : un chemin de requête HTTP ne l'attend pas.
+   */
   async retain(scope: string, text: string, tags: string[] = []): Promise<boolean> {
-    try {
-      await this.#post("/memory/add", { text, agent_id: scope, tags: tags.join(",") || undefined, infer: false });
-      return true;
-    } catch (err) {
-      this.#log(`oracle injoignable (écriture perdue) : ${err instanceof Error ? err.message : String(err)}`);
-      return false;
+    const body = { text, agent_id: scope, tags: tags.join(",") || undefined, infer: false };
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.#request("/memory/add", this.#writeTimeoutMs, body);
+        return true;
+      } catch (err) {
+        const failure = failureOf(err);
+        if (failure.retry && attempt < this.#writeAttempts) {
+          const wait = this.#backoffMs * 2 ** (attempt - 1);
+          this.#log(
+            `oracle ${failure.kind} (écriture, essai ${attempt}/${this.#writeAttempts}) : ${failure.message} — nouvel essai dans ${wait / 1000} s`,
+          );
+          await this.#sleep(wait);
+          continue;
+        }
+        this.#lost = {
+          count: this.#lost.count + 1,
+          lastAt: this.#now().toISOString(),
+          lastError: `${failure.kind} : ${failure.message}`,
+        };
+        this.#log(
+          `oracle ${failure.kind} (écriture perdue après ${attempt} essai${attempt > 1 ? "s" : ""}) : ${failure.message}`,
+        );
+        return false;
+      }
     }
+  }
+
+  lostWrites(): LostWrites {
+    return { ...this.#lost };
   }
 }
 
@@ -233,6 +330,7 @@ export const NO_ORACLE: Oracle = {
   consolidate: async () => {
     throw new Error("aucun oracle configuré");
   },
+  lostWrites: () => ({ count: 0, lastAt: null, lastError: null }),
 };
 
 /**

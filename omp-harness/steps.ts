@@ -736,9 +736,10 @@ export class StepExecutor {
 
     if (step === "req") {
       // Seuls les titres de besoins (`B-n`) rejoignent l'oracle : un souvenir court, qui se rappelle bien.
+      // Sans l'attendre : une écriture lente se retente des minutes durant, l'étape suivante lit req.md.
       const brief = briefOfReq(store.getArtifact(run.id, "req.md") ?? "");
       if (brief !== "")
-        await this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${brief}`, [
+        void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${brief}`, [
           "harness",
           "besoins",
         ]);

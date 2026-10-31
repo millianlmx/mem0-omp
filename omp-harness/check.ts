@@ -163,7 +163,13 @@ async function checkOracle(config: HarnessConfig, health: () => Promise<boolean>
       label: "mémoire (oracle)",
       detail: "aucun oracle : les runs tournent sans la mémoire du projet",
     };
-  if (await health()) return { status: "ok", label: "mémoire (oracle)", detail: config.oracle.url };
+  // Seule la santé est sondée : les écritures perdues se comptent dans le service (GET /v1/status).
+  if (await health())
+    return {
+      status: "ok",
+      label: "mémoire (oracle)",
+      detail: `${config.oracle.url} répond ; écritures perdues : GET /v1/status`,
+    };
   return {
     status: "fail",
     label: "mémoire (oracle)",

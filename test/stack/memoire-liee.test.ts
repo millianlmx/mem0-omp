@@ -109,7 +109,7 @@ test("memoire-liee/AC-2 : sur le corpus commité, la fusion graphe ne fait pire 
     const graphe = par.get(`graphe-k${k}`);
     assert.ok(rrf && graphe, `rrf-k${k} et graphe-k${k} mesurées`);
     for (const [categorie, m] of Object.entries(graphe.categories)) {
-      const base = rrf.categories[categorie]!;
+      const base: Mesures = rrf.categories[categorie]!;
       assert.ok(m.ndcg_10 >= base.ndcg_10 - 1e-9, `graphe-k${k} ${categorie} : ${m.ndcg_10} < ${base.ndcg_10}`);
     }
     assert.ok(
