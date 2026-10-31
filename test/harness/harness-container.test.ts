@@ -261,5 +261,45 @@ test("harness-container/AC-5 : le déploiement tient la même promesse — omp �
     read("compose.yaml"),
     /embeddings:\n {4}image: docker\.io\/ollama\/ollama:\d+\.\d+\.\d+\n(.*\n)*? {4}profiles: \["embeddings"\]/,
   );
-  assert.match(read("harness.sh"), /OMLX_BASE_URL:-http:\/\/embeddings:11434\/v1/);
+});
+
+test("harness-container/AC-6 : `harness.sh up` coupe le chat de la mémoire sur l'Ollama intégré, le rétablit sur une installation d'avant, et le laisse suivre un serveur d'embeddings donné", () => {
+  const bin = tmpdir("harness-container-up-bin-");
+  fs.writeFileSync(path.join(bin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const up = (dir: string, extra: Record<string, string> = {}) => {
+    const root = path.join(dir, "root");
+    fs.mkdirSync(path.join(root, "state"), { recursive: true });
+    fs.writeFileSync(path.join(root, "state", "token"), "t\n");
+    spawnSync("bash", [path.join(BOX, "harness.sh"), "up"], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        HOME: dir,
+        OMP_HARNESS_ENGINE: "docker",
+        OMP_HARNESS_ROOT: root,
+        OMP_HARNESS_SECRETS: path.join(dir, "secrets"),
+        OMP_HARNESS_TAILSCALE: "0",
+        OMP_HARNESS_BUILD: "0",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        ...extra,
+      },
+    });
+    return path.join(dir, "secrets", "mem0.env");
+  };
+
+  const builtin = tmpdir("harness-container-up-");
+  const env = up(builtin);
+  assert.match(fs.readFileSync(env, "utf8"), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
+  assert.match(fs.readFileSync(env, "utf8"), /^OMLX_CHAT_BASE_URL=off$/m);
+  // Une installation d'avant le chat séparé : le prochain `up` coupe le chat.
+  fs.writeFileSync(env, fs.readFileSync(env, "utf8").replace(/^OMLX_CHAT_BASE_URL=.*\n/m, ""));
+  up(builtin);
+  assert.match(fs.readFileSync(env, "utf8"), /^OMLX_CHAT_BASE_URL=off$/m);
+
+  const external = up(tmpdir("harness-container-up-"), { OMLX_BASE_URL: "http://10.0.0.2:8000/v1" });
+  assert.match(fs.readFileSync(external, "utf8"), /^OMLX_CHAT_BASE_URL=http:\/\/10\.0\.0\.2:8000\/v1$/m);
+  const chat = up(tmpdir("harness-container-up-"), { OMLX_CHAT_BASE_URL: "http://10.0.0.3:8000/v1" });
+  assert.match(fs.readFileSync(chat, "utf8"), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
+  assert.match(fs.readFileSync(chat, "utf8"), /^OMLX_CHAT_BASE_URL=http:\/\/10\.0\.0\.3:8000\/v1$/m);
 });

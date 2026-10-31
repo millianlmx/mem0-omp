@@ -21,7 +21,7 @@ setting() { [ ! -e "$2" ] || sed -n "s/^$1=//p" "$2" | tail -1; }
 # Les fichiers .env sont sourcés par les conteneurs : une valeur ne porte que des
 # caractères sans effet pour le shell.
 check_values() {
-  for name in OMLX_BASE_URL OMLX_API_TOKEN OMLX_LLM_MODEL OMLX_EMBED_MODEL EMBEDDING_DIMS \
+  for name in OMLX_BASE_URL OMLX_API_TOKEN OMLX_CHAT_BASE_URL OMLX_CHAT_API_TOKEN OMLX_LLM_MODEL OMLX_EMBED_MODEL EMBEDDING_DIMS \
     ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
     eval "value=\${$name:-}"
     case "$value" in
@@ -41,12 +41,18 @@ cmd_init() {
   token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0/mem0.env")"
   [ -n "$token" ] || token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 
+  # Le chat (rêve, add infer=true) suit OMLX_BASE_URL quand elle est donnée ; l'Ollama
+  # intégré ne sert que les embeddings : sans serveur de chat, le chat est coupé.
+  chat="${OMLX_CHAT_BASE_URL:-}"
+  [ -n "$chat" ] || [ -n "${OMLX_BASE_URL:-}" ] || chat=off
   umask 077
   printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness/harness.env"
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
     printf 'OMLX_BASE_URL=%s\n' "${OMLX_BASE_URL:-http://embeddings:11434/v1}"
     printf 'OMLX_API_TOKEN=%s\n' "${OMLX_API_TOKEN:-}"
+    [ -z "$chat" ] || printf 'OMLX_CHAT_BASE_URL=%s\n' "$chat"
+    [ -z "${OMLX_CHAT_API_TOKEN:-}" ] || printf 'OMLX_CHAT_API_TOKEN=%s\n' "$OMLX_CHAT_API_TOKEN"
     printf 'OMLX_LLM_MODEL=%s\n' "${OMLX_LLM_MODEL:-qwen3-8b}"
     printf 'OMLX_EMBED_MODEL=%s\n' "${OMLX_EMBED_MODEL:-bge-m3}"
     printf 'EMBEDDING_DIMS=%s\n' "${EMBEDDING_DIMS:-1024}"

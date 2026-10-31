@@ -33,6 +33,10 @@ services:
       # appels LLM et embedding repartent en 401.
       OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
       OMLX_LLM_MODEL: ${OMLX_LLM_MODEL:-qwen3-8b}
+      # Le chat (rêve, add infer=true) sur un autre serveur ; vide : OMLX_BASE_URL
+      # et OMLX_API_TOKEN ; OMLX_CHAT_BASE_URL=off le coupe.
+      OMLX_CHAT_BASE_URL: ${OMLX_CHAT_BASE_URL:-}
+      OMLX_CHAT_API_TOKEN: ${OMLX_CHAT_API_TOKEN:-}
       OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
       # Optionnel : si définie, le plugin doit l'envoyer dans X-Mem0-Token.

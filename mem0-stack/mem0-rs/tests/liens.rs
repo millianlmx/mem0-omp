@@ -17,12 +17,23 @@ struct Banc {
 }
 
 async fn banc(nom: &str) -> Banc {
+    banc_avec(nom, &[]).await
+}
+
+async fn banc_avec(nom: &str, env: &[(&str, &str)]) -> Banc {
     let faux = FauxOpenAI::demarrer().await;
     let dossier = Dossier::nouveau(nom);
-    let serveur =
-        Serveur::demarrer(&Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" })
-            .await;
+    let serveur = Serveur::demarrer_avec(
+        &Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" },
+        env,
+    )
+    .await;
     Banc { serveur, faux, _dossier: dossier }
+}
+
+/// Le champ `dream` de `GET /health`.
+async fn sante_reve(s: &Serveur) -> Value {
+    ok(&s.appeler("GET", "/health", None).await)["dream"].clone()
 }
 
 fn ok(r: &Reponse) -> Value {
@@ -183,14 +194,75 @@ async fn reve_local_juge_les_paires_et_propose_sans_supprimer() {
 async fn reve_local_llm_injoignable_journalise_l_erreur() {
     let b = banc("reve-erreur").await;
     let s = &b.serveur;
+    let sante = sante_reve(s).await;
+    assert_eq!(sante, json!({"enabled": true, "chat": "on", "last_run_at": null, "last_error": null}));
     ajouter(s, "le port par défaut de mem0-rs est 8321").await;
     ajouter(s, "le port par défaut de mem0-rs est 8322").await;
-    b.faux.scripter(vec![ReponseChat::Statut(400)]);
+    b.faux.scripter(vec![ReponseChat::Statut(404)]);
     let r = ok(&s.appeler("POST", "/memory/dream", None).await);
     let rapport = &r["dreams"][0];
     assert_eq!(rapport["pairs_judged"], 0);
     assert!(rapport["errors"][0].as_str().unwrap().starts_with("LLM : "), "{rapport}");
     assert!(ok(&s.appeler("GET", &format!("/memory/dream?agent_id={AGENT}"), None).await)["proposals"].as_array().unwrap().is_empty());
+
+    // L'échec du cycle se voit dans /health, puis s'efface au cycle réussi suivant.
+    let sante = sante_reve(s).await;
+    let erreur = sante["last_error"].as_str().expect("last_error");
+    assert!(erreur.starts_with(&format!("« {AGENT} » : LLM : ")) && erreur.contains("404"), "{sante}");
+    assert!(sante["last_run_at"].is_string(), "{sante}");
+    b.faux.scripter(vec![ReponseChat::Contenu(r#"{"verdict":"distinct","garder":null,"raison":"deux ports"}"#.to_owned())]);
+    let r = ok(&s.appeler("POST", "/memory/dream", None).await);
+    assert_eq!(r["dreams"][0]["pairs_judged"], 1);
+    assert_eq!(sante_reve(s).await["last_error"], Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reve_chat_coupe_rejoue_et_journalise_sans_llm() {
+    let b = banc_avec("reve-chat-coupe", &[("OMLX_CHAT_BASE_URL", "off")]).await;
+    let s = &b.serveur;
+    assert!(s.journal().contains("LLM modele-chat-test via off"), "{}", s.journal());
+    assert_eq!(sante_reve(s).await["chat"], "off");
+    ajouter(s, "le port par défaut de mem0-rs est 8321").await;
+    ajouter(s, "le port par défaut de mem0-rs est 8322").await;
+
+    // Rejouer, oublier et le journal tournent ; comparer est sauté, sans erreur.
+    let r = ok(&s.appeler("POST", "/memory/dream", Some(&json!({"agent_id": AGENT}))).await);
+    let rapport = &r["dreams"][0];
+    assert_eq!(rapport["pairs_judged"], 0);
+    assert_eq!(rapport["errors"], json!([]), "{rapport}");
+    let journal = ok(&s.appeler("GET", &format!("/memory/dream?agent_id={AGENT}"), None).await);
+    assert_eq!(journal["dreams"][0]["kind"], "local");
+    assert!(b.faux.requetes_chat().is_empty(), "aucun appel chat/completions");
+    let sante = sante_reve(s).await;
+    assert!(sante["last_run_at"].is_string() && sante["last_error"].is_null(), "{sante}");
+
+    // L'extraction (add infer=true) est refusée en le disant, sans appel.
+    let embeddings = b.faux.appels();
+    let r = s.appeler("POST", "/memory/add", Some(&json!({"text": "à extraire", "agent_id": AGENT, "infer": true}))).await;
+    assert_eq!(r.statut, 500, "{}", r.texte);
+    assert!(r.json()["detail"].as_str().unwrap().contains("OMLX_CHAT_BASE_URL=off"), "{}", r.texte);
+    assert!(b.faux.requetes_chat().is_empty());
+    assert_eq!(b.faux.appels(), embeddings, "aucun embedding non plus");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reve_chat_sur_sa_propre_base() {
+    let chat = FauxOpenAI::demarrer().await;
+    let b = banc_avec(
+        "reve-chat-separe",
+        &[("OMLX_CHAT_BASE_URL", chat.base_url.as_str()), ("OMLX_CHAT_API_TOKEN", "jeton-chat")],
+    )
+    .await;
+    let s = &b.serveur;
+    ajouter(s, "le port par défaut de mem0-rs est 8321").await;
+    ajouter(s, "le port par défaut de mem0-rs est 8322").await;
+    chat.scripter(vec![ReponseChat::Contenu(r#"{"verdict":"distinct","garder":null,"raison":"deux ports"}"#.to_owned())]);
+    let r = ok(&s.appeler("POST", "/memory/dream", None).await);
+    assert_eq!(r["dreams"][0]["pairs_judged"], 1, "{r}");
+    assert_eq!(chat.autorisations_chat(), ["Bearer jeton-chat"]);
+    assert_eq!(chat.appels(), 0, "les embeddings restent sur OMLX_BASE_URL");
+    assert!(b.faux.appels() > 0);
+    assert!(b.faux.requetes_chat().is_empty(), "le chat ne passe plus par OMLX_BASE_URL");
 }
 
 #[tokio::test(flavor = "multi_thread")]

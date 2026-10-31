@@ -138,6 +138,8 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   );
   assert.equal(read(path.join(secrets, "runner.env")), `MEM0_HTTP_TOKEN=${token}\nANTHROPIC_API_KEY=sk-ant-test_1\n`);
   assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
+  // L'Ollama intégré ne sert que les embeddings : le chat de la mémoire est coupé.
+  assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_CHAT_BASE_URL=off$/m);
   for (const file of ["runner.env", "harness/harness.env", "mem0/mem0.env"])
     assert.equal(mode(path.join(secrets, file)), 0o600, `${file} lisible par d'autres`);
   for (const dir of [root, secrets, path.join(root, "home", ".ssh")]) assert.equal(mode(dir), 0o700, dir);
@@ -164,6 +166,18 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   assert.equal(read(path.join(secrets, "runner.env")), `MEM0_HTTP_TOKEN=${token}\nOPENROUTER_API_KEY=sk-or-2\n`);
   assert.match(read(path.join(secrets, "mem0", "mem0.env")), new RegExp(`^MEM0_HTTP_TOKEN=${token}$`, "m"));
   assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_BASE_URL=http:\/\/10\.0\.0\.2:8000\/v1$/m);
+  // Un serveur à soi : le chat le suit (aucune ligne, mem0-rs reprend OMLX_BASE_URL).
+  assert.doesNotMatch(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_CHAT_/m);
+  const chat = run(SETUP, ["init"], {
+    ...env,
+    OMLX_CHAT_BASE_URL: "http://10.0.0.3:8000/v1",
+    OMLX_CHAT_API_TOKEN: "cle-chat",
+  });
+  assert.equal(chat.status, 0, chat.stderr);
+  const withChat = read(path.join(secrets, "mem0", "mem0.env"));
+  assert.match(withChat, /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
+  assert.match(withChat, /^OMLX_CHAT_BASE_URL=http:\/\/10\.0\.0\.3:8000\/v1$/m);
+  assert.match(withChat, /^OMLX_CHAT_API_TOKEN=cle-chat$/m);
   assert.equal(read(path.join(root, "home", ".ssh", "id_ed25519.pub")), key);
   assert.equal(read(path.join(root, "config.json")), edited);
 

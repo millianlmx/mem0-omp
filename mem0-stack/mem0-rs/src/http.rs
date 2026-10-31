@@ -40,7 +40,7 @@ pub const CORPS_MAX: usize = 1024 * 1024;
 pub struct Etat {
     pub db: Arc<Mutex<Connection>>,
     pub embedder: Embedder,
-    /// chat/completions de l'extraction (add infer=true).
+    /// chat/completions de l'extraction (add infer=true) et du rêve ; peut être coupé.
     pub chat: ClientChat,
     /// Secret : jamais imprimé. Vide = aucun contrôle.
     pub http_token: String,
@@ -49,6 +49,8 @@ pub struct Etat {
     pub recherche: recherche::Reglage,
     /// Réglage du rêve local, que `POST /memory/dream` applique aussi.
     pub reve: crate::reve::Reglage,
+    /// Dernier cycle du rêve local, montré par `GET /health`.
+    pub suivi_reve: Arc<crate::reve::Suivi>,
 }
 
 pub(crate) type Partage = State<Arc<Etat>>;
@@ -130,6 +132,11 @@ pub(crate) fn interne() -> Response {
         .into_response()
 }
 
+/// 500 qui nomme sa cause (`{"detail": …}`), quand le client peut y remédier.
+fn erreur_interne(detail: &str) -> Response {
+    json(StatusCode::INTERNAL_SERVER_ERROR, &json!({ "detail": detail }))
+}
+
 fn rejet(r: Rejet) -> Response {
     match r {
         Rejet::Invalide(entrees) => json(StatusCode::UNPROCESSABLE_ENTITY, &Rejet::corps_422(&entrees)),
@@ -195,10 +202,17 @@ fn md5_hex(texte: &str) -> String {
 }
 
 async fn health(State(etat): Partage) -> Response {
+    let (last_run_at, last_error) = etat.suivi_reve.etat();
     let mut corps = json!({
         "ok": true,
         "mem0": concat!("mem0-rs ", env!("CARGO_PKG_VERSION")),
         "user": USER,
+        "dream": {
+            "enabled": !etat.reve.intervalle.is_zero(),
+            "chat": if etat.chat.actif() { "on" } else { "off" },
+            "last_run_at": last_run_at,
+            "last_error": last_error,
+        },
     });
     if !etat.installation_token.is_empty() {
         corps["installation"] = json!(etat.installation_token);
@@ -297,6 +311,11 @@ async fn ajouter_infere(
     run_id: Option<String>,
     tags: Option<String>,
 ) -> Response {
+    // Chat coupé : refusé avant tout appel, comme un chat en échec (500), en le nommant.
+    if !etat.chat.actif() {
+        eprintln!("mem0-rs : extraction : {}", crate::openai::CHAT_COUPE);
+        return erreur_interne(&format!("add infer=true : {}", crate::openai::CHAT_COUPE));
+    }
     let scope = extraction::portee_session(USER, agent_id.as_deref(), run_id.as_deref());
     let derniers = {
         let scope = scope.clone();

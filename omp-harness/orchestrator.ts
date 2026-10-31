@@ -36,6 +36,7 @@ import { ACTIVE_STATES, crashed, heldForDailyBudget, nextAfter, pausedForBudget,
 import type { FailCause, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
+import type { LostWrites } from "./oracle.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
@@ -930,10 +931,11 @@ export class Orchestrator {
     };
   }
 
-  /** L'état de la mémoire du projet : configurée, joignable. */
-  async oracleStatus(): Promise<{ configured: boolean; ok: boolean }> {
-    if (!this.#ctx.config.oracle) return { configured: false, ok: false };
-    return { configured: true, ok: await this.#ctx.oracle.health() };
+  /** L'état de la mémoire du projet : configurée, joignable, et les écritures perdues depuis le démarrage. */
+  async oracleStatus(): Promise<{ configured: boolean; ok: boolean; lostWrites: LostWrites }> {
+    const lostWrites = this.#ctx.oracle.lostWrites();
+    if (!this.#ctx.config.oracle) return { configured: false, ok: false, lostWrites };
+    return { configured: true, ok: await this.#ctx.oracle.health(), lostWrites };
   }
 }
 

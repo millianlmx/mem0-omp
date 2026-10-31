@@ -83,11 +83,17 @@ let
         {
           OMLX_BASE_URL = ollamaUrl;
           OMLX_EMBED_MODEL = cfg.embeddings.model;
-          # Sans modèle de chat, l'extraction (add infer=true) n'est pas servie ; le harness et
-          # le plugin mémoire écrivent sans extraction par défaut.
-          OMLX_LLM_MODEL = if cfg.embeddings.llmModel != null then cfg.embeddings.llmModel else cfg.embeddings.model;
           EMBEDDING_DIMS = toString cfg.embeddings.dims;
         }
+        # Sans modèle de chat, le chat est coupé : le rêve ne compare pas, et l'extraction
+        # (add infer=true) est refusée ; le harness et le plugin mémoire écrivent sans
+        # extraction par défaut.
+        // (
+          if cfg.embeddings.llmModel != null then
+            { OMLX_LLM_MODEL = cfg.embeddings.llmModel; }
+          else
+            { OMLX_CHAT_BASE_URL = "off"; }
+        )
       else
         {
           OMLX_BASE_URL = "http://homelab:8000/v1";
@@ -234,8 +240,9 @@ in
         default = null;
         example = "qwen3:1.7b";
         description = ''
-          Un modèle de chat servi par le même Ollama pour l'extraction de souvenirs (add infer=true).
-          null : pas d'extraction ; le harness et le plugin mémoire n'en demandent pas par défaut.
+          Un modèle de chat servi par le même Ollama pour le rêve de la mémoire et l'extraction
+          de souvenirs (add infer=true). null : chat coupé (OMLX_CHAT_BASE_URL=off) ; le harness
+          et le plugin mémoire ne demandent pas d'extraction par défaut.
         '';
       };
       port = lib.mkOption {
@@ -289,6 +296,8 @@ in
       host = "127.0.0.1";
       port = cfg.embeddings.port;
       loadModels = [ cfg.embeddings.model ] ++ lib.optional (cfg.embeddings.llmModel != null) cfg.embeddings.llmModel;
+      # Les modèles restent chargés : un rechargement à froid ferait expirer les écritures de mem0.
+      environmentVariables.OLLAMA_KEEP_ALIVE = "-1";
     };
 
     users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-mem0 = { }; };

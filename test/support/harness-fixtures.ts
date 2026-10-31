@@ -12,7 +12,7 @@ import type { HarnessConfig } from "../../omp-harness/config.ts";
 import { Store } from "../../omp-harness/db.ts";
 import { Git } from "../../omp-harness/git.ts";
 import { HeavyRunner } from "../../omp-harness/heavy.ts";
-import type { ConsolidationReport, DreamDossier, Oracle, Memory } from "../../omp-harness/oracle.ts";
+import type { ConsolidationReport, DreamDossier, LostWrites, Oracle, Memory } from "../../omp-harness/oracle.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
 import type { OrchestratorDeps, SpawnRunner } from "../../omp-harness/orchestrator.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
@@ -126,6 +126,9 @@ export class MemoryOracle implements Oracle {
       models: count("models"),
       horizon_us: Number(body.horizon_us ?? 0),
     };
+  }
+  lostWrites(): LostWrites {
+    return { count: 0, lastAt: null, lastError: null };
   }
 }
 

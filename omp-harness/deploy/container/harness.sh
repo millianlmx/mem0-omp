@@ -23,7 +23,8 @@
 #
 # Variables, toutes facultatives : ANTHROPIC_API_KEY (sinon demandée), OMLX_BASE_URL
 # (un serveur d'embeddings à toi ; sinon un Ollama intégré ; avec --omlx, celui des
-# agents aussi), OMLX_API_TOKEN, OMLX_CONTEXT_WINDOW (131072), OMP_HARNESS_ENGINE
+# agents aussi), OMLX_API_TOKEN, OMLX_CHAT_BASE_URL (le chat de la mémoire ; défaut : la
+# base des embeddings, off avec l'Ollama intégré), OMLX_CONTEXT_WINDOW (131072), OMP_HARNESS_ENGINE
 # (docker | podman), OMP_HARNESS_ROOT (~/.omp-harness), OMP_HARNESS_SECRETS
 # (~/.omp-harness-secrets), OMP_HARNESS_PORT (8790), OMP_HARNESS_TAILSCALE=0 (ne
 # publie pas), OMP_HARNESS_SOCKET, OMP_HARNESS_USER, OMP_HARNESS_BUILD=0.
@@ -38,6 +39,8 @@ EMBED_MODEL="bge-m3"
 SELF="bash $HERE/harness.sh"
 # Le modèle oMLX des agents (`up --omlx`), gardé dans compose.env ; vide : Anthropic.
 OMLX_MODEL=""
+# Les embeddings de l'Ollama intégré, vus de mem0-rs.
+BUILTIN_EMBEDDINGS=http://embeddings:11434/v1
 
 die() { echo "✗ $*" >&2; exit 1; }
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -192,7 +195,12 @@ write_secrets() {
     # Passée sur oMLX, la mémoire y prend ses embeddings et son modèle.
     if [ -n "$OMLX_MODEL" ]; then
       set_line OMLX_BASE_URL "$(omlx_url)" "$SECRETS/mem0.env"
+      set_line OMLX_CHAT_BASE_URL "$(chat_url "$(omlx_url)")" "$SECRETS/mem0.env"
       set_line OMLX_LLM_MODEL "$OMLX_MODEL" "$SECRETS/mem0.env"
+    elif [ "$(setting OMLX_BASE_URL "$SECRETS/mem0.env")" = "$BUILTIN_EMBEDDINGS" ] &&
+      ! grep -q '^OMLX_CHAT_BASE_URL=' "$SECRETS/mem0.env"; then
+      # Installation d'avant le chat séparé : l'Ollama intégré n'a pas de modèle de chat.
+      set_line OMLX_CHAT_BASE_URL "$(chat_url "$BUILTIN_EMBEDDINGS")" "$SECRETS/mem0.env"
     fi
   else
     write_new_secrets
@@ -203,10 +211,19 @@ write_secrets() {
   fi
 }
 
+# La base du chat de la mémoire (rêve, add infer=true) pour une base d'embeddings :
+# OMLX_CHAT_BASE_URL si donnée ; `off` sur l'Ollama intégré, qui ne sert que les
+# embeddings ; sinon la même base.
+chat_url() {
+  if [ -n "${OMLX_CHAT_BASE_URL:-}" ]; then echo "$OMLX_CHAT_BASE_URL"
+  elif [ "$1" = "$BUILTIN_EMBEDDINGS" ]; then echo off
+  else echo "$1"; fi
+}
+
 write_new_secrets() {
   local token embed_url
   token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-  embed_url="${OMLX_BASE_URL:-http://embeddings:11434/v1}"
+  embed_url="${OMLX_BASE_URL:-$BUILTIN_EMBEDDINGS}"
   [ -z "$OMLX_MODEL" ] || embed_url="$(omlx_url)"
   umask 077
   printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness.env"
@@ -217,6 +234,8 @@ MEM0_HTTP_TOKEN=$token
 # (oMLX sur un Mac : http://host.containers.internal:8000/v1).
 OMLX_BASE_URL=$embed_url
 OMLX_API_TOKEN=${OMLX_API_TOKEN:-}
+# Le serveur de chat (rêve, add infer=true) ; off : coupé.
+OMLX_CHAT_BASE_URL=$(chat_url "$embed_url")
 OMLX_LLM_MODEL=${OMLX_MODEL:-qwen3-8b}
 OMLX_EMBED_MODEL=$EMBED_MODEL
 EMBEDDING_DIMS=1024
