@@ -219,7 +219,17 @@ const F = (format: "uuid" | "date-iso" | "md5"): Forme => ({ type: "format", for
 const objet = (cles: Record<string, Forme>): Forme => ({ type: "objet", cles });
 const tableau = (element: Forme): Forme => ({ type: "tableau", element });
 
-export const SANTE: Forme = objet({ ok: C(true), mem0: S, user: C("moi") });
+export const SANTE: Forme = objet({
+  ok: C(true),
+  mem0: S,
+  user: C("moi"),
+  dream: objet({
+    enabled: B,
+    chat: S,
+    last_run_at: { type: "ou", formes: [Nul, S] },
+    last_error: { type: "ou", formes: [Nul, S] },
+  }),
+});
 
 export const AJOUT: Forme = objet({
   results: tableau(objet({ id: F("uuid"), memory: S, event: C("ADD"), actor_id: Nul, role: C("user") })),

@@ -263,6 +263,8 @@ impl Serveur {
                 .env_remove("MEM0_DREAM_QUIET_MINUTES")
                 .env_remove("MEM0_DREAM_PAIRS")
                 .env_remove("MEM0_DREAM_FORGET_DAYS")
+                .env_remove("OMLX_CHAT_BASE_URL")
+                .env_remove("OMLX_CHAT_API_TOKEN")
                 .env("OMLX_BASE_URL", l.embedder_url)
                 .env("OMLX_API_TOKEN", JETON_OMLX)
                 .env("OMLX_LLM_MODEL", MODELE_CHAT)

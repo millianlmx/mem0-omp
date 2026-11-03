@@ -240,9 +240,12 @@ func closingKillsTheWholeProcessGroup() async throws {
     let reapErrno = errno
     #expect(reaped == -1)
     #expect(reapErrno == ECHILD)
-    // 3) L'état reflète la mort réelle.
+    // 3) L'état reflète la mort réelle. `isRunning` tombe à la récolte, AVANT
+    // `onExit` : l'annonce attend la fin du flux du lecteur (≤ 200 ms) ou la grâce
+    // des derniers octets, d'où une attente bornée — puis UNE seule annonce.
     #expect(host.pid == nil)
     #expect(host.isRunning == false)
+    _ = await waitUntil { !recorder.exits.isEmpty }
     #expect(recorder.exits.count == 1)
 }
 

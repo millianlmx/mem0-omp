@@ -61,11 +61,15 @@ services:
       start_period: 10s
 
   # Les embeddings de la mémoire quand `harness.sh up` n'en a pas reçu d'autres
-  # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne.
+  # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne. Il
+  # n'a pas de modèle de chat : mem0.env porte alors OMLX_CHAT_BASE_URL=off.
   embeddings:
     image: docker.io/ollama/ollama:0.12.6
     restart: unless-stopped
     profiles: ["embeddings"]
+    environment:
+      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de mem0.
+      OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       - ${OMP_HARNESS_ROOT}/ollama:/root/.ollama
 

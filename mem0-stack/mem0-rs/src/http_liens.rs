@@ -217,7 +217,8 @@ struct CorpsReve {
 }
 
 /// `POST /memory/dream` : un rêve local maintenant, sur la portée `agent_id`
-/// (toutes les portées s'il est absent), sans attendre le calme. Rend les rapports.
+/// (toutes les portées s'il est absent), sans attendre le calme. Rend les rapports ;
+/// c'est un cycle du suivi de `GET /health`.
 pub async fn rever(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> Response {
     let c: CorpsReve = if octets.is_empty() {
         CorpsReve::default()
@@ -239,15 +240,24 @@ pub async fn rever(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> R
         },
     };
     let mut rapports = Vec::with_capacity(cibles.len());
+    let mut erreurs = Vec::new();
     for p in cibles {
         match reve::rever_portee(&etat.db, &etat.chat, &etat.reve, &p).await {
-            Ok(r) => rapports.push(r),
+            Ok(r) => {
+                if !r.errors.is_empty() {
+                    erreurs.push(reve::erreur_de_portee(&p, &r.errors.join(" ; ")));
+                }
+                rapports.push(r);
+            }
             Err(e) => {
                 eprintln!("mem0-rs : rêve de « {p} » impossible : {e}");
+                erreurs.push(reve::erreur_de_portee(&p, &e));
+                etat.suivi_reve.noter(&erreurs);
                 return interne();
             }
         }
     }
+    etat.suivi_reve.noter(&erreurs);
     json(StatusCode::OK, &json!({ "dreams": rapports }))
 }
 

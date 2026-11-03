@@ -93,7 +93,7 @@ export async function startHarness(
     admission: config.admission,
     providers: config.providers,
   });
-  const git = new Git(execProcess, config.git);
+  const git = new Git(execProcess, config.git, { log });
   const heavy = new HeavyRunner({ config, store, scheduler, git, exec: execProcess });
   // Le jeton de mem0-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
   if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)

@@ -140,16 +140,19 @@ export class HumanLoop {
         return [{ item, answer: text, reason: why, by: actor.by }];
       }),
     );
-    await this.#retainAnswers(run, answered);
+    this.#retainAnswers(run, answered);
     await this.#resumeIfAllAnswered(runId, actor);
     return this.#ctx.run(runId);
   }
 
-  /** Chaque réponse humaine retourne à l'oracle : la raison d'abord, avec les options et le contexte. */
-  async #retainAnswers(run: RunRow, answered: readonly Answered[]): Promise<void> {
+  /**
+   * Chaque réponse humaine retourne à l'oracle : la raison d'abord, avec les options et le
+   * contexte. Sans l'attendre : une écriture lente se retente des minutes durant.
+   */
+  #retainAnswers(run: RunRow, answered: readonly Answered[]): void {
     const repo = this.#ctx.repo(run.repo);
     for (const { item, answer, reason } of answered) {
-      await this.#ctx.oracle.retain(
+      void this.#ctx.oracle.retain(
         repo.scope,
         humanDecisionMemory({
           feature: run.title,
@@ -167,8 +170,8 @@ export class HumanLoop {
 
   /**
    * Quand plus aucune escalade n'est ouverte, le run reprend son étape avec les réponses
-   * du lot (toutes les escalades de la DERNIÈRE étape escaladée). Relu APRÈS les
-   * écritures de l'oracle : un geste a pu passer entre-temps.
+   * du lot (toutes les escalades de la DERNIÈRE étape escaladée). Relu : un geste a pu
+   * passer entre-temps.
    */
   async #resumeIfAllAnswered(runId: string, actor: Actor): Promise<void> {
     const { store } = this.#ctx;
@@ -292,8 +295,9 @@ export class HumanLoop {
       });
     }
     const repo = this.#ctx.repo(run.repo);
+    // L'oracle n'est pas attendu : une écriture lente se retente des minutes durant.
     for (const { item, decision } of decided) {
-      await this.#ctx.oracle.retain(
+      void this.#ctx.oracle.retain(
         repo.scope,
         `Décision tranchée à l'échéance (${rationale}) — feature « ${run.title} » : ${decision.question} → « ${decision.chosen} » (recommandation de l'agent, non validée par l'humain). ` +
           `Options : ${item.options.join(" | ")}.${item.context ? ` Contexte : ${item.context}` : ""}`,
@@ -362,7 +366,7 @@ export class HumanLoop {
     if (run.state === "merging" || this.#hooks.merging(runId))
       throw new HarnessError(409, "merge en cours : renverse après le merge (un run de suite sera ouvert)");
     const repo = this.#ctx.repo(run.repo);
-    await oracle.retain(
+    void oracle.retain(
       repo.scope,
       humanDecisionMemory({
         feature: run.title,
@@ -599,7 +603,7 @@ export class HumanLoop {
       if (why === "") throw new HarnessError(400, "un refus porte sa raison");
       // Un refus du pilote n'est pas une correction humaine : l'oracle ne le rappellera pas comme tel.
       if (!actor.pilot)
-        await oracle.retain(
+        void oracle.retain(
           this.#ctx.repo(run.repo).scope,
           `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`,
           ["harness", "correction"],

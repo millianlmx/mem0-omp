@@ -21,6 +21,9 @@
 //! raisonne sur toute la portée : le harness les confie à une session omp
 //! ([`crate::consolidation`]).
 //!
+//! Chat coupé (`OMLX_CHAT_BASE_URL=off`) : l'étape 2 est sautée, sans erreur.
+//! Le dernier cycle (heure de fin, erreurs) est montré par `GET /health` ([`Suivi`]).
+//!
 //! Le verrou de la base n'est jamais tenu pendant un appel au LLM.
 
 use std::sync::{Arc, Mutex};
@@ -298,8 +301,8 @@ pub async fn rever_portee(
         rapport.reindexed = ids.len();
     }
 
-    // 2. Comparer.
-    let paires = paires_a_juger(&*verrou()?, portee, reglage.paires).map_err(base)?;
+    // 2. Comparer (sautée, chat coupé).
+    let paires = if chat.actif() { paires_a_juger(&*verrou()?, portee, reglage.paires).map_err(base)? } else { Vec::new() };
     for (a, b) in paires {
         let reponse = match chat.completer(PROMPT_PAIRE, &invite_paire((&a.3, &a.1), (&b.3, &b.1))).await {
             Ok(r) => r,
@@ -369,32 +372,81 @@ pub fn due(conn: &Connection, portee: &str, calme: Duration, paires: bool, maint
     Ok(dernier.is_none_or(|d| plus_recent > d) || (paires && !paires_a_juger(conn, portee, 1)?.is_empty()))
 }
 
+/// Le dernier cycle du rêve local (boucle ou `POST /memory/dream`), montré par
+/// `GET /health`.
+#[derive(Debug, Default)]
+pub struct Suivi(Mutex<Option<DernierCycle>>);
+
+#[derive(Debug, Clone)]
+struct DernierCycle {
+    fin: String,
+    erreur: Option<String>,
+}
+
+impl Suivi {
+    /// Note la fin d'un cycle et ses erreurs (« portée » : erreur ; vide = réussi).
+    pub fn noter(&self, erreurs: &[String]) {
+        let cycle = DernierCycle {
+            fin: horodatage::maintenant().iso,
+            erreur: (!erreurs.is_empty()).then(|| erreurs.join(" ; ")),
+        };
+        if let Ok(mut d) = self.0.lock() {
+            *d = Some(cycle);
+        }
+    }
+
+    /// `(last_run_at, last_error)` ; `(null, null)` avant le premier cycle.
+    pub fn etat(&self) -> (Option<String>, Option<String>) {
+        match self.0.lock().ok().and_then(|d| d.clone()) {
+            Some(c) => (Some(c.fin), c.erreur),
+            None => (None, None),
+        }
+    }
+}
+
+/// Erreur d'une portée dans le suivi d'un cycle.
+pub fn erreur_de_portee(portee: &str, erreur: &str) -> String {
+    format!("« {portee} » : {erreur}")
+}
+
 /// Boucle du rêve de fond, lancée par `main` quand l'intervalle n'est pas nul.
-/// Le premier tour a lieu une période après le démarrage.
-pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Reglage) {
+/// Le premier tour a lieu une période après le démarrage ; un tour sans portée
+/// due n'est pas un cycle.
+pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Reglage, suivi: Arc<Suivi>) {
     loop {
         tokio::time::sleep(reglage.intervalle).await;
         let maintenant = horodatage::maintenant().micros;
+        let paires = reglage.paires > 0 && chat.actif();
         let dues: Vec<String> = {
             let Ok(conn) = db.lock() else { return };
             match portees(&conn) {
-                Ok(p) => p
-                    .into_iter()
-                    .filter(|p| due(&conn, p, reglage.calme, reglage.paires > 0, maintenant).unwrap_or(false))
-                    .collect(),
+                Ok(p) => p.into_iter().filter(|p| due(&conn, p, reglage.calme, paires, maintenant).unwrap_or(false)).collect(),
                 Err(e) => {
                     eprintln!("mem0-rs : rêve : {e}");
+                    suivi.noter(&[e.to_string()]);
                     continue;
                 }
             }
         };
+        if dues.is_empty() {
+            continue;
+        }
+        let mut erreurs = Vec::new();
         for portee in dues {
             match rever_portee(&db, &chat, &reglage, &portee).await {
-                Ok(r) if !r.errors.is_empty() => eprintln!("mem0-rs : rêve de « {portee} » : {}", r.errors.join(" ; ")),
+                Ok(r) if !r.errors.is_empty() => {
+                    let e = r.errors.join(" ; ");
+                    eprintln!("mem0-rs : rêve de « {portee} » : {e}");
+                    erreurs.push(erreur_de_portee(&portee, &e));
+                }
                 Ok(_) => {}
-                Err(e) => eprintln!("mem0-rs : rêve de « {portee} » impossible : {e}"),
+                Err(e) => {
+                    eprintln!("mem0-rs : rêve de « {portee} » impossible : {e}");
+                    erreurs.push(erreur_de_portee(&portee, &e));
+                }
             }
         }
+        suivi.noter(&erreurs);
     }
 }
 

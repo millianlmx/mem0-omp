@@ -82,13 +82,14 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
     let client = openai::client().map_err(|e| e.to_string())?;
     let embedder =
         embedder::Embedder::new(client.clone(), &cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims);
-    let chat = openai::ClientChat::new(client, &cfg.base_url, &cfg.llm_model, &cfg.api_token);
+    let chat = openai::ClientChat::new(client, cfg.chat_base_url.as_deref(), &cfg.llm_model, &cfg.chat_api_token);
     let db = Arc::new(Mutex::new(conn));
     if !cfg.sauvegarde.intervalle.is_zero() {
         tokio::spawn(sauvegarde::boucle(Arc::clone(&db), cfg.db_path.clone(), cfg.sauvegarde));
     }
+    let suivi_reve = Arc::new(reve::Suivi::default());
     if !cfg.reve.intervalle.is_zero() {
-        tokio::spawn(reve::boucle(Arc::clone(&db), chat.clone(), cfg.reve));
+        tokio::spawn(reve::boucle(Arc::clone(&db), chat.clone(), cfg.reve, Arc::clone(&suivi_reve)));
     }
     let etat = Arc::new(http::Etat {
         db,
@@ -98,13 +99,15 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         installation_token: cfg.installation_token.clone(),
         recherche: cfg.recherche,
         reve: cfg.reve,
+        suivi_reve,
     });
     eprintln!(
-        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {}, recherche {})",
+        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {} via {}, recherche {})",
         env!("CARGO_PKG_VERSION"),
         cfg.embed_model,
         cfg.base_url,
         cfg.llm_model,
+        cfg.chat_base_url.as_deref().unwrap_or(config::CHAT_COUPE),
         cfg.recherche.strategie(None)
     );
     axum::serve(listener, http::routeur(etat))

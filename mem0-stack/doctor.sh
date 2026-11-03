@@ -131,44 +131,65 @@ echo
 # oMLX vu depuis le conteneur — la panne la plus fréquente. La sonde tourne DANS le
 # conteneur (curl de l'image), avec ses propres variables : c'est ce que mem0-rs
 # voit, pas ce que voit l'hôte. La dernière ligne de sa sortie est le code HTTP
-# (000 quand la connexion échoue), le reste est le corps.
+# (000 quand la connexion échoue), le reste est le corps. Les embeddings se sondent
+# sur OMLX_BASE_URL, le modèle de chat sur OMLX_CHAT_BASE_URL (défaut : la même
+# base ; `off` : chat coupé, rien à sonder).
+SONDE_EMBED='curl -sS -m 5 -w "\n%{http_code}" ${OMLX_API_TOKEN:+-H "Authorization: Bearer $OMLX_API_TOKEN"} "$OMLX_BASE_URL/models"'
+SONDE_CHAT='t=${OMLX_CHAT_API_TOKEN:-$OMLX_API_TOKEN}; curl -sS -m 5 -w "\n%{http_code}" ${t:+-H "Authorization: Bearer $t"} "$OMLX_CHAT_BASE_URL/models"'
+sonder() { # sonder <libellé> <sonde> <variables de modèle…>
+  local libelle="$1" sonde="$2" OUT http_code body var want
+  shift 2
+  OUT=$($CE exec "$NAME" sh -c "$sonde" 2>&1)
+  http_code=$(printf '%s\n' "$OUT" | tail -1)
+  body=$(printf '%s\n' "$OUT" | sed '$d')
+  case "$http_code" in
+    200)
+      pass "$libelle répond"
+      # Les modèles demandés existent-ils vraiment ?
+      for var in "$@"; do
+        want=$($CE exec "$NAME" printenv "$var" 2>/dev/null || echo "")
+        if [ -n "$want" ] && ! printf '%s' "$body" | grep -qF "\"id\":\"$want\"" \
+           && ! printf '%s' "$body" | grep -qF "\"id\": \"$want\""; then
+          fail "$var=$want absent de la liste des modèles chargés" \
+               "charge-le dans $libelle, ou corrige le nom dans .env (il doit être exact)"
+        fi
+      done
+      ;;
+    401|403)
+      fail "$libelle répond mais refuse l'authentification (HTTP $http_code)" \
+           "ton serveur exige une clé : mets OMLX_API_TOKEN=... (OMLX_CHAT_API_TOKEN=... pour le chat) dans .env puis
+       $CE compose up -d --force-recreate mem0-rs
+       Sans elle, tous les appels LLM et embedding partent en 401."
+      ;;
+    [1-9][0-9][0-9])
+      fail "$libelle répond mais renvoie une erreur (HTTP $http_code)" "vérifie que l'URL pointe bien sur /v1"
+      ;;
+    *)
+      fail "$libelle injoignable depuis le conteneur ($(printf '%s' "${body:-$OUT}" | head -c 160))" \
+           "oMLX tourne en natif sur le Mac : un conteneur ne le voit pas via localhost.
+       Podman -> host.containers.internal ; Docker Desktop -> host.docker.internal.
+       Vérifie surtout qu'oMLX écoute sur 0.0.0.0 et pas seulement sur 127.0.0.1 :
+       lié au loopback, il reste invisible même avec le bon nom d'hôte."
+      ;;
+  esac
+}
 echo "── oMLX, vu depuis mem0-rs"
 if [ -z "$CONTAINER" ]; then
   echo "  · non exécuté — conteneur $NAME absent"
 else
   OMLX_BASE=$($CE exec "$NAME" printenv OMLX_BASE_URL 2>/dev/null || echo "?")
+  CHAT_BASE=$($CE exec "$NAME" printenv OMLX_CHAT_BASE_URL 2>/dev/null || echo "")
   echo "  OMLX_BASE_URL = $OMLX_BASE"
-  OUT=$($CE exec "$NAME" sh -c 'curl -sS -m 5 -w "\n%{http_code}" ${OMLX_API_TOKEN:+-H "Authorization: Bearer $OMLX_API_TOKEN"} "$OMLX_BASE_URL/models"' 2>&1)
-  http_code=$(printf '%s\n' "$OUT" | tail -1)
-  body=$(printf '%s\n' "$OUT" | sed '$d')
-  case "$http_code" in
-    200)
-      pass "oMLX répond"
-      # Les modèles demandés existent-ils vraiment ?
-      for var in OMLX_LLM_MODEL OMLX_EMBED_MODEL; do
-        want=$($CE exec "$NAME" printenv "$var" 2>/dev/null || echo "")
-        if [ -n "$want" ] && ! printf '%s' "$body" | grep -qF "\"id\":\"$want\"" \
-           && ! printf '%s' "$body" | grep -qF "\"id\": \"$want\""; then
-          fail "$var=$want absent de la liste des modèles chargés" \
-               "charge-le dans oMLX, ou corrige le nom dans .env (il doit être exact)"
-        fi
-      done
-      ;;
-    401|403)
-      fail "oMLX répond mais refuse l'authentification (HTTP $http_code)" \
-           "ton oMLX exige une clé : mets OMLX_API_TOKEN=... dans .env puis
-       $CE compose up -d --force-recreate mem0-rs
-       Sans elle, tous les appels LLM et embedding partent en 401."
-      ;;
-    [1-9][0-9][0-9])
-      fail "oMLX répond mais renvoie une erreur (HTTP $http_code)" "vérifie que l'URL pointe bien sur /v1"
+  case "$CHAT_BASE" in
+    "" | "$OMLX_BASE") sonder oMLX "$SONDE_EMBED" OMLX_LLM_MODEL OMLX_EMBED_MODEL ;;
+    [oO][fF][fF])
+      sonder oMLX "$SONDE_EMBED" OMLX_EMBED_MODEL
+      echo "  · chat coupé (OMLX_CHAT_BASE_URL=off) : le rêve ne compare pas, add infer=true est refusé"
       ;;
     *)
-      fail "oMLX injoignable depuis le conteneur ($(printf '%s' "${body:-$OUT}" | head -c 160))" \
-           "oMLX tourne en natif sur le Mac : un conteneur ne le voit pas via localhost.
-       Podman -> host.containers.internal ; Docker Desktop -> host.docker.internal.
-       Vérifie surtout qu'oMLX écoute sur 0.0.0.0 et pas seulement sur 127.0.0.1 :
-       lié au loopback, il reste invisible même avec le bon nom d'hôte."
+      sonder oMLX "$SONDE_EMBED" OMLX_EMBED_MODEL
+      echo "  OMLX_CHAT_BASE_URL = $CHAT_BASE"
+      sonder "le serveur de chat" "$SONDE_CHAT" OMLX_LLM_MODEL
       ;;
   esac
 fi

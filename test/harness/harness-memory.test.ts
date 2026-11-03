@@ -98,7 +98,11 @@ test("harness-memory/AC-2 : chaque runner charge le plugin mémoire, sans qu'on 
       () => JSON.stringify(world.oracle.retained),
     );
     assert.ok(world.oracle.retained.every((m) => m.scope === "mon-produit"));
-    assert.deepEqual(await world.orchestrator.oracleStatus(), { configured: true, ok: true });
+    assert.deepEqual(await world.orchestrator.oracleStatus(), {
+      configured: true,
+      ok: true,
+      lostWrites: { count: 0, lastAt: null, lastError: null },
+    });
   } finally {
     await world.orchestrator.stop();
   }

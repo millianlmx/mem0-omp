@@ -50,10 +50,12 @@ bruts).
 
 | Variable | Défaut | Usage |
 |---|---|---|
-| `OMLX_BASE_URL` | `http://host.containers.internal:8000/v1` | base de l'API OpenAI-compatible (`POST {base}/embeddings` et `POST {base}/chat/completions`) |
+| `OMLX_BASE_URL` | `http://host.containers.internal:8000/v1` | base de l'API OpenAI-compatible des embeddings (`POST {base}/embeddings`) |
 | `OMLX_EMBED_MODEL` | `bge-m3` | champ `model` de la requête d'embedding |
-| `OMLX_API_TOKEN` | `not-needed` | `Authorization: Bearer` ; jamais imprimé |
-| `OMLX_LLM_MODEL` | `qwen3-8b` | modèle chat/completions de l'extraction (`add` infer=true) |
+| `OMLX_API_TOKEN` | `not-needed` | `Authorization: Bearer` des embeddings ; jamais imprimé |
+| `OMLX_CHAT_BASE_URL` | `OMLX_BASE_URL` | base du chat (`POST {base}/chat/completions`) : extraction (`add` infer=true) et rêve ; `off` coupe le chat (§ Rêve) |
+| `OMLX_CHAT_API_TOKEN` | `OMLX_API_TOKEN` | `Authorization: Bearer` du chat ; jamais imprimé |
+| `OMLX_LLM_MODEL` | `qwen3-8b` | modèle chat/completions de l'extraction (`add` infer=true) et du rêve |
 | `EMBEDDING_DIMS` | `1024` | dimension des vecteurs ; entier positif, sinon code 1 |
 | `MEM0_DB_PATH` | `$HOME/.mem0/mem0-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque |
 | `MEM0_HTTP_TOKEN` | `""` | jeton exigé dans `X-Mem0-Token` ; vide = aucun contrôle ; jamais imprimé |
@@ -492,7 +494,7 @@ requêtes, quand une portée est calme. Il n'efface et ne réécrit **jamais** u
 écrit par un agent : il ajoute des objets dérivés (liens, observations, mental
 models, propositions), et toute suppression passe par une décision humaine.
 
-**Rêve local** (`src/reve.rs`), dans mem0-rs, sur son propre LLM (`OMLX_LLM_MODEL`) :
+**Rêve local** (`src/reve.rs`), dans mem0-rs, sur son propre LLM (`OMLX_LLM_MODEL` via `OMLX_CHAT_BASE_URL`) :
 toutes les `MEM0_DREAM_INTERVAL_MINUTES`, chaque portée qui a changé depuis son
 dernier rêve et qu'aucune écriture n'a touchée depuis `MEM0_DREAM_QUIET_MINUTES` :
 
@@ -508,6 +510,18 @@ dernier rêve et qu'aucune écriture n'a touchée depuis `MEM0_DREAM_QUIET_MINUT
    jours devient une proposition d'oubli (pas avant qu'une fenêtre entière se soit
    écoulée depuis la création ou la migration de la base).
 4. **Journal** — une ligne `reves` par portée et par rêve.
+
+Chat coupé (`OMLX_CHAT_BASE_URL=off`, une pile dont le serveur n'a que des
+embeddings) : l'étape 2 est sautée sans erreur, les autres tournent ; `add`
+infer=true rend 500 `{"detail": "add infer=true : LLM coupé (OMLX_CHAT_BASE_URL=off)"}`
+sans aucun appel.
+
+`GET /health` porte l'état du rêve local : `dream: {enabled, chat, last_run_at,
+last_error}` — `enabled` : la boucle tourne (`MEM0_DREAM_INTERVAL_MINUTES` non
+nul) ; `chat` : `on` ou `off` ; `last_run_at` : la fin du dernier cycle (un tour de
+la boucle qui a rêvé au moins une portée, ou un `POST /memory/dream`), `null`
+avant le premier ; `last_error` : ses erreurs (`« portée » : …`, jointes par
+` ; `), `null` s'il a réussi.
 
 **Consolidation** (phases 3 et 4) : elle demande un modèle qui raisonne sur toute une
 portée. Le harness la confie à une session omp (`omp-harness/dreams.ts`), dont les

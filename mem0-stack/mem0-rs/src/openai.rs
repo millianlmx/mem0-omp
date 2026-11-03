@@ -72,19 +72,35 @@ fn retentable(statut: StatusCode) -> bool {
     matches!(statut.as_u16(), 408 | 409 | 429) || statut.is_server_error()
 }
 
-/// Client chat/completions de l'extraction (S-1).
+/// Client chat/completions de l'extraction (S-1) et du rêve ; coupé par
+/// `OMLX_CHAT_BASE_URL=off`.
 #[derive(Clone)]
 pub struct ClientChat {
     client: reqwest::Client,
-    url: String,
+    /// `None` : chat coupé, aucun appel.
+    url: Option<String>,
     model: String,
     /// Secret : jamais imprimé.
     jeton: String,
 }
 
+/// Refus d'un appel au chat coupé.
+pub const CHAT_COUPE: &str = "LLM coupé (OMLX_CHAT_BASE_URL=off)";
+
 impl ClientChat {
-    pub fn new(client: reqwest::Client, base_url: &str, model: &str, jeton: &str) -> ClientChat {
-        ClientChat { client, url: url(base_url, "chat/completions"), model: model.to_owned(), jeton: jeton.to_owned() }
+    /// `base_url` absente : chat coupé.
+    pub fn new(client: reqwest::Client, base_url: Option<&str>, model: &str, jeton: &str) -> ClientChat {
+        ClientChat {
+            client,
+            url: base_url.map(|b| url(b, "chat/completions")),
+            model: model.to_owned(),
+            jeton: jeton.to_owned(),
+        }
+    }
+
+    /// Le chat est-il servi ?
+    pub fn actif(&self) -> bool {
+        self.url.is_some()
     }
 
     /// Corps exact de la requête (6 clés, dans l'ordre d'openai-python).
@@ -103,12 +119,16 @@ impl ClientChat {
     }
 
     /// Un appel en mode JSON ; rend le contenu de `choices[0].message` (S-1).
+    /// Chat coupé : [`CHAT_COUPE`], sans appel.
     pub async fn completer(&self, system: &str, user: &str) -> Result<String, ErreurOpenAI> {
-        let reponse = poster(&self.client, &self.url, &self.jeton, &self.corps(system, user)).await?;
+        let Some(url) = &self.url else {
+            return Err(ErreurOpenAI(CHAT_COUPE.to_owned()));
+        };
+        let reponse = poster(&self.client, url, &self.jeton, &self.corps(system, user)).await?;
         let message = reponse
             .pointer("/choices/0/message")
             .and_then(Value::as_object)
-            .ok_or_else(|| ErreurOpenAI(format!("{} : choices[0].message absent", self.url)))?;
+            .ok_or_else(|| ErreurOpenAI(format!("{url} : choices[0].message absent")))?;
         Ok(extraction::contenu_reponse(message.get("content").unwrap_or(&Value::Null)))
     }
 }
@@ -129,11 +149,18 @@ mod tests {
 
     #[test]
     fn ac2_corps_chat_six_cles_dans_l_ordre() {
-        let c = ClientChat::new(client().unwrap(), "http://h/v1/", "modele", "k");
-        assert_eq!(c.url, "http://h/v1/chat/completions");
+        let c = ClientChat::new(client().unwrap(), Some("http://h/v1/"), "modele", "k");
+        assert_eq!(c.url.as_deref(), Some("http://h/v1/chat/completions"));
         assert_eq!(
             serde_json::to_string(&c.corps("S", "U")).unwrap(),
             r#"{"model":"modele","messages":[{"role":"system","content":"S"},{"role":"user","content":"U"}],"max_tokens":2000,"response_format":{"type":"json_object"},"temperature":0.1,"top_p":0.1}"#
         );
+    }
+
+    #[tokio::test]
+    async fn chat_coupe_refuse_sans_appel() {
+        let c = ClientChat::new(client().unwrap(), None, "modele", "k");
+        assert!(!c.actif());
+        assert_eq!(c.completer("S", "U").await.unwrap_err().0, CHAT_COUPE);
     }
 }
