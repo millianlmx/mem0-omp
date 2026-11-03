@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.14.1 — 2026-11-03
+
+- fix(harness,stack,mem0-rs): rêve sans 404, écritures mémoire retentées, index.lock géré (#315) (8e3922f)
+
 ## omp-harness 1.14.0 — 2026-11-03
 
 - feat(harness): serveur MCP des issues GitHub qui lance les corrections, une clé de déploiement par dépôt (#317) (e489cab)
