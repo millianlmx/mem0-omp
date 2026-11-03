@@ -2,15 +2,16 @@
 // déclare un dépôt sans éditer la configuration — clone nu, écriture éprouvée à
 // blanc, commandes de test devinées — et répond par un code que le script traduit
 // en geste : 3 lecture refusée, 4 écriture refusée (la clé de déploiement à poser).
+// Chaque dépôt a sa clé SSH (`~/.ssh/repos/<nom>`), seule offerte au distant.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfig } from "../../omp-harness/config.ts";
-import { Git } from "../../omp-harness/git.ts";
-import { execProcess } from "../../omp-harness/proc.ts";
-import { addRepo, detectTests, repoName } from "../../omp-harness/repos.ts";
+import { Git, remoteEnv } from "../../omp-harness/git.ts";
+import { execProcess, type Exec } from "../../omp-harness/proc.ts";
+import { addRepo, detectTests, repoName, type KeyGen } from "../../omp-harness/repos.ts";
 import { git, harnessRepo } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -47,6 +48,28 @@ function install(): { root: string; file: string; remote: string } {
 }
 
 const gitOf = (file: string) => new Git(execProcess, loadConfig(file).git);
+
+/** Un git qui note l'environnement de chaque appel, par sous-commande. */
+function recordingGit(file: string): { git: Git; calls: { args: string[]; ssh: string | undefined }[] } {
+  const calls: { args: string[]; ssh: string | undefined }[] = [];
+  const exec: Exec = (command, args, options) => {
+    calls.push({ args, ssh: options?.env?.GIT_SSH_COMMAND });
+    return execProcess(command, args, options);
+  };
+  return { git: new Git(exec, loadConfig(file).git), calls };
+}
+
+/** Le double de ssh-keygen : écrit la paire demandée et compte ses appels. */
+function fakeKeygen(): { keygen: KeyGen; made: string[][] } {
+  const made: string[][] = [];
+  const keygen: KeyGen = async (args) => {
+    made.push(args);
+    const key = args[args.indexOf("-f") + 1] as string;
+    fs.writeFileSync(key, "PRIVEE\n", { mode: 0o600 });
+    fs.writeFileSync(`${key}.pub`, `ssh-ed25519 AAAAFAKE ${args[args.indexOf("-C") + 1]}\n`);
+  };
+  return { keygen, made };
+}
 
 test("harness-repos/AC-1 : les commandes de test et l'image viennent des manifestes, le nom vient de l'URL", () => {
   assert.deepEqual(detectTests(["package.json", "pnpm-lock.yaml"]), {
@@ -100,8 +123,19 @@ test("harness-repos/AC-4 : un package.json avec test:touched donne la commande t
 
 test("harness-repos/AC-2 : un dépôt joignable est cloné, éprouvé et déclaré à la place de l'exemple ; le redéclarer ne change rien", async () => {
   const { root, file, remote } = install();
-  const result = await addRepo(file, loadConfig(file), gitOf(file), remote);
+  const home = path.join(root, "home");
+  const { keygen, made } = fakeKeygen();
+  const { git: recorded, calls } = recordingGit(file);
+  const result = await addRepo(file, loadConfig(file), recorded, remote, { keygen, home });
   assert.equal(result.code, 0, result.message);
+  const key = path.join(home, ".ssh", "repos", "produit");
+  assert.equal(made.length, 1);
+  assert.equal(made[0]?.[made[0].indexOf("-f") + 1], key);
+  assert.equal(fs.statSync(path.dirname(key)).mode & 0o777, 0o700);
+  for (const verb of ["ls-remote", "clone", "push"]) {
+    const call = calls.find((c) => c.args.includes(verb));
+    assert.ok(call?.ssh?.includes(`-i '${key}'`), `${verb} n'offre que la clé du dépôt`);
+  }
   assert.match(result.message, /produit ajouté — tests : « npm test »/);
 
   const config = loadConfig(file);
@@ -111,6 +145,7 @@ test("harness-repos/AC-2 : un dépôt joignable est cloné, éprouvé et déclar
     "l'exemple « mon-produit » a disparu",
   );
   const repo = config.repos[0];
+  assert.equal(repo?.sshKey, key);
   assert.equal(repo?.path, path.join(root, "repos", "produit"));
   assert.equal(repo?.mainBranch, "main");
   assert.equal(repo?.tests.touched, "npm run -s test:touched -- {files}", "le package.json de main est lu");
@@ -121,11 +156,17 @@ test("harness-repos/AC-2 : un dépôt joignable est cloné, éprouvé et déclar
   assert.equal(git(remote, "branch", "--list", "omp-harness-check").trim(), "", "l'essai d'écriture est à blanc");
 
   const before = fs.readFileSync(file, "utf8");
-  assert.deepEqual(await addRepo(file, loadConfig(file), gitOf(file), remote), {
+  assert.deepEqual(await addRepo(file, loadConfig(file), gitOf(file), remote, { keygen, home }), {
     code: 0,
     message: "produit est déjà déclaré",
   });
   assert.equal(fs.readFileSync(file, "utf8"), before);
+
+  // Une clé déjà là (redéclaration après suppression de l'entrée) est reprise, pas regénérée.
+  fs.writeFileSync(file, `${JSON.stringify({ ...JSON.parse(before), repos: [] }, null, 2)}\n`);
+  assert.equal((await addRepo(file, loadConfig(file), gitOf(file), remote, { keygen, home })).code, 0);
+  assert.equal(made.length, 1);
+  assert.equal(loadConfig(file).repos[0]?.sshKey, key);
 });
 
 test("harness-repos/AC-3 : lecture refusée → code 3, écriture refusée → code 4, et la configuration reste intacte", async () => {
@@ -143,25 +184,46 @@ test("harness-repos/AC-3 : lecture refusée → code 3, écriture refusée → c
         "--add-repo",
         url,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: { ...process.env, HOME: path.join(root, "home") } },
     );
 
+  // Le vrai ssh-keygen crée la clé du dépôt ; l'échec montre sa clé publique.
   const unreadable = run(path.join(root, "absent.git"));
   assert.equal(unreadable.status, 3, unreadable.stderr);
   assert.match(unreadable.stdout, /^✗ lecture refusée sur /);
+  const pub = fs.readFileSync(path.join(root, "home", ".ssh", "repos", "absent.pub"), "utf8").trim();
+  assert.ok(unreadable.stdout.includes(pub), "la clé publique du dépôt est affichée");
 
   // Un clone déjà là dont le distant refuse les poussées (le cas d'une clé en lecture seule).
   const clone = path.join(root, "repos", "produit");
   git(root, "clone", "-q", "--bare", remote, clone);
   git(clone, "config", "remote.origin.receivepack", "false");
-  const readOnly = await addRepo(file, loadConfig(file), gitOf(file), remote);
+  const home = path.join(root, "home");
+  const readOnly = await addRepo(file, loadConfig(file), gitOf(file), remote, { keygen: fakeKeygen().keygen, home });
   assert.equal(readOnly.code, 4);
   assert.match(readOnly.message, /^écriture refusée sur /);
+  assert.ok(readOnly.message.includes("ssh-ed25519 AAAAFAKE omp-harness:produit"));
   assert.equal(fs.readFileSync(file, "utf8"), before);
 
   assert.equal(
-    (await addRepo(file, loadConfig(file), gitOf(file), remote, "../x")).code,
+    (await addRepo(file, loadConfig(file), gitOf(file), remote, { name: "../x", keygen: fakeKeygen().keygen, home }))
+      .code,
     1,
     "un nom qui sortirait de repos/ est refusé",
   );
+});
+
+test("harness-repos/AC-5 : la clé d'un dépôt est seule offerte, citée pour le shell ; sans clé, l'identité du service", () => {
+  assert.deepEqual(remoteEnv({ sshKey: null }), {});
+  const home = tmpdir("harness-repos-home-");
+  const env = { HOME: home, GIT_SSH_COMMAND: "ssh -i /service/id_ed25519" };
+  const plain = remoteEnv({ sshKey: "/k/a b" }, env).GIT_SSH_COMMAND ?? "";
+  assert.ok(plain.startsWith("ssh -i '/k/a b' "));
+  assert.ok(!plain.includes("/service/"), "la clé du service n'est pas reprise");
+  assert.match(plain, /-o IdentitiesOnly=yes/);
+  assert.ok(plain.includes(`UserKnownHostsFile='${path.join(home, ".ssh", "known_hosts")}'`));
+  assert.ok(!plain.includes(" -F "));
+  fs.mkdirSync(path.join(home, ".ssh"));
+  fs.writeFileSync(path.join(home, ".ssh", "config"), "");
+  assert.ok(remoteEnv({ sshKey: "/k/a" }, env).GIT_SSH_COMMAND?.includes(`-F '${path.join(home, ".ssh", "config")}'`));
 });

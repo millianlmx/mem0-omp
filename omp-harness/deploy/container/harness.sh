@@ -16,7 +16,7 @@
 #
 #   bash omp-harness/deploy/container/harness.sh check      vérifie tout, sans rien modifier
 #   bash omp-harness/deploy/container/harness.sh login      connecte les runners à un compte OMP (au lieu d'une clé API)
-#   bash omp-harness/deploy/container/harness.sh key        la clé SSH publique du service
+#   bash omp-harness/deploy/container/harness.sh key [nom]  la clé SSH publique du service, ou celle du dépôt <nom>
 #   bash omp-harness/deploy/container/harness.sh token      le jeton de l'API
 #   bash omp-harness/deploy/container/harness.sh connect    les clients de CETTE machine visent cette pile (disconnect : retour)
 #   bash omp-harness/deploy/container/harness.sh logs | restart | start | down
@@ -382,15 +382,19 @@ ssh_url() {
   esac
 }
 
+# Le nom d'un dépôt d'après son URL, comme `--add-repo` (repos.ts repoName).
+repo_name() { local base="${1%/}"; base="${base##*[/:]}"; echo "${base%.git}"; }
+
+# Chaque dépôt a sa clé (`--add-repo` la crée) : GitHub refuse une clé sur deux dépôts.
 deploy_key_help() {
-  local url="$1" slug
+  local url="$1" name="$2" slug
   echo
-  echo "Le service n'a pas d'accès en écriture à ce dépôt. Pose sa clé en clé de déploiement,"
-  echo "case « Allow write access » cochée :"
+  echo "Le service n'a pas d'accès en écriture à ce dépôt. Pose LA CLÉ DE CE DÉPÔT en clé de"
+  echo "déploiement, case « Allow write access » cochée :"
   slug="$(printf '%s' "$url" | sed -n 's#^git@github\.com:\(.*\)\.git$#\1#p')"
   [ -z "$slug" ] || echo "  https://github.com/$slug/settings/keys/new"
   echo
-  cat "$ROOT/home/.ssh/id_ed25519.pub"
+  cat "$ROOT/home/.ssh/repos/$name.pub"
   echo
 }
 
@@ -405,7 +409,7 @@ cmd_add() {
     case "$code" in
       0) cmd_reload >/dev/null; echo "Lance un pipeline depuis omp ou l'app."; return ;;
       3|4)
-        deploy_key_help "$url"
+        deploy_key_help "$url" "${name:-$(repo_name "$url")}"
         [ -t 0 ] || exit "$code"
         read -r -p "Entrée une fois la clé ajoutée (Ctrl-C pour abandonner) " _ ;;
       *) exit "$code" ;;
@@ -537,7 +541,7 @@ case "${1:-}" in
   reload) cmd_reload ;;
   check) compose run --rm --no-deps harness omp-harness-check ;;
   login) cmd_login ;;
-  key) cat "$ROOT/home/.ssh/id_ed25519.pub" ;;
+  key) if [ -n "${2:-}" ]; then cat "$ROOT/home/.ssh/repos/$2.pub"; else cat "$ROOT/home/.ssh/id_ed25519.pub"; fi ;;
   token) cat "$ROOT/state/token" ;;
   connect) cmd_connect ;;
   disconnect) cmd_disconnect ;;

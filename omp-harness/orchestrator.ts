@@ -8,6 +8,7 @@
 // - `dreams.ts`       le rêve de la mémoire (consolidation des faits d'un dépôt au repos) ;
 // - `workstation.ts`  le poste de travail (extension Chrome, file d'actions, profil) et
 //   `workstation-agent.ts` son agent 24/24 ;
+// - `issues.ts`       les issues GitHub d'un dépôt déclaré, lancées en run ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -45,6 +46,7 @@ import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
 import { StepExecutor, challengeUnit, liveRun } from "./steps.ts";
 import { Workstation } from "./workstation.ts";
+import { IssueDesk } from "./issues.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 
 export { HarnessError } from "./errors.ts";
@@ -122,6 +124,8 @@ export class Orchestrator {
   readonly workstationAgent: WorkstationAgent;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
+  /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
+  readonly issues: IssueDesk;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -155,6 +159,7 @@ export class Orchestrator {
       retry: (runId, actor, instructions) => this.#human.retry(runId, actor, instructions),
       cancel: (runId, actor) => this.#human.cancel(runId, actor),
     });
+    this.issues = new IssueDesk(this.#ctx, { createRun: (input, actor) => this.createRun(input, actor) });
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);

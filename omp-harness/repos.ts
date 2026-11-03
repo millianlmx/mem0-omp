@@ -1,14 +1,16 @@
 // `main.ts --add-repo <url>` : déclare un dépôt sans éditer la configuration à la
-// main. Le clone nu est fait par le service (sa clé SSH), l'accès en écriture est
-// éprouvé à blanc, les commandes de test sont devinées depuis les manifestes de la
+// main. Chaque dépôt reçoit sa clé SSH (`~/.ssh/repos/<nom>`, créée ou reprise : GitHub
+// refuse une même clé de déploiement sur deux dépôts), le clone nu est fait avec elle,
+// l'accès en écriture est éprouvé à blanc, les commandes de test sont devinées depuis les manifestes de la
 // branche principale, puis l'entrée est écrite dans config.json.
 //
 // Codes de sortie (lus par harness.sh, qui guide la clé de déploiement) :
 //   0 ajouté (ou déjà là) · 3 lecture refusée · 4 écriture refusée · 1 autre échec.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import type { HarnessConfig } from "./config.ts";
-import type { Git } from "./git.ts";
+import { remoteEnv, type Git } from "./git.ts";
 
 export type TestPlan = {
   touched: string;
@@ -102,13 +104,35 @@ export function repoName(url: string): string {
 
 export type AddResult = { code: 0 | 1 | 3 | 4; message: string };
 
+/** Le lanceur de `ssh-keygen` (doublé par les tests) ; lève si la clé n'est pas créée. */
+export type KeyGen = (args: string[]) => Promise<void>;
+
+/** La clé du dépôt `<HOME>/.ssh/repos/<nom>` : reprise si elle existe, sinon créée. */
+export async function ensureRepoKey(name: string, keygen: KeyGen, home: string): Promise<string> {
+  const dir = path.join(home, ".ssh", "repos");
+  const key = path.join(dir, name);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(key)) await keygen(["-q", "-t", "ed25519", "-N", "", "-C", `omp-harness:${name}`, "-f", key]);
+  return key;
+}
+
+/** Le geste qui accorde l'accès : la clé publique du dépôt et, sur GitHub, la page où la coller. */
+function deployKeyHelp(url: string, key: string): string {
+  const github = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/*$/.exec(url);
+  const page = github ? ` (https://github.com/${github[1]}/${github[2]}/settings/keys/new)` : "";
+  const pub = fs.readFileSync(`${key}.pub`, "utf8").trim();
+  return `\nAjoute cette clé de déploiement AVEC écriture sur le dépôt${page} :\n${pub}`;
+}
+
 export async function addRepo(
   configFile: string,
   config: HarnessConfig,
   git: Git,
   url: string,
-  name = repoName(url),
+  options: { name?: string; keygen: KeyGen; home?: string },
 ): Promise<AddResult> {
+  const name = options.name ?? repoName(url);
+  const home = options.home ?? process.env.HOME ?? os.homedir();
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name))
     return { code: 1, message: `nom de dépôt invalide : « ${name} » (passe --name)` };
   const raw = JSON.parse(fs.readFileSync(configFile, "utf8")) as { repos?: Record<string, unknown>[] };
@@ -117,25 +141,31 @@ export async function addRepo(
 
   const reposRoot = path.dirname(config.dataDir);
   const clone = path.join(reposRoot, "repos", name);
+  const sshKey = await ensureRepoKey(name, options.keygen, home);
+  const env = remoteEnv({ sshKey }, { ...process.env, HOME: home });
   if (!fs.existsSync(clone)) {
-    const read = await git.raw(reposRoot, ["ls-remote", "--heads", url]);
+    const read = await git.raw(reposRoot, ["ls-remote", "--heads", url], env);
     if (read.code !== 0)
-      return { code: 3, message: `lecture refusée sur ${url} : ${read.stderr.trim().split("\n")[0] ?? ""}` };
+      return {
+        code: 3,
+        message: `lecture refusée sur ${url} : ${read.stderr.trim().split("\n")[0] ?? ""}${deployKeyHelp(url, sshKey)}`,
+      };
     fs.mkdirSync(path.dirname(clone), { recursive: true });
-    const cloned = await git.raw(reposRoot, ["clone", "--quiet", "--bare", url, clone]);
+    const cloned = await git.raw(reposRoot, ["clone", "--quiet", "--bare", url, clone], env);
     if (cloned.code !== 0) return { code: 1, message: `clone impossible : ${cloned.stderr.trim()}` };
   }
   const head = await git.raw(clone, ["symbolic-ref", "--short", "HEAD"]);
   const mainBranch = head.code === 0 && head.stdout.trim() !== "" ? head.stdout.trim() : "main";
-  const write = await git.raw(clone, [
-    "push",
-    "--dry-run",
-    "--porcelain",
-    "origin",
-    `refs/heads/${mainBranch}:refs/heads/omp-harness-check`,
-  ]);
+  const write = await git.raw(
+    clone,
+    ["push", "--dry-run", "--porcelain", "origin", `refs/heads/${mainBranch}:refs/heads/omp-harness-check`],
+    env,
+  );
   if (write.code !== 0)
-    return { code: 4, message: `écriture refusée sur ${url} : ${write.stderr.trim().split("\n")[0] ?? ""}` };
+    return {
+      code: 4,
+      message: `écriture refusée sur ${url} : ${write.stderr.trim().split("\n")[0] ?? ""}${deployKeyHelp(url, sshKey)}`,
+    };
 
   const listed = await git.raw(clone, ["ls-tree", "--name-only", mainBranch]);
   const files = listed.code === 0 ? listed.stdout.split("\n").filter(Boolean) : [];
@@ -150,6 +180,7 @@ export async function addRepo(
     ...(plan.testImage ? { testImage: plan.testImage } : {}),
     merge: "local",
     remote: "origin",
+    sshKey,
   });
   fs.writeFileSync(configFile, `${JSON.stringify({ ...raw, repos }, null, 2)}\n`);
   return {

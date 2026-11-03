@@ -93,3 +93,29 @@ test("harness-check/AC-2 : chaque manque est un ✗ avec son geste — omp absen
   // Sans modèles déclarés : un avertissement, pas un échec.
   assert.equal(lines.find((line) => line.label === "modèles")?.status, "warn");
 });
+
+test("harness-check/AC-3 : un dépôt à clé propre est éprouvé et nommé par sa clé ; deux dépôts sur la clé du service sont signalés", async () => {
+  const { clone } = cloneWithRemote();
+  const key = path.join(tmpdir("harness-check-key-"), "demo");
+  const config = testConfig(clone, (c) => {
+    c.oracle = { url: "http://127.0.0.1:8321", token: null };
+    c.repos = c.repos.map((repo) => ({ ...repo, remote: "nulle-part", sshKey: key }));
+  });
+  const own = await runChecks(config, deps(config));
+  const read = own.find((line) => line.label === "dépôt demo — lecture de nulle-part");
+  assert.ok(read?.fix?.includes(`${key}.pub`), read?.fix ?? "");
+  assert.equal(
+    own.find((line) => line.label === "clés de déploiement"),
+    undefined,
+  );
+
+  config.repos = config.repos.flatMap((repo) => [
+    { ...repo, sshKey: null },
+    { ...repo, name: "autre", sshKey: null },
+    { ...repo, name: "local", sshKey: null, remote: null },
+  ]);
+  const shared = (await runChecks(config, deps(config))).find((line) => line.label === "clés de déploiement");
+  assert.equal(shared?.status, "warn");
+  assert.ok(shared?.detail.includes("demo, autre") && !shared.detail.includes("local"), shared?.detail ?? "");
+  assert.match(shared?.fix ?? "", /\.ssh\/repos\/<nom>/, "le geste donne au dépôt sa propre clé");
+});

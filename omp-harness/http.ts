@@ -31,6 +31,7 @@ import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers
 import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
 import type { Workstation } from "./workstation.ts";
+import { handleMcp } from "./mcp.ts";
 import { MAX_WAIT_SEC, parseActionInput } from "./workstation.ts";
 
 export const API_VERSION = 1;
@@ -61,6 +62,7 @@ export const API_FEATURES = [
   "metrics",
   "push-activities",
   "workstation",
+  "mcp",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -141,7 +143,7 @@ function send(res: http.ServerResponse, status: number, body: unknown, headers: 
   res.end(json);
 }
 
-async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -150,12 +152,15 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
     chunks.push(chunk as Buffer);
   }
   if (size === 0) return {};
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     throw new HarnessError(400, "JSON invalide");
   }
+}
+
+async function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  const parsed = await readJson(req);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
     throw new HarnessError(400, "un objet JSON est attendu");
   return parsed as Record<string, unknown>;
@@ -781,6 +786,35 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         throw new HarnessError(400, "models : { fast, standard, heavy } attendu, ou null (retour à la configuration)");
       orchestrator.providers.setChains(body.models as ModelChains | null, call.actor.by);
       send(call.res, 200, providersView());
+    }),
+    // MCP (« Streamable HTTP », réponses JSON) : un message ou un lot JSON-RPC ; sans requête
+    // à rendre (notifications seules), 202. Pas de flux serveur : `GET` reste un 405.
+    route("POST", "/v1/mcp", "viewer", async (call) => {
+      let body: unknown;
+      try {
+        body = await readJson(call.req);
+      } catch (err) {
+        if (!(err instanceof HarnessError) || err.status !== 400) throw err;
+        send(call.res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "JSON invalide" } });
+        return;
+      }
+      const mcp = {
+        client: call.client,
+        actor: call.actor,
+        desk: orchestrator.issues,
+        repos: () => orchestrator.config.repos,
+        version: HARNESS_VERSION,
+      };
+      const replies = await Promise.all(
+        (Array.isArray(body) ? body : [body]).map((message) => handleMcp(message, mcp)),
+      );
+      const answered = replies.filter((reply) => reply !== null);
+      if (answered.length === 0) {
+        call.res.writeHead(202, { "Cache-Control": "no-store" });
+        call.res.end();
+        return;
+      }
+      send(call.res, 200, Array.isArray(body) ? answered : answered[0]);
     }),
   ];
 }

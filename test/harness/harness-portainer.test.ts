@@ -149,7 +149,6 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   assert.equal(config.dataDir, path.join(root, "state"));
   assert.equal(config.oracle?.url, "http://mem0:8321");
   const key = read(path.join(root, "home", ".ssh", "id_ed25519.pub"));
-  assert.ok(first.stdout.includes(key.trim()), "la clé de déploiement s'affiche dans les journaux");
 
   // Redéploiement : la clé du modèle et le serveur d'embeddings suivent les variables ;
   // le jeton, la clé SSH et une config.json éditée restent.
@@ -186,13 +185,17 @@ test("harness-portainer/AC-4 : `repos` déclare chaque dépôt, guide la clé de
   const { dir, root, env } = stack();
   assert.equal(run(SETUP, ["init"], env).status, 0);
 
-  // Doublure de `main.ts --add-repo` : écriture refusée (4) au premier essai, puis acceptée.
+  // Doublure de `main.ts --add-repo` : crée la clé du dépôt, écriture refusée (4) au premier essai, puis acceptée.
   const calls = path.join(dir, "calls");
   const main = path.join(dir, "fake-main.mjs");
+  const keys = path.join(root, "home", ".ssh", "repos");
   fs.writeFileSync(
     main,
     `import fs from "node:fs";
 const url = process.argv[process.argv.indexOf("--add-repo") + 1];
+const name = url.split(/[/:]/).pop().replace(/\\.git$/, "");
+fs.mkdirSync(${JSON.stringify(keys)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(keys)} + "/" + name + ".pub", "ssh-ed25519 AAAA omp-harness:" + name + "\\n");
 fs.appendFileSync(${JSON.stringify(calls)}, url + "\\n");
 const seen = fs.readFileSync(${JSON.stringify(calls)}, "utf8").split("\\n").filter((l) => l === url).length;
 process.exit(url.includes("verrou") && seen === 1 ? 4 : 0);
@@ -211,7 +214,7 @@ process.exit(url.includes("verrou") && seen === 1 ? 4 : 0);
     "git@github.com:toi/verrou.git",
   ]);
   assert.ok(repos.stdout.includes("https://github.com/toi/verrou/settings/keys/new"), repos.stdout);
-  assert.ok(repos.stdout.includes(read(path.join(root, "home", ".ssh", "id_ed25519.pub")).trim()));
+  assert.ok(repos.stdout.includes("ssh-ed25519 AAAA omp-harness:verrou"), "la clé du dépôt, pas celle du service");
   assert.match(repos.stdout, /✓ dépôts déclarés/);
 
   const none = run(SETUP, ["repos"], { ...env, OMP_HARNESS_MAIN: main });
