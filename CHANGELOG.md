@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.14.0 — 2026-11-03
+
+- feat(harness): serveur MCP des issues GitHub qui lance les corrections, une clé de déploiement par dépôt (#317) (e489cab)
+
 ## omp-harness 1.13.1 — 2026-10-30
 
 - fix(harness,console): l'audit pilote ses features, /impl sans diff passe en revue, le merge ne rejoue plus un conflit résolu (#310) (7e9dc12)
