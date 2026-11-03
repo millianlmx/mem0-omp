@@ -307,4 +307,15 @@ export const MIGRATIONS: readonly string[] = [
      outcome TEXT NOT NULL,
      actions INTEGER NOT NULL DEFAULT 0
    );`,
+  // Les issues GitHub lancées en run (issues.ts) : une issue n'est liée qu'à son dernier
+  // run, ce qui empêche de la relancer tant que ce run n'a pas échoué ou été annulé.
+  `CREATE TABLE issue_runs (
+     repo TEXT NOT NULL,
+     number INTEGER NOT NULL,
+     run_id TEXT NOT NULL,
+     url TEXT NOT NULL,
+     by TEXT,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (repo, number)
+   );`,
 ];

@@ -162,6 +162,11 @@ export type RepoConfig = {
    * les modules bornent). Un gros dépôt ne prend pas tous les runners aux autres.
    */
   maxParallel: number | null;
+  /**
+   * La clé SSH PRIVÉE de ce dépôt (chemin absolu) pour tout appel au distant : GitHub
+   * refuse une même clé de déploiement sur deux dépôts. `null` : l'identité du service.
+   */
+  sshKey: string | null;
 };
 
 export type HarnessConfig = {
@@ -333,6 +338,11 @@ export type HarnessConfig = {
   monitoring: MonitoringConfig;
   apns: ApnsConfig | null;
   workstation: WorkstationConfig;
+  /**
+   * Les issues GitHub servies aux clients MCP (`POST /v1/mcp`, issues.ts) : `label` désigne
+   * les issues qu'`issues_fix_labeled` lance, `maxLaunch` borne les runs lancés par appel.
+   */
+  issues: { label: string; maxLaunch: number };
   repos: RepoConfig[];
 };
 
@@ -473,6 +483,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       shiftMaxActions: 20,
       profileEveryHours: 6,
     },
+    issues: { label: "omp:fix", maxLaunch: 5 },
     repos: [],
   };
 }
@@ -559,6 +570,11 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     if (repo.merge !== "local" && repo.merge !== "gh") fail(`repos.${repo.name}.merge : local | gh`);
     if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1))
       fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
+    if (
+      repo.sshKey !== null &&
+      (typeof repo.sshKey !== "string" || !path.isAbsolute(repo.sshKey) || repo.sshKey.includes("'"))
+    )
+      fail(`repos.${repo.name}.sshKey : chemin absolu sans apostrophe, ou null`);
   }
   if (!Array.isArray(config.runner.retryBackoffSec) || config.runner.retryBackoffSec.some((s) => !(s >= 0)))
     fail("runner.retryBackoffSec : liste de secondes ≥ 0");
@@ -630,6 +646,10 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       if (typeof apns[key] !== "string" || apns[key].trim() === "") fail(`apns.${key} : texte non vide`);
     if (typeof apns.sandbox !== "boolean") fail("apns.sandbox : booléen");
   }
+  if (typeof config.issues.label !== "string" || config.issues.label.trim() === "")
+    fail("issues.label : texte non vide");
+  if (!(Number.isInteger(config.issues.maxLaunch) && config.issues.maxLaunch >= 1))
+    fail("issues.maxLaunch : entier ≥ 1");
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);
@@ -664,6 +684,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       remote: null,
       testImage: null,
       maxParallel: null,
+      sshKey: null,
     },
     raw,
   );

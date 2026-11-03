@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { modelChain } from "./config.ts";
-import type { Git } from "./git.ts";
+import { remoteEnv, type Git } from "./git.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { Exec } from "./proc.ts";
 import { engine, memoryExtension } from "./runner.ts";
@@ -207,9 +207,15 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean):
   if (repo.remote === null) {
     lines.push({ status: "warn", label: label("distant"), detail: "`remote: null` : les merges restent sur ce VPS" });
   } else {
-    const read = await git.raw(repo.path, ["ls-remote", "--heads", repo.remote, repo.mainBranch]);
-    const home = (deps.env ?? process.env).HOME ?? os.homedir();
-    const key = contained ? "la clé de `harness.sh key`" : path.join(home, ".ssh", "id_ed25519.pub");
+    const env = deps.env ?? process.env;
+    const sshEnv = remoteEnv(repo, env);
+    const read = await git.raw(repo.path, ["ls-remote", "--heads", repo.remote, repo.mainBranch], sshEnv);
+    const key =
+      repo.sshKey !== null
+        ? `${repo.sshKey}.pub${contained ? ` (\`harness.sh key ${repo.name}\`)` : ""}`
+        : contained
+          ? "la clé de `harness.sh key`"
+          : path.join(env.HOME ?? os.homedir(), ".ssh", "id_ed25519.pub");
     const keyFix = `Ajoute ${key} comme clé de déploiement AVEC écriture sur le dépôt.`;
     if (read.code !== 0) {
       lines.push({
@@ -220,13 +226,11 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean):
       });
     } else {
       // Une ref neuve en essai : l'authentification en écriture est éprouvée, rien n'est poussé.
-      const write = await git.raw(repo.path, [
-        "push",
-        "--dry-run",
-        "--porcelain",
-        repo.remote,
-        `refs/heads/${repo.mainBranch}:refs/heads/omp-harness-check`,
-      ]);
+      const write = await git.raw(
+        repo.path,
+        ["push", "--dry-run", "--porcelain", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/omp-harness-check`],
+        sshEnv,
+      );
       lines.push(
         write.code === 0
           ? { status: "ok", label: label(`écriture sur ${repo.remote}`), detail: "authentifiée (essai à blanc)" }
@@ -274,6 +278,17 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
     lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix });
   }
   for (const repo of config.repos) lines.push(...(await checkRepo(repo, deps, contained)));
+  // GitHub refuse une même clé de déploiement sur deux dépôts : la clé du service n'en sert qu'un.
+  const shared = config.repos.filter((repo) => repo.remote !== null && repo.sshKey === null).map((repo) => repo.name);
+  if (shared.length >= 2)
+    lines.push({
+      status: "warn",
+      label: "clés de déploiement",
+      detail: `${shared.join(", ")} partagent la clé du service, que GitHub n'accepte que sur un dépôt`,
+      fix: contained
+        ? "Donne à chacun sa clé : retire son entrée de config.json, puis `harness.sh add <url> <nom>` (ou relance le service `repos` de la pile)."
+        : `Donne à chacun sa clé : \`sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C omp-harness:<nom> -f ${path.join((deps.env ?? process.env).HOME ?? os.homedir(), ".ssh", "repos", "<nom>")}\`, puis \`"sshKey"\` sur son entrée de la configuration.`,
+    });
   return lines;
 }
 

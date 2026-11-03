@@ -453,3 +453,26 @@ export class Git {
     return (await this.run(repo, ["ls-tree", "-r", "--name-only", ref])).split("\n").filter(Boolean);
   }
 }
+
+/**
+ * L'environnement de git pour tout appel au distant d'un dépôt : `{}` sans clé propre
+ * (l'identité du service), sinon un `GIT_SSH_COMMAND` qui n'offre QUE la clé du dépôt.
+ * Le `-i` du service n'est pas repris : ssh l'offrirait d'abord, GitHub l'accepterait
+ * pour un autre dépôt et répondrait « repository not found ».
+ */
+export function remoteEnv(
+  repo: { sshKey: string | null },
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  if (repo.sshKey === null) return {};
+  const ssh = path.join(env.HOME ?? os.homedir(), ".ssh");
+  const config = path.join(ssh, "config");
+  return {
+    GIT_SSH_COMMAND: [
+      `ssh -i '${repo.sshKey}'`,
+      ...(fs.existsSync(config) ? [`-F '${config}'`] : []),
+      "-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
+      `-o UserKnownHostsFile='${path.join(ssh, "known_hosts")}'`,
+    ].join(" "),
+  };
+}

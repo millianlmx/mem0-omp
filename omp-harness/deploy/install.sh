@@ -98,7 +98,7 @@ for user in omp-harness omp-runner omp-heavy; do
   fi
 done
 
-echo "· clé SSH du service : il pousse les merges sur le distant"
+echo "· clé SSH du service : le repli des dépôts sans clé propre (\"sshKey\")"
 if [ ! -e /var/lib/omp-harness/.ssh/id_ed25519 ]; then
   install -d -m 0700 -o omp-harness -g omp-harness /var/lib/omp-harness/.ssh
   sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C "omp-harness@$(hostname)" -f /var/lib/omp-harness/.ssh/id_ed25519
@@ -131,10 +131,12 @@ systemctl start dev-zram0.swap 2>/dev/null || true
 if grep -q '"repos": \[\s*\]' /etc/omp-harness/config.json || grep -q '"mon-produit"' /etc/omp-harness/config.json; then
   echo
   echo "Installé. La suite (omp-harness/README.md § Installer le serveur) :"
-  echo "  1. Clé de déploiement AVEC écriture, sur chaque dépôt :"
-  echo "       $(cat /var/lib/omp-harness/.ssh/id_ed25519.pub)"
-  echo "  2. sudo -u omp-harness git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>"
-  echo "  3. sudoedit /etc/omp-harness/config.json : repos, models"
+  echo "  1. Une clé par dépôt (GitHub refuse une clé sur deux dépôts), posée en clé de déploiement AVEC écriture :"
+  echo "       sudo -u omp-harness install -d -m 0700 /var/lib/omp-harness/.ssh/repos"
+  echo "       sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C omp-harness:<dépôt> -f /var/lib/omp-harness/.ssh/repos/<dépôt>"
+  echo "       sudo cat /var/lib/omp-harness/.ssh/repos/<dépôt>.pub"
+  echo "  2. sudo -u omp-harness -H env GIT_SSH_COMMAND=\"ssh -i /var/lib/omp-harness/.ssh/repos/<dépôt> -o IdentitiesOnly=yes\" git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>"
+  echo "  3. sudoedit /etc/omp-harness/config.json : repos (\"sshKey\": \"/var/lib/omp-harness/.ssh/repos/<dépôt>\"), models"
   echo "  4. Comptes LLM : ANTHROPIC_API_KEY=… dans /etc/omp-harness/runner.env, ou sudo -u omp-runner -H omp --profile pipeline (/login)"
   echo "  5. OMLX_BASE_URL dans /etc/omp-harness/mem0.env, puis systemctl restart omp-harness-mem0"
   echo "  6. sudo omp-harness-check, puis systemctl enable --now omp-harness"

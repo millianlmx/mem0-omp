@@ -12,7 +12,7 @@ import type { RunPatch, RunRow, Store } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { EventType } from "./events.ts";
 import { EPHEMERAL_EVENTS } from "./events.ts";
-import type { Git } from "./git.ts";
+import { remoteEnv, type Git } from "./git.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import type { RunState, Transition } from "./machine.ts";
 import { assertTransition, isTerminal } from "./machine.ts";
@@ -267,12 +267,11 @@ export class HarnessContext {
   /** `main` local avancé depuis le remote (fast-forward seulement ; une divergence est journalisée). */
   async fetchMain(repo: RepoConfig): Promise<void> {
     if (!repo.remote) return;
-    const result = await this.git.raw(repo.path, [
-      "fetch",
-      "-q",
-      repo.remote,
-      `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`,
-    ]);
+    const result = await this.git.raw(
+      repo.path,
+      ["fetch", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`],
+      remoteEnv(repo),
+    );
     if (result.code !== 0) this.log(`fetch ${repo.name} : ${result.stderr.trim().slice(0, 200)}`);
   }
 

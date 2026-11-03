@@ -4,7 +4,8 @@
 #   services.omp-harness = {
 #     enable = true;
 #     ompPackage = inputs.omp.packages.${pkgs.system}.omp;   # github:can1357/oh-my-pi/v18.6.0
-#     settings.repos = [ { name = "mon-produit"; path = "/var/lib/omp-harness/repos/mon-produit"; … } ];
+#     settings.repos = [ { name = "mon-produit"; path = "/var/lib/omp-harness/repos/mon-produit";
+#                          sshKey = "/var/lib/omp-harness/.ssh/repos/mon-produit"; … } ];
 #     tailscale.serve = true;                                 # l'API (443) et la mémoire (8443) sur le tailnet
 #   };
 #
@@ -355,7 +356,8 @@ in
           printf 'MEM0_HTTP_TOKEN=%s\n' "$token" >> env
           printf 'MEM0_HTTP_URL=http://127.0.0.1:8321\nMEM0_HTTP_TOKEN=%s\n' "$token" >> runner.env
         fi
-        # La clé SSH du service : il pousse les merges sur le distant (clé de déploiement AVEC écriture).
+        # La clé SSH du service : le repli des dépôts sans `sshKey` (chacun devrait avoir la sienne,
+        # GitHub refusant une même clé de déploiement sur deux dépôts : README § NixOS).
         if [ ! -e /var/lib/omp-harness/.ssh/id_ed25519 ]; then
           install -d -m 0700 -o omp-harness -g omp-harness /var/lib/omp-harness/.ssh
           runuser -u omp-harness -- ssh-keygen -q -t ed25519 -N "" -C "omp-harness@${config.networking.hostName}" -f /var/lib/omp-harness/.ssh/id_ed25519

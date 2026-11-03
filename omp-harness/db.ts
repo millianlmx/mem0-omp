@@ -10,13 +10,13 @@
 // d'héritage linéaire, chacune ne voyant que celles du dessous :
 //
 //   core → runs → journal → steps → decisions → heavy → projects → providers
-//        → sessions → usage → push → workstation → workstation-meetings → Store
+//        → sessions → usage → push → workstation → workstation-meetings → issues → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { WorkstationMeetingStore } from "./db/workstation-meetings.ts";
+import { IssueStore } from "./db/issues.ts";
 
-export class Store extends WorkstationMeetingStore {}
+export class Store extends IssueStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
@@ -30,6 +30,7 @@ export type { ProviderModel, ProviderRow } from "./db/providers.ts";
 export { groupUsage, modelKey, sumUsage } from "./db/usage.ts";
 export type { UsageRow, UsageTotals } from "./db/usage.ts";
 export type { PushTokenRow } from "./db/push.ts";
+export type { IssueRunRow } from "./db/issues.ts";
 export { ACTION_KINDS, ACTION_STATES } from "./db/workstation.ts";
 export type {
   ActionKind,

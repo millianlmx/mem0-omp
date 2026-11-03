@@ -18,6 +18,7 @@ import type { RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import type { DecisionRow, DecisionStatus, RunRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { remoteEnv } from "./git.ts";
 import { afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
 
@@ -196,7 +197,7 @@ export class Merger {
     const args = ["push", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`];
     let detail = "";
     for (let attempt = 0; ; attempt++) {
-      const push = await git.raw(repo.path, args);
+      const push = await git.raw(repo.path, args, remoteEnv(repo));
       if (push.code === 0) return true;
       detail = (push.stderr || push.stdout).trim().slice(0, 300);
       this.#ctx.event("push_failed", run.id, { detail, attempt });
@@ -225,7 +226,7 @@ export class Merger {
     const remote = repo.remote ?? "origin";
     const worktree = run.worktree;
     if (worktree === null) throw new Error("le run n'a plus de worktree");
-    await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`]);
+    await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
     const body = message.split("\n").slice(2).join("\n");
     const created = await exec(
       "gh",
@@ -357,12 +358,11 @@ export class Merger {
       if (repo.merge === "local") {
         await git.run(repo.path, ["update-ref", `refs/heads/${repo.mainBranch}`, sha, main]);
         if (repo.remote) {
-          const push = await git.raw(repo.path, [
-            "push",
-            "-q",
-            repo.remote,
-            `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`,
-          ]);
+          const push = await git.raw(
+            repo.path,
+            ["push", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`],
+            remoteEnv(repo),
+          );
           if (push.code !== 0) {
             // La poussée refusée défait le revert local : main reste comme le distant la connaît.
             await git.raw(repo.path, ["update-ref", `refs/heads/${repo.mainBranch}`, main, sha]);
@@ -413,7 +413,7 @@ export class Merger {
     const { git, exec } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const branch = `harness/revert-${run.slug}`;
-    await git.run(scratch, ["push", "-q", "-f", remote, `${branch}:${branch}`]);
+    await git.run(scratch, ["push", "-q", "-f", remote, `${branch}:${branch}`], remoteEnv(repo));
     const created = await exec(
       "gh",
       [

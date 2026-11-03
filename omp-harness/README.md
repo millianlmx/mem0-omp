@@ -50,7 +50,9 @@ configuration. `harness.sh pair` réaffiche le code. `harness.sh approver` affic
 poste de travail »). `harness.sh client add <nom>` crée un client de plus et affiche
 SON code (voir « Plusieurs clients, plusieurs projets »).
 
-`add` clone le dépôt en nu, éprouve l'écriture sur son distant (un essai à blanc),
+`add` crée la clé SSH du dépôt (`~/.omp-harness/home/.ssh/repos/<dépôt>`, reprise si
+elle existe : GitHub refuse une même clé de déploiement sur deux dépôts ; `harness.sh
+key <dépôt>` la réaffiche), clone le dépôt en nu avec elle, éprouve l'écriture sur son distant (un essai à blanc),
 devine ses commandes de test d'après ses manifestes (`package.json`, `Cargo.toml`,
 `go.mod`, `pyproject.toml`) et le déclare dans `~/.omp-harness/config.json`, puis recharge les dépôts du service sans
 arrêter les runs en cours (`harness.sh reload`). Pour un projet node, le `package.json`
@@ -58,7 +60,7 @@ de `main` est lu : un script `test:touched` donne `tests.touched` = `npm run -s 
 (sinon `npm test -- {files}`), `tests.pattern` vaut `test/**/*.test.ts` si un dossier
 `test/` existe (sinon `**/*.test.{ts,js}`), et les scripts `lint` et `typecheck` deviennent
 des `checks` nommés. Si la clé
-du service n'a pas accès, il l'affiche avec le lien GitHub où la poser (case « Allow
+du dépôt n'a pas accès, il l'affiche avec le lien GitHub où la poser (case « Allow
 write access ») et réessaie quand tu valides. Une URL `https://github.com/…` est
 convertie en SSH. Les commandes devinées, les modèles et le reste se règlent ensuite
 dans `config.json` (voir « Configuration »), puis `harness.sh reload` (les dépôts) ou
@@ -155,10 +157,11 @@ embarque pas, elle se publie par celui de l'hôte.
 
 Ensuite, tout se lit dans les journaux des conteneurs :
 
-- **`setup`** affiche la clé SSH du service. Pose-la en clé de déploiement de chaque
-  dépôt, case « Allow write access » cochée.
-- **`repos`** déclare les dépôts. Tant qu'une clé manque, il donne le lien GitHub où la
-  poser et réessaie toutes les 30 s : rien à redéployer.
+- **`repos`** déclare les dépôts, chacun avec SA clé SSH (créée sous
+  `$OMP_HARNESS_ROOT/home/.ssh/repos/<dépôt>` : GitHub refuse une même clé de
+  déploiement sur deux dépôts). Tant qu'une clé n'est pas posée, il affiche la clé
+  publique du dépôt et le lien GitHub où la poser (case « Allow write access »
+  cochée), et réessaie toutes les 30 s : rien à redéployer.
 - **`pairing`** publie le harness et sa mémoire sur le tailnet par le Tailscale de
   l'hôte (son socket, `/var/run/tailscale`), puis affiche le code d'appairage `omp1:…`,
   à coller dans l'app ou avec `/pair`. Si Tailscale manque ou n'est pas connecté sur
@@ -242,13 +245,19 @@ par son empreinte), le service et ses unités systemd, le lanceur root, la mémo
 `omp-harness-check`, et une clé SSH pour le service. Il ne remplace jamais une
 configuration déjà posée : relancé, il met à jour le code et redémarre le service.
 
-**3. La clé de déploiement.** Le service pousse ses merges sur ton dépôt avec sa
-propre clé. Ajoute-la au dépôt **avec l'écriture** (GitHub : Settings ▸ Deploy keys ▸
+**3. La clé de déploiement.** Le service parle à chaque dépôt avec une clé propre à ce
+dépôt (GitHub refuse une même clé de déploiement sur deux dépôts). Crée-la, puis
+ajoute sa clé publique au dépôt **avec l'écriture** (GitHub : Settings ▸ Deploy keys ▸
 Add deploy key ▸ Allow write access) :
 
 ```bash
-sudo cat /var/lib/omp-harness/.ssh/id_ed25519.pub
+sudo -u omp-harness install -d -m 0700 /var/lib/omp-harness/.ssh/repos
+sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C omp-harness:<dépôt> -f /var/lib/omp-harness/.ssh/repos/<dépôt>
+sudo cat /var/lib/omp-harness/.ssh/repos/<dépôt>.pub
 ```
+
+La clé du service (`/var/lib/omp-harness/.ssh/id_ed25519`, posée par l'installation)
+ne sert qu'aux dépôts sans `sshKey` : un seul dépôt GitHub peut l'utiliser.
 
 En mode `"merge": "gh"` (une PR par feature, fusionnée par `gh`), installe aussi
 `gh` et connecte-le : `sudo -u omp-harness -H gh auth login`.
@@ -256,7 +265,8 @@ En mode `"merge": "gh"` (une PR par feature, fusionnée par `gh`), installe auss
 **4. Le clone.** Un clone nu par dépôt, au nom de `omp-harness` :
 
 ```bash
-sudo -u omp-harness git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>
+sudo -u omp-harness -H env GIT_SSH_COMMAND="ssh -i /var/lib/omp-harness/.ssh/repos/<dépôt> -o IdentitiesOnly=yes" \
+  git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>
 ```
 
 **5. La configuration.** `sudoedit /etc/omp-harness/config.json` : remplace le dépôt
@@ -270,7 +280,8 @@ d'exemple par les tiens, et garde ou change les modèles (voir « Configuration 
     "tests": { "touched": "npm run -s test:touched -- {files}", "full": "npm test", "pattern": "test/**/*.test.ts" },
     "checks": { "lint": "npm run -s lint" },
     "merge": "local",
-    "remote": "origin"
+    "remote": "origin",
+    "sshKey": "/var/lib/omp-harness/.ssh/repos/mon-produit"
   }
 ]
 ```
@@ -362,8 +373,11 @@ Puis `sudo nixos-rebuild switch`, et les gestes qui ne se déclarent pas, dans l
 même ordre que sur Debian (étapes 3, 4, 6 et 8) :
 
 ```bash
-sudo cat /var/lib/omp-harness/.ssh/id_ed25519.pub          # clé de déploiement, avec l'écriture
-sudo -u omp-harness git clone --bare git@github.com:<toi>/mon-produit.git /var/lib/omp-harness/repos/mon-produit
+sudo -u omp-harness install -d -m 0700 /var/lib/omp-harness/.ssh/repos
+sudo -u omp-harness ssh-keygen -q -t ed25519 -N '' -C omp-harness:mon-produit -f /var/lib/omp-harness/.ssh/repos/mon-produit
+sudo cat /var/lib/omp-harness/.ssh/repos/mon-produit.pub   # sa clé de déploiement, avec l'écriture ; sshKey dans settings.repos
+sudo -u omp-harness -H env GIT_SSH_COMMAND="ssh -i /var/lib/omp-harness/.ssh/repos/mon-produit -o IdentitiesOnly=yes" \
+  git clone --bare git@github.com:<toi>/mon-produit.git /var/lib/omp-harness/repos/mon-produit
 echo 'ANTHROPIC_API_KEY=sk-ant-…' | sudo tee -a /etc/omp-harness/runner.env >/dev/null
 sudo omp-harness-check
 sudo systemctl restart omp-harness
@@ -449,6 +463,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
 | `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR posée en `gh pr merge --squash --auto`, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée) |
 | `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
+| `repos[].sshKey` | `null` | la clé SSH privée du dépôt (chemin absolu), seule offerte à son distant (fetch, push, `--check`) ; `--add-repo` la crée sous `~/.ssh/repos/<nom>`. `null` : la clé du service, qu'un seul dépôt GitHub peut porter |
 | `repos[].mainBranch` | `main` | la branche principale |
 | `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
 | `repos[].testImage` | `container.testImage` | l'image des tests de ce dépôt, en conteneurs |
@@ -512,6 +527,8 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `workstation.approvalTtlHours` | `24` | une action en attente d'approbation au-delà passe `expired` — vaut refus, jamais approuvée ; une action restée en file aussi longtemps expire aussi |
 | `workstation.shiftEveryMin`, `workstation.shiftMaxActions` | `30`, `20` | le repos entre deux services de l'agent 24/24 (qui dure au plus ce repos, borné par `runner.stepTimeoutSec`), et les actions qu'un service dépose au plus, décisions comprises |
 | `workstation.profileEveryHours` | `6` | le profil est resynthétisé au plus toutes les 6 h, seulement s'il y a de nouvelles observations (le premier : 6 h après la première observation) ; `POST /v1/workstation/profile/rebuild` le demande tout de suite |
+| `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` lance (§ « Les issues GitHub (MCP) ») |
+| `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` lance au plus ; le reste attend l'appel suivant |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -922,6 +939,41 @@ répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 `<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
 ne touche à la mémoire d'aucun projet.
 
+## Les issues GitHub (MCP)
+
+`POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
+flux serveur) : un agent y lit les issues GitHub d'un dépôt et lance les pipelines qui
+les corrigent. Il prend le même jeton que l'API :
+
+```bash
+claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
+  --header "Authorization: Bearer <jeton operator>"
+```
+
+| Outil | Rôle | Effet |
+|---|---|---|
+| `repos_list` | viewer | Les dépôts déclarés que le client voit, avec leur dépôt GitHub. |
+| `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
+| `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. |
+| `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). |
+
+- **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
+  `owner/name` sur GitHub (retrouvé par le distant des clones) ; facultatif quand le
+  client ne voit qu'un dépôt. Un dépôt absent de la liste, ou que le client ne voit
+  pas, est refusé avec la marche à suivre (`harness.sh add <url>`) : sans clone ni clé
+  de déploiement, un run ne pourrait ni partir de `main` ni pousser son merge.
+- **Le dépôt GitHub** est celui du distant du clone (`repos[].remote`, `origin` sinon).
+- **`gh` connecté.** Les issues passent par `gh` avec la connexion du service
+  (`sudo -u omp-harness -H gh auth login`, ou `gh auth login` dans le conteneur
+  `harness`), même en `"merge": "local"` : une clé de déploiement n'ouvre que git,
+  jamais l'API. Sans connexion, l'outil rend une erreur qui le dit.
+- **Le texte d'une issue est une donnée de tiers.** La demande du run le dit à
+  l'agent ; le label est le filtre de confiance (seul un collaborateur avec le droit
+  de trier peut le poser), et le run passe par les mêmes portes que tout autre
+  (specs, revue, tests, merge).
+- Une erreur d'outil (dépôt non déclaré, rôle insuffisant, issue fermée, `gh` en
+  échec) est un résultat `isError` ; une erreur de protocole, une erreur JSON-RPC.
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -982,6 +1034,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
+| `POST /v1/mcp` | viewer | Le serveur MCP des issues GitHub (§ « Les issues GitHub (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les outils qui lancent exigent `operator`. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
@@ -1014,6 +1067,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Pilote d'un audit** (ajout) | `pilot.ts`, `machine.ts` (`humanWaitOf`), `gestures.ts` | Un audit lancé pilote les runs qui en descendent (son projet, puis les `follow_up` et `split` du journal). Un run `awaiting_human` de cette lignée, à une révision pas encore traitée, part dans une session (une à la fois par audit, même slot runner et même plafond journalier que les audits) qui rend `pilot_act` ; le geste passe par `HumanLoop` avec `{by: "pilote:<audit>", rev, pilot: true}` : 412 ou 409 si l'humain a agi entre-temps, et rien n'est écrit. Les gestes permis dépendent de l'attente lue dans la raison du run (`humanWaitOf`). Un geste du pilote ne va pas dans l'oracle comme une correction humaine. |
 | **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), meetings, profil versionné. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
+| **Issues GitHub** (ajout) | `issues.ts`, `mcp.ts`, `db/issues.ts` | Le serveur MCP de `POST /v1/mcp` : les issues d'un dépôt déclaré lues par `gh` dans le dépôt GitHub de son distant, lancées en runs par `createRun` ; la table `issue_runs` lie chaque issue à son dernier run et empêche un double lancement (et deux appels simultanés sur la même issue n'en font qu'un). |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
 | **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Répondre aux escalades (avec une raison, qui part dans l'oracle avec les options et le contexte), relancer un run échoué ou en attente (`retry`), accepter une décision ou toutes d'un geste, renverser une décision. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service **reverte** les commits de N et de ses dépendantes (du checkpoint N au checkpoint de la première survivante postérieure, sinon HEAD) : le travail indépendant d'après reste dans l'arbre, les checkpoints tiennent ; si ce revert entre en conflit, retour dur au checkpoint N et les indépendantes sont réappliquées par consigne. Un run déjà mergé : revert du commit squash sur `main`, puis un run de suite qui porte l'option (si le revert ne passe pas — push refusé —, événement `revert_failed` et run de suite seul). Sans réponse humaine passé `review.escalationTimeoutSec`, chaque escalade ouverte (jamais une suppression, ni une escalade sans recommandation) reçoit l'option recommandée : décision `auto_timeout` avec son checkpoint, renversable comme les autres, événement `decision_auto_timeout`, souvenir tagué `harness,decision,auto_timeout`, et le run reprend. |
 

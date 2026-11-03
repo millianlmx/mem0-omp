@@ -2,8 +2,8 @@
 //
 //   node --experimental-strip-types omp-harness/main.ts --config /etc/omp-harness/config.json
 //   … --check : vérifie l'installation (omp, lanceur, modèles, oracle, dépôts) et sort.
-//   … --add-repo <url> [--name <nom>] : clone le dépôt, éprouve l'écriture, devine ses
-//     tests et le déclare dans le fichier de configuration (codes : repos.ts).
+//   … --add-repo <url> [--name <nom>] : crée (ou reprend) la clé SSH du dépôt, le clone,
+//     éprouve l'écriture, devine ses tests et le déclare dans la configuration (codes : repos.ts).
 //   … --models <omlx/<modèle>|anthropic> [--omlx-url <url>] [--omlx-context <n>] : les
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
 //   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] : un
@@ -206,13 +206,13 @@ if (isMain) {
   const added = argValue(process.argv, "--add-repo");
   if (added !== null) {
     if (file === null) throw new Error("--add-repo exige --config");
-    const result = await addRepo(
-      file,
-      config,
-      new Git(execProcess, config.git),
-      added,
-      argValue(process.argv, "--name") ?? undefined,
-    );
+    const result = await addRepo(file, config, new Git(execProcess, config.git), added, {
+      name: argValue(process.argv, "--name") ?? undefined,
+      keygen: async (args) => {
+        const made = await execProcess("ssh-keygen", args, { timeoutMs: 30_000 });
+        if (made.code !== 0) throw new Error(`ssh-keygen : ${made.stderr.trim()}`);
+      },
+    });
     console.log(`${result.code === 0 ? "✓" : "✗"} ${result.message}`);
     process.exit(result.code);
   }
