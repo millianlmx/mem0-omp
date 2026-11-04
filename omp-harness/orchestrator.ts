@@ -39,7 +39,7 @@ import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import type { LostWrites } from "./oracle.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
-import { loadOf, runView } from "./queries.ts";
+import { inboxOf, loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
 import { auditOwner } from "./session-feed.ts";
 import { projectScope } from "./scope.ts";
@@ -834,6 +834,13 @@ export class Orchestrator {
       budget: this.#ctx.monitor.budget(runId),
       alerts: this.#ctx.monitor.alertsOf(runId),
     };
+  }
+
+  /** La boîte de l'humain : `inboxOf` (filtrée par dépôts), les alertes et les coûts des runs listés. */
+  inboxView(repos: RepoFilter = null): Record<string, unknown> {
+    const inbox = inboxOf(this.store, repos);
+    const runs = (inbox.runs as { id: string }[]).map((run) => run.id);
+    return { ...inbox, alerts: this.#ctx.monitor.alerts(repos), costs: this.store.runCosts(runs) };
   }
 
   /**

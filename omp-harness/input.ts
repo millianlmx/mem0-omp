@@ -55,3 +55,20 @@ export function priorityInput(body: Record<string, unknown>): number {
   if (priority === undefined) throw new HarnessError(400, "priority : entier attendu");
   return priority;
 }
+
+/** Les réponses aux escalades d'un run : `answers[{ id, answer, reason? }]`, `reason` gardée si non blanche. */
+export function escalationAnswers(body: Record<string, unknown>): { id: number; answer: string; reason?: string }[] {
+  if (!Array.isArray(body.answers)) throw new HarnessError(400, "answers : liste de { id, answer } attendue");
+  return body.answers.map((item) => {
+    const record = (item ?? {}) as Record<string, unknown>;
+    if (typeof record.id !== "number" || typeof record.answer !== "string")
+      throw new HarnessError(400, "answers : { id: nombre, answer: chaîne, reason?: chaîne }");
+    if (record.reason !== undefined && typeof record.reason !== "string")
+      throw new HarnessError(400, "answers[].reason : chaîne attendue");
+    return {
+      id: record.id,
+      answer: record.answer,
+      ...(typeof record.reason === "string" && record.reason.trim() !== "" ? { reason: record.reason } : {}),
+    };
+  });
+}

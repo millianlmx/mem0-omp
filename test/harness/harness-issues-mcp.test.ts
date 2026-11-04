@@ -10,10 +10,11 @@ import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import type { HarnessConfig } from "../../omp-harness/config.ts";
 import { createHandler } from "../../omp-harness/http.ts";
+import type { RunState, StepKind } from "../../omp-harness/machine.ts";
 import { githubSlug } from "../../omp-harness/issues.ts";
 import type { Exec, ProcResult } from "../../omp-harness/proc.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
-import { fakeWorld, git } from "../support/harness-fixtures.ts";
+import { commitOnMain, fakeWorld, git } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -406,7 +407,12 @@ const rest = (mcp: Mcp, token: string, route: string): Promise<Response> =>
 
 let seeded = 0;
 /** Un run posé directement dans le store (état et dépôt au choix, sans passer par un outil). */
-const seed = (mcp: Mcp, repo: string, state: "queued" | "cancelled" | "failed" = "queued"): RunSummary => {
+const seed = (
+  mcp: Mcp,
+  repo: string,
+  state: RunState = "queued",
+  step: StepKind | null = null,
+): RunSummary => {
   const n = ++seeded;
   const run = mcp.world.store.createRun({
     id: `r-seed-${n}`,
@@ -416,6 +422,7 @@ const seed = (mcp: Mcp, repo: string, state: "queued" | "cancelled" | "failed" =
     request: "R",
     branch: `harness/seed-${n}`,
     state,
+    step,
   });
   return run;
 };
@@ -805,6 +812,491 @@ test("harness-issues-mcp/AC-52 : après un geste, run_get rend une révision sup
       /le run a changé depuis ta lecture/,
     );
     assert.equal(mcp.world.store.getRun(run.id)?.priority, 4);
+  } finally {
+    await mcp.close();
+  }
+});
+
+// -- les gestes qui débloquent un run (AC-53 … AC-70) -----------------------------------
+
+const operator = (mcp: Mcp, name: string, args: Record<string, unknown>) => mcp.tool(mcp.tokens.operator, name, args);
+const structured = <T>(result: Record<string, unknown>): T => {
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  return result.structuredContent as T;
+};
+/** Des décisions `auto` (une par question) posées sur le run. */
+const decide = (mcp: Mcp, runId: string, count: number): number[] => {
+  const step = mcp.world.store.startStep(runId, "impl", 1, null, null);
+  return Array.from({ length: count }, (_, i) =>
+    mcp.world.store.addDecision({
+      runId,
+      stepId: step.id,
+      question: `Q${i + 1}`,
+      options: ["a", "b"],
+      chosen: "a",
+      rationale: "R",
+      category: "reversible",
+      checkpointSha: null,
+      dependsOn: [],
+    }).seq,
+  );
+};
+
+/** Des escalades ouvertes posées sur le run, leurs ids rendus. */
+const escalate = (mcp: Mcp, runId: string, count = 1): number[] => {
+  const step = mcp.world.store.startStep(runId, "impl", 1, null, null);
+  return Array.from({ length: count }, (_, i) =>
+    mcp.world.store.addEscalation({
+      runId,
+      stepId: step.id,
+      category: "clarification",
+      question: `Question ${i + 1} ?`,
+      options: ["A", "B"],
+      context: "Le besoin ne tranche pas.",
+    }),
+  ).map((item) => item.id);
+};
+
+/** Un run `merged` dont `mergeSha` est un vrai commit de `main`. */
+const mergedRun = (mcp: Mcp, repo = "demo"): RunSummary => {
+  const run = seed(mcp, repo, "merged", "review");
+  const sha = commitOnMain(mcp.world.repo, `merged-${run.id}.txt`, `${run.id}\n`);
+  mcp.world.store.updateRun(run.id, { mergeSha: sha });
+  return run;
+};
+
+/** Ce qu'un geste refusé ne doit pas changer : état, révision, décisions et escalades. */
+const snapshot = (mcp: Mcp, id: string): string => {
+  const { store } = mcp.world;
+  const run = store.getRun(id);
+  return JSON.stringify({
+    state: run?.state,
+    step: run?.step,
+    rev: run?.rev,
+    decisions: store.listDecisions({ runId: id }).map((item) => item.status),
+    escalations: store.listEscalations({ runId: id }).map((item) => item.status),
+  });
+};
+
+test("harness-issues-mcp/AC-53 : run_validate approuve le verdict d'un run en awaiting_human (étape review) : merging, et run_get rend le même état", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "awaiting_human", "review");
+    const done = runOf(await operator(mcp, "run_validate", { id: run.id, approve: true }));
+    assert.equal(done.state, "merging");
+    const got = structured<{ run: RunSummary }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id }));
+    assert.equal(got.run.state, "merging");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-54 : run_validate approuve les specs d'un run en awaiting_human (étape specs) : queued à l'étape impl", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "awaiting_human", "specs");
+    const done = runOf(await operator(mcp, "run_validate", { id: run.id, approve: true }));
+    assert.equal(done.state, "queued");
+    assert.equal(done.step, "impl");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-55 : run_validate refuse avec une raison : queued à l'étape fix, la raison dans run.reason", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "awaiting_human", "review");
+    const done = runOf(await operator(mcp, "run_validate", { id: run.id, approve: false, reason: "tests rouges" }));
+    assert.equal(done.state, "queued");
+    assert.equal(done.step, "fix");
+    assert.match(mcp.world.store.getRun(run.id)?.reason ?? "", /tests rouges/);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-56 : run_validate sans raison pour un refus, avec une raison blanche ou non chaîne, ou avec un approve non booléen : isError 400, run inchangé", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "awaiting_human", "review");
+    const before = snapshot(mcp, run.id);
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ approve: false }, /un refus porte sa raison/],
+      [{ approve: false, reason: "   " }, /un refus porte sa raison/],
+      [{ approve: true, reason: 3 }, /reason : chaîne attendue/],
+      [{ approve: "oui" }, /approve : booléen attendu/],
+      [{}, /approve : booléen attendu/],
+    ];
+    for (const [args, message] of cases) {
+      assert.match(errorText(await operator(mcp, "run_validate", { id: run.id, ...args })), message, JSON.stringify(args));
+      assert.equal(snapshot(mcp, run.id), before, JSON.stringify(args));
+    }
+    assert.equal(mcp.world.store.getRun(run.id)?.state, "awaiting_human");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-57 : run_validate sur un run qui n'attend pas de validation : isError 409, run inchangé", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "queued");
+    const before = snapshot(mcp, run.id);
+    assert.match(
+      errorText(await operator(mcp, "run_validate", { id: run.id, approve: true })),
+      /le run n'attend pas de validation \(état queued\)/,
+    );
+    assert.equal(snapshot(mcp, run.id), before);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-58 : run_retry relance un run failed à la même étape, attempts à 0 ; un run queued est refusé en 409, inchangé", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const failed = seed(mcp, "demo", "failed", "impl");
+    mcp.world.store.updateRun(failed.id, { attempts: 2 });
+    const done = runOf(await operator(mcp, "run_retry", { id: failed.id }));
+    assert.equal(done.state, "queued");
+    assert.equal(done.step, "impl");
+    assert.equal(mcp.world.store.getRun(failed.id)?.attempts, 0);
+
+    const queued = seed(mcp, "demo", "queued");
+    const before = snapshot(mcp, queued.id);
+    assert.match(
+      errorText(await operator(mcp, "run_retry", { id: queued.id })),
+      /seul un run échoué ou en attente se relance \(état queued\)/,
+    );
+    assert.equal(snapshot(mcp, queued.id), before);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-59 : run_revert refuse un run non mergé (409, aucun run de suite) ; sur un run merged d'un dépôt local il défait le commit sur main et rend le run de suite", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const { store, repo } = mcp.world;
+    const open = seed(mcp, "demo", "queued");
+    const count = store.listRuns().length;
+    assert.match(errorText(await operator(mcp, "run_revert", { id: open.id })), /n'est pas mergé : rien à reverter/);
+    assert.equal(store.listRuns().length, count);
+
+    const merged = mergedRun(mcp);
+    const head = git(repo, "rev-parse", "main");
+    const followUp = runOf(await operator(mcp, "run_revert", { id: merged.id }));
+    assert.equal(git(repo, "rev-parse", "main^"), head);
+    assert.match(git(repo, "log", "-1", "--format=%s", "main"), /^Revert/);
+    assert.equal(store.getRun(followUp.id)?.repo, "demo");
+    assert.equal(store.getRun(followUp.id)?.title, `Reprise après revert — ${store.getRun(merged.id)?.title}`);
+    assert.equal(followUp.state, "queued");
+    assert.equal(store.getRun(merged.id)?.state, "merged");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-60 : run_decisions_accept rend accepted: 2 pour deux décisions auto et une déjà acceptée ; run_get montre les trois acceptées", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "queued");
+    const seqs = decide(mcp, run.id, 3);
+    mcp.world.store.acceptDecision(run.id, seqs[2] as number);
+    const result = structured<{ accepted: number }>(await operator(mcp, "run_decisions_accept", { id: run.id }));
+    assert.equal(result.accepted, 2);
+    const got = structured<{ decisions: { status: string }[] }>(
+      await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id }),
+    );
+    assert.deepEqual(
+      got.decisions.map((item) => item.status),
+      ["accepted", "accepted", "accepted"],
+    );
+    const none = seed(mcp, "demo", "queued");
+    assert.deepEqual(structured(await operator(mcp, "run_decisions_accept", { id: none.id })), { accepted: 0 });
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-61 : run_decision_accept accepte la décision n ; n inexistant : 404 ; n absent ou non entier : 400, la décision reste auto", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "queued");
+    decide(mcp, run.id, 1);
+    const status = () => mcp.world.store.listDecisions({ runId: run.id })[0]?.status;
+    assert.equal(errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 99 })), `décision inconnue : ${run.id}#99`);
+    assert.equal(errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 0 })), `décision inconnue : ${run.id}#0`);
+    for (const args of [{}, { n: null }, { n: "1" }, { n: 1.5 }])
+      assert.match(
+        errorText(await operator(mcp, "run_decision_accept", { id: run.id, ...args })),
+        /n : entier attendu/,
+        JSON.stringify(args),
+      );
+    assert.equal(status(), "auto");
+    const accepted = structured<{ decision: { seq: number; status: string } }>(
+      await operator(mcp, "run_decision_accept", { id: run.id, n: 1 }),
+    );
+    assert.deepEqual([accepted.decision.seq, accepted.decision.status], [1, "accepted"]);
+    assert.equal(status(), "accepted");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-62 : run_answer_escalation répond à une escalade sur deux (le run reste escalated, run_get la montre répondue avec sa raison), puis à la seconde (queued, même étape)", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "escalated", "impl");
+    const [first, second] = escalate(mcp, run.id, 2) as [number, number];
+    const partial = runOf(
+      await operator(mcp, "run_answer_escalation", {
+        id: run.id,
+        answers: [{ id: first, answer: " CSV ", reason: " le plus simple " }],
+      }),
+    );
+    assert.equal(partial.state, "escalated");
+    const view = structured<{
+      escalations: { id: number; status: string; answer: string | null; answerReason: string | null; answeredBy: string | null }[];
+    }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id }));
+    assert.deepEqual(
+      view.escalations.map((item) => [item.id, item.status, item.answer, item.answerReason, item.answeredBy]),
+      [
+        [first, "answered", "CSV", "le plus simple", "agent"],
+        [second, "open", null, null, null],
+      ],
+    );
+    const last = runOf(
+      await operator(mcp, "run_answer_escalation", { id: run.id, answers: [{ id: second, answer: "JSON" }] }),
+    );
+    assert.equal(last.state, "queued");
+    assert.equal(last.step, "impl");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-63 : run_answer_escalation refuse answers absent/non liste, id non numérique, answer non chaîne ou vide, reason non chaîne, escalade non ouverte : aucune escalade répondue ; run non escalated : 409", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const run = seed(mcp, "demo", "escalated", "impl");
+    const [open] = escalate(mcp, run.id, 1) as [number];
+    const before = snapshot(mcp, run.id);
+    const cases: [unknown, RegExp][] = [
+      [undefined, /answers : liste de \{ id, answer \} attendue/],
+      ["CSV", /answers : liste de \{ id, answer \} attendue/],
+      [[{ id: "1", answer: "CSV" }], /answers : \{ id: nombre, answer: chaîne, reason\?: chaîne \}/],
+      [[{ id: open, answer: 3 }], /answers : \{ id: nombre, answer: chaîne, reason\?: chaîne \}/],
+      [[{ id: open, answer: "CSV", reason: 4 }], /answers\[\]\.reason : chaîne attendue/],
+      [[{ id: open, answer: "   " }], new RegExp(`réponse vide pour l'escalade ${open}`)],
+      [[{ id: open, answer: "CSV" }, { id: open + 100, answer: "JSON" }], new RegExp(`escalade ouverte inconnue : ${open + 100}`)],
+    ];
+    for (const [answers, message] of cases) {
+      const args = answers === undefined ? { id: run.id } : { id: run.id, answers };
+      assert.match(errorText(await operator(mcp, "run_answer_escalation", args)), message, JSON.stringify(answers));
+      assert.equal(snapshot(mcp, run.id), before, JSON.stringify(answers));
+    }
+    const idle = seed(mcp, "demo", "queued");
+    assert.match(
+      errorText(await operator(mcp, "run_answer_escalation", { id: idle.id, answers: [] })),
+      /le run n'attend pas de réponse \(état queued\)/,
+    );
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-64 : inbox, appelée par un viewer, rend le corps de GET /v1/inbox du même client", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    seed(mcp, "demo", "awaiting_human", "review");
+    const escalated = seed(mcp, "demo", "escalated", "impl");
+    escalate(mcp, escalated.id, 1);
+    const withDecisions = seed(mcp, "demo", "queued");
+    decide(mcp, withDecisions.id, 2);
+    const got = structured<Record<string, unknown>>(await mcp.tool(mcp.tokens.viewer, "inbox"));
+    const viaRest = (await (await rest(mcp, mcp.tokens.viewer, "/v1/inbox")).json()) as Record<string, unknown>;
+    assert.deepEqual(got, viaRest);
+    assert.equal(got.pendingCount, 2);
+    assert.equal((got.decisions as unknown[]).length, 2);
+    assert.ok("alerts" in got && "costs" in got);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-65 : escalations_list rend les escalades ouvertes comme GET /v1/escalations, les répondues avec status: answered ; un autre status est refusé", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const openRun = seed(mcp, "demo", "escalated", "impl");
+    escalate(mcp, openRun.id, 1);
+    const answeredRun = seed(mcp, "demo", "escalated", "impl");
+    const [answered] = escalate(mcp, answeredRun.id, 1) as [number];
+    mcp.world.store.answerEscalation(answered, "CSV", "agent", null);
+    const viewer = mcp.tokens.viewer;
+    const open = structured<{ batches: { run: { id: string } }[] }>(await mcp.tool(viewer, "escalations_list"));
+    assert.deepEqual(open, (await (await rest(mcp, viewer, "/v1/escalations")).json()) as typeof open);
+    assert.deepEqual(open.batches.map((batch) => batch.run.id), [openRun.id]);
+    assert.deepEqual(structured(await mcp.tool(viewer, "escalations_list", { status: "open" })), open);
+    const closed = structured<typeof open>(await mcp.tool(viewer, "escalations_list", { status: "answered" }));
+    assert.deepEqual(closed, (await (await rest(mcp, viewer, "/v1/escalations?status=answered")).json()) as typeof open);
+    assert.deepEqual(closed.batches.map((batch) => batch.run.id), [answeredRun.id]);
+    assert.equal(errorText(await mcp.tool(viewer, "escalations_list", { status: "closed" })), "status : « open » ou « answered » attendu");
+    assert.equal(errorText(await mcp.tool(viewer, "escalations_list", { status: 3 })), "status : chaîne attendue");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après les neuf existants, avec leur schéma et readOnlyHint ; initialize cite run_validate, run_answer_escalation et inbox", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const listed = (await (await mcp.rpc(mcp.tokens.viewer, { jsonrpc: "2.0", id: 1, method: "tools/list" })).json()) as {
+      result: {
+        tools: {
+          name: string;
+          inputSchema: { properties: Record<string, unknown>; required: string[] };
+          annotations: { readOnlyHint: boolean };
+        }[];
+      };
+    };
+    const added = listed.result.tools.slice(9);
+    assert.deepEqual(
+      added.map((tool) => [tool.name, tool.inputSchema.required, Object.keys(tool.inputSchema.properties), tool.annotations.readOnlyHint]),
+      [
+        ["run_validate", ["id", "approve"], ["id", "approve", "reason", "rev"], false],
+        ["run_retry", ["id"], ["id", "rev"], false],
+        ["run_revert", ["id"], ["id"], false],
+        ["run_decisions_accept", ["id"], ["id", "rev"], false],
+        ["run_decision_accept", ["id", "n"], ["id", "n", "rev"], false],
+        ["run_answer_escalation", ["id", "answers"], ["id", "answers", "rev"], false],
+        ["inbox", [], [], true],
+        ["escalations_list", [], ["status"], true],
+      ],
+    );
+    const init = (await (
+      await mcp.rpc(mcp.tokens.viewer, { jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18" } })
+    ).json()) as { result: { instructions: string } };
+    for (const name of ["run_validate", "run_answer_escalation", "inbox"]) assert.ok(init.result.instructions.includes(name), name);
+  } finally {
+    await mcp.close();
+  }
+});
+
+/** Pour chacun des six gestes, un run adapté et des arguments valides. */
+const GESTURES: { name: string; make: (mcp: Mcp) => RunSummary; args: (mcp: Mcp, id: string) => Record<string, unknown> }[] = [
+  { name: "run_validate", make: (mcp) => seed(mcp, "demo", "awaiting_human", "review"), args: () => ({ approve: true }) },
+  { name: "run_retry", make: (mcp) => seed(mcp, "demo", "failed", "impl"), args: () => ({}) },
+  { name: "run_revert", make: (mcp) => mergedRun(mcp), args: () => ({}) },
+  {
+    name: "run_decisions_accept",
+    make: (mcp) => {
+      const run = seed(mcp, "demo", "queued");
+      decide(mcp, run.id, 2);
+      return run;
+    },
+    args: () => ({}),
+  },
+  {
+    name: "run_decision_accept",
+    make: (mcp) => {
+      const run = seed(mcp, "demo", "queued");
+      decide(mcp, run.id, 1);
+      return run;
+    },
+    args: () => ({ n: 1 }),
+  },
+  {
+    name: "run_answer_escalation",
+    make: (mcp) => {
+      const run = seed(mcp, "demo", "escalated", "impl");
+      escalate(mcp, run.id, 1);
+      return run;
+    },
+    args: (mcp, id) => ({ answers: [{ id: mcp.world.store.listEscalations({ runId: id })[0]?.id, answer: "CSV" }] }),
+  },
+];
+
+test("harness-issues-mcp/AC-67 : un viewer est refusé (403) et un operator qui ne voit pas le dépôt reçoit 404 « run inconnu » sur chacun des six gestes, run inchangé", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    for (const gesture of GESTURES) {
+      const run = gesture.make(mcp);
+      const main = git(mcp.world.repo, "rev-parse", "main");
+      const before = snapshot(mcp, run.id);
+      const args = { id: run.id, ...gesture.args(mcp, run.id) };
+      assert.equal(
+        errorText(await mcp.tool(mcp.tokens.viewer, gesture.name, args)),
+        `le rôle viewer ne permet pas ${gesture.name} (operator requis)`,
+      );
+      assert.equal(errorText(await mcp.tool(mcp.tokens.elsewhere, gesture.name, args)), `run inconnu : ${run.id}`);
+      assert.equal(snapshot(mcp, run.id), before, gesture.name);
+      assert.equal(git(mcp.world.repo, "rev-parse", "main"), main, gesture.name);
+    }
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-68 : un geste à rev refuse rev: r - 1 (412, run inchangé, avant tout contrôle d'état) et s'applique avec rev: r", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    for (const gesture of GESTURES.filter((item) => item.name !== "run_revert")) {
+      const run = gesture.make(mcp);
+      const r = mcp.world.store.updateRun(run.id, {}).rev;
+      assert.ok(r >= 1);
+      const read = structured<{ run: RunSummary }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).run.rev;
+      assert.equal(read, r);
+      const args = { id: run.id, ...gesture.args(mcp, run.id) };
+      const before = snapshot(mcp, run.id);
+      assert.match(
+        errorText(await operator(mcp, gesture.name, { ...args, rev: r - 1 })),
+        /^le run a changé depuis ta lecture/,
+        gesture.name,
+      );
+      assert.equal(snapshot(mcp, run.id), before, gesture.name);
+      const applied = await operator(mcp, gesture.name, { ...args, rev: r });
+      assert.equal(applied.isError, undefined, `${gesture.name} : ${JSON.stringify(applied)}`);
+      assert.notEqual(snapshot(mcp, run.id), before, gesture.name);
+    }
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-69 : inbox et escalations_list ne rendent ni le run ni l'escalade d'un dépôt que le client ne voit pas", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const visible = seed(mcp, "demo", "awaiting_human", "review");
+    const hidden = seed(mcp, "autre", "awaiting_human", "review");
+    escalate(mcp, visible.id, 1);
+    escalate(mcp, hidden.id, 1);
+    const inbox = structured<{ awaiting: { id: string }[]; runs: { id: string }[]; batches: { run: { id: string } }[] }>(
+      await mcp.tool(mcp.tokens.viewer, "inbox"),
+    );
+    assert.deepEqual(inbox.awaiting.map((run) => run.id), [visible.id]);
+    assert.deepEqual(inbox.runs.map((run) => run.id), [visible.id]);
+    assert.deepEqual(inbox.batches.map((batch) => batch.run.id), [visible.id]);
+    const list = structured<{ batches: { run: { id: string } }[] }>(await mcp.tool(mcp.tokens.viewer, "escalations_list"));
+    assert.deepEqual(list.batches.map((batch) => batch.run.id), [visible.id]);
+    for (const body of [inbox, list]) assert.ok(!JSON.stringify(body).includes(`"${hidden.id}"`));
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("harness-issues-mcp/AC-70 : run_revert d'un run merged d'un dépôt invisible : isError 404, main inchangée, run toujours merged, aucun run de suite", async () => {
+  const mcp = await mcpWorld([]);
+  try {
+    const merged = mergedRun(mcp);
+    const { store, repo } = mcp.world;
+    const main = git(repo, "rev-parse", "main");
+    const count = store.listRuns().length;
+    assert.equal(errorText(await mcp.tool(mcp.tokens.elsewhere, "run_revert", { id: merged.id })), `run inconnu : ${merged.id}`);
+    assert.equal(git(repo, "rev-parse", "main"), main);
+    assert.equal(store.getRun(merged.id)?.state, "merged");
+    assert.equal(store.listRuns().length, count);
   } finally {
     await mcp.close();
   }

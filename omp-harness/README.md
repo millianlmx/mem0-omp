@@ -956,7 +956,8 @@ ne touche à la mémoire d'aucun projet.
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
 flux serveur) : un agent y lit les issues GitHub d'un dépôt et lance les pipelines qui
-les corrigent, lance aussi des runs libres (`run_start`), les suit et les pilote. Il
+les corrigent, lance aussi des runs libres (`run_start`), les suit et les pilote, les
+débloque (valider, répondre aux escalades, relancer) et lit la boîte de l'humain. Il
 prend le même jeton que l'API :
 
 ```bash
@@ -975,6 +976,14 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
 | `run_cancel` `{id, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon) : `POST /v1/runs/{id}/cancel`. |
 | `run_priority` `{id, priority, rev?}` | operator | Change la priorité (entier de -1000 à 1000) d'un run non terminal : `POST /v1/runs/{id}/priority`. |
+| `run_validate` `{id, approve, reason?, rev?}` | operator | Sort un run de `awaiting_human` : valide ou refuse les specs (avant /impl) ou le verdict de revue, selon l'étape du run. Un refus porte sa raison (400 `un refus porte sa raison`) ; un run qui n'attend pas de validation : 409. `POST /v1/runs/{id}/validate`. |
+| `run_retry` `{id, rev?}` | operator | Relance un run `failed` ou `awaiting_human`, même étape, tout de suite (409 sinon) : `POST /v1/runs/{id}/retry`. |
+| `run_revert` `{id}` | operator | Défait le commit d'un run `merged` sur `main` et ouvre un run de suite (409 `n'est pas mergé` sinon), sans contrôle de révision : `POST /v1/runs/{id}/revert`. |
+| `run_decisions_accept` `{id, rev?}` | operator | Accepte d'un geste les décisions `auto` et `auto_timeout` d'un run (`{accepted}`, 0 sans erreur) : `POST /v1/runs/{id}/decisions/accept`. |
+| `run_decision_accept` `{id, n, rev?}` | operator | Accepte la décision n° `n` du run (404 `décision inconnue` sinon ; 400 si `n` n'est pas un entier) : `POST /v1/runs/{id}/decisions/{n}/accept`. |
+| `run_answer_escalation` `{id, answers, rev?}` | operator | Répond aux escalades ouvertes d'un run `escalated` (`answers[{id, answer, reason?}]`) ; le run reprend son étape quand toutes sont répondues (409 s'il n'attend pas de réponse, 404 pour une escalade non ouverte) : `POST /v1/runs/{id}/escalations`. |
+| `inbox` | viewer | La boîte de l'humain, d'un appel : escalades groupées, verdicts à valider, décisions prises seules, features en cours, audits, alertes, coûts, `cursor` : `GET /v1/inbox`. Le premier appel à faire. |
+| `escalations_list` `{status?}` | viewer | Les escalades groupées par run, `open` (défaut) ou `answered` (400 pour un autre `status`) : `GET /v1/escalations`. |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
   `owner/name` sur GitHub (retrouvé par le distant des clones) ; facultatif quand le
@@ -993,12 +1002,13 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
   l'agent ; le label est le filtre de confiance (seul un collaborateur avec le droit
   de trier peut le poser), et le run passe par les mêmes portes que tout autre
   (specs, revue, tests, merge).
-- **`rev`, la révision lue.** `run_cancel` et `run_priority` acceptent `rev` : la
-  révision `run.rev` que `run_get` a rendue. Si le run a changé depuis, le geste est un
-  `isError` du 412 (« le run a changé depuis ta lecture ») et rien ne change ; sans
-  `rev`, il s'applique. C'est l'équivalent de `If-Match`, par appel : l'en-tête
-  `If-Match` de la requête MCP n'est pas lu par ces outils (il vaudrait pour tous les
-  appels d'un lot).
+- **`rev`, la révision lue.** `run_cancel`, `run_priority`, `run_validate`, `run_retry`,
+  `run_decisions_accept`, `run_decision_accept` et `run_answer_escalation` acceptent
+  `rev` : la révision `run.rev` que `run_get` a rendue. Si le run a changé depuis, le
+  geste est un `isError` du 412 (« le run a changé depuis ta lecture ») et rien ne
+  change ; sans `rev`, il s'applique. `run_revert` ne la prend pas (comme la route).
+  C'est l'équivalent de `If-Match`, par appel : l'en-tête `If-Match` de la requête MCP
+  n'est pas lu par ces outils (il vaudrait pour tous les appels d'un lot).
 - Une erreur d'outil (dépôt non déclaré, rôle insuffisant, issue fermée, `gh` en
   échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
   une erreur JSON-RPC.
@@ -1063,7 +1073,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
-| `POST /v1/mcp` | viewer | Le serveur MCP des issues GitHub (§ « Les issues GitHub (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les outils qui lancent exigent `operator`. |
+| `POST /v1/mcp` | viewer | Le serveur MCP des issues GitHub (§ « Les issues GitHub (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les gestes exigent `operator`. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice` ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle

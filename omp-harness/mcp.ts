@@ -14,10 +14,11 @@ import type { RepoConfig } from "./config.ts";
 import type { Actor } from "./context.ts";
 import type { RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
-import { newRunInput, priorityInput, stringList, text } from "./input.ts";
+import { escalationAnswers, integer, newRunInput, priorityInput, stringList, text } from "./input.ts";
 import type { FixOutcome, IssueDesk } from "./issues.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
+import { escalationBatches } from "./queries.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -309,6 +310,151 @@ export const MCP_TOOLS: readonly Tool[] = [
       return { run: await call.orchestrator.setPriority(id, priority, gestureActor(call, args)) };
     },
   },
+  {
+    name: "run_validate",
+    title: "Valider ou refuser un run en attente",
+    description:
+      "Sort un run de `awaiting_human` : `POST /v1/runs/{id}/validate`. Selon l'étape du run, valide les specs (avant /impl) ou le verdict de revue ; `approve: false` le renvoie en reprise et porte sa raison (`reason`, obligatoire pour un refus). Un run qui n'attend pas de validation est refusé (409).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      approve: { type: "boolean", description: "`true` : valider ; `false` : refuser (la raison est alors obligatoire)." },
+      reason: {
+        type: "string",
+        description: "Obligatoire pour un refus (`approve: false`) : elle repart à l'agent qui reprend le run.",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "approve"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      if (typeof args.approve !== "boolean") throw new HarnessError(400, "approve : booléen attendu");
+      const reason = text(args, "reason", false);
+      return { run: await call.orchestrator.validate(id, args.approve, reason, gestureActor(call, args)) };
+    },
+  },
+  {
+    name: "run_retry",
+    title: "Relancer un run",
+    description:
+      "Relance un run `failed` ou `awaiting_human`, même étape, tout de suite : `POST /v1/runs/{id}/retry`. Un autre état est refusé (409).",
+    role: "operator",
+    readOnly: false,
+    properties: { id: RUN_ID_PROPERTY, rev: REV_PROPERTY },
+    required: ["id"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      return { run: await call.orchestrator.retry(id, gestureActor(call, args)) };
+    },
+  },
+  {
+    name: "run_revert",
+    title: "Reverter un run mergé",
+    description:
+      "Défait le commit d'un run sur `main` et ouvre un run de suite : `POST /v1/runs/{id}/revert`. Seul un run `merged` est accepté (409 sinon). Ne vérifie pas la révision du run.",
+    role: "operator",
+    readOnly: false,
+    properties: { id: RUN_ID_PROPERTY },
+    required: ["id"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      return { run: await call.orchestrator.revert(id, { by: call.actor.by }) };
+    },
+  },
+  {
+    name: "run_decisions_accept",
+    title: "Accepter les décisions prises seules d'un run",
+    description:
+      "Accepte d'un geste les décisions d'un run au statut `auto` ou `auto_timeout` : `POST /v1/runs/{id}/decisions/accept`. Rend le nombre de décisions acceptées (0 s'il n'y en a pas).",
+    role: "operator",
+    readOnly: false,
+    properties: { id: RUN_ID_PROPERTY, rev: REV_PROPERTY },
+    required: ["id"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      return { ...(await call.orchestrator.acceptAllDecisions(id, gestureActor(call, args))) };
+    },
+  },
+  {
+    name: "run_decision_accept",
+    title: "Accepter une décision d'un run",
+    description:
+      "Accepte la décision n° `n` d'un run : `POST /v1/runs/{id}/decisions/{n}/accept`. Une décision inconnue est refusée (404) ; une décision déjà acceptée ou renversée est rendue telle quelle.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      n: { type: "integer", minimum: 1, description: "Le numéro de la décision dans le run (seq, rendu par run_get)." },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "n"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      const n = integer(args.n, "n");
+      if (n === undefined) throw new HarnessError(400, "n : entier attendu");
+      return { decision: await call.orchestrator.acceptDecision(id, n, gestureActor(call, args)) };
+    },
+  },
+  {
+    name: "run_answer_escalation",
+    title: "Répondre aux escalades d'un run",
+    description:
+      "Répond aux escalades ouvertes d'un run `escalated` : `POST /v1/runs/{id}/escalations`. Les ids sont ceux des escalades ouvertes que run_get rend ; le run reprend son étape quand toutes ses escalades sont répondues. Un run qui n'attend pas de réponse est refusé (409).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      answers: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "integer", description: "L'id de l'escalade ouverte (run_get)." },
+            answer: { type: "string", description: "La réponse, non vide." },
+            reason: { type: "string", description: "Facultatif : le motif de la réponse." },
+          },
+          required: ["id", "answer"],
+        },
+        description: "Les réponses, une par escalade ouverte à laquelle tu réponds.",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "answers"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      const answers = escalationAnswers(args);
+      return { run: await call.orchestrator.answerEscalations(id, answers, gestureActor(call, args)) };
+    },
+  },
+  {
+    name: "inbox",
+    title: "La boîte de l'humain",
+    description:
+      "Ce qui attend l'humain, d'un seul appel : `GET /v1/inbox`. Les escalades groupées par run, les verdicts à valider (`awaiting`), les décisions prises seules, les features en cours, les audits, les alertes, les coûts et le `cursor` du journal. C'est le premier appel pour savoir ce qui attend une décision.",
+    role: "viewer",
+    readOnly: true,
+    properties: {},
+    required: [],
+    run: async (call) => call.orchestrator.inboxView(call.visible),
+  },
+  {
+    name: "escalations_list",
+    title: "Les escalades, groupées par run",
+    description:
+      "Les escalades groupées par run : `GET /v1/escalations`. Les ouvertes par défaut, les répondues avec `status: \"answered\"`.",
+    role: "viewer",
+    readOnly: true,
+    properties: {
+      status: { type: "string", enum: ["open", "answered"], description: "Facultatif : `open` (par défaut) ou `answered`." },
+    },
+    required: [],
+    run: async (call, args) => {
+      const status = optionalText(args, "status") ?? "open";
+      if (status !== "open" && status !== "answered") throw new HarnessError(400, "status : « open » ou « answered » attendu");
+      return escalationBatches(call.orchestrator.store, status, call.visible);
+    },
+  },
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -374,7 +520,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority). Un geste peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }
