@@ -407,12 +407,7 @@ const rest = (mcp: Mcp, token: string, route: string): Promise<Response> =>
 
 let seeded = 0;
 /** Un run posé directement dans le store (état et dépôt au choix, sans passer par un outil). */
-const seed = (
-  mcp: Mcp,
-  repo: string,
-  state: RunState = "queued",
-  step: StepKind | null = null,
-): RunSummary => {
+const seed = (mcp: Mcp, repo: string, state: RunState = "queued", step: StepKind | null = null): RunSummary => {
   const n = ++seeded;
   const run = mcp.world.store.createRun({
     id: `r-seed-${n}`,
@@ -827,18 +822,20 @@ const structured = <T>(result: Record<string, unknown>): T => {
 /** Des décisions `auto` (une par question) posées sur le run. */
 const decide = (mcp: Mcp, runId: string, count: number): number[] => {
   const step = mcp.world.store.startStep(runId, "impl", 1, null, null);
-  return Array.from({ length: count }, (_, i) =>
-    mcp.world.store.addDecision({
-      runId,
-      stepId: step.id,
-      question: `Q${i + 1}`,
-      options: ["a", "b"],
-      chosen: "a",
-      rationale: "R",
-      category: "reversible",
-      checkpointSha: null,
-      dependsOn: [],
-    }).seq,
+  return Array.from(
+    { length: count },
+    (_, i) =>
+      mcp.world.store.addDecision({
+        runId,
+        stepId: step.id,
+        question: `Q${i + 1}`,
+        options: ["a", "b"],
+        chosen: "a",
+        rationale: "R",
+        category: "reversible",
+        checkpointSha: null,
+        dependsOn: [],
+      }).seq,
   );
 };
 
@@ -929,7 +926,11 @@ test("harness-issues-mcp/AC-56 : run_validate sans raison pour un refus, avec un
       [{}, /approve : booléen attendu/],
     ];
     for (const [args, message] of cases) {
-      assert.match(errorText(await operator(mcp, "run_validate", { id: run.id, ...args })), message, JSON.stringify(args));
+      assert.match(
+        errorText(await operator(mcp, "run_validate", { id: run.id, ...args })),
+        message,
+        JSON.stringify(args),
+      );
       assert.equal(snapshot(mcp, run.id), before, JSON.stringify(args));
     }
     assert.equal(mcp.world.store.getRun(run.id)?.state, "awaiting_human");
@@ -1026,8 +1027,14 @@ test("harness-issues-mcp/AC-61 : run_decision_accept accepte la décision n ; n 
     const run = seed(mcp, "demo", "queued");
     decide(mcp, run.id, 1);
     const status = () => mcp.world.store.listDecisions({ runId: run.id })[0]?.status;
-    assert.equal(errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 99 })), `décision inconnue : ${run.id}#99`);
-    assert.equal(errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 0 })), `décision inconnue : ${run.id}#0`);
+    assert.equal(
+      errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 99 })),
+      `décision inconnue : ${run.id}#99`,
+    );
+    assert.equal(
+      errorText(await operator(mcp, "run_decision_accept", { id: run.id, n: 0 })),
+      `décision inconnue : ${run.id}#0`,
+    );
     for (const args of [{}, { n: null }, { n: "1" }, { n: 1.5 }])
       assert.match(
         errorText(await operator(mcp, "run_decision_accept", { id: run.id, ...args })),
@@ -1058,7 +1065,13 @@ test("harness-issues-mcp/AC-62 : run_answer_escalation répond à une escalade s
     );
     assert.equal(partial.state, "escalated");
     const view = structured<{
-      escalations: { id: number; status: string; answer: string | null; answerReason: string | null; answeredBy: string | null }[];
+      escalations: {
+        id: number;
+        status: string;
+        answer: string | null;
+        answerReason: string | null;
+        answeredBy: string | null;
+      }[];
     }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id }));
     assert.deepEqual(
       view.escalations.map((item) => [item.id, item.status, item.answer, item.answerReason, item.answeredBy]),
@@ -1090,7 +1103,13 @@ test("harness-issues-mcp/AC-63 : run_answer_escalation refuse answers absent/non
       [[{ id: open, answer: 3 }], /answers : \{ id: nombre, answer: chaîne, reason\?: chaîne \}/],
       [[{ id: open, answer: "CSV", reason: 4 }], /answers\[\]\.reason : chaîne attendue/],
       [[{ id: open, answer: "   " }], new RegExp(`réponse vide pour l'escalade ${open}`)],
-      [[{ id: open, answer: "CSV" }, { id: open + 100, answer: "JSON" }], new RegExp(`escalade ouverte inconnue : ${open + 100}`)],
+      [
+        [
+          { id: open, answer: "CSV" },
+          { id: open + 100, answer: "JSON" },
+        ],
+        new RegExp(`escalade ouverte inconnue : ${open + 100}`),
+      ],
     ];
     for (const [answers, message] of cases) {
       const args = answers === undefined ? { id: run.id } : { id: run.id, answers };
@@ -1137,12 +1156,24 @@ test("harness-issues-mcp/AC-65 : escalations_list rend les escalades ouvertes co
     const viewer = mcp.tokens.viewer;
     const open = structured<{ batches: { run: { id: string } }[] }>(await mcp.tool(viewer, "escalations_list"));
     assert.deepEqual(open, (await (await rest(mcp, viewer, "/v1/escalations")).json()) as typeof open);
-    assert.deepEqual(open.batches.map((batch) => batch.run.id), [openRun.id]);
+    assert.deepEqual(
+      open.batches.map((batch) => batch.run.id),
+      [openRun.id],
+    );
     assert.deepEqual(structured(await mcp.tool(viewer, "escalations_list", { status: "open" })), open);
     const closed = structured<typeof open>(await mcp.tool(viewer, "escalations_list", { status: "answered" }));
-    assert.deepEqual(closed, (await (await rest(mcp, viewer, "/v1/escalations?status=answered")).json()) as typeof open);
-    assert.deepEqual(closed.batches.map((batch) => batch.run.id), [answeredRun.id]);
-    assert.equal(errorText(await mcp.tool(viewer, "escalations_list", { status: "closed" })), "status : « open » ou « answered » attendu");
+    assert.deepEqual(
+      closed,
+      (await (await rest(mcp, viewer, "/v1/escalations?status=answered")).json()) as typeof open,
+    );
+    assert.deepEqual(
+      closed.batches.map((batch) => batch.run.id),
+      [answeredRun.id],
+    );
+    assert.equal(
+      errorText(await mcp.tool(viewer, "escalations_list", { status: "closed" })),
+      "status : « open » ou « answered » attendu",
+    );
     assert.equal(errorText(await mcp.tool(viewer, "escalations_list", { status: 3 })), "status : chaîne attendue");
   } finally {
     await mcp.close();
@@ -1152,7 +1183,9 @@ test("harness-issues-mcp/AC-65 : escalations_list rend les escalades ouvertes co
 test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après les neuf existants, avec leur schéma et readOnlyHint ; initialize cite run_validate, run_answer_escalation et inbox", async () => {
   const mcp = await mcpWorld([]);
   try {
-    const listed = (await (await mcp.rpc(mcp.tokens.viewer, { jsonrpc: "2.0", id: 1, method: "tools/list" })).json()) as {
+    const listed = (await (
+      await mcp.rpc(mcp.tokens.viewer, { jsonrpc: "2.0", id: 1, method: "tools/list" })
+    ).json()) as {
       result: {
         tools: {
           name: string;
@@ -1163,7 +1196,12 @@ test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après
     };
     const added = listed.result.tools.slice(9);
     assert.deepEqual(
-      added.map((tool) => [tool.name, tool.inputSchema.required, Object.keys(tool.inputSchema.properties), tool.annotations.readOnlyHint]),
+      added.map((tool) => [
+        tool.name,
+        tool.inputSchema.required,
+        Object.keys(tool.inputSchema.properties),
+        tool.annotations.readOnlyHint,
+      ]),
       [
         ["run_validate", ["id", "approve"], ["id", "approve", "reason", "rev"], false],
         ["run_retry", ["id"], ["id", "rev"], false],
@@ -1176,17 +1214,31 @@ test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après
       ],
     );
     const init = (await (
-      await mcp.rpc(mcp.tokens.viewer, { jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18" } })
+      await mcp.rpc(mcp.tokens.viewer, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      })
     ).json()) as { result: { instructions: string } };
-    for (const name of ["run_validate", "run_answer_escalation", "inbox"]) assert.ok(init.result.instructions.includes(name), name);
+    for (const name of ["run_validate", "run_answer_escalation", "inbox"])
+      assert.ok(init.result.instructions.includes(name), name);
   } finally {
     await mcp.close();
   }
 });
 
 /** Pour chacun des six gestes, un run adapté et des arguments valides. */
-const GESTURES: { name: string; make: (mcp: Mcp) => RunSummary; args: (mcp: Mcp, id: string) => Record<string, unknown> }[] = [
-  { name: "run_validate", make: (mcp) => seed(mcp, "demo", "awaiting_human", "review"), args: () => ({ approve: true }) },
+const GESTURES: {
+  name: string;
+  make: (mcp: Mcp) => RunSummary;
+  args: (mcp: Mcp, id: string) => Record<string, unknown>;
+}[] = [
+  {
+    name: "run_validate",
+    make: (mcp) => seed(mcp, "demo", "awaiting_human", "review"),
+    args: () => ({ approve: true }),
+  },
   { name: "run_retry", make: (mcp) => seed(mcp, "demo", "failed", "impl"), args: () => ({}) },
   { name: "run_revert", make: (mcp) => mergedRun(mcp), args: () => ({}) },
   {
@@ -1246,7 +1298,8 @@ test("harness-issues-mcp/AC-68 : un geste à rev refuse rev: r - 1 (412, run inc
       const run = gesture.make(mcp);
       const r = mcp.world.store.updateRun(run.id, {}).rev;
       assert.ok(r >= 1);
-      const read = structured<{ run: RunSummary }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).run.rev;
+      const read = structured<{ run: RunSummary }>(await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).run
+        .rev;
       assert.equal(read, r);
       const args = { id: run.id, ...gesture.args(mcp, run.id) };
       const before = snapshot(mcp, run.id);
@@ -1272,14 +1325,30 @@ test("harness-issues-mcp/AC-69 : inbox et escalations_list ne rendent ni le run 
     const hidden = seed(mcp, "autre", "awaiting_human", "review");
     escalate(mcp, visible.id, 1);
     escalate(mcp, hidden.id, 1);
-    const inbox = structured<{ awaiting: { id: string }[]; runs: { id: string }[]; batches: { run: { id: string } }[] }>(
-      await mcp.tool(mcp.tokens.viewer, "inbox"),
+    const inbox = structured<{
+      awaiting: { id: string }[];
+      runs: { id: string }[];
+      batches: { run: { id: string } }[];
+    }>(await mcp.tool(mcp.tokens.viewer, "inbox"));
+    assert.deepEqual(
+      inbox.awaiting.map((run) => run.id),
+      [visible.id],
     );
-    assert.deepEqual(inbox.awaiting.map((run) => run.id), [visible.id]);
-    assert.deepEqual(inbox.runs.map((run) => run.id), [visible.id]);
-    assert.deepEqual(inbox.batches.map((batch) => batch.run.id), [visible.id]);
-    const list = structured<{ batches: { run: { id: string } }[] }>(await mcp.tool(mcp.tokens.viewer, "escalations_list"));
-    assert.deepEqual(list.batches.map((batch) => batch.run.id), [visible.id]);
+    assert.deepEqual(
+      inbox.runs.map((run) => run.id),
+      [visible.id],
+    );
+    assert.deepEqual(
+      inbox.batches.map((batch) => batch.run.id),
+      [visible.id],
+    );
+    const list = structured<{ batches: { run: { id: string } }[] }>(
+      await mcp.tool(mcp.tokens.viewer, "escalations_list"),
+    );
+    assert.deepEqual(
+      list.batches.map((batch) => batch.run.id),
+      [visible.id],
+    );
     for (const body of [inbox, list]) assert.ok(!JSON.stringify(body).includes(`"${hidden.id}"`));
   } finally {
     await mcp.close();
@@ -1293,7 +1362,10 @@ test("harness-issues-mcp/AC-70 : run_revert d'un run merged d'un dépôt invisib
     const { store, repo } = mcp.world;
     const main = git(repo, "rev-parse", "main");
     const count = store.listRuns().length;
-    assert.equal(errorText(await mcp.tool(mcp.tokens.elsewhere, "run_revert", { id: merged.id })), `run inconnu : ${merged.id}`);
+    assert.equal(
+      errorText(await mcp.tool(mcp.tokens.elsewhere, "run_revert", { id: merged.id })),
+      `run inconnu : ${merged.id}`,
+    );
     assert.equal(git(repo, "rev-parse", "main"), main);
     assert.equal(store.getRun(merged.id)?.state, "merged");
     assert.equal(store.listRuns().length, count);

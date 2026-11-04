@@ -319,7 +319,10 @@ export const MCP_TOOLS: readonly Tool[] = [
     readOnly: false,
     properties: {
       id: RUN_ID_PROPERTY,
-      approve: { type: "boolean", description: "`true` : valider ; `false` : refuser (la raison est alors obligatoire)." },
+      approve: {
+        type: "boolean",
+        description: "`true` : valider ; `false` : refuser (la raison est alors obligatoire).",
+      },
       reason: {
         type: "string",
         description: "Obligatoire pour un refus (`approve: false`) : elle repart à l'agent qui reprend le run.",
@@ -442,16 +445,21 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "escalations_list",
     title: "Les escalades, groupées par run",
     description:
-      "Les escalades groupées par run : `GET /v1/escalations`. Les ouvertes par défaut, les répondues avec `status: \"answered\"`.",
+      'Les escalades groupées par run : `GET /v1/escalations`. Les ouvertes par défaut, les répondues avec `status: "answered"`.',
     role: "viewer",
     readOnly: true,
     properties: {
-      status: { type: "string", enum: ["open", "answered"], description: "Facultatif : `open` (par défaut) ou `answered`." },
+      status: {
+        type: "string",
+        enum: ["open", "answered"],
+        description: "Facultatif : `open` (par défaut) ou `answered`.",
+      },
     },
     required: [],
     run: async (call, args) => {
       const status = optionalText(args, "status") ?? "open";
-      if (status !== "open" && status !== "answered") throw new HarnessError(400, "status : « open » ou « answered » attendu");
+      if (status !== "open" && status !== "answered")
+        throw new HarnessError(400, "status : « open » ou « answered » attendu");
       return escalationBatches(call.orchestrator.store, status, call.visible);
     },
   },
