@@ -24,12 +24,12 @@ import type { Actor } from "./context.ts";
 import type { ActionState, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
 import { ACTION_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
-import { integer, newRunInput, priorityInput, requireRepo, stringList, text } from "./input.ts";
+import { escalationAnswers, integer, newRunInput, priorityInput, requireRepo, stringList, text } from "./input.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
-import { escalationBatches, inboxOf, projectsOf } from "./queries.ts";
+import { escalationBatches, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
 import type { Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
@@ -393,19 +393,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     }),
     route("POST", "/v1/runs/{id}/escalations", "operator", async (call) => {
       const body = await readBody(call.req);
-      if (!Array.isArray(body.answers)) throw new HarnessError(400, "answers : liste de { id, answer } attendue");
-      const answers = body.answers.map((item) => {
-        const record = (item ?? {}) as Record<string, unknown>;
-        if (typeof record.id !== "number" || typeof record.answer !== "string")
-          throw new HarnessError(400, "answers : { id: nombre, answer: chaîne, reason?: chaîne }");
-        if (record.reason !== undefined && typeof record.reason !== "string")
-          throw new HarnessError(400, "answers[].reason : chaîne attendue");
-        return {
-          id: record.id,
-          answer: record.answer,
-          ...(typeof record.reason === "string" && record.reason.trim() !== "" ? { reason: record.reason } : {}),
-        };
-      });
+      const answers = escalationAnswers(body);
       send(call.res, 200, { run: await orchestrator.answerEscalations(runId(call), answers, call.actor) });
     }),
     // La relance d'un run échoué ou en attente de l'humain : même étape, tout de suite.
@@ -455,11 +443,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
     // verdicts à valider, décisions prises seules, features en cours, et le
     // curseur du journal à partir duquel s'abonner au flux.
-    route("GET", "/v1/inbox", "viewer", (call) => {
-      const inbox = inboxOf(store, call.repos);
-      const runs = (inbox.runs as { id: string }[]).map((run) => run.id);
-      send(call.res, 200, { ...inbox, alerts: orchestrator.monitor.alerts(call.repos), costs: store.runCosts(runs) });
-    }),
+    route("GET", "/v1/inbox", "viewer", (call) => send(call.res, 200, orchestrator.inboxView(call.repos))),
     // La relecture du matin : les décisions prises seules (par l'agent, ou à l'échéance d'une escalade), pas encore relues.
     route("GET", "/v1/decisions", "viewer", (call) => {
       const status = (call.url.searchParams.get("status") ?? "auto,auto_timeout").split(",").filter(isDecisionStatus);
