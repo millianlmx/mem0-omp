@@ -11,6 +11,8 @@ import {
   runnerMemoryEnv,
   writePipelineOverlay,
 } from "../../omp-harness/runner.ts";
+import { clientEnv } from "../../omp-harness/heavy.ts";
+import { loginEnv } from "../../omp-harness/oauth.ts";
 import { testConfig } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -184,4 +186,55 @@ test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le ser
     "impact",
     "effort",
   ]);
+});
+
+test("harness-runner/AC-34 : GH_TOKEN et GITHUB_TOKEN du service n'atteignent ni un runner (isolation none ou container), ni une connexion OAuth, ni un job de tests", () => {
+  const secrets = {
+    GH_TOKEN: "ghp_secret",
+    GITHUB_TOKEN: "ghs_secret",
+    GH_ENTERPRISE_TOKEN: "ghe_secret",
+    GITHUB_ENTERPRISE_TOKEN: "ghes_secret",
+    HARNESS_TOKEN: "api",
+  };
+  const env = runnerEnv("demo-scope", null, { ...secrets, ANTHROPIC_API_KEY: "k", PATH: "/bin" });
+  assert.equal(env.ANTHROPIC_API_KEY, "k");
+  for (const key of Object.keys(secrets)) assert.equal(key in env, false, `runnerEnv garde ${key}`);
+
+  const login = loginEnv({ ...secrets, PATH: "/bin" });
+  assert.equal(login.PATH, "/bin");
+  assert.equal(login.GROQ_API_KEY, "omp-harness-login");
+  for (const key of Object.keys(secrets)) assert.equal(key in login, false, `loginEnv garde ${key}`);
+
+  const saved = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+  process.env.GH_TOKEN = secrets.GH_TOKEN;
+  process.env.GITHUB_TOKEN = secrets.GITHUB_TOKEN;
+  try {
+    const config = testConfig("/srv/repo", (c) => {
+      c.runner.isolation = "container";
+    });
+    const { args } = runnerArgv(config, {
+      unit: "u",
+      cwd: "/w",
+      overlay: "/o",
+      model: null,
+      scope: "demo-scope",
+      repo: "/r",
+    });
+    assert.equal(
+      args.some((arg) => /GH_TOKEN|GITHUB_TOKEN|ghp_secret|ghs_secret/.test(arg)),
+      false,
+      "l'argv du runner conteneur ne passe pas les jetons GitHub",
+    );
+    const client = clientEnv();
+    assert.equal(
+      "GH_TOKEN" in client || "GITHUB_TOKEN" in client,
+      false,
+      "le CLI d'un job de tests n'a que de quoi joindre le moteur",
+    );
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

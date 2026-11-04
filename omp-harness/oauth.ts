@@ -18,7 +18,7 @@ import { HarnessError } from "./errors.ts";
 import type { Exec } from "./proc.ts";
 import type { ProviderRegistry } from "./providers.ts";
 import { RpcRunner } from "./rpc.ts";
-import { containerUser, engine, forceStop } from "./runner.ts";
+import { SERVICE_SECRETS, containerUser, engine, forceStop } from "./runner.ts";
 
 /** Un fournisseur qu'omp sait connecter en OAuth, et s'il l'est déjà. */
 export type LoginProvider = { id: string; name: string; available: boolean; authenticated: boolean };
@@ -60,6 +60,14 @@ const KEEP_MS = 10 * 60 * 1000;
  * qu'aucun abonnement ne paraisse connecté.
  */
 export const LOGIN_PLACEHOLDER_ENV: Readonly<Record<string, string>> = { GROQ_API_KEY: "omp-harness-login" };
+
+/** L'environnement d'une connexion : celui du service, sans ses secrets, plus les valeurs factices. */
+export function loginEnv(base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base };
+  for (const key of SERVICE_SECRETS) delete env[key];
+  for (const [key, value] of Object.entries(LOGIN_PLACEHOLDER_ENV)) env[key] ??= value;
+  return env;
+}
 
 type Live = {
   view: LoginView;
@@ -331,9 +339,7 @@ export class OAuthLogins {
 
   #open(unit: string, onFrame: (frame: Record<string, unknown>) => void): RpcRunner {
     const argv = loginArgv(this.#config, unit);
-    const env: Record<string, string | undefined> = { ...process.env };
-    delete env.HARNESS_TOKEN;
-    for (const [key, value] of Object.entries(LOGIN_PLACEHOLDER_ENV)) env[key] ??= value;
+    const env = loginEnv();
     const proc = this.#spawn(argv.command, argv.args, { cwd: this.#config.dataDir, env });
     return new RpcRunner(proc, {
       onHostTool: async () => ({ text: "aucun outil hôte pendant une connexion", isError: true }),

@@ -422,3 +422,59 @@ test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing`
     ts.close();
   }
 });
+
+test("harness-portainer/AC-31 : `GH_TOKEN: ${GH_TOKEN:-}` n'est référencé que par `setup` : le jeton n'entre pas dans l'environnement du conteneur harness", () => {
+  assert.match(service("setup"), /^ {6}GH_TOKEN: \$\{GH_TOKEN:-\}$/m);
+  const references = compose
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#") && line.includes("GH_TOKEN"));
+  assert.deepEqual(references, ["      GH_TOKEN: ${GH_TOKEN:-}"], "une seule référence, celle de `setup`");
+  assert.doesNotMatch(service("harness"), /GH_TOKEN/);
+});
+
+test("harness-portainer/AC-32 : `init` écrit GH_TOKEN dans harness.env (0600) à chaque démarrage, jamais ailleurs ; sans jeton, harness.env est celui d'avant ; un jeton à caractère refusé fait échouer `init`", () => {
+  const { secrets, env } = stack();
+  const harnessEnv = path.join(secrets, "harness", "harness.env");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = run(SETUP, ["init"], { ...env, GH_TOKEN: "ghp_Ab1-x_2", ANTHROPIC_API_KEY: "sk-ant-test_1" });
+    assert.equal(result.status, 0, result.stderr);
+    const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
+    assert.ok(token);
+    assert.equal(read(harnessEnv), `MEM0_HTTP_TOKEN=${token}\nGH_TOKEN=ghp_Ab1-x_2\n`);
+    assert.equal(mode(harnessEnv), 0o600);
+    for (const file of ["runner.env", "mem0/mem0.env"])
+      assert.doesNotMatch(read(path.join(secrets, file)), /GH_TOKEN|ghp_/, file);
+  }
+  for (const empty of [{}, { GH_TOKEN: "" }] as Record<string, string>[]) {
+    const result = run(SETUP, ["init"], { ...env, ...empty });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      read(harnessEnv),
+      /^MEM0_HTTP_TOKEN=[0-9a-f]{64}\n$/,
+      "la ligne disparaît avec la variable, sans ligne vide",
+    );
+  }
+  const refused = run(SETUP, ["init"], { ...env, GH_TOKEN: "gh p$(id)" });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /GH_TOKEN porte un caractère refusé/);
+  assert.doesNotMatch(read(harnessEnv), /GH_TOKEN/, "rien n'est écrit par un init refusé");
+});
+
+test("harness-portainer/AC-33 : `harness-entrypoint` exporte le GH_TOKEN du fichier secret vers la commande lancée ; sans la ligne, il est absent", () => {
+  const dir = tmpdir("harness-portainer-gh-");
+  const launch = (content: string) => {
+    fs.writeFileSync(path.join(dir, "harness.env"), content);
+    const entry = spawnSync(
+      "sh",
+      [path.join(BOX, "harness-entrypoint"), "sh", "-c", 'printf %s "${GH_TOKEN-absent}"'],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: dir, OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env") },
+      },
+    );
+    assert.equal(entry.status, 0, entry.stderr);
+    return entry.stdout;
+  };
+  assert.equal(launch("MEM0_HTTP_TOKEN=m\nGH_TOKEN=ghp_depuis-le-fichier\n"), "ghp_depuis-le-fichier");
+  assert.equal(launch("MEM0_HTTP_TOKEN=m\n"), "absent");
+});

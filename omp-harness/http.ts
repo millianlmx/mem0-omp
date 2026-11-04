@@ -24,6 +24,7 @@ import type { Actor } from "./context.ts";
 import type { ActionState, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
 import { ACTION_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { integer, newRunInput, priorityInput, requireRepo, stringList, text } from "./input.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
@@ -166,26 +167,6 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
   return parsed as Record<string, unknown>;
 }
 
-function text(body: Record<string, unknown>, key: string, required = true): string {
-  const value = body[key];
-  if (typeof value === "string") return value;
-  if (!required && value === undefined) return "";
-  throw new HarnessError(400, `${key} : chaîne attendue`);
-}
-
-function stringList(value: unknown, key: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
-    throw new HarnessError(400, `${key} : liste de chaînes attendue`);
-  return value as string[];
-}
-
-function integer(value: unknown, key: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (!Number.isInteger(value)) throw new HarnessError(400, `${key} : entier attendu`);
-  return value as number;
-}
-
 const DECISION_STATUSES: readonly DecisionStatus[] = ["auto", "auto_timeout", "accepted", "reversed", "superseded"];
 
 function isDecisionStatus(value: string): value is DecisionStatus {
@@ -288,10 +269,6 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     pattern: new RegExp(`^${path.replace(/\{n\}/g, "(\\d+)").replace(/\{(id|name)\}/g, "([\\w.-]+)")}$`),
     handle,
   });
-  const requireRepo = (call: Call, repo: string): void => {
-    if (!canSeeRepo(call.client, repo))
-      throw new HarnessError(403, `le client ${call.client.name} n'a pas accès au dépôt ${repo}`);
-  };
   const visibleAudit = (call: Call, id: string) => {
     const audit = store.getAudit(id);
     if (!audit || !canSeeRepo(call.client, audit.repo)) throw new HarnessError(404, `audit inconnu : ${id}`);
@@ -380,24 +357,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
-      const modules = stringList(body.modules, "modules");
-      const slug = text(body, "slug", false);
-      const needs = text(body, "req", false);
-      const priority = integer(body.priority, "priority");
-      const repo = text(body, "repo");
-      requireRepo(call, repo);
-      const run = orchestrator.createRun(
-        {
-          repo,
-          title: text(body, "title"),
-          request: text(body, "request"),
-          ...(slug ? { slug } : {}),
-          ...(needs ? { req: needs } : {}),
-          ...(modules ? { modules } : {}),
-          ...(priority !== undefined ? { priority } : {}),
-        },
-        call.actor,
-      );
+      const run = orchestrator.createRun(newRunInput(body, call.client), call.actor);
       send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
     }),
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
@@ -429,9 +389,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     ),
     route("POST", "/v1/runs/{id}/priority", "operator", async (call) => {
       const body = await readBody(call.req);
-      const priority = integer(body.priority, "priority");
-      if (priority === undefined) throw new HarnessError(400, "priority : entier attendu");
-      send(call.res, 200, { run: await orchestrator.setPriority(runId(call), priority, call.actor) });
+      send(call.res, 200, { run: await orchestrator.setPriority(runId(call), priorityInput(body), call.actor) });
     }),
     route("POST", "/v1/runs/{id}/escalations", "operator", async (call) => {
       const body = await readBody(call.req);
@@ -524,7 +482,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         };
       });
       const repo = text(body, "repo");
-      requireRepo(call, repo);
+      requireRepo(call.client, repo);
       const priority = integer(body.priority, "priority");
       send(
         call.res,
@@ -548,7 +506,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("POST", "/v1/dreams", "operator", async (call) => {
       const body = await readBody(call.req);
       const repo = text(body, "repo");
-      requireRepo(call, repo);
+      requireRepo(call.client, repo);
       orchestrator.dreams.request(repo, call.actor);
       void orchestrator.tick();
       send(call.res, 202, { repo, requested: true });
@@ -557,7 +515,7 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("POST", "/v1/audits", "operator", async (call) => {
       const body = await readBody(call.req);
       const repo = text(body, "repo");
-      requireRepo(call, repo);
+      requireRepo(call.client, repo);
       const audit = orchestrator.audits.create(repo, text(body, "focus", false), call.actor);
       void orchestrator.tick();
       send(call.res, 201, { audit });
@@ -803,6 +761,8 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         actor: call.actor,
         desk: orchestrator.issues,
         repos: () => orchestrator.config.repos,
+        orchestrator,
+        visible: call.repos,
         version: HARNESS_VERSION,
       };
       const replies = await Promise.all(

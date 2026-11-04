@@ -193,6 +193,7 @@ Les autres variables, facultatives :
 | `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
 | `OMLX_CHAT_BASE_URL`, `OMLX_CHAT_API_TOKEN`, `OMLX_LLM_MODEL` | `OMLX_BASE_URL` ; `off` avec l'Ollama de la pile | le serveur de chat du rêve de la mémoire, sa clé et son modèle (`qwen3-8b`) |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
+| `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
@@ -955,7 +956,8 @@ ne touche à la mémoire d'aucun projet.
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
 flux serveur) : un agent y lit les issues GitHub d'un dépôt et lance les pipelines qui
-les corrigent. Il prend le même jeton que l'API :
+les corrigent, lance aussi des runs libres (`run_start`), les suit et les pilote. Il
+prend le même jeton que l'API :
 
 ```bash
 claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
@@ -968,6 +970,11 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
 | `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. |
 | `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). |
+| `run_start` `{repo, title, request, slug?, req?, modules?, priority?}` | operator | Lance un run libre sur un dépôt déclaré, sans GitHub : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
+| `run_get` `{id}` | viewer | Le run (`run.state`, `run.step`, `run.verdict`, `run.rev`), ses étapes, escalades, tests, artefacts, coûts : le corps de `GET /v1/runs/{id}`. |
+| `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
+| `run_cancel` `{id, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon) : `POST /v1/runs/{id}/cancel`. |
+| `run_priority` `{id, priority, rev?}` | operator | Change la priorité (entier de -1000 à 1000) d'un run non terminal : `POST /v1/runs/{id}/priority`. |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
   `owner/name` sur GitHub (retrouvé par le distant des clones) ; facultatif quand le
@@ -977,14 +984,24 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 - **Le dépôt GitHub** est celui du distant du clone (`repos[].remote`, `origin` sinon).
 - **`gh` connecté.** Les issues passent par `gh` avec la connexion du service
   (`sudo -u omp-harness -H gh auth login`, ou `gh auth login` dans le conteneur
-  `harness`), même en `"merge": "local"` : une clé de déploiement n'ouvre que git,
-  jamais l'API. Sans connexion, l'outil rend une erreur qui le dit.
+  `harness`), ou avec `GH_TOKEN` dans l'environnement du service (pile Portainer : la
+  variable de pile `GH_TOKEN`) ; ce jeton n'est jamais donné aux runners, aux
+  connexions OAuth ni aux jobs de tests. C'est vrai même en `"merge": "local"` : une clé de déploiement n'ouvre que git,
+  jamais l'API. Sans connexion, l'outil rend une erreur qui le dit. `run_start` n'a pas
+  besoin de GitHub.
 - **Le texte d'une issue est une donnée de tiers.** La demande du run le dit à
   l'agent ; le label est le filtre de confiance (seul un collaborateur avec le droit
   de trier peut le poser), et le run passe par les mêmes portes que tout autre
   (specs, revue, tests, merge).
+- **`rev`, la révision lue.** `run_cancel` et `run_priority` acceptent `rev` : la
+  révision `run.rev` que `run_get` a rendue. Si le run a changé depuis, le geste est un
+  `isError` du 412 (« le run a changé depuis ta lecture ») et rien ne change ; sans
+  `rev`, il s'applique. C'est l'équivalent de `If-Match`, par appel : l'en-tête
+  `If-Match` de la requête MCP n'est pas lu par ces outils (il vaudrait pour tous les
+  appels d'un lot).
 - Une erreur d'outil (dépôt non déclaré, rôle insuffisant, issue fermée, `gh` en
-  échec) est un résultat `isError` ; une erreur de protocole, une erreur JSON-RPC.
+  échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
+  une erreur JSON-RPC.
 
 ## API
 

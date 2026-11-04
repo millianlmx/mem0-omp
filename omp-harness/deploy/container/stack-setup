@@ -22,7 +22,7 @@ setting() { [ ! -e "$2" ] || sed -n "s/^$1=//p" "$2" | tail -1; }
 # caractères sans effet pour le shell.
 check_values() {
   for name in OMLX_BASE_URL OMLX_API_TOKEN OMLX_CHAT_BASE_URL OMLX_CHAT_API_TOKEN OMLX_LLM_MODEL OMLX_EMBED_MODEL EMBEDDING_DIMS \
-    ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
+    ANTHROPIC_API_KEY OPENROUTER_API_KEY GH_TOKEN; do
     eval "value=\${$name:-}"
     case "$value" in
       *[!A-Za-z0-9_.:/~+=@-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
@@ -46,7 +46,10 @@ cmd_init() {
   chat="${OMLX_CHAT_BASE_URL:-}"
   [ -n "$chat" ] || [ -n "${OMLX_BASE_URL:-}" ] || chat=off
   umask 077
-  printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness/harness.env"
+  {
+    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    [ -z "${GH_TOKEN:-}" ] || printf 'GH_TOKEN=%s\n' "$GH_TOKEN"
+  } > "$SECRETS/harness/harness.env"
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
     printf 'OMLX_BASE_URL=%s\n' "${OMLX_BASE_URL:-http://embeddings:11434/v1}"
