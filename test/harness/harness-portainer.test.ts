@@ -425,7 +425,9 @@ test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing`
 
 test("harness-portainer/AC-31 : `GH_TOKEN: ${GH_TOKEN:-}` n'est référencé que par `setup` : le jeton n'entre pas dans l'environnement du conteneur harness", () => {
   assert.match(service("setup"), /^ {6}GH_TOKEN: \$\{GH_TOKEN:-\}$/m);
-  const references = compose.split("\n").filter((line) => !line.trimStart().startsWith("#") && line.includes("GH_TOKEN"));
+  const references = compose
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#") && line.includes("GH_TOKEN"));
   assert.deepEqual(references, ["      GH_TOKEN: ${GH_TOKEN:-}"], "une seule référence, celle de `setup`");
   assert.doesNotMatch(service("harness"), /GH_TOKEN/);
 });
@@ -443,10 +445,14 @@ test("harness-portainer/AC-32 : `init` écrit GH_TOKEN dans harness.env (0600) �
     for (const file of ["runner.env", "mem0/mem0.env"])
       assert.doesNotMatch(read(path.join(secrets, file)), /GH_TOKEN|ghp_/, file);
   }
-  for (const empty of [{}, { GH_TOKEN: "" }]) {
+  for (const empty of [{}, { GH_TOKEN: "" }] as Record<string, string>[]) {
     const result = run(SETUP, ["init"], { ...env, ...empty });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(read(harnessEnv), /^MEM0_HTTP_TOKEN=[0-9a-f]{64}\n$/, "la ligne disparaît avec la variable, sans ligne vide");
+    assert.match(
+      read(harnessEnv),
+      /^MEM0_HTTP_TOKEN=[0-9a-f]{64}\n$/,
+      "la ligne disparaît avec la variable, sans ligne vide",
+    );
   }
   const refused = run(SETUP, ["init"], { ...env, GH_TOKEN: "gh p$(id)" });
   assert.notEqual(refused.status, 0);
@@ -458,10 +464,14 @@ test("harness-portainer/AC-33 : `harness-entrypoint` exporte le GH_TOKEN du fich
   const dir = tmpdir("harness-portainer-gh-");
   const launch = (content: string) => {
     fs.writeFileSync(path.join(dir, "harness.env"), content);
-    const entry = spawnSync("sh", [path.join(BOX, "harness-entrypoint"), "sh", "-c", 'printf %s "${GH_TOKEN-absent}"'], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH, HOME: dir, OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env") },
-    });
+    const entry = spawnSync(
+      "sh",
+      [path.join(BOX, "harness-entrypoint"), "sh", "-c", 'printf %s "${GH_TOKEN-absent}"'],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: dir, OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env") },
+      },
+    );
     assert.equal(entry.status, 0, entry.stderr);
     return entry.stdout;
   };

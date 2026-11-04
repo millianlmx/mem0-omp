@@ -212,14 +212,25 @@ test("harness-runner/AC-34 : GH_TOKEN et GITHUB_TOKEN du service n'atteignent ni
     const config = testConfig("/srv/repo", (c) => {
       c.runner.isolation = "container";
     });
-    const { args } = runnerArgv(config, { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope", repo: "/r" });
+    const { args } = runnerArgv(config, {
+      unit: "u",
+      cwd: "/w",
+      overlay: "/o",
+      model: null,
+      scope: "demo-scope",
+      repo: "/r",
+    });
     assert.equal(
       args.some((arg) => /GH_TOKEN|GITHUB_TOKEN|ghp_secret|ghs_secret/.test(arg)),
       false,
       "l'argv du runner conteneur ne passe pas les jetons GitHub",
     );
     const client = clientEnv();
-    assert.equal("GH_TOKEN" in client || "GITHUB_TOKEN" in client, false, "le CLI d'un job de tests n'a que de quoi joindre le moteur");
+    assert.equal(
+      "GH_TOKEN" in client || "GITHUB_TOKEN" in client,
+      false,
+      "le CLI d'un job de tests n'a que de quoi joindre le moteur",
+    );
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];

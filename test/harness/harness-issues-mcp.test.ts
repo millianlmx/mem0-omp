@@ -172,12 +172,9 @@ test("harness-issues-mcp/AC-2 : le protocole MCP — initialize négocie la vers
       };
     };
     assert.deepEqual(
-      list.result.tools.slice(0, 4).map((tool) => [
-        tool.name,
-        tool.inputSchema.type,
-        tool.inputSchema.required,
-        tool.annotations.readOnlyHint,
-      ]),
+      list.result.tools
+        .slice(0, 4)
+        .map((tool) => [tool.name, tool.inputSchema.type, tool.inputSchema.required, tool.annotations.readOnlyHint]),
       [
         ["repos_list", "object", [], true],
         ["issues_list", "object", [], true],
@@ -389,7 +386,15 @@ test("harness-issues-mcp/AC-7 : une issue fermée n'est pas lancée ; un `gh` no
   }
 });
 
-type RunSummary = { id: string; slug: string; state: string; step: string | null; verdict: unknown; rev: number; priority: number };
+type RunSummary = {
+  id: string;
+  slug: string;
+  state: string;
+  step: string | null;
+  verdict: unknown;
+  rev: number;
+  priority: number;
+};
 const runOf = (result: Record<string, unknown>): RunSummary => {
   assert.equal(result.isError, undefined, JSON.stringify(result));
   return (result.structuredContent as { run: RunSummary }).run;
@@ -417,7 +422,15 @@ const seed = (mcp: Mcp, repo: string, state: "queued" | "cancelled" | "failed" =
 
 /** `run_start` avec `modules` : le run n'attend pas l'inférence des modules, sa révision reste stable. */
 const start = async (mcp: Mcp, args: Record<string, unknown> = {}): Promise<RunSummary> =>
-  runOf(await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", title: "T", request: "R", modules: ["src"], ...args }));
+  runOf(
+    await mcp.tool(mcp.tokens.operator, "run_start", {
+      repo: "demo",
+      title: "T",
+      request: "R",
+      modules: ["src"],
+      ...args,
+    }),
+  );
 
 test("harness-issues-mcp/AC-9 : run_start lance un run libre, sans GitHub, qui part en file et que GET /v1/runs/{id} rend", async () => {
   const mcp = await mcpWorld([]);
@@ -441,15 +454,25 @@ test("harness-issues-mcp/AC-10 : run_start refuse un titre absent ou blanc, un d
   try {
     const noTitle = errorText(await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", request: "R" }));
     assert.equal(noTitle, "title : chaîne attendue");
-    const blank = errorText(await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", title: " ", request: "R" }));
+    const blank = errorText(
+      await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", title: " ", request: "R" }),
+    );
     assert.equal(blank, "title et request sont requis");
-    const hidden = errorText(await mcp.tool(mcp.tokens.elsewhere, "run_start", { repo: "demo", title: "T", request: "R" }));
+    const hidden = errorText(
+      await mcp.tool(mcp.tokens.elsewhere, "run_start", { repo: "demo", title: "T", request: "R" }),
+    );
     assert.equal(hidden, "le client autre n'a pas accès au dépôt demo");
-    const undeclared = errorText(await mcp.tool(mcp.tokens.operator, "run_start", { repo: "inexistant", title: "T", request: "R" }));
+    const undeclared = errorText(
+      await mcp.tool(mcp.tokens.operator, "run_start", { repo: "inexistant", title: "T", request: "R" }),
+    );
     assert.equal(undeclared, "le client agent n'a pas accès au dépôt inexistant");
-    const unknown = errorText(await mcp.tool(mcp.tokens.elsewhere, "run_start", { repo: "autre", title: "T", request: "R" }));
+    const unknown = errorText(
+      await mcp.tool(mcp.tokens.elsewhere, "run_start", { repo: "autre", title: "T", request: "R" }),
+    );
     assert.equal(unknown, "dépôt inconnu : autre", "visible du client mais absent de la liste du harness");
-    const badReq = errorText(await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", title: "T", request: "R", req: "sans besoins" }));
+    const badReq = errorText(
+      await mcp.tool(mcp.tokens.operator, "run_start", { repo: "demo", title: "T", request: "R", req: "sans besoins" }),
+    );
     assert.match(badReq, /## Besoins/);
     assert.equal(mcp.world.store.listRuns({}).length, 0, "aucun run créé");
   } finally {
@@ -505,12 +528,18 @@ test("harness-issues-mcp/AC-13 : runs_list filtre par états et par dépôt, et 
     };
     assert.deepEqual(await ids(mcp.tokens.viewer), [cancelled.id, failed.id, queued.id].sort());
     assert.deepEqual(await ids(mcp.tokens.viewer, { state: ["cancelled"] }), [cancelled.id]);
-    assert.deepEqual(await ids(mcp.tokens.viewer, { state: ["cancelled", "queued"] }), [cancelled.id, queued.id].sort());
+    assert.deepEqual(
+      await ids(mcp.tokens.viewer, { state: ["cancelled", "queued"] }),
+      [cancelled.id, queued.id].sort(),
+    );
     assert.deepEqual(await ids(mcp.tokens.viewer, { repo: "demo", state: ["failed"] }), [failed.id]);
     assert.deepEqual(await ids(mcp.tokens.viewer, { repo: "autre" }), [], "un dépôt invisible, même nommé");
     assert.deepEqual(await ids(mcp.tokens.elsewhere), [elsewhere.id]);
     assert.deepEqual(await ids(mcp.tokens.elsewhere, { repo: "demo" }), []);
-    assert.equal(errorText(await mcp.tool(mcp.tokens.viewer, "runs_list", { state: "queued" })), "state : liste de chaînes attendue");
+    assert.equal(
+      errorText(await mcp.tool(mcp.tokens.viewer, "runs_list", { state: "queued" })),
+      "state : liste de chaînes attendue",
+    );
   } finally {
     await mcp.close();
   }
@@ -560,7 +589,10 @@ test("harness-issues-mcp/AC-17 : run_priority refuse un entier hors [-1000, 1000
       errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 1001 })),
       "priority : entier entre -1000 et 1000",
     );
-    assert.equal(errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id })), "priority : entier attendu");
+    assert.equal(
+      errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id })),
+      "priority : entier attendu",
+    );
     assert.equal(
       errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: "haute" })),
       "priority : entier attendu",
@@ -570,7 +602,10 @@ test("harness-issues-mcp/AC-17 : run_priority refuse un entier hors [-1000, 1000
     assert.equal(changed.priority, -1000);
     assert.equal(mcp.world.store.getRun(run.id)?.priority, -1000);
     mcp.world.store.updateRun(run.id, { state: "failed" });
-    assert.match(errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 5 })), /^run déjà failed/);
+    assert.match(
+      errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 5 })),
+      /^run déjà failed/,
+    );
   } finally {
     await mcp.close();
   }
@@ -617,13 +652,20 @@ test("harness-issues-mcp/AC-28 : run_start → run_get → run_cancel : le run e
   try {
     const started = await start(mcp, { title: "Enchaînement" });
     assert.equal(started.state, "queued");
-    const read = (await mcp.tool(mcp.tokens.operator, "run_get", { id: started.id })).structuredContent as { run: RunSummary };
+    const read = (await mcp.tool(mcp.tokens.operator, "run_get", { id: started.id })).structuredContent as {
+      run: RunSummary;
+    };
     assert.deepEqual([read.run.id, read.run.state], [started.id, "queued"]);
     const cancelled = runOf(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: started.id, rev: read.run.rev }));
     assert.equal(cancelled.state, "cancelled");
-    const after = (await mcp.tool(mcp.tokens.operator, "run_get", { id: started.id })).structuredContent as { run: RunSummary };
+    const after = (await mcp.tool(mcp.tokens.operator, "run_get", { id: started.id })).structuredContent as {
+      run: RunSummary;
+    };
     assert.equal(after.run.state, "cancelled");
-    assert.match(errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: started.id })), /^run déjà cancelled/);
+    assert.match(
+      errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: started.id })),
+      /^run déjà cancelled/,
+    );
   } finally {
     await mcp.close();
   }
@@ -633,17 +675,34 @@ test("harness-issues-mcp/AC-30 : un geste avec `rev` périmé est isError du 412
   const mcp = await mcpWorld([]);
   try {
     const run = await start(mcp);
-    const stale = errorText(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 7, rev: run.rev + 5 }));
+    const stale = errorText(
+      await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 7, rev: run.rev + 5 }),
+    );
     assert.match(stale, /le run a changé depuis ta lecture/);
-    assert.match(errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: run.id, rev: run.rev + 5 })), /le run a changé depuis ta lecture/);
-    assert.deepEqual([mcp.world.store.getRun(run.id)?.priority, mcp.world.store.getRun(run.id)?.state, mcp.world.store.getRun(run.id)?.rev], [0, "queued", run.rev]);
+    assert.match(
+      errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: run.id, rev: run.rev + 5 })),
+      /le run a changé depuis ta lecture/,
+    );
+    assert.deepEqual(
+      [
+        mcp.world.store.getRun(run.id)?.priority,
+        mcp.world.store.getRun(run.id)?.state,
+        mcp.world.store.getRun(run.id)?.rev,
+      ],
+      [0, "queued", run.rev],
+    );
     assert.equal(
       errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: run.id, rev: -1 })),
       "rev : la révision du run (entier ≥ 0) attendue",
     );
-    assert.equal(errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: run.id, rev: "1" })), "rev : la révision du run (entier ≥ 0) attendue");
+    assert.equal(
+      errorText(await mcp.tool(mcp.tokens.operator, "run_cancel", { id: run.id, rev: "1" })),
+      "rev : la révision du run (entier ≥ 0) attendue",
+    );
 
-    const current = runOf(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 7, rev: run.rev }));
+    const current = runOf(
+      await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 7, rev: run.rev }),
+    );
     assert.equal(current.priority, 7);
     const noRev = runOf(await mcp.tool(mcp.tokens.operator, "run_priority", { id: run.id, priority: 8 }));
     assert.equal(noRev.priority, 8);
@@ -652,13 +711,25 @@ test("harness-issues-mcp/AC-30 : un geste avec `rev` périmé est isError du 412
     const call = (ifMatch: string, args: Record<string, unknown>) =>
       fetch(mcp.url, {
         method: "POST",
-        headers: { Authorization: `Bearer ${mcp.tokens.operator}`, "Content-Type": "application/json", "If-Match": ifMatch },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "run_priority", arguments: args } }),
+        headers: {
+          Authorization: `Bearer ${mcp.tokens.operator}`,
+          "Content-Type": "application/json",
+          "If-Match": ifMatch,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "run_priority", arguments: args },
+        }),
       }).then(async (response) => ((await response.json()) as { result: Record<string, unknown> }).result);
     const ignored = runOf(await call('"999"', { id: run.id, priority: 9 }));
     assert.equal(ignored.priority, 9, "un If-Match périmé n'empêche pas le geste");
     const live = mcp.world.store.getRun(run.id)?.rev as number;
-    assert.match(errorText(await call(`"${live}"`, { id: run.id, priority: 10, rev: live + 1 })), /le run a changé depuis ta lecture/);
+    assert.match(
+      errorText(await call(`"${live}"`, { id: run.id, priority: 10, rev: live + 1 })),
+      /le run a changé depuis ta lecture/,
+    );
     assert.equal(mcp.world.store.getRun(run.id)?.priority, 9, "c'est l'argument qui compte, pas l'en-tête");
   } finally {
     await mcp.close();
@@ -669,8 +740,14 @@ test("harness-issues-mcp/AC-50 : run_get rend à un viewer les étapes, les test
   const mcp = await mcpWorld([]);
   try {
     const run = await start(mcp, { req: "## Besoins\n\n- B-1 : exporter en CSV" });
-    const got = (await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).structuredContent as Record<string, unknown>;
-    const viaRest = (await (await rest(mcp, mcp.tokens.viewer, `/v1/runs/${run.id}`)).json()) as Record<string, unknown>;
+    const got = (await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).structuredContent as Record<
+      string,
+      unknown
+    >;
+    const viaRest = (await (await rest(mcp, mcp.tokens.viewer, `/v1/runs/${run.id}`)).json()) as Record<
+      string,
+      unknown
+    >;
     for (const key of ["steps", "tests", "artifacts"]) assert.deepEqual(got[key], viaRest[key], key);
     assert.ok(JSON.stringify(got.artifacts).includes("req.md"), JSON.stringify(got.artifacts));
     assert.equal((got.run as RunSummary).step, "specs");
@@ -695,9 +772,14 @@ test("harness-issues-mcp/AC-51 : run_get porte l'escalade ouverte d'un run comme
     const got = (await mcp.tool(mcp.tokens.viewer, "run_get", { id: run.id })).structuredContent as {
       escalations: { question: string; status: string }[];
     };
-    const viaRest = (await (await rest(mcp, mcp.tokens.viewer, `/v1/runs/${run.id}`)).json()) as { escalations: unknown[] };
+    const viaRest = (await (await rest(mcp, mcp.tokens.viewer, `/v1/runs/${run.id}`)).json()) as {
+      escalations: unknown[];
+    };
     assert.deepEqual(got.escalations, viaRest.escalations);
-    assert.deepEqual(got.escalations.map((item) => [item.question, item.status]), [["Quel format ?", "open"]]);
+    assert.deepEqual(
+      got.escalations.map((item) => [item.question, item.status]),
+      [["Quel format ?", "open"]],
+    );
     assert.equal(errorText(await mcp.tool(mcp.tokens.elsewhere, "run_get", { id: run.id })), `run inconnu : ${run.id}`);
   } finally {
     await mcp.close();

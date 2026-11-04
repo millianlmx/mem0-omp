@@ -215,8 +215,7 @@ export const MCP_TOOLS: readonly Tool[] = [
       slug: { type: "string", description: "Facultatif : le slug du run." },
       req: {
         type: "string",
-        description:
-          "Facultatif : un compte rendu de besoins déjà établi, avec `## Besoins` : le run part de /specs.",
+        description: "Facultatif : un compte rendu de besoins déjà établi, avec `## Besoins` : le run part de /specs.",
       },
       modules: {
         type: "array",
