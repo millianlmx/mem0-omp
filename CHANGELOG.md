@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.15.0 — 2026-11-04
+
+- feat(harness): pilotage des runs en MCP, GH_TOKEN de la pile jusqu'au service (#321) (c7e3a3b)
+
 ## omp-harness 1.14.1 — 2026-11-03
 
 - fix(harness,stack,mem0-rs): rêve sans 404, écritures mémoire retentées, index.lock géré (#315) (8e3922f)
