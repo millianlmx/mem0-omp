@@ -192,8 +192,8 @@ Les autres variables, facultatives :
 | `OMP_HARNESS_SECRETS` | `/var/lib/omp-harness-secrets` | les secrets, sur l'hôte (les clés LLM n'y sont lues que par les runners) |
 | `OMLX_BASE_URL`, `OMLX_API_TOKEN` | l'Ollama de la pile | un serveur d'embeddings à toi |
 | `OMLX_CHAT_BASE_URL`, `OMLX_CHAT_API_TOKEN`, `OMLX_LLM_MODEL` | `OMLX_BASE_URL` ; `off` avec l'Ollama de la pile | le serveur de chat du rêve de la mémoire, sa clé et son modèle (`qwen3-8b`) |
-| `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
+| `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
