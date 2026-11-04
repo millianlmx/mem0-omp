@@ -234,6 +234,18 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
 }
 
 /**
+ * Les secrets du service qu'aucun runner ni connexion ne reçoit : le jeton de l'API et
+ * les jetons GitHub que `gh` lit (le texte d'une issue est une donnée de tiers).
+ */
+export const SERVICE_SECRETS = [
+  "HARNESS_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+] as const;
+
+/**
  * L'environnement d'un runner lancé SANS le lanceur root : celui du service (clés des
  * fournisseurs), la mémoire du projet (adresse et jeton de l'oracle), jamais le jeton
  * de l'API. Avec le lanceur, sudo l'ignore : clés et oracle viennent de runner.env.
@@ -249,7 +261,7 @@ export function runnerEnv(
     env.MEM0_HTTP_URL = oracle.url;
     if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;
   }
-  delete env.HARNESS_TOKEN;
+  for (const key of SERVICE_SECRETS) delete env[key];
   return env;
 }
 

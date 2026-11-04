@@ -260,7 +260,7 @@ export function classify(result: ProcResult): HeavyOutcome {
 }
 
 /** L'environnement du CLI qui lance le job : de quoi joindre le moteur, rien d'autre. */
-function clientEnv(): Record<string, string> {
+export function clientEnv(): Record<string, string> {
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
   for (const key of ["HOME", "DOCKER_HOST", "CONTAINER_HOST", "XDG_RUNTIME_DIR"]) {
     const value = process.env[key];

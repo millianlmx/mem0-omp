@@ -6,6 +6,7 @@
 #
 # Variables de la pile, toutes facultatives sauf la clé du modèle :
 #   ANTHROPIC_API_KEY (ou OPENROUTER_API_KEY)  la clé des agents
+#   GH_TOKEN               un jeton GitHub (issues en MCP, merge gh) : écrit dans le secret du service, jamais donné aux runners
 #   OMP_HARNESS_REPOS      les dépôts, séparés par des virgules (git@github.com:toi/dépôt.git)
 #   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
 #   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
@@ -48,6 +49,7 @@ services:
       <<: *paths
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GH_TOKEN: ${GH_TOKEN:-}
       OMLX_BASE_URL: ${OMLX_BASE_URL:-}
       OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
       OMLX_CHAT_BASE_URL: ${OMLX_CHAT_BASE_URL:-}
