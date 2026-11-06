@@ -98,6 +98,12 @@ public final class HarnessDrafts: ObservableObject {
     /// Les adresses et pseudos de l'utilisateur en cours de saisie (une par ligne) ;
     /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
     @Published public var workstationIdentities: String?
+    /// La consigne en cours de saisie dans « Demandes ».
+    @Published public var workstationInstruction = ""
+    /// La demande dont l'annulation attend confirmation.
+    @Published public var workstationCancelRequest: WorkstationRequest?
+    /// L'automatisation dont la suppression attend confirmation.
+    @Published public var workstationAutomationRemoval: WorkstationAutomation?
 
     /// Ouvre la saisie du refus d'un envoi, raison vide.
     public func beginWorkstationRefusal(_ action: WorkstationAction) {

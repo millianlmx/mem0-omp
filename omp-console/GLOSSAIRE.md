@@ -71,6 +71,10 @@ Chaque forme refusée est interdite dans les textes ; le terme retenu la rempla
 | embeddings | `embedding`, `embeddings` | vecteurs sémantiques | « la mémoire a besoin de ses vecteurs sémantiques » |
 | fixture | `fixture`, `fixtures` | jeu d’essai | « le jeu d’essai de la recette » |
 | script | `script`, `scripts` | programme | « un programme de relevé » |
+| request | `request`, `requests` | demande | « Aucune demande pour l’instant. » |
+| prompt | `prompt`, `prompts` | consigne | « Saisissez une consigne » |
+| automation | `automation`, `automations` | automatisation | « Aucune automatisation » |
+| report | `report`, `reports` | compte rendu | « Compte rendu » |
 
 ## Typographie
 

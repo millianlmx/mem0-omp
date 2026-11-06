@@ -442,3 +442,540 @@ struct WorkstationModelTests {
         #expect(drafts.workstationRefusal?.seq == 3 && drafts.workstationRefusalReason.isEmpty)
     }
 }
+
+// MARK: - Demandes et automatisations du poste
+
+private func json(_ object: Any, status: Int = 200) -> HarnessReply {
+    HarnessReply(status: status, body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data())
+}
+
+private func requestJSON(
+    _ id: String, _ state: String, instruction: String = "Relever les prix", reason: String? = nil,
+    report: String? = nil, automationId: String? = nil
+) -> [String: Any] {
+    [
+        "id": id, "createdAt": 1, "updatedAt": 2, "by": "mac", "instruction": instruction,
+        "automationId": automationId ?? NSNull(), "state": state, "reason": reason ?? NSNull(),
+        "report": report ?? NSNull(), "startedAt": NSNull(), "endedAt": NSNull(),
+    ]
+}
+
+private func actionJSON(_ seq: Int, requestId: String, kind: String = "open", rationale: String, state: String = "done") -> [String: Any] {
+    ["seq": seq, "requestId": requestId, "createdAt": 1, "updatedAt": 1, "origin": "session", "by": "mac", "kind": kind,
+     "params": [String: Any](), "rationale": rationale, "state": state, "approved": false]
+}
+
+private func automationJSON(_ id: String, title: String = "Relancer les devis") -> [String: Any] {
+    ["id": id, "createdAt": 1, "by": "mac", "title": title, "frequency": "chaque lundi",
+     "steps": ["mail.google.com/mail", "crm.exemple.fr/devis/:id"], "profileVersion": 3]
+}
+
+/// Le profil de `profileJSON` précédé d'une tâche qui n'est PAS automatisable.
+private let twoTasksProfileJSON = profileJSON.replacingOccurrences(
+    of: #""repetitiveTasks":["#,
+    with: #""repetitiveTasks":[{"title":"Trier la boîte","frequency":"chaque jour","steps":["mail.google.com/mail"],"automatable":false},"#
+)
+
+private let approverDenied = reply(#"{"error":"seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste"}"#, status: 403)
+
+/// Un serveur du poste qui sert aussi les demandes et les automatisations, avec leur état.
+private final class PosteServer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [[String: Any]] = []
+    private var automations: [[String: Any]] = []
+    private var details: [String: [String: Any]] = [:]
+    private var forced: [String: HarnessReply] = [:]
+    private var health = reply(#"{"ok":true,"api":1,"features":["workstation-requests"],"checks":[]}"#)
+    private var counter = 0
+
+    func handler() -> @Sendable (HarnessCall) -> HarnessReply {
+        { [self] call in handle(call) }
+    }
+
+    func force(_ key: String, _ forcedReply: HarnessReply?) { lock.withLock { forced[key] = forcedReply } }
+    func setHealth(_ value: HarnessReply) { lock.withLock { health = value } }
+    func setRequests(_ list: [[String: Any]]) { lock.withLock { requests = list } }
+    func setAutomations(_ list: [[String: Any]]) { lock.withLock { automations = list } }
+    func setDetail(_ id: String, request: [String: Any], actions: [[String: Any]]) {
+        lock.withLock { details[id] = ["request": request, "actions": actions] }
+    }
+    func removeDetail(_ id: String) { lock.withLock { details[id] = nil } }
+
+    private func handle(_ call: HarnessCall) -> HarnessReply {
+        let key = "\(call.method) \(call.path)"
+        let (forcedReply, healthReply) = lock.withLock { (forced[key], health) }
+        if let forcedReply { return forcedReply }
+        if key == "GET /v1/health" { return healthReply }
+        if let routed = lock.withLock({ route(call) }) { return routed }
+        return workstationServer(["GET /v1/workstation/profile": reply(profileJSON)])(call)
+    }
+
+    /// Le verrou est tenu.
+    private func route(_ call: HarnessCall) -> HarnessReply? {
+        let requestsBase = "/v1/workstation/requests"
+        let automationsBase = "/v1/workstation/automations"
+        switch (call.method, call.path) {
+        case ("GET", requestsBase): return json(["requests": requests])
+        case ("GET", automationsBase): return json(["automations": automations])
+        case ("POST", requestsBase):
+            let sent = (try? JSONSerialization.jsonObject(with: call.body ?? Data())) as? [String: Any]
+            counter += 1
+            let created = requestJSON("n\(counter)", "queued", instruction: sent?["instruction"] as? String ?? "")
+            requests.insert(created, at: 0)
+            return json(["request": created], status: 201)
+        case ("POST", automationsBase):
+            counter += 1
+            let created = automationJSON("auto\(counter)")
+            automations.append(created)
+            return json(["automation": created], status: 201)
+        default: break
+        }
+        if call.path.hasPrefix(requestsBase + "/") {
+            let rest = String(call.path.dropFirst(requestsBase.count + 1))
+            if call.method == "GET" {
+                return details[rest].map { json($0) } ?? json(["error": "demande inconnue"], status: 404)
+            }
+            if call.method == "POST", rest.hasSuffix("/cancel") {
+                let id = String(rest.dropLast("/cancel".count))
+                guard let index = requests.firstIndex(where: { $0["id"] as? String == id }) else {
+                    return json(["error": "demande inconnue"], status: 404)
+                }
+                requests[index]["state"] = "cancelled"
+                return json(["request": requests[index]])
+            }
+        }
+        if call.path.hasPrefix(automationsBase + "/") {
+            let rest = String(call.path.dropFirst(automationsBase.count + 1))
+            if call.method == "POST", rest.hasSuffix("/launch") {
+                counter += 1
+                let id = String(rest.dropLast("/launch".count))
+                let created = requestJSON("n\(counter)", "queued", instruction: "Relancer les devis", automationId: id)
+                requests.insert(created, at: 0)
+                return json(["request": created], status: 201)
+            }
+            if call.method == "DELETE" {
+                automations.removeAll { $0["id"] as? String == rest }
+                return json(["removed": true])
+            }
+        }
+        return nil
+    }
+}
+
+/// Une doublure de transport qui retient la réponse d'un appel (celle qu'il avait à l'instant
+/// de l'appel) jusqu'à `release`, pour entrelacer deux lectures.
+private final class GatedTransport: HarnessTransport, @unchecked Sendable {
+    let inner = ScriptedHarnessTransport()
+    private let lock = NSLock()
+    private var gated: Set<String> = []
+    private var waiting: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    var calls: [HarnessCall] { inner.calls }
+
+    func hold(_ key: String) { lock.withLock { _ = gated.insert(key) } }
+
+    func heldCount(_ key: String) -> Int { lock.withLock { waiting[key]?.count ?? 0 } }
+
+    func release(_ key: String) {
+        let continuations = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            gated.remove(key)
+            return waiting.removeValue(forKey: key) ?? []
+        }
+        for continuation in continuations { continuation.resume() }
+    }
+
+    func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
+        let key = "\(call.method) \(call.path)"
+        let answer = try await inner.send(call, server: server)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let passes = lock.withLock { () -> Bool in
+                if gated.contains(key) {
+                    waiting[key, default: []].append(continuation)
+                    return false
+                }
+                return true
+            }
+            if passes { continuation.resume() }
+        }
+        return answer
+    }
+
+    func events(_ call: HarnessCall, server: HarnessServer) async throws -> AsyncThrowingStream<Data, Error> {
+        try await inner.events(call, server: server)
+    }
+}
+
+@MainActor
+private func connectedGated(_ transport: GatedTransport) async -> HarnessModel {
+    let model = HarnessModel(
+        transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+        retryDelay: .seconds(3600), refreshDelay: .milliseconds(1)
+    )
+    _ = await model.configure(address: "vps.example", token: "t")
+    return model
+}
+
+private func touchesRequests(_ call: HarnessCall) -> Bool {
+    call.path.hasPrefix("/v1/workstation/requests") || call.path.hasPrefix("/v1/workstation/automations")
+}
+
+@Suite("Poste de travail — demandes et automatisations")
+@MainActor
+struct WorkstationRequestsTests {
+    private func opened(_ poste: PosteServer = PosteServer()) async -> (WorkstationModel, ScriptedHarnessTransport, PosteServer) {
+        let transport = ScriptedHarnessTransport()
+        transport.respond(poste.handler())
+        let server = await connected(transport)
+        await server.workstation.load()
+        return (server.workstation, transport, poste)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-7 : une demande se décode avec sa raison d'attente, son compte rendu et un état inconnu ; l'action porte sa demande")
+    func decodesRequestsAndAutomations() throws {
+        let decoder = JSONDecoder()
+        let list = try decoder.decode(WorkstationRequestList.self, from: json([
+            "requests": [
+                requestJSON("r1", "queued", reason: "l’extension est hors ligne"),
+                requestJSON("r2", "failed", reason: "page introuvable"),
+                requestJSON("r3", "en_pause"),
+            ],
+            "inconnu": true,
+        ]).body)
+        #expect(list.requests.map(\.id) == ["r1", "r2", "r3"])
+        #expect(list.requests[0].phase == .queued && list.requests[0].reason == "l’extension est hors ligne")
+        #expect(list.requests[1].phase == .failed && list.requests[1].reason == "page introuvable")
+        #expect(list.requests[2].phase == nil && list.requests[2].state == "en_pause", "un état apparu plus tard se lit sans échouer")
+        #expect(list.requests[0].report == nil && list.requests[0].automationId == nil)
+
+        let detail = try decoder.decode(WorkstationRequestDetail.self, from: json([
+            "request": requestJSON("r1", "done", report: "Trois prix relevés."),
+            "actions": [actionJSON(21, requestId: "r1", rationale: "Ouvrir le catalogue")],
+        ]).body)
+        #expect(detail.report == "Trois prix relevés." && detail.actions.map(\.requestId) == ["r1"])
+        let plain = try decoder.decode(WorkstationAction.self, from: Data(#"{"seq":1,"kind":"tabs","state":"done"}"#.utf8))
+        #expect(plain.requestId == nil, "une action hors demande n'a pas de requestId")
+
+        let automation = try decoder.decode(WorkstationAutomationList.self, from: json(["automations": [automationJSON("a1")]]).body)
+        #expect(automation.automations[0].title == "Relancer les devis" && automation.automations[0].steps.count == 2)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-10 : les cinq états ont un libellé distinct, un état inconnu se rend brut")
+    func fiveDistinctStates() {
+        let labels = WorkstationRequestState.allCases.map { WorkstationText.requestState($0.rawValue) }
+        #expect(labels.count == 5 && Set(labels).count == 5)
+        #expect(WorkstationText.requestState("cancelled") == "Annulée par vous")
+        #expect(WorkstationText.requestState("paused") == "paused")
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-21 : sans le drapeau (ou /v1/health en 404) ni les blocs ni aucune route de demande ; les gestes ne partent pas")
+    func noFlagNoRequests() async {
+        let poste = PosteServer()
+        poste.setHealth(reply(#"{"ok":true,"features":["workstation"]}"#))
+        let (workstation, transport, _) = await opened(poste)
+        #expect(workstation.availability == .available && !workstation.requestsEnabled)
+        #expect(workstation.requests.isEmpty && workstation.automations.isEmpty && workstation.openRequest == nil)
+        #expect(await workstation.ask("Relever les prix") == false)
+        #expect(await workstation.cancel(WorkstationRequest(id: "r1", instruction: "x", state: "queued")) == false)
+        #expect(await workstation.launch(WorkstationAutomation(id: "a1", title: "t")) == false)
+        #expect(await workstation.delete(WorkstationAutomation(id: "a1", title: "t")) == false)
+        await workstation.open(request: "r1")
+        #expect(workstation.openRequestId == nil)
+        #expect(!transport.calls.contains(where: touchesRequests))
+
+        // Le serveur de test par défaut répond 404 à /v1/health : drapeau jamais lu.
+        let plain = ScriptedHarnessTransport()
+        plain.respond(workstationServer())
+        let bare = await connected(plain)
+        await bare.workstation.load()
+        #expect(!bare.workstation.requestsEnabled && bare.workstation.availability == .available)
+        #expect(!plain.calls.contains(where: touchesRequests))
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-27 : le drapeau se lit en 503 ; injoignable ou illisible, la dernière valeur est gardée, sans lecture les blocs restent cachés")
+    func flagReadAcrossHealthStates() async {
+        let poste = PosteServer()
+        poste.setHealth(reply(#"{"ok":false,"features":["workstation-requests"],"checks":[]}"#, status: 503))
+        let (workstation, transport, _) = await opened(poste)
+        #expect(workstation.requestsEnabled, "503 avec le drapeau : les blocs s'affichent")
+
+        poste.setHealth(reply(#"{"error":"bad gateway"}"#, status: 502))
+        await workstation.load()
+        #expect(workstation.requestsEnabled, "502 : la dernière valeur lue est gardée")
+        poste.setHealth(reply("<html>pas du JSON</html>"))
+        await workstation.load()
+        #expect(workstation.requestsEnabled && workstation.failure == nil, "illisible : valeur gardée, aucun échec")
+
+        // Sans aucune lecture réussie : cachés, aucune route de demande.
+        let unreadable = PosteServer()
+        unreadable.setHealth(reply("pas du JSON"))
+        let (hidden, hiddenTransport, _) = await opened(unreadable)
+        #expect(!hidden.requestsEnabled && !hiddenTransport.calls.contains(where: touchesRequests))
+        #expect(transport.calls.contains { $0.method == "GET" && $0.path == "/v1/health" })
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-1 : « Demander » pose la consigne par POST /v1/workstation/requests et la demande apparaît en file ; AC-4 : aucun run ni projet")
+    func askPostsTheInstruction() async throws {
+        let (workstation, transport, _) = await opened()
+        #expect(workstation.requestsEnabled && workstation.requests.isEmpty)
+        #expect(await workstation.ask("  Relever les prix du catalogue \n"))
+        let post = try #require(transport.calls.first { $0.method == "POST" })
+        #expect(post.path == "/v1/workstation/requests")
+        let sent = try body(post)
+        #expect(NSDictionary(dictionary: sent) == NSDictionary(dictionary: ["instruction": "Relever les prix du catalogue"]))
+        #expect(workstation.requests.map(\.instruction) == ["Relever les prix du catalogue"])
+        #expect(workstation.requests[0].phase == .queued && workstation.requestsFailure == nil && !workstation.isAsking)
+        let writes = transport.calls.filter { $0.method != "GET" }
+        #expect(writes.map(\.path) == ["/v1/workstation/requests"])
+        #expect(!transport.calls.contains { $0.path.hasPrefix("/v1/runs") || $0.path.hasPrefix("/v1/projects") })
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-3 : une consigne vide ou faite d'espaces ne part pas")
+    func blankInstructionIsNotSent() async {
+        let (workstation, transport, _) = await opened()
+        #expect(!WorkstationModel.canAsk("") && !WorkstationModel.canAsk("  \n\t") && WorkstationModel.canAsk(" a "))
+        let before = transport.calls.count
+        #expect(await workstation.ask("  \n") == false)
+        #expect(transport.calls.count == before)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-5 : poste en pause, le 409 est dit dans le bloc Demandes et rien n'est ajouté")
+    func askRefusedWhilePaused() async {
+        let (workstation, _, poste) = await opened()
+        poste.force("POST /v1/workstation/requests", reply(#"{"error":"le poste est en pause"}"#, status: 409))
+        #expect(await workstation.ask("Relever les prix") == false)
+        #expect(workstation.requestsFailure == .rejected("le poste est en pause"))
+        #expect(workstation.requests.isEmpty && workstation.failure == nil && workstation.availability == .available)
+        #expect(!workstation.isAsking)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-11 : « Annuler » une demande en file ou en cours appelle POST …/{id}/cancel et la demande se lit annulée ; AC-12 : jamais sur une demande finie")
+    func cancelOnlyQueuedOrRunning() async throws {
+        let poste = PosteServer()
+        poste.setRequests([requestJSON("r1", "running"), requestJSON("r2", "done"), requestJSON("r3", "failed"), requestJSON("r4", "queued"), requestJSON("r5", "weird")])
+        let (workstation, transport, _) = await opened(poste)
+        #expect(workstation.requests.count == 5)
+        #expect(WorkstationRequestState.allCases.filter { WorkstationModel.canCancel($0) } == [.queued, .running])
+        #expect(!WorkstationModel.canCancel(nil))
+
+        #expect(await workstation.cancel(workstation.requests[0]))
+        let post = try #require(transport.calls.last { $0.method == "POST" })
+        #expect(post.path == "/v1/workstation/requests/r1/cancel")
+        #expect(workstation.requests[0].phase == .cancelled && workstation.busyRequests.isEmpty)
+
+        let before = transport.calls.count
+        for index in [1, 2, 4] { #expect(await workstation.cancel(workstation.requests[index]) == false) }
+        #expect(transport.calls.count == before, "finie, échouée ou d'état inconnu : aucune requête")
+        #expect(await workstation.cancel(workstation.requests[3]))
+        #expect(workstation.requests[3].phase == .cancelled)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-14 : « Automatiser » envoie la version du profil et l'indice de la tâche ; AC-28 : la seconde tâche d'un profil dont la première ne l'est pas porte task: 1")
+    func automateSendsVersionAndIndex() async throws {
+        let poste = PosteServer()
+        poste.force("GET /v1/workstation/profile", reply(twoTasksProfileJSON))
+        let (workstation, transport, _) = await opened(poste)
+        let profile = try #require(workstation.profile?.profile)
+        #expect(profile.repetitiveTasks.map(\.automatable) == [false, true])
+
+        #expect(await workstation.automate(taskAt: 1, of: profile))
+        let post = try #require(transport.calls.last { $0.method == "POST" })
+        #expect(post.path == "/v1/workstation/automations")
+        let sent = try body(post)
+        #expect(NSDictionary(dictionary: sent) == NSDictionary(dictionary: ["version": 3, "task": 1]))
+        #expect(workstation.automations.map(\.title) == ["Relancer les devis"])
+        #expect(workstation.automateFailure == nil && workstation.busyTasks.isEmpty)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-15 : aucune automatisation depuis une tâche non automatisable ou inexistante, aucune requête")
+    func automateOnlyAutomatableTasks() async throws {
+        let poste = PosteServer()
+        poste.force("GET /v1/workstation/profile", reply(twoTasksProfileJSON))
+        let (workstation, transport, _) = await opened(poste)
+        let profile = try #require(workstation.profile?.profile)
+        let before = transport.calls.count
+        #expect(await workstation.automate(taskAt: 0, of: profile) == false)
+        #expect(await workstation.automate(taskAt: 2, of: profile) == false)
+        #expect(await workstation.automate(taskAt: -1, of: profile) == false)
+        #expect(transport.calls.count == before)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-17 : « Lancer » appelle POST …/{id}/launch et une demande en file apparaît ; AC-18 : « Supprimer » appelle DELETE, l'automatisation part, la demande lancée reste")
+    func launchThenDelete() async throws {
+        let poste = PosteServer()
+        poste.setAutomations([automationJSON("a1")])
+        let (workstation, transport, _) = await opened(poste)
+        #expect(workstation.automations.map(\.id) == ["a1"] && workstation.requests.isEmpty)
+
+        #expect(await workstation.launch(workstation.automations[0]))
+        let launch = try #require(transport.calls.last { $0.method == "POST" })
+        #expect(launch.path == "/v1/workstation/automations/a1/launch")
+        #expect(workstation.requests.count == 1 && workstation.requests[0].phase == .queued && workstation.requests[0].automationId == "a1")
+
+        #expect(await workstation.delete(workstation.automations[0]))
+        let delete = try #require(transport.calls.last { $0.method == "DELETE" })
+        #expect(delete.path == "/v1/workstation/automations/a1")
+        #expect(workstation.automations.isEmpty, "elle quitte la liste")
+        #expect(workstation.requests.count == 1, "la demande déjà lancée reste lisible")
+        #expect(workstation.busyAutomations.isEmpty && workstation.automationsFailure == nil)
+
+        // Un 204 sans corps vaut succès.
+        poste.setAutomations([automationJSON("a2")])
+        await workstation.refresh()
+        poste.force("DELETE /v1/workstation/automations/a2", HarnessReply(status: 204, body: Data()))
+        #expect(await workstation.delete(workstation.automations[0]))
+        #expect(workstation.automations.isEmpty)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-20 : le 403 approbateur donne .approverOnly pour chacun des cinq gestes, dans l'échec de son bloc, listes inchangées")
+    func approverOnlyOnEveryGesture() async throws {
+        let poste = PosteServer()
+        poste.setRequests([requestJSON("r1", "queued")])
+        poste.setAutomations([automationJSON("a1")])
+        poste.force("GET /v1/workstation/profile", reply(profileJSON))
+        let (workstation, _, _) = await opened(poste)
+        for key in ["POST /v1/workstation/requests", "POST /v1/workstation/requests/r1/cancel", "POST /v1/workstation/automations",
+                    "POST /v1/workstation/automations/a1/launch", "DELETE /v1/workstation/automations/a1"] {
+            poste.force(key, approverDenied)
+        }
+        let requestsBefore = workstation.requests
+        let automationsBefore = workstation.automations
+        let profile = try #require(workstation.profile?.profile)
+
+        #expect(await workstation.ask("Relever les prix") == false)
+        #expect(workstation.requestsFailure == .approverOnly)
+        #expect(await workstation.cancel(workstation.requests[0]) == false)
+        #expect(workstation.requestsFailure == .approverOnly)
+        #expect(await workstation.automate(taskAt: 0, of: profile) == false)
+        #expect(workstation.automateFailure == .approverOnly)
+        #expect(await workstation.launch(workstation.automations[0]) == false)
+        #expect(workstation.automationsFailure == .approverOnly)
+        #expect(await workstation.delete(workstation.automations[0]) == false)
+        #expect(workstation.automationsFailure == .approverOnly)
+
+        #expect(workstation.failure == nil && workstation.availability == .available)
+        #expect(workstation.requests == requestsBefore && workstation.automations == automationsBefore)
+        #expect(workstation.requestsFailure?.message == WorkstationText.approverOnly)
+
+        // Un autre 403 garde son motif ; un geste qui repart efface l'échec de son bloc.
+        poste.force("POST /v1/workstation/requests", reply(#"{"error":"le rôle viewer ne permet pas cela"}"#, status: 403))
+        #expect(await workstation.ask("Relever les prix") == false)
+        #expect(workstation.requestsFailure == .forbidden("le rôle viewer ne permet pas cela"))
+        poste.force("POST /v1/workstation/requests", nil)
+        #expect(await workstation.ask("Relever les prix"))
+        #expect(workstation.requestsFailure == nil)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-6 : un événement workstation_request relit la liste et le détail ouvert sans geste, workstation_action le détail, workstation_automation les automatisations")
+    func eventsReloadWithoutGesture() async {
+        let poste = PosteServer()
+        poste.setRequests([requestJSON("d1", "running")])
+        poste.setDetail("d1", request: requestJSON("d1", "running"), actions: [actionJSON(1, requestId: "d1", rationale: "Ouvrir le catalogue")])
+        let (workstation, transport, _) = await opened(poste)
+        await workstation.open(request: "d1")
+        #expect(workstation.requests[0].phase == .running && workstation.openRequest?.actions.count == 1)
+
+        poste.setRequests([requestJSON("d1", "done", report: "Trois prix relevés.")])
+        poste.setDetail("d1", request: requestJSON("d1", "done", report: "Trois prix relevés."), actions: [
+            actionJSON(1, requestId: "d1", rationale: "Ouvrir le catalogue"), actionJSON(2, requestId: "d1", kind: "snapshot", rationale: "Lire les prix"),
+        ])
+        workstation.receive(["workstation_request"])
+        #expect(await eventually { workstation.requests[0].phase == .done && workstation.openRequest?.actions.count == 2 })
+        #expect(workstation.openRequest?.report == "Trois prix relevés.")
+
+        poste.setDetail("d1", request: requestJSON("d1", "done", report: "Trois prix relevés."), actions: [
+            actionJSON(1, requestId: "d1", rationale: "Ouvrir le catalogue"), actionJSON(2, requestId: "d1", kind: "snapshot", rationale: "Lire les prix"),
+            actionJSON(3, requestId: "d1", kind: "click", rationale: "Valider"),
+        ])
+        workstation.receive(["workstation_action"])
+        #expect(await eventually { workstation.openRequest?.actions.count == 3 })
+
+        poste.setAutomations([automationJSON("a9")])
+        let before = transport.calls.filter { $0.path == "/v1/workstation/automations" }.count
+        workstation.receive(["workstation_automation"])
+        #expect(await eventually { workstation.automations.map(\.id) == ["a9"] })
+        #expect(transport.calls.filter { $0.path == "/v1/workstation/automations" }.count > before)
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-25 : un événement reçu pendant une relecture en cours est relu après elle, une fois")
+    func eventDuringReloadIsNotLost() async {
+        let poste = PosteServer()
+        poste.setRequests([requestJSON("d1", "running")])
+        let transport = GatedTransport()
+        transport.inner.respond(poste.handler())
+        let server = await connectedGated(transport)
+        let workstation = server.workstation
+        await workstation.load()
+        let key = "GET /v1/workstation/requests"
+        let reads = { transport.calls.filter { $0.method == "GET" && $0.path == "/v1/workstation/requests" }.count }
+        let before = reads()
+
+        transport.hold(key)
+        workstation.receive(["workstation_request"])
+        #expect(await eventually { transport.heldCount(key) == 1 }, "la relecture est en cours, sa réponse retenue")
+        poste.setRequests([requestJSON("d1", "done")])
+        workstation.receive(["workstation_automation"])
+        workstation.receive(["workstation_action"])
+        transport.release(key)
+
+        #expect(await eventually { workstation.requests.first?.phase == .done }, "la réponse retenue datait d'avant : une relecture de plus l'a corrigée")
+        try? await Task.sleep(for: .milliseconds(40))
+        #expect(reads() == before + 2, "deux événements pendant la relecture n'en donnent qu'une de plus")
+    }
+
+    @Test("demandes-et-automatisations-du-poste/AC-9 : le détail ouvert est celui de la demande ouverte, jamais d'une autre ni rétabli après fermeture ; un 404 le ferme sans échec")
+    func openRequestInterleavings() async {
+        let poste = PosteServer()
+        poste.setRequests([requestJSON("A", "done"), requestJSON("B", "done")])
+        poste.setDetail("A", request: requestJSON("A", "done", report: "Compte rendu A"), actions: [actionJSON(1, requestId: "A", rationale: "Action de A")])
+        poste.setDetail("B", request: requestJSON("B", "done", report: "Compte rendu B"), actions: [actionJSON(2, requestId: "B", rationale: "Action de B")])
+        let transport = GatedTransport()
+        transport.inner.respond(poste.handler())
+        let server = await connectedGated(transport)
+        let workstation = server.workstation
+        await workstation.load()
+        let detailA = "GET /v1/workstation/requests/A"
+        let detailB = "GET /v1/workstation/requests/B"
+
+        // (a) A chargé, puis B retenu : le détail de A ne reste pas affiché.
+        await workstation.open(request: "A")
+        #expect(workstation.openRequest?.request.id == "A" && workstation.openRequest?.report == "Compte rendu A")
+        transport.hold(detailB)
+        let openB = Task { await workstation.open(request: "B") }
+        #expect(await eventually { transport.heldCount(detailB) == 1 })
+        #expect(workstation.openRequestId == "B" && workstation.openRequest == nil)
+        transport.release(detailB)
+        await openB.value
+        #expect(workstation.openRequest?.request.id == "B")
+
+        // (b) A retenu, B répond, A est libéré : B reste.
+        transport.hold(detailA)
+        let openA = Task { await workstation.open(request: "A") }
+        #expect(await eventually { transport.heldCount(detailA) == 1 })
+        await workstation.open(request: "B")
+        transport.release(detailA)
+        await openA.value
+        #expect(workstation.openRequestId == "B" && workstation.openRequest?.request.id == "B")
+
+        // (c) relecture dont le détail est retenu, fermeture, libération : rien n'est rétabli.
+        transport.hold(detailB)
+        let reload = Task { await workstation.refresh() }
+        #expect(await eventually { transport.heldCount(detailB) == 1 })
+        workstation.closeRequest()
+        transport.release(detailB)
+        await reload.value
+        #expect(workstation.openRequestId == nil && workstation.openRequest == nil)
+
+        // (d) la demande ouverte disparaît : 404, fermée sans échec, la liste est relue.
+        await workstation.open(request: "A")
+        poste.removeDetail("A")
+        poste.setRequests([requestJSON("B", "done")])
+        await workstation.refresh()
+        #expect(workstation.openRequestId == nil && workstation.openRequest == nil)
+        #expect(workstation.failure == nil && workstation.requestsFailure == nil)
+        #expect(workstation.requests.map(\.id) == ["B"])
+
+        // Ouvrir une demande inconnue : 404, ni détail ni échec.
+        await workstation.open(request: "Z")
+        #expect(workstation.openRequestId == nil && workstation.openRequest == nil && workstation.requestsFailure == nil)
+    }
+}

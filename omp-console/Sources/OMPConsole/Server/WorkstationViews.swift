@@ -49,6 +49,10 @@ struct WorkstationView: View {
                     WorkstationStatusSections(workstation: workstation, drafts: drafts, status: status)
                 }
                 WorkstationApprovalsSection(workstation: workstation, drafts: drafts)
+                if workstation.requestsEnabled {
+                    WorkstationRequestsSection(workstation: workstation, drafts: drafts)
+                    WorkstationAutomationsSection(workstation: workstation, drafts: drafts)
+                }
                 WorkstationProfileSections(workstation: workstation)
                 WorkstationJournalSection(journal: workstation.journal)
                 WorkstationMeetingsSection(meetings: workstation.meetings)
@@ -294,6 +298,176 @@ struct WorkstationApprovalRow: View {
     }
 }
 
+// MARK: - Demandes et automatisations
+
+struct WorkstationRequestsSection: View {
+    @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        Section {
+            TextField(
+                WorkstationText.instructionLabel,
+                text: $drafts.workstationInstruction,
+                prompt: Text(WorkstationText.instructionPrompt),
+                axis: .vertical
+            )
+            .lineLimit(2...6)
+            .accessibilityIdentifier("workstation.instruction")
+            Button(WorkstationText.ask) {
+                Task { if await workstation.ask(drafts.workstationInstruction) { drafts.workstationInstruction = "" } }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!workstation.canAct || workstation.isAsking || !WorkstationModel.canAsk(drafts.workstationInstruction))
+            .accessibilityIdentifier("workstation.ask")
+            Text(WorkstationText.requestsHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let failure = workstation.requestsFailure {
+                if failure == .approverOnly {
+                    HarnessFailureLabel(failure: .approverOnly)
+                } else {
+                    HarnessFailureLabel(failure: failure)
+                }
+            }
+            if workstation.requests.isEmpty {
+                Text(WorkstationText.noRequest)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(workstation.requests) { request in
+                requestRow(request)
+            }
+        } header: {
+            Text(WorkstationText.requestsTitle)
+        }
+        .accessibilityIdentifier("workstation.requests")
+    }
+
+    private func expansion(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { workstation.openRequestId == id },
+            set: { expand in
+                if expand {
+                    Task { await workstation.open(request: id) }
+                } else {
+                    workstation.closeRequest()
+                }
+            }
+        )
+    }
+
+    private func requestRow(_ request: WorkstationRequest) -> some View {
+        let id = request.id
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(request.instruction)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            Text(WorkstationText.requestState(request.state))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let reason = request.reason, !reason.isEmpty {
+                Text(WorkstationText.reason(reason))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            DisclosureGroup(WorkstationText.requestDetails, isExpanded: expansion(id)) {
+                if workstation.openRequestId == id, let open = workstation.openRequest {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(WorkstationText.requestActionsTitle)
+                            .font(.subheadline.bold())
+                        if open.actions.isEmpty {
+                            Text(WorkstationText.noRequestAction)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(Array(open.actions.enumerated()), id: \.offset) { _, action in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(WorkstationText.kind(action.kind))
+                                Text(action.rationale)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(WorkstationText.state(action.state))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if let report = open.report, !report.isEmpty {
+                            Text(WorkstationText.reportTitle)
+                                .font(.subheadline.bold())
+                            Text(report)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("workstation.requestDetail.\(id)")
+            if WorkstationModel.canCancel(request.phase) {
+                Button(PipelineServerText.cancel, role: .destructive) {
+                    drafts.workstationCancelRequest = request
+                }
+                .buttonStyle(.bordered)
+                .disabled(!workstation.canAct || workstation.busyRequests.contains(id))
+                .accessibilityIdentifier("workstation.cancelRequest.\(id)")
+            }
+        }
+        .accessibilityIdentifier("workstation.request.\(id)")
+    }
+}
+
+struct WorkstationAutomationsSection: View {
+    @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        let automations = workstation.automations
+        Section {
+            Text(WorkstationText.automationsHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let failure = workstation.automationsFailure {
+                if failure == .approverOnly {
+                    HarnessFailureLabel(failure: .approverOnly)
+                } else {
+                    HarnessFailureLabel(failure: failure)
+                }
+            }
+            if automations.isEmpty {
+                Text(WorkstationText.noAutomation)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(automations) { automation in
+                let id = automation.id
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(automation.title)
+                        .font(.headline)
+                    Text(automation.steps.joined(separator: " → "))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button(PipelineServerText.launch) {
+                            Task { await workstation.launch(automation) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!workstation.canAct || workstation.busyAutomations.contains(id))
+                        .accessibilityIdentifier("workstation.launchAutomation.\(id)")
+                        Button(WorkstationText.deleteAutomation, role: .destructive) {
+                            drafts.workstationAutomationRemoval = automation
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!workstation.canAct || workstation.busyAutomations.contains(id))
+                        .accessibilityIdentifier("workstation.deleteAutomation.\(id)")
+                    }
+                }
+                .accessibilityIdentifier("workstation.automation.\(id)")
+            }
+        } header: {
+            Text(WorkstationText.automationsTitle)
+        }
+        .accessibilityIdentifier("workstation.automations")
+    }
+}
+
 // MARK: - Profil et activité
 
 struct WorkstationProfileSections: View {
@@ -351,7 +525,10 @@ struct WorkstationProfileSections: View {
             }
             if !profile.repetitiveTasks.isEmpty {
                 Section(WorkstationText.repetitiveTasks) {
-                    ForEach(profile.repetitiveTasks, id: \.title) { task in
+                    if let failure = workstation.automateFailure {
+                        HarnessFailureLabel(failure: failure)
+                    }
+                    ForEach(Array(profile.repetitiveTasks.enumerated()), id: \.offset) { offset, task in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
                                 Text(task.title)
@@ -369,6 +546,14 @@ struct WorkstationProfileSections: View {
                                 Text(task.steps.joined(separator: " → "))
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
+                            }
+                            if task.automatable && workstation.requestsEnabled {
+                                Button(WorkstationText.automate) {
+                                    Task { await workstation.automate(taskAt: offset, of: profile) }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!workstation.canAct || workstation.busyTasks.contains(offset))
+                                .accessibilityIdentifier("workstation.automate.\(offset)")
                             }
                         }
                     }
@@ -625,6 +810,36 @@ private struct WorkstationGestures: ViewModifier {
         content
             .sheet(item: $drafts.workstationRefusal) { action in
                 refusalSheet(action)
+            }
+            .confirmationDialog(
+                WorkstationText.cancelRequestConfirm,
+                isPresented: Binding(
+                    get: { drafts.workstationCancelRequest != nil },
+                    set: { if !$0 { drafts.workstationCancelRequest = nil } }
+                ),
+                presenting: drafts.workstationCancelRequest
+            ) { request in
+                Button(WorkstationText.cancelRequest, role: .destructive) {
+                    Task { await workstation.cancel(request) }
+                }
+                Button(WorkstationText.keepRequest, role: .cancel) {}
+            } message: { _ in
+                Text(WorkstationText.cancelRequestMessage)
+            }
+            .confirmationDialog(
+                WorkstationText.deleteAutomationConfirm,
+                isPresented: Binding(
+                    get: { drafts.workstationAutomationRemoval != nil },
+                    set: { if !$0 { drafts.workstationAutomationRemoval = nil } }
+                ),
+                presenting: drafts.workstationAutomationRemoval
+            ) { automation in
+                Button(WorkstationText.deleteAutomation, role: .destructive) {
+                    Task { await workstation.delete(automation) }
+                }
+                Button(PipelineServerText.cancel, role: .cancel) {}
+            } message: { _ in
+                Text(WorkstationText.deleteAutomationMessage)
             }
     }
 

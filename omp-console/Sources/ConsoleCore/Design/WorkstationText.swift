@@ -261,4 +261,43 @@ public enum WorkstationText {
     public static func segments(_ count: Int) -> String {
         count == 1 ? L10n.text("1 segment transcrit") : L10n.format("%lld segments transcrits", count)
     }
+
+    // MARK: - Demandes
+
+    public static let requestsTitle = L10n.text("Demandes")
+    public static let requestsHint = L10n.text("L’agent du poste fait ce que vous demandez dans votre navigateur, par l’extension Chrome. Un envoi de message attend toujours votre approbation.")
+    public static let instructionLabel = L10n.text("Consigne")
+    public static let instructionPrompt = L10n.text("Ce que l’agent doit faire dans le navigateur")
+    public static let ask = L10n.text("Demander")
+    public static let noRequest = L10n.text("Aucune demande pour l’instant.")
+    public static let requestDetails = L10n.text("Détails")
+    public static let requestActionsTitle = L10n.text("Actions déposées")
+    public static let noRequestAction = L10n.text("Aucune action déposée pour cette demande.")
+    public static let reportTitle = L10n.text("Compte rendu")
+    public static let cancelRequestConfirm = L10n.text("Annuler cette demande ?")
+    public static let cancelRequestMessage = L10n.text("L’agent s’arrête. Ce qu’il a déjà fait dans le navigateur reste fait.")
+    public static let cancelRequest = L10n.text("Annuler la demande")
+    public static let keepRequest = L10n.text("Garder la demande")
+
+    /// L'état d'une demande, en français (la valeur brute du serveur ; inconnue : rendue telle quelle).
+    public static func requestState(_ raw: String) -> String {
+        switch raw {
+        case "queued": L10n.text("En file")
+        case "running": L10n.text("En cours")
+        case "done": L10n.text("Terminée")
+        case "failed": L10n.text("Échouée")
+        case "cancelled": L10n.text("Annulée par vous")
+        default: raw
+        }
+    }
+
+    // MARK: - Automatisations
+
+    public static let automationsTitle = L10n.text("Automatisations")
+    public static let automationsHint = L10n.text("Une automatisation est une consigne enregistrée : « Lancer » en fait une nouvelle demande. Elle ne part jamais seule.")
+    public static let noAutomation = L10n.text("Aucune automatisation. Pour en créer une, choisissez « Automatiser » sur une tâche automatisable du profil.")
+    public static let automate = L10n.text("Automatiser")
+    public static let deleteAutomation = L10n.text("Supprimer")
+    public static let deleteAutomationConfirm = L10n.text("Supprimer cette automatisation ?")
+    public static let deleteAutomationMessage = L10n.text("Les demandes qu’elle a déjà lancées restent lisibles.")
 }
