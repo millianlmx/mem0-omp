@@ -103,8 +103,6 @@ public struct WorkstationActionResult: Codable, Equatable, Sendable {
 /// Sa `rationale` (le POURQUOI) est ce que le journal des décisions montre.
 public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
     public var seq: Int
-    /// La demande pour laquelle l'agent l'a déposée, `nil` sinon.
-    public var requestId: String?
     public var createdAt: Double
     public var updatedAt: Double
     /// `session` (un outil OMP) ou `agent` (l'agent 24/24 du serveur).
@@ -124,12 +122,11 @@ public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
     public var id: Int { seq }
 
     public init(
-        seq: Int, requestId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, origin: String = "agent", by: String? = nil,
+        seq: Int, createdAt: Double = 0, updatedAt: Double = 0, origin: String = "agent", by: String? = nil,
         kind: String, params: [String: JSONValue] = [:], rationale: String, state: String, approved: Bool = false,
         approval: WorkstationApproval? = nil, result: WorkstationActionResult? = nil, error: String? = nil
     ) {
         self.seq = seq
-        self.requestId = requestId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.origin = origin
@@ -145,13 +142,12 @@ public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case seq, requestId, createdAt, updatedAt, origin, by, kind, params, rationale, state, approved, approval, result, error
+        case seq, createdAt, updatedAt, origin, by, kind, params, rationale, state, approved, approval, result, error
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         seq = try container.decode(Int.self, forKey: .seq)
-        requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
         createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
         updatedAt = try container.decodeIfPresent(Double.self, forKey: .updatedAt) ?? createdAt
         origin = try container.decodeIfPresent(String.self, forKey: .origin) ?? ""
@@ -589,164 +585,4 @@ public struct WorkstationMeetingList: Decodable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         meetings = try container.list([WorkstationMeeting].self, .meetings)
     }
-}
-
-// MARK: - Demandes et automatisations
-
-/// Les états d'une demande du poste (`WorkstationRequest.state`).
-public enum WorkstationRequestState: String, CaseIterable, Sendable {
-    case queued
-    case running
-    case done
-    case failed
-    case cancelled
-}
-
-/// Une consigne en texte libre posée au poste, exécutée par l'agent dans le navigateur.
-/// L'état reste la chaîne du serveur (`phase` en donne la valeur connue) ; `reason` dit
-/// pourquoi elle attend ou a échoué ; `report` est le compte rendu final.
-public struct WorkstationRequest: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var createdAt: Double
-    public var updatedAt: Double
-    public var by: String?
-    public var instruction: String
-    /// L'automatisation qui l'a lancée, `nil` pour une consigne saisie.
-    public var automationId: String?
-    public var state: String
-    public var reason: String?
-    public var report: String?
-    public var startedAt: Double?
-    public var endedAt: Double?
-
-    public init(
-        id: String, createdAt: Double = 0, updatedAt: Double = 0, by: String? = nil, instruction: String,
-        automationId: String? = nil, state: String, reason: String? = nil, report: String? = nil,
-        startedAt: Double? = nil, endedAt: Double? = nil
-    ) {
-        self.id = id
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.by = by
-        self.instruction = instruction
-        self.automationId = automationId
-        self.state = state
-        self.reason = reason
-        self.report = report
-        self.startedAt = startedAt
-        self.endedAt = endedAt
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, createdAt, updatedAt, by, instruction, automationId, state, reason, report, startedAt, endedAt
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
-        updatedAt = try container.decodeIfPresent(Double.self, forKey: .updatedAt) ?? createdAt
-        by = try container.decodeIfPresent(String.self, forKey: .by)
-        instruction = try container.decodeIfPresent(String.self, forKey: .instruction) ?? ""
-        automationId = try container.decodeIfPresent(String.self, forKey: .automationId)
-        state = try container.decode(String.self, forKey: .state)
-        reason = try container.decodeIfPresent(String.self, forKey: .reason)
-        report = try container.decodeIfPresent(String.self, forKey: .report)
-        startedAt = try container.decodeIfPresent(Double.self, forKey: .startedAt)
-        endedAt = try container.decodeIfPresent(Double.self, forKey: .endedAt)
-    }
-
-    /// L'état connu de cette version, ou `nil` pour un état apparu après elle.
-    public var phase: WorkstationRequestState? { WorkstationRequestState(rawValue: state) }
-}
-
-/// `GET /v1/workstation/requests` : récentes d'abord.
-public struct WorkstationRequestList: Decodable, Equatable, Sendable {
-    public var requests: [WorkstationRequest]
-
-    private enum CodingKeys: String, CodingKey { case requests }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        requests = try container.list([WorkstationRequest].self, .requests)
-    }
-}
-
-/// `GET /v1/workstation/requests/{id}` : la demande et les actions déposées pour elle, dans l'ordre.
-public struct WorkstationRequestDetail: Decodable, Equatable, Sendable {
-    public var request: WorkstationRequest
-    public var actions: [WorkstationAction]
-
-    /// Le compte rendu final, quand l'agent en a rendu un.
-    public var report: String? { request.report }
-
-    private enum CodingKeys: String, CodingKey { case request, actions }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        request = try container.decode(WorkstationRequest.self, forKey: .request)
-        actions = try container.list([WorkstationAction].self, .actions)
-    }
-}
-
-/// La réponse de `POST /v1/workstation/requests`, de `…/{id}/cancel` et de `…/launch`.
-struct WorkstationRequestReply: Decodable {
-    var request: WorkstationRequest
-}
-
-/// Une consigne enregistrée, créée depuis une tâche répétitive automatisable du profil.
-public struct WorkstationAutomation: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var createdAt: Double
-    public var by: String?
-    public var title: String
-    public var frequency: String
-    public var steps: [String]
-    /// La version du profil dont la tâche est tirée.
-    public var profileVersion: Int
-
-    public init(
-        id: String, createdAt: Double = 0, by: String? = nil, title: String, frequency: String = "",
-        steps: [String] = [], profileVersion: Int = 0
-    ) {
-        self.id = id
-        self.createdAt = createdAt
-        self.by = by
-        self.title = title
-        self.frequency = frequency
-        self.steps = steps
-        self.profileVersion = profileVersion
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, createdAt, by, title, frequency, steps, profileVersion
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
-        by = try container.decodeIfPresent(String.self, forKey: .by)
-        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
-        frequency = try container.decodeIfPresent(String.self, forKey: .frequency) ?? ""
-        steps = try container.list([String].self, .steps)
-        profileVersion = try container.decodeIfPresent(Int.self, forKey: .profileVersion) ?? 0
-    }
-}
-
-/// `GET /v1/workstation/automations`.
-public struct WorkstationAutomationList: Decodable, Equatable, Sendable {
-    public var automations: [WorkstationAutomation]
-
-    private enum CodingKeys: String, CodingKey { case automations }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        automations = try container.list([WorkstationAutomation].self, .automations)
-    }
-}
-
-/// La réponse de `POST /v1/workstation/automations` (201, ou 200 si elle existait déjà).
-struct WorkstationAutomationReply: Decodable {
-    var automation: WorkstationAutomation
 }

@@ -50,10 +50,6 @@ struct IOSWorkstationScreen: View {
                     IOSWorkstationStatusSections(workstation: workstation, drafts: drafts, status: status)
                 }
                 IOSWorkstationApprovalsSection(workstation: workstation, drafts: drafts)
-                if workstation.requestsEnabled {
-                    IOSWorkstationRequestsSection(workstation: workstation, drafts: drafts)
-                    IOSWorkstationAutomationsSection(workstation: workstation, drafts: drafts)
-                }
                 IOSWorkstationProfileSections(workstation: workstation)
                 IOSWorkstationJournalSection(journal: workstation.journal)
                 IOSWorkstationMeetingsSection(meetings: workstation.meetings)
@@ -217,168 +213,6 @@ struct IOSWorkstationApprovalsSection: View {
     }
 }
 
-// MARK: - Demandes et automatisations
-
-/// Les demandes faites à l'agent du poste : la consigne, puis chaque demande avec son
-/// état et, au dépli, ses actions et son rapport.
-struct IOSWorkstationRequestsSection: View {
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        Section {
-            TextField(WorkstationText.instructionLabel, text: $drafts.workstationInstruction, prompt: Text(WorkstationText.instructionPrompt), axis: .vertical)
-                .accessibilityIdentifier("ios.workstation.instruction")
-            Button(WorkstationText.ask) {
-                Task { if await workstation.ask(drafts.workstationInstruction) { drafts.workstationInstruction = "" } }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!workstation.canAct || workstation.isAsking || !WorkstationModel.canAsk(drafts.workstationInstruction))
-            .accessibilityIdentifier("ios.workstation.ask")
-            Text(WorkstationText.requestsHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if workstation.requestsFailure == .approverOnly {
-                IOSApproverOnlyNotice()
-            } else if let failure = workstation.requestsFailure {
-                Text(failure.message)
-                    .font(.callout)
-                    .iosBanner(tone: .attention)
-            }
-            if workstation.requests.isEmpty {
-                Text(WorkstationText.noRequest).foregroundStyle(.secondary)
-            }
-            ForEach(workstation.requests) { request in
-                IOSWorkstationRequestRow(workstation: workstation, drafts: drafts, request: request)
-            }
-        } header: {
-            Text(WorkstationText.requestsTitle)
-        }
-        .accessibilityIdentifier("ios.workstation.requests")
-    }
-}
-
-struct IOSWorkstationRequestRow: View {
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var drafts: HarnessDrafts
-    let request: WorkstationRequest
-
-    var body: some View {
-        let id = request.id
-        VStack(alignment: .leading, spacing: 6) {
-            Text(request.instruction)
-            Text(WorkstationText.requestState(request.state))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let reason = request.reason {
-                Text(WorkstationText.reason(reason))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            DisclosureGroup(
-                WorkstationText.requestDetails,
-                isExpanded: Binding(
-                    get: { workstation.openRequestId == id },
-                    set: { expand in
-                        if expand {
-                            Task { await workstation.open(request: id) }
-                        } else {
-                            workstation.closeRequest()
-                        }
-                    }
-                )
-            ) {
-                if workstation.openRequestId == id, let detail = workstation.openRequest {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(WorkstationText.requestActionsTitle)
-                            .font(.subheadline.weight(.semibold))
-                        if detail.actions.isEmpty {
-                            Text(WorkstationText.noRequestAction)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(WorkstationText.kind(action.kind))
-                                Text(action.rationale)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(WorkstationText.state(action.state))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        if let report = detail.report, !report.isEmpty {
-                            Text(WorkstationText.reportTitle)
-                                .font(.subheadline.weight(.semibold))
-                            Text(report)
-                                .font(.callout)
-                        }
-                    }
-                }
-            }
-            .accessibilityIdentifier("ios.workstation.requestDetail.\(id)")
-            if WorkstationModel.canCancel(request.phase) {
-                Button(PipelineServerText.cancel, role: .destructive) {
-                    drafts.workstationCancelRequest = request
-                }
-                .buttonStyle(.bordered)
-                .disabled(!workstation.canAct || workstation.busyRequests.contains(id))
-                .accessibilityIdentifier("ios.workstation.cancelRequest.\(id)")
-            }
-        }
-        .accessibilityIdentifier("ios.workstation.request.\(id)")
-    }
-}
-
-/// Les automatisations enregistrées : lancer ou supprimer.
-struct IOSWorkstationAutomationsSection: View {
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        Section {
-            if workstation.automations.isEmpty {
-                Text(WorkstationText.noAutomation).foregroundStyle(.secondary)
-            }
-            if workstation.automationsFailure == .approverOnly {
-                IOSApproverOnlyNotice()
-            } else if let failure = workstation.automationsFailure {
-                Text(failure.message)
-                    .font(.callout)
-                    .iosBanner(tone: .attention)
-            }
-            ForEach(workstation.automations) { automation in
-                let id = automation.id
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(automation.title)
-                    Text(automation.steps.joined(separator: " → "))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                    Button(PipelineServerText.launch) {
-                        Task { await workstation.launch(automation) }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!workstation.canAct || workstation.busyAutomations.contains(id))
-                    .accessibilityIdentifier("ios.workstation.launchAutomation.\(id)")
-                    Button(WorkstationText.deleteAutomation, role: .destructive) {
-                        drafts.workstationAutomationRemoval = automation
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!workstation.canAct || workstation.busyAutomations.contains(id))
-                    .accessibilityIdentifier("ios.workstation.deleteAutomation.\(id)")
-                }
-                .accessibilityIdentifier("ios.workstation.automation.\(id)")
-            }
-        } header: {
-            Text(WorkstationText.automationsTitle)
-        } footer: {
-            Text(WorkstationText.automationsHint)
-        }
-        .accessibilityIdentifier("ios.workstation.automations")
-    }
-}
-
 /// Sur l'Accueil : les envois à approuver, seulement quand il y en a.
 struct IOSWorkstationHomeApprovals: View {
     @ObservedObject var workstation: WorkstationModel
@@ -528,14 +362,7 @@ struct IOSWorkstationProfileSections: View {
             }
             if !profile.repetitiveTasks.isEmpty {
                 Section(WorkstationText.repetitiveTasks) {
-                    if workstation.automateFailure == .approverOnly {
-                        IOSApproverOnlyNotice()
-                    } else if let failure = workstation.automateFailure {
-                        Text(failure.message)
-                            .font(.callout)
-                            .iosBanner(tone: .attention)
-                    }
-                    ForEach(Array(profile.repetitiveTasks.enumerated()), id: \.offset) { offset, task in
+                    ForEach(profile.repetitiveTasks, id: \.title) { task in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(task.title)
                             Text(task.frequency)
@@ -550,14 +377,6 @@ struct IOSWorkstationProfileSections: View {
                                 Label(WorkstationText.automatable, systemImage: WorkstationText.automatableSymbol)
                                     .font(.caption)
                                     .foregroundStyle(.green)
-                                if workstation.requestsEnabled {
-                                    Button(WorkstationText.automate) {
-                                        Task { await workstation.automate(taskAt: offset, of: profile) }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(!workstation.canAct || workstation.busyTasks.contains(offset))
-                                    .accessibilityIdentifier("ios.workstation.automate.\(offset)")
-                                }
                             }
                         }
                     }
@@ -805,32 +624,6 @@ private struct IOSWorkstationGestures: ViewModifier {
         content
             .sheet(item: $drafts.workstationRefusal) { action in
                 refusalSheet(action)
-            }
-            .confirmationDialog(
-                WorkstationText.cancelRequestConfirm,
-                isPresented: Binding(get: { drafts.workstationCancelRequest != nil }, set: { if !$0 { drafts.workstationCancelRequest = nil } }),
-                titleVisibility: .visible,
-                presenting: drafts.workstationCancelRequest
-            ) { request in
-                Button(WorkstationText.cancelRequest, role: .destructive) {
-                    Task { await workstation.cancel(request) }
-                }
-                Button(WorkstationText.keepRequest, role: .cancel) {}
-            } message: { _ in
-                Text(WorkstationText.cancelRequestMessage)
-            }
-            .confirmationDialog(
-                WorkstationText.deleteAutomationConfirm,
-                isPresented: Binding(get: { drafts.workstationAutomationRemoval != nil }, set: { if !$0 { drafts.workstationAutomationRemoval = nil } }),
-                titleVisibility: .visible,
-                presenting: drafts.workstationAutomationRemoval
-            ) { automation in
-                Button(WorkstationText.deleteAutomation, role: .destructive) {
-                    Task { await workstation.delete(automation) }
-                }
-                Button(PipelineServerText.cancel, role: .cancel) {}
-            } message: { _ in
-                Text(WorkstationText.deleteAutomationMessage)
             }
     }
 

@@ -9,7 +9,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { API_FEATURES, APPROVER_ONLY, apiRoutes, createHandler } from "../../omp-harness/http.ts";
+import { APPROVER_ONLY, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -298,25 +298,12 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     ['"/v1/workstation/actions/\\(seq)/refuse"', "POST", "/v1/workstation/actions/9/refuse", "operator"],
     ['method: "PUT", path: "/v1/workstation/settings"', "PUT", "/v1/workstation/settings", "operator"],
     ['method: "POST", path: "/v1/workstation/profile/rebuild"', "POST", "/v1/workstation/profile/rebuild", "operator"],
-    ['method: "POST", path: "/v1/workstation/requests", body:', "POST", "/v1/workstation/requests", "operator"],
-    ['"/v1/workstation/requests")', "GET", "/v1/workstation/requests", "viewer"],
-    ['method: "GET", path: "/v1/workstation/requests/\\(id)")', "GET", "/v1/workstation/requests/r1", "viewer"],
-    ['method: "POST", path: "/v1/workstation/requests/\\(id)/cancel"', "POST", "/v1/workstation/requests/r1/cancel", "operator"],
-    ['"/v1/workstation/automations")', "GET", "/v1/workstation/automations", "viewer"],
-    ['method: "POST", path: "/v1/workstation/automations", body:', "POST", "/v1/workstation/automations", "operator"],
-    ['method: "POST", path: "/v1/workstation/automations/\\(id)/launch"', "POST", "/v1/workstation/automations/a1/launch", "operator"],
-    ['method: "DELETE", path: "/v1/workstation/automations/\\(id)")', "DELETE", "/v1/workstation/automations/a1", "operator"],
   ];
   for (const [client, method, sample, role] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
     const served = routes.find((route) => route.method === method && route.pattern.test(sample));
     assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
   }
-  // Le drapeau qui ouvre les blocs « Demandes » et « Automatisations » : lu sur /v1/health
-  // (servi avant l'authentification, donc hors de `apiRoutes`) et annoncé par le serveur.
-  assert.ok(model.includes('method: "GET", path: "/v1/health")'), "le client lit le drapeau sur GET /v1/health");
-  assert.ok(model.includes('"workstation-requests"'), "le client nomme le drapeau workstation-requests");
-  assert.ok(API_FEATURES.includes("workstation-requests"), "le serveur n'annonce pas workstation-requests");
   // L'approbation n'est appelée que par un geste de l'humain : dans les deux apps, un
   // `Button` et lui seul porte `approve(shown:` — avec l'action affichée, dont l'`updatedAt`
   // part en If-Match ; le modèle ne l'appelle jamais lui-même.

@@ -508,48 +508,14 @@ pas encore le poste de travail ».
   l'erreur ou le début du résultat.
 - **Réunions** (`GET /v1/workstation/meetings`) : titre, état, heure, nombre de
   segments transcrits, résumé et besoins retenus avec leur citation.
-- **Demandes** (`POST /v1/workstation/requests`, `GET /v1/workstation/requests`,
-  `GET /v1/workstation/requests/{id}`, `POST /v1/workstation/requests/{id}/cancel`) :
-  une consigne en texte libre, « Demander », que l'agent du poste exécute dans le
-  navigateur par l'extension Chrome — jamais une exécution de pipeline. Chaque
-  demande montre son état (En file, En cours, Terminée, Échouée, Annulée par vous), la
-  raison d'attente ou d'échec quand le serveur en donne une, et se déplie
-  (« Détails », une seule à la fois) sur les actions déposées pour elle, avec leur
-  raison, et sur le compte rendu final. « Annuler », après confirmation, n'est offert
-  que sur une demande en file ou en cours. Un envoi de message attend toujours votre
-  approbation. Le bloc ne s'affiche que si le serveur annonce le drapeau
-  `workstation-requests` dans `features` de `GET /v1/health` (lu en 200 comme en 503 ;
-  injoignable ou illisible, la dernière valeur lue est gardée, et sans lecture
-  réussie le bloc reste caché). Écrire (demander, annuler) exige l'app appairée avec
-  le code approbateur : sur le 403 approbateur, le bloc affiche le message
-  `approverOnly` ci-dessus.
-- **Automatisations** (`GET /v1/workstation/automations`, `POST
-  /v1/workstation/automations` avec le corps `{version, task}`, `POST
-  /v1/workstation/automations/{id}/launch`, `DELETE /v1/workstation/automations/{id}`) :
-  « Automatiser » n'est proposé que sur une tâche répétitive du profil marquée
-  automatisable, et envoie la version du profil affichée et le rang de la tâche (à
-  partir de 0, dans l'ordre servi) ; son échec (refus approbateur, profil périmé) se
-  lit en tête des tâches répétitives. Le bloc liste les automatisations (titre et
-  étapes) ; « Lancer » en fait une nouvelle demande en file, qui ne part jamais seule ;
-  « Supprimer », après confirmation, la retire de la liste sans toucher aux demandes
-  déjà lancées. Même drapeau, même rôle approbateur que les demandes.
 
-Les événements `workstation_*` du flux de la boîte (dont `workstation_request` et
-`workstation_automation`) relisent l'état et les envois à approuver, et, section
-ouverte, le reste : les demandes, les automatisations et le détail ouvert, sans geste
-de l'utilisateur ; un événement reçu pendant une relecture en provoque une de plus.
-Aucun second flux n'est ouvert.
+Les événements `workstation_*` du flux de la boîte relisent l'état et les envois à
+approuver (et le reste, section ouverte) ; aucun second flux n'est ouvert.
 Identifiants Mac : `workstation.harness`, `workstation.online`,
 `workstation.autonomy`, `workstation.sendGuard`, `workstation.paused`,
 `workstation.identities`, `workstation.identities.save`,
 `workstation.approve.<n>`, `workstation.refusal.<n>`, feuille de refus
 `workstation.refusal.reason` et `workstation.refusal.commit`, `workstation.rebuild` ;
-pour les demandes et les automatisations : `workstation.requests`,
-`workstation.instruction`, `workstation.ask`, `workstation.request.<id>`,
-`workstation.requestDetail.<id>`, `workstation.cancelRequest.<id>`,
-`workstation.automate.<n>` (le rang de la tâche dans le profil, à partir de 0),
-`workstation.automations`, `workstation.automation.<id>`,
-`workstation.launchAutomation.<id>`, `workstation.deleteAutomation.<id>` ;
 sur iOS, les mêmes préfixés `ios.`.
 
 ## Lire les fichiers et les diffs d'une cible
