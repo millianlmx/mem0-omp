@@ -166,7 +166,14 @@ Ensuite, tout se lit dans les journaux des conteneurs :
 - **`pairing`** publie le harness et sa mémoire sur le tailnet par le Tailscale de
   l'hôte (son socket, `/var/run/tailscale`), puis affiche le code d'appairage `omp1:…`,
   à coller dans l'app ou avec `/pair`. Si Tailscale manque ou n'est pas connecté sur
-  l'hôte, il le dit et attend. Redémarre-le pour réafficher le code.
+  l'hôte, il le dit et attend. Redémarre-le pour réafficher le code. Il écrit aussi
+  les deux adresses publiées dans `$OMP_HARNESS_ROOT/published/published.env`.
+- **Le code approbateur** des apps (le seul qui approuve les envois du poste) ne
+  passe jamais par les journaux : ouvre la console du conteneur `harness`
+  (**Containers › harness › Console**, `/bin/sh`) et lance `omp-harness-stack
+  approver`. Chaque appel invalide le code précédent ; il faut que `pairing` ait
+  affiché son code (après un **Pull and redeploy** si la pile date d'avant cette
+  commande).
 
 `setup`, `repos`, `runner-image` et `test-image` s'arrêtent une fois leur travail
 fait : l'état « exited » est normal. Le tailnet doit avoir MagicDNS et HTTPS activés,
@@ -923,7 +930,10 @@ dépôts ; l'ancien code cesse de valoir) et imprime le **code approbateur** : l
 jeton approbateur ; les quatre premières lignes sont celles de `harness.sh pair`. Les
 apps gardent le jeton approbateur au trousseau et écrivent le jeton ordinaire dans
 `~/.omp/harness.json` ; omp `/pair` et l'extension refusent ce code (« code des apps :
-utilisez `harness.sh pair` »). Sous systemd, `sudo omp-harness-client approver` n'imprime
+utilisez `harness.sh pair` »). Avec Portainer, `omp-harness-stack approver`, lancé dans
+la console du conteneur `harness`, fait de même : les adresses viennent de
+`published/published.env`, que le service `pairing` écrit sous `OMP_HARNESS_ROOT` en
+affichant son code. Sous systemd, `sudo omp-harness-client approver` n'imprime
 que le jeton approbateur. Risque résiduel : qui a la main sur le serveur (un shell sur
 le VPS, ou un serveur local sur le Mac) peut frapper un approbateur.
 

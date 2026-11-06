@@ -262,7 +262,8 @@ exécuter une étape elle-même.
   `~/.omp/mem0.json`, que lisent les plugins d'omp et la section Mémoire (après une
   relance). Sans serveur enregistré, l'app Mac prend celui de `~/.omp/harness.json`
   (posé par `/pair` dans omp).
-- **Le code approbateur** (`harness.sh approver` sur le VPS) est le code ordinaire
+- **Le code approbateur** (`harness.sh approver` sur le VPS ; avec Portainer,
+  `omp-harness-stack approver` dans la console du conteneur `harness`) est le code ordinaire
   plus une 5e ligne : le jeton du client approbateur, le seul qui approuve, refuse
   ou règle le poste de travail. Collé dans la feuille « Serveur » (Mac et iPhone ;
   « Oublier ce serveur » d'abord si l'app est déjà reliée), il donne à l'app ce
@@ -493,8 +494,9 @@ pas encore le poste de travail ».
   garde ses boutons — le serveur seul décide —, mais il répond 403 ; l'app le dit
   sur les envois à approuver et sous l'autonomie (`HarnessFailure.approverOnly`) :
   « Seul l'appareil approbateur peut approuver, refuser ou régler le poste :
-  appairez cette app avec le code qu'affiche harness.sh approver sur le VPS, ou
-  avec le jeton qu'affiche sudo omp-harness-client approver (systemd). ».
+  appairez cette app avec le code approbateur : harness.sh approver sur le VPS,
+  omp-harness-stack approver dans la console du conteneur harness (Portainer), ou
+  le jeton de sudo omp-harness-client approver (systemd). ».
 - **Profil** (`GET /v1/workstation/profile`) : le résumé, les habitudes, les
   outils, les horaires, les tâches répétitives (automatisables marquées), les
   besoins des clients et les préférences ; « Reconstruire le profil »

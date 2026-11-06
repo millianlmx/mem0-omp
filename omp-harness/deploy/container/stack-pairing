@@ -7,7 +7,9 @@
 # changent ces ports quand l'hôte sert déjà autre chose, Portainer par exemple),
 # puis écrit dans les journaux du service `pairing` le même code que
 # `harness.sh pair` : `omp1:` puis, en base64url, le harness, son jeton, la mémoire
-# et son jeton. Relancer le service le réaffiche.
+# et son jeton. Relancer le service le réaffiche. Les deux adresses publiées restent
+# dans published.env (dossier `published` de la racine) : `omp-harness-stack approver`
+# en compose le code approbateur.
 set -eu
 
 SOCKET="${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}"
@@ -18,6 +20,7 @@ MEM0_PORT="${OMP_HARNESS_MEM0_PORT:-8321}"
 POLL="${OMP_HARNESS_PAIRING_POLL:-5}"
 TS_PORT="${OMP_HARNESS_TAILNET_PORT:-443}"
 TS_MEM0_PORT="${OMP_HARNESS_TAILNET_MEM0_PORT:-8443}"
+PUBLISHED="${OMP_HARNESS_PUBLISHED:-/published/published.env}"
 
 ts() { tailscale --socket="$SOCKET" "$@"; }
 
@@ -64,6 +67,8 @@ if [ "${OMP_HARNESS_TAILSCALE_SERVE:-1}" != 0 ]; then
     { echo "✗ tailscale serve a échoué pour la mémoire ($TS_MEM0_PORT)" >&2; exit 1; }
   echo "✓ publié sur le tailnet : $harness_url (harness), $mem0_url (mémoire)"
 fi
+
+printf 'URL=%s\nMEM0_URL=%s\n' "$harness_url" "$mem0_url" > "$PUBLISHED"
 
 code="$(printf '%s\n%s\n%s\n%s\n' \
   "$harness_url" "$(tr -d '\n' < "$TOKEN_FILE")" \

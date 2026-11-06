@@ -318,7 +318,7 @@ struct WorkstationModelTests {
         #expect(workstation.isSaving == false)
 
         #expect(workstation.failure?.message == WorkstationText.approverOnly)
-        #expect(HarnessFailure.approverOnly.message == "Seul l’appareil approbateur peut approuver, refuser ou régler le poste\u{00A0}: appairez cette app avec le code qu’affiche harness.sh approver sur le VPS, ou avec le jeton qu’affiche sudo omp-harness-client approver (systemd).")
+        #expect(HarnessFailure.approverOnly.message == "Seul l’appareil approbateur peut approuver, refuser ou régler le poste\u{00A0}: appairez cette app avec le code approbateur\u{00A0}: harness.sh approver sur le VPS, omp-harness-stack approver dans la console du conteneur harness (Portainer), ou le jeton de sudo omp-harness-client approver (systemd).")
         // Un autre 403 garde son motif.
         transport.respond(workstationServer(["PUT /v1/workstation/settings": reply(#"{"error":"le rôle viewer ne permet pas cela"}"#, status: 403)]))
         #expect(await workstation.setPaused(true) == false)

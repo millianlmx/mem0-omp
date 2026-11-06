@@ -236,8 +236,13 @@ que seul le serveur imprime :
 bash omp-harness/deploy/container/harness.sh approver   # sur le serveur ; un nouvel appel invalide l'ancien code
 ```
 
+Avec Portainer, lance `omp-harness-stack approver` dans la console du conteneur
+`harness` (**Containers › harness › Console**, `/bin/sh`) ; sous systemd,
+`sudo omp-harness-client approver` n'imprime que le jeton.
+
 Colle ce code dans la feuille **Serveur** de l'app, sur le Mac comme sur l'iPhone.
-omp (`/pair`) et l'extension le refusent : garde-leur le code de `harness.sh pair`.
+omp (`/pair`) et l'extension le refusent : garde-leur le code de `harness.sh pair`
+(avec Portainer, celui des journaux de `pairing`).
 
 Pour installer l'extension, prends `omp-chrome.zip` dans la dernière
 [release](https://github.com/millianlmx/mem0-omp/releases) et décompresse-le
