@@ -773,7 +773,7 @@
 "Destinataires inconnus" = "Unknown recipients";
 "Message" = "Message";
 "L’envoi a changé depuis son affichage : relisez-le avant d’approuver." = "The message changed since it was shown: read it again before approving.";
-"Seul l’appareil approbateur peut approuver, refuser ou régler le poste : appairez cette app avec le code qu’affiche harness.sh approver sur le VPS, ou avec le jeton qu’affiche sudo omp-harness-client approver (systemd)." = "Only the approver device can approve, refuse or adjust the workstation: pair this app with the code shown by harness.sh approver on the VPS, or with the token shown by sudo omp-harness-client approver (systemd).";
+"Seul l’appareil approbateur peut approuver, refuser ou régler le poste : appairez cette app avec le code approbateur : harness.sh approver sur le VPS, omp-harness-stack approver dans la console du conteneur harness (Portainer), ou le jeton de sudo omp-harness-client approver (systemd)." = "Only the approver device can approve, refuse or adjust the workstation: pair this app with the approver code: harness.sh approver on the VPS, omp-harness-stack approver in the harness container console (Portainer), or the token from sudo omp-harness-client approver (systemd).";
 "Action proposée par l’agent 24/24" = "Action proposed by the 24/7 agent";
 "Approuver ce geste n’autorise aucun envoi de message : un envoi demandera sa propre approbation." = "Approving this action authorizes no message: any send will ask for its own approval.";
 "À : %@" = "To: %@";

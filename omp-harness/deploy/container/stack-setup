@@ -5,8 +5,10 @@
 # de la pile (docker-compose.yml) ; le jeton de la mémoire et la clé SSH, eux, ne
 # sont créés qu'une fois.
 #
-#   omp-harness-stack init    dossiers, secrets, config.json, clé SSH (service `setup`)
-#   omp-harness-stack repos   déclare les dépôts d'OMP_HARNESS_REPOS (service `repos`)
+#   omp-harness-stack init      dossiers, secrets, config.json, clé SSH (service `setup`)
+#   omp-harness-stack repos     déclare les dépôts d'OMP_HARNESS_REPOS (service `repos`)
+#   omp-harness-stack approver  le code approbateur des apps, à la main dans la console
+#                               du conteneur `harness` (comme `harness.sh approver`)
 set -eu
 
 ROOT="${OMP_HARNESS_ROOT:?OMP_HARNESS_ROOT manquant}"
@@ -17,6 +19,10 @@ RETRY="${OMP_HARNESS_REPOS_RETRY:-30}"
 
 die() { echo "✗ $*" >&2; exit 1; }
 setting() { [ ! -e "$2" ] || sed -n "s/^$1=//p" "$2" | tail -1; }
+harness_main() {
+  node --experimental-strip-types --disable-warning=ExperimentalWarning \
+    --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$MAIN" --config "$ROOT/config.json" "$@"
+}
 
 # Les fichiers .env sont sourcés par les conteneurs : une valeur ne porte que des
 # caractères sans effet pour le shell.
@@ -34,7 +40,7 @@ cmd_init() {
   check_values
   umask 022
   mkdir -p "$ROOT/state" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
-    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$SECRETS/harness" "$SECRETS/mem0"
+    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/published" "$SECRETS/harness" "$SECRETS/mem0"
   chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/mem0" "$ROOT/home/.ssh"
 
   # Le jeton de la mémoire, partagé par le service, mem0-rs et les runners : gardé.
@@ -124,8 +130,7 @@ cmd_repos() {
     for url in $pending; do
       url="$(ssh_url "$url")"
       code=0
-      node --experimental-strip-types --disable-warning=ExperimentalWarning \
-        --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$MAIN" --config "$ROOT/config.json" --add-repo "$url" || code=$?
+      harness_main --add-repo "$url" || code=$?
       case "$code" in
         0) added=1 ;;
         3|4) left="$left $url"; [ $((round % 20)) -ne 0 ] || deploy_key_help "$url" ;;
@@ -142,8 +147,33 @@ cmd_repos() {
   echo "✓ dépôts déclarés"
 }
 
+# Le code approbateur des apps (Mac et iPhone), le seul qui approuve, refuse ou règle
+# le poste : (re)crée le client app-approbateur — l'ancien code cesse de valoir — et
+# imprime le code d'appairage du service `pairing` (adresses écrites par lui dans
+# published.env) suivi de ce jeton en 5e ligne. Jamais dans les journaux de la pile.
+cmd_approver() {
+  [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : attends le service harness, puis relance"
+  url="$(setting URL "$ROOT/published/published.env")"
+  mem0_url="$(setting MEM0_URL "$ROOT/published/published.env")"
+  [ -n "$url" ] && [ -n "$mem0_url" ] ||
+    die "adresses du tailnet inconnues : attends que le service pairing affiche son code (Pull and redeploy s'il date d'avant cette version), puis relance"
+  mem0_token="$(setting MEM0_HTTP_TOKEN "${OMP_HARNESS_ENV_FILE:-$SECRETS/harness/harness.env}")"
+  [ -n "$mem0_token" ] || die "jeton de la mémoire introuvable : lance cette commande dans le conteneur harness"
+  harness_main --revoke-client app-approbateur >/dev/null 2>&1 || true
+  token="$(harness_main --add-client app-approbateur --approver)" || exit 1
+  code="$(printf '%s\n%s\n%s\n%s\n%s\n' "$url" "$(tr -d '\n' < "$ROOT/state/token")" "$mem0_url" "$mem0_token" "$token" |
+    base64 | tr -d '\n=' | tr '+/' '-_')"
+  echo "Code approbateur (secret : il approuve les envois du poste ; il ne sera plus affiché) :"
+  echo
+  echo "  omp1:$code"
+  echo
+  echo "Dans OMP Console, feuille Serveur (Mac et iPhone ; « Oublier ce serveur » d'abord si l'app est déjà reliée)."
+  echo "omp /pair et l'extension Chrome refusent ce code : ils gardent celui du service pairing."
+}
+
 case "${1:-}" in
   init) cmd_init ;;
   repos) cmd_repos ;;
-  *) die "usage : omp-harness-stack init | repos" ;;
+  approver) cmd_approver ;;
+  *) die "usage : omp-harness-stack init | repos | approver" ;;
 esac

@@ -147,7 +147,8 @@ services:
       OLLAMA_HOST: http://embeddings:11434
 
   # Publie le harness (443) et sa mémoire (8443), ou les ports OMP_HARNESS_TAILNET_*,
-  # par le Tailscale de l'hôte, puis écrit le code d'appairage dans ses journaux.
+  # par le Tailscale de l'hôte, puis écrit le code d'appairage dans ses journaux et les
+  # deux adresses dans published/ (lues par `omp-harness-stack approver`).
   pairing:
     build:
       context: .
@@ -167,6 +168,7 @@ services:
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state:/state:ro
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/secrets:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/published:/published
       # Le dossier du socket de tailscaled sur l'hôte, pas le socket lui-même : un
       # fichier absent deviendrait un dossier.
       - ${OMP_HARNESS_TAILSCALE_RUN:-/var/run/tailscale}:/var/run/tailscale

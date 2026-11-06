@@ -111,7 +111,7 @@ public enum WorkstationText {
     /// L'envoi a changé entre son affichage et le geste (autre appareil, brouillon recalculé).
     public static let approvalChanged = L10n.text("L’envoi a changé depuis son affichage : relisez-le avant d’approuver.")
     /// Le jeton de cette app n'est pas l'approbateur (403 `APPROVER_ONLY` du serveur) : où obtenir le bon.
-    public static let approverOnly = L10n.text("Seul l’appareil approbateur peut approuver, refuser ou régler le poste : appairez cette app avec le code qu’affiche harness.sh approver sur le VPS, ou avec le jeton qu’affiche sudo omp-harness-client approver (systemd).")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur peut approuver, refuser ou régler le poste : appairez cette app avec le code approbateur : harness.sh approver sur le VPS, omp-harness-stack approver dans la console du conteneur harness (Portainer), ou le jeton de sudo omp-harness-client approver (systemd).")
     /// Une action proposée par l'agent 24/24 (autonomie « Proposer ») : un geste, pas un envoi.
     public static let proposal = L10n.text("Action proposée par l’agent 24/24")
     public static let proposalHint = L10n.text("Approuver ce geste n’autorise aucun envoi de message : un envoi demandera sa propre approbation.")

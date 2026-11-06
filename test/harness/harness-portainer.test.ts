@@ -12,8 +12,9 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { loadConfig } from "../../omp-harness/config.ts";
-import { decodePairing } from "../../omp-mem0-req/harness.ts";
+import { APPROVER_CODE_REFUSAL, decodePairing } from "../../omp-mem0-req/harness.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const BOX = path.join(ROOT, "omp-harness", "deploy", "container");
@@ -271,6 +272,7 @@ cat "${dir}/state$n"
     TS_SOCKET: socket,
     OMP_HARNESS_TOKEN_FILE: path.join(dir, "token"),
     OMP_HARNESS_MEM0_ENV: path.join(dir, "mem0.env"),
+    OMP_HARNESS_PUBLISHED: path.join(dir, "published.env"),
     OMP_HARNESS_PAIRING_POLL: "0",
     OMP_HARNESS_PORT: "8790",
     OMP_HARNESS_MEM0_PORT: "8321",
@@ -314,6 +316,11 @@ test("harness-portainer/AC-5 : `pairing` attend le Tailscale de l'hôte, publie 
       mem0Url: "https://vps.tail1234.ts.net:8443",
       mem0Token: "mem0-token",
     });
+    assert.equal(
+      read(ts.env.OMP_HARNESS_PUBLISHED),
+      "URL=https://vps.tail1234.ts.net\nMEM0_URL=https://vps.tail1234.ts.net:8443\n",
+      "les adresses du code, pour `omp-harness-stack approver`",
+    );
 
     // OMP_HARNESS_TAILSCALE_SERVE=0 : le `tailscale serve` de l'hôte n'est pas touché.
     fs.rmSync(path.join(ts.dir, "serve.log"));
@@ -477,4 +484,52 @@ test("harness-portainer/AC-33 : `harness-entrypoint` exporte le GH_TOKEN du fich
   };
   assert.equal(launch("MEM0_HTTP_TOKEN=m\nGH_TOKEN=ghp_depuis-le-fichier\n"), "ghp_depuis-le-fichier");
   assert.equal(launch("MEM0_HTTP_TOKEN=m\n"), "absent");
+});
+
+test("harness-portainer/AC-34 : `approver`, dans le conteneur harness, (re)crée l'approbateur et imprime le code des apps — le code de `pairing` plus son jeton ; sans adresses publiées, il le dit et ne crée rien", () => {
+  const { root, secrets, env } = stack();
+  assert.equal(run(SETUP, ["init"], env).status, 0);
+  assert.match(service("pairing"), /- \$\{OMP_HARNESS_ROOT:-\/var\/lib\/omp-harness\}\/published:\/published\n/);
+  fs.writeFileSync(path.join(root, "state", "token"), "harness-token\n");
+  const approverEnv = {
+    ...env,
+    OMP_HARNESS_MAIN: path.join(ROOT, "omp-harness", "main.ts"),
+    OMP_HARNESS_ENV_FILE: path.join(secrets, "harness", "harness.env"),
+  };
+  const clients = new ClientRegistry(loadConfig(path.join(root, "config.json")).clientsFile);
+
+  const unpublished = run(SETUP, ["approver"], approverEnv);
+  assert.notEqual(unpublished.status, 0);
+  assert.match(unpublished.stderr, /adresses du tailnet inconnues : attends que le service pairing affiche son code/);
+  assert.deepEqual(clients.list(), [], "rien n'est créé tant que le code ne peut pas être composé");
+
+  fs.writeFileSync(
+    path.join(root, "published", "published.env"),
+    "URL=https://vps.tail1234.ts.net:7443\nMEM0_URL=https://vps.tail1234.ts.net:8443\n",
+  );
+  const mem0Token = /^MEM0_HTTP_TOKEN=(.+)$/m.exec(read(path.join(secrets, "harness", "harness.env")))?.[1];
+  const lines = () => {
+    const result = run(SETUP, ["approver"], approverEnv);
+    assert.equal(result.status, 0, result.stderr);
+    const code = /omp1:[A-Za-z0-9_-]+/.exec(result.stdout)?.[0];
+    assert.ok(code, result.stdout);
+    assert.deepEqual(decodePairing(code), { refusal: APPROVER_CODE_REFUSAL }, "omp /pair refuse le code des apps");
+    return Buffer.from(code.slice("omp1:".length), "base64url").toString("utf8").split("\n");
+  };
+  const first = lines();
+  assert.deepEqual(first.slice(0, 4), [
+    "https://vps.tail1234.ts.net:7443",
+    "harness-token",
+    "https://vps.tail1234.ts.net:8443",
+    mem0Token,
+  ]);
+  assert.equal(clients.authenticate(first[4])?.approver, true);
+
+  const second = lines();
+  assert.equal(clients.authenticate(second[4])?.approver, true);
+  assert.equal(clients.authenticate(first[4]), null, "le code précédent cesse de valoir");
+  assert.deepEqual(
+    clients.list().map((client) => client.name),
+    ["app-approbateur"],
+  );
 });
