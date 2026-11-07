@@ -64,15 +64,10 @@ type ChallengeEnd =
   | { kind: "missing"; reason: string }
   | { kind: "interrupted"; result: PromptResult };
 
-/** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage, suite). */
+/** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage). */
 export type StepHooks = {
   /** /specs a découpé : un projet avec les sous-features AUTRES que celle que le run continue. */
   createProject: (input: NewProjectInput, actor: Actor) => Promise<{ projectId: string; runs: RunRow[] }>;
-  /** /impl a laissé un `## Reste` : un run de suite. */
-  followUp: (
-    input: { repo: string; title: string; request: string; modules: string[]; priority: number },
-    actor: Actor,
-  ) => Promise<RunRow>;
 };
 
 /** L'état vivant d'un run conduit par ce process. */
@@ -746,7 +741,7 @@ export class StepExecutor {
     }
     let gate: string[] | null = null;
     if (step === "specs") gate = await this.#closeSpecs(run, stepRow.id);
-    if (step === "impl") await this.#closeImpl(run, worktree);
+    const remaining = step === "impl" ? await this.#closeImpl(run, worktree) : null;
     if (await git.mergeInProgress(worktree))
       await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
     else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
@@ -756,6 +751,7 @@ export class StepExecutor {
       kind: "done",
       escalations,
       ...(gate !== null ? { gateNeeded: gate.length > 0, gateReasons: gate } : {}),
+      ...(remaining !== null ? { continueImpl: remaining } : {}),
     };
     let review: { verdict: Verdict; merge: MergeDecision; head: string } | null = null;
     if (step === "review") {
@@ -806,6 +802,16 @@ export class StepExecutor {
         store.updateRun(run.id, { verdict: review.verdict, lastReviewSha: review.head });
         this.#ctx.event("review", run.id, { verdict: review.verdict, merge: review.merge });
       }
+      if (remaining !== null) {
+        // La reprise sait ce qui reste, et ne refait pas ce qui est fait.
+        store.addInstructions(
+          run.id,
+          `/impl a laissé un reste à livrer ; livre-le maintenant, sur la même branche :\n${remaining}\n\n` +
+            `Ne refais pas ce qui est fait (\`git diff ${run.baseSha ?? "main"}\` et \`## Fait\` de \`${ARTIFACTS_DIR}/impl.md\`). ` +
+            `Mets à jour \`${ARTIFACTS_DIR}/impl.md\` : \`## Fait\` complété, \`## Reste\` vidé, ou réduit à ce qui ne peut pas être livré ici, avec la raison.`,
+        );
+        this.#ctx.event("impl_continued", run.id, { remaining: remaining.slice(0, 500) });
+      }
       store.finishStep(stepRow.id, escalations > 0 ? "escalated" : "done", null);
       this.#ctx.event("step_done", run.id, {
         step,
@@ -855,35 +861,21 @@ export class StepExecutor {
   }
 
   /**
-   * Fin de /impl : un `## Reste` non vide devient un run de suite — sauf si cette
-   * implémentation n'a rien changé : une suite referait la même chose (un reste qui exige
-   * un outillage absent du runner se rouvrirait sans fin). La revue et le pilote le voient.
+   * Fin de /impl : le `## Reste` à reprendre sur la même branche, ou `null` (la revue
+   * juge ce qui manque). Une seule reprise par run (`impl_continued`), et aucune si cette
+   * implémentation n'a rien changé : la reprise referait la même chose (un reste qui exige
+   * un outillage absent du runner reviendrait sans fin).
    */
-  async #closeImpl(run: RunRow, worktree: string): Promise<void> {
+  async #closeImpl(run: RunRow, worktree: string): Promise<string | null> {
     const { store, git } = this.#ctx;
     const remaining = parseRemaining(store.getArtifact(run.id, "impl.md") ?? "");
-    if (remaining === "") return;
+    if (remaining === "") return null;
     if (run.baseSha !== null && (await git.touchedFiles(worktree, run.baseSha)).length === 0) {
-      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de run de suite pour son « ## Reste »`);
-      return;
+      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de reprise pour son « ## Reste »`);
+      return null;
     }
-    const alreadyFollowed = store.eventsSince(0, run.id).some((event) => event.type === "follow_up");
-    if (alreadyFollowed) return;
-    const followUp = await this.#hooks.followUp(
-      {
-        repo: run.repo,
-        title: `Suite de « ${run.title} »`.slice(0, 120),
-        request: `Reste de l'implémentation de « ${run.title} » (${run.id}) :\n${remaining}`,
-        modules: run.modules,
-        priority: run.priority,
-      },
-      SERVICE,
-    );
-    this.#ctx.event("follow_up", run.id, {
-      runId: followUp.id,
-      title: followUp.title,
-      remaining: remaining.slice(0, 500),
-    });
+    if (store.eventsSince(0, run.id).some((event) => event.type === "impl_continued")) return null;
+    return remaining;
   }
 
   /** Les artefacts du run, écrits dans `.harness/` avant l'étape (le runner lit ceux de N-1). */

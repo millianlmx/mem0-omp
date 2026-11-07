@@ -566,10 +566,15 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
   courant garde sa part. /impl : un diff vide n'est pas une panne si `## Fait`
   dit, critère par critère, où le code est déjà livré (par un run précédent) ; la
   revue en juge. Sans diff ni `## Fait`, c'est un échec `missing_output`. Un
-  `## Reste` non vide ouvre un run de suite « Suite de « … » » sur les mêmes
-  modules (une seule fois), sauf si /impl n'a rien changé : la suite referait la
-  même chose. Un `## Reste` qui commence par « Rien », « Aucun » ou « Néant » suivi
-  de `:`, d'un point, d'un tiret ou de « à … » ne demande rien.
+  `## Reste` non vide ne part pas en revue : le même run refait /impl sur sa
+  branche (runner neuf, relances remises à zéro, événement `impl_continued`), avec
+  une consigne qui cite le reste à livrer, demande de mettre `## Fait` et `## Reste`
+  à jour et de ne pas refaire ce qui est fait. Une seule reprise par run : si le
+  reste persiste ensuite, ou si /impl n'a rien changé (la reprise referait la même
+  chose), le run passe en revue, qui juge ce qui manque ; aucun run de suite n'est
+  ouvert, main ne reçoit pas de feature à moitié livrée. Un `## Reste` qui commence
+  par « Rien », « Aucun » ou « Néant » suivi de `:`, d'un point, d'un tiret ou de
+  « à … » ne demande rien.
 - **Interruption.** Une étape coupée (échéance, fournisseur, réseau, runner mort)
   laisse un commit `wip(<étape>): interrompu (tentative N)` et la tentative
   suivante reçoit la consigne de repartir de `git diff <base>` et de l'artefact,

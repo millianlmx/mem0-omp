@@ -55,7 +55,8 @@ export type StepOutcome =
   /**
    * L'étape a rendu ce qu'elle devait ; `escalations` = escalades ouvertes en fin
    * d'étape ; `gateNeeded` (specs) = la relecture humaine vaut la peine, `gateReasons`
-   * dit pourquoi ; `criteriaMissing` (review) = critères d'acceptation sans verdict.
+   * dit pourquoi ; `criteriaMissing` (review) = critères d'acceptation sans verdict ;
+   * `continueImpl` (impl) = le reste à livrer, que /impl reprend sur la même branche.
    */
   | {
       kind: "done";
@@ -65,6 +66,7 @@ export type StepOutcome =
       gateNeeded?: boolean;
       gateReasons?: string[];
       criteriaMissing?: string[];
+      continueImpl?: string;
     }
   | { kind: "failed"; reason: string; retryable: boolean; cause: FailCause };
 
@@ -116,6 +118,9 @@ export const WAIT_REASON = {
 
 /** La raison de porte des specs qui réserve leur validation à l'humain (steps.ts `gateReasons`). */
 export const IRREVERSIBLE_GATE = "geste irréversible";
+
+/** La raison d'une reprise de /impl pour livrer son `## Reste` (une fois par run, steps.ts `#closeImpl`). */
+const IMPL_CONTINUED = "/impl : reste à livrer sur la même branche";
 
 /**
  * Ce qu'un run `awaiting_human` attend : des specs à valider (`irreversible` si elles
@@ -204,6 +209,9 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
       return to("running", NEXT[step], cursor, { reason: "/specs terminé" });
     }
     case "impl":
+      // Un reste à livrer : le même run reprend /impl sur sa branche (un runner neuf,
+      // relances remises à zéro) au lieu de laisser une feature à moitié livrée en revue.
+      if (outcome.continueImpl !== undefined) return to("running", "impl", cursor, { reason: IMPL_CONTINUED });
       return to("running", "review", cursor, { rebase: true, reason: "/impl terminé — rebase sur main avant /review" });
     case "fix":
       return to("running", "review", cursor, { keepRunner: false, reason: "/impl --fix terminé" });

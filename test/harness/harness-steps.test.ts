@@ -204,29 +204,6 @@ test("harness-steps/AC-9 : la porte « auto » — des specs qui découpent atte
   }
 });
 
-test("harness-steps/AC-10 : un `## Reste` non vide dans impl.md ouvre un run de suite, une seule fois", async () => {
-  const impl = [
-    { write: "src/api/export.ts", content: "export const exportCsv = () => 'a,b';\n" },
-    { write: ".harness/impl.md", content: "## Fait\nAC-1 fait\n## Reste\n- la pagination de l'export\n" },
-  ];
-  const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [impl], review: [OK.review] });
-  await world.orchestrator.start();
-  try {
-    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
-    await until(world, run.id, ["merged", "failed", "awaiting_human"]);
-    const event = world.store.eventsSince(0, run.id).find((item) => item.type === "follow_up");
-    assert.ok(event, "événement follow_up");
-    const followUp = world.store.getRun(String(event.payload.runId));
-    assert.equal(followUp?.title, "Suite de « Export CSV »");
-    assert.match(followUp?.request ?? "", /la pagination de l'export/);
-    assert.deepEqual(followUp?.modules, ["src/api"]);
-    assert.equal(world.store.listRuns().filter((row) => row.title.startsWith("Suite de")).length, 1);
-    await world.orchestrator.cancel(followUp?.id ?? "", { by: "test" });
-  } finally {
-    await world.orchestrator.stop();
-  }
-});
-
 test("harness-steps/AC-11 : une étape interrompue à l'échéance laisse un commit WIP et la tentative suivante reçoit la consigne de reprise", async () => {
   const world = fakeWorld(
     {
