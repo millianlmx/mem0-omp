@@ -340,9 +340,10 @@ export type HarnessConfig = {
   workstation: WorkstationConfig;
   /**
    * Les issues GitHub servies aux clients MCP (`POST /v1/mcp`, issues.ts) : `label` désigne
-   * les issues qu'`issues_fix_labeled` lance, `maxLaunch` borne les runs lancés par appel.
+   * les issues qu'`issues_fix_labeled` lance, `maxLaunch` borne les runs lancés par appel,
+   * `pollSec` l'intervalle de la relève automatique du label (`null` : à la demande seulement).
    */
-  issues: { label: string; maxLaunch: number };
+  issues: { label: string; maxLaunch: number; pollSec: number | null };
   /**
    * Les voies d'un run (orchestrator.ts) : `direct` laisse une demande qui porte déjà ses
    * critères d'acceptation (`## Critères d'acceptation`, au moins un `AC-n`) partir à /impl
@@ -489,7 +490,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       shiftMaxActions: 20,
       profileEveryHours: 6,
     },
-    issues: { label: "omp:fix", maxLaunch: 5 },
+    issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
     repos: [],
   };
@@ -658,6 +659,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(Number.isInteger(config.issues.maxLaunch) && config.issues.maxLaunch >= 1))
     fail("issues.maxLaunch : entier ≥ 1");
   if (typeof config.lanes.direct !== "boolean") fail("lanes.direct : booléen");
+  if (config.issues.pollSec !== null && !(Number.isInteger(config.issues.pollSec) && config.issues.pollSec >= 60))
+    fail("issues.pollSec : entier ≥ 60 (secondes), ou null");
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);

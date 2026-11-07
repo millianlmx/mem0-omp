@@ -8,8 +8,11 @@
 //
 // Une issue lancée est liée à son run (table `issue_runs`) : elle n'est relancée que si
 // ce run a échoué ou a été annulé, et jamais par un lancement par label.
+//
+// La relève (`issues.pollSec`) lance d'elle-même, à intervalle régulier, les issues du
+// label de chaque dépôt déclaré qui pousse vers un distant : poser le label suffit.
 import type { RepoConfig } from "./config.ts";
-import type { Actor, HarnessContext } from "./context.ts";
+import { type Actor, type HarnessContext, SERVICE } from "./context.ts";
 import type { RunRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
@@ -53,6 +56,10 @@ const LIST_MAX = 100;
 const BODY_MAX = 20_000;
 const COMMENTS_MAX = 10;
 const COMMENT_MAX = 4_000;
+/** La première relève attend au plus ceci après le démarrage : la reprise des runs passe d'abord. */
+const FIRST_POLL_MS = 30_000;
+/** L'échec de relève d'un dépôt n'est journalisé qu'une fois par heure : il revient à chaque relève. */
+const POLL_ERROR_EVERY_MS = 60 * 60 * 1000;
 
 /** `owner/name` d'une URL GitHub (SSH, `ssh://` ou HTTPS) ; `null` pour un autre hôte. */
 export function githubSlug(url: string): string | null {
@@ -119,6 +126,11 @@ export class IssueDesk {
   readonly #createRun: (input: NewRunInput, actor: Actor) => RunRow;
   /** Les lancements en cours par issue : deux appels simultanés n'en font qu'un. */
   readonly #pending = new Map<string, Promise<FixOutcome>>();
+  #pollTimer: NodeJS.Timeout | undefined;
+  #polling: Promise<number> | null = null;
+  #pollStopped = false;
+  /** Le dernier échec de relève journalisé, par dépôt. */
+  readonly #pollErrors = new Map<string, number>();
 
   constructor(ctx: HarnessContext, hooks: { createRun: (input: NewRunInput, actor: Actor) => RunRow }) {
     this.#ctx = ctx;
@@ -280,5 +292,65 @@ export class IssueDesk {
       else outcome.remaining.push(issue.number);
     }
     return outcome;
+  }
+
+  /** La relève périodique, si `issues.pollSec` n'est pas `null` : la première peu après l'appel. */
+  start(): void {
+    const pollSec = this.#ctx.config.issues.pollSec;
+    this.#pollStopped = false;
+    if (pollSec === null) return;
+    this.#schedule(Math.min(pollSec * 1000, FIRST_POLL_MS));
+  }
+
+  /** Arrête la relève ; une relève en cours finit (ses runs sont créés ou non, jamais à moitié). */
+  async stop(): Promise<void> {
+    this.#pollStopped = true;
+    clearTimeout(this.#pollTimer);
+    this.#pollTimer = undefined;
+    await this.#polling;
+  }
+
+  #schedule(ms: number): void {
+    if (this.#pollStopped) return;
+    this.#pollTimer = setTimeout(() => {
+      this.#pollTimer = undefined;
+      void this.poll().finally(() => {
+        const pollSec = this.#ctx.config.issues.pollSec;
+        if (pollSec !== null) this.#schedule(pollSec * 1000);
+      });
+    }, ms);
+    // La relève ne garde pas le process en vie.
+    this.#pollTimer.unref?.();
+  }
+
+  /**
+   * Une relève : `fixLabeled` sur chaque dépôt déclaré qui a un distant, au nom du service.
+   * Rend le nombre de runs lancés ; jamais d'exception (une relève en cours est rejointe).
+   */
+  poll(now: number = Date.now()): Promise<number> {
+    if (this.#polling) return this.#polling;
+    this.#polling = this.#poll(now).finally(() => {
+      this.#polling = null;
+    });
+    return this.#polling;
+  }
+
+  async #poll(now: number): Promise<number> {
+    let launched = 0;
+    for (const repo of this.#ctx.config.repos.filter((entry) => entry.remote !== null)) {
+      if (this.#pollStopped) break;
+      try {
+        launched += (await this.fixLabeled(repo, undefined, SERVICE)).launched.filter(
+          (outcome) => outcome.status === "launched",
+        ).length;
+      } catch (err) {
+        const last = this.#pollErrors.get(repo.name);
+        if (last !== undefined && now - last < POLL_ERROR_EVERY_MS) continue;
+        this.#pollErrors.set(repo.name, now);
+        this.#ctx.log(`relève des issues de ${repo.name} : ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (launched > 0) this.#ctx.log(`relève : ${launched} lancée(s)`);
+    return launched;
   }
 }
