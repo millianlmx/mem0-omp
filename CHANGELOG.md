@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.15.2 — 2026-11-07
+
+- fix(harness): un `## Reste` de /impl est repris sur la même branche (#328) (18dd1e9)
+
 ## omp-harness 1.15.1 — 2026-11-06
 
 - fix(harness,console): code approbateur pour la pile Portainer (omp-harness-stack approver) (#325) (487dc33)
