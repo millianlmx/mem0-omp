@@ -32,7 +32,56 @@ export type Verdict = {
   criteria: CriterionVerdict[];
   /** `weak` : la revue elle-même doute — l'humain lira le code. */
   confidence: "strong" | "weak";
+  /**
+   * Le message du commit squash, rédigé par la revue : ce que le changement fait et
+   * pourquoi, pas le récit de la relecture. Absent d'un verdict rendu avant ce champ
+   * (run en vol au déploiement) : le merge prend alors le titre du run.
+   */
+  commit?: CommitMessage;
 };
+
+/** Un message de commit : un sujet Conventional Commits et un corps en prose. */
+export type CommitMessage = { subject: string; body: string };
+
+/** Les types Conventional Commits admis dans un sujet de commit. */
+export const COMMIT_TYPES = [
+  "feat",
+  "fix",
+  "refactor",
+  "perf",
+  "test",
+  "docs",
+  "build",
+  "ci",
+  "chore",
+  "style",
+  "revert",
+] as const;
+
+/** La longueur maximale d'un sujet de commit. */
+export const COMMIT_SUBJECT_MAX = 72;
+
+/**
+ * `type(scope): résumé` : scope facultatif, sans espace ni parenthèse, résumé non vide.
+ * Une seule ligne : `.` ne traverse aucun saut de ligne.
+ */
+const COMMIT_SUBJECT = new RegExp(`^(?:${COMMIT_TYPES.join("|")})(?:\\([^()\\s]+\\))?: \\S.*$`);
+
+function commitMessage(value: unknown, errors: string[]): CommitMessage {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    errors.push("commit : le message du commit squash est requis ({subject, body})");
+    return { subject: "", body: "" };
+  }
+  const subject = "subject" in value && typeof value.subject === "string" ? value.subject.trim() : "";
+  const body = "body" in value && typeof value.body === "string" ? value.body.trim() : "";
+  if (subject.length > COMMIT_SUBJECT_MAX || !COMMIT_SUBJECT.test(subject))
+    errors.push(
+      `commit.subject : \`type(scope): résumé\` en Conventional Commits, une ligne, ${COMMIT_SUBJECT_MAX} caractères au plus ` +
+        `(type ${COMMIT_TYPES.join(" | ")}, scope facultatif) — reçu « ${subject} »`,
+    );
+  if (body === "") errors.push("commit.body : ce que le changement fait et pourquoi est requis");
+  return { subject, body };
+}
 
 export type VerdictParse = { ok: true; verdict: Verdict } | { ok: false; errors: string[] };
 
@@ -105,6 +154,7 @@ export function parseVerdict(raw: unknown): VerdictParse {
     unverified: strings(record.unverified, "unverified", errors),
     criteria: criteria(record.criteria, errors),
     confidence: confidence ?? "weak",
+    commit: commitMessage(record.commit, errors),
   };
   if (verdict.files.length === 0) errors.push("files : la liste des fichiers touchés est requise");
   return errors.length > 0 ? { ok: false, errors } : { ok: true, verdict };

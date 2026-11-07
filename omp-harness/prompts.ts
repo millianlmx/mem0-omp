@@ -97,7 +97,8 @@ ${bullets(ctx.previousBlockers) ?? "- (aucun bloquant transmis : relis `.harness
 
 ${scope}
 - Ne modifie PAS le code pendant la revue : un bloquant part en correction.
-- Termine par \`review_verdict\`, une fois : la table \`criteria\` AC par AC (chaque AC-n de specs.md, le nom du test qui le prouve, \`pass\` | \`fail\` | \`untested\`), le risque, les bloquants, les risques résiduels, les fichiers touchés (tous ceux du diff), ce que tu n'as PAS vérifié (\`unverified\`), et une \`confidence\` honnête : \`weak\` dès que tu doutes de ta propre revue — un \`strong\` mensonger coûte plus qu'un \`weak\` sincère.`;
+- Termine par \`review_verdict\`, une fois : la table \`criteria\` AC par AC (chaque AC-n de specs.md, le nom du test qui le prouve, \`pass\` | \`fail\` | \`untested\`), le risque, les bloquants, les risques résiduels, les fichiers touchés (tous ceux du diff), ce que tu n'as PAS vérifié (\`unverified\`), et une \`confidence\` honnête : \`weak\` dès que tu doutes de ta propre revue — un \`strong\` mensonger coûte plus qu'un \`weak\` sincère.
+- Le verdict porte aussi \`commit\`, le message du commit squash sur main : \`subject\` au format Conventional Commits \`type(scope): résumé\` (feat | fix | refactor | perf | test | docs | build | ci | chore | style | revert, scope facultatif, une ligne, 72 caractères au plus), et \`body\`, ce que le changement fait et pourquoi en quelques lignes — pas le récit de ta relecture, qui reste dans \`summary\`. Suis la langue et les scopes de l'historique : \`git log --format=%s -20 ${ctx.baseSha}\`.`;
 }
 
 function fixBody(ctx: PromptContext): string {

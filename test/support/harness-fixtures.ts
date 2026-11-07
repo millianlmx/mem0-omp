@@ -260,6 +260,7 @@ export const OK = {
         unverified: [],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ],

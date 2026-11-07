@@ -16,6 +16,7 @@ const verdict: Verdict = {
     { id: "AC-2", test: "x/AC-2", status: "pass" },
   ],
   confidence: "strong",
+  commit: { subject: "feat(x): faire x", body: "Fait x." },
 };
 const evidence: MergeEvidence = {
   fullTests: "pass",
@@ -28,11 +29,11 @@ const evidence: MergeEvidence = {
   touchedFiles: ["a.ts", "b.ts"],
 };
 
-test("harness-verdict/AC-1 : un verdict se valide champ par champ ; risque, résumé, fichiers, criteria et confiance sont requis", () => {
+test("harness-verdict/AC-1 : un verdict se valide champ par champ ; risque, résumé, fichiers, criteria, confiance et message de commit sont requis", () => {
   assert.equal(parseVerdict(verdict).ok, true);
   const bad = parseVerdict({ risk: "nul", summary: "", files: [] });
   assert.equal(bad.ok, false);
-  assert.equal(!bad.ok && bad.errors.length, 5);
+  assert.equal(!bad.ok && bad.errors.length, 6);
   assert.equal(parseVerdict([]).ok, false);
   const noConfidence = parseVerdict({ ...verdict, confidence: undefined });
   assert.ok(!noConfidence.ok && noConfidence.errors.some((e) => /confidence/.test(e)), "plus de défaut strong");

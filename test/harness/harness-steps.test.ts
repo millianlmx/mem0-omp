@@ -252,6 +252,7 @@ test("harness-steps/AC-12 : la seconde revue est incrémentale — elle reçoit 
         unverified: [],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];
@@ -268,6 +269,7 @@ test("harness-steps/AC-12 : la seconde revue est incrémentale — elle reçoit 
         unverified: ["AC-1 sous charge"],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
         confidence: "weak",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];

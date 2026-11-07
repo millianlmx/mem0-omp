@@ -21,6 +21,7 @@ import type { StepKind } from "./machine.ts";
 import { DECISION_CATEGORIES } from "./decisions.ts";
 import type { Exec } from "./proc.ts";
 import type { HostToolDefinition, RpcRunner } from "./rpc.ts";
+import { COMMIT_SUBJECT_MAX, COMMIT_TYPES } from "./verdict.ts";
 
 /** Les réglages du profil pipeline, en overlay `--config` (YAML ⊃ JSON). */
 export const PIPELINE_SETTINGS = {
@@ -421,7 +422,8 @@ const VERDICT_TOOL: HostToolDefinition = {
   description:
     "Rend le verdict STRUCTURÉ de la revue, une fois, à la fin. `criteria` est la table AC par AC : chaque AC-n de specs.md, le test nommé qui le prouve, son état. " +
     "`blockers` non vide ⇒ correction. Aucun bloquant + risque sous le plafond + suite complète verte + chaque AC `pass` + `confidence: strong` ⇒ auto-merge. " +
-    "`unverified` liste ce que tu n'as pas pu vérifier (cite l'AC-n concerné s'il y en a un) ; `confidence: weak` si tu doutes de ta propre revue (l'humain lira alors le code).",
+    "`unverified` liste ce que tu n'as pas pu vérifier (cite l'AC-n concerné s'il y en a un) ; `confidence: weak` si tu doutes de ta propre revue (l'humain lira alors le code). " +
+    "`commit` est le message du commit squash sur main : `subject` en Conventional Commits, `body` ce que le changement fait et pourquoi — pas le récit de ta relecture, qui va dans `summary`.",
   parameters: {
     type: "object",
     properties: {
@@ -445,8 +447,23 @@ const VERDICT_TOOL: HostToolDefinition = {
         },
       },
       confidence: { type: "string", enum: ["strong", "weak"] },
+      commit: {
+        type: "object",
+        properties: {
+          subject: {
+            type: "string",
+            description: `\`type(scope): résumé\`, une ligne, ${COMMIT_SUBJECT_MAX} caractères au plus ; type ${COMMIT_TYPES.join(" | ")}, scope facultatif. Langue et scopes : ceux de \`git log --format=%s -20\` sur main.`,
+          },
+          body: {
+            type: "string",
+            description: "Ce que le changement fait et pourquoi, en prose courte (2 à 6 lignes).",
+          },
+        },
+        required: ["subject", "body"],
+        additionalProperties: false,
+      },
     },
-    required: ["risk", "summary", "blockers", "risks", "files", "unverified", "criteria", "confidence"],
+    required: ["risk", "summary", "blockers", "risks", "files", "unverified", "criteria", "confidence", "commit"],
     additionalProperties: false,
   },
   loadMode: "essential",

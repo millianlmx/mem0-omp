@@ -641,7 +641,14 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
   levé est vérifié un par un ; suite complète seulement quand il n'en reste
   aucun — si elle manque encore, le service la réclame une fois), puis rend un
   verdict structuré (`review_verdict`) avec une table AC par AC (`criteria` : id,
-  test nommé, `pass` | `fail` | `untested`) et une confiance honnête. Une suite
+  test nommé, `pass` | `fail` | `untested`), une confiance honnête et le message
+  du commit squash (`commit` : `subject` au format Conventional Commits
+  `type(scope): résumé`, types `feat` · `fix` · `refactor` · `perf` · `test` ·
+  `docs` · `build` · `ci` · `chore` · `style` · `revert`, scope facultatif, une
+  ligne de 72 caractères au plus, dans la langue et les scopes de
+  `git log --format=%s -20` de `main` ; `body` dit ce que le changement fait et
+  pourquoi, pas le récit de la relecture). Un sujet hors format est refusé par
+  l'outil, qui rappelle le format attendu. Une suite
   complète rouge devient un bloquant « suite complète rouge : … », quoi qu'en dise
   la revue. Auto-merge si : aucun bloquant, risque ≤ `review.autoMergeRisk`, suite
   verte sur l'arbre exact, diff court (`review.diffCount`), aucune escalade
@@ -653,7 +660,16 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
   preuve.
 - **Merge.** Rebase sur `main`, squash, puis push sur le distant. Si le rebase bute (une
   branche qui a déjà fusionné `main` en revue rejoue au rebase ses conflits résolus),
-  `main` est fusionnée dans la branche ; seul un conflit nouveau arrête le merge. Un push refusé par le
+  `main` est fusionnée dans la branche ; seul un conflit nouveau arrête le merge. Le
+  commit squash a pour sujet le `subject` du verdict, pour corps son `body`, puis le
+  bloc « Décisions : » et le trailer `Harness-Run:` ; le résumé de la revue n'y entre
+  pas (un verdict rendu avant le champ `commit` garde le titre du run pour sujet).
+  En mode `gh`, la PR a pour titre le `subject` et pour corps le `body` suivi du
+  résumé de la revue, et `gh pr merge --squash --subject --body` impose au commit le
+  même message qu'en mode local. Une branche que le rebase a vidée (son travail est
+  déjà dans `main`, par un autre run) se termine mergée **sans commit** : ni
+  poussée ni PR, `mergeSha` nul (rien à reverter), événement `merged` avec
+  `empty: true` ; le squash lui-même refuse un arbre identique à celui de `main`. Un push refusé par le
   dépôt (branche protégée, droit manquant) n'est **pas** un merge : le run attend
   l'humain avec la raison (« push refusé : … », événement `push_failed`) ; une
   coupure réseau est réessayée trois fois avant. En mode `gh`, la PR est posée en
@@ -1061,7 +1077,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/runs/{id}/validate` `{approve, reason?}` | operator | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
 | `POST /v1/runs/{id}/cancel` | operator | Annuler (la branche reste). |
 | `POST /v1/runs/{id}/retry` | operator | Relancer un run `failed` ou `awaiting_human` à son étape, tout de suite (409 sinon). |
-| `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé. |
+| `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé, ou s'il l'a été sans commit (déjà dans `main`). |
 | `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
 | `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
 | `GET /v1/decisions?status=auto,auto_timeout` | viewer | La relecture du matin : les décisions prises seules par l'agent, ou à l'échéance d'une escalade. |
@@ -1113,7 +1129,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build, revert ciblé | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Le tree hash du cache heavy part d'une copie de l'index du worktree (git ne relit que ce qui a changé). `diffLines(mode)` : `code` ignore `test/**`, `*.test.*`, `Tests/`, `*.md`, `CHANGELOG*`, `package.json`, `*.lock` — ce qui compte face à `review.maxDiffLines` (`review.diffCount`). `revertRange(de, à)` défait une plage de commits en un seul commit `revert: …` (checkpoints vides sautés) ; un conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus — le renversement d'une décision ne perd plus le travail indépendant. Les gestes qui écrivent l'index ou HEAD d'un worktree (commit, reset, rebase, revert, fusion, worktree add/remove) passent un par un, dans une file par worktree : deux `decision` d'un même tour, la fin d'étape, la boucle humaine et le merge ne se marchent plus dessus ; `status` ne prend pas le verrou de l'index au passage (`GIT_OPTIONAL_LOCKS=0`). Un verrou `*.lock` tenu par un autre git est attendu 10 s, puis le geste échoue en le nommant ; plus vieux que 5 min (aucun git du service ne vit plus de 120 s), c'est le reste d'un git tué : retiré, journalisé, et le geste repart. |
 | **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par toutes les étapes et /project (`recall`), et par les escalades (`recallDecisions` : les souvenirs `harness,decision` seulement, filtrés ici car mem0-rs ne filtre les étiquettes que par égalité stricte). En écriture : les besoins `B-n` du compte rendu (`briefOfReq`, ≤ 500 car.), chaque feature mergée (knowledge-updater : résumé, modules, risques, non vérifié, décisions) et chaque décision humaine **avec sa raison**, sa catégorie, ses options et son contexte. Rendu au prompt avec l'étiquette principale et la date courte. Injoignable, il dégrade sans bloquer. |
 | **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review → fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur une cause de `runner.failoverOn`, `set_model` fait passer le **même** runner au fournisseur suivant. |
-| **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`, avec la table AC par AC (`criteria`) et une `confidence` obligatoires. Auto-merge si aucun bloquant, risque ≤ `review.autoMergeRisk`, suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner), diff ≤ `review.maxDiffLines`, aucune escalade ouverte, confiance forte, chaque `AC-n` des specs gelées à la clôture de /specs (`_specs.baseline.md`), et de ceux ajoutés depuis, en `pass`, aucun critère gelé retiré ou réécrit (`criteriaDrift`), et tous les fichiers touchés (git) relus par la revue. Un point non vérifié ne bloque que s'il cite un `AC-n`. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
+| **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`, avec la table AC par AC (`criteria`), une `confidence` et le message du commit squash (`commit` : sujet Conventional Commits validé par le service, corps) obligatoires. Auto-merge si aucun bloquant, risque ≤ `review.autoMergeRisk`, suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner), diff ≤ `review.maxDiffLines`, aucune escalade ouverte, confiance forte, chaque `AC-n` des specs gelées à la clôture de /specs (`_specs.baseline.md`), et de ceux ajoutés depuis, en `pass`, aucun critère gelé retiré ou réécrit (`criteriaDrift`), et tous les fichiers touchés (git) relus par la revue. Un point non vérifié ne bloque que s'il cite un `AC-n`. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 14 Go | `deploy/` | `omp-harness.slice` 16G ⊃ runners 5G + heavy 8G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
 | **Validation des specs** (ajout) | `machine.ts`, `gestures.ts` | `review.specsGate` (`"auto"` par défaut) : après /specs, le run attend l'humain — toujours (`true`), jamais (`false`), ou seulement si les specs découpent, laissent les modules vides, touchent à l'irréversible, ouvrent un projet ou laissent un désaccord avec le contradicteur (`"auto"`, raisons dans celle du run) —, modules réservés. L'accord lance /impl. Un refus refait /specs avec sa raison, qui part aussi dans l'oracle. |
 | **Contradicteur** (ajout) | `challenge.ts`, `steps.ts`, `runner-session.ts` | En fin de /req et /specs : l'auteur rend son runner (un run, un slot, un runner), un runner neuf (`<unité>-contradicteur`, arrêtée aussi à la reprise après redémarrage) relit l'artefact avec `progress`, `oracle_recall` et `challenge_report` seulement ; ses écritures sont jetées (`resetTo` sur le commit de l'auteur, artefacts remis depuis la base). L'auteur répond sur un runner neuf (`<unité>-reponse`). Les passages sont gardés en base (`_contradicteur.json`, invisible) et rendus dans `contradicteur.md`, que seul le service écrit. |

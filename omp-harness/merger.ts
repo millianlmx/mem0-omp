@@ -7,7 +7,11 @@
 //
 // Si main a bougé depuis la revue : rebase, puis la suite complète repasse en heavy
 // sur le nouvel arbre — sans LLM. Rouge ou conflit : retour en correction (machine),
-// après un délai (5, 15 puis 60 min) compté dans `mergeRetries`.
+// après un délai (5, 15 puis 60 min) compté dans `mergeRetries`. Une branche que le
+// rebase a vidée (son travail est déjà dans main) se termine mergée, sans commit.
+//
+// Le message du squash vient du verdict (`commit` : sujet Conventional Commits, corps),
+// suivi des décisions et du trailer `Harness-Run` ; le résumé de la revue n'y entre pas.
 //
 // Mode `gh` : une PR, `gh pr merge --squash --auto`, puis l'attente de la fusion
 // constatée (les checks requis de la branche protégée) — jamais « merged » avant que
@@ -122,7 +126,8 @@ export class Merger {
         this.#finish(run, main, repo);
         return;
       }
-      if (main !== run.baseSha) {
+      const mainMoved = main !== run.baseSha;
+      if (mainMoved) {
         // Un rebase qui bute ne vaut pas conflit : une branche qui porte déjà une fusion de
         // main (conflits résolus en revue) rejoue au rebase ses commits d'avant la fusion,
         // donc les mêmes conflits, à chaque tentative. Une fusion de main ne rejoue rien :
@@ -136,6 +141,18 @@ export class Merger {
           return this.#stopped(run, "review", `conflit avec main avant merge : ${updated.conflicts.join(", ")}`);
         await this.#ctx.remapCheckpoints(run.id, worktree, main);
         run = store.updateRun(run.id, { baseSha: main });
+      }
+      // La branche n'apporte plus rien à main (son travail y est entré par un autre run,
+      // et le rebase l'a vidée) : déjà dans main, sans commit vide, sans poussée ni PR.
+      // Vérifié avant la suite complète : elle jugerait l'arbre de main, pas ce run.
+      if (
+        (await git.run(repo.path, ["rev-parse", `${run.branch}^{tree}`])) ===
+        (await git.run(repo.path, ["rev-parse", `${main}^{tree}`]))
+      ) {
+        this.#finish(run, null, repo);
+        return;
+      }
+      if (mainMoved) {
         const result = await heavy.run({
           runId: run.id,
           stepId: null,
@@ -149,16 +166,23 @@ export class Merger {
           return this.#stopped(run, "fix", `suite complète ${result.outcome} après rebase sur main`);
       }
       const decisions = store.listDecisions({ runId, status: DECIDED });
-      const message = [
-        run.title,
-        "",
-        run.verdict?.summary ?? "",
-        "",
+      // Le message vient du verdict (`commit`) ; un verdict rendu avant ce champ garde le titre du run.
+      const subject = run.verdict?.commit?.subject ?? run.title;
+      const body = run.verdict?.commit?.body ?? "";
+      const trailer = [
         ...(decisions.length > 0 ? ["Décisions :", ...decisions.map((d) => `- ${decisionLine(d)}`), ""] : []),
         `Harness-Run: ${run.id}`,
-      ].join("\n");
+      ];
+      const commitBody = [...(body === "" ? [] : [body, ""]), ...trailer].join("\n");
       if (repo.merge === "gh") {
-        const outcome = await this.#mergeWithGh(run, repo, message);
+        // La PR est le lieu de la revue : son corps porte aussi le résumé du relecteur, le commit non.
+        const review = run.verdict?.summary ?? "";
+        const prBody = [
+          ...(body === "" ? [] : [body, ""]),
+          ...(review === "" ? [] : ["## Revue", review, ""]),
+          ...trailer,
+        ];
+        const outcome = await this.#mergeWithGh(run, repo, { subject, commitBody, prBody: prBody.join("\n") });
         if (outcome.prUrl !== null && outcome.prUrl !== run.prUrl)
           run = store.updateRun(run.id, { prUrl: outcome.prUrl });
         if (outcome.kind === "merged") {
@@ -167,7 +191,7 @@ export class Merger {
         }
         return this.#stopped(run, "review", outcome.reason);
       }
-      const sha = await git.squashMerge(repo.path, run.branch, repo.mainBranch, main, message);
+      const sha = await git.squashMerge(repo.path, run.branch, repo.mainBranch, main, `${subject}\n\n${commitBody}`);
       if (!(await this.#pushMain(run, repo))) return;
       this.#finish(run, sha, repo);
     } catch (err) {
@@ -215,31 +239,44 @@ export class Merger {
   /**
    * Mode `gh` : la PR (créée ou retrouvée), `gh pr merge --squash --auto`, puis l'attente
    * de la fusion constatée par `gh pr view`, toutes les `mergePollSec`, jusqu'à
-   * `mergeWaitSec`. Fermée sans fusion, refusée ou trop longue : le merge s'arrête.
+   * `mergeWaitSec`. Fermée sans fusion, refusée ou trop longue : le merge s'arrête. Le
+   * squash prend `--subject` et `--body` : sans eux, GitHub composerait le message
+   * depuis le titre et les commits de la PR, ou son corps, selon le réglage du dépôt.
    */
   async #mergeWithGh(
     run: RunRow,
     repo: RepoConfig,
-    message: string,
+    message: { subject: string; commitBody: string; prBody: string },
   ): Promise<{ kind: "merged"; prUrl: string | null } | { kind: "stopped"; prUrl: string | null; reason: string }> {
     const { git, exec, config } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const worktree = run.worktree;
     if (worktree === null) throw new Error("le run n'a plus de worktree");
     await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
-    const body = message.split("\n").slice(2).join("\n");
     const created = await exec(
       "gh",
-      ["pr", "create", "-B", repo.mainBranch, "-H", run.branch, "-t", run.title, "-b", body],
+      ["pr", "create", "-B", repo.mainBranch, "-H", run.branch, "-t", message.subject, "-b", message.prBody],
       { cwd: repo.path, timeoutMs: 120_000 },
     );
     // Une PR existe déjà pour la branche (merge relancé) : gh le dit, avec son URL.
     const prUrl = urlIn(created.stdout) ?? urlIn(created.stderr) ?? run.prUrl;
     if (created.code !== 0 && prUrl === null) throw new Error(`gh pr create : ${created.stderr.trim().slice(0, 300)}`);
-    const merge = await exec("gh", ["pr", "merge", run.branch, "--squash", "--auto", "--delete-branch"], {
-      cwd: repo.path,
-      timeoutMs: 120_000,
-    });
+    const merge = await exec(
+      "gh",
+      [
+        "pr",
+        "merge",
+        run.branch,
+        "--squash",
+        "--auto",
+        "--delete-branch",
+        "--subject",
+        message.subject,
+        "--body",
+        message.commitBody,
+      ],
+      { cwd: repo.path, timeoutMs: 120_000 },
+    );
     if (merge.code !== 0)
       return { kind: "stopped", prUrl, reason: `gh pr merge --auto refusé : ${merge.stderr.trim().slice(0, 300)}` };
     const deadline = Date.now() + config.review.mergeWaitSec * 1000;
@@ -300,22 +337,31 @@ export class Merger {
     });
   }
 
-  /** Fin de run : état, knowledge-updater (oracle), worktree rendu (le projet est clos par le contexte). */
-  #finish(run: RunRow, sha: string, repo: RepoConfig): void {
+  /**
+   * Fin de run : état, knowledge-updater (oracle), worktree rendu (le projet est clos par le contexte).
+   * `sha` null : la branche n'apportait plus rien à main, aucun commit n'a été posé —
+   * `mergeSha` reste null (un revert déferait le commit d'un autre) et l'événement
+   * `merged` porte `empty: true`.
+   */
+  #finish(run: RunRow, sha: string | null, repo: RepoConfig): void {
     const { store, git, oracle } = this.#ctx;
     // Le merge est fait dans git : l'état suit. Aucun geste ne passe pendant un merge
     // (annuler, renverser et valider le refusent), le run est donc toujours en `merging`.
     const current = store.getRun(run.id) ?? run;
     const moved = store.transaction(() => {
       if (!this.#ctx.transition(current, afterMerged(current), ["merging"], { patch: { mergeSha: sha } })) return false;
-      this.#ctx.event("merged", run.id, { sha, prUrl: store.getRun(run.id)?.prUrl ?? null });
+      this.#ctx.event("merged", run.id, {
+        sha,
+        prUrl: store.getRun(run.id)?.prUrl ?? null,
+        ...(sha === null ? { empty: true } : {}),
+      });
       return true;
     });
     if (!moved) return;
     const decisions = store.listDecisions({ runId: run.id, status: DECIDED });
     const verdict = run.verdict;
     const summary = [
-      `Feature mergée « ${run.title} » (${sha.slice(0, 12)}) : ${verdict?.summary ?? ""}`,
+      `Feature mergée « ${run.title} » (${sha === null ? "déjà dans main, sans commit" : sha.slice(0, 12)}) : ${verdict?.summary ?? ""}`,
       run.modules.length > 0 ? `Modules : ${run.modules.join(", ")}.` : "",
       verdict && verdict.risks.length > 0 ? `Risques résiduels : ${verdict.risks.join(" ; ")}.` : "",
       verdict && verdict.unverified.length > 0 ? `Non vérifié par la revue : ${verdict.unverified.join(" ; ")}.` : "",
@@ -336,8 +382,9 @@ export class Merger {
    */
   async revert(runId: string, actor: Actor): Promise<RunRow> {
     const run = this.#ctx.run(runId);
-    if (run.state !== "merged" || run.mergeSha === null)
-      throw new HarnessError(409, `le run ${runId} n'est pas mergé : rien à reverter`);
+    if (run.state !== "merged") throw new HarnessError(409, `le run ${runId} n'est pas mergé : rien à reverter`);
+    if (run.mergeSha === null)
+      throw new HarnessError(409, `le run ${runId} n'a posé aucun commit sur main (déjà dans main) : rien à reverter`);
     const repo = this.#ctx.repo(run.repo);
     const { git, config } = this.#ctx;
     await this.#ctx.fetchMain(repo);
