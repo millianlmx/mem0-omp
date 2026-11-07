@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.16.0 — 2026-11-07
+
+- feat(harness): relève automatique des issues du label omp:fix (#329) (1f0a43b)
+
 ## omp-harness 1.15.2 — 2026-11-07
 
 - fix(harness): un `## Reste` de /impl est repris sur la même branche (#328) (18dd1e9)
