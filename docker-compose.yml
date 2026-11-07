@@ -130,7 +130,7 @@ services:
 
   # Les embeddings de la mémoire : un Ollama sur le CPU, et son modèle tiré une fois.
   embeddings:
-    image: docker.io/ollama/ollama:0.12.6
+    image: docker.io/ollama/ollama:0.40.14
     restart: unless-stopped
     environment:
       # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de mem0.
@@ -139,7 +139,7 @@ services:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/ollama:/root/.ollama
 
   embeddings-model:
-    image: docker.io/ollama/ollama:0.12.6
+    image: docker.io/ollama/ollama:0.40.14
     command: ["pull", "${OMLX_EMBED_MODEL:-bge-m3}"]
     restart: on-failure
     depends_on: [embeddings]
