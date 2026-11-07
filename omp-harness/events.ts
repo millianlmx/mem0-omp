@@ -23,6 +23,7 @@ export const EVENT_TYPES = [
   "step_started",
   "step_done",
   "step_timeout",
+  "impl_continued",
   "runner_started",
   "runner_stopped",
   "rate_limited",

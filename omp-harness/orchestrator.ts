@@ -141,7 +141,6 @@ export class Orchestrator {
     });
     this.#steps = new StepExecutor(this.#ctx, {
       createProject: (input, actor) => this.createProject(input, actor),
-      followUp: async (input, actor) => this.createRun(input, actor),
     });
     this.#merger = new Merger(this.#ctx, {
       onDone: () => this.#kick(),
