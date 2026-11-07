@@ -343,6 +343,12 @@ export type HarnessConfig = {
    * les issues qu'`issues_fix_labeled` lance, `maxLaunch` borne les runs lancés par appel.
    */
   issues: { label: string; maxLaunch: number };
+  /**
+   * Les voies d'un run (orchestrator.ts) : `direct` laisse une demande qui porte déjà ses
+   * critères d'acceptation (`## Critères d'acceptation`, au moins un `AC-n`) partir à /impl
+   * sans /req ni /specs ; `false` : tout run passe par /req.
+   */
+  lanes: { direct: boolean };
   repos: RepoConfig[];
 };
 
@@ -484,6 +490,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       profileEveryHours: 6,
     },
     issues: { label: "omp:fix", maxLaunch: 5 },
+    lanes: { direct: true },
     repos: [],
   };
 }
@@ -650,6 +657,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("issues.label : texte non vide");
   if (!(Number.isInteger(config.issues.maxLaunch) && config.issues.maxLaunch >= 1))
     fail("issues.maxLaunch : entier ≥ 1");
+  if (typeof config.lanes.direct !== "boolean") fail("lanes.direct : booléen");
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);

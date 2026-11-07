@@ -92,6 +92,7 @@ test("harness-specs-gelees/AC-3 : le prompt de revue cite chaque critère modifi
     decisions: [],
     conflicts: [],
     specsDrift: [],
+    direct: false,
   };
   assert.doesNotMatch(stepPrompt(ctx), /Critères modifiés depuis la validation/);
   const prompt = stepPrompt({ ...ctx, specsDrift: [{ id: "AC-2", validated: AC2, current: null }] });

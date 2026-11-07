@@ -22,6 +22,7 @@ function ctx(patch: Partial<PromptContext>): PromptContext {
     decisions: [],
     conflicts: [],
     specsDrift: [],
+    direct: false,
     ...patch,
   };
 }

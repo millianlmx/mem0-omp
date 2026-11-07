@@ -26,6 +26,7 @@ import { retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
 import type { DecisionRow, RepoFilter, RunRow } from "./db.ts";
+import { detectIrreversible } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
 import { HumanLoop } from "./gestures.ts";
 import { newId } from "./ids.ts";
@@ -45,7 +46,7 @@ import { auditOwner } from "./session-feed.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
-import { StepExecutor, challengeUnit, liveRun } from "./steps.ts";
+import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } from "./steps.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
@@ -55,7 +56,10 @@ export type { Actor, SpawnRunner } from "./context.ts";
 
 export type OrchestratorDeps = HarnessDeps;
 
-/** `req` : le compte rendu de besoins déjà établi en session interactive (/req local) — le run part de /specs. */
+/**
+ * `req` : le compte rendu de besoins déjà établi en session interactive (/req local) — le run part de /specs.
+ * `lane: "full"` : la voie complète (/req) même si la demande porte ses critères d'acceptation.
+ */
 export type NewRunInput = {
   repo: string;
   title: string;
@@ -64,6 +68,7 @@ export type NewRunInput = {
   modules?: string[];
   req?: string;
   priority?: number;
+  lane?: "full";
 };
 
 export type NewProjectInput = {
@@ -655,6 +660,7 @@ export class Orchestrator {
     if (input.title.trim() === "" || input.request.trim() === "")
       throw new HarnessError(400, "title et request sont requis");
     const req = input.req?.trim() ?? "";
+    const specs = req === "" ? this.#directSpecs(input) : null;
     if (req !== "" && !/^##\s+Besoins/m.test(req)) throw new HarnessError(400, "req : la section `## Besoins` manque");
     const priority = input.priority ?? 0;
     if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
@@ -672,10 +678,15 @@ export class Orchestrator {
         modules: input.modules ?? [],
         priority,
         createdBy: actor.by,
-        ...(req !== "" ? { step: "specs" as const } : {}),
+        ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
       });
       if (req !== "") store.putArtifact(created.id, "req.md", `${req}\n`, null);
+      // Voie directe : les specs synthétisées sont aussi les specs gelées sur lesquelles la revue juge.
+      if (specs !== null) {
+        store.putArtifact(created.id, "specs.md", specs, null);
+        store.putArtifact(created.id, SPECS_BASELINE, specs, null);
+      }
       this.#ctx.event("run_created", created.id, {
         repo: created.repo,
         slug: created.slug,
@@ -683,6 +694,7 @@ export class Orchestrator {
         modules: created.modules,
         projectId: created.projectId,
         priority,
+        lane: specs !== null ? "direct" : "full",
         ...(actor.by ? { by: actor.by } : {}),
       });
       return created;
@@ -697,6 +709,22 @@ export class Orchestrator {
     if (input.inferModules !== false && (input.modules ?? []).length === 0) void this.#inferModules(run);
     else this.#kick();
     return run;
+  }
+
+  /**
+   * Le specs.md de la voie directe (`directSpecs`), ou `null` : voie complète. Une demande
+   * à critères passe quand même par /req si le client le demande (`lane: "full"`), si
+   * `lanes.direct` est coupé, ou si la porte des specs l'aurait arrêtée : toujours
+   * (`specsGate: true`), ou en `"auto"` sur l'irréversible et la première feature d'un
+   * projet. Les modules vides ne comptent pas : l'oracle les déduit comme pour tout run créé sans.
+   */
+  #directSpecs(input: NewRunInput & { projectId?: string; projectOrder?: number }): string | null {
+    const { config } = this.#ctx;
+    if (input.lane === "full" || !config.lanes.direct || config.review.specsGate === true) return null;
+    const specs = directSpecs(input.title, input.request);
+    if (specs === null || config.review.specsGate === false) return specs;
+    const firstOfProject = Boolean(input.projectId) && (input.projectOrder ?? 0) === 0;
+    return detectIrreversible(specs) !== null || firstOfProject ? null : specs;
   }
 
   /** Les modules d'un run créé sans : l'oracle, puis `modules` posés s'ils ne l'ont pas été entre-temps (`set_modules`). */

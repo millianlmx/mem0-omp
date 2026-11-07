@@ -45,6 +45,8 @@ export type PromptContext = {
   conflicts: string[];
   /** Les critères qui ont bougé depuis la validation des specs (review). */
   specsDrift: CriterionDrift[];
+  /** Voie directe (pas de req.md) : specs.md ne porte que la demande et ses critères, ni relevé ni S-n. */
+  direct: boolean;
 };
 
 const POLICY = `## Politique de décision (non négociable)
@@ -74,7 +76,7 @@ const TESTABLE_SPEC = "Une spec qui ne permet pas d'écrire le test avant le cod
 function reviewBody(ctx: PromptContext): string {
   const head = `# /review — revue de « ${ctx.title} »
 
-Lis \`${ART}/req.md\` et \`${ART}/specs.md\`, puis le diff : la revue juge le code contre les critères AC-n (B-m), pas contre une impression. Forme ton jugement critère par critère sur le code et les tests AVANT d'ouvrir \`${ART}/impl.md\` : le compte rendu de l'implémenteur ne prouve rien, il sert seulement à repérer ce qu'il dit avoir laissé de côté.`;
+Lis ${ctx.direct ? `\`${ART}/specs.md\` (voie directe : la demande et ses critères, pas de req.md)` : `\`${ART}/req.md\` et \`${ART}/specs.md\``}, puis le diff : la revue juge le code contre les critères AC-n${ctx.direct ? "" : " (B-m)"}, pas contre une impression. Forme ton jugement critère par critère sur le code et les tests AVANT d'ouvrir \`${ART}/impl.md\` : le compte rendu de l'implémenteur ne prouve rien, il sert seulement à repérer ce qu'il dit avoir laissé de côté.`;
   const drift =
     ctx.specsDrift.length === 0
       ? ""
@@ -157,9 +159,17 @@ Ne modifie AUCUN autre fichier.`,
 
   impl: (ctx) => `# /impl — implémentation de « ${ctx.title} »
 
-Lis \`${ART}/req.md\` et \`${ART}/specs.md\` (le relevé du dépôt t'évite de le relire). Implémente les spécifications S-n, avec un test par critère d'acceptation, NOMMÉ avec son id (\`AC-n\` dans le nom du test).
+${
+  ctx.direct
+    ? `Voie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné. Lis \`${ART}/specs.md\` (la demande et ses critères AC-n ; pas de req.md, ni relevé du dépôt ni spécifications S-n) et lis le dépôt juste assez pour situer le changement. Implémente ce que chaque critère demande, avec un test par critère, NOMMÉ avec son id (\`AC-n\` dans le nom du test).`
+    : `Lis \`${ART}/req.md\` et \`${ART}/specs.md\` (le relevé du dépôt t'évite de le relire). Implémente les spécifications S-n, avec un test par critère d'acceptation, NOMMÉ avec son id (\`AC-n\` dans le nom du test).`
+}
 - Aucun stub, aucun TODO, aucun « à faire plus tard » : ce qui est livré est complet.
-- Une spec ambiguë ou fausse ⇒ corrige \`${ART}/specs.md\` (et cite la S-n modifiée dans impl.md) plutôt que d'implémenter à côté.
+${
+  ctx.direct
+    ? "- Un critère ambigu ⇒ tranche par `decision` ; ne réécris pas les critères de `specs.md` : la revue juge sur ceux de la demande."
+    : `- Une spec ambiguë ou fausse ⇒ corrige \`${ART}/specs.md\` (et cite la S-n modifiée dans impl.md) plutôt que d'implémenter à côté.`
+}
 - \`set_modules\` dès que les chemins touchés sont connus, s'ils diffèrent de specs.md.
 - \`save_checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
 - Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.

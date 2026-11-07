@@ -489,6 +489,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `providers.<nom>` | — | `capacity` et `refillPerMinute` : le débit permis par fournisseur (ceux déclarés depuis les apps s'y ajoutent) |
 | `providersEnvFile`, `providersModelsFile` | `providers.env`, `providers.models.yml` à côté de `tokenFile` | les clés et le `models.yml` des fournisseurs déclarés depuis les apps |
 | `review.specsGate` | `"auto"` | la feature attend ta validation entre `/specs` et `/impl` : `true` toujours, `false` jamais, `"auto"` seulement si les specs découpent, laissent `## Modules` vide, touchent à l'irréversible, ou ouvrent un projet |
+| `lanes.direct` | `true` | la voie directe : une demande qui porte déjà sa section `## Critères d'acceptation` (au moins un `AC-n`) part à `/impl` sans `/req` ni `/specs` (§ « Une feature, pas à pas ») ; `false` : tout run passe par `/req` |
 | `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
 | `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
 | `review.autoMergeRisk` | `"medium"` | le risque le plus haut du verdict qui s'auto-merge encore (`"low"` pour serrer) |
@@ -549,6 +550,21 @@ fin. Une configuration invalide est refusée, l'ancienne reste en place.
 
 ## Une feature, pas à pas
 
+- **Deux voies, triées à la création.** Sans `req` fourni, le service lit la
+  demande, sans LLM : si elle porte une section `## Critères d'acceptation` avec au
+  moins une ligne qui commence par `AC-n` (le parseur de la revue), le run naît à
+  `/impl` (**voie directe**). Son `specs.md` est synthétisé — le titre, la demande
+  citée telle quelle, puis la section des critères — et gelé tel quel : la revue et
+  l'auto-merge comptent ces `AC-n`. Il n'y a ni `req.md`, ni relevé du dépôt, ni
+  spécifications `S-n` : les prompts de /impl et de /review le disent, et les modules
+  viennent de l'oracle comme pour tout run créé sans. Sinon, la **voie complète**
+  `/req` → `/specs` → `/impl` reste celle d'avant. La voie complète est aussi gardée
+  quand le client la demande (`lane: "full"`), quand `lanes.direct` est `false`, et
+  quand la porte des specs aurait arrêté le run : toujours (`review.specsGate: true`),
+  ou en `"auto"` si la demande touche à l'irréversible ou ouvre un projet. Les issues
+  GitHub (la section se lit dans la demande du run : le texte de l'issue, ou à défaut
+  un commentaire) et les features d'un projet ou d'un audit passent par le même tri.
+  `run_created` porte `lane` : `direct` ou `full`.
 - **Artefacts tracés.** /req écrit des besoins `B-n : verbe objet contraintes` et
   des critères `AC-n (B-m) : Given/When/Then` co-signés par leur besoin. /specs
   ajoute un relevé du dépôt (chemins, symboles, conventions avec leurs lignes, pour
@@ -1002,7 +1018,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
 | `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. |
 | `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). |
-| `run_start` `{repo, title, request, slug?, req?, modules?, priority?}` | operator | Lance un run libre sur un dépôt déclaré, sans GitHub : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
+| `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?}` | operator | Lance un run libre sur un dépôt déclaré, sans GitHub : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
 | `run_get` `{id}` | viewer | Le run (`run.state`, `run.step`, `run.verdict`, `run.rev`), ses étapes, escalades, tests, artefacts, coûts : le corps de `GET /v1/runs/{id}`. |
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
 | `run_cancel` `{id, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon) : `POST /v1/runs/{id}/cancel`. |
@@ -1067,7 +1083,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
 | `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
 | `GET /v1/repos` | viewer | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`). |
-| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). |
+| `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?, lane?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `req`, une demande qui porte `## Critères d'acceptation` part de /impl (voie directe, § « Une feature, pas à pas ») ; `lane: "full"` l'envoie quand même à /req, toute autre valeur est un 400. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). |
 | `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`), étapes, décisions, escalades (avec `recommended`, `options`, `context`, `rationale`, `impacts`), tests, artefacts. |
 | `GET /v1/runs/{id}/session?before=…&limit=…` | viewer | Le direct de la session du runner, écrit en base (rejouable, même après un redémarrage ; rétention de `events.retentionDays`) : une page d'entrées (`entries`, les 200 dernières par défaut, celles qui précèdent `before` sinon) et `more` s'il en reste de plus anciennes, `live` (le run est conduit en ce moment) et `cursor`, le curseur du journal d'où suivre la suite par `GET /v1/events?run={id}&live=1&after={cursor}`. |
 | `GET /v1/runs/{id}/session/{seq}` | viewer | Une entrée du direct et son détail, jamais poussé dans le flux : pour un outil, `view` (son rendu lisible, comme dans le terminal d'OMP : `{headline, blocks, agents}`, chaque bloc `{kind, role, title, format, text, fields, items, agents}` — `kind` parmi `text`, `fields`, `list`, `agents`, `format` parmi `markdown`, `code`, `diff`, `command`, `plain`, `role` un code que les apps traduisent ; voir `tool-view.ts`), `args` et `result` (le JSON brut de ses arguments et de son résultat, 32 000 et 64 000 caractères au plus) et `output` (sa sortie entière, 64 000 caractères au plus, début et fin gardés) — ceux qui s'écrivent s'il tourne encore ; pour un paragraphe plus long que son entrée, son texte entier dans `output`. Secrets masqués ; 404 si l'entrée est inconnue. `GET /v1/audits/{id}/session/{seq}` : la même chose pour l'analyse d'un audit. |
