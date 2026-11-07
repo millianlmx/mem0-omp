@@ -9,6 +9,7 @@
 // - `workstation.ts`  le poste de travail (extension Chrome, file d'actions, profil) et
 //   `workstation-agent.ts` son agent 24/24 ;
 // - `issues.ts`       les issues GitHub d'un dépôt déclaré, lancées en run ;
+// - `digest.ts`       le rapport du matin, posté chaque jour ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -27,6 +28,7 @@ import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
 import type { DecisionRow, RepoFilter, RunRow } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
+import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
 import { HumanLoop } from "./gestures.ts";
 import { newId } from "./ids.ts";
@@ -132,6 +134,8 @@ export class Orchestrator {
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
   readonly issues: IssueDesk;
+  /** Le rapport du matin, posté chaque jour à `notify.digestHour`. */
+  readonly digest: DigestSender;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -168,6 +172,12 @@ export class Orchestrator {
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.digest = new DigestSender({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      notifier: this.#ctx.notifier,
+      log: this.#ctx.log,
+    });
   }
 
   get store(): HarnessContext["store"] {
@@ -211,6 +221,7 @@ export class Orchestrator {
     void this.tick();
     // La relève des issues du label : la première peu après, pas pendant le démarrage.
     this.issues.start();
+    this.digest.start();
   }
 
   /** Verrouille le gitdir de chaque dépôt et calcule sa scope mémoire si elle n'est pas déclarée. */
@@ -265,6 +276,7 @@ export class Orchestrator {
   async stop(): Promise<void> {
     this.#stopping = true;
     if (this.#timer) clearInterval(this.#timer);
+    this.digest.stop();
     this.#stopMetrics?.();
     await this.issues.stop();
     await this.#ticking;

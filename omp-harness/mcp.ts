@@ -19,6 +19,7 @@ import type { FixOutcome, IssueDesk } from "./issues.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { escalationBatches } from "./queries.ts";
+import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -48,6 +49,8 @@ type Tool = {
   properties: Record<string, unknown>;
   required: string[];
   run: (call: McpCall, args: ToolArgs) => Promise<Record<string, unknown>>;
+  /** Le texte rendu à l'agent ; par défaut, le résultat en JSON. */
+  render?: (result: Record<string, unknown>) => string;
 };
 
 const REPO_PROPERTY = {
@@ -469,6 +472,29 @@ export const MCP_TOOLS: readonly Tool[] = [
       return escalationBatches(call.orchestrator.store, status, call.visible);
     },
   },
+  {
+    name: "digest",
+    title: "Le rapport du matin",
+    description:
+      "Ce que le système a fait seul depuis `since` (24 dernières heures par défaut) : `GET /v1/digest`, rendu en Markdown. Les runs mergés, les décisions prises seules à relire, les runs qui attendent l'humain (avec la raison), les échecs et le coût de la fenêtre.",
+    role: "viewer",
+    readOnly: true,
+    properties: {
+      since: {
+        type: "integer",
+        minimum: 0,
+        description: "Facultatif : le début de la fenêtre, en ms depuis l'epoch. Par défaut : il y a 24 heures.",
+      },
+    },
+    required: [],
+    run: async (call, args) => {
+      const now = Date.now();
+      const since = integer(args.since ?? undefined, "since") ?? now - DIGEST_WINDOW_MS;
+      if (since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      return digestOf(call.orchestrator.store, since, now, call.visible);
+    },
+    render: (result) => String(result.text),
+  },
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -485,7 +511,10 @@ async function callTool(call: McpCall, params: Record<string, unknown>): Promise
     if (!allows(call.client.role, tool.role))
       throw new HarnessError(403, `le rôle ${call.client.role} ne permet pas ${tool.name} (${tool.role} requis)`);
     const result = await tool.run(call, args as ToolArgs);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result };
+    return {
+      content: [{ type: "text", text: tool.render?.(result) ?? JSON.stringify(result, null, 2) }],
+      structuredContent: result,
+    };
   } catch (err) {
     if (!(err instanceof HarnessError)) throw err;
     return { content: [{ type: "text", text: err.message }], isError: true };
@@ -534,7 +563,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }
