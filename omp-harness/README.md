@@ -539,8 +539,9 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `workstation.approvalTtlHours` | `24` | une action en attente d'approbation au-delà passe `expired` — vaut refus, jamais approuvée ; une action restée en file aussi longtemps expire aussi |
 | `workstation.shiftEveryMin`, `workstation.shiftMaxActions` | `30`, `20` | le repos entre deux services de l'agent 24/24 (qui dure au plus ce repos, borné par `runner.stepTimeoutSec`), et les actions qu'un service dépose au plus, décisions comprises |
 | `workstation.profileEveryHours` | `6` | le profil est resynthétisé au plus toutes les 6 h, seulement s'il y a de nouvelles observations (le premier : 6 h après la première observation) ; `POST /v1/workstation/profile/rebuild` le demande tout de suite |
-| `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` lance (§ « Les issues GitHub (MCP) ») |
-| `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` lance au plus ; le reste attend l'appel suivant |
+| `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues GitHub (MCP) ») |
+| `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
+| `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -1049,6 +1050,15 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
   l'agent ; le label est le filtre de confiance (seul un collaborateur avec le droit
   de trier peut le poser), et le run passe par les mêmes portes que tout autre
   (specs, revue, tests, merge).
+- **La relève automatique.** Poser le label `omp:fix` (`issues.label`) sur une issue
+  suffit : toutes les `issues.pollSec` secondes (15 min ; la première relève 30 s au
+  plus après le démarrage), le service fait de lui-même un `issues_fix_labeled` sur
+  chaque dépôt déclaré qui a un distant (`repos[].remote`), mêmes règles : jamais une
+  issue déjà liée à un run, au plus `issues.maxLaunch` par dépôt et par relève. Un
+  dépôt dont la relève échoue (`gh` absent ou non connecté, distant qui n'est pas sur
+  GitHub, réseau) est journalisé au plus une fois par heure et n'arrête pas les autres ;
+  le journal dit « relève : N lancée(s) » quand des runs partent. `null` : à la demande
+  seulement.
 - **`rev`, la révision lue.** `run_cancel`, `run_priority`, `run_validate`, `run_retry`,
   `run_decisions_accept`, `run_decision_accept` et `run_answer_escalation` acceptent
   `rev` : la révision `run.rev` que `run_get` a rendue. Si le run a changé depuis, le

@@ -209,6 +209,8 @@ export class Orchestrator {
     this.#timer = setInterval(() => void this.tick(), this.#tickMs);
     this.#timer.unref?.();
     void this.tick();
+    // La relève des issues du label : la première peu après, pas pendant le démarrage.
+    this.issues.start();
   }
 
   /** Verrouille le gitdir de chaque dépôt et calcule sa scope mémoire si elle n'est pas déclarée. */
@@ -264,6 +266,7 @@ export class Orchestrator {
     this.#stopping = true;
     if (this.#timer) clearInterval(this.#timer);
     this.#stopMetrics?.();
+    await this.issues.stop();
     await this.#ticking;
     const lives = [...this.#live.values()];
     for (const live of lives) {
