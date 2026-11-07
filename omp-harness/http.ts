@@ -31,6 +31,7 @@ import type { ModelChains, ProviderInput } from "./providers.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { escalationBatches, projectsOf } from "./queries.ts";
 import { computeStats } from "./stats.ts";
+import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
 import { MAX_WAIT_SEC, parseActionInput } from "./workstation.ts";
@@ -64,6 +65,7 @@ export const API_FEATURES = [
   "push-activities",
   "workstation",
   "mcp",
+  "digest",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -566,6 +568,14 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
+    // Le rapport du matin : ce qui s'est fait seul depuis `since` (epoch ms ; défaut : 24 h).
+    route("GET", "/v1/digest", "viewer", (call) => {
+      const now = Date.now();
+      const raw = call.url.searchParams.get("since");
+      const since = raw === null ? now - DIGEST_WINDOW_MS : Number(raw);
+      if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      send(call.res, 200, digestOf(store, since, now, call.repos));
+    }),
     // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
     route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),
     route("PUT", "/v1/workstation/settings", "operator", async (call) => {

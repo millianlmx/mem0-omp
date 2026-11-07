@@ -78,7 +78,8 @@
       "budget_exceeded",
       "daily_budget_reached",
       "pilot"
-    ]
+    ],
+    "digestHour": 8
   },
   "memory": { "runnerMode": true },
   "repos": [

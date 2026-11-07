@@ -301,8 +301,11 @@ export type HarnessConfig = {
    * l'auteur corrige ou réfute chaque point. `steps` vide le coupe.
    */
   challenge: { steps: ChallengeStep[]; tier: Tier };
-  /** Les notifications sortantes (ntfy ou webhook) : `url` null = aucune ; `events` = les types envoyés. */
-  notify: { url: string | null; events: string[] };
+  /**
+   * Les notifications sortantes (ntfy ou webhook) : `url` null = aucune ; `events` = les types envoyés ;
+   * `digestHour` = l'heure locale (0-23) du rapport quotidien, `null` = pas de rapport.
+   */
+  notify: { url: string | null; events: string[]; digestHour: number | null };
   /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
   memory: { runnerMode: boolean };
   oracle: { url: string; token: string | null } | null;
@@ -460,7 +463,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       crossProvider: true,
     },
     challenge: { steps: [...CHALLENGE_STEPS], tier: "heavy" },
-    notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS] },
+    notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS], digestHour: 8 },
     memory: { runnerMode: true },
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
@@ -615,6 +618,9 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (config.notify.url !== null && typeof config.notify.url !== "string") fail("notify.url : URL ou null");
   if (!Array.isArray(config.notify.events) || config.notify.events.some((event) => typeof event !== "string"))
     fail("notify.events : liste de noms d'événements");
+  const { digestHour } = config.notify;
+  if (digestHour !== null && !(Number.isInteger(digestHour) && digestHour >= 0 && digestHour <= 23))
+    fail("notify.digestHour : heure entière 0-23, ou null");
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
   const { dreams } = config;
   if (dreams.checkMinutes !== null && !(typeof dreams.checkMinutes === "number" && dreams.checkMinutes > 0))

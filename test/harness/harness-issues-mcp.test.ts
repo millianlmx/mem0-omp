@@ -1194,7 +1194,7 @@ test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après
         }[];
       };
     };
-    const added = listed.result.tools.slice(9);
+    const added = listed.result.tools.slice(9, 17);
     assert.deepEqual(
       added.map((tool) => [
         tool.name,

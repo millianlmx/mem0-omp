@@ -15,6 +15,8 @@ export type Notification = {
   priority: 1 | 2 | 3 | 4 | 5;
   tags: string[];
   click: string | null;
+  /** Le corps est du Markdown (en-tête ntfy `Markdown: yes`) : le rapport du matin. */
+  markdown?: boolean;
 };
 
 /** Une heure : la cadence maximale des erreurs d'envoi journalisées. */
@@ -253,7 +255,13 @@ export class Notifier {
     if (url === null || event.ephemeral || event.type === "notify_failed" || !events.includes(event.type)) return;
     const run = event.runId ? this.#store.getRun(event.runId) : null;
     const notification = notificationFor(event, run);
-    if (notification === null) return;
+    if (notification !== null) this.post(notification);
+  }
+
+  /** Un message envoyé s'il y a une URL posée, sans attendre (le rapport du matin passe par là). */
+  post(notification: Notification): void {
+    const { url } = this.#config.notify;
+    if (url === null) return;
     const sending = this.send(url, notification).finally(() => this.#inFlight.delete(sending));
     this.#inFlight.add(sending);
   }
@@ -268,6 +276,7 @@ export class Notifier {
       };
       if (notification.tags.length > 0) headers.Tags = notification.tags.join(",");
       if (notification.click !== null) headers.Click = notification.click;
+      if (notification.markdown) headers.Markdown = "yes";
       const response = await fetch(url, {
         method: "POST",
         headers,
