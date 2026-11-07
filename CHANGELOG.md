@@ -2,10 +2,13 @@
 
 ## omp-harness 1.16.0 — 2026-11-07
 
+- feat(harness): rapport du matin (GET /v1/digest, outil MCP digest, envoi quotidien) (#332) (8ed8018)
 - feat(harness): relève automatique des issues du label omp:fix (#329) (1f0a43b)
 
 ## omp-harness 1.15.2 — 2026-11-07
 
+- feat(harness): voie directe vers /impl quand la demande porte ses critères d'acceptation (#331) (e424823)
+- feat(harness): commit squash conventionnel rédigé par la revue, jamais de commit vide (#330) (e8c4e66)
 - fix(harness): un `## Reste` de /impl est repris sur la même branche (#328) (18dd1e9)
 
 ## omp-harness 1.15.1 — 2026-11-06
