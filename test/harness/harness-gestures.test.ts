@@ -69,6 +69,7 @@ const MEDIUM_REVIEW = [
       files: ["src/api/export.ts"],
       unverified: [],
       confidence: "strong",
+      commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       criteria: [{ id: "AC-1", test: "export", status: "pass" }],
     },
   },

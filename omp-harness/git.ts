@@ -577,7 +577,8 @@ export class Git {
   /**
    * Merge squash de `branch` sur `main`, sans checkout : un commit de l'arbre de la
    * branche avec `main` pour parent, posé par `update-ref` en compare-and-swap. Un
-   * `main` qui a bougé entre-temps fait échouer le geste — jamais un écrasement.
+   * `main` qui a bougé entre-temps fait échouer le geste — jamais un écrasement. Un
+   * arbre identique à celui de `main` est refusé : jamais de commit vide.
    */
   async squashMerge(
     repo: string,
@@ -592,6 +593,8 @@ export class Git {
       throw new Error(`${branch} n'est pas rebasée sur ${main} (${expectedMain.slice(0, 12)}) : merge refusé`);
     }
     const tree = await this.run(repo, ["rev-parse", `${branch}^{tree}`]);
+    if (tree === (await this.run(repo, ["rev-parse", `${expectedMain}^{tree}`])))
+      throw new Error(`${branch} n'apporte rien à ${main} (arbre identique) : commit vide refusé`);
     const commit = await this.run(repo, ["commit-tree", tree, "-p", expectedMain, "-m", message]);
     await this.run(repo, ["update-ref", `refs/heads/${main}`, commit, expectedMain]);
     return commit;

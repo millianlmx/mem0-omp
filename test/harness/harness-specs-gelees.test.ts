@@ -124,6 +124,7 @@ test("harness-specs-gelees/AC-4 : /impl retire un critère de specs.md — la re
         unverified: [],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];

@@ -84,6 +84,7 @@ test("harness-pipeline/AC-2 : chaque étape a son runner, sauf req → specs et 
         unverified: [],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];
@@ -135,6 +136,7 @@ const HUMAN_REVIEW = [
       unverified: [],
       criteria: [{ id: "AC-1", test: "harness/AC-1", status: "pass" }],
       confidence: "strong",
+      commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
     },
   },
 ];
@@ -368,6 +370,7 @@ test("harness-pipeline/AC-5 : un verdict faible (un critère non vérifié) atte
         unverified: ["AC-1 : la perf sur 1M lignes n'a pas été vérifiée"],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "untested" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];
@@ -466,6 +469,7 @@ test("harness-pipeline/AC-7 : /review part d'un rebase sur main ; un main qui bo
         files: ["src/api/export.ts"],
         unverified: [],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];
@@ -793,6 +797,7 @@ test("harness-pipeline/AC-16 : chaque étape prend le modèle de son tier ; revi
         unverified: [],
         criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }],
         confidence: "strong",
+        commit: { subject: "feat(api): exporter les données en CSV", body: "Ajoute l'export CSV des données." },
       },
     },
   ];

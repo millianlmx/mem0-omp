@@ -116,7 +116,20 @@ test("harness-merger/AC-1 : en mode gh, le merge pose `gh pr merge --squash --au
     assert.equal(done?.state, "merged", done?.reason ?? "");
     assert.equal(done?.mergeSha, squash, "le sha de merge est celui que GitHub a posé");
     assert.equal(done?.prUrl, "https://github.com/x/y/pull/7");
-    assert.deepEqual(gh.calls[1], ["pr", "merge", "harness/gh-ok", "--squash", "--auto", "--delete-branch"]);
+    // La PR porte le résumé de la revue ; le commit squash (`--body`) non.
+    assert.deepEqual(gh.calls[0]?.slice(-4), ["-t", "Feature gh-ok", "-b", "## Revue\nok\n\nHarness-Run: r-gh-ok"]);
+    assert.deepEqual(gh.calls[1], [
+      "pr",
+      "merge",
+      "harness/gh-ok",
+      "--squash",
+      "--auto",
+      "--delete-branch",
+      "--subject",
+      "Feature gh-ok",
+      "--body",
+      "Harness-Run: r-gh-ok",
+    ]);
     assert.ok(views >= 3, "la fusion a été relue jusqu'à être constatée");
     assert.deepEqual(gh.calls[2]?.slice(0, 2), ["pr", "view"]);
     const memory = world.oracle.retained.find((m) => /Feature mergée/.test(m.text));
