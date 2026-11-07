@@ -36,6 +36,7 @@ export function newRunInput(body: Record<string, unknown>, client: Client): NewR
   const slug = text(body, "slug", false);
   const needs = text(body, "req", false);
   const priority = integer(body.priority, "priority");
+  if (body.lane !== undefined && body.lane !== "full") throw new HarnessError(400, 'lane : "full" ou absent');
   const repo = text(body, "repo");
   requireRepo(client, repo);
   return {
@@ -46,6 +47,7 @@ export function newRunInput(body: Record<string, unknown>, client: Client): NewR
     ...(needs ? { req: needs } : {}),
     ...(modules ? { modules } : {}),
     ...(priority !== undefined ? { priority } : {}),
+    ...(body.lane === "full" ? { lane: "full" as const } : {}),
   };
 }
 

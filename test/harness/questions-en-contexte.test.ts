@@ -85,6 +85,7 @@ test("questions-en-contexte/AC-3 : la politique de décision de chaque étape qu
       decisions: [],
       conflicts: [],
       specsDrift: [],
+      direct: false,
     };
     const policy = stepPrompt(ctx).split("## Politique de décision")[1]?.split("\n## ")[0] ?? "";
     assert.ok(policy.includes("`context`"), `${step} : la politique nomme \`context\``);

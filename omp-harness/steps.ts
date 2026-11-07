@@ -216,6 +216,24 @@ export function gateNeeded(run: Pick<RunRow, "projectId" | "projectOrder">, spec
   return gateReasons(run, specsMd).length > 0;
 }
 
+/**
+ * La voie directe, triée à la création sans LLM : une demande qui porte déjà sa section
+ * `## Critères d'acceptation`, avec au moins un `AC-n` en tête de ligne (le parseur de la
+ * revue), part à /impl sans /req ni /specs. Rend le specs.md synthétisé — le titre, la
+ * demande citée telle quelle (en citation : ses titres et ses ids n'y comptent pas), puis
+ * ses critères —, ou `null` si la demande n'en porte pas.
+ */
+export function directSpecs(title: string, request: string): string | null {
+  const criteria = sectionBody(request, /^crit[eè]res d'acceptation/i);
+  if (criteria === null || parseAcIds(criteria).length === 0) return null;
+  const quoted = request
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\n${criteria}\n`;
+}
+
 /** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
 export function failCauseOf(status: "aborted" | "error", error: PromptError | null): FailCause {
   if (status === "aborted") return "aborted";
@@ -357,6 +375,8 @@ export class StepExecutor {
         decisions: this.#decisionLines(run.id),
         conflicts: live.conflicts,
         specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
+        // Pas de req.md : le run est né en voie directe, specs.md ne porte que la demande et ses critères.
+        direct: store.getArtifact(run.id, "req.md") === null,
       });
       store.setInstructions(run.id, null);
       live.conflicts = [];

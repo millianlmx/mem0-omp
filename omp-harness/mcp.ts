@@ -229,6 +229,12 @@ export const MCP_TOOLS: readonly Tool[] = [
         maximum: 1000,
         description: "Facultatif : plus grand = admis avant les autres.",
       },
+      lane: {
+        type: "string",
+        enum: ["full"],
+        description:
+          "Facultatif : `full` force la voie complète (/req puis /specs) même si la demande porte sa section `## Critères d'acceptation`.",
+      },
     },
     required: ["repo", "title", "request"],
     run: async (call, args) => ({
