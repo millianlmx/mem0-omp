@@ -26,7 +26,7 @@ function stateOf(world: FakeWorld, runId: string): string {
   return `${run?.state}/${run?.step} — ${run?.reason}`;
 }
 
-test("voie-directe-avec-criteres/AC-1 : une demande avec `## Critères d'acceptation` et `- AC-1 : …` naît à /impl, specs.md et les specs gelées portent AC-1, run_created dit lane direct ; la revue juge sur AC-1 et le run s'auto-merge sans /req ni /specs", async () => {
+test("voie-directe-avec-criteres/AC-1 : une demande qui porte sa section `## Critères d'acceptation` naît à /impl, specs.md et les specs gelées portent son critère, run_created dit lane direct ; la revue juge sur ce critère et le run s'auto-merge sans /req ni /specs", async () => {
   const world = fakeWorld({ impl: [OK.impl], review: [OK.review] });
   const run = world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: WITH_CRITERIA });
   assert.equal(run.step, "impl");
