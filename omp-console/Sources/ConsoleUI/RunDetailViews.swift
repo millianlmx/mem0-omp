@@ -132,13 +132,13 @@ public struct RunPendingCard: View {
     /// La feature attend quelque chose de l'humain.
     public static func isPending(_ run: HarnessRun, in inbox: HarnessInbox?) -> Bool {
         guard let inbox else { return false }
-        return inbox.batches.contains { $0.id == run.id } || inbox.awaiting.contains { $0.id == run.id }
+        return inbox.openBatches.contains { $0.id == run.id } || inbox.awaiting.contains { $0.id == run.id }
             || inbox.decisions.contains { $0.runId == run.id }
     }
 
     public var body: some View {
         if let inbox = server.inbox {
-            if let batch = inbox.batches.first(where: { $0.id == run.id }) {
+            if let batch = inbox.openBatches.first(where: { $0.id == run.id }) {
                 EscalationBatchCard(server: server, drafts: drafts, inbox: inbox, batch: batch, showsOpen: false)
                     .disabled(!server.canAct)
             }

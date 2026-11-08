@@ -3,12 +3,15 @@ import ConsoleCore
 import SwiftUI
 
 /// La feuille « Serveur de pipelines » : relier le serveur du VPS (omp-harness),
-/// joint directement (Tailscale) sans passer par le Mac, par son adresse et son
-/// jeton d'accès, ou l'oublier ; un admin y déclare aussi les fournisseurs LLM et
-/// les modèles (`IOSProvidersScreen`). Les écrans de pilotage l'ouvrent depuis leur barre.
+/// joint directement (Tailscale) sans passer par le Mac, par un code d'appairage ou
+/// son adresse et son jeton d'accès, ou l'oublier ; un admin y déclare aussi les
+/// fournisseurs LLM et les modèles (`IOSProvidersScreen`). Ouverte par la rangée
+/// Serveur du hub Système, et par « Relier le serveur… » d'un écran non relié.
 ///
-/// Le modèle et les brouillons sont ceux de l'app, les mots du noyau
-/// (`PipelineServerText`) : aucun libellé en dur ici (`design-ios/AC-5`).
+/// « Relier » vit dans la barre de la feuille (jamais sous le clavier) et ↩ relie aussi ;
+/// l'échec s'affiche EN TÊTE de la feuille, la réussite la referme. Le modèle et les
+/// brouillons sont ceux de l'app, les mots du noyau (`PipelineServerText`) : aucun
+/// libellé en dur ici (`design-ios/AC-5`).
 struct IOSServerSheet: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -17,6 +20,16 @@ struct IOSServerSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let failure = server.failure {
+                    Section {
+                        Text(failure.message)
+                            .font(.callout)
+                            .iosBanner(tone: .attention)
+                            .accessibilityIdentifier("ios.server.failure")
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
                 if server.isConfigured {
                     Section {
                         Label(
@@ -39,52 +52,48 @@ struct IOSServerSheet: View {
                     }
                 } else {
                     Section {
-                        Text(PipelineServerText.setupExplanation)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Text(PipelineServerText.approverExplanation)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
                         TextField(PipelineServerText.addressLabel, text: $drafts.address, prompt: Text(PipelineServerText.addressPrompt))
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .submitLabel(.go)
+                            .onSubmit(connect)
                             .accessibilityIdentifier("ios.server.address")
                         SecureField(PipelineServerText.tokenLabel, text: $drafts.token)
+                            .submitLabel(.go)
+                            .onSubmit(connect)
                             .accessibilityIdentifier("ios.server.secret")
                     } header: {
                         Text(PipelineServerText.setupTitle)
-                    }
-                    Section {
-                        Button(PipelineServerText.save) {
-                            Task {
-                                if await server.configure(address: drafts.address, token: drafts.token) {
-                                    drafts.token = ""
-                                    server.startLive()
-                                    dismiss()
-                                }
-                            }
+                    } footer: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(PipelineServerText.setupExplanation)
+                            Text(PipelineServerText.approverExplanation)
                         }
-                        .disabled(server.isLoading || drafts.address.isEmpty || (drafts.token.isEmpty && HarnessPairing.decode(drafts.address) == nil))
-                        .accessibilityIdentifier("ios.server.save")
                     }
-                }
-                if let failure = server.failure {
-                    Section {
-                        Text(failure.message)
-                            .font(.callout)
-                            .iosBanner(tone: .attention)
-                    }
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
                 }
             }
             .formStyle(.grouped)
             .navigationTitle(PipelineServerText.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(PipelineServerText.close) { dismiss() }
+                if server.isConfigured {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(PipelineServerText.close) { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(PipelineServerText.close) { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        if server.isLoading {
+                            ProgressView()
+                        } else {
+                            Button(PipelineServerText.save, action: connect)
+                                .disabled(!canConnect)
+                                .accessibilityIdentifier("ios.server.save")
+                        }
+                    }
                 }
             }
         }
@@ -98,5 +107,23 @@ struct IOSServerSheet: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.server.sheet")
+    }
+
+    /// Une adresse, et un jeton sauf si l'adresse est un code d'appairage (il le porte).
+    private var canConnect: Bool {
+        !server.isLoading && !drafts.address.isEmpty && (!drafts.token.isEmpty || HarnessPairing.decode(drafts.address) != nil)
+    }
+
+    /// Relie le serveur : la feuille se referme quand il répond, sinon son échec
+    /// s'affiche en tête.
+    private func connect() {
+        guard canConnect else { return }
+        Task {
+            if await server.configure(address: drafts.address, token: drafts.token) {
+                drafts.token = ""
+                server.startLive()
+                dismiss()
+            }
+        }
     }
 }

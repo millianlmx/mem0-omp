@@ -3,42 +3,11 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-// Le monitoring dans les écrans de pilotage iOS : les alertes de la veille du serveur
-// en tête de l'Accueil (chacune ouvre le direct de sa feature), et dans Statistiques
-// la consommation des agents, la comparaison des modèles, les tests instables et la
-// santé du serveur, relue toutes les `sampleSec` secondes tant que l'écran est
-// affiché. Les mots viennent du noyau (`MonitoringText`) : aucun libellé en dur ici.
-
-/// Les alertes en cours, en tête de l'Accueil.
-struct IOSAlertsSection: View {
-    @ObservedObject var drafts: HarnessDrafts
-    let inbox: HarnessInbox
-
-    var body: some View {
-        if !inbox.alerts.isEmpty {
-            Section {
-                ForEach(inbox.alerts) { alert in
-                    Button {
-                        if let run = inbox.run(alert.runId) { drafts.sessionRequest = HarnessSessionRequest(run: run) }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(alert.line, systemImage: alert.symbol)
-                                .foregroundStyle(.orange)
-                            Text(inbox.run(alert.runId)?.title ?? alert.runId)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .accessibilityIdentifier("ios.home.alert")
-                }
-            } header: {
-                Text(MonitoringText.alertsTitle)
-            } footer: {
-                Text(MonitoringText.alertsHint)
-            }
-        }
-    }
-}
+// Le monitoring de la page Statistiques et santé (hub Système) : la consommation des
+// agents, la comparaison des modèles, les tests instables et la santé du serveur,
+// relue toutes les `sampleSec` secondes tant que l'écran est affiché. Les alertes
+// d'une feature vivent dans « À traiter » et sur sa page. Les mots viennent du noyau
+// (`MonitoringText`) : aucun libellé en dur ici.
 
 /// La consommation des agents : depuis le début, sur 7 jours, et jour par jour.
 struct IOSUsageSection: View {

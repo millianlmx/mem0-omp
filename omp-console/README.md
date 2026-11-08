@@ -1,25 +1,29 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : **une seule fenêtre**, une barre latérale à treize sections en trois
-groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Audit**,
-**Statistiques**, **Poste**), **Consultation** (**Terminal**, **Fichiers**,
-**Mémoire**) et **Exploitation** (**Vigie**, **Planifications**, **Issues**,
-**Administration**, cette dernière pour un jeton admin seulement), raccourcis
-⌘1…⌘9 puis ⌘0 pour la Vigie — et un panneau de détail. Rien n'ouvre de fenêtre annexe :
-l'app est utilisable entièrement en plein écran. Les fenêtres ne se regroupent pas
-en onglets : Présentation et Fenêtre n'ont aucune entrée d'onglet, et aucun menu
-ne montre de séparateur en tête, en fin ou en double.
+contrôle : **une seule fenêtre**, une barre latérale à **sept sections** en trois
+groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 
-Les six sections de **Pilotage** lisent et lancent le travail sur le **serveur de
+| Groupe | Section | Ce qu'elle montre |
+|---|---|---|
+| Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
+| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
+| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
+| Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
+| Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
+
+Créer passe toujours par une **feuille** (« + », ⌘N) : jamais un formulaire en tête
+d'écran. Rien n'ouvre de fenêtre annexe : l'app est utilisable entièrement en plein
+écran. Les fenêtres ne se regroupent pas en onglets : Présentation et Fenêtre n'ont
+aucune entrée d'onglet, et aucun menu ne montre de séparateur en tête, en fin ou en
+double.
+
+Le Travail et le Système lisent et lancent le travail sur le **serveur de
 pipelines du VPS** (`omp-harness`, le seul moteur de pipelines, voir « Serveur de
-pipelines ») : l'app n'exécute aucune pipeline elle-même. **Poste** y montre le
-poste de travail (extension Chrome et agent 24/24, voir « Poste de travail »).
-Les trois sections de
-**Consultation** restent locales au Mac : **Terminal** le terminal intégré (voir
-« Section Terminal »), **Fichiers** la visionneuse de fichiers et de diffs (voir
-« Lire les fichiers et les diffs d'une cible ») et **Mémoire** la mémoire du
-projet (voir « Consulter et corriger la mémoire du projet »). Liquid Glass est
+pipelines ») : l'app n'exécute aucune pipeline elle-même. Les Outils restent
+locaux : **Terminal** (voir « Section Terminal »), **Fichiers** (voir « Lire les
+fichiers et les diffs d'une cible ») et **Mémoire** (voir « Consulter et corriger
+la mémoire du projet »). Liquid Glass est
 réservé à la couche fonctionnelle que le système dessine (barre latérale, barres
 d'outils, feuilles) ; le contenu emploie des surfaces opaques et les boutons
 standard `.bordered`/`.borderedProminent` (HIG Materials : « Don't use Liquid

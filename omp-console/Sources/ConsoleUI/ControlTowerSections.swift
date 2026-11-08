@@ -215,6 +215,7 @@ public struct VigieSections: View {
 
 struct VigieIncidentRow: View {
     @ObservedObject var drafts: HarnessDrafts
+    @Environment(\.consoleShell) private var shell
     let incident: VigieIncident
 
     var body: some View {
@@ -251,7 +252,7 @@ struct VigieIncidentRow: View {
                 }
                 if let runId = incident.fixRunId ?? incident.runId {
                     Button(incident.fixRunId != nil ? ControlText.fixRun : ControlText.incidentRun) {
-                        drafts.sessionRequest = HarnessSessionRequest(target: .run(runId), title: incident.fixRunId != nil ? ControlText.fixRun : ControlText.incidentRun)
+                        ConsoleNavigation.openRun(runId, drafts: drafts, select: shell.select)
                     }
                     .buttonStyle(.bordered)
                     .consoleID("vigie.incident.run")
@@ -772,6 +773,7 @@ struct IssueRow: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var issues: HarnessIssues
     @ObservedObject var drafts: HarnessDrafts
+    @Environment(\.consoleShell) private var shell
     let issue: HarnessIssue
 
     var body: some View {
@@ -789,8 +791,8 @@ struct IssueRow: View {
             }
             if let run = issue.run {
                 ConsoleStatusChip(status: ConsoleStatus(text: PipelineServerText.state(run.state), tone: Self.tone(run.phase)))
-                Button(ControlText.openSession) {
-                    drafts.sessionRequest = HarnessSessionRequest(target: .run(run.id), title: issue.title)
+                Button(ShellText.openRun, systemImage: ShellText.openRunSymbol) {
+                    ConsoleNavigation.openRun(run.id, drafts: drafts, select: shell.select)
                 }
                 .buttonStyle(.bordered)
                 .consoleID("issues.session")

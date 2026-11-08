@@ -1,8 +1,9 @@
 // Le vocabulaire de la section « Poste » (le poste de travail : l'extension Chrome
 // qui observe et agit dans le navigateur, l'agent 24/24 du serveur), partagé par la
-// coque Mac et l'app iOS : état de l'extension, autonomie, envois à approuver, profil
-// établi, journal des décisions et réunions. Les mots qui existent ailleurs
-// (Refuser, Raison, Annuler, Envoyer) se reprennent de `PipelineServerText`.
+// coque Mac et l'app iOS : état de l'extension, autonomie, envois à approuver, pages
+// poussées (réglages, profil, journal…), journal des décisions et réunions. Les mots
+// qui existent ailleurs (Refuser, Raison, Annuler, Envoyer) se reprennent de
+// `PipelineServerText`.
 //
 // Les codes du serveur (sorte d'action, état, origine, autonomie) se traduisent ici,
 // une seule fois pour les deux apps ; un code inconnu de cette version se rend tel quel.
@@ -22,6 +23,22 @@ public enum WorkstationText {
     public static let observedTitle = L10n.text("Observation")
     public static let observedHint = L10n.text("En mode Auto, l’agent 24/24 commence à agir une fois le seuil atteint.")
     public static let absent = L10n.text("Ce serveur ne connaît pas encore le poste de travail : mettez omp-harness à jour.")
+
+    // MARK: - Page principale et pages poussées
+
+    public static let askTitle = L10n.text("Demander au poste")
+    public static let settingsTitle = L10n.text("Réglages")
+    public static let settingsSymbol = "slider.horizontal.3"
+    public static let commandSymbol = "safari"
+    public static let profileSymbol = "person.text.rectangle"
+    public static let meetingsSymbol = "person.2.wave.2"
+    public static let journalSymbol = "list.bullet.rectangle"
+    public static let requestsSymbol = "text.bubble"
+    public static let allJournal = L10n.text("Tout le journal")
+    public static let allRequests = L10n.text("Toutes les demandes")
+    /// L'état du poste mis en pause depuis une app (pas un arrêt d'urgence).
+    public static let paused = L10n.text("En pause")
+    public static let resumeSymbol = "play.circle.fill"
 
     /// « Dernier contact il y a 2 minutes ».
     public static func lastSeen(_ relative: String) -> String { L10n.format("Dernier contact %@", relative) }
@@ -102,7 +119,6 @@ public enum WorkstationText {
 
     public static let approvalsTitle = L10n.text("Envois à approuver")
     public static let approvalsHint = L10n.text("L’agent attend votre accord avant d’envoyer ces messages. Sans réponse, l’envoi expire et vaut refus.")
-    public static let noApproval = L10n.text("Aucun envoi n’attend votre accord.")
     public static let approve = L10n.text("Approuver l’envoi")
     public static let refuseTitle = L10n.text("Refuser l’envoi")
     public static let refuseHint = L10n.text("La raison, facultative, est gardée au journal des décisions.")

@@ -4,12 +4,13 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-// La feuille « Session en direct » d'une feature (ou « Analyse en direct » d'un audit),
-// sur iPhone et iPad : ce que l'agent du serveur écrit, son raisonnement et chaque
-// outil qu'il lance, avec son résultat, en temps réel — et, pour une feature, les
-// fichiers qu'elle touche (leurs différences en un toucher), la sortie de ses tests
-// et sa frise, dans des onglets. Ouverte depuis le menu contextuel d'une feature
-// (`RunRow`, cible ConsoleUI) ou d'un audit.
+// Le DIRECT d'un agent du serveur, sur iPhone et iPad : ce qu'il écrit, son
+// raisonnement et chaque outil qu'il lance, avec son résultat, en temps réel — et,
+// pour une feature, les fichiers qu'elle touche (leurs différences en un toucher), la
+// sortie de ses tests et sa frise. Le contenu (`IOSSessionSections`) se pose dans une
+// `List` : la page d'une feature (`IOSRunScreen`) le montre sous ses onglets, et la
+// feuille « Session en direct » (`IOSSessionSheet`) le montre pour l'analyse d'un
+// audit ou un job du poste.
 //
 // Chaque outil montre sa commande (son appel), même quand l'agent a donné son
 // intention, et un appel de sous-agents montre chacun d'eux en une ligne, en direct.
@@ -17,130 +18,47 @@ import SwiftUI
 // qu'il tourne, et son JSON brut replié dessous. Un paragraphe trop long pour le
 // direct s'ouvre en entier.
 //
-// Le modèle suit un direct à la fois (`HarnessModel.followSession`) : la feuille
-// l'ouvre à son apparition et l'arrête à sa fermeture. Une session finie se rejoue
-// page par page. « Suivre la fin » garde la dernière entrée à l'écran, d'un saut sous
-// « Réduire les animations » (`IOSMotion`). Le texte se sélectionne partout dans la
-// feuille (une seule pose, sur sa pile de navigation). Les mots viennent du noyau
+// Le modèle suit un direct à la fois (`HarnessModel.followSession`) : la page ou la
+// feuille l'ouvre à son apparition et l'arrête à sa disparition. Une session finie se
+// rejoue page par page. « Suivre la fin » garde la dernière entrée à l'écran, d'un
+// saut sous « Réduire les animations » (`IOSMotion`). Les mots viennent du noyau
 // (`PipelineServerText`, `MonitoringText`) : aucun libellé en dur ici (`design-ios/AC-5`).
 
-/// Les onglets de la feuille.
-enum IOSSessionTab: Hashable, CaseIterable {
+/// Ce que montre le contenu d'un direct : l'agent en direct, puis, pour une feature,
+/// ses fichiers, ses tests et sa frise.
+enum IOSSessionTab: Hashable {
     case live, changes, tests, timeline
-
-    var title: String {
-        switch self {
-        case .live: MonitoringText.tabLive
-        case .changes: MonitoringText.tabFiles
-        case .tests: MonitoringText.tabTests
-        case .timeline: MonitoringText.tabTimeline
-        }
-    }
 }
 
-/// Un fichier dont on lit les différences (destination de navigation).
-struct IOSDiffTarget: Hashable {
-    let runId: String
-    let path: String
-}
-
-/// Une entrée du direct dont on lit le détail (destination de navigation).
-struct IOSSessionEntryTarget: Hashable {
-    let seq: Int
-}
-
-struct IOSSessionSheet: View {
+/// Le contenu d'un direct, posé dans une `List` : son état, puis l'onglet montré. Les
+/// détails (différences d'un fichier, entrée entière) se poussent dans la pile de
+/// navigation qui l'entoure.
+struct IOSSessionSections: View {
     @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    let request: HarnessSessionRequest
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var followsEnd = true
-    @State private var tab: IOSSessionTab = .live
+    let target: HarnessSessionTarget
+    let tab: IOSSessionTab
+    @Binding var followsEnd: Bool
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                List {
-                    if request.runId != nil {
-                        Picker(PipelineServerText.sessionTitle, selection: $tab) {
-                            ForEach(IOSSessionTab.allCases, id: \.self) { tab in
-                                Text(tab.title).tag(tab)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .iosBareListRow()
-                        .accessibilityIdentifier("ios.session.tabs")
-                    }
-                    statusSection
-                    // La consigne à l'agent d'une feature vivante, sous l'état du direct.
-                    if let runId = request.runId, server.inbox?.runs.contains(where: { $0.id == runId && $0.acceptsInstructions }) == true {
-                        Section {
-                            RunInstructionsComposer(server: server, drafts: drafts, runId: runId)
-                        } header: {
-                            Text(ControlText.instructionsTitle)
-                        }
-                    }
-                    switch tab {
-                    case .live:
-                        liveSections
-                    case .changes:
-                        if let runId = request.runId { IOSChangesSections(server: server, runId: runId, refreshKey: toolsDone) }
-                    case .tests:
-                        IOSTestsSections(jobs: feed?.tests ?? [])
-                    case .timeline:
-                        if let runId = request.runId { IOSTimelineSections(server: server, runId: runId, refreshKey: feed?.entries.count ?? 0) }
-                    }
-                }
-                .iosGroupedList()
-                .onChange(of: entries.last) { _, last in
-                    scroll(proxy, to: last)
-                }
-                .onChange(of: followsEnd) { _, _ in
-                    scroll(proxy, to: entries.last)
-                }
-            }
-            .navigationTitle(request.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: IOSDiffTarget.self) { target in
-                IOSDiffScreen(server: server, target: target)
-            }
-            .navigationDestination(for: IOSSessionEntryTarget.self) { target in
-                IOSSessionDetailScreen(server: server, target: request.target, seq: target.seq)
-            }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    // Forme 44 pt, comme la fiche d'un souvenir : le bouton de barre par défaut n'a que 36 pt.
-                    Button {
-                        dismiss()
-                    } label: {
-                        Text(PipelineServerText.close)
-                            .padding(.horizontal, 8)
-                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("ios.session.close")
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Toggle(isOn: $followsEnd) {
-                        Label(PipelineServerText.sessionFollowEnd, systemImage: PipelineServerText.sessionFollowEndSymbol)
-                    }
-                    .toggleStyle(.button)
-                    .accessibilityIdentifier("ios.session.followEnd")
-                }
-            }
+        statusSection
+        switch tab {
+        case .live:
+            liveSections
+        case .changes:
+            if let runId { IOSChangesSections(server: server, runId: runId, refreshKey: toolsDone) }
+        case .tests:
+            IOSTestsSections(jobs: feed?.tests ?? [])
+        case .timeline:
+            if let runId { IOSTimelineSections(server: server, runId: runId, refreshKey: feed?.entries.count ?? 0) }
         }
-        // Une pose pour toute la feuille : le texte de l'agent, ses commandes, leurs résultats et les différences se copient.
-        .textSelection(.enabled)
-        .iosPageSheet()
-        .onAppear { server.followSession(request.target) }
-        .onDisappear { server.stopSession() }
+    }
+
+    private var runId: String? {
+        if case let .run(id) = target { id } else { nil }
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.target == request.target ? server.session : nil
+        server.session?.target == target ? server.session : nil
     }
 
     private var entries: [HarnessSessionEntry] { feed?.entries ?? [] }
@@ -179,7 +97,9 @@ struct IOSSessionSheet: View {
                 ForEach(group) { entry in
                     Group {
                         if entry.canOpenDetails {
-                            NavigationLink(value: IOSSessionEntryTarget(seq: entry.seq)) {
+                            NavigationLink {
+                                IOSSessionDetailScreen(server: server, target: target, seq: entry.seq)
+                            } label: {
                                 IOSSessionEntryRow(entry: entry, opens: true)
                             }
                         } else {
@@ -197,8 +117,8 @@ struct IOSSessionSheet: View {
     }
 
     /// L'état du direct, en tête : l'agent au travail (et son outil du moment, ou le job
-    /// de tests en cours), ou au repos ; les alertes de la feature ; l'échec qui a arrêté
-    /// le direct, ou la reconnexion en cours.
+    /// de tests en cours), ou au repos ; l'échec qui a arrêté le direct, ou la
+    /// reconnexion en cours.
     @ViewBuilder
     private var statusSection: some View {
         Section {
@@ -221,16 +141,6 @@ struct IOSSessionSheet: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                if let runId = request.runId {
-                    ForEach(server.inbox?.alerts(of: runId) ?? []) { alert in
-                        Label(alert.line, systemImage: alert.symbol)
-                            .font(.footnote)
-                            .iosBanner(tone: .attention)
-                    }
-                    if let cost = server.inbox?.costs[runId] {
-                        LabeledContent(MonitoringText.costLabel, value: MonitoringText.cost(cost))
-                    }
-                }
                 if !server.isSessionLive {
                     Text(PipelineServerText.sessionReconnecting)
                         .font(.footnote)
@@ -249,12 +159,98 @@ struct IOSSessionSheet: View {
             }
         }
     }
+}
 
-    private func scroll(_ proxy: ScrollViewProxy, to last: HarnessSessionEntry?) {
-        guard followsEnd, tab == .live, let last else { return }
+extension View {
+    /// « Suivre la fin » : la liste qui montre le direct de `target` garde sa dernière
+    /// entrée à l'écran tant que `followsEnd` est vrai et que le direct est montré.
+    func iosFollowsSessionEnd(server: HarnessModel, target: HarnessSessionTarget, shown: Bool, followsEnd: Bool, proxy: ScrollViewProxy) -> some View {
+        modifier(IOSSessionEndFollower(server: server, target: target, shown: shown, followsEnd: followsEnd, proxy: proxy))
+    }
+}
+
+private struct IOSSessionEndFollower: ViewModifier {
+    @ObservedObject var server: HarnessModel
+    let target: HarnessSessionTarget
+    let shown: Bool
+    let followsEnd: Bool
+    let proxy: ScrollViewProxy
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: last) { _, last in scroll(to: last) }
+            .onChange(of: followsEnd) { _, _ in scroll(to: last) }
+    }
+
+    private var last: HarnessSessionEntry? {
+        server.session?.target == target ? server.session?.entries.last : nil
+    }
+
+    private func scroll(to last: HarnessSessionEntry?) {
+        guard followsEnd, shown, let last else { return }
         withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion)) {
             proxy.scrollTo(last.seq, anchor: .bottom)
         }
+    }
+}
+
+/// Le bouton de barre « Suivre la fin » d'un direct.
+struct IOSFollowEndToggle: View {
+    @Binding var followsEnd: Bool
+
+    var body: some View {
+        Toggle(isOn: $followsEnd) {
+            Label(PipelineServerText.sessionFollowEnd, systemImage: PipelineServerText.sessionFollowEndSymbol)
+        }
+        .toggleStyle(.button)
+        .accessibilityIdentifier("ios.session.followEnd")
+    }
+}
+
+/// La feuille « Session en direct » : l'analyse d'un audit ou un job du poste
+/// (`drafts.sessionRequest`). Une feature, elle, s'ouvre en page (`IOSRunScreen`).
+struct IOSSessionSheet: View {
+    @ObservedObject var server: HarnessModel
+    let request: HarnessSessionRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var followsEnd = true
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                List {
+                    IOSSessionSections(server: server, target: request.target, tab: .live, followsEnd: $followsEnd)
+                }
+                .iosGroupedList()
+                .iosFollowsSessionEnd(server: server, target: request.target, shown: true, followsEnd: followsEnd, proxy: proxy)
+            }
+            .navigationTitle(request.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    // Forme 44 pt, comme la fiche d'un souvenir : le bouton de barre par défaut n'a que 36 pt.
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text(PipelineServerText.close)
+                            .padding(.horizontal, 8)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("ios.session.close")
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    IOSFollowEndToggle(followsEnd: $followsEnd)
+                }
+            }
+        }
+        // Une pose pour toute la feuille : le texte de l'agent, ses commandes et leurs résultats se copient.
+        .textSelection(.enabled)
+        .iosPageSheet()
+        .onAppear { server.followSession(request.target) }
+        .onDisappear { server.stopSession() }
     }
 }
 
@@ -529,7 +525,9 @@ struct IOSChangesSections: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(changes.touched) { file in
-                    NavigationLink(value: IOSDiffTarget(runId: runId, path: file.path)) {
+                    NavigationLink {
+                        IOSDiffScreen(server: server, runId: runId, path: file.path)
+                    } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.path)
                                 .font(.footnote.monospaced())
@@ -566,7 +564,8 @@ struct IOSChangesSections: View {
 /// Les différences d'un fichier, ligne à ligne : ajouts en vert, retraits en rouge.
 struct IOSDiffScreen: View {
     @ObservedObject var server: HarnessModel
-    let target: IOSDiffTarget
+    let runId: String
+    let path: String
     @State private var diff: HarnessFileDiff?
     @State private var loaded = false
 
@@ -599,10 +598,10 @@ struct IOSDiffScreen: View {
                 ProgressView()
             }
         }
-        .navigationTitle(target.path)
+        .navigationTitle(path)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            diff = await server.fileDiff(runId: target.runId, path: target.path)
+            diff = await server.fileDiff(runId: runId, path: path)
             loaded = true
         }
     }

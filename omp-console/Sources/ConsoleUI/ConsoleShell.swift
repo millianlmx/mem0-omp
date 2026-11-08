@@ -161,7 +161,7 @@ public enum ConsolePlatform {
 }
 
 extension ConsoleTone {
-    /// La teinte qui double le mot d'un état (celle de `StatusBadge` et `IOSStatusChip`).
+    /// La teinte qui double le mot d'un état (celle de `ConsoleStatusChip` et `IOSStatusChip`).
     public var consoleTint: Color {
         switch self {
         case .neutral: .gray

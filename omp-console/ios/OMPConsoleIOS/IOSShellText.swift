@@ -1,7 +1,7 @@
-// Le vocabulaire de la coque iOS : la barre latérale de l'iPad, l'onglet « Plus »
-// de l'iPhone, le libellé d'accessibilité d'un onglet et les symboles des écrans
-// du serveur de pipelines. Les mots des écrans du serveur vivent dans le noyau
-// partagé (`PipelineServerText`), communs au Mac.
+// Le vocabulaire de la coque iOS : la barre latérale de l'iPad, le libellé
+// d'accessibilité d'un onglet et les symboles des écrans du serveur de pipelines. Les
+// mots des écrans du serveur vivent dans le noyau partagé (`PipelineServerText`,
+// `ShellText`), communs au Mac.
 //
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`) : typographie française et
 // glossaire `GLOSSAIRE.md` ; la garde `design-ios/AC-5` n'autorise un littéral
@@ -14,14 +14,12 @@ enum IOSShellText {
     /// (`tabViewSidebarHeader`), invisible sur iPhone.
     static let rootTitle = "OMP Console"
 
-    /// Le libellé du dernier onglet de l'iPhone et le titre de navigation de sa
-    /// liste, qui pousse les sections rangées sous « Plus ».
-    static let plusTitle = L10n.text("Plus")
-    /// Le symbole SF de l'onglet « Plus ».
-    static let plusSymbol = "ellipsis"
-
     /// Le mot qui suit le nombre d'un badge visible dans le libellé d'un onglet.
     static let rowPending = L10n.text("en attente")
+
+    /// Le résumé de la rangée Mémoire du hub Système (iPhone, où la Mémoire n'a pas
+    /// d'onglet).
+    static let memorySummary = L10n.text("Les souvenirs des agents, en liste, en graphe ou par recherche.")
 
     /// Le libellé d'accessibilité d'un onglet de section : le titre, suivi du badge
     /// QUAND il est visible (`badge > 0`).
@@ -36,8 +34,4 @@ enum IOSShellText {
 
     static let serverSymbol = "server.rack"
     static let addSymbol = "plus"
-    static let pickedSymbol = "checkmark.circle.fill"
-    static let unpickedSymbol = "circle"
-    /// « Faiblesse · motif »
-    static func proposalDetail(kind: String, rationale: String) -> String { "\(kind) · \(rationale)" }
 }

@@ -1,4 +1,4 @@
-// État de la coque : la section courante — l'Accueil à l'ouverture.
+// État de la coque : la section courante — « À traiter » à l'ouverture.
 //
 // L'état vit dans une classe `ObservableObject` parce que `@State` est INTERDIT
 // sous les Command Line Tools : c'est une macro SwiftUI que le toolchain CLT ne
@@ -12,8 +12,9 @@
 import Combine
 import ConsoleCore
 
+@MainActor
 final class ConsoleModel: ObservableObject {
-    @Published private(set) var selection: ConsoleSection = .home
+    @Published private(set) var selection: ConsoleSection = .inbox
 
     func select(_ section: ConsoleSection) {
         selection = section

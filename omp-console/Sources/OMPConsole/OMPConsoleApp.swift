@@ -1,13 +1,13 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// UNE scène : la fenêtre principale à barre latérale. Les sections de pilotage
-// (Accueil, Pipelines, Projet, Audit, Statistiques, Poste) sont servies par le
-// serveur de pipelines du VPS (omp-harness) ; Terminal, Fichiers et Mémoire sont
-// locaux. L'app reste utilisable en plein écran : aucune fenêtre annexe.
+// UNE scène : la fenêtre principale à barre latérale. « À traiter », Features, Poste et
+// Système sont servis par le serveur de pipelines du VPS (omp-harness) ; Mémoire,
+// Terminal et Fichiers sont locaux. L'app reste utilisable en plein écran : aucune
+// fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ les neuf sections (⌘1…⌘9) ; Fichier ▸ « Nouvelle
-// feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
+// Barre des menus : Présentation ▸ les sept sections (⌘1…⌘7) et « Actualiser » (⌘R) ;
+// Fichier ▸ « Nouvelle feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
 // l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
@@ -26,8 +26,8 @@ import SwiftUI
 struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
     /// Le serveur de pipelines du VPS : UN modèle et UN jeu de brouillons pour la
-    /// fenêtre, partagés par les six sections de pilotage (le poste de travail est
-    /// porté par ce même modèle, `server.workstation`).
+    /// fenêtre, partagés par les sections du serveur (le poste de travail est porté par
+    /// ce même modèle, `server.workstation`).
     /// Un code d'appairage collé ici relie aussi omp et la mémoire de ce Mac (`~/.omp`).
     @StateObject private var server = HarnessModel.live(
         fallback: { HarnessPairing.sharedSettings(home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) },
@@ -103,6 +103,7 @@ struct OMPConsoleApp: App {
         }
         .commands {
             SectionCommands(console: model)
+            RefreshCommands()
             PaletteCommands(drafts: drafts)
             // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
             // barre d'outils… ».
@@ -112,9 +113,8 @@ struct OMPConsoleApp: App {
     }
 }
 
-/// Menu Présentation ▸ les sections, dans l'ordre de la barre latérale : ⌘1…⌘9 puis ⌘0
-/// pour les dix premières, sans raccourci au-delà. Ramène la fenêtre principale, puis
-/// y sélectionne la section.
+/// Menu Présentation ▸ les sections, dans l'ordre de la barre latérale : ⌘1…⌘9 au plus
+/// (sept aujourd'hui). Ramène la fenêtre principale, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
 
@@ -131,13 +131,26 @@ struct SectionCommands: Commands {
         }
     }
 
-    /// La touche du raccourci de la section à `index` : 1…9, puis 0 pour la
-    /// dixième (comme la rangée des chiffres du clavier) ; aucune au-delà.
+    /// La touche du raccourci de la section à `index` : 1…9, aucune au-delà.
     static func key(at index: Int) -> Character? {
-        switch index {
-        case 0..<9: Character(String(index + 1))
-        case 9: "0"
-        default: nil
+        (0..<9).contains(index) ? Character(String(index + 1)) : nil
+    }
+}
+
+/// Présentation ▸ « Actualiser » (⌘R) : relit ce que montre la section à l'écran (son
+/// cadre publie l'action, `HarnessRefreshAction`). Aucun bouton ne la répète à l'écran.
+struct RefreshCommands: Commands {
+    @FocusedValue(\.harnessRefresh) private var refresh
+
+    var body: some Commands {
+        CommandGroup(before: .sidebar) {
+            Button(PipelineServerText.refresh) {
+                guard let refresh else { return }
+                Task { await refresh.perform() }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(refresh?.isEnabled != true)
+            Divider()
         }
     }
 }

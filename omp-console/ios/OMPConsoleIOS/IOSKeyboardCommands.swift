@@ -31,10 +31,9 @@ enum IOSKeyboard {
     /// restent aux feuilles.
     static let modifiers: EventModifiers = .command
 
-    /// ⌘1…⌘9 : les neuf premières sections, dans l'ordre affiché par la barre latérale
-    /// (les suivantes, Issues et Administration, n'ont pas de chiffre).
+    /// ⌘1…⌘5 : les sections, dans l'ordre affiché par la barre latérale.
     static var sections: [(section: ConsoleSection, shortcut: IOSShortcut)] {
-        IOSSection.sidebarOrder.prefix(9).enumerated().map { index, section in
+        IOSSection.sidebarOrder.enumerated().map { index, section in
             (section, IOSShortcut(title: section.title, key: Character(String(index + 1))))
         }
     }
@@ -83,7 +82,7 @@ struct IOSSectionSelector: Equatable {
 }
 
 extension FocusedValues {
-    /// Publiée par `RootView` : la sélection de section (⌘1…⌘7).
+    /// Publiée par `RootView` : la sélection de section (⌘1…⌘5).
     @Entry var iosSelectSection: IOSSectionSelector?
     /// Publiée par l'écran affiché : relire ses données (⌘R).
     @Entry var iosRefresh: IOSCommandAction?
@@ -110,7 +109,7 @@ enum IOSModalPresence {
     }
 }
 
-/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘7, Actualiser ⌘R,
+/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘5, Actualiser ⌘R,
 /// Rechercher ⌘F) ; « Nouvelle fenêtre » est retirée (l'app garde une seule
 /// fenêtre et un seul client).
 struct IOSKeyboardCommands: Commands {

@@ -71,7 +71,7 @@ public enum HarnessInboxFeed {
     /// La file de `inbox`, dans l'ordre de lecture (voir l'en-tête du fichier).
     public static func items(_ inbox: HarnessInbox) -> [HarnessInboxItem] {
         var gates: [(item: HarnessInboxItem, since: Double)] = []
-        for batch in inbox.batches where !batch.items.isEmpty {
+        for batch in inbox.openBatches where !batch.items.isEmpty {
             gates.append((.questions(batch), batch.run?.updatedAt ?? 0))
         }
         for run in inbox.awaiting {

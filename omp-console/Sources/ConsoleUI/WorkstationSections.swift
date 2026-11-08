@@ -1,14 +1,18 @@
 // Le contenu de la section « Poste », écrit une fois pour le Mac et l'iPhone/iPad : le
-// poste de travail observé par l'extension Chrome et l'agent 24/24 du serveur. En tête,
-// l'état de l'extension et l'observation (heures observées sur le seuil), l'autonomie —
-// avec, toujours visible, la garde d'envoi qu'aucun mode ne lève —, la pause et les
-// adresses de l'utilisateur ; puis les envois à approuver, le profil et l'activité
-// observée, le journal des décisions et les réunions transcrites.
+// poste de travail observé par l'extension Chrome et l'agent 24/24 du serveur.
 //
-// Chaque app le pose dans son cadre (formulaire du Mac, liste groupée d'iOS). Le modèle
-// (`WorkstationModel`, porté par `HarnessModel`) et les brouillons viennent du client
-// partagé ; les mots viennent de `WorkstationText`. La feuille de refus est posée par
-// `workstationGestures`.
+// Une page principale calme, dans l'ordre : l'état (extension, dernier contact,
+// autonomie appliquée, pause ou arrêt) avec l'arrêt d'urgence pour seul geste marquant
+// — ou la reprise quand le poste est arrêté ; les envois à approuver, seulement s'il y
+// en a ; « Demander au poste » et les demandes en cours ; les dernières décisions du
+// journal ; puis une rangée par page poussée (`WorkstationPage`) : réglages,
+// automatisations, commande du navigateur, profil, réunions, sessions de l'agent 24/24.
+//
+// Chaque app pose la page principale dans son cadre (formulaire du Mac, liste groupée
+// d'iOS) et les pages poussées par `workstationDestinations` dans sa pile de navigation.
+// Le modèle (`WorkstationModel`, porté par `HarnessModel`) et les brouillons viennent du
+// client partagé ; les mots viennent de `WorkstationText` et `ControlText`. Les feuilles
+// et confirmations sont posées une fois par l'app (`workstationGestures`).
 
 import Charts
 import ConsoleClient
@@ -26,7 +30,7 @@ public struct WorkstationSections: View {
 
     public var body: some View {
         // Le refus d'un jeton non approbateur se dit là où sont les gestes (réglages,
-        // envois à approuver), pas en tête.
+        // envois à approuver, demandes), pas en tête.
         if let failure = workstation.failure, failure != .approverOnly {
             ConsoleFailureBanner(failure: failure)
         }
@@ -44,54 +48,278 @@ public struct WorkstationSections: View {
             }
         case .available:
             if let status = workstation.status {
-                WorkstationStopSection(workstation: workstation, drafts: drafts, status: status)
-                WorkstationStatusSections(workstation: workstation, drafts: drafts, status: status)
+                WorkstationHeaderSection(workstation: workstation, drafts: drafts, status: status)
             }
-            WorkstationApprovalsSection(workstation: workstation, drafts: drafts)
-            if let status = workstation.status {
-                if let requests = workstation.requests {
-                    WorkstationRequestsSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
-                }
-                WorkstationCommandSection(workstation: workstation, drafts: drafts, status: status)
+            WorkstationHomeApprovals(workstation: workstation, drafts: drafts)
+            if let status = workstation.status, let requests = workstation.requests {
+                WorkstationAskSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
             }
-            if let automations = workstation.automations {
-                WorkstationAutomationsSection(workstation: workstation, drafts: drafts, automations: automations)
-            }
-            WorkstationProfileSections(workstation: workstation)
-            WorkstationJournalSection(drafts: drafts, journal: workstation.journal)
-            WorkstationMeetingsSection(drafts: drafts, meetings: workstation.meetings)
-            WorkstationSessionsSection(drafts: drafts)
-            if let status = workstation.status {
-                WorkstationBrowsersSection(workstation: workstation, status: status)
-                WorkstationNavigationSection(workstation: workstation, drafts: drafts, status: status)
-            }
+            WorkstationRecentJournalSection(drafts: drafts, journal: workstation.journal)
+            WorkstationPagesSection(workstation: workstation)
         }
     }
 }
 
-// MARK: - État, autonomie, pause, adresses
+// MARK: - En-tête : état et arrêt d'urgence
 
-struct WorkstationStatusSections: View {
+/// L'état du poste d'un coup d'œil — extension, dernier contact, autonomie appliquée,
+/// pause ou arrêt — et le seul geste marquant de la page : l'arrêt d'urgence (permis à
+/// tout jeton, jamais grisé par le rôle), ou la reprise quand le poste est arrêté.
+struct WorkstationHeaderSection: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var drafts: HarnessDrafts
     let status: WorkstationStatus
 
     var body: some View {
         Section {
-            ConsoleStatusChip(status: ConsoleStatus(
-                text: status.online ? WorkstationText.online : WorkstationText.offline,
-                tone: status.online ? .success : .neutral
-            ))
-            .consoleID("workstation.online")
-            if let seen = status.lastSeenAt {
-                Text(WorkstationText.lastSeen(ConsoleFormat.relative(ms: seen, nowMs: Date().timeIntervalSince1970 * 1000)))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
+            HStack(spacing: 8) {
+                ConsoleStatusChip(status: ConsoleStatus(
+                    text: status.online ? WorkstationText.online : WorkstationText.offline,
+                    tone: status.online ? .success : .neutral
+                ))
+                .consoleID("workstation.online")
+                Spacer(minLength: 8)
+                if let seen = status.lastSeenAt {
+                    Text(WorkstationText.lastSeen(ConsoleFormat.relative(ms: seen, nowMs: Date().timeIntervalSince1970 * 1000)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if status.lastSeenAt == nil {
                 Text(WorkstationText.neverSeen)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            LabeledContent(WorkstationText.autonomyLabel) {
+                Text(autonomy)
+            }
+            .consoleID("workstation.autonomy.effective")
+            if let stopped = status.stopped {
+                Label(ControlText.stopped(ConsoleFormat.dateTime(ms: stopped.at), by: stopped.by), systemImage: ControlText.stopSymbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .consoleID("workstation.stopped")
+                Button {
+                    Task { await workstation.setPaused(false) }
+                } label: {
+                    Label(ControlText.resume, systemImage: WorkstationText.resumeSymbol)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(workstation.isSaving)
+                .consoleID("workstation.resume")
+            } else {
+                if status.paused {
+                    Label(WorkstationText.paused, systemImage: WorkstationText.pausedSymbol)
+                        .foregroundStyle(.orange)
+                        .consoleID("workstation.pausedState")
+                }
+                Button(role: .destructive) {
+                    drafts.workstationStopAsked = true
+                } label: {
+                    Label(ControlText.stop, systemImage: ControlText.stopSymbol)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(workstation.isStopping)
+                .consoleID("workstation.stop")
+            }
+        } footer: {
+            if status.stopped == nil {
+                Text(ControlText.stopHint)
+            }
+        }
+    }
+
+    /// L'autonomie appliquée ; en Auto, le réglage puis ce qu'il applique (« Auto · Observer »).
+    private var autonomy: String {
+        let effective = WorkstationText.autonomy(status.autonomy.effective)
+        guard status.autonomySetting == .auto else { return effective }
+        return WorkstationText.autonomyAuto + " · " + effective
+    }
+}
+
+// MARK: - Pages poussées
+
+/// Une page poussée depuis la page principale du Poste (`NavigationLink(value:)`) ; le
+/// cadre de chaque app la résout par `workstationDestinations(server:drafts:)`.
+public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
+    case settings
+    case automations
+    case command
+    case profile
+    case meetings
+    case journal
+    case sessions
+    case requests
+
+    public var id: String { rawValue }
+
+    /// Les rangées de la page principale, dans l'ordre. Le journal et les demandes
+    /// s'ouvrent depuis leur propre section (« Tout le journal », « Toutes les demandes »).
+    static let rows: [WorkstationPage] = [.settings, .automations, .command, .profile, .meetings, .sessions]
+
+    public var title: String {
+        switch self {
+        case .settings: WorkstationText.settingsTitle
+        case .automations: ControlText.automationsTitle
+        case .command: ControlText.commandTitle
+        case .profile: WorkstationText.profileTitle
+        case .meetings: WorkstationText.meetingsTitle
+        case .journal: WorkstationText.journalTitle
+        case .sessions: ControlText.sessionsTitle
+        case .requests: ControlText.requestsTitle
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .settings: WorkstationText.settingsSymbol
+        case .automations: WorkstationText.automatableSymbol
+        case .command: WorkstationText.commandSymbol
+        case .profile: WorkstationText.profileSymbol
+        case .meetings: WorkstationText.meetingsSymbol
+        case .journal: WorkstationText.journalSymbol
+        case .sessions: PipelineServerText.sessionSymbol
+        case .requests: WorkstationText.requestsSymbol
+        }
+    }
+}
+
+extension View {
+    /// Les pages du Poste dans la pile de navigation du cadre : chaque `WorkstationPage`
+    /// poussée depuis la page principale y trouve sa vue.
+    public func workstationDestinations(server: HarnessModel, drafts: HarnessDrafts) -> some View {
+        let workstation = server.workstation
+        return navigationDestination(for: WorkstationPage.self) { page in
+            WorkstationPageView(workstation: workstation, drafts: drafts, page: page)
+        }
+    }
+}
+
+/// Les rangées des pages poussées, en pied de la page principale.
+struct WorkstationPagesSection: View {
+    @ObservedObject var workstation: WorkstationModel
+
+    var body: some View {
+        Section {
+            ForEach(pages) { page in
+                NavigationLink(value: page) {
+                    HStack(spacing: 8) {
+                        Label(page.title, systemImage: page.systemImage)
+                        Spacer(minLength: 8)
+                        if let count = count(page), count > 0 {
+                            Text(count, format: .number)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .consoleID("workstation.page." + page.rawValue)
+            }
+        }
+    }
+
+    /// Une page dont le serveur ne sert pas le contenu n'a pas de rangée.
+    private var pages: [WorkstationPage] {
+        WorkstationPage.rows.filter { page in
+            switch page {
+            case .settings, .command: workstation.status != nil
+            case .automations: workstation.automations != nil
+            case .profile, .meetings, .journal, .sessions, .requests: true
+            }
+        }
+    }
+
+    private func count(_ page: WorkstationPage) -> Int? {
+        switch page {
+        case .automations: workstation.automations?.count
+        case .meetings: workstation.meetings.count
+        case .settings, .command, .profile, .journal, .sessions, .requests: nil
+        }
+    }
+}
+
+/// Une page poussée : ses sections dans un formulaire groupé, l'échec du dernier échange
+/// en tête, et l'actualisation par le geste du système.
+struct WorkstationPageView: View {
+    @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var drafts: HarnessDrafts
+    let page: WorkstationPage
+
+    var body: some View {
+        Form {
+            if let failure = workstation.failure, failure != .approverOnly {
+                ConsoleFailureBanner(failure: failure)
+            }
+            content
+        }
+        .formStyle(.grouped)
+        .navigationTitle(page.title)
+        .consoleInlineTitle()
+        .refreshable { await workstation.load() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch page {
+        case .settings:
+            if let status = workstation.status {
+                WorkstationSettingsSections(workstation: workstation, drafts: drafts, status: status)
+                WorkstationBrowsersSection(workstation: workstation, status: status)
+                WorkstationNavigationSection(workstation: workstation, drafts: drafts, status: status)
+            } else {
+                loading
+            }
+        case .automations:
+            if let automations = workstation.automations {
+                WorkstationAutomationsSection(workstation: workstation, drafts: drafts, automations: automations)
+            } else {
+                loading
+            }
+        case .command:
+            if let status = workstation.status {
+                WorkstationCommandSection(workstation: workstation, drafts: drafts, status: status)
+            } else {
+                loading
+            }
+        case .profile:
+            WorkstationProfileSections(workstation: workstation)
+        case .meetings:
+            WorkstationMeetingsSection(drafts: drafts, meetings: workstation.meetings)
+        case .journal:
+            WorkstationJournalSection(drafts: drafts, journal: workstation.journal)
+        case .sessions:
+            WorkstationSessionsSection(drafts: drafts)
+        case .requests:
+            if let requests = workstation.requests {
+                WorkstationRequestsListSection(workstation: workstation, requests: requests)
+            } else {
+                loading
+            }
+        }
+    }
+
+    private var loading: some View {
+        Section {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+// MARK: - Réglages : observation, autonomie, pause, adresses
+
+struct WorkstationSettingsSections: View {
+    @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var drafts: HarnessDrafts
+    let status: WorkstationStatus
+
+    var body: some View {
+        Section {
             if let version = status.extensionVersion {
                 Text(WorkstationText.version(version))
                     .font(.caption)
@@ -200,37 +428,9 @@ struct WorkstationStatusSections: View {
 
 // MARK: - Envois à approuver
 
-/// Les envois qui attendent l'humain, chacun avec ses destinataires et le message, et
-/// les deux gestes : approuver, ou refuser avec une raison facultative.
-public struct WorkstationApprovalsSection: View {
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    public init(workstation: WorkstationModel, drafts: HarnessDrafts) {
-        self.workstation = workstation
-        self.drafts = drafts
-    }
-
-    public var body: some View {
-        Section {
-            if workstation.approvals.isEmpty {
-                Text(WorkstationText.noApproval).foregroundStyle(.secondary)
-            }
-            if workstation.failure == .approverOnly {
-                ApproverOnlyNotice()
-            }
-            ForEach(workstation.approvals) { action in
-                WorkstationApprovalRow(workstation: workstation, drafts: drafts, action: action)
-            }
-        } header: {
-            Text(WorkstationText.approvalsTitle)
-        } footer: {
-            Text(WorkstationText.approvalsHint)
-        }
-    }
-}
-
-/// Sur l'Accueil : les envois à approuver, seulement quand il y en a (ils expirent).
+/// Les envois qui attendent l'humain, seulement quand il y en a (ils expirent) : en tête
+/// de « À traiter » et de la page principale du Poste. Chacun avec ses destinataires et
+/// le message, et les deux gestes : approuver, ou refuser avec une raison facultative.
 public struct WorkstationHomeApprovals: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var drafts: HarnessDrafts
@@ -242,7 +442,18 @@ public struct WorkstationHomeApprovals: View {
 
     public var body: some View {
         if !workstation.approvals.isEmpty {
-            WorkstationApprovalsSection(workstation: workstation, drafts: drafts)
+            Section {
+                if workstation.failure == .approverOnly {
+                    ApproverOnlyNotice()
+                }
+                ForEach(workstation.approvals) { action in
+                    WorkstationApprovalRow(workstation: workstation, drafts: drafts, action: action)
+                }
+            } header: {
+                Text(WorkstationText.approvalsTitle)
+            } footer: {
+                Text(WorkstationText.approvalsHint)
+            }
         }
     }
 }
@@ -355,8 +566,6 @@ struct WorkstationProfileSections: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        } header: {
-            Text(WorkstationText.profileTitle)
         }
 
         if let profile = reply?.profile {
@@ -508,6 +717,35 @@ struct WorkstationActivitySection: View {
 
 // MARK: - Journal des décisions
 
+/// Les décisions les plus récentes sur la page principale, en lignes courtes ; le reste
+/// est sur la page du journal.
+struct WorkstationRecentJournalSection: View {
+    @ObservedObject var drafts: HarnessDrafts
+    let journal: [WorkstationAction]
+
+    /// Le nombre de décisions montrées sur la page principale.
+    static let shown = 5
+
+    var body: some View {
+        if !journal.isEmpty {
+            Section {
+                ForEach(journal.prefix(Self.shown)) { action in
+                    WorkstationJournalEntry(drafts: drafts, action: action, compact: true)
+                }
+                if journal.count > Self.shown {
+                    NavigationLink(value: WorkstationPage.journal) {
+                        Text(WorkstationText.allJournal)
+                    }
+                    .consoleID("workstation.journal.all")
+                }
+            } header: {
+                Text(WorkstationText.journalTitle)
+            }
+        }
+    }
+}
+
+/// Le journal entier, sur sa page.
 struct WorkstationJournalSection: View {
     @ObservedObject var drafts: HarnessDrafts
     let journal: [WorkstationAction]
@@ -518,33 +756,73 @@ struct WorkstationJournalSection: View {
                 Text(WorkstationText.noAction).foregroundStyle(.secondary)
             }
             ForEach(journal) { action in
-                // Le détail : le résultat entier, l'annulation, et la capture d'un `screenshot`.
-                Button {
-                    drafts.showWorkstationAction(action)
-                } label: {
-                    WorkstationJournalRow(action: action)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint(Text(ControlText.actionOpen))
-                .consoleID("workstation.action.\(action.seq)")
+                WorkstationJournalEntry(drafts: drafts, action: action, compact: false)
             }
-        } header: {
-            Text(WorkstationText.journalTitle)
         } footer: {
             Text(WorkstationText.journalHint)
         }
     }
 }
 
-struct WorkstationJournalRow: View {
+/// Une décision du journal ; la toucher ouvre son détail : le résultat entier,
+/// l'annulation, et la capture d'un `screenshot`.
+struct WorkstationJournalEntry: View {
+    @ObservedObject var drafts: HarnessDrafts
     let action: WorkstationAction
+    let compact: Bool
 
     var body: some View {
+        Button {
+            drafts.showWorkstationAction(action)
+        } label: {
+            WorkstationJournalRow(action: action, compact: compact)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text(ControlText.actionOpen))
+        .consoleID("workstation.action.\(action.seq)")
+    }
+}
+
+struct WorkstationJournalRow: View {
+    let action: WorkstationAction
+    /// La ligne courte de la page principale : sorte et état, raison, origine et âge.
+    var compact = false
+
+    var body: some View {
+        Group {
+            if compact { line } else { full }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var chip: some View {
+        ConsoleStatusChip(status: ConsoleStatus(text: WorkstationText.state(action.state), tone: Self.tone(of: action.phase)))
+    }
+
+    private var line: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(WorkstationText.kind(action.kind))
+                    .font(.body.weight(.medium))
+                Spacer(minLength: 8)
+                chip
+            }
+            Text(action.rationale)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text(WorkstationText.origin(action.origin) + " · " + ConsoleFormat.relative(ms: action.createdAt, nowMs: Date().timeIntervalSince1970 * 1000))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var full: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(WorkstationText.kind(action.kind))
                 .font(.headline)
-            ConsoleStatusChip(status: ConsoleStatus(text: WorkstationText.state(action.state), tone: Self.tone(of: action.phase)))
+            chip
             Text(action.rationale)
                 .consoleReadable()
             Text(WorkstationText.origin(action.origin) + " · " + ConsoleFormat.dateTime(ms: action.createdAt))
@@ -571,8 +849,6 @@ struct WorkstationJournalRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
     }
 
     /// Le ton qui double l'état : l'attente se signale, l'échec et le refus alarment.
@@ -640,8 +916,6 @@ struct WorkstationMeetingsSection: View {
                 }
                 .padding(.vertical, 2)
             }
-        } header: {
-            Text(WorkstationText.meetingsTitle)
         }
     }
 }
@@ -649,9 +923,9 @@ struct WorkstationMeetingsSection: View {
 // MARK: - Gestes
 
 extension View {
-    /// Les feuilles et confirmations du poste de travail : refus d'un envoi (raison
-    /// facultative), arrêt d'urgence, détail d'une action et d'une réunion, suppression
-    /// d'une automatisation.
+    /// Les feuilles et confirmations du poste de travail, posées une fois par l'app :
+    /// refus d'un envoi (raison facultative), arrêt d'urgence, détail d'une action et
+    /// d'une réunion, suppression d'une automatisation.
     public func workstationGestures(workstation: WorkstationModel, drafts: HarnessDrafts) -> some View {
         modifier(WorkstationGestures(workstation: workstation, drafts: drafts))
             .modifier(WorkstationControlSheets(workstation: workstation, drafts: drafts))

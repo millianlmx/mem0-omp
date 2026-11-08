@@ -1,12 +1,13 @@
-// La feuille « Session en direct » d'une feature (ou « Analyse en direct » d'un audit) :
-// ce que l'agent du serveur écrit, son raisonnement et chaque outil qu'il lance, avec
-// son résultat, en temps réel — et, pour une feature, les fichiers qu'elle touche, la
-// sortie de ses tests et sa frise, dans des onglets.
+// Le DIRECT d'une session : ce que l'agent du serveur écrit, son raisonnement et chaque
+// outil qu'il lance, avec son résultat, en temps réel — et, pour une feature, les
+// fichiers qu'elle touche, la sortie de ses tests et sa frise.
 //
-// Le modèle suit un direct à la fois (`HarnessModel.followSession`) : la feuille
-// l'ouvre à son apparition et l'arrête à sa fermeture. Une session finie se rejoue :
-// « Afficher les entrées précédentes » remonte page par page. « Suivre la fin » garde
-// la dernière entrée à l'écran tant qu'il est coché.
+// `HarnessSessionContent` est posé tel quel par la page d'une feature (onglets Direct,
+// Fichiers, Tests, Frise) et par la feuille `HarnessSessionSheet`, qui ne sert plus
+// qu'à l'analyse d'un audit et aux jobs du poste. Le modèle suit un direct à la fois
+// (`HarnessModel.followSession`) : celui qui pose le contenu l'ouvre et l'arrête. Une
+// session finie se rejoue : « Afficher les entrées précédentes » remonte page par page.
+// « Suivre la fin » garde la dernière entrée à l'écran tant qu'il est coché.
 //
 // Chaque outil montre sa commande (son appel), même quand l'agent a donné son
 // intention, et un appel de sous-agents montre chacun d'eux en une ligne, en direct.
@@ -19,90 +20,47 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-/// Les onglets de la feuille.
-enum HarnessSessionTab: Hashable, CaseIterable {
+/// Ce que montre le contenu d'une session : le direct, ou un panneau d'une feature.
+enum HarnessSessionPane: Hashable {
     case live, files, tests, timeline
-
-    var title: String {
-        switch self {
-        case .live: MonitoringText.tabLive
-        case .files: MonitoringText.tabFiles
-        case .tests: MonitoringText.tabTests
-        case .timeline: MonitoringText.tabTimeline
-        }
-    }
 }
 
-struct HarnessSessionSheet: View {
+/// L'état du direct puis le journal (ou le panneau choisi) d'une session.
+struct HarnessSessionContent: View {
     @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    let request: HarnessSessionRequest
-    @Environment(\.dismiss) private var dismiss
-    @State private var followsEnd = true
-    @State private var tab: HarnessSessionTab = .live
+    let target: HarnessSessionTarget
+    let pane: HarnessSessionPane
+    @Binding var followsEnd: Bool
     @State private var opened: HarnessSessionDetailRequest?
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                statusBar
-                // La consigne à l'agent, au pied du direct d'une feature vivante.
-                if let runId = request.runId, server.inbox?.runs.contains(where: { $0.id == runId && $0.acceptsInstructions }) == true {
-                    RunInstructionsComposer(server: server, drafts: drafts, runId: runId)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
-                }
-                Divider()
-                switch tab {
-                case .live:
-                    log
-                case .files:
-                    if let runId = request.runId { HarnessChangesPane(server: server, runId: runId, refreshKey: toolsDone) }
-                case .tests:
-                    HarnessTestsPane(jobs: feed?.tests ?? [], followsEnd: followsEnd)
-                case .timeline:
-                    if let runId = request.runId { HarnessTimelinePane(server: server, runId: runId, refreshKey: feed?.entries.count ?? 0) }
-                }
-            }
-            .navigationTitle(request.title)
-            .navigationSubtitle(request.subtitle)
-            .toolbar {
-                if request.runId != nil {
-                    ToolbarItem(placement: .principal) {
-                        Picker(PipelineServerText.sessionTitle, selection: $tab) {
-                            ForEach(HarnessSessionTab.allCases, id: \.self) { tab in
-                                Text(tab.title).tag(tab)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .accessibilityIdentifier("session.tabs")
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Toggle(isOn: $followsEnd) {
-                        Label(PipelineServerText.sessionFollowEnd, systemImage: PipelineServerText.sessionFollowEndSymbol)
-                    }
-                    .accessibilityIdentifier("session.followEnd")
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(PipelineServerText.close) { dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityIdentifier("session.close")
-                }
+        VStack(spacing: 0) {
+            statusBar
+            Divider()
+            switch pane {
+            case .live:
+                log
+            case .files:
+                if let runId { HarnessChangesPane(server: server, runId: runId, refreshKey: toolsDone) }
+            case .tests:
+                HarnessTestsPane(jobs: feed?.tests ?? [], followsEnd: followsEnd)
+            case .timeline:
+                if let runId { HarnessTimelinePane(server: server, runId: runId, refreshKey: feed?.entries.count ?? 0) }
             }
         }
-        .frame(minWidth: 720, idealWidth: 900, minHeight: 560, idealHeight: 720)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(item: $opened) { item in
-            HarnessSessionDetailSheet(server: server, target: request.target, seq: item.seq)
+            HarnessSessionDetailSheet(server: server, target: target, seq: item.seq)
         }
-        .onAppear { server.followSession(request.target) }
-        .onDisappear { server.stopSession() }
-        .accessibilityIdentifier("session.sheet")
+    }
+
+    private var runId: String? {
+        if case let .run(id) = target { return id }
+        return nil
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.target == request.target ? server.session : nil
+        server.session?.target == target ? server.session : nil
     }
 
     /// Les outils terminés : leur nombre relit les fichiers touchés (une écriture en est peut-être une).
@@ -131,13 +89,6 @@ struct HarnessSessionSheet: View {
                     Label(MonitoringText.testLine(scope: test.scope, attempt: test.attempt, outcome: nil), systemImage: MonitoringText.testSymbol(nil))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                if let runId = request.runId {
-                    ForEach(server.inbox?.alerts(of: runId) ?? []) { alert in
-                        Label(alert.line, systemImage: alert.symbol)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
                 }
                 if !server.isSessionLive {
                     Text(PipelineServerText.sessionReconnecting)
@@ -195,6 +146,50 @@ struct HarnessSessionSheet: View {
                 proxy.scrollTo(last.seq, anchor: .bottom)
             }
         }
+    }
+}
+
+/// « Suivre la fin » : garder la dernière entrée du direct à l'écran.
+struct HarnessFollowEndToggle: View {
+    @Binding var followsEnd: Bool
+
+    var body: some View {
+        Toggle(isOn: $followsEnd) {
+            Label(PipelineServerText.sessionFollowEnd, systemImage: PipelineServerText.sessionFollowEndSymbol)
+        }
+        .help(PipelineServerText.sessionFollowEnd)
+        .accessibilityIdentifier("session.followEnd")
+    }
+}
+
+/// La feuille du direct d'une session qui n'a pas de page : l'analyse d'un audit, un
+/// job du poste (`drafts.sessionRequest`). Une feature, elle, s'ouvre en page.
+struct HarnessSessionSheet: View {
+    @ObservedObject var server: HarnessModel
+    let request: HarnessSessionRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var followsEnd = true
+
+    var body: some View {
+        NavigationStack {
+            HarnessSessionContent(server: server, target: request.target, pane: .live, followsEnd: $followsEnd)
+                .navigationTitle(request.title)
+                .navigationSubtitle(request.subtitle)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        HarnessFollowEndToggle(followsEnd: $followsEnd)
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(PipelineServerText.close) { dismiss() }
+                            .keyboardShortcut(.cancelAction)
+                            .accessibilityIdentifier("session.close")
+                    }
+                }
+        }
+        .frame(minWidth: 720, idealWidth: 900, minHeight: 560, idealHeight: 720)
+        .onAppear { server.followSession(request.target) }
+        .onDisappear { server.stopSession() }
+        .accessibilityIdentifier("session.sheet")
     }
 }
 

@@ -1,6 +1,7 @@
 // Les tests hermétiques du socle partagé Mac/iOS côté client : la saisie des options de
-// lancement, l'historique des features (`GET /v1/runs`, filtres, pages, kanban), la
-// palette de commandes, la carte des services et la remontée bornée des erreurs.
+// lancement, l'historique des features (`GET /v1/runs`, filtres, pages, groupes), la file
+// « À traiter », la palette de commandes, la carte des services et la remontée bornée
+// des erreurs.
 
 import ConsoleClient
 import ConsoleCore
@@ -23,6 +24,24 @@ private final class RecordingTransport: HarnessTransport, @unchecked Sendable {
     func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
         lock.withLock { recorded.append(call) }
         return reply(call)
+    }
+
+    func events(_ call: HarnessCall, server: HarnessServer) async throws -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+/// Un transport dont chaque échange échoue sur `error` : une annulation d'abord.
+private final class CancellingTransport: HarnessTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Error = CancellationError()
+    var error: Error {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+
+    func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
+        throw error
     }
 
     func events(_ call: HarnessCall, server: HarnessServer) async throws -> AsyncThrowingStream<Data, Error> {
@@ -77,33 +96,86 @@ struct HarnessSocleTests {
         #expect(HarnessRunsHistory.path(states: [], repo: nil) == "/v1/runs")
     }
 
-    @Test("le kanban range par état et un dépôt place la feature devant sa cible, sauf colonne terminée")
-    func kanban() {
-        let a = run("a", priority: 5)
-        let b = run("b", priority: 0)
-        let done = run("d", state: "merged")
-        let columns = HarnessKanban.columns([b, a, done, run("w", state: "awaiting_human")])
-        #expect(columns.first(where: { $0.column == .queued })?.runs.map(\.id) == ["a", "b"])
-        #expect(columns.first(where: { $0.column == .waiting })?.runs.map(\.id) == ["w"])
-        #expect(HarnessKanban.priority(moving: b, before: a) == 6)
-        #expect(HarnessKanban.priority(moving: a, before: b) == 1)
-        #expect(HarnessKanban.priority(moving: a, before: a) == nil)
-        #expect(HarnessKanban.priority(moving: done, before: a) == nil)
-        #expect(HarnessKanban.priority(moving: run("x", priority: 1000), before: run("y", priority: 1000)) == nil, "bornée à 1000")
+    @Test("les groupes : ce qui vous attend, puis ce qui tourne, la file par priorité, le fini du plus récent ; la boîte prime et complète l'historique")
+    func groups() {
+        let old = run("w1", state: "awaiting_human", updated: 10)
+        let recent = run("w2", state: "escalated", updated: 20)
+        let high = run("q1", priority: 5)
+        let low = run("q2", priority: 0)
+        let merged = run("m1", state: "merged", updated: 30)
+        let failed = run("f1", state: "failed", updated: 40)
+        // L'historique croit q2 en file ; la boîte la sait déjà en cours, et connaît une
+        // feature lancée depuis la lecture de l'historique.
+        let fresh = run("q2", state: "running", updated: 50)
+        let launched = run("n1", state: "queued", priority: 1)
+        let groups = HarnessRunGroups.groups([recent, merged, low, old, failed, high], live: [fresh, launched])
+        #expect(groups.map(\.group) == [.needsYou, .running, .queued, .done])
+        #expect(groups[0].runs.map(\.id) == ["w1", "w2"], "la plus vieille attente d'abord")
+        #expect(groups[1].runs.map(\.id) == ["q2"])
+        #expect(groups[2].runs.map(\.id) == ["q1", "n1"], "l'ordre d'admission")
+        #expect(groups[3].runs.map(\.id) == ["f1", "m1"])
+        #expect(HarnessRunGroups.groups([merged]).map(\.group) == [.done], "aucun groupe vide")
+        #expect(!merged.acceptsPriority && high.acceptsPriority)
+    }
+
+    @Test("la file « À traiter » : les portes de la plus vieille à la plus récente, puis alertes, audits et décisions par feature ; une question d'une feature terminée n'y est plus")
+    func inboxFeed() {
+        let specs = run("s", state: "awaiting_human", updated: 30)
+        var verdict = run("v", state: "awaiting_human", updated: 10)
+        verdict.step = "review"
+        var waitingSpecs = specs
+        waitingSpecs.step = "specs"
+        let asked = run("q", state: "escalated", updated: 20)
+        let batch = HarnessEscalationBatch(run: asked, items: [HarnessEscalation(id: 1, runId: "q", category: "reversible", question: "?", options: ["a", "b"])])
+        let empty = HarnessEscalationBatch(run: run("e", state: "escalated"), items: [])
+        // Un serveur plus ancien sert encore la question d'une feature annulée : plus rien ne l'attend.
+        let stale = HarnessEscalationBatch(run: run("c", state: "cancelled"), items: [HarnessEscalation(id: 9, runId: "c", category: "reversible", question: "?", options: ["a"])])
+        let decisions = [
+            HarnessDecision(id: 1, runId: "d", seq: 1, question: "?", options: ["a"], chosen: "a", rationale: "r", createdAt: 5),
+            HarnessDecision(id: 2, runId: "d", seq: 2, question: "?", options: ["a"], chosen: "a", rationale: "r", createdAt: 6),
+        ]
+        let inbox = HarnessInbox(
+            batches: [batch, empty, stale], awaiting: [waitingSpecs, verdict], decisions: decisions,
+            audits: [HarnessAudit(id: "a1", repo: "demo", state: "proposed"), HarnessAudit(id: "a2", repo: "demo", state: "analysing")],
+            alerts: [HarnessAlert(runId: "x", kind: "stalled", since: 1)]
+        )
+        let items = HarnessInboxFeed.items(inbox)
+        #expect(items.map(\.id) == ["verdict/v", "questions/q", "specs/s", "alert/x/stalled", "audit/a1", "decisions/d"])
+        let gates = items.prefix(3).filter(\.isGate).count
+        #expect(gates == 3)
+        #expect(HarnessInboxFeed.first(.specs, in: items)?.runId == "s")
+        #expect(inbox.pendingCount == 3, "une question et deux validations ; la question orpheline ne compte pas")
+        #expect(HarnessInboxFeed.items(HarnessInbox()).isEmpty, "une boîte vide ne montre rien")
+    }
+
+    @Test("une annulation n'est pas une panne : changer d'écran n'allume pas le bandeau « injoignable »")
+    func cancellationIsNotAFailure() async {
+        let transport = RecordingTransport { _ in HarnessReply(status: 200, body: Data(inbox.utf8)) }
+        let server = model(transport)
+        let cancelled = CancellingTransport()
+        let other = HarnessModel(transport: cancelled, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(), retryDelay: .seconds(3600), refreshDelay: .milliseconds(1))
+        #expect(await server.configure(address: "vps.example", token: "t"))
+        #expect(await other.configure(address: "vps.example", token: "t") == false)
+        #expect(other.failure == nil, "un échange annulé ne se dit pas injoignable")
+        cancelled.error = URLError(.notConnectedToInternet)
+        #expect(await other.configure(address: "vps.example", token: "t") == false)
+        #expect(other.failure == .unreachable)
     }
 
     @Test("la palette retient les entrées qui contiennent chaque mot, la meilleure d'abord ; ⌘F ne garde que features et mémoire")
     func palette() {
-        let history = [run("r1", state: "merged", title: "Export CSV des souvenirs"), run("r2", title: "Refonte du kanban")]
-        let all = HarnessPalette.items(query: "", search: false, sections: [.home, .kanban, .memory], inbox: HarnessInbox(), history: history, canAct: true, memory: true)
+        let history = [run("r1", state: "merged", title: "Export CSV des souvenirs"), run("r2", title: "Refonte de la liste")]
+        let all = HarnessPalette.items(query: "", search: false, sections: [.inbox, .runs, .memory], systemPages: [.vigie], inbox: HarnessInbox(), history: history, canAct: true, memory: true)
         #expect(all.contains { $0.command == .newFeature })
         #expect(all.contains { $0.command == .section(.memory) })
-        let found = HarnessPalette.items(query: "export csv", search: false, sections: [.home], inbox: nil, history: history, canAct: true, memory: true)
+        #expect(all.contains { $0.command == .system(.vigie) })
+        let found = HarnessPalette.items(query: "export csv", search: false, sections: [.inbox], inbox: nil, history: history, canAct: true, memory: true)
         #expect(found.first?.command == .run("r1"))
         #expect(found.last?.command == .searchMemory("export csv"))
-        let search = HarnessPalette.items(query: "kanban", search: true, sections: ConsoleSection.allCases, inbox: nil, history: history, canAct: true, memory: true)
-        #expect(search.first?.command == .searchMemory("kanban"))
+        let search = HarnessPalette.items(query: "liste", search: true, sections: ConsoleSection.allCases, systemPages: SystemPage.allCases, inbox: nil, history: history, canAct: true, memory: true)
+        #expect(search.first?.command == .searchMemory("liste"))
         #expect(!search.contains { if case .section = $0.command { true } else { false } })
+        #expect(!search.contains { if case .system = $0.command { true } else { false } })
         #expect(search.contains { $0.command == .run("r2") })
         let reader = HarnessPalette.items(query: "", search: false, sections: [], inbox: nil, history: [], canAct: false, memory: false)
         #expect(!reader.contains { $0.command == .newFeature }, "un lecteur ne lance rien")

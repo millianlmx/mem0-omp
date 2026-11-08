@@ -80,6 +80,7 @@ public enum ShellText {
     public static let tabOverview = L10n.text("Aperçu")
     public static let request = L10n.text("Demande")
     public static let specs = L10n.text("Specs")
+    public static let verdict = L10n.text("Verdict")
     public static let priority = L10n.text("Priorité")
     public static let unknownRun = L10n.text("Cette feature n’est plus connue du serveur.")
 

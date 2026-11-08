@@ -192,8 +192,10 @@ public enum HarnessRunGroups {
     /// file dans l'ordre d'admission, le fini du plus récent.
     public static func groups(_ runs: [HarnessRun], live: [HarnessRun] = []) -> [(group: HarnessRunGroup, runs: [HarnessRun])] {
         let fresh = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let known = Set(runs.map(\.id))
-        let merged = runs.map { fresh[$0.id] ?? $0 } + live.filter { !known.contains($0.id) }
+        // Une feature peut figurer deux fois dans la boîte (ses questions et sa ligne) :
+        // chacune ne compte qu'une fois.
+        var known = Set(runs.map(\.id))
+        let merged = runs.map { fresh[$0.id] ?? $0 } + live.filter { known.insert($0.id).inserted }
         return HarnessRunGroup.allCases.compactMap { group in
             let members = merged.filter { HarnessRunGroup.of($0) == group }
             guard !members.isEmpty else { return nil }

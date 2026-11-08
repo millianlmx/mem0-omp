@@ -6,7 +6,7 @@ import ConsoleCore
 /// deux sections hors périmètre est calculé.
 enum IOSSection {
     /// Les sections de l'app iOS : `ConsoleSection.allCases` moins `terminal` et
-    /// `files`, dans l'ordre de `allCases`.
+    /// `files`, dans l'ordre de `allCases` — À traiter, Features, Poste, Mémoire, Système.
     static let all: [ConsoleSection] = ConsoleSection.allCases.filter { $0 != .terminal && $0 != .files }
 
     /// Les sections d'un groupe de la barre latérale, dans l'ordre de `allCases`.
@@ -15,7 +15,7 @@ enum IOSSection {
     }
 
     /// Les sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
-    /// groupe, comme la barre de `RootView`. Les raccourcis ⌘1…⌘7 suivent cet
+    /// groupe, comme la barre de `RootView`. Les raccourcis ⌘1…⌘5 suivent cet
     /// ordre ; si la barre latérale change, ils la suivent.
     static var sidebarOrder: [ConsoleSection] {
         ConsoleSectionGroup.allCases.flatMap(sections(of:))
@@ -29,10 +29,10 @@ enum IOSSection {
     /// La section désignée par l'argument de lancement `-section <rawValue>`.
     ///
     /// La DERNIÈRE paire reconnue gagne. Rien à lire, un drapeau sans valeur ou une
-    /// valeur qui ne désigne pas l'une des sections rendent l'Accueil : jamais
+    /// valeur qui ne désigne pas l'une des sections rendent « À traiter » : jamais
     /// d'alerte, jamais de persistance (l'app n'écrit rien).
     static func resolve(_ arguments: [String]) -> ConsoleSection {
-        var resolved: ConsoleSection = .home
+        var resolved: ConsoleSection = .inbox
         var index = 0
         while index < arguments.count {
             if arguments[index] == "-section",

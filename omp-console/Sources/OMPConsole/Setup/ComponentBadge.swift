@@ -19,6 +19,7 @@
 // replie donc au besoin, sans jamais être tronqué (AC-2 exige les noms).
 
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct ComponentBadge: View {
@@ -39,13 +40,13 @@ struct ComponentBadge: View {
     private var badge: some View {
         if let open {
             Button(action: open) {
-                StatusBadge(status: status)
+                ConsoleStatusChip(status: status)
             }
             .buttonStyle(.plain)
             .help(SetupText.componentsBadgeHelp)
             .accessibilityLabel(status.text)
         } else {
-            StatusBadge(status: status)
+            ConsoleStatusChip(status: status)
         }
     }
 }
