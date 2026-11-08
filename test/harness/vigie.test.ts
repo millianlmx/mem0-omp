@@ -76,7 +76,20 @@ class FakeGitHub {
       const listed = this.issues.filter(
         (issue) => (label === "" || issue.labels.includes(label)) && (all || issue.state === "OPEN"),
       );
-      return done(JSON.stringify(listed.map((issue) => ({ number: issue.number, url: url(issue), body: issue.body }))));
+      // Le JSON de `gh issue list` : ce que lit IssueDesk (et la forge GitHub), corps compris.
+      return done(
+        JSON.stringify(
+          listed.map((issue) => ({
+            number: issue.number,
+            title: issue.title,
+            url: url(issue),
+            labels: issue.labels.map((name) => ({ name })),
+            author: { login: "omp-harness" },
+            createdAt: "2026-11-07T10:00:00Z",
+            body: issue.body,
+          })),
+        ),
+      );
     }
     if (noun === "issue" && verb === "create") {
       const labels = args.flatMap((arg, index) => (args[index - 1] === "--label" ? [arg] : []));
