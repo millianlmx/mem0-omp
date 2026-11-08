@@ -72,6 +72,9 @@ declare namespace chrome {
     function create(properties: { windowId?: number; url?: string; active?: boolean }): Promise<Tab>;
     function update(tabId: number, properties: { url?: string; active?: boolean }): Promise<Tab>;
     function remove(tabId: number): Promise<void>;
+    function goBack(tabId: number): Promise<void>;
+    function goForward(tabId: number): Promise<void>;
+    function reload(tabId: number, properties?: { bypassCache?: boolean }): Promise<void>;
     function captureVisibleTab(
       windowId: number,
       options: { format: "jpeg" | "png"; quality?: number },
@@ -111,11 +114,54 @@ declare namespace chrome {
       result?: T;
     }
     function executeScript<Args extends unknown[], Result>(injection: {
-      target: { tabId: number; frameIds?: number[] };
+      target: { tabId: number; frameIds?: number[]; allFrames?: boolean };
       func: (...args: Args) => Result;
       args?: Args;
       world?: "ISOLATED" | "MAIN";
     }): Promise<InjectionResult<Awaited<Result>>[]>;
+  }
+
+  // `debugger` est un mot réservé : déclaré sous `_debugger`, exposé sous son vrai nom.
+  namespace _debugger {
+    interface Debuggee {
+      tabId?: number;
+    }
+    function attach(target: Debuggee, requiredVersion: string): Promise<void>;
+    function detach(target: Debuggee): Promise<void>;
+    function sendCommand(target: Debuggee, method: string, commandParams?: Record<string, unknown>): Promise<unknown>;
+    const onDetach: ChromeEvent<(source: Debuggee, reason: string) => void>;
+  }
+  namespace downloads {
+    interface DownloadItem {
+      id: number;
+      url: string;
+      finalUrl: string;
+      filename: string;
+      mime: string;
+      state: "in_progress" | "interrupted" | "complete";
+      error?: string;
+      fileSize: number;
+      totalBytes: number;
+      bytesReceived: number;
+    }
+    interface StateDelta {
+      current?: string;
+      previous?: string;
+    }
+    interface DownloadDelta {
+      id: number;
+      state?: StateDelta;
+      error?: StateDelta;
+    }
+    function download(options: {
+      url: string;
+      saveAs?: boolean;
+      conflictAction?: "uniquify" | "overwrite" | "prompt";
+    }): Promise<number>;
+    function search(query: { id?: number }): Promise<DownloadItem[]>;
+    function cancel(downloadId: number): Promise<void>;
+    const onCreated: ChromeEvent<(item: DownloadItem) => void>;
+    const onChanged: ChromeEvent<(delta: DownloadDelta) => void>;
   }
 
   namespace idle {
@@ -152,4 +198,10 @@ declare namespace chrome {
     function setBadgeText(details: { text: string; tabId?: number }): Promise<void>;
     function setBadgeBackgroundColor(details: { color: string; tabId?: number }): Promise<void>;
   }
+}
+
+// Un bloc à part : un `export` dans un espace de noms ambiant y rend privé tout membre non
+// exporté explicitement ; ici, seul l'alias est déclaré.
+declare namespace chrome {
+  export { _debugger as debugger };
 }

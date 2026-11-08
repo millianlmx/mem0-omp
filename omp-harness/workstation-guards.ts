@@ -9,16 +9,34 @@
 //   rendu à l'agent entre délimiteurs, les délimiteurs du contenu étant neutralisés.
 import type { ActionKind } from "./db.ts";
 
-/** Les gestes qui lisent ou agissent DANS un onglet : hors de la fenêtre de l'agent, l'humain approuve. */
-export const TAB_KINDS: Partial<Record<ActionKind, true>> = {
-  navigate: true,
-  snapshot: true,
-  click: true,
-  type: true,
-  key: true,
-  scroll: true,
-  screenshot: true,
+/**
+ * Ce qu'un geste fait dans un onglet : une `lecture` (rien ne change), une `écriture` (la
+ * page, l'historique, un fichier joint ou téléchargé), ou peut-être un `envoi` — que
+ * l'extension classe au geste et retient pour l'humain (garde d'envoi).
+ */
+export type TabEffect = "lecture" | "écriture" | "envoi";
+
+/** Les gestes qui lisent ou agissent DANS un onglet, et leur effet : hors de la fenêtre de l'agent, l'humain approuve. */
+export const TAB_KINDS: Partial<Record<ActionKind, TabEffect>> = {
+  navigate: "écriture",
+  snapshot: "lecture",
+  click: "envoi",
+  type: "envoi",
+  key: "envoi",
+  scroll: "lecture",
+  screenshot: "lecture",
+  select: "écriture",
+  hover: "écriture",
+  back: "écriture",
+  forward: "écriture",
+  reload: "écriture",
+  wait_for: "lecture",
+  upload: "écriture",
+  download: "écriture",
 };
+
+/** Les gestes qui chargent une adresse (`params.url`) : bornés par `allowedHosts`, gardés contre l'exfiltration. */
+export const URL_KINDS: Partial<Record<ActionKind, true>> = { open: true, navigate: true, download: true };
 
 /** Les onglets rapportés au plus (une fenêtre d'agent n'en a jamais autant). */
 const MAX_AGENT_TABS = 500;

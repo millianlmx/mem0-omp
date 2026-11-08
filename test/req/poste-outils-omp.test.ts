@@ -193,7 +193,7 @@ test("poste-outils-omp/AC-1 : les six outils du poste sont essentiels ; seul wor
   const approval = tools.get("workstation_act")?.approval;
   assert.equal(typeof approval, "function");
   const tier = (args: unknown) => (approval as typeof actApproval)(args).tier;
-  const reads = ["tabs", "snapshot", "screenshot", "wait", "decision"];
+  const reads = ["tabs", "snapshot", "screenshot", "wait", "wait_for", "decision"];
   for (const kind of ACTION_KINDS)
     assert.equal(tier({ kind, params: {} }), reads.includes(kind) ? "read" : "write", kind);
   // Un appel illisible ou un kind inconnu est classé en écriture : jamais d'accord implicite.

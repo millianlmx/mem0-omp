@@ -474,13 +474,14 @@ test("poste-extension/AC-6 : un envoi ne part qu'approuvé et identique à ce qu
   assert.equal(approvalGate(link, { approved: false, approval: null }, seen), null);
 });
 
-/** Une doublure minimale du DOM : attributs, visibilité, et le sous-ensemble des sélecteurs CSS du module. */
+/** Une doublure minimale du DOM : attributs, visibilité, enfants, et le sous-ensemble des sélecteurs CSS du module. */
 class FakeElement implements SnapElement {
   readonly tagName: string;
   readonly attributes = new Map<string, string>();
   textContent: string | null;
   value?: string;
   labels?: { textContent: string | null }[];
+  children: FakeElement[] = [];
   visible = true;
   constructor(
     tag: string,
@@ -504,6 +505,9 @@ class FakeElement implements SnapElement {
   }
   hasAttribute(name: string): boolean {
     return this.attributes.has(name);
+  }
+  matches(selector: string): boolean {
+    return matches(this, selector);
   }
   checkVisibility(): boolean {
     return this.visible;
@@ -530,16 +534,16 @@ function matches(el: Attributed, selector: string): boolean {
 }
 
 function fakeDocument(elements: FakeElement[], bodyText: string): SnapDocument {
+  const body = Object.assign(new FakeElement("body"), { children: elements, innerText: bodyText });
   return {
     title: "Devis — CRM",
     location: { href: "https://crm.example.com/devis/12?onglet=lignes" },
-    body: { innerText: bodyText, textContent: bodyText },
-    querySelectorAll: (selector: string) => elements.filter((candidate) => matches(candidate, selector)),
+    body,
     getElementById: (id: string) => elements.find((candidate) => candidate.getAttribute("id") === id) ?? null,
   };
 }
 
-test("poste-extension/AC-7 : le snapshot numérote les seuls éléments interactifs visibles, nomme sans lire les saisies et renumérote", () => {
+test("poste-extension/AC-7 : le snapshot numérote les seuls éléments interactifs visibles, nomme sans lire les saisies, et une référence disparue ne désigne plus rien", () => {
   const stale = new FakeElement("div", { [REF_ATTRIBUTE]: "e9" }, { text: "vieux" });
   const send = new FakeElement("button", { "aria-label": "Envoyer" }, { text: "✉" });
   const hidden = new FakeElement("button", {}, { text: "Caché" });
@@ -578,13 +582,16 @@ test("poste-extension/AC-7 : le snapshot numérote les seuls éléments interact
   assert.ok(!JSON.stringify(first.elements).includes("brouillon"));
   assert.ok(INTERACTIVE_SELECTOR.includes("[contenteditable]"));
 
-  // Le bouton disparaît : le snapshot suivant renumérote, l'ancienne référence ne désigne plus rien.
+  // Le bouton disparaît : il perd sa référence ; les autres gardent la leur (références stables).
   send.visible = false;
   const second = takeSnapshot(doc);
   assert.equal(second.elements[0]?.label, "Objet");
-  assert.equal(second.elements[0]?.ref, "e1");
+  assert.equal(second.elements[0]?.ref, "e2");
   assert.equal(send.hasAttribute(REF_ATTRIBUTE), false);
   assert.equal(second.elements.length, 6);
+  // Revenu, il prend une référence jamais servie : l'ancienne `e1` ne désigne jamais un autre élément.
+  send.visible = true;
+  assert.equal(takeSnapshot(doc).elements[0]?.ref, "e8");
   assert.equal(takeSnapshot(doc, { maxElements: 2 }).elements.length, 2);
 });
 

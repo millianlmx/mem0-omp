@@ -27,15 +27,28 @@ export const ACTION_KINDS = [
   "screenshot",
   "wait",
   "close",
+  "select",
+  "hover",
+  "back",
+  "forward",
+  "reload",
+  "wait_for",
+  "upload",
+  "download",
   "decision",
 ] as const;
 
-/** Les actions qui ne changent rien au poste : lire les onglets, une page, une capture ; attendre ; journaliser. */
+/**
+ * Les actions qui ne changent rien au poste : lire les onglets, une page, une capture ;
+ * attendre (un délai, un texte ou un élément) ; journaliser. Toute autre (`upload` et
+ * `download` compris) est une écriture.
+ */
 export const READ_KINDS: Partial<Record<string, true>> = {
   tabs: true,
   snapshot: true,
   screenshot: true,
   wait: true,
+  wait_for: true,
   decision: true,
 };
 
@@ -413,7 +426,10 @@ type SnapshotData = {
   title?: string;
   url?: string;
   text?: string;
+  /** L'arbre compact (extension ≥ gestes de confiance) : une ligne par repère ou élément, `[ref]` compris. */
+  tree?: string;
   elements?: { ref: string; role: string; label: string; value?: string }[];
+  truncated?: boolean;
 };
 
 function renderResult(action: WorkstationAction): string {
@@ -425,15 +441,22 @@ function renderResult(action: WorkstationAction): string {
   if (action.kind === "snapshot" && data !== null && typeof data === "object") {
     const page = data as SnapshotData;
     const elements = page.elements ?? [];
+    // Une extension plus ancienne rend la liste plate des éléments, sans arbre : rendue comme avant.
+    const tree =
+      typeof page.tree === "string"
+        ? page.tree
+        : elements
+            .map(
+              (item) =>
+                `- [${item.ref}] ${item.role} « ${item.label} »${item.value !== undefined ? ` = « ${item.value} »` : ""}`,
+            )
+            .join("\n");
     return [
-      `« ${page.title ?? ""} » ${page.url ?? ""}`,
+      `« ${page.title ?? ""} » ${page.url ?? ""}${page.truncated === true ? " (snapshot tronqué : fais défiler ou cible une frame)" : ""}`,
+      `## Éléments (${elements.length}) — agis par ref (click { tabId, ref }, type { tabId, ref, text })`,
+      tree,
       "## Texte",
       page.text ?? "",
-      `## Éléments (${elements.length}) — agis par ref (click { tabId, ref }, type { tabId, ref, text })`,
-      ...elements.map(
-        (item) =>
-          `- [${item.ref}] ${item.role} « ${item.label} »${item.value !== undefined ? ` = « ${item.value} »` : ""}`,
-      ),
     ].join("\n");
   }
   return [result.text ?? "", data !== undefined && data !== null ? JSON.stringify(data, null, 2) : ""]
@@ -686,11 +709,12 @@ export function registerWorkstationTools(pi: ExtensionAPI, deps: Pick<ToolDeps, 
     approval: actApproval,
     description: [
       "Agit dans Chrome sur le Mac de l'utilisateur (le navigateur SEULEMENT : aucun accès au reste du bureau), à travers l'extension omp-chrome. Chaque action est une décision journalisée.",
-      "Méthode : `open` { url } ouvre un onglet dans la fenêtre de l'agent (non focalisée, ne dérange pas l'utilisateur) et rend son tabId ; `snapshot` { tabId } rend le texte de la page et ses éléments avec un `ref` ; puis `click` { tabId, ref }, `type` { tabId, ref, text, submit? }, `key` { tabId, ref?, key } (Enter, Escape, Tab, flèches, Backspace) avec un ref du DERNIER snapshot de l'onglet. Refais un snapshot après chaque changement de page.",
-      "Autres kinds : `tabs` {} (onglets ouverts), `navigate` { tabId, url }, `scroll` { tabId, dy }, `screenshot` { tabId } (rend l'image), `wait` { ms ≤ 10000 }, `close` { tabId }, `decision` {} (journalise une décision sans rien exécuter).",
+      "Méthode : `open` { url } ouvre un onglet dans la fenêtre de l'agent (non focalisée, ne dérange pas l'utilisateur) et rend son tabId ; `snapshot` { tabId } rend le texte de la page et l'arbre compact de ses repères et éléments (rôle, nom, `ref`), iframes et shadow DOM ouvert compris (`e12` dans la page, `f3e2` dans la frame 3) ; puis `click` { tabId, ref }, `hover` { tabId, ref }, `type` { tabId, ref, text, submit? }, `select` { tabId, ref, option } (valeur ou libellé d'une option d'un <select>), `key` { tabId, ref?, key } avec un ref du DERNIER snapshot. Une référence reste valable tant que l'élément est affiché ; refais un snapshot après chaque changement de page.",
+      "`key` : Enter, Escape, Tab, flèches, Backspace, Delete, Home, End, PageUp, PageDown, Space, précédées au besoin de Control+, Alt+, Shift+ ou Meta+ (Shift+Tab, Meta+Enter) ; une lettre ou un chiffre seulement en raccourci (Control+a). Dans la fenêtre de l'agent, clics, survols, saisies et touches sont de vrais gestes (débogueur de Chrome) : les applications qui ignorent les événements simulés y réagissent.",
+      "Autres kinds : `tabs` {} (onglets ouverts), `navigate` { tabId, url }, `back` / `forward` / `reload` { tabId }, `scroll` { tabId, dy }, `wait_for` { tabId, text? | role (+ name?), timeoutMs ≤ 10000 } (attend un texte ou un élément), `upload` { tabId, ref, file } (`file` : le NOM d'un fichier du dossier d'envoi du serveur, `envois/` du répertoire de travail de l'agent du poste — jamais un chemin du Mac), `download` { tabId, ref | url } (le fichier va dans les Téléchargements du Mac ; rend son nom, son chemin, son type, sa taille, et le texte d'un fichier texte de 100 000 caractères au plus), `screenshot` { tabId } (rend l'image), `wait` { ms ≤ 10000 }, `close` { tabId }, `decision` {} (journalise une décision sans rien exécuter).",
       "`rationale` est OBLIGATOIRE et doit dire vraiment pourquoi tu fais ce geste : c'est la décision que l'utilisateur relit dans le journal.",
       "Tout message à quelqu'un d'autre que l'utilisateur (mail, chat, commentaire, publication…) est retenu et attend l'approbation de l'humain dans l'app OMP Console : ne cherche jamais à contourner cette garde, ne réessaie pas, dis à l'utilisateur d'approuver dans l'app. Hors ligne ou en pause, le poste refuse toute action.",
-      "Lire ou agir dans un onglet de l'utilisateur (hors de la fenêtre de l'agent : snapshot, screenshot, click, type, key, scroll, navigate) attend aussi son approbation : travaille dans les onglets que tu ouvres par `open`. Une adresse hors des hôtes permis (`workstation.allowedHosts`) attend de même.",
+      "Lire ou agir dans un onglet de l'utilisateur (hors de la fenêtre de l'agent : tout geste qui vise un tabId sauf `close`, qui ne lui est jamais permis) attend aussi son approbation : travaille dans les onglets que tu ouvres par `open`. Une adresse hors des hôtes permis (`workstation.allowedHosts` : `open`, `navigate`, `download` par url) attend de même.",
       UNTRUSTED_RULE,
     ].join(" "),
     parameters: z.object({

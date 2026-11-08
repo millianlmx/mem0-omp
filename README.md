@@ -279,12 +279,30 @@ participants.
 
 **L'agent reste dans sa fenêtre.** Il agit dans une fenêtre de Chrome à lui, ouverte
 sans prendre le focus. Lire ou toucher un de tes onglets (le lire, le capturer, y
-cliquer, y saisir, le faire défiler, y changer d'adresse) attend ton accord dans l'app,
-et il ne ferme jamais un de tes onglets. Le serveur et l'extension le vérifient tous les
-deux, quel que soit le mode. En autonomie, une adresse vers un site jamais vu dans
-l'observation, ou qui porte une longue valeur opaque (de quoi faire sortir un secret),
-attend aussi ton accord. Le réglage `workstation.allowedHosts` du serveur restreint les
-sites où l'on navigue sans te demander.
+cliquer, y saisir, le faire défiler, y changer d'adresse ou de page, y joindre ou y
+télécharger un fichier) attend ton accord dans l'app, et il ne ferme jamais un de tes
+onglets. Le serveur et l'extension le vérifient tous les deux, quel que soit le mode.
+En autonomie, une adresse vers un site jamais vu dans l'observation, ou qui porte une
+longue valeur opaque (de quoi faire sortir un secret), attend aussi ton accord. Le
+réglage `workstation.allowedHosts` du serveur restreint les sites où l'on navigue (et
+télécharge par adresse) sans te demander.
+
+**Ce que l'agent sait faire.** Cliquer, survoler, saisir, choisir dans une liste,
+presser une touche ou un raccourci (avec Control, Alt, Shift ou Meta), revenir en
+arrière ou recharger, attendre qu'un texte ou un bouton apparaisse, joindre un fichier,
+télécharger. Il lit les iframes et les composants web comme le reste de la page. Dans
+sa fenêtre, ses clics, saisies et touches passent par le débogueur de Chrome : ce sont
+de vrais gestes, et les applications qui ignorent les événements simulés y réagissent.
+Chrome affiche alors une bannière : « OMP Poste de travail » débogue ce navigateur.
+C'est voulu : la bannière disparaît 20 s après le dernier geste, ou au **Stop**.
+**Annuler** sur la bannière coupe ces gestes jusqu'au redémarrage de Chrome, et l'agent
+continue avec des événements simulés. Dans un de tes onglets, rien de tout cela sans ton
+accord pour l'action.
+
+**Les fichiers.** L'agent ne joint qu'un fichier posé sur le serveur, dans le dossier
+d'envoi du poste (`envois/`, 10 Mio au plus), jamais un fichier de ton Mac. Ce qu'il
+télécharge va dans tes Téléchargements ; il en reçoit le nom, le type et la taille, et
+le texte d'un petit fichier texte (CSV, JSON…).
 
 **Une page ne donne pas d'ordre.** Ce que l'agent lit dans une page (texte, titres,
 valeurs, transcripts) lui arrive marqué comme une donnée non fiable, jamais comme une

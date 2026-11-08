@@ -10,6 +10,7 @@
 // journal des dernières actions que lit le popup), et les écouteurs sont posés au premier
 // tour de l'évaluation du module.
 
+import { detachAll } from "./cdp.ts";
 import { agentTabIds, agentWindowId, execute } from "./executor.ts";
 import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
 import { HarnessError, harnessCall } from "./lib/harness.ts";
@@ -287,7 +288,11 @@ async function runAction(action: WorkstationAction): Promise<void> {
   await logAction(entry);
   let outcome: ActionOutcome;
   try {
-    outcome = await execute(action, settings.excluded, abort.signal);
+    const pairing = settings.pairing;
+    outcome = await execute(action, settings.excluded, abort.signal, {
+      // Le fichier d'un `upload`, lu dans le dossier d'envoi du serveur : jamais un chemin du Mac.
+      uploadFile: (seq) => harnessCall(pairing, "GET", `/v1/workstation/actions/${seq}/file`),
+    });
   } finally {
     if (running === abort) running = null;
   }
@@ -320,6 +325,7 @@ async function runAction(action: WorkstationAction): Promise<void> {
 async function emergencyStop(): Promise<Reply<{ cancelled: number[] }>> {
   await saveSettings({ observationPaused: true });
   running?.abort();
+  await detachAll();
   await pushConfig();
   await refocus();
   const { pairing: paired, browserLabel } = await loadSettings();
@@ -536,7 +542,10 @@ async function handle(request: ToBackground, sender: chrome.runtime.MessageSende
     case "set-observation-paused":
       await saveSettings({ observationPaused: request.paused });
       // La pause locale coupe aussi les actions : l'action en cours, puis le long-poll.
-      if (request.paused) running?.abort();
+      if (request.paused) {
+        running?.abort();
+        await detachAll();
+      }
       await pushConfig();
       await refocus();
       return OK;
