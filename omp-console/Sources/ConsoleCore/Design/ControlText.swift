@@ -336,6 +336,7 @@ public enum ControlText {
         case "run": L10n.text("Une feature")
         case "audit": L10n.text("Un audit")
         case "issues": L10n.text("La relève des issues")
+        case "automation": L10n.text("Une automatisation du poste")
         default: raw
         }
     }

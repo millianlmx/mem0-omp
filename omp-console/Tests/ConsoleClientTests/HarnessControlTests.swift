@@ -224,6 +224,16 @@ struct HarnessControlTests {
         #expect((mcp["params"] as? [String: Any])?["name"] as? String == "issues_list")
     }
 
+    @Test("une planification d'automatisation du poste se décode sans dépôt, avec son automatisation")
+    func automationScheduleDecodes() throws {
+        let target = try JSONDecoder().decode(
+            HarnessScheduleTarget.self, from: Data(#"{"kind":"automation","automationId":"au-1"}"#.utf8))
+        #expect(target.kind == "automation")
+        #expect(target.repo == "")
+        #expect(target.automationId == "au-1")
+        #expect(ControlText.scheduleKind("automation") != "automation")
+    }
+
     @Test("un outil du MCP en échec devient l'échec de l'écran, avec son texte")
     func toolError() async {
         let transport = Transport { call in

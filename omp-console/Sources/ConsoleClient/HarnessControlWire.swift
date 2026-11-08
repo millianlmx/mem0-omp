@@ -283,10 +283,12 @@ public struct HarnessScheduleTarget: Codable, Equatable, Sendable {
     public var budgetUsd: Double?
     public var focus: String?
     public var label: String?
+    /// La cible `automation` : l'automatisation du poste lancée (sans dépôt, `repo` vide).
+    public var automationId: String?
 
     public init(
         kind: String, repo: String, title: String? = nil, request: String? = nil, lane: String? = nil, priority: Int? = nil,
-        budgetUsd: Double? = nil, focus: String? = nil, label: String? = nil
+        budgetUsd: Double? = nil, focus: String? = nil, label: String? = nil, automationId: String? = nil
     ) {
         self.kind = kind
         self.repo = repo
@@ -297,6 +299,26 @@ public struct HarnessScheduleTarget: Codable, Equatable, Sendable {
         self.budgetUsd = budgetUsd
         self.focus = focus
         self.label = label
+        self.automationId = automationId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, repo, title, request, lane, priority, budgetUsd, focus, label, automationId
+    }
+
+    /// Une cible `automation` n'a pas de `repo` : il se lit vide.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(String.self, forKey: .kind)
+        repo = try container.decodeIfPresent(String.self, forKey: .repo) ?? ""
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        request = try container.decodeIfPresent(String.self, forKey: .request)
+        lane = try container.decodeIfPresent(String.self, forKey: .lane)
+        priority = try container.decodeIfPresent(Int.self, forKey: .priority)
+        budgetUsd = try container.decodeIfPresent(Double.self, forKey: .budgetUsd)
+        focus = try container.decodeIfPresent(String.self, forKey: .focus)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        automationId = try container.decodeIfPresent(String.self, forKey: .automationId)
     }
 }
 

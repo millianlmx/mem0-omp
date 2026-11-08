@@ -1089,6 +1089,7 @@
 "Une feature" = "A feature";
 "Un audit" = "An audit";
 "La relève des issues" = "The issues sweep";
+"Une automatisation du poste" = "A workstation automation";
 "Sautée : la précédente n’est pas finie" = "Skipped: the previous one is not finished";
 "Sautée : plafond du jour atteint" = "Skipped: daily limit reached";
 "Manquée pendant un arrêt du serveur" = "Missed during a server stop";
