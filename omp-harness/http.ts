@@ -44,9 +44,9 @@ import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
-import type { Workstation } from "./workstation.ts";
+import type { SessionJob, Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
-import { MAX_WAIT_SEC, parseActionInput } from "./workstation.ts";
+import { MAX_WAIT_SEC, SESSION_JOBS, parseActionInput } from "./workstation.ts";
 
 export const API_VERSION = 1;
 
@@ -76,6 +76,9 @@ export const API_FEATURES = [
   "metrics",
   "push-activities",
   "workstation",
+  "workstation-stop",
+  "workstation-session",
+  "workstation-captures",
   "mcp",
   "digest",
   "instructions",
@@ -656,7 +659,13 @@ export function apiRoutes(
       const workstation = workstationOf(call);
       const signal = departure(call.res);
       const version = call.req.headers["x-omp-extension"];
-      const action = await workstation.next(waitOf(call.url), signal, typeof version === "string" ? version : null);
+      const agentTabs = call.req.headers["x-omp-agent-tabs"];
+      const action = await workstation.next(
+        waitOf(call.url),
+        signal,
+        typeof version === "string" ? version : null,
+        typeof agentTabs === "string" ? agentTabs : undefined,
+      );
       if (action) send(call.res, 200, { action });
       else if (!signal.aborted) {
         call.res.writeHead(204, { "Cache-Control": "no-store" });
@@ -692,6 +701,31 @@ export function apiRoutes(
     route("POST", "/v1/workstation/actions/{n}/result", "operator", async (call) => {
       const workstation = workstationOf(call);
       send(call.res, 200, { action: workstation.submitResult(Number(call.match[1]), await readBody(call.req)) });
+    }),
+    route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) =>
+      send(call.res, 200, workstationOf(call).capture(Number(call.match[1]))),
+    ),
+    // Annuler une action qui n'a pas abouti (en file, en cours, en attente) : `refused`, sa raison dans `error`.
+    route("POST", "/v1/workstation/actions/{n}/cancel", "operator", (call) =>
+      send(call.res, 200, { action: workstationOf(call).cancel(Number(call.match[1]), call.actor) }),
+    ),
+    // L'arrêt d'urgence : tout client du poste, viewer compris (arrêter est toujours permis).
+    route("POST", "/v1/workstation/stop", "viewer", async (call) => {
+      const stopped = workstationOf(call).stop(call.actor);
+      await orchestrator.workstationAgent.halt("interrompu : arrêt d'urgence");
+      send(call.res, 200, stopped);
+    }),
+    route("GET", "/v1/workstation/session", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      const job = call.url.searchParams.get("job") ?? "";
+      if (!Object.hasOwn(SESSION_JOBS, job))
+        throw new HarnessError(400, `job : ${Object.keys(SESSION_JOBS).join(" | ")}`);
+      const sinceRaw = call.url.searchParams.get("since");
+      const since = sinceRaw === null ? null : Number(sinceRaw);
+      if (since !== null && !(Number.isInteger(since) && since >= 0))
+        throw new HarnessError(400, "since : le numéro (seq) de la dernière entrée lue attendu");
+      const live = orchestrator.workstationAgent.isLive(SESSION_JOBS[job as SessionJob]);
+      send(call.res, 200, workstation.sessionView(job as SessionJob, live, { ...pageOf(call.url), since }));
     }),
     route("POST", "/v1/workstation/actions/{n}/approve", "operator", (call) =>
       send(call.res, 200, { action: approverOf(call).approve(Number(call.match[1]), call.actor) }),

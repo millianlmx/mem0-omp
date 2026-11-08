@@ -355,7 +355,8 @@ test("serveur-de-pipelines/AC-7 : chaque champ du poste de travail décodé par 
     const call = async (method: string, route: string, body?: unknown) => {
       const response = await fetch(`http://127.0.0.1:${port}${route}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        // L'extension rapporte l'onglet 1 comme de la fenêtre de l'agent : le cantonnement laisse partir le clic.
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-OMP-Agent-Tabs": "1" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const text = await response.text();

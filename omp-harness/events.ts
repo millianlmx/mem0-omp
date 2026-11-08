@@ -89,6 +89,7 @@ export const EVENT_TYPES = [
   "workstation_meeting",
   "workstation_settings",
   "workstation_shift",
+  "workstation_stop",
   // éphémères
   "activity",
   "session",

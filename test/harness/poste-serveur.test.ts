@@ -114,8 +114,12 @@ async function teardown(world: FakeWorld, api: Api): Promise<void> {
   await world.orchestrator.stop();
 }
 
+/** L'extension en ligne, qui rapporte les onglets de la fenêtre de l'agent où agissent ces tests. */
 async function online(api: Api): Promise<void> {
-  assert.equal((await api.call("GET", "/v1/workstation/next?wait=0")).status, 204);
+  const reply = await api.call("GET", "/v1/workstation/next?wait=0", undefined, undefined, undefined, {
+    "X-OMP-Agent-Tabs": "1,3,7,123",
+  });
+  assert.equal(reply.status, 204);
 }
 
 /** Dépose une action, la fait louer par l'extension et rend son numéro. */
@@ -408,6 +412,11 @@ test("poste-serveur/AC-7 : propose retient l'action de l'agent, l'extension hors
     assert.deepEqual([decision.json.action.state, decision.json.action.origin], ["done", "session"]);
     await online(api);
     assert.equal((await api.call("GET", "/v1/workstation/next?wait=0")).status, 204, "une décision n'est jamais louée");
+    // Un site déjà observé : seule l'autonomie `propose` retient l'action (pas la garde de navigation).
+    await api.call("POST", "/v1/workstation/observations", {
+      tz: 0,
+      events: [visit(Date.now(), "https://crm.exemple.fr/devis", 60_000)],
+    });
     await api.call("PUT", "/v1/workstation/settings", { autonomy: "propose" });
     const proposed = workstation.createAction(
       { kind: "open", params: { url: "https://crm.exemple.fr/" }, rationale: "ouvrir le CRM pour la relance" },
@@ -523,7 +532,7 @@ test("poste-serveur/AC-9 : ProfileStats — sites par temps, heures LOCALES selo
   ]);
 });
 
-test("poste-serveur/AC-10 : la capture d'écran rejoint l'appelant qui attend, jamais la base", async () => {
+test("poste-serveur/AC-10 : la capture d'écran rejoint l'appelant qui attend, jamais le journal des actions", async () => {
   const { world, api } = await setup();
   try {
     await online(api);
@@ -549,7 +558,10 @@ test("poste-serveur/AC-10 : la capture d'écran rejoint l'appelant qui attend, j
     const view = await waiting;
     assert.deepEqual([view.json.action.state, view.json.image], ["done", image]);
     const rows = world.store.db.prepare("SELECT * FROM workstation_actions").all();
-    assert.ok(!JSON.stringify(rows).includes(image.slice(0, 40)), "l'image n'est pas écrite en base");
+    assert.ok(
+      !JSON.stringify(rows).includes(image.slice(0, 40)),
+      "l'image n'est pas écrite dans le journal des actions",
+    );
     const listed = await api.call("GET", "/v1/workstation/actions?state=done");
     assert.ok(!JSON.stringify(listed.json).includes(image.slice(0, 40)));
     assert.equal(world.store.getWorkstationAction(seq)?.result?.text, "capture");

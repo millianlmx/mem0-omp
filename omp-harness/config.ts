@@ -114,6 +114,20 @@ export type WorkstationConfig = {
   profileEveryHours: number;
   /** La politique de modèles des jobs `poste-profil`, `poste-digest` et `poste-service` (données sensibles). */
   policy?: ModelPolicy;
+  /**
+   * Les hôtes où l'agent navigue sans approbation (`open`, `navigate`), sous-domaines
+   * compris ; vide : tout hôte (hors sites exclus par l'extension). Un hôte hors de la
+   * liste attend l'approbation humaine.
+   */
+  allowedHosts: string[];
+  /**
+   * La garde anti-exfiltration de l'agent 24/24 en autonomie : une adresse vers un hôte
+   * jamais observé ni listé dans `allowedHosts`, ou dont la query porte une valeur
+   * longue ou opaque, attend l'approbation humaine. `false` la coupe.
+   */
+  exfiltrationGuard: boolean;
+  /** Les captures d'écran gardées par action, en heures (JPEG tel que capturé). */
+  captureRetentionHours: number;
 };
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
@@ -530,6 +544,9 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       shiftEveryMin: 30,
       shiftMaxActions: 20,
       profileEveryHours: 6,
+      allowedHosts: [],
+      exfiltrationGuard: true,
+      captureRetentionHours: 24,
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
@@ -747,8 +764,20 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   const workstation = config.workstation;
   if (!isRecord(workstation)) fail("workstation : objet attendu");
   if (typeof workstation.enabled !== "boolean") fail("workstation.enabled : booléen");
-  for (const key of ["thresholdHours", "retentionDays", "approvalTtlHours", "profileEveryHours"] as const)
+  for (const key of [
+    "thresholdHours",
+    "retentionDays",
+    "approvalTtlHours",
+    "profileEveryHours",
+    "captureRetentionHours",
+  ] as const)
     if (!(typeof workstation[key] === "number" && workstation[key] > 0)) fail(`workstation.${key} : nombre > 0`);
+  if (
+    !Array.isArray(workstation.allowedHosts) ||
+    workstation.allowedHosts.some((host) => typeof host !== "string" || host.trim() === "")
+  )
+    fail("workstation.allowedHosts : liste d'hôtes (chaînes non vides)");
+  if (typeof workstation.exfiltrationGuard !== "boolean") fail("workstation.exfiltrationGuard : booléen");
   if (!(typeof workstation.actionTimeoutSec === "number" && workstation.actionTimeoutSec >= 1))
     fail("workstation.actionTimeoutSec : secondes ≥ 1");
   if (!(typeof workstation.shiftEveryMin === "number" && workstation.shiftEveryMin >= 1))

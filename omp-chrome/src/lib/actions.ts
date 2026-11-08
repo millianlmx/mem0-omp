@@ -33,6 +33,8 @@ export type WorkstationAction = {
   kind: ActionKind;
   params: Record<string, unknown>;
   rationale: string;
+  /** Qui l'a déposée : `session` (omp sur le Mac) ou `agent` (l'agent 24/24). */
+  origin?: string;
   approved: boolean;
   approval: Approval | null;
 };

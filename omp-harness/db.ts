@@ -10,7 +10,8 @@
 // d'héritage linéaire, chacune ne voyant que celles du dessous :
 //
 //   core → runs → journal → steps → decisions → heavy → projects → providers
-//        → sessions → usage → push → workstation → workstation-meetings → issues → Store
+//        → sessions → usage → push → workstation → workstation-meetings
+//        → workstation-captures → issues → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
@@ -51,3 +52,4 @@ export type {
   WorkstationProfile,
   WorkstationProfileBody,
 } from "./db/workstation-meetings.ts";
+export type { WorkstationCapture } from "./db/workstation-captures.ts";

@@ -1,16 +1,20 @@
 // Le service worker de l'extension omp-chrome : observation (visites, interactions,
 // tampon persistant envoyé par lots), exécution des actions remises par le document
-// offscreen (qui tient le long-poll), et pilotage des meetings (capture + transcription).
+// offscreen (qui tient le long-poll), pilotage des meetings (capture + transcription),
+// et l'arrêt d'urgence (bouton Stop du popup) : pause locale, action en cours coupée,
+// `POST /v1/workstation/stop` au serveur.
 //
 // Un service worker MV3 peut mourir à tout instant : tout état vit dans chrome.storage
 // (`local` pour les réglages et le tampon d'observations, `session` pour la visite en
-// cours, la fenêtre de l'agent, le meeting et l'état de la liaison), et les écouteurs
-// sont posés au premier tour de l'évaluation du module.
+// cours, la fenêtre de l'agent, le meeting, l'état de la liaison, l'action en cours et le
+// journal des dernières actions que lit le popup), et les écouteurs sont posés au premier
+// tour de l'évaluation du module.
 
-import { agentWindowId, execute } from "./executor.ts";
-import type { WorkstationAction } from "./lib/actions.ts";
+import { agentTabIds, agentWindowId, execute } from "./executor.ts";
+import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
 import { HarnessError, harnessCall } from "./lib/harness.ts";
 import type {
+  ActionLog,
   LinkState,
   MeetingState,
   OffscreenConfig,
@@ -20,6 +24,7 @@ import type {
   ToBackground,
   ToOffscreen,
 } from "./lib/messages.ts";
+import { ACTION_LOG_KEEP } from "./lib/messages.ts";
 import type { Observation } from "./lib/observation.ts";
 import {
   MAX_BATCH,
@@ -73,7 +78,13 @@ let creating: Promise<void> | null = null;
 
 async function offscreenConfig(): Promise<OffscreenConfig> {
   const settings = await loadSettings();
-  return { pairing: settings.pairing, stt: settings.stt, version: VERSION };
+  return {
+    pairing: settings.pairing,
+    stt: settings.stt,
+    version: VERSION,
+    paused: settings.observationPaused,
+    agentTabs: await agentTabIds().catch(() => []),
+  };
 }
 
 async function pushConfig(): Promise<void> {
@@ -235,14 +246,90 @@ async function observe(raw: unknown, sender: chrome.runtime.MessageSender): Prom
 
 // ── Actions ───────────────────────────────────────────────────────────────
 
+/** L'action en cours d'exécution : le bouton Stop (ou la pause locale) l'interrompt. */
+let running: AbortController | null = null;
+
+async function readRecent(): Promise<ActionLog[]> {
+  const stored = await sessionValue("recent");
+  // Écrit par logAction seulement.
+  return Array.isArray(stored) ? (stored as ActionLog[]) : [];
+}
+
+/** L'action en cours (`running`), puis son issue en tête du journal des dernières actions. */
+async function logAction(entry: ActionLog): Promise<void> {
+  const recent = [entry, ...(await readRecent()).filter((each) => each.seq !== entry.seq)].slice(0, ACTION_LOG_KEEP);
+  await chrome.storage.session.set({ recent, current: entry.state === "running" ? entry : null });
+}
+
+function detailOf(outcome: ActionOutcome): string {
+  if (outcome.outcome === "failed") return outcome.error;
+  if (outcome.outcome === "needs_approval") return outcome.approval.summary;
+  return "";
+}
+
 async function runAction(action: WorkstationAction): Promise<void> {
   const settings = await loadSettings();
   if (settings.pairing === null || !Number.isSafeInteger(action.seq)) return;
-  const outcome = await execute(action, settings.excluded);
+  const entry: ActionLog = {
+    seq: action.seq,
+    kind: String(action.kind),
+    rationale: String(action.rationale ?? ""),
+    origin: String(action.origin ?? ""),
+    state: "running",
+    detail: "",
+    at: Date.now(),
+  };
+  const abort = new AbortController();
+  // En pause locale, rien ne s'exécute : l'action rend `failed` tout de suite.
+  if (settings.observationPaused) abort.abort();
+  running = abort;
+  await logAction(entry);
+  let outcome: ActionOutcome;
   try {
-    await harnessCall(settings.pairing, "POST", `/v1/workstation/actions/${action.seq}/result`, outcome);
+    outcome = await execute(action, settings.excluded, abort.signal);
+  } finally {
+    if (running === abort) running = null;
+  }
+  await logAction({ ...entry, state: outcome.outcome, detail: detailOf(outcome), at: Date.now() });
+  // Les onglets de la fenêtre de l'agent partent avec le résultat : `open` vient peut-être d'en créer un.
+  const agentTabs = await agentTabIds().catch(() => []);
+  try {
+    await harnessCall(settings.pairing, "POST", `/v1/workstation/actions/${action.seq}/result`, {
+      ...outcome,
+      agentTabs,
+    });
   } catch (error) {
-    await setLink("offline", `résultat de l'action ${action.seq} non remis : ${message(error)}`);
+    // 409 : l'action a été annulée (arrêt d'urgence) pendant qu'elle s'exécutait.
+    if (!(error instanceof HarnessError && error.status === 409))
+      await setLink("offline", `résultat de l'action ${action.seq} non remis : ${message(error)}`);
+  }
+  await pushConfig();
+}
+
+/**
+ * L'arrêt d'urgence : la pause locale d'abord (plus de long-poll, plus d'exécution),
+ * l'action en cours interrompue, puis le serveur (pause, actions annulées, service de
+ * l'agent coupé). La reprise côté serveur appartient à l'approbateur, dans OMP Console.
+ */
+async function emergencyStop(): Promise<Reply<{ cancelled: number[] }>> {
+  await saveSettings({ observationPaused: true });
+  running?.abort();
+  await pushConfig();
+  await refocus();
+  const { pairing } = await loadSettings();
+  if (pairing === null) return { ok: true, value: { cancelled: [] } };
+  try {
+    const reply = await harnessCall<{ cancelled?: unknown }>(pairing, "POST", "/v1/workstation/stop", undefined, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    await chrome.storage.session.set({ serverPaused: true });
+    const cancelled = Array.isArray(reply?.cancelled) ? reply.cancelled.filter(Number.isSafeInteger) : [];
+    return { ok: true, value: { cancelled: cancelled as number[] } };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `extension arrêtée, mais le serveur n'a pas reçu l'arrêt : ${message(error)} (réessayez, ou utilisez OMP Console)`,
+    };
   }
 }
 
@@ -375,9 +462,10 @@ async function status(): Promise<PopupStatus> {
   if (settings.pairing === null) link = { state: "unpaired", detail: "", at: Date.now() };
   let serverPaused: boolean | null = null;
   let pendingApprovals: number | null = null;
+  let stopped: PopupStatus["stopped"] = null;
   if (settings.pairing !== null) {
     try {
-      const server = await harnessCall<{ paused?: unknown; pending?: unknown }>(
+      const server = await harnessCall<{ paused?: unknown; pending?: unknown; stopped?: unknown }>(
         settings.pairing,
         "GET",
         "/v1/workstation",
@@ -388,6 +476,9 @@ async function status(): Promise<PopupStatus> {
       );
       serverPaused = server?.paused === true;
       pendingApprovals = typeof server?.pending === "number" ? server.pending : null;
+      const halt = server?.stopped;
+      if (typeof halt === "object" && halt !== null && "at" in halt && "by" in halt)
+        stopped = { at: Number(halt.at), by: String(halt.by) };
       await chrome.storage.session.set({ serverPaused });
     } catch (error) {
       if (error instanceof HarnessError && (error.status === 401 || error.status === 403)) {
@@ -395,13 +486,18 @@ async function status(): Promise<PopupStatus> {
       }
     }
   }
+  const current = await sessionValue("current");
   return {
     paired: settings.pairing !== null,
     link,
     observationPaused: settings.observationPaused,
     serverPaused,
+    stopped,
     pendingApprovals,
     meeting: await readMeeting(),
+    // Écrit par logAction seulement.
+    current: typeof current === "object" && current !== null ? (current as ActionLog) : null,
+    recent: await readRecent(),
     version: VERSION,
   };
 }
@@ -436,8 +532,13 @@ async function handle(request: ToBackground, sender: chrome.runtime.MessageSende
       return { ok: true, value: await status() };
     case "set-observation-paused":
       await saveSettings({ observationPaused: request.paused });
+      // La pause locale coupe aussi les actions : l'action en cours, puis le long-poll.
+      if (request.paused) running?.abort();
+      await pushConfig();
       await refocus();
       return OK;
+    case "emergency-stop":
+      return emergencyStop();
     case "meeting-start":
       return startMeeting(request);
     case "meeting-stop":
@@ -477,7 +578,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (meeting?.tabId === tabId) void stopMeeting();
   });
   void refocus();
+  // Un onglet fermé n'est plus à l'agent : le serveur l'apprend au prochain long-poll.
+  void pushConfig();
 });
+chrome.tabs.onCreated.addListener(() => void pushConfig());
+chrome.windows.onRemoved.addListener(() => void pushConfig());
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== TICK) return;

@@ -416,7 +416,11 @@ test("poste-outils-omp/AC-4 : une action retenue par la garde d'envoi rend aussi
       );
     assert.ok(Date.now() - started < 5000, "rendu sans attendre la fin de waitSec");
     const out = textOf(result);
-    assert.match(out, /EN ATTENTE DE L'APPROBATION DE L'HUMAIN : Envoyer un message à Paul Martin sur Gmail/);
+    // Le résumé vient de la page (destinataires, titre) : il arrive entre délimiteurs de contenu non fiable.
+    assert.match(
+      out,
+      /EN ATTENTE DE L'APPROBATION DE L'HUMAIN\.\n<<<CONTENU NON FIABLE[^\n]*>>>\nEnvoyer un message à Paul Martin sur Gmail/,
+    );
     assert.match(out, /paul@client\.fr/);
     assert.match(out, /Bonjour Paul, voici la facture\./);
     assert.ok(out.includes(APPROVAL_RULE));

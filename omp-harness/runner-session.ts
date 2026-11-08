@@ -224,6 +224,29 @@ export class RunnerSession {
     return this.#live().setHostTools(tools);
   }
 
+  /**
+   * Le modèle courant du runner lit-il les images (`get_state` → `model.input`) ? Faux au
+   * moindre doute — runner absent, réponse illisible ou lente (`timeoutMs`) : échec fermé.
+   */
+  async acceptsImages(timeoutMs = 5000): Promise<boolean> {
+    const runner = this.#runner;
+    if (!runner?.alive) return false;
+    // Promise.withResolvers n'est pas dans la lib du harness (ES2023) : le délai en promesse.
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      const state = await Promise.race([runner.request({ type: "get_state" }), timeout]);
+      const input = (state as { model?: { input?: unknown } } | null)?.model?.input;
+      return Array.isArray(input) && input.includes("image");
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   #live(): RpcRunner {
     if (!this.#runner) throw new Error("aucun runner ouvert");
     return this.#runner;

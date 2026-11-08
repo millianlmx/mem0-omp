@@ -1,6 +1,8 @@
 // Le document offscreen : il survit à l'endormissement du service worker et tient
 // (1) le long-poll des actions `GET /v1/workstation/next?wait=25`, chaque action étant
-// remise au service worker qui l'exécute et rend le résultat ;
+// remise au service worker qui l'exécute et rend le résultat ; la pause locale (popup,
+// bouton Stop) le suspend, et chaque appel rapporte les onglets de la fenêtre de l'agent
+// (`X-OMP-Agent-Tabs`) : le serveur y tient le cantonnement ;
 // (2) la capture d'un meeting : audio de l'onglet (« autres », rejoué aux haut-parleurs)
 // et micro (« moi ») enregistrés séparément en segments webm/opus autonomes de ~15 s,
 // transcrits par oMLX en local, dont seul le texte part au harness.
@@ -44,8 +46,8 @@ async function pollLoop(): Promise<never> {
   let backoff = 0;
   for (;;) {
     const current = config;
-    if (!current?.pairing) {
-      report("unpaired");
+    if (!current?.pairing || current.paused) {
+      report(current?.paused ? "paused" : "unpaired", current?.paused ? "pause de l'extension" : "");
       await new Promise<void>((resolve) => {
         wakeConfig = resolve;
       });
@@ -60,13 +62,17 @@ async function pollLoop(): Promise<never> {
         "GET",
         `/v1/workstation/next?wait=${POLL_WAIT_S}`,
         undefined,
-        { headers: { "X-OMP-Extension": current.version }, signal: abort.signal },
+        {
+          headers: { "X-OMP-Extension": current.version, "X-OMP-Agent-Tabs": current.agentTabs.join(",") },
+          signal: abort.signal,
+        },
       );
       backoff = 0;
       report("online");
+      // Une pause posée pendant l'attente : l'action louée n'est pas exécutée (le service worker la rend `failed`).
       if (reply?.action) await tell({ to: "background", type: "execute", action: reply.action });
     } catch (error) {
-      if (abort.signal.aborted && config !== current) continue; // appairage changé : on repart aussitôt
+      if (abort.signal.aborted && config !== current) continue; // appairage changé ou pause : on repart aussitôt
       if (error instanceof HarnessError && (error.status === 401 || error.status === 403)) {
         report("unauthorized", error.message);
         backoff = 60_000;
@@ -247,7 +253,12 @@ function isToOffscreen(message: unknown): message is ToOffscreen {
 function applyConfig(next: OffscreenConfig): void {
   const previous = config;
   config = next;
-  if (previous?.pairing?.url !== next.pairing?.url || previous?.pairing?.token !== next.pairing?.token) {
+  // Un appairage changé, ou la pause locale posée : le long-poll en cours s'arrête tout de suite.
+  if (
+    previous?.pairing?.url !== next.pairing?.url ||
+    previous?.pairing?.token !== next.pairing?.token ||
+    (next.paused && previous?.paused !== true)
+  ) {
     pollAbort?.abort();
   }
   wakeConfig?.();

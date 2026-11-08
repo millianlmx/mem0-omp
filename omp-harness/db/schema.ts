@@ -318,4 +318,13 @@ export const MIGRATIONS: readonly string[] = [
      created_at INTEGER NOT NULL,
      PRIMARY KEY (repo, number)
    );`,
+  // Les captures d'écran du poste, gardées par action (workstation-captures.ts) : le JPEG
+  // tel que capturé, en base64, effacé après `workstation.captureRetentionHours`.
+  `CREATE TABLE workstation_captures (
+     seq INTEGER PRIMARY KEY,
+     at INTEGER NOT NULL,
+     mime_type TEXT NOT NULL,
+     image TEXT NOT NULL
+   );
+   CREATE INDEX workstation_captures_at ON workstation_captures (at);`,
 ];

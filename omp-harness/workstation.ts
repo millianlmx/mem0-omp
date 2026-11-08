@@ -30,13 +30,16 @@ import type {
   ShiftRow,
   StoredObservation,
   WorkstationAction,
+  WorkstationCapture,
   WorkstationProfile,
   WorkstationProfileBody,
 } from "./db.ts";
 import { ACTION_KINDS } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
-import { redact } from "./session-feed.ts";
+import { redact, workstationOwner } from "./session-feed.ts";
+import type { SessionEntry } from "./session-feed.ts";
+import { TAB_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
 
 export type Autonomy = "auto" | "observe" | "propose" | "act";
 export type EffectiveAutonomy = "observe" | "propose" | "act";
@@ -48,6 +51,8 @@ export type WorkstationSettings = {
   selfIdentities: string[];
   paused: boolean;
   thresholdHours: number;
+  /** L'arrêt d'urgence en cours (`POST /v1/workstation/stop`) : levé par la reprise de l'approbateur. */
+  stopped: { at: number; by: string } | null;
 };
 
 export type ProfileStats = {
@@ -71,6 +76,8 @@ export type WorkstationStatus = {
   profileUpdatedAt: number | null;
   lastShift: { at: number; outcome: string; actions: number } | null;
   nextShiftAt: number | null;
+  /** L'arrêt d'urgence en cours, `null` sinon ; seule la reprise par l'approbateur (`paused: false`) le lève. */
+  stopped: { at: number; by: string } | null;
 };
 
 export type ActionInput = { kind: ActionKind; params: Record<string, unknown>; rationale: string };
@@ -104,9 +111,9 @@ const PURGE_EVERY_MS = 60 * 60 * 1000;
 export const ORPHAN_MEETING_MS = 30 * 60 * 1000;
 /** L'empreinte d'envoi : SHA-256 en hexadécimal (64 caractères). */
 const FINGERPRINT = /^[0-9a-f]{64}$/i;
-/** Une image rendue par l'extension reste en mémoire cinq minutes, pour l'appelant qui attend. */
-const IMAGE_KEEP_MS = 5 * 60 * 1000;
-const IMAGE_KEEP = 16;
+/** Les jobs du poste dont la session se lit (`GET /v1/workstation/session?job=`). */
+export const SESSION_JOBS = { profil: "poste-profil", digest: "poste-digest", service: "poste-service" } as const;
+export type SessionJob = keyof typeof SESSION_JOBS;
 /** Deux visites espacées de plus de 30 min appartiennent à deux enchaînements distincts. */
 const SEQUENCE_GAP_MS = 30 * 60 * 1000;
 const SEQUENCE_MIN_COUNT = 3;
@@ -715,8 +722,12 @@ export class Workstation {
   #polls = 0;
   readonly #queueWaiters = new Set<Waiter>();
   readonly #actionWaiters = new Map<number, Set<Waiter>>();
-  readonly #images = new Map<number, { image: string; at: number }>();
   #purgedAt = 0;
+  /**
+   * Les onglets de la fenêtre de l'agent, tels que l'extension les a rapportés en dernier ;
+   * `null` tant qu'elle n'a rien dit : tout onglet est alors un onglet de l'utilisateur.
+   */
+  #agentTabs: Set<number> | null = null;
   /** Une synthèse du profil demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
   profileRequested = false;
   #closed = false;
@@ -743,6 +754,10 @@ export class Workstation {
         typeof stored.thresholdHours === "number" && stored.thresholdHours > 0
           ? stored.thresholdHours
           : this.#ctx.config.workstation.thresholdHours,
+      stopped:
+        isRecord(stored.stopped) && typeof stored.stopped.at === "number" && typeof stored.stopped.by === "string"
+          ? { at: stored.stopped.at, by: stored.stopped.by }
+          : null,
     };
   }
 
@@ -753,6 +768,8 @@ export class Workstation {
     store.transaction(() => {
       const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
       if (stored.thresholdHours === null) delete stored.thresholdHours;
+      // La reprise par l'approbateur lève l'arrêt d'urgence.
+      if (patch.paused === false) delete stored.stopped;
       store.setSetting(SETTINGS_KEY, stored, actor.by);
       this.#ctx.event("workstation_settings", null, actor.by ? { by: actor.by } : {}, null);
     });
@@ -813,6 +830,7 @@ export class Workstation {
       profileUpdatedAt: store.latestWorkstationProfile()?.updatedAt ?? null,
       lastShift: last ? { at: last.at, outcome: last.outcome, actions: last.actions } : null,
       nextShiftAt: this.nextShiftAt(settings, effective, last, now),
+      stopped: settings.stopped,
     };
   }
 
@@ -897,7 +915,8 @@ export class Workstation {
   /**
    * Dépose une action. `decision` est écrite `done` (journal seul, jamais louée). Les autres
    * exigent l'extension en ligne et le poste hors pause ; déposées par l'agent en autonomie
-   * `propose`, elles attendent l'approbation humaine.
+   * `propose`, elles attendent l'approbation humaine, comme toute action que retient une
+   * garde (`#guards`) : un onglet de l'utilisateur, une navigation hors liste ou suspecte.
    */
   createAction(input: ActionInput, origin: ActionOrigin, by: string | null): WorkstationAction {
     const { store } = this.#ctx;
@@ -910,10 +929,15 @@ export class Workstation {
       const effective = this.effective(settings);
       if (origin === "agent" && effective === "observe")
         throw new HarnessError(409, "l'autonomie du poste est en observation : l'agent n'agit pas");
-      state = origin === "agent" && effective === "propose" ? "awaiting_approval" : "queued";
-      if (state === "awaiting_approval")
+      const reasons = this.#guards(input, origin);
+      state = (origin === "agent" && effective === "propose") || reasons.length > 0 ? "awaiting_approval" : "queued";
+      if (state === "awaiting_approval") {
+        const gesture = describeGesture(input.kind, input.params);
         approval = {
-          summary: clean(describeGesture(input.kind, input.params), MAX_SUMMARY),
+          summary: clean(
+            reasons.length > 0 ? `${gesture} — approbation requise : ${reasons.join(" ; ")}` : gesture,
+            MAX_SUMMARY,
+          ),
           recipients: [],
           preview:
             input.kind === "type" && typeof input.params.text === "string"
@@ -924,6 +948,7 @@ export class Workstation {
           decidedAt: null,
           reason: null,
         };
+      }
     }
     const action = store.transaction(() => {
       const created = store.createWorkstationAction({ origin, by, ...input, state, approval });
@@ -932,6 +957,37 @@ export class Workstation {
     });
     if (action.state === "queued") this.#wakeQueue();
     return action;
+  }
+
+  /**
+   * Pourquoi une action doit attendre l'humain, tranché ICI et non par le prompt (vide : elle
+   * part). Le cantonnement : un geste dans un onglet que l'extension n'a pas rapporté comme
+   * de la fenêtre de l'agent. La navigation : un hôte hors de `allowedHosts` (s'il y en a) ;
+   * pour l'agent 24/24, un hôte jamais observé ni listé, ou une query longue ou opaque.
+   */
+  #guards(input: ActionInput, origin: ActionOrigin): string[] {
+    const reasons: string[] = [];
+    if (TAB_KINDS[input.kind] && !this.#agentTabs?.has(input.params.tabId as number))
+      reasons.push("onglet de l'utilisateur, hors de la fenêtre de l'agent");
+    if (input.kind !== "open" && input.kind !== "navigate") return reasons;
+    const url = String(input.params.url);
+    const host = hostOf(url) ?? "";
+    const { allowedHosts, exfiltrationGuard } = this.#ctx.config.workstation;
+    const listed = hostListed(host, allowedHosts);
+    if (allowedHosts.length > 0 && !listed) reasons.push(`${host} hors de la liste des hôtes permis`);
+    if (origin !== "agent" || !exfiltrationGuard) return reasons;
+    if (!listed && !this.#ctx.store.workstationHostSeen(host)) reasons.push(`${host} jamais vu dans l'observation`);
+    const param = opaqueQueryParam(url);
+    if (param !== null) reasons.push(`l'adresse porte une valeur longue ou opaque (${param})`);
+    return reasons;
+  }
+
+  /**
+   * Les onglets de la fenêtre de l'agent rapportés par l'extension (`X-OMP-Agent-Tabs`,
+   * `agentTabs` d'un résultat) ; absent (`undefined`) : la connaissance précédente reste.
+   */
+  reportAgentTabs(raw: unknown): void {
+    if (raw !== undefined) this.#agentTabs = parseAgentTabs(raw);
   }
 
   getAction(seq: number): WorkstationAction {
@@ -960,8 +1016,14 @@ export class Workstation {
    * `waitSec` secondes sans rien en file. Un dépôt réveille l'attente tout de suite ; la
    * déconnexion du client (`signal`) y met fin sans louer d'action.
    */
-  async next(waitSec: number, signal: AbortSignal, version: string | null = null): Promise<WorkstationAction | null> {
+  async next(
+    waitSec: number,
+    signal: AbortSignal,
+    version: string | null = null,
+    agentTabs?: string,
+  ): Promise<WorkstationAction | null> {
     this.touch(version);
+    this.reportAgentTabs(agentTabs);
     this.#polls++;
     try {
       const deadline = Date.now() + Math.max(0, Math.min(waitSec, MAX_WAIT_SEC)) * 1000;
@@ -999,25 +1061,31 @@ export class Workstation {
       if (waiters.size === 0) this.#actionWaiters.delete(seq);
       action = this.getAction(seq);
     }
-    const image = this.#images.get(seq)?.image;
-    return image === undefined ? { action } : { action, image };
+    const capture = this.#ctx.store.getWorkstationCapture(seq);
+    return capture === null ? { action } : { action, image: capture.image };
   }
 
-  /** Le résultat de l'extension pour une action en cours. */
+  /** Le résultat de l'extension pour une action en cours (et les onglets de sa fenêtre qu'elle rapporte). */
   submitResult(seq: number, body: Record<string, unknown>): WorkstationAction {
     const input = parseResult(body);
     this.touch();
+    this.reportAgentTabs(body.agentTabs);
     const action = this.getAction(seq);
     if (action.state !== "running")
       throw new HarnessError(409, `l'action #${seq} n'est pas en cours (état ${action.state})`);
     let updated: WorkstationAction | null;
     if (input.outcome === "done") {
-      if (input.image !== null) this.#keepImage(seq, input.image);
-      updated = this.#transition(seq, ["running"], {
-        state: "done",
-        result: input.result,
-        error: null,
-        leasedAt: null,
+      const { store } = this.#ctx;
+      updated = store.transaction(() => {
+        const done = this.#transition(seq, ["running"], {
+          state: "done",
+          result: input.result,
+          error: null,
+          leasedAt: null,
+        });
+        // La capture est gardée avec l'action, pour sa rétention (`captureRetentionHours`).
+        if (done && input.image !== null) store.putWorkstationCapture(seq, input.image);
+        return done;
       });
     } else if (input.outcome === "failed") {
       updated = this.#transition(seq, ["running"], { state: "failed", error: input.error, leasedAt: null });
@@ -1090,6 +1158,85 @@ export class Workstation {
     return this.#decide(action, { state: "refused", approved: false, approval, error: "refusée par l'humain" });
   }
 
+  /** Les actions qui n'ont pas encore abouti : en file, louées (en cours), en attente de l'humain. */
+  static readonly PENDING: readonly ActionState[] = ["queued", "running", "awaiting_approval"];
+
+  /** Annule une action qui n'a pas abouti : `refused`, la raison dans `error` ; 409 sinon. */
+  cancel(seq: number, actor: Actor): WorkstationAction {
+    const action = this.getAction(seq);
+    const cancelled = this.#cancel(action, `annulée par ${actor.by ?? "un client"}`);
+    if (!cancelled) throw new HarnessError(409, `l'action #${seq} a déjà abouti (état ${this.getAction(seq).state})`);
+    return cancelled;
+  }
+
+  #cancel(action: WorkstationAction, error: string): WorkstationAction | null {
+    return this.#transition(action.seq, Workstation.PENDING, {
+      state: "refused",
+      approved: false,
+      error,
+      leasedAt: null,
+    });
+  }
+
+  /**
+   * L'arrêt d'urgence, permis à tout client : le poste passe en pause (l'extension ne loue
+   * plus rien, l'observation est refusée), toute action qui n'a pas abouti est annulée, et
+   * l'arrêt reste affiché jusqu'à la reprise par l'approbateur (`PUT …/settings`
+   * `paused: false`). La session de service en cours est coupée par l'appelant (l'agent).
+   */
+  stop(actor: Actor): { status: WorkstationStatus; cancelled: number[] } {
+    const by = actor.by ?? "un client";
+    const { store } = this.#ctx;
+    const cancelled = store.transaction(() => {
+      const stored = store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {};
+      store.setSetting(SETTINGS_KEY, { ...stored, paused: true, stopped: { at: Date.now(), by } }, actor.by);
+      this.#ctx.event("workstation_stop", null, { by }, null);
+      const seqs: number[] = [];
+      for (const action of store.listWorkstationActions({ states: Workstation.PENDING, limit: 10_000 }))
+        if (this.#cancel(action, `annulée par l'arrêt d'urgence (${by})`)) seqs.push(action.seq);
+      return seqs.sort((a, b) => a - b);
+    });
+    this.#ctx.log(`poste : arrêt d'urgence par ${by}, ${cancelled.length} action(s) annulée(s)`);
+    return { status: this.status(), cancelled };
+  }
+
+  /** La capture gardée d'une action ; 404 si elle n'en a pas (ou plus : rétention). */
+  capture(seq: number): WorkstationCapture {
+    this.getAction(seq);
+    const capture = this.#ctx.store.getWorkstationCapture(seq);
+    if (!capture) throw new HarnessError(404, `aucune capture gardée pour l'action #${seq}`);
+    return capture;
+  }
+
+  /**
+   * Le direct de la session d'un job du poste, sous la forme de `GET /v1/runs/{id}/session`
+   * (`job` au lieu de `runId`) : une page d'entrées (avant `before`), et seulement celles
+   * d'après `since` (une `seq`) s'il est donné ; `more` s'il en reste de plus anciennes non lues.
+   */
+  sessionView(
+    job: SessionJob,
+    live: boolean,
+    page: { before?: number | null; limit?: number; since?: number | null } = {},
+  ): Record<string, unknown> {
+    const { entries, more } = this.#ctx.sessions.page(
+      workstationOwner(SESSION_JOBS[job]),
+      page.before ?? null,
+      page.limit,
+    );
+    const since = page.since ?? null;
+    const fresh: SessionEntry[] = since === null ? entries : entries.filter((entry) => entry.seq > since);
+    const oldest = entries[0]?.seq ?? null;
+    return {
+      runId: null,
+      auditId: null,
+      job,
+      live,
+      cursor: this.#ctx.store.lastEventId(),
+      entries: fresh,
+      more: more && (since === null || (oldest !== null && oldest - 1 > since)),
+    };
+  }
+
   /**
    * Les échéances, à chaque tour : un bail sans résultat après `actionTimeoutSec` → `failed` ;
    * une approbation non donnée après `approvalTtlHours` → `expired` (JAMAIS approuvée) ; une
@@ -1129,16 +1276,8 @@ export class Workstation {
       if (cleared > 0)
         this.#ctx.log(`poste : ${cleared} résultat(s) d'action de plus de ${config.retentionDays} j vidé(s)`);
     }
-    for (const [seq, kept] of this.#images) if (now - kept.at > IMAGE_KEEP_MS) this.#images.delete(seq);
-  }
-
-  #keepImage(seq: number, image: string): void {
-    this.#images.set(seq, { image, at: Date.now() });
-    while (this.#images.size > IMAGE_KEEP) {
-      const oldest = this.#images.keys().next().value;
-      if (oldest === undefined) break;
-      this.#images.delete(oldest);
-    }
+    // Les captures, à chaque tour : leur rétention se compte en heures.
+    store.pruneWorkstationCaptures(now - config.captureRetentionHours * 3_600_000);
   }
 
   // -- attentes ---------------------------------------------------------------------
