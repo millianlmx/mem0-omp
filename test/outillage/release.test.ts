@@ -502,7 +502,7 @@ function writeFakeGh(bin: string): void {
   const script = [
     "#!/usr/bin/env bash",
     "# Faux `gh` du harnais (voir test/outillage/release.test.ts) : journalise, simule la PR",
-    "# (list/create/view/edit/merge/close) et la création de release. `pr merge` fabrique un",
+    "# (list/create/view/merge/close, et la mise à jour REST `api -X PATCH`) et la création de release. `pr merge` fabrique un",
     "# vrai commit de fusion squash sur refs/heads/main du remote nu. Les PR ouvertes",
     "# sont les fichiers de $GH_STATE/open/ (nom = numéro, contenu = branche ; un",
     "# fichier <n>.fourche en fait une PR de fourche) : `pr list` sans --head les rend.",
@@ -558,7 +558,8 @@ function writeFakeGh(bin: string): void {
     '    printf \'{"number":%s,"state":"OPEN","mergeStateStatus":"%s","mergeCommit":{"oid":"%s"},"url":"https://%s/%s/pull/%s"}\\n\' \\',
     '      "$number" "$state" "$merged" "$GH_HOST" "$GH_REPO" "$number"',
     "    ;;",
-    '  "pr edit")',
+    '  "api -X")',
+    "    printf '{}\\n'",
     "    ;;",
     '  "pr merge")',
     '    subject=""; body=""; match=""; prev=""',
@@ -1088,6 +1089,7 @@ async function buildDeploy(kind: string): Promise<DeployBuilt> {
   git(["push", "-q", "origin", `${repo.before}:refs/heads/deploy`], repo.dir);
   const run = await runEngine(repo);
   const afterRun = remoteHead(repo, "deploy");
+  console.error("DEBUGRUN", output(run));
   git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], repo.dir);
   const replay = await runEngine(repo);
   const afterReplay = remoteHead(repo, "deploy");
@@ -1856,9 +1858,11 @@ test("release/AC-14 : main bouge sous la PR de release — la release se recalcu
   const calls = readCalls(repo.journal).map((call) => call.args);
   const title = `chore(release): ${MEMORY.name} ${memory.minor}`;
   assert.equal(calls.filter((args) => args.startsWith("pr create ")).length, 1, calls.join("\n"));
-  const edits = calls.filter((args) => args.startsWith("pr edit 1 "));
+  // La PR réutilisée est remise à jour par l'API REST : `gh pr edit` exige `read:org`.
+  assert.equal(calls.filter((args) => args.startsWith("pr edit ")).length, 0, calls.join("\n"));
+  const edits = calls.filter((args) => args.startsWith("api -X PATCH repos/") && args.includes("/pulls/1 "));
   assert.equal(edits.length, 1, calls.join("\n"));
-  assert.ok(edits[0]?.includes(`--title ${title}`), edits[0]);
+  assert.ok(edits[0]?.includes(`-f title=${title}`), edits[0]);
   assert.equal(calls.filter((args) => args.startsWith("pr merge ")).length, 1, calls.join("\n"));
   assert.equal(remoteGit(repo.remote, ["log", "-1", "--format=%s", afterRun.main]).trim(), title);
   assert.deepEqual(

@@ -850,7 +850,9 @@ function prNumberOf(raw: string): string {
 /**
  * La PR ouverte de la branche, réutilisée si elle existe déjà (relance). `refresh` :
  * le plan vient d'être recalculé, le titre et le corps de la PR réutilisée sont
- * remis à jour (`gh pr edit`) pour nommer les versions qu'elle porte désormais.
+ * remis à jour pour nommer les versions qu'elle porte désormais. Par l'API REST
+ * (`gh api -X PATCH`) et non `gh pr edit` : ce dernier passe par GraphQL, qui exige
+ * `read:org`, une portée que le jeton du job de release n'a pas (constaté le 2026-11-08).
  */
 async function openPullRequest(
   branch: string,
@@ -881,8 +883,8 @@ async function openPullRequest(
     console.log(`· PR de release réutilisée : ${url}`);
     if (refresh) {
       const edited = ghCall(
-        ["pr", "edit", existing, "--repo", ownerRepo, "--title", title, "--body", body],
-        `gh pr edit ${existing}`,
+        ["api", "-X", "PATCH", `repos/${ownerRepo}/pulls/${existing}`, "-f", `title=${title}`, "-f", `body=${body}`],
+        `gh api PATCH pulls/${existing}`,
       );
       if (edited === null) return null;
       console.log(`· PR #${existing} remise à jour : ${title}`);
