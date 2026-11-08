@@ -77,6 +77,7 @@ public enum ShellText {
     public static let openPR = L10n.text("Ouvrir la PR")
     public static let openPRSymbol = "arrow.triangle.pull"
     public static let waitsForYou = L10n.text("Elle attend votre décision")
+    public static let tabOverview = L10n.text("Aperçu")
     public static let request = L10n.text("Demande")
     public static let specs = L10n.text("Specs")
     public static let priority = L10n.text("Priorité")
