@@ -12,31 +12,11 @@ import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { APPROVER_ONLY } from "../../omp-harness/workstation.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
+import { covers, swiftFields } from "../support/swift-contract.ts";
 import { ROOT } from "../support/repo.ts";
 
 const CLIENT = path.join(ROOT, "omp-console", "Sources", "ConsoleClient");
 const read = (...parts: string[]) => fs.readFileSync(path.join(ROOT, ...parts), "utf8");
-
-/** Les propriétés stockées d'une struct Swift : nom → optionnelle ? */
-function swiftFields(source: string, struct: string): Map<string, boolean> {
-  const start = source.indexOf(`public struct ${struct}:`);
-  assert.ok(start >= 0, `struct ${struct} introuvable`);
-  const body = source.slice(start, source.indexOf("\n}\n", start));
-  const fields = new Map<string, boolean>();
-  for (const [, name, type] of body.matchAll(/^ {4}public var (\w+): ([^\s{=]+)\s*$/gm))
-    fields.set(name as string, (type as string).endsWith("?"));
-  assert.ok(fields.size > 0, `aucun champ lu dans ${struct}`);
-  return fields;
-}
-
-/** Vérifie qu'un objet JSON du serveur porte chaque champ du client Swift. */
-function covers(object: Record<string, unknown>, fields: Map<string, boolean>, label: string): void {
-  for (const [name, optional] of fields) {
-    assert.ok(name in object, `${label}.${name} : le client Swift le décode, le serveur ne l'envoie pas`);
-    if (!optional)
-      assert.notEqual(object[name], null, `${label}.${name} : non optionnel côté Swift, null côté serveur`);
-  }
-}
 
 test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift existe dans la boîte RÉELLE du serveur", async () => {
   const world = fakeWorld({});
@@ -161,6 +141,7 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['path: "/revert"', "POST", "/v1/runs/r1/revert"],
     ['path: "/v1/push/devices"', "POST", "/v1/push/devices"],
     ['"/v1/push/devices/\\(id)"', "DELETE", "/v1/push/devices/ab12"],
+    ['/proofs")', "GET", "/v1/runs/r1/proofs"],
   ];
   for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);

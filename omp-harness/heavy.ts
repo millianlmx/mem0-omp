@@ -16,6 +16,8 @@
 // et clone en lecture seulement.
 import { createHash } from "node:crypto";
 import * as path from "node:path";
+import { TapCounter, tapTally } from "./tap.ts";
+import type { TapTally } from "./tap.ts";
 import { launch } from "./config.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { containerUser, engine, forceStop } from "./runner.ts";
@@ -57,6 +59,8 @@ export type HeavyResult = {
   tree: string;
   key: string;
   command: string;
+  /** Le décompte TAP de toute la sortie du passage (pas de sa seule fin gardée) ; `null` sans lancement ni cache. */
+  tap: TapTally | null;
 };
 
 /** Les octets de sortie gardés d'un job : la fin, là où est l'échec. */
@@ -298,6 +302,7 @@ const NOTHING_RAN: HeavyResult = {
   tree: "",
   key: "",
   command: "",
+  tap: null,
 };
 
 type JobId = { key: string; tree: string; command: string; env: Record<string, string> };
@@ -382,6 +387,7 @@ export class HeavyRunner {
         tree,
         key,
         command,
+        tap: null,
       };
     }
 
@@ -509,6 +515,7 @@ export class HeavyRunner {
     const started = now();
     const liveJob = this.#output?.start(job.runId, job.scope, attempt) ?? null;
     let result: ProcResult;
+    const counter = new TapCounter();
     try {
       result = await exec(argv.command, argv.args, {
         cwd: job.worktree,
@@ -517,6 +524,7 @@ export class HeavyRunner {
         timeoutMs: (config.heavy.timeoutSec + (config.heavy.isolation === "container" ? 0 : 30)) * 1000,
         maxBytes: OUTPUT_TAIL,
         signal,
+        onStdout: (chunk: Buffer) => counter.push(chunk),
         ...(liveJob !== null ? { onOutput: (chunk: string) => this.#output?.append(liveJob, chunk) } : {}),
       });
     } finally {
@@ -541,6 +549,7 @@ export class HeavyRunner {
       tree: id.tree,
       key: id.key,
       command: id.command,
+      tap: counter.seen ? counter.result() : tapTally(result.stdout),
     };
   }
 }
