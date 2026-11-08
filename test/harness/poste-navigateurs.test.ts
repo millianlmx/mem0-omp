@@ -386,3 +386,75 @@ test("poste-navigateurs/AC-7 : l'extension présente son identifiant stable et s
     Reflect.deleteProperty(globalThis, "chrome");
   }
 });
+
+test("poste-navigateurs/AC-8 : l'approbateur règle à chaud les hôtes permis et la garde anti-exfiltration ; la garde de navigation les applique, la configuration reste le défaut", async () => {
+  const { world, api } = await setup();
+  try {
+    await poll(api, PERSO);
+    const initial = (await api.call<WorkstationStatus>("GET", "/v1/workstation")).json;
+    assert.deepEqual(
+      [initial.allowedHosts, initial.exfiltrationGuard, initial.navigationSource],
+      [[], true, { allowedHosts: "config", exfiltrationGuard: "config" }],
+    );
+    const open = { kind: "open", params: { url: "https://intranet.adeo.com/x" }, rationale: "ouvrir" };
+    assert.equal((await deposit(api, open)).state, "queued", "aucune liste : l'hôte passe");
+
+    const clients = new ClientRegistry(path.join(tmpdir("poste-navigateurs-"), "clients.json"));
+    const admin = clients.add("mac", "admin", "*").token;
+    const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const refused = await fetch(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/workstation/settings`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ allowedHosts: ["exemple.fr"] }),
+        },
+      );
+      assert.equal(refused.status, 403);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    for (const allowedHosts of [
+      ["https://adeo.com"],
+      ["adeo.com/chemin"],
+      ["adeo.com:443"],
+      "adeo.com",
+      Array(201).fill("a.fr"),
+    ])
+      assert.equal(
+        (await api.call("PUT", "/v1/workstation/settings", { allowedHosts })).status,
+        400,
+        JSON.stringify(allowedHosts).slice(0, 40),
+      );
+    assert.equal((await api.call("PUT", "/v1/workstation/settings", { exfiltrationGuard: "non" })).status, 400);
+
+    const set = await api.call<WorkstationStatus>("PUT", "/v1/workstation/settings", {
+      allowedHosts: [" Mail.Exemple.fr ", "*.adeo.com", "mail.exemple.fr"],
+      exfiltrationGuard: false,
+    });
+    assert.equal(set.status, 200);
+    assert.deepEqual(
+      [set.json.allowedHosts, set.json.exfiltrationGuard, set.json.navigationSource],
+      [["mail.exemple.fr", "*.adeo.com"], false, { allowedHosts: "setting", exfiltrationGuard: "setting" }],
+    );
+    assert.equal((await deposit(api, open)).state, "queued", "un sous-domaine listé passe");
+    const outside = await deposit(api, { ...open, params: { url: "https://ailleurs.example/" } });
+    assert.equal(outside.state, "awaiting_approval");
+    assert.match(String(outside.approval?.summary), /hors de la liste des hôtes permis/);
+
+    const reset = await api.call<WorkstationStatus>("PUT", "/v1/workstation/settings", {
+      allowedHosts: null,
+      exfiltrationGuard: null,
+    });
+    assert.deepEqual(
+      [reset.json.allowedHosts, reset.json.exfiltrationGuard, reset.json.navigationSource],
+      [[], true, { allowedHosts: "config", exfiltrationGuard: "config" }],
+    );
+  } finally {
+    await teardown(world, api);
+  }
+});

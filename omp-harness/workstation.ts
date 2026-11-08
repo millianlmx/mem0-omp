@@ -58,6 +58,12 @@ export type WorkstationSettings = {
   stopped: { at: number; by: string } | null;
   /** Le navigateur par défaut choisi ; `null` : le premier vu. */
   defaultBrowser: string | null;
+  /** Les hôtes permis à la navigation (`workstation.allowedHosts` si l'approbateur n'a rien réglé). */
+  allowedHosts: string[];
+  /** La garde anti-exfiltration de l'agent (`workstation.exfiltrationGuard` si rien n'est réglé). */
+  exfiltrationGuard: boolean;
+  /** D'où vient chacun des deux : la configuration, ou le réglage de l'approbateur. */
+  navigationSource: { allowedHosts: "config" | "setting"; exfiltrationGuard: "config" | "setting" };
 };
 
 /** Ce qu'une extension dit d'elle à chaque appel (`X-OMP-Browser`, `X-OMP-Browser-Label`, `X-OMP-Extension`). */
@@ -103,6 +109,10 @@ export type WorkstationStatus = {
   /** Les navigateurs connus (un par extension appairée), et celui qui reçoit ce qui n'en cible aucun. */
   browsers: BrowserView[];
   defaultBrowser: string | null;
+  /** La navigation gardée en vigueur, et la source de chaque valeur (`config` ou `setting`). */
+  allowedHosts: string[];
+  exfiltrationGuard: boolean;
+  navigationSource: { allowedHosts: "config" | "setting"; exfiltrationGuard: "config" | "setting" };
 };
 
 /** Une action à déposer ; `browserId` : le navigateur qui l'exécute (absent : celui de la demande, sinon le défaut). */
@@ -164,6 +174,10 @@ const MAX_REPORT = 8000;
 const MAX_REQUEST_REASON = 300;
 const BROWSER_ID = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_BROWSER_LABEL = 60;
+const MAX_ALLOWED_HOSTS = 200;
+/** Un hôte permis : un nom DNS (ou `*.domaine`), sans schéma, port ni chemin. */
+const HOST_NAME =
+  /^(\*\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 /** Une expression cron à 5 champs (minute heure jour mois jour-de-semaine), lue par le planificateur. */
 const CRON_FIELD = /^[0-9A-Za-z*,/?-]{1,40}$/;
 export const REQUEST_CANCELLED = "demande annulée";
@@ -577,10 +591,27 @@ export function parseSegments(body: Record<string, unknown>): Segment[] {
   });
 }
 
-function parseSettings(body: Record<string, unknown>): Partial<Omit<WorkstationSettings, "thresholdHours">> & {
-  thresholdHours?: number | null;
-} {
-  const patch: Partial<Omit<WorkstationSettings, "thresholdHours">> & { thresholdHours?: number | null } = {};
+/**
+ * Les hôtes permis réglés par l'approbateur : `null` revient à la configuration ; sinon au
+ * plus 200 noms DNS (`*.domaine` permis), en minuscules, sans schéma, port ni chemin, dédoublonnés.
+ */
+function parseAllowedHosts(value: unknown): string[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string"))
+    bad("allowedHosts : liste d'hôtes attendue, ou null (retour à la configuration)");
+  if (value.length > MAX_ALLOWED_HOSTS) bad(`allowedHosts : ${MAX_ALLOWED_HOSTS} hôtes au plus`);
+  const hosts = (value as string[]).map((entry) => entry.trim().toLowerCase().replace(/\.$/, ""));
+  const wrong = hosts.find((host) => !HOST_NAME.test(host));
+  if (wrong !== undefined) bad(`allowedHosts : « ${wrong} » n'est pas un nom d'hôte (sans schéma, port ni chemin)`);
+  return [...new Set(hosts)];
+}
+
+type SettingsPatch = Partial<
+  Omit<WorkstationSettings, "thresholdHours" | "allowedHosts" | "exfiltrationGuard" | "navigationSource">
+> & { thresholdHours?: number | null; allowedHosts?: string[] | null; exfiltrationGuard?: boolean | null };
+
+function parseSettings(body: Record<string, unknown>): SettingsPatch {
+  const patch: SettingsPatch = {};
   if (body.autonomy !== undefined) {
     if (!(AUTONOMIES as readonly unknown[]).includes(body.autonomy)) bad(`autonomy : ${AUTONOMIES.join(" | ")}`);
     patch.autonomy = body.autonomy as Autonomy;
@@ -597,6 +628,12 @@ function parseSettings(body: Record<string, unknown>): Partial<Omit<WorkstationS
     patch.paused = body.paused;
   }
   if (body.defaultBrowser !== undefined) patch.defaultBrowser = browserRef(body.defaultBrowser, "defaultBrowser");
+  if (body.allowedHosts !== undefined) patch.allowedHosts = parseAllowedHosts(body.allowedHosts);
+  if (body.exfiltrationGuard !== undefined) {
+    if (body.exfiltrationGuard !== null && typeof body.exfiltrationGuard !== "boolean")
+      bad("exfiltrationGuard : booléen attendu, ou null (retour à la configuration)");
+    patch.exfiltrationGuard = body.exfiltrationGuard;
+  }
   if (body.thresholdHours !== undefined) {
     const value = body.thresholdHours;
     if (value !== null && !(typeof value === "number" && value > 0 && value <= 100_000))
@@ -871,6 +908,17 @@ export class Workstation {
           ? { at: stored.stopped.at, by: stored.stopped.by }
           : null,
       defaultBrowser: typeof stored.defaultBrowser === "string" ? stored.defaultBrowser : null,
+      allowedHosts: Array.isArray(stored.allowedHosts)
+        ? stored.allowedHosts.filter((entry): entry is string => typeof entry === "string")
+        : [...this.#ctx.config.workstation.allowedHosts],
+      exfiltrationGuard:
+        typeof stored.exfiltrationGuard === "boolean"
+          ? stored.exfiltrationGuard
+          : this.#ctx.config.workstation.exfiltrationGuard,
+      navigationSource: {
+        allowedHosts: Array.isArray(stored.allowedHosts) ? "setting" : "config",
+        exfiltrationGuard: typeof stored.exfiltrationGuard === "boolean" ? "setting" : "config",
+      },
     };
   }
 
@@ -883,6 +931,8 @@ export class Workstation {
       const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
       if (stored.thresholdHours === null) delete stored.thresholdHours;
       if (stored.defaultBrowser === null) delete stored.defaultBrowser;
+      if (stored.allowedHosts === null) delete stored.allowedHosts;
+      if (stored.exfiltrationGuard === null) delete stored.exfiltrationGuard;
       // La reprise par l'approbateur lève l'arrêt d'urgence.
       if (patch.paused === false) delete stored.stopped;
       store.setSetting(SETTINGS_KEY, stored, actor.by);
@@ -1014,6 +1064,9 @@ export class Workstation {
       stopped: settings.stopped,
       browsers,
       defaultBrowser: browsers.find((browser) => browser.isDefault)?.id ?? null,
+      allowedHosts: settings.allowedHosts,
+      exfiltrationGuard: settings.exfiltrationGuard,
+      navigationSource: settings.navigationSource,
     };
   }
 
@@ -1190,7 +1243,7 @@ export class Workstation {
     if (input.kind !== "open" && input.kind !== "navigate") return reasons;
     const url = String(input.params.url);
     const host = hostOf(url) ?? "";
-    const { allowedHosts, exfiltrationGuard } = this.#ctx.config.workstation;
+    const { allowedHosts, exfiltrationGuard } = this.settings();
     const listed = hostListed(host, allowedHosts);
     if (allowedHosts.length > 0 && !listed) reasons.push(`${host} hors de la liste des hôtes permis`);
     if (origin !== "agent" || !exfiltrationGuard) return reasons;
