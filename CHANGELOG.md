@@ -1,5 +1,11 @@
 # Journal des versions
 
+## omp-harness 1.22.0 — 2026-11-08
+
+- feat(harness): la vigie — surveillance 24/24, issues caviardées et pipelines de correction pilotés (#343) (9b812d6)
+- feat(harness): forges configurables — GitHub, GitLab (glab) ou aucune (#350) (23162b2)
+- fix(harness): un découpage attend la validation et le merge de son parent (#339) (cd7cbfb)
+
 ## omp-harness 1.21.0 — 2026-11-08
 
 - feat(harness,mem0-rs): observabilité — journaux JSON, /metrics Prometheus, erreurs des clients, sauvegardes distantes (#345) (63a202b)
