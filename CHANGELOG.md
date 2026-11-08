@@ -1,5 +1,20 @@
 # Journal des versions
 
+## omp-mem0-req 2.5.0 — 2026-11-08
+
+- feat(chrome): gestes de confiance (CDP), iframes et shadow DOM, select/hover/upload/download/navigation (#352) (4968c35)
+- feat(harness,chrome,req): demandes et automatisations du poste, plusieurs navigateurs (#349) (2789e0d)
+
+## omp-harness 1.20.0 — 2026-11-08
+
+- feat(chrome): gestes de confiance (CDP), iframes et shadow DOM, select/hover/upload/download/navigation (#352) (4968c35)
+- feat(harness,chrome,req): demandes et automatisations du poste, plusieurs navigateurs (#349) (2789e0d)
+
+## omp-chrome 0.3.0 — 2026-11-08
+
+- feat(chrome): gestes de confiance (CDP), iframes et shadow DOM, select/hover/upload/download/navigation (#352) (4968c35)
+- feat(harness,chrome,req): demandes et automatisations du poste, plusieurs navigateurs (#349) (2789e0d)
+
 ## omp-mem0-req 2.4.0 — 2026-11-08
 
 - feat(chrome,harness): poste cantonné à sa fenêtre, arrêt d'urgence, contenu des pages non fiable, session et captures visibles (#341) (701a92d)
