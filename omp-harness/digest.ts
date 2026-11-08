@@ -1,10 +1,11 @@
 // Le rapport du matin : ce que le système a fait seul pendant une fenêtre [depuis, maintenant]
-// — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs et
-// coût. Construit par une fonction PURE sur la base (`digestOf`), servi par `GET /v1/digest`
-// et l'outil MCP `digest`, et posté chaque jour à `notify.digestHour` par `DigestSender`.
+// — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs,
+// planifications lancées ou manquées, et coût. Construit par une fonction PURE sur la base
+// (`digestOf`), servi par `GET /v1/digest` et l'outil MCP `digest`, et posté chaque jour à
+// `notify.digestHour` par `DigestSender`.
 import { HARNESS_COMMIT } from "./build-info.ts";
 import type { HarnessConfig } from "./config.ts";
-import type { DecisionRow, RepoFilter, RunRow, Store } from "./db.ts";
+import type { DecisionRow, EventRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { sumUsage } from "./db.ts";
 import type { Notifier } from "./notify.ts";
 
@@ -60,6 +61,26 @@ function waitingLine(run: RunRow): string {
   return `${feature(run, run.id)} : ${flat(reason)}`;
 }
 
+const SKIPPED: Readonly<Record<string, string>> = {
+  busy: "non lancée, le lancement précédent n'est pas fini",
+  daily_budget: "non lancée, plafond journalier atteint",
+  missed: "manquée",
+  failed: "en échec",
+};
+
+/** L'issue d'une échéance en mots, d'après son événement (`schedule_fired` ou `schedule_skipped` et sa raison). */
+export function scheduleStatus(event: EventRow): string {
+  return event.type === "schedule_fired" ? "lancée" : (SKIPPED[String(event.payload.reason)] ?? "non lancée");
+}
+
+/** Ce qu'a donné l'échéance d'une planification. */
+function scheduleLine(event: EventRow): string {
+  const { payload } = event;
+  const name = typeof payload.name === "string" ? flat(payload.name, 80) : String(payload.scheduleId);
+  const detail = typeof payload.detail === "string" ? ` — ${flat(payload.detail, 120)}` : "";
+  return `${event.repo ?? "?"} · ${name} : ${scheduleStatus(event)}${detail}`;
+}
+
 /**
  * Le rapport des dépôts que le lecteur voit (`repos`, `null` : tous) sur [since, until].
  * Mergés et échoués : les runs dont la dernière écriture (la fin) tombe dans la fenêtre ;
@@ -84,6 +105,9 @@ export function digestOf(
     .listDecisions({ status: ["auto", "auto_timeout"], repos })
     .filter((decision) => inWindow(decision.createdAt));
   const usage = store.usageSince(since, repos).filter((row) => row.at <= until);
+  const schedules = [...store.eventsOfType("schedule_fired", repos), ...store.eventsOfType("schedule_skipped", repos)]
+    .filter((event) => inWindow(event.at))
+    .sort((a, b) => a.id - b.id);
 
   const sections = [
     section("Mergés", merged.map(mergedLine)),
@@ -96,6 +120,7 @@ export function digestOf(
       "Échecs",
       failed.map((run) => `${feature(run, run.id)} : ${flat(run.reason ?? "cause inconnue")}`),
     ),
+    section("Planifications", schedules.map(scheduleLine)),
   ].filter((part): part is string => part !== null);
   const parts = sections.length > 0 ? sections : ["Rien de neuf."];
   // Le coût n'est dit que si la consommation des agents est connue sur la fenêtre.

@@ -44,6 +44,7 @@ import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import { scheduleEdit, scheduleInput } from "./schedules.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
 import { MAX_WAIT_SEC, SESSION_JOBS, parseActionInput, parseBrowserHello, parseRequestStates } from "./workstation.ts";
@@ -87,6 +88,7 @@ export const API_FEATURES = [
   "instructions",
   "run-budget",
   "admin-repos",
+  "schedules",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -643,6 +645,31 @@ export function apiRoutes(
       const since = raw === null ? now - DIGEST_WINDOW_MS : Number(raw);
       if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
       send(call.res, 200, digestOf(store, since, now, call.repos));
+    }),
+    // Les planifications récurrentes (schedules.ts) : celles des dépôts que le client voit.
+    route("GET", "/v1/schedules", "viewer", (call) => send(call.res, 200, orchestrator.schedules.view(call.repos))),
+    route("POST", "/v1/schedules", "operator", async (call) => {
+      const schedule = orchestrator.schedules.create(scheduleInput(await readBody(call.req), call.client), call.actor);
+      send(call.res, 201, { schedule }, { ETag: `"${schedule.rev}"` });
+    }),
+    route("PUT", "/v1/schedules/{id}", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const schedule = orchestrator.schedules.update(
+        call.match[1] as string,
+        scheduleEdit(body, call.client),
+        call.actor,
+        call.repos,
+      );
+      send(call.res, 200, { schedule }, { ETag: `"${schedule.rev}"` });
+    }),
+    route("DELETE", "/v1/schedules/{id}", "operator", (call) => {
+      orchestrator.schedules.delete(call.match[1] as string, call.actor, call.repos);
+      send(call.res, 200, { deleted: true });
+    }),
+    route("POST", "/v1/schedules/{id}/run", "operator", async (call) => {
+      const fired = await orchestrator.schedules.runNow(call.match[1] as string, call.actor, call.repos);
+      void orchestrator.tick();
+      send(call.res, 201, fired, { ETag: `"${fired.schedule.rev}"` });
     }),
     // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
     route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),

@@ -172,3 +172,37 @@ export function parseRunView(raw: unknown): RunView | null {
     budget: parseBudget(raw.budget),
   };
 }
+
+/** Une planification récurrente du harness (`GET /v1/schedules`), telle que `harness_schedules` la montre. */
+export type ScheduleSummary = {
+  id: string;
+  name: string;
+  cron: string;
+  repo: string;
+  enabled: boolean;
+  target: Record<string, unknown>;
+  nextRunAt: number | null;
+  lastOutcome: { status: string; detail: string } | null;
+};
+
+/** La liste des planifications reçue du serveur ; `null` si le corps n'en porte pas. */
+export function parseSchedules(raw: unknown): { timezone: string; schedules: ScheduleSummary[] } | null {
+  if (!isRecord(raw) || !Array.isArray(raw.schedules)) return null;
+  return {
+    timezone: str(raw, "timezone"),
+    schedules: records(raw, "schedules")
+      .filter((item) => typeof item.id === "string")
+      .map((item) => ({
+        id: str(item, "id"),
+        name: str(item, "name"),
+        cron: str(item, "cron"),
+        repo: str(item, "repo"),
+        enabled: item.enabled === true,
+        target: isRecord(item.target) ? item.target : {},
+        nextRunAt: typeof item.nextRunAt === "number" ? item.nextRunAt : null,
+        lastOutcome: isRecord(item.lastOutcome)
+          ? { status: str(item.lastOutcome, "status"), detail: str(item.lastOutcome, "detail") }
+          : null,
+      })),
+  };
+}

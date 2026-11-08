@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { LOCAL_PROVIDER } from "./local-model.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { StepKind } from "./machine.ts";
+import { isTimeZone } from "./cron.ts";
 
 /** Les familles de modèles, de la moins chère à la plus capable. */
 export type Tier = "fast" | "standard" | "heavy";
@@ -405,6 +406,13 @@ export type HarnessConfig = {
    * sans /req ni /specs ; `false` : tout run passe par /req.
    */
   lanes: { direct: boolean };
+  /**
+   * Les planifications récurrentes (schedules.ts) : leurs expressions cron se lisent en heure
+   * murale de `timezone` (IANA) ; une échéance passée pendant un arrêt du service n'est
+   * rattrapée (une seule fois) que si elle date de moins de `catchUpMin` minutes, sinon elle
+   * est notée manquée.
+   */
+  schedules: { timezone: string; catchUpMin: number };
   repos: RepoConfig[];
 };
 
@@ -550,6 +558,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
+    schedules: { timezone: "Europe/Paris", catchUpMin: 60 },
     repos: [],
   };
 }
@@ -803,6 +812,16 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (typeof config.lanes.direct !== "boolean") fail("lanes.direct : booléen");
   if (config.issues.pollSec !== null && !(Number.isInteger(config.issues.pollSec) && config.issues.pollSec >= 60))
     fail("issues.pollSec : entier ≥ 60 (secondes), ou null");
+  if (typeof config.schedules.timezone !== "string" || !isTimeZone(config.schedules.timezone))
+    fail(`schedules.timezone : fuseau IANA inconnu (${String(config.schedules.timezone)}), ex. Europe/Paris`);
+  if (
+    !(
+      Number.isInteger(config.schedules.catchUpMin) &&
+      config.schedules.catchUpMin >= 1 &&
+      config.schedules.catchUpMin <= 10_080
+    )
+  )
+    fail("schedules.catchUpMin : entier de 1 à 10080 (minutes, une semaine au plus)");
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);

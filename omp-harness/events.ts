@@ -70,6 +70,9 @@ export const EVENT_TYPES = [
   "audit_state",
   "pilot",
   "dream_state",
+  // planifications récurrentes (le dépôt de leur cible)
+  "schedule_fired",
+  "schedule_skipped",
   // configuration du serveur
   "providers_changed",
   // notifications sortantes (ntfy)

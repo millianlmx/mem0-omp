@@ -587,6 +587,8 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues GitHub (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
+| `schedules.timezone` | `Europe/Paris` | le fuseau IANA dans lequel se lisent les expressions cron des planifications (§ « Les planifications ») ; un fuseau inconnu refuse la configuration |
+| `schedules.catchUpMin` | `60` | le rattrapage après un arrêt du service : la plus récente échéance passée de moins de N minutes part une fois, les plus vieilles sont notées manquées (`missed`) ; entier de 1 à 10080 |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -1286,6 +1288,9 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `digest` `{since?}` | viewer | Le rapport du matin en Markdown (texte rendu tel quel, `structuredContent` = le corps de la route) : ce qui s'est fait seul depuis `since` (ms epoch, défaut : 24 h) : `GET /v1/digest`. |
 | `run_instructions` `{id, text, rev?}` | operator | Une consigne à un run ni mergé ni annulé (409 sinon) : injectée dans la session de son agent s'il tourne (`delivered: "session"`), gardée pour son prochain prompt sinon (`"pending"`) : `POST /v1/runs/{id}/instructions`. |
 | `run_budget` `{id, budgetUsd, rev?}` | operator | Le budget propre d'un run non terminal, en dollars (`null` : celui de la configuration) ; rend `{run, budget}` : `POST /v1/runs/{id}/budget`. |
+| `schedules_list` | viewer | Les planifications des dépôts que le client voit, avec le fuseau : `GET /v1/schedules`. |
+| `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible). Mêmes contrôles que `POST /v1/schedules`. |
+| `schedule_delete` `{id, rev?}` | operator | Supprime une planification (`{id, deleted}`) ; avec `rev`, refusée si elle a changé depuis : `DELETE /v1/schedules/{id}`. |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
   `owner/name` sur GitHub (retrouvé par le distant des clones) ; facultatif quand le
@@ -1324,6 +1329,52 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 - Une erreur d'outil (dépôt non déclaré, rôle insuffisant, issue fermée, `gh` en
   échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
   une erreur JSON-RPC.
+
+## Les planifications
+
+Le système travaille seul à heure fixe : « chaque lundi, audite X », « chaque nuit,
+corrige les issues `omp:fix` », « chaque jour à 8 h, relance la veille Y ». Une
+planification porte un nom, une expression cron et une cible :
+
+| Cible | Champs | À chaque échéance |
+|---|---|---|
+| `run` | `repo`, `title`, `request`, `lane?`, `priority?`, `budgetUsd?` | un run, comme `POST /v1/runs` (`budgetUsd` : le budget propre du run) |
+| `audit` | `repo`, `focus?` | un audit, comme `POST /v1/audits` |
+| `issues` | `repo`, `label?` | la relève des issues ouvertes du label (`issues.label` par défaut), comme `issues_fix_labeled` |
+
+`automation` (les automatisations du poste Chrome) est réservée : refusée (400) avec un
+message qui le dit, tant que le poste ne les sert pas.
+
+- **L'expression cron** a cinq champs — minute, heure, jour du mois, mois, jour de la
+  semaine — chacun `*`, une valeur, une plage `a-b`, un pas `*/n`, `a-b/n` ou `a/n`, ou une
+  liste de ces formes ; mois et jours se nomment en anglais ou en français (`mon`, `lun`,
+  `janv`, `août`), 0 et 7 sont le dimanche. Comme dans cron, un jour du mois ET un jour de
+  semaine restreints valent l'un OU l'autre. Une expression illisible, ou qui n'échoit
+  jamais (`0 0 30 2 *`), est refusée (400).
+- **Le fuseau** est `schedules.timezone` (Paris par défaut). Au passage à l'heure d'été,
+  une heure qui n'existe pas part décalée du saut (`30 2 * * *` part à 03:30) ; au retour
+  à l'heure d'hiver, une heure répétée ne part qu'une fois, à sa première occurrence.
+- **Une échéance, un lancement.** Le tour de scheduling traite chaque planification due
+  une fois et avance `nextRunAt`. Après un arrêt du service, pas de rafale : la plus
+  récente échéance passée de moins de `schedules.catchUpMin` minutes part une fois (les
+  autres sont comptées dans `missed`) ; s'il n'y en a pas, rien ne part et l'issue est
+  `missed` (manquée).
+- **Pas d'empilement.** Tant que le run (ou l'audit, `queued` ou `analysing`) lancé par
+  l'échéance précédente n'est pas fini, ou que sa relève d'issues court encore, l'échéance
+  est sautée (`busy`). Une relève d'issues ne bloque pas sur les runs qu'elle a lancés :
+  une issue déjà liée à un run n'est jamais relancée.
+- **Le plafond journalier** (`monitoring.dailyBudgetUsd`) atteint, l'échéance est sautée
+  (`daily_budget`) : rien ne part, la suivante est attendue.
+- **L'issue de chaque échéance** est gardée (`lastOutcome` : `status` parmi `fired`,
+  `busy`, `daily_budget`, `missed`, `failed`, `at`, `dueAt`, `detail`, `missed`, `runIds`,
+  `auditId`) et publiée : `schedule_fired` ou `schedule_skipped` (`reason` = le statut),
+  au dépôt de la cible ; ajoutés à `notify.events`, ils partent en notification. Le
+  rapport du matin les liste dans sa section « Planifications ».
+- Les runs et audits lancés le sont au nom du service ; l'événement porte la
+  planification (`scheduleId`) et, pour un déclenchement à la main, son auteur (`by`).
+
+Côté omp, `harness_schedule` crée une planification du dépôt courant (avec l'accord de
+l'utilisateur, comme `harness_launch`) et `harness_schedules` les liste.
 
 ## API
 
@@ -1378,7 +1429,10 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries du tableau de bord de l'Accueil : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
-| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, puis le coût de la fenêtre si la consommation est connue ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
+| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
+| `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |
+| `PUT /v1/schedules/{id}` `{name?, cron?, target?, enabled?}` · `DELETE /v1/schedules/{id}` | operator | Modifier (seuls les champs présents ; un nouveau `cron` ou une réactivation réarment `nextRunAt` depuis maintenant) ou supprimer. `If-Match: <rev>` facultatif : périmé, 412. Une planification d'un dépôt que le client ne voit pas : 404. |
+| `POST /v1/schedules/{id}/run` | operator | Déclencher tout de suite, hors échéance, même désactivée (`{schedule, outcome}`, 201) ; 409 si le lancement précédent n'est pas fini ou le plafond journalier atteint. `nextRunAt` ne bouge pas. |
 | `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-têtes `X-OMP-Extension: <version>`, `X-OMP-Browser`, `X-OMP-Browser-Label` et `X-OMP-Agent-Tabs: <onglets de la fenêtre de l'agent>`) : 200 `{action}` de CE navigateur passée `running`, ou 204. |
@@ -1407,7 +1461,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
 | `POST /v1/mcp` | viewer | Le serveur MCP des issues GitHub (§ « Les issues GitHub (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les gestes exigent `operator`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une

@@ -7,6 +7,7 @@
 // rien et n'est journalisée (log + événement `notify_failed`) qu'une fois par heure.
 import type { HarnessConfig } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
+import { scheduleStatus } from "./digest.ts";
 
 export type Notification = {
   title: string;
@@ -206,6 +207,18 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         ),
         priority: 4,
         tags: ["raised_hand"],
+        click: null,
+      };
+    }
+    // Les planifications : à ajouter à `notify.events` pour être prévenu de chaque échéance.
+    case "schedule_fired":
+    case "schedule_skipped": {
+      const status = scheduleStatus(event);
+      return {
+        title: `Planification ${status} — ${text(payload.repo)} · ${text(payload.name, text(payload.scheduleId))}`,
+        body: short(text(payload.detail, status)),
+        priority: event.type === "schedule_fired" ? 2 : 3,
+        tags: [event.type === "schedule_fired" ? "alarm_clock" : "fast_forward"],
         click: null,
       };
     }
