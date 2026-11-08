@@ -2011,8 +2011,9 @@ s'ajoute derrière la bascule « Graphe ⇄ Liste » : il est dérivé sur l'iPh
 MÊME noyau que la fenêtre macOS (`MemoryGraph`, nœuds-souvenirs, nœuds-étiquettes,
 arêtes de proximité) — les liens manuels restent sur le Mac qui les a tracés —,
 manipulable au doigt (pincer, glisser, toucher) ; toucher un souvenir ouvre sa fiche
-en lecture seule, toucher un nœud-étiquette applique son filtre. L'app n'émet AUCUNE
-écriture et rien ne se rafraîchit en continu.
+en lecture seule, toucher un nœud-étiquette applique son filtre. Le graphe et la fiche
+n'émettent AUCUNE écriture ; seule la liste corrige ou supprime un souvenir (menu de la
+rangée, `MemoryWriter`, suppression confirmée), et rien ne se rafraîchit en continu.
 
 Recette pas à pas :
 
