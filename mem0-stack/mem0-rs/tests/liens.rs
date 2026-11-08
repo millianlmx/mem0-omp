@@ -220,7 +220,7 @@ async fn reve_local_llm_injoignable_journalise_l_erreur() {
 async fn reve_chat_coupe_rejoue_et_journalise_sans_llm() {
     let b = banc_avec("reve-chat-coupe", &[("OMLX_CHAT_BASE_URL", "off")]).await;
     let s = &b.serveur;
-    assert!(s.journal().contains("LLM modele-chat-test via off"), "{}", s.journal());
+    assert!(s.journal_contient("LLM modele-chat-test via off").await, "{}", s.journal());
     assert_eq!(sante_reve(s).await["chat"], "off");
     ajouter(s, "le port par défaut de mem0-rs est 8321").await;
     ajouter(s, "le port par défaut de mem0-rs est 8322").await;
