@@ -1,0 +1,85 @@
+#!/bin/sh
+# Le commit construit dans l'image du harness, imprimé sur la sortie (40 hex), ou
+# rien s'il est inconnu. Lancé par Dockerfile.harness au build, sur le contexte de
+# build monté en lecture (`build-commit <contexte>`) ; le service le rend par
+# /v1/health et dans le rapport du matin. Trois sources, la première qui répond :
+#
+#   1. OMP_HARNESS_COMMIT, l'argument du build : `harness.sh` le pose d'après le
+#      clone (`git rev-parse HEAD`), et toute pile peut le passer ;
+#   2. le `.git` du contexte (HEAD, refs, packed-refs, que .dockerignore laisse
+#      entrer) : un `docker compose up` lancé depuis un clone ;
+#   3. le tag `omp-harness-v<version>` du dépôt OMP_HARNESS_SOURCE_REPO, retenu
+#      SEULEMENT si les arbres omp-harness et omp-mem0-memory du contexte sont
+#      ceux du tag : Portainer CE supprime le `.git` de ses clones, et la pile
+#      qui suit la branche `deploy` construit toujours un commit tagué. Récupéré
+#      sans le contenu des fichiers (`--filter=blob:none`, profondeur 1).
+#
+# Une source illisible, un réseau absent ou un arbre qui diffère du tag ne font
+# jamais échouer le build : le commit reste inconnu, jamais faux.
+set -eu
+ctx="${1:?usage : build-commit <dossier du contexte>}"
+
+sha_ok() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{40}$'; }
+say() { echo "build-commit : $*" >&2; }
+
+# 1. L'argument du build.
+given="$(printf '%s' "${OMP_HARNESS_COMMIT:-}" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+if [ -n "$given" ]; then
+  if sha_ok "$given"; then echo "$given"; exit 0; fi
+  say "OMP_HARNESS_COMMIT ignoré (pas un sha complet) : $given"
+fi
+
+# 2. Le .git du contexte : une référence symbolique (fichier libre, puis packed-refs),
+# ou une tête détachée.
+dot="$ctx/.git"
+if [ -f "$dot/HEAD" ]; then
+  head="$(head -n 1 "$dot/HEAD")"
+  sha=""
+  case "$head" in
+    "ref: "*)
+      ref="${head#ref: }"
+      if [ -f "$dot/$ref" ]; then
+        sha="$(head -n 1 "$dot/$ref")"
+      elif [ -f "$dot/packed-refs" ]; then
+        sha="$(awk -v ref="$ref" '$2 == ref { print $1; exit }' "$dot/packed-refs")"
+      fi
+      ;;
+    *) sha="$head" ;;
+  esac
+  if sha_ok "$sha"; then echo "$sha"; exit 0; fi
+  say "$dot/HEAD illisible ($head)"
+fi
+
+# 3. Le tag de la version, prouvé par les arbres.
+repo="${OMP_HARNESS_SOURCE_REPO:-}"
+[ -n "$repo" ] || exit 0
+version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ctx/omp-harness/package.json" | head -n 1)"
+[ -n "$version" ] || { say "version illisible dans omp-harness/package.json"; exit 0; }
+tag="omp-harness-v$version"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+if ! git clone -q --bare --depth 1 --filter=blob:none --branch "$tag" "$repo" "$work/tag.git" 2>"$work/err"; then
+  say "$tag introuvable sur $repo ($(tail -n 1 "$work/err"))"
+  exit 0
+fi
+commit="$(git --git-dir="$work/tag.git" rev-parse "refs/tags/$tag^{commit}")"
+# Les deux arbres se calculent dans un dépôt ordinaire : jamais de lecture paresseuse
+# des fichiers absents du clone partiel. Le contexte n'a ni omp-harness/deploy/nixos
+# (exclu par .dockerignore) ni rien hors des deux dossiers : l'arbre attendu est
+# celui du tag, réduit de même.
+plain="$work/plain.git"
+git init -q --bare "$plain"
+git --git-dir="$work/tag.git" ls-tree -r "$commit" omp-harness omp-mem0-memory |
+  grep -v "$(printf '\t')omp-harness/deploy/nixos/" |
+  GIT_INDEX_FILE="$work/expected" git --git-dir="$plain" update-index --add --index-info
+expected="$(GIT_INDEX_FILE="$work/expected" git --git-dir="$plain" write-tree --missing-ok)"
+# `--force` : le contexte ne porte que des fichiers suivis, même ceux qu'un .gitignore
+# imbriqué nommerait.
+GIT_INDEX_FILE="$work/built" git --git-dir="$plain" --work-tree="$ctx" -c core.autocrlf=false \
+  add --all --force -- omp-harness omp-mem0-memory
+built="$(GIT_INDEX_FILE="$work/built" git --git-dir="$plain" write-tree)"
+if [ "$expected" = "$built" ]; then
+  echo "$commit"
+else
+  say "le contexte n'est pas l'arbre de $tag (des commits non publiés) : commit inconnu"
+fi

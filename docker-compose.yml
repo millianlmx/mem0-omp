@@ -20,6 +20,12 @@
 #   OMP_HARNESS_TAILNET_PORT       le port https du harness sur le tailnet (443)
 #   OMP_HARNESS_TAILNET_MEM0_PORT  celui de la mémoire (8443)
 #   OMP_HARNESS_TAILSCALE_SERVE=0  ne touche pas au `tailscale serve` de l'hôte
+#   OMP_HARNESS_COMMIT     le commit construit, rendu par /v1/health ; sans lui, lu
+#                          dans le .git du clone, sinon prouvé par le tag de la version
+#                          sur OMP_HARNESS_SOURCE_REPO (Portainer supprime le .git)
+#
+# Le déploiement continu : Portainer suit la branche `deploy` (GitOps updates), que
+# le job de release avance sur chaque release du harness.
 #
 # Tailscale n'est pas dans la pile : celui de l'hôte publie le harness et sa mémoire
 # (service `pairing`, par son socket).
@@ -32,6 +38,9 @@ x-harness-image: &harness-image
   build:
     context: .
     dockerfile: omp-harness/deploy/container/Dockerfile.harness
+    args:
+      OMP_HARNESS_COMMIT: ${OMP_HARNESS_COMMIT:-}
+      OMP_HARNESS_SOURCE_REPO: ${OMP_HARNESS_SOURCE_REPO-https://github.com/millianlmx/mem0-omp.git}
   image: omp-harness:local
   # Construite depuis le dépôt, jamais tirée d'un registre.
   pull_policy: build

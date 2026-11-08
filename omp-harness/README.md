@@ -45,7 +45,10 @@ bash omp-harness/deploy/container/harness.sh add git@github.com:<toi>/<dépôt>.
    **Serveur** de l'app.
 
 Relancé, `up` met à jour et redémarre sans toucher aux secrets ni à la
-configuration. `harness.sh pair` réaffiche le code. `harness.sh approver` affiche le
+configuration ; `up --ref deploy` met d'abord le clone sur la branche `deploy`
+d'origin, la dernière release du harness (en avance rapide ; une modification locale
+suivie l'arrête). L'image porte le commit du clone, que `/v1/health` rend
+(`commit`). `harness.sh pair` réaffiche le code. `harness.sh approver` affiche le
 **code approbateur** des apps, le seul qui approuve les envois du poste (voir « Le
 poste de travail »). `harness.sh client add <nom>` crée un client de plus et affiche
 SON code (voir « Plusieurs clients, plusieurs projets »).
@@ -144,8 +147,10 @@ pilote, et Tailscale installé sur l'hôte et connecté (`tailscale up`) : la pi
 embarque pas, elle se publie par celui de l'hôte.
 
 1. Dans Portainer : **Stacks › Add stack › Repository**. URL :
-   `https://github.com/millianlmx/mem0-omp`, référence `refs/heads/main`, chemin du
-   compose : `docker-compose.yml`.
+   `https://github.com/millianlmx/mem0-omp`, référence `refs/heads/deploy`, chemin du
+   compose : `docker-compose.yml`. La branche `deploy` porte toujours la dernière
+   release du harness : le job de release l'y avance (en avance rapide) après chaque
+   tag `omp-harness-v*` ; `refs/heads/main` suit au contraire chaque fusion.
 2. Dans **Environment variables**, au minimum :
 
    | Variable | Valeur |
@@ -153,8 +158,25 @@ embarque pas, elle se publie par celui de l'hôte.
    | `ANTHROPIC_API_KEY` | la clé des agents (ou `OPENROUTER_API_KEY`) |
    | `OMP_HARNESS_REPOS` | tes dépôts, séparés par des virgules : `git@github.com:toi/a.git,git@github.com:toi/b.git` |
 
-3. **Deploy the stack**. La première fois, la construction des images prend quelques
+3. **GitOps updates** activé (la mise à jour automatique) : **Mechanism** `Polling`,
+   **Fetch interval** `5m` ; **Re-pull image** et **Force redeployment** coupés.
+   Portainer relit la branche toutes les 5 minutes et ne redéploie que si son commit a
+   changé : il reclone alors le dépôt et relance la pile, et `pull_policy: build`
+   reconstruit les images du harness depuis ce clone (ni Re-pull image, qui
+   chercherait `omp-harness:local` dans un registre, ni Force redeployment, qui
+   redéploierait à chaque sondage, ne servent ici).
+4. **Deploy the stack**. La première fois, la construction des images prend quelques
    minutes.
+
+Chaque release du harness arrive ainsi seule sur le serveur, au plus 5 minutes après
+son tag, plus le temps de la construction ; les runs en cours reprennent à leur
+dernier point de reprise après le redémarrage. Pour savoir ce qui tourne,
+`GET /v1/health` rend `version` et `commit` : Portainer supprime le `.git` de ses
+clones, donc le build retrouve le commit par le tag `omp-harness-v<version>` du dépôt
+`OMP_HARNESS_SOURCE_REPO` (l'URL ci-dessus par défaut), qu'il ne retient que si
+les arbres `omp-harness/` et `omp-mem0-memory/` construits sont exactement ceux du
+tag — sur `deploy`, c'est toujours le cas ; une pile qui suit `main` entre deux
+releases rend `commit: null` plutôt qu'un commit faux.
 
 Ensuite, tout se lit dans les journaux des conteneurs :
 
@@ -208,10 +230,15 @@ Les autres variables, facultatives :
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
 | `OMP_HARNESS_TAILNET_PORT`, `OMP_HARNESS_TAILNET_MEM0_PORT` | `443`, `8443` | les ports https du harness et de la mémoire sur le tailnet, ceux du code d'appairage |
 | `OMP_HARNESS_TAILSCALE_SERVE` | `1` | `0` : `pairing` ne touche pas au `tailscale serve` de l'hôte |
+| `OMP_HARNESS_COMMIT` | aucun | le commit construit, rendu par `/v1/health` ; sans lui, lu dans le `.git` du clone (`docker compose up` depuis un clone), sinon prouvé par le tag de la version |
+| `OMP_HARNESS_SOURCE_REPO` | ce dépôt | le dépôt dont le build lit le tag `omp-harness-v<version>` quand le `.git` manque (un fork : le sien) ; vide : jamais |
 
-Chaque redéploiement (**Pull and redeploy**, ou une variable changée) relit les
-variables : la clé du modèle et la liste des dépôts suivent, le jeton de la mémoire,
-la clé SSH et `config.json` sont gardés. Pour la vérification, ouvre la console du
+Chaque redéploiement (**Pull and redeploy**, une variable changée, ou la mise à jour
+GitOps) relit les variables : la clé du modèle et la liste des dépôts suivent, le
+jeton de la mémoire, la clé SSH et `config.json` sont gardés. Une pile créée sur
+`refs/heads/main` passe au déploiement continu depuis **Stacks › <pile> › Editor** :
+référence `refs/heads/deploy`, **GitOps updates** réglé comme à l'étape 3, puis
+**Update the stack**. Pour la vérification, ouvre la console du
 conteneur `harness` et lance `omp-harness-check`. Les autres réglages (modèles,
 plafonds) se font dans `config.json`, sous `OMP_HARNESS_ROOT`, puis en redémarrant
 `harness`.
@@ -421,7 +448,12 @@ Les runs en cours reprennent à leur dernier point de reprise après le redémar
   recompiler `mem0-rs`, refais les deux commandes `cargo build` et `install` de
   l'étape 2.
 - **NixOS** : `nix flake update mem0-omp`, puis `sudo nixos-rebuild switch`.
-- **En conteneurs** : `git pull`, puis `bash omp-harness/deploy/container/harness.sh up`.
+- **En conteneurs** : `bash omp-harness/deploy/container/harness.sh up --ref deploy`
+  (la dernière release ; `git pull` puis `harness.sh up` pour suivre `main`). Un
+  `cron` qui le relance fait du serveur un déploiement continu, comme la pile
+  Portainer.
+- **Avec Portainer** : rien à faire avec les **GitOps updates** sur `refs/heads/deploy`
+  (§ Avec Portainer) ; sinon **Pull and redeploy**.
 
 ### Sauvegarder et restaurer la base
 
@@ -1145,7 +1177,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
-du service, `api`, `features`). La colonne « Rôle » est le rôle minimal.
+du service, `commit` construit ou `null`, `api`, `features`). La colonne « Rôle » est le rôle minimal.
 
 `features` nomme ce que le serveur sait faire au-delà de l'API 1 d'origine
 (`API_FEATURES`, `http.ts`) : un client teste la capacité avant d'offrir le geste.
@@ -1195,7 +1227,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries du tableau de bord de l'Accueil : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
-| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, puis le coût de la fenêtre si la consommation est connue ; une section vide est omise, « Rien de neuf. » si tout est vide. |
+| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, puis le coût de la fenêtre si la consommation est connue ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-tête `X-OMP-Extension: <version>`) : 200 `{action}` passée `running`, ou 204. |

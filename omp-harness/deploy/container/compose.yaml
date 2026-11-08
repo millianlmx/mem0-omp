@@ -12,6 +12,9 @@ services:
     build:
       context: ../../..
       dockerfile: omp-harness/deploy/container/Dockerfile.harness
+      args:
+        # Le commit du clone, posé par harness.sh (git rev-parse HEAD) : /v1/health le rend.
+        OMP_HARNESS_COMMIT: ${OMP_HARNESS_COMMIT:-}
     image: omp-harness:local
     user: "${OMP_HARNESS_USER}"
     group_add: ["${OMP_HARNESS_ENGINE_GID:-0}"]

@@ -255,3 +255,23 @@ test("rapport-du-matin/AC-5 : à l'heure dite avec notify.url, un seul rapport p
     await ntfy.close();
   }
 });
+
+test("rapport-du-matin/AC-6 : la dernière ligne du rapport nomme le commit déployé (sha court), ou le dit inconnu — même sur une fenêtre sans rien de neuf", () => {
+  const since = 100 * HOUR;
+  const { clock, store } = clocked(undefined, since);
+  try {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const quiet = digestOf(store, since, since + HOUR, null, sha);
+    assert.match(quiet.text, /^Rien de neuf/);
+    assert.equal(quiet.text.split("\n").at(-1), "Commit déployé : 0123456789ab");
+    run(store, "neuf", "Export CSV");
+    clock.now = since + 2 * HOUR;
+    store.updateRun("neuf", { state: "merged", mergeSha: "b".repeat(40) });
+    const busy = digestOf(store, since, since + 3 * HOUR, null, sha);
+    assert.equal(busy.text.split("\n").at(-1), "Commit déployé : 0123456789ab", busy.text);
+    assert.ok(!busy.text.includes(sha), "le sha court seulement");
+    assert.match(digestOf(store, since, since + 3 * HOUR, null, null).text, /\nCommit déployé : inconnu[^\n]*$/);
+  } finally {
+    store.close();
+  }
+});

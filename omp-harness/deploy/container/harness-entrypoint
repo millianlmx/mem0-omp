@@ -14,6 +14,11 @@ if [ -n "${OMP_HARNESS_ENV_FILE:-}" ] && [ -r "$OMP_HARNESS_ENV_FILE" ]; then
   . "$OMP_HARNESS_ENV_FILE"
   set +a
 fi
+# Le commit construit (build-commit, au build de l'image), sauf s'il est donné au lancement.
+if [ -z "${OMP_HARNESS_COMMIT:-}" ] && [ -s /opt/omp-harness/commit ]; then
+  OMP_HARNESS_COMMIT="$(cat /opt/omp-harness/commit)"
+  export OMP_HARNESS_COMMIT
+fi
 if [ -n "${HOME:-}" ]; then
   export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -F $HOME/.ssh/config -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
 fi

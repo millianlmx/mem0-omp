@@ -42,6 +42,7 @@ import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers
 import { escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
+import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
@@ -248,6 +249,8 @@ export type HttpOptions = {
   version?: string;
   /** Le fichier de configuration administré à chaud (`POST /v1/reload`, `POST /v1/repos`) ; absent : 409. */
   admin?: ConfigAdmin | null;
+  /** Le commit rendu par `/v1/health` ; défaut : `OMP_HARNESS_COMMIT` (build-info.ts). */
+  commit?: string | null;
   /** Le journal du service : la cause d'une erreur interne y va, jamais dans la réponse. */
   log?: (line: string) => void;
   /** La cadence des pings du flux SSE, et de la relecture du jeton de chaque flux ouvert. */
@@ -955,6 +958,8 @@ export function createHandler(options: HttpOptions): http.RequestListener {
             ok: health.ok,
             api: API_VERSION,
             version: options.version ?? HARNESS_VERSION,
+            // Le commit construit (null : image ou service lancés sans OMP_HARNESS_COMMIT).
+            commit: options.commit === undefined ? HARNESS_COMMIT : options.commit,
             features: API_FEATURES,
             checks: health.checks,
           });

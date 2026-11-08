@@ -116,8 +116,24 @@ jamais par un `t.skip` nu : c'est ce saut que `--strict` change en échec nommé
 `scripts/` ne garde à sa racine que ce que la CI, la release et le développement
 lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,
 `swift-app.sh`, `ios-build.sh`, `run-console.sh`, `mem0-http-contrat.sh`…) ; les
-recettes manuelles ou gatées (captures iOS, sondes AX, bascule réelle)
+recettes manuelles ou gatées (captures iOS, sondes AX, bascule réelle, pile compose)
 vivent dans `scripts/recette/`.
+
+`bash scripts/recette/smoke-pile.sh [--omlx <url …/v1>] [--keep]` éprouve la pile
+compose du serveur (`docker-compose.yml`, celle de Portainer) sur un poste avec Docker
+(ou podman et sa CLI `docker`), Compose ≥ 2.24.4, node, git et curl : il construit
+les images, monte le harness et mem0-rs sous un projet, un réseau, des dossiers
+(`OMP_SMOKE_DIR`, `~/.cache` par défaut) et des ports à lui, sans clé de modèle — un
+faux serveur compatible OpenAI sert les embeddings, ou l'oMLX donné par `--omlx`
+(`http://host.docker.internal:8000/v1` sur un Mac) —, puis vérifie dans l'ordre :
+`/v1/health` à 200 avec le commit du clone, un client appairé (`--add-client`) dont
+le jeton ouvre l'API (401 sans), un run de /req au merge sur un dépôt jetable avec le
+faux runner des tests (`test/support/fake-omp-rpc.ts`), et un souvenir écrit puis
+retrouvé dans mem0. Une ligne `✓`/`✗` par vérification ; au premier écart, l'état des
+conteneurs et les journaux du harness, de mem0 et du faux runner, puis la sortie 1.
+Tout vert : 0. La pile est retirée à la fin, sauf avec `--keep`. La première fois,
+la construction de mem0-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
+étape d'attente). Ni `check.sh` ni la CI ne la lancent.
 
 ## CI et release
 
@@ -386,9 +402,15 @@ patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits 
 chaque plugin — et non par la PR mergée : personne ne monte une version à la main
 (une PR qui le tente échoue en CI). `CHANGELOG.md` est écrit au même moment, une
 section datée par version publiée, et les versions historiques jamais publiées sont
-rattrapées par le même run. Le jeton dédié que ce job exige, ses permissions et sa
+rattrapées par le même run. Si une autre PR est fusionnée pendant que le job attend
+les statuts de sa PR de release, il ne la fusionne pas : il recalcule la release
+depuis le nouveau `main` et remet la même PR à jour, si bien que deux fusions
+rapprochées donnent une seule version, au bump de l'ensemble, et une entrée de
+journal qui les nomme toutes. Après les tags, il avance la branche `deploy` sur le
+dernier tag `omp-harness-v*` : le serveur la suit (pile Portainer en GitOps,
+`harness.sh up --ref deploy`). Le jeton dédié que ce job exige, ses permissions et sa
 création sont dans `PUBLISHING.md` § Jeton de release ; les règles de décision, le
-flux en six étapes et la commande de protection de branche aussi.
+flux en huit étapes et la commande de protection de branche aussi.
 
 Chaque release publiée déclenche ensuite `.github/workflows/release-assets.yml` :
 deux jobs macOS construisent OMP Console depuis le tag (`scripts/release-assets.sh
