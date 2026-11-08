@@ -662,7 +662,7 @@ test("poste-demandes/AC-37 : une automatisation créée ne pose aucune demande d
   }
 });
 
-test("poste-demandes/AC-40 AC-44 : en propose, le clic d'une demande part en file ; un envoi à un tiers attend l'approbation et ne part pas sans elle", async () => {
+test("poste-demandes/AC-40 poste-demandes/AC-44 : en propose, le clic d'une demande part en file ; un envoi à un tiers attend l'approbation et ne part pas sans elle", async () => {
   const { world, api } = await setup({ "poste-demande": [[ACT(CLICK), REPORT("envoi en attente d'approbation")]] });
   try {
     await api.call("PUT", "/v1/workstation/settings", { autonomy: "propose" });
