@@ -13,6 +13,7 @@ import type {
   Issue,
   IssueComment,
   IssueDetail,
+  IssueQuery,
   SquashMessage,
 } from "./forge.ts";
 import { failure, githubSlug, record, remoteLocation, textOf, urlIn } from "./forge.ts";
@@ -177,13 +178,15 @@ export class GitHubForge implements Forge {
     return view.code === 0 ? prState(view.stdout) : null;
   }
 
-  async issues(options: { state: "open" | "all"; label?: string; limit: number }): Promise<Issue[]> {
-    const args = ["issue", "list", "--repo", this.#slug(), "--state", options.state, "--limit", String(options.limit)];
-    if (options.label) args.push("--label", options.label);
-    args.push("--json", ISSUE_FIELDS);
+  async issues(query: IssueQuery): Promise<Issue[]> {
+    const args = ["issue", "list", "--repo", this.#slug(), "--state", query.state, "--limit", String(query.limit)];
+    if (query.label) args.push("--label", query.label);
+    args.push("--json", query.withBody ? `${ISSUE_FIELDS},body` : ISSUE_FIELDS);
     const raw = await this.#json(args);
     if (!Array.isArray(raw)) throw new HarnessError(502, "gh issue list : une liste est attendue");
-    return raw.map(issueOf);
+    return raw.map((entry) =>
+      query.withBody ? { ...issueOf(entry), body: textOf(record(entry).body) } : issueOf(entry),
+    );
   }
 
   async issue(number: number): Promise<IssueDetail> {

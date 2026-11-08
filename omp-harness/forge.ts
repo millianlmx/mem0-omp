@@ -24,7 +24,15 @@ export type Issue = {
   labels: string[];
   author: string | null;
   createdAt: string;
+  /** Le texte de l'issue, seulement si la liste l'a demandé (`withBody`). */
+  body?: string;
 };
+
+/**
+ * Une liste d'issues : ouvertes ou toutes, un label les filtre, au plus `limit` (la forge
+ * pagine au-delà de 100). `withBody` y joint leur texte (la vigie y cherche son empreinte).
+ */
+export type IssueQuery = { state: "open" | "all"; label?: string; limit: number; withBody?: boolean };
 
 export type IssueComment = { author: string | null; body: string; createdAt: string };
 
@@ -60,8 +68,7 @@ export type Forge = {
   autoMerge(head: string, message: SquashMessage | null): Promise<void>;
   /** L'état de la PR de `head`, `null` s'il ne se lit pas (la forge ne répond pas). */
   changeState(head: string): Promise<ChangeState | null>;
-  /** Les issues (ouvertes, ou toutes), un label les filtre, au plus `limit` (≤ 100). */
-  issues(options: { state: "open" | "all"; label?: string; limit: number }): Promise<Issue[]>;
+  issues(query: IssueQuery): Promise<Issue[]>;
   /** Une issue, son texte et ses commentaires. */
   issue(number: number): Promise<IssueDetail>;
   comment(number: number, body: string): Promise<void>;

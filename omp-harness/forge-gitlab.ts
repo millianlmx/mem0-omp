@@ -16,6 +16,7 @@ import type {
   Issue,
   IssueComment,
   IssueDetail,
+  IssueQuery,
   SquashMessage,
 } from "./forge.ts";
 import { failure, record, remoteLocation, textOf } from "./forge.ts";
@@ -242,21 +243,24 @@ export class GitLabForge implements Forge {
     return (await this.#openMr(head))?.state ?? null;
   }
 
-  async issues(options: { state: "open" | "all"; label?: string; limit: number }): Promise<Issue[]> {
-    const args = [
-      "issue",
-      "list",
-      "-R",
-      this.#target(),
-      "--per-page",
-      String(Math.min(Math.max(options.limit, 1), PAGE_MAX)),
-    ];
-    if (options.state === "all") args.push("--all");
-    if (options.label) args.push("--label", options.label);
-    args.push("--output", "json");
-    const raw = await this.#json(args);
-    if (!Array.isArray(raw)) throw new HarnessError(502, "glab issue list : une liste est attendue");
-    return raw.map(issueOf);
+  async issues(query: IssueQuery): Promise<Issue[]> {
+    const limit = Math.max(query.limit, 1);
+    const perPage = Math.min(limit, PAGE_MAX);
+    const found: Issue[] = [];
+    // GitLab rend au plus 100 issues par page : les suivantes se demandent par `--page`.
+    for (let page = 1; found.length < limit; page++) {
+      const args = ["issue", "list", "-R", this.#target(), "--per-page", String(perPage)];
+      if (page > 1) args.push("--page", String(page));
+      if (query.state === "all") args.push("--all");
+      if (query.label) args.push("--label", query.label);
+      args.push("--output", "json");
+      const raw = await this.#json(args);
+      if (!Array.isArray(raw)) throw new HarnessError(502, "glab issue list : une liste est attendue");
+      for (const entry of raw)
+        found.push(query.withBody ? { ...issueOf(entry), body: textOf(record(entry).description) } : issueOf(entry));
+      if (raw.length < perPage) break;
+    }
+    return found.slice(0, limit);
   }
 
   async issue(number: number): Promise<IssueDetail> {

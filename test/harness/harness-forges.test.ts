@@ -82,8 +82,11 @@ function fakeForges(
       const listed = issues.filter(
         (issue) => (all || issue.state === "opened") && (label === null || issue.labels.includes(label)),
       );
-      // GitLab rend les plus récentes d'abord.
-      return done(JSON.stringify(listed.sort((a, b) => b.iid - a.iid).map(json)));
+      // GitLab rend les plus récentes d'abord, page par page.
+      const perPage = Number(args[args.indexOf("--per-page") + 1]);
+      const page = args.includes("--page") ? Number(args[args.indexOf("--page") + 1]) : 1;
+      const sorted = listed.sort((a, b) => b.iid - a.iid).slice((page - 1) * perPage, page * perPage);
+      return done(JSON.stringify(sorted.map(json)));
     }
     if (what === "issue" && verb === "view") {
       const issue = issues.find((candidate) => String(candidate.iid) === args[2]);
@@ -321,6 +324,19 @@ test("harness-forges/AC-3 : GitHub inchangé — `gh issue list/view --repo owne
       ],
     );
     assert.equal(calls[0]?.env, undefined, "sans compte propre, gh hérite de l'environnement du service");
+    // Le texte des issues seulement sur demande (la vigie, qui y cherche son empreinte).
+    const forge = await mcp.world.orchestrator.issues.forge(mcp.world.config.repos[0] as RepoConfig);
+    await forge.issues({ state: "all", label: "omp:vigie", limit: 500, withBody: true });
+    assert.deepEqual(calls[1]?.args.slice(4), [
+      "--state",
+      "all",
+      "--limit",
+      "500",
+      "--label",
+      "omp:vigie",
+      "--json",
+      "number,title,url,labels,author,createdAt,body",
+    ]);
   } finally {
     await mcp.close();
   }
@@ -502,7 +518,7 @@ test("harness-forges/AC-5 : GitLab, issues — issues_list, issue_fix (notes non
   }
 });
 
-test("harness-forges/AC-6 : GitLab, gestes d'issue de la forge — commenter (`issue note`), fermer et rouvrir avec un commentaire, créer avec labels (URL work_items), lister et créer des labels", async () => {
+test("harness-forges/AC-6 : GitLab, gestes d'issue de la forge — commenter (`issue note`), fermer et rouvrir avec un commentaire, créer avec labels (URL work_items), lister et créer des labels, lister toutes les issues d'un label avec leur texte au-delà d'une page", async () => {
   const restore = withServiceTokens();
   const calls: Call[] = [];
   const repo = harnessRepo("harness-forges-gestes-");
@@ -555,6 +571,32 @@ test("harness-forges/AC-6 : GitLab, gestes d'issue de la forge — commenter (`i
     calls.length = 0;
     await assert.rejects(forge.comment(3, "x"), /GITLAB_TOKEN_CORPO \(son jeton GitLab\) est absente/);
     assert.equal(calls.length, 0);
+
+    // La vigie cherche son empreinte dans le texte de toutes ses issues, ouvertes ou non : 150, sur deux pages.
+    process.env.GITLAB_TOKEN_CORPO = CORPO_TOKEN;
+    const many: FakeGitlabIssue[] = Array.from({ length: 160 }, (_, i) => ({
+      iid: i + 1,
+      title: `Incident ${i + 1}`,
+      description: `<!-- omp-vigie:fingerprint=${i + 1} -->`,
+      state: i % 2 === 0 ? "opened" : "closed",
+      labels: ["omp:vigie"],
+    }));
+    const paged = await openForge(entry, {
+      exec: fakeForges(many, calls),
+      git: new Git(execProcess, { authorName: "t", authorEmail: "t@t" }),
+    });
+    const all = await paged.issues({ state: "all", label: "omp:vigie", limit: 150, withBody: true });
+    assert.equal(all.length, 150);
+    assert.equal(all[0]?.body, "<!-- omp-vigie:fingerprint=160 -->");
+    assert.equal(all.at(-1)?.number, 11);
+    assert.deepEqual(
+      calls.map((call) => call.args.slice(5, 9)),
+      [
+        ["100", "--all", "--label", "omp:vigie"],
+        ["100", "--page", "2", "--all"],
+      ],
+    );
+    assert.equal((await paged.issues({ state: "open", limit: 5 }))[0]?.body, undefined, "sans withBody, pas de texte");
   } finally {
     restore();
   }
