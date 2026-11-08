@@ -132,7 +132,7 @@ test("harness-runner/AC-4 : les outils hôtes suivent l'étape — save_checkpoi
   assert.deepEqual(names("specs"), [...common, "split_feature"].sort());
   assert.deepEqual(names("impl"), [...common, "run_tests", "split_feature"].sort());
   assert.deepEqual(names("fix"), [...common, "run_tests"].sort());
-  assert.deepEqual(names("review"), [...common, "review_verdict", "run_tests"].sort());
+  assert.deepEqual(names("review"), [...common, "qa_record_proof", "review_verdict", "run_tests"].sort());
   assert.deepEqual(names("audit"), ["audit_propose", "oracle_recall", "progress"]);
   // OMP prend un résultat d'outil `checkpoint` pour son checkpoint de contexte et exige
   // alors un `rewind` absent du runner : aucun outil hôte ne porte ces noms.
@@ -166,6 +166,7 @@ test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le ser
   ]);
   assert.deepEqual(at("impl", "run_tests", "required"), ["scope"]);
   assert.equal(at("impl", "run_tests", "properties", "check", "type"), "string");
+  assert.deepEqual(at("review", "qa_record_proof", "required"), ["kind", "title"]);
   const verdictRequired = at("review", "review_verdict", "required");
   assert.ok(
     Array.isArray(verdictRequired) && verdictRequired.includes("criteria") && verdictRequired.includes("confidence"),

@@ -717,6 +717,50 @@ public struct HarnessRunView: Codable, Equatable, Sendable {
     public var specs: String? { artifact("specs.md") }
 }
 
+/// Une preuve jointe à un run (`GET /v1/runs/{id}/proofs`) : capture, vidéo, log ou rapport de tests.
+/// Le contenu s'obtient par `GET /v1/runs/{id}/proofs/{n}` ; le serveur ne donne jamais de chemin.
+public struct HarnessProof: Codable, Equatable, Sendable, Identifiable {
+    public var n: Int
+    /// `screenshot`, `video`, `log` ou `test_report`.
+    public var kind: String
+    public var title: String
+    /// L'étape qui l'a produite : `impl`, `fix` ou `review`.
+    public var step: String
+    public var mime: String
+    public var size: Int
+    /// En millisecondes depuis l'epoch.
+    public var createdAt: Double
+    /// Le critère d'acceptation (`AC-n`) que la preuve illustre.
+    public var acRef: String?
+    /// `before` (la base) ou `after` (le worktree du run), pour apparier des captures.
+    public var side: String?
+
+    public var id: Int { n }
+
+    public init(n: Int, kind: String, title: String, step: String = "review", mime: String = "image/png", size: Int = 0, createdAt: Double = 0, acRef: String? = nil, side: String? = nil) {
+        self.n = n
+        self.kind = kind
+        self.title = title
+        self.step = step
+        self.mime = mime
+        self.size = size
+        self.createdAt = createdAt
+        self.acRef = acRef
+        self.side = side
+    }
+}
+
+/// Les preuves d'un run : l'enveloppe de `GET /v1/runs/{id}/proofs`.
+public struct HarnessProofs: Codable, Equatable, Sendable {
+    public var runId: String
+    public var proofs: [HarnessProof]
+
+    public init(runId: String, proofs: [HarnessProof] = []) {
+        self.runId = runId
+        self.proofs = proofs
+    }
+}
+
 /// Un dépôt déclaré sur le serveur (`GET /v1/status`).
 /// Le client de ce jeton (`GET /v1/me`) : son nom, son rôle, ses dépôts.
 public struct HarnessClient: Decodable, Equatable, Sendable {

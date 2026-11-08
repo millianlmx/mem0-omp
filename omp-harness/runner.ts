@@ -498,6 +498,29 @@ const VERDICT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const RECORD_PROOF_TOOL: HostToolDefinition = {
+  name: "qa_record_proof",
+  label: "Harness — preuve de revue",
+  description:
+    "Joindre une preuve à la revue : un log texte, ou une capture prise par qa_screenshot ; jamais un fichier. " +
+    "`acRef` (AC-n) lie la preuve à un critère, `side` dit si elle vient de la base (`before`) ou du worktree du run (`after`). " +
+    "Le service borne le nombre et la taille des preuves et refuse la suivante au-delà, avec la raison.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["log", "screenshot"] },
+      title: { type: "string", description: "Ce que la preuve montre, 200 caractères au plus." },
+      text: { type: "string", description: "Le texte du log (kind: log), 64 Kio au plus." },
+      capture: { type: "string", description: "L'identifiant rendu par qa_screenshot (kind: screenshot)." },
+      acRef: { type: "string", description: "AC-n" },
+      side: { type: "string", enum: ["before", "after"] },
+    },
+    required: ["kind", "title"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const RECALL_TOOL: HostToolDefinition = {
   name: "oracle_recall",
   label: "Harness — oracle",
@@ -919,7 +942,7 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
  * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
- * `review_verdict` en revue seulement.
+ * `review_verdict` et `qa_record_proof` en revue seulement.
  */
 export function hostToolsFor(
   step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
@@ -952,6 +975,6 @@ export function hostToolsFor(
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
-  if (step === "review") tools.push(VERDICT_TOOL);
+  if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL);
   return tools;
 }

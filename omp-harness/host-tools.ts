@@ -1,6 +1,6 @@
 // Les outils hôtes d'un run : ce que le runner appelle et que le SERVICE exécute
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
-// `run_tests`, `review_verdict`). Le runner n'a ni la base ni le jeton de l'API : tout
+// `run_tests`, `review_verdict`, `qa_record_proof`). Le runner n'a ni la base ni le jeton de l'API : tout
 // passe par ici.
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
@@ -24,6 +24,11 @@ export type StepState = {
   fullRunsThisStep: number;
   /** Le dernier résultat de la suite complète dans l'étape en cours (un `fail` n'est pas en cache). */
   lastFull: HeavyResult | null;
+  /**
+   * Le dernier passage `run_tests` (hors `check`) de l'étape : de quoi écrire son rapport à la clôture. Un
+   * passage servi par le cache sur la même clé garde le décompte du passage précédent, issu du flux complet.
+   */
+  lastTests: { scope: "touched" | "full"; result: HeavyResult } | null;
 };
 
 /** Le score d'un souvenir de décision humaine à partir duquel il vaut réponse. */
@@ -94,6 +99,8 @@ export async function runHostTool(
       state.verdict = parsed.verdict;
       return { text: "verdict enregistré. Termine ton tour." };
     }
+    case "qa_record_proof":
+      return recordProofTool(ctx, run, step, args);
     default:
       return { text: `outil inconnu : ${name}`, isError: true };
   }
@@ -298,6 +305,40 @@ function splitFeatureTool(hooks: StepHooks, run: RunRow, step: StepRow, args: Re
   };
 }
 
+const PROOF_ARGS: readonly string[] = ["kind", "title", "text", "capture", "acRef", "side"];
+
+/** `qa_record_proof` : un log texte joint à la revue. Aucun chemin n'est jamais lu ; aucune capture sans navigateur. */
+function recordProofTool(
+  ctx: HarnessContext,
+  run: RunRow,
+  step: StepRow,
+  args: Record<string, unknown>,
+): HostToolResult {
+  const refuse = (reason: string): HostToolResult => ({ text: `qa_record_proof refusé : ${reason}`, isError: true });
+  if (step.kind !== "review") return { text: "qa_record_proof n'existe qu'en /review", isError: true };
+  const unknown = Object.keys(args).find((key) => !PROOF_ARGS.includes(key));
+  if (unknown !== undefined) return refuse(`argument inconnu « ${unknown} »`);
+  if (args.kind === "test_report") return refuse("test_report n'est produit que par le harness");
+  if (args.kind === "video") return refuse("aucun outil n'enregistre de vidéo");
+  if (args.kind === "screenshot") return refuse("aucun navigateur pour ce run");
+  if (args.kind !== "log") return refuse(`type de preuve inconnu : ${String(args.kind)}`);
+  if (typeof args.text !== "string") return refuse("text attendu pour un log");
+  if (typeof args.title !== "string") return refuse("titre vide");
+  const { acRef = null, side = null } = args;
+  if (acRef !== null && typeof acRef !== "string") return refuse("acRef attendu au format AC-n");
+  if (side !== null && side !== "before" && side !== "after") return refuse("side attendu : before ou after");
+  const added = ctx.proofs.add(run.id, {
+    kind: "log",
+    title: args.title,
+    step: "review",
+    mime: "text/plain; charset=utf-8",
+    data: Buffer.from(args.text, "utf8"),
+    acRef,
+    side,
+  });
+  return added.ok ? { text: `preuve #${added.proof.n} enregistrée` } : refuse(added.reason);
+}
+
 async function runTestsTool(
   ctx: HarnessContext,
   state: StepState,
@@ -348,6 +389,8 @@ async function runTestsTool(
     },
     signal,
   );
+  if (scope !== "check" && !(result.cached && state.lastTests?.result.key === result.key))
+    state.lastTests = { scope, result };
   if (scope === "full") state.lastFull = result;
   return {
     text: heavyReport(result, config.heavy.memoryMax),

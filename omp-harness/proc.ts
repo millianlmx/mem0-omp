@@ -28,6 +28,8 @@ export type ProcOptions = {
   killGraceMs?: number;
   /** Chaque morceau de sortie (stdout ou stderr) dès qu'il arrive : la sortie en direct d'un job. */
   onOutput?: (chunk: string) => void;
+  /** Chaque morceau de stdout seul, brut : un décompte au fil du flux complet (une écriture de stderr ne coupe jamais une ligne). */
+  onStdout?: (chunk: Buffer) => void;
 };
 
 export type Exec = (command: string, args: string[], options?: ProcOptions) => Promise<ProcResult>;
@@ -96,6 +98,11 @@ export const execProcess: Exec = (command, args, options = {}) => {
   child.stdout.on("data", (chunk: Buffer) => {
     outBytes = keep(out, outBytes, chunk);
     live(chunk);
+    try {
+      options.onStdout?.(chunk);
+    } catch {
+      /* un lecteur du flux qui échoue n'arrête pas le process */
+    }
   });
   child.stderr.on("data", (chunk: Buffer) => {
     errBytes = keep(err, errBytes, chunk);

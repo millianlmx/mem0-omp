@@ -53,6 +53,7 @@ import type { FailCause, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import type { LostWrites } from "./oracle.ts";
+import type { Proof } from "./proofs.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { inboxOf, loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
@@ -1162,6 +1163,17 @@ export class Orchestrator {
   liveTests(runId: string, repos: RepoFilter = null): Record<string, unknown> {
     const run = this.visibleRun(runId, repos);
     return { runId: run.id, cursor: this.store.lastEventId(), jobs: this.#ctx.tests.jobs(run.id) };
+  }
+
+  /** Les preuves d'un run (le dossier d'un dépôt invisible n'est jamais lu : 404 avant). */
+  proofsView(runId: string, repos: RepoFilter = null): { runId: string; proofs: Proof[] } {
+    const run = this.visibleRun(runId, repos);
+    return { runId: run.id, proofs: this.#ctx.proofs.list(run.id) };
+  }
+
+  /** Le contenu d'une preuve par son rang. */
+  proofContent(runId: string, n: number, repos: RepoFilter = null): { proof: Proof; data: Buffer } {
+    return this.#ctx.proofs.read(this.visibleRun(runId, repos).id, n);
   }
 
   /** La veille : coût, budget et alertes des features. */
