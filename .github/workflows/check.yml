@@ -51,12 +51,12 @@ jobs:
     # les 6 h par défaut.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
@@ -162,7 +162,7 @@ jobs:
     # que release.yml accorde à release.ts (`--merge-timeout 2100`).
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -214,7 +214,7 @@ jobs:
         run: ditto -c -k --keepParent "omp-console/build/OMP Console.app" "omp-console/build/OMP-Console-macOS.zip"
       - name: Publier l'app Mac (artefact du run)
         if: steps.scope.outputs.run == '1'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: OMP-Console-macOS
           path: omp-console/build/OMP-Console-macOS.zip
@@ -228,7 +228,7 @@ jobs:
     # Médiane 186 s, max 688 s (2026-10-24) : même plafond que macos-app-swift.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La portée du diff compare la base et la tête de la PR.
           fetch-depth: 0
@@ -278,12 +278,12 @@ jobs:
     # Médiane 251 s, max 565 s par partie (2026-10-24) : même plafond.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # La garde anti-bump manuel compare la base et la tête de la PR : sans
           # l'historique complet, `git merge-base` ne trouve pas la base.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # Empreinte des toolchains de l'image (Node, rustc, Swift/Xcode) : elle entre
@@ -363,6 +363,6 @@ jobs:
     # Quelques secondes mesurées : ce job ne fait que lire trois résultats.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verdict des jobs macOS
         run: bash scripts/ci-verdict.sh macos-app-swift=${{ needs.macos-app-swift.result }} macos-app-ios=${{ needs.macos-app-ios.result }} macos-tests=${{ needs.macos-tests.result }}

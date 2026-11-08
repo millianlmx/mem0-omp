@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { usesParMajeure } from "../support/workflows.ts";
+import { ACTIONS, usesParMajeure } from "../support/workflows.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -85,7 +85,7 @@ function cacheStep(name: string, family: Family, paths: string[], condition?: st
   return [
     `      - name: ${name}`,
     ...(condition ? [`        if: ${condition}`] : []),
-    "        uses: actions/cache@v6",
+    `        uses: ${ACTIONS.cache}`,
     "        with:",
     ...(paths.length === 1
       ? [`          path: ${paths[0]}`]
@@ -116,7 +116,7 @@ const EXPECTED: Expected[] = [
   {
     file: CHECK_FILE,
     job: "check",
-    anchor: "      - uses: actions/setup-node@v4",
+    anchor: `      - uses: ${ACTIONS.setupNode}`,
     caches: [
       { family: "npm", step: NPM },
       { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") },
@@ -126,14 +126,14 @@ const EXPECTED: Expected[] = [
   {
     job: "macos-app-swift",
     file: CHECK_FILE,
-    anchor: "      - uses: actions/checkout@v4",
+    anchor: `      - uses: ${ACTIONS.checkout}`,
     caches: [{ family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") }],
     consumer: "        run: ./scripts/check.sh --sections=app-swift",
   },
   {
     file: CHECK_FILE,
     job: "macos-tests",
-    anchor: "      - uses: actions/setup-node@v4",
+    anchor: `      - uses: ${ACTIONS.setupNode}`,
     caches: [
       { family: "npm", step: NPM },
       { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2'") },
@@ -143,7 +143,7 @@ const EXPECTED: Expected[] = [
   {
     file: SIMULATION_FILE,
     job: "release-simulation",
-    anchor: "      - uses: actions/setup-node@v4",
+    anchor: `      - uses: ${ACTIONS.setupNode}`,
     caches: [{ family: "cargo", step: CARGO("${{ runner.temp }}/cargo-target") }],
     consumer: "        run: bash scripts/release-simulation.sh",
   },
@@ -264,13 +264,7 @@ test("ci-without-cache/AC-1 : chaque job qui installe l'hôte OMP, compile du Ru
 
 // `upload-artifact` ne restaure rien : il publie le bundle de l'app Mac du run
 // (macos-app-swift), à télécharger pour essayer une PR sans la compiler.
-const ALLOWED_USES = [
-  "actions/checkout@v4",
-  "actions/setup-node@v4",
-  "oven-sh/setup-bun@v2",
-  "actions/cache@v6",
-  "actions/upload-artifact@v4",
-];
+const ALLOWED_USES: string[] = Object.values(ACTIONS);
 
 test("ci-without-cache/AC-2 : les contextes de statut requis et les jobs restent ceux d'avant, sans relance ni contournement du cache", () => {
   for (const file of [CHECK_FILE, SIMULATION_FILE]) {

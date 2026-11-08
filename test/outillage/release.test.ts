@@ -55,7 +55,7 @@ import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
-import { lireWorkflow } from "../support/workflows.ts";
+import { ACTIONS, lireWorkflow } from "../support/workflows.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 // Assemblé, jamais littéral : test/outillage/docs.test.ts calcule la liste des fichiers du
@@ -1099,7 +1099,7 @@ test("release/AC-2 : la publication n'utilise que le jeton dédié, et reprend u
   assert.ok(yaml.includes("queue: max"), "un merge intermédiaire ne perd plus son run");
   assert.ok(yaml.includes("fetch-depth: 0"), "l'historique complet est nécessaire au plan");
   const guardIndex = yaml.indexOf("- name: Vérifier le jeton de release");
-  const checkoutIndex = yaml.indexOf("uses: actions/checkout@v4");
+  const checkoutIndex = yaml.indexOf(`uses: ${ACTIONS.checkout}`);
   assert.ok(guardIndex !== -1 && guardIndex < checkoutIndex, "la garde précède le checkout");
 
   // (2) La garde, exécutée pour de vrai : sans jeton, le job s'arrête avec le

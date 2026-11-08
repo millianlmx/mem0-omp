@@ -78,7 +78,14 @@ test("mem0-stack-bascule-rust/AC-1 : le compose ne sert que mem0-rs, en image mu
   const dockerfile = lignesUtiles(read("mem0-stack/mem0-rs/Dockerfile"));
   const etapes = dockerfile.filter((ligne) => /^FROM /.test(ligne));
   assert.ok(etapes.length >= 2, `le Dockerfile doit avoir au moins 2 étapes (${etapes.length} FROM)`);
-  assert.equal(etapes[0], "FROM rust:1.89-bookworm AS build");
+  // L'image de build est une rust Debian bookworm (même glibc que l'exécution),
+  // jamais plus vieille que le `rust-version` de la crate : Dependabot la monte seul.
+  const image = /^FROM rust:(\d+)\.(\d+)(?:\.\d+)?-bookworm AS build$/.exec(etapes[0] ?? "");
+  assert.ok(image, `première étape inattendue : ${etapes[0]}`);
+  const msrv = /^rust-version = "(\d+)\.(\d+)(?:\.\d+)?"$/m.exec(read("mem0-stack/mem0-rs/Cargo.toml"));
+  assert.ok(msrv, "Cargo.toml doit déclarer rust-version");
+  const version = (m: RegExpExecArray) => Number(m[1]) * 1000 + Number(m[2]);
+  assert.ok(version(image) >= version(msrv), `${etapes[0]} plus vieille que rust-version ${msrv[1]}.${msrv[2]}`);
   assert.equal(etapes[etapes.length - 1], "FROM debian:bookworm-slim");
   assert.ok(
     dockerfile.some((ligne) => ligne.startsWith("COPY --from=build ")),
