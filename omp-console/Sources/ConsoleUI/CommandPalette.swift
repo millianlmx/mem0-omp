@@ -37,6 +37,15 @@ private struct PalettePresenter: ViewModifier {
             .sheet(isPresented: $drafts.launchSheetShown) {
                 LaunchFeatureSheet(server: server, drafts: drafts)
             }
+            .sheet(isPresented: $drafts.projectSheetShown) {
+                NewProjectSheet(server: server, drafts: drafts)
+            }
+            .sheet(isPresented: $drafts.auditSheetShown) {
+                NewAuditSheet(server: server, drafts: drafts)
+            }
+            .sheet(isPresented: $drafts.scheduleSheetShown) {
+                NewScheduleSheet(server: server, drafts: drafts)
+            }
     }
 
     private func runPending() {
@@ -54,21 +63,16 @@ public enum ConsolePaletteActions {
     ) {
         switch command {
         case .section(let section):
+            if section == .system { drafts.systemPage = nil }
             select(section)
+        case .system(let page):
+            ConsoleNavigation.open(page, drafts: drafts, select: select)
         case .run(let id):
-            let live = server.inbox.map { $0.batches.compactMap(\.run) + $0.awaiting + $0.runs } ?? []
-            let run = live.first { $0.id == id } ?? server.history.run(id)
-            if let run, run.canFollowSession {
-                drafts.sessionRequest = HarnessSessionRequest(run: run)
-            } else {
-                // Une feature sans direct (terminée) : l'historique, filtré sur elle.
-                server.history.query = id
-                select(.kanban)
-            }
+            ConsoleNavigation.openRun(id, drafts: drafts, select: select)
         case .newFeature:
             drafts.launchSheetShown = true
         case .inbox(let anchor):
-            select(.home)
+            select(.inbox)
             drafts.homeAnchor = anchor
         case .refresh:
             Task {
@@ -100,6 +104,7 @@ struct CommandPalette: View {
             query: drafts.paletteQuery,
             search: drafts.paletteSearch,
             sections: sections,
+            systemPages: SystemPage.visible(isAdmin: server.isAdmin),
             inbox: server.inbox,
             history: history.runs,
             canAct: server.canAct,

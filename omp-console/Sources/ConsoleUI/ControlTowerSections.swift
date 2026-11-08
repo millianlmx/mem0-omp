@@ -291,7 +291,6 @@ public struct SchedulesSections: View {
         ControlAvailabilityNotice(availability: schedules.availability)
         if schedules.availability == .available {
             listSection
-            newSection
         }
     }
 
@@ -299,6 +298,8 @@ public struct SchedulesSections: View {
         Section {
             if schedules.schedules.isEmpty {
                 Text(ControlText.noSchedule).foregroundStyle(.secondary)
+                Button(ShellText.newSchedule, systemImage: PipelineServerText.newFeatureSymbol) { drafts.scheduleSheetShown = true }
+                    .disabled(!server.canAct)
             }
             if let fired = schedules.lastFired {
                 Text(ControlText.fired(ControlText.outcome(fired.outcome.status)) + " · " + fired.schedule.name)
@@ -310,68 +311,105 @@ public struct SchedulesSections: View {
             }
         } header: {
             Text(ControlText.schedulesTitle)
-        }
-    }
-
-    private var newSection: some View {
-        Section {
-            TextField(ControlText.scheduleName, text: $drafts.scheduleDraft.name, prompt: Text(ControlText.scheduleNamePrompt))
-                .consoleID("schedules.new.name")
-            Picker(ControlText.scheduleTarget, selection: $drafts.scheduleDraft.kind) {
-                ForEach(HarnessScheduleKind.allCases) { kind in
-                    Text(ControlText.scheduleKind(kind.rawValue)).tag(kind)
-                }
-            }
-            .consoleSegmented()
-            .consoleID("schedules.new.kind")
-            Picker(ControlText.scheduleRepo, selection: repoBinding) {
-                ForEach(server.repos) { repo in
-                    Text(repo.name).tag(repo.name)
-                }
-            }
-            .consoleID("schedules.new.repo")
-            switch drafts.scheduleDraft.kind {
-            case .run:
-                TextField(ControlText.scheduleTitle, text: $drafts.scheduleDraft.title)
-                    .consoleID("schedules.new.title")
-                TextField(ControlText.scheduleRequest, text: $drafts.scheduleDraft.request, axis: .vertical)
-                    .lineLimit(2...6)
-                    .consoleID("schedules.new.request")
-                TextField(ControlText.scheduleBudget, text: $drafts.scheduleDraft.budget)
-                    .consoleDecimalInput()
-                    .consoleID("schedules.new.budget")
-            case .audit:
-                TextField(ControlText.scheduleFocus, text: $drafts.scheduleDraft.focus)
-                    .consoleID("schedules.new.focus")
-            case .issues:
-                TextField(ControlText.scheduleLabel, text: $drafts.scheduleDraft.label)
-                    .consolePlainInput()
-                    .consoleID("schedules.new.label")
-            }
-            TextField(ControlText.scheduleCron, text: $drafts.scheduleDraft.cron, prompt: Text(ControlText.scheduleCronPrompt))
-                .consolePlainInput()
-                .font(.body.monospaced())
-                .consoleID("schedules.new.cron")
-            Toggle(ControlText.scheduleEnabled, isOn: $drafts.scheduleDraft.enabled)
-            if let problem = drafts.scheduleDraft.problem, problem != .name {
-                Text(Self.message(problem))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Button(ControlText.scheduleCreate) {
-                let draft = drafts.scheduleDraft
-                Task {
-                    if await schedules.create(draft) != nil { drafts.scheduleDraft = HarnessScheduleDraft() }
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!server.canAct || schedules.isSaving || drafts.scheduleDraft.problem != nil)
-            .consoleID("schedules.new.create")
-        } header: {
-            Text(ControlText.newSchedule)
         } footer: {
             Text(ControlText.scheduleCronHint)
         }
+    }
+}
+
+/// « Nouvelle planification », en feuille (bouton « + » de la page Planifications).
+struct NewScheduleSheet: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var schedules: HarnessSchedules
+    @ObservedObject var drafts: HarnessDrafts
+
+    init(server: HarnessModel, drafts: HarnessDrafts) {
+        self.server = server
+        self.schedules = server.schedules
+        self.drafts = drafts
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let failure = schedules.failure {
+                    ConsoleFailureBanner(failure: failure)
+                }
+                Section {
+                    TextField(ControlText.scheduleName, text: $drafts.scheduleDraft.name, prompt: Text(ControlText.scheduleNamePrompt))
+                        .consoleID("schedules.new.name")
+                    Picker(ControlText.scheduleTarget, selection: $drafts.scheduleDraft.kind) {
+                        ForEach(HarnessScheduleKind.allCases) { kind in
+                            Text(ControlText.scheduleKind(kind.rawValue)).tag(kind)
+                        }
+                    }
+                    .consoleSegmented()
+                    .consoleID("schedules.new.kind")
+                    Picker(ControlText.scheduleRepo, selection: repoBinding) {
+                        ForEach(server.repos) { repo in
+                            Text(repo.name).tag(repo.name)
+                        }
+                    }
+                    .consoleID("schedules.new.repo")
+                }
+                Section {
+                    switch drafts.scheduleDraft.kind {
+                    case .run:
+                        TextField(ControlText.scheduleTitle, text: $drafts.scheduleDraft.title)
+                            .consoleID("schedules.new.title")
+                        TextField(ControlText.scheduleRequest, text: $drafts.scheduleDraft.request, axis: .vertical)
+                            .lineLimit(2...6)
+                            .consoleID("schedules.new.request")
+                        TextField(ControlText.scheduleBudget, text: $drafts.scheduleDraft.budget)
+                            .consoleDecimalInput()
+                            .consoleID("schedules.new.budget")
+                    case .audit:
+                        TextField(ControlText.scheduleFocus, text: $drafts.scheduleDraft.focus)
+                            .consoleID("schedules.new.focus")
+                    case .issues:
+                        TextField(ControlText.scheduleLabel, text: $drafts.scheduleDraft.label)
+                            .consolePlainInput()
+                            .consoleID("schedules.new.label")
+                    }
+                }
+                Section {
+                    TextField(ControlText.scheduleCron, text: $drafts.scheduleDraft.cron, prompt: Text(ControlText.scheduleCronPrompt))
+                        .consolePlainInput()
+                        .font(.body.monospaced())
+                        .consoleID("schedules.new.cron")
+                    Toggle(ControlText.scheduleEnabled, isOn: $drafts.scheduleDraft.enabled)
+                } footer: {
+                    if let problem = drafts.scheduleDraft.problem, problem != .name {
+                        Text(Self.message(problem))
+                    } else {
+                        Text(ControlText.scheduleCronHint)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(ControlText.newSchedule)
+            .consoleInlineTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(PipelineServerText.cancel) { drafts.scheduleSheetShown = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(ControlText.scheduleCreate) {
+                        let draft = drafts.scheduleDraft
+                        Task {
+                            if await schedules.create(draft) != nil {
+                                drafts.scheduleDraft = HarnessScheduleDraft()
+                                drafts.scheduleSheetShown = false
+                            }
+                        }
+                    }
+                    .disabled(!server.canAct || schedules.isSaving || drafts.scheduleDraft.problem != nil)
+                    .consoleID("schedules.new.create")
+                }
+            }
+        }
+        .consoleSheetSize(minWidth: 520, minHeight: 480)
+        .task { await server.refreshCatalog() }
     }
 
     /// Le dépôt saisi, sinon le premier déclaré (posé dans la saisie au premier rendu).

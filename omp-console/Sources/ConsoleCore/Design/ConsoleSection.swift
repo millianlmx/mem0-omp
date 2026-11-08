@@ -1,113 +1,155 @@
-// Les treize sections de la coque, dans l'ordre d'affichage de la barre latérale,
-// rangées en trois groupes : « Pilotage » (Accueil, Pipelines, Projet, Audit,
-// Statistiques, Poste — servis par le serveur de pipelines du VPS), « Consultation »
-// (Terminal, Fichiers, Mémoire — locaux) et « Exploitation » (Vigie, Planifications,
-// Issues, Administration — la tour de contrôle du même serveur). TOUT vit dans la
-// fenêtre principale.
+// Les sept sections de la coque, dans l'ordre d'affichage de la barre latérale (Mac,
+// iPad) et des onglets (iPhone), rangées en trois groupes :
+//  · « Travail » — À traiter (la file unique de ce qui attend l'humain), Features (une
+//    ligne par feature, une page par feature) et Poste (le poste de travail observé
+//    par l'extension Chrome et l'agent 24/24) ;
+//  · « Outils » — Mémoire, Terminal et Fichiers (ces deux derniers sur le Mac seul) ;
+//  · « Système » — un hub qui pousse ce qu'on règle rarement : vigie, planifications,
+//    statistiques et santé, administration, serveur (`SystemPage`).
 //
-// Le Poste (le poste de travail observé par l'extension Chrome et l'agent 24/24)
-// est en Pilotage : il est servi par le même serveur, et l'humain y POSE des
-// gestes (approuver ou refuser un envoi, régler l'autonomie, mettre en pause) —
-// ce n'est pas une simple consultation.
-//
-// L'Exploitation vient en dernier : les raccourcis ⌘1…⌘9 des neuf premières sections
-// ne bougent pas, la Vigie prend ⌘0 sur le Mac. L'Administration n'est montrée qu'à un
-// jeton administrateur (le filtre est posé par chaque app, qui connaît le jeton).
-//
-// Un enum plutôt qu'un tableau de vues : la section est l'identité PARTAGÉE entre
-// la liste, le détail, les tests et les features métier. L'ordre de déclaration
-// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘0,
-// donc il n'existe pas de seconde liste à tenir synchronisée.
+// Moins de destinations, plus de profondeur : les projets, audits et issues sont des
+// PORTÉES de la section Features (`RunsScope`), pas des sections ; ce qui se règle
+// rarement vit sous Système. L'ordre de déclaration des cas EST l'ordre d'affichage
+// (`CaseIterable`) et celui des raccourcis ⌘1…⌘7 : aucune seconde liste à tenir.
 
 public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case home
-    case kanban
-    case project
-    case audit
-    case stats
+    case inbox
+    case runs
     case workstation
+    case memory
     case terminal
     case files
-    case memory
-    case vigie
-    case schedules
-    case issues
-    case admin
+    case system
 
     public var id: String { rawValue }
 
-    /// Libellé affiché dans la barre latérale, et titre de la fenêtre.
+    /// Libellé affiché dans la barre latérale ou l'onglet, et titre de la fenêtre.
     public var title: String {
         switch self {
-        case .home: L10n.text("Accueil")
-        case .kanban: L10n.text("Pipelines")
-        case .project: L10n.text("Projet")
-        case .audit: L10n.text("Audit")
+        case .inbox: L10n.text("À traiter")
+        case .runs: L10n.text("Features")
+        case .workstation: L10n.text("Poste")
+        case .memory: L10n.text("Mémoire")
         case .terminal: L10n.text("Terminal")
         case .files: L10n.text("Fichiers")
-        case .memory: L10n.text("Mémoire")
-        case .stats: L10n.text("Statistiques")
-        case .workstation: L10n.text("Poste")
-        case .vigie: ControlText.vigieTitle
-        case .schedules: ControlText.schedulesTitle
-        case .issues: ControlText.issuesTitle
-        case .admin: ControlText.adminTitle
+        case .system: L10n.text("Système")
         }
     }
 
-    /// Symbole SF associé à la section.
+    /// Symbole SF de la section.
     public var systemImage: String {
         switch self {
-        case .home: "house"
-        case .kanban: "square.grid.2x2"
-        case .project: "target"
-        case .audit: "checklist"
+        case .inbox: "tray.full"
+        case .runs: "square.stack.3d.up"
+        case .workstation: "desktopcomputer"
+        case .memory: "brain"
         case .terminal: "terminal"
         case .files: "doc.text"
-        case .memory: "brain"
-        case .stats: "chart.bar"
-        case .workstation: "desktopcomputer"
-        case .vigie: ControlText.vigieSymbol
-        case .schedules: ControlText.schedulesSymbol
-        case .issues: ControlText.issuesSymbol
-        case .admin: ControlText.adminSymbol
+        case .system: "gearshape.2"
         }
     }
 
-    /// Le groupe de la barre latérale.
     public var group: ConsoleSectionGroup {
         switch self {
-        case .home, .kanban, .project, .audit, .stats, .workstation: .pilotage
-        case .terminal, .files, .memory: .consultation
-        case .vigie, .schedules, .issues, .admin: .exploitation
+        case .inbox, .runs, .workstation: .work
+        case .memory, .terminal, .files: .tools
+        case .system: .system
         }
-    }
-
-    /// La section n'est montrée qu'à un jeton administrateur.
-    public var isAdminOnly: Bool { self == .admin }
-
-    /// Les sections montrées à un jeton : l'Administration seulement à un administrateur.
-    public static func visible(_ sections: [ConsoleSection], isAdmin: Bool) -> [ConsoleSection] {
-        sections.filter { isAdmin || !$0.isAdminOnly }
     }
 }
 
-/// Les groupes de la barre latérale, dans leur ordre d'affichage.
 public enum ConsoleSectionGroup: CaseIterable, Sendable {
-    case pilotage
-    case consultation
-    case exploitation
+    case work
+    case tools
+    case system
 
     public var title: String {
         switch self {
-        case .pilotage: L10n.text("Pilotage")
-        case .consultation: L10n.text("Consultation")
-        case .exploitation: ControlText.groupTitle
+        case .work: L10n.text("Travail")
+        case .tools: L10n.text("Outils")
+        case .system: L10n.text("Système")
         }
     }
 
-    /// Les sections du groupe, dans l'ordre de `ConsoleSection.allCases`.
     public var sections: [ConsoleSection] {
         ConsoleSection.allCases.filter { $0.group == self }
+    }
+}
+
+/// Les portées de la section Features : les features elles-mêmes, puis ce qui en lance
+/// plusieurs (projets), en propose (audits) ou en demande (issues d'un dépôt).
+public enum RunsScope: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case features
+    case projects
+    case audits
+    case issues
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .features: L10n.text("Features")
+        case .projects: L10n.text("Projets")
+        case .audits: L10n.text("Audits")
+        case .issues: L10n.text("Issues")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .features: "square.stack.3d.up"
+        case .projects: "target"
+        case .audits: "checklist"
+        case .issues: "exclamationmark.bubble"
+        }
+    }
+}
+
+/// Les pages du hub Système : ce qui se règle ou se consulte rarement.
+public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case vigie
+    case schedules
+    case stats
+    case admin
+    case server
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .vigie: L10n.text("Vigie")
+        case .schedules: L10n.text("Planifications")
+        case .stats: L10n.text("Statistiques et santé")
+        case .admin: L10n.text("Administration")
+        case .server: L10n.text("Serveur")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .vigie: "binoculars"
+        case .schedules: "calendar.badge.clock"
+        case .stats: "chart.xyaxis.line"
+        case .admin: "person.2.badge.key"
+        case .server: "server.rack"
+        }
+    }
+
+    /// Ce que décrit la rangée du hub, sous son titre.
+    public var summary: String {
+        switch self {
+        case .vigie: L10n.text("L’agent qui surveille, ouvre les issues et lance les correctifs.")
+        case .schedules: L10n.text("Features, audits et relèves d’issues à heure fixe.")
+        case .stats: L10n.text("Débit, coûts, étapes, tests et santé du serveur.")
+        case .admin: L10n.text("Clients, dépôts déclarés et configuration.")
+        case .server: L10n.text("Connexion, fournisseurs et modèles.")
+        }
+    }
+
+    public var isAdminOnly: Bool { self == .admin }
+
+    /// Les pages montrées à ce jeton : l'Administration à un administrateur seulement.
+    public static func visible(isAdmin: Bool) -> [SystemPage] {
+        allCases.filter { isAdmin || !$0.isAdminOnly }
     }
 }
