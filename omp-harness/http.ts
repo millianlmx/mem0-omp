@@ -81,6 +81,7 @@ export const API_FEATURES = [
   "workstation-stop",
   "workstation-session",
   "workstation-captures",
+  "workstation-files",
   "mcp",
   "digest",
   "instructions",
@@ -715,6 +716,10 @@ export function apiRoutes(
     }),
     route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) =>
       send(call.res, 200, workstationOf(call).capture(Number(call.match[1]))),
+    ),
+    // Le fichier d'un `upload` en cours, lu dans le dossier d'envoi du poste : pour l'extension qui l'exécute.
+    route("GET", "/v1/workstation/actions/{n}/file", "operator", (call) =>
+      send(call.res, 200, workstationOf(call).uploadFile(Number(call.match[1]))),
     ),
     // Annuler une action qui n'a pas abouti (en file, en cours, en attente) : `refused`, sa raison dans `error`.
     route("POST", "/v1/workstation/actions/{n}/cancel", "operator", (call) =>

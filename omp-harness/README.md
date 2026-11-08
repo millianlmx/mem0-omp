@@ -1098,6 +1098,58 @@ capture d'une action `screenshot` est jointe au résultat (contenu `image` de l'
 seulement si le modèle du runner lit les images (`get_state` → `model.input`, au
 moindre doute non) ; sinon l'agent est renvoyé à `snapshot`.
 
+**Les gestes** (`kind` d'une action, `params` validés par le serveur puis par l'extension ;
+un paramètre inconnu ou invalide : 400). L'effet dit ce que le geste fait dans l'onglet ;
+il est écrit dans la raison d'une approbation demandée (« … (écriture) »).
+
+| `kind` | `params` | Effet |
+|---|---|---|
+| `tabs` | `{}` | lecture (les onglets, sans query chez l'utilisateur) |
+| `open` | `{url}` | ouvre un onglet dans la fenêtre de l'agent |
+| `navigate` | `{tabId, url}` | écriture |
+| `back`, `forward`, `reload` | `{tabId}` | écriture ; attend la fin du chargement |
+| `snapshot` | `{tabId}` | lecture : `{title, url, text, tree, elements, frames, truncated}` |
+| `screenshot` | `{tabId}` | lecture |
+| `scroll` | `{tabId, dy}` | lecture |
+| `wait_for` | `{tabId, text? \| role (+ name?), timeoutMs? ≤ 10000}` | lecture ; échoue si rien ne paraît à l'échéance (5 s par défaut) |
+| `click` | `{tabId, ref}` | envoi possible (garde d'envoi de l'extension) |
+| `type` | `{tabId, ref, text, submit?}` | envoi possible |
+| `key` | `{tabId, ref?, key}` | envoi possible : Enter, Escape, Tab, flèches, Backspace, Delete, Home, End, PageUp, PageDown, Space, précédés au besoin de `Control+`, `Alt+`, `Shift+`, `Meta+` ; une lettre ou un chiffre seulement avec Control, Alt ou Meta (`Meta+k`) ; toute combinaison avec Enter passe la garde d'envoi |
+| `hover` | `{tabId, ref}` | écriture |
+| `select` | `{tabId, ref, option}` | écriture : l'option d'un `<select>` par sa valeur, sinon son libellé |
+| `upload` | `{tabId, ref, file}` | écriture : `file` est le NOM d'un fichier du dossier d'envoi |
+| `download` | `{tabId, ref}` ou `{tabId, url}` | écriture : métadonnées, et le texte d'un petit fichier texte |
+| `wait` | `{ms ≤ 10000}` | — |
+| `close` | `{tabId}` | jamais un onglet de l'utilisateur |
+| `decision` | `{summary?}` | journal seul |
+
+Le snapshot lit chaque frame de l'onglet (`allFrames` : iframes de même origine ou non) et
+le shadow DOM ouvert ; `tree` est un arbre compact, une ligne par repère (région, formulaire,
+dialogue, titre, iframe) ou élément (`button « Envoyer » [e3]`, `textbox « Objet » [e2] =
+« Relance »`). Les références d'un document sont stables (un élément affiché garde la sienne,
+un nouveau en prend une jamais servie) ; celles d'une frame sont préfixées (`f3e2`). Une
+frame d'un site exclu est écartée ; les bornes (300 éléments, 8000 caractères de texte)
+valent pour toute la page.
+
+**Les gestes de confiance.** Dans la fenêtre de l'agent, l'extension passe clics, survols,
+saisies et touches par `chrome.debugger` (CDP : `Input.dispatchMouseEvent`,
+`Input.dispatchKeyEvent`, `Input.insertText`) : de vrais événements (`isTrusted`), après une
+préparation dans la page qui tranche la garde d'envoi et vise le centre de l'élément (s'il
+n'est pas recouvert). Repli en événements DOM si le débogueur n'est pas disponible, si le
+point est illisible (frame d'une autre origine) ou dans un onglet caché de l'utilisateur ;
+dans un onglet de l'utilisateur, jamais sans l'approbation de l'action. Chrome montre sa
+bannière de débogage tant qu'une session est ouverte : 20 s après le dernier geste, à l'arrêt
+ou à la pause, elle se ferme ; « Annuler » sur la bannière coupe les gestes de confiance
+jusqu'au redémarrage de Chrome.
+
+**Les fichiers.** `upload` ne joint qu'un fichier du dossier d'envoi
+`<worktreesDir>/workstation/_poste/envois/` (le seul dossier où écrit le runner du poste) :
+fichier ordinaire (ni lien, ni dossier), 10 Mio au plus, vérifié au dépôt (400 sinon) et
+relu par `GET …/actions/{n}/file` quand l'extension exécute l'action. `download` dépose le
+fichier dans les Téléchargements du Mac et rend `{file: {name, path, mime, size, url},
+content?}` : `content` pour un fichier texte de 100 000 caractères au plus (relu par la
+page, sinon par l'extension), les métadonnées seules au-delà.
+
 ### Les demandes et les automatisations
 
 Depuis les apps (jeton approbateur), l'humain DEMANDE au poste de faire quelque chose
@@ -1155,15 +1207,16 @@ les onglets ouverts par `open`. L'extension rapporte les onglets de cette fenêt
 chaque long-poll (`X-OMP-Agent-Tabs: 12,13`) et avec chaque résultat (`agentTabs`) ;
 un en-tête illisible n'en laisse aucun, un long-poll sans en-tête garde le dernier
 rapport. Toute action d'une session ou de l'agent qui lit ou agit dans un autre onglet
-(`snapshot`, `screenshot`, `click`, `type`, `key`, `scroll`, `navigate`) est déposée
+(tout geste à `tabId` sauf `close` : `TAB_KINDS` de `workstation-guards.ts`) est déposée
 `awaiting_approval` — résumé « … — approbation requise : onglet de l'utilisateur, hors
-de la fenêtre de l'agent », sans empreinte —, et n'en sort que par l'approbateur. Tant
-que l'extension n'a rien rapporté, tout onglet est à l'utilisateur. L'extension tranche
-aussi de son côté, à l'exécution : un geste hors de sa fenêtre sans `approved` rend
-`needs_approval` ; `close` n'y vise jamais un onglet de l'utilisateur, même approuvé.
+de la fenêtre de l'agent (<effet>) », sans empreinte —, et n'en sort que par
+l'approbateur. Tant que l'extension n'a rien rapporté, tout onglet est à l'utilisateur.
+L'extension tranche aussi de son côté, à l'exécution : un geste hors de sa fenêtre sans
+`approved` rend `needs_approval` ; `close` n'y vise jamais un onglet de l'utilisateur,
+même approuvé.
 
-**La navigation gardée.** `open` et `navigate` vers un hôte hors de
-`workstation.allowedHosts` (s'il y en a) attendent l'approbateur. Pour l'agent 24/24,
+**La navigation gardée.** `open`, `navigate` et `download` par `url` vers un hôte hors
+de `workstation.allowedHosts` (s'il y en a) attendent l'approbateur. Pour l'agent 24/24,
 `workstation.exfiltrationGuard` retient aussi un hôte jamais vu dans l'observation ni
 listé, et une adresse dont la query porte une valeur longue ou opaque : de quoi faire
 sortir un secret lu dans une page. La raison est écrite dans `approval.summary`.
@@ -1332,7 +1385,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/actions` `{kind, params, rationale, browserId?}` · `GET /v1/workstation/actions?state=a,b&limit=&before=` | operator · viewer | Déposer une action (201, origine `session`) : `rationale` vide, `kind` inconnu ou `params` invalides → 400 ; extension hors ligne ou poste en pause → 409 (sauf `decision`, écrite `done`). Le journal, récent d'abord (`limit` ≤ 200). Événement `workstation_action` à chaque état. |
 | `GET /v1/workstation/actions/{n}?wait=` | viewer | Une action ; `wait` (≤ 30 s) rend dès qu'elle n'est plus `queued` ni `running`, avec `image` (JPEG base64) si une capture est gardée pour elle. |
 | `GET /v1/workstation/actions/{n}/capture` | viewer | La capture d'une action `screenshot` réussie, telle que capturée : `{seq, at, mimeType: "image/jpeg", image}` (base64) ; 404 sans capture ou passé `workstation.captureRetentionHours`. |
-| `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?, agentTabs?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon, une action annulée comprise) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). `agentTabs` : les onglets de la fenêtre de l'agent, après l'action. Sauf pour une action d'une demande annulée ou échouée : `failed`, sans approbation. |
+| `GET /v1/workstation/actions/{n}/file` | operator | Le fichier d'une action `upload` EN COURS, pour l'extension qui l'exécute : `{name, mime, size, data}` (base64), lu dans le dossier d'envoi (`<worktreesDir>/workstation/_poste/envois/`) ; 409 pour une autre action ou un autre état, 400 si le fichier a disparu, n'est plus un fichier ordinaire ou dépasse 10 Mio. |
+| `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?, agentTabs?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon, une action annulée comprise) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). `agentTabs` : les onglets de la fenêtre de l'agent, après l'action. |
 | `POST /v1/workstation/actions/{n}/approve` · `POST /v1/workstation/actions/{n}/refuse` `{reason?}` | operator (approbateur) | Le geste humain sur une action `awaiting_approval` (409 sinon), par le seul client `approver` (403 sinon) : `queued` avec `approved: true`, ou `refused`. `approve` exige `If-Match: "<updatedAt>"` (absent 428, périmé 412) ; `refuse` l'accepte facultatif (périmé 412). |
 | `POST /v1/workstation/actions/{n}/cancel` | operator | Annule une action `queued`, `running` ou `awaiting_approval` → `refused`, `error` « annulée par <client> » ; 409 si elle a déjà abouti. |
 | `POST /v1/workstation/stop` | viewer | L'arrêt d'urgence : pause, actions en attente annulées, service de l'agent coupé → `{status, cancelled: [seq…]}` ; événement `workstation_stop`. La reprise : `PUT …/settings` `paused: false` par l'approbateur. |

@@ -29,7 +29,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
-import { repoDefaults } from "./config.ts";
+import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
 import {
@@ -45,7 +45,15 @@ import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
 import { workstationOwner } from "./session-feed.ts";
 import type { EffectiveAutonomy, ProfileStats, Workstation } from "./workstation.ts";
-import { MAX_WAIT_SEC, REQUEST_CANCELLED, clip, parseActionInput, parseDigest, parseProfile } from "./workstation.ts";
+import {
+  MAX_WAIT_SEC,
+  REQUEST_CANCELLED,
+  clip,
+  parseActionInput,
+  parseDigest,
+  parseProfile,
+  uploadDir,
+} from "./workstation.ts";
 import { untrusted } from "./workstation-guards.ts";
 
 /** La scope mémoire des jobs du poste. */
@@ -73,6 +81,8 @@ const JOURNAL_SHOWN = 20;
 const TRANSCRIPT_HEAD = 20_000;
 const TRANSCRIPT_TAIL = 100_000;
 const TOOL_TEXT_MAX = 8000;
+/** Un snapshot (arbre de 300 éléments au plus, et 8000 caractères de texte) se rend plus long qu'un autre résultat. */
+const SNAPSHOT_TEXT_MAX = 32_000;
 
 /** Le dépôt synthétique et le répertoire de travail des jobs du poste (voir l'en-tête). */
 export function workstationTarget(config: HarnessConfig): { repo: RepoConfig; cwd: string } {
@@ -166,7 +176,12 @@ function actResult(
     case "done": {
       const page: string[] = [];
       if (action.result?.text) page.push(clip(action.result.text, TOOL_TEXT_MAX));
-      if (action.result?.data !== undefined) page.push(clip(JSON.stringify(action.result.data), TOOL_TEXT_MAX));
+      const data = action.result?.data;
+      if (action.kind === "snapshot" && isRecord(data) && typeof data.tree === "string") {
+        // Le snapshot se lit comme une page : l'arbre (rôles, noms, références), puis le texte.
+        const head = `« ${String(data.title ?? "")} » ${String(data.url ?? "")}`;
+        page.push(clip(`${head}\n## Éléments\n${data.tree}\n## Texte\n${String(data.text ?? "")}`, SNAPSHOT_TEXT_MAX));
+      } else if (data !== undefined) page.push(clip(JSON.stringify(data), TOOL_TEXT_MAX));
       const parts = [`action #${action.seq} faite.`];
       if (page.length > 0) parts.push(untrusted("résultat lu dans le navigateur", page.join("\n")));
       if (capture.image !== undefined && capture.readable)
@@ -259,7 +274,8 @@ export class WorkstationAgent {
   ): Promise<RunnerSession> {
     const target = workstationTarget(this.#ctx.config);
     fs.mkdirSync(target.repo.path, { recursive: true });
-    fs.mkdirSync(target.cwd, { recursive: true });
+    // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
+    fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
     const session = new RunnerSession(this.#ctx, target, {
       onHostTool: (name, args) =>
         name === "progress" ? Promise.resolve(this.#progress(job, args)) : onHostTool(name, args),

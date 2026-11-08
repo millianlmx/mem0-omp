@@ -18,6 +18,14 @@ export const ACTION_KINDS = [
   "screenshot",
   "wait",
   "close",
+  "select",
+  "hover",
+  "back",
+  "forward",
+  "reload",
+  "wait_for",
+  "upload",
+  "download",
   "decision",
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];

@@ -15,7 +15,10 @@
 // Les attentes (long-poll de l'extension, attente d'un résultat) sont en mémoire : une
 // promesse par appelant, réveillée par le changement attendu, l'échéance, la déconnexion
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { isRecord } from "./config.ts";
+import type { HarnessConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import type {
   ActionKind,
@@ -42,7 +45,7 @@ import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { redact, workstationOwner } from "./session-feed.ts";
 import type { SessionEntry } from "./session-feed.ts";
-import { TAB_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
+import { TAB_KINDS, URL_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
 
 export type Autonomy = "auto" | "observe" | "propose" | "act";
 export type EffectiveAutonomy = "observe" | "propose" | "act";
@@ -162,7 +165,78 @@ const SEQUENCE_MAX_STEPS = 4;
 const SEQUENCE_KEEP = 20;
 const TOP_SITES = 15;
 
-export const KEYS = ["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace"] as const;
+/** Les touches nommées que `key` presse (seules, ou avec des modificateurs) : la liste blanche de l'extension (lib/keys.ts). */
+export const NAMED_KEYS = [
+  "Enter",
+  "Escape",
+  "Tab",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Backspace",
+  "Delete",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Space",
+] as const;
+const MODIFIERS = ["Control", "Alt", "Shift", "Meta"] as const;
+
+/**
+ * La combinaison d'une touche permise : une touche nommée, éventuellement précédée de
+ * modificateurs (`Shift+Tab`, `Control+Enter`) ; une lettre ou un chiffre seulement avec
+ * Control, Alt ou Meta (`Meta+k`) — taper du texte passe par `type`. `false` hors liste.
+ */
+export function isKeyCombo(raw: unknown): boolean {
+  if (typeof raw !== "string" || raw.length > 60) return false;
+  const parts = raw.split("+");
+  const base = parts.pop() ?? "";
+  if (new Set(parts).size !== parts.length || parts.some((part) => !(MODIFIERS as readonly string[]).includes(part)))
+    return false;
+  if ((NAMED_KEYS as readonly string[]).includes(base)) return true;
+  return /^[a-z0-9]$/i.test(base) && parts.some((part) => part !== "Shift");
+}
+
+/** Le dossier d'envoi : les seuls fichiers qu'`upload` joint, dans le répertoire de travail de l'agent 24/24. */
+export function uploadDir(config: Pick<HarnessConfig, "worktreesDir">): string {
+  return path.join(config.worktreesDir, "workstation", "_poste", "envois");
+}
+/** Un fichier joint par `upload` pèse au plus 10 Mio. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Le nom d'un fichier du dossier d'envoi : ni séparateur, ni caractère de contrôle, ni nom caché. */
+export function isUploadName(name: unknown): name is string {
+  if (typeof name !== "string" || name.length === 0 || name.length > 200 || name.startsWith(".")) return false;
+  for (const char of name) if (char === "/" || char === "\\" || char.charCodeAt(0) < 0x20) return false;
+  return true;
+}
+
+/** Le type MIME d'un fichier du dossier d'envoi, d'après son extension. */
+const MIME_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  csv: "text/csv",
+  txt: "text/plain",
+  md: "text/markdown",
+  json: "application/json",
+  xml: "application/xml",
+  html: "text/html",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  zip: "application/zip",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  odt: "application/vnd.oasis.opendocument.text",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
+};
 
 const SETTINGS_KEY = "workstation";
 /** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
@@ -400,6 +474,14 @@ function ref(value: unknown, required: boolean): void {
     bad("params.ref : la référence d'un élément du dernier snapshot attendue");
 }
 
+/** Une chaîne facultative, non vide, de `max` caractères au plus. */
+function optionalText(params: Record<string, unknown>, name: string, max: number): void {
+  const value = params[name];
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string" || value.trim() === "" || value.length > max)
+    bad(`params.${name} : chaîne non vide de ${max} caractères au plus attendue`);
+}
+
 /** Les paramètres permis de chaque sorte d'action (tout autre est refusé). */
 const PARAMS: Record<ActionKind, readonly string[]> = {
   tabs: [],
@@ -413,6 +495,14 @@ const PARAMS: Record<ActionKind, readonly string[]> = {
   screenshot: ["tabId"],
   wait: ["ms"],
   close: ["tabId"],
+  select: ["tabId", "ref", "option"],
+  hover: ["tabId", "ref"],
+  back: ["tabId"],
+  forward: ["tabId"],
+  reload: ["tabId"],
+  wait_for: ["tabId", "text", "role", "name", "timeoutMs"],
+  upload: ["tabId", "ref", "file"],
+  download: ["tabId", "ref", "url"],
   decision: ["summary"],
 };
 
@@ -426,7 +516,13 @@ function checkParams(kind: ActionKind, params: Record<string, unknown>): void {
       webUrl(params.url);
       return;
     case "click":
+    case "hover":
       ref(params.ref, true);
+      return;
+    case "select":
+      ref(params.ref, true);
+      if (typeof params.option !== "string" || params.option === "" || params.option.length > 500)
+        bad("params.option : la valeur ou le libellé d'une option (500 caractères au plus) attendu");
       return;
     case "type":
       ref(params.ref, true);
@@ -436,7 +532,37 @@ function checkParams(kind: ActionKind, params: Record<string, unknown>): void {
       return;
     case "key":
       ref(params.ref, false);
-      if (!(KEYS as readonly unknown[]).includes(params.key)) bad(`params.key : ${KEYS.join(" | ")}`);
+      if (!isKeyCombo(params.key))
+        bad(
+          `params.key : ${NAMED_KEYS.join(" | ")}, éventuellement précédée de ${MODIFIERS.join("+ | ")}+ ; une lettre ou un chiffre seulement avec Control, Alt ou Meta`,
+        );
+      return;
+    case "wait_for": {
+      optionalText(params, "text", 200);
+      optionalText(params, "role", 40);
+      optionalText(params, "name", 200);
+      if (typeof params.role === "string" && !/^[a-z]+$/.test(params.role))
+        bad("params.role : un rôle ARIA (button, link…)");
+      if (params.text == null && params.role == null) bad("params.text ou params.role : ce qu'il faut attendre");
+      if (params.name != null && params.role == null) bad("params.name : seulement avec params.role");
+      const timeoutMs = params.timeoutMs;
+      if (
+        timeoutMs !== undefined &&
+        (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 0 || (timeoutMs as number) > 10_000)
+      )
+        bad("params.timeoutMs : entier de 0 à 10000 attendu");
+      return;
+    }
+    case "upload":
+      ref(params.ref, true);
+      if (!isUploadName(params.file))
+        bad("params.file : le nom d'un fichier du dossier d'envoi du poste, sans chemin (ni /, ni \\, ni nom caché)");
+      return;
+    case "download":
+      ref(params.ref, false);
+      if (params.url !== undefined) webUrl(params.url);
+      if ((params.ref === undefined) === (params.url === undefined))
+        bad("params.ref ou params.url : l'un des deux, jamais les deux");
       return;
     case "scroll":
       if (typeof params.dy !== "number" || !Number.isFinite(params.dy) || Math.abs(params.dy) > 100_000)
@@ -570,6 +696,27 @@ export function describeGesture(kind: ActionKind, params: Record<string, unknown
       return `Attendre ${String(params.ms)} ms`;
     case "close":
       return `Fermer ${tab}`;
+    case "select":
+      return `Choisir « ${String(params.option)} » dans ${String(params.ref)} (${tab})`;
+    case "hover":
+      return `Survoler ${String(params.ref)} dans ${tab}`;
+    case "back":
+      return `Revenir à la page précédente dans ${tab}`;
+    case "forward":
+      return `Aller à la page suivante dans ${tab}`;
+    case "reload":
+      return `Recharger ${tab}`;
+    case "wait_for": {
+      const what =
+        typeof params.text === "string"
+          ? `« ${params.text} »`
+          : `${String(params.role)}${typeof params.name === "string" ? ` « ${params.name} »` : ""}`;
+      return `Attendre ${what} dans ${tab}`;
+    }
+    case "upload":
+      return `Joindre le fichier « ${String(params.file)} » à ${String(params.ref)} (${tab})`;
+    case "download":
+      return `Télécharger ${typeof params.url === "string" ? params.url : String(params.ref)} depuis ${tab}`;
     case "decision":
       return "Journaliser une décision";
   }
@@ -1186,6 +1333,8 @@ export class Workstation {
       const effective = this.effective(settings);
       if (requestId === null && origin === "agent" && effective === "observe")
         throw new HarnessError(409, "l'autonomie du poste est en observation : l'agent n'agit pas");
+      // Le fichier d'un `upload` existe dans le dossier d'envoi, sous la borne : sinon rien n'est déposé.
+      if (input.kind === "upload") this.#uploadPath(String(input.params.file));
       const reasons = this.#guards(input, origin, browserId);
       const proposes = requestId === null && origin === "agent" && effective === "propose";
       state = proposes || reasons.length > 0 ? "awaiting_approval" : "queued";
@@ -1232,16 +1381,18 @@ export class Workstation {
   /**
    * Pourquoi une action doit attendre l'humain, tranché ICI et non par le prompt (vide : elle
    * part). Le cantonnement : un geste dans un onglet que l'extension n'a pas rapporté comme
-   * de la fenêtre de l'agent. La navigation : un hôte hors de `allowedHosts` (s'il y en a) ;
+   * de la fenêtre de l'agent (son effet, `TAB_KINDS`, est dit à l'humain). L'adresse chargée
+   * (`open`, `navigate`, `download` par `url`) : un hôte hors de `allowedHosts` (s'il y en a) ;
    * pour l'agent 24/24, un hôte jamais observé ni listé, ou une query longue ou opaque.
    */
   #guards(input: ActionInput, origin: ActionOrigin, browserId: string | null): string[] {
     const reasons: string[] = [];
+    const effect = TAB_KINDS[input.kind];
     const agentTabs = browserId === null ? null : (this.#presence.get(browserId)?.agentTabs ?? null);
-    if (TAB_KINDS[input.kind] && !agentTabs?.has(input.params.tabId as number))
-      reasons.push("onglet de l'utilisateur, hors de la fenêtre de l'agent");
-    if (input.kind !== "open" && input.kind !== "navigate") return reasons;
-    const url = String(input.params.url);
+    if (effect !== undefined && !agentTabs?.has(input.params.tabId as number))
+      reasons.push(`onglet de l'utilisateur, hors de la fenêtre de l'agent (${effect})`);
+    if (!URL_KINDS[input.kind] || typeof input.params.url !== "string") return reasons;
+    const url = input.params.url;
     const host = hostOf(url) ?? "";
     const { allowedHosts, exfiltrationGuard } = this.settings();
     const listed = hostListed(host, allowedHosts);
@@ -1251,6 +1402,44 @@ export class Workstation {
     const param = opaqueQueryParam(url);
     if (param !== null) reasons.push(`l'adresse porte une valeur longue ou opaque (${param})`);
     return reasons;
+  }
+
+  /**
+   * Le chemin d'un fichier du dossier d'envoi (`uploadDir`) : un fichier ordinaire (ni lien
+   * symbolique, ni dossier), de `MAX_UPLOAD_BYTES` au plus ; 400 sinon. Le nom a déjà été
+   * validé (`isUploadName`) : il ne sort jamais du dossier.
+   */
+  #uploadPath(name: string): string {
+    const file = path.join(uploadDir(this.#ctx.config), name);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(file);
+    } catch {
+      throw new HarnessError(400, `params.file : « ${name} » absent du dossier d'envoi du poste (envois/)`);
+    }
+    if (!stat.isFile()) throw new HarnessError(400, `params.file : « ${name} » n'est pas un fichier ordinaire`);
+    if (stat.size > MAX_UPLOAD_BYTES)
+      throw new HarnessError(400, `params.file : « ${name} » dépasse ${MAX_UPLOAD_BYTES} octets`);
+    return file;
+  }
+
+  /**
+   * Le fichier d'une action `upload` EN COURS, pour l'extension qui l'exécute : nom, type,
+   * taille et contenu en base64. 409 pour une autre action ou un autre état, 400 si le
+   * fichier a disparu ou grossi depuis le dépôt.
+   */
+  uploadFile(seq: number): { name: string; mime: string; size: number; data: string } {
+    const action = this.getAction(seq);
+    if (action.kind !== "upload") throw new HarnessError(409, `l'action #${seq} n'est pas un upload`);
+    if (action.state !== "running")
+      throw new HarnessError(409, `l'action #${seq} n'est pas en cours (état ${action.state})`);
+    const name = String(action.params.file);
+    const bytes = fs.readFileSync(this.#uploadPath(name));
+    if (bytes.length > MAX_UPLOAD_BYTES)
+      throw new HarnessError(400, `params.file : « ${name} » dépasse ${MAX_UPLOAD_BYTES} octets`);
+    const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? "";
+    const mime = MIME_TYPES[extension] ?? "application/octet-stream";
+    return { name, mime, size: bytes.length, data: bytes.toString("base64") };
   }
 
   /**
