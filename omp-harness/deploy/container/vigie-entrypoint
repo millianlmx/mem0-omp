@@ -1,0 +1,15 @@
+#!/bin/sh
+# L'entrée de la vigie : son jeton de client pilote, celui de la mémoire et les clés des
+# modèles viennent du fichier monté (écrit par `omp-harness-stack init` ou `harness.sh up`,
+# après la lecture du compose) : lus ici, jamais passés en argument ni dans le compose.
+set -eu
+if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
+  echo "vigie:x:$(id -u):$(id -g):vigie:${HOME:-/tmp}:/bin/sh" >> /etc/passwd
+fi
+if [ -n "${VIGIE_ENV_FILE:-}" ] && [ -r "$VIGIE_ENV_FILE" ]; then
+  set -a
+  . "$VIGIE_ENV_FILE"
+  set +a
+fi
+[ -z "${HOME:-}" ] || mkdir -p "$HOME"
+exec "$@"

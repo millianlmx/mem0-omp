@@ -41,6 +41,30 @@ services:
       retries: 3
       start_period: 60s
 
+  # La vigie (omp-harness/vigie/) : 24/24, à part du harness pour survivre à ses pannes et
+  # constater son silence. Journal structuré et clones en lecture seule, son jeton de client
+  # pilote (écrit par `harness.sh up`), ni socket du moteur, ni base, ni jeton GitHub.
+  vigie:
+    build:
+      context: ../../..
+      dockerfile: omp-harness/deploy/container/Dockerfile.vigie
+    image: omp-harness-vigie:local
+    user: "${OMP_HARNESS_USER}"
+    restart: unless-stopped
+    environment:
+      HOME: /var/lib/omp-vigie/home
+      VIGIE_ENV_FILE: /run/secrets/omp-vigie/vigie.env
+      VIGIE_HARNESS_URL: http://harness:8790
+      VIGIE_STATE_DIR: /var/lib/omp-vigie
+      VIGIE_LOGS_DIR: /logs
+      VIGIE_REPOS_DIR: /repos
+      MEM0_HTTP_URL: http://mem0:8321
+    volumes:
+      - ${OMP_HARNESS_ROOT}/vigie:/var/lib/omp-vigie
+      - ${OMP_HARNESS_ROOT}/state/logs:/logs:ro
+      - ${OMP_HARNESS_ROOT}/repos:/repos:ro
+      - ${OMP_HARNESS_SECRETS}/vigie:/run/secrets/omp-vigie:ro
+
   mem0:
     build: ../../../mem0-stack/mem0-rs
     image: mem0-rs:local

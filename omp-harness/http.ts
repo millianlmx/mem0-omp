@@ -48,6 +48,8 @@ import type { LogLine } from "./logger.ts";
 import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
+import type { VigieStatus } from "./db.ts";
+import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
 import {
   APPROVER_ONLY,
@@ -100,6 +102,7 @@ export const API_FEATURES = [
   "schedules",
   "client-errors",
   "prometheus",
+  "vigie",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -361,6 +364,11 @@ export function apiRoutes(
       call.req.headers["x-omp-browser-label"],
       call.req.headers["x-omp-extension"],
     );
+  /** Les routes d'écriture de la vigie : son client pilote seulement (son jeton, jamais un autre). */
+  const pilotOf = (call: Call): void => {
+    if (!call.client.pilot)
+      throw new HarnessError(403, "réservé au client pilote de la vigie (`main.ts --add-client vigie --pilot`)");
+  };
   /** `?wait=` : les secondes d'un long-poll, bornées à 30 ; absent ou illisible : aucune attente. */
   const waitOf = (url: URL): number => {
     const wait = Number(url.searchParams.get("wait"));
@@ -768,6 +776,9 @@ export function apiRoutes(
     }),
     route("POST", "/v1/workstation/actions", "operator", async (call) => {
       const workstation = workstationOf(call);
+      // Un envoi du poste est un geste réservé à l'humain : jamais un agent pilote (la vigie).
+      if (call.client.pilot)
+        throw new HarnessError(403, "geste réservé à l'humain — un client pilote n'agit pas sur le poste");
       const input = parseActionInput(await readBody(call.req));
       send(call.res, 201, { action: workstation.createAction(input, "session", call.actor.by) });
     }),
@@ -905,6 +916,31 @@ export function apiRoutes(
       orchestrator.schedules.unlinkAutomation(removed);
       send(call.res, 200, { removed });
     }),
+    // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
+    route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
+    route("PUT", "/v1/vigie", "admin", async (call) =>
+      send(call.res, 200, { settings: orchestrator.vigie.updateSettings(await readBody(call.req), call.actor) }),
+    ),
+    route("POST", "/v1/vigie/heartbeat", "operator", async (call) => {
+      pilotOf(call);
+      send(call.res, 200, orchestrator.vigie.heartbeat(await readBody(call.req), call.client, Date.now()));
+    }),
+    route("GET", "/v1/vigie/incidents", "viewer", (call) => {
+      const statuses = (call.url.searchParams.get("status") ?? "").split(",").filter((status) => status !== "");
+      if (statuses.some((status) => !(VIGIE_STATUSES as readonly string[]).includes(status)))
+        throw new HarnessError(400, `status : ${VIGIE_STATUSES.join(" | ")}`);
+      send(call.res, 200, {
+        incidents: orchestrator.vigie.list(
+          { statuses: statuses as VigieStatus[], limit: limitOf(call.url, 100, 1000) },
+          call.repos,
+        ),
+      });
+    }),
+    route("POST", "/v1/vigie/incidents", "operator", async (call) => {
+      pilotOf(call);
+      const outcome = await orchestrator.vigie.report(await readBody(call.req), Date.now());
+      send(call.res, outcome.known ? 200 : 201, outcome);
+    }),
     // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
     route("GET", "/v1/clients", "admin", (call) => send(call.res, 200, { clients: clients.list() })),
     route("POST", "/v1/clients", "admin", async (call) => {
@@ -915,11 +951,18 @@ export function apiRoutes(
           400,
           "approver : un approbateur ne se crée qu'en ligne de commande sur le serveur (harness.sh approver)",
         );
+      if (body.pilot !== undefined && typeof body.pilot !== "boolean") throw new HarnessError(400, "pilot : booléen");
       const role = text(body, "role", false) || "operator";
       if (!(ROLES as readonly string[]).includes(role)) throw new HarnessError(400, `role : ${ROLES.join(" | ")}`);
       const repos = body.repos === undefined || body.repos === "*" ? "*" : stringList(body.repos, "repos");
       try {
-        const { client, token } = clients.add(text(body, "name"), role as Role, repos ?? "*");
+        const { client, token } = clients.add(
+          text(body, "name"),
+          role as Role,
+          repos ?? "*",
+          false,
+          body.pilot === true,
+        );
         send(call.res, 201, { client, token });
       } catch (err) {
         throw new HarnessError(400, err instanceof Error ? err.message : String(err));
@@ -1184,7 +1227,8 @@ export function createHandler(options: HttpOptions): http.RequestListener {
               403,
               `le rôle ${client.role} ne permet pas ${route.method} ${route.path} (${route.role} requis)`,
             );
-          await route.handle({ match, req, res, url, client, repos, actor: { by: client.name, rev: ifMatch(req) } });
+          const actor: Actor = { by: client.name, rev: ifMatch(req), ...(client.pilot ? { pilot: true } : {}) };
+          await route.handle({ match, req, res, url, client, repos, actor });
           return;
         }
         send(res, matchedPath ? 405 : 404, { error: matchedPath ? "méthode non permise" : "route inconnue" });

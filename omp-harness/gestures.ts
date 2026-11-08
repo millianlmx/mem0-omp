@@ -10,9 +10,11 @@
 // - les écritures d'un geste (état, décisions, escalades, consignes, événements)
 //   tiennent dans UNE transaction : un arrêt au milieu ne laisse rien à moitié fait.
 // L'auteur de chaque geste est gardé (`by`) dans la base et dans le journal.
+// Un pilote (celui d'un audit, ou un client `pilot` comme la vigie) emprunte ces gestes,
+// sauf ceux réservés à l'humain : il est refusé en 403, sans rien écrire.
 import type { Actor, HarnessContext } from "./context.ts";
 import type { DecisionRow, EscalationRow, RunPatch, RunRow } from "./db.ts";
-import { checkpointMessage, dependentsOf } from "./decisions.ts";
+import { IRREVERSIBLE, checkpointMessage, dependentsOf } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
 import type { StepKind } from "./machine.ts";
 import {
@@ -29,9 +31,11 @@ import {
   resumeAtCheckpoint,
   retried,
   reworkAfterReversal,
+  humanWaitOf,
 } from "./machine.ts";
 import { humanDecisionMemory } from "./oracle.ts";
 import type { RunBudget } from "./monitor.ts";
+import { HUMAN_ONLY } from "./pilot.ts";
 
 export type GestureHooks = {
   /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
@@ -76,7 +80,8 @@ function byOf(actor: Actor): { by?: string } {
 
 /** Qui tranche, dans la raison écrite sur le run. */
 function whoOf(actor: Actor): string {
-  return actor.pilot ? "le pilote de l'audit" : "l'humain";
+  if (!actor.pilot) return "l'humain";
+  return actor.by === null || actor.by.startsWith("pilote:") ? "le pilote de l'audit" : `le pilote ${actor.by}`;
 }
 
 function list(seqs: readonly number[]): string {
@@ -118,6 +123,17 @@ export class HumanLoop {
     return run;
   }
 
+  /**
+   * Un pilote (audit ou client pilote) ne fait jamais un geste réservé à l'humain : sur une
+   * attente de `HUMAN_ONLY` (geste irréversible, budget dépassé), 403 sans rien écrire.
+   */
+  assertPilotMay(run: RunRow, actor: Actor): void {
+    if (!actor.pilot) return;
+    const wait = humanWaitOf(run);
+    const reason = wait === null ? undefined : HUMAN_ONLY[wait];
+    if (reason !== undefined) throw new HarnessError(403, `geste réservé à l'humain — ${reason}`);
+  }
+
   // -- escalades --------------------------------------------------------------
 
   /** Réponses aux escalades d'un run ; quand toutes sont répondues, le run reprend son étape. */
@@ -130,6 +146,12 @@ export class HumanLoop {
     const run = this.#fresh(runId, actor);
     if (run.state !== "escalated") throw new HarnessError(409, `le run n'attend pas de réponse (état ${run.state})`);
     const open = new Map(store.listEscalations({ runId, status: "open" }).map((item) => [item.id, item]));
+    // Une escalade porte un geste irréversible (schema, public_api, deletion) : l'humain seul y répond.
+    if (actor.pilot && answers.some(({ id }) => IRREVERSIBLE.some((category) => category === open.get(id)?.category)))
+      throw new HarnessError(
+        403,
+        "geste réservé à l'humain — une escalade (schema, public_api, deletion) n'est tranchée que par l'humain",
+      );
     for (const { id, answer, reason } of answers) {
       if (!open.get(id)) throw new HarnessError(404, `escalade ouverte inconnue : ${id}`);
       if (typeof answer !== "string" || answer.trim() === "")
@@ -614,6 +636,7 @@ export class HumanLoop {
   async #validate(runId: string, approve: boolean, why: string, actor: Actor): Promise<RunRow> {
     const { store, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
+    this.assertPilotMay(run, actor);
     if (run.state !== "awaiting_human")
       throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
     const specs = run.step === "specs";
@@ -689,6 +712,7 @@ export class HumanLoop {
     return this.#serial(runId, async () => {
       const { store } = this.#ctx;
       const run = this.#fresh(runId, actor);
+      this.assertPilotMay(run, actor);
       if (run.state !== "failed" && run.state !== "awaiting_human")
         throw new HarnessError(409, `seul un run échoué ou en attente se relance (état ${run.state})`);
       const stop = mergeStopOf(run);
@@ -720,6 +744,7 @@ export class HumanLoop {
   async #cancel(runId: string, actor: Actor): Promise<RunRow> {
     const { git } = this.#ctx;
     const run = this.#fresh(runId, actor);
+    this.assertPilotMay(run, actor);
     if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
     // Un merge en cours touche main et le worktree : on ne l'interrompt pas à mi-chemin.
     if (run.state === "merging" || this.#hooks.merging(runId))
@@ -772,6 +797,8 @@ export class HumanLoop {
   setBudget(runId: string, budget: number | null, actor: Actor): Promise<{ run: RunRow; budget: RunBudget }> {
     return this.#serial(runId, async () => {
       const run = this.#fresh(runId, actor);
+      // Accorder un budget est réservé à l'humain : jamais un pilote (audit ou vigie).
+      if (actor.pilot) throw new HarnessError(403, `geste réservé à l'humain — ${HUMAN_ONLY.budget}`);
       if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
       this.#ctx.event("run_budget", runId, { budgetUsd: budget, ...byOf(actor) });
       const view = this.#ctx.monitor.setRunBudget(runId, budget, actor.by);

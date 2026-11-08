@@ -5,7 +5,8 @@
 # de la pile (docker-compose.yml) ; le jeton de la mémoire et la clé SSH, eux, ne
 # sont créés qu'une fois.
 #
-#   omp-harness-stack init      dossiers, secrets, config.json, clé SSH (service `setup`)
+#   omp-harness-stack init      dossiers, secrets, config.json, clé SSH, client pilote de la
+#                               vigie et ses secrets (service `setup`)
 #   omp-harness-stack repos     déclare les dépôts d'OMP_HARNESS_REPOS (service `repos`)
 #   omp-harness-stack approver  le code approbateur des apps, à la main dans la console
 #                               du conteneur `harness` (comme `harness.sh approver`)
@@ -57,9 +58,10 @@ secret_lines() {
 cmd_init() {
   check_values
   umask 022
-  mkdir -p "$ROOT/state" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
-    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/published" "$SECRETS/harness" "$SECRETS/mem0"
-  chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/mem0" "$ROOT/home/.ssh"
+  mkdir -p "$ROOT/state" "$ROOT/state/logs" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
+    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/published" "$ROOT/vigie" \
+    "$SECRETS/harness" "$SECRETS/mem0" "$SECRETS/vigie"
+  chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/mem0" "$SECRETS/vigie" "$ROOT/home/.ssh"
 
   # Le jeton de la mémoire, partagé par le service, mem0-rs et les runners : gardé.
   token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0/mem0.env")"
@@ -117,10 +119,37 @@ cmd_init() {
     chmod 0600 "$ROOT/home/.ssh/config"
   fi
 
+  vigie_secrets "$token"
+
   echo "✓ harness prêt dans $ROOT (secrets dans $SECRETS)"
   grep -q '^[A-Z_]*API_KEY=.' "$SECRETS/runner.env" ||
     echo "· Aucune clé de modèle : pose ANTHROPIC_API_KEY dans les variables de la pile, puis redéploie"
   echo "· Chaque dépôt d'OMP_HARNESS_REPOS reçoit sa propre clé de déploiement, affichée par le service repos."
+}
+
+# La vigie (service `vigie`) : son client pilote — operator, jamais approbateur — recréé
+# s'il a disparu, et ses secrets : son jeton, celui de la mémoire et les clés des modèles
+# de ses sessions, jamais GH_TOKEN (les issues passent par le harness, qui les caviarde).
+vigie_secrets() {
+  if [ ! -r "$MAIN" ]; then
+    echo "· La vigie attend son client : $MAIN introuvable"
+    return 0
+  fi
+  vigie="$(setting VIGIE_TOKEN "$SECRETS/vigie/vigie.env")"
+  if [ -z "$vigie" ] || ! harness_main --list-clients 2>/dev/null | grep -q "^vigie$(printf '\t').*pilote\$"; then
+    harness_main --revoke-client vigie >/dev/null 2>&1 || true
+    vigie="$(harness_main --add-client vigie --role operator --pilot 2>/dev/null)" || die "client de la vigie non créé"
+  fi
+  umask 077
+  {
+    printf 'VIGIE_TOKEN=%s\n' "$vigie"
+    printf 'MEM0_HTTP_TOKEN=%s\n' "$1"
+    for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
+      eval "value=\${$name:-}"
+      [ -z "$value" ] || printf '%s=%s\n' "$name" "$value"
+    done
+  } > "$SECRETS/vigie/vigie.env"
+  umask 022
 }
 
 # L'URL SSH d'un dépôt GitHub donné en HTTPS : la clé de déploiement ne sert qu'en SSH.

@@ -235,6 +235,28 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["floppy_disk", "warning"],
         click: null,
       };
+    // La vigie ne notifie que ce qu'elle rend à l'humain : le reste se lit dans le rapport du matin.
+    case "vigie_incident":
+      if (payload.status !== "deferred") return null;
+      return {
+        title: `La vigie te laisse la main — ${text(payload.title, text(payload.location, "incident"))}`,
+        body: short(
+          `${text(payload.note, "décision réservée à l'humain")}${text(payload.issueUrl) ? ` · ${text(payload.issueUrl)}` : ""}`,
+        ),
+        priority: 4,
+        tags: ["raising_hand"],
+        click: text(payload.issueUrl) || null,
+      };
+    case "vigie_silent":
+      return {
+        title: "La vigie est muette",
+        body: short(
+          `aucun battement de cœur depuis ${typeof payload.silentSec === "number" ? Math.round(payload.silentSec / 60) : "?"} min : son conteneur est-il arrêté ?`,
+        ),
+        priority: 4,
+        tags: ["see_no_evil"],
+        click: null,
+      };
     case "notify_failed":
       return null;
     default:

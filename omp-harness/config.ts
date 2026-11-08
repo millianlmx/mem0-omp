@@ -72,6 +72,9 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "workstation_approval",
   "pilot",
   "backup_failed",
+  // La vigie : ce qu'elle rend à l'humain (notificationFor ne dit rien d'autre), et son silence.
+  "vigie_incident",
+  "vigie_silent",
 ];
 
 /**

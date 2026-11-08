@@ -1,7 +1,8 @@
 // Le serveur MCP du harness (`POST /v1/mcp`, transport « Streamable HTTP » en réponses
 // JSON, sans flux serveur) : les issues des dépôts déclarés sur leur forge (GitHub, GitLab) et leur lancement en
-// run pour que le dépôt se corrige lui-même, puis le lancement, la lecture et le pilotage
-// des runs, avec les mêmes contrôles que l'API REST.
+// run pour que le dépôt se corrige lui-même, la publication caviardée d'une issue
+// (`issue_create`, la vigie), puis le lancement, la lecture et le pilotage des runs,
+// avec les mêmes contrôles que l'API REST.
 //
 // Même jeton, même client que le reste de l'API : `tools/list` est ouvert à tout client,
 // un outil qui lance du travail exige `operator`, et un dépôt que le client ne voit pas
@@ -133,10 +134,11 @@ function runArg(args: ToolArgs): string {
  */
 function gestureActor(call: McpCall, args: ToolArgs): Actor {
   const rev = args.rev;
-  if (rev === undefined || rev === null) return { by: call.actor.by };
+  const pilot = call.actor.pilot ? { pilot: true } : {};
+  if (rev === undefined || rev === null) return { by: call.actor.by, ...pilot };
   if (!Number.isInteger(rev) || (rev as number) < 0)
     throw new HarnessError(400, "rev : la révision du run (entier ≥ 0) attendue");
-  return { by: call.actor.by, rev: rev as number };
+  return { by: call.actor.by, rev: rev as number, ...pilot };
 }
 
 export const MCP_TOOLS: readonly Tool[] = [
@@ -190,7 +192,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issue_fix",
     title: "Corriger une issue",
     description:
-      "Lance un pipeline du harness qui corrige l'issue donnée (GitHub ou GitLab, la forge du dépôt). Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé.",
+      "Lance un pipeline du harness qui corrige l'issue donnée (GitHub ou GitLab, la forge du dépôt). Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé. Un client pilote (la vigie) ne lance que ses propres issues, en mode fix, une fois par empreinte, dans ses plafonds.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -201,7 +203,12 @@ export const MCP_TOOLS: readonly Tool[] = [
     run: async (call, args) => {
       const repo = await targetRepo(call, args);
       if (!Number.isInteger(args.number)) throw new HarnessError(400, "number : numéro d'issue attendu");
-      return { repo: repo.name, ...launched(await call.desk.fix(repo, args.number as number, call.actor)) };
+      const number = args.number as number;
+      const vigie = call.client.pilot ? call.orchestrator.vigie : null;
+      const incident = vigie?.guardFix(repo, number, Date.now()) ?? null;
+      const outcome = await call.desk.fix(repo, number, call.actor);
+      if (vigie && incident) vigie.recordFix(incident, outcome.run.id, Date.now());
+      return { repo: repo.name, ...launched(outcome) };
     },
   },
   {
@@ -405,7 +412,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     required: ["id"],
     run: async (call, args) => {
       const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
-      return { run: await call.orchestrator.revert(id, { by: call.actor.by }) };
+      return { run: await call.orchestrator.revert(id, gestureActor(call, {})) };
     },
   },
   {
@@ -652,6 +659,48 @@ export const MCP_TOOLS: readonly Tool[] = [
       const id = text(args, "id");
       call.orchestrator.schedules.delete(id, gestureActor(call, args), call.visible);
       return { id, deleted: true };
+    },
+  },
+  {
+    name: "issue_create",
+    title: "Publier une issue caviardée",
+    description:
+      "Publie une issue sur la forge (GitHub ou GitLab) d'un dépôt déclaré, avec le label `omp:vigie` et l'empreinte du bug en marqueur caché. Le serveur caviarde le titre et le corps avant publication (secrets, e-mails, requêtes d'URL, chemins personnels, tout texte du poste de travail). Une empreinte déjà publiée rend son issue (`already`). Un client pilote (la vigie) est tenu par son mode, ses dépôts et `maxIssuesPerDay` : hors d'eux, rien ne part (`withheld`).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      repo: REPO_PROPERTY,
+      title: { type: "string", description: "Le titre de l'issue." },
+      body: {
+        type: "string",
+        description:
+          "Le corps, en Markdown : symptôme, preuves, hypothèse, fichiers probables et `## Critères d'acceptation` (`AC-n`).",
+      },
+      labels: {
+        type: "array",
+        items: { type: "string" },
+        description: "Facultatif : des labels en plus d'`omp:vigie`.",
+      },
+      fingerprint: {
+        type: "string",
+        description: "L'empreinte du bug (16 à 64 hexadécimaux) : la clé du dédoublonnage.",
+      },
+    },
+    required: ["repo", "title", "body", "fingerprint"],
+    run: async (call, args) => {
+      const repo = await targetRepo(call, args);
+      const outcome = await call.orchestrator.vigie.publish(
+        {
+          repo,
+          title: text(args, "title"),
+          body: text(args, "body"),
+          labels: stringList(args.labels ?? undefined, "labels") ?? [],
+          fingerprint: text(args, "fingerprint"),
+        },
+        call.client,
+        Date.now(),
+      );
+      return { repo: repo.name, ...outcome };
     },
   },
 ];

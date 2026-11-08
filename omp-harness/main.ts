@@ -8,9 +8,10 @@
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
 //   … --local-model omlx/<modèle> --omlx-url <url> [--omlx-context <n>] : le modèle oMLX
 //     déclaré aux runners sans toucher aux chaînes du serveur (dépôts `local-only`).
-//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] : un
-//     client de plus (son jeton s'affiche une fois ; --approver : l'approbateur du poste,
-//     admin sur tous les dépôts) ; --revoke-client <nom> ; --list-clients.
+//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] [--pilot] :
+//     un client de plus (son jeton s'affiche une fois ; --approver : l'approbateur du poste,
+//     admin sur tous les dépôts ; --pilot : un agent, la vigie, à qui les gestes réservés à
+//     l'humain sont refusés) ; --revoke-client <nom> ; --list-clients.
 //
 // Le jeton historique vient de HARNESS_TOKEN, sinon du fichier `tokenFile` (créé en
 // 0600 au premier démarrage) : c'est le client `admin`. Les autres clients vivent
@@ -183,6 +184,7 @@ export function clientCommand(argv: string[], registry: ClientRegistry): Command
     const clientName = argValue(argv, "--add-client");
     if (clientName !== null) {
       const approver = argv.includes("--approver");
+      const pilot = argv.includes("--pilot");
       const role = argValue(argv, "--role") ?? (approver ? "admin" : "operator");
       const repos = argValue(argv, "--repos") ?? "*";
       const { client, token } = registry.add(
@@ -195,12 +197,13 @@ export function clientCommand(argv: string[], registry: ClientRegistry): Command
               .map((name) => name.trim())
               .filter(Boolean),
         approver,
+        pilot,
       );
       const scope = client.repos === "*" ? "tous" : client.repos.join(", ");
       return {
         status: 0,
         stdout: `${token}\n`,
-        stderr: `✓ client ${client.name} (${client.role}, dépôts : ${scope}${client.approver ? ", approbateur du poste" : ""}) — son jeton ne sera plus affiché :\n`,
+        stderr: `✓ client ${client.name} (${client.role}, dépôts : ${scope}${client.approver ? ", approbateur du poste" : ""}${client.pilot ? ", pilote" : ""}) — son jeton ne sera plus affiché :\n`,
       };
     }
     if (argv.includes("--revoke-client")) {
@@ -216,7 +219,7 @@ export function clientCommand(argv: string[], registry: ClientRegistry): Command
       .list()
       .map(
         (client) =>
-          `${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}${client.approver ? "\tapprobateur" : ""}\n`,
+          `${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}${client.approver ? "\tapprobateur" : ""}${client.pilot ? "\tpilote" : ""}\n`,
       );
     return { status: 0, stdout: lines.join(""), stderr: "" };
   } catch (err) {

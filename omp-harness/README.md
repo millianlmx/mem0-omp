@@ -1380,6 +1380,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `schedules_list` | viewer | Les planifications des dépôts que le client voit, avec le fuseau : `GET /v1/schedules`. |
 | `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible) ; une cible `automation` n'en a pas. Mêmes contrôles que `POST /v1/schedules`. |
 | `schedule_delete` `{id, rev?}` | operator | Supprime une planification (`{id, deleted}`) ; avec `rev`, refusée si elle a changé depuis : `DELETE /v1/schedules/{id}`. |
+| `issue_create` `{repo, title, body, labels?, fingerprint}` | operator | Publie une issue sur la forge du dépôt déclaré (GitHub ou GitLab, forge.ts ; 409 sans forge), label `omp:vigie` (créé au besoin), l'empreinte en marqueur caché `<!-- omp-vigie:fingerprint=… -->`. Le serveur caviarde titre et corps avant de les confier à la forge (§ « La vigie »). Une empreinte déjà publiée — en base, ou retrouvée par son marqueur sur la forge — rend son issue (`already`) ; un client pilote hors de son mode, de ses dépôts ou de `maxIssuesPerDay` ne publie rien (`withheld`, brouillon gardé). |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou son
   projet sur sa forge (`owner/name`, `groupe/projet`, retrouvé par le distant des
@@ -1525,6 +1526,54 @@ l'utilisateur, comme `harness_launch`) et `harness_schedules` les liste.
   docker compose --profile monitoring up -d   # Grafana : http://127.0.0.1:3000 (GRAFANA_ADMIN_PASSWORD)
   ```
 
+## La vigie
+
+Un conteneur à part (`vigie` dans `docker-compose.yml` et `deploy/container/compose.yaml`,
+image `Dockerfile.vigie` : node et omp épinglé), 24/24, qui regarde le harness « en
+shadow » et orchestre lui-même la correction de ce qu'il trouve (`vigie/`). Il survit
+aux pannes du harness et constate son silence. Il parle à l'API sous **son** jeton de
+client pilote (`main.ts --add-client vigie --pilot`, créé par `setup` ou `harness.sh up`
+dans `<secrets>/vigie/vigie.env`), jamais celui de l'approbateur ; il n'a ni le socket du
+moteur, ni la base, ni le jeton GitHub. Le journal structuré (`<dataDir>/logs`) et les
+clones (`<racine>/repos`) lui sont montés en lecture seule.
+
+- **Collecte.** Le flux `/v1/events` (repris par `Last-Event-ID`) : runs échoués, push et
+  revert refusés, notifications perdues, erreurs des clients (`client_error`, sans leur
+  `context`), actions du poste en échec (type et état seulement) ; les lignes `warn` et
+  `error` du journal structuré ; `/v1/health` et `/v1/status` (mémoire injoignable,
+  `oracle.lostWrites` en hausse) ; la CI de `main` des dépôts de la vigie (API GitHub
+  publique) ; le harness injoignable plus de 5 min. Ses signaux d'un harness injoignable
+  attendent dans son état (`state.json`) et partent à son retour.
+- **Empreinte** (`vigie/fingerprint.ts`), sans LLM : SHA-256 de la source, de
+  l'emplacement et du message normalisés (ids, nombres, horodatages, chemins temporaires
+  et personnels, IP retirés). Connue : une occurrence de plus, et au plus toutes les 6 h
+  un commentaire de comptes sur son issue. Nouvelle : le tri.
+- **Tri.** Une session omp (`RpcRunner`, en-tête `# /vigie-triage`) au contexte borné —
+  événements et journal ±5 min, le run concerné et sa session, `git log` de `main`, les
+  bugs connus de la mémoire — rend `vigie_verdict` : bruit, ou bug avec symptôme, preuves,
+  hypothèse, fichiers et critères, numérotés `AC-n` dans l'issue (la voie directe du
+  harness). La session ne reçoit ni le jeton de la vigie, ni celui de la mémoire.
+- **Publication** par `issue_create` (MCP), **caviardée par le serveur** (`vigie/redact.ts`,
+  les familles de mem0-rs réécrites en TS, plus jetons longs, e-mails, requête des URL,
+  chemins personnels, noms du tailnet et IP) ; tout texte que le serveur garde du poste
+  (pages, meetings, actions, profil, identités) est retiré mot pour mot.
+- **Correction** (mode `fix`) : `issue_fix`, puis le pilotage du run quand il attend
+  (`# /vigie-pilote`, `vigie_act` → `run_validate` ou `run_retry` avec consigne, au plus
+  3 gestes par run). Escalade, geste irréversible ou budget : rendus à l'humain sans
+  session — et la boucle humaine refuse de toute façon ces gestes en 403 à un client
+  pilote (`HUMAN_ONLY` de `pilot.ts`, escalades `schema`/`public_api`/`deletion`, envois
+  du poste). Après le merge, l'empreinte est surveillée 24 h : absente, l'issue est
+  fermée avec un commentaire et le souvenir écrit (symptôme, cause, correctif) ; revenue,
+  l'issue est rouverte et l'incident rendu à l'humain (`vigie_incident`, notifié).
+- **Gardes du serveur** (`vigie/desk.ts`), réglées par `PUT /v1/vigie` : `mode`
+  `off` · `shadow` (défaut : tout est consigné en incidents, l'issue qu'elle aurait
+  publiée comprise, rien ne sort) · `report` (publie) · `fix` (publie et corrige) ;
+  `maxIssuesPerDay` (5), `maxLiveRuns` (2), `dailyBudgetUsd` (10, tris et runs de
+  correction du jour UTC), `repos` (les dépôts où elle publie et corrige). Une seule
+  génération de correction par empreinte ; un bug sur un run lancé par la vigie (ou sa
+  descendance) revient à l'humain (anti-boucle). Battement toutes les 60 s ; au-delà de
+  5 min de silence, un `vigie_silent`, notifié. Le rapport du matin a sa section « Vigie ».
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -1613,6 +1662,9 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
 | `POST /v1/mcp` | viewer | Le serveur MCP des issues (§ « Les issues (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les gestes exigent `operator`. |
+| `GET /v1/vigie` · `PUT /v1/vigie` `{mode?, maxIssuesPerDay?, maxLiveRuns?, dailyBudgetUsd?, repos?}` | viewer · admin | La vigie (§ « La vigie ») : `{settings, heartbeat {at, version, client, silent, silentSince}, today {since, issues, liveRuns, spentUsd}, incidents}` (compte par statut) ; les réglages, validés (400 pour un champ inconnu ou un dépôt non déclaré). |
+| `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
+| `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
