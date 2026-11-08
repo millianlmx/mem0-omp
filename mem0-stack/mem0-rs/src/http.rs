@@ -22,6 +22,7 @@ use crate::extraction::{self, Lecture};
 use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
 use crate::http_liens;
+use crate::jetons::{Acces, Jetons};
 use crate::liens;
 use crate::openai::ClientChat;
 use crate::recherche::{self, Details, Refus};
@@ -42,8 +43,8 @@ pub struct Etat {
     pub embedder: Embedder,
     /// chat/completions de l'extraction (add infer=true) et du rêve ; peut être coupé.
     pub chat: ClientChat,
-    /// Secret : jamais imprimé. Vide = aucun contrôle.
-    pub http_token: String,
+    /// Secrets : jamais imprimés. Aucun jeton = aucun contrôle.
+    pub jetons: Jetons,
     pub installation_token: String,
     /// Fusion de la recherche quand la requête n'en demande pas, et `k` de la RRF.
     pub recherche: recherche::Reglage,
@@ -145,25 +146,33 @@ fn rejet(r: Rejet) -> Response {
     }
 }
 
-/// `None` si le jeton est bon (ou non exigé), sinon la réponse 401.
-pub(crate) fn controle_jeton(etat: &Etat, entetes: &HeaderMap) -> Option<Response> {
-    if etat.http_token.is_empty()
-        || entetes.get("x-mem0-token").is_some_and(|v| egal_temps_constant(v.as_bytes(), etat.http_token.as_bytes()))
-    {
-        return None;
-    }
-    Some(json(StatusCode::UNAUTHORIZED, &json!({ "detail": "bad or missing X-Mem0-Token" })))
+/// Ce qu'ouvre le jeton de la requête (tout, sans contrôle), sinon la réponse 401.
+#[expect(clippy::result_large_err, reason = "la réponse d'erreur part telle quelle, une fois par requête")]
+pub(crate) fn controle_jeton<'a>(etat: &'a Etat, entetes: &HeaderMap) -> Result<Acces<'a>, Response> {
+    etat.jetons
+        .identifier(entetes.get("x-mem0-token").map(HeaderValue::as_bytes))
+        .ok_or_else(|| json(StatusCode::UNAUTHORIZED, &json!({ "detail": "bad or missing X-Mem0-Token" })))
 }
 
-/// Égalité d'octets dont la durée ne dépend pas de la position du premier écart :
-/// `==` s'arrête au premier octet différent, ce qui laisse deviner le jeton octet
-/// par octet en mesurant les réponses. Seule la longueur se lit au chronomètre.
-fn egal_temps_constant(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+/// `None` si le jeton ouvre la portée `portee` (`None` : toutes), sinon la réponse 403.
+pub(crate) fn controle_portee(acces: &Acces<'_>, portee: Option<&str>) -> Option<Response> {
+    (!acces.permet(portee)).then(|| json(StatusCode::FORBIDDEN, &json!({ "detail": acces.refus(portee) })))
+}
+
+/// `None` si le jeton ouvre la portée de chacun des souvenirs `ids`, sinon 403 — un
+/// souvenir inconnu compris : un jeton limité n'apprend rien d'une autre portée.
+pub(crate) async fn controle_souvenirs(etat: &Etat, acces: &Acces<'_>, ids: &[&str]) -> Option<Response> {
+    if *acces == Acces::Total {
+        return None;
     }
-    let ecart = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
-    std::hint::black_box(ecart) == 0
+    let ids: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+    let lu = avec_base(etat, move |conn| ids.iter().map(|id| db::portee_de(conn, id)).collect::<rusqlite::Result<Vec<_>>>())
+        .await;
+    match lu {
+        Ok(portees) if portees.iter().all(|p| matches!(p, Some(Some(a)) if acces.permet(Some(a)))) => None,
+        Ok(_) => controle_portee(acces, None),
+        Err(()) => Some(interne()),
+    }
 }
 
 fn content_type(entetes: &HeaderMap) -> Option<&[u8]> {
@@ -225,12 +234,16 @@ async fn add(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response
         Ok(r) => r,
         Err(r) => return rejet(r),
     };
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
-    }
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
     let (Ok(agent_id), Ok(run_id)) = (portee(req.agent_id), portee(req.run_id)) else {
         return interne();
     };
+    if let Some(refus) = controle_portee(&acces, agent_id.as_deref()) {
+        return refus;
+    }
     let tags = req.tags.filter(|t| !t.is_empty());
     // Masquage des secrets avant tout usage du texte : embedding, invite
     // d'extraction, message de session et souvenir ne voient que la version masquée.
@@ -247,12 +260,16 @@ async fn add_procedure(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -
         Ok(r) => r,
         Err(r) => return rejet(r),
     };
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
-    }
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
     let Ok(agent_id) = portee(Some(req.agent_id)) else {
         return interne();
     };
+    if let Some(refus) = controle_portee(&acces, agent_id.as_deref()) {
+        return refus;
+    }
     ajouter(&etat, masquer(&req.steps), agent_id, None, None).await
 }
 
@@ -466,12 +483,16 @@ async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Respo
         Ok(r) => r,
         Err(r) => return rejet(r),
     };
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
-    }
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
     let Ok(agent_id) = portee(req.agent_id.take()) else {
         return interne();
     };
+    if let Some(refus) = controle_portee(&acces, agent_id.as_deref()) {
+        return refus;
+    }
     let explain = req.explain;
     let avec_liens = req.liens;
     let requete = match recherche::preparer(req, USER, agent_id, etat.recherche) {
@@ -520,8 +541,14 @@ struct ReponseGraphe {
 }
 
 async fn graph(State(etat): Partage, entetes: HeaderMap) -> Response {
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
+    // Le graphe traverse toutes les portées : le jeton total seul.
+    match controle_jeton(&etat, &entetes) {
+        Ok(acces) => {
+            if let Some(refus) = controle_portee(&acces, None) {
+                return refus;
+            }
+        }
+        Err(refus) => return refus,
     }
     let Ok(points) = avec_base(&etat, |conn| db::vecteurs(conn, USER)).await else {
         return interne();
@@ -629,12 +656,16 @@ struct ReponseRecherche<'a> {
 async fn all(State(etat): Partage, Query(parametres): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
     // Paramètre répété : le dernier l'emporte, comme starlette.
     let agent_id = parametres.into_iter().rev().find(|(k, _)| k == "agent_id").map(|(_, v)| v);
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
-    }
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
     let Ok(agent_id) = portee(agent_id) else {
         return interne();
     };
+    if let Some(refus) = controle_portee(&acces, agent_id.as_deref()) {
+        return refus;
+    }
     let Ok(souvenirs) = avec_base(&etat, move |conn| db::tous(conn, USER, agent_id.as_deref())).await else {
         return interne();
     };
@@ -647,7 +678,11 @@ async fn update(State(etat): Partage, memory_id: String, entetes: HeaderMap, cor
         Ok(r) => r,
         Err(r) => return rejet(r),
     };
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
+    if let Some(refus) = controle_souvenirs(&etat, &acces, &[&memory_id]).await {
         return refus;
     }
     let id = memory_id.clone();
@@ -676,7 +711,11 @@ async fn update(State(etat): Partage, memory_id: String, entetes: HeaderMap, cor
 }
 
 async fn delete(State(etat): Partage, memory_id: String, entetes: HeaderMap) -> Response {
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
+    if let Some(refus) = controle_souvenirs(&etat, &acces, &[&memory_id]).await {
         return refus;
     }
     let ecrit = avec_base(&etat, move |conn| db::supprimer(conn, &memory_id, &horodatage::maintenant())).await;
@@ -687,7 +726,12 @@ async fn delete(State(etat): Partage, memory_id: String, entetes: HeaderMap) -> 
 }
 
 async fn history(State(etat): Partage, Path(memory_id): Path<String>, entetes: HeaderMap) -> Response {
-    if let Some(refus) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(refus) => return refus,
+    };
+    // Un souvenir supprimé n'a plus de portée lisible : son historique reste au jeton total.
+    if let Some(refus) = controle_souvenirs(&etat, &acces, &[&memory_id]).await {
         return refus;
     }
     match avec_base(&etat, move |conn| db::historique(conn, &memory_id)).await {
@@ -712,18 +756,8 @@ mod tests {
     }
 
     #[test]
-    fn jeton_compare_en_temps_constant() {
-        assert!(egal_temps_constant(b"", b""));
-        assert!(egal_temps_constant(b"s3cret", b"s3cret"));
-        assert!(!egal_temps_constant(b"s3cret", b"s3creT"));
-        assert!(!egal_temps_constant(b"Xs3cret", b"s3cret"));
-        assert!(!egal_temps_constant(b"s3cre", b"s3cret"));
-        assert!(!egal_temps_constant(b"", b"s"));
-    }
-
     /// Vecteurs connus (RFC 1321, et `hashlib.md5(...).hexdigest()` de mem0 Python) :
     /// l'empreinte stockée en base ne change pas d'une version de `md-5` à l'autre.
-    #[test]
     fn md5_minuscule() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("The quick brown fox jumps over the lazy dog"), "9e107d9d372bb6826bd81d3542a419d6");

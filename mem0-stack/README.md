@@ -24,6 +24,21 @@ Le dossier de données se crée AVANT `up` : tous les moteurs ne créent pas la
 source manquante d'un bind-mount. Si tu changes `MEM0_RS_DATA_DIR` dans `.env`,
 crée ce dossier-là.
 
+## Jetons à portées
+
+`MEM0_HTTP_TOKEN` reste le jeton TOTAL (toutes les portées, toutes les routes).
+`MEM0_HTTP_TOKENS` (`nom:jeton:scope1,scope2;nom2:jeton2:scope3`) ou
+`MEM0_HTTP_TOKENS_FILE` (le même format, une entrée par ligne, `#` pour un
+commentaire) déclarent des jetons LIMITÉS à leurs portées (`agent_id`, la scope
+d'un projet). Un tel jeton (16 à 512 caractères parmi `A-Z a-z 0-9 . _ ~ + / = -`)
+n'ouvre que les requêtes qui nomment une de ses portées ou visent un souvenir de
+l'une d'elles ; le reste — autre portée, requête sans `agent_id`, `/memory/graph`,
+rêve de toutes les portées, souvenir inconnu — rend 403. Un jeton inconnu reste un
+401 ; une déclaration illisible (nom, secret, doublon, portée vide) arrête le
+démarrage. Le harness donne à chaque dépôt `memory.tokenEnv` le sien
+(omp-harness/README.md § « Projets perso et corpo ») : le runner d'un projet ne lit
+plus la mémoire d'un autre.
+
 ## Instantanés de la base
 
 mem0-rs prend lui-même des instantanés de sa base (`VACUUM INTO`) dans

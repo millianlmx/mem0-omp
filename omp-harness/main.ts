@@ -6,6 +6,8 @@
 //     éprouve l'écriture, devine ses tests et le déclare dans la configuration (codes : repos.ts).
 //   … --models <omlx/<modèle>|anthropic> [--omlx-url <url>] [--omlx-context <n>] : les
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
+//   … --local-model omlx/<modèle> --omlx-url <url> [--omlx-context <n>] : le modèle oMLX
+//     déclaré aux runners sans toucher aux chaînes du serveur (dépôts `local-only`).
 //   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] : un
 //     client de plus (son jeton s'affiche une fois ; --approver : l'approbateur du poste,
 //     admin sur tous les dépôts) ; --revoke-client <nom> ; --list-clients.
@@ -33,7 +35,8 @@ import { HeavyRunner } from "./heavy.ts";
 import { HARNESS_VERSION, createHandler } from "./http.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
-import { setModels } from "./local-model.ts";
+import { addLocalModel, setModels } from "./local-model.ts";
+import { repoIdentity } from "./policy.ts";
 import { ConfigAdmin, addRepo, sshKeygen } from "./repos.ts";
 import type { SpawnRunner } from "./orchestrator.ts";
 import { execProcess } from "./proc.ts";
@@ -96,7 +99,7 @@ export async function startHarness(
     admission: config.admission,
     providers: config.providers,
   });
-  const git = new Git(execProcess, config.git, { log });
+  const git = new Git(execProcess, repoIdentity(config), { log });
   const heavy = new HeavyRunner({ config, store, scheduler, git, exec: execProcess });
   // Le jeton de mem0-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
   if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)
@@ -224,6 +227,14 @@ if (isMain) {
     const url = argValue(process.argv, "--omlx-url");
     const context = Number(argValue(process.argv, "--omlx-context") ?? "") || undefined;
     console.log(`✓ ${setModels(file, config, models, url ? { baseUrl: url, contextWindow: context } : undefined)}`);
+    process.exit(0);
+  }
+  const localModel = argValue(process.argv, "--local-model");
+  if (localModel !== null) {
+    const url = argValue(process.argv, "--omlx-url");
+    if (url === null) throw new Error("--local-model exige --omlx-url");
+    const context = Number(argValue(process.argv, "--omlx-context") ?? "") || undefined;
+    console.log(`✓ ${addLocalModel(config, localModel, { baseUrl: url, contextWindow: context })}`);
     process.exit(0);
   }
   if (["--add-client", "--revoke-client", "--list-clients"].some((flag) => process.argv.includes(flag))) {

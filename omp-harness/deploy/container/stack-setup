@@ -34,6 +34,24 @@ check_values() {
       *[!A-Za-z0-9_.:/~+=@-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
     esac
   done
+  # Les jetons par dépôt (politique par dépôt) : `nom:jeton:scope,…;…` et `nom:jeton;…`.
+  for name in OMP_HARNESS_MEMORY_TOKENS OMP_HARNESS_GITHUB_ACCOUNTS; do
+    eval "value=\${$name:-}"
+    case "$value" in
+      *[!A-Za-z0-9_.:/~+=@,\;-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
+    esac
+  done
+}
+
+# Le nom d'une variable du service pour l'entrée `nom` : PRÉFIXE_NOM, en majuscules.
+secret_var() { printf '%s_%s' "$1" "$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')"; }
+
+# Les jetons d'une liste `nom:jeton[:…];…`, une ligne `PRÉFIXE_NOM=jeton` chacun.
+secret_lines() {
+  printf '%s\n' "$2" | tr ';' '\n' | while IFS=: read -r name secret _; do
+    [ -n "$name" ] && [ -n "$secret" ] || continue
+    printf '%s=%s\n' "$(secret_var "$1" "$name")" "$secret"
+  done
 }
 
 cmd_init() {
@@ -52,9 +70,13 @@ cmd_init() {
   chat="${OMLX_CHAT_BASE_URL:-}"
   [ -n "$chat" ] || [ -n "${OMLX_BASE_URL:-}" ] || chat=off
   umask 077
+  # Le jeton de la mémoire, puis ceux des dépôts (`memory.tokenEnv` : MEM0_TOKEN_<NOM>,
+  # `gh.tokenEnv` : GH_TOKEN_<NOM>) : le service les passe à SES runners, ou à gh.
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
     [ -z "${GH_TOKEN:-}" ] || printf 'GH_TOKEN=%s\n' "$GH_TOKEN"
+    secret_lines MEM0_TOKEN "${OMP_HARNESS_MEMORY_TOKENS:-}"
+    secret_lines GH_TOKEN "${OMP_HARNESS_GITHUB_ACCOUNTS:-}"
   } > "$SECRETS/harness/harness.env"
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
@@ -65,7 +87,14 @@ cmd_init() {
     printf 'OMLX_LLM_MODEL=%s\n' "${OMLX_LLM_MODEL:-qwen3-8b}"
     printf 'OMLX_EMBED_MODEL=%s\n' "${OMLX_EMBED_MODEL:-bge-m3}"
     printf 'EMBEDDING_DIMS=%s\n' "${EMBEDDING_DIMS:-1024}"
+    # Les jetons limités à leurs portées : un fichier (mem0.env est sourcé, `;` y couperait la ligne).
+    [ -z "${OMP_HARNESS_MEMORY_TOKENS:-}" ] || printf 'MEM0_HTTP_TOKENS_FILE=/run/secrets/mem0/tokens\n'
   } > "$SECRETS/mem0/mem0.env"
+  if [ -n "${OMP_HARNESS_MEMORY_TOKENS:-}" ]; then
+    printf '%s\n' "$OMP_HARNESS_MEMORY_TOKENS" | tr ';' '\n' > "$SECRETS/mem0/tokens"
+  else
+    rm -f "$SECRETS/mem0/tokens"
+  fi
   # Les clés LLM ne vont qu'aux runners : le service ne les voit jamais.
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"

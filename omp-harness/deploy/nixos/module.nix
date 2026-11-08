@@ -139,6 +139,7 @@ let
     RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
     PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
+    MEMORY_TOKENS_DIR=/var/lib/omp-harness/state/memory-tokens
     HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     HEAVY_SHELL=${shell}
   '';

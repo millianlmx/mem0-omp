@@ -201,6 +201,8 @@ Les autres variables, facultatives :
 | `OMLX_CHAT_BASE_URL`, `OMLX_CHAT_API_TOKEN`, `OMLX_LLM_MODEL` | `OMLX_BASE_URL` ; `off` avec l'Ollama de la pile | le serveur de chat du rêve de la mémoire, sa clé et son modèle (`qwen3-8b`) |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
 | `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
+| `OMP_HARNESS_MEMORY_TOKENS` | aucun | des jetons mémoire limités à des scopes, `nom:jeton:scope1,scope2;…` : mem0-rs les lit dans un fichier des secrets (`MEM0_HTTP_TOKENS_FILE`), le service les reçoit en `MEM0_TOKEN_<NOM>` (`repos[].memory.tokenEnv`, § « Projets perso et corpo ») |
+| `OMP_HARNESS_GITHUB_ACCOUNTS` | aucun | des comptes GitHub par dépôt, `nom:jeton;…` : le service les reçoit en `GH_TOKEN_<NOM>` (`repos[].gh.tokenEnv`) |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
@@ -520,6 +522,12 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `oracle` | `{ "url": "http://127.0.0.1:8321" }` (posé par l'installation) | la mémoire du projet ; `null` la coupe |
 | `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
 | `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
+| `repos[].models` | — | les chaînes de CE dépôt par tier (`{ "heavy": ["omlx/qwen3-coder"] }`, des `"fournisseur/modèle"`), prioritaires sur `models` ; un tier non redéfini prend celui du serveur (§ « Projets perso et corpo ») |
+| `repos[].providers` | — | la liste blanche des fournisseurs du dépôt : jamais une bascule hors d'elle ; un tier sans modèle permis refuse l'étape (le run échoue, sans relance) |
+| `repos[].privacy` | `"standard"` | `"local-only"` : seul le modèle local `omlx` (`harness.sh local <modèle>`), aucune clé de fournisseur distant chez ses runners ; le serveur et les autres dépôts gardent leurs modèles |
+| `repos[].git` | `git` du serveur | `{ "name", "email" }` : l'identité des commits du dépôt (WIP, squash de merge, revert) |
+| `repos[].gh` | la connexion du service | `{ "configDir"?, "tokenEnv"? }` : le compte GitHub du dépôt pour `gh` (PR, merge, issues, MCP) — un `GH_CONFIG_DIR` à lui, ou le NOM d'une variable du service qui porte son jeton |
+| `repos[].memory.tokenEnv` | le jeton global | le NOM d'une variable du service qui porte un jeton mem0-rs limité à la scope du dépôt (`MEM0_HTTP_TOKENS`) : ses runners le reçoivent au lieu du jeton global |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
 | `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
 | `backups.intervalHours`, `backups.keep` | `24`, `7` | un instantané de la base toutes les 24 h (le premier au démarrage si le dernier a plus d'un intervalle), les 7 derniers gardés ; `intervalHours: null` les coupe |
@@ -540,6 +548,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `workstation.approvalTtlHours` | `24` | une action en attente d'approbation au-delà passe `expired` — vaut refus, jamais approuvée ; une action restée en file aussi longtemps expire aussi |
 | `workstation.shiftEveryMin`, `workstation.shiftMaxActions` | `30`, `20` | le repos entre deux services de l'agent 24/24 (qui dure au plus ce repos, borné par `runner.stepTimeoutSec`), et les actions qu'un service dépose au plus, décisions comprises |
 | `workstation.profileEveryHours` | `6` | le profil est resynthétisé au plus toutes les 6 h, seulement s'il y a de nouvelles observations (le premier : 6 h après la première observation) ; `POST /v1/workstation/profile/rebuild` le demande tout de suite |
+| `workstation.policy` | — | `{ "models"?, "providers"?, "privacy"? }` comme un dépôt, pour les jobs `poste-profil`, `poste-digest` et `poste-service` : les données du poste peuvent ne jamais quitter la machine (`"privacy": "local-only"`) |
 | `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues GitHub (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
@@ -848,6 +857,62 @@ dépôt. Les tests heavy attendent leur slot dans une file servie par priorité 
 par ordre d'arrivée : personne ne double personne. Les merges d'un même dépôt
 passent l'un après l'autre (le second se rebase sur le `main` du premier) ; les
 dépôts différents mergent en parallèle.
+
+## Projets perso et corpo
+
+Un même serveur sert des dépôts personnels et des dépôts d'un client qui exige que
+son code ne sorte pas, sous son identité et ses comptes. Tout est **facultatif et
+par dépôt** (`policy.ts`) ; un dépôt sans ces champs garde le comportement du serveur.
+Ce qui est posé s'applique en **échec fermé** : jamais de repli vers un autre
+fournisseur, un autre compte ou le jeton global.
+
+```json
+{
+  "name": "client-corpo",
+  "path": "/var/lib/omp-harness/repos/client-corpo",
+  "merge": "gh",
+  "remote": "origin",
+  "sshKey": "/var/lib/omp-harness/.ssh/repos/client-corpo",
+  "privacy": "local-only",
+  "models": { "heavy": ["omlx/qwen3-coder-30b"] },
+  "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" },
+  "gh": { "configDir": "/var/lib/omp-harness/gh/client-corpo" },
+  "memory": { "tokenEnv": "MEM0_TOKEN_CLIENT_CORPO" }
+}
+```
+
+- **Les modèles** : `models` remplace, tier par tier, les chaînes du serveur pour ce
+  dépôt ; `providers` est une liste blanche — la bascule (rate limit, 5xx, réseau)
+  ne la quitte jamais, et un tier sans modèle permis refuse l'étape avec sa raison
+  (le run échoue sans relance : corrige la configuration, puis relance-le).
+- **`local-only`** : les prompts du dépôt ne partent que vers le modèle local
+  `omlx`. `harness.sh local <modèle>` (ou `main.ts --local-model omlx/<modèle>
+  --omlx-url <url>`) le déclare aux runners SANS toucher aux chaînes du serveur —
+  contrairement à `up --omlx`, qui bascule tout le serveur. Ses runners ne reçoivent
+  aucune clé `*_API_KEY` (ni de `runner.env`, ni de l'API : le lanceur root et l'entrée
+  des conteneurs les retirent, `OMP_HARNESS_LOCAL_ONLY=1`). Un fournisseur distant
+  dans `providers` ou `models` est refusé au chargement. Les identifiants OAuth déjà
+  posés dans le HOME des runners y restent : le modèle reste imposé par le service.
+- **L'identité** : `git` signe les commits du dépôt (auteur et committer).
+- **Le compte GitHub** : `gh.configDir` est une connexion à part (`sudo -u omp-harness
+  -H env GH_CONFIG_DIR=/var/lib/omp-harness/gh/client-corpo gh auth login`) ;
+  `gh.tokenEnv` nomme une variable du service qui porte son jeton. Les jetons du
+  service (`GH_TOKEN`, `GITHUB_TOKEN`) ne sont jamais passés à ce `gh`.
+- **La mémoire cloisonnée** : un jeton mem0-rs limité à la scope du dépôt
+  (`MEM0_HTTP_TOKENS`, `mem0-stack/README.md`), posé dans une variable du service
+  (`/etc/omp-harness/env`, `harness.env` des secrets en conteneurs, ou la variable de
+  pile `OMP_HARNESS_MEMORY_TOKENS` sous Portainer, qui le nomme
+  `MEM0_TOKEN_<NOM>`). Ses runners le reçoivent au lieu du jeton global : par
+  l'environnement (`none`), par `memory.env` monté (`container`) ou par le lanceur
+  root (`systemd`, `MEMORY_TOKENS_DIR/<dépôt>.env`), jamais sur une ligne de commande.
+  Le runner d'un autre projet n'a jamais ce jeton, et ce jeton n'ouvre aucune autre
+  scope (403). Aucun runner ne voit la variable d'un dépôt (la sienne comprise).
+- **Le poste de travail** : `workstation.policy` (`models`, `providers`, `privacy`)
+  vaut pour ses jobs comme pour un dépôt.
+
+`--check` (`harness.sh check`) dit, dépôt par dépôt, ce qui manque : modèle local
+injoignable ou absent, liste blanche vide ou sans modèle pour une étape, variable
+absente de l'environnement du service, `configDir` gh introuvable.
 
 ## Les fournisseurs LLM, déclarés depuis les apps
 

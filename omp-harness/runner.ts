@@ -19,6 +19,7 @@ import { launch } from "./config.ts";
 import type { HarnessConfig, ModelChoice } from "./config.ts";
 import type { StepKind } from "./machine.ts";
 import { DECISION_CATEGORIES } from "./decisions.ts";
+import { GH_TOKEN_VARS } from "./policy.ts";
 import type { Exec } from "./proc.ts";
 import type { HostToolDefinition, RpcRunner } from "./rpc.ts";
 import { COMMIT_SUBJECT_MAX, COMMIT_TYPES } from "./verdict.ts";
@@ -125,6 +126,12 @@ export function runnerMemoryEnv(scope: string, runnerMode: boolean): Record<stri
   return env;
 }
 
+/**
+ * Le drapeau d'un runner `local-only` (policy.ts) : son entrée (conteneur) ou le lanceur
+ * root (systemd) ne lui donnent aucune clé `*_API_KEY` — aucun fournisseur distant.
+ */
+export const LOCAL_ONLY_ENV = "OMP_HARNESS_LOCAL_ONLY";
+
 export type RunnerSpec = {
   unit: string;
   cwd: string;
@@ -135,6 +142,10 @@ export type RunnerSpec = {
   repo?: string;
   /** L'adresse de la mémoire vue du runner. */
   oracleUrl?: string | null;
+  /** Le fichier du jeton mémoire du dépôt (policy.ts) : monté en `container`, sinon lu par le lanceur. */
+  memoryEnvFile?: string | null;
+  /** Le dépôt est `local-only` : aucune clé de fournisseur distant chez le runner. */
+  localOnly?: boolean;
 };
 
 /** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
@@ -150,6 +161,7 @@ function containerRunnerArgv(
     PI_PY: "0",
     ...runnerMemoryEnv(spec.scope, config.memory.runnerMode),
     ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}),
+    ...(spec.localOnly ? { [LOCAL_ONLY_ENV]: "1" } : {}),
   };
   return engine(config, [
     "run",
@@ -174,9 +186,11 @@ function containerRunnerArgv(
     `${spec.overlay}:${spec.overlay}:ro`,
     ...(box.runnerHome ? ["--volume", `${box.runnerHome}:/home/runner`] : []),
     ...(box.runnerEnvFile ? ["--volume", `${box.runnerEnvFile}:/run/secrets/runner.env:ro`] : []),
+    // Le jeton mémoire du dépôt : l'entrée le lit APRÈS runner.env, il remplace le jeton global.
+    ...(spec.memoryEnvFile ? ["--volume", `${spec.memoryEnvFile}:/run/secrets/memory.env:ro`] : []),
     // Les clés déclarées par l'API (providers.ts) : montées seulement si le fichier existe
-    // (un montage d'un fichier absent créerait un répertoire).
-    ...(fs.existsSync(config.providersEnvFile)
+    // (un montage d'un fichier absent créerait un répertoire) ; jamais chez un runner `local-only`.
+    ...(!spec.localOnly && fs.existsSync(config.providersEnvFile)
       ? ["--volume", `${config.providersEnvFile}:/run/secrets/providers.env:ro`]
       : []),
     ...Object.entries(env).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
@@ -226,9 +240,11 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     // Le clone (le gitdir du worktree) : le lanceur le rend visible en lecture, et lui seul.
     ...(spec.repo ? ["-p", `BindReadOnlyPaths=${spec.repo}`] : []),
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
-    ...Object.entries(runnerMemoryEnv(spec.scope, config.memory.runnerMode)).map(
-      ([key, value]) => `--setenv=${key}=${value}`,
-    ),
+    // Le jeton mémoire du dépôt, lui, est lu par le lanceur dans le dossier des jetons (jamais sur la ligne).
+    ...Object.entries({
+      ...runnerMemoryEnv(spec.scope, config.memory.runnerMode),
+      ...(spec.localOnly ? { [LOCAL_ONLY_ENV]: "1" } : {}),
+    }).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
     ...omp,
   ]);
@@ -238,31 +254,42 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
  * Les secrets du service qu'aucun runner ni connexion ne reçoit : le jeton de l'API et
  * les jetons GitHub que `gh` lit (le texte d'une issue est une donnée de tiers).
  */
-export const SERVICE_SECRETS = [
-  "HARNESS_TOKEN",
-  "GH_TOKEN",
-  "GITHUB_TOKEN",
-  "GH_ENTERPRISE_TOKEN",
-  "GITHUB_ENTERPRISE_TOKEN",
-] as const;
+export const SERVICE_SECRETS = ["HARNESS_TOKEN", ...GH_TOKEN_VARS] as const;
+
+/** Ce que la politique du dépôt change à l'environnement d'un runner (policy.ts). */
+export type RunnerEnvPolicy = {
+  /** Le jeton mémoire du dépôt : remplace le jeton global. */
+  memoryToken?: string | null;
+  /** Les variables du service qui portent un jeton propre à un dépôt : retirées. */
+  hidden?: readonly string[];
+  /** `local-only` : toute clé `*_API_KEY` retirée. */
+  localOnly?: boolean;
+};
 
 /**
  * L'environnement d'un runner lancé SANS le lanceur root : celui du service (clés des
- * fournisseurs), la mémoire du projet (adresse et jeton de l'oracle), jamais le jeton
- * de l'API. Avec le lanceur, sudo l'ignore : clés et oracle viennent de runner.env.
+ * fournisseurs), la mémoire du projet (adresse et jeton de l'oracle, ou celui du
+ * dépôt), jamais le jeton de l'API ni le jeton d'un dépôt. Avec le lanceur, sudo
+ * l'ignore : clés et oracle viennent de runner.env et du dossier des jetons.
  */
 export function runnerEnv(
   scope: string,
   oracle: HarnessConfig["oracle"],
   base: Record<string, string | undefined> = process.env,
   runnerMode = true,
+  policy: RunnerEnvPolicy = {},
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base, ...runnerMemoryEnv(scope, runnerMode), PI_PY: "0" };
   if (oracle) {
     env.MEM0_HTTP_URL = oracle.url;
     if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;
   }
-  for (const key of SERVICE_SECRETS) delete env[key];
+  if (policy.memoryToken) env.MEM0_HTTP_TOKEN = policy.memoryToken;
+  for (const key of [...SERVICE_SECRETS, ...(policy.hidden ?? [])]) delete env[key];
+  if (policy.localOnly) {
+    for (const key of Object.keys(env)) if (key.endsWith("_API_KEY")) delete env[key];
+    env[LOCAL_ONLY_ENV] = "1";
+  }
   return env;
 }
 

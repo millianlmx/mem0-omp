@@ -52,6 +52,9 @@ RUNNER_HIDDEN="/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /
 # et le models.yml des fournisseurs compatibles OpenAI.
 PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
 PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
+# Les jetons mémoire propres à un dépôt (écrits par le service, policy.ts) : <dépôt>.env,
+# une ligne MEM0_HTTP_TOKEN=…, qui remplace celle de runner.env pour les runners de ce dépôt.
+MEMORY_TOKENS_DIR=/var/lib/omp-harness/state/memory-tokens
 # Le bash des jobs heavy : `/bin/bash`, ou son chemin du store sous NixOS.
 HEAVY_SHELL=/bin/bash
 # Ce qu'un job heavy ne doit jamais voir, ajouté par le lanceur lui-même.
@@ -81,6 +84,7 @@ if [ -r "$CONF" ]; then
       RUNNER_ENV_FILE) RUNNER_ENV_FILE="$value" ;;
       PROVIDERS_ENV_FILE) PROVIDERS_ENV_FILE="$value" ;;
       PROVIDERS_MODELS_FILE) PROVIDERS_MODELS_FILE="$value" ;;
+      MEMORY_TOKENS_DIR) MEMORY_TOKENS_DIR="$value" ;;
       HEAVY_HIDDEN) HEAVY_HIDDEN="$value" ;;
       HEAVY_SHELL) HEAVY_SHELL="$value" ;;
       *) ;;
@@ -207,12 +211,13 @@ env_value() {
 #
 #   --wait --pipe --collect --service-type=exec --unit=omp-runner-ID --quiet --slice=…
 #   --working-directory=WORKTREES_ROOT/<dépôt>/<feature> -p MemoryMax=X -p OOMScoreAdjust=N
-#   [-p BindReadOnlyPaths=<clone>] [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE=…]…
+#   [-p BindReadOnlyPaths=<clone>] [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE|OMP_HARNESS_LOCAL_ONLY=…]…
 #   -- OMP_BIN …
 #
-# Les clés (runner.env, puis les *_API_KEY de l'API, puis la scope mémoire) partent dans
-# un fichier root 0600 de RUNNER_ENV_DIR que systemd lit au démarrage (EnvironmentFile=) :
-# jamais sur la ligne de commande ni dans les propriétés de l'unité, lisibles de tous.
+# Les clés (runner.env, puis les *_API_KEY de l'API, puis le jeton mémoire du dépôt, puis
+# la scope mémoire) partent dans un fichier root 0600 de RUNNER_ENV_DIR que systemd lit au
+# démarrage (EnvironmentFile=) : jamais sur la ligne de commande ni dans les propriétés de
+# l'unité, lisibles de tous. Un runner `OMP_HARNESS_LOCAL_ONLY=1` ne reçoit aucune `*_API_KEY`.
 launch_runner() {
   [ "$#" -ge 14 ] || refuse "ligne de runner trop courte"
   [ "$1" = "--wait" ] && [ "$2" = "--pipe" ] && [ "$3" = "--collect" ] && [ "$4" = "--service-type=exec" ] \
@@ -260,14 +265,19 @@ launch_runner() {
     fi
     shift 2
   fi
-  # La mémoire du projet du runner : quatre variables, liste FERMÉE, valeurs simples.
+  # La mémoire du projet du runner : cinq variables, liste FERMÉE, valeurs simples.
   memory_env=()
+  local_only=0
   while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
     assignment="${1#--setenv=}"
     name="${assignment%%=*}"
     value="${assignment#*=}"
-    case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE) ;; *) refuse "variable de runner non permise : $name" ;; esac
+    case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE | OMP_HARNESS_LOCAL_ONLY) ;; *) refuse "variable de runner non permise : $name" ;; esac
     [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
+    if [ "$name" = OMP_HARNESS_LOCAL_ONLY ]; then
+      [ "$value" = 1 ] || refuse "OMP_HARNESS_LOCAL_ONLY vaut 1"
+      local_only=1
+    fi
     memory_env+=("$name=$value")
     shift
   done
@@ -300,6 +310,8 @@ launch_runner() {
       [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
       case "${BASH_REMATCH[1]}" in BASH_ENV | ENV | LD_* | PATH | HOME | USER | LOGNAME | SHELL) continue ;; esac
       key="${BASH_REMATCH[1]}"
+      # Un runner local-only : aucune clé de fournisseur distant.
+      if [ "$local_only" = 1 ] && [[ "$key" == *_API_KEY ]]; then continue; fi
       if quoted=$(env_value "${BASH_REMATCH[2]}"); then
         printf '%s=%s\n' "$key" "$quoted" >> "$env_tmp"
       else
@@ -309,7 +321,7 @@ launch_runner() {
   fi
   # Les clés déclarées par l'API : seulement des `*_API_KEY` aux valeurs simples. Elles
   # passent après runner.env et l'emportent (root garde la main sur tout le reste).
-  if service_file "$PROVIDERS_ENV_FILE"; then
+  if [ "$local_only" = 0 ] && service_file "$PROVIDERS_ENV_FILE"; then
     while IFS= read -r line; do
       # 8 à 512 caractères ; la borne haute hors du motif : le regex BSD refuse `{8,512}` (RE_DUP_MAX 255).
       [[ "$line" =~ ^([A-Z][A-Z0-9_]*_API_KEY)=([A-Za-z0-9._~+/=:-]{8,})$ ]] && [ "${#BASH_REMATCH[2]}" -le 512 ] || continue
@@ -334,6 +346,16 @@ launch_runner() {
       runuser -u "$RUNNER_USER" -- /bin/sh -c 'umask 077 && mkdir -p -- "$1" && cat > "$1/models.yml.tmp" && mv -f -- "$1/models.yml.tmp" "$1/models.yml"' \
         sh "$models_dir" < "$PROVIDERS_MODELS_FILE" || refuse "models.yml du runner non posé"
     fi
+  fi
+  # Le jeton mémoire propre au dépôt (le `<dépôt>` du worktree) : après runner.env, il
+  # l'emporte. Écrit par le service ; seule une valeur simple est prise.
+  if service_file "$MEMORY_TOKENS_DIR/$repo.env"; then
+    while IFS= read -r line; do
+      # 16 à 512 caractères ; la borne haute hors du motif (RE_DUP_MAX du regex BSD).
+      [[ "$line" =~ ^MEM0_HTTP_TOKEN=([A-Za-z0-9._~+/=-]{16,})$ ]] && [ "${#BASH_REMATCH[1]}" -le 512 ] || continue
+      printf "MEM0_HTTP_TOKEN='%s'\n" "${BASH_REMATCH[1]}" >> "$env_tmp"
+      if [ "$DRY_RUN" = "1" ]; then printf 'memorytoken:%s\n' "$repo"; fi
+    done < "$MEMORY_TOKENS_DIR/$repo.env"
   fi
   # La scope du run passe en dernier : elle vaut pour ce run, pas pour tous.
   for assignment in "${memory_env[@]}"; do

@@ -24,6 +24,12 @@ import { parseCheckpointTrailer } from "./decisions.ts";
 
 export type GitIdentity = { authorName: string; authorEmail: string };
 
+/**
+ * L'identité des commits : une seule, ou celle du lieu du geste (le clone ou le dossier
+ * git commun d'un worktree reconnu, sinon le répertoire de l'appel) — policy.ts `repoIdentity`.
+ */
+export type GitIdentitySource = GitIdentity | ((place: string) => GitIdentity);
+
 /** Un fichier changé : `added`/`removed` valent `null` pour un binaire. */
 export type FileChange = { path: string; status: string; added: number | null; removed: number | null };
 
@@ -109,7 +115,7 @@ export function isNonCode(file: string): boolean {
 
 export class Git {
   readonly #exec: Exec;
-  readonly #identity: GitIdentity;
+  readonly #identity: GitIdentitySource;
   /** Worktree (chemin résolu) → son gitdir, lu côté clone au moment où on le reconnaît. */
   readonly #worktrees = new Map<string, string>();
   /** Worktree → la fin de sa file de gestes en écriture. */
@@ -118,7 +124,7 @@ export class Git {
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #log: (line: string) => void;
 
-  constructor(exec: Exec, identity: GitIdentity, options: GitOptions = {}) {
+  constructor(exec: Exec, identity: GitIdentitySource, options: GitOptions = {}) {
     this.#exec = exec;
     this.#identity = identity;
     this.#now = options.now ?? Date.now;
@@ -126,7 +132,7 @@ export class Git {
     this.#log = options.log ?? ((line) => console.error(`[omp-harness] ${line}`));
   }
 
-  #env(extra: Record<string, string> = {}): Record<string, string> {
+  #env(cwd: string, extra: Record<string, string> = {}): Record<string, string> {
     const env: Record<string, string> = {};
     // GIT_SSH_COMMAND vient de l'environnement du SERVICE (l'image en conteneurs) :
     // jamais d'un dépôt, dont la config reste neutralisée par HARDENING.
@@ -134,12 +140,18 @@ export class Git {
       const value = process.env[key];
       if (value !== undefined) env[key] = value;
     }
+    // Un worktree reconnu s'écrit au nom de son clone : son gitdir vit sous `<commun>/worktrees/<id>`.
+    const gitDir = this.#worktrees.get(path.resolve(cwd));
+    const identity =
+      typeof this.#identity === "function"
+        ? this.#identity(gitDir ? path.dirname(path.dirname(gitDir)) : cwd)
+        : this.#identity;
     return {
       ...env,
-      GIT_AUTHOR_NAME: this.#identity.authorName,
-      GIT_AUTHOR_EMAIL: this.#identity.authorEmail,
-      GIT_COMMITTER_NAME: this.#identity.authorName,
-      GIT_COMMITTER_EMAIL: this.#identity.authorEmail,
+      GIT_AUTHOR_NAME: identity.authorName,
+      GIT_AUTHOR_EMAIL: identity.authorEmail,
+      GIT_COMMITTER_NAME: identity.authorName,
+      GIT_COMMITTER_EMAIL: identity.authorEmail,
       GIT_TERMINAL_PROMPT: "0",
       // `status` (isDirty) ne prend pas le verrou de l'index au passage. `diff`, qui l'ignore, ne le
       // prend qu'en le trouvant libre : un geste en écriture qui le croise l'attend (`#rawLocked`).
@@ -154,7 +166,7 @@ export class Git {
     const located = gitDir ? ["--git-dir", gitDir, "--work-tree", cwd] : [];
     return this.#exec("git", [...HARDENING, ...located, ...args], {
       cwd,
-      env: this.#env(env),
+      env: this.#env(cwd, env),
       timeoutMs: GIT_TIMEOUT_MS,
     });
   }

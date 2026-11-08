@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::jetons::Jetons;
 use crate::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
 use crate::reve;
 use crate::sauvegarde::Politique;
@@ -107,8 +108,9 @@ pub struct Config {
     pub chat_api_token: String,
     pub embedding_dims: usize,
     pub db_path: PathBuf,
-    /// Secret : jamais imprimé. Vide = aucun contrôle.
-    pub http_token: String,
+    /// Secrets : jamais imprimés. `MEM0_HTTP_TOKEN` (total) et les jetons à portées
+    /// (`MEM0_HTTP_TOKENS`, `MEM0_HTTP_TOKENS_FILE`) ; aucun = aucun contrôle.
+    pub jetons: Jetons,
     pub installation_token: String,
     /// Instantanés périodiques de la base (`MEM0_BACKUP_INTERVAL_HOURS`, `MEM0_BACKUP_KEEP`).
     pub sauvegarde: Politique,
@@ -211,6 +213,20 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
     let base_url = env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1");
     let api_token = env_ou(&lire, "OMLX_API_TOKEN", "not-needed");
     let chat_base_url = env_ou(&lire, "OMLX_CHAT_BASE_URL", &base_url);
+    let fichier = match lire("MEM0_HTTP_TOKENS_FILE").map(|v| strip_python(&v).to_owned()).filter(|v| !v.is_empty()) {
+        Some(chemin) => {
+            let contenu = std::fs::read_to_string(&chemin)
+                .map_err(|e| format!("MEM0_HTTP_TOKENS_FILE={chemin} illisible : {e}"))?;
+            Some((chemin, contenu))
+        }
+        None => None,
+    };
+    let jetons = Jetons::lire(
+        lire("MEM0_HTTP_TOKEN").unwrap_or_default(),
+        lire("MEM0_HTTP_TOKENS").as_deref(),
+        fichier.as_ref().map(|(chemin, contenu)| (chemin.as_str(), contenu.as_str())),
+    )
+    .map_err(|e| format!("jetons de l'API : {e}"))?;
     Ok(Config {
         chat_base_url: (!chat_base_url.eq_ignore_ascii_case(CHAT_COUPE)).then_some(chat_base_url),
         chat_api_token: env_ou(&lire, "OMLX_CHAT_API_TOKEN", &api_token),
@@ -220,7 +236,7 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         llm_model: env_ou(&lire, "OMLX_LLM_MODEL", "qwen3-8b"),
         embedding_dims,
         db_path,
-        http_token: lire("MEM0_HTTP_TOKEN").unwrap_or_default(),
+        jetons,
         installation_token: lire("OMP_INSTALLATION_TOKEN").unwrap_or_default(),
         sauvegarde,
         recherche: Reglage { fusion, rrf_k },
@@ -330,9 +346,9 @@ mod tests {
         assert_eq!(c.api_token, "not-needed");
         assert_eq!(c.embedding_dims, 1024);
         assert_eq!(c.db_path, PathBuf::from("/h/.mem0/mem0-rs.db"));
-        assert_eq!(c.http_token, "");
+        assert!(!c.jetons.exige());
         let c = lire_env(env(&[("HOME", "/h"), ("MEM0_HTTP_TOKEN", " t ")])).unwrap();
-        assert_eq!(c.http_token, " t ");
+        assert_eq!(c.jetons.identifier(Some(b" t ")), Some(crate::jetons::Acces::Total));
     }
 
     #[test]

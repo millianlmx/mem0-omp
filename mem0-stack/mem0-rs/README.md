@@ -59,6 +59,8 @@ bruts).
 | `EMBEDDING_DIMS` | `1024` | dimension des vecteurs ; entier positif, sinon code 1 |
 | `MEM0_DB_PATH` | `$HOME/.mem0/mem0-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque |
 | `MEM0_HTTP_TOKEN` | `""` | jeton exigé dans `X-Mem0-Token` ; vide = aucun contrôle ; jamais imprimé |
+| `MEM0_HTTP_TOKENS` | `""` | jetons limités à des portées, `nom:jeton:scope1,scope2;…` (16 à 512 caractères) : 403 hors de leurs portées ; `MEM0_HTTP_TOKEN` reste le jeton total ; jamais imprimés |
+| `MEM0_HTTP_TOKENS_FILE` | `""` | le même format dans un fichier, une entrée par ligne (`#` : commentaire) ; illisible = refus de démarrer |
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
 | `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart visé entre deux instantanés de la base, en heures ; `0` les coupe ; entier positif ou nul, sinon code 1 (§ Instantanés) |
 | `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés ; entier positif, sinon code 1 |

@@ -25,6 +25,8 @@ import { HarnessError } from "./errors.ts";
 import { remoteEnv } from "./git.ts";
 import { afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { ghEnv } from "./policy.ts";
+import type { ProcResult } from "./proc.ts";
 
 export type MergerHooks = {
   /** Un merge (réussi ou non) a quitté la file : l'orchestrateur refait un tour. */
@@ -236,6 +238,12 @@ export class Merger {
     return false;
   }
 
+  /** `gh` dans le clone, sous le compte GitHub du dépôt (policy.ts) s'il en déclare un. */
+  #gh(repo: RepoConfig, args: string[]): Promise<ProcResult> {
+    const env = ghEnv(repo);
+    return this.#ctx.exec("gh", args, { cwd: repo.path, timeoutMs: 120_000, ...(env ? { env } : {}) });
+  }
+
   /**
    * Mode `gh` : la PR (créée ou retrouvée), `gh pr merge --squash --auto`, puis l'attente
    * de la fusion constatée par `gh pr view`, toutes les `mergePollSec`, jusqu'à
@@ -248,43 +256,43 @@ export class Merger {
     repo: RepoConfig,
     message: { subject: string; commitBody: string; prBody: string },
   ): Promise<{ kind: "merged"; prUrl: string | null } | { kind: "stopped"; prUrl: string | null; reason: string }> {
-    const { git, exec, config } = this.#ctx;
+    const { git, config } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const worktree = run.worktree;
     if (worktree === null) throw new Error("le run n'a plus de worktree");
     await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
-    const created = await exec(
-      "gh",
-      ["pr", "create", "-B", repo.mainBranch, "-H", run.branch, "-t", message.subject, "-b", message.prBody],
-      { cwd: repo.path, timeoutMs: 120_000 },
-    );
+    const created = await this.#gh(repo, [
+      "pr",
+      "create",
+      "-B",
+      repo.mainBranch,
+      "-H",
+      run.branch,
+      "-t",
+      message.subject,
+      "-b",
+      message.prBody,
+    ]);
     // Une PR existe déjà pour la branche (merge relancé) : gh le dit, avec son URL.
     const prUrl = urlIn(created.stdout) ?? urlIn(created.stderr) ?? run.prUrl;
     if (created.code !== 0 && prUrl === null) throw new Error(`gh pr create : ${created.stderr.trim().slice(0, 300)}`);
-    const merge = await exec(
-      "gh",
-      [
-        "pr",
-        "merge",
-        run.branch,
-        "--squash",
-        "--auto",
-        "--delete-branch",
-        "--subject",
-        message.subject,
-        "--body",
-        message.commitBody,
-      ],
-      { cwd: repo.path, timeoutMs: 120_000 },
-    );
+    const merge = await this.#gh(repo, [
+      "pr",
+      "merge",
+      run.branch,
+      "--squash",
+      "--auto",
+      "--delete-branch",
+      "--subject",
+      message.subject,
+      "--body",
+      message.commitBody,
+    ]);
     if (merge.code !== 0)
       return { kind: "stopped", prUrl, reason: `gh pr merge --auto refusé : ${merge.stderr.trim().slice(0, 300)}` };
     const deadline = Date.now() + config.review.mergeWaitSec * 1000;
     for (;;) {
-      const view = await exec("gh", ["pr", "view", run.branch, "--json", "state,mergedAt"], {
-        cwd: repo.path,
-        timeoutMs: 120_000,
-      });
+      const view = await this.#gh(repo, ["pr", "view", run.branch, "--json", "state,mergedAt"]);
       const state = view.code === 0 ? this.#prState(view.stdout) : null;
       if (state === "MERGED") {
         await this.#ctx.fetchMain(repo);
@@ -457,33 +465,26 @@ export class Merger {
     scratch: string,
     sha: string,
   ): Promise<{ sha: string; prUrl: string | null }> {
-    const { git, exec } = this.#ctx;
+    const { git } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const branch = `harness/revert-${run.slug}`;
     await git.run(scratch, ["push", "-q", "-f", remote, `${branch}:${branch}`], remoteEnv(repo));
-    const created = await exec(
-      "gh",
-      [
-        "pr",
-        "create",
-        "-B",
-        repo.mainBranch,
-        "-H",
-        branch,
-        "-t",
-        `Revert « ${run.title} »`.slice(0, 120),
-        "-b",
-        `Revert du commit ${run.mergeSha?.slice(0, 12) ?? ""} (run ${run.id}).\n\nHarness-Run: ${run.id}`,
-      ],
-      { cwd: repo.path, timeoutMs: 120_000 },
-    );
+    const created = await this.#gh(repo, [
+      "pr",
+      "create",
+      "-B",
+      repo.mainBranch,
+      "-H",
+      branch,
+      "-t",
+      `Revert « ${run.title} »`.slice(0, 120),
+      "-b",
+      `Revert du commit ${run.mergeSha?.slice(0, 12) ?? ""} (run ${run.id}).\n\nHarness-Run: ${run.id}`,
+    ]);
     const prUrl = urlIn(created.stdout) ?? urlIn(created.stderr);
     if (created.code !== 0 && prUrl === null)
       throw new HarnessError(502, `gh pr create (revert) : ${created.stderr.trim().slice(0, 300)}`);
-    const merge = await exec("gh", ["pr", "merge", branch, "--squash", "--auto", "--delete-branch"], {
-      cwd: repo.path,
-      timeoutMs: 120_000,
-    });
+    const merge = await this.#gh(repo, ["pr", "merge", branch, "--squash", "--auto", "--delete-branch"]);
     if (merge.code !== 0)
       throw new HarnessError(502, `gh pr merge --auto (revert) : ${merge.stderr.trim().slice(0, 300)}`);
     return { sha, prUrl };

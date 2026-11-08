@@ -5,6 +5,9 @@
 #   bash omp-harness/deploy/container/harness.sh up --omlx <modèle>
 #                                                    tout en local sur un Mac : agents et mémoire sur oMLX natif
 #                                                    (gardé d'un up à l'autre ; up --anthropic : retour)
+#   bash omp-harness/deploy/container/harness.sh local <modèle>
+#                                                    déclare un modèle oMLX aux runners SANS changer ceux du
+#                                                    serveur : les dépôts `"privacy": "local-only"` le prennent
 #   bash omp-harness/deploy/container/harness.sh add <url>  ajoute un dépôt (te guide pour sa clé de déploiement)
 #   bash omp-harness/deploy/container/harness.sh pair       réaffiche le code d'appairage
 #   bash omp-harness/deploy/container/harness.sh approver   le code approbateur des apps (Mac et iPhone) : le seul
@@ -507,6 +510,17 @@ cmd_client() {
   esac
 }
 
+# Un modèle oMLX déclaré aux runners (leur models.yml) sans toucher aux chaînes du
+# serveur : seuls les dépôts « local-only » (policy.ts) le prennent.
+cmd_local() {
+  OMLX_MODEL="${1:?usage : local <modèle>}"
+  probe_omlx
+  local args=(--local-model "omlx/$OMLX_MODEL" --omlx-url "$(omlx_url)")
+  [ -z "${OMLX_CONTEXT_WINDOW:-}" ] || args+=(--omlx-context "$OMLX_CONTEXT_WINDOW")
+  harness_main "${args[@]}"
+  echo "  · Un dépôt « \"privacy\": \"local-only\" » de config.json y prend maintenant ses modèles (harness.sh reload)."
+}
+
 # Relit la configuration sans arrêter les runs (SIGHUP) ; un moteur qui ne sait pas
 # signaler un service redémarre le harness (les runs reprennent à leur checkpoint).
 cmd_reload() {
@@ -558,6 +572,7 @@ case "${1:-}" in
   approver) cmd_approver ;;
   client) shift; cmd_client "$@" ;;
   reload) cmd_reload ;;
+  local) shift; cmd_local "$@" ;;
   check) compose run --rm --no-deps harness omp-harness-check ;;
   login) cmd_login ;;
   key) if [ -n "${2:-}" ]; then cat "$ROOT/home/.ssh/repos/$2.pub"; else cat "$ROOT/home/.ssh/id_ed25519.pub"; fi ;;
@@ -568,5 +583,5 @@ case "${1:-}" in
   restart) compose restart ;;
   start) cmd_start ;;
   down) compose down ;;
-  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac
