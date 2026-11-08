@@ -375,6 +375,8 @@ test("pont-corpo-usine/AC-1 : un signalement Slack produit une proposition dans 
     await api.close();
     await stop(b);
   }
+  // Une détection sans verdict est retentée, puis le signalement est jugé sans objet.
+  await noVerdictRetried();
 });
 
 test("pont-corpo-usine/AC-2 : gmail, une page lue par le service et une demande du poste produisent chacun une proposition (gmail, chrome, manual), rien n'est créé sur la forge", async () => {
@@ -521,9 +523,11 @@ test("pont-corpo-usine/AC-4 : un fil n'a qu'une proposition ; écartée, elle n'
     await api.close();
     await stop(b);
   }
+  // Un message neutre puis le rapport : un seul signal, une seule proposition.
+  await neutralThenReport();
 });
 
-test("pont-corpo-usine/AC-4 : un message neutre puis le rapport, poste en pause ou pendant une détection vivante, ne donnent qu'un signal et qu'une proposition", async () => {
+async function neutralThenReport(): Promise<void> {
   const b = bridge({ scenario: { "poste-signal": [[{ sleep: 700 }, IGNORE], [PROPOSE()]] } });
   try {
     // En pause : les deux messages s'ajoutent, aucune détection ne part.
@@ -556,7 +560,7 @@ test("pont-corpo-usine/AC-4 : un message neutre puis le rapport, poste en pause 
   } finally {
     await stop(b);
   }
-});
+}
 
 test("pont-corpo-usine/AC-5 : en observation la proposition apparaît (et une demande du poste signale une page sans service) ; en pause rien ne part, et la reprise propose", async () => {
   const b = bridge({
@@ -1042,6 +1046,8 @@ test("pont-corpo-usine/AC-16 : en full sur un dépôt que la forge dit privé, l
     await api.close();
     await stop(b);
   }
+  // GitLab : seule la visibilité « private » vaut privé.
+  await gitlabVisibility();
 });
 
 test("pont-corpo-usine/AC-17 : une valeur d'issues.corporate inconnue est refusée au chargement avec le nom du dépôt et du champ", async () => {
@@ -1273,7 +1279,7 @@ test("pont-corpo-usine/AC-26 : issue créée puis run en échec (ou redémarrage
   }
 });
 
-test("pont-corpo-usine/AC-1 : une détection qui ne rend aucun verdict est retentée puis, à la troisième fois, le signalement est jugé sans objet avec la raison ; aucune proposition", async () => {
+async function noVerdictRetried(): Promise<void> {
   const b = bridge({ scenario: { "poste-signal": [[]] } });
   try {
     const { id } = report(b);
@@ -1287,9 +1293,9 @@ test("pont-corpo-usine/AC-1 : une détection qui ne rend aucun verdict est reten
   } finally {
     await stop(b);
   }
-});
+}
 
-test("pont-corpo-usine/AC-16 : sur GitLab la visibilité vient de l'API du projet ; seul « private » vaut privé (internal, illisible : redacted)", async () => {
+async function gitlabVisibility(): Promise<void> {
   const calls: string[][] = [];
   let visibility: string | null = "private";
   const exec: Exec = async (command, args, options) => {
@@ -1309,4 +1315,4 @@ test("pont-corpo-usine/AC-16 : sur GitLab la visibilité vient de l'API du proje
   } finally {
     await world.orchestrator.stop();
   }
-});
+}
