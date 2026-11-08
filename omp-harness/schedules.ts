@@ -1,39 +1,47 @@
 // Les planifications récurrentes : « chaque lundi, audite X », « chaque nuit, corrige les
 // issues omp:fix », « chaque jour à 8 h, relance la veille Y ». Une planification porte une
 // expression cron (cron.ts, lue dans le fuseau `schedules.timezone`) et une cible : un run,
-// un audit, ou une relève des issues ouvertes d'un label.
+// un audit, une relève des issues ouvertes d'un label, ou une automatisation du poste (une
+// demande au navigateur, `Workstation.runAutomation`). Une automatisation créée avec un
+// `schedule` reçoit sa planification liée (`linkAutomation`), supprimée avec elle.
 //
 // Le tour de l'orchestrateur appelle `tick` : chaque planification due est traitée UNE fois.
 // - Après un arrêt du service, les échéances passées ne partent pas en rafale : la plus
 //   récente est lancée si elle date de moins de `schedules.catchUpMin` minutes, les autres
 //   sont comptées (`missed`) ; plus vieilles, rien ne part et l'issue est « manquée ».
 // - Le plafond journalier atteint (`monitor.dailyBudgetDue()`), l'échéance est sautée.
-// - Pas d'empilement : tant que le run (ou l'audit) lancé par l'échéance précédente n'est pas
-//   fini, ou que sa relève d'issues court encore, l'échéance est sautée.
+// - Pas d'empilement : tant que le run (ou l'audit, ou la demande au poste) lancé par
+//   l'échéance précédente n'est pas fini, ou que sa relève d'issues court encore, l'échéance
+//   est sautée.
 // Chaque échéance traitée écrit `lastOutcome` et un événement `schedule_fired` ou
-// `schedule_skipped` (SSE, notifiable par `notify.events`), au dépôt de la cible.
+// `schedule_skipped` (SSE, notifiable par `notify.events`), au dépôt de la cible (sans dépôt
+// pour une automatisation : seul le propriétaire le voit).
 import type { Client } from "./auth.ts";
 import { isRecord } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import { SERVICE } from "./context.ts";
 import type { Cron } from "./cron.ts";
 import { nextOccurrence, parseCron } from "./cron.ts";
-import type { AuditRow, RepoFilter, RunRow, ScheduleOutcome, ScheduleRow, ScheduleTarget } from "./db.ts";
+import type {
+  AuditRow,
+  RepoFilter,
+  RunRow,
+  ScheduleOutcome,
+  ScheduleRow,
+  ScheduleTarget,
+  WorkstationAutomation,
+  WorkstationRequest,
+} from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { budgetUsd, integer, requireRepo, text } from "./input.ts";
 import type { LabeledOutcome } from "./issues.ts";
 import { TERMINAL_STATES } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { APPROVER_ONLY } from "./workstation.ts";
 
-/** Les cibles servies aujourd'hui. */
-export const TARGET_KINDS = ["run", "audit", "issues"] as const;
-
-/** Les cibles annoncées mais pas encore servies : refusées avec ce qui manque. */
-const RESERVED_KINDS: Readonly<Record<string, string>> = {
-  automation:
-    "target.kind « automation » : les automatisations du poste Chrome ne sont pas encore planifiables (cible réservée à une version future)",
-};
+/** Les cibles servies. */
+export const TARGET_KINDS = ["run", "audit", "issues", "automation"] as const;
 
 const NAME_MAX = 120;
 /** Au-delà, les échéances manquées pendant un arrêt ne sont plus comptées une à une. */
@@ -46,15 +54,27 @@ export type ScheduleHooks = {
   createRun: (input: NewRunInput, actor: Actor) => RunRow;
   createAudit: (repo: string, focus: string, actor: Actor) => AuditRow;
   fixLabeled: (repo: string, label: string | undefined, actor: Actor) => Promise<LabeledOutcome>;
+  /** Une demande au poste qui reprend l'automatisation ; 404 si elle n'existe plus, 409 en pause. */
+  runAutomation: (automationId: string, actor: Actor) => WorkstationRequest;
 };
 
-/** La cible d'une planification, contrôlée comme le corps de la route qu'elle appellera. */
+/**
+ * La cible d'une planification, contrôlée comme le corps de la route qu'elle appellera. Une
+ * automatisation agit dans le navigateur de l'utilisateur : comme `POST …/automations/{id}/launch`,
+ * propriétaire (403 à un client restreint à des dépôts) et appareil approbateur seulement.
+ */
 export function targetInput(raw: unknown, client: Client): ScheduleTarget {
   if (!isRecord(raw)) throw new HarnessError(400, "target : objet {kind, repo, …} attendu");
   const kind = raw.kind;
-  if (typeof kind === "string" && RESERVED_KINDS[kind] !== undefined) throw new HarnessError(400, RESERVED_KINDS[kind]);
   if (!(TARGET_KINDS as readonly unknown[]).includes(kind))
     throw new HarnessError(400, `target.kind : ${TARGET_KINDS.join(" | ")} attendu`);
+  if (kind === "automation") {
+    if (client.repos !== "*") throw new HarnessError(403, "le poste est réservé au propriétaire");
+    if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
+    const automationId = text(raw, "automationId").trim();
+    if (automationId === "") throw new HarnessError(400, "target : automationId est requis");
+    return { kind, automationId };
+  }
   const repo = text(raw, "repo").trim();
   requireRepo(client, repo);
   if (kind === "audit") return { kind, repo, focus: text(raw, "focus", false).trim() };
@@ -119,7 +139,7 @@ function message(err: unknown): string {
 }
 
 /** Ce qu'une échéance a lancé. */
-type Launched = { runIds: string[]; auditId: string | null; detail: string };
+type Launched = { runIds: string[]; auditId: string | null; requestId?: string; detail: string };
 
 export class Schedules {
   readonly #ctx: HarnessContext;
@@ -167,8 +187,20 @@ export class Schedules {
     return schedule;
   }
 
+  /** La cible désigne un dépôt déclaré, ou une automatisation qui existe (404 sinon). */
+  #checkTarget(target: ScheduleTarget): void {
+    if (target.kind !== "automation") {
+      this.#ctx.repo(target.repo);
+      return;
+    }
+    if (!this.#ctx.config.workstation.enabled)
+      throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
+    if (!this.#ctx.store.getWorkstationAutomation(target.automationId))
+      throw new HarnessError(404, `automatisation inconnue : ${target.automationId}`);
+  }
+
   create(input: ScheduleInput, actor: Actor = SERVICE, now = Date.now()): ScheduleRow {
-    this.#ctx.repo(input.target.repo);
+    this.#checkTarget(input.target);
     return this.#ctx.store.createSchedule({
       id: newId("s"),
       name: input.name,
@@ -185,7 +217,7 @@ export class Schedules {
     const { store } = this.#ctx;
     return store.transaction(() => {
       const current = this.#current(id, actor, repos);
-      if (edit.target) this.#ctx.repo(edit.target.repo);
+      if (edit.target) this.#checkTarget(edit.target);
       const cron = edit.cron ?? current.cron;
       const rearm = edit.cron !== undefined || (edit.enabled === true && !current.enabled);
       return store.updateSchedule(id, {
@@ -202,6 +234,36 @@ export class Schedules {
       this.#current(id, actor, repos);
       store.deleteSchedule(id);
     });
+  }
+
+  /**
+   * La planification liée d'une automatisation créée avec un `schedule` : son cron, sa cible,
+   * active ; `null` sans `schedule`. Elle se règle (désactiver, lancer, changer le cron) comme
+   * toute planification, et disparaît avec l'automatisation (`unlinkAutomation`).
+   */
+  linkAutomation(automation: WorkstationAutomation, actor: Actor, now = Date.now()): ScheduleRow | null {
+    if (automation.schedule === null) return null;
+    return this.create(
+      {
+        name: `Automatisation « ${automation.title} »`.slice(0, NAME_MAX),
+        cron: automation.schedule,
+        target: { kind: "automation", automationId: automation.id },
+        enabled: true,
+      },
+      actor,
+      now,
+    );
+  }
+
+  /** Supprime les planifications d'une automatisation supprimée ; rend leurs identifiants. */
+  unlinkAutomation(automationId: string): string[] {
+    const { store } = this.#ctx;
+    return store.transaction(() =>
+      store.automationSchedules(automationId).map((schedule) => {
+        store.deleteSchedule(schedule.id);
+        return schedule.id;
+      }),
+    );
   }
 
   /**
@@ -315,10 +377,19 @@ export class Schedules {
             detail: `l'audit précédent ${id} n'est pas fini (${audit.state}) : pas d'empilement`,
           };
       }
+    if (fired?.kind === "request")
+      for (const id of fired.ids) {
+        const request = store.getWorkstationRequest(id);
+        if (request && (request.state === "queued" || request.state === "running"))
+          return {
+            status: "busy",
+            detail: `la demande précédente ${id} n'est pas finie (${request.state}) : pas d'empilement`,
+          };
+      }
     return null;
   }
 
-  /** Lance la cible ; un run ou un audit est créé avant le premier `await`. */
+  /** Lance la cible ; un run, un audit ou une demande au poste est créé avant le premier `await`. */
   async #launch(target: ScheduleTarget): Promise<Launched> {
     switch (target.kind) {
       case "run": {
@@ -349,6 +420,15 @@ export class Schedules {
           runIds,
           auditId: null,
           detail: `label « ${outcome.label} » : ${runIds.length} issue(s) lancée(s), ${outcome.skipped.length} déjà portée(s)${rest}`,
+        };
+      }
+      case "automation": {
+        const request = this.#hooks.runAutomation(target.automationId, SERVICE);
+        return {
+          runIds: [],
+          auditId: null,
+          requestId: request.id,
+          detail: `demande ${request.id} au poste (automatisation ${target.automationId})`,
         };
       }
     }
@@ -386,9 +466,11 @@ export class Schedules {
     const fired =
       outcome.status !== "fired" || schedule.target.kind === "issues"
         ? {}
-        : outcome.auditId !== null
-          ? { lastFired: { kind: "audit" as const, ids: [outcome.auditId] } }
-          : { lastFired: { kind: "run" as const, ids: outcome.runIds } };
+        : outcome.requestId !== undefined
+          ? { lastFired: { kind: "request" as const, ids: [outcome.requestId] } }
+          : outcome.auditId !== null
+            ? { lastFired: { kind: "audit" as const, ids: [outcome.auditId] } }
+            : { lastFired: { kind: "run" as const, ids: outcome.runIds } };
     store.transaction(() => {
       store.updateSchedule(schedule.id, { lastOutcome: outcome, ...fired });
       this.#ctx.event(
@@ -403,7 +485,7 @@ export class Schedules {
           ...outcome,
           ...(by ? { by } : {}),
         },
-        schedule.repo,
+        schedule.repo === "" ? null : schedule.repo,
       );
     });
   }

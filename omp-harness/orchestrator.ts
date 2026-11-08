@@ -191,6 +191,7 @@ export class Orchestrator {
       createRun: (input, actor) => this.createRun(input, actor),
       createAudit: (repo, focus, actor) => this.audits.create(repo, focus, actor),
       fixLabeled: (repo, label, actor) => this.issues.fixLabeled(this.#ctx.repo(repo), label, actor),
+      runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
     });
   }
 

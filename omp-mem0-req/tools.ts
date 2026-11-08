@@ -78,6 +78,7 @@ export function renderSchedules(timezone: string, schedules: ScheduleSummary[]):
     const field = (key: string) => (typeof target[key] === "string" ? (target[key] as string) : "");
     if (target.kind === "audit") return `audit${field("focus") ? ` (${field("focus")})` : ""}`;
     if (target.kind === "issues") return `relève des issues${field("label") ? ` du label ${field("label")}` : ""}`;
+    if (target.kind === "automation") return `automatisation ${field("automationId")} du poste`;
     return `run « ${field("title")} »`;
   };
   return [
@@ -89,7 +90,7 @@ export function renderSchedules(timezone: string, schedules: ScheduleSummary[]):
       const last = schedule.lastOutcome
         ? `, dernière : ${OUTCOMES[schedule.lastOutcome.status] ?? schedule.lastOutcome.status}${schedule.lastOutcome.detail ? ` — ${schedule.lastOutcome.detail}` : ""}`
         : "";
-      return `- [${schedule.id}] ${schedule.name} — \`${schedule.cron}\` — ${what(schedule.target)} sur ${schedule.repo} — ${next}${last}`;
+      return `- [${schedule.id}] ${schedule.name} — \`${schedule.cron}\` — ${what(schedule.target)}${schedule.repo ? ` sur ${schedule.repo}` : ""} — ${next}${last}`;
     }),
   ].join("\n");
 }

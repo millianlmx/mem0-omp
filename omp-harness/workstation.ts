@@ -41,6 +41,7 @@ import type {
   WorkstationRequest,
 } from "./db.ts";
 import { ACTION_KINDS, REQUEST_STATES } from "./db.ts";
+import { parseCron } from "./cron.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { redact, workstationOwner } from "./session-feed.ts";
@@ -252,9 +253,10 @@ const MAX_ALLOWED_HOSTS = 200;
 /** Un hôte permis : un nom DNS (ou `*.domaine`), sans schéma, port ni chemin. */
 const HOST_NAME =
   /^(\*\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
-/** Une expression cron à 5 champs (minute heure jour mois jour-de-semaine), lue par le planificateur. */
-const CRON_FIELD = /^[0-9A-Za-z*,/?-]{1,40}$/;
 export const REQUEST_CANCELLED = "demande annulée";
+/** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
+export const APPROVER_ONLY =
+  "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
 
 const LEASE_LOST = "l'extension n'a pas rendu le résultat";
 const APPROVAL_EXPIRED = "approbation non donnée à temps : vaut refus";
@@ -315,13 +317,18 @@ export function automationInstruction(automation: { title: string; steps: readon
   return clip(lines.join("\n"), MAX_INSTRUCTION);
 }
 
-/** Une planification d'automatisation : absente ou `null` → aucune ; sinon une expression cron à 5 champs. */
+/**
+ * Une planification d'automatisation : absente ou `null` → aucune ; sinon une expression cron
+ * lue comme celles des planifications (cron.ts), puisque le planificateur la déclenchera.
+ */
 function parseSchedule(value: unknown): string | null {
   if (value === undefined || value === null) return null;
-  const fields = typeof value === "string" ? value.trim().split(/\s+/) : [];
-  if (fields.length !== 5 || !fields.every((field) => CRON_FIELD.test(field)))
-    bad("schedule : expression cron à 5 champs attendue (minute heure jour mois jour-de-semaine), ou null");
-  return fields.join(" ");
+  if (typeof value !== "string") bad("schedule : expression cron à 5 champs attendue, ou null");
+  try {
+    return parseCron(value).source;
+  } catch (err) {
+    return bad(`schedule : ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** Les états d'une liste de demandes (`?state=a,b`) ; un état inconnu est refusé. */

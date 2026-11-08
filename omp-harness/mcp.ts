@@ -583,7 +583,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "schedule_create",
     title: "Planifier un travail récurrent",
     description:
-      "Crée une planification : à chaque échéance de `cron` (5 champs : minute heure jour-du-mois mois jour-de-la-semaine, noms `mon`/`lun` permis), le harness lance la cible — un run (`kind: run`, `title`, `request`), un audit (`kind: audit`, `focus`) ou la relève des issues ouvertes d'un label (`kind: issues`, `label`). Une échéance n'empile pas : si le lancement précédent n'est pas fini, elle est sautée.",
+      "Crée une planification : à chaque échéance de `cron` (5 champs : minute heure jour-du-mois mois jour-de-la-semaine, noms `mon`/`lun` permis), le harness lance la cible — un run (`kind: run`, `title`, `request`), un audit (`kind: audit`, `focus`) la relève des issues ouvertes d'un label (`kind: issues`, `label`) ou une automatisation du poste (`kind: automation`, `automationId`, sans `repo` : propriétaire et appareil approbateur seulement). Une échéance n'empile pas : si le lancement précédent n'est pas fini, elle est sautée.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -602,6 +602,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           budgetUsd: { type: "number", description: "run, facultatif : le budget propre de chaque run lancé." },
           focus: { type: "string", description: "audit, facultatif : ce que l'audit regarde." },
           label: { type: "string", description: "issues, facultatif : le label (`issues.label` par défaut)." },
+          automationId: { type: "string", description: "automation : l'automatisation du poste lancée." },
         },
         required: ["kind"],
       },
@@ -612,7 +613,7 @@ export const MCP_TOOLS: readonly Tool[] = [
       const target = args.target;
       // Le dépôt se désigne comme pour les issues : son nom, `owner/name`, ou le seul visible.
       const resolved =
-        isRecord(target) && (TARGET_KINDS as readonly unknown[]).includes(target.kind)
+        isRecord(target) && target.kind !== "automation" && (TARGET_KINDS as readonly unknown[]).includes(target.kind)
           ? { ...target, repo: (await targetRepo(call, target)).name }
           : target;
       const input = scheduleInput({ ...args, target: resolved }, call.client);

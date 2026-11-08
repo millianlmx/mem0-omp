@@ -1,7 +1,7 @@
 // Feature harness-planification : des planifications récurrentes (cron à cinq champs, fuseau
-// `schedules.timezone`) qui lancent seules un run, un audit ou une relève d'issues — une fois
-// par échéance, sans rafale après un arrêt, sans empilement, sous le plafond journalier —
-// pilotées par l'API REST (`/v1/schedules`) et le MCP.
+// `schedules.timezone`) qui lancent seules un run, un audit, une relève d'issues ou une
+// automatisation du poste — une fois par échéance, sans rafale après un arrêt, sans
+// empilement, sous le plafond journalier — pilotées par l'API REST (`/v1/schedules`) et le MCP.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
@@ -419,6 +419,7 @@ type ApiBody = {
   schedule: ScheduleRow;
   schedules: ScheduleRow[];
   outcome: ScheduleOutcome;
+  automation: { id: string; schedule: string | null };
   result: { tools: { name: string }[] } & ToolResult;
 };
 
@@ -439,6 +440,7 @@ async function apiWorld() {
     viewer: clients.add("tableau", "viewer", "*").token,
     operator: clients.add("mac", "operator", "*").token,
     demoOnly: clients.add("demo-seul", "operator", ["demo"]).token,
+    approver: clients.add("console", "admin", "*", true).token,
   };
   const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
   const listening = Promise.withResolvers<void>();
@@ -489,17 +491,14 @@ test("harness-planification/AC-8 : /v1/schedules — lecture viewer filtrée par
       [{ ...body, cron: "0 9 * mon" }, /cinq champs/],
       [{ ...body, cron: "0 0 30 2 *" }, /aucune échéance/],
       [{ ...body, name: " " }, /name/],
-      [
-        { ...body, target: { kind: "automation", automationId: "a1" } },
-        /automation.*poste Chrome.*pas encore planifiables/,
-      ],
+      [{ ...body, target: { kind: "automation", automationId: "a1" } }, /appareil approbateur/],
       [{ ...body, target: { kind: "rêve", repo: "demo" } }, /target\.kind : run \| audit \| issues/],
       [{ ...body, target: { kind: "run", repo: "demo", title: "t" } }, /request/],
       [{ ...body, target: { kind: "run", repo: "demo", title: "t", request: "r", budgetUsd: -1 } }, /budgetUsd/],
       [{ ...body, target: { kind: "audit", repo: "inconnu" } }, /dépôt inconnu/],
     ] as const) {
       const refused = await call("POST", "/v1/schedules", tokens.operator, bad);
-      assert.ok(refused.status === 400 || refused.status === 404, JSON.stringify(refused));
+      assert.ok([400, 403, 404].includes(refused.status), JSON.stringify(refused));
       assert.match(String(refused.body.error), why);
     }
 
@@ -610,7 +609,7 @@ test("harness-planification/AC-9 : MCP — schedules_list, schedule_create (oper
       target: { kind: "automation", automationId: "a" },
     });
     assert.equal(reserved.isError, true);
-    assert.match(reserved.content[0]?.text ?? "", /automation/);
+    assert.match(reserved.content[0]?.text ?? "", /appareil approbateur/, "automation : l'approbateur seulement");
 
     const created = await tool(tokens.operator, "schedule_create", args);
     assert.notEqual(created.isError, true, created.content[0]?.text);
@@ -659,5 +658,167 @@ test("harness-planification/AC-10 : le tour de l'orchestrateur déclenche la pla
     assert.notEqual(again.outcome.runIds[0], runId);
   } finally {
     await world.orchestrator.stop();
+  }
+});
+
+/** Une automatisation du poste, tirée d'un profil dont la première tâche est automatisable. */
+function automationOf(world: ReturnType<typeof fakeWorld>, schedule?: string) {
+  const { version } = world.store.addWorkstationProfile({
+    summary: "Consultant",
+    habits: [],
+    tools: [],
+    schedule: "9 h – 18 h",
+    repetitiveTasks: [
+      { title: "Relance des devis", frequency: "chaque lundi", steps: ["ouvrir le CRM"], automatable: true },
+    ],
+    clientNeeds: [],
+    preferences: [],
+  });
+  return world.orchestrator.workstation.createAutomation(
+    { version, task: 0, ...(schedule ? { schedule } : {}) },
+    { by: "console" },
+  ).automation;
+}
+
+test("harness-planification/AC-11 : une cible `automation` pose à l'échéance une demande au poste (`Workstation.runAutomation`), sautée tant que la précédente n'est pas finie, en échec si l'automatisation a disparu", async () => {
+  const { world, schedules } = scheduleWorld();
+  try {
+    const automation = automationOf(world);
+    assert.throws(
+      () =>
+        schedules.create(
+          { name: "x", cron: "* * * * *", target: { kind: "automation", automationId: "au-inconnue" }, enabled: true },
+          { by: "console" },
+        ),
+      { status: 404 },
+    );
+    const created = at("2026-11-09T10:00:00Z");
+    const schedule = schedules.create(
+      {
+        name: "Relance du lundi",
+        cron: "*/10 * * * *",
+        target: { kind: "automation", automationId: automation.id },
+        enabled: true,
+      },
+      { by: "console" },
+      created,
+    );
+    assert.equal(schedule.repo, "", "une automatisation n'a pas de dépôt");
+
+    await schedules.tick(at("2026-11-09T10:10:01Z"));
+    const [request] = world.store.listWorkstationRequests();
+    assert.deepEqual([request?.state, request?.automationId], ["queued", automation.id]);
+    assert.match(request?.instruction ?? "", /Relance des devis/);
+    const fired = world.store.getSchedule(schedule.id) as ScheduleRow;
+    assert.deepEqual(
+      [fired.lastOutcome?.status, fired.lastOutcome?.requestId, fired.lastFired],
+      ["fired", request?.id, { kind: "request", ids: [request?.id] }],
+    );
+    assert.equal(world.store.listRuns().length, 0, "aucun run");
+
+    await schedules.tick(at("2026-11-09T10:20:01Z"));
+    assert.equal(world.store.listWorkstationRequests().length, 1, "la demande précédente est en file : pas de seconde");
+    const busy = world.store.getSchedule(schedule.id) as ScheduleRow;
+    assert.equal(busy.lastOutcome?.status, "busy");
+    assert.match(busy.lastOutcome?.detail ?? "", new RegExp(`${request?.id}.*queued`));
+    await assert.rejects(schedules.runNow(schedule.id, { by: "console" }, null), { status: 409 });
+
+    world.orchestrator.workstation.cancelRequest(request?.id as string, { by: "console" });
+    await schedules.tick(at("2026-11-09T10:30:01Z"));
+    assert.equal(world.store.listWorkstationRequests().length, 2, "la précédente annulée : l'échéance suivante part");
+
+    // Les événements n'ont pas de dépôt : un client restreint à `demo` ne les voit pas.
+    const events = scheduleEvents(world, schedule.id);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["schedule_fired", "schedule_skipped", "schedule_fired"],
+    );
+    assert.equal(
+      world.store.eventsSince(0, null, 500, ["demo"]).filter((event) => event.type.startsWith("schedule_")).length,
+      0,
+    );
+
+    world.orchestrator.workstation.cancelRequest(world.store.listWorkstationRequests()[0]?.id as string, {
+      by: "console",
+    });
+    world.orchestrator.workstation.deleteAutomation(automation.id);
+    await schedules.tick(at("2026-11-09T10:40:01Z"));
+    const gone = world.store.getSchedule(schedule.id) as ScheduleRow;
+    assert.equal(gone.lastOutcome?.status, "failed");
+    assert.match(gone.lastOutcome?.detail ?? "", /automatisation inconnue/);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-planification/AC-12 : l'API réserve la cible `automation` à l'appareil approbateur du propriétaire ; une automatisation créée avec un `schedule` reçoit sa planification liée, qui part à l'échéance et disparaît avec elle", async () => {
+  const api = await apiWorld();
+  const { world, tokens, call } = api;
+  try {
+    const plain = automationOf(world);
+    const body = { name: "Relance", cron: "0 9 * * 1", target: { kind: "automation", automationId: plain.id } };
+    assert.equal((await call("POST", "/v1/schedules", tokens.operator, body)).status, 403, "pas approbateur");
+    assert.equal((await call("POST", "/v1/schedules", tokens.demoOnly, body)).status, 403, "pas propriétaire");
+    const direct = await call("POST", "/v1/schedules", tokens.approver, body);
+    assert.equal(direct.status, 201, JSON.stringify(direct.body));
+    assert.deepEqual(direct.body.schedule.target, { kind: "automation", automationId: plain.id });
+    const seen = await call("GET", "/v1/schedules", tokens.demoOnly);
+    assert.deepEqual(seen.body.schedules, [], "un client restreint à des dépôts ne voit pas le poste");
+
+    const { version } = world.store.addWorkstationProfile({
+      summary: "Consultant",
+      habits: [],
+      tools: [],
+      schedule: "",
+      repetitiveTasks: [{ title: "Relevé", frequency: "chaque matin", steps: ["ouvrir"], automatable: true }],
+      clientNeeds: [],
+      preferences: [],
+    });
+    const illegible = await call("POST", "/v1/workstation/automations", tokens.approver, {
+      version,
+      task: 0,
+      schedule: "0 25 * * *",
+    });
+    assert.equal(illegible.status, 400, "un schedule que le planificateur ne lirait pas est refusé");
+    const created = await call("POST", "/v1/workstation/automations", tokens.approver, {
+      version,
+      task: 0,
+      schedule: "*/5  * * * *",
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const automation = created.body.automation;
+    assert.equal(automation.schedule, "*/5 * * * *");
+    const linked = world.store.automationSchedules(automation.id);
+    assert.equal(linked.length, 1);
+    const [schedule] = linked as [ScheduleRow];
+    assert.deepEqual(
+      [schedule.name, schedule.cron, schedule.target, schedule.enabled, schedule.createdBy],
+      [
+        "Automatisation « Relevé »",
+        "*/5 * * * *",
+        { kind: "automation", automationId: automation.id },
+        true,
+        "console",
+      ],
+    );
+    const again = await call("POST", "/v1/workstation/automations", tokens.approver, { version, task: 0 });
+    assert.equal(again.status, 200);
+    assert.equal(
+      world.store.automationSchedules(automation.id).length,
+      1,
+      "idempotente : pas de seconde planification",
+    );
+
+    await world.orchestrator.schedules.tick((schedule.nextRunAt as number) + 1000);
+    const requests = world.store.listWorkstationRequests().filter((row) => row.automationId === automation.id);
+    assert.equal(requests.length, 1, "l'échéance du schedule pose la demande");
+    assert.equal(world.store.getSchedule(schedule.id)?.lastOutcome?.status, "fired");
+
+    const removed = await call("DELETE", `/v1/workstation/automations/${automation.id}`, tokens.approver);
+    assert.equal(removed.status, 200);
+    assert.equal(world.store.getSchedule(schedule.id), null, "la planification liée part avec l'automatisation");
+    assert.notEqual(world.store.getSchedule(direct.body.schedule.id), null, "les autres restent");
+  } finally {
+    await api.close();
   }
 });

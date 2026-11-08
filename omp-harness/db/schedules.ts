@@ -1,10 +1,13 @@
 // Les planifications récurrentes (schedules.ts) : une expression cron, une cible (un run, un
-// audit, une relève d'issues) et ce qu'a donné la dernière échéance.
+// audit, une relève d'issues, une automatisation du poste) et ce qu'a donné la dernière échéance.
 import { IssueStore } from "./issues.ts";
 import { json, num, numOrNull, str, strOrNull } from "./sql.ts";
 import type { Row, RepoFilter, SqlValue } from "./sql.ts";
 
-/** Ce qu'une planification lance : un run, un audit, ou une relève des issues d'un label. */
+/**
+ * Ce qu'une planification lance : un run, un audit, une relève des issues d'un label, ou une
+ * automatisation du poste (une demande au navigateur, sans dépôt : propriétaire seulement).
+ */
 export type ScheduleTarget =
   | {
       kind: "run";
@@ -16,7 +19,16 @@ export type ScheduleTarget =
       budgetUsd?: number;
     }
   | { kind: "audit"; repo: string; focus: string }
-  | { kind: "issues"; repo: string; label?: string };
+  | { kind: "issues"; repo: string; label?: string }
+  | { kind: "automation"; automationId: string };
+
+/**
+ * Le dépôt rangé avec la planification, qui la filtre par client : celui de la cible, ou ""
+ * pour une automatisation du poste — qu'aucun client restreint à des dépôts ne voit.
+ */
+export function scheduleRepo(target: ScheduleTarget): string {
+  return target.kind === "automation" ? "" : target.repo;
+}
 
 /**
  * Ce qu'a donné une échéance : `fired` (lancée), `busy` (le lancement précédent n'est pas
@@ -36,10 +48,12 @@ export type ScheduleOutcome = {
   missed: number;
   runIds: string[];
   auditId: string | null;
+  /** La demande au poste posée par une cible `automation`. */
+  requestId?: string;
 };
 
 /** Le dernier lancement : ce qui doit être fini avant le suivant (pas d'empilement). */
-export type ScheduleFired = { kind: "run" | "audit"; ids: string[] };
+export type ScheduleFired = { kind: "run" | "audit" | "request"; ids: string[] };
 
 export type ScheduleRow = {
   id: string;
@@ -104,7 +118,7 @@ export class ScheduleStore extends IssueStore {
       input.name,
       input.cron,
       JSON.stringify(input.target),
-      input.target.repo,
+      scheduleRepo(input.target),
       input.enabled ? 1 : 0,
       input.nextRunAt,
       input.createdBy,
@@ -135,6 +149,14 @@ export class ScheduleStore extends IssueStore {
     ).map(scheduleOf);
   }
 
+  /** Les planifications dont la cible est l'automatisation `automationId`. */
+  automationSchedules(automationId: string): ScheduleRow[] {
+    return this.selectAll(
+      "SELECT * FROM schedules WHERE repo = '' AND json_extract(target, '$.automationId') = ? ORDER BY created_at, id",
+      automationId,
+    ).map(scheduleOf);
+  }
+
   /** Écrit un patch et avance la révision ; `null` si la planification n'existe plus. */
   updateSchedule(id: string, patch: SchedulePatch): ScheduleRow | null {
     const sets = ["rev = rev + 1", "updated_at = ?"];
@@ -153,7 +175,7 @@ export class ScheduleStore extends IssueStore {
       );
       if (key === "target") {
         sets.push("repo = ?");
-        params.push((value as ScheduleTarget).repo);
+        params.push(scheduleRepo(value as ScheduleTarget));
       }
     }
     const result = this.execute(`UPDATE schedules SET ${sets.join(", ")} WHERE id = ?`, ...params, id);

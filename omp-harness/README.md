@@ -1177,9 +1177,12 @@ Une automatisation est une tâche `automatable` du profil gardée comme consigne
 (`POST /v1/workstation/automations {version, task, browserId?, schedule?}`, idempotente,
 permise en pause). Elle ne part jamais seule dans le tour de l'agent : l'humain la lance
 (`…/launch`), ou le planificateur appelle `Workstation.runAutomation(automationId, actor)`
-pour son `schedule` (cron à 5 champs) — la même méthode : une demande `queued`
-rattachée (`automationId`), qui reprend son titre et ses étapes ; 404 si elle n'existe
-plus, 409 en pause.
+— la même méthode : une demande `queued` rattachée (`automationId`), qui reprend son titre
+et ses étapes ; 404 si elle n'existe plus, 409 en pause. Son `schedule` (cron lu comme
+celui des planifications, 400 s'il est illisible) crée à sa création une planification
+liée, cible `automation`, nommée « Automatisation « <titre> » » : elle se désactive, se
+lance ou change de cron comme les autres (§ « Les planifications »), et disparaît avec
+l'automatisation.
 
 La navigation gardée se règle aussi à chaud par l'approbateur : `PUT /v1/workstation/settings`
 `{allowedHosts?: string[] | null, exfiltrationGuard?: boolean | null}` (au plus 200 noms
@@ -1289,7 +1292,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `run_instructions` `{id, text, rev?}` | operator | Une consigne à un run ni mergé ni annulé (409 sinon) : injectée dans la session de son agent s'il tourne (`delivered: "session"`), gardée pour son prochain prompt sinon (`"pending"`) : `POST /v1/runs/{id}/instructions`. |
 | `run_budget` `{id, budgetUsd, rev?}` | operator | Le budget propre d'un run non terminal, en dollars (`null` : celui de la configuration) ; rend `{run, budget}` : `POST /v1/runs/{id}/budget`. |
 | `schedules_list` | viewer | Les planifications des dépôts que le client voit, avec le fuseau : `GET /v1/schedules`. |
-| `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible). Mêmes contrôles que `POST /v1/schedules`. |
+| `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible) ; une cible `automation` n'en a pas. Mêmes contrôles que `POST /v1/schedules`. |
 | `schedule_delete` `{id, rev?}` | operator | Supprime une planification (`{id, deleted}`) ; avec `rev`, refusée si elle a changé depuis : `DELETE /v1/schedules/{id}`. |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
@@ -1341,9 +1344,13 @@ planification porte un nom, une expression cron et une cible :
 | `run` | `repo`, `title`, `request`, `lane?`, `priority?`, `budgetUsd?` | un run, comme `POST /v1/runs` (`budgetUsd` : le budget propre du run) |
 | `audit` | `repo`, `focus?` | un audit, comme `POST /v1/audits` |
 | `issues` | `repo`, `label?` | la relève des issues ouvertes du label (`issues.label` par défaut), comme `issues_fix_labeled` |
+| `automation` | `automationId` | une demande au poste qui reprend l'automatisation, comme `POST /v1/workstation/automations/{id}/launch` |
 
-`automation` (les automatisations du poste Chrome) est réservée : refusée (400) avec un
-message qui le dit, tant que le poste ne les sert pas.
+Une cible `automation` n'a pas de dépôt (`repo` de la planification vide) : seul le
+propriétaire la voit, et seul l'appareil approbateur la pose (403 sinon) ; 404 si
+l'automatisation n'existe pas ou si le poste est désactivé. Une échéance dont la demande
+précédente est encore `queued` ou `running` est sautée (`busy`) ; l'automatisation
+supprimée entre-temps, l'échéance est `failed` (404).
 
 - **L'expression cron** a cinq champs — minute, heure, jour du mois, mois, jour de la
   semaine — chacun `*`, une valeur, une plage `a-b`, un pas `*/n`, `a-b/n` ou `a/n`, ou une
@@ -1451,8 +1458,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/requests` `{instruction, browserId?}` | operator (approbateur) | Pose une demande (consigne ≤ 4000 caractères, secrets masqués) : 201 `{request}` `queued` ; 409 en pause ; 404 navigateur inconnu. |
 | `GET /v1/workstation/requests?state=&limit=` · `GET /v1/workstation/requests/{id}` | viewer | Les demandes, récentes d'abord (`{id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt}`, `state` : `queued`, `running`, `done`, `failed`, `cancelled`) ; une demande et ses actions (`requestId`), par `seq` croissant. |
 | `POST /v1/workstation/requests/{id}/cancel` | operator (approbateur) | Annule une demande en file ou en cours : 200 `{request}` `cancelled` ; 409 « la demande est déjà <état> ». |
-| `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable. |
-| `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), ses demandes restent. |
+| `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable ; 400 `schedule` illisible. Avec `schedule`, la création pose sa planification liée. |
+| `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), avec ses planifications ; ses demandes restent. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
