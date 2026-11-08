@@ -8,6 +8,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct ProvidersView: View {
@@ -23,7 +24,7 @@ struct ProvidersView: View {
             }
             if let failure = server.failure {
                 Section {
-                    HarnessFailureLabel(failure: failure)
+                    ConsoleFailureBanner(failure: failure)
                 }
             }
             Section {
@@ -311,7 +312,7 @@ struct ProviderForm: View {
                 }
                 if let failure = server.failure {
                     Section {
-                        HarnessFailureLabel(failure: failure)
+                        ConsoleFailureBanner(failure: failure)
                     }
                 }
             }

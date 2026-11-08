@@ -87,6 +87,13 @@ struct SectionDetail: View {
         // Ancrée en HAUT : une section dont le contenu ne remplit pas la hauteur
         // garde son en-tête sous la barre d'outils.
         content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // La recherche de mémoire demandée par la palette (⌘F) : la liste la lance.
+            .task(id: section.rawValue + "|" + (drafts.memorySearchRequest ?? "")) {
+                guard section == .memory, let query = drafts.memorySearchRequest else { return }
+                drafts.memorySearchRequest = nil
+                if memoryGraph.shown { memoryGraph.hide() }
+                await memoryModel.search(query)
+            }
     }
 
     @ViewBuilder

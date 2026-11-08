@@ -13,6 +13,7 @@
 
 import AppKit
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct MemoryView: ConsoleSectionView {
@@ -353,6 +354,14 @@ struct MemoryView: ConsoleSectionView {
                         ForEach(rows) { row in
                             MemoryRowView(row: row, nowMs: nowMs)
                                 .tag(Optional(row.id))
+                                // Corriger ou supprimer un souvenir depuis la liste (la
+                                // suppression attend sa confirmation).
+                                .contextMenu {
+                                    Button(MemoryText.edit) { model.beginEdit(row) }
+                                        .accessibilityIdentifier("memoire.row.edit")
+                                    Button(MemoryText.delete, role: .destructive) { model.requestDelete(row) }
+                                        .accessibilityIdentifier("memoire.row.delete")
+                                }
                         }
                     }
                     .listStyle(.inset)
@@ -360,6 +369,36 @@ struct MemoryView: ConsoleSectionView {
                 }
             }
             .frame(minWidth: 260, idealWidth: 320)
+            .sheet(item: Binding(get: { model.editing }, set: { if $0 == nil { model.cancelEdit() } })) { _ in
+                MemoryEditSheet(
+                    text: $model.draftText,
+                    tags: $model.draftTags,
+                    isSaving: model.isWriting,
+                    error: model.writeError,
+                    save: { Task { await model.saveEdit() } },
+                    cancel: { model.cancelEdit() }
+                )
+            }
+            .confirmationDialog(
+                MemoryText.deleteConfirmTitle,
+                isPresented: Binding(get: { model.pendingDelete != nil }, set: { if !$0 { model.cancelDelete() } }),
+                titleVisibility: .visible
+            ) {
+                Button(MemoryText.deleteConfirm, role: .destructive) { Task { await model.confirmDelete() } }
+                    .accessibilityIdentifier("memoire.delete.confirm")
+                Button(MemoryText.cancel, role: .cancel) { model.cancelDelete() }
+            } message: {
+                Text(verbatim: MemoryText.deleteConfirmMessage)
+            }
+            .overlay(alignment: .bottom) {
+                if model.editing == nil, let error = model.writeError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding(8)
+                        .accessibilityIdentifier("memoire.write.error")
+                }
+            }
 
             detailPane
         }

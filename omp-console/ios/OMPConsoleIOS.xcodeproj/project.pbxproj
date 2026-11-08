@@ -10,6 +10,7 @@
 		E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
 		E1E2E3E4E5E6E7E8E9EAEB1C /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
 		E1E2E3E4E5E6E7E8E9EAEB21 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
+		E1E2E3E4E5E6E7E8E9EAEB41 /* ConsoleUI in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB40 /* ConsoleUI */; };
 		E1E2E3E4E5E6E7E8E9EAEB22 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
 		E1E2E3E4E5E6E7E8E9EAEB30 /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
 		E1E2E3E4E5E6E7E8E9EAEB31 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
@@ -90,6 +91,7 @@
 			files = (
 				E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */,
 				E1E2E3E4E5E6E7E8E9EAEB21 /* ConsoleClient in Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB41 /* ConsoleUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,6 +160,7 @@
 			packageProductDependencies = (
 				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
 				E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */,
+				E1E2E3E4E5E6E7E8E9EAEB40 /* ConsoleUI */,
 			);
 			productName = OMPConsoleIOS;
 			productReference = E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */;
@@ -571,6 +574,10 @@
 		E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ConsoleClient;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB40 /* ConsoleUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ConsoleUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

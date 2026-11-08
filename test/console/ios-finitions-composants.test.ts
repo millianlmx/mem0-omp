@@ -182,7 +182,8 @@ test("ios-finitions-composants/AC-6 : toute durée de l'app iOS s'affiche en chi
   assert.deepEqual(durationFaults(labelled), ["durée rendue hors garde : Fictive.swift"]);
 });
 
-const PICKER = "IOSHarnessScreens.swift";
+/** Le sélecteur partagé Mac/iOS (cible ConsoleUI), compilé dans l'app iOS. */
+const PICKER = "LaunchViews.swift";
 const REPO_PICKER = "Picker(PipelineServerText.repoLabel, selection: Binding(";
 
 /**
@@ -190,8 +191,8 @@ const REPO_PICKER = "Picker(PipelineServerText.repoLabel, selection: Binding(";
  * montre son nom et le porte en tag ; aucun `Menu` reconstruit ni chevron.
  */
 function repoPickerFaults(sources: Map<string, string>): string[] {
-  const view = memberBody(stripComments(sources.get(PICKER) ?? ""), "struct IOSHarnessRepoPicker");
-  if (view === "") return [`${PICKER} : IOSHarnessRepoPicker introuvable`];
+  const view = memberBody(stripComments(sources.get(PICKER) ?? ""), "public struct RepoPicker");
+  if (view === "") return [`${PICKER} : RepoPicker introuvable`];
   const faults: string[] = [];
   if (view.includes("Menu {"))
     faults.push(`${PICKER} : un Menu reconstruit subsiste, le sélecteur est le Picker natif`);
@@ -207,7 +208,10 @@ function repoPickerFaults(sources: Map<string, string>): string[] {
 }
 
 test("ios-finitions-composants/AC-8 : un lancement choisit son dépôt dans un Picker natif, tagué par le nom du dépôt", () => {
-  const sources = swiftSources(APP);
+  const sources = new Map([
+    ...swiftSources(APP),
+    ...swiftSources(path.join(ROOT, "omp-console", "Sources", "ConsoleUI")),
+  ]);
   assert.ok(sources.has(PICKER), "les écrans du serveur doivent être lus");
   assert.deepEqual(repoPickerFaults(sources), []);
   const view = sources.get(PICKER)!;

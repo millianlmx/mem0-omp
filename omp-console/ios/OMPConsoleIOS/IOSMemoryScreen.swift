@@ -13,6 +13,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct IOSMemoryScreen: View {
@@ -24,6 +25,8 @@ struct IOSMemoryScreen: View {
     let graphRecipe: IOSMemoryGraphRecipe?
     /// La feuille Serveur de la racine, ouverte par « Relier le serveur ».
     @Binding var showConnection: Bool
+    /// Une recherche demandée par la palette (⌘F) : la liste la lance, puis l'oublie.
+    @Binding var searchRequest: String?
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
     /// La largeur disponible : elle fixe le plafond de lignes d'un souvenir (S-5).
@@ -38,17 +41,27 @@ struct IOSMemoryScreen: View {
     @State private var searchPresented = false
     /// Le focus du champ de recherche, posé par ⌘F.
     @FocusState private var searchFocused: Bool
+    /// La correction ouverte depuis la liste, sa saisie, la suppression qui attend
+    /// confirmation et l'échec de la dernière écriture.
+    @State private var editing: RemoteMemoryRow?
+    @State private var draftText = ""
+    @State private var draftTags = ""
+    @State private var pendingDelete: RemoteMemoryRow?
+    @State private var isWriting = false
+    @State private var writeError: String?
 
     init(
         client: MemoryAccess,
         recipe: IOSScreenState,
         graphRecipe: IOSMemoryGraphRecipe? = nil,
-        showConnection: Binding<Bool>
+        showConnection: Binding<Bool>,
+        searchRequest: Binding<String?> = .constant(nil)
     ) {
         self.client = client
         self.recipe = recipe
         self.graphRecipe = graphRecipe
         _showConnection = showConnection
+        _searchRequest = searchRequest
         if graphRecipe?.fails == true {
             // Les recettes de panne : la liste et le graphe lisent le MÊME lecteur qui échoue.
             let failing = IOSMemoryFailureReader()
@@ -83,6 +96,34 @@ struct IOSMemoryScreen: View {
                     }
                     .accessibilityIdentifier(IOSMemoryAccessibility.graphToggle)
                 }
+            }
+            .sheet(item: $editing) { _ in
+                MemoryEditSheet(
+                    text: $draftText,
+                    tags: $draftTags,
+                    isSaving: isWriting,
+                    error: writeError,
+                    save: { Task { await saveEdit() } },
+                    cancel: { editing = nil }
+                )
+            }
+            .confirmationDialog(
+                MemoryText.deleteConfirmTitle,
+                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: pendingDelete
+            ) { row in
+                Button(MemoryText.deleteConfirm, role: .destructive) { Task { await delete(row) } }
+                Button(MemoryText.cancel, role: .cancel) {}
+            } message: { _ in
+                Text(MemoryText.deleteConfirmMessage)
+            }
+            // La recherche demandée par la palette (⌘F).
+            .onChange(of: searchRequest, initial: true) { _, request in
+                guard let query = request else { return }
+                searchRequest = nil
+                model.updateQuery(query)
+                Task { await model.submitQuery() }
             }
             .sheet(item: $model.selection) { target in
                 IOSMemoryDetailView(row: target.row, scope: model.scope)
@@ -428,6 +469,42 @@ struct IOSMemoryScreen: View {
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }
 
+    // MARK: - Corriger, supprimer
+
+    private func beginEdit(_ row: RemoteMemoryRow) {
+        draftText = row.text
+        draftTags = MemoryTags.display(row.tags)
+        writeError = nil
+        editing = row
+    }
+
+    /// Enregistre la correction ; un échec laisse la feuille ouverte avec sa phrase.
+    private func saveEdit() async {
+        guard let row = editing, let writer = client.writer else { return }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await writer.update(id: row.id, text: draftText, tags: MemoryTags.list(draftTags))
+        } catch {
+            writeError = MemoryText.saveFailed
+            return
+        }
+        editing = nil
+        await model.refresh()
+    }
+
+    private func delete(_ row: RemoteMemoryRow) async {
+        pendingDelete = nil
+        guard let writer = client.writer else { return }
+        do {
+            try await writer.delete(id: row.id)
+        } catch {
+            writeError = MemoryText.saveFailed
+            return
+        }
+        await model.refresh()
+    }
+
     /// La section des souvenirs, dans l'ORDRE reçu (aucun tri local), séparés par
     /// le système. Le pied de la page suivante est la DERNIÈRE rangée : la List,
     /// paresseuse, ne la crée qu'à l'approche du bas, et elle change d'identité
@@ -446,8 +523,12 @@ struct IOSMemoryScreen: View {
                 .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                 .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
                 .contextMenu {
-                    IOSContextMenuItems(actions: IOSContextMenu.memory(row)) { action in
-                        if case .copy(let copied) = action { IOSPasteboard.copy(copied) }
+                    IOSContextMenuItems(actions: IOSContextMenu.memory(row, writable: client.writer != nil)) { action in
+                        switch action {
+                        case .copy(let copied): IOSPasteboard.copy(copied)
+                        case .edit(let edited): beginEdit(edited)
+                        case .delete(let deleted): pendingDelete = deleted
+                        }
                     }
                 }
                 .iosHoverEffect()

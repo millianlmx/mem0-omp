@@ -47,7 +47,10 @@ function appSources(root: string): { file: string; code: string }[] {
 /** La source d'un fichier de l'app, ou la chaîne vide. */
 function appFile(root: string, name: string): string {
   const file = path.join(root, "omp-console", "ios", "OMPConsoleIOS", name);
-  return fs.existsSync(file) ? code(file) : "";
+  if (fs.existsSync(file)) return code(file);
+  // Les écrans PARTAGÉS avec le Mac (cible ConsoleUI) sont compilés dans l'app iOS.
+  const shared = path.join(root, "omp-console", "Sources", "ConsoleUI", name);
+  return fs.existsSync(shared) ? code(shared) : "";
 }
 
 /** Le source d'un fichier du noyau, commentaires retirés. */
@@ -170,12 +173,21 @@ function typographyFaults(root: string): string[] {
 
 /** Les mots partagés attendus, section par section (tableau de S-2) : l'écran qui
  * rend la section, son fichier, et le mot d'état vide qu'il lit dans le noyau. */
-type SectionWord = { screen: string; file: string; message: string; constant: string; core: string };
+/** `words` : où vit l'état vide quand l'écran le tient d'une vue PARTAGÉE (ConsoleUI). */
+type SectionWord = {
+  screen: string;
+  file: string;
+  message: string;
+  constant: string;
+  core: string;
+  words?: { screen: string; file: string };
+};
 
 const SECTION_WORDS: Record<string, SectionWord> = {
   home: {
     screen: "IOSHarnessHomeScreen",
     file: "IOSHarnessScreens.swift",
+    words: { screen: "InboxSections", file: "InboxSections.swift" },
     message: "Rien n’attend votre décision.",
     constant: "PipelineServerText.nothingPending",
     core: "Design/PipelineServerText.swift",
@@ -183,6 +195,7 @@ const SECTION_WORDS: Record<string, SectionWord> = {
   kanban: {
     screen: "IOSHarnessPipelinesScreen",
     file: "IOSHarnessScreens.swift",
+    words: { screen: "RunsHistorySections", file: "RunsHistoryViews.swift" },
     message: "Aucune feature sur ce serveur.",
     constant: "PipelineServerText.noRun",
     core: "Design/PipelineServerText.swift",
@@ -211,6 +224,7 @@ const SECTION_WORDS: Record<string, SectionWord> = {
   workstation: {
     screen: "IOSWorkstationScreen",
     file: "IOSWorkstationScreen.swift",
+    words: { screen: "WorkstationApprovalsSection", file: "WorkstationSections.swift" },
     message: "Aucun envoi n’attend votre accord.",
     constant: "WorkstationText.noApproval",
     core: "Design/WorkstationText.swift",
@@ -226,7 +240,7 @@ const SECTION_WORDS: Record<string, SectionWord> = {
 
 /** Le corps d'une déclaration `struct <name>` : jusqu'à la déclaration de premier niveau suivante. */
 function structBody(source: string, name: string): string {
-  const start = source.search(new RegExp(`^struct ${name}\\b`, "m"));
+  const start = source.search(new RegExp(`^(?:public )?struct ${name}\\b`, "m"));
   if (start === -1) return "";
   const rest = source.slice(start + 1);
   const next = rest.search(/^(struct|private struct|enum|extension|final class|\/\/ MARK)\b/m);
@@ -256,7 +270,7 @@ function screenFaults(root: string): string[] {
   // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
   const harness = appFile(root, "IOSHarnessScreens.swift");
   for (const section of SECTIONS.filter((s) => s !== "memory")) {
-    const { screen, file } = SECTION_WORDS[section];
+    const { screen, file } = SECTION_WORDS[section].words ?? SECTION_WORDS[section];
     const body = structBody(appFile(root, file), screen);
     if (body === "") faults.push(`${screen} absent`);
     else if (!body.includes("IOSHarnessScreen(")) faults.push(`${screen} ne passe pas par le cadre IOSHarnessScreen`);
@@ -460,7 +474,10 @@ function recipeFaults(root: string): string[] {
 /** Les manques de la coque macOS : mots partagés et noyau sans cadre (S-9, AC-10). */
 function macOSFaults(root: string): string[] {
   const faults: string[] = [];
-  const shell = swiftFilesIn(path.join(root, "omp-console", "Sources", "OMPConsole"))
+  const shell = [
+    ...swiftFilesIn(path.join(root, "omp-console", "Sources", "OMPConsole")),
+    ...swiftFilesIn(path.join(root, "omp-console", "Sources", "ConsoleUI")),
+  ]
     .map((file) => code(file))
     .join("\n");
   // La coque macOS lit les MÊMES mots d'état vide que l'iPhone, jamais une copie.

@@ -161,8 +161,16 @@ function otherMarkdownFaults(root: string): string[] {
   }
   // Les specs d'une feature, lues sur le serveur de pipelines, sont un document
   // Markdown : elles passent par le rendu partagé.
-  if (!appFile(root, "IOSHarnessScreens.swift").includes("IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))")) {
-    faults.push("IOSHarnessScreens.swift ne rend plus les specs par IOSMarkdownView(");
+  // Les specs passent par le rendu partagé de l'app (`ConsoleShell.markdown` = IOSMarkdownView).
+  if (
+    !fs
+      .readFileSync(path.join(root, "omp-console", "Sources", "ConsoleUI", "InboxSections.swift"), "utf8")
+      .includes("ConsoleMarkdown(blocks: MarkdownDocument.blocks(specs))")
+  ) {
+    faults.push("InboxSections.swift ne rend plus les specs par ConsoleMarkdown(");
+  }
+  if (!appFile(root, "RootView.swift").includes("markdown: { AnyView(IOSMarkdownView(blocks: $0)) }")) {
+    faults.push("RootView.swift ne branche plus IOSMarkdownView comme rendu Markdown partagé");
   }
   return faults;
 }
@@ -171,9 +179,9 @@ test("ios-souvenir-markdown-altere/AC-4 : un contenu non-souvenir garde son gras
   assert.deepEqual(otherMarkdownFaults(ROOT), []);
 
   const copy = copyRepo("ios-souvenir-markdown-altere-copie-");
-  const target = appPath(copy, "IOSHarnessScreens.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleUI", "InboxSections.swift");
   const planted = code(target).replace(
-    "IOSMarkdownView(blocks: MarkdownDocument.blocks(specs))",
+    "ConsoleMarkdown(blocks: MarkdownDocument.blocks(specs))",
     "Text(verbatim: specs)",
   );
   assert.notEqual(planted, code(target), "la faute n'a pas pu être plantée");

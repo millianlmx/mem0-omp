@@ -12,4 +12,7 @@ enum IOSMenuText {
     /// Le symbole système de « Copier » (HIG Context menus : « Use the same icons
     /// as the system to represent actions such as Copy »).
     static let copySymbol = "doc.on.doc"
+    /// Les symboles système de « Modifier… » et « Supprimer… ».
+    static let editSymbol = "pencil"
+    static let deleteSymbol = "trash"
 }

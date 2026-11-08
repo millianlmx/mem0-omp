@@ -386,4 +386,70 @@ public enum MonitoringText {
 
     /// « Lu à 14 h 05 »
     public static func widgetUpdated(_ time: String) -> String { L10n.format("Lu à %@", time) }
+
+    // MARK: - Services
+
+    public static let servicesTitle = L10n.text("Services")
+    public static let servicesHint = L10n.text("La santé du serveur, de sa mémoire, de ses sauvegardes et de l’extension Chrome.")
+    public static let servicesUnreachable = L10n.text("Le serveur ne répond pas à la sonde de santé.")
+    public static let servicesAllGood = L10n.text("Tous les services sont en ordre.")
+    public static let servicesSymbol = "stethoscope"
+    public static let serviceNotConfigured = L10n.text("Non configuré")
+
+    /// Le nom d'un service (`HarnessServiceLine.Kind`).
+    public static func service(_ raw: String) -> String {
+        switch raw {
+        case "server": L10n.text("Serveur de pipelines")
+        case "database": L10n.text("Base de données")
+        case "scheduler": L10n.text("Ordonnancement")
+        case "disk": L10n.text("Disque")
+        case "oracle": L10n.text("Mémoire du projet")
+        case "memory": L10n.text("Service mem0")
+        case "backups": L10n.text("Sauvegardes")
+        default: L10n.text("Extension Chrome")
+        }
+    }
+
+    /// Le niveau d'un service (`HarnessServiceLine.Level`).
+    public static func serviceLevel(_ raw: Int) -> String {
+        switch raw {
+        case 0: L10n.text("En ordre")
+        case 2: L10n.text("À surveiller")
+        case 3: L10n.text("En panne")
+        default: L10n.text("Inconnu")
+        }
+    }
+
+    /// Le symbole d'un niveau de service.
+    public static func serviceSymbol(_ raw: Int) -> String {
+        switch raw {
+        case 0: "checkmark.circle.fill"
+        case 2: "exclamationmark.triangle.fill"
+        case 3: "xmark.octagon.fill"
+        default: "questionmark.circle"
+        }
+    }
+
+    /// Le résumé de l'Accueil : combien de services demandent un regard.
+    public static func servicesProblems(_ count: Int) -> String {
+        count == 1 ? L10n.text("1 service demande votre attention.") : L10n.format("%lld services demandent votre attention.", count)
+    }
+
+    public static func serviceVersion(_ version: String) -> String { L10n.format("Version %@", version) }
+    public static func lastTick(_ duration: String) -> String { L10n.format("Dernier tour il y a %@", duration) }
+    public static func freeSpace(_ size: String) -> String { L10n.format("%@ libres", size) }
+    public static func lostWrites(_ count: Int) -> String {
+        count == 1 ? L10n.text("1 écriture perdue") : L10n.format("%lld écritures perdues", count)
+    }
+    public static func memories(_ count: Int) -> String {
+        count == 1 ? L10n.text("1 souvenir") : L10n.format("%lld souvenirs", count)
+    }
+    public static func lastBackup(_ date: String) -> String { L10n.format("Dernière sauvegarde : %@", date) }
+    public static func lastError(_ error: String) -> String { L10n.format("Dernière erreur : %@", error) }
+
+    // MARK: - Rapport du matin
+
+    public static let digestTitle = L10n.text("Rapport du matin")
+    public static let digestSymbol = "sun.max"
+    public static func digestWindow(_ since: String) -> String { L10n.format("Depuis le %@", since) }
 }

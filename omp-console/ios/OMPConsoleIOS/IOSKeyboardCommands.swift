@@ -14,6 +14,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 import UIKit
 
@@ -42,6 +43,10 @@ enum IOSKeyboard {
     /// ⌘F : activer le champ de recherche de l'écran courant.
     static let search = IOSShortcut(title: IOSKeyboardText.search, key: IOSKeyboardText.searchKey)
 
+    /// ⌘K : la palette de commandes ; ⌘N : une nouvelle feature (ConsoleUI).
+    static let palette = IOSShortcut(title: PipelineServerText.paletteMenu, key: IOSKeyboardText.paletteKey)
+    static let newFeature = IOSShortcut(title: PipelineServerText.newFeature, key: IOSKeyboardText.newFeatureKey)
+
     /// Les raccourcis : les sections, puis Actualiser, Rechercher.
     static var all: [IOSShortcut] {
         sections.map(\.shortcut) + [refresh, search]
@@ -56,6 +61,15 @@ struct IOSCommandAction: Equatable {
     let run: @MainActor () -> Void
 
     static func == (a: Self, b: Self) -> Bool { a.owner == b.owner && a.isEnabled == b.isEnabled }
+}
+
+/// La palette publiée par la racine : ⌘K l'ouvre, ⌘N ouvre « Nouvelle feature », et
+/// ⌘F l'ouvre en recherche globale quand l'écran n'a pas son propre champ.
+struct IOSPaletteAction: Equatable {
+    let drafts: HarnessDrafts
+    let isEnabled: Bool
+
+    static func == (a: Self, b: Self) -> Bool { a.drafts === b.drafts && a.isEnabled == b.isEnabled }
 }
 
 /// La sélection de section publiée par la racine : la section affichée et le moyen
@@ -74,6 +88,8 @@ extension FocusedValues {
     @Entry var iosRefresh: IOSCommandAction?
     /// Publiée par l'écran affiché qui possède un champ de recherche (⌘F).
     @Entry var iosSearch: IOSCommandAction?
+    /// Publiée par `RootView` : la palette (⌘K, ⌘N, et ⌘F sans champ propre).
+    @Entry var iosPalette: IOSPaletteAction?
 }
 
 /// La garde modale : une feuille, une alerte ou un `confirmationDialog` est-il
@@ -100,6 +116,7 @@ struct IOSKeyboardCommands: Commands {
     @FocusedValue(\.iosSelectSection) private var selector
     @FocusedValue(\.iosRefresh) private var refresh
     @FocusedValue(\.iosSearch) private var search
+    @FocusedValue(\.iosPalette) private var palette
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {}
@@ -113,8 +130,17 @@ struct IOSKeyboardCommands: Commands {
         CommandGroup(after: .sidebar) {
             command(IOSKeyboard.refresh) { perform(refresh) }
                 .disabled(!(refresh?.isEnabled ?? false))
-            command(IOSKeyboard.search) { perform(search) }
-                .disabled(!(search?.isEnabled ?? false))
+            command(IOSKeyboard.search) {
+                if search?.isEnabled == true { perform(search) } else { openPalette(search: true) }
+            }
+            .disabled(!(search?.isEnabled ?? false) && palette == nil)
+            command(IOSKeyboard.palette) { openPalette(search: false) }
+                .disabled(palette == nil)
+            command(IOSKeyboard.newFeature) {
+                guard !IOSModalPresence.isPresenting(), let palette, palette.isEnabled else { return }
+                palette.drafts.launchSheetShown = true
+            }
+            .disabled(!(palette?.isEnabled ?? false))
         }
     }
 
@@ -126,6 +152,11 @@ struct IOSKeyboardCommands: Commands {
     @MainActor private func select(_ section: ConsoleSection) {
         guard !IOSModalPresence.isPresenting(), let selector, selector.current != section else { return }
         selector.select(section)
+    }
+
+    @MainActor private func openPalette(search: Bool) {
+        guard !IOSModalPresence.isPresenting(), let palette else { return }
+        palette.drafts.openPalette(search: search)
     }
 
     @MainActor private func perform(_ action: IOSCommandAction?) {

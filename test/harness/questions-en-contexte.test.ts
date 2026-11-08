@@ -227,17 +227,19 @@ test("questions-en-contexte/AC-6 : une notification nomme le dépôt avant la fe
 });
 
 const INBOX_VIEWS = {
+  // La boîte est ÉCRITE UNE FOIS pour les deux apps (cible ConsoleUI) : le Mac et
+  // l'iPhone/iPad compilent la même vue.
   mac: {
-    file: "omp-console/Sources/OMPConsole/Server/HarnessInboxSections.swift",
-    place: "HarnessQuestionPlaceView(",
-    context: "HarnessContextView(",
-    choice: "HarnessChoiceRow(",
+    file: "omp-console/Sources/ConsoleUI/InboxSections.swift",
+    place: "QuestionPlaceView(",
+    context: "QuestionContextView(",
+    choice: "QuestionChoiceRow(",
   },
   ios: {
-    file: "omp-console/ios/OMPConsoleIOS/IOSHarnessScreens.swift",
-    place: "IOSQuestionPlaceView(",
-    context: "IOSContextView(",
-    choice: "IOSChoiceRow(",
+    file: "omp-console/Sources/ConsoleUI/InboxSections.swift",
+    place: "QuestionPlaceView(",
+    context: "QuestionContextView(",
+    choice: "QuestionChoiceRow(",
   },
 } as const;
 
@@ -275,7 +277,7 @@ test("questions-en-contexte/AC-7 : dans les deux apps, chaque question de la bo�
 
   const planted = {
     ...sources,
-    mac: sources.mac.replace("MarkdownBlocksView(markdown: verdict.summary)", "Text(verdict.summary)"),
+    mac: sources.mac.replace("ConsoleMarkdown(markdown: verdict.summary)", "Text(verdict.summary)"),
   };
   assert.notEqual(planted.mac, sources.mac, "la faute doit pouvoir se planter");
   assert.ok(inboxFaults(planted).some((fault) => fault.includes("Text(verdict.summary)")));

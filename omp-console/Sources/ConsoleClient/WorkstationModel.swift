@@ -101,13 +101,14 @@ public final class WorkstationModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            let reply = try await harness.exchange(HarnessCall(method: "GET", path: "/v1/workstation"))
+            let call = HarnessCall(method: "GET", path: "/v1/workstation")
+            let reply = try await harness.exchange(call)
             // Un serveur antérieur au poste n'a pas la route : la section le dit, sans échec.
             if reply.status == 404 {
                 clear(.absent)
                 return
             }
-            let read: WorkstationStatus = try HarnessModel.decoded(reply)
+            let read: WorkstationStatus = try harness.decode(reply, for: call)
             status = read
             availability = .available
             let pending: WorkstationActionList = try await get("/v1/workstation/actions?state=awaiting_approval&limit=\(Self.approvalsLimit)")
@@ -210,9 +211,8 @@ public final class WorkstationModel: ObservableObject {
         isSaving = true
         defer { isSaving = false }
         do {
-            let _: QueuedReply = try HarnessModel.decoded(
-                try await harness.exchange(HarnessCall(method: "POST", path: "/v1/workstation/profile/rebuild", body: Data("{}".utf8)))
-            )
+            let call = HarnessCall(method: "POST", path: "/v1/workstation/profile/rebuild", body: Data("{}".utf8))
+            let _: QueuedReply = try harness.decode(try await harness.exchange(call), for: call)
             rebuildQueued = true
             failure = nil
             return true
@@ -250,7 +250,8 @@ public final class WorkstationModel: ObservableObject {
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
         guard let harness else { throw HarnessFailure.unreachable }
-        return try HarnessModel.decoded(try await harness.exchange(HarnessCall(method: "GET", path: path)))
+        let call = HarnessCall(method: "GET", path: path)
+        return try harness.decode(try await harness.exchange(call), for: call)
     }
 
     private func decide<Body: Encodable>(_ shown: WorkstationAction, path: String, body: Body) async -> Bool {
@@ -263,9 +264,8 @@ public final class WorkstationModel: ObservableObject {
         busy.insert(seq)
         defer { busy.remove(seq) }
         do {
-            let reply = try await harness.exchange(
-                HarnessCall(method: "POST", path: path, body: encoded, headers: ["If-Match": shown.revisionTag])
-            )
+            let call = HarnessCall(method: "POST", path: path, body: encoded, headers: ["If-Match": shown.revisionTag])
+            let reply = try await harness.exchange(call)
             // 412 : l'envoi a changé depuis son affichage ; 428 : le serveur n'a pas reçu la
             // révision. Dans les deux cas rien n'est tranché : relire, puis le dire.
             if reply.status == 412 || reply.status == 428 {
@@ -273,7 +273,7 @@ public final class WorkstationModel: ObservableObject {
                 failure = .approvalChanged
                 return false
             }
-            let decided: WorkstationActionReply = try HarnessModel.decoded(reply)
+            let decided: WorkstationActionReply = try harness.decode(reply, for: call)
             apply(decided.action)
             failure = nil
             await refresh()
@@ -307,9 +307,8 @@ public final class WorkstationModel: ObservableObject {
         isSaving = true
         defer { isSaving = false }
         do {
-            status = try HarnessModel.decoded(
-                try await harness.exchange(HarnessCall(method: "PUT", path: "/v1/workstation/settings", body: encoded))
-            )
+            let call = HarnessCall(method: "PUT", path: "/v1/workstation/settings", body: encoded)
+            status = try harness.decode(try await harness.exchange(call), for: call)
             failure = nil
             return true
         } catch {

@@ -46,6 +46,11 @@ public final class MemoryAccess: ObservableObject {
         server.map { MemoryReader(server: $0, transport: transport) }
     }
 
+    /// Les deux écritures permises depuis la liste (corriger, supprimer).
+    public var writer: MemoryWriter? {
+        server.map { MemoryWriter(server: $0, transport: transport) }
+    }
+
     /// Relit l'adresse, le jeton et la portée choisie.
     public func load() async {
         defer { isLoaded = true }

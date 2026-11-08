@@ -74,6 +74,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var notBefore: Date?
     /// La cause du dernier échec d'étape (`timeout`, `rate_limit`, `network`…), ou `nil`.
     public var lastFailCause: String?
+    /// Le projet de la feature, ou `nil` pour une feature lancée seule.
+    public var projectId: String?
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -82,7 +84,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         fixes: Int = 0, modules: [String] = [], verdict: HarnessVerdict? = nil, mergeSha: String? = nil,
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
-        createdAt: Double = 0, updatedAt: Double = 0
+        projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
     ) {
         self.id = id
         self.repo = repo
@@ -104,13 +106,14 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.mergeRetries = mergeRetries
         self.notBefore = notBefore
         self.lastFailCause = lastFailCause
+        self.projectId = projectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, createdAt, updatedAt
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause` :
@@ -137,6 +140,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         mergeRetries = try container.decodeIfPresent(Int.self, forKey: .mergeRetries) ?? 0
         notBefore = try container.decodeIfPresent(Double.self, forKey: .notBefore).map { Date(timeIntervalSince1970: $0 / 1000) }
         lastFailCause = try container.decodeIfPresent(String.self, forKey: .lastFailCause)
+        projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         createdAt = try container.decode(Double.self, forKey: .createdAt)
         updatedAt = try container.decode(Double.self, forKey: .updatedAt)
     }
@@ -163,6 +167,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encode(mergeRetries, forKey: .mergeRetries)
         try container.encodeIfPresent(notBefore.map { ($0.timeIntervalSince1970 * 1000).rounded() }, forKey: .notBefore)
         try container.encodeIfPresent(lastFailCause, forKey: .lastFailCause)
+        try container.encodeIfPresent(projectId, forKey: .projectId)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
@@ -738,10 +743,6 @@ public struct HarnessRepo: Codable, Equatable, Sendable, Identifiable {
     }
 
     public var id: String { name }
-}
-
-struct HarnessStatus: Decodable {
-    var repos: [HarnessRepo]
 }
 
 struct HarnessProjects: Decodable {

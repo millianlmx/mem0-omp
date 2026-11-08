@@ -33,6 +33,17 @@
 	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.omp.console</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ompconsole</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OMP Console joint votre serveur de pipelines et votre mémoire quand ils sont sur votre réseau local.</string>
 	<key>INAlternativeAppNames</key>

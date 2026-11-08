@@ -91,3 +91,20 @@ final class IOSLiveActivityCenter: ObservableObject {
         }
     }
 }
+
+/// Le geste propre à l'iPhone/iPad dans le menu d'une feature (`ConsoleShell.runActions`) :
+/// la suivre sur l'écran verrouillé, ou arrêter de la suivre.
+struct IOSLiveActivityMenuItem: View {
+    @ObservedObject var server: HarnessModel
+    @EnvironmentObject private var activities: IOSLiveActivityCenter
+    let run: HarnessRun
+
+    var body: some View {
+        if activities.isAvailable, run.phase.map({ ![.merged, .failed, .cancelled].contains($0) }) ?? false {
+            Button(
+                activities.isFollowing(run.id) ? MonitoringText.activityStop : MonitoringText.activityStart,
+                systemImage: MonitoringText.activitySymbol
+            ) { activities.toggle(run, with: server) }
+        }
+    }
+}

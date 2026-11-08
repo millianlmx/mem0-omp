@@ -205,3 +205,31 @@ public enum MemorySearch {
         return (Array(kept), rows.count, scored)
     }
 }
+
+/// La normalisation des étiquettes d'un souvenir, en UNE formule partagée par la
+/// feuille d'édition, celle de création et les clients HTTP : découpage aux virgules,
+/// trim, segments vides retirés, doublons retirés (l'ordre d'apparition est
+/// conservé), jointure par « , ». `""` signifie « aucune étiquette ».
+public enum MemoryTags {
+    /// Les étiquettes d'un champ de saisie, dans l'ordre d'apparition.
+    public static func list(_ raw: String) -> [String] {
+        var seen: Set<String> = []
+        var kept: [String] = []
+        for segment in raw.split(separator: ",") {
+            let tag = segment.trimmingCharacters(in: .whitespaces)
+            guard !tag.isEmpty, seen.insert(tag).inserted else { continue }
+            kept.append(tag)
+        }
+        return kept
+    }
+
+    /// La forme envoyée au service : `"a,b"`, ou `""` pour aucune.
+    public static func normalized(_ tags: [String]) -> String {
+        tags.joined(separator: ",")
+    }
+
+    /// La forme d'un champ de saisie : `"a, b"`.
+    public static func display(_ tags: [String]) -> String {
+        tags.joined(separator: ", ")
+    }
+}

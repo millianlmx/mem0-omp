@@ -27,7 +27,7 @@ struct IOSSectionView: View {
         case .memory, .terminal, .files:
             // Terminal et Fichiers ne sont jamais atteints (`IOSSection.all`).
             // « Relier le serveur » de l'écran Mémoire ouvre la feuille Serveur.
-            IOSMemoryScreen(client: memory, recipe: state, graphRecipe: memoryRecipe, showConnection: $drafts.serverSheetShown)
+            IOSMemoryScreen(client: memory, recipe: state, graphRecipe: memoryRecipe, showConnection: $drafts.serverSheetShown, searchRequest: $drafts.memorySearchRequest)
         }
     }
 }

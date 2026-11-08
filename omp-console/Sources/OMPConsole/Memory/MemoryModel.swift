@@ -67,6 +67,15 @@ final class MemoryModel: ObservableObject {
     /// Faux tant que la première sonde n'a pas rendu : la vue n'affiche pas
     /// « Aucun projet ouvert » avant de savoir (S-4, S-6).
     @Published private(set) var prepared = false
+    /// La correction ouverte depuis la LISTE (feuille partagée `MemoryEditSheet`), ses
+    /// champs, la suppression qui attend confirmation, et l'échec de la dernière
+    /// écriture (la phrase à l'écran). Chaque écriture réussie recharge la liste.
+    @Published private(set) var editing: MemoryRow?
+    @Published var draftText = ""
+    @Published var draftTags = ""
+    @Published private(set) var pendingDelete: MemoryRow?
+    @Published private(set) var isWriting = false
+    @Published private(set) var writeError: String?
 
     /// L'adresse affichée en en-tête, celle de `MEM0_HTTP_URL` EFFECTIF (S-7).
     let address: String
@@ -274,6 +283,66 @@ final class MemoryModel: ObservableObject {
     func suspend() {
         inFlight?.cancel()
         inFlight = nil
+    }
+
+    // MARK: - Gestes : corriger ou supprimer depuis la liste
+
+    /// Ouvre la correction d'un souvenir, pré-remplie VERBATIM (texte, étiquettes).
+    func beginEdit(_ row: MemoryRow) {
+        draftText = row.text
+        draftTags = MemoryTags.display(row.tags)
+        writeError = nil
+        editing = row
+    }
+
+    func cancelEdit() {
+        editing = nil
+        writeError = nil
+    }
+
+    /// Enregistre la correction ; un échec laisse la feuille ouverte avec sa phrase.
+    func saveEdit() async {
+        guard let row = editing, !isWriting, !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            try await service.update(id: row.id, text: draftText, tags: MemoryTags.list(draftTags))
+        } catch {
+            writeError = MemoryText.saveFailed
+            return
+        }
+        editing = nil
+        writeError = nil
+        await perform { await self.loadCurrent() }
+    }
+
+    func requestDelete(_ row: MemoryRow) {
+        writeError = nil
+        pendingDelete = row
+    }
+
+    func cancelDelete() {
+        pendingDelete = nil
+    }
+
+    /// La suppression confirmée : le service, puis la liste relue sans le souvenir.
+    func confirmDelete() async {
+        guard let row = pendingDelete else { return }
+        pendingDelete = nil
+        do {
+            try await service.delete(id: row.id)
+        } catch {
+            writeError = MemoryText.saveFailed
+            return
+        }
+        if selectedId == row.id { selectedId = nil }
+        await perform { await self.loadCurrent() }
+    }
+
+    /// Une recherche demandée d'ailleurs (palette ⌘F) : la requête est posée puis lancée.
+    func search(_ text: String) async {
+        updateQuery(text)
+        await search()
     }
 
     // MARK: - Travail

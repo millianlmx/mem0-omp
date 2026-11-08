@@ -24,9 +24,12 @@ public struct HarnessFeatureDraft: Equatable, Sendable, Identifiable {
     }
 
     /// Les modules saisis, un par chemin, sans doublon ; vide si rien n'est saisi.
-    public var moduleList: [String] {
+    public var moduleList: [String] { Self.modules(of: modules) }
+
+    /// Les chemins d'une saisie de modules (virgules, espaces ou lignes), sans doublon.
+    public static func modules(of text: String) -> [String] {
         var seen = Set<String>()
-        return modules
+        return text
             .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" })
             .map { String($0).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -73,6 +76,24 @@ public final class HarnessDrafts: ObservableObject {
     /// Une feature à lancer.
     @Published public var runTitle = ""
     @Published public var runRequest = ""
+    /// Les options du lancement d'une feature (priorité, voie, modules, cadrage, budget).
+    @Published public var runOptions = HarnessLaunchDraft()
+    /// La feuille « Nouvelle feature » (⌘N) est ouverte.
+    @Published public var launchSheetShown = false
+    /// La palette de commandes (⌘K) est ouverte, et ce qui y est tapé ; `paletteSearch`
+    /// l'ouvre en recherche globale (⌘F : features et mémoire).
+    @Published public var paletteShown = false
+    @Published public var paletteQuery = ""
+    /// L'entrée surlignée de la palette (flèches), et la commande choisie, exécutée
+    /// une fois la palette refermée (une feuille ne s'ouvre pas sous une autre).
+    @Published public var paletteSelection: HarnessPaletteCommand?
+    @Published public var palettePending: HarnessPaletteCommand?
+    @Published public var paletteSearch = false
+    /// Une recherche de mémoire demandée depuis la palette : l'écran Mémoire la soumet,
+    /// puis l'oublie.
+    @Published public var memorySearchRequest: String?
+    /// L'historique des features se montre en kanban (Mac) plutôt qu'en tableau.
+    @Published public var historyBoard = false
     /// Un projet à lancer, feature par feature.
     @Published public var projectTitle = ""
     @Published public var features: [HarnessFeatureDraft] = [HarnessFeatureDraft()]
@@ -152,17 +173,28 @@ public final class HarnessDrafts: ObservableObject {
     }
 
     public var canLaunchRun: Bool {
-        !runTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !runRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !runTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !runRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && runOptions.problem == nil
     }
 
     public var canLaunchProject: Bool {
         !projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !features.isEmpty && features.allSatisfy(\.isComplete)
     }
 
-    /// Après un lancement réussi, la saisie est remise à zéro.
+    /// Ouvre la palette (⌘K) ou la recherche globale (⌘F), saisie vide.
+    public func openPalette(search: Bool) {
+        paletteQuery = ""
+        paletteSelection = nil
+        paletteSearch = search
+        paletteShown = true
+    }
+
+    /// Après un lancement réussi, la saisie est remise à zéro, options comprises.
     public func clearRun() {
         runTitle = ""
         runRequest = ""
+        runOptions = HarnessLaunchDraft()
     }
 
     public func clearProject() {

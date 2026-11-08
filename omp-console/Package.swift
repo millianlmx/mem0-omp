@@ -28,6 +28,7 @@ let package = Package(
     products: [
         .library(name: "ConsoleCore", targets: ["ConsoleCore"]),
         .library(name: "ConsoleClient", targets: ["ConsoleClient"]),
+        .library(name: "ConsoleUI", targets: ["ConsoleUI"]),
         .executable(name: "OMPConsole", targets: ["OMPConsole"]),
     ],
     targets: [
@@ -52,15 +53,23 @@ let package = Package(
         // l'autre. Dépendance UNIQUE : ConsoleCore — ni AppKit, ni UIKit, ni Cocoa
         // (garde « Noyau partagé » de check.sh).
         .target(name: "ConsoleClient", dependencies: ["ConsoleCore"], path: "Sources/ConsoleClient"),
+        // Cible PARTAGÉE macOS/iOS des ÉCRANS écrits une seule fois : la boîte de
+        // l'humain, le Poste, l'historique des features, le lancement avec options,
+        // la priorité, la palette de commandes, la carte des services et la feuille
+        // d'un souvenir. SwiftUI et Charts seulement (ni AppKit, ni UIKit : garde
+        // « Noyau partagé » de check.sh) ; ce qui diffère d'une plateforme à l'autre
+        // (rendu Markdown, direct d'une session, Live Activity) est fourni par l'app
+        // dans l'environnement (`ConsoleShell`). Tout réseau passe par ConsoleClient.
+        .target(name: "ConsoleUI", dependencies: ["ConsoleCore", "ConsoleClient"], path: "Sources/ConsoleUI"),
         // Cible exécutable : le fichier d'entrée ne s'appelle PAS main.swift,
         // sinon `@main` est refusé.
         // ConsoleClient : le client du serveur de pipelines (`HarnessModel`), partagé
         // avec l'app iOS. Seuls les fichiers qui l'importent le voient ; les types
         // homonymes de la coque (`URLSessionTransport`) restent prioritaires dans
-        // leur module.
+        // leur module. ConsoleUI : les écrans partagés avec l'app iOS.
         .executableTarget(
             name: "OMPConsole",
-            dependencies: ["ConsoleCore", "ConsoleClient"],
+            dependencies: ["ConsoleCore", "ConsoleClient", "ConsoleUI"],
             path: "Sources/OMPConsole"
         ),
         // Tests en Swift Testing, jamais XCTest : sous les Command Line Tools

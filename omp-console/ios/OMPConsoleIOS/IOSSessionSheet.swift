@@ -8,7 +8,7 @@ import SwiftUI
 // outil qu'il lance, avec son résultat, en temps réel — et, pour une feature, les
 // fichiers qu'elle touche (leurs différences en un toucher), la sortie de ses tests
 // et sa frise, dans des onglets. Ouverte depuis le menu contextuel d'une feature
-// (`IOSHarnessRunRow`) ou d'un audit.
+// (`RunRow`, cible ConsoleUI) ou d'un audit.
 //
 // Chaque outil montre sa commande (son appel), même quand l'agent a donné son
 // intention, et un appel de sous-agents montre chacun d'eux en une ligne, en direct.

@@ -300,7 +300,7 @@ const UNTRANSLATED: readonly Untranslated[] = [
     name: "stepKinds",
     reason: "codes d'étape du serveur",
   },
-  ...["refreshKey", "searchKey"].map((name) => ({
+  ...["refreshKey", "searchKey", "paletteKey", "newFeatureKey"].map((name) => ({
     file: "omp-console/ios/OMPConsoleIOS/IOSKeyboardText.swift",
     name,
     reason: "touche d'un raccourci clavier",
