@@ -31,8 +31,9 @@ import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
-import { ARTIFACTS_DIR } from "./git.ts";
+import { ARTIFACTS_DIR, isTestFile } from "./git.ts";
 import type { HeavyResult } from "./heavy.ts";
+import { matchesGlob } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
@@ -46,11 +47,18 @@ import { RunnerExited } from "./rpc.ts";
 import { hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession, STEP_TIMEOUT_PREFIX, providerOfLabel } from "./runner-session.ts";
 import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
-import type { CriterionDrift, MergeDecision, Verdict } from "./verdict.ts";
+import type { CriterionDrift, MergeDecision, ReviewEvidence, Verdict } from "./verdict.ts";
 import { criteriaDrift, mergeDecision, parseAcIds } from "./verdict.ts";
 
 /** Les specs telles qu'à la clôture de /specs (et donc à leur validation) : artefact interne. */
 export const SPECS_BASELINE = "_specs.baseline.md";
+
+/**
+ * Ce que la revue a établi quand elle a rendu son verdict (`{merge, evidence}`) : artefact interne,
+ * que l'autonomie par paliers relit pour lever une attente de verdict (autonomy-gates.ts). Il n'entre
+ * ni dans la vue du run ni dans le journal public, et le runner ne le voit pas.
+ */
+export const REVIEW_EVIDENCE = "_review-evidence.json";
 
 /** L'unité du runner contradicteur d'une étape (l'arrêt forcé la retrouve au redémarrage). */
 export function challengeUnit(runId: string, stepId: number): string {
@@ -807,7 +815,7 @@ export class StepExecutor {
       ...(gate !== null ? { gateNeeded: gate.length > 0, gateReasons: gate } : {}),
       ...(remaining !== null ? { continueImpl: remaining } : {}),
     };
-    let review: { verdict: Verdict; merge: MergeDecision; head: string } | null = null;
+    let review: { verdict: Verdict; merge: MergeDecision; evidence: ReviewEvidence } | null = null;
     if (step === "review") {
       // La revue a pu rebaser à la main (conflits) : la base suit main si elle la contient.
       await this.#adoptMainIfRebased(run);
@@ -829,7 +837,7 @@ export class StepExecutor {
       const acIds = [
         ...new Set([...parseAcIds(store.getArtifact(run.id, SPECS_BASELINE) ?? current), ...parseAcIds(current)]),
       ];
-      const merge = mergeDecision(verdict, {
+      const mergeEvidence = {
         fullTests,
         diffLines: await git.diffLines(worktree, base, config.review.diffCount),
         maxDiffLines: config.review.maxDiffLines,
@@ -838,11 +846,21 @@ export class StepExecutor {
         specsDrift: this.#specsDrift(run.id),
         autoMergeRisk: config.review.autoMergeRisk,
         touchedFiles: await git.touchedFiles(worktree, base),
-      });
+      };
+      const merge = mergeDecision(verdict, mergeEvidence);
       const criteriaMissing = acIds.filter(
         (id) => !verdict.criteria.some((criterion) => criterion.id === id && criterion.status === "pass"),
       );
-      review = { verdict, merge, head: await git.revParse(worktree, "HEAD") };
+      // Les tests que le run ajoute ou modifie (un test supprimé ne prouve rien) : selon `tests.pattern`, sinon par convention.
+      const reproTests = (await git.changes(worktree, base))
+        .filter(
+          (change) =>
+            (change.status === "A" || change.status === "M") &&
+            (repo.tests.pattern !== null ? matchesGlob(repo.tests.pattern, change.path) : isTestFile(change.path)),
+        )
+        .map((change) => change.path);
+      const head = await git.revParse(worktree, "HEAD");
+      review = { verdict, merge, evidence: { ...mergeEvidence, reproTests, reviewSha: head } };
       outcome = {
         kind: "done",
         escalations,
@@ -853,7 +871,13 @@ export class StepExecutor {
     }
     store.transaction(() => {
       if (review) {
-        store.updateRun(run.id, { verdict: review.verdict, lastReviewSha: review.head });
+        store.updateRun(run.id, { verdict: review.verdict, lastReviewSha: review.evidence.reviewSha });
+        store.putArtifact(
+          run.id,
+          REVIEW_EVIDENCE,
+          JSON.stringify({ merge: review.merge, evidence: review.evidence }),
+          stepRow.id,
+        );
         this.#ctx.event("review", run.id, { verdict: review.verdict, merge: review.merge });
       }
       if (remaining !== null) {

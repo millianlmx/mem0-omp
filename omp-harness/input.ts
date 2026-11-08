@@ -1,5 +1,7 @@
 // Les champs d'un corps JSON (REST) ou des arguments d'un outil (MCP) : mêmes contrôles,
 // mêmes messages, pour que la route et l'outil d'un même geste refusent de la même façon.
+import { WORK_KINDS } from "./autonomy-rules.ts";
+import type { WorkKind } from "./autonomy-rules.ts";
 import type { Client } from "./auth.ts";
 import { canSeeRepo } from "./auth.ts";
 import { HarnessError } from "./errors.ts";
@@ -61,14 +63,37 @@ export function instructionsInput(body: Record<string, unknown>, key: string, re
   return value;
 }
 
-/** Le lancement d'un run : les contrôles de `POST /v1/runs`, dans le même ordre. */
-export function newRunInput(body: Record<string, unknown>, client: Client): NewRunInput {
+/** Le plus grand nombre de labels d'un run, et la plus longue longueur de l'un d'eux. */
+const MAX_LABELS = 20;
+const MAX_LABEL_LENGTH = 50;
+
+/** Le type de travail et les labels d'un run (`POST /v1/runs`) : facultatifs, contrôlés avant le dépôt. */
+function typedInput(body: Record<string, unknown>): { kind?: WorkKind; labels?: string[] } {
+  const kind = WORK_KINDS.find((candidate) => candidate === body.kind);
+  if (body.kind !== undefined && kind === undefined) throw new HarnessError(400, `kind : ${WORK_KINDS.join(" | ")}`);
+  const raw = stringList(body.labels, "labels");
+  const labels = [...new Set((raw ?? []).map((label) => label.trim()))];
+  if (raw !== undefined && (raw.length > MAX_LABELS || labels.some((l) => l === "" || l.length > MAX_LABEL_LENGTH)))
+    throw new HarnessError(400, `labels : ${MAX_LABELS} au plus, de 1 à ${MAX_LABEL_LENGTH} caractères chacun`);
+  return { ...(kind !== undefined ? { kind } : {}), ...(labels.length > 0 ? { labels } : {}) };
+}
+
+/**
+ * Le lancement d'un run : les contrôles de `POST /v1/runs`, dans le même ordre. `typed` : le
+ * client déclare type et labels (REST seulement : un outil MCP ne les pose pas, décision #12).
+ */
+export function newRunInput(
+  body: Record<string, unknown>,
+  client: Client,
+  options: { typed?: boolean } = {},
+): NewRunInput {
   const modules = stringList(body.modules, "modules");
   const slug = text(body, "slug", false);
   const needs = text(body, "req", false);
   const priority = integer(body.priority, "priority");
   const budget = budgetUsd(body.budgetUsd);
   if (body.lane !== undefined && body.lane !== "full") throw new HarnessError(400, 'lane : "full" ou absent');
+  const typed = options.typed === true ? typedInput(body) : {};
   const repo = text(body, "repo");
   requireRepo(client, repo);
   return {
@@ -80,6 +105,7 @@ export function newRunInput(body: Record<string, unknown>, client: Client): NewR
     ...(modules ? { modules } : {}),
     ...(priority !== undefined ? { priority } : {}),
     ...(budget !== undefined ? { budgetUsd: budget } : {}),
+    ...typed,
     ...(body.lane === "full" ? { lane: "full" as const } : {}),
   };
 }

@@ -21,6 +21,8 @@
 // (modules disjoints seulement) et le plafond de chaque dépôt (`maxParallel`).
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
+import { AutonomyGates } from "./autonomy-gates.ts";
+import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
 import { AuditPilot } from "./pilot.ts";
@@ -88,6 +90,9 @@ export type NewRunInput = {
   priority?: number;
   lane?: "full";
   budgetUsd?: number;
+  /** Le type de travail et les labels déclarés par le créateur (`POST /v1/runs`), lus par l'autonomie par paliers. */
+  kind?: WorkKind;
+  labels?: string[];
 };
 
 export type NewProjectInput = {
@@ -174,6 +179,8 @@ export class Orchestrator {
   readonly schedules: Schedules;
   /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
   readonly vigie: VigieDesk;
+  /** L'autonomie par paliers : lève seule certaines attentes humaines, selon les règles du dépôt. */
+  readonly #autonomy: AutonomyGates;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -204,6 +211,7 @@ export class Orchestrator {
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
       steer: (runId, message) => this.#live.get(runId)?.session?.steer(message) ?? Promise.resolve(false),
       specsAccepted: (run) => this.#splits.accepted(run),
+      liftable: (run) => this.#autonomy.liftable(run),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
     this.pilot = new AuditPilot(this.#ctx, {
@@ -213,6 +221,11 @@ export class Orchestrator {
     });
     this.issues = new IssueDesk(this.#ctx, { createRun: (input, actor) => this.createRun(input, actor) });
     this.vigie = new VigieDesk(this.#ctx, this.issues);
+    this.#autonomy = new AutonomyGates(this.#ctx, {
+      validate: (runId, approve, reason, actor, inscribe) =>
+        this.#human.validate(runId, approve, reason, actor, inscribe),
+      launchedByVigie: (runId) => this.vigie.launchedByVigie(runId),
+    });
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
@@ -457,6 +470,11 @@ export class Orchestrator {
         level: "error",
         err,
       });
+    }
+    try {
+      await this.#autonomy.tick();
+    } catch (err) {
+      this.#ctx.log(`autonomie : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     // Les planifications dues d'abord : un run ou un audit qu'elles créent part dès ce tour.
     try {
@@ -767,11 +785,24 @@ export class Orchestrator {
             : run.step === "review" && run.lastFailCause === "missing_output"
               ? run.lastFailCause
               : null;
+        // Une attente que l'autonomie va lever seule : les notifications sont retenues (`hold`) jusqu'à
+        // son tour, qui valide ou y renonce et les publie (autonomy-gates.ts).
+        const held =
+          transition.state === "awaiting_human"
+            ? this.#autonomy.evaluate({
+                ...run,
+                state: transition.state,
+                step: transition.step,
+                reason: transition.reason,
+              })
+            : null;
         // Des specs acceptées sans porte : leur découpage part dans la même transaction.
         const moved = store.transaction(() => {
           const next = this.#ctx.transition(run, transition, ["running"], {
             patch: { notBefore: transition.notBefore, lastFailCause },
+            quiet: held?.ok === true,
           });
+          if (next && held?.ok) this.#ctx.event("autonomy", run.id, { action: "hold", gate: held.gate, rev: next.rev });
           if (next && acceptsSpecs(run.step, transition)) this.#splits.accepted(next);
           return next;
         });
@@ -842,6 +873,8 @@ export class Orchestrator {
         modules: input.modules ?? [],
         priority,
         createdBy: actor.by,
+        ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        ...(input.labels !== undefined ? { labels: input.labels } : {}),
         ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id, reason: waitReason(input.afterRun) } : {}),
