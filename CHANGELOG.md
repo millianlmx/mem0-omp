@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.18.1 — 2026-11-08
+
+- fix(release): une release se recalcule quand main bouge ; déploiement continu par la branche deploy et commit exposé (#346) (8726ccb)
+
 ## omp-harness 1.18.0 — 2026-11-08
 
 - feat(harness,mem0-rs): politique par dépôt — modèles, fournisseurs, identité, compte gh et mémoire cloisonnée (#340) (ec4985b)
