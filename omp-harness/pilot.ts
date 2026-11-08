@@ -40,8 +40,11 @@ export const PILOT_ACTIONS: Record<HumanWait, readonly PilotAction[]> = {
   budget: [],
 };
 
-/** Pourquoi une attente revient à l'humain sans que le pilote la lise. */
-const HUMAN_ONLY: Partial<Record<HumanWait, string>> = {
+/**
+ * Pourquoi une attente revient à l'humain sans que le pilote la lise. La boucle humaine
+ * (gestures.ts) refuse aussi ces gestes en 403 à tout pilote, client pilote (la vigie) compris.
+ */
+export const HUMAN_ONLY: Partial<Record<HumanWait, string>> = {
   irreversible: "specs à geste irréversible : la validation revient à l'humain",
   budget: "budget dépassé : seul l'humain en accorde un autre",
 };

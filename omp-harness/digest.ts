@@ -1,9 +1,9 @@
 // Le rapport du matin : ce que le système a fait seul pendant une fenêtre [depuis, maintenant]
 // — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs,
-// planifications lancées ou manquées, et coût, puis la santé (mémoire, sauvegardes) quand
-// elle est connue. Construit par une fonction PURE sur la base (`digestOf`), servi par
-// `GET /v1/digest` et l'outil MCP `digest`, et posté chaque jour à `notify.digestHour` par
-// `DigestSender`.
+// planifications lancées ou manquées, ce qu'a fait la vigie, et coût, puis la santé (mémoire,
+// sauvegardes) quand elle est connue. Construit par une fonction PURE sur la base (`digestOf`),
+// servi par `GET /v1/digest` et l'outil MCP `digest`, et posté chaque jour à `notify.digestHour`
+// par `DigestSender`.
 import { HARNESS_COMMIT } from "./build-info.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { DecisionRow, EventRow, RepoFilter, RunRow, Store } from "./db.ts";
@@ -11,6 +11,7 @@ import { sumUsage } from "./db.ts";
 import type { LogLine } from "./logger.ts";
 import type { Notifier } from "./notify.ts";
 import type { BackupStatus, MemoryStatus } from "./observability.ts";
+import { vigieDigestLines } from "./vigie/desk.ts";
 
 /** La fenêtre par défaut : les dernières 24 heures. */
 export const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -159,6 +160,7 @@ export function digestOf(
       failed.map((run) => `${feature(run, run.id)} : ${flat(run.reason ?? "cause inconnue")}`),
     ),
     section("Planifications", schedules.map(scheduleLine)),
+    section("Vigie", vigieDigestLines(store, since, until, repos)),
   ].filter((part): part is string => part !== null);
   const parts = sections.length > 0 ? sections : ["Rien de neuf."];
   // Le coût n'est dit que si la consommation des agents est connue sur la fenêtre.

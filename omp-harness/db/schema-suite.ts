@@ -93,4 +93,37 @@ export const MIGRATIONS_SUITE: readonly string[] = [
   // avant que le code dont elle dépend soit sur main.
   `ALTER TABLE runs ADD COLUMN after_run TEXT;
    CREATE INDEX runs_after_run ON runs (after_run);`,
+  // La vigie (vigie/) : un incident par empreinte, de son premier signal à la fermeture de
+  // son issue — tri, issue publiée, run de correction (un seul), surveillance après le merge.
+  `CREATE TABLE vigie_incidents (
+     fingerprint TEXT PRIMARY KEY,
+     source TEXT NOT NULL,
+     location TEXT NOT NULL,
+     message TEXT NOT NULL,
+     repo TEXT,
+     run_id TEXT,
+     status TEXT NOT NULL,
+     count INTEGER NOT NULL DEFAULT 1,
+     first_at INTEGER NOT NULL,
+     last_at INTEGER NOT NULL,
+     context TEXT,
+     triage TEXT,
+     triage_cost REAL NOT NULL DEFAULT 0,
+     triaged_at INTEGER,
+     draft TEXT,
+     issue_number INTEGER,
+     issue_url TEXT,
+     published_at INTEGER,
+     commented_count INTEGER NOT NULL DEFAULT 1,
+     commented_at INTEGER,
+     fix_run_id TEXT,
+     fixed_at INTEGER,
+     merged_at INTEGER,
+     closed_at INTEGER,
+     note TEXT,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX vigie_incidents_status ON vigie_incidents (status, last_at);
+   CREATE INDEX vigie_incidents_fix_run ON vigie_incidents (fix_run_id);
+   CREATE INDEX vigie_incidents_issue ON vigie_incidents (repo, issue_number);`,
 ];

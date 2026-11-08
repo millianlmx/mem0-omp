@@ -15,6 +15,10 @@
 // serveur (`main.ts --add-client <nom> --approver`, `harness.sh approver`), jamais par
 // l'API. Le jeton historique n'est jamais approbateur.
 //
+// Un client `pilot` (la vigie, vigie/) est un agent, pas un humain : operator, jamais
+// approbateur, et la boucle humaine lui refuse en 403 les gestes réservés à l'humain
+// (gestures.ts : geste irréversible, budget, escalades, envois du poste).
+//
 // Le fichier (`clientsFile`, 0600) est relu à chaque changement de date : un client
 // ajouté ou révoqué par la ligne de commande vaut tout de suite, sans redémarrage.
 // Un fichier illisible (édité à la main, JSON cassé) ne casse pas l'API : le dernier
@@ -29,8 +33,18 @@ export type Role = "viewer" | "operator" | "admin";
 
 export const ROLES: readonly Role[] = ["viewer", "operator", "admin"];
 
-/** Un client tel que l'API le montre (jamais son jeton). `approver` : il tranche les envois du poste. */
-export type Client = { name: string; role: Role; repos: string[] | "*"; createdAt: number; approver: boolean };
+/**
+ * Un client tel que l'API le montre (jamais son jeton). `approver` : il tranche les envois du poste ;
+ * `pilot` : un agent (la vigie), à qui les gestes réservés à l'humain sont refusés.
+ */
+export type Client = {
+  name: string;
+  role: Role;
+  repos: string[] | "*";
+  createdAt: number;
+  approver: boolean;
+  pilot: boolean;
+};
 
 type StoredClient = Client & { tokenSha256: string };
 
@@ -39,7 +53,7 @@ type ClientsFile = { clients: StoredClient[] };
 /** Le nom du client du jeton historique. */
 export const LEGACY_CLIENT = "admin";
 
-const LEGACY: Client = { name: LEGACY_CLIENT, role: "admin", repos: "*", createdAt: 0, approver: false };
+const LEGACY: Client = { name: LEGACY_CLIENT, role: "admin", repos: "*", createdAt: 0, approver: false, pilot: false };
 
 function digest(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
@@ -121,8 +135,8 @@ export class ClientRegistry {
               /^[0-9a-f]{64}$/.test(entry.tokenSha256) &&
               ROLES.includes(entry.role),
           )
-          // Un fichier d'avant les approbateurs : aucun client ne l'est.
-          .map((entry) => ({ ...entry, approver: entry.approver === true }))
+          // Un fichier d'avant les approbateurs (ou les pilotes) : aucun client ne l'est.
+          .map((entry) => ({ ...entry, approver: entry.approver === true, pilot: entry.pilot === true }))
       : [];
   }
 
@@ -166,8 +180,15 @@ export class ClientRegistry {
   /**
    * Crée un client et rend son jeton, montré UNE fois (seule son empreinte est gardée).
    * `approver` : réservé à la ligne de commande du serveur, admin sur tous les dépôts.
+   * `pilot` : un agent (la vigie), operator ou viewer, jamais approbateur.
    */
-  add(name: string, role: Role, repos: string[] | "*", approver = false): { client: Client; token: string } {
+  add(
+    name: string,
+    role: Role,
+    repos: string[] | "*",
+    approver = false,
+    pilot = false,
+  ): { client: Client; token: string } {
     this.#reloadForWrite();
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name))
       throw new Error(`nom de client invalide : ${name} (lettres, chiffres, . _ -)`);
@@ -178,6 +199,8 @@ export class ClientRegistry {
       throw new Error("repos : « * » ou une liste de noms de dépôts");
     if (approver && (role !== "admin" || repos !== "*"))
       throw new Error("un approbateur est admin sur tous les dépôts");
+    if (pilot && (approver || role === "admin"))
+      throw new Error("un client pilote n'est ni admin ni approbateur : c'est un agent, pas l'humain");
     const token = randomBytes(32).toString("hex");
     const client: StoredClient = {
       name,
@@ -185,6 +208,7 @@ export class ClientRegistry {
       repos,
       createdAt: Date.now(),
       approver,
+      pilot,
       tokenSha256: digest(token).toString("hex"),
     };
     this.#clients = [...this.#clients, client];
@@ -210,5 +234,6 @@ function publicOf(client: StoredClient): Client {
     repos: client.repos,
     createdAt: client.createdAt,
     approver: client.approver,
+    pilot: client.pilot,
   };
 }

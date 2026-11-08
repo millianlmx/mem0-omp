@@ -365,6 +365,29 @@ checkout_ref() {
   echo "· clone sur $ref ($(git -C "$top" rev-parse --short=12 HEAD))"
 }
 
+# La vigie (service `vigie`) : son client pilote — operator, jamais approbateur — recréé
+# s'il a disparu, et ses secrets : son jeton, celui de la mémoire et les clés des modèles
+# de ses sessions, jamais un jeton GitHub (les issues passent par le harness, qui caviarde).
+vigie_secrets() {
+  install -d -m 0700 "$SECRETS/vigie"
+  local file="$SECRETS/vigie/vigie.env" token
+  token="$(setting VIGIE_TOKEN "$file")"
+  if [ -z "$token" ] || ! harness_main --list-clients 2>/dev/null | grep -q $'^vigie\t.*pilote$'; then
+    harness_main --revoke-client vigie >/dev/null 2>&1 || true
+    token="$(harness_main --add-client vigie --role operator --pilot 2>/dev/null || true)"
+  fi
+  if [ -z "$token" ]; then
+    echo "✗ client de la vigie non créé : la vigie attendra un prochain $SELF up" >&2
+    return 0
+  fi
+  umask 077
+  {
+    printf 'VIGIE_TOKEN=%s\n' "$token"
+    grep -E '^(MEM0_HTTP_TOKEN|[A-Z_]*API_KEY)=' "$SECRETS/runner.env" || true
+  } > "$file"
+  umask 022
+}
+
 cmd_up() {
   local previous ref="" rest=()
   previous="$(setting OMP_HARNESS_OMLX_MODEL "$ROOT/compose.env")"
@@ -388,8 +411,8 @@ cmd_up() {
   command -v "$ENGINE" >/dev/null || die "$ENGINE introuvable : installe Docker ou podman"
   [ -z "$OMLX_MODEL" ] || probe_omlx
   install -d -m 0700 "$ROOT" "$SECRETS"
-  install -d "$ROOT/state" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
-    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo"
+  install -d "$ROOT/state" "$ROOT/state/logs" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
+    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/vigie"
   chmod 0700 "$ROOT/home/.ssh"
 
   write_compose_env
@@ -403,6 +426,7 @@ cmd_up() {
   "$ENGINE" image inspect "$TEST_IMAGE" >/dev/null 2>&1 || "$ENGINE" pull "$TEST_IMAGE" >/dev/null
   ssh_key
   use_models "$previous"
+  vigie_secrets
 
   say "Démarrage"
   compose up -d

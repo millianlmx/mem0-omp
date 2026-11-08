@@ -24,6 +24,7 @@
 #   OMP_HARNESS_COMMIT     le commit construit, rendu par /v1/health ; sans lui, lu
 #                          dans le .git du clone, sinon prouvé par le tag de la version
 #                          sur OMP_HARNESS_SOURCE_REPO (Portainer supprime le .git)
+#   VIGIE_MODEL            le modèle des sessions de la vigie (fournisseur/modèle ; défaut : celui d'omp)
 #
 # Le déploiement continu : Portainer suit la branche `deploy` (GitOps updates), que
 # le job de release avance sur chaque release du harness.
@@ -120,6 +121,35 @@ services:
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}:${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
       - ${OMP_HARNESS_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+
+  # La vigie (omp-harness/vigie/) : 24/24, à part du harness pour survivre à ses pannes et
+  # constater son silence. Elle lit le journal structuré et les clones EN LECTURE SEULE,
+  # parle au harness sous son jeton de client pilote (créé par `setup`, jamais celui de
+  # l'approbateur) et n'a ni le socket du moteur, ni la base, ni le jeton GitHub. Son mode
+  # (shadow au départ) se règle par `PUT /v1/vigie`.
+  vigie:
+    build:
+      context: .
+      dockerfile: omp-harness/deploy/container/Dockerfile.vigie
+    image: omp-harness-vigie:local
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    environment:
+      HOME: /var/lib/omp-vigie/home
+      VIGIE_ENV_FILE: /run/secrets/omp-vigie/vigie.env
+      VIGIE_HARNESS_URL: http://harness:8790
+      VIGIE_STATE_DIR: /var/lib/omp-vigie
+      VIGIE_LOGS_DIR: /logs
+      VIGIE_REPOS_DIR: /repos
+      VIGIE_MODEL: ${VIGIE_MODEL:-}
+      MEM0_HTTP_URL: http://mem0:8321
+    volumes:
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/vigie:/var/lib/omp-vigie
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state/logs:/logs:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/repos:/repos:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/vigie:/run/secrets/omp-vigie:ro
 
   mem0:
     build: mem0-stack/mem0-rs

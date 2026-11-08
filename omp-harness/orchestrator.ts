@@ -11,6 +11,7 @@
 // - `issues.ts`       les issues GitHub d'un dépôt déclaré, lancées en run ;
 // - `digest.ts`       le rapport du matin, posté chaque jour ;
 // - `schedules.ts`    les planifications récurrentes (runs, audits, relèves d'issues) ;
+// - `vigie/desk.ts`   la vigie : ses réglages, ses incidents et ses gardes ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -65,6 +66,7 @@ import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
+import { VigieDesk } from "./vigie/desk.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -170,6 +172,8 @@ export class Orchestrator {
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
   readonly schedules: Schedules;
+  /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
+  readonly vigie: VigieDesk;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -208,6 +212,7 @@ export class Orchestrator {
       cancel: (runId, actor) => this.#human.cancel(runId, actor),
     });
     this.issues = new IssueDesk(this.#ctx, { createRun: (input, actor) => this.createRun(input, actor) });
+    this.vigie = new VigieDesk(this.#ctx, this.issues);
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
@@ -471,6 +476,7 @@ export class Orchestrator {
     this.#watch();
     this.metrics.maybeSample();
     this.#ctx.observability.tick();
+    this.vigie.maybeTick(Date.now());
   }
 
   /** La veille des runs conduits : agent muet, étape lente, boucle de corrections. */
@@ -989,11 +995,12 @@ export class Orchestrator {
 
   /**
    * La relance par l'humain d'un run échoué ou en attente : même étape, tout de suite.
-   * `instructions` : la consigne que l'étape relancée recevra.
+   * `instructions` : la consigne que l'étape relancée recevra. Un pilote est refusé (403)
+   * sur un budget dépassé AVANT que la relance n'en accorde un autre.
    */
   retry(runId: string, actor: Actor = SERVICE, instructions = ""): Promise<RunRow> {
+    this.#human.assertPilotMay(this.visibleRun(runId), actor);
     // Une feature arrêtée sur son budget : la relancer lui en accorde un de plus.
-    this.visibleRun(runId);
     this.#ctx.monitor.acknowledgeBudget(runId, actor.by);
     return this.#human.retry(runId, actor, instructions);
   }
