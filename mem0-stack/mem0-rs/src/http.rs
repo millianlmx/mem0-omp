@@ -273,15 +273,18 @@ async fn health(State(etat): Partage) -> Response {
     json(StatusCode::OK, &corps)
 }
 
-/// `GET /metrics` : le jeton du service en `X-Mem0-Token` ou en `Authorization: Bearer`
-/// (ce que Prometheus sait envoyer).
+/// `GET /metrics` : le jeton TOTAL du service en `X-Mem0-Token` ou en `Authorization: Bearer`
+/// (ce que Prometheus sait envoyer) ; un jeton à portées n'y lit rien (403), les compteurs
+/// couvrant toutes les portées.
 async fn metriques(State(etat): Partage, entetes: HeaderMap) -> Response {
-    let porteur = entetes
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.as_bytes().strip_prefix(b"Bearer "))
-        .is_some_and(|jeton| egal_temps_constant(jeton, etat.http_token.as_bytes()));
-    if !porteur && let Some(refus) = controle_jeton(&etat, &entetes) {
-        return refus;
+    let presente = entetes
+        .get("x-mem0-token")
+        .map(HeaderValue::as_bytes)
+        .or_else(|| entetes.get(header::AUTHORIZATION).and_then(|v| v.as_bytes().strip_prefix(b"Bearer ")));
+    match etat.jetons.identifier(presente) {
+        Some(Acces::Total) => {}
+        Some(acces) => return controle_portee(&acces, None).unwrap_or_else(interne),
+        None => return json(StatusCode::UNAUTHORIZED, &json!({ "detail": "bad or missing X-Mem0-Token" })),
     }
     let sauvegarde = etat.suivi_sauvegarde.etat();
     let souvenirs =
