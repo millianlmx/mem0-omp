@@ -775,7 +775,7 @@ export class VigieDesk {
   /** WATCH_MS sans récidive : l'issue fermée avec un commentaire, le souvenir écrit. */
   async #close(fingerprint: string, now: number): Promise<void> {
     const incident = this.#store.getVigieIncident(fingerprint);
-    if (!incident || incident.status !== "watching") return;
+    if (incident?.status !== "watching") return;
     const repo = incident.repo ? repoByName(this.#ctx.config, incident.repo) : null;
     const run = incident.fixRunId ? this.#store.getRun(incident.fixRunId) : null;
     const hours = Math.round(WATCH_MS / 3_600_000);

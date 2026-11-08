@@ -279,7 +279,7 @@ test("vigie/AC-2 : le caviardage retire secrets, e-mails, requêtes d'URL, chemi
   const leaked = [
     "clé sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv",
     "gh ghp_abcdefghijklmnopqrstuvwxyz123456",
-    "jeton harness " + "f".repeat(30) + "0123456789abcdef0123456789abcdef",
+    `jeton harness ${"f".repeat(30)}0123456789abcdef0123456789abcdef`,
     "Authorization: Bearer abcdefghijklmnop1234",
     "password=hunter2hunter2",
     "écrit à alice@example.com",
