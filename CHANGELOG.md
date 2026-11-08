@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.18.0 — 2026-11-08
+
+- feat(harness,mem0-rs): politique par dépôt — modèles, fournisseurs, identité, compte gh et mémoire cloisonnée (#340) (ec4985b)
+
 ## omp-mem0-req 2.3.0 — 2026-11-08
 
 - feat(harness,req): consignes à un run en cours, budget par run, dépôts et rechargement par l'API (#338) (87c1642)
