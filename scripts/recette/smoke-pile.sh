@@ -130,6 +130,17 @@ cleanup() {
       echo "── journal du faux runner"
       tail -n 40 "$SMOKE/fake.log" || true
     fi
+    if [ -n "${token:-}" ]; then
+      # Ce qui retient un run en file : slots, MemAvailable, jetons des fournisseurs, refus d'admission.
+      echo "── GET /v1/status"
+      curl -sS -m 10 -H "Authorization: Bearer $token" "$URL/v1/status" 2>&1 || true
+      echo
+      if [ -n "${run_id:-}" ]; then
+        echo "── GET /v1/runs/$run_id/timeline"
+        curl -sS -m 10 -H "Authorization: Bearer $token" "$URL/v1/runs/$run_id/timeline" 2>&1 | tail -c 3000 || true
+        echo
+      fi
+    fi
   fi
   if [ "$KEEP" = 1 ]; then
     echo "· pile gardée : docker compose -p $PROJECT … (dossier $WORK)"
@@ -246,6 +257,10 @@ compose run --rm --no-deps --entrypoint node setup -e '
   config.runner.stepRetries = 1;
   config.review = { ...config.review, specsGate: false };
   config.challenge = { ...(config.challenge ?? {}), steps: [] };
+  // Le faux runner et les tests `true` ne pèsent rien : la réserve de MemAvailable du
+  // serveur (2 Gio) refuserait toute admission dans une VM de poste de 4 Go
+  // (événement admission_refused, run en file indéfiniment).
+  config.admission = { reserveMiB: 256, runnerMiB: 64, heavyMiB: 64 };
   config.repos = [{ name: "demo", path: demo, scope: "recette", tests: { touched: "true # {files}", full: "true" } }];
   fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
 ' "$ROOT/config.json" "$SMOKE" "$DEMO" >/dev/null 2>&1 || fail "config.json de la recette écrite / échec"

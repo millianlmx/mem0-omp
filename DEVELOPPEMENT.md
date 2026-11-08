@@ -129,8 +129,12 @@ faux serveur compatible OpenAI sert les embeddings, ou l'oMLX donné par `--omlx
 `/v1/health` à 200 avec le commit du clone, un client appairé (`--add-client`) dont
 le jeton ouvre l'API (401 sans), un run de /req au merge sur un dépôt jetable avec le
 faux runner des tests (`test/support/fake-omp-rpc.ts`), et un souvenir écrit puis
-retrouvé dans mem0. Une ligne `✓`/`✗` par vérification ; au premier écart, l'état des
-conteneurs et les journaux du harness, de mem0 et du faux runner, puis la sortie 1.
+retrouvé dans mem0. Le faux runner ne pesant rien, la recette abaisse l'admission
+mémoire du service (`admission.reserveMiB` 256, runner et heavy 64 Mio) : avec la
+réserve de 2 Gio d'un serveur, une VM de poste de 4 Go refuse toute admission et le
+run reste en file (`admission_refused` dans sa timeline). Une ligne `✓`/`✗` par
+vérification ; au premier écart, l'état des conteneurs, les journaux du harness, de
+mem0 et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1.
 Tout vert : 0. La pile est retirée à la fin, sauf avec `--keep`. La première fois,
 la construction de mem0-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
 étape d'attente). Ni `check.sh` ni la CI ne la lancent.
