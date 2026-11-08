@@ -665,7 +665,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issue_create",
     title: "Publier une issue caviardée",
     description:
-      "Publie une issue sur le dépôt GitHub d'un dépôt déclaré, avec le label `omp:vigie` et l'empreinte du bug en marqueur caché. Le serveur caviarde le titre et le corps avant publication (secrets, e-mails, requêtes d'URL, chemins personnels, tout texte du poste de travail). Une empreinte déjà publiée rend son issue (`already`). Un client pilote (la vigie) est tenu par son mode, ses dépôts et `maxIssuesPerDay` : hors d'eux, rien ne part (`withheld`).",
+      "Publie une issue sur la forge (GitHub ou GitLab) d'un dépôt déclaré, avec le label `omp:vigie` et l'empreinte du bug en marqueur caché. Le serveur caviarde le titre et le corps avant publication (secrets, e-mails, requêtes d'URL, chemins personnels, tout texte du poste de travail). Une empreinte déjà publiée rend son issue (`already`). Un client pilote (la vigie) est tenu par son mode, ses dépôts et `maxIssuesPerDay` : hors d'eux, rien ne part (`withheld`).",
     role: "operator",
     readOnly: false,
     properties: {

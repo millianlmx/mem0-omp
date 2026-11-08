@@ -345,6 +345,7 @@ test("vigie/AC-2 : le caviardage retire secrets, e-mails, requêtes d'URL, chemi
       title: "Point confidentiel",
       url: "https://meet.example/abc",
       startedAt: now,
+      browserId: null,
     });
     v.world.store.addWorkstationSegments("m1", [
       { at: now, speaker: "autres", text: "le rachat de Dupont SA est signé" },
@@ -1163,6 +1164,28 @@ test("vigie/AC-14 : le rapport du matin porte une section Vigie — issues publi
 });
 
 /** Le bloc d'un service d'un compose, de sa ligne `  <nom>:` à la suivante. */
+test('vigie/AC-17 : la publication passe par la forge du dépôt — sans forge (`forge: "none"`), issue_create est refusé en le disant, sans appeler `gh` ni rien lier', async () => {
+  const v = await vigieWorld({}, (config) => {
+    for (const repo of config.repos) repo.forge = "none";
+  });
+  try {
+    await v.settings({ mode: "report", repos: ["demo"] });
+    assert.equal((await v.report(signal(FP))).status, 201);
+    await v.report({ fingerprint: FP, triage: BUG });
+    const refused = await v.tool(v.tokens.vigie, "issue_create", {
+      repo: "demo",
+      title: "[vigie] bug",
+      body: "corps",
+      fingerprint: FP,
+    });
+    assert.match(errorText(refused), /n'a pas de forge/);
+    assert.equal(v.gh.calls.length, 0, "aucun appel direct à gh");
+    assert.deepEqual([incident(v.world, FP).issueNumber, incident(v.world, FP).publishedAt], [null, null]);
+  } finally {
+    await v.close();
+  }
+});
+
 function serviceBlock(compose: string, name: string): string {
   const lines = compose.split("\n");
   const start = lines.indexOf(`  ${name}:`);

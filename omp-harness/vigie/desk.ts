@@ -9,7 +9,7 @@
 //   et runs de correction) par jour UTC, `maxLiveRuns` corrections vivantes ;
 // - une seule génération de correction par empreinte, et l'anti-boucle : un bug relevé
 //   sur un run que la vigie a lancé (ou sur sa descendance) revient à l'humain ;
-// - le caviardage de tout ce qui part sur GitHub (vigie/redact.ts) ;
+// - le caviardage de tout ce qui part sur la forge du dépôt (vigie/redact.ts) ;
 // - le silence : plus de battement depuis SILENT_MS, un événement `vigie_silent` ;
 // - après le merge d'une correction, l'empreinte est surveillée WATCH_MS : sans
 //   récidive, l'issue est fermée et le souvenir écrit ; revenue, l'issue est rouverte
@@ -21,6 +21,7 @@ import type { Actor, HarnessContext } from "../context.ts";
 import type { RepoFilter, Store, VigieIncident, VigieStatus, VigieTriage } from "../db.ts";
 import { VIGIE_STATUSES } from "../db.ts";
 import { HarnessError } from "../errors.ts";
+import type { Forge } from "../forge.ts";
 import type { IssueDesk } from "../issues.ts";
 import { isTerminal } from "../machine.ts";
 import { isFingerprint } from "./fingerprint.ts";
@@ -61,7 +62,6 @@ const COMMENT_EVERY_MS = 6 * 60 * 60_000;
 const TICK_EVERY_MS = 30_000;
 const SETTINGS_KEY = "vigie";
 const HEARTBEAT_KEY = "vigie.heartbeat";
-const GH_TIMEOUT_MS = 60_000;
 const TITLE_MAX = 200;
 const BODY_MAX = 60_000;
 const MESSAGE_MAX = 4_000;
@@ -151,7 +151,7 @@ export class VigieDesk {
   readonly #issues: IssueDesk;
   /** Les écritures d'une même empreinte passent une par une (deux occurrences, deux publications). */
   readonly #pending = new Map<string, Promise<unknown>>();
-  /** Les labels connus de chaque dépôt GitHub (créés au besoin, une fois). */
+  /** Les labels connus du projet de chaque dépôt sur sa forge (créés au besoin, une fois). */
   readonly #labels = new Map<string, Set<string>>();
   /** La dernière erreur journalisée par empreinte : une fermeture qui échoue revient à chaque tour. */
   readonly #errors = new Map<string, number>();
@@ -413,86 +413,37 @@ export class VigieDesk {
     return false;
   }
 
-  // -- GitHub -------------------------------------------------------------------
+  // -- La forge du dépôt (forge.ts : GitHub, GitLab ; `none` refuse en 409) ---------------
 
-  async #gh(repo: RepoConfig, args: string[]): Promise<string> {
-    const result = await this.#ctx.exec("gh", args, {
-      cwd: repo.path,
-      timeoutMs: GH_TIMEOUT_MS,
-      maxBytes: 8 * 1024 * 1024,
-    });
-    if (result.code !== 0) {
-      const cause = result.timedOut ? "délai dépassé" : result.stderr.trim().slice(0, 300) || `code ${result.code}`;
-      throw new HarnessError(
-        502,
-        `gh ${args.slice(0, 2).join(" ")} : ${cause} (le service est-il connecté à GitHub ? \`gh auth login\`)`,
-      );
-    }
-    return result.stdout;
-  }
-
-  /** Les labels manquants du dépôt GitHub, créés (sans toucher à ceux qui existent). */
-  async #ensureLabels(repo: RepoConfig, slug: string, labels: readonly string[]): Promise<void> {
-    let known = this.#labels.get(slug);
+  /** Les labels manquants du projet, créés sur sa forge (sans toucher à ceux qui existent). */
+  async #ensureLabels(repo: RepoConfig, forge: Forge, labels: readonly string[]): Promise<void> {
+    let known = this.#labels.get(repo.name);
     if (!known) {
-      const raw = JSON.parse(
-        await this.#gh(repo, ["label", "list", "--repo", slug, "--limit", "500", "--json", "name"]),
-      );
-      known = new Set(Array.isArray(raw) ? raw.map((label: unknown) => String(record(label).name)) : []);
-      this.#labels.set(slug, known);
+      known = new Set(await forge.labels());
+      this.#labels.set(repo.name, known);
     }
     for (const label of labels) {
       if (known.has(label)) continue;
       const vigie = label === VIGIE_LABEL;
-      await this.#gh(repo, [
-        "label",
-        "create",
-        label,
-        "--repo",
-        slug,
-        "--color",
-        vigie ? "5319e7" : "ededed",
-        "--description",
-        vigie ? "Issue écrite par la vigie d'omp-harness" : "",
-      ]);
+      await forge.createLabel(label, {
+        color: vigie ? "5319e7" : "ededed",
+        description: vigie ? "Issue écrite par la vigie d'omp-harness" : "",
+      });
       known.add(label);
     }
   }
 
-  /** L'issue de la vigie qui porte déjà cette empreinte sur GitHub (une base perdue ne republie pas). */
-  async #existingIssue(
-    repo: RepoConfig,
-    slug: string,
-    fingerprint: string,
-  ): Promise<{ number: number; url: string } | null> {
-    const raw = JSON.parse(
-      await this.#gh(repo, [
-        "issue",
-        "list",
-        "--repo",
-        slug,
-        "--label",
-        VIGIE_LABEL,
-        "--state",
-        "all",
-        "--limit",
-        "500",
-        "--json",
-        "number,url,body",
-      ]),
-    );
-    if (!Array.isArray(raw)) return null;
-    for (const entry of raw) {
-      const issue = record(entry);
-      const match = typeof issue.body === "string" ? MARKER.exec(issue.body) : null;
-      if (match?.[1] === fingerprint && typeof issue.number === "number" && Number.isInteger(issue.number))
-        return { number: issue.number, url: String(issue.url ?? "") };
+  /** L'issue de la vigie qui porte déjà cette empreinte sur la forge (une base perdue ne republie pas). */
+  async #existingIssue(forge: Forge, fingerprint: string): Promise<{ number: number; url: string } | null> {
+    const issues = await forge.issues({ state: "all", label: VIGIE_LABEL, limit: 500, withBody: true });
+    for (const issue of issues) {
+      if (MARKER.exec(issue.body ?? "")?.[1] === fingerprint) return { number: issue.number, url: issue.url };
     }
     return null;
   }
 
   /**
-   * L'outil MCP `issue_create` : l'issue caviardée, publiée sur le dépôt GitHub de `repo`
+   * L'outil MCP `issue_create` : l'issue caviardée, publiée sur la forge de `repo` (forge.ts)
    * avec le label de la vigie et l'empreinte en marqueur caché. Une empreinte déjà publiée
    * rend son issue (`already`). Un client pilote (la vigie) est tenu par le mode, les dépôts
    * permis et `maxIssuesPerDay` : hors d'eux, rien ne part (`withheld`), le brouillon est gardé.
@@ -556,8 +507,8 @@ export class VigieDesk {
       this.#event(updated, "withheld");
       return { status: "withheld", fingerprint, issue: null, reason: withheld };
     }
-    const slug = await this.#issues.github(repo);
-    const existing = await this.#existingIssue(repo, slug, fingerprint);
+    const forge = await this.#issues.forge(repo);
+    const existing = await this.#existingIssue(forge, fingerprint);
     if (existing) {
       const linked = this.#store.updateVigieIncident(fingerprint, {
         issueNumber: existing.number,
@@ -569,22 +520,8 @@ export class VigieDesk {
       return { status: "already", fingerprint, issue: existing, reason: null };
     }
     const labels = [...new Set([VIGIE_LABEL, ...input.labels])];
-    await this.#ensureLabels(repo, slug, labels);
-    const out = await this.#gh(repo, [
-      "issue",
-      "create",
-      "--repo",
-      slug,
-      "--title",
-      title,
-      "--body",
-      body,
-      ...labels.flatMap((label) => ["--label", label]),
-    ]);
-    const url = out.trim().split("\n").at(-1)?.trim() ?? "";
-    const number = Number(/\/issues\/(\d+)/.exec(url)?.[1]);
-    if (!Number.isInteger(number))
-      throw new HarnessError(502, `gh issue create : URL d'issue illisible (${short(url, 100)})`);
+    await this.#ensureLabels(repo, forge, labels);
+    const { number, url } = await forge.createIssue({ title, body, labels });
     const published = this.#store.updateVigieIncident(fingerprint, {
       issueNumber: number,
       issueUrl: url,
@@ -596,7 +533,9 @@ export class VigieDesk {
       ...(incident.status === "new" || incident.status === "bug" ? { status: "reported" as const } : {}),
     });
     this.#event(published, "published");
-    this.#ctx.log(`vigie : issue ${slug}#${number} publiée (empreinte ${fingerprint})`);
+    this.#ctx.log(
+      `vigie : issue ${forge.name} ${forge.project ?? repo.name}#${number} publiée (empreinte ${fingerprint})`,
+    );
     return { status: "published", fingerprint, issue: { number, url }, reason: null };
   }
 
@@ -621,16 +560,11 @@ export class VigieDesk {
     if (!repo || incident.issueNumber === null) return;
     const more = incident.count - incident.commentedCount;
     try {
-      const slug = await this.#issues.github(repo);
-      await this.#gh(repo, [
-        "issue",
-        "comment",
-        String(incident.issueNumber),
-        "--repo",
-        slug,
-        "--body",
+      const forge = await this.#issues.forge(repo);
+      await forge.comment(
+        incident.issueNumber,
         `La vigie a revu ce symptôme : ${more} occurrence(s) de plus (${incident.count} au total), la dernière le ${new Date(incident.lastAt).toISOString()}.`,
-      ]);
+      );
       this.#store.updateVigieIncident(incident.fingerprint, { commentedCount: incident.count, commentedAt: now });
     } catch (err) {
       this.#logOnce(incident.fingerprint, now, `commentaire de l'issue #${incident.issueNumber}`, err);
@@ -644,11 +578,9 @@ export class VigieDesk {
     const text = `La vigie a revu ce symptôme le ${when}, après le merge de sa correction : le bug n'est pas corrigé. Je laisse la main à l'humain.`;
     if (repo && incident.issueNumber !== null) {
       try {
-        const slug = await this.#issues.github(repo);
-        const number = String(incident.issueNumber);
-        if (incident.status === "resolved")
-          await this.#gh(repo, ["issue", "reopen", number, "--repo", slug, "--comment", text]);
-        else await this.#gh(repo, ["issue", "comment", number, "--repo", slug, "--body", text]);
+        const forge = await this.#issues.forge(repo);
+        if (incident.status === "resolved") await forge.reopen(incident.issueNumber, text);
+        else await forge.comment(incident.issueNumber, text);
       } catch (err) {
         this.#logOnce(incident.fingerprint, Date.now(), `réouverture de l'issue #${incident.issueNumber}`, err);
       }
@@ -781,16 +713,11 @@ export class VigieDesk {
     const hours = Math.round(WATCH_MS / 3_600_000);
     if (repo && incident.issueNumber !== null) {
       try {
-        const slug = await this.#issues.github(repo);
-        await this.#gh(repo, [
-          "issue",
-          "close",
-          String(incident.issueNumber),
-          "--repo",
-          slug,
-          "--comment",
+        const forge = await this.#issues.forge(repo);
+        await forge.close(
+          incident.issueNumber,
           `Corrigé${run ? ` par le run « ${redactSecrets(run.title)} »${run.mergeSha ? ` (${run.mergeSha.slice(0, 12)})` : ""}` : ""} : la vigie n'a plus vu ce symptôme en ${hours} h depuis le merge. Fermée par la vigie.`,
-        ]);
+        );
       } catch (err) {
         this.#logOnce(fingerprint, now, `fermeture de l'issue #${incident.issueNumber}`, err);
         return;
