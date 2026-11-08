@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.21.0 — 2026-11-08
+
+- feat(harness,mem0-rs): observabilité — journaux JSON, /metrics Prometheus, erreurs des clients, sauvegardes distantes (#345) (63a202b)
+
 ## omp-mem0-req 2.5.0 — 2026-11-08
 
 - feat(harness,req): planifications récurrentes (runs, audits, issues) (#342) (250d462)
