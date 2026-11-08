@@ -119,6 +119,11 @@ export class RpcRunner {
     return this.#dead === null;
   }
 
+  /** Un prompt du service est en cours (envoyé, pas encore de `prompt_result`). */
+  get busy(): boolean {
+    return this.#prompts.size > 0;
+  }
+
   stderrTail(): string {
     return this.#stderr.join("");
   }
@@ -295,6 +300,15 @@ export class RpcRunner {
       this.#requests.set(id, { resolve: () => {}, reject });
       this.#write({ type: "prompt", id, message });
     });
+  }
+
+  /**
+   * Un message de pilotage (`steer`) : OMP le place dans la file de la session en cours
+   * et le livre à l'agent au prochain tour, sans attendre la fin du prompt. Résolu à
+   * l'accusé de réception, pas à la livraison.
+   */
+  steer(message: string): Promise<unknown> {
+    return this.request({ type: "steer", message });
   }
 
   setHostTools(tools: HostToolDefinition[]): Promise<unknown> {

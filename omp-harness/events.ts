@@ -45,6 +45,7 @@ export const EVENT_TYPES = [
   "verdict",
   "decision_auto_timeout",
   "retried",
+  "instructions",
   // tests heavy
   "heavy_started",
   "heavy_done",
@@ -78,6 +79,7 @@ export const EVENT_TYPES = [
   "step_slow",
   "fix_loop",
   "budget_exceeded",
+  "run_budget",
   "daily_budget_reached",
   "alert_cleared",
   // le poste de travail (repo null : seuls les clients qui voient tous les dépôts les reçoivent)

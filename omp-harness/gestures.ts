@@ -1,6 +1,7 @@
 // La boucle humaine : répondre aux escalades, accepter ou renverser une décision,
-// valider specs et verdicts, relancer, annuler, changer la priorité — et, quand
-// l'humain ne répond pas, trancher à l'échéance par l'option recommandée.
+// valider specs et verdicts, relancer, annuler, changer la priorité ou le budget,
+// parler à un run en cours (consigne) — et, quand l'humain ne répond pas, trancher à
+// l'échéance par l'option recommandée.
 //
 // Plusieurs clients peuvent agir sur le même run (le Mac, l'iPhone, un collègue) :
 // - les gestes d'un même run passent un par un (`serial`) ;
@@ -29,6 +30,7 @@ import {
   reworkAfterReversal,
 } from "./machine.ts";
 import { humanDecisionMemory } from "./oracle.ts";
+import type { RunBudget } from "./monitor.ts";
 
 export type GestureHooks = {
   /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
@@ -44,7 +46,15 @@ export type GestureHooks = {
   ) => Promise<RunRow>;
   /** Reverte le commit squash d'un run mergé sur main et rend le run de suite ouvert ; lève si le revert ou le push échoue. */
   revertMerge: (runId: string, actor: Actor) => Promise<RunRow>;
+  /**
+   * Injecte `message` dans le prompt en cours de la session du run (`steer` d'OMP) ; `false`
+   * si le run n'est pas conduit par ce process ou qu'aucun prompt ne tourne.
+   */
+  steer: (runId: string, message: string) => Promise<boolean>;
 };
+
+/** Où est allée une consigne : dans le prompt en cours (`session`), ou gardée pour le prochain (`pending`). */
+export type Delivered = "session" | "pending";
 
 export type EscalationAnswer = { id: number; answer: string; reason?: string };
 
@@ -712,6 +722,53 @@ export class HumanLoop {
     // La branche reste (inspection) ; seul le worktree est rendu.
     if (run.worktree) await git.removeWorktree(this.#ctx.repo(run.repo).path, run.worktree, null).catch(() => {});
     return this.#ctx.run(runId);
+  }
+
+  /**
+   * Une consigne de l'humain à un run. S'il tourne et que son runner est en plein prompt,
+   * elle y est injectée : l'agent la lit au prochain tour. Sinon elle rejoint les consignes
+   * en attente, que le prompt suivant porte (même étape ou suivante). Un run mergé ou
+   * annulé n'en reçoit plus (409). Elle entre dans le direct du run (`instructions`).
+   */
+  instruct(runId: string, text: string, actor: Actor): Promise<{ run: RunRow; delivered: Delivered }> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const consigne = text.trim();
+      if (consigne === "") throw new HarnessError(400, "text : consigne vide");
+      const run = this.#fresh(runId, actor);
+      if (run.state === "merged" || run.state === "cancelled")
+        throw new HarnessError(409, `run déjà ${run.state} : il ne reçoit plus de consigne`);
+      const author = `${whoOf(actor)}${actor.by ? ` (${actor.by})` : ""}`;
+      const live =
+        run.state === "running" &&
+        (await this.#hooks.steer(
+          runId,
+          `Consigne de ${author}, reçue pendant ton travail : ${consigne}\n\nApplique-la dès maintenant, sans refaire ce qui est fait.`,
+        ));
+      const delivered: Delivered = live ? "session" : "pending";
+      store.transaction(() => {
+        if (!live) store.addInstructions(runId, `Consigne de ${author} : ${consigne}`);
+        this.#ctx.event("instructions", runId, { text: consigne, delivered, step: run.step, ...byOf(actor) });
+      });
+      this.#ctx.sessions.instructions(runId, run.step, consigne);
+      return { run: this.#ctx.run(runId), delivered };
+    });
+  }
+
+  /**
+   * Le budget propre d'un run (`null` : retour à `monitoring.runBudgetUsd`). Sous le
+   * nouveau seuil, l'alerte de dépassement s'éteint ; au-delà, la veille la lève et
+   * arrête l'étape gardée (`pauseOnBudget`). Un run terminé est refusé (409).
+   */
+  setBudget(runId: string, budget: number | null, actor: Actor): Promise<{ run: RunRow; budget: RunBudget }> {
+    return this.#serial(runId, async () => {
+      const run = this.#fresh(runId, actor);
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      this.#ctx.event("run_budget", runId, { budgetUsd: budget, ...byOf(actor) });
+      const view = this.#ctx.monitor.setRunBudget(runId, budget, actor.by);
+      this.#hooks.tick();
+      return { run: this.#ctx.run(runId), budget: view };
+    });
   }
 
   /** La priorité d'un run : à la prochaine admission (runner) et dans la file des tests (heavy). */

@@ -80,13 +80,34 @@ export type VerdictSummary = {
   criteria: CriterionSummary[];
 };
 
+/** Le coût d'un run et son budget (`source` : `run`, son propre budget ; `config`, celui du serveur). */
+export type BudgetSummary = {
+  cost: number;
+  budget: number | null;
+  threshold: number | null;
+  source: "run" | "config" | null;
+};
+
 export type RunView = {
   run: RunSummary;
   decisions: DecisionSummary[];
   escalations: EscalationSummary[];
   verdict: VerdictSummary | null;
   artifacts: { name: string; content: string }[];
+  /** `null` d'un serveur qui ne le rend pas. */
+  budget: BudgetSummary | null;
 };
+
+function numOrNull(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseBudget(raw: unknown): BudgetSummary | null {
+  if (!isRecord(raw) || typeof raw.cost !== "number") return null;
+  const source = raw.source === "run" || raw.source === "config" ? raw.source : null;
+  return { cost: raw.cost, budget: numOrNull(raw, "budget"), threshold: numOrNull(raw, "threshold"), source };
+}
 
 function parseVerdict(raw: unknown): VerdictSummary | null {
   if (!isRecord(raw)) return null;
@@ -148,5 +169,6 @@ export function parseRunView(raw: unknown): RunView | null {
     })),
     verdict: parseVerdict(run.verdict),
     artifacts: records(raw, "artifacts").map((item) => ({ name: str(item, "name"), content: str(item, "content") })),
+    budget: parseBudget(raw.budget),
   };
 }

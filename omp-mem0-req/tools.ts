@@ -1,6 +1,7 @@
 // Les outils du harness exposés au MODÈLE : lire la boîte, un run et son journal ;
 // lancer une feature ou un projet ; et les GESTES de la boucle humaine (valider,
-// répondre, renverser, relancer, annuler, accepter les décisions).
+// répondre, renverser, relancer, annuler, accepter les décisions, parler à un run en
+// cours).
 //
 // Les gestes ne demandent aucune approbation à OMP : la conversation vaut autorisation.
 // Le modèle n'appelle un geste que si l'utilisateur l'a demandé en clair ; la
@@ -12,7 +13,7 @@ import { readEvents } from "./events.ts";
 import type { HarnessEvent } from "./events.ts";
 import { HarnessCallError, harnessCall, inboxSummary, resolveTarget } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
-import { parseRunView } from "./wire.ts";
+import { isRecord, parseRunView } from "./wire.ts";
 import type { RunView } from "./wire.ts";
 
 /**
@@ -40,12 +41,14 @@ export type ToolDeps = {
 };
 
 type FeatureParams = { title: string; request: string; modules: string[] };
-type LaunchParams = FeatureParams & { req: string };
+type LaunchParams = FeatureParams & { req: string; budgetUsd?: number };
 type ProjectParams = { title: string; features: FeatureParams[] };
 type IdParams = { id: string };
 type ValidateParams = IdParams & { approve: boolean; reason?: string };
 type AnswerParams = IdParams & { answers: { id: number; answer: string; reason?: string }[] };
 type ReverseParams = IdParams & { seq: number; option: string; reason: string };
+type RetryParams = IdParams & { instructions?: string };
+type InstructParams = IdParams & { text: string };
 type EventsParams = { run?: string; since?: number };
 
 export function text(content: string, isError = false) {
@@ -54,6 +57,14 @@ export function text(content: string, isError = false) {
 
 function truncate(content: string, limit: number): string {
   return content.length <= limit ? content : `${content.slice(0, limit)}\n… (tronqué à ${limit} caractères)`;
+}
+
+/** `1.50 $ sur un budget de 5.00 $ (propre au run)` ; sans plafond, le coût seul. */
+function budgetLine(budget: NonNullable<RunView["budget"]>): string {
+  const cost = `${budget.cost.toFixed(2)} $`;
+  if (budget.budget === null) return `${cost}, sans budget`;
+  const source = budget.source === "run" ? "propre au run" : "du serveur";
+  return `${cost} sur un budget de ${budget.budget.toFixed(2)} $ (${source})`;
 }
 
 /** La vue d'un run en Markdown lisible : ce que le modèle lit avant de proposer un geste. */
@@ -69,6 +80,7 @@ export function renderRun(view: RunView): string {
     `- modules : ${run.modules.length > 0 ? run.modules.join(", ") : "(aucun)"}`,
     `- corrections : ${run.fixes}, tentatives : ${run.attempts}${run.lastFailCause ? `, dernière cause d'échec : ${run.lastFailCause}` : ""}`,
     ...(run.notBefore !== null ? [`- relance prévue : ${new Date(run.notBefore).toISOString()}`] : []),
+    ...(view.budget !== null ? [`- coût : ${budgetLine(view.budget)}`] : []),
     "",
     `## Décisions (${view.decisions.length})`,
     ...(view.decisions.length === 0
@@ -145,7 +157,8 @@ async function fetchRun(target: HarnessTarget, id: string, fetcher: typeof fetch
 
 /**
  * Un geste sur un run : lit la révision courante, l'envoie en `If-Match`, puis rend le
- * run tel qu'il est après le geste. Un 412 devient le message « relis harness_run ».
+ * run tel qu'il est après le geste, et la réponse du geste (`reply`). Un 412 devient le
+ * message « relis harness_run ».
  */
 export async function gesture(
   target: HarnessTarget,
@@ -153,10 +166,11 @@ export async function gesture(
   route: string,
   body: Record<string, unknown>,
   fetcher: typeof fetch | undefined,
-): Promise<{ ok: boolean; text: string }> {
+): Promise<{ ok: boolean; text: string; reply?: unknown }> {
+  let reply: unknown;
   try {
     const before = await fetchRun(target, id, fetcher);
-    await harnessCall<unknown>(target, "POST", `/v1/runs/${encodeURIComponent(id)}${route}`, body, {
+    reply = await harnessCall<unknown>(target, "POST", `/v1/runs/${encodeURIComponent(id)}${route}`, body, {
       headers: { "If-Match": String(before.run.rev) },
       fetcher,
     });
@@ -165,9 +179,9 @@ export async function gesture(
     return { ok: false, text: message(err) };
   }
   try {
-    return { ok: true, text: renderRun(await fetchRun(target, id, fetcher)) };
+    return { ok: true, text: renderRun(await fetchRun(target, id, fetcher)), reply };
   } catch (err) {
-    return { ok: true, text: `geste fait ; relecture impossible : ${message(err)}` };
+    return { ok: true, text: `geste fait ; relecture impossible : ${message(err)}`, reply };
   }
 }
 
@@ -205,8 +219,18 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     approval: LAUNCH_APPROVAL,
     description:
       "Crée la feature sur le harness avec le compte rendu de besoins VALIDÉ par l'utilisateur (sections ## Besoins, ## Critères d'acceptation, ## Hors périmètre, ## Contraintes) " +
-      "et les chemins du dépôt qu'elle touchera (`modules`, obligatoire) : le serveur enchaîne /specs, /impl, /review et le merge.",
-    parameters: z.object({ ...fields, req: z.string().describe("Le compte rendu de besoins validé, en Markdown") }),
+      "et les chemins du dépôt qu'elle touchera (`modules`, obligatoire) : le serveur enchaîne /specs, /impl, /review et le merge. " +
+      "`budgetUsd` : le budget de la feature en dollars, seulement si l'utilisateur en a donné un.",
+    parameters: z.object({
+      ...fields,
+      req: z.string().describe("Le compte rendu de besoins validé, en Markdown"),
+      budgetUsd: z
+        .number()
+        .positive()
+        .max(10_000)
+        .optional()
+        .describe("Le budget de la feature en dollars, prioritaire sur celui du serveur ; absent : celui du serveur"),
+    }),
     async execute(
       _id: string,
       params: LaunchParams,
@@ -446,19 +470,54 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
     name: "harness_retry",
     label: "Harness — relancer",
     loadMode: "essential",
-    description: `Relance un run en échec ou en attente de l'humain, à la même étape. ${GESTURE_RULE}`,
-    parameters: z.object({ id }),
+    description: `Relance un run en échec ou en attente de l'humain, à la même étape ; \`instructions\` dit à l'étape relancée ce qui doit changer. ${GESTURE_RULE}`,
+    parameters: z.object({
+      id,
+      instructions: z.string().optional().describe("La consigne de l'étape relancée, si l'utilisateur en donne une"),
+    }),
     async execute(
       _id: string,
-      params: IdParams,
+      params: RetryParams,
       _signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
       const target = targetOf(ctx);
       if ("refusal" in target) return text(target.refusal, true);
-      const result = await gesture(target, params.id, "/retry", {}, fetcher);
+      const instructions = params.instructions?.trim() ?? "";
+      const result = await gesture(target, params.id, "/retry", instructions ? { instructions } : {}, fetcher);
       return text(result.text, !result.ok);
+    },
+  });
+
+  pi.registerTool({
+    name: "harness_instruct",
+    label: "Harness — donner une consigne",
+    loadMode: "essential",
+    description: `Envoie une consigne de l'utilisateur à un run du harness sans l'arrêter : s'il tourne, son agent la lit au prochain tour ; sinon elle part avec son prochain prompt. ${GESTURE_RULE}`,
+    parameters: z.object({
+      id,
+      text: z.string().describe("La consigne, précise et vérifiable, telle que l'utilisateur l'a donnée"),
+    }),
+    async execute(
+      _id: string,
+      params: InstructParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const target = targetOf(ctx);
+      if ("refusal" in target) return text(target.refusal, true);
+      const consigne = typeof params.text === "string" ? params.text.trim() : "";
+      if (consigne === "") return text("harness_instruct : `text` est vide (la consigne à transmettre).", true);
+      const result = await gesture(target, params.id, "/instructions", { text: consigne }, fetcher);
+      if (!result.ok) return text(result.text, true);
+      const delivered = isRecord(result.reply) ? result.reply.delivered : undefined;
+      const lead =
+        delivered === "session"
+          ? "Consigne transmise à l'agent du run, qui la lit au prochain tour."
+          : "Consigne gardée : le run la recevra avec son prochain prompt.";
+      return text(`${lead}\n\n${result.text}`);
     },
   });
 

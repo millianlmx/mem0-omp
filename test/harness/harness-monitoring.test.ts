@@ -251,7 +251,12 @@ test("harness-monitoring/AC-4 : au-delà du budget, l'humain est prévenu une fo
       ["budget_exceeded"],
     );
     await world.orchestrator.retry(run.id);
-    assert.deepEqual(world.orchestrator.monitor.budget(run.id), { cost: 1.5, budget: 1, threshold: 2.5 });
+    assert.deepEqual(world.orchestrator.monitor.budget(run.id), {
+      cost: 1.5,
+      budget: 1,
+      threshold: 2.5,
+      source: "config",
+    });
     await waitFor(
       () => world.store.getRun(run.id)?.state === "merged",
       () => `${world.store.getRun(run.id)?.state} — ${world.store.getRun(run.id)?.reason}`,

@@ -34,7 +34,8 @@
 import type { AgentLine, ToolView } from "./tool-view.ts";
 import { cleanDeep, messageOf, rawJson, resultText, toolView } from "./tool-view.ts";
 
-export type SessionEntryKind = "text" | "thinking" | "tool" | "notice";
+/** `instructions` : une consigne de l'humain envoyée au run pendant qu'il tourne (son texte). */
+export type SessionEntryKind = "text" | "thinking" | "tool" | "notice" | "instructions";
 
 export type SessionEntryStatus = "running" | "ok" | "error";
 
@@ -329,6 +330,14 @@ export class SessionFeeds {
     if (!feed) return null;
     const running = [...feed.tools.values()].at(-1);
     return { at: feed.lastAt, tool: running ? (running.entry.tool ?? "") : null };
+  }
+
+  /** Une consigne de l'humain dans le direct du run, à l'étape `step` : masquée et bornée comme un paragraphe. */
+  instructions(owner: string, step: string | null, text: string): SessionEntry {
+    this.#settle(owner, this.#feed(owner));
+    return this.#add(owner, step, "instructions", {
+      text: tail(this.#clean(tail(text, SESSION_TEXT_MAX + 256)), SESSION_TEXT_MAX),
+    });
   }
 
   /** Une trame RPC du runner de `owner`, à l'étape `step` ; les trames sans intérêt pour le direct sont ignorées. */

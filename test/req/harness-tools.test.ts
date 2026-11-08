@@ -239,9 +239,16 @@ function pointAt(url: string | null): void {
 }
 
 const ctx = { cwd: tmpdir("harness-tools-"), hasUI: true, ui: { notify: () => undefined } };
-const VIEW_EMPTY = { run: { ...RUN, verdict: null }, decisions: [], escalations: [], verdict: null, artifacts: [] };
+const VIEW_EMPTY = {
+  run: { ...RUN, verdict: null },
+  decisions: [],
+  escalations: [],
+  verdict: null,
+  artifacts: [],
+  budget: null,
+};
 
-test("harness-tools/AC-1 : les onze outils sont essentiels ; seuls les lancements demandent l'accord ; chaque geste porte la règle « demandé en clair »", () => {
+test("harness-tools/AC-1 : les douze outils sont essentiels ; seuls les lancements demandent l'accord ; chaque geste porte la règle « demandé en clair »", () => {
   const { tools } = plugin();
   const gestures = [
     "harness_validate",
@@ -250,6 +257,7 @@ test("harness-tools/AC-1 : les onze outils sont essentiels ; seuls les lancement
     "harness_retry",
     "harness_cancel",
     "harness_accept_decisions",
+    "harness_instruct",
   ];
   const readers = ["harness_inbox", "harness_run", "harness_events"];
   for (const name of [...gestures, ...readers, "harness_launch", "harness_project"])

@@ -14,8 +14,8 @@
 // 0600 au premier démarrage) : c'est le client `admin`. Les autres clients vivent
 // dans `clientsFile` (auth.ts), relu à chaque changement. SIGTERM arrête proprement :
 // plus de requêtes, runners arrêtés ; au redémarrage, chaque run reprend à son
-// dernier checkpoint. SIGHUP relit la configuration et recharge les dépôts sans
-// arrêter les runs.
+// dernier checkpoint. SIGHUP (ou `POST /v1/reload`) relit la configuration et recharge
+// les dépôts sans arrêter les runs ; `POST /v1/repos` fait `--add-repo` par l'API.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
@@ -34,7 +34,7 @@ import { HARNESS_VERSION, createHandler } from "./http.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { setModels } from "./local-model.ts";
-import { addRepo } from "./repos.ts";
+import { ConfigAdmin, addRepo, sshKeygen } from "./repos.ts";
 import type { SpawnRunner } from "./orchestrator.ts";
 import { execProcess } from "./proc.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -57,12 +57,15 @@ export type Harness = {
   server: http.Server;
   store: Store;
   clients: ClientRegistry;
+  /** Le fichier de configuration administré à chaud (SIGHUP, `POST /v1/reload`, `POST /v1/repos`). */
+  admin: ConfigAdmin;
   stop: () => Promise<void>;
 };
 
+/** `configFile` : le fichier d'où vient `config` (`null` : aucun, rien à relire ni à écrire). */
 export async function startHarness(
   config: HarnessConfig,
-  options: { spawn?: SpawnRunner; log?: (line: string) => void; token?: string } = {},
+  options: { spawn?: SpawnRunner; log?: (line: string) => void; token?: string; configFile?: string | null } = {},
 ): Promise<Harness> {
   const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
   fs.mkdirSync(config.dataDir, { recursive: true });
@@ -114,7 +117,8 @@ export async function startHarness(
   snapshots.start();
   const token = options.token ?? loadToken(config);
   const clients = new ClientRegistry(config.clientsFile, token, log);
-  const server = http.createServer(createHandler({ orchestrator, clients, log }));
+  const admin = new ConfigAdmin(options.configFile ?? null, orchestrator, { git });
+  const server = http.createServer(createHandler({ orchestrator, clients, admin, log }));
   await new Promise<void>((resolve) => server.listen(config.listen.port, config.listen.host, resolve));
   log(
     `omp-harness ${HARNESS_VERSION} à l'écoute sur ${config.listen.host}:${(server.address() as { port: number }).port} — ${config.repos.length} dépôt(s), ${clients.list().length} client(s)`,
@@ -124,6 +128,7 @@ export async function startHarness(
     server,
     store,
     clients,
+    admin,
     stop: async () => {
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -208,10 +213,7 @@ if (isMain) {
     if (file === null) throw new Error("--add-repo exige --config");
     const result = await addRepo(file, config, new Git(execProcess, config.git), added, {
       name: argValue(process.argv, "--name") ?? undefined,
-      keygen: async (args) => {
-        const made = await execProcess("ssh-keygen", args, { timeoutMs: 30_000 });
-        if (made.code !== 0) throw new Error(`ssh-keygen : ${made.stderr.trim()}`);
-      },
+      keygen: sshKeygen,
     });
     console.log(`${result.code === 0 ? "✓" : "✗"} ${result.message}`);
     process.exit(result.code);
@@ -242,7 +244,7 @@ if (isMain) {
     console.log(renderChecks(lines));
     process.exit(lines.some((line) => line.status === "fail") ? 1 : 0);
   }
-  const harness = await startHarness(config);
+  const harness = await startHarness(config, { configFile: file });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
       void harness.stop().finally(() => process.exit(0));
@@ -252,10 +254,8 @@ if (isMain) {
   // par `--add-repo` sert sans arrêter les runs des autres). Une configuration
   // invalide est refusée et journalisée : l'ancienne reste en place.
   process.on("SIGHUP", () => {
-    try {
-      void harness.orchestrator.reloadRepos(loadConfig(file).repos);
-    } catch (err) {
+    harness.admin.reload().catch((err: unknown) => {
       console.error(`[omp-harness] rechargement refusé : ${err instanceof Error ? err.message : String(err)}`);
-    }
+    });
   });
 }

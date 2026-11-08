@@ -30,12 +30,44 @@ export function requireRepo(client: Client, repo: string): void {
   if (!canSeeRepo(client, repo)) throw new HarnessError(403, `le client ${client.name} n'a pas accès au dépôt ${repo}`);
 }
 
+/** Le plus gros budget propre qu'un run peut recevoir, en dollars. */
+export const MAX_RUN_BUDGET_USD = 10_000;
+
+/** La plus longue consigne qu'un run peut recevoir, en caractères. */
+export const MAX_INSTRUCTIONS = 4000;
+
+/** Un budget en dollars : un nombre > 0 et ≤ MAX_RUN_BUDGET_USD ; `undefined` s'il est absent. */
+export function budgetUsd(value: unknown, key = "budgetUsd"): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > MAX_RUN_BUDGET_USD)
+    throw new HarnessError(400, `${key} : montant en dollars attendu (> 0, ≤ ${MAX_RUN_BUDGET_USD})`);
+  return value;
+}
+
+/** Le budget propre posé sur un run (`POST /v1/runs/{id}/budget`) : un montant, ou `null` pour revenir à la configuration. */
+export function budgetInput(body: Record<string, unknown>): number | null {
+  if (body.budgetUsd === null) return null;
+  const value = budgetUsd(body.budgetUsd);
+  if (value === undefined) throw new HarnessError(400, "budgetUsd : montant en dollars attendu, ou null");
+  return value;
+}
+
+/** Une consigne : non blanche, au plus MAX_INSTRUCTIONS caractères, rognée. `required: false` : absente ou blanche → "". */
+export function instructionsInput(body: Record<string, unknown>, key: string, required = true): string {
+  const value = text(body, key, required).trim();
+  if (required && value === "") throw new HarnessError(400, `${key} : consigne vide`);
+  if (value.length > MAX_INSTRUCTIONS)
+    throw new HarnessError(400, `${key} : ${MAX_INSTRUCTIONS} caractères au plus (${value.length})`);
+  return value;
+}
+
 /** Le lancement d'un run : les contrôles de `POST /v1/runs`, dans le même ordre. */
 export function newRunInput(body: Record<string, unknown>, client: Client): NewRunInput {
   const modules = stringList(body.modules, "modules");
   const slug = text(body, "slug", false);
   const needs = text(body, "req", false);
   const priority = integer(body.priority, "priority");
+  const budget = budgetUsd(body.budgetUsd);
   if (body.lane !== undefined && body.lane !== "full") throw new HarnessError(400, 'lane : "full" ou absent');
   const repo = text(body, "repo");
   requireRepo(client, repo);
@@ -47,6 +79,7 @@ export function newRunInput(body: Record<string, unknown>, client: Client): NewR
     ...(needs ? { req: needs } : {}),
     ...(modules ? { modules } : {}),
     ...(priority !== undefined ? { priority } : {}),
+    ...(budget !== undefined ? { budgetUsd: budget } : {}),
     ...(body.lane === "full" ? { lane: "full" as const } : {}),
   };
 }

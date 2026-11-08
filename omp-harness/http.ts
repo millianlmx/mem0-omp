@@ -24,12 +24,23 @@ import type { Actor } from "./context.ts";
 import type { ActionState, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
 import { ACTION_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
-import { escalationAnswers, integer, newRunInput, priorityInput, requireRepo, stringList, text } from "./input.ts";
+import {
+  budgetInput,
+  escalationAnswers,
+  instructionsInput,
+  integer,
+  newRunInput,
+  priorityInput,
+  requireRepo,
+  stringList,
+  text,
+} from "./input.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { escalationBatches, projectsOf } from "./queries.ts";
+import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { Workstation } from "./workstation.ts";
@@ -66,6 +77,9 @@ export const API_FEATURES = [
   "workstation",
   "mcp",
   "digest",
+  "instructions",
+  "run-budget",
+  "admin-repos",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -232,6 +246,8 @@ export type HttpOptions = {
   /** Les clients nommés ; par défaut, le seul jeton historique. */
   clients?: ClientRegistry;
   version?: string;
+  /** Le fichier de configuration administré à chaud (`POST /v1/reload`, `POST /v1/repos`) ; absent : 409. */
+  admin?: ConfigAdmin | null;
   /** Le journal du service : la cause d'une erreur interne y va, jamais dans la réponse. */
   log?: (line: string) => void;
   /** La cadence des pings du flux SSE, et de la relecture du jeton de chaque flux ouvert. */
@@ -260,8 +276,15 @@ export type Route = {
   handle: (call: Call) => Promise<void> | void;
 };
 
-/** Les routes de l'API, avec le rôle minimal de chacune : la table que documente le README du harness. */
-export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): Route[] {
+/**
+ * Les routes de l'API, avec le rôle minimal de chacune : la table que documente le README du harness.
+ * `admin` : le fichier de configuration administré à chaud (`null` : ces routes rendent 409).
+ */
+export function apiRoutes(
+  orchestrator: Orchestrator,
+  clients: ClientRegistry,
+  admin: ConfigAdmin | null = null,
+): Route[] {
   const store = orchestrator.store;
   const route = (method: Route["method"], path: string, role: Role, handle: Route["handle"]): Route => ({
     method,
@@ -328,6 +351,13 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     const limit = Number(url.searchParams.get("limit"));
     return Number.isInteger(limit) && limit > 0 ? Math.min(limit, max) : fallback;
   };
+  /** La configuration du serveur est au propriétaire : un client restreint à des dépôts n'y touche pas. */
+  const adminOf = (call: Call): ConfigAdmin => {
+    if (call.repos !== null) throw new HarnessError(403, "la configuration du serveur est réservée au propriétaire");
+    if (admin === null)
+      throw new HarnessError(409, "service lancé sans fichier de configuration (--config) : rien à relire ni à écrire");
+    return admin;
+  };
 
   return [
     route("GET", "/v1/me", "viewer", (call) => send(call.res, 200, { client: call.client })),
@@ -347,6 +377,16 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
           })),
       }),
     ),
+    // `--add-repo` par l'API : clé du dépôt, clone, écriture éprouvée, configuration écrite et rechargée.
+    route("POST", "/v1/repos", "admin", async (call) => {
+      const target = adminOf(call);
+      const body = await readBody(call.req);
+      const name = text(body, "name", false).trim();
+      const declared = await target.declare(text(body, "url"), name === "" ? undefined : name);
+      send(call.res, declared.added ? 201 : 200, declared);
+    }),
+    // SIGHUP par l'API : la configuration relue, les dépôts rechargés ; invalide, 400 et rien ne change.
+    route("POST", "/v1/reload", "admin", async (call) => send(call.res, 200, { reload: await adminOf(call).reload() })),
     route("GET", "/v1/runs", "viewer", (call) => {
       const state = call.url.searchParams.get("state");
       const repo = call.url.searchParams.get("repo");
@@ -389,6 +429,16 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
     route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
     ),
+    // Une consigne au run : injectée dans le prompt en cours de sa session, sinon gardée pour le suivant.
+    route("POST", "/v1/runs/{id}/instructions", "operator", async (call) => {
+      const body = await readBody(call.req);
+      send(call.res, 200, await orchestrator.instruct(runId(call), instructionsInput(body, "text"), call.actor));
+    }),
+    // Le budget propre du run (`null` : celui de la configuration).
+    route("POST", "/v1/runs/{id}/budget", "operator", async (call) => {
+      const body = await readBody(call.req);
+      send(call.res, 200, await orchestrator.setBudget(runId(call), budgetInput(body), call.actor));
+    }),
     route("POST", "/v1/runs/{id}/priority", "operator", async (call) => {
       const body = await readBody(call.req);
       send(call.res, 200, { run: await orchestrator.setPriority(runId(call), priorityInput(body), call.actor) });
@@ -398,10 +448,12 @@ export function apiRoutes(orchestrator: Orchestrator, clients: ClientRegistry): 
       const answers = escalationAnswers(body);
       send(call.res, 200, { run: await orchestrator.answerEscalations(runId(call), answers, call.actor) });
     }),
-    // La relance d'un run échoué ou en attente de l'humain : même étape, tout de suite.
-    route("POST", "/v1/runs/{id}/retry", "operator", async (call) =>
-      send(call.res, 200, { run: await orchestrator.retry(runId(call), call.actor) }),
-    ),
+    // La relance d'un run échoué ou en attente de l'humain : même étape, tout de suite, avec une consigne facultative.
+    route("POST", "/v1/runs/{id}/retry", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const instructions = instructionsInput(body, "instructions", false);
+      send(call.res, 200, { run: await orchestrator.retry(runId(call), call.actor, instructions) });
+    }),
     // Toutes les décisions prises seules d'un run, acceptées d'un geste.
     route("POST", "/v1/runs/{id}/decisions/accept", "operator", async (call) =>
       send(call.res, 200, await orchestrator.acceptAllDecisions(runId(call), call.actor)),
@@ -778,7 +830,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const { orchestrator } = options;
   const store = orchestrator.store;
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
-  const routes = apiRoutes(orchestrator, clients);
+  const routes = apiRoutes(orchestrator, clients, options.admin ?? null);
   const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
 
   const pingMs = options.pingMs ?? PING_MS;

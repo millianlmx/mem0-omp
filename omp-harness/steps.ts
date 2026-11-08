@@ -380,7 +380,11 @@ export class StepExecutor {
       let missing =
         result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
       if (result.status === "completed" && missing !== null) {
-        result = await session.prompt(nudgePrompt(step, missing), live.abort.signal, deadlineAt);
+        result = await session.prompt(
+          this.#withPending(run.id, nudgePrompt(step, missing)),
+          live.abort.signal,
+          deadlineAt,
+        );
         missing = result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
       }
       // Une revue sans bloquant conclut sur la suite complète : si elle n'a pas tourné sur cet arbre, une relance.
@@ -396,7 +400,10 @@ export class StepExecutor {
         (await this.#fullTests(live, run)) === "not_run"
       ) {
         result = await session.prompt(
-          nudgePrompt(step, "la suite complète n'a pas tourné sur cet arbre — lance `run_tests` avec `scope: full`"),
+          this.#withPending(
+            run.id,
+            nudgePrompt(step, "la suite complète n'a pas tourné sur cet arbre — lance `run_tests` avec `scope: full`"),
+          ),
           live.abort.signal,
           deadlineAt,
         );
@@ -492,13 +499,17 @@ export class StepExecutor {
           : `${ids.join(", ")} sans réponse dans la section \`## Contradicteur\` de \`${ARTIFACTS_DIR}/${STEP_ARTIFACT[step] as string}\` (\`C-n : corrigé — …\` ou \`C-n : réfuté — …\`)`;
       };
       let result = await session.prompt(
-        challengeAnswerPrompt({ step, title: run.title, findings: pending }),
+        this.#withPending(run.id, challengeAnswerPrompt({ step, title: run.title, findings: pending })),
         live.abort.signal,
         deadlineAt,
       );
       let missing = result.status === "completed" ? await missingAnswer() : null;
       if (result.status === "completed" && missing !== null) {
-        result = await session.prompt(nudgePrompt(step, missing), live.abort.signal, deadlineAt);
+        result = await session.prompt(
+          this.#withPending(run.id, nudgePrompt(step, missing)),
+          live.abort.signal,
+          deadlineAt,
+        );
         missing = result.status === "completed" ? await missingAnswer() : null;
       }
       if (result.status !== "completed") return { kind: "interrupted", result };
@@ -606,6 +617,20 @@ export class StepExecutor {
     } finally {
       await critic.stop();
     }
+  }
+
+  /**
+   * Un prompt de plus dans la même étape, suivi des consignes arrivées depuis le
+   * précédent (une consigne de l'humain quand aucun prompt ne tournait, une décision
+   * renversée) : l'agent les reçoit au prochain tour, pas à l'étape suivante. Lues, elles
+   * sont effacées.
+   */
+  #withPending(runId: string, message: string): string {
+    const { store } = this.#ctx;
+    const pending = store.instructions(runId)?.trim() ?? "";
+    if (pending === "") return message;
+    store.setInstructions(runId, null);
+    return `${message}\n\n## Consignes reçues pendant l'étape\n${pending}`;
   }
 
   /** L'artefact d'une étape tel que le runner l'a laissé dans le worktree. */
