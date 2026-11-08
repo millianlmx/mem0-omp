@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.24.0 — 2026-11-08
+
+- feat(console): refonte des apps Mac et iOS — À traiter, une page par feature, hub Système (#372) (ad790d9)
+
 ## omp-harness 1.23.0 — 2026-11-08
 
 - feat(harness,console): notifications iOS et Mac actionnables (valider, approuver, ouvrir) (#354) (856b8c1)
