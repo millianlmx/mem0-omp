@@ -30,6 +30,7 @@ import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
 import { ActivityPusher, ApnsClient } from "./push.ts";
 import { AlertPusher } from "./push-alerts.ts";
+import { ProofStore, currentRound } from "./proofs.ts";
 import { TestFeeds } from "./test-feed.ts";
 
 export type SpawnRunner = (
@@ -68,6 +69,7 @@ export class HarnessContext {
   readonly scheduler: Scheduler;
   readonly git: Git;
   readonly heavy: HeavyRunner;
+  readonly proofs: ProofStore;
   readonly oracle: Oracle;
   readonly spawn: SpawnRunner;
   readonly exec: Exec;
@@ -99,6 +101,7 @@ export class HarnessContext {
     this.scheduler = deps.scheduler;
     this.git = deps.git;
     this.heavy = deps.heavy;
+    this.proofs = new ProofStore(deps.config.dataDir);
     this.oracle = deps.oracle;
     this.spawn = deps.spawn;
     this.exec = deps.exec;
@@ -249,7 +252,13 @@ export class HarnessContext {
       }
       if (transition.state === "awaiting_human" && options.quiet !== true) {
         if (transition.step === "specs") this.event("specs_ready", run.id, { reason: transition.reason });
-        else this.event("verdict", run.id, { verdict: next.verdict, reason: transition.reason });
+        else
+          this.event("verdict", run.id, {
+            verdict: next.verdict,
+            reason: transition.reason,
+            // Seules les preuves du tour de revue courant comptent : celles d'avant la dernière correction restent listées.
+            proofs: currentRound(this.proofs.list(run.id), this.store.listSteps(run.id)).length,
+          });
       }
       if (transition.state === "failed")
         this.event("run_failed", run.id, {
