@@ -20,7 +20,7 @@ import type { HarnessConfig, ModelChoice } from "./config.ts";
 import { ACTION_KINDS } from "./db.ts";
 import type { StepKind } from "./machine.ts";
 import { DECISION_CATEGORIES } from "./decisions.ts";
-import { GH_TOKEN_VARS } from "./policy.ts";
+import { GH_TOKEN_VARS, GITLAB_TOKEN_VARS } from "./policy.ts";
 import type { Exec } from "./proc.ts";
 import type { HostToolDefinition, RpcRunner } from "./rpc.ts";
 import { COMMIT_SUBJECT_MAX, COMMIT_TYPES } from "./verdict.ts";
@@ -253,9 +253,10 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
 
 /**
  * Les secrets du service qu'aucun runner ni connexion ne reçoit : le jeton de l'API et
- * les jetons GitHub que `gh` lit (le texte d'une issue est une donnée de tiers).
+ * les jetons GitHub et GitLab que `gh` et `glab` lisent (le texte d'une issue est une
+ * donnée de tiers).
  */
-export const SERVICE_SECRETS = ["HARNESS_TOKEN", ...GH_TOKEN_VARS] as const;
+export const SERVICE_SECRETS = ["HARNESS_TOKEN", ...GH_TOKEN_VARS, ...GITLAB_TOKEN_VARS] as const;
 
 /** Ce que la politique du dépôt change à l'environnement d'un runner (policy.ts). */
 export type RunnerEnvPolicy = {

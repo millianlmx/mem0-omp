@@ -16,6 +16,7 @@ import * as os from "node:os";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { HarnessError } from "./errors.ts";
+import { forgeKindOf, remoteLocation } from "./forge.ts";
 import { remoteEnv, type Git } from "./git.ts";
 import { execProcess } from "./proc.ts";
 
@@ -133,12 +134,18 @@ export async function ensureRepoKey(name: string, keygen: KeyGen, home: string):
   return key;
 }
 
-/** La clé publique du dépôt et, sur GitHub, la page des clés de déploiement. */
+/** La clé publique du dépôt et, sur GitHub ou GitLab, la page des clés de déploiement. */
 function deployKeyOf(url: string, key: string): DeployKey {
-  const github = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/*$/.exec(url);
+  const at = remoteLocation(url);
+  const kind = forgeKindOf({ merge: "local" }, url);
   return {
     publicKey: fs.readFileSync(`${key}.pub`, "utf8").trim(),
-    url: github ? `https://github.com/${github[1]}/${github[2]}/settings/keys/new` : null,
+    url:
+      at === null || kind === "none"
+        ? null
+        : kind === "github"
+          ? `https://github.com/${at.path}/settings/keys/new`
+          : `https://${at.host}/${at.path}/-/settings/repository`,
   };
 }
 
@@ -215,9 +222,11 @@ export async function addRepo(
     sshKey,
   });
   fs.writeFileSync(configFile, `${JSON.stringify({ ...raw, repos }, null, 2)}\n`);
+  // La forge se déduit de l'URL à chaque appel : rien à écrire, mais l'humain sait ce qui servira PR et issues.
+  const forge = forgeKindOf({ merge: "local" }, url);
   return {
     code: 0,
-    message: `${name} ajouté — tests : « ${plan.full} »${plan.testImage ? ` dans ${plan.testImage}` : ""}`,
+    message: `${name} ajouté — tests : « ${plan.full} »${plan.testImage ? ` dans ${plan.testImage}` : ""} — forge : ${forge === "none" ? "aucune (merge local seulement ; `forge` dans la configuration pour la changer)" : forge}`,
   };
 }
 

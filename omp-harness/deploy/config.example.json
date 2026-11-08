@@ -110,6 +110,17 @@
       "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" },
       "gh": { "configDir": "/var/lib/omp-harness/gh/client-corpo" },
       "memory": { "tokenEnv": "MEM0_TOKEN_CLIENT_CORPO" }
+    },
+    {
+      "name": "client-gitlab",
+      "path": "/var/lib/omp-harness/repos/client-gitlab",
+      "tests": { "touched": "npm test -- {files}", "full": "npm test", "pattern": null },
+      "merge": "gh",
+      "remote": "origin",
+      "sshKey": "/var/lib/omp-harness/.ssh/repos/client-gitlab",
+      "forge": "gitlab",
+      "gitlab": { "host": "gitlab.client.example", "tokenEnv": "GITLAB_TOKEN_CLIENT_GITLAB" },
+      "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" }
     }
   ]
 }

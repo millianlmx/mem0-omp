@@ -146,7 +146,7 @@ let
 
   # `sudo omp-harness-check` : l'installation vérifiée, en omp-harness, avec l'environnement du service.
   check = pkgs.writeShellScriptBin "omp-harness-check" ''
-    exec /run/wrappers/bin/sudo -u omp-harness -H ${pkgs.bash}/bin/sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; PATH=${lib.makeBinPath [ pkgs.git pkgs.openssh pkgs.gh ]}:$PATH exec ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json --check'
+    exec /run/wrappers/bin/sudo -u omp-harness -H ${pkgs.bash}/bin/sh -c 'set -a; [ -r /etc/omp-harness/env ] && . /etc/omp-harness/env; set +a; PATH=${lib.makeBinPath [ pkgs.git pkgs.openssh pkgs.gh pkgs.glab ]}:$PATH exec ${cfg.nodejs}/bin/node --experimental-strip-types --disable-warning=ExperimentalWarning ${src}/omp-harness/main.ts --config /etc/omp-harness/config.json --check'
   '';
 
   # `sudo omp-harness-client add|list|revoke|approver …` : les clients du harness, en omp-harness (auth.ts).
@@ -415,7 +415,8 @@ in
       requires = [ "omp-harness-secrets.service" ];
       wantedBy = [ "multi-user.target" ];
       restartTriggers = [ harnessConfig launcherConf ];
-      path = [ pkgs.git pkgs.openssh pkgs.gh ];
+      # gh et glab : les forges GitHub et GitLab (PR, issues).
+      path = [ pkgs.git pkgs.openssh pkgs.gh pkgs.glab ];
       serviceConfig = {
         Type = "simple";
         User = "omp-harness";

@@ -83,6 +83,11 @@ export type Privacy = "standard" | "local-only";
 
 export const PRIVACIES: readonly Privacy[] = ["standard", "local-only"];
 
+/** Les forges des PR et des issues d'un dépôt (forge.ts). */
+export type ForgeKind = "github" | "gitlab" | "none";
+
+export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
+
 /**
  * La politique de modèles d'un dépôt ou du poste (policy.ts) : des chaînes par tier
  * (`"fournisseur/modèle"`, prioritaires sur celles du serveur), une liste blanche de
@@ -207,7 +212,10 @@ export type RepoConfig = {
   tests: { touched: string; full: string; pattern: string | null };
   /** Les commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que `run_tests scope:"check"` lance. */
   checks: Record<string, string>;
-  /** `local` : squash + update-ref sur `main` ; `gh` : PR puis `gh pr merge --squash`. */
+  /**
+   * `local` : squash + update-ref sur `main` ; `gh` : une PR (une MR sur GitLab) posée sur la
+   * forge du dépôt (`forge`), fusionnée par elle en squash.
+   */
   merge: "local" | "gh";
   /** Le remote poussé après un merge local, ou `null` (aucun push). */
   remote: string | null;
@@ -231,6 +239,20 @@ export type RepoConfig = {
    * du service qui porte son jeton. Absent : la connexion (ou `GH_TOKEN`) du service.
    */
   gh?: { configDir?: string; tokenEnv?: string };
+  /**
+   * La forge des PR et des issues (forge.ts) : `github` (`gh`), `gitlab` (`glab`) ou `none`
+   * (merge local seulement, pas d'issues). Absente : déduite de l'URL du distant
+   * (github.com → github ; un hôte qui contient « gitlab », ou un bloc `gitlab` → gitlab ;
+   * sinon none).
+   */
+  forge?: ForgeKind;
+  /**
+   * Le GitLab de ce dépôt pour `glab` : `host` l'instance (`gitlab.client.example`, ou son
+   * URL ; absente : l'hôte du distant), `tokenEnv` le NOM d'une variable du service qui
+   * porte son jeton, `configDir` le `GLAB_CONFIG_DIR` d'une connexion `glab auth login`
+   * propre. Sans jeton ni connexion propres : celle du service.
+   */
+  gitlab?: { host?: string; tokenEnv?: string; configDir?: string };
   /**
    * Le jeton mémoire de ce dépôt : `tokenEnv` est le NOM d'une variable du service qui
    * porte un jeton mem0-rs limité à sa scope (`MEM0_HTTP_TOKENS`). Ses runners le
@@ -664,7 +686,10 @@ function checkPolicy(where: string, policy: ModelPolicy): void {
   }
 }
 
-/** Valide les champs propres à un dépôt : identité, compte gh, jeton mémoire. */
+/** L'instance d'un GitLab : un hôte (`gitlab.client.example`, port permis) ou son URL http(s). */
+const GITLAB_HOST = /^(?:https?:\/\/)?[A-Za-z0-9](?:[A-Za-z0-9.-]{0,252})(?::\d{1,5})?(?:\/[\w.~-]+)*\/?$/;
+
+/** Valide les champs propres à un dépôt : identité, comptes gh et GitLab, forge, jeton mémoire. */
 function checkRepoAccounts(repo: RepoConfig): void {
   const where = `repos.${repo.name}`;
   if (repo.git !== undefined) {
@@ -680,6 +705,22 @@ function checkRepoAccounts(repo: RepoConfig): void {
       fail(`${where}.gh.configDir : chemin absolu`);
     if (gh.tokenEnv !== undefined && (typeof gh.tokenEnv !== "string" || !ENV_NAME.test(gh.tokenEnv)))
       fail(`${where}.gh.tokenEnv : nom de variable (MAJUSCULES_ET_SOULIGNÉS)`);
+  }
+  if (repo.forge !== undefined && !(FORGES as readonly string[]).includes(repo.forge))
+    fail(`${where}.forge : ${FORGES.join(" | ")}`);
+  if (repo.forge === "none" && repo.merge === "gh")
+    fail(`${where}.forge : « none » n'ouvre aucune PR, \`merge: "gh"\` demande une forge`);
+  if (repo.gitlab !== undefined) {
+    const { gitlab } = repo;
+    if (!isRecord(gitlab)) fail(`${where}.gitlab : { host?, tokenEnv?, configDir? }`);
+    if (repo.forge !== undefined && repo.forge !== "gitlab")
+      fail(`${where}.gitlab : déclaré pour une forge ${repo.forge}`);
+    if (gitlab.host !== undefined && (typeof gitlab.host !== "string" || !GITLAB_HOST.test(gitlab.host)))
+      fail(`${where}.gitlab.host : un hôte (gitlab.client.example) ou son URL https://`);
+    if (gitlab.configDir !== undefined && (typeof gitlab.configDir !== "string" || !path.isAbsolute(gitlab.configDir)))
+      fail(`${where}.gitlab.configDir : chemin absolu`);
+    if (gitlab.tokenEnv !== undefined && (typeof gitlab.tokenEnv !== "string" || !ENV_NAME.test(gitlab.tokenEnv)))
+      fail(`${where}.gitlab.tokenEnv : nom de variable (MAJUSCULES_ET_SOULIGNÉS)`);
   }
   if (repo.memory !== undefined) {
     const { memory } = repo;

@@ -7,10 +7,30 @@ ARG DOCKER_CLI_IMAGE=docker.io/library/docker:29-cli
 FROM ${DOCKER_CLI_IMAGE} AS cli
 
 FROM ${NODE_IMAGE} AS base
-# Les paquets absents de l'image de base, et eux seuls (`gh` sert `"merge": "gh"`).
-ARG PACKAGES="ca-certificates git openssh-client gh"
+# Les paquets absents de l'image de base, et eux seuls (`gh` sert la forge GitHub : PR de
+# `"merge": "gh"`, issues).
+ARG PACKAGES="ca-certificates curl git openssh-client gh"
 RUN missing="$(for p in $PACKAGES; do dpkg -s "$p" >/dev/null 2>&1 || echo "$p"; done)"; \
     if [ -n "$missing" ]; then apt-get update && apt-get install -y --no-install-recommends $missing && rm -rf /var/lib/apt/lists/*; fi
+# `glab` sert la forge GitLab (MR, issues) : une version épinglée, l'archive vérifiée par
+# sa somme SHA-256 (celles de checksums.txt de la release) avant d'être dépaquetée.
+ARG GLAB_VERSION=1.128.0
+ARG GLAB_SHA256_AMD64=bc024819e7598b19429a199cd87f640d98b2b67416d8ad796f19e4260b57a7c7
+ARG GLAB_SHA256_ARM64=60d0512085a8c1be7c5ef51aa7e4ee28213444cea0376b3260707d90489199ea
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) sum="$GLAB_SHA256_AMD64" ;; \
+      arm64) sum="$GLAB_SHA256_ARM64" ;; \
+      *) echo "glab : architecture $arch non prise en charge" >&2; exit 1 ;; \
+    esac; \
+    file="glab_${GLAB_VERSION}_linux_${arch}.tar.gz"; \
+    curl -fsSL -o "/tmp/$file" \
+      "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/$file"; \
+    echo "$sum  /tmp/$file" | sha256sum -c -; \
+    tar -xzf "/tmp/$file" -C /usr/local bin/glab; \
+    rm "/tmp/$file"; \
+    glab --version
 
 # Le commit construit (build-commit) : l'argument, sinon le .git du contexte, sinon le
 # tag de la version prouvé par ses arbres. Inconnu, il reste vide : le build continue.

@@ -10,6 +10,7 @@
 #   OMP_HARNESS_MEMORY_TOKENS    des jetons mémoire limités à des portées, `nom:jeton:scope1,scope2;…` :
 #                                mem0-rs les accepte, le service les voit en MEM0_TOKEN_<NOM> (`memory.tokenEnv` d'un dépôt)
 #   OMP_HARNESS_GITHUB_ACCOUNTS  des comptes GitHub par dépôt, `nom:jeton;…` : GH_TOKEN_<NOM> du service (`gh.tokenEnv`)
+#   OMP_HARNESS_GITLAB_ACCOUNTS  des comptes GitLab par dépôt, `nom:jeton;…` : GITLAB_TOKEN_<NOM> du service (`gitlab.tokenEnv`)
 #   OMP_HARNESS_REPOS      les dépôts, séparés par des virgules (git@github.com:toi/dépôt.git)
 #   OMP_HARNESS_ROOT       les données, sur l'hôte (/var/lib/omp-harness)
 #   OMP_HARNESS_SECRETS    les secrets, sur l'hôte (/var/lib/omp-harness-secrets)
@@ -64,6 +65,7 @@ services:
       GH_TOKEN: ${GH_TOKEN:-}
       OMP_HARNESS_MEMORY_TOKENS: ${OMP_HARNESS_MEMORY_TOKENS:-}
       OMP_HARNESS_GITHUB_ACCOUNTS: ${OMP_HARNESS_GITHUB_ACCOUNTS:-}
+      OMP_HARNESS_GITLAB_ACCOUNTS: ${OMP_HARNESS_GITLAB_ACCOUNTS:-}
       OMLX_BASE_URL: ${OMLX_BASE_URL:-}
       OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
       OMLX_CHAT_BASE_URL: ${OMLX_CHAT_BASE_URL:-}
