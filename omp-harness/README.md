@@ -511,6 +511,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
 | `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR (une MR sur GitLab) posée sur la forge du dépôt en fusion squash automatique, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée, pipeline) |
 | `repos[].forge` | déduite du distant | `github`, `gitlab` ou `none` : la forge des PR et des issues (§ « Les forges ») |
+| `repos[].issues` | `{ "corporate": "redacted" }` | `{ "corporate"?: "forbid" \| "redacted" \| "full" }` : ce qu'une issue née d'un signalement de collègue peut contenir (§ « Les signalements des collègues ») — `forbid` : aucune issue ni proposition pour ce dépôt ; `redacted` : un texte reformulé et caviardé par le serveur ; `full` : le texte confirmé tel quel, seulement si la forge dit le dépôt privé |
 | `repos[].gitlab` | aucun | `{ "host"?, "tokenEnv"?, "configDir"? }` : l'instance GitLab du dépôt (défaut : l'hôte du distant), le NOM de la variable du service qui porte son jeton, ou un `GLAB_CONFIG_DIR` à lui |
 | `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
 | `repos[].sshKey` | `null` | la clé SSH privée du dépôt (chemin absolu), seule offerte à son distant (fetch, push, `--check`) ; `--add-repo` la crée sous `~/.ssh/repos/<nom>`. `null` : la clé du service, qu'un seul dépôt GitHub peut porter |
@@ -1278,6 +1279,85 @@ qui restent le défaut ; `GET /v1/workstation` rend les valeurs en vigueur (`all
 `exfiltrationGuard`) et leur source (`navigationSource: {allowedHosts, exfiltrationGuard}`,
 `"config"` ou `"setting"`).
 
+### Les signalements des collègues
+
+Un collègue signale un bug ou demande une feature par Slack, par mail ou sur une page : le
+serveur en fait une **proposition** « Ouvrir une issue et lancer un correctif dans <dépôt> »,
+et c'est le geste de l'appareil approbateur — jamais l'agent, quelle que soit l'autonomie —
+qui crée l'issue sur la forge puis le run lié. Chaque étape est tenue par le serveur, pas par
+un prompt.
+
+**Le point d'entrée.** `orchestrator.signals.reportSignal({channel, threadRef, url, personRef?, text})`
+est le seul chemin des signalements (les canaux Gmail et Slack du chantier 4/6 l'appelleront ;
+les pages lues dans Chrome et les demandes du poste y passent par l'outil d'hôte
+`workstation_signal` des jobs `poste-service` et `poste-demande`). Il rend sans lever
+`{status, signal, reason?}` : `received` (enregistré, ou un message de plus ajouté à un fil qui
+attend sa détection), `duplicate` (fil déjà proposé ou confirmé : rien ne change), `dismissed`
+(fil écarté par l'humain : jamais reproposé), `refused` (la raison ne cite jamais la valeur reçue).
+`channel` : `slack`, `gmail`, `chrome` ou `manual` (la consigne d'une demande du poste).
+Une ligne par fil (`channel` + `threadRef`) ; un fil jugé sans objet (`ignored`) est réarmé par un
+nouveau message.
+
+- **`threadRef` désigne un fil de conversation** : Slack, le `ts` du message racine du thread (ou du
+  message seul hors thread) ; Gmail, le `threadId` ; jamais un canal ni une DM entière, sans quoi le
+  signalement suivant d'un collègue serait avalé après une première confirmation ou un écart. Chaque
+  message d'un fil se remet par son propre appel (ajouté à l'extrait tant que la détection n'a pas
+  jugé). Pour une page, la requête d'URL distingue le fil (elle devient l'empreinte `?h=<16 hexadécimaux>`,
+  aucun jeton n'est gardé) et ne reste dans `url` que filtrée (paramètres de jeton, clé, session… retirés).
+- **`personRef`** est une référence opaque facultative, telle que l'appelant la donne. La garde « soi »
+  ne joue que si c'est l'adresse e-mail de l'expéditeur (Gmail) ou son pseudo Slack, tels qu'ils figurent
+  dans `selfIdentities` (comparés sans casse ni espaces) : le signal d'un canal autre que `manual` qui
+  porte une identité de l'utilisateur est refusé. Un identifiant opaque (id Slack `U…`) ne la déclenche
+  jamais : l'appelant ne remet alors pas les messages de l'utilisateur lui-même. Le filtrage de
+  l'adressage (DM, mention, To/Cc) est à la charge de l'appelant.
+- **Bornes.** `threadRef` et `url` ≤ 2000 caractères, `personRef` ≤ 200, extrait ≤ 2000 (secrets
+  masqués, coupé en gardant le début ; un fil qui attend sa détection garde le plus récent). Poste
+  désactivé : `refused`. Poste en pause ou arrêté : le signal est enregistré (`received`), la
+  détection attend la reprise.
+
+**La détection.** Le job `poste-signal` (tier `standard`, quelle que soit l'autonomie : il ne crée
+rien) juge le plus ancien signal `received` : l'extrait n'entre dans son prompt qu'entre délimiteurs de
+contenu non fiable, sans `personRef`, lien ni `threadRef`. Il n'a que `progress`,
+`workstation_signal_propose` et `workstation_signal_ignore` ; le serveur n'accepte une proposition que
+pour le signal qu'il juge et dans un dépôt candidat (déclaré, `issues.corporate` ≠ `forbid`, avec forge) :
+le dernier dépôt confirmé pour la même `personRef` s'impose s'il est encore candidat. Aucun dépôt
+candidat : `ignored`. Un job qui finit sans verdict ou dont le runner échoue compte une tentative (3 au
+plus) ; une session coupée par le serveur (pause, arrêt) ou qui a jugé un extrait périmé n'en compte
+aucune. En autonomie `observe`, un signalement `chrome` ne naît que d'une demande du poste qui pointe
+une page : le service autonome n'y tourne pas.
+
+**La confirmation.** `POST /v1/signals/{id}/preview` rend le texte EXACT que `confirm` enverrait ;
+`confirm {repo, title, body}` (appareil approbateur) crée l'issue par la forge du dépôt (aucun label : la
+relève ne la voit pas), puis le run lié par `IssueDesk.fix`, et rend 201
+`{signal, issue, run, policy: {declared, applied, note}}`. Une forge qui échoue laisse la proposition
+(`error` renseigné) ; une issue déjà créée est réutilisée à la confirmation suivante (le texte reçu n'est
+alors pas renvoyé à la forge : `preview` rend `issue`, `policy.note` le dit). `issues.corporate` :
+`forbid` refuse ; `redacted` (défaut) envoie un texte que le serveur caviarde — personne de l'origine,
+identités de l'utilisateur, lien et `threadRef` du fil, extrait entier et chacune de ses phrases, textes
+du poste, puis secrets, e-mails et requêtes d'URL (un nom inconnu, une paraphrase ou une donnée métier
+relèvent de la relecture de la feuille) ; `full` n'est appliqué que si `Forge.visibility()` rend
+`private` (`internal` ou illisible : `redacted`, dit dans `policy.note`) et envoie alors le texte
+confirmé, `redactSecrets` seul. La demande et le titre du run lié sont toujours construits par le serveur
+depuis le texte caviardé de la proposition, jamais relus sur la forge, à la création comme à chaque
+relance : ni l'origine, ni ce que l'humain ajoute sous `full` n'atteignent le prompt du runner, les outils
+MCP (`run_get`, `runs_list`, `issues_list`) ni les notifications. Une issue d'origine ne se lance que par sa
+confirmation : `issue_fix` MCP la refuse (409) et la relève par label la saute ; une relance du run qui a
+échoué (`issue_fix`) porte la même origine.
+
+**L'origine d'un run** (`GET /v1/runs/{id}/origin` : `{origin: {signalId, channel, threadRef, url,
+personRef, excerpt, issue, confirmedBy, confirmedAt}}`, ou `{origin: null}`) vit dans la base du harness
+(`corporate_signals`, `corporate_signal_runs`) : jamais sur la forge ni dans le dépôt, et lisible par REST
+seulement. Comme tout le poste, signalements et origine sont au **propriétaire** : un client restreint à des
+dépôts reçoit 403 « le poste est réservé au propriétaire » (après le 404 d'un run qu'il ne voit pas), un client
+pilote 403 ; `confirm` et `dismiss` exigent l'appareil approbateur. Ils restent lisibles et confirmables
+poste désactivé. Aucun outil MCP ne les lit.
+
+**Aucun journal ne les porte.** L'événement `signal` est `{id, state}` (`runId` et dépôt nuls : seuls les
+clients de tous les dépôts le reçoivent) ; aucun log, événement ni message d'erreur du serveur ne cite
+l'extrait, `personRef`, `url` ou `threadRef`. Le job `poste-signal` n'a aucun direct, son `progress`
+ne journalise rien et ses événements `activity` n'ont pas d'`intent`.
+
+
 ### Plusieurs navigateurs
 
 Chaque extension appairée (un profil Chrome : « Perso », « ADEO »…) se présente à chaque
@@ -1656,6 +1736,10 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/requests/{id}/cancel` | operator (approbateur) | Annule une demande en file ou en cours : 200 `{request}` `cancelled` ; 409 « la demande est déjà <état> ». |
 | `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable ; 400 `schedule` illisible. Avec `schedule`, la création pose sa planification liée. |
 | `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), avec ses planifications ; ses demandes restent. |
+| `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
+| `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
+| `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |
+| `GET /v1/runs/{id}/origin` | viewer (propriétaire) | L'origine du run (`{origin: {signalId, channel, threadRef, url, personRef, excerpt, issue: {repo, number, url}, confirmedBy, confirmedAt}}`, ou `{origin: null}`) ; 404 `run inconnu` hors des dépôts du client, puis 403 client restreint ou pilote. Capacité `corporate-signals`. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
@@ -1667,7 +1751,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/vigie` · `PUT /v1/vigie` `{mode?, maxIssuesPerDay?, maxLiveRuns?, dailyBudgetUsd?, repos?}` | viewer · admin | La vigie (§ « La vigie ») : `{settings, heartbeat {at, version, client, silent, silentSince}, today {since, issues, liveRuns, spentUsd}, incidents}` (compte par statut) ; les réglages, validés (400 pour un champ inconnu ou un dépôt non déclaré). |
 | `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
 | `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
