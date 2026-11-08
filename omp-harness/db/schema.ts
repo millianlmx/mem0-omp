@@ -327,4 +327,45 @@ export const MIGRATIONS: readonly string[] = [
      image TEXT NOT NULL
    );
    CREATE INDEX workstation_captures_at ON workstation_captures (at);`,
+  // Les demandes au poste et les automatisations (consignes enregistrées) ; le lien action → demande.
+  // Les navigateurs du poste (un profil Chrome = une extension appairée = un `browserId`) : la
+  // cible d'une action ou d'une demande, et le navigateur d'où viennent observations et meetings.
+  `CREATE TABLE workstation_requests (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     by TEXT,
+     instruction TEXT NOT NULL,
+     automation_id TEXT,
+     browser_id TEXT,
+     state TEXT NOT NULL,
+     reason TEXT,
+     report TEXT,
+     started_at INTEGER,
+     ended_at INTEGER
+   );
+   CREATE INDEX workstation_requests_state ON workstation_requests (state, created_at);
+   CREATE TABLE workstation_automations (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     by TEXT,
+     title TEXT NOT NULL,
+     frequency TEXT NOT NULL DEFAULT '',
+     steps TEXT NOT NULL DEFAULT '[]',
+     profile_version INTEGER,
+     browser_id TEXT,
+     schedule TEXT
+   );
+   ALTER TABLE workstation_actions ADD COLUMN request_id TEXT;
+   ALTER TABLE workstation_actions ADD COLUMN browser_id TEXT;
+   CREATE INDEX workstation_actions_request ON workstation_actions (request_id, seq);
+   ALTER TABLE workstation_observations ADD COLUMN browser_id TEXT;
+   ALTER TABLE workstation_meetings ADD COLUMN browser_id TEXT;
+   CREATE TABLE workstation_browsers (
+     id TEXT PRIMARY KEY,
+     label TEXT,
+     version TEXT,
+     first_seen_at INTEGER NOT NULL,
+     last_seen_at INTEGER NOT NULL
+   );`,
 ];

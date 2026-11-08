@@ -19,6 +19,8 @@ export type Meeting = {
   summary: string | null;
   needs: MeetingNeed[];
   segments: number;
+  /** Le navigateur d'où vient le meeting ; `null` pour les lignes d'avant les navigateurs. */
+  browserId: string | null;
 };
 
 export type Segment = { at: number; speaker: "moi" | "autres"; text: string };
@@ -49,6 +51,7 @@ function meetingOf(row: Row): Meeting {
     summary: strOrNull(row, "summary"),
     needs: json<MeetingNeed[]>(row, "needs", []),
     segments: num(row, "segments"),
+    browserId: strOrNull(row, "browser_id"),
   };
 }
 
@@ -76,17 +79,24 @@ export class WorkstationMeetingStore extends WorkstationStore {
 
   // -- meetings -----------------------------------------------------------------
 
-  createWorkstationMeeting(input: { id: string; title: string; url: string; startedAt: number }): Meeting {
+  createWorkstationMeeting(input: {
+    id: string;
+    title: string;
+    url: string;
+    startedAt: number;
+    browserId: string | null;
+  }): Meeting {
     const at = this.now();
     this.execute(
-      `INSERT INTO workstation_meetings (id, title, url, started_at, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'live', ?, ?)`,
+      `INSERT INTO workstation_meetings (id, title, url, started_at, state, created_at, updated_at, browser_id)
+       VALUES (?, ?, ?, ?, 'live', ?, ?, ?)`,
       input.id,
       input.title,
       input.url,
       input.startedAt,
       at,
       at,
+      input.browserId,
     );
     return this.getWorkstationMeeting(input.id) as Meeting;
   }
@@ -199,6 +209,12 @@ export class WorkstationMeetingStore extends WorkstationStore {
 
   latestWorkstationProfile(): WorkstationProfile | null {
     const row = this.selectOne("SELECT * FROM workstation_profiles ORDER BY version DESC LIMIT 1");
+    return row ? profileOf(row) : null;
+  }
+
+  /** Une version donnée du profil (les tâches s'y désignent par leur rang), ou `null`. */
+  workstationProfile(version: number): WorkstationProfile | null {
+    const row = this.selectOne("SELECT * FROM workstation_profiles WHERE version = ?", version);
     return row ? profileOf(row) : null;
   }
 

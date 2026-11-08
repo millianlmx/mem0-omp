@@ -26,15 +26,18 @@ import type {
   Meeting,
   MeetingNeed,
   Observation,
+  RequestState,
   Segment,
   ShiftRow,
   StoredObservation,
   WorkstationAction,
+  WorkstationAutomation,
   WorkstationCapture,
   WorkstationProfile,
   WorkstationProfileBody,
+  WorkstationRequest,
 } from "./db.ts";
-import { ACTION_KINDS } from "./db.ts";
+import { ACTION_KINDS, REQUEST_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { redact, workstationOwner } from "./session-feed.ts";
@@ -53,6 +56,25 @@ export type WorkstationSettings = {
   thresholdHours: number;
   /** L'arrêt d'urgence en cours (`POST /v1/workstation/stop`) : levé par la reprise de l'approbateur. */
   stopped: { at: number; by: string } | null;
+  /** Le navigateur par défaut choisi ; `null` : le premier vu. */
+  defaultBrowser: string | null;
+};
+
+/** Ce qu'une extension dit d'elle à chaque appel (`X-OMP-Browser`, `X-OMP-Browser-Label`, `X-OMP-Extension`). */
+export type BrowserHello = { id: string | null; label: string | null; version: string | null };
+export const NO_HELLO: BrowserHello = { id: null, label: null, version: null };
+/** Le navigateur d'une extension sans `browserId` (version ancienne) quand aucun autre n'est connu. */
+export const LEGACY_BROWSER = "default";
+
+/** Un navigateur du poste, tel que le montrent le statut et le profil. */
+export type BrowserView = {
+  id: string;
+  label: string | null;
+  online: boolean;
+  lastSeenAt: number;
+  firstSeenAt: number;
+  extensionVersion: string | null;
+  isDefault: boolean;
 };
 
 export type ProfileStats = {
@@ -78,9 +100,18 @@ export type WorkstationStatus = {
   nextShiftAt: number | null;
   /** L'arrêt d'urgence en cours, `null` sinon ; seule la reprise par l'approbateur (`paused: false`) le lève. */
   stopped: { at: number; by: string } | null;
+  /** Les navigateurs connus (un par extension appairée), et celui qui reçoit ce qui n'en cible aucun. */
+  browsers: BrowserView[];
+  defaultBrowser: string | null;
 };
 
-export type ActionInput = { kind: ActionKind; params: Record<string, unknown>; rationale: string };
+/** Une action à déposer ; `browserId` : le navigateur qui l'exécute (absent : celui de la demande, sinon le défaut). */
+export type ActionInput = {
+  kind: ActionKind;
+  params: Record<string, unknown>;
+  rationale: string;
+  browserId?: string;
+};
 
 export type ResultInput =
   | { outcome: "done"; result: WorkstationAction["result"]; image: string | null }
@@ -127,6 +158,16 @@ const SETTINGS_KEY = "workstation";
 /** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
 const OBSERVED_KEY = "workstation.observed";
 
+/** Une consigne de demande : 4000 caractères au plus. */
+export const MAX_INSTRUCTION = 4000;
+const MAX_REPORT = 8000;
+const MAX_REQUEST_REASON = 300;
+const BROWSER_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_BROWSER_LABEL = 60;
+/** Une expression cron à 5 champs (minute heure jour mois jour-de-semaine), lue par le planificateur. */
+const CRON_FIELD = /^[0-9A-Za-z*,/?-]{1,40}$/;
+export const REQUEST_CANCELLED = "demande annulée";
+
 const LEASE_LOST = "l'extension n'a pas rendu le résultat";
 const APPROVAL_EXPIRED = "approbation non donnée à temps : vaut refus";
 const QUEUE_EXPIRED = "l'action n'est pas partie à temps";
@@ -143,6 +184,69 @@ export function clip(text: string, max: number): string {
 /** Un texte reçu : secrets masqués (le `redact()` du direct des sessions), puis borné. */
 function clean(text: string, max: number): string {
   return clip(redact(text).trim(), max);
+}
+
+/**
+ * La présentation d'une extension, lue dans ses en-têtes : `X-OMP-Browser` (identifiant
+ * stable, absent pour une extension ancienne), `X-OMP-Browser-Label` (encodé
+ * `encodeURIComponent`), `X-OMP-Extension` (sa version).
+ */
+export function parseBrowserHello(rawId: unknown, rawLabel: unknown, rawVersion: unknown): BrowserHello {
+  let id: string | null = null;
+  if (typeof rawId === "string" && rawId.trim() !== "") {
+    if (!BROWSER_ID.test(rawId.trim())) bad("X-OMP-Browser : identifiant de 1 à 64 caractères [A-Za-z0-9_.-] attendu");
+    id = rawId.trim();
+  }
+  let label: string | null = null;
+  if (typeof rawLabel === "string" && rawLabel.trim() !== "") {
+    let decoded = rawLabel;
+    try {
+      decoded = decodeURIComponent(rawLabel);
+    } catch {
+      bad("X-OMP-Browser-Label : libellé encodé (encodeURIComponent) attendu");
+    }
+    label = clean(decoded, MAX_BROWSER_LABEL) || null;
+  }
+  const version = typeof rawVersion === "string" && rawVersion.trim() !== "" ? rawVersion.trim().slice(0, 64) : null;
+  return { id, label, version };
+}
+
+/** Un navigateur désigné dans un corps : absent ou `null` → `null` (le défaut). */
+function browserRef(value: unknown, where: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !BROWSER_ID.test(value)) bad(`${where} : identifiant de navigateur attendu`);
+  return value;
+}
+
+/** La consigne d'une demande, des automatisations comprises : 4000 caractères au plus. */
+export function automationInstruction(automation: { title: string; steps: readonly string[] }): string {
+  const lines = [
+    `Automatisation « ${automation.title} » : suis ces étapes dans l'ordre.`,
+    ...automation.steps.map((step, index) => `${index + 1}. ${step}`),
+  ];
+  return clip(lines.join("\n"), MAX_INSTRUCTION);
+}
+
+/** Une planification d'automatisation : absente ou `null` → aucune ; sinon une expression cron à 5 champs. */
+function parseSchedule(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const fields = typeof value === "string" ? value.trim().split(/\s+/) : [];
+  if (fields.length !== 5 || !fields.every((field) => CRON_FIELD.test(field)))
+    bad("schedule : expression cron à 5 champs attendue (minute heure jour mois jour-de-semaine), ou null");
+  return fields.join(" ");
+}
+
+/** Les états d'une liste de demandes (`?state=a,b`) ; un état inconnu est refusé. */
+export function parseRequestStates(raw: string | null): RequestState[] {
+  const states = (raw ?? "").split(",").filter((state) => state !== "");
+  if (states.some((state) => !(REQUEST_STATES as readonly string[]).includes(state)))
+    bad(`state : ${REQUEST_STATES.join(" | ")}`);
+  return states as RequestState[];
+}
+
+/** La sorte d'une raison d'attente : le texte avant son premier « : ». */
+function reasonKind(reason: string | null): string | null {
+  return reason === null ? null : (reason.split(" : ")[0] ?? reason);
 }
 
 /** Les chaînes d'une valeur JSON passées par `redact()`, à toute profondeur. */
@@ -348,10 +452,12 @@ export function parseActionInput(body: Record<string, unknown>): ActionInput {
   if (typeof body.rationale !== "string" || body.rationale.trim() === "")
     bad("rationale : obligatoire et non vide — c'est la décision journalisée");
   const summary = typeof params.summary === "string" ? { summary: clean(params.summary, MAX_SUMMARY) } : {};
+  const browserId = browserRef(body.browserId, "browserId");
   return {
     kind: kind as ActionKind,
     params: kind === "decision" ? summary : params,
     rationale: clean(body.rationale, MAX_RATIONALE),
+    ...(browserId === null ? {} : { browserId }),
   };
 }
 
@@ -490,6 +596,7 @@ function parseSettings(body: Record<string, unknown>): Partial<Omit<WorkstationS
     if (typeof body.paused !== "boolean") bad("paused : booléen attendu");
     patch.paused = body.paused;
   }
+  if (body.defaultBrowser !== undefined) patch.defaultBrowser = browserRef(body.defaultBrowser, "defaultBrowser");
   if (body.thresholdHours !== undefined) {
     const value = body.thresholdHours;
     if (value !== null && !(typeof value === "number" && value > 0 && value <= 100_000))
@@ -714,20 +821,25 @@ export function profileStats(
 
 type Waiter = () => void;
 
-export class Workstation {
-  readonly #ctx: HarnessContext;
-  #lastSeenAt: number | null = null;
-  #extensionVersion: string | null = null;
-  /** Les long-polls de l'extension en cours : elle est en ligne tant qu'elle attend. */
-  #polls = 0;
-  readonly #queueWaiters = new Set<Waiter>();
-  readonly #actionWaiters = new Map<number, Set<Waiter>>();
-  #purgedAt = 0;
+/** La présence d'un navigateur, en mémoire : dernier contact, long-polls en cours, onglets de l'agent. */
+type Presence = {
+  lastSeenAt: number;
+  /** Les long-polls en cours : il est en ligne tant qu'il attend. */
+  polls: number;
   /**
    * Les onglets de la fenêtre de l'agent, tels que l'extension les a rapportés en dernier ;
    * `null` tant qu'elle n'a rien dit : tout onglet est alors un onglet de l'utilisateur.
    */
-  #agentTabs: Set<number> | null = null;
+  agentTabs: Set<number> | null;
+};
+
+export class Workstation {
+  readonly #ctx: HarnessContext;
+  /** La présence de chaque navigateur (`browserId`) vu depuis le démarrage. */
+  readonly #presence = new Map<string, Presence>();
+  readonly #queueWaiters = new Set<Waiter>();
+  readonly #actionWaiters = new Map<number, Set<Waiter>>();
+  #purgedAt = 0;
   /** Une synthèse du profil demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
   profileRequested = false;
   #closed = false;
@@ -758,6 +870,7 @@ export class Workstation {
         isRecord(stored.stopped) && typeof stored.stopped.at === "number" && typeof stored.stopped.by === "string"
           ? { at: stored.stopped.at, by: stored.stopped.by }
           : null,
+      defaultBrowser: typeof stored.defaultBrowser === "string" ? stored.defaultBrowser : null,
     };
   }
 
@@ -765,16 +878,18 @@ export class Workstation {
   updateSettings(body: Record<string, unknown>, actor: Actor): WorkstationStatus {
     const patch = parseSettings(body);
     const { store } = this.#ctx;
+    if (typeof patch.defaultBrowser === "string") this.#known(patch.defaultBrowser);
     store.transaction(() => {
       const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
       if (stored.thresholdHours === null) delete stored.thresholdHours;
+      if (stored.defaultBrowser === null) delete stored.defaultBrowser;
       // La reprise par l'approbateur lève l'arrêt d'urgence.
       if (patch.paused === false) delete stored.stopped;
       store.setSetting(SETTINGS_KEY, stored, actor.by);
       this.#ctx.event("workstation_settings", null, actor.by ? { by: actor.by } : {}, null);
     });
-    // Une pause levée : ce qui attendait en file peut partir.
-    if (patch.paused === false) this.#wakeQueue();
+    // Une pause levée ou un autre navigateur par défaut : ce qui attendait en file peut partir.
+    if (patch.paused === false || patch.defaultBrowser !== undefined) this.#wakeQueue();
     return this.status();
   }
 
@@ -790,14 +905,71 @@ export class Workstation {
     return effectiveAutonomy(settings.autonomy, Math.floor(this.observed().ms / 1000), settings.thresholdHours);
   }
 
-  /** Un contact de l'extension (long-poll, observation, résultat, transcript). */
-  touch(version: string | null = null): void {
-    this.#lastSeenAt = Date.now();
-    if (version !== null && version.trim() !== "") this.#extensionVersion = version.trim().slice(0, 64);
+  // -- navigateurs ------------------------------------------------------------------
+
+  /**
+   * Le navigateur par défaut : celui des réglages s'il est connu, sinon le premier vu ;
+   * `null` tant qu'aucune extension ne s'est présentée.
+   */
+  defaultBrowserId(): string | null {
+    const { store } = this.#ctx;
+    const chosen = this.settings().defaultBrowser;
+    if (chosen !== null && store.getWorkstationBrowser(chosen)) return chosen;
+    return store.listWorkstationBrowsers()[0]?.id ?? null;
   }
 
-  online(now = Date.now()): boolean {
-    return this.#polls > 0 || (this.#lastSeenAt !== null && now - this.#lastSeenAt < ONLINE_MS);
+  /** Un navigateur désigné doit être connu (une extension s'est présentée avec cet identifiant). */
+  #known(browserId: string): string {
+    if (!this.#ctx.store.getWorkstationBrowser(browserId))
+      throw new HarnessError(404, `navigateur inconnu : ${browserId}`);
+    return browserId;
+  }
+
+  /** Le navigateur d'un appel : le sien, sinon (extension ancienne) le navigateur par défaut. */
+  #browserOf(hello: BrowserHello): string {
+    return hello.id ?? this.defaultBrowserId() ?? LEGACY_BROWSER;
+  }
+
+  /** Un contact d'une extension (long-poll, observation, résultat, transcript) : rend son navigateur. */
+  touch(hello: BrowserHello = NO_HELLO): string {
+    const id = this.#browserOf(hello);
+    const now = Date.now();
+    const presence = this.#presence.get(id);
+    if (presence) presence.lastSeenAt = now;
+    else this.#presence.set(id, { lastSeenAt: now, polls: 0, agentTabs: null });
+    const { store } = this.#ctx;
+    const before = store.getWorkstationBrowser(id);
+    store.transaction(() => {
+      store.touchWorkstationBrowser({ id, label: hello.label, version: hello.version, at: now });
+      if (!before || (hello.label !== null && hello.label !== before.label))
+        this.#ctx.event("workstation_browser", null, { id, label: hello.label ?? before?.label ?? null }, null);
+    });
+    return id;
+  }
+
+  #isOnline(presence: Presence | undefined, now: number): boolean {
+    return presence !== undefined && (presence.polls > 0 || now - presence.lastSeenAt < ONLINE_MS);
+  }
+
+  /** Le navigateur `browserId` est en ligne ; sans navigateur désigné : l'un d'eux au moins. */
+  online(now = Date.now(), browserId: string | null = null): boolean {
+    if (browserId !== null) return this.#isOnline(this.#presence.get(browserId), now);
+    for (const presence of this.#presence.values()) if (this.#isOnline(presence, now)) return true;
+    return false;
+  }
+
+  /** Les navigateurs connus, du premier vu au dernier. */
+  browsers(now = Date.now()): BrowserView[] {
+    const fallback = this.defaultBrowserId();
+    return this.#ctx.store.listWorkstationBrowsers().map((row) => ({
+      id: row.id,
+      label: row.label,
+      online: this.online(now, row.id),
+      lastSeenAt: row.lastSeenAt,
+      firstSeenAt: row.firstSeenAt,
+      extensionVersion: row.version,
+      isDefault: row.id === fallback,
+    }));
   }
 
   /** Le prochain service de l'agent 24/24 : après le repos qui suit le dernier, si l'autonomie le permet. */
@@ -817,10 +989,19 @@ export class Workstation {
     const observedSeconds = Math.floor(this.observed().ms / 1000);
     const effective = effectiveAutonomy(settings.autonomy, observedSeconds, settings.thresholdHours);
     const last = store.lastWorkstationShift();
+    const browsers = this.browsers(now);
+    const latest = browsers.reduce<BrowserView | null>(
+      (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
+      null,
+    );
+    const seen = [...this.#presence.values()].reduce<number | null>(
+      (max, presence) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
+      null,
+    );
     return {
       online: this.online(now),
-      lastSeenAt: this.#lastSeenAt,
-      extensionVersion: this.#extensionVersion,
+      lastSeenAt: seen,
+      extensionVersion: latest?.extensionVersion ?? null,
       observedSeconds,
       thresholdHours: settings.thresholdHours,
       autonomy: { setting: settings.autonomy, effective },
@@ -831,19 +1012,21 @@ export class Workstation {
       lastShift: last ? { at: last.at, outcome: last.outcome, actions: last.actions } : null,
       nextShiftAt: this.nextShiftAt(settings, effective, last, now),
       stopped: settings.stopped,
+      browsers,
+      defaultBrowser: browsers.find((browser) => browser.isDefault)?.id ?? null,
     };
   }
 
   // -- observation ------------------------------------------------------------------
 
-  /** Un lot d'observations de l'extension ; refusé (409) en pause. Rend le nombre écrit. */
-  recordObservations(body: Record<string, unknown>): number {
+  /** Un lot d'observations d'un navigateur ; refusé (409) en pause. Rend le nombre écrit. */
+  recordObservations(body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): number {
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
     const { tz, events } = parseObservations(body);
-    this.touch();
+    const browserId = this.touch(hello);
     const { store } = this.#ctx;
     return store.transaction(() => {
-      const stored = store.addWorkstationObservations(tz, events);
+      const stored = store.addWorkstationObservations(tz, events, browserId);
       const observed = this.observed();
       const visited = events.reduce((sum, event) => sum + (event.kind === "visit" ? event.durationMs : 0), 0);
       const first = events.reduce<number | null>(
@@ -862,7 +1045,10 @@ export class Workstation {
     });
   }
 
-  listObservations(filter: { since?: number; limit?: number }): (Observation & { id: number })[] {
+  listObservations(filter: {
+    since?: number;
+    limit?: number;
+  }): (Observation & { id: number; browserId: string | null })[] {
     return this.#ctx.store.listWorkstationObservations(filter).map(({ tz: _tz, ...observation }) => observation);
   }
 
@@ -876,7 +1062,13 @@ export class Workstation {
     this.#ctx.event(
       "workstation_action",
       null,
-      { seq: action.seq, state: action.state, kind: action.kind, origin: action.origin },
+      {
+        seq: action.seq,
+        state: action.state,
+        kind: action.kind,
+        origin: action.origin,
+        ...(action.requestId === null ? {} : { requestId: action.requestId }),
+      },
       null,
     );
     if (action.state === "awaiting_approval")
@@ -913,24 +1105,37 @@ export class Workstation {
   }
 
   /**
-   * Dépose une action. `decision` est écrite `done` (journal seul, jamais louée). Les autres
-   * exigent l'extension en ligne et le poste hors pause ; déposées par l'agent en autonomie
+   * Dépose une action pour un navigateur (`input.browserId`, sinon celui de la demande, sinon
+   * le défaut). `decision` est écrite `done` (journal seul, jamais louée). Les autres exigent
+   * ce navigateur en ligne et le poste hors pause ; déposées par l'agent en autonomie
    * `propose`, elles attendent l'approbation humaine, comme toute action que retient une
    * garde (`#guards`) : un onglet de l'utilisateur, une navigation hors liste ou suspecte.
+   * Déposée par le job d'une demande (`requestId`), l'action est rattachée à la demande,
+   * qui doit être en cours ; l'autonomie ne s'y applique pas (l'humain l'a demandée), les
+   * gardes si.
    */
-  createAction(input: ActionInput, origin: ActionOrigin, by: string | null): WorkstationAction {
+  createAction(
+    input: ActionInput,
+    origin: ActionOrigin,
+    by: string | null,
+    requestId: string | null = null,
+  ): WorkstationAction {
     const { store } = this.#ctx;
     const settings = this.settings();
+    const request = requestId === null ? null : store.getWorkstationRequest(requestId);
+    const browserId =
+      input.browserId !== undefined ? this.#known(input.browserId) : (request?.browserId ?? this.defaultBrowserId());
     let state: ActionState = "done";
     let approval: Approval | null = null;
     if (input.kind !== "decision") {
-      if (!this.online()) throw new HarnessError(409, "l'extension du poste est hors ligne");
+      if (!this.online(Date.now(), browserId)) throw new HarnessError(409, "l'extension du poste est hors ligne");
       if (settings.paused) throw new HarnessError(409, "le poste est en pause");
       const effective = this.effective(settings);
-      if (origin === "agent" && effective === "observe")
+      if (requestId === null && origin === "agent" && effective === "observe")
         throw new HarnessError(409, "l'autonomie du poste est en observation : l'agent n'agit pas");
-      const reasons = this.#guards(input, origin);
-      state = (origin === "agent" && effective === "propose") || reasons.length > 0 ? "awaiting_approval" : "queued";
+      const reasons = this.#guards(input, origin, browserId);
+      const proposes = requestId === null && origin === "agent" && effective === "propose";
+      state = proposes || reasons.length > 0 ? "awaiting_approval" : "queued";
       if (state === "awaiting_approval") {
         const gesture = describeGesture(input.kind, input.params);
         approval = {
@@ -951,7 +1156,19 @@ export class Workstation {
       }
     }
     const action = store.transaction(() => {
-      const created = store.createWorkstationAction({ origin, by, ...input, state, approval });
+      if (requestId !== null && store.getWorkstationRequest(requestId)?.state !== "running")
+        throw new HarnessError(409, "la demande n'est plus en cours");
+      const created = store.createWorkstationAction({
+        origin,
+        by,
+        kind: input.kind,
+        params: input.params,
+        rationale: input.rationale,
+        state,
+        approval,
+        requestId,
+        browserId,
+      });
       this.#event(created);
       return created;
     });
@@ -965,9 +1182,10 @@ export class Workstation {
    * de la fenêtre de l'agent. La navigation : un hôte hors de `allowedHosts` (s'il y en a) ;
    * pour l'agent 24/24, un hôte jamais observé ni listé, ou une query longue ou opaque.
    */
-  #guards(input: ActionInput, origin: ActionOrigin): string[] {
+  #guards(input: ActionInput, origin: ActionOrigin, browserId: string | null): string[] {
     const reasons: string[] = [];
-    if (TAB_KINDS[input.kind] && !this.#agentTabs?.has(input.params.tabId as number))
+    const agentTabs = browserId === null ? null : (this.#presence.get(browserId)?.agentTabs ?? null);
+    if (TAB_KINDS[input.kind] && !agentTabs?.has(input.params.tabId as number))
       reasons.push("onglet de l'utilisateur, hors de la fenêtre de l'agent");
     if (input.kind !== "open" && input.kind !== "navigate") return reasons;
     const url = String(input.params.url);
@@ -983,11 +1201,13 @@ export class Workstation {
   }
 
   /**
-   * Les onglets de la fenêtre de l'agent rapportés par l'extension (`X-OMP-Agent-Tabs`,
-   * `agentTabs` d'un résultat) ; absent (`undefined`) : la connaissance précédente reste.
+   * Les onglets de la fenêtre de l'agent rapportés par l'extension du navigateur `browserId`
+   * (`X-OMP-Agent-Tabs`, `agentTabs` d'un résultat) ; absent (`undefined`) : la connaissance
+   * précédente reste. Les numéros d'onglets n'ont de sens que dans leur navigateur.
    */
-  reportAgentTabs(raw: unknown): void {
-    if (raw !== undefined) this.#agentTabs = parseAgentTabs(raw);
+  #reportAgentTabs(browserId: string, raw: unknown): void {
+    const presence = this.#presence.get(browserId);
+    if (raw !== undefined && presence) presence.agentTabs = parseAgentTabs(raw);
   }
 
   getAction(seq: number): WorkstationAction {
@@ -1000,11 +1220,15 @@ export class Workstation {
     return this.#ctx.store.listWorkstationActions(filter);
   }
 
-  /** La plus ancienne action en file passe `running` (bail posé) ; aucune ne part en pause. */
-  #lease(): WorkstationAction | null {
+  /**
+   * La plus ancienne action en file POUR CE NAVIGATEUR passe `running` (bail posé) : les
+   * siennes, et celles sans navigateur s'il est le navigateur par défaut. Aucune ne part en pause.
+   */
+  #lease(browserId: string): WorkstationAction | null {
     if (this.settings().paused) return null;
+    const isDefault = browserId === this.defaultBrowserId();
     for (;;) {
-      const oldest = this.#ctx.store.oldestQueuedWorkstationAction();
+      const oldest = this.#ctx.store.oldestQueuedWorkstationAction(browserId, isDefault);
       if (!oldest) return null;
       const leased = this.#transition(oldest.seq, ["queued"], { state: "running", leasedAt: Date.now() });
       if (leased) return leased;
@@ -1012,32 +1236,34 @@ export class Workstation {
   }
 
   /**
-   * Le long-poll de l'extension : la prochaine action (passée `running`), ou `null` après
-   * `waitSec` secondes sans rien en file. Un dépôt réveille l'attente tout de suite ; la
-   * déconnexion du client (`signal`) y met fin sans louer d'action.
+   * Le long-poll d'une extension : la prochaine action de son navigateur (passée `running`),
+   * ou `null` après `waitSec` secondes sans rien en file. Un dépôt réveille l'attente tout de
+   * suite ; la déconnexion du client (`signal`) y met fin sans louer d'action. Deux profils
+   * Chrome ne se disputent jamais une action : chacun ne loue que celles qui le ciblent.
    */
   async next(
     waitSec: number,
     signal: AbortSignal,
-    version: string | null = null,
+    hello: BrowserHello = NO_HELLO,
     agentTabs?: string,
   ): Promise<WorkstationAction | null> {
-    this.touch(version);
-    this.reportAgentTabs(agentTabs);
-    this.#polls++;
+    const browserId = this.touch(hello);
+    this.#reportAgentTabs(browserId, agentTabs);
+    const presence = this.#presence.get(browserId) as Presence;
+    presence.polls++;
     try {
       const deadline = Date.now() + Math.max(0, Math.min(waitSec, MAX_WAIT_SEC)) * 1000;
       for (;;) {
         if (signal.aborted || this.#closed) return null;
-        const leased = this.#lease();
+        const leased = this.#lease(browserId);
         if (leased) return leased;
         const remaining = deadline - Date.now();
         if (remaining <= 0) return null;
         await this.#park(this.#queueWaiters, remaining, signal);
       }
     } finally {
-      this.#polls--;
-      this.touch();
+      presence.polls--;
+      presence.lastSeenAt = Date.now();
     }
   }
 
@@ -1065,11 +1291,14 @@ export class Workstation {
     return capture === null ? { action } : { action, image: capture.image };
   }
 
-  /** Le résultat de l'extension pour une action en cours (et les onglets de sa fenêtre qu'elle rapporte). */
-  submitResult(seq: number, body: Record<string, unknown>): WorkstationAction {
+  /**
+   * Le résultat de l'extension pour une action en cours (et les onglets de sa fenêtre qu'elle
+   * rapporte). Un envoi à approuver d'une demande déjà annulée ou échouée est clos (`failed`)
+   * au lieu d'attendre l'humain : personne n'attend plus son issue.
+   */
+  submitResult(seq: number, body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): WorkstationAction {
     const input = parseResult(body);
-    this.touch();
-    this.reportAgentTabs(body.agentTabs);
+    this.#reportAgentTabs(this.touch(hello), body.agentTabs);
     const action = this.getAction(seq);
     if (action.state !== "running")
       throw new HarnessError(409, `l'action #${seq} n'est pas en cours (état ${action.state})`);
@@ -1089,6 +1318,14 @@ export class Workstation {
       });
     } else if (input.outcome === "failed") {
       updated = this.#transition(seq, ["running"], { state: "failed", error: input.error, leasedAt: null });
+    } else if (this.#closedRequestError(action) !== null) {
+      updated = this.#transition(seq, ["running"], {
+        state: "failed",
+        error: this.#closedRequestError(action),
+        approved: false,
+        approval: { ...input.approval, decidedBy: null, decidedAt: null, reason: null },
+        leasedAt: null,
+      });
     } else {
       // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart sans geste humain.
       const self = isSelfOnly(input.approval.recipients, this.settings().selfIdentities);
@@ -1328,13 +1565,13 @@ export class Workstation {
     return meeting;
   }
 
-  createMeeting(body: Record<string, unknown>): Meeting {
+  createMeeting(body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): Meeting {
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
     if (typeof body.title !== "string") bad("title : chaîne attendue");
     const url = stripUrl(body.url, "url");
     if (typeof body.startedAt !== "number" || !Number.isFinite(body.startedAt) || body.startedAt <= 0)
       bad("startedAt : horodatage en millisecondes attendu");
-    this.touch();
+    const browserId = this.touch(hello);
     const { store } = this.#ctx;
     return store.transaction(() => {
       const meeting = store.createWorkstationMeeting({
@@ -1342,6 +1579,7 @@ export class Workstation {
         title: clean(body.title as string, MAX_TITLE),
         url,
         startedAt: Math.round(body.startedAt as number),
+        browserId,
       });
       this.#meetingEvent(meeting);
       return meeting;
@@ -1349,17 +1587,17 @@ export class Workstation {
   }
 
   /** Un lot de segments transcrits d'un meeting en cours ; refusé en pause. */
-  addSegments(id: string, body: Record<string, unknown>): number {
+  addSegments(id: string, body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): number {
     const meeting = this.getMeeting(id);
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
     if (meeting.state !== "live") throw new HarnessError(409, `le meeting n'est plus en cours (état ${meeting.state})`);
     const segments = parseSegments(body);
-    this.touch();
+    this.touch(hello);
     return this.#ctx.store.addWorkstationSegments(id, segments);
   }
 
   /** La fin d'un meeting : son digest part au prochain tour de l'agent. */
-  endMeeting(id: string): Meeting {
+  endMeeting(id: string, hello: BrowserHello = NO_HELLO): Meeting {
     const meeting = this.getMeeting(id);
     const { store } = this.#ctx;
     const ended = store.transaction(() => {
@@ -1368,7 +1606,7 @@ export class Workstation {
       return next;
     });
     if (!ended) throw new HarnessError(409, `le meeting n'est plus en cours (état ${meeting.state})`);
-    this.touch();
+    this.touch(hello);
     return ended;
   }
 
@@ -1398,10 +1636,238 @@ export class Workstation {
     });
   }
 
+  // -- demandes et automatisations ---------------------------------------------------------
+
+  #requestEvent(request: WorkstationRequest): void {
+    this.#ctx.event(
+      "workstation_request",
+      null,
+      { id: request.id, state: request.state, reason: request.reason },
+      null,
+    );
+  }
+
+  /** L'erreur d'une action dont la demande est close (annulée ou échouée) ; `null` sinon. */
+  #closedRequestError(action: WorkstationAction): string | null {
+    if (action.requestId === null) return null;
+    const request = this.#ctx.store.getWorkstationRequest(action.requestId);
+    if (request?.state === "cancelled") return REQUEST_CANCELLED;
+    if (request?.state === "failed") return request.reason ?? "demande échouée";
+    return null;
+  }
+
+  /** Les actions d'une demande close qui ne sont pas parties (en file, à approuver) passent `failed`. */
+  #closeRequestActions(id: string, error: string): void {
+    for (const action of this.#ctx.store.listWorkstationActions({
+      requestId: id,
+      states: ["queued", "awaiting_approval"],
+      limit: 10_000,
+    }))
+      this.#transition(action.seq, ["queued", "awaiting_approval"], { state: "failed", error });
+  }
+
+  getRequest(id: string): WorkstationRequest {
+    const request = this.#ctx.store.getWorkstationRequest(id);
+    if (!request) throw new HarnessError(404, `demande inconnue : ${id}`);
+    return request;
+  }
+
+  #enqueue(
+    input: { instruction: string; automationId: string | null; browserId: string | null },
+    actor: Actor,
+  ): WorkstationRequest {
+    const { store } = this.#ctx;
+    return store.transaction(() => {
+      const request = store.createWorkstationRequest({ id: newId("q"), by: actor.by, ...input });
+      this.#requestEvent(request);
+      return request;
+    });
+  }
+
+  /**
+   * Une demande de l'humain : une consigne que le job `poste-demande` exécutera dans le
+   * navigateur (`browserId`, sinon le navigateur par défaut), quelle que soit l'autonomie.
+   * Refusée en pause ; extension hors ligne : elle attend en file. Aucun run, aucun worktree.
+   */
+  createRequest(body: Record<string, unknown>, actor: Actor): WorkstationRequest {
+    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
+    const raw = body.instruction;
+    if (typeof raw !== "string") bad("instruction : chaîne attendue");
+    const trimmed = raw.trim();
+    if (trimmed === "") bad("instruction : consigne non vide attendue");
+    if (trimmed.length > MAX_INSTRUCTION) bad(`instruction : ${MAX_INSTRUCTION} caractères au plus`);
+    const browserId = browserRef(body.browserId, "browserId");
+    if (browserId !== null) this.#known(browserId);
+    return this.#enqueue({ instruction: clean(trimmed, MAX_INSTRUCTION), automationId: null, browserId }, actor);
+  }
+
+  listRequests(filter: { states?: readonly RequestState[]; limit?: number }): WorkstationRequest[] {
+    return this.#ctx.store.listWorkstationRequests(filter);
+  }
+
+  /** Une demande et toutes ses actions (celles qu'a déposées son job, et elles seules), les plus anciennes d'abord. */
+  requestView(id: string): { request: WorkstationRequest; actions: WorkstationAction[] } {
+    const request = this.getRequest(id);
+    return {
+      request,
+      actions: this.#ctx.store.listWorkstationActions({ requestId: id, order: "asc", limit: 10_000 }),
+    };
+  }
+
+  /**
+   * L'annulation par l'humain d'une demande en file ou en cours : ses actions pas encore
+   * parties passent `failed`, son job est arrêté au tour suivant (`WorkstationAgent`).
+   */
+  cancelRequest(id: string, actor: Actor): WorkstationRequest {
+    this.getRequest(id);
+    const { store } = this.#ctx;
+    const cancelled = store.transaction(() => {
+      const next = store.updateWorkstationRequestIf(id, ["queued", "running"], {
+        state: "cancelled",
+        reason: "annulée par l'humain",
+        endedAt: Date.now(),
+      });
+      if (next) this.#requestEvent(next);
+      return next;
+    });
+    if (!cancelled) throw new HarnessError(409, `la demande est déjà ${this.getRequest(id).state}`);
+    this.#closeRequestActions(id, REQUEST_CANCELLED);
+    this.#ctx.log(`poste : demande ${id} annulée par ${actor.by ?? "un client"}`);
+    return cancelled;
+  }
+
+  /** Le départ d'une demande en file ; `null` si elle n'y est plus (annulée entre-temps). */
+  startRequest(id: string): WorkstationRequest | null {
+    const { store } = this.#ctx;
+    return store.transaction(() => {
+      const next = store.updateWorkstationRequestIf(id, ["queued"], {
+        state: "running",
+        reason: null,
+        startedAt: Date.now(),
+      });
+      if (next) this.#requestEvent(next);
+      return next;
+    });
+  }
+
+  /**
+   * Pourquoi une demande en file attend. Écrite (et signalée) seulement si sa SORTE (le texte
+   * avant le premier « : ») change : une dépense qui monte ou des slots qui bougent ne
+   * réécrivent rien.
+   */
+  waitRequest(id: string, reason: string): void {
+    const { store } = this.#ctx;
+    const request = store.getWorkstationRequest(id);
+    if (request?.state !== "queued" || reasonKind(request.reason) === reasonKind(reason)) return;
+    store.transaction(() => {
+      const next = store.updateWorkstationRequestIf(id, ["queued"], { reason: clip(reason, MAX_REQUEST_REASON) });
+      if (next) this.#requestEvent(next);
+    });
+  }
+
+  /**
+   * L'issue d'une demande en cours : `done` avec le compte rendu, ou `failed` avec la raison
+   * (ses actions pas encore parties passent `failed`). `null` si elle n'était plus en cours.
+   */
+  finishRequest(id: string, outcome: { report: string } | { reason: string }): WorkstationRequest | null {
+    const { store } = this.#ctx;
+    const failure = "reason" in outcome ? clip(outcome.reason, MAX_REQUEST_REASON) : null;
+    const finished = store.transaction(() => {
+      const next = store.updateWorkstationRequestIf(
+        id,
+        ["running"],
+        "report" in outcome
+          ? { state: "done", report: clean(outcome.report, MAX_REPORT), endedAt: Date.now() }
+          : { state: "failed", reason: failure, endedAt: Date.now() },
+      );
+      if (next) this.#requestEvent(next);
+      return next;
+    });
+    if (finished && failure !== null) this.#closeRequestActions(id, failure);
+    return finished;
+  }
+
+  getAutomation(id: string): WorkstationAutomation {
+    const automation = this.#ctx.store.getWorkstationAutomation(id);
+    if (!automation) throw new HarnessError(404, `automatisation inconnue : ${id}`);
+    return automation;
+  }
+
+  listAutomations(): WorkstationAutomation[] {
+    return this.#ctx.store.listWorkstationAutomations();
+  }
+
+  /**
+   * Une automatisation tirée de la tâche `task` (son rang) de la version `version` du profil,
+   * si elle est automatisable : titre, fréquence et étapes copiés. Idempotente (même titre et
+   * mêmes étapes : l'existante, `created: false`), permise en pause. `browserId` : le
+   * navigateur de ses demandes ; `schedule` : son expression cron, lue par le planificateur.
+   */
+  createAutomation(
+    body: Record<string, unknown>,
+    actor: Actor,
+  ): { automation: WorkstationAutomation; created: boolean } {
+    const { version, task } = body;
+    if (typeof version !== "number" || !Number.isInteger(version) || version < 1) bad("version : entier attendu");
+    if (typeof task !== "number" || !Number.isInteger(task) || task < 0) bad("task : entier attendu");
+    const browserId = browserRef(body.browserId, "browserId");
+    const schedule = parseSchedule(body.schedule);
+    const { store } = this.#ctx;
+    const profile = store.workstationProfile(version);
+    if (!profile) throw new HarnessError(404, `profil inconnu : ${version}`);
+    const source = profile.repetitiveTasks[task];
+    if (!source) throw new HarnessError(404, `tâche inconnue : ${task}`);
+    if (!source.automatable) throw new HarnessError(409, "cette tâche n'est pas automatisable");
+    if (browserId !== null) this.#known(browserId);
+    return store.transaction(() => {
+      const existing = store.findWorkstationAutomation(source.title, source.steps);
+      if (existing) return { automation: existing, created: false };
+      const automation = store.createWorkstationAutomation({
+        id: newId("au"),
+        by: actor.by,
+        title: source.title,
+        frequency: source.frequency,
+        steps: source.steps,
+        profileVersion: version,
+        browserId,
+        schedule,
+      });
+      this.#ctx.event("workstation_automation", null, { id: automation.id }, null);
+      return { automation, created: true };
+    });
+  }
+
+  /**
+   * Lance une automatisation : une demande « en file » dont la consigne reprend son titre et
+   * ses étapes, rattachée à elle. C'est le point d'entrée du lancement par l'humain
+   * (`POST …/automations/{id}/launch`) ET du planificateur (cible `automation`) : 404 si
+   * l'automatisation n'existe plus, 409 en pause ; l'appelant relance le tour de l'agent.
+   */
+  runAutomation(automationId: string, actor: Actor): WorkstationRequest {
+    const automation = this.getAutomation(automationId);
+    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
+    return this.#enqueue(
+      { instruction: automationInstruction(automation), automationId, browserId: automation.browserId },
+      actor,
+    );
+  }
+
+  /** Supprime une automatisation ; les demandes déjà lancées gardent leur consigne. */
+  deleteAutomation(id: string): string {
+    const { store } = this.#ctx;
+    const removed = store.transaction(() => {
+      const gone = store.deleteWorkstationAutomation(id);
+      if (gone) this.#ctx.event("workstation_automation", null, { id, removed: true }, null);
+      return gone;
+    });
+    if (!removed) throw new HarnessError(404, `automatisation inconnue : ${id}`);
+    return id;
+  }
+
   // -- profil et services --------------------------------------------------------------
 
-  profileView(): { profile: WorkstationProfile | null; stats: ProfileStats } {
-    return { profile: this.#ctx.store.latestWorkstationProfile(), stats: this.stats() };
+  profileView(): { profile: WorkstationProfile | null; stats: ProfileStats; browsers: BrowserView[] } {
+    return { profile: this.#ctx.store.latestWorkstationProfile(), stats: this.stats(), browsers: this.browsers() };
   }
 
   writeProfile(profile: WorkstationProfileBody): WorkstationProfile {

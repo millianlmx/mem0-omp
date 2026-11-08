@@ -7,7 +7,11 @@
 //   rendu par `workstation_meeting_digest` ;
 // - `poste-service` : un service de l'agent, toutes les `shiftEveryMin` minutes quand
 //   l'autonomie appliquée est `propose` ou `act`, l'extension en ligne et le poste hors
-//   pause : de petites actions par `workstation_act`, chacune journalisée avec sa raison.
+//   pause : de petites actions par `workstation_act`, chacune journalisée avec sa raison ;
+// - `poste-demande` : une demande de l'humain (ou une automatisation lancée), la plus
+//   ancienne en file, quand son navigateur est en ligne et le poste hors pause, quelle que
+//   soit l'autonomie ; ses actions lui sont rattachées, son compte rendu rendu par
+//   `workstation_request_report`. Une demande à la fois, dans l'ordre d'arrivée.
 //
 // Un seul job de chaque sorte à la fois. La garde d'envoi n'est pas ici : elle est dans la
 // file (workstation.ts) et dans l'extension, et aucun outil de l'agent n'approuve.
@@ -27,28 +31,41 @@ import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
-import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile } from "./db.ts";
-import { nudgePrompt, workstationDigestPrompt, workstationProfilePrompt, workstationShiftPrompt } from "./prompts.ts";
+import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
+import {
+  nudgePrompt,
+  workstationDigestPrompt,
+  workstationProfilePrompt,
+  workstationRequestPrompt,
+  workstationShiftPrompt,
+} from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import type { WorkstationJob } from "./runner.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
 import { workstationOwner } from "./session-feed.ts";
 import type { EffectiveAutonomy, ProfileStats, Workstation } from "./workstation.ts";
-import { MAX_WAIT_SEC, clip, parseActionInput, parseDigest, parseProfile } from "./workstation.ts";
+import { MAX_WAIT_SEC, REQUEST_CANCELLED, clip, parseActionInput, parseDigest, parseProfile } from "./workstation.ts";
 import { untrusted } from "./workstation-guards.ts";
 
 /** La scope mémoire des jobs du poste. */
 export const WORKSTATION_SCOPE = "workstation";
 
-const JOBS: readonly WorkstationJob[] = ["poste-profil", "poste-digest", "poste-service"];
+const JOBS: readonly WorkstationJob[] = ["poste-profil", "poste-digest", "poste-service", "poste-demande"];
 
 /** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer. */
 const JOB_TIERS: Record<WorkstationJob, Tier> = {
   "poste-profil": "heavy",
   "poste-digest": "standard",
   "poste-service": "heavy",
+  "poste-demande": "heavy",
 };
+
+/** L'issue d'une demande coupée par l'arrêt ou le redémarrage du service : jamais relancée. */
+const SERVICE_STOPPED = "interrompu : service arrêté";
+
+/** Le compteur des dépôts d'un job (service ou demande) : le plafond `shiftMaxActions`. */
+type Counter = { actions: number; capped: boolean };
 
 const OBSERVATIONS_SAMPLE = 300;
 const MEETINGS_SHOWN = 10;
@@ -186,6 +203,8 @@ export class WorkstationAgent {
   readonly #live = new Map<WorkstationJob, LiveJob>();
   /** La dernière synthèse du profil tentée : un échec n'est pas relancé avant `profileEveryHours`. */
   #profileAttemptAt = 0;
+  /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
+  #requestId: string | null = null;
 
   constructor(ctx: HarnessContext, workstation: Workstation) {
     this.#ctx = ctx;
@@ -197,9 +216,11 @@ export class WorkstationAgent {
     this.#ws.maintain(now);
     if (!this.#ws.enabled) return;
     this.#guardShift();
+    this.#guardRequest();
     this.#digestNext();
     this.#profileIfDue(now);
     this.#shiftIfDue(now);
+    this.#requestNext(now);
   }
 
   /** Le job tourne en ce moment. */
@@ -207,12 +228,17 @@ export class WorkstationAgent {
     return this.#live.has(job);
   }
 
-  /** Un job lancé s'il n'en tourne pas déjà un de sa sorte, sous le plafond journalier, avec un slot runner. */
-  #launch(job: WorkstationJob, drive: (live: LiveJob) => Promise<void>): boolean {
-    if (this.#live.has(job)) return false;
-    if (this.#ctx.monitor.dailyBudgetDue()) return false;
+  /**
+   * Un job lancé s'il n'en tourne pas déjà un de sa sorte, sous le plafond journalier, avec
+   * un slot runner : `null` s'il part, sinon pourquoi il ne part pas (lisible par l'humain).
+   */
+  #launch(job: WorkstationJob, drive: (live: LiveJob) => Promise<void>): string | null {
+    if (this.#live.has(job)) return "une demande plus ancienne est en cours";
+    const daily = this.#ctx.monitor.dailyBudgetDue();
+    if (daily)
+      return `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
     const slot = this.#ctx.scheduler.tryAcquire("runner", unitOf(job));
-    if ("refused" in slot) return false;
+    if ("refused" in slot) return `aucun runner libre : ${slot.detail}`;
     const live: LiveJob = { abort: new AbortController(), session: null, stopReason: null, done: Promise.resolve() };
     this.#live.set(job, live);
     live.done = drive(live)
@@ -222,7 +248,7 @@ export class WorkstationAgent {
         slot.release();
         this.#live.delete(job);
       });
-    return true;
+    return null;
   }
 
   /** Un runner prêt pour `job`, sur le dépôt synthétique du poste, avec ses outils hôtes. */
@@ -338,7 +364,7 @@ export class WorkstationAgent {
         now - Math.max(reference, this.#profileAttemptAt) >= every &&
         store.countWorkstationObservationsSince(last?.updatedAt ?? 0) > 0);
     if (!due) return;
-    if (!this.#launch("poste-profil", (live) => this.#profile(live))) return;
+    if (this.#launch("poste-profil", (live) => this.#profile(live)) !== null) return;
     this.#ws.profileRequested = false;
     this.#profileAttemptAt = now;
   }
@@ -413,7 +439,7 @@ export class WorkstationAgent {
   async #shift(live: LiveJob, autonomy: Exclude<EffectiveAutonomy, "observe">): Promise<void> {
     const { config, store } = this.#ctx;
     const startedAt = Date.now();
-    const counter = { actions: 0, capped: false };
+    const counter: Counter = { actions: 0, capped: false };
     let outcome: string;
     try {
       const session = await this.#open("poste-service", live, (name, args) =>
@@ -450,43 +476,65 @@ export class WorkstationAgent {
       await live.session?.stop();
       live.session = null;
     }
-    if (live.abort.signal.aborted) outcome = live.stopReason ?? "interrompu : service arrêté";
+    if (live.abort.signal.aborted) outcome = live.stopReason ?? SERVICE_STOPPED;
     this.#ws.recordShift({ startedAt, outcome: clip(outcome, 300), actions: counter.actions });
+  }
+
+  /**
+   * Un dépôt de `workstation_act` ou `workstation_decision` par un job de l'agent : sous le
+   * plafond `shiftMaxActions` (au-delà, `capText` et aucune action), rattaché à la demande
+   * `requestId` (`null` pour le service 24/24), puis l'attente de son résultat.
+   */
+  async #deposit(
+    name: string,
+    args: Record<string, unknown>,
+    counter: Counter,
+    live: LiveJob,
+    requestId: string | null,
+    capText: string,
+  ): Promise<HostToolResult> {
+    if (counter.actions >= this.#ctx.config.workstation.shiftMaxActions) {
+      counter.capped = true;
+      return { text: capText, isError: true };
+    }
+    let action: WorkstationAction;
+    try {
+      const input =
+        name === "workstation_decision"
+          ? parseActionInput({ kind: "decision", params: { summary: args.summary }, rationale: args.rationale })
+          : parseActionInput({ kind: args.kind, params: args.params ?? {}, rationale: args.rationale });
+      if (name === "workstation_act" && input.kind === "decision")
+        return { text: "une décision sans geste passe par `workstation_decision`.", isError: true };
+      action = this.#ws.createAction(input, "agent", "agent", requestId);
+    } catch (err) {
+      return { text: `action refusée : ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    }
+    counter.actions++;
+    if (action.kind === "decision") return { text: `décision #${action.seq} journalisée.` };
+    if (action.state === "awaiting_approval") return { text: AWAITING(action.seq) };
+    const waited = await this.#ws.waitAction(action.seq, MAX_WAIT_SEC, live.abort.signal);
+    const readable = waited.image !== undefined && (await live.session?.acceptsImages()) === true;
+    return actResult(waited.action, { image: waited.image, readable });
   }
 
   async #shiftTool(
     name: string,
     args: Record<string, unknown>,
-    counter: { actions: number; capped: boolean },
+    counter: Counter,
     live: LiveJob,
   ): Promise<HostToolResult> {
-    const { config, store } = this.#ctx;
+    const { store } = this.#ctx;
     switch (name) {
       case "workstation_act":
-      case "workstation_decision": {
-        if (counter.actions >= config.workstation.shiftMaxActions) {
-          counter.capped = true;
-          return { text: "plafond d'actions de ce service atteint : termine ton tour maintenant.", isError: true };
-        }
-        let action: WorkstationAction;
-        try {
-          const input =
-            name === "workstation_decision"
-              ? parseActionInput({ kind: "decision", params: { summary: args.summary }, rationale: args.rationale })
-              : parseActionInput({ kind: args.kind, params: args.params ?? {}, rationale: args.rationale });
-          if (name === "workstation_act" && input.kind === "decision")
-            return { text: "une décision sans geste passe par `workstation_decision`.", isError: true };
-          action = this.#ws.createAction(input, "agent", "agent");
-        } catch (err) {
-          return { text: `action refusée : ${err instanceof Error ? err.message : String(err)}`, isError: true };
-        }
-        counter.actions++;
-        if (action.kind === "decision") return { text: `décision #${action.seq} journalisée.` };
-        if (action.state === "awaiting_approval") return { text: AWAITING(action.seq) };
-        const waited = await this.#ws.waitAction(action.seq, MAX_WAIT_SEC, live.abort.signal);
-        const readable = waited.image !== undefined && (await live.session?.acceptsImages()) === true;
-        return actResult(waited.action, { image: waited.image, readable });
-      }
+      case "workstation_decision":
+        return this.#deposit(
+          name,
+          args,
+          counter,
+          live,
+          null,
+          "plafond d'actions de ce service atteint : termine ton tour maintenant.",
+        );
       case "workstation_activity": {
         const sinceMin =
           typeof args.sinceMin === "number" && Number.isFinite(args.sinceMin)
@@ -511,31 +559,158 @@ export class WorkstationAgent {
     }
   }
 
-  // -- cycle de vie -------------------------------------------------------------------
+  // -- demandes de l'humain ---------------------------------------------------------------
 
-  /** Un job qu'un process mort a laissé tourner : son unité est arrêtée (le meeting reste `ended`, repris). */
-  async recover(): Promise<void> {
-    const { config, exec } = this.#ctx;
-    for (const job of JOBS) await forceStop(config, exec, unitOf(job));
+  /**
+   * La demande en cours s'arrête dès qu'elle n'est plus `running` (annulée par l'humain) ou
+   * que le poste passe en pause. L'autonomie ne l'arrête pas : l'humain l'a demandée.
+   */
+  #guardRequest(): void {
+    const live = this.#live.get("poste-demande");
+    if (!live || live.abort.signal.aborted || this.#requestId === null) return;
+    const reason =
+      this.#ctx.store.getWorkstationRequest(this.#requestId)?.state !== "running"
+        ? REQUEST_CANCELLED
+        : this.#ws.settings().paused
+          ? "le poste a été mis en pause"
+          : null;
+    if (reason === null) return;
+    live.stopReason = reason;
+    live.abort.abort();
   }
 
   /**
-   * L'arrêt d'urgence : le service en cours est coupé tout de suite (son runner arrêté, son
-   * issue `reason`). Rend `true` s'il y en avait un.
+   * La plus ancienne demande en file part si rien ne la retient ; sinon sa raison d'attente
+   * est écrite (une fois par sorte). Aucune automatisation ne pose de demande d'elle-même ici :
+   * c'est le geste de l'humain, ou le planificateur, par `Workstation.runAutomation`.
+   */
+  #requestNext(now: number): void {
+    const head = this.#ctx.store.oldestQueuedWorkstationRequest();
+    if (!head) return;
+    const reason = this.#ws.settings().paused
+      ? "le poste est en pause"
+      : !this.#ws.online(now, head.browserId ?? this.#ws.defaultBrowserId())
+        ? "l'extension du poste est hors ligne"
+        : this.#live.has("poste-demande")
+          ? "une demande plus ancienne est en cours"
+          : this.#launch("poste-demande", (live) => this.#request(head, live));
+    if (reason !== null) this.#ws.waitRequest(head.id, reason);
+  }
+
+  async #request(request: WorkstationRequest, live: LiveJob): Promise<void> {
+    if (this.#ws.startRequest(request.id) === null) return;
+    this.#requestId = request.id;
+    const { config, store } = this.#ctx;
+    const counter: Counter = { actions: 0, capped: false };
+    const out: { report: string | null } = { report: null };
+    let failure: string | null = null;
+    try {
+      const session = await this.#open("poste-demande", live, (name, args) =>
+        this.#requestTool(name, args, counter, live, request.id, out),
+      );
+      const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      let result = await session.prompt(
+        workstationRequestPrompt({
+          instruction: request.instruction,
+          maxActions: config.workstation.shiftMaxActions,
+          profile: profileText(store.latestWorkstationProfile()),
+        }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && out.report === null && !counter.capped)
+        result = await session.prompt(
+          nudgePrompt("poste-demande", "le compte rendu n'a pas été rendu par `workstation_request_report`"),
+          live.abort.signal,
+          deadlineAt,
+        );
+      if (result.status !== "completed") failure = `échec du runner : ${result.error?.message ?? "erreur du runner"}`;
+    } catch (err) {
+      failure = `échec du runner : ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      await live.session?.stop();
+      live.session = null;
+      this.#requestId = null;
+    }
+    const capNote = `Plafond d'actions atteint (${config.workstation.shiftMaxActions}) : la demande s'est arrêtée là.`;
+    const outcome: { report: string } | { reason: string } = live.abort.signal.aborted
+      ? { reason: live.stopReason ?? SERVICE_STOPPED }
+      : failure !== null
+        ? { reason: failure }
+        : out.report !== null
+          ? { report: counter.capped ? `${out.report}\n\n${capNote}` : out.report }
+          : counter.capped
+            ? { report: capNote }
+            : { reason: "l'agent n'a pas rendu de compte rendu" };
+    this.#ws.finishRequest(request.id, outcome);
+    if ("reason" in outcome) this.#ctx.log(`poste : demande ${request.id} en échec : ${outcome.reason}`);
+  }
+
+  async #requestTool(
+    name: string,
+    args: Record<string, unknown>,
+    counter: Counter,
+    live: LiveJob,
+    requestId: string,
+    out: { report: string | null },
+  ): Promise<HostToolResult> {
+    switch (name) {
+      case "workstation_act":
+      case "workstation_decision":
+        return this.#deposit(
+          name,
+          args,
+          counter,
+          live,
+          requestId,
+          "plafond d'actions de cette demande atteint : rends ton compte rendu par `workstation_request_report` maintenant.",
+        );
+      case "workstation_request_report": {
+        if (typeof args.report !== "string" || args.report.trim() === "")
+          return { text: "report : compte rendu non vide attendu", isError: true };
+        out.report = args.report;
+        return { text: "compte rendu enregistré. Termine ton tour." };
+      }
+      default:
+        return { text: `outil inconnu : ${name}`, isError: true };
+    }
+  }
+
+  // -- cycle de vie -------------------------------------------------------------------
+
+  /**
+   * Un job qu'un process mort a laissé tourner : son unité est arrêtée (le meeting reste
+   * `ended`, repris) ; une demande restée `running` passe `failed`, jamais relancée. Ce que
+   * CE process mène déjà (un tour joué avant le démarrage) n'est pas touché.
+   */
+  async recover(): Promise<void> {
+    const { config, exec, store } = this.#ctx;
+    for (const job of JOBS) if (!this.#live.has(job)) await forceStop(config, exec, unitOf(job));
+    for (const request of store.listWorkstationRequests({ states: ["running"], limit: 1000 }))
+      if (request.id !== this.#requestId) this.#ws.finishRequest(request.id, { reason: SERVICE_STOPPED });
+  }
+
+  /**
+   * L'arrêt d'urgence : le service et la demande en cours sont coupés tout de suite (leur
+   * runner arrêté, leur issue `reason`). Rend `true` s'il y en avait un.
    */
   async halt(reason: string): Promise<boolean> {
-    const live = this.#live.get("poste-service");
-    if (!live || live.abort.signal.aborted) return false;
-    live.stopReason = reason;
-    live.abort.abort();
-    await live.session?.stop();
-    return true;
+    let halted = false;
+    for (const job of ["poste-service", "poste-demande"] as const) {
+      const live = this.#live.get(job);
+      if (!live || live.abort.signal.aborted) continue;
+      live.stopReason = reason;
+      live.abort.abort();
+      await live.session?.stop();
+      halted = true;
+    }
+    return halted;
   }
 
   async stop(): Promise<void> {
     const lives = [...this.#live.values()];
     for (const live of lives) {
-      live.stopReason ??= "interrompu : service arrêté";
+      live.stopReason ??= SERVICE_STOPPED;
       live.abort.abort();
       await live.session?.stop();
     }
