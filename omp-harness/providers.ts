@@ -24,7 +24,7 @@ import type { HarnessConfig, ModelChoice, ProviderLimit, Tier } from "./config.t
 import { TIERS } from "./config.ts";
 import type { ProviderModel, ProviderRow, Store } from "./db.ts";
 import { HarnessError } from "./errors.ts";
-import { LOCAL_PROVIDER, runnerModelsFile } from "./local-model.ts";
+import { LOCAL_PROVIDER, localBlock, servedModelsFile } from "./local-model.ts";
 import type { Scheduler } from "./scheduler.ts";
 
 /** Les fournisseurs connus d'omp et la variable de leur clé. */
@@ -113,16 +113,6 @@ export function providersModelsYaml(providers: ProviderRow[], preserved = ""): s
   if (preserved !== "") lines.push(preserved.replace(/\n+$/, ""));
   if (lines.length === 2) lines[1] = "providers: {}";
   return `${lines.join("\n")}\n`;
-}
-
-/** Le bloc `omlx` qu'a écrit `--models omlx` (harness.sh up --omlx), gardé tel quel. */
-export function localBlock(existing: string): string {
-  const lines = existing.split("\n");
-  const start = lines.indexOf(`  ${LOCAL_PROVIDER}:`);
-  if (start < 0) return "";
-  let end = start + 1;
-  while (end < lines.length && (lines[end] === "" || /^ {3,}/.test(lines[end] as string))) end++;
-  return lines.slice(start, end).join("\n");
 }
 
 export class ProviderRegistry {
@@ -394,8 +384,7 @@ export class ProviderRegistry {
    */
   #writeModels(): void {
     const compatible = this.#store.listProviders().filter((row) => row.kind === COMPATIBLE);
-    const target =
-      this.#config.runner.isolation === "container" ? runnerModelsFile(this.#config) : this.#config.providersModelsFile;
+    const target = servedModelsFile(this.#config);
     if (target === null) return;
     let existing: string | null = null;
     try {

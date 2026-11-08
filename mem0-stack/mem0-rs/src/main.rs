@@ -18,6 +18,7 @@ mod horodatage;
 mod http;
 mod http_liens;
 mod import;
+mod jetons;
 mod liens;
 mod openai;
 mod recherche;
@@ -95,20 +96,21 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         db,
         embedder,
         chat,
-        http_token: cfg.http_token.clone(),
+        jetons: cfg.jetons.clone(),
         installation_token: cfg.installation_token.clone(),
         recherche: cfg.recherche,
         reve: cfg.reve,
         suivi_reve,
     });
     eprintln!(
-        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {} via {}, recherche {})",
+        "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {} via {}, recherche {}, {} jeton(s) à portées)",
         env!("CARGO_PKG_VERSION"),
         cfg.embed_model,
         cfg.base_url,
         cfg.llm_model,
         cfg.chat_base_url.as_deref().unwrap_or(config::CHAT_COUPE),
-        cfg.recherche.strategie(None)
+        cfg.recherche.strategie(None),
+        cfg.jetons.limites()
     );
     axum::serve(listener, http::routeur(etat))
         .with_graceful_shutdown(signal_d_arret())

@@ -8,9 +8,9 @@
 // de l'échéance de l'étape, le runner est arrêté et le prompt rend une erreur
 // relançable, jamais une attente infinie.
 import type { ModelChoice, RepoConfig, Tier } from "./config.ts";
-import { modelChain } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { EventType } from "./events.ts";
+import { policyChain, policySecretVars, repoMemoryToken, syncMemoryTokenFile } from "./policy.ts";
 import { FAILOVER_PROMPT } from "./prompts.ts";
 import type { HostToolDefinition, HostToolHandler, PromptError, PromptErrorCause, PromptResult } from "./rpc.ts";
 import { RpcRunner, classifyPromptError, parseRetryAfter } from "./rpc.ts";
@@ -133,6 +133,14 @@ export class RunnerSession {
   }
 
   /**
+   * La chaîne de bascule d'un tier sous la politique du dépôt (policy.ts) : jamais un
+   * fournisseur hors de sa liste blanche ; aucun modèle permis lève `PolicyRefusal`.
+   */
+  #chain(tier: Tier): ModelChoice[] {
+    return policyChain(this.#ctx.config, this.#repo, tier, `le dépôt ${this.#repo.name}`);
+  }
+
+  /**
    * Un runner prêt pour `tier` : celui qui vit déjà (review ⇄ fix garde sa
    * conversation, seul le modèle suit le tier), sinon un nouveau, sous `unit`.
    * `avoidProvider` : un runner NEUF commence sa chaîne au premier modèle d'un autre
@@ -147,7 +155,7 @@ export class RunnerSession {
     const { config, scheduler } = this.#ctx;
     if (this.#runner?.alive) {
       if (this.#tier !== tier) {
-        const pick = await scheduler.waitModel(tier, modelChain(config, tier), 0, signal);
+        const pick = await scheduler.waitModel(tier, this.#chain(tier), 0, signal);
         this.#tier = tier;
         this.#prepaid = pick !== null;
         if (pick && (pick.choice.provider !== this.#model?.provider || pick.choice.model !== this.#model?.model)) {
@@ -156,7 +164,10 @@ export class RunnerSession {
       }
       return true;
     }
-    const chain = modelChain(config, tier);
+    const chain = this.#chain(tier);
+    // Le jeton mémoire du dépôt (policy.ts) : déclaré mais absent, aucun runner (jamais le jeton global).
+    const memoryToken = repoMemoryToken(this.#repo);
+    const localOnly = this.#repo.privacy === "local-only";
     const pick = await scheduler.waitModel(tier, chain, chainStart(chain, options.avoidProvider ?? null), signal);
     this.#tier = tier;
     this.#model = pick?.choice ?? null;
@@ -171,13 +182,21 @@ export class RunnerSession {
       scope,
       repo: this.#repo.path,
       oracleUrl: config.oracle?.url ?? null,
+      memoryEnvFile: syncMemoryTokenFile(config, this.#repo.name, memoryToken),
+      localOnly,
     });
     // Sans lanceur ni conteneur, les clés déclarées par l'API passent par l'environnement du runner.
     const base =
-      config.runner.isolation === "none" ? { ...process.env, ...this.#ctx.providers.runnerEnv() } : process.env;
+      config.runner.isolation === "none" && !localOnly
+        ? { ...process.env, ...this.#ctx.providers.runnerEnv() }
+        : process.env;
     const proc = this.#ctx.spawn(argv.command, argv.args, {
       cwd: this.#cwd,
-      env: runnerEnv(scope, config.oracle, base, config.memory.runnerMode),
+      env: runnerEnv(scope, config.oracle, base, config.memory.runnerMode, {
+        memoryToken,
+        hidden: policySecretVars(config),
+        localOnly,
+      }),
     });
     const runner = new RpcRunner(proc, {
       onHostTool: this.#hooks.onHostTool,
@@ -239,7 +258,7 @@ export class RunnerSession {
   async prompt(message: string, signal: AbortSignal, deadlineAt: number): Promise<PromptResult> {
     const { config, scheduler } = this.#ctx;
     const tier = this.#tier ?? "heavy";
-    const chain = modelChain(config, tier);
+    const chain = this.#chain(tier);
     if (this.#prepaid) this.#prepaid = false;
     else if (chain.length > 0 && this.#model) {
       const pick = await scheduler.waitModel(tier, chain, this.#modelIndex, signal);

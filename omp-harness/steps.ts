@@ -42,6 +42,7 @@ import type { NewProjectInput } from "./orchestrator.ts";
 import { parseModulesSection } from "./planner.ts";
 import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
 import { briefOfReq, renderMemories } from "./oracle.ts";
+import { PolicyRefusal } from "./policy.ts";
 import type { PromptError, PromptResult } from "./rpc.ts";
 import { RunnerExited } from "./rpc.ts";
 import { hostToolsFor, runnerUnit } from "./runner.ts";
@@ -443,7 +444,15 @@ export class StepExecutor {
       }
       const reason = err instanceof Error ? err.message : String(err);
       await session.stop();
-      return await this.#interrupted(run, stepRow, err instanceof RunnerExited ? "runner" : "other", reason, true);
+      // Une politique du dépôt qui refuse l'étape (aucun modèle permis, jeton absent) : la
+      // relancer telle quelle referait le même refus — l'humain corrige la configuration.
+      return await this.#interrupted(
+        run,
+        stepRow,
+        err instanceof RunnerExited ? "runner" : "other",
+        reason,
+        !(err instanceof PolicyRefusal),
+      );
     }
   }
 

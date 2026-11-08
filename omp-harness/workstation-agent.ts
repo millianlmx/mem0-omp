@@ -19,7 +19,9 @@
 // - le répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 //   `<dépôt>/<feature>` qu'exige le lanceur root (`_` comme `_audit-<id>` : aucun run n'y
 //   prend son worktree), seul dossier inscriptible du runner ;
-// - la scope mémoire est `workstation` : l'agent ne lit ni n'écrit la mémoire d'un projet.
+// - la scope mémoire est `workstation` : l'agent ne lit ni n'écrit la mémoire d'un projet ;
+// - sa politique de modèles est `workstation.policy` (models, providers, privacy : policy.ts),
+//   appliquée comme celle d'un dépôt — les données du poste peuvent ne jamais quitter la machine.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
@@ -57,11 +59,14 @@ const TOOL_TEXT_MAX = 8000;
 /** Le dépôt synthétique et le répertoire de travail des jobs du poste (voir l'en-tête). */
 export function workstationTarget(config: HarnessConfig): { repo: RepoConfig; cwd: string } {
   return {
-    repo: repoDefaults({
-      name: "workstation",
-      path: path.join(config.dataDir, "workstation"),
-      scope: WORKSTATION_SCOPE,
-    }),
+    repo: {
+      ...repoDefaults({
+        name: "workstation",
+        path: path.join(config.dataDir, "workstation"),
+        scope: WORKSTATION_SCOPE,
+      }),
+      ...config.workstation.policy,
+    },
     cwd: path.join(config.worktreesDir, "workstation", "_poste"),
   };
 }

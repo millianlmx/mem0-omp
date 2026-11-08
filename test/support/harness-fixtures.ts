@@ -14,6 +14,7 @@ import { Git } from "../../omp-harness/git.ts";
 import { HeavyRunner } from "../../omp-harness/heavy.ts";
 import type { ConsolidationReport, DreamDossier, LostWrites, Oracle, Memory } from "../../omp-harness/oracle.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
+import { repoIdentity } from "../../omp-harness/policy.ts";
 import type { OrchestratorDeps, SpawnRunner } from "../../omp-harness/orchestrator.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
 import type { Exec } from "../../omp-harness/proc.ts";
@@ -184,7 +185,7 @@ export function fakeWorld(
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20))),
   });
   const exec = options.exec ?? execProcess;
-  const gitClient = new Git(execProcess, config.git);
+  const gitClient = new Git(execProcess, repoIdentity(config));
   const heavy = new HeavyRunner({ config, store, scheduler, git: gitClient, exec });
   const oracle = new MemoryOracle();
   const deps: OrchestratorDeps = {

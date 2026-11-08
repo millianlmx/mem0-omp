@@ -6,10 +6,12 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { HarnessConfig, RepoConfig } from "./config.ts";
+import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import { modelChain } from "./config.ts";
 import { remoteEnv, type Git } from "./git.ts";
+import { LOCAL_PROVIDER, localProvider } from "./local-model.ts";
 import { STEP_KINDS } from "./machine.ts";
+import { PolicyRefusal, ghEnv, policyChain } from "./policy.ts";
 import type { Exec } from "./proc.ts";
 import { engine, memoryExtension } from "./runner.ts";
 
@@ -23,7 +25,135 @@ export type CheckDeps = {
   /** `GET /health` de l'oracle : `true` si mem0-rs répond `ok`. */
   oracleHealth: () => Promise<boolean>;
   env?: Record<string, string | undefined>;
+  /** Les modèles que sert un fournisseur compatible OpenAI (`GET <base>/models`), `null` s'il ne répond pas. */
+  servedModels?: (baseUrl: string) => Promise<string[] | null>;
 };
+
+/** `GET <base>/models` d'un serveur compatible OpenAI (oMLX), borné à 5 s. */
+async function fetchServedModels(baseUrl: string, token: string | undefined): Promise<string[] | null> {
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/models`, {
+      signal: AbortSignal.timeout(5000),
+      ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { data?: { id?: unknown }[] };
+    return (body.data ?? []).flatMap((entry) => (typeof entry.id === "string" ? [entry.id] : []));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * La politique de modèles d'un dépôt ou du poste : chaque étape a un modèle permis
+ * (sinon elle sera refusée), et en `local-only` le serveur local répond et sert ces modèles.
+ */
+async function checkModelPolicy(
+  config: HarnessConfig,
+  policy: ModelPolicy,
+  label: string,
+  deps: CheckDeps,
+  contained: boolean,
+): Promise<CheckLine[]> {
+  if (policy.providers === undefined && policy.privacy !== "local-only" && policy.models === undefined) return [];
+  if (policy.providers?.length === 0)
+    return [
+      {
+        status: "fail",
+        label: `${label} — modèles`,
+        detail: "`providers` est vide : toute étape sera refusée",
+        fix: "Nomme au moins un fournisseur permis, ou retire `providers`.",
+      },
+    ];
+  const used = new Set<string>();
+  for (const step of STEP_KINDS) {
+    try {
+      for (const choice of policyChain(config, policy, config.stepTiers[step], label))
+        used.add(`${choice.provider}/${choice.model}`);
+    } catch (err) {
+      if (!(err instanceof PolicyRefusal)) throw err;
+      return [
+        {
+          status: "fail",
+          label: `${label} — modèles`,
+          detail: `/${step} : ${err.message}`,
+          fix: "Ajoute un modèle permis à `models` (ou un fournisseur à `providers`) pour ce tier.",
+        },
+      ];
+    }
+  }
+  const lines: CheckLine[] = [
+    { status: "ok", label: `${label} — modèles`, detail: [...used].join(", ") || "modèle par défaut d'omp" },
+  ];
+  if (policy.privacy !== "local-only") return lines;
+  const local = localProvider(config);
+  const fix = contained
+    ? "`harness.sh local <modèle>` (oMLX lancé sur l'hôte)"
+    : `main.ts --local-model ${LOCAL_PROVIDER}/<modèle> --omlx-url <url>`;
+  if (local === null) {
+    lines.push({
+      status: "fail",
+      label: `${label} — modèle local`,
+      detail: `« local-only » sans fournisseur ${LOCAL_PROVIDER} déclaré aux runners`,
+      fix,
+    });
+    return lines;
+  }
+  const env = deps.env ?? process.env;
+  const served = await (deps.servedModels ?? ((url) => fetchServedModels(url, env.OMLX_API_TOKEN)))(local.baseUrl);
+  const wanted = [...used]
+    .filter((ref) => ref.startsWith(`${LOCAL_PROVIDER}/`))
+    .map((ref) => ref.slice(LOCAL_PROVIDER.length + 1));
+  const missing = served === null ? [] : wanted.filter((model) => !served.includes(model));
+  lines.push(
+    served === null
+      ? { status: "fail", label: `${label} — modèle local`, detail: `${local.baseUrl}/models ne répond pas`, fix }
+      : missing.length > 0
+        ? {
+            status: "fail",
+            label: `${label} — modèle local`,
+            detail: `${local.baseUrl} ne sert pas ${missing.join(", ")}`,
+            fix: "Charge ce modèle dans oMLX, ou change `models` du dépôt.",
+          }
+        : { status: "ok", label: `${label} — modèle local`, detail: `${local.baseUrl} sert ${wanted.join(", ")}` },
+  );
+  return lines;
+}
+
+/** Le jeton mémoire et le compte gh propres au dépôt : présents là où la configuration les attend. */
+function checkRepoAccounts(repo: RepoConfig, env: Record<string, string | undefined>): CheckLine[] {
+  const label = (what: string) => `dépôt ${repo.name} — ${what}`;
+  const lines: CheckLine[] = [];
+  const memory = repo.memory?.tokenEnv;
+  if (memory !== undefined)
+    lines.push(
+      env[memory]?.trim()
+        ? { status: "ok", label: label("jeton mémoire"), detail: `${memory} (propre au dépôt)` }
+        : {
+            status: "fail",
+            label: label("jeton mémoire"),
+            detail: `${memory} est absente de l'environnement du service : aucun runner ne partira`,
+            fix: `Crée un jeton mem0-rs limité à la scope du dépôt (MEM0_HTTP_TOKENS) et pose-le dans ${memory} (environnement du service).`,
+          },
+    );
+  const token = repo.gh?.tokenEnv;
+  if (token !== undefined && !env[token]?.trim())
+    lines.push({
+      status: "fail",
+      label: label("compte gh"),
+      detail: `${token} est absente de l'environnement du service`,
+      fix: `Pose le jeton GitHub du compte de ce dépôt dans ${token}.`,
+    });
+  const configDir = repo.gh?.configDir;
+  if (configDir !== undefined && !fs.existsSync(configDir))
+    lines.push({
+      status: "fail",
+      label: label("compte gh"),
+      detail: `${configDir} n'existe pas`,
+      fix: `GH_CONFIG_DIR=${configDir} gh auth login (sous l'utilisateur du service)`,
+    });
+  return lines;
+}
 
 /** La première ligne utile d'une sortie d'outil, pour le détail d'un échec. */
 function firstLine(text: string): string {
@@ -249,16 +379,29 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean):
       );
     }
   }
-  if (repo.merge === "gh") {
-    const auth = await exec("gh", ["auth", "status"], { cwd: repo.path, timeoutMs: 30_000 }).catch(() => null);
+  if (repo.merge === "gh" || repo.gh !== undefined) {
+    // Sous le compte du dépôt s'il en déclare un ; un jeton absent est déjà signalé (checkRepoAccounts).
+    let env: Record<string, string | undefined> | undefined;
+    try {
+      env = ghEnv(repo, deps.env ?? process.env);
+    } catch {
+      return lines;
+    }
+    const auth = await exec("gh", ["auth", "status"], {
+      cwd: repo.path,
+      timeoutMs: 30_000,
+      ...(env ? { env } : {}),
+    }).catch(() => null);
     lines.push(
       auth && auth.code === 0
-        ? { status: "ok", label: label("gh"), detail: "authentifié" }
+        ? { status: "ok", label: label("gh"), detail: repo.gh ? "authentifié (compte du dépôt)" : "authentifié" }
         : {
             status: "fail",
             label: label("gh"),
             detail: "gh absent ou non authentifié",
-            fix: "sudo -u omp-harness -H gh auth login",
+            fix: repo.gh?.configDir
+              ? `sudo -u omp-harness -H env GH_CONFIG_DIR=${repo.gh.configDir} gh auth login`
+              : "sudo -u omp-harness -H gh auth login",
           },
     );
   }
@@ -283,7 +426,14 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
       : "Ajoute une entrée à `repos` dans la configuration du harness.";
     lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix });
   }
-  for (const repo of config.repos) lines.push(...(await checkRepo(repo, deps, contained)));
+  for (const repo of config.repos)
+    lines.push(
+      ...(await checkRepo(repo, deps, contained)),
+      ...checkRepoAccounts(repo, deps.env ?? process.env),
+      ...(await checkModelPolicy(config, repo, `dépôt ${repo.name}`, deps, contained)),
+    );
+  if (config.workstation.enabled && config.workstation.policy)
+    lines.push(...(await checkModelPolicy(config, config.workstation.policy, "poste de travail", deps, contained)));
   // GitHub refuse une même clé de déploiement sur deux dépôts : la clé du service n'en sert qu'un.
   const shared = config.repos.filter((repo) => repo.remote !== null && repo.sshKey === null).map((repo) => repo.name);
   if (shared.length >= 2)

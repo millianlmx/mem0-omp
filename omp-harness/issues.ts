@@ -17,6 +17,7 @@ import type { RunRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import type { RunState } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { ghEnv } from "./policy.ts";
 
 export type Issue = {
   number: number;
@@ -169,10 +170,13 @@ export class IssueDesk {
   }
 
   async #gh(repo: RepoConfig, args: string[]): Promise<unknown> {
+    // Le compte GitHub du dépôt (policy.ts) s'il en déclare un, sinon celui du service.
+    const env = ghEnv(repo);
     const result = await this.#ctx.exec("gh", args, {
       cwd: repo.path,
       timeoutMs: GH_TIMEOUT_MS,
       maxBytes: GH_MAX_BYTES,
+      ...(env ? { env } : {}),
     });
     const what = `gh ${args.slice(0, 2).join(" ")}`;
     if (result.code !== 0) {

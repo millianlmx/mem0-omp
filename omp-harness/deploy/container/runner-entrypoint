@@ -11,20 +11,35 @@ if [ -r /run/secrets/runner.env ]; then
   . /run/secrets/runner.env
   set +a
 fi
-# Les clés déclarées par l'API (le service les écrit) : lues, jamais sourcées, et
-# seulement des `*_API_KEY` ; elles passent après runner.env et l'emportent.
-if [ -r /run/secrets/providers.env ]; then
-  while IFS= read -r line; do
-    case "$line" in
-      *[!A-Za-z0-9_=._~+/:-]*) continue ;;
-    esac
-    name=${line%%=*}
-    case "$name" in
-      [A-Z]*_API_KEY) ;;
-      *) continue ;;
-    esac
-    case "$name" in *[!A-Z0-9_]*) continue ;; esac
-    export "$line"
-  done < /run/secrets/providers.env
+# Le jeton mémoire propre au dépôt (policy.ts) : il remplace le jeton global de runner.env.
+# Monté mais illisible : le runner s'arrête (`set -e`), jamais de repli sur le jeton global.
+if [ -e /run/secrets/memory.env ]; then
+  unset MEM0_HTTP_TOKEN
+  set -a
+  . /run/secrets/memory.env
+  set +a
+fi
+# Un dépôt `local-only` : aucune clé de fournisseur distant, ni de runner.env ni de l'API.
+if [ "${OMP_HARNESS_LOCAL_ONLY:-}" = 1 ]; then
+  for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*_API_KEY\)=.*/\1/p'); do
+    unset "$name"
+  done
+else
+  # Les clés déclarées par l'API (le service les écrit) : lues, jamais sourcées, et
+  # seulement des `*_API_KEY` ; elles passent après runner.env et l'emportent.
+  if [ -r /run/secrets/providers.env ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        *[!A-Za-z0-9_=._~+/:-]*) continue ;;
+      esac
+      name=${line%%=*}
+      case "$name" in
+        [A-Z]*_API_KEY) ;;
+        *) continue ;;
+      esac
+      case "$name" in *[!A-Z0-9_]*) continue ;; esac
+      export "$line"
+    done < /run/secrets/providers.env
+  fi
 fi
 exec "$@"

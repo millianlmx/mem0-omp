@@ -4,7 +4,8 @@
 //! Hors du contrat de l'ancien mem0-http : les erreurs y sont plus simples —
 //! 422 `{"detail": "<raison>"}` pour un corps invalide, 404 pour un id inconnu,
 //! 409 pour une proposition déjà décidée. Le jeton `X-Mem0-Token` est exigé
-//! comme partout, après la lecture du corps.
+//! comme partout, après la lecture du corps ; un jeton à portées n'ouvre que les
+//! siennes (403 sinon : sans `agent_id`, souvenir ou proposition d'une autre portée).
 
 use std::sync::Arc;
 
@@ -18,7 +19,10 @@ use serde_json::{Value, json};
 
 use crate::consolidation::{self, Consolidation};
 use crate::horodatage;
-use crate::http::{Partage, USER, avec_base, controle_jeton, interne, json, portee};
+use crate::http::{
+    Partage, USER, avec_base, controle_jeton, controle_portee, controle_souvenirs, interne, json, portee,
+};
+use crate::jetons::Acces;
 use crate::liens::{self, Lien, TYPES_AGENT};
 use crate::redaction::masquer;
 use crate::reve::{self, Decision};
@@ -34,13 +38,22 @@ fn refus(statut: StatusCode, detail: impl Into<String>) -> Response {
     json(statut, &json!({ "detail": detail.into() }))
 }
 
-/// `agent_id` d'une requête GET (le dernier l'emporte), contrôlé comme une portée.
-fn agent_de(parametres: &[(String, String)]) -> Result<Option<String>, ()> {
-    portee(parametres.iter().rev().find(|(k, _)| k == "agent_id").map(|(_, v)| v.clone()))
+/// `agent_id` brut d'une requête GET (le dernier l'emporte).
+fn agent_de(parametres: &[(String, String)]) -> Option<String> {
+    parametres.iter().rev().find(|(k, _)| k == "agent_id").map(|(_, v)| v.clone())
 }
 
 fn parametre<'a>(parametres: &'a [(String, String)], nom: &str) -> Option<&'a str> {
     parametres.iter().rev().find(|(k, _)| k == nom).map(|(_, v)| v.as_str())
+}
+
+/// Le jeton de la requête (401), puis `brut` contrôlé comme une portée (500), puis
+/// cette portée ouverte par le jeton (403 ; absente : toutes les portées).
+#[expect(clippy::result_large_err, reason = "la réponse d'erreur part telle quelle, une fois par requête")]
+fn portee_ouverte(etat: &crate::http::Etat, entetes: &HeaderMap, brut: Option<String>) -> Result<Option<String>, Response> {
+    let acces = controle_jeton(etat, entetes)?;
+    let agent_id = portee(brut).map_err(|()| interne())?;
+    controle_portee(&acces, agent_id.as_deref()).map_or(Ok(agent_id), Err)
 }
 
 #[derive(Deserialize)]
@@ -61,7 +74,11 @@ pub async fn lier(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> Re
         Ok(c) => c,
         Err(r) => return *r,
     };
-    if let Some(r) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if let Some(r) = controle_souvenirs(&etat, &acces, &[&c.source, &c.target]).await {
         return r;
     }
     if !TYPES_AGENT.contains(&c.type_.as_str()) {
@@ -111,7 +128,11 @@ pub async fn delier(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> 
         Ok(c) => c,
         Err(r) => return *r,
     };
-    if let Some(r) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if let Some(r) = controle_souvenirs(&etat, &acces, &[&c.source, &c.target]).await {
         return r;
     }
     match avec_base(&etat, move |conn| liens::delier(conn, &c.source, &c.target, &c.type_)).await {
@@ -123,10 +144,10 @@ pub async fn delier(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> 
 /// `GET /memory/links?agent_id=…[&semantic=true]` : les liens de la portée
 /// (typés, et `semantique` avec `semantic=true`).
 pub async fn liens_portee(State(etat): Partage, Query(p): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = agent_de(&p) else { return interne() };
+    let agent_id = match portee_ouverte(&etat, &entetes, agent_de(&p)) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     let semantiques = parametre(&p, "semantic") == Some("true");
     match avec_base(&etat, move |conn| liens::liens_portee(conn, USER, agent_id.as_deref(), semantiques)).await {
         Ok(l) => json(StatusCode::OK, &json!({ "total": l.len(), "links": l })),
@@ -137,7 +158,11 @@ pub async fn liens_portee(State(etat): Partage, Query(p): Query<Vec<(String, Str
 /// `GET /memory/{id}/links` : les liens typés d'un souvenir, avec le texte de
 /// l'autre bout, et ses entités.
 pub async fn liens_souvenir(State(etat): Partage, Path(id): Path<String>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if let Some(r) = controle_souvenirs(&etat, &acces, &[&id]).await {
         return r;
     }
     let lu = avec_base(&etat, move |conn| {
@@ -166,10 +191,10 @@ pub async fn liens_souvenir(State(etat): Partage, Path(id): Path<String>, entete
 
 /// `GET /memory/entities?agent_id=…` : les entités de la portée, les plus portées d'abord.
 pub async fn entites(State(etat): Partage, Query(p): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = agent_de(&p) else { return interne() };
+    let agent_id = match portee_ouverte(&etat, &entetes, agent_de(&p)) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     match avec_base(&etat, move |conn| liens::entites_portee(conn, USER, agent_id.as_deref())).await {
         Ok(e) => json(StatusCode::OK, &json!({ "total": e.len(), "entities": e })),
         Err(()) => interne(),
@@ -178,10 +203,10 @@ pub async fn entites(State(etat): Partage, Query(p): Query<Vec<(String, String)>
 
 /// `GET /memory/models?agent_id=…` : les mental models de la portée.
 pub async fn modeles(State(etat): Partage, Query(p): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = agent_de(&p) else { return interne() };
+    let agent_id = match portee_ouverte(&etat, &entetes, agent_de(&p)) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     match avec_base(&etat, move |conn| consolidation::modeles(conn, USER, agent_id.as_deref())).await {
         Ok(m) => json(StatusCode::OK, &json!({ "models": m })),
         Err(()) => interne(),
@@ -191,10 +216,10 @@ pub async fn modeles(State(etat): Partage, Query(p): Query<Vec<(String, String)>
 /// `GET /memory/dream?agent_id=…` : les derniers rêves de la portée et ses
 /// propositions ouvertes.
 pub async fn journal(State(etat): Partage, Query(p): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = agent_de(&p) else { return interne() };
+    let agent_id = match portee_ouverte(&etat, &entetes, agent_de(&p)) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     let cle = liens::cle_portee(agent_id.as_deref()).to_owned();
     let lu = avec_base(&etat, move |conn| {
         Ok(json!({
@@ -228,10 +253,11 @@ pub async fn rever(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> R
             Err(r) => return *r,
         }
     };
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = portee(c.agent_id) else { return interne() };
+    // Sans `agent_id`, le rêve parcourt toutes les portées : le jeton total seul.
+    let agent_id = match portee_ouverte(&etat, &entetes, c.agent_id) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     let cibles = match agent_id {
         Some(a) => vec![a],
         None => match avec_base(&etat, |conn| reve::portees(conn)).await {
@@ -275,8 +301,25 @@ pub async fn decider(State(etat): Partage, entetes: HeaderMap, octets: Bytes) ->
         Ok(c) => c,
         Err(r) => return *r,
     };
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if acces != Acces::Total {
+        let id = c.id.clone();
+        let lue = avec_base(&etat, move |conn| {
+            rusqlite::OptionalExtension::optional(conn.query_row(
+                "SELECT agent_id FROM propositions WHERE id = ?1",
+                [&id],
+                |r| r.get::<_, Option<String>>(0),
+            ))
+        })
+        .await;
+        match lue {
+            Ok(Some(Some(p))) if !p.is_empty() && acces.permet(Some(&p)) => {}
+            Ok(_) => return controle_portee(&acces, None).unwrap_or_else(interne),
+            Err(()) => return interne(),
+        }
     }
     let accepter = match c.decision.as_str() {
         "accept" => true,
@@ -298,10 +341,10 @@ pub async fn decider(State(etat): Partage, entetes: HeaderMap, octets: Bytes) ->
 /// `GET /memory/dream/dossier?agent_id=…` : ce que la session de consolidation
 /// (phases 3 et 4, menée par le harness) doit lire.
 pub async fn dossier(State(etat): Partage, Query(p): Query<Vec<(String, String)>>, entetes: HeaderMap) -> Response {
-    if let Some(r) = controle_jeton(&etat, &entetes) {
-        return r;
-    }
-    let Ok(agent_id) = agent_de(&p) else { return interne() };
+    let agent_id = match portee_ouverte(&etat, &entetes, agent_de(&p)) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     match avec_base(&etat, move |conn| consolidation::dossier(conn, USER, agent_id.as_deref())).await {
         Ok(d) => json(StatusCode::OK, &d),
         Err(()) => interne(),
@@ -315,10 +358,14 @@ pub async fn consolider(State(etat): Partage, entetes: HeaderMap, octets: Bytes)
         Ok(c) => c,
         Err(r) => return *r,
     };
-    if let Some(r) = controle_jeton(&etat, &entetes) {
+    let acces = match controle_jeton(&etat, &entetes) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let Ok(agent_id) = portee(c.agent_id.take()) else { return interne() };
+    if let Some(r) = controle_portee(&acces, agent_id.as_deref()) {
         return r;
     }
-    let Ok(agent_id) = portee(c.agent_id.take()) else { return interne() };
     c.agent_id = agent_id;
     let c = Arc::new(c);
     let controle = {

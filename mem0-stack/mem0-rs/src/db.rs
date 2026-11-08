@@ -506,6 +506,11 @@ pub fn existe(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
         .map(|o| o.is_some())
 }
 
+/// La portée (`agent_id`) du souvenir `id` : `None` s'il n'existe pas, `Some(None)` sans portée.
+pub fn portee_de(conn: &Connection, id: &str) -> rusqlite::Result<Option<Option<String>>> {
+    conn.query_row("SELECT agent_id FROM memories WHERE id = ?1", [id], |r| r.get(0)).optional()
+}
+
 /// Réécrit le souvenir `id` (fusion D-1) ; `false` s'il n'existe pas.
 pub fn mettre_a_jour(
     conn: &mut Connection,

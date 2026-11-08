@@ -82,6 +82,7 @@
     "digestHour": 8
   },
   "memory": { "runnerMode": true },
+  "workstation": { "policy": { "providers": ["anthropic"] } },
   "repos": [
     {
       "name": "mon-produit",
@@ -96,6 +97,19 @@
       "merge": "local",
       "remote": "origin",
       "maxParallel": 3
+    },
+    {
+      "name": "client-corpo",
+      "path": "/var/lib/omp-harness/repos/client-corpo",
+      "tests": { "touched": "npm test -- {files}", "full": "npm test", "pattern": null },
+      "merge": "gh",
+      "remote": "origin",
+      "sshKey": "/var/lib/omp-harness/.ssh/repos/client-corpo",
+      "privacy": "local-only",
+      "models": { "heavy": ["omlx/qwen3-coder-30b"] },
+      "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" },
+      "gh": { "configDir": "/var/lib/omp-harness/gh/client-corpo" },
+      "memory": { "tokenEnv": "MEM0_TOKEN_CLIENT_CORPO" }
     }
   ]
 }

@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { LOCAL_PROVIDER } from "./local-model.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { StepKind } from "./machine.ts";
 
@@ -70,6 +71,27 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
 ];
 
 /**
+ * La confidentialité d'un dépôt (ou des jobs du poste) : `local-only` ne laisse partir
+ * ses prompts que vers le modèle local (`omlx`, local-model.ts) et retire aux runners
+ * les clés des fournisseurs distants ; `standard` (défaut) n'impose rien.
+ */
+export type Privacy = "standard" | "local-only";
+
+export const PRIVACIES: readonly Privacy[] = ["standard", "local-only"];
+
+/**
+ * La politique de modèles d'un dépôt ou du poste (policy.ts) : des chaînes par tier
+ * (`"fournisseur/modèle"`, prioritaires sur celles du serveur), une liste blanche de
+ * fournisseurs (jamais de bascule hors de la liste) et la confidentialité. Absente :
+ * les chaînes du serveur, comme avant.
+ */
+export type ModelPolicy = {
+  models?: Partial<Record<Tier, string[]>>;
+  providers?: string[];
+  privacy?: Privacy;
+};
+
+/**
  * Le poste de travail (workstation.ts) : l'extension Chrome observe et agit dans le
  * navigateur, l'agent 24/24 du serveur y fait de petites actions. `enabled: false` coupe
  * les routes `/v1/workstation*` (404) et les jobs de l'agent.
@@ -90,6 +112,8 @@ export type WorkstationConfig = {
   shiftMaxActions: number;
   /** Le profil est resynthétisé au plus toutes les `profileEveryHours` heures, s'il y a du neuf. */
   profileEveryHours: number;
+  /** La politique de modèles des jobs `poste-profil`, `poste-digest` et `poste-service` (données sensibles). */
+  policy?: ModelPolicy;
 };
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
@@ -167,7 +191,21 @@ export type RepoConfig = {
    * refuse une même clé de déploiement sur deux dépôts. `null` : l'identité du service.
    */
   sshKey: string | null;
-};
+  /** L'identité des commits de ce dépôt (WIP, squash de merge, revert) ; absente : `git` du serveur. */
+  git?: { name: string; email: string };
+  /**
+   * Le compte GitHub de ce dépôt pour `gh` (PR, merge, issues, MCP) : `configDir` est le
+   * `GH_CONFIG_DIR` d'une connexion `gh auth login` propre, `tokenEnv` le NOM d'une variable
+   * du service qui porte son jeton. Absent : la connexion (ou `GH_TOKEN`) du service.
+   */
+  gh?: { configDir?: string; tokenEnv?: string };
+  /**
+   * Le jeton mémoire de ce dépôt : `tokenEnv` est le NOM d'une variable du service qui
+   * porte un jeton mem0-rs limité à sa scope (`MEM0_HTTP_TOKENS`). Ses runners le
+   * reçoivent au lieu du jeton global. Absent : le jeton global.
+   */
+  memory?: { tokenEnv?: string };
+} & ModelPolicy;
 
 export type HarnessConfig = {
   listen: { host: string; port: number };
@@ -525,6 +563,70 @@ function checkModels(tier: string, list: unknown): ModelChoice[] {
   });
 }
 
+/** Une référence de modèle d'une politique : `fournisseur/modèle` (le modèle peut porter des `/`). */
+export const MODEL_REF = /^([a-z][a-z0-9-]{0,31})\/([A-Za-z0-9._:/@-]{1,128})$/;
+
+/** Le nom d'une variable d'environnement du service (`tokenEnv`). */
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,127}$/;
+
+/** Valide une politique de modèles (`where` : `repos.<nom>` ou `workstation.policy`). */
+function checkPolicy(where: string, policy: ModelPolicy): void {
+  const { models, providers, privacy } = policy;
+  if (privacy !== undefined && !(PRIVACIES as readonly string[]).includes(privacy))
+    fail(`${where}.privacy : ${PRIVACIES.join(" | ")}`);
+  const localOnly = privacy === "local-only";
+  if (providers !== undefined) {
+    if (!Array.isArray(providers) || providers.some((name) => typeof name !== "string" || name.trim() === ""))
+      fail(`${where}.providers : liste de noms de fournisseurs`);
+    const remote = localOnly ? providers.filter((name) => name !== LOCAL_PROVIDER) : [];
+    if (remote.length > 0)
+      fail(`${where}.providers : « local-only » refuse tout fournisseur distant (${remote.join(", ")})`);
+  }
+  if (models !== undefined) {
+    if (!isRecord(models)) fail(`${where}.models : { fast?, standard?, heavy? }`);
+    for (const [tier, list] of Object.entries(models)) {
+      if (!(TIERS as readonly string[]).includes(tier))
+        fail(`${where}.models.${tier} : tier inconnu (${TIERS.join(" | ")})`);
+      if (!Array.isArray(list)) fail(`${where}.models.${tier} : liste de "fournisseur/modèle"`);
+      for (const ref of list) {
+        const match = typeof ref === "string" ? MODEL_REF.exec(ref) : null;
+        if (!match) fail(`${where}.models.${tier} : « ${String(ref)} » n'est pas "fournisseur/modèle"`);
+        const provider = match[1] as string;
+        if (localOnly && provider !== LOCAL_PROVIDER)
+          fail(`${where}.models.${tier} : « local-only » refuse le fournisseur distant ${provider}`);
+        if (providers !== undefined && !providers.includes(provider))
+          fail(`${where}.models.${tier} : ${provider} est hors de la liste blanche \`providers\``);
+      }
+    }
+  }
+}
+
+/** Valide les champs propres à un dépôt : identité, compte gh, jeton mémoire. */
+function checkRepoAccounts(repo: RepoConfig): void {
+  const where = `repos.${repo.name}`;
+  if (repo.git !== undefined) {
+    const { git } = repo;
+    const text = (value: unknown) => typeof value === "string" && value.trim() !== "" && !/[\n\r<>]/.test(value);
+    if (!isRecord(git) || !text(git.name) || !text(git.email))
+      fail(`${where}.git : { name, email } non vides, sur une ligne, sans < ni >`);
+  }
+  if (repo.gh !== undefined) {
+    const { gh } = repo;
+    if (!isRecord(gh)) fail(`${where}.gh : { configDir?, tokenEnv? }`);
+    if (gh.configDir !== undefined && (typeof gh.configDir !== "string" || !path.isAbsolute(gh.configDir)))
+      fail(`${where}.gh.configDir : chemin absolu`);
+    if (gh.tokenEnv !== undefined && (typeof gh.tokenEnv !== "string" || !ENV_NAME.test(gh.tokenEnv)))
+      fail(`${where}.gh.tokenEnv : nom de variable (MAJUSCULES_ET_SOULIGNÉS)`);
+  }
+  if (repo.memory !== undefined) {
+    const { memory } = repo;
+    if (!isRecord(memory)) fail(`${where}.memory : { tokenEnv? }`);
+    if (memory.tokenEnv !== undefined && (typeof memory.tokenEnv !== "string" || !ENV_NAME.test(memory.tokenEnv)))
+      fail(`${where}.memory.tokenEnv : nom de variable (MAJUSCULES_ET_SOULIGNÉS)`);
+  }
+  checkPolicy(where, repo);
+}
+
 /** Valide une configuration complète ; lève une erreur NOMMÉE au premier défaut. */
 export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.listen.port) || config.listen.port < 0 || config.listen.port > 65535)
@@ -586,6 +688,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       (typeof repo.sshKey !== "string" || !path.isAbsolute(repo.sshKey) || repo.sshKey.includes("'"))
     )
       fail(`repos.${repo.name}.sshKey : chemin absolu sans apostrophe, ou null`);
+    checkRepoAccounts(repo);
   }
   if (!Array.isArray(config.runner.retryBackoffSec) || config.runner.retryBackoffSec.some((s) => !(s >= 0)))
     fail("runner.retryBackoffSec : liste de secondes ≥ 0");
@@ -652,6 +755,10 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("workstation.shiftEveryMin : minutes ≥ 1");
   if (!(Number.isInteger(workstation.shiftMaxActions) && workstation.shiftMaxActions >= 1))
     fail("workstation.shiftMaxActions : entier ≥ 1");
+  if (workstation.policy !== undefined) {
+    if (!isRecord(workstation.policy)) fail("workstation.policy : { models?, providers?, privacy? }");
+    checkPolicy("workstation.policy", workstation.policy);
+  }
   if (config.apns !== null) {
     const apns = config.apns;
     if (!isRecord(apns)) fail("apns : { keyFile, keyId, teamId, topic, sandbox } ou null");

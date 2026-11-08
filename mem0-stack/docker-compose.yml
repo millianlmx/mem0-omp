@@ -41,6 +41,8 @@ services:
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
       # Optionnel : si définie, le plugin doit l'envoyer dans X-Mem0-Token.
       MEM0_HTTP_TOKEN: ${MEM0_HTTP_TOKEN:-}
+      # Optionnel : des jetons limités à des portées, `nom:jeton:scope1,scope2;…` (voir README).
+      MEM0_HTTP_TOKENS: ${MEM0_HTTP_TOKENS:-}
       # Instantanés de la base dans /data/backups (voir mem0-stack/README.md).
       MEM0_BACKUP_INTERVAL_HOURS: ${MEM0_BACKUP_INTERVAL_HOURS:-24}
       MEM0_BACKUP_KEEP: ${MEM0_BACKUP_KEEP:-7}
