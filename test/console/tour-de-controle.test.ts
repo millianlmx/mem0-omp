@@ -177,7 +177,7 @@ test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration so
   const section = read("Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
   assert.match(
     section,
-    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case autonomy\s*case stats\s*case admin\s*case server/,
+    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case stats\s*case admin\s*case server/,
   );
   assert.match(section, /public enum RunsScope[^{]*\{\s*case features\s*case projects\s*case audits\s*case issues/);
   assert.match(section, /public var isAdminOnly: Bool \{ self == \.admin \}/);

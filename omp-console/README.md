@@ -10,7 +10,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 | Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
 | Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
-| Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Autonomie, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
+| Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
 
 Créer passe toujours par une **feuille** (« + », ⌘N) : jamais un formulaire en tête
 d'écran. Rien n'ouvre de fenêtre annexe : l'app est utilisable entièrement en plein
@@ -180,7 +180,7 @@ pied de la barre latérale (`server.open`) ou par Système › Serveur.
 
 Identifiants des écrans du serveur : `inbox.harness`, `runs.harness`,
 `workstation.harness`, `system.harness`, et pour les pages de Système
-`vigie.harness`, `schedules.harness`, `autonomy.harness`, `stats.harness`, `admin.harness` (le
+`vigie.harness`, `schedules.harness`, `stats.harness`, `admin.harness` (le
 formulaire de chaque écran) ; `server.failure` (l'échec du dernier échange, en
 tête), `server.configure` (sans serveur relié). À traiter : `inbox.pulse` (ligne de
 pouls), `inbox.allClear` et `inbox.allClear.launch` (file vide), `inbox.openRun`
@@ -190,13 +190,10 @@ pouls), `inbox.allClear` et `inbox.allClear.launch` (file vide), `inbox.openRun`
 `run.instructions.text` et `run.instructions.send`. Feuille « Nouvelle feature »
 `pipelines.launch.title`, `pipelines.launch.request`, `pipelines.launch.priority`,
 `pipelines.launch.lane`, `pipelines.launch.modules`, `pipelines.launch.req`,
-`pipelines.launch.budget`, `pipelines.launch.kind`, `pipelines.launch.labels`,
-`pipelines.launch.commit` ; « Nouveau projet »
+`pipelines.launch.budget`, `pipelines.launch.commit` ; « Nouveau projet »
 `project.launch.title`, `project.launch.commit` ; « Nouvel audit »
-`audit.launch.focus`, `audit.launch.commit`. Page Système › Autonomie
-`autonomy.repo`, `autonomy.rule`, `autonomy.validation`, `autonomy.proposal`,
-`autonomy.proof` (aussi dans la carte d'À traiter). Rangées de Système
-`system.<vigie|schedules|autonomy|stats|admin>` et `system.server` ; feuille « Serveur »
+`audit.launch.focus`, `audit.launch.commit`. Rangées de Système
+`system.<vigie|schedules|stats|admin>` et `system.server` ; feuille « Serveur »
 `server.sheet` (`server.address`, `server.secret`, `server.save`, `server.forget`,
 `server.providers`). Feuille « Préparation d'OMP Console » `sheet.setup`
 (`sheet.setup.install`, `sheet.setup.retry`, `sheet.setup.switchAnyway`,
@@ -631,10 +628,10 @@ Identifiants (les mêmes sur Mac et iOS, écrans partagés) : `workstation.harne
 
 Les écrans de l'OS agentique sont écrits une fois dans `ConsoleUI` (Mac et iOS) et
 passent par les modèles de `ConsoleClient` portés par `HarnessModel` :
-`server.vigie`, `server.schedules`, `server.autonomy`, `server.admin`, `server.issues`,
-en plus de `server.workstation`. Vigie, Planifications, Autonomie et Administration
-sont des pages du hub **Système** (`SystemPage`, lien `ompconsole://system/<page>` sur
-le Mac), Issues une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
+`server.vigie`, `server.schedules`, `server.admin`, `server.issues`, en plus de
+`server.workstation`. Vigie, Planifications et Administration sont des pages du hub
+**Système** (`SystemPage`, lien `ompconsole://system/<page>` sur le Mac), Issues
+une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
 (« mettez omp-harness à jour »), sans échec. Chaque page est aussi dans la palette
 ⌘K ; « Arrêt d'urgence » y figure.
 
@@ -670,18 +667,6 @@ le Mac), Issues une portée de **Features**. Un serveur qui ne sert pas une fonc
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
   création.
-- **Autonomie** (`AutonomyViews.swift`, `HarnessAutonomy.swift`) : la page Système ›
-  Autonomie lit `GET /v1/autonomy` en **lecture seule** — aucun geste n'y modifie une
-  règle, le serveur ne le fait jamais seul. Elle montre les règles de chaque dépôt (le
-  type de travail et ce qui le restreint, les exigences à prouver, qui franchit chaque
-  porte), les décisions prises seules par le serveur avec la porte franchie, la règle
-  (rang, `match`) et chaque preuve avec sa valeur, et les propositions de palier avec la
-  modification de configuration suggérée (`changes` : chemin et valeur), que vous faites
-  vous-même dans la configuration du serveur. La carte « décision prise seule » d'À
-  traiter montre le même bloc, accepte ou renverse la décision, et « Ouvrir la feature »
-  mène aux gestes de la page de la feature (revert, annulation, relance). La feuille
-  « Nouvelle feature » porte le type de travail et les étiquettes (`kind`, `labels` de
-  `POST /v1/runs`, facultatifs : sans type, la feature reste à l'humain).
 - **Administration** (admin seulement, masquée sinon) : clients (`/v1/clients` : créer
   avec rôle et dépôts — le jeton n'est montré qu'une fois —, révoquer, confirmé), dépôts
   (`POST /v1/repos` : la clé de déploiement à poser et le lien de la page des clés),

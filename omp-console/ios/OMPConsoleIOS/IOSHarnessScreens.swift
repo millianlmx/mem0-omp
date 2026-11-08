@@ -308,7 +308,6 @@ struct IOSSystemPageScreen: View {
         switch page {
         case .vigie: IOSVigieScreen(server: server, drafts: drafts)
         case .schedules: IOSSchedulesScreen(server: server, drafts: drafts)
-        case .autonomy: IOSAutonomyScreen(server: server, drafts: drafts)
         case .stats: IOSStatsScreen(server: server, drafts: drafts)
         case .admin: IOSAdminScreen(server: server, drafts: drafts)
         // La rangée Serveur ouvre la feuille de connexion : jamais poussée (`RootView`
@@ -328,19 +327,6 @@ struct IOSVigieScreen: View {
             VigieSections(server: server, drafts: drafts)
         }
         .task { await server.vigie.load() }
-    }
-}
-
-/// L'autonomie par paliers, en lecture : règles par dépôt, décisions prises seules, propositions de palier (contenu partagé, ConsoleUI).
-struct IOSAutonomyScreen: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, page: .autonomy, reloadAlso: { await server.autonomy.refresh() }) {
-            AutonomySections(server: server)
-        }
-        .task { await server.autonomy.refresh() }
     }
 }
 

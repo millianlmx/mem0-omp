@@ -2,7 +2,6 @@
 // les exclusions, l'inscription et le renversement des décisions prises seules, l'apprentissage borné et la route
 // de lecture. Faux runner : test/support/fake-omp-rpc.ts.
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
@@ -16,12 +15,10 @@ import { repoDefaults, validateConfig } from "../../omp-harness/config.ts";
 import type { HarnessConfig, RepoConfig } from "../../omp-harness/config.ts";
 import { Store } from "../../omp-harness/db.ts";
 import { digestOf } from "../../omp-harness/digest.ts";
-import { apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import { WORK_KINDS } from "../../omp-harness/autonomy-rules.ts";
-import { EVENT_TYPES } from "../../omp-harness/events.ts";
+import { createHandler } from "../../omp-harness/http.ts";
 import { newRunInput } from "../../omp-harness/input.ts";
 import { WAIT_REASON, humanWaitOf } from "../../omp-harness/machine.ts";
-import { REVIEW_EVIDENCE } from "../../omp-harness/steps.ts";
+import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../omp-harness/steps.ts";
 import { mergeDecision } from "../../omp-harness/verdict.ts";
 import type { ReviewEvidence, Verdict } from "../../omp-harness/verdict.ts";
 import { BUG_REVIEW_RULE, autonomyDecisions, bugWorld, configure, eventsOf, implOf, lines, reviewOf, stateOf, until } from "../support/autonomie-fixtures.ts";
@@ -1475,6 +1472,43 @@ test("autonomie-par-paliers/AC-17 : un arbitrage (plafond de corrections, contes
   }
 });
 
+test("autonomie-par-paliers/AC-13 : à la porte revue, des specs validées avec un geste irréversible gardent le verdict à l'humain", async () => {
+  await withHeld({}, async (held) => {
+    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
+    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV, puis supprimer les données exportées", stepId);
+    await holdAndTick(held);
+    assertDeferred(held, "specs irréversibles à la revue", /irréversible/);
+  });
+  // Témoin : des specs sans geste irréversible laissent le même run à l'autonomie.
+  await withHeld({}, async (held) => {
+    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
+    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV", stepId);
+    await holdAndTick(held);
+    const done = await until(held.world, held.runId, ["merged", "failed"]);
+    assert.equal(done.state, "merged", stateOf(held.world, held.runId));
+  });
+});
+
+test("autonomie-par-paliers/AC-14 : une erreur sur un run retenu le rend à l'humain sans empêcher le tour des autres", async () => {
+  await withHeld({}, async (held) => {
+    const { world, runId } = held;
+    // Un second run, déjà en attente, dont l'attente est retenue : il vient après le premier dans le tour.
+    world.store.createRun({ id: "second", repo: "demo", slug: "second", title: "Second", request: "x", branch: "harness/second" });
+    world.store.updateRun("second", { state: "awaiting_human", step: "review", reason: "validation humaine : test" });
+    world.store.appendEvent("autonomy", "second", { action: "hold", gate: "review", rev: 0 }, "demo");
+    // Le premier échoue à la relecture de l'arbre : une exception hors de `evaluate`.
+    const real = world.deps.git.revParse.bind(world.deps.git);
+    world.deps.git.revParse = async (cwd: string, ref: string): Promise<string> => {
+      if (cwd === world.store.getRun(runId)?.worktree) throw new Error("arbre illisible");
+      return real(cwd, ref);
+    };
+    await holdAndTick(held);
+    assertDeferred(held, "erreur d'évaluation", /arbre illisible/);
+    const second = eventsOf(world, "second", "autonomy");
+    assert.equal(second.at(-1)?.payload.action, "defer", "le second run est traité malgré l'erreur du premier");
+  });
+});
+
 /** Réécrit l'évidence et le verdict de la revue d'un run (le merge est recalculé comme `#close` l'aurait fait). */
 function rewriteReview(held: Held, change: (verdict: Verdict, evidence: ReviewEvidence) => void): void {
   const { store } = held.world;
@@ -1630,247 +1664,4 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await world.orchestrator.stop();
   }
-});
-
-// ── AC-23, AC-24, AC-32 : omp-console (Mac et iOS) lit le contrat du serveur ────────────────────────────────────
-
-const ROOT_C = path.resolve(import.meta.dirname, "..", "..");
-const readC = (...parts: string[]): string => fs.readFileSync(path.join(ROOT_C, ...parts), "utf8");
-const CLIENT_C = ["omp-console", "Sources", "ConsoleClient"];
-const NBSP_C = "\u00A0";
-
-/** Les propriétés stockées d'une struct Swift : nom → optionnelle ? */
-function swiftFieldsC(source: string, struct: string): Map<string, boolean> {
-  const start = source.indexOf(`public struct ${struct}:`);
-  assert.ok(start >= 0, `struct ${struct} introuvable`);
-  const body = source.slice(start, source.indexOf("\n}\n", start));
-  const fields = new Map<string, boolean>();
-  for (const [, name, type] of body.matchAll(/^ {4}public var (\w+): ([^\s{=]+)\s*$/gm)) fields.set(name as string, (type as string).endsWith("?"));
-  assert.ok(fields.size > 0, `aucun champ lu dans ${struct}`);
-  return fields;
-}
-
-/**
- * Le contrat dans les DEUX sens : chaque champ que le client décode est dans le JSON réel du serveur (sauf `lenient` : la
- * liste ou l'objet que le serveur omet quand il est vide, et que le client lit par `decodeIfPresent`), et chaque champ que
- * le serveur envoie est un champ du client (aucun n'est ignoré en silence).
- */
-function contractC(object: unknown, source: string, struct: string, lenient: readonly string[] = [], reverse = true): void {
-  assert.ok(typeof object === "object" && object !== null && !Array.isArray(object), `${struct} : le serveur n'envoie pas d'objet`);
-  const json = object as Record<string, unknown>;
-  const fields = swiftFieldsC(source, struct);
-  for (const [name, optional] of fields) {
-    if (lenient.includes(name)) continue;
-    assert.ok(name in json, `${struct}.${name} : le client Swift le décode, le serveur ne l'envoie pas`);
-    if (!optional) assert.notEqual(json[name], null, `${struct}.${name} : non optionnel côté Swift, null côté serveur`);
-  }
-  if (reverse)
-    for (const name of Object.keys(json)) assert.ok(fields.has(name), `${struct}.${name} : le serveur l'envoie, le client Swift l'ignore`);
-}
-
-/** Un serveur où un bug typé est fusionné seul, plus deux refus humains du même type : règles, validation et proposition réelles. */
-async function autonomyServerC<T>(use: (call: (route: string) => Promise<Record<string, unknown>>, runId: string) => Promise<T>): Promise<T> {
-  const world = bugWorld({
-    rules: [BUG_REVIEW_RULE],
-    patch: (config: HarnessConfig) => {
-      config.autonomyLearning.minRuns = 2;
-    },
-  });
-  await world.orchestrator.start();
-  try {
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Corriger l'export", request: "Corriger", kind: "bug", labels: ["export"] });
-    const done = await until(world, run.id, ["merged", "awaiting_human", "failed"]);
-    assert.equal(done.state, "merged", stateOf(world, run.id));
-    for (const n of [1, 2]) {
-      const id = `refus-${n}`;
-      world.store.createRun({ id, repo: "demo", slug: id, title: id, request: "x", branch: `harness/${id}`, kind: "bug" });
-      world.store.appendEvent("validation", id, { gate: "verdict", approve: false, liftable: true, by: "humain" });
-    }
-    return await withServer(world, (call) => use(async (route) => (await call("GET", route)).body, run.id));
-  } finally {
-    await world.orchestrator.stop();
-  }
-}
-
-test("autonomie-par-paliers/AC-24 : chaque route et chaque champ de l'autonomie lus par la console existent côté serveur, dans les deux sens", async () => {
-  const wire = readC(...CLIENT_C, "HarnessWire.swift");
-  const autonomy = readC(...CLIENT_C, "HarnessAutonomy.swift");
-  const model = readC(...CLIENT_C, "HarnessModel.swift");
-
-  // La route : lue par le client, servie par le routeur au rôle `viewer`, aucune écriture.
-  assert.ok(autonomy.includes('readIfServed("/v1/autonomy")'), "le client ne lit plus /v1/autonomy");
-  const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, TOKEN));
-  const served = routes.filter((route) => route.pattern.test("/v1/autonomy"));
-  assert.deepEqual(served.map((route) => `${route.method} ${route.role}`), ["GET viewer"]);
-  assert.doesNotMatch(autonomy, /\bwrite\(|"POST"|"PUT"|"PATCH"|"DELETE"/, "la page Autonomie n'écrit rien");
-  // Le flux : les deux événements que le client relit sont ceux du serveur.
-  for (const event of ["autonomy", "validation"]) {
-    assert.ok(autonomy.includes(`$0 == "${event}"`), `le client ne relit pas sur l'événement ${event}`);
-    assert.ok(EVENT_TYPES.includes(event as never), `le serveur ne connaît pas l'événement ${event}`);
-  }
-
-  // La création : le client envoie `kind` et `labels` à POST /v1/runs, avec les valeurs et les bornes du serveur.
-  assert.match(model, /private struct RunBody: Encodable \{[^}]*var kind: String\?[^}]*var labels: \[String\]\?/s);
-  const kinds = [...(/public enum HarnessWorkKind[^{]*\{([^}]*)\}/s.exec(autonomy)?.[1] ?? "").matchAll(/case (\w+)/g)].map((m) => m[1]);
-  assert.deepEqual(kinds, [...WORK_KINDS], "les types de travail du client sont ceux du serveur");
-  const launch = readC(...CLIENT_C, "HarnessLaunch.swift");
-  const refused = (() => {
-    try {
-      newRunInput({ repo: "demo", title: "t", request: "r", labels: Array.from({ length: 21 }, (_, i) => `l${i}`) }, { name: "t", role: "operator", repos: "*", createdAt: 0, approver: false, pilot: false }, { typed: true });
-    } catch (err) {
-      return String(err instanceof Error ? err.message : err);
-    }
-    return "";
-  })();
-  const [, maxLabels, maxLength] = /labels : (\d+) au plus, de 1 à (\d+) caractères/.exec(refused) ?? [];
-  assert.match(launch, new RegExp(`maxLabels = ${maxLabels}\\b`), "le client borne les labels comme le serveur");
-  assert.match(launch, new RegExp(`maxLabelLength = ${maxLength}\\b`), "le client borne la longueur d'un label comme le serveur");
-
-  await autonomyServerC(async (get, runId) => {
-    // GET /v1/autonomy : la vue, un dépôt, une règle, une validation avec son autonomie, une proposition avec ses changes.
-    const view = await get("/v1/autonomy");
-    contractC(view, autonomy, "HarnessAutonomyView");
-    const [repo] = view.repos as Record<string, unknown>[];
-    contractC(repo, autonomy, "HarnessAutonomyRepo");
-    const [rule] = (repo as { rules: Record<string, unknown>[] }).rules;
-    contractC(rule, autonomy, "HarnessAutonomyRule");
-    const ruleOf = rule as { match: unknown; require: unknown; gates: unknown };
-    contractC(ruleOf.match, autonomy, "HarnessAutonomyMatch", ["paths", "labels"]);
-    contractC(ruleOf.require, autonomy, "HarnessAutonomyRequire", ["reproTest", "greenChecks", "proofs"]);
-    contractC(ruleOf.gates, autonomy, "HarnessAutonomyGates");
-    const [validation] = view.validations as { runId: string; autonomy: Record<string, unknown> }[];
-    assert.equal(validation?.runId, runId);
-    contractC(validation?.autonomy, autonomy, "HarnessAutonomyProof");
-    const proof = validation?.autonomy as { rule: { match: unknown; require: unknown; gates: unknown }; proofs: unknown };
-    contractC(proof.rule, autonomy, "HarnessAutonomyRuleSnapshot");
-    contractC(proof.rule.match, autonomy, "HarnessAutonomyMatch", ["paths", "labels"]);
-    contractC(proof.rule.require, autonomy, "HarnessAutonomyRequire", ["reproTest", "greenChecks", "proofs"]);
-    contractC(proof.rule.gates, autonomy, "HarnessAutonomyGates");
-    contractC(proof.proofs, autonomy, "HarnessAutonomyProofs", ["gateReasons"]);
-    const proposals = view.proposals as { changes: unknown[] }[];
-    assert.ok(proposals.length >= 1, "une proposition réelle");
-    for (const proposal of proposals) {
-      contractC(proposal, autonomy, "HarnessAutonomyProposal");
-      for (const change of proposal.changes) contractC(change, autonomy, "HarnessAutonomyChange");
-    }
-
-    // /v1/inbox : la décision prise seule porte `autonomy`, que décode HarnessDecision ; le run porte `kind` et `labels`.
-    const inbox = await get("/v1/inbox");
-    const [decision] = (inbox.decisions as Record<string, unknown>[]).filter((d) => d.autonomy !== null);
-    assert.ok(decision, "la décision prise seule est dans À traiter");
-    // Ces deux structs existaient avant l'autonomie : le client en ignore des champs à dessein ; seul le sens client → serveur compte.
-    contractC(decision, wire, "HarnessDecision", [], false);
-    const read = await get(`/v1/runs/${runId}`);
-    // `waitCause` n'est porté que par un run retenu en file (prouvé par tour-de-controle/AC-2).
-    contractC(read.run ?? read, wire, "HarnessRun", ["waitCause"], false);
-  });
-});
-
-test("autonomie-par-paliers/AC-23 : Système › Autonomie lit, en français, les règles par dépôt, chaque validation prise seule avec sa règle et ses preuves, et les propositions avec leur changement de configuration, sans geste qui modifie une règle", async () => {
-  const system = readC("omp-console", "Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
-  assert.match(system, /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case autonomy\s*case stats\s*case admin\s*case server/);
-  assert.match(system, /case \.autonomy: AutonomyText\.pageTitle/, "la rangée du hub s'appelle Autonomie");
-  assert.match(system, /allCases\.filter \{ isAdmin \|\| !\$0\.isAdminOnly \}/, "la page est visible de tout jeton lecteur");
-  // Les deux apps ouvrent la même page partagée, et la rechargent depuis le serveur.
-  assert.match(readC("omp-console", "Sources", "OMPConsole", "Server", "SystemPages.swift"), /case \.autonomy:\s*HarnessForm\(server: server, drafts: drafts\) \{ AutonomySections\(server: server\) \}/);
-  assert.match(readC("omp-console", "ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"), /case \.autonomy: IOSAutonomyScreen\(server: server, drafts: drafts\)/);
-  assert.match(readC("omp-console", "ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"), /AutonomySections\(server: server\)/);
-
-  // La page rend les trois blocs, et chaque champ utile du serveur : règle (match, exigences, portes), validation (porte, règle,
-  // preuves, statut), proposition (palier, taux, changes).
-  const views = readC("omp-console", "Sources", "ConsoleUI", "AutonomyViews.swift");
-  for (const needle of [
-    "AutonomyText.rulesTitle",
-    "AutonomyText.validationsTitle",
-    "AutonomyText.proposalsTitle",
-    "rule.match.summary",
-    "rule.require.summary",
-    "rule.gates.summary",
-    "AutonomyProofView(proof: proof)",
-    "AutonomyText.validationStatus(decision.status)",
-    "AutonomyText.proposalTitle(raise: proposal.isRaise, kind: proposal.kind, gate: proposal.gate)",
-    "AutonomyText.proposalToday(current: proposal.current, rule: proposal.rule)",
-    "AutonomyText.proposalFigures(runs: proposal.runs, passages: proposal.passages, corrections: proposal.corrections, rate: proposal.rate)",
-    "ForEach(proposal.changes)",
-    "change.path",
-    "change.valueText",
-  ])
-    assert.ok(views.includes(needle), `la page ne rend pas ${needle}`);
-  // Aucun geste n'y modifie une règle : ni bouton, ni champ de saisie, ni appel d'écriture.
-  assert.doesNotMatch(views, /\bButton\b|TextField|Toggle|Picker|Stepper|\.write\(|\.launch|\.validate|\.accept|\.reverse/, "la page Autonomie est en lecture seule");
-  assert.match(views, /AutonomyText\.readOnlyHint/);
-
-  // Le vocabulaire : en français, par L10n (donc dans la table anglaise), avec le changement de configuration et la règle en toutes lettres.
-  const text = readC("omp-console", "Sources", "ConsoleCore", "Design", "AutonomyText.swift");
-  const table = readC("omp-console", "Sources", "ConsoleCore", "Resources", "en.lproj", "Localizable.strings");
-  const keys = [...text.matchAll(/L10n\.(?:text|format)\("((?:[^"\\]|\\.)*)"/g)].map((m) => m[1] as string);
-  assert.ok(keys.length > 40, "le vocabulaire de l'autonomie");
-  for (const key of keys) assert.ok(table.includes(`"${key}" =`), `« ${key} » sans traduction anglaise`);
-  for (const phrase of [
-    "Règles par dépôt",
-    "Décisions prises seules",
-    "Propositions de palier",
-    "Modification de configuration suggérée",
-    `Règle %lld${NBSP_C}: %@`,
-    "test de reproduction vert",
-    "suite complète verte",
-    "critères d’acceptation prouvés",
-  ])
-    assert.ok(keys.includes(phrase), `AutonomyText ne dit pas « ${phrase} »`);
-  assert.match(text, /Pour modifier un palier, éditez la configuration du serveur/);
-
-  // Ce que la page lit est ce que le serveur sert (AC-24) : un montage réel, et la page rend le même rang, la même règle.
-  await autonomyServerC(async (get) => {
-    const view = (await get("/v1/autonomy")) as {
-      repos: { repo: string; rules: { match: { kind: string } }[] }[];
-      validations: { autonomy: { rule: { rank: number } } }[];
-      proposals: { direction: string; changes: { path: string }[] }[];
-    };
-    assert.equal(view.repos[0]?.repo, "demo");
-    assert.equal(view.repos[0]?.rules[0]?.match.kind, "bug");
-    assert.equal(view.validations[0]?.autonomy.rule.rank, 1);
-    assert.ok(view.proposals.some((p) => p.direction === "lower" && p.changes.some((c) => c.path === "repos.demo.autonomy.rules[0].gates.review")));
-  });
-});
-
-test("autonomie-par-paliers/AC-32 : la carte « décision prise seule » d'À traiter montre la porte, la règle et chaque preuve avec sa valeur, et mène aux gestes existants", async () => {
-  const autonomy = readC(...CLIENT_C, "HarnessAutonomy.swift");
-  const facts = autonomy.slice(autonomy.indexOf("var facts: [HarnessAutonomyFact]"));
-  assert.ok(facts.length > 0, "HarnessAutonomyProof.facts introuvable");
-
-  // La porte franchie, le rang et le `match` de la règle, ses exigences et ses portes.
-  for (const needle of ["AutonomyText.gateCrossed(gate)", "AutonomyText.factRule(rank: rule.rank)", "rule.match.summary", "rule.require.summary", "rule.gates.summary"])
-    assert.ok(facts.includes(needle), `la carte ne dit pas ${needle}`);
-
-  // Chaque preuve que le serveur inscrit, aux deux portes, est lue dans `facts` avec sa valeur.
-  const proofKeys = new Set<string>();
-  await autonomyServerC(async (get) => {
-    const [validation] = ((await get("/v1/autonomy")).validations ?? []) as { autonomy: { gate: string; proofs: Record<string, unknown> } }[];
-    assert.equal(validation?.autonomy.gate, "review");
-    for (const key of Object.keys(validation?.autonomy.proofs ?? {})) proofKeys.add(key);
-  });
-  const specsWorld = worldS({ rules: [DOCS_SPECS_RULE_S], gate: true });
-  await withWorldS(specsWorld, async () => {
-    const run = docsRunS(specsWorld);
-    await waitFor(() => autonomyDecisions(specsWorld, run.id).length > 0, () => stateOf(specsWorld, run.id), 60_000);
-    const [decision] = autonomyDecisions(specsWorld, run.id);
-    assert.equal(decision?.autonomy?.gate, "specs");
-    for (const key of Object.keys(decision?.autonomy?.proofs ?? {})) proofKeys.add(key);
-  });
-  assert.deepEqual([...proofKeys].sort(), ["diffLines", "fullTests", "gateReasons", "kind", "labels", "provenCriteria", "reproTests", "reviewMaxDiffLines", "reviewSha", "ruleMaxDiffLines"]);
-  for (const key of proofKeys) assert.ok(facts.includes(`proofs.${key}`), `la preuve ${key} n'est pas montrée par la carte`);
-
-  // La carte d'À traiter rend ce bloc pour une décision d'autonomie, garde accepter et renverser, et ouvre la feature
-  // (page où vivent revert, annulation et relance).
-  const feed = readC("omp-console", "Sources", "ConsoleUI", "InboxFeed.swift");
-  const card = feed.slice(feed.indexOf("struct DecisionsCard"));
-  assert.match(card, /if let proof = decision\.autonomy \{[\s\S]*?AutonomyText\.validatedAlone[\s\S]*?AutonomyProofView\(proof: proof\)/);
-  assert.ok(card.includes("server.accept(runId: decision.runId, seq: decision.seq)"), "accepter");
-  assert.ok(card.includes("drafts.beginReversal(decision)"), "renverser");
-  assert.match(card, /if decision\.autonomy != nil \{\s*OpenRunButton\(drafts: drafts, runId: decision\.runId\)/);
-  const page = readC("omp-console", "Sources", "ConsoleUI", "RunViews.swift") + readC("omp-console", "Sources", "ConsoleUI", "RunControlViews.swift");
-  for (const gesture of ["server.revert(", "server.cancel(", "server.retry("]) assert.ok(page.includes(gesture), `la page de la feature n'offre plus ${gesture}`);
-  // Les deux apps rendent la même carte (vue partagée).
-  for (const file of [["ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"], ["Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"]])
-    assert.ok(readC("omp-console", ...file).includes("InboxFeed(server: server, drafts: drafts, inbox: server.inbox ?? HarnessInbox())"), `${file.at(-1)} : le fil À traiter`);
 });
