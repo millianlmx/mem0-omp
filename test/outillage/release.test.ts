@@ -32,6 +32,7 @@ import {
   bumpVersion,
   changesBetween,
   compareVersions,
+  deployTargetOf,
   historyOf,
   insertChangelog,
   levelOf,
@@ -501,10 +502,12 @@ function writeFakeGh(bin: string): void {
   const script = [
     "#!/usr/bin/env bash",
     "# Faux `gh` du harnais (voir test/outillage/release.test.ts) : journalise, simule la PR",
-    "# (list/create/view/merge/close) et la création de release. `pr merge` fabrique un",
+    "# (list/create/view/edit/merge/close) et la création de release. `pr merge` fabrique un",
     "# vrai commit de fusion squash sur refs/heads/main du remote nu. Les PR ouvertes",
     "# sont les fichiers de $GH_STATE/open/ (nom = numéro, contenu = branche ; un",
     "# fichier <n>.fourche en fait une PR de fourche) : `pr list` sans --head les rend.",
+    "# $GH_STATE/concurrent (un sha) : la fusion d'une AUTRE PR pendant l'attente des",
+    "# statuts — le premier `pr view` qui lit mergeStateStatus avance main sur ce sha.",
     "set -uo pipefail",
     "journal_args=\"${*//$'\\n'/ }\"",
     'printf \'%s\\n\' "$journal_args" >> "$GH_JOURNAL"',
@@ -541,11 +544,21 @@ function writeFakeGh(bin: string): void {
     '    printf \'https://%s/%s/pull/1\\n\' "$GH_HOST" "$GH_REPO"',
     "    ;;",
     '  "pr view")',
+    '    case " $* " in',
+    "      *mergeStateStatus*)",
+    '        if [ -f "$GH_STATE/concurrent" ]; then',
+    '          git "${remote[@]}" update-ref refs/heads/main "$(cat "$GH_STATE/concurrent")"',
+    '          rm -f "$GH_STATE/concurrent"',
+    "        fi",
+    "        ;;",
+    "    esac",
     '    number="${3:-1}"',
     '    state="$(cat "$GH_STATE/merge-state" 2>/dev/null || printf \'CLEAN\')"',
     '    merged="$(cat "$GH_STATE/merge-sha" 2>/dev/null || printf \'\')"',
     '    printf \'{"number":%s,"state":"OPEN","mergeStateStatus":"%s","mergeCommit":{"oid":"%s"},"url":"https://%s/%s/pull/%s"}\\n\' \\',
     '      "$number" "$state" "$merged" "$GH_HOST" "$GH_REPO" "$number"',
+    "    ;;",
+    '  "pr edit")',
     "    ;;",
     '  "pr merge")',
     '    subject=""; body=""; match=""; prev=""',
@@ -992,6 +1005,117 @@ async function buildStale(kind: string): Promise<StaleBuilt> {
   return { repo, dry, afterDry, run, afterRun, empty, afterEmpty, again, afterAgain: staleState(repo) };
 }
 
+/** La tête d'une branche du remote, `""` si elle n'existe pas. */
+function remoteHead(repo: Repo, name: string): string {
+  return remoteGit(repo.remote, ["for-each-ref", "--format=%(objectname)", `refs/heads/${name}`]).trim();
+}
+
+/** Ce qui est publié sur le remote à un instant : `main`, ses tags et son journal. */
+type Published = { main: string; tags: string[]; changelog: string };
+
+function published(repo: Repo): Published {
+  const main = remoteSha(repo, "main");
+  const shown = spawnSync("git", [`--git-dir=${repo.remote}`, "show", `${main}:CHANGELOG.md`], {
+    env: GIT_ENV,
+    encoding: "utf8",
+  });
+  return { main, tags: remoteTags(repo.remote), changelog: shown.status === 0 ? shown.stdout : "" };
+}
+
+type ConcurrentBuilt = {
+  repo: Repo;
+  /** La fusion concurrente : un `feat(memory)` arrivé sur main pendant l'attente des statuts. */
+  concurrent: { subject: string; sha: string };
+  /** Le run de l'événement A (un `fix(memory)`), sous lequel main bouge. */
+  run: Run;
+  afterRun: Published;
+  /** Le run de la fusion concurrente, en file derrière le premier : plus rien à publier. */
+  next: Run;
+  afterNext: Published;
+};
+
+/**
+ * Deux fusions concurrentes : le run de A (un correctif) ouvre sa PR de release,
+ * puis une autre PR (un `feat`) est fusionnée sur main pendant qu'il en attend
+ * les statuts. Le run de la seconde fusion, en file (`queue: max`), passe ensuite.
+ */
+async function buildConcurrent(kind: string): Promise<ConcurrentBuilt> {
+  const repo = makeRepo(kind, PATCH_STEPS);
+  const subject = "feat(memory): le brief se résume en une ligne";
+  fs.appendFileSync(path.join(repo.dir, MEMORY.dir, "brief.ts"), "\n// fusion concurrente\n");
+  git(["add", "--", `${MEMORY.dir}/brief.ts`], repo.dir);
+  git(["commit", "-q", "-m", subject], repo.dir);
+  const sha = git(["rev-parse", "HEAD"], repo.dir).trim();
+  // L'objet est sur le remote, hors de main : le faux `gh` l'y fusionne pendant l'attente.
+  git(["push", "-q", "origin", "HEAD:refs/scenario/concurrent"], repo.dir);
+  git(["reset", "-q", "--hard", repo.after], repo.dir);
+  fs.writeFileSync(path.join(repo.state, "concurrent"), sha);
+  const run = await runEngine(repo);
+  const afterRun = published(repo);
+  git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], repo.dir);
+  const next = await runEngine(repo, { before: repo.after, after: sha });
+  return { repo, concurrent: { subject, sha }, run, afterRun, next, afterNext: published(repo) };
+}
+
+type DeployBuilt = {
+  repo: Repo;
+  /** Le tag du harness publié par le run. */
+  tag: string;
+  run: Run;
+  /** La tête de `deploy` après chaque run. */
+  afterRun: string;
+  /** Rejeu du même événement : rien à publier, `deploy` déjà sur le tag. */
+  replay: Run;
+  afterReplay: string;
+  /** `deploy` poussée en avance sur le tag (un enfant du commit tagué). */
+  ahead: { sha: string; run: Run; after: string };
+  /** `deploy` poussée sur un commit sans lien avec le tag. */
+  divergent: { sha: string; run: Run; after: string };
+};
+
+/** La branche `deploy` : créée sur le tag du harness, puis rejouée, en avance et divergente. */
+async function buildDeploy(kind: string): Promise<DeployBuilt> {
+  const repo = makeRepo(kind, [
+    {
+      subject: "feat(harness): le service dit quel commit tourne",
+      edits: [{ file: "omp-harness/README.md", append: "\nUne ligne de plus.\n" }],
+    },
+  ]);
+  const harness = SERVICES.find((service) => service.name === "omp-harness");
+  assert.ok(harness, "omp-harness absent de SERVICES");
+  const tag = versionTag(harness.name, bumpVersion(versionIn(ROOT, `${harness.dir}/package.json`), "minor"));
+  // `deploy` sur la release précédente (le commit de base, tagué par makeRepo) : le run l'avance.
+  git(["push", "-q", "origin", `${repo.before}:refs/heads/deploy`], repo.dir);
+  const run = await runEngine(repo);
+  const afterRun = remoteHead(repo, "deploy");
+  git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], repo.dir);
+  const replay = await runEngine(repo);
+  const afterReplay = remoteHead(repo, "deploy");
+
+  const tagged = git(["rev-parse", `${tag}^{commit}`], repo.dir).trim();
+  const pushDeploy = (sha: string) => git(["push", "-q", "--force", "origin", `${sha}:refs/heads/deploy`], repo.dir);
+  const aheadSha = git(
+    ["commit-tree", `${tagged}^{tree}`, "-p", tagged, "-m", "fix: correctif à chaud"],
+    repo.dir,
+  ).trim();
+  pushDeploy(aheadSha);
+  const aheadRun = await runEngine(repo);
+  const afterAhead = remoteHead(repo, "deploy");
+  const divergentSha = git(["commit-tree", `${tagged}^{tree}`, "-m", "chore: une autre histoire"], repo.dir).trim();
+  pushDeploy(divergentSha);
+  const divergentRun = await runEngine(repo);
+  return {
+    repo,
+    tag,
+    run,
+    afterRun,
+    replay,
+    afterReplay,
+    ahead: { sha: aheadSha, run: aheadRun, after: afterAhead },
+    divergent: { sha: divergentSha, run: divergentRun, after: remoteHead(repo, "deploy") },
+  };
+}
+
 // Les scénarios sont construits une seule fois, avant le premier test : chaque
 // test ne réclame que le sien, et les copies imbriquées (`MEM0_CHECK_DEPTH` ≠ 0)
 // n'en construisent aucun — sinon elles se rappelleraient elles-mêmes. Ils se
@@ -1012,6 +1136,10 @@ type ScenarioSet = {
   argCases: Repo;
   /** Des PR de release laissées ouvertes par des runs précédents. */
   stale: StaleBuilt;
+  /** Une autre PR fusionnée pendant que le run attend les statuts de sa PR de release. */
+  concurrent: ConcurrentBuilt;
+  /** La branche `deploy` du déploiement continu. */
+  deploy: DeployBuilt;
 };
 
 async function buildScenarios(): Promise<ScenarioSet> {
@@ -1021,17 +1149,20 @@ async function buildScenarios(): Promise<ScenarioSet> {
       edits: [{ file: "omp-harness/README.md", append: "\nUne ligne.\n" }],
     },
   ]);
-  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun, stale] = await Promise.all([
-    buildSimple("patch", PATCH_STEPS),
-    buildSimple("docs", DOCS_STEPS),
-    buildSimple("major", MAJOR_STEPS),
-    buildTagged("tagged"),
-    buildBacklog("backlog"),
-    buildBlocked("blocked"),
-    buildNoToken("token"),
-    runEngine(serviceRepo, { extra: ["--dry-run"] }),
-    buildStale("stale"),
-  ]);
+  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun, stale, concurrent, deploy] =
+    await Promise.all([
+      buildSimple("patch", PATCH_STEPS),
+      buildSimple("docs", DOCS_STEPS),
+      buildSimple("major", MAJOR_STEPS),
+      buildTagged("tagged"),
+      buildBacklog("backlog"),
+      buildBlocked("blocked"),
+      buildNoToken("token"),
+      runEngine(serviceRepo, { extra: ["--dry-run"] }),
+      buildStale("stale"),
+      buildConcurrent("concurrent"),
+      buildDeploy("deploy"),
+    ]);
   return {
     patch,
     docs,
@@ -1043,6 +1174,8 @@ async function buildScenarios(): Promise<ScenarioSet> {
     service: { repo: serviceRepo, run: serviceRun },
     argCases: makeRepo("args", PATCH_STEPS),
     stale,
+    concurrent,
+    deploy,
   };
 }
 
@@ -1701,4 +1834,112 @@ test("release/AC-13 : `--dry-run` nomme les PR de release que le run fermerait, 
   for (const head of ["release/perimee-1", "release/perimee-2", "feat/autre"]) {
     assert.ok(afterDry.heads.includes(`refs/heads/${head}`), afterDry.heads.join(", "));
   }
+});
+
+test("release/AC-14 : main bouge sous la PR de release — la release se recalcule depuis le nouveau main : un seul bump sur tous les commits (fix + feat ⇒ mineure), aucune entrée de journal perdue, et le run suivant n'a plus rien à publier", (t) => {
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
+  const built = scenario(SCENARIOS?.concurrent, t);
+  if (built === null) return;
+  const { repo, concurrent, run, afterRun, next, afterNext } = built;
+  const memory = VERSIONS[MEMORY.name];
+  assert.ok(memory);
+  assert.equal(run.status, 0, output(run));
+  assert.ok(
+    output(run).includes(
+      `↻ main a bougé sous la PR de release #1 (${repo.after.slice(0, 12)} → ${concurrent.sha.slice(0, 12)})`,
+    ),
+    output(run),
+  );
+  assert.ok(!output(run).includes("n'est pas l'arbre validé"), output(run));
+
+  // (1) La même PR, remise à jour avec le nouveau plan, fusionnée UNE fois, sur le main qui a bougé.
+  const calls = readCalls(repo.journal).map((call) => call.args);
+  const title = `chore(release): ${MEMORY.name} ${memory.minor}`;
+  assert.equal(calls.filter((args) => args.startsWith("pr create ")).length, 1, calls.join("\n"));
+  const edits = calls.filter((args) => args.startsWith("pr edit 1 "));
+  assert.equal(edits.length, 1, calls.join("\n"));
+  assert.ok(edits[0]?.includes(`--title ${title}`), edits[0]);
+  assert.equal(calls.filter((args) => args.startsWith("pr merge ")).length, 1, calls.join("\n"));
+  assert.equal(remoteGit(repo.remote, ["log", "-1", "--format=%s", afterRun.main]).trim(), title);
+  assert.deepEqual(
+    remoteGit(repo.remote, ["log", "-1", "--format=%P", afterRun.main]).trim().split(" "),
+    [concurrent.sha],
+    "le commit de release a pour parent le main qui a bougé",
+  );
+
+  // (2) Le bump porte sur TOUS les commits depuis la version publiée : le `feat` concurrent en fait une mineure.
+  const minorTag = versionTag(MEMORY.name, memory.minor);
+  assert.ok(afterRun.tags.includes(minorTag), afterRun.tags.join(", "));
+  assert.ok(!afterRun.tags.includes(versionTag(MEMORY.name, memory.patch)), "jamais le correctif seul en patch");
+  assert.equal(remoteSha(repo, `refs/tags/${minorTag}`), afterRun.main, "le tag pointe sur la fusion");
+
+  // (3) Une entrée de journal, qui nomme les deux commits.
+  const entry = afterRun.changelog.split(/^## /m).find((part) => part.startsWith(`${MEMORY.name} ${memory.minor} `));
+  assert.ok(entry, afterRun.changelog);
+  for (const subject of [repo.commits[0]?.subject ?? "", concurrent.subject]) {
+    assert.ok(entry.includes(subject), `« ${subject} » absent du journal :\n${entry}`);
+  }
+  const notes = releaseCalls(repo.journal).find((call) => call.tag === minorTag)?.notes ?? "";
+  assert.ok(notes.includes(concurrent.subject), notes);
+
+  // (4) Le run de la fusion concurrente, en file derrière : plus rien à publier, rien ne bouge.
+  assert.equal(next.status, 0, output(next));
+  assert.deepEqual(afterNext, afterRun, "ni commit, ni tag, ni journal de plus");
+  assert.equal(
+    readCalls(repo.journal).filter((call) => call.args.startsWith("pr create ")).length,
+    1,
+    "aucune seconde PR de release",
+  );
+});
+
+test("release/AC-15 : après la publication, la branche deploy avance en avance rapide sur le commit du dernier tag omp-harness — un rejeu ne la bouge pas, une branche en avance est laissée, une divergente fait échouer le run en la nommant", (t) => {
+  // La cible : le plus grand tag semver du service, son commit pelé quel que soit l'ordre des lignes.
+  const [a, b, c, d] = ["a", "b", "c", "d"].map((x) => x.repeat(40));
+  const listing = [
+    `${a}\trefs/tags/omp-harness-v1.9.0`,
+    `${b}\trefs/tags/omp-harness-v1.10.0`,
+    `${c}\trefs/tags/omp-harness-v1.10.0^{}`,
+    `${d}\trefs/tags/omp-harness-v2.0.0-rc.1`,
+    `${d}\trefs/tags/omp-mem0-memory-v9.0.0`,
+  ].join("\n");
+  assert.deepEqual(deployTargetOf(listing, "omp-harness"), { tag: "omp-harness-v1.10.0", commit: c });
+  assert.deepEqual(
+    deployTargetOf(
+      [`${c}\trefs/tags/omp-harness-v1.10.0^{}`, `${b}\trefs/tags/omp-harness-v1.10.0`].join("\n"),
+      "omp-harness",
+    ),
+    { tag: "omp-harness-v1.10.0", commit: c },
+  );
+  assert.equal(deployTargetOf(`${d}\trefs/tags/omp-mem0-memory-v9.0.0`, "omp-harness"), null);
+
+  if (outilEpingleAbsent(t, "biome", "typescript")) return;
+  const built = scenario(SCENARIOS?.deploy, t);
+  if (built === null) return;
+  const { repo, tag, run, afterRun, replay, afterReplay, ahead, divergent } = built;
+  assert.equal(run.status, 0, output(run));
+  const tagged = remoteSha(repo, `refs/tags/${tag}`);
+  assert.equal(tagged, remoteSha(repo, "main"), "le tag du harness pointe sur la fusion de la release");
+  assert.equal(afterRun, tagged, "deploy avancée sur le commit tagué");
+  assert.equal(
+    remoteGit(repo.remote, ["merge-base", "--is-ancestor", repo.before, afterRun]),
+    "",
+    "depuis la release précédente : une avance rapide",
+  );
+  assert.ok(output(run).includes(`→ branche deploy avancée sur ${tag} (${tagged.slice(0, 12)})`), output(run));
+
+  assert.equal(replay.status, 0, output(replay));
+  assert.equal(afterReplay, tagged);
+  assert.ok(output(replay).includes(`· branche deploy déjà sur ${tag}`), output(replay));
+
+  assert.equal(ahead.run.status, 0, output(ahead.run));
+  assert.equal(ahead.after, ahead.sha, "une branche en avance sur le tag n'est jamais reculée");
+  assert.ok(output(ahead.run).includes(`en avance sur ${tag}`), output(ahead.run));
+
+  assert.notEqual(divergent.run.status, 0, output(divergent.run));
+  assert.equal(divergent.after, divergent.sha, "jamais de poussée forcée");
+  assert.ok(
+    output(divergent.run).includes(`✗ branche deploy divergente (${divergent.sha.slice(0, 12)})`) &&
+      output(divergent.run).includes(`git push --force origin ${tag}^{commit}:refs/heads/deploy`),
+    output(divergent.run),
+  );
 });

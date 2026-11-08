@@ -2,6 +2,7 @@
 // — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs et
 // coût. Construit par une fonction PURE sur la base (`digestOf`), servi par `GET /v1/digest`
 // et l'outil MCP `digest`, et posté chaque jour à `notify.digestHour` par `DigestSender`.
+import { HARNESS_COMMIT } from "./build-info.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { DecisionRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { sumUsage } from "./db.ts";
@@ -64,8 +65,15 @@ function waitingLine(run: RunRow): string {
  * Mergés et échoués : les runs dont la dernière écriture (la fin) tombe dans la fenêtre ;
  * décisions : celles prises seules dans la fenêtre et pas encore acceptées ni renversées ;
  * attentes : tout ce qui bloque sur l'humain à l'instant du rapport, quelle que soit la date.
+ * La dernière ligne nomme le commit du service (`commit`, défaut : `OMP_HARNESS_COMMIT`).
  */
-export function digestOf(store: Store, since: number, until: number, repos: RepoFilter = null): Digest {
+export function digestOf(
+  store: Store,
+  since: number,
+  until: number,
+  repos: RepoFilter = null,
+  commit: string | null = HARNESS_COMMIT,
+): Digest {
   const inWindow = (at: number) => at >= since && at <= until;
   const runs = store.listRuns({ repos }).sort((a, b) => a.updatedAt - b.updatedAt);
   const byId = new Map(runs.map((run) => [run.id, run]));
@@ -92,6 +100,9 @@ export function digestOf(store: Store, since: number, until: number, repos: Repo
   const parts = sections.length > 0 ? sections : ["Rien de neuf."];
   // Le coût n'est dit que si la consommation des agents est connue sur la fenêtre.
   if (usage.length > 0) parts.push(`Coût de la fenêtre : ${sumUsage(usage).cost.toFixed(2)} $`);
+  parts.push(
+    `Commit déployé : ${commit === null ? "inconnu (service construit sans OMP_HARNESS_COMMIT)" : commit.slice(0, 12)}`,
+  );
   return {
     since,
     until,

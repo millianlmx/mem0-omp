@@ -4,3 +4,8 @@
 !omp-harness
 !omp-mem0-memory
 omp-harness/deploy/nixos
+# Ce qui nomme le commit du clone, et rien d'autre du .git : lu par build-commit au build
+# (Dockerfile.harness), quand la pile ne passe pas OMP_HARNESS_COMMIT.
+!.git/HEAD
+!.git/refs
+!.git/packed-refs

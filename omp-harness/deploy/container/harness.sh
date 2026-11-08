@@ -8,6 +8,9 @@
 #   bash omp-harness/deploy/container/harness.sh local <modèle>
 #                                                    déclare un modèle oMLX aux runners SANS changer ceux du
 #                                                    serveur : les dépôts `"privacy": "local-only"` le prennent
+#   bash omp-harness/deploy/container/harness.sh up --ref deploy
+#                                                    met d'abord le clone sur la branche deploy d'origin (la
+#                                                    dernière release du harness, avancée par le job de release)
 #   bash omp-harness/deploy/container/harness.sh add <url>  ajoute un dépôt (te guide pour sa clé de déploiement)
 #   bash omp-harness/deploy/container/harness.sh pair       réaffiche le code d'appairage
 #   bash omp-harness/deploy/container/harness.sh approver   le code approbateur des apps (Mac et iPhone) : le seul
@@ -30,7 +33,8 @@
 # base des embeddings, off avec l'Ollama intégré), OMLX_CONTEXT_WINDOW (131072), OMP_HARNESS_ENGINE
 # (docker | podman), OMP_HARNESS_ROOT (~/.omp-harness), OMP_HARNESS_SECRETS
 # (~/.omp-harness-secrets), OMP_HARNESS_PORT (8790), OMP_HARNESS_TAILSCALE=0 (ne
-# publie pas), OMP_HARNESS_SOCKET, OMP_HARNESS_USER, OMP_HARNESS_BUILD=0.
+# publie pas), OMP_HARNESS_SOCKET, OMP_HARNESS_USER, OMP_HARNESS_BUILD=0,
+# OMP_HARNESS_COMMIT (le commit construit ; défaut : celui du clone).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -341,17 +345,46 @@ EOT
   loginctl enable-linger "$USER" >/dev/null 2>&1 || true
 }
 
+# `up --ref <branche>` : le clone de ce script passe sur la branche d'origin, en avance
+# rapide seulement (deploy : la dernière release du harness). Une modification locale
+# suivie, ou une branche locale qui a divergé, arrête tout sans rien toucher.
+checkout_ref() {
+  local ref="$1" top
+  top="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" || die "--ref : $HERE n'est pas dans un clone git"
+  [ -z "$(git -C "$top" status --porcelain --untracked-files=no)" ] ||
+    die "--ref : le clone $top a des modifications locales : range-les (git stash), puis relance"
+  git -C "$top" fetch --quiet origin "+refs/heads/$ref:refs/remotes/origin/$ref" ||
+    die "--ref : la branche $ref est introuvable sur origin ($(git -C "$top" remote get-url origin 2>/dev/null))"
+  if git -C "$top" show-ref --verify --quiet "refs/heads/$ref"; then
+    git -C "$top" checkout --quiet "$ref"
+    git -C "$top" merge --quiet --ff-only "origin/$ref" ||
+      die "--ref : la branche locale $ref a divergé d'origin/$ref : réaligne-la (git reset --hard origin/$ref)"
+  else
+    git -C "$top" checkout --quiet -b "$ref" --track "origin/$ref"
+  fi
+  echo "· clone sur $ref ($(git -C "$top" rev-parse --short=12 HEAD))"
+}
+
 cmd_up() {
-  local previous
+  local previous ref="" rest=()
   previous="$(setting OMP_HARNESS_OMLX_MODEL "$ROOT/compose.env")"
   OMLX_MODEL="$previous"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --omlx) OMLX_MODEL="${2:?usage : up --omlx <modèle>}"; shift 2 ;;
-      --anthropic) OMLX_MODEL=""; shift ;;
-      *) die "option inconnue : $1 (up [--omlx <modèle> | --anthropic])" ;;
+      --omlx) OMLX_MODEL="${2:?usage : up --omlx <modèle>}"; rest+=("$1" "$2"); shift 2 ;;
+      --anthropic) OMLX_MODEL=""; rest+=("$1"); shift ;;
+      --ref) ref="${2:?usage : up --ref <branche>}"; shift 2 ;;
+      *) die "option inconnue : $1 (up [--omlx <modèle> | --anthropic] [--ref <branche>])" ;;
     esac
   done
+  if [ -n "$ref" ]; then
+    checkout_ref "$ref"
+    # La suite est celle de la version qu'on vient de récupérer.
+    exec bash "$HERE/harness.sh" up ${rest[@]+"${rest[@]}"}
+  fi
+  # Le commit construit, rendu par /v1/health (compose.yaml le passe au build).
+  [ -n "${OMP_HARNESS_COMMIT:-}" ] || OMP_HARNESS_COMMIT="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || true)"
+  export OMP_HARNESS_COMMIT
   command -v "$ENGINE" >/dev/null || die "$ENGINE introuvable : installe Docker ou podman"
   [ -z "$OMLX_MODEL" ] || probe_omlx
   install -d -m 0700 "$ROOT" "$SECRETS"
@@ -583,5 +616,5 @@ case "${1:-}" in
   restart) compose restart ;;
   start) cmd_start ;;
   down) compose down ;;
-  *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

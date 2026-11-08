@@ -7,6 +7,16 @@
 // Les PR `release/*` laissées ouvertes par un run précédent sont fermées dès que
 // la PR courante existe, ou quand plus rien n'est à publier.
 //
+// Quand `main` bouge sous la PR de release (une autre PR fusionnée pendant
+// l'attente des statuts), la PR n'est JAMAIS fusionnée telle quelle : le plan se
+// recalcule depuis le nouveau `main` (tous les commits depuis la version
+// courante, donc aucune entrée de journal perdue ni de bump sous-évalué), la même
+// branche est réécrite et la même PR remise à jour, puis l'attente reprend.
+//
+// Après la publication, la branche `deploy` avance (avance rapide seulement) sur
+// le commit du dernier tag `omp-harness-v*` : c'est elle que suit le déploiement
+// continu (pile Portainer en GitOps, `harness.sh up --ref deploy`).
+//
 // Lancé par `.github/workflows/release.yml` :
 //   node --experimental-strip-types scripts/release.ts --before <sha> --after <sha>
 // et utilisable à la main avec `--dry-run` (calcule et imprime, n'écrit rien).
@@ -454,6 +464,36 @@ export function repoFromRemote(url: string): string | null {
   return match ? match[1] : null;
 }
 
+/** La branche que suit le déploiement continu, et le service dont elle porte les releases. */
+export const DEPLOY_BRANCH = "deploy";
+export const DEPLOY_SERVICE = "omp-harness";
+
+/**
+ * La cible de la branche `deploy` d'après `git ls-remote --tags` : le tag
+ * `<name>-v<semver>` de plus grande version et son COMMIT (ligne `^{}` d'un tag
+ * annoté, sinon l'objet du tag léger). `null` sans aucun tag du service.
+ */
+export function deployTargetOf(lsRemote: string, name: string): { tag: string; commit: string } | null {
+  const prefix = `refs/tags/${name}-v`;
+  const commits = new Map<string, string>();
+  for (const line of lsRemote.split("\n")) {
+    const [sha = "", ref = ""] = line.trim().split("\t");
+    if (!/^[0-9a-f]{40}$/.test(sha) || !ref.startsWith(prefix)) continue;
+    const peeled = ref.endsWith("^{}");
+    const tag = ref.slice("refs/tags/".length).replace(/\^\{\}$/, "");
+    // Le commit pelé l'emporte sur l'objet du tag annoté, quel que soit l'ordre des lignes.
+    if (peeled || !commits.has(tag)) commits.set(tag, sha);
+  }
+  const versions = [...commits.keys()]
+    .map((tag) => tag.slice(name.length + 2))
+    .filter((version) => /^\d+\.\d+\.\d+$/.test(version));
+  const latest = maxVersion(versions);
+  if (latest === null) return null;
+  const tag = versionTag(name, latest);
+  const commit = commits.get(tag);
+  return commit === undefined ? null : { tag, commit };
+}
+
 // ---------------------------------------------------------------------------
 // Exécution : git, gh, check.sh
 // ---------------------------------------------------------------------------
@@ -652,6 +692,39 @@ function historyOfPlugin(plugin: { name: string; dir: string }, main: string): P
   return { name: plugin.name, dir: plugin.dir, history, ranges, sinceCurrent };
 }
 
+/** Le plan calculé sur une référence `main`, avec les plugins qu'il couvre. */
+type Planned = { plugins: Array<{ name: string; dir: string }>; plan: Plan; published: boolean };
+
+/**
+ * Le plan sur la référence `main` : les plugins locaux du catalogue (lu dans
+ * l'arbre de travail, extrait de cette référence), les services hors catalogue
+ * présents sur elle, leurs historiques, les tags du remote et la garde
+ * d'idempotence de l'événement `after`. Appelé au départ du run, puis à chaque
+ * recalcul quand `main` a bougé sous la PR de release. Lève sur un historique
+ * illisible.
+ */
+function planOn(main: string, catalog: Catalog, after: string, eventDate: string): Planned {
+  // Les services hors catalogue suivent les plugins, s'ils existent sur la référence `main`.
+  const services = SERVICES.filter(
+    (service) => gitQuiet(["cat-file", "-e", `${main}:${service.dir}/package.json`]).code === 0,
+  ).map((service) => ({ name: service.name, dir: service.dir }));
+  const plugins = [...localPlugins(catalog), ...services];
+  if (plugins.length === 0) return { plugins, plan: planOf([], new Set(), eventDate, false), published: false };
+
+  // Idempotence (1) : le trailer du commit de release marque l'événement publié.
+  // --grep SANS pathspec : avec `-- .`, le commit de release (vide) est exclu.
+  const published =
+    git(["log", "--fixed-strings", `--grep=Release-Event: ${after}`, "--format=%H", "-n", "1", main]).stdout.trim() !==
+    "";
+  let histories: PluginHistory[];
+  try {
+    histories = plugins.map((plugin) => historyOfPlugin(plugin, main));
+  } catch (error) {
+    throw new Error(`historique illisible : ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { plugins, plan: planOf(histories, remoteTags(), eventDate, published), published };
+}
+
 /** Une ligne par plugin du catalogue, dans son ordre (S-1). */
 function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: boolean): void {
   const backfills = new Map<string, Release[]>();
@@ -774,8 +847,18 @@ function prNumberOf(raw: string): string {
   }
 }
 
-/** La PR ouverte de la branche, réutilisée si elle existe déjà (relance). */
-async function openPullRequest(branch: string, title: string, body: string, ownerRepo: string): Promise<string | null> {
+/**
+ * La PR ouverte de la branche, réutilisée si elle existe déjà (relance). `refresh` :
+ * le plan vient d'être recalculé, le titre et le corps de la PR réutilisée sont
+ * remis à jour (`gh pr edit`) pour nommer les versions qu'elle porte désormais.
+ */
+async function openPullRequest(
+  branch: string,
+  title: string,
+  body: string,
+  ownerRepo: string,
+  refresh: boolean,
+): Promise<string | null> {
   const listed = ghCall(
     ["pr", "list", "--repo", ownerRepo, "--head", branch, "--state", "open", "--json", "number"],
     `gh pr list --head ${branch}`,
@@ -796,6 +879,14 @@ async function openPullRequest(branch: string, title: string, body: string, owne
       return null;
     }
     console.log(`· PR de release réutilisée : ${url}`);
+    if (refresh) {
+      const edited = ghCall(
+        ["pr", "edit", existing, "--repo", ownerRepo, "--title", title, "--body", body],
+        `gh pr edit ${existing}`,
+      );
+      if (edited === null) return null;
+      console.log(`· PR #${existing} remise à jour : ${title}`);
+    }
     return existing;
   }
 
@@ -858,6 +949,8 @@ function closeStalePullRequests(
   ownerRepo: string,
   current: { branch: string; number: string | null } | null,
   dryRun: boolean,
+  /** La raison écrite dans le commentaire de fermeture, quand ce n'est ni un remplacement ni un plan vide. */
+  reason: string | null = null,
 ): void {
   const listed = run("gh", [
     "pr",
@@ -882,9 +975,10 @@ function closeStalePullRequests(
     return;
   }
   const replacement =
-    current === null
+    reason ??
+    (current === null
       ? "plus rien n'est à publier depuis main"
-      : `remplacée par ${current.number === null ? `la PR de ${current.branch}` : `#${current.number}`}`;
+      : `remplacée par ${current.number === null ? `la PR de ${current.branch}` : `#${current.number}`}`);
   for (const pr of stale) {
     if (dryRun) {
       console.log(`· PR de release périmée #${pr.number} (${pr.headRefName}) à fermer : ${replacement}`);
@@ -910,13 +1004,32 @@ function closeStalePullRequests(
 /** Les états de `mergeStateStatus` qui autorisent la fusion (Doc-3). */
 const MERGEABLE = new Set(["CLEAN", "UNSTABLE", "HAS_HOOKS"]);
 
+/** Le sha de `main` sur le remote, relu sans rien récupérer ; null si illisible. */
+function remoteMain(): string | null {
+  const listed = gitQuiet(["ls-remote", "origin", "refs/heads/main"]);
+  const sha = listed.code === 0 ? (listed.stdout.trim().split("\t")[0] ?? "") : "";
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+/** Issue de l'attente : fusionnable, `main` a bougé sous la PR, ou échec nommé. */
+type Waited = "ready" | "moved" | "failed";
+
 /**
- * Attend que les statuts requis aient passé. Un statut inconnu ne fait jamais
- * fusionner : on attend le budget, puis on échoue en le nommant. `DIRTY` (conflit)
+ * Attend que les statuts requis aient passé, jusqu'à `deadline` (budget
+ * `--merge-timeout`, commun à toutes les attentes du run). Un statut inconnu ne
+ * fait jamais fusionner : on attend le budget, puis on échoue en le nommant.
+ * `main` est relu à chaque tour : s'il n'est plus `base`, la PR porte un plan
+ * périmé et l'attente s'arrête sur `moved` — AVANT tout autre verdict, car un
+ * `DIRTY` peut justement venir de ce déplacement. `DIRTY` sur la même base
  * échoue immédiatement.
  */
-async function waitMergeable(number: string, ownerRepo: string, timeout: number): Promise<boolean> {
-  const deadline = Date.now() + timeout * 1000;
+async function waitMergeable(
+  number: string,
+  ownerRepo: string,
+  base: string,
+  deadline: number,
+  budget: number,
+): Promise<Waited> {
   let last = { status: "UNKNOWN", url: "" };
   for (;;) {
     const view = run("gh", [
@@ -930,27 +1043,29 @@ async function waitMergeable(number: string, ownerRepo: string, timeout: number)
     ]);
     if (view.missing) {
       console.error("✗ gh indisponible (GH_TOKEN ?)");
-      return false;
+      return "failed";
     }
     if (view.code !== 0) {
       console.error(`✗ gh pr view ${number} : ${view.stderr.trim() || "échec sans message"}`);
-      return false;
+      return "failed";
     }
     try {
       const parsed = JSON.parse(view.stdout) as { mergeStateStatus?: string; url?: string };
       last = { status: parsed.mergeStateStatus ?? "INCONNU", url: parsed.url ?? "" };
     } catch {
       console.error(`✗ gh pr view ${number} : réponse illisible (${view.stdout.trim() || "vide"})`);
-      return false;
+      return "failed";
     }
-    if (MERGEABLE.has(last.status)) return true;
+    const main = remoteMain();
+    if (main !== null && main !== base) return "moved";
+    if (MERGEABLE.has(last.status)) return "ready";
     if (last.status === "DIRTY") {
       console.error(`✗ PR #${number} en conflit (DIRTY) : ${last.url}`);
-      return false;
+      return "failed";
     }
     if (Date.now() >= deadline) {
-      console.error(`✗ PR #${number} non fusionnable après ${timeout} s (dernier état : ${last.status}) : ${last.url}`);
-      return false;
+      console.error(`✗ PR #${number} non fusionnable après ${budget} s (dernier état : ${last.status}) : ${last.url}`);
+      return "failed";
     }
     await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10_000, Math.max(0, deadline - Date.now()))));
   }
@@ -1000,25 +1115,66 @@ async function mergePullRequest(
 }
 
 /**
+ * Recalculs au plus par run quand `main` bouge sous la PR de release. Chacun
+ * coûte un `check.sh` et une nouvelle attente des statuts (dans le même budget
+ * `--merge-timeout`) ; au-delà, le run échoue SANS rien fusionner : le run de la
+ * dernière fusion, en file derrière lui (`concurrency: release-main`), repart
+ * alors du `main` courant et ne perd rien.
+ */
+const MAX_REPLANS = 3;
+
+/**
+ * Le budget d'attente minimal pour tenter un recalcul (check.sh de la release puis
+ * statuts requis de la PR remise à jour). En deçà, le run passe la main au run de la
+ * fusion qui a bougé `main`, en file derrière lui : le job reste sous son plafond de 60 min.
+ */
+const REPLAN_RESERVE_S = 1200;
+
+const short = (sha: string) => sha.slice(0, 12);
+
+/**
  * Publie le plan : une branche de release, sa PR, sa fusion par le bot, puis les
  * tags et les releases. Ordre imposé, jamais inversé : **commit → fusion → tags
  * → releases** (S-1). Rien n'est poussé sur `refs/heads/main` (G-1).
+ *
+ * La PR n'est fusionnée que si `main` est encore la base de son plan : sinon le
+ * plan se recalcule depuis le nouveau `main` (`planOn`), la même branche
+ * `release/<after>` est réécrite (poussée forcée : elle n'appartient qu'au job),
+ * la même PR remise à jour, et l'attente reprend.
  */
-async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catalog, eventIso: string): Promise<number> {
-  const title = mergeTitle(plan);
-  const body = mergeBody(plan, args.after);
+async function publish(
+  first: Plan,
+  args: Args,
+  ownerRepo: string,
+  catalog: Catalog,
+  event: { iso: string; date: string },
+): Promise<number> {
   const branch = `release/${args.after}`;
-
-  // Les écritures partent de origin/main et vivent sur la branche de release.
-  git(["checkout", "-B", branch, "origin/main"]);
-  const changelogFile = path.join(ROOT, CHANGELOG_FILE);
-  const existing = fs.existsSync(changelogFile) ? fs.readFileSync(changelogFile, "utf8") : null;
-  // Le catalogue est RELU après le checkout : le plan a lu l'arbre d'avant, les
-  // écritures partent de origin/main.
-  const { written } = writeReleaseFiles(plan, readCatalog(CATALOGS[0]), existing);
-
+  let plan = first;
+  let base = git(["rev-parse", "origin/main^{commit}"]).stdout.trim();
   let mergeSha: string | null = null;
-  if (written.length > 0) {
+  let deadline: number | null = null;
+  for (let replans = 0; ; replans++) {
+    const title = mergeTitle(plan);
+    const body = mergeBody(plan, args.after);
+    // Les écritures partent de la base du plan et vivent sur la branche de release.
+    git(["checkout", "-B", branch, base]);
+    const changelogFile = path.join(ROOT, CHANGELOG_FILE);
+    const existing = fs.existsSync(changelogFile) ? fs.readFileSync(changelogFile, "utf8") : null;
+    // Le catalogue est RELU après le checkout : le plan a lu l'arbre d'avant, les
+    // écritures partent de la base.
+    const { written } = writeReleaseFiles(plan, readCatalog(CATALOGS[0]), existing);
+
+    if (written.length === 0) {
+      // Rien à écrire (rejeu après fusion, tags manquants) : ni branche, ni PR à
+      // ouvrir — mais l'état de main est relu avant de taguer. Aucune PR n'est
+      // courante : toute PR de release encore ouverte est périmée (celle de ce
+      // run comprise, si un recalcul l'a vidée).
+      git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+      closeStalePullRequests(ownerRepo, null, false);
+      break;
+    }
+
     const check = runCheck(written);
     if (check.code !== 0) {
       console.error("✗ check.sh rouge après écriture — rien n'est committé");
@@ -1027,40 +1183,93 @@ async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catal
 
     // Dates figées sur celles de l'événement : un rejeu produit le MÊME sha, donc
     // un push sans effet (G-3).
-    const dates = { GIT_AUTHOR_DATE: eventIso, GIT_COMMITTER_DATE: eventIso };
+    const dates = { GIT_AUTHOR_DATE: event.iso, GIT_COMMITTER_DATE: event.iso };
     git(["add", "--", ...written]);
     git([...IDENTITY, "commit", "-m", title, "-m", body], { env: dates });
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
 
-    const pushed = run("git", ["push", "origin", `HEAD:refs/heads/${branch}`]);
+    // Forcée : après un recalcul, la branche repart d'un autre `main`.
+    const pushed = run("git", ["push", "origin", `+HEAD:refs/heads/${branch}`]);
     if (pushed.code !== 0) {
       console.error(`✗ git push origin HEAD:refs/heads/${branch} : ${pushed.stderr.trim() || "échec sans message"}`);
       return 1;
     }
 
-    const number = await openPullRequest(branch, title, body, ownerRepo);
+    const number = await openPullRequest(branch, title, body, ownerRepo, replans > 0);
     if (number === null) return 1;
     // La PR courante existe : les PR de release des runs précédents sont périmées,
     // fermées AVANT l'attente — même si ce run échoue ensuite sur son budget.
     closeStalePullRequests(ownerRepo, { branch, number }, false);
-    if (!(await waitMergeable(number, ownerRepo, args.mergeTimeout))) return 1;
-    mergeSha = await mergePullRequest(number, ownerRepo, head, title, body);
-    if (mergeSha === null) return 1;
-
-    git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-    // Invariant : l'arbre fusionné doit être EXACTEMENT celui qui a passé check.sh.
-    const mergedTree = git(["rev-parse", "origin/main^{tree}"]).stdout.trim();
-    const validatedTree = git(["rev-parse", `${branch}^{tree}`]).stdout.trim();
-    if (mergedTree !== validatedTree) {
-      console.error(`✗ l'arbre fusionné (${mergedTree}) n'est pas l'arbre validé (${validatedTree})`);
+    deadline ??= Date.now() + args.mergeTimeout * 1000;
+    const waited = await waitMergeable(number, ownerRepo, base, deadline, args.mergeTimeout);
+    if (waited === "failed") return 1;
+    // Relu juste avant la fusion : l'attente a pu dormir jusqu'à 10 s.
+    const main = waited === "ready" ? remoteMain() : null;
+    if (waited === "ready" && main === null) {
+      console.error("✗ main illisible sur origin (git ls-remote) — rien n'est fusionné");
       return 1;
     }
-  } else {
-    // Rien à écrire (rejeu après fusion, tags manquants) : ni branche, ni PR à
-    // ouvrir — mais l'état de main est relu avant de taguer. Aucune PR n'est
-    // courante : toute PR de release encore ouverte est périmée.
+    if (waited === "ready" && main === base) {
+      mergeSha = await mergePullRequest(number, ownerRepo, head, title, body);
+      if (mergeSha === null) return 1;
+      git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+      // Invariant : l'arbre fusionné doit être EXACTEMENT celui qui a passé check.sh.
+      const mergedTree = git(["rev-parse", `${mergeSha}^{tree}`]).stdout.trim();
+      const validatedTree = git(["rev-parse", `${branch}^{tree}`]).stdout.trim();
+      if (mergedTree !== validatedTree) {
+        const parent = gitQuiet(["rev-parse", `${mergeSha}^1`]).stdout.trim();
+        console.error(`✗ l'arbre fusionné (${mergedTree}) n'est pas l'arbre validé (${validatedTree})`);
+        if (parent !== base) {
+          console.error(
+            `  main a bougé pendant la fusion (${short(base)} → ${short(parent)}) : rien n'est tagué. ` +
+              "Le commit de release est sur main ; compare CHANGELOG.md aux commits fusionnés entre les deux et complète-le par une PR `docs(changelog)`.",
+          );
+        }
+        return 1;
+      }
+      break;
+    }
+
+    // `main` a bougé sous la PR : elle ne sera jamais fusionnée telle quelle. Le
+    // recalcul rejoue check.sh puis une attente complète des statuts : sans assez
+    // de budget pour les deux, ou passé MAX_REPLANS, ce run passe la main.
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    if (replans >= MAX_REPLANS || left < REPLAN_RESERVE_S) {
+      const why = replans >= MAX_REPLANS ? `${MAX_REPLANS} recalculs déjà faits` : `${left} s de budget restant`;
+      console.log(
+        `↷ main a bougé sous la PR de release #${number} (${why}) : rien n'est fusionné, la PR est fermée — ` +
+          "le run de la fusion qui a bougé main, en file derrière celui-ci, publie depuis le nouveau main",
+      );
+      closeStalePullRequests(
+        ownerRepo,
+        null,
+        false,
+        "relayée au run de la fusion suivante, qui repart du nouveau main",
+      );
+      return 0;
+    }
     git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-    closeStalePullRequests(ownerRepo, null, false);
+    const moved = git(["rev-parse", "origin/main^{commit}"]).stdout.trim();
+    console.log(
+      `↻ main a bougé sous la PR de release #${number} (${short(base)} → ${short(moved)}) : la release se recalcule depuis le nouveau main`,
+    );
+    base = moved;
+    // Le catalogue du recalcul est celui du nouveau main.
+    git(["checkout", "-B", branch, base]);
+    let replanned: Planned;
+    try {
+      replanned = planOn("origin/main", readCatalog(CATALOGS[0]), args.after, event.date);
+    } catch (error) {
+      console.error(`✗ recalcul impossible : ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+    printPlan(replanned.plugins, replanned.plan, replanned.published);
+    plan = replanned.plan;
+    if (plan.releases.length === 0) {
+      // Le nouveau main n'a plus rien à publier : la PR de ce run est périmée.
+      closeStalePullRequests(ownerRepo, null, false);
+      return 0;
+    }
   }
 
   // Tous les tags D'ABORD, en une seule poussée, puis les releases (S-1).
@@ -1072,7 +1281,7 @@ async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catal
       return 1;
     }
     git([...IDENTITY, "tag", "-a", release.tag, "-m", `${release.name} ${release.version}`, target], {
-      env: { GIT_COMMITTER_DATE: eventIso },
+      env: { GIT_COMMITTER_DATE: event.iso },
     });
     tagRefs.push(`refs/tags/${release.tag}`);
   }
@@ -1109,7 +1318,7 @@ async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catal
     console.log(`  → ${release.name} ${release.version} publié (tag ${release.tag})`);
   }
 
-  if (written.length > 0) {
+  if (mergeSha !== null) {
     const deleted = run("git", ["push", "origin", "--delete", branch]);
     if (deleted.code !== 0) {
       console.log(
@@ -1117,6 +1326,65 @@ async function publish(plan: Plan, args: Args, ownerRepo: string, catalog: Catal
       );
     }
   }
+  return 0;
+}
+
+/**
+ * Avance la branche `deploy` sur le commit du dernier tag `omp-harness-v*` du
+ * remote (`deployTargetOf`) : la pile Portainer qui la suit en GitOps, ou un
+ * `harness.sh up --ref deploy`, redéploie alors cette release et elle seule.
+ * Avance rapide SEULEMENT (push sans force) : une branche en avance sur le tag
+ * est laissée telle quelle, une branche divergente fait échouer le run en
+ * donnant la commande qui la réaligne. Idempotent, et appelé à CHAQUE run qui
+ * publie ou n'a rien à publier : un échec est rattrapé par le run suivant.
+ * `dryRun` : la cible s'imprime, rien n'est récupéré ni poussé.
+ */
+function advanceDeploy(dryRun: boolean): number {
+  const target = deployTargetOf(git(["ls-remote", "--tags", "origin"]).stdout, DEPLOY_SERVICE);
+  if (target === null) {
+    console.log(`· branche ${DEPLOY_BRANCH} : aucun tag ${DEPLOY_SERVICE}-v* — rien à déployer`);
+    return 0;
+  }
+  const listed = git(["ls-remote", "--heads", "origin", `refs/heads/${DEPLOY_BRANCH}`]).stdout.trim();
+  const current = listed === "" ? "" : (listed.split("\t")[0] ?? "");
+  if (current === target.commit) {
+    console.log(`· branche ${DEPLOY_BRANCH} déjà sur ${target.tag} (${short(target.commit)})`);
+    return 0;
+  }
+  if (dryRun) {
+    console.log(`· branche ${DEPLOY_BRANCH} : avancerait sur ${target.tag} (${short(target.commit)})`);
+    return 0;
+  }
+
+  // Les deux commits en local, pour comparer leurs ascendances et pousser le sha.
+  const refspecs = [`+refs/tags/${target.tag}:refs/tags/${target.tag}`];
+  if (current !== "") refspecs.push(`+refs/heads/${DEPLOY_BRANCH}:refs/remotes/origin/${DEPLOY_BRANCH}`);
+  const fetched = gitQuiet(["fetch", "--quiet", "origin", ...refspecs]);
+  if (fetched.code !== 0) {
+    console.error(
+      `✗ branche ${DEPLOY_BRANCH} : ${target.tag} irrécupérable (${fetched.stderr.trim() || "échec sans message"})`,
+    );
+    return 1;
+  }
+  if (current !== "" && gitQuiet(["merge-base", "--is-ancestor", current, target.commit]).code !== 0) {
+    if (gitQuiet(["merge-base", "--is-ancestor", target.commit, current]).code === 0) {
+      console.log(`· branche ${DEPLOY_BRANCH} en avance sur ${target.tag} (${short(current)}) : inchangée`);
+      return 0;
+    }
+    console.error(
+      `✗ branche ${DEPLOY_BRANCH} divergente (${short(current)}) : ni ancêtre ni descendant de ${target.tag} — ` +
+        `réaligne-la : git push --force origin ${target.tag}^{commit}:refs/heads/${DEPLOY_BRANCH}`,
+    );
+    return 1;
+  }
+  const pushed = run("git", ["push", "origin", `${target.commit}:refs/heads/${DEPLOY_BRANCH}`]);
+  if (pushed.code !== 0) {
+    console.error(
+      `✗ git push origin ${short(target.commit)}:refs/heads/${DEPLOY_BRANCH} : ${pushed.stderr.trim() || "échec sans message"}`,
+    );
+    return 1;
+  }
+  console.log(`→ branche ${DEPLOY_BRANCH} avancée sur ${target.tag} (${short(target.commit)}) : la pile la redéploie`);
   return 0;
 }
 
@@ -1253,68 +1521,49 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
-  // Les services hors catalogue suivent les plugins, s'ils existent sur la référence `main`.
-  const services = SERVICES.filter(
-    (service) => gitQuiet(["cat-file", "-e", `${args.main}:${service.dir}/package.json`]).code === 0,
-  ).map((service) => ({ name: service.name, dir: service.dir }));
-  const plugins = [...localPlugins(catalog), ...services];
-  if (plugins.length === 0) {
-    console.log("· catalogue sans plugin local");
-    return 0;
-  }
-
-  let eventIso: string;
-  let eventDate: string;
+  let event: { iso: string; date: string };
   try {
-    eventIso = git(["show", "-s", "--format=%aI", args.after]).stdout.trim();
-    eventDate = utcDate(eventIso);
+    const iso = git(["show", "-s", "--format=%aI", args.after]).stdout.trim();
+    event = { iso, date: utcDate(iso) };
   } catch (error) {
     console.error(`✗ date de l'événement illisible : ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-  const existingTags = remoteTags();
 
-  // Idempotence (1) : le trailer du commit de release marque l'événement publié.
-  // --grep SANS pathspec : avec `-- .`, le commit de release (vide) est exclu.
-  const published =
-    git([
-      "log",
-      "--fixed-strings",
-      `--grep=Release-Event: ${args.after}`,
-      "--format=%H",
-      "-n",
-      "1",
-      args.main,
-    ]).stdout.trim() !== "";
-  if (published) console.log("· merge déjà publié");
-
-  let histories: PluginHistory[];
+  let planned: Planned;
   try {
-    histories = plugins.map((plugin) => historyOfPlugin(plugin, args.main));
+    planned = planOn(args.main, catalog, args.after, event.date);
   } catch (error) {
-    console.error(`✗ historique illisible : ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-
-  const plan = planOf(histories, existingTags, eventDate, published);
+  const { plugins, plan, published } = planned;
+  if (plugins.length === 0) {
+    console.log("· catalogue sans plugin local");
+    return 0;
+  }
+  if (published) console.log("· merge déjà publié");
   printPlan(plugins, plan, published);
   // La simulation s'exécute MÊME quand le plan est vide : c'est le cas de la PR
   // de release, dont l'arbre bumpé doit passer `check.sh` (S-1, AC-4).
   if (args.simulate) return simulate(plan, catalog);
   // Plus rien à publier : une PR de release encore ouverte est périmée (son plan
-  // est déjà sur main, ou remplacé). `--dry-run` la nomme sans la fermer.
+  // est déjà sur main, ou remplacé). `--dry-run` la nomme sans la fermer. La
+  // branche `deploy` converge quand même : un run qui aurait échoué à l'avancer
+  // est rattrapé par le suivant.
   if (plan.releases.length === 0) {
     closeStalePullRequests(ownerRepo, null, args.dryRun);
-    return 0;
+    return advanceDeploy(args.dryRun);
   }
   // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé — les
   // PR de release que le run fermerait sont listées, aucune n'est fermée.
   if (args.dryRun) {
     closeStalePullRequests(ownerRepo, { branch: `release/${args.after}`, number: null }, true);
-    return 0;
+    return advanceDeploy(true);
   }
 
-  return await publish(plan, args, ownerRepo, catalog, eventIso);
+  const code = await publish(plan, args, ownerRepo, catalog, event);
+  return code === 0 ? advanceDeploy(false) : code;
 }
 
 const invokedDirectly =

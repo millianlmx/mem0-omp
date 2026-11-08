@@ -62,9 +62,10 @@ grep -rlE 'github\.com/[^/[:space:]]+/mem0-omp' . --exclude-dir=.git --exclude-d
 ./scripts/check.sh
 ```
 
-Cette commande liste exactement six fichiers — `README.md`, `omp-harness/README.md`,
+Cette commande liste exactement sept fichiers — `README.md`, `omp-harness/README.md`,
 `.omp-plugin/marketplace.json`, `.claude-plugin/marketplace.json`,
-`omp-mem0-memory/package.json` et ce `PUBLISHING.md` — et c'est elle qui fait
+`omp-mem0-memory/package.json`, `docker-compose.yml` (le dépôt dont le build
+vérifie les tags du harness) et ce `PUBLISHING.md` — et c'est elle qui fait
 autorité : après une édition, relance-la plutôt que de te fier à cette liste.
 Pour un fork, le texte à substituer est le handle : `<ton-handle>`.
 
@@ -299,20 +300,42 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    cette PR (`check (ubuntu-latest)`, `check (macos-latest)` et
    `release-simulation`, ce dernier rejouant la release sur l'arbre écrit, cf.
    § Simulation de release) — `mergeStateStatus` ∈ `CLEAN`, `UNSTABLE`,
-   `HAS_HOOKS` — et échoue en le nommant après le budget d'attente ;
-5. **Fusion** — squash avec un titre et un corps explicites, puis relecture du sha
+   `HAS_HOOKS` — et échoue en le nommant après le budget d'attente
+   (`--merge-timeout`, commun à toute l'attente du run) ;
+5. **Main a bougé ?** — à chaque tour de l'attente, puis juste avant la fusion, le
+   job relit `main` sur le remote. Si une autre PR y a été fusionnée entre-temps, la
+   PR de release porte un plan périmé et n'est **jamais** fusionnée telle quelle :
+   le moteur recalcule le plan depuis le nouveau `main` — tous les commits depuis la
+   version courante, donc un `fix` et un `feat` fusionnés coup sur coup donnent une
+   mineure, et l'entrée de `CHANGELOG.md` les nomme tous —, réécrit la même branche,
+   remet la même PR à jour (titre, corps) et reprend l'attente. Au-delà de 3
+   recalculs, ou s'il reste moins de 20 min de budget (le recalcul rejoue `check.sh`
+   puis attend de nouveau les statuts, sous le plafond de 60 min du job), il ne
+   fusionne rien, ferme sa PR et sort vert : le run de la fusion qui a bougé `main`,
+   en file derrière lui, repart du `main` courant et publie le tout. Les runs restants
+   ne trouvent ensuite plus rien à publier ;
+6. **Fusion** — squash avec un titre et un corps explicites, puis relecture du sha
    de fusion et vérification que l'arbre fusionné est bien celui qui a passé
-   `check.sh` ;
-6. **Tags et releases** — tous les tags `<plugin>-v<version>` d'abord, en une seule
+   `check.sh` (si `main` a bougé dans les secondes de la fusion elle-même, le job
+   s'arrête là sans taguer et le dit) ;
+7. **Tags et releases** — tous les tags `<plugin>-v<version>` d'abord, en une seule
    poussée, puis une release GitHub par version, portant les commandes
    d'installation et de mise à jour — et « ce qui casse / quoi faire » pour un bump
-   majeur.
+   majeur ;
+8. **Branche `deploy`** — le job l'avance, en avance rapide seulement, sur le commit
+   du dernier tag `omp-harness-v*` (elle est créée au premier passage). C'est elle
+   que suit le déploiement continu du serveur : la pile Portainer en GitOps, ou
+   `harness.sh up --ref deploy` (cf. `omp-harness/README.md` § Avec Portainer). Une
+   branche déjà sur ce commit, ou en avance sur lui, reste telle quelle ; une branche
+   divergente fait échouer le job en donnant la commande qui la réaligne. Chaque run,
+   même sans rien à publier, refait ce pas : un échec est rattrapé par le suivant.
 
 Le serveur de pipelines `omp-harness/` suit le même chemin sans être un plugin du
 catalogue : son `omp-harness/package.json` est bumpé d'après les commits qui touchent
 `omp-harness/`, tagué `omp-harness-v<version>` et publié avec une note qui renvoie à
 son installation (`harness.sh up`), jamais à `/marketplace`. Sa version ne se monte
-pas plus à la main que celle d'un plugin, et `/v1/health` la rend aux clients.
+pas plus à la main que celle d'un plugin, et `/v1/health` la rend aux clients, avec
+le commit construit (`commit`).
 L'extension Chrome `omp-chrome/` aussi : `omp-chrome/package.json` porte sa version,
 bumpée d'après les commits qui touchent `omp-chrome/` et taguée `omp-chrome-v<version>`.
 `scripts/chrome-extension.sh` l'écrit dans le manifeste construit ;
@@ -534,7 +557,8 @@ ce qu'il faut y mettre.
 
 Le job de release publie avec un jeton **dédié**, rangé dans le secret de dépôt
 `RELEASE_TOKEN` et lu par `.github/workflows/release.yml`. C'est ce jeton qui
-pousse la branche, ouvre la PR, la fusionne, pousse les tags et crée les releases.
+pousse la branche, ouvre la PR, la fusionne, pousse les tags, crée les releases et
+avance la branche `deploy` (**Contents** suffit : `deploy` n'a pas de protection).
 
 Il est **obligatoire** : les événements créés par le `GITHUB_TOKEN` du dépôt ne
 déclenchent aucun run de workflow, donc une PR de release ouverte avec lui resterait

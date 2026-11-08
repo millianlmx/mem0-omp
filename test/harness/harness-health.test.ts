@@ -4,7 +4,7 @@
 // piles compose en font la sonde du conteneur du harness.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,8 +16,13 @@ import type { FakeWorld } from "../support/harness-fixtures.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-async function serve(world: FakeWorld): Promise<{ port: number; url: string; close: () => Promise<void> }> {
-  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token: "t".repeat(64) }));
+async function serve(
+  world: FakeWorld,
+  extra: { commit?: string | null } = {},
+): Promise<{ port: number; url: string; close: () => Promise<void> }> {
+  const server = http.createServer(
+    createHandler({ orchestrator: world.orchestrator, token: "t".repeat(64), ...extra }),
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
   return {
@@ -34,6 +39,7 @@ type Health = {
   ok: boolean;
   api: number;
   version: string;
+  commit: string | null;
   features: string[];
   checks: {
     db: { ok: boolean };
@@ -148,5 +154,47 @@ test("harness-health/AC-4 : les deux piles compose sondent le conteneur du harne
     await down.close();
     await healthy.orchestrator.stop();
     await failing.orchestrator.stop();
+  }
+});
+
+test("harness-health/AC-5 : `/v1/health` rend le commit construit — OMP_HARNESS_COMMIT de l'environnement du service, null s'il manque ou n'est pas un sha", async () => {
+  // Lu au chargement, dans un process à part : l'environnement de CE process ne bouge pas.
+  const loaded = (value: string | undefined) => {
+    const env = { ...process.env };
+    delete env.OMP_HARNESS_COMMIT;
+    if (value !== undefined) env.OMP_HARNESS_COMMIT = value;
+    const out = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        "--input-type=module",
+        "-e",
+        `import { HARNESS_COMMIT } from ${JSON.stringify(path.join(ROOT, "omp-harness/build-info.ts"))};` +
+          "process.stdout.write(JSON.stringify(HARNESS_COMMIT));",
+      ],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(out.status, 0, out.stderr);
+    return JSON.parse(out.stdout) as string | null;
+  };
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  assert.equal(loaded(` ${sha.toUpperCase()}\n`), sha, "espaces retirés, minuscules");
+  assert.equal(loaded(undefined), null);
+  assert.equal(loaded("0123456"), null, "un sha abrégé n'est pas un commit");
+  assert.equal(loaded("$(git rev-parse HEAD)"), null);
+
+  const world = fakeWorld({});
+  await world.orchestrator.start();
+  const built = await serve(world, { commit: sha });
+  const unknown = await serve(world, { commit: null });
+  try {
+    assert.equal((await health(built.url)).body.commit, sha);
+    const { status, body } = await health(unknown.url);
+    assert.deepEqual([status, body.commit], [200, null], "un commit inconnu ne rend pas le service malade");
+  } finally {
+    await built.close();
+    await unknown.close();
+    await world.orchestrator.stop();
   }
 });

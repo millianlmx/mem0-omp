@@ -7,6 +7,11 @@ name: release
 # ne pousse JAMAIS sur main : la protection de branche exige deux statuts qu'un
 # commit neuf n'a pas encore, donc un push direct rendrait
 # `remote: error: GH006: Protected branch update failed for refs/heads/main.`
+# Si main bouge pendant l'attente (une autre PR fusionnée), la PR n'est pas
+# fusionnée : le moteur recalcule la release depuis le nouveau main et remet la
+# même PR à jour. Enfin, il avance la branche `deploy` (avance rapide seulement)
+# sur le commit du dernier tag omp-harness-v* : la pile Portainer la suit en
+# GitOps (omp-harness/README.md § Avec Portainer).
 on:
   push:
     branches: [main]
@@ -20,7 +25,9 @@ permissions:
 # premier (le moteur relit origin/main et repart de son état). `queue: max` :
 # jusqu'à 100 runs en attente (FIFO) — avec le défaut `single`, un merge
 # intermédiaire perdrait silencieusement son run et sa publication n'aurait
-# jamais lieu tant qu'aucun merge ne suit.
+# jamais lieu tant qu'aucun merge ne suit. La file ne suffit pas seule : le
+# merge suivant arrive pendant que le premier run attend sa PR, d'où le
+# recalcul du moteur quand main bouge sous elle.
 concurrency:
   group: release-main
   queue: max
@@ -30,8 +37,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     # Phase d'ouverture de la PR (≈ 18 min observées : écriture, check.sh, push),
-    # puis attente des statuts requis (--merge-timeout 2100 ci-dessous, 35 min),
-    # puis fusion et publication : release.ts échoue sur son budget avant ce plafond.
+    # puis attente des statuts requis (--merge-timeout 2100 ci-dessous, 35 min,
+    # budget commun à tous les recalculs : un recalcul — main a bougé — rejoue
+    # check.sh DANS ce budget, et n'est tenté que s'il en reste assez), puis fusion
+    # et publication : release.ts échoue sur son budget avant ce plafond.
     timeout-minutes: 60
     steps:
       # Première étape, avant tout checkout : sans le jeton dédié, rien ne peut
