@@ -1,7 +1,7 @@
 # Image de mem0-rs pour mem0-stack/docker-compose.yml, en deux étapes.
 #
-# Étape de build : rust:1.89-bookworm porte le MSRV de la crate (1.89, le plus
-# haut de tout Cargo.lock) et le gcc/make de buildpack-deps. aws-lc-sys (hors
+# Étape de build : rust:1.98-bookworm, jamais plus vieille que le `rust-version`
+# de Cargo.toml (1.98), porte la toolchain et le gcc/make de buildpack-deps. aws-lc-sys (hors
 # FIPS), libsqlite3-sys `bundled`, sqlite-vec et ring n'ont besoin que d'un
 # compilateur C : ni CMake, ni clang, ni OpenSSL, donc aucun apt-get ici.
 #
@@ -11,7 +11,7 @@
 # retiré ensuite avec ce que cargo a produit pour lui (le `touch` force cargo à
 # recompiler le vrai main.rs, plus vieux que l'artefact factice). Rien de propre
 # à BuildKit (pas de `--mount=type=cache`) : Docker et podman la cachent pareil.
-FROM rust:1.89-bookworm AS build
+FROM rust:1.98-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs \

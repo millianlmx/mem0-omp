@@ -229,7 +229,7 @@ sans réseau ni clé). Une quatrième, `omp-mem0`, tient la mémoire du projet
 #### Debian ou Ubuntu
 
 **1. Les prérequis.** Node ≥ 22.6, git, curl, ssh-keygen, sudo, systemd ≥ 250, et
-Rust ≥ 1.89 pour compiler `mem0-rs` :
+Rust ≥ 1.98 pour compiler `mem0-rs` :
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -

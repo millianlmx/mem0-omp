@@ -25,7 +25,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
-import { lireWorkflow } from "../support/workflows.ts";
+import { ACTIONS, lireWorkflow } from "../support/workflows.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
@@ -519,7 +519,7 @@ const FINGERPRINT_STEP = [
 /** Le cache npm de l'hôte OMP (ci-without-cache S-2), juste après l'empreinte. */
 const NPM_CACHE_STEP = [
   "      - name: Cache npm (hôte OMP)",
-  "        uses: actions/cache@v6",
+  `        uses: ${ACTIONS.cache}`,
   "        with:",
   "          path: ~/.npm",
   "          key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}",
@@ -527,7 +527,7 @@ const NPM_CACHE_STEP = [
 /** Le cache cargo de mem0-rs (ci-without-cache S-2), juste après le cache npm. */
 const CARGO_CACHE_STEP = [
   "      - name: Cache cargo (mem0-rs)",
-  "        uses: actions/cache@v6",
+  `        uses: ${ACTIONS.cache}`,
   "        with:",
   "          path: |",
   "            ~/.cargo/registry/index",
@@ -616,7 +616,7 @@ test("ci-macos-jobs-paralleles/AC-13 : les jobs d'app ne compilent que si le dif
     const job = jobs.get(id) ?? "";
     const steps = stepsOf(job);
     // L'historique complet : la portée compare la base et la tête de la PR.
-    assert.equal(steps[0], "      - uses: actions/checkout@v4", id);
+    assert.equal(steps[0], `      - uses: ${ACTIONS.checkout}`, id);
     assert.ok(steps.includes("          fetch-depth: 0"), `${id} : fetch-depth: 0 attendu\n${job}`);
     // L'étape de portée, identifiée `scope`, appelle ci-scope.sh avec la base de la PR.
     const scope = steps.indexOf("        id: scope");

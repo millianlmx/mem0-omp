@@ -258,6 +258,14 @@ mod tests {
         Lecture::Elements(v.as_array().unwrap().iter().map(|e| e.as_object().unwrap().clone()).collect())
     }
 
+    /// Vecteurs connus (FIPS 180-2) : l'aide `sha256` qui juge les invites rend le
+    /// même hexadécimal d'une version de `sha2` à l'autre.
+    #[test]
+    fn sha256_vecteurs_connus() {
+        assert_eq!(sha256(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
     #[test]
     fn ac2_invites_copiees_octet_pour_octet() {
         assert_eq!(sha256(ADDITIVE_EXTRACTION_PROMPT), "ad19187a37813ef77ee156e714c0650e6ec749e0264bdc07d499bc9b24115155");

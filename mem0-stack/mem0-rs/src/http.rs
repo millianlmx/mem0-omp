@@ -721,10 +721,14 @@ mod tests {
         assert!(!egal_temps_constant(b"", b"s"));
     }
 
+    /// Vecteurs connus (RFC 1321, et `hashlib.md5(...).hexdigest()` de mem0 Python) :
+    /// l'empreinte stockée en base ne change pas d'une version de `md-5` à l'autre.
     #[test]
     fn md5_minuscule() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
-        assert_eq!(md5_hex("a\0b"), format!("{:x}", Md5::digest(b"a\0b")));
+        assert_eq!(md5_hex("The quick brown fox jumps over the lazy dog"), "9e107d9d372bb6826bd81d3542a419d6");
+        assert_eq!(md5_hex("a\0b"), "70350f6027bce3713f6b76473084309b");
+        assert_eq!(md5_hex("é"), "66ddcd97cfdeabb2f6fb8a999b4bc76f");
     }
 
     fn cles(v: &serde_json::Value) -> Vec<&str> {

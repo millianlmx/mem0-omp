@@ -27,7 +27,7 @@ import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
-import { usesParMajeure } from "../support/workflows.ts";
+import { ACTIONS, usesParMajeure } from "../support/workflows.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 const WORKFLOW = ".github/workflows/release-simulation.yml";
@@ -727,9 +727,9 @@ test("release-simulation/AC-6 : le statut du job est celui que PUBLISHING.md dé
   assert.match(yaml, /permissions:\n {2}contents: read/);
   assert.match(yaml, /cancel-in-progress: true/);
   assert.match(yaml, /timeout-minutes: 30/);
-  assert.match(yaml, /uses: actions\/checkout@v4/);
+  assert.ok(yaml.includes(`uses: ${ACTIONS.checkout}`), "checkout attendu");
   assert.match(yaml, /fetch-depth: 0/);
-  assert.match(yaml, /uses: actions\/setup-node@v4/);
+  assert.ok(yaml.includes(`uses: ${ACTIONS.setupNode}`), "setup-node attendu");
   assert.match(yaml, /node-version: "22"/);
   assert.match(yaml, new RegExp(`^ {8}run: bash ${SCRIPT}$`, "m"));
   // L'environnement est celui du job de release : ni secret, ni gate plus strict.

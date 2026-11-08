@@ -5,7 +5,8 @@
 // les deux à jour. Les gardes, elles, jugent l'action et sa version MAJEURE :
 // `usesParMajeure` ramène chaque `uses:` épinglé à `<action>@v<majeure>`, donc un
 // bump mineur ou correctif de Dependabot ne fait rougir aucune garde, et un bump
-// majeur, qui mérite une relecture, les fait rougir.
+// majeur, qui mérite une relecture, les fait rougir. La majeure relue de chaque
+// action vit dans `ACTIONS`, seul endroit à toucher une fois la relecture faite.
 //
 // Ce module n'est pas un fichier de test (pas de suffixe `.test.ts`) : ni
 // scripts/test-files.sh ni `node --test` ne le lancent, seuls les tests
@@ -18,6 +19,15 @@ const RACINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", 
 
 /** Un `uses:` épinglé : l'action, le sha de 40, puis `# v<majeure>[.<mineure>[.<correctif>]]`. */
 export const USES_EPINGLE = /(uses:\s*[\w.-]+\/[\w.-]+)@[0-9a-f]{40} # v(\d+)(?:\.\d+){0,2}(?=\s|$)/g;
+
+/** Chaque action permise dans les workflows, à sa majeure relue (`<action>@v<majeure>`). */
+export const ACTIONS = {
+  checkout: "actions/checkout@v7",
+  setupNode: "actions/setup-node@v7",
+  setupBun: "oven-sh/setup-bun@v2",
+  cache: "actions/cache@v6",
+  uploadArtifact: "actions/upload-artifact@v7",
+} as const;
 
 /** Le YAML où chaque `uses:` épinglé est réécrit `<action>@v<majeure>`. */
 export function usesParMajeure(yaml: string): string {
