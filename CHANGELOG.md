@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.23.0 — 2026-11-08
+
+- feat(harness,console): notifications iOS et Mac actionnables (valider, approuver, ouvrir) (#354) (856b8c1)
+
 ## omp-harness 1.22.0 — 2026-11-08
 
 - feat(harness): la vigie — surveillance 24/24, issues caviardées et pipelines de correction pilotés (#343) (9b812d6)
