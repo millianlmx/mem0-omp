@@ -995,6 +995,22 @@ test("autonomie-par-paliers/AC-13 : des specs à geste irréversible restent à 
     assert.equal(reason, WAIT_REASON.specs, "la raison de l'attente ne nomme pas le geste irréversible");
     assert.doesNotMatch(reason, /irréversible/);
   });
+
+  // À la porte revue, des specs validées avec un geste irréversible gardent le verdict à l'humain.
+  await withHeld({}, async (held) => {
+    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
+    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV, puis supprimer les données exportées", stepId);
+    await holdAndTick(held);
+    assertDeferred(held, "specs irréversibles à la revue", /irréversible/);
+  });
+  // Témoin : des specs sans geste irréversible laissent le même run à l'autonomie.
+  await withHeld({}, async (held) => {
+    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
+    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV", stepId);
+    await holdAndTick(held);
+    const done = await until(held.world, held.runId, ["merged", "failed"]);
+    assert.equal(done.state, "merged", stateOf(held.world, held.runId));
+  });
 });
 
 test("autonomie-par-paliers/AC-1 : sans champ autonomy, specsGate true, un run docs attend l'humain aux specs comme avant, sans décision", async () => {
@@ -1364,6 +1380,25 @@ test("autonomie-par-paliers/AC-14 : une attente de budget ou un budget dépassé
     await holdAndTick(held);
     assertDeferred(held, "budget dépassé", /budget dépassé/);
   });
+
+  // Une erreur sur un run retenu le rend à l'humain sans empêcher le tour des autres.
+  await withHeld({}, async (held) => {
+    const { world, runId } = held;
+    // Un second run, déjà en attente, dont l'attente est retenue : il vient après le premier dans le tour.
+    world.store.createRun({ id: "second", repo: "demo", slug: "second", title: "Second", request: "x", branch: "harness/second" });
+    world.store.updateRun("second", { state: "awaiting_human", step: "review", reason: "validation humaine : test" });
+    world.store.appendEvent("autonomy", "second", { action: "hold", gate: "review", rev: 0 }, "demo");
+    // Le premier échoue à la relecture de l'arbre : une exception hors de `evaluate`.
+    const real = world.deps.git.revParse.bind(world.deps.git);
+    world.deps.git.revParse = async (cwd: string, ref: string): Promise<string> => {
+      if (cwd === world.store.getRun(runId)?.worktree) throw new Error("arbre illisible");
+      return real(cwd, ref);
+    };
+    await holdAndTick(held);
+    assertDeferred(held, "erreur d'évaluation", /arbre illisible/);
+    const second = eventsOf(world, "second", "autonomy");
+    assert.equal(second.at(-1)?.payload.action, "defer", "le second run est traité malgré l'erreur du premier");
+  });
 });
 
 test("autonomie-par-paliers/AC-15 : un run qui a porté une escalade schema, public_api ou deletion, close ou non, n'est jamais validé seul", async () => {
@@ -1470,43 +1505,6 @@ test("autonomie-par-paliers/AC-17 : un arbitrage (plafond de corrections, contes
       assertDeferred(held, name);
     });
   }
-});
-
-test("autonomie-par-paliers/AC-13 : à la porte revue, des specs validées avec un geste irréversible gardent le verdict à l'humain", async () => {
-  await withHeld({}, async (held) => {
-    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
-    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV, puis supprimer les données exportées", stepId);
-    await holdAndTick(held);
-    assertDeferred(held, "specs irréversibles à la revue", /irréversible/);
-  });
-  // Témoin : des specs sans geste irréversible laissent le même run à l'autonomie.
-  await withHeld({}, async (held) => {
-    const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
-    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV", stepId);
-    await holdAndTick(held);
-    const done = await until(held.world, held.runId, ["merged", "failed"]);
-    assert.equal(done.state, "merged", stateOf(held.world, held.runId));
-  });
-});
-
-test("autonomie-par-paliers/AC-14 : une erreur sur un run retenu le rend à l'humain sans empêcher le tour des autres", async () => {
-  await withHeld({}, async (held) => {
-    const { world, runId } = held;
-    // Un second run, déjà en attente, dont l'attente est retenue : il vient après le premier dans le tour.
-    world.store.createRun({ id: "second", repo: "demo", slug: "second", title: "Second", request: "x", branch: "harness/second" });
-    world.store.updateRun("second", { state: "awaiting_human", step: "review", reason: "validation humaine : test" });
-    world.store.appendEvent("autonomy", "second", { action: "hold", gate: "review", rev: 0 }, "demo");
-    // Le premier échoue à la relecture de l'arbre : une exception hors de `evaluate`.
-    const real = world.deps.git.revParse.bind(world.deps.git);
-    world.deps.git.revParse = async (cwd: string, ref: string): Promise<string> => {
-      if (cwd === world.store.getRun(runId)?.worktree) throw new Error("arbre illisible");
-      return real(cwd, ref);
-    };
-    await holdAndTick(held);
-    assertDeferred(held, "erreur d'évaluation", /arbre illisible/);
-    const second = eventsOf(world, "second", "autonomy");
-    assert.equal(second.at(-1)?.payload.action, "defer", "le second run est traité malgré l'erreur du premier");
-  });
 });
 
 /** Réécrit l'évidence et le verdict de la revue d'un run (le merge est recalculé comme `#close` l'aurait fait). */
