@@ -13,8 +13,8 @@ import { readEvents } from "./events.ts";
 import type { HarnessEvent } from "./events.ts";
 import { HarnessCallError, harnessCall, inboxSummary, resolveTarget } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
-import { isRecord, parseRunView } from "./wire.ts";
-import type { RunView } from "./wire.ts";
+import { isRecord, parseRunView, parseSchedules } from "./wire.ts";
+import type { RunView, ScheduleSummary } from "./wire.ts";
 
 /**
  * La validation d'un geste qui crée du travail sur le serveur : demandée à chaque
@@ -50,6 +50,50 @@ type ReverseParams = IdParams & { seq: number; option: string; reason: string };
 type RetryParams = IdParams & { instructions?: string };
 type InstructParams = IdParams & { text: string };
 type EventsParams = { run?: string; since?: number };
+type ScheduleParams = {
+  name: string;
+  cron: string;
+  kind: "run" | "audit" | "issues";
+  title?: string;
+  request?: string;
+  focus?: string;
+  label?: string;
+  lane?: "full";
+  priority?: number;
+};
+
+/** Les issues d'une échéance, en mots (`lastOutcome.status` du serveur). */
+const OUTCOMES: Record<string, string> = {
+  fired: "lancée",
+  busy: "sautée, le lancement précédent n'était pas fini",
+  daily_budget: "sautée, plafond journalier atteint",
+  missed: "manquée (service arrêté)",
+  failed: "en échec",
+};
+
+/** Les planifications du harness, une ligne chacune : ce que `harness_schedules` rend. */
+export function renderSchedules(timezone: string, schedules: ScheduleSummary[]): string {
+  if (schedules.length === 0) return "Aucune planification sur le harness.";
+  const what = (target: Record<string, unknown>): string => {
+    const field = (key: string) => (typeof target[key] === "string" ? (target[key] as string) : "");
+    if (target.kind === "audit") return `audit${field("focus") ? ` (${field("focus")})` : ""}`;
+    if (target.kind === "issues") return `relève des issues${field("label") ? ` du label ${field("label")}` : ""}`;
+    if (target.kind === "automation") return `automatisation ${field("automationId")} du poste`;
+    return `run « ${field("title")} »`;
+  };
+  return [
+    `Planifications du harness (cron lu dans le fuseau ${timezone || "du serveur"}) :`,
+    ...schedules.map((schedule) => {
+      const next = schedule.enabled
+        ? `prochaine ${schedule.nextRunAt !== null ? new Date(schedule.nextRunAt).toISOString() : "—"}`
+        : "désactivée";
+      const last = schedule.lastOutcome
+        ? `, dernière : ${OUTCOMES[schedule.lastOutcome.status] ?? schedule.lastOutcome.status}${schedule.lastOutcome.detail ? ` — ${schedule.lastOutcome.detail}` : ""}`
+        : "";
+      return `- [${schedule.id}] ${schedule.name} — \`${schedule.cron}\` — ${what(schedule.target)}${schedule.repo ? ` sur ${schedule.repo}` : ""} — ${next}${last}`;
+    }),
+  ].join("\n");
+}
 
 export function text(content: string, isError = false) {
   return { content: [{ type: "text" as const, text: content }], ...(isError ? { isError: true } : {}) };
@@ -300,6 +344,93 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
         return text(
           `Projet ${created.projectId} créé : ${created.runs.length} feature(s) en file sur le harness (${created.runs.map((run) => run.id).join(", ")}). Suivi par harness_inbox ou OMP Console. Termine ta réponse.`,
         );
+      } catch (err) {
+        return text(message(err), true);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "harness_schedule",
+    label: "Harness — planifier",
+    loadMode: "essential",
+    approval: LAUNCH_APPROVAL,
+    description:
+      "Crée sur le harness une planification RÉCURRENTE du dépôt courant, validée par l'utilisateur : à chaque échéance de `cron` (5 champs : minute heure jour-du-mois mois jour-de-la-semaine, dans le fuseau du serveur ; ex. `0 9 * * mon` chaque lundi à 9 h, `0 2 * * *` chaque nuit à 2 h), le serveur lance un run (`kind: run`, `title`, `request` autoportante), un audit (`kind: audit`, `focus`) ou la relève des issues ouvertes d'un label (`kind: issues`, `label`, `omp:fix` par défaut). Une échéance n'empile pas : si le lancement précédent n'est pas fini, elle est sautée.",
+    parameters: z.object({
+      name: z.string().describe("Le nom de la planification (« Audit du lundi »)"),
+      cron: z.string().describe("L'expression cron à cinq champs"),
+      kind: z.enum(["run", "audit", "issues"]).describe("Ce que chaque échéance lance"),
+      title: z.string().optional().describe("run : le titre du run"),
+      request: z.string().optional().describe("run : la demande, autoportante"),
+      focus: z.string().optional().describe("audit : ce que l'audit regarde (vide : tout le dépôt)"),
+      label: z.string().optional().describe("issues : le label des issues à corriger"),
+      lane: z.enum(["full"]).optional().describe("run : `full` force /req et /specs"),
+      priority: z.number().int().optional().describe("run : plus grand = admis avant les autres"),
+    }),
+    async execute(
+      _id: string,
+      params: ScheduleParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const target = targetOf(ctx);
+      if ("refusal" in target) return text(target.refusal, true);
+      const { name, cron, kind, title, request, focus, label, lane, priority } = params;
+      const goal =
+        kind === "run"
+          ? {
+              kind,
+              repo: target.repo,
+              title,
+              request,
+              ...(lane ? { lane } : {}),
+              ...(priority !== undefined ? { priority } : {}),
+            }
+          : kind === "audit"
+            ? { kind, repo: target.repo, focus: focus ?? "" }
+            : { kind, repo: target.repo, ...(label ? { label } : {}) };
+      try {
+        const { schedule } = await harnessCall<{ schedule: { id: string; nextRunAt: number | null } }>(
+          target,
+          "POST",
+          "/v1/schedules",
+          { name, cron, target: goal },
+          { fetcher },
+        );
+        const next = schedule.nextRunAt !== null ? new Date(schedule.nextRunAt).toISOString() : "—";
+        return text(
+          `Planification « ${name} » créée sur le harness (${schedule.id}) : première échéance ${next}. Suivi par harness_schedules ou OMP Console. Termine ta réponse.`,
+        );
+      } catch (err) {
+        return text(message(err), true);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "harness_schedules",
+    label: "Harness — les planifications",
+    loadMode: "essential",
+    description:
+      "Lit les planifications récurrentes du harness : expression cron, cible (run, audit, relève d'issues), prochaine échéance et issue de la dernière (lancée, sautée, manquée). Lecture seule.",
+    parameters: z.object({}),
+    async execute(
+      _id: string,
+      _params: unknown,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const target = targetOf(ctx);
+      if ("refusal" in target) return text(target.refusal, true);
+      try {
+        const listed = parseSchedules(
+          await harnessCall<unknown>(target, "GET", "/v1/schedules", undefined, { fetcher }),
+        );
+        if (listed === null) return text("harness : liste des planifications illisible", true);
+        return text(renderSchedules(listed.timezone, listed.schedules));
       } catch (err) {
         return text(message(err), true);
       }

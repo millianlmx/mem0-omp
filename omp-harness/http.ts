@@ -44,9 +44,17 @@ import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import { scheduleEdit, scheduleInput } from "./schedules.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
-import { MAX_WAIT_SEC, SESSION_JOBS, parseActionInput, parseBrowserHello, parseRequestStates } from "./workstation.ts";
+import {
+  APPROVER_ONLY,
+  MAX_WAIT_SEC,
+  SESSION_JOBS,
+  parseActionInput,
+  parseBrowserHello,
+  parseRequestStates,
+} from "./workstation.ts";
 
 export const API_VERSION = 1;
 
@@ -87,6 +95,7 @@ export const API_FEATURES = [
   "instructions",
   "run-budget",
   "admin-repos",
+  "schedules",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -100,10 +109,6 @@ export const HARNESS_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
-
-/** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
-export const APPROVER_ONLY =
-  "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
 
 const MAX_BODY = 1024 * 1024;
 const PING_MS = 15_000;
@@ -644,6 +649,31 @@ export function apiRoutes(
       if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
       send(call.res, 200, digestOf(store, since, now, call.repos));
     }),
+    // Les planifications récurrentes (schedules.ts) : celles des dépôts que le client voit.
+    route("GET", "/v1/schedules", "viewer", (call) => send(call.res, 200, orchestrator.schedules.view(call.repos))),
+    route("POST", "/v1/schedules", "operator", async (call) => {
+      const schedule = orchestrator.schedules.create(scheduleInput(await readBody(call.req), call.client), call.actor);
+      send(call.res, 201, { schedule }, { ETag: `"${schedule.rev}"` });
+    }),
+    route("PUT", "/v1/schedules/{id}", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const schedule = orchestrator.schedules.update(
+        call.match[1] as string,
+        scheduleEdit(body, call.client),
+        call.actor,
+        call.repos,
+      );
+      send(call.res, 200, { schedule }, { ETag: `"${schedule.rev}"` });
+    }),
+    route("DELETE", "/v1/schedules/{id}", "operator", (call) => {
+      orchestrator.schedules.delete(call.match[1] as string, call.actor, call.repos);
+      send(call.res, 200, { deleted: true });
+    }),
+    route("POST", "/v1/schedules/{id}/run", "operator", async (call) => {
+      const fired = await orchestrator.schedules.runNow(call.match[1] as string, call.actor, call.repos);
+      void orchestrator.tick();
+      send(call.res, 201, fired, { ETag: `"${fired.schedule.rev}"` });
+    }),
     // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
     route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),
     route("PUT", "/v1/workstation/settings", "operator", async (call) => {
@@ -807,6 +837,8 @@ export function apiRoutes(
     route("POST", "/v1/workstation/automations", "operator", async (call) => {
       const workstation = approverOf(call);
       const { automation, created } = workstation.createAutomation(await readBody(call.req), call.actor);
+      // Son `schedule` devient une planification liée, déclenchée par le planificateur.
+      if (created) orchestrator.schedules.linkAutomation(automation, call.actor);
       send(call.res, created ? 201 : 200, { automation });
     }),
     route("POST", "/v1/workstation/automations/{id}/launch", "operator", (call) => {
@@ -814,9 +846,11 @@ export function apiRoutes(
       send(call.res, 201, { request });
       void orchestrator.tick();
     }),
-    route("DELETE", "/v1/workstation/automations/{id}", "operator", (call) =>
-      send(call.res, 200, { removed: approverOf(call).deleteAutomation(call.match[1] as string) }),
-    ),
+    route("DELETE", "/v1/workstation/automations/{id}", "operator", (call) => {
+      const removed = approverOf(call).deleteAutomation(call.match[1] as string);
+      orchestrator.schedules.unlinkAutomation(removed);
+      send(call.res, 200, { removed });
+    }),
     // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
     route("GET", "/v1/clients", "admin", (call) => send(call.res, 200, { clients: clients.list() })),
     route("POST", "/v1/clients", "admin", async (call) => {

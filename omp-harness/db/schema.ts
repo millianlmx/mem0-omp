@@ -368,4 +368,23 @@ export const MIGRATIONS: readonly string[] = [
      first_seen_at INTEGER NOT NULL,
      last_seen_at INTEGER NOT NULL
    );`,
+  // Les planifications récurrentes (schedules.ts) : `repo` répète celui de la cible pour le
+  // filtrage par client ; `last_fired` garde le dernier lancement, qui doit finir avant le suivant.
+  `CREATE TABLE schedules (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     cron TEXT NOT NULL,
+     target TEXT NOT NULL,
+     repo TEXT NOT NULL,
+     enabled INTEGER NOT NULL DEFAULT 1,
+     next_run_at INTEGER,
+     last_run_at INTEGER,
+     last_outcome TEXT,
+     last_fired TEXT,
+     created_by TEXT,
+     rev INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX schedules_due ON schedules (enabled, next_run_at);`,
 ];

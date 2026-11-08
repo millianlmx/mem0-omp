@@ -137,6 +137,18 @@ const VIEW = {
   ],
 };
 
+const SCHEDULE = {
+  id: "s1",
+  name: "Audit du lundi",
+  cron: "0 9 * * mon",
+  repo: "demo",
+  enabled: true,
+  target: { kind: "audit", repo: "demo", focus: "sécurité" },
+  nextRunAt: Date.parse("2026-11-16T08:00:00Z"),
+  lastRunAt: Date.parse("2026-11-09T08:00:01Z"),
+  lastOutcome: { status: "busy", detail: "l'audit précédent a1 n'est pas fini (analysing)", at: 0, missed: 0 },
+};
+
 /** Un faux harness : chaque requête est enregistrée ; `rev` est la révision courante du run r1. */
 async function fakeHarness(options: { rev?: number; events?: string[] } = {}) {
   const seen: Seen[] = [];
@@ -190,6 +202,10 @@ async function fakeHarness(options: { rev?: number; events?: string[] } = {}) {
             { id: "r3", modules: [] },
           ],
         });
+      if (req.method === "GET" && url.pathname === "/v1/schedules")
+        return json(200, { timezone: "Europe/Paris", schedules: [SCHEDULE] });
+      if (req.method === "POST" && url.pathname === "/v1/schedules")
+        return json(201, { schedule: { ...SCHEDULE, id: "s9", nextRunAt: Date.parse("2026-11-09T08:00:00Z") } });
       if (req.method === "POST" && url.pathname.startsWith("/v1/runs/r1/")) {
         if (req.headers["if-match"] !== String(rev)) return json(412, { error: "révision périmée" });
         rev += 1;
@@ -619,6 +635,63 @@ test("harness-tools/AC-9 : /pipelines affiche le résumé ET le poste dans la se
       harnessCall({ url: server.url, token: TOKEN, repo: "demo" }, "GET", "/v1/nulle-part"),
       (err: unknown) => err instanceof HarnessCallError && err.status === 404 && /route inconnue/.test(err.message),
     );
+  } finally {
+    pointAt(null);
+    await server.close();
+  }
+});
+
+test("harness-tools/AC-10 : harness_schedule demande l'accord et crée la planification du dépôt courant ; harness_schedules lit les planifications avec leur dernière issue", async () => {
+  const server = await fakeHarness();
+  const { tools } = plugin();
+  pointAt(server.url);
+  const call = (name: string, params: unknown) => tools.get(name)?.execute("t", params, undefined, undefined, ctx);
+  try {
+    assert.deepEqual(tools.get("harness_schedule")?.approval, LAUNCH_APPROVAL);
+    assert.equal(tools.get("harness_schedules")?.approval, undefined);
+    for (const name of ["harness_schedule", "harness_schedules"]) assert.equal(tools.get(name)?.loadMode, "essential");
+
+    const audit = await call("harness_schedule", {
+      name: "Audit du lundi",
+      cron: "0 9 * * mon",
+      kind: "audit",
+      focus: "sécurité",
+      title: "ignoré pour un audit",
+    });
+    assert.notEqual(audit?.isError, true, audit?.content[0]?.text);
+    assert.match(audit?.content[0]?.text ?? "", /s9.*2026-11-09T08:00:00\.000Z/);
+    await call("harness_schedule", {
+      name: "Veille",
+      cron: "0 8 * * *",
+      kind: "run",
+      title: "Veille Y",
+      request: "relance la veille Y",
+      priority: 3,
+    });
+    await call("harness_schedule", { name: "Nuit", cron: "0 2 * * *", kind: "issues" });
+    const posts = server.seen.filter((item) => item.method === "POST" && item.path === "/v1/schedules");
+    assert.deepEqual(
+      posts.map((item) => item.body),
+      [
+        { name: "Audit du lundi", cron: "0 9 * * mon", target: { kind: "audit", repo: "demo", focus: "sécurité" } },
+        {
+          name: "Veille",
+          cron: "0 8 * * *",
+          target: { kind: "run", repo: "demo", title: "Veille Y", request: "relance la veille Y", priority: 3 },
+        },
+        { name: "Nuit", cron: "0 2 * * *", target: { kind: "issues", repo: "demo" } },
+      ],
+    );
+    assert.ok(server.seen.every((item) => item.auth === `Bearer ${TOKEN}`));
+
+    const listed = await call("harness_schedules", {});
+    const text = listed?.content[0]?.text ?? "";
+    assert.match(text, /Europe\/Paris/);
+    assert.match(
+      text,
+      /\[s1\] Audit du lundi — `0 9 \* \* mon` — audit \(sécurité\) sur demo — prochaine 2026-11-16T08:00:00\.000Z/,
+    );
+    assert.match(text, /dernière : sautée, le lancement précédent n'était pas fini — l'audit précédent a1/);
   } finally {
     pointAt(null);
     await server.close();

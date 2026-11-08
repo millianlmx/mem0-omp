@@ -11,6 +11,7 @@
 import type { Client, Role } from "./auth.ts";
 import { allows, canSeeRepo } from "./auth.ts";
 import type { RepoConfig } from "./config.ts";
+import { isRecord } from "./config.ts";
 import type { Actor } from "./context.ts";
 import type { RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
@@ -31,6 +32,7 @@ import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { escalationBatches } from "./queries.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -566,6 +568,79 @@ export const MCP_TOOLS: readonly Tool[] = [
       return { ...(await call.orchestrator.setBudget(id, budgetInput(args), gestureActor(call, args))) };
     },
   },
+  {
+    name: "schedules_list",
+    title: "Planifications",
+    description:
+      "Les planifications récurrentes des dépôts que ce client voit : `GET /v1/schedules`. Chacune porte son expression cron (lue dans le fuseau `timezone`), sa cible, `nextRunAt`, `lastRunAt` et `lastOutcome` (`fired`, `busy`, `daily_budget`, `missed`, `failed`).",
+    role: "viewer",
+    readOnly: true,
+    properties: {},
+    required: [],
+    run: async (call) => call.orchestrator.schedules.view(call.visible),
+  },
+  {
+    name: "schedule_create",
+    title: "Planifier un travail récurrent",
+    description:
+      "Crée une planification : à chaque échéance de `cron` (5 champs : minute heure jour-du-mois mois jour-de-la-semaine, noms `mon`/`lun` permis), le harness lance la cible — un run (`kind: run`, `title`, `request`), un audit (`kind: audit`, `focus`) la relève des issues ouvertes d'un label (`kind: issues`, `label`) ou une automatisation du poste (`kind: automation`, `automationId`, sans `repo` : propriétaire et appareil approbateur seulement). Une échéance n'empile pas : si le lancement précédent n'est pas fini, elle est sautée.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      name: { type: "string", description: "Le nom de la planification (« Audit du lundi »)." },
+      cron: { type: "string", description: "L'expression cron, ex. `0 8 * * mon-fri` (8 h en semaine)." },
+      target: {
+        type: "object",
+        description: "La cible lancée à chaque échéance.",
+        properties: {
+          kind: { type: "string", enum: [...TARGET_KINDS] },
+          repo: REPO_PROPERTY,
+          title: { type: "string", description: "run : le titre du run." },
+          request: { type: "string", description: "run : la demande." },
+          lane: { type: "string", enum: ["full"], description: "run, facultatif : la voie complète." },
+          priority: { type: "integer", minimum: -1000, maximum: 1000, description: "run, facultatif." },
+          budgetUsd: { type: "number", description: "run, facultatif : le budget propre de chaque run lancé." },
+          focus: { type: "string", description: "audit, facultatif : ce que l'audit regarde." },
+          label: { type: "string", description: "issues, facultatif : le label (`issues.label` par défaut)." },
+          automationId: { type: "string", description: "automation : l'automatisation du poste lancée." },
+        },
+        required: ["kind"],
+      },
+      enabled: { type: "boolean", description: "Facultatif : `false` la crée désactivée." },
+    },
+    required: ["name", "cron", "target"],
+    run: async (call, args) => {
+      const target = args.target;
+      // Le dépôt se désigne comme pour les issues : son nom, `owner/name`, ou le seul visible.
+      const resolved =
+        isRecord(target) && target.kind !== "automation" && (TARGET_KINDS as readonly unknown[]).includes(target.kind)
+          ? { ...target, repo: (await targetRepo(call, target)).name }
+          : target;
+      const input = scheduleInput({ ...args, target: resolved }, call.client);
+      return { schedule: call.orchestrator.schedules.create(input, { by: call.actor.by }) };
+    },
+  },
+  {
+    name: "schedule_delete",
+    title: "Supprimer une planification",
+    description: "Supprime une planification (lue par schedules_list) ; ce qu'elle a déjà lancé continue.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: { type: "string", description: "L'id de la planification." },
+      rev: {
+        type: "integer",
+        minimum: 0,
+        description: "Facultatif : la révision lue ; si la planification a changé depuis, rien n'est supprimé.",
+      },
+    },
+    required: ["id"],
+    run: async (call, args) => {
+      const id = text(args, "id");
+      call.orchestrator.schedules.delete(id, gestureActor(call, args), call.visible);
+      return { id, deleted: true };
+    },
+  },
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -634,7 +709,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }

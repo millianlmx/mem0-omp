@@ -10,6 +10,7 @@
 //   `workstation-agent.ts` son agent 24/24 ;
 // - `issues.ts`       les issues GitHub d'un dépôt déclaré, lancées en run ;
 // - `digest.ts`       le rapport du matin, posté chaque jour ;
+// - `schedules.ts`    les planifications récurrentes (runs, audits, relèves d'issues) ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -47,6 +48,7 @@ import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { inboxOf, loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
 import { auditOwner } from "./session-feed.ts";
+import { Schedules } from "./schedules.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
@@ -140,6 +142,8 @@ export class Orchestrator {
   readonly issues: IssueDesk;
   /** Le rapport du matin, posté chaque jour à `notify.digestHour`. */
   readonly digest: DigestSender;
+  /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
+  readonly schedules: Schedules;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -182,6 +186,12 @@ export class Orchestrator {
       store: this.#ctx.store,
       notifier: this.#ctx.notifier,
       log: this.#ctx.log,
+    });
+    this.schedules = new Schedules(this.#ctx, {
+      createRun: (input, actor) => this.createRun(input, actor),
+      createAudit: (repo, focus, actor) => this.audits.create(repo, focus, actor),
+      fixLabeled: (repo, label, actor) => this.issues.fixLabeled(this.#ctx.repo(repo), label, actor),
+      runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
     });
   }
 
@@ -285,6 +295,8 @@ export class Orchestrator {
     this.#stopMetrics?.();
     await this.issues.stop();
     await this.#ticking;
+    // Une relève d'issues partie d'une échéance finit (ses runs sont créés ou non, jamais à moitié).
+    await this.schedules.stop();
     const lives = [...this.#live.values()];
     for (const live of lives) {
       live.abort.abort();
@@ -389,6 +401,12 @@ export class Orchestrator {
       await this.#human.autoDecideExpired(Date.now());
     } catch (err) {
       this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Les planifications dues d'abord : un run ou un audit qu'elles créent part dès ce tour.
+    try {
+      void this.schedules.tick(Date.now());
+    } catch (err) {
+      this.#ctx.log(`planifications : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
     try {
