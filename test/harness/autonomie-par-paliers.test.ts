@@ -1580,9 +1580,16 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
 
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    type Body = {
+      repos: { repo: string; rules: unknown }[];
+      validations: { runId: string; step: unknown; autonomy: { gate: string; rule: { rank: number; match: unknown }; proofs: Record<string, unknown> } }[];
+      proposals: { repo: string; kind: string; gate: string; direction: string; changes: unknown }[];
+      features: string[];
+    };
     const call = async (token: string, method: string, route: string) => {
       const response = await fetch(`${url}${route}`, { method, headers: { Authorization: `Bearer ${token}` } });
-      return { status: response.status, body: (await response.json().catch(() => ({}))) as Record<string, any> };
+      const body: Body = await response.json().catch(() => ({ repos: [], validations: [], proposals: [], features: [] }));
+      return { status: response.status, body };
     };
     const rulesBefore = JSON.stringify(repoOf(world.config).autonomy);
 
@@ -1590,7 +1597,8 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
     assert.equal(seen.status, 200);
     assert.deepEqual(seen.body.repos, [{ repo: "demo", rules: [BUG_REVIEW_RULE] }], "les règles du seul dépôt visible");
     assert.equal(seen.body.validations.length, 1, "la seule validation de demo");
-    const [validation] = seen.body.validations;
+    const validation = seen.body.validations[0];
+    assert.ok(validation, "une validation visible");
     assert.equal(validation.runId, run.id);
     assert.equal(validation.autonomy.gate, "review");
     assert.equal(validation.autonomy.rule.rank, 1);
@@ -1599,20 +1607,20 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
     assert.ok(validation.step, "la décision porte son étape");
     assert.ok(seen.body.proposals.length >= 1);
     for (const proposal of seen.body.proposals) assert.equal(proposal.repo, "demo", "aucune proposition d'un autre dépôt");
-    const lower = seen.body.proposals.find((p: Record<string, unknown>) => p.direction === "lower" && p.kind === "bug" && p.gate === "review");
+    const lower = seen.body.proposals.find((p) => p.direction === "lower" && p.kind === "bug" && p.gate === "review");
     assert.deepEqual(lower?.changes, [{ path: "repos.demo.autonomy.rules[0].gates.review", value: "human" }]);
 
     const full = await call(all, "GET", "/v1/autonomy");
-    assert.deepEqual(full.body.repos.map((r: { repo: string }) => r.repo).sort(), ["autre", "demo"]);
+    assert.deepEqual(full.body.repos.map((r) => r.repo).sort(), ["autre", "demo"]);
     assert.equal(full.body.validations.length, 2);
-    assert.ok(full.body.proposals.some((p: { repo: string }) => p.repo === "autre"));
+    assert.ok(full.body.proposals.some((p) => p.repo === "autre"));
 
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
       const refused = await call(all, method, "/v1/autonomy");
       assert.equal(refused.status, 405, `${method} /v1/autonomy`);
     }
     const health = await call(all, "GET", "/v1/health");
-    assert.ok((health.body.features as string[]).includes("autonomy"), "drapeau de capacité");
+    assert.ok(health.body.features.includes("autonomy"), "drapeau de capacité");
     assert.equal(JSON.stringify(repoOf(world.config).autonomy), rulesBefore, "les règles sont inchangées");
   } finally {
     server.closeAllConnections();
