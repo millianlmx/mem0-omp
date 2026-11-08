@@ -161,6 +161,11 @@ const EXCEPTIONS: readonly Exception[] = [
     reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },
   {
+    file: "omp-console/Sources/ConsoleCore/Design/AutonomyText.swift",
+    literal: "review",
+    reason: "valeur de fil `gate` du serveur (motif de `case`), jamais affichée",
+  },
+  {
     file: "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift",
     literal: "omp1:… ou vps.exemple.ts.net",
     reason: "exemple de saisie : `omp1:` est le préfixe du code d’appairage",

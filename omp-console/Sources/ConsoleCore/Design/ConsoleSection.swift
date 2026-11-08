@@ -109,6 +109,7 @@ public enum RunsScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
     case vigie
     case schedules
+    case autonomy
     case stats
     case admin
     case server
@@ -119,6 +120,7 @@ public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .vigie: L10n.text("Vigie")
         case .schedules: L10n.text("Planifications")
+        case .autonomy: AutonomyText.pageTitle
         case .stats: L10n.text("Statistiques et santé")
         case .admin: L10n.text("Administration")
         case .server: L10n.text("Serveur")
@@ -129,6 +131,7 @@ public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .vigie: "binoculars"
         case .schedules: "calendar.badge.clock"
+        case .autonomy: AutonomyText.pageSymbol
         case .stats: "chart.xyaxis.line"
         case .admin: "person.2.badge.key"
         case .server: "server.rack"
@@ -140,6 +143,7 @@ public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .vigie: L10n.text("Surveillance du serveur, issues ouvertes et correctifs lancés par l’agent.")
         case .schedules: L10n.text("Features, audits et relèves d’issues à heure fixe.")
+        case .autonomy: AutonomyText.pageSummary
         case .stats: L10n.text("Débit, coûts, étapes, tests et santé du serveur.")
         case .admin: L10n.text("Clients, dépôts déclarés et configuration.")
         case .server: L10n.text("Connexion, fournisseurs et modèles.")

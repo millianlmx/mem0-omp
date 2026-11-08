@@ -573,25 +573,37 @@ struct DecisionsCard: View {
     private func decisionView(_ decision: HarnessDecision) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             QuestionPlaceView(place: inbox.question(decision))
-            HStack(alignment: .firstTextBaseline) {
-                Text(PipelineServerText.category(decision.category))
+            if let proof = decision.autonomy {
+                // Une validation prise seule par le serveur : la porte franchie, la règle et les preuves
+                // remplacent la situation et les options de l'agent (le contexte n'en redit que le texte).
+                Label(AutonomyText.validatedAlone, systemImage: AutonomyText.pageSymbol)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                if let status = PipelineServerText.decisionStatus(decision.status) {
-                    Text(status)
+                Text(MarkdownDocument.inline(decision.question))
+                    .font(.headline)
+                    .consoleReadable()
+                AutonomyProofView(proof: proof)
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(PipelineServerText.category(decision.category))
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+                        .foregroundStyle(.secondary)
+                    if let status = PipelineServerText.decisionStatus(decision.status) {
+                        Text(status)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(decision.decidedAtDeadline ? Color.orange : Color.secondary)
+                    }
                 }
-            }
-            Text(MarkdownDocument.inline(decision.question))
-                .font(.headline)
-                .consoleReadable()
-            if let context = decision.shownContext {
-                QuestionContextView(context: context)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(decision.choices) { choice in
-                    QuestionChoiceRow(choice: choice, badge: PipelineServerText.chosenBadge, selected: choice.isPreferred)
+                Text(MarkdownDocument.inline(decision.question))
+                    .font(.headline)
+                    .consoleReadable()
+                if let context = decision.shownContext {
+                    QuestionContextView(context: context)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(decision.choices) { choice in
+                        QuestionChoiceRow(choice: choice, badge: PipelineServerText.chosenBadge, selected: choice.isPreferred)
+                    }
                 }
             }
             QuestionReasonView(title: PipelineServerText.whyChosen, text: decision.rationale)
@@ -604,6 +616,9 @@ struct DecisionsCard: View {
                     .buttonStyle(.bordered)
             }
             .disabled(server.busy.contains(decision.runId))
+            if decision.autonomy != nil {
+                OpenRunButton(drafts: drafts, runId: decision.runId)
+            }
         }
     }
 }

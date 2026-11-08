@@ -88,12 +88,26 @@ public struct LaunchFeatureSections: View {
             if drafts.runOptions.problem == .budget {
                 problem(PipelineServerText.budgetInvalid)
             }
+            Picker(AutonomyText.launchKindLabel, selection: $drafts.runOptions.kind) {
+                Text(AutonomyText.launchKindNone).tag(HarnessWorkKind?.none)
+                ForEach(HarnessWorkKind.allCases) { kind in
+                    Text(AutonomyText.kindName(kind.rawValue)).tag(HarnessWorkKind?.some(kind))
+                }
+            }
+            .consoleID("pipelines.launch.kind")
+            TextField(AutonomyText.launchLabelsLabel, text: $drafts.runOptions.labels, prompt: Text(AutonomyText.launchLabelsPrompt))
+                .consolePlainInput()
+                .consoleID("pipelines.launch.labels")
+            if drafts.runOptions.problem == .labels {
+                problem(AutonomyText.launchLabelsInvalid)
+            }
         } header: {
             Text(PipelineServerText.launchOptionsTitle)
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(PipelineServerText.laneHint)
                 Text(PipelineServerText.reqHint)
+                Text(AutonomyText.launchKindHint)
             }
         }
 

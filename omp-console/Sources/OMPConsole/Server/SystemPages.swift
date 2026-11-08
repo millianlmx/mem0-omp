@@ -19,6 +19,7 @@ struct HarnessSystemView: View {
         HarnessSection(server: server, drafts: drafts, catalog: true, form: false, reload: {
             await server.vigie.load()
             await server.schedules.refresh()
+            if server.autonomy.isWatched { await server.autonomy.refresh() }
             if server.isAdmin { await server.admin.refresh() }
         }) {
             NavigationStack(path: path) {
@@ -55,6 +56,10 @@ struct HarnessSystemView: View {
                 .accessibilityIdentifier("vigie.harness")
         case .schedules:
             SystemSchedulesPage(server: server, drafts: drafts)
+        case .autonomy:
+            HarnessForm(server: server, drafts: drafts) { AutonomySections(server: server) }
+                .task { await server.autonomy.refresh() }
+                .accessibilityIdentifier("autonomy.harness")
         case .stats:
             SystemStatsPage(server: server, drafts: drafts)
         case .admin:

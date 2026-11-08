@@ -166,6 +166,12 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
     assert.ok(served(method, sample), `le serveur ne sert pas ${method} ${sample}`);
   }
+  // L'autonomie par paliers (page Système › Autonomie) : lue par `HarnessAutonomy`, servie en lecture seule.
+  const autonomy = fs.readFileSync(path.join(CLIENT, "HarnessAutonomy.swift"), "utf8");
+  assert.ok(autonomy.includes('readIfServed("/v1/autonomy")'), "le client ne lit plus /v1/autonomy");
+  assert.ok(served("GET", "/v1/autonomy"), "le serveur ne sert pas GET /v1/autonomy");
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"])
+    assert.ok(!served(method, "/v1/autonomy"), `le serveur ne doit pas servir ${method} /v1/autonomy`);
   // Le flux d'événements est servi hors de la table (SSE).
   assert.ok(model.includes("/v1/events?after="), "le client ne suit plus /v1/events");
   assert.match(read("omp-harness", "http.ts"), /url\.pathname === "\/v1\/events"/);

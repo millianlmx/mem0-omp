@@ -94,7 +94,7 @@ public struct SystemHubSections: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-        case .stats, .admin:
+        case .stats, .admin, .autonomy:
             EmptyView()
         }
     }
