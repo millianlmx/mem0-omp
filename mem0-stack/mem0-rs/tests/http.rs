@@ -719,7 +719,7 @@ async fn rrf_par_configuration_du_serveur() {
     let dossier = Dossier::nouveau("rrf-config");
     let lancement = Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" };
     let s = Serveur::demarrer_avec(&lancement, &[("MEM0_SEARCH_FUSION", "rrf"), ("MEM0_RRF_K", "10")]).await;
-    assert!(s.journal().contains("recherche rrf-k10"), "{}", s.journal());
+    assert!(s.journal_contient("recherche rrf-k10").await, "{}", s.journal());
     let cible = semer_hors_candidats(&s).await;
     let corps = json!({"query":"alpha_beta","agent_id":AGENT,"limit":10,"threshold":0,"explain":true});
     let rrf = chercher(&s, corps.clone()).await;

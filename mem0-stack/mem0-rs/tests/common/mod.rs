@@ -346,6 +346,22 @@ impl Serveur {
         verrou(&self.journal).clone()
     }
 
+    /// Vrai dès que stderr contient `motif`, faux après 5 s. Le fil qui recopie stderr
+    /// peut prendre du retard sur le serveur, déjà prêt : lire `journal()` tout de suite
+    /// après un appel rend parfois une ligne pas encore recopiée.
+    pub async fn journal_contient(&self, motif: &str) -> bool {
+        let debut = std::time::Instant::now();
+        loop {
+            if self.journal().contains(motif) {
+                return true;
+            }
+            if debut.elapsed() > Duration::from_secs(5) {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// Requête brute : méthode, chemin, corps et en-têtes tels quels.
     pub async fn envoyer(&self, methode: &str, chemin: &str, corps: Option<&str>, entetes: &[(&str, &str)]) -> Reponse {
         let methode = reqwest::Method::from_bytes(methode.as_bytes()).unwrap();

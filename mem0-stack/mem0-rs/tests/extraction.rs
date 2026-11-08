@@ -328,7 +328,7 @@ async fn ac4_ac5_reponses_degradees() {
         assert_eq!(b.faux.requetes_chat().len(), n0 + 1, "cas {i} : un seul appel chat");
         assert_eq!(tous(s, &agent).await, json!({"total": 0, "results": []}), "cas {i} : {reponse:?}");
     }
-    assert!(s.journal().contains("extraction"), "une lecture en échec est journalisée : {}", s.journal());
+    assert!(s.journal_contient("extraction").await, "une lecture en échec est journalisée : {}", s.journal());
 
     // Réponses tolérées : le fait est extrait.
     let tolerees = [
@@ -401,7 +401,7 @@ async fn ac6_chat_500_trois_essais_sans_ecriture() {
     assert!(requetes.iter().all(|r| r == &requetes[0]), "les 3 essais portent le même corps");
     assert_eq!(b.faux.appels(), 1, "seul l'embedding de la requête");
     assert_eq!(tous(s, "ag-ac6").await, json!({"total": 0, "results": []}));
-    assert!(s.journal().contains("extraction"), "{}", s.journal());
+    assert!(s.journal_contient("extraction").await, "{}", s.journal());
     // Le message n'a pas été sauvé : l'appel suivant a un Last k Messages vide.
     ok(&inferer(s, "Après la panne", "ag-ac6").await);
     let i = invite_recue(b.faux.requetes_chat().last().unwrap()).to_owned();
