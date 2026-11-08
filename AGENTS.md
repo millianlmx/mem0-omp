@@ -2,6 +2,19 @@
 
 Conventions de contribution : [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Dans un runner du harness
+
+Le conteneur d'un runner (étapes /impl, /impl --fix, /review) n'a que 1 Go de
+mémoire, sans swap. Au-delà, le noyau le tue (code 137) et l'étape est perdue.
+
+- Lance les tests UNIQUEMENT par l'outil hôte `run_tests` : il tourne dans le
+  conteneur heavy, qui a la mémoire et les outils.
+- N'installe ni ne lance `node`, `bun`, `swift`, `cargo`, le type-check ou
+  `scripts/check.sh` dans ton shell, même pour un seul fichier.
+- Pas plus d'UN sous-agent à la fois.
+- Les échecs de la suite complète liés au conteneur Linux (pas de macOS ni de
+  Swift, outils absents) sont connus : ne les corrige pas, nomme-les.
+
 <!-- mem0:brief v6 -->
 ## Mémoire du projet
 
