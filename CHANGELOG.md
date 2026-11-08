@@ -1,5 +1,17 @@
 # Journal des versions
 
+## omp-mem0-req 2.4.0 — 2026-11-08
+
+- feat(chrome,harness): poste cantonné à sa fenêtre, arrêt d'urgence, contenu des pages non fiable, session et captures visibles (#341) (701a92d)
+
+## omp-harness 1.19.0 — 2026-11-08
+
+- feat(chrome,harness): poste cantonné à sa fenêtre, arrêt d'urgence, contenu des pages non fiable, session et captures visibles (#341) (701a92d)
+
+## omp-chrome 0.2.0 — 2026-11-08
+
+- feat(chrome,harness): poste cantonné à sa fenêtre, arrêt d'urgence, contenu des pages non fiable, session et captures visibles (#341) (701a92d)
+
 ## omp-harness 1.18.1 — 2026-11-08
 
 - fix(release): une release se recalcule quand main bouge ; déploiement continu par la branche deploy et commit exposé (#346) (8726ccb)
