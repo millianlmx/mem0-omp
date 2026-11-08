@@ -104,14 +104,30 @@ export function slugify(text: string): string {
 /** Un candidat à l'admission et ce qui décide de son rang. */
 type Candidate = { run: RunRow; resumed: boolean; group: string };
 
+/**
+ * Ce qui retient un run `queued` dû : la cause (le code de `admission_refused`) et son
+ * texte, recalculé à chaque tour (les chiffres restent à jour).
+ */
+export type QueueWait = {
+  cause: "slots" | "memory" | "daily_budget" | "repo_cap" | "modules" | "unknown_repo";
+  text: string;
+};
+
+/** Un run tel que l'API le rend : en file, sa raison est ce qui le retient (`waitCause` en dit le code). */
+export type RunWithWait = RunRow & { waitCause?: QueueWait["cause"] };
+
 export class Orchestrator {
   readonly #ctx: HarnessContext;
   readonly #steps: StepExecutor;
   readonly #merger: Merger;
   readonly #human: HumanLoop;
   readonly #live = new Map<string, LiveRun & { slot: Slot }>();
-  /** Le dernier refus d'admission annoncé par run : un refus n'est écrit qu'une fois, pas à chaque tour. */
-  readonly #refused = new Map<string, string>();
+  /**
+   * Ce qui retient chaque run en file, tenu en mémoire seulement : rien n'est écrit en
+   * base (ni révision ni horodatage ne bougent), et tout repart de zéro au démarrage.
+   * `admission_refused` n'est journalisé que lorsque la CAUSE d'un run change.
+   */
+  readonly #waits = new Map<string, QueueWait>();
   /** Les runs dont la veille a arrêté l'étape sur leur plafond de coût, et ce plafond. */
   readonly #budgetStops = new Map<string, BudgetDue>();
   /** Les runs dont les modules sont en cours de déduction : pas candidats avant. */
@@ -458,8 +474,17 @@ export class Orchestrator {
     }
   }
 
-  /** Les candidats de chaque dépôt : les runs repris d'abord, puis les nouveaux que les modules et `maxParallel` laissent partir. */
-  #candidates(): { candidates: Candidate[]; activeByRepo: Map<string, number>; activeByGroup: Map<string, number> } {
+  /**
+   * Les candidats de chaque dépôt : les runs repris d'abord, puis les nouveaux que les
+   * modules et `maxParallel` laissent partir. `held` : ce qui retient les runs dus qui
+   * ne sont pas candidats (plafond du dépôt, modules partagés, dépôt retiré).
+   */
+  #candidates(): {
+    candidates: Candidate[];
+    held: Map<string, QueueWait>;
+    activeByRepo: Map<string, number>;
+    activeByGroup: Map<string, number>;
+  } {
     const { store } = this.#ctx;
     // Un run relancé après un échec attend son heure (`notBefore`) : il n'est pas candidat avant.
     const queued = store
@@ -480,9 +505,15 @@ export class Orchestrator {
     const byRepo = new Map<string, RunRow[]>();
     for (const run of queued) byRepo.set(run.repo, [...(byRepo.get(run.repo) ?? []), run]);
     const candidates: Candidate[] = [];
+    const held = new Map<string, QueueWait>();
     for (const [name, runs] of byRepo) {
       const repo = this.#ctx.config.repos.find((entry) => entry.name === name);
-      if (!repo) continue;
+      if (!repo) {
+        for (const run of runs) {
+          held.set(run.id, { cause: "unknown_repo", text: `dépôt ${name} absent de la configuration du serveur` });
+        }
+        continue;
+      }
       // Un run qui a déjà un worktree a déjà été admis par le planificateur : il repasse devant.
       const resumed = runs.filter((run) => run.worktree !== null);
       const fresh = runs.filter((run) => run.worktree === null);
@@ -493,23 +524,35 @@ export class Orchestrator {
           [...others, ...resumed.map((run) => ({ id: run.id, modules: run.modules }))],
         ),
       );
-      let room =
-        repo.maxParallel === null ? Number.POSITIVE_INFINITY : repo.maxParallel - (activeByRepo.get(name) ?? 0);
+      for (const run of fresh) {
+        if (!free.has(run.id)) {
+          held.set(run.id, {
+            cause: "modules",
+            text: `ses modules (${run.modules.join(", ") || "tout le dépôt"}) recoupent ceux d'un run de ${name} en cours ou passé avant lui`,
+          });
+        }
+      }
+      const running = activeByRepo.get(name) ?? 0;
+      let room = repo.maxParallel === null ? Number.POSITIVE_INFINITY : repo.maxParallel - running;
       for (const run of [...resumed, ...fresh.filter((run) => free.has(run.id))]) {
-        if (room <= 0) break;
+        if (room <= 0) {
+          held.set(run.id, {
+            cause: "repo_cap",
+            text: `plafond du dépôt ${name} atteint : ${running} run(s) en cours, maxParallel ${repo.maxParallel}`,
+          });
+          continue;
+        }
         candidates.push({ run, resumed: run.worktree !== null, group: groupOf(run) });
         room--;
       }
     }
-    return { candidates, activeByRepo, activeByGroup };
+    return { candidates, held, activeByRepo, activeByGroup };
   }
 
   /** L'admission équitable : un candidat à la fois, au meilleur rang, tant qu'un slot runner se libère. */
   #admit(): void {
-    const { candidates, activeByRepo, activeByGroup } = this.#candidates();
-    // Un run qui n'attend plus (admis, annulé, devenu non candidat) oublie son dernier refus.
-    const waiting = new Set(candidates.map((c) => c.run.id));
-    for (const id of this.#refused.keys()) if (!waiting.has(id)) this.#refused.delete(id);
+    const { candidates, held, activeByRepo, activeByGroup } = this.#candidates();
+    const waits = new Map(held);
     const rank = (c: Candidate): number[] => [
       -c.run.priority,
       c.resumed ? 0 : 1,
@@ -517,19 +560,12 @@ export class Orchestrator {
       activeByGroup.get(c.group) ?? 0,
       c.run.createdAt,
     ];
-    // Le plafond journalier du serveur atteint : personne ne part, chacun sait pourquoi (une fois).
+    // Le plafond journalier du serveur atteint : personne ne part, chacun sait pourquoi.
     const daily = candidates.length > 0 ? this.#ctx.monitor.dailyBudgetDue() : null;
     if (daily) {
-      const detail = `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
-      for (const candidate of candidates) {
-        if (this.#refused.get(candidate.run.id)?.split(":")[0] === "daily_budget") continue;
-        this.#ctx.event("admission_refused", candidate.run.id, {
-          reason: "daily_budget",
-          detail,
-          waiting: candidates.length,
-        });
-        this.#refused.set(candidate.run.id, `daily_budget: ${detail}`);
-      }
+      const text = `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
+      for (const candidate of candidates) waits.set(candidate.run.id, { cause: "daily_budget", text });
+      this.#settleWaits(waits);
       return;
     }
     while (candidates.length > 0) {
@@ -537,22 +573,54 @@ export class Orchestrator {
       const next = candidates.shift() as Candidate;
       const slot = this.#ctx.scheduler.tryAcquire("runner", next.run.id);
       if ("refused" in slot) {
-        const why = `${slot.refused}: ${slot.detail}`;
-        if (this.#refused.get(next.run.id)?.split(":")[0] !== slot.refused) {
-          this.#ctx.event("admission_refused", next.run.id, {
-            reason: slot.refused,
-            detail: slot.detail,
-            waiting: candidates.length + 1,
-          });
+        // Le premier de la file est refusé : ceux qui le suivent attendent la même chose.
+        for (const run of [next.run, ...candidates.map((c) => c.run)]) {
+          waits.set(run.id, { cause: slot.refused, text: slot.detail });
         }
-        this.#refused.set(next.run.id, why);
-        return;
+        break;
       }
-      this.#refused.delete(next.run.id);
       activeByRepo.set(next.run.repo, (activeByRepo.get(next.run.repo) ?? 0) + 1);
       activeByGroup.set(next.group, (activeByGroup.get(next.group) ?? 0) + 1);
       this.#launch(next.run.id, slot);
     }
+    this.#settleWaits(waits);
+  }
+
+  /**
+   * Garde ce qui retient chaque run en file (le texte suit les chiffres à chaque tour) ;
+   * `admission_refused` n'est journalisé que lorsqu'un run change de cause. Un run qui
+   * n'attend plus (admis, annulé, différé) oublie la sienne.
+   */
+  #settleWaits(waits: Map<string, QueueWait>): void {
+    for (const [id, wait] of waits) {
+      if (this.#waits.get(id)?.cause !== wait.cause) {
+        this.#ctx.event("admission_refused", id, { reason: wait.cause, detail: wait.text, waiting: waits.size });
+      }
+    }
+    this.#waits.clear();
+    for (const [id, wait] of waits) this.#waits.set(id, wait);
+  }
+
+  /** Un run tel que l'API le rend : en file et retenu, sa raison dit ce qui le retient. */
+  withWait(run: RunRow): RunWithWait {
+    const wait = run.state === "queued" ? this.#waits.get(run.id) : undefined;
+    return wait ? { ...run, reason: wait.text, waitCause: wait.cause } : run;
+  }
+
+  /** Les runs en file retenus, par cause, et la cause dominante (la plus fréquente) : la file de `/v1/status`. */
+  queueWaits(repos: RepoFilter = null): { held: number; byCause: Record<string, number>; dominant: QueueWait | null } {
+    const byCause: Record<string, number> = {};
+    const first = new Map<string, QueueWait>();
+    let held = 0;
+    for (const [id, wait] of this.#waits) {
+      const run = this.store.getRun(id);
+      if (!run || (repos !== null && !repos.includes(run.repo))) continue;
+      held += 1;
+      byCause[wait.cause] = (byCause[wait.cause] ?? 0) + 1;
+      if (!first.has(wait.cause)) first.set(wait.cause, wait);
+    }
+    const top = Object.entries(byCause).sort((a, b) => b[1] - a[1])[0]?.[0];
+    return { held, byCause, dominant: top === undefined ? null : (first.get(top) ?? null) };
   }
 
   #launch(runId: string, slot: Slot): void {
@@ -935,9 +1003,9 @@ export class Orchestrator {
     return run;
   }
 
-  /** La vue complète d'un run : étapes, décisions, escalades, tests, artefacts. */
+  /** La vue complète d'un run : étapes, décisions, escalades, tests, artefacts ; en file, ce qui le retient. */
   runView(runId: string, repos: RepoFilter = null): Record<string, unknown> {
-    const view = runView(this.store, this.visibleRun(runId, repos), this.#live.has(runId));
+    const view = runView(this.store, this.withWait(this.visibleRun(runId, repos)), this.#live.has(runId));
     return {
       ...view,
       usage: this.store.runUsage(runId),
@@ -949,8 +1017,18 @@ export class Orchestrator {
   /** La boîte de l'humain : `inboxOf` (filtrée par dépôts), les alertes et les coûts des runs listés. */
   inboxView(repos: RepoFilter = null): Record<string, unknown> {
     const inbox = inboxOf(this.store, repos);
-    const runs = (inbox.runs as { id: string }[]).map((run) => run.id);
-    return { ...inbox, alerts: this.#ctx.monitor.alerts(repos), costs: this.store.runCosts(runs) };
+    const runs = (inbox.runs as RunRow[]).map((run) => this.withWait(run));
+    const batches = (inbox.batches as { run: RunRow | null; items: unknown[] }[]).map((batch) => ({
+      ...batch,
+      run: batch.run === null ? null : this.withWait(batch.run),
+    }));
+    return {
+      ...inbox,
+      runs,
+      batches,
+      alerts: this.#ctx.monitor.alerts(repos),
+      costs: this.store.runCosts(runs.map((run) => run.id)),
+    };
   }
 
   /**
@@ -1047,6 +1125,8 @@ export class Orchestrator {
         runner: { ...snapshot.runner, labels: snapshot.runner.labels.filter(visible) },
         heavy: { ...snapshot.heavy, labels: snapshot.heavy.labels.filter(visible) },
       },
+      // La file : combien de runs dus sont retenus, par cause, et ce qui retient le plus.
+      queue: this.queueWaits(repos),
       repos: this.#ctx.config.repos
         .filter((repo) => repos === null || repos.includes(repo.name))
         .map((repo) => ({ name: repo.name, scope: repo.scope, maxParallel: repo.maxParallel })),

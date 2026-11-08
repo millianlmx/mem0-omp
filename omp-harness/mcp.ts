@@ -295,11 +295,13 @@ export const MCP_TOOLS: readonly Tool[] = [
       const state = stringList(args.state, "state");
       const repo = optionalText(args, "repo");
       return {
-        runs: call.orchestrator.store.listRuns({
-          ...(state && state.length > 0 ? { state: state as RunState[] } : {}),
-          ...(repo ? { repo } : {}),
-          repos: call.visible,
-        }),
+        runs: call.orchestrator.store
+          .listRuns({
+            ...(state && state.length > 0 ? { state: state as RunState[] } : {}),
+            ...(repo ? { repo } : {}),
+            repos: call.visible,
+          })
+          .map((run) => call.orchestrator.withWait(run)),
       };
     },
   },

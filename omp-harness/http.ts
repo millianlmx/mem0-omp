@@ -429,7 +429,8 @@ export function apiRoutes(
         ...(repo ? { repo } : {}),
         repos: call.repos,
       });
-      send(call.res, 200, { runs });
+      // En file, la raison d'un run dit ce qui le retient (Orchestrator.withWait).
+      send(call.res, 200, { runs: runs.map((run) => orchestrator.withWait(run)) });
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
