@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.25.0 — 2026-11-08
+
+- feat(harness,console): preuves de revue, API et rapport de tests (3195d77)
+
 ## omp-harness 1.24.0 — 2026-11-08
 
 - feat(console): refonte des apps Mac et iOS — À traiter, une page par feature, hub Système (#372) (ad790d9)
