@@ -66,6 +66,10 @@ export type WorkstationAction = {
   approval: Approval | null;
   result: { text?: string; data?: unknown } | null;
   error: string | null;
+  /** La demande au poste dont le job a déposé l'action ; `null` hors demande. */
+  requestId: string | null;
+  /** Le navigateur qui l'exécute ; `null` : le navigateur par défaut au moment de la location. */
+  browserId: string | null;
 };
 
 export type ActionPatch = Partial<
@@ -83,8 +87,8 @@ export type Observation =
       target: { role: string; label: string };
     };
 
-/** Une observation en base : son id, et le décalage horaire (`getTimezoneOffset`, minutes) de son lot. */
-export type StoredObservation = Observation & { id: number; tz: number };
+/** Une observation en base : son id, le décalage horaire (`getTimezoneOffset`, minutes) de son lot et son navigateur. */
+export type StoredObservation = Observation & { id: number; tz: number; browserId: string | null };
 
 function actionOf(row: Row): WorkstationAction {
   return {
@@ -101,6 +105,8 @@ function actionOf(row: Row): WorkstationAction {
     approval: approvalOf(json<Approval | null>(row, "approval", null)),
     result: json<WorkstationAction["result"]>(row, "result", null),
     error: strOrNull(row, "error"),
+    requestId: strOrNull(row, "request_id"),
+    browserId: strOrNull(row, "browser_id"),
   };
 }
 
@@ -114,6 +120,7 @@ function observationOf(row: Row): StoredObservation {
   const base = {
     id: num(row, "id"),
     tz: num(row, "tz"),
+    browserId: strOrNull(row, "browser_id"),
     at: num(row, "at"),
     url: str(row, "url"),
     title: str(row, "title"),
@@ -131,14 +138,14 @@ function observationOf(row: Row): StoredObservation {
 export class WorkstationStore extends PushStore {
   // -- observation --------------------------------------------------------------
 
-  /** Écrit un lot d'observations déjà validées ; rend le nombre de lignes écrites. */
-  addWorkstationObservations(tz: number, events: readonly Observation[]): number {
+  /** Écrit un lot d'observations déjà validées, venues du navigateur `browserId` ; rend le nombre de lignes écrites. */
+  addWorkstationObservations(tz: number, events: readonly Observation[], browserId: string | null = null): number {
     const at = this.now();
     return this.transaction(() => {
       for (const event of events)
         this.execute(
-          `INSERT INTO workstation_observations (at, kind, url, title, duration_ms, action, target, tz, received_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO workstation_observations (at, kind, url, title, duration_ms, action, target, tz, received_at, browser_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           event.at,
           event.kind,
           event.url,
@@ -148,6 +155,7 @@ export class WorkstationStore extends PushStore {
           event.kind === "interaction" ? JSON.stringify(event.target) : null,
           tz,
           at,
+          browserId,
         );
       return events.length;
     });
@@ -208,11 +216,13 @@ export class WorkstationStore extends PushStore {
     state: ActionState;
     approved?: boolean;
     approval?: Approval | null;
+    requestId?: string | null;
+    browserId?: string | null;
   }): WorkstationAction {
     const at = this.now();
     const result = this.execute(
-      `INSERT INTO workstation_actions (created_at, updated_at, origin, by, kind, params, rationale, state, approved, approval)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO workstation_actions (created_at, updated_at, origin, by, kind, params, rationale, state, approved, approval, request_id, browser_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       at,
       at,
       input.origin,
@@ -223,6 +233,8 @@ export class WorkstationStore extends PushStore {
       input.state,
       input.approved ? 1 : 0,
       input.approval ? JSON.stringify(input.approval) : null,
+      input.requestId ?? null,
+      input.browserId ?? null,
     );
     return this.getWorkstationAction(Number(result.lastInsertRowid)) as WorkstationAction;
   }
@@ -274,9 +286,15 @@ export class WorkstationStore extends PushStore {
     );
   }
 
-  /** Le journal : les plus récentes d'abord, filtrées par état, avant `before` (seq). */
+  /** Le journal : les plus récentes d'abord (`order: "asc"` : les plus anciennes), filtrées par état, demande, avant `before` (seq). */
   listWorkstationActions(
-    filter: { states?: readonly ActionState[]; limit?: number; before?: number } = {},
+    filter: {
+      states?: readonly ActionState[];
+      limit?: number;
+      before?: number;
+      requestId?: string;
+      order?: "asc" | "desc";
+    } = {},
   ): WorkstationAction[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
@@ -288,17 +306,28 @@ export class WorkstationStore extends PushStore {
       where.push("seq < ?");
       params.push(filter.before);
     }
+    if (filter.requestId !== undefined) {
+      where.push("request_id = ?");
+      params.push(filter.requestId);
+    }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     return this.selectAll(
-      `SELECT * FROM workstation_actions ${clause} ORDER BY seq DESC LIMIT ?`,
+      `SELECT * FROM workstation_actions ${clause} ORDER BY seq ${filter.order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
       ...params,
       filter.limit ?? 50,
     ).map(actionOf);
   }
 
-  /** La plus ancienne action en file, ou `null`. */
-  oldestQueuedWorkstationAction(): WorkstationAction | null {
-    const row = this.selectOne("SELECT * FROM workstation_actions WHERE state = 'queued' ORDER BY seq LIMIT 1");
+  /**
+   * La plus ancienne action en file pour le navigateur `browserId`, ou `null` : les siennes, et
+   * celles sans navigateur si c'est le navigateur par défaut (`isDefault`).
+   */
+  oldestQueuedWorkstationAction(browserId: string, isDefault: boolean): WorkstationAction | null {
+    const row = this.selectOne(
+      `SELECT * FROM workstation_actions WHERE state = 'queued' AND (browser_id = ?${isDefault ? " OR browser_id IS NULL" : ""})
+       ORDER BY seq LIMIT 1`,
+      browserId,
+    );
     return row ? actionOf(row) : null;
   }
 

@@ -36,7 +36,7 @@ import {
 } from "./lib/observation.ts";
 import { checkStt } from "./lib/stt.ts";
 import { stripUrl } from "./lib/url.ts";
-import { loadSettings, saveSettings } from "./store.ts";
+import { identified, loadSettings, saveSettings } from "./store.ts";
 
 const VERSION = chrome.runtime.getManifest().version;
 const TICK = "omp-tick";
@@ -79,7 +79,7 @@ let creating: Promise<void> | null = null;
 async function offscreenConfig(): Promise<OffscreenConfig> {
   const settings = await loadSettings();
   return {
-    pairing: settings.pairing,
+    pairing: settings.pairing === null ? null : await identified(settings.pairing, settings.browserLabel),
     stt: settings.stt,
     version: VERSION,
     paused: settings.observationPaused,
@@ -133,8 +133,9 @@ async function readBuffer(): Promise<Observation[]> {
 
 /** Envoie le tampon par lots de 500 au plus ; appelé dans la file du tampon. */
 async function flushNow(): Promise<void> {
-  const { pairing } = await loadSettings();
-  if (pairing === null) return;
+  const { pairing: paired, browserLabel } = await loadSettings();
+  if (paired === null) return;
+  const pairing = await identified(paired, browserLabel);
   for (let round = 0; round < 10; round++) {
     const { batch, rest } = takeBatch(await readBuffer());
     if (batch.length === 0) return;
@@ -294,10 +295,15 @@ async function runAction(action: WorkstationAction): Promise<void> {
   // Les onglets de la fenêtre de l'agent partent avec le résultat : `open` vient peut-être d'en créer un.
   const agentTabs = await agentTabIds().catch(() => []);
   try {
-    await harnessCall(settings.pairing, "POST", `/v1/workstation/actions/${action.seq}/result`, {
-      ...outcome,
-      agentTabs,
-    });
+    await harnessCall(
+      await identified(settings.pairing, settings.browserLabel),
+      "POST",
+      `/v1/workstation/actions/${action.seq}/result`,
+      {
+        ...outcome,
+        agentTabs,
+      },
+    );
   } catch (error) {
     // 409 : l'action a été annulée (arrêt d'urgence) pendant qu'elle s'exécutait.
     if (!(error instanceof HarnessError && error.status === 409))
@@ -316,8 +322,9 @@ async function emergencyStop(): Promise<Reply<{ cancelled: number[] }>> {
   running?.abort();
   await pushConfig();
   await refocus();
-  const { pairing } = await loadSettings();
-  if (pairing === null) return { ok: true, value: { cancelled: [] } };
+  const { pairing: paired, browserLabel } = await loadSettings();
+  if (paired === null) return { ok: true, value: { cancelled: [] } };
+  const pairing = await identified(paired, browserLabel);
   try {
     const reply = await harnessCall<{ cancelled?: unknown }>(pairing, "POST", "/v1/workstation/stop", undefined, {
       signal: AbortSignal.timeout(10_000),
@@ -352,6 +359,7 @@ function startMeeting(request: { tabId: number; title: string; url: string }): P
     if (settings.pairing === null)
       return { ok: false, error: "extension non appairée : collez le code omp1: dans les réglages" };
     if ((await readMeeting()) !== null) return { ok: false, error: "une transcription est déjà en cours" };
+    const target = await identified(settings.pairing, settings.browserLabel);
     // Une adresse, une clé ou un modèle faux ne se verraient sinon qu'à chaque segment, dans
     // ce popup, et le meeting finirait à « 0 segment transcrit » : on refuse d'emblée.
     try {
@@ -362,16 +370,11 @@ function startMeeting(request: { tabId: number; title: string; url: string }): P
     const startedAt = Date.now();
     let meetingId: string;
     try {
-      const created = await harnessCall<{ meeting?: { id?: unknown } }>(
-        settings.pairing,
-        "POST",
-        "/v1/workstation/meetings",
-        {
-          title: request.title,
-          url: stripUrl(request.url) ?? "",
-          startedAt,
-        },
-      );
+      const created = await harnessCall<{ meeting?: { id?: unknown } }>(target, "POST", "/v1/workstation/meetings", {
+        title: request.title,
+        url: stripUrl(request.url) ?? "",
+        startedAt,
+      });
       const id = created?.meeting?.id;
       if (typeof id !== "string" || id === "") return { ok: false, error: "le harness n'a pas rendu de meeting" };
       meetingId = id;
@@ -386,11 +389,9 @@ function startMeeting(request: { tabId: number; title: string; url: string }): P
     try {
       streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: request.tabId });
     } catch (error) {
-      await harnessCall(
-        settings.pairing,
-        "POST",
-        `/v1/workstation/meetings/${encodeURIComponent(meetingId)}/end`,
-      ).catch(() => undefined);
+      await harnessCall(target, "POST", `/v1/workstation/meetings/${encodeURIComponent(meetingId)}/end`).catch(
+        () => undefined,
+      );
       return { ok: false, error: `capture de l'onglet refusée : ${message(error)}` };
     }
     const started = await toOffscreen<{ micro: "on" | "refused" }>({
@@ -400,11 +401,9 @@ function startMeeting(request: { tabId: number; title: string; url: string }): P
       meetingId,
     });
     if (!started.ok) {
-      await harnessCall(
-        settings.pairing,
-        "POST",
-        `/v1/workstation/meetings/${encodeURIComponent(meetingId)}/end`,
-      ).catch(() => undefined);
+      await harnessCall(target, "POST", `/v1/workstation/meetings/${encodeURIComponent(meetingId)}/end`).catch(
+        () => undefined,
+      );
       return started;
     }
     const meeting: MeetingState = {
@@ -429,10 +428,14 @@ function stopMeeting(): Promise<Reply> {
     const stopped = await toOffscreen<undefined>({ to: "offscreen", type: "capture-stop" });
     await chrome.storage.session.set({ meeting: null });
     await badge(false);
-    const { pairing } = await loadSettings();
+    const { pairing, browserLabel } = await loadSettings();
     if (pairing === null) return stopped;
     try {
-      await harnessCall(pairing, "POST", `/v1/workstation/meetings/${encodeURIComponent(meeting.id)}/end`);
+      await harnessCall(
+        await identified(pairing, browserLabel),
+        "POST",
+        `/v1/workstation/meetings/${encodeURIComponent(meeting.id)}/end`,
+      );
     } catch (error) {
       return { ok: false, error: `fin du meeting non remise au harness : ${message(error)}` };
     }

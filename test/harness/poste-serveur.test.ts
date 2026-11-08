@@ -492,6 +492,7 @@ test("poste-serveur/AC-9 : ProfileStats — sites par temps, heures LOCALES selo
   const observation = (url: string, start: number, durationMs: number, tz = 0): StoredObservation => ({
     id: ++id,
     tz,
+    browserId: null,
     kind: "visit",
     at: start,
     url,

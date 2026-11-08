@@ -118,13 +118,18 @@ public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
     public var approval: WorkstationApproval?
     public var result: WorkstationActionResult?
     public var error: String?
+    /// La demande de l'humain dont le job a déposé l'action ; `nil` hors demande.
+    public var requestId: String?
+    /// Le navigateur (profil Chrome) qui l'exécute ; `nil` : le navigateur par défaut.
+    public var browserId: String?
 
     public var id: Int { seq }
 
     public init(
         seq: Int, createdAt: Double = 0, updatedAt: Double = 0, origin: String = "agent", by: String? = nil,
         kind: String, params: [String: JSONValue] = [:], rationale: String, state: String, approved: Bool = false,
-        approval: WorkstationApproval? = nil, result: WorkstationActionResult? = nil, error: String? = nil
+        approval: WorkstationApproval? = nil, result: WorkstationActionResult? = nil, error: String? = nil,
+        requestId: String? = nil, browserId: String? = nil
     ) {
         self.seq = seq
         self.createdAt = createdAt
@@ -139,10 +144,13 @@ public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
         self.approval = approval
         self.result = result
         self.error = error
+        self.requestId = requestId
+        self.browserId = browserId
     }
 
     private enum CodingKeys: String, CodingKey {
         case seq, createdAt, updatedAt, origin, by, kind, params, rationale, state, approved, approval, result, error
+        case requestId, browserId
     }
 
     public init(from decoder: Decoder) throws {
@@ -160,6 +168,8 @@ public struct WorkstationAction: Codable, Equatable, Sendable, Identifiable {
         approval = try container.decodeIfPresent(WorkstationApproval.self, forKey: .approval)
         result = try container.decodeIfPresent(WorkstationActionResult.self, forKey: .result)
         error = try container.decodeIfPresent(String.self, forKey: .error)
+        requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
+        browserId = try container.decodeIfPresent(String.self, forKey: .browserId)
     }
 
     /// L'état connu de cette version, ou `nil` pour un état apparu après elle.
@@ -584,5 +594,129 @@ public struct WorkstationMeetingList: Decodable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         meetings = try container.list([WorkstationMeeting].self, .meetings)
+    }
+}
+
+// MARK: - Demandes et automatisations
+
+/// Les états d'une demande de l'humain au poste.
+public enum WorkstationRequestState: String, CaseIterable, Sendable {
+    case queued
+    case running
+    case done
+    case failed
+    case cancelled
+}
+
+/// Une demande de l'humain : une consigne que le job `poste-demande` exécute dans le navigateur.
+public struct WorkstationRequest: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var createdAt: Double
+    public var updatedAt: Double
+    public var by: String?
+    public var instruction: String
+    /// L'automatisation lancée, si la demande en vient (elle a pu être supprimée depuis).
+    public var automationId: String?
+    /// Le navigateur ciblé ; `nil` : le navigateur par défaut.
+    public var browserId: String?
+    public var state: WorkstationRequestState
+    /// Pourquoi elle attend (en file), a échoué ou a été annulée.
+    public var reason: String?
+    /// Le compte rendu de l'agent, une fois terminée.
+    public var report: String?
+    public var startedAt: Double?
+    public var endedAt: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
+        updatedAt = try container.decodeIfPresent(Double.self, forKey: .updatedAt) ?? createdAt
+        by = try container.decodeIfPresent(String.self, forKey: .by)
+        instruction = try container.decodeIfPresent(String.self, forKey: .instruction) ?? ""
+        automationId = try container.decodeIfPresent(String.self, forKey: .automationId)
+        browserId = try container.decodeIfPresent(String.self, forKey: .browserId)
+        let raw = try container.decodeIfPresent(String.self, forKey: .state) ?? ""
+        state = WorkstationRequestState(rawValue: raw) ?? .queued
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        report = try container.decodeIfPresent(String.self, forKey: .report)
+        startedAt = try container.decodeIfPresent(Double.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Double.self, forKey: .endedAt)
+    }
+}
+
+extension WorkstationRequestState: Codable {}
+
+/// `GET /v1/workstation/requests`.
+public struct WorkstationRequestList: Decodable, Equatable, Sendable {
+    public var requests: [WorkstationRequest]
+
+    private enum CodingKeys: String, CodingKey { case requests }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requests = try container.list([WorkstationRequest].self, .requests)
+    }
+}
+
+/// `GET /v1/workstation/requests/{id}` : la demande et les actions de son job, les plus anciennes d'abord.
+public struct WorkstationRequestDetail: Decodable, Equatable, Sendable {
+    public var request: WorkstationRequest
+    public var actions: [WorkstationAction]
+
+    private enum CodingKeys: String, CodingKey { case request, actions }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        request = try container.decode(WorkstationRequest.self, forKey: .request)
+        actions = try container.list([WorkstationAction].self, .actions)
+    }
+}
+
+/// Une automatisation : une tâche répétitive du profil gardée comme consigne, lancée à la demande ou planifiée.
+public struct WorkstationAutomation: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var createdAt: Double
+    public var by: String?
+    public var title: String
+    public var frequency: String
+    public var steps: [String]
+    public var profileVersion: Int?
+    /// Le navigateur de ses demandes ; `nil` : le navigateur par défaut.
+    public var browserId: String?
+    /// Son expression cron, si elle est planifiée.
+    public var schedule: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
+        by = try container.decodeIfPresent(String.self, forKey: .by)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        frequency = try container.decodeIfPresent(String.self, forKey: .frequency) ?? ""
+        steps = try container.list([String].self, .steps)
+        profileVersion = try container.decodeIfPresent(Int.self, forKey: .profileVersion)
+        browserId = try container.decodeIfPresent(String.self, forKey: .browserId)
+        schedule = try container.decodeIfPresent(String.self, forKey: .schedule)
+    }
+}
+
+/// `GET /v1/workstation/automations`.
+public struct WorkstationAutomationList: Decodable, Equatable, Sendable {
+    public var automations: [WorkstationAutomation]
+
+    private enum CodingKeys: String, CodingKey { case automations }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        automations = try container.list([WorkstationAutomation].self, .automations)
     }
 }

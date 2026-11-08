@@ -7,7 +7,7 @@
 //
 // Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`,
 // `pilote`, `fix`, `contradicteur`, `reve`, et les jobs du poste `poste-profil`, `poste-digest`,
-// `poste-service`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
+// `poste-service`, `poste-demande`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "parallel": [{ "tool", "args" }, …] }     appelle ces outils hôtes ensemble (un tour à plusieurs outils)
@@ -65,7 +65,7 @@ function stepOf(message: string): string | null {
   const first = message.split("\n")[0] ?? "";
   if (first.startsWith("# /impl --fix")) return "fix";
   const match =
-    /^# \/(req|specs|impl|review|audit|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service)\b/.exec(
+    /^# \/(req|specs|impl|review|audit|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande)\b/.exec(
       first,
     );
   return match ? (match[1] as string) : null;

@@ -665,7 +665,7 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service";
+export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -799,6 +799,25 @@ const WORKSTATION_PROFILE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_REQUEST_REPORT_TOOL: HostToolDefinition = {
+  name: "workstation_request_report",
+  label: "Poste — compte rendu de la demande",
+  description:
+    "Rend le compte rendu de la demande de l'humain, une fois, quand elle est faite ou impossible : ce qui a été fait, ce qui reste ou a bloqué (un envoi en attente d'approbation, un geste irréversible refusé).",
+  parameters: {
+    type: "object",
+    properties: {
+      report: {
+        type: "string",
+        description: "Le compte rendu pour l'humain, en français : ce qui a été fait, ce qui reste ou a bloqué.",
+      },
+    },
+    required: ["report"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   name: "workstation_meeting_digest",
   label: "Poste — digest de meeting",
@@ -844,6 +863,8 @@ export function hostToolsFor(
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
+  if (step === "poste-demande")
+    return [PROGRESS_TOOL, WORKSTATION_ACT_TOOL, WORKSTATION_DECISION_TOOL, WORKSTATION_REQUEST_REPORT_TOOL];
   if (step === "poste-service")
     return [
       PROGRESS_TOOL,

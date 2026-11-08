@@ -108,6 +108,8 @@ type WorkstationStatus = {
   nextShiftAt: number | null;
   /** L'arrêt d'urgence en cours (absent d'un harness plus ancien). */
   stopped?: { at: number; by: string } | null;
+  /** Les navigateurs (profils Chrome) appairés (absents d'un harness plus ancien). */
+  browsers?: { id: string; label: string | null; online: boolean; isDefault: boolean }[];
 };
 
 type ProfileStats = {
@@ -151,7 +153,13 @@ type Segment = { at: number; speaker: "moi" | "autres"; text: string };
 type ActivityParams = { sinceMin?: number; limit?: number };
 type MeetingsParams = { id?: string };
 type JournalParams = { state?: string; limit?: number };
-type ActParams = { kind: string; params?: Record<string, unknown>; rationale: string; waitSec?: number };
+type ActParams = {
+  kind: string;
+  params?: Record<string, unknown>;
+  rationale: string;
+  waitSec?: number;
+  browserId?: string;
+};
 
 /**
  * L'accord que l'hôte demande pour `workstation_act`, selon le kind : lecture pour ce
@@ -256,6 +264,10 @@ export function renderStatus(status: WorkstationStatus): string {
     `- profil mis à jour : ${status.profileUpdatedAt === null ? "jamais" : iso(status.profileUpdatedAt)}`,
     `- dernier service de l'agent : ${status.lastShift === null ? "aucun" : `${iso(status.lastShift.at)} — ${status.lastShift.outcome} (${status.lastShift.actions} action(s))`}`,
     `- prochain service : ${iso(status.nextShiftAt)}`,
+    ...(status.browsers ?? []).map(
+      (browser) =>
+        `- navigateur ${browser.label ?? browser.id} (browserId ${browser.id})${browser.isDefault ? ", par défaut" : ""} : ${browser.online ? "en ligne" : "hors ligne"}`,
+    ),
     ...(status.stopped
       ? [
           `- ARRÊT D'URGENCE par ${status.stopped.by} le ${iso(status.stopped.at)} : rien ne part jusqu'à la reprise par l'utilisateur dans OMP Console. Ne réessaie pas.`,
@@ -685,6 +697,12 @@ export function registerWorkstationTools(pi: ExtensionAPI, deps: Pick<ToolDeps, 
       kind: z.enum(ACTION_KINDS).describe("Le geste"),
       params: z.record(z.string(), z.unknown()).describe("Les paramètres du geste (voir la description), {} si aucun"),
       rationale: z.string().describe("Pourquoi ce geste : la décision journalisée, jamais vide"),
+      browserId: z
+        .string()
+        .optional()
+        .describe(
+          "Le navigateur (profil Chrome) qui l'exécute, vu dans workstation_status ; absent : celui par défaut",
+        ),
       waitSec: z
         .number()
         .int()
@@ -714,7 +732,12 @@ export function registerWorkstationTools(pi: ExtensionAPI, deps: Pick<ToolDeps, 
           target,
           "POST",
           "/v1/workstation/actions",
-          { kind: params.kind, params: actionParams, rationale: params.rationale },
+          {
+            kind: params.kind,
+            params: actionParams,
+            rationale: params.rationale,
+            ...(typeof params.browserId === "string" && params.browserId !== "" ? { browserId: params.browserId } : {}),
+          },
           { fetcher },
         );
         let image: string | undefined;

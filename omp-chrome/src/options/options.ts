@@ -7,7 +7,7 @@ import type { PopupStatus } from "../lib/messages.ts";
 import { decodePairing } from "../lib/pairing.ts";
 import { checkStt, validateSttUrl } from "../lib/stt.ts";
 import { parseExcludedSites } from "../lib/url.ts";
-import { ask, loadSettings, saveSettings } from "../store.ts";
+import { ask, browserId, loadSettings, saveSettings } from "../store.ts";
 
 const pairingCode = element("pairing-code", HTMLTextAreaElement);
 const pairingCurrent = element("pairing-current", HTMLParagraphElement);
@@ -15,6 +15,7 @@ const sttUrl = element("stt-url", HTMLInputElement);
 const sttKey = element("stt-key", HTMLInputElement);
 const sttModel = element("stt-model", HTMLInputElement);
 const excluded = element("excluded", HTMLTextAreaElement);
+const browserLabel = element("browser-label", HTMLInputElement);
 
 function say(id: string, text: string, kind: "error" | "success" | "" = ""): void {
   const target = element(id, HTMLParagraphElement);
@@ -66,6 +67,8 @@ async function renderSettings(): Promise<void> {
   sttKey.value = settings.stt.key;
   sttModel.value = settings.stt.model;
   excluded.value = settings.excluded.join("\n");
+  browserLabel.value = settings.browserLabel;
+  element("browser-id", HTMLParagraphElement).textContent = `Identifiant : ${await browserId()}`;
 }
 
 async function changed(): Promise<void> {
@@ -163,6 +166,20 @@ element("excluded-save", HTMLButtonElement).addEventListener("click", () => {
   void (async () => {
     await saveSettings({ excluded: sites });
     say("excluded-message", sites.length === 0 ? "Aucun site exclu." : `${sites.length} site(s) exclu(s).`, "success");
+    await changed();
+  })();
+});
+
+element("browser-save", HTMLButtonElement).addEventListener("click", () => {
+  const label = browserLabel.value.trim().slice(0, 60);
+  void (async () => {
+    await saveSettings({ browserLabel: label });
+    say(
+      "browser-message",
+      label === "" ? "Sans libellé : le serveur montre l'identifiant." : `Libellé : ${label}.`,
+      "success",
+    );
+    // Le long-poll repart avec le nouveau libellé : le serveur le montre dès son prochain appel.
     await changed();
   })();
 });

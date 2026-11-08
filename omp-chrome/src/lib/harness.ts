@@ -2,8 +2,15 @@
 // du code d'appairage. Une réponse non 2xx lève `HarnessError`, qui porte le statut et
 // le message d'erreur français du serveur (`{ error }`) ; un serveur injoignable a le
 // statut 0.
+//
+// Chaque appel présente ce navigateur (`X-OMP-Browser`, `X-OMP-Browser-Label`) quand la
+// cible le porte : le serveur distingue les profils Chrome appairés (« Perso », « ADEO »…)
+// et ne livre à chacun que les actions qui le ciblent.
 
-export type HarnessTarget = { url: string; token: string };
+/** L'identité de ce navigateur : un identifiant stable et le libellé réglé dans les options. */
+export type BrowserIdentity = { id: string; label: string };
+
+export type HarnessTarget = { url: string; token: string; browser?: BrowserIdentity };
 
 export class HarnessError extends Error {
   readonly status: number;
@@ -29,6 +36,11 @@ export async function harnessCall<T>(
 ): Promise<T | null> {
   const fetcher = options.fetcher ?? fetch;
   const headers: Record<string, string> = { Authorization: `Bearer ${target.token}`, ...options.headers };
+  if (target.browser) {
+    headers["X-OMP-Browser"] = target.browser.id;
+    if (target.browser.label.trim() !== "")
+      headers["X-OMP-Browser-Label"] = encodeURIComponent(target.browser.label.trim());
+  }
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let response: Response;
   try {

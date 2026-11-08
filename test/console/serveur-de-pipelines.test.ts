@@ -9,7 +9,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { APPROVER_ONLY, apiRoutes, createHandler } from "../../omp-harness/http.ts";
+import { API_FEATURES, APPROVER_ONLY, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -462,4 +462,58 @@ test("serveur-de-pipelines/AC-8 : le client Swift reconnaît le refus APPROVER_O
   );
   assert.ok(writer.length > 0, "writeShared introuvable");
   assert.doesNotMatch(writer, /approverToken|appToken/, "~/.omp ne reçoit que le jeton ordinaire");
+});
+
+test("serveur-de-pipelines/AC-29 : chaque champ des demandes et automatisations décodé par le client Swift existe dans le JSON RÉEL du serveur", async () => {
+  const token = "t".repeat(64);
+  const world = fakeWorld({});
+  const ws = world.orchestrator.workstation;
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const get = async (route: string) => {
+      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      assert.equal(response.status, 200, route);
+      return object(await response.json(), route);
+    };
+    await ws.next(0, new AbortController().signal);
+    const { version } = world.store.addWorkstationProfile({
+      summary: "s",
+      habits: [],
+      tools: [],
+      schedule: "",
+      repetitiveTasks: [{ title: "Relancer", frequency: "lundi", steps: ["a"], automatable: true }],
+      clientNeeds: [],
+      preferences: [],
+    });
+    ws.createAutomation({ version, task: 0 }, { by: "test" });
+    const request = ws.createRequest({ instruction: "Ouvre la page des factures" }, { by: "test" });
+    ws.startRequest(request.id);
+    ws.createAction({ kind: "tabs", params: {}, rationale: "voir" }, "agent", "agent", request.id);
+
+    const wire = fs.readFileSync(path.join(CLIENT, "WorkstationWire.swift"), "utf8");
+    const listed = firstOf((await get("/v1/workstation/requests")).requests, "requests");
+    covers(listed, swiftFields(wire, "WorkstationRequest"), "WorkstationRequest (liste)");
+    const detail = await get(`/v1/workstation/requests/${request.id}`);
+    covers(object(detail.request, "request"), swiftFields(wire, "WorkstationRequest"), "WorkstationRequest");
+    const action = firstOf(detail.actions, "actions");
+    assert.equal(action.requestId, request.id);
+    covers(action, swiftFields(wire, "WorkstationAction"), "WorkstationAction");
+    const automation = firstOf((await get("/v1/workstation/automations")).automations, "automations");
+    covers(automation, swiftFields(wire, "WorkstationAutomation"), "WorkstationAutomation");
+    const states = [
+      ...wire
+        .slice(wire.indexOf("enum WorkstationRequestState"), wire.indexOf("public struct WorkstationRequest:"))
+        .matchAll(/case (\w+)$/gm),
+    ].map(([, name]) => name);
+    assert.deepEqual(states, ["queued", "running", "done", "failed", "cancelled"]);
+    assert.ok((API_FEATURES as readonly string[]).includes("workstation-requests"));
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await world.orchestrator.stop();
+  }
 });

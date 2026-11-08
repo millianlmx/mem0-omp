@@ -44,9 +44,9 @@ import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
-import type { SessionJob, Workstation } from "./workstation.ts";
+import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
-import { MAX_WAIT_SEC, SESSION_JOBS, parseActionInput } from "./workstation.ts";
+import { MAX_WAIT_SEC, SESSION_JOBS, parseActionInput, parseBrowserHello, parseRequestStates } from "./workstation.ts";
 
 export const API_VERSION = 1;
 
@@ -76,6 +76,8 @@ export const API_FEATURES = [
   "metrics",
   "push-activities",
   "workstation",
+  "workstation-requests",
+  "workstation-browsers",
   "workstation-stop",
   "workstation-session",
   "workstation-captures",
@@ -342,6 +344,13 @@ export function apiRoutes(
     if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
     return workstation;
   };
+  /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
+  const helloOf = (call: Call): BrowserHello =>
+    parseBrowserHello(
+      call.req.headers["x-omp-browser"],
+      call.req.headers["x-omp-browser-label"],
+      call.req.headers["x-omp-extension"],
+    );
   /** `?wait=` : les secondes d'un long-poll, bornées à 30 ; absent ou illisible : aucune attente. */
   const waitOf = (url: URL): number => {
     const wait = Number(url.searchParams.get("wait"));
@@ -642,7 +651,7 @@ export function apiRoutes(
     }),
     route("POST", "/v1/workstation/observations", "operator", async (call) => {
       const workstation = workstationOf(call);
-      send(call.res, 200, { stored: workstation.recordObservations(await readBody(call.req)) });
+      send(call.res, 200, { stored: workstation.recordObservations(await readBody(call.req), helloOf(call)) });
     }),
     route("GET", "/v1/workstation/observations", "viewer", (call) => {
       const workstation = workstationOf(call);
@@ -657,13 +666,13 @@ export function apiRoutes(
     // Le long-poll de l'extension : 200 `{ action }` (passée `running`), ou 204 après l'attente.
     route("GET", "/v1/workstation/next", "operator", async (call) => {
       const workstation = workstationOf(call);
+      const hello = helloOf(call);
       const signal = departure(call.res);
-      const version = call.req.headers["x-omp-extension"];
       const agentTabs = call.req.headers["x-omp-agent-tabs"];
       const action = await workstation.next(
         waitOf(call.url),
         signal,
-        typeof version === "string" ? version : null,
+        hello,
         typeof agentTabs === "string" ? agentTabs : undefined,
       );
       if (action) send(call.res, 200, { action });
@@ -700,7 +709,9 @@ export function apiRoutes(
     }),
     route("POST", "/v1/workstation/actions/{n}/result", "operator", async (call) => {
       const workstation = workstationOf(call);
-      send(call.res, 200, { action: workstation.submitResult(Number(call.match[1]), await readBody(call.req)) });
+      send(call.res, 200, {
+        action: workstation.submitResult(Number(call.match[1]), await readBody(call.req), helloOf(call)),
+      });
     }),
     route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) =>
       send(call.res, 200, workstationOf(call).capture(Number(call.match[1]))),
@@ -745,14 +756,16 @@ export function apiRoutes(
     }),
     route("POST", "/v1/workstation/meetings", "operator", async (call) => {
       const workstation = workstationOf(call);
-      send(call.res, 201, { meeting: workstation.createMeeting(await readBody(call.req)) });
+      send(call.res, 201, { meeting: workstation.createMeeting(await readBody(call.req), helloOf(call)) });
     }),
     route("POST", "/v1/workstation/meetings/{id}/segments", "operator", async (call) => {
       const workstation = workstationOf(call);
-      send(call.res, 200, { stored: workstation.addSegments(call.match[1] as string, await readBody(call.req)) });
+      send(call.res, 200, {
+        stored: workstation.addSegments(call.match[1] as string, await readBody(call.req), helloOf(call)),
+      });
     }),
     route("POST", "/v1/workstation/meetings/{id}/end", "operator", (call) => {
-      const meeting = workstationOf(call).endMeeting(call.match[1] as string);
+      const meeting = workstationOf(call).endMeeting(call.match[1] as string, helloOf(call));
       void orchestrator.tick();
       send(call.res, 200, { meeting });
     }),
@@ -761,6 +774,43 @@ export function apiRoutes(
     ),
     route("GET", "/v1/workstation/meetings/{id}", "viewer", (call) =>
       send(call.res, 200, workstationOf(call).meetingView(call.match[1] as string)),
+    ),
+    // Les demandes de l'humain au poste (une consigne exécutée par le job `poste-demande`, sans
+    // run ni pipeline) et les automatisations : lectures au propriétaire, gestes à l'approbateur.
+    route("POST", "/v1/workstation/requests", "operator", async (call) => {
+      const workstation = approverOf(call);
+      const request = workstation.createRequest(await readBody(call.req), call.actor);
+      send(call.res, 201, { request });
+      void orchestrator.tick();
+    }),
+    route("GET", "/v1/workstation/requests", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      const states = parseRequestStates(call.url.searchParams.get("state"));
+      send(call.res, 200, { requests: workstation.listRequests({ states, limit: limitOf(call.url, 50, 200) }) });
+    }),
+    route("GET", "/v1/workstation/requests/{id}", "viewer", (call) =>
+      send(call.res, 200, workstationOf(call).requestView(call.match[1] as string)),
+    ),
+    route("POST", "/v1/workstation/requests/{id}/cancel", "operator", (call) => {
+      const request = approverOf(call).cancelRequest(call.match[1] as string, call.actor);
+      send(call.res, 200, { request });
+      void orchestrator.tick();
+    }),
+    route("GET", "/v1/workstation/automations", "viewer", (call) =>
+      send(call.res, 200, { automations: workstationOf(call).listAutomations() }),
+    ),
+    route("POST", "/v1/workstation/automations", "operator", async (call) => {
+      const workstation = approverOf(call);
+      const { automation, created } = workstation.createAutomation(await readBody(call.req), call.actor);
+      send(call.res, created ? 201 : 200, { automation });
+    }),
+    route("POST", "/v1/workstation/automations/{id}/launch", "operator", (call) => {
+      const request = approverOf(call).runAutomation(call.match[1] as string, call.actor);
+      send(call.res, 201, { request });
+      void orchestrator.tick();
+    }),
+    route("DELETE", "/v1/workstation/automations/{id}", "operator", (call) =>
+      send(call.res, 200, { removed: approverOf(call).deleteAutomation(call.match[1] as string) }),
     ),
     // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
     route("GET", "/v1/clients", "admin", (call) => send(call.res, 200, { clients: clients.list() })),

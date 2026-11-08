@@ -35,6 +35,19 @@
     </section>
 
     <section>
+      <h2>Ce navigateur</h2>
+      <p class="muted">
+        Le nom de ce profil Chrome pour le serveur et OMP Console (« Perso », « ADEO »…) : chaque navigateur appairé
+        ne reçoit que les actions qui le ciblent.
+      </p>
+      <label for="browser-label">Libellé</label>
+      <input type="text" id="browser-label" maxlength="60" spellcheck="false" />
+      <p class="muted" id="browser-id"></p>
+      <button type="button" id="browser-save">Enregistrer</button>
+      <p class="message" id="browser-message" role="status"></p>
+    </section>
+
+    <section>
       <h2>Transcription locale (oMLX)</h2>
       <p class="muted">
         L'audio des meetings est transcrit sur ce Mac par oMLX ; il n'est jamais enregistré ni envoyé ailleurs,

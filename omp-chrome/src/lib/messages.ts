@@ -18,6 +18,8 @@ export type Settings = {
    * actions, ni exécution. La pause du serveur est `paused` du statut.
    */
   observationPaused: boolean;
+  /** Le libellé de ce navigateur pour le serveur et les apps (« Perso », « ADEO »…) ; vide : son identifiant. */
+  browserLabel: string;
 };
 
 export type LinkState = {
