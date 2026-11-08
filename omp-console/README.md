@@ -1,30 +1,48 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : **une seule fenêtre**, une barre latérale à treize sections en trois
-groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Audit**,
-**Statistiques**, **Poste**), **Consultation** (**Terminal**, **Fichiers**,
-**Mémoire**) et **Exploitation** (**Vigie**, **Planifications**, **Issues**,
-**Administration**, cette dernière pour un jeton admin seulement), raccourcis
-⌘1…⌘9 puis ⌘0 pour la Vigie — et un panneau de détail. Rien n'ouvre de fenêtre annexe :
-l'app est utilisable entièrement en plein écran. Les fenêtres ne se regroupent pas
-en onglets : Présentation et Fenêtre n'ont aucune entrée d'onglet, et aucun menu
-ne montre de séparateur en tête, en fin ou en double.
+contrôle : **une seule fenêtre**, une barre latérale à **sept sections** en trois
+groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 
-Les six sections de **Pilotage** lisent et lancent le travail sur le **serveur de
+| Groupe | Section | Ce qu'elle montre |
+|---|---|---|
+| Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
+| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
+| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
+| Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
+| Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
+
+Créer passe toujours par une **feuille** (« + », ⌘N) : jamais un formulaire en tête
+d'écran. Rien n'ouvre de fenêtre annexe : l'app est utilisable entièrement en plein
+écran. Les fenêtres ne se regroupent pas en onglets : Présentation et Fenêtre n'ont
+aucune entrée d'onglet, et aucun menu ne montre de séparateur en tête, en fin ou en
+double.
+
+Le Travail et le Système lisent et lancent le travail sur le **serveur de
 pipelines du VPS** (`omp-harness`, le seul moteur de pipelines, voir « Serveur de
-pipelines ») : l'app n'exécute aucune pipeline elle-même. **Poste** y montre le
-poste de travail (extension Chrome et agent 24/24, voir « Poste de travail »).
-Les trois sections de
-**Consultation** restent locales au Mac : **Terminal** le terminal intégré (voir
-« Section Terminal »), **Fichiers** la visionneuse de fichiers et de diffs (voir
-« Lire les fichiers et les diffs d'une cible ») et **Mémoire** la mémoire du
-projet (voir « Consulter et corriger la mémoire du projet »). Liquid Glass est
+pipelines ») : l'app n'exécute aucune pipeline elle-même. Les Outils restent
+locaux : **Terminal** (voir « Section Terminal »), **Fichiers** (voir « Lire les
+fichiers et les diffs d'une cible ») et **Mémoire** (voir « Consulter et corriger
+la mémoire du projet »). Liquid Glass est
 réservé à la couche fonctionnelle que le système dessine (barre latérale, barres
 d'outils, feuilles) ; le contenu emploie des surfaces opaques et les boutons
 standard `.bordered`/`.borderedProminent` (HIG Materials : « Don't use Liquid
 Glass in the content layer »).
 Cible minimale : macOS 26.
+
+**Pourquoi cette organisation.** L'audit du 2026-11-08 avait trouvé une app qu'on
+fuyait pour le terminal : 13 sections à plat ; un Accueil qui empilait tuiles
+d'indicateurs et graphiques avant les décisions à prendre ; aucune page pour une
+feature (seule une feuille modale de session) ; sur iOS, toucher une ligne de
+feature ne faisait rien ; un formulaire de création en tête de chaque section ; les
+mêmes boutons « Actualiser » et « Serveur » répétés dans chaque barre d'outils ; un
+Poste en quatorze sections ; un bandeau « ne répond pas » affiché à tort après une
+simple annulation. D'où les principes : **ce qui m'attend d'abord** (une seule file
+triée, rien de vide affiché) ; **une feature = une page** ; **une ligne dense par
+feature** (point d'état, titre, `dépôt · étape · durée`) ; **créer = une feuille**,
+ouverte par un seul « + » ; **le rare va dans Système** ; **aucun graphique sur la
+file** À traiter, une seule ligne de pouls (les graphiques vivent dans Système ›
+Statistiques et santé).
 
 - [Prérequis](#prérequis)
 - [Premiers pas](#premiers-pas)
@@ -66,10 +84,11 @@ Cible minimale : macOS 26.
   honoré (sinon `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`).
   `xcodebuild` ne sert pas à construire : contre `Package.swift`, il construit le
   produit exécutable comme un « tool », sans extraire aucune métadonnée App Intents.
-- **Le serveur de pipelines du VPS** pour les sections de Pilotage : son adresse
-  code d'appairage (`harness.sh pair`), ou son adresse https et son jeton, se
-  collent dans la feuille « Serveur » (voir « Serveur de pipelines »). Sans serveur relié, ces sections le disent et proposent « Relier le
-  serveur… » ; Terminal, Fichiers et Mémoire n'en ont pas besoin.
+- **Le serveur de pipelines du VPS** pour À traiter, Features, Poste et Système :
+  son code d'appairage (`harness.sh pair`), ou son adresse https et son jeton, se
+  collent dans la feuille « Serveur » (voir « Serveur de pipelines »). Sans serveur
+  relié, ces sections le disent et proposent « Relier le serveur… » ; Terminal,
+  Fichiers et Mémoire n'en ont pas besoin.
 - **Rien d'autre à installer** : ni `omp`, ni Docker, ni podman, ni conteneur —
   l'app installe son `omp` et démarre son service mémoire au premier lancement
   (voir « Composants de l'app » et « Service mémoire »). Restent hors périmètre,
@@ -120,15 +139,19 @@ Tout se fait depuis l'app, sans terminal :
 
    À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
    dépend d'un `omp` système.
-2. **Relier le serveur de pipelines** — sans serveur relié, l'Accueil, Pipelines,
-   Projet, Audit, Statistiques et Poste montrent « Aucun serveur relié… » et le bouton
-   « Relier le serveur… » (`server.configure`), qui ouvre la feuille « Serveur » :
-   l'adresse du serveur et son jeton d'accès (voir « Serveur de pipelines »).
-3. **Piloter** — Pipelines lance une feature, Projet un projet, Audit un audit ;
-   l'Accueil résume la boîte de l'humain et y répond (envois du poste de travail à
-   approuver, questions à trancher, specs et verdicts à valider, décisions à
-   relire, audits à trier). Le serveur conduit seul chaque feature de /req au
-   merge ; l'app ne lance aucun process `omp` pour une pipeline.
+2. **Relier le serveur de pipelines** — sans serveur relié, À traiter, Features,
+   Poste et Système montrent « Aucun serveur relié… » et le bouton « Relier le
+   serveur… » (`server.configure`), qui ouvre la feuille « Serveur » : l'adresse du
+   serveur et son jeton d'accès (voir « Serveur de pipelines »). La même feuille
+   s'ouvre par la ligne de connexion au pied de la barre latérale (`server.open`)
+   et par Système › Serveur.
+3. **Piloter** — **À traiter** est la file unique de ce qui vous attend (envois du
+   poste à approuver, questions à trancher, specs et verdicts à valider, décisions
+   à relire, audits à trier) ; **Features** liste les features groupées (À vous,
+   En cours, En file, Terminées) et ouvre la page de chacune. Le « + » lance une
+   feature, un projet ou un audit, toujours dans une feuille. Le serveur conduit
+   seul chaque feature de /req au merge ; l'app ne lance aucun process `omp` pour
+   une pipeline.
 
 **La mémoire survit à ⌘Q** : le service mémoire est un agent launchd
 (`com.omp.console.mem0-rs`), pas un process de l'app — le Quitter de l'app ne le
@@ -145,17 +168,34 @@ ensuite : `PUBLISHING.md` § « Mettre à jour », à la racine du dépôt.
 
 | Section | Barre d'outils |
 |---|---|
-| Accueil, Pipelines, Projet, Audit, Statistiques, Poste | « Actualiser » (`server.refresh`, ⌘R : relit la boîte et, hors Accueil et Poste, le catalogue du serveur ; sur l'Accueil et le Poste, relit aussi le poste de travail ; inactif sans serveur relié ou pendant une lecture), puis « Serveur » (`server.open`) : la feuille du serveur de pipelines |
+| À traiter | « + » (`inbox.new`) : la feuille « Nouvelle feature » |
+| Features | le sélecteur de portée (`runs.scope` : Features, Projets, Audits, Issues), le menu de filtres (`runs.filters` : dépôt, projet, ordre), la recherche, puis « + » (`runs.new` : Nouvelle feature, Nouveau projet ou Nouvel audit, action principale selon la portée) ; sur la page d'une feature, le menu « … » de ses gestes (`run.actions`) |
+| Système › Planifications | « + » (`schedules.new`) : la feuille « Nouvelle planification » |
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer OMP » (`terminal.launchOmp`) — trois groupes séparés |
 
-Identifiants des sections de Pilotage : `home.harness`, `pipelines.harness`,
-`project.harness`, `audit.harness`, `stats.harness`, `workstation.harness` (le
-formulaire de chaque section), `server.failure` (l'échec du dernier échange, en tête), `server.configure`
-(sans serveur relié) ; champs de lancement `pipelines.launch.title`,
-`pipelines.launch.request`, `pipelines.launch.commit`, `project.launch.title`,
-`project.launch.commit`, `audit.launch.focus`, `audit.launch.commit` ; feuille
-« Serveur » `server.sheet` (`server.address`, `server.secret`, `server.save`,
-`server.forget`). Feuille « Préparation d'OMP Console » `sheet.setup`
+Aucune section ne porte de bouton « Actualiser » ni « Serveur » : Présentation ▸
+Actualiser (⌘R) relit la section du serveur affichée (inactif sans serveur relié ou
+pendant une lecture), et la feuille du serveur s'ouvre par la ligne de connexion au
+pied de la barre latérale (`server.open`) ou par Système › Serveur.
+
+Identifiants des écrans du serveur : `inbox.harness`, `runs.harness`,
+`workstation.harness`, `system.harness`, et pour les pages de Système
+`vigie.harness`, `schedules.harness`, `stats.harness`, `admin.harness` (le
+formulaire de chaque écran) ; `server.failure` (l'échec du dernier échange, en
+tête), `server.configure` (sans serveur relié). À traiter : `inbox.pulse` (ligne de
+pouls), `inbox.allClear` et `inbox.allClear.launch` (file vide), `inbox.openRun`
+(« Ouvrir la feature »), `inbox.audit.open`, `home.acceptRecommended`. Features :
+`runs.row` (une ligne), `runs.more`, `projects.row` ; page d'une feature `run.page`,
+`run.header`, `run.steps`, `run.request`, `run.tabs`, `run.actions`, consigne
+`run.instructions.text` et `run.instructions.send`. Feuille « Nouvelle feature »
+`pipelines.launch.title`, `pipelines.launch.request`, `pipelines.launch.priority`,
+`pipelines.launch.lane`, `pipelines.launch.modules`, `pipelines.launch.req`,
+`pipelines.launch.budget`, `pipelines.launch.commit` ; « Nouveau projet »
+`project.launch.title`, `project.launch.commit` ; « Nouvel audit »
+`audit.launch.focus`, `audit.launch.commit`. Rangées de Système
+`system.<vigie|schedules|stats|admin>` et `system.server` ; feuille « Serveur »
+`server.sheet` (`server.address`, `server.secret`, `server.save`, `server.forget`,
+`server.providers`). Feuille « Préparation d'OMP Console » `sheet.setup`
 (`sheet.setup.install`, `sheet.setup.retry`, `sheet.setup.switchAnyway`,
 `sheet.setup.quit`, `sheet.setup.close`, `sheet.setup.ompMissing`,
 `sheet.setup.retryMissed`, lignes
@@ -186,15 +226,18 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
   `MemoryAccess`) et le trousseau. Les deux apps sont indépendantes : aucune ne parle
   à l'autre. Dépendance unique : `ConsoleCore` ; ni AppKit ni UIKit.
 - **ConsoleUI** — la **cible partagée macOS/iOS des écrans écrits une seule fois** :
-  la boîte de l'humain (`InboxSections`, questions situées, gestes et confirmations
-  `harnessGestures`), le Poste (`WorkstationSections`), l'historique des features
-  (`RunsHistorySections` sur iOS ; `RunsHistoryPanel` sur le Mac : tableau triable et
-  kanban par état, priorité au glisser-déposer), le lancement avec options
-  (`LaunchFeatureSections`, ⌘N), le menu de priorité, la palette ⌘K et la recherche
-  globale ⌘F (`consolePalette`), la carte « Services » et le rapport du matin
-  (`ServicesSection`, `DigestSection`) et la feuille d'un souvenir
-  (`MemoryEditSheet`). SwiftUI et Charts seulement ; ce qui diffère (rendu Markdown,
-  direct d'une session, Live Activity) est fourni par chaque app (`consoleShell`).
+  la file À traiter (`InboxFeed`, `PulseLine`, questions situées, gestes et
+  confirmations `harnessGestures`), la liste groupée des features
+  (`RunsListSections`, `RunListRow`) et la page d'une feature (`RunDetailHeader`,
+  `RunStepTracker`, `RunPendingCard`, `RunActionsMenu`), les portées Projets, Audits
+  et Issues (`ScopeSections`), le Poste (`WorkstationSections` et ses pages
+  `WorkstationPage`), le hub Système (`SystemHubSections`), les feuilles de création
+  (Nouvelle feature ⌘N, Nouveau projet, Nouvel audit, Nouvelle planification), le
+  menu de priorité, la palette ⌘K et la recherche globale ⌘F (`consolePalette`), la
+  carte « Services » et le rapport du matin (`ServicesSection`, `DigestSection`) et
+  la feuille d'un souvenir (`MemoryEditSheet`). SwiftUI et Charts seulement ; ce qui
+  diffère (rendu Markdown, direct d'une session, Live Activity) est fourni par chaque
+  app (`consoleShell`).
   Dépend de `ConsoleCore` et de `ConsoleClient` ; tout réseau passe par
   `ConsoleClient`.
 - **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
@@ -255,17 +298,18 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
 
 ## Serveur de pipelines
 
-Les six sections de **Pilotage** — Accueil, Pipelines, Projet, Audit, Statistiques
-et Poste — sont servies par le serveur de pipelines du VPS (`omp-harness`, voir
-`omp-harness/README.md`), sur le Mac (`Sources/OMPConsole/Server/`) comme sur
-l'iPhone et l'iPad (`ios/OMPConsoleIOS/IOSHarnessScreens.swift`,
-`ios/OMPConsoleIOS/IOSWorkstationScreen.swift`). C'est le seul
-moteur de pipelines : l'app lit son état et lui envoie des gestes, sans jamais
-exécuter une étape elle-même.
+**À traiter**, **Features**, **Poste** et **Système** sont servis par le serveur de
+pipelines du VPS (`omp-harness`, voir `omp-harness/README.md`), sur le Mac
+(`Sources/OMPConsole/Server/`) comme sur l'iPhone et l'iPad
+(`ios/OMPConsoleIOS/IOSHarnessScreens.swift`, `ios/OMPConsoleIOS/IOSRunScreen.swift`,
+`ios/OMPConsoleIOS/IOSWorkstationScreen.swift`). C'est le seul moteur de pipelines :
+l'app lit son état et lui envoie des gestes, sans jamais exécuter une étape
+elle-même.
 
 - **Connexion directe.** L'app joint le serveur en https (Tailscale ou un reverse
-  proxy TLS), sans passer par le Mac sur iOS. La feuille « Serveur » (bouton
-  « Serveur » de la barre d'outils, `Sources/OMPConsole/Server/ServerSheet.swift`
+  proxy TLS), sans passer par le Mac sur iOS. La feuille « Serveur » (ligne de
+  connexion au pied de la barre latérale du Mac, ou Système › Serveur ;
+  `Sources/OMPConsole/Server/ServerSheet.swift`
   et `ios/OMPConsoleIOS/IOSServerSheet.swift`) demande deux choses : l'adresse,
   gardée dans les préférences (`harness.address`), et le jeton du serveur
   (`/var/lib/omp-harness/state/token`), gardé dans le trousseau
@@ -309,32 +353,25 @@ exécuter une étape elle-même.
   `oauth`) et se nomme dans les modèles par niveau (`openai-codex/…`). La section se
   cache face à un serveur qui ne connaît pas les abonnements.
 - **Un seul client.** Un `HarnessModel` et un `HarnessDrafts` pour toute la
-  fenêtre : les six sections partagent la même boîte, le même catalogue et les
-  mêmes brouillons de lancement. Sans serveur relié, chacune montre le même appel à
-  le relier ; l'échec du dernier échange s'affiche en tête de section, avec sa
-  cause puis son remède.
-- **Accueil** — un **tableau de bord** d'abord, pour comprendre d'un coup d'œil ce
-  qui se passe sur tous les projets (`GET /v1/inbox` et `GET /v1/stats`) :
-  - des **tuiles de KPI** : ce qui bloque (à traiter), les décisions à relire, les
-    features en cours, la plus vieille attente, les fusions et le taux de fusion de
-    la semaine, le délai médian, le coût des agents sur 7 jours, les alertes et les
-    audits à trier. Les tuiles « À traiter », « À relire » et « En cours » font
-    défiler l'Accueil jusqu'à leur section de la boîte ;
-  - quatre **graphiques** (Swift Charts), deux par ligne quand la fenêtre le
-    permet : **Ce qui vous attend** (une barre par projet, empilée par sorte),
-    **Débit** (fusionnées et échouées jour par jour sur 14 jours, les lancées en
-    courbe, puis les features en cours par étape), **Coût des agents** (jour par
-    jour, puis par projet sur 7 jours) et **Santé** (la part d'échecs par étape,
-    l'occupation des agents et des jobs de tests, les tests instables). Face à un
-    serveur sans séries, les blocs le disent au lieu d'échouer.
-
-  Puis la boîte de l'humain, en sections. Chaque question est **située** avant
-  d'être posée, parce qu'elle se lit au milieu de plusieurs projets : le fil
-  dépôt › feature › étape qui l'a posée, la demande d'origine (repliée, avec les
-  modules touchés), la situation décrite par l'agent (`context`), puis chaque
-  option avec ce qu'elle emporte (`impacts`) et la raison de l'agent. Les textes
-  de l'agent, les specs et les verdicts sont rendus en Markdown (titres, listes,
-  code, tableaux), jamais montrés en source :
+  fenêtre : toutes les sections du serveur partagent la même boîte, le même
+  catalogue et les mêmes brouillons. Sans serveur relié, chacune montre le même appel
+  à le relier ; l'échec du dernier échange s'affiche en tête, avec sa cause puis son
+  remède. Une annulation (changement d'écran, relecture remplacée) n'est pas un
+  échec : aucun bandeau « ne répond pas ».
+- **À traiter** — la file unique de ce qui vous attend (`GET /v1/inbox`), sans
+  tuile ni graphique : en tête une seule **ligne de pouls** (`inbox.pulse` : direct
+  ou hors ligne, features en cours, en file, coût sur 7 jours), le bandeau d'une
+  vigie muette s'il y a lieu, puis les envois du poste à approuver, puis chaque
+  élément de la boîte dans sa propre section, la plus vieille attente d'abord, sous
+  un en-tête `genre · dépôt · il y a …`. Rien de vide n'est affiché ; une file vide
+  dit « Rien ne vous attend », avec la ligne de pouls et « Nouvelle feature »
+  (`inbox.allClear`). Le rapport du matin suit la file. Chaque question est
+  **située** avant d'être posée : le fil dépôt › feature › étape qui l'a posée, la
+  demande d'origine (repliée, avec les modules touchés), la situation décrite par
+  l'agent (`context`), puis chaque option avec ce qu'elle emporte (`impacts`) et la
+  raison de l'agent. Les textes de l'agent, les specs et les verdicts sont rendus en
+  Markdown, jamais montrés en source. « Ouvrir la feature » (`inbox.openRun`) mène à
+  sa page. Les genres :
   - **À trancher** : les escalades d'une feature, répondues en un seul geste
     (`POST /v1/runs/{id}/escalations`) ; la feature reprend quand toutes ont leur
     réponse. Chaque réponse part de l'option que l'agent recommande (`recommended`) ;
@@ -355,38 +392,44 @@ exécuter une étape elle-même.
     celles d'une feature (`POST /v1/runs/{id}/decisions/accept`). Une décision
     `auto_timeout` (tranchée par le serveur à l'échéance d'une escalade) est
     marquée « Tranchée à l’échéance » ;
-  - **Features en cours**, chacune avec « Arrêter la feature » (confirmé ; la
-    branche reste, pour inspection). Une feature en file dit sa reprise différée
-    (`notBefore`), une feature en échec sa dernière cause (`lastFailCause`).
-- **Relancer, annuler.** Une feature `failed` ou `awaiting_human` se relance
-  (`POST /v1/runs/{id}/retry`, confirmé : elle repart de son étape) ; une feature
-  `merged` s'annule (`POST /v1/runs/{id}/revert`, confirmé : commit inverse sur la
-  branche principale, feature de suite). Sur le Mac, ce sont les boutons de la
-  rangée ; sur iOS, son menu contextuel. Comme les autres gestes, ils portent la
-  révision lue (`If-Match`).
-- **Pipelines** — « Nouvelle feature » : le dépôt (parmi ceux que le serveur déclare,
-  `GET /v1/status`), un titre et la demande ; « Lancer » (`POST /v1/runs`) confie la
-  feature au serveur, qui la conduit seul — besoins, specs (à valider),
-  implémentation, revue, fusion. Puis « Toutes les features », avec leur état et
-  leur étape.
-- **Projet** — « Nouveau projet » : un nom et ses features (titre et demande,
-  « Ajouter une feature » / « Retirer ») ; « Lancer » (`POST /v1/projects`) : les
-  features dont les modules sont disjoints tournent en parallèle, chacune fusionnée
-  dès sa validation. Puis la liste des projets (`GET /v1/projects`), avec le
-  décompte de leurs features fusionnées.
-- **Audit** — « Nouvel audit » : un périmètre (vide : le dépôt entier) ; « Lancer »
-  (`POST /v1/audits`). Un agent lit la branche principale sans rien modifier, puis
-  propose des faiblesses à corriger et des features. Les propositions se cochent,
-  puis « Lancer la sélection en projet » (`POST /v1/audits/{id}/launch`) ;
-  « Annuler l'audit » (`POST /v1/audits/{id}/cancel`) tant qu'il n'est pas lancé.
-- **Statistiques** — `GET /v1/stats` : features (total, par état, fusionnées sur 7
-  jours, taux de fusion, délai médian jusqu'à la fusion, corrections par fusion),
-  étapes (nombre, échecs, durée médiane), tests (repris du cache, relancés après un
-  manque de mémoire) et capacité du serveur (runners, slots lourds, mémoire libre).
-- **Poste** — le poste de travail (extension Chrome, agent 24/24) : voir « Poste
-  de travail » ci-dessous.
-- **Session en direct.** Sur une feature, « Session en direct » (bouton de la
-  rangée sur le Mac, menu contextuel sur iOS) ouvre une feuille à quatre onglets :
+  - **Alertes** de la veille (agent muet, étape lente, boucle de corrections, budget
+    dépassé) et **audits à trier** (`inbox.audit.open`).
+- **Features** — un sélecteur de portée en tête (`RunsScope`) :
+  - **Features** : une ligne dense par feature (`RunListRow` : point d'état, animé
+    si elle tourne, titre, `dépôt · étape · âge`, coût si connu), groupée « À vous »,
+    « En cours », « En file », « Terminées » (`HarnessRunGroups`), filtrable par
+    dépôt, projet et ordre (`runs.filters`) et par la recherche. Une feature en file
+    dit ce qui la retient, une feature en échec sa dernière cause ; quand des features
+    dues sont retenues, la file d'admission se résume en tête de liste (combien, et la
+    cause dominante, `runs.queue`). Choisir une ligne
+    ouvre sa **page** — à droite de la liste sur le Mac, poussée dans la pile sur
+    iOS ; elle se lie aussi par `ompconsole://runs/<id>` sur le Mac ;
+  - **Projets** (`GET /v1/projects`, avec le décompte des features fusionnées) :
+    choisir un projet filtre les features sur lui ;
+  - **Audits** : un agent lit la branche principale sans rien modifier, puis propose
+    des faiblesses à corriger et des features ; les propositions se cochent, puis
+    « Lancer la sélection en projet » (`POST /v1/audits/{id}/launch`) ; « Annuler
+    l'audit » (`POST /v1/audits/{id}/cancel`) tant qu'il n'est pas lancé ;
+  - **Issues** : les issues ouvertes d'un dépôt et la feature qui les porte,
+    « Corriger » — par le MCP du serveur (`POST /v1/mcp`, outils `issues_list` et
+    `issue_fix`, `HarnessModel.callTool`).
+- **Créer = une feuille.** Le « + » ouvre « Nouvelle feature » (⌘N : le dépôt
+  parmi ceux que le serveur déclare, un titre, la demande et ses options ;
+  `POST /v1/runs`), « Nouveau projet » (un nom et ses features ; `POST /v1/projects` :
+  les features dont les modules sont disjoints tournent en parallèle, chacune
+  fusionnée dès sa validation) ou « Nouvel audit » (un périmètre, vide : le dépôt
+  entier ; `POST /v1/audits`). Aucun formulaire n'est posé en tête d'un écran.
+- **La page d'une feature** (Mac `RunPageView.swift`, iOS `IOSRunScreen.swift`) : un
+  en-tête fixe (`RunDetailHeader` : titre, pastille d'état, `dépôt · créée il y a …`,
+  jalons Besoins → Specs → Implémentation → Revue → Fusion), puis cinq onglets
+  segmentés (`run.tabs`) — **Aperçu** (ce que la feature attend de vous, en place,
+  la demande d'origine repliée, les specs et le verdict lisibles), **Direct**,
+  **Fichiers**, **Tests**, **Frise** — et, en pied, le champ de consigne à l'agent
+  quand elle en accepte une. Elle s'ouvre sur l'Aperçu quand elle vous attend, sur le
+  Direct quand elle tourne, sur l'Aperçu sinon. Tous ses gestes sont dans un seul
+  menu « … » (`run.actions`, le même que le menu contextuel d'une ligne) :
+  consigne, budget, priorité, relancer, arrêter, annuler la fusion, PR, suivre sur
+  l'écran verrouillé (iPhone). Les onglets :
   - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
     paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
     son intention, sa commande, son état, sa durée et la fin de son résultat
@@ -403,11 +446,12 @@ exécuter une étape elle-même.
     et le job de tests du moment, les alertes et le coût s'affichent en tête ;
     « Suivre la fin » garde la dernière entrée à l'écran. La session est écrite en
     base par le serveur : une feature finie se rejoue, « Afficher les entrées
-    précédentes » remonte page par page (`?before=`). La feuille lit
+    précédentes » remonte page par page (`?before=`). La page lit
     `GET /v1/runs/{id}/session` puis suit `GET /v1/events?run={id}&live=1` : chaque
     événement `session` remplace l'entrée de même `seq`. Une coupure est reprise,
     tampon relu ; un refus (serveur trop ancien, feature inconnue) arrête le direct
-    avec sa cause. Le serveur masque les secrets reconnus avant d'envoyer ;
+    avec sa cause. Le direct s'arrête quand on quitte la page. Le serveur masque les
+    secrets reconnus avant d'envoyer ;
   - **Fichiers** : les fichiers touchés (`GET /v1/runs/{id}/changes`, du dossier de
     la feature, sinon de sa version fusionnée), relus quand un outil se termine ; le
     choix d'un fichier montre ses différences (`/diff?path=`) ;
@@ -416,20 +460,31 @@ exécuter une étape elle-même.
   - **Frise** : les étapes sur l'axe du temps (Swift Charts), les événements
     marquants, les décisions, les tests et le coût par étape (`/timeline`).
 
-  Un audit a son « Analyse en direct » (`GET /v1/audits/{id}/session`, flux filtré
-  par `audit=`). Le texte se sélectionne partout.
+  La feuille « Session en direct » ne sert plus qu'à l'« Analyse en direct » d'un
+  audit (`GET /v1/audits/{id}/session`, flux filtré par `audit=`) et aux sessions
+  des jobs du poste. Le texte se sélectionne partout.
+- **Relancer, annuler.** Une feature `failed` ou `awaiting_human` se relance
+  (`POST /v1/runs/{id}/retry`, en feuille avec une consigne facultative : elle repart
+  de son étape) ; une feature `merged` s'annule (`POST /v1/runs/{id}/revert`,
+  confirmé : commit inverse sur la branche principale, feature de suite). Comme les
+  autres gestes, ils portent la révision lue (`If-Match`).
 - **Alertes et coût.** La veille du serveur (agent muet, étape lente, boucle de
-  corrections, budget dépassé) s'affiche en tête de l'Accueil — chaque alerte ouvre
-  le direct de sa feature — et sur la rangée de la feature, avec son coût
-  (`alerts` et `costs` de `GET /v1/inbox`).
-- **Statistiques du monitoring.** En plus des compteurs : la consommation des agents
-  (depuis le début, sur 7 jours, jour par jour), la comparaison des modèles
-  (étapes, échecs, durée médiane, implémentations corrigées, features fusionnées,
-  coût), les tests instables et la santé du serveur (`GET /v1/metrics` : agents et
+  corrections, budget dépassé) arrive dans À traiter — chaque alerte ouvre la page
+  de sa feature — et sur la ligne de la feature, avec son coût (`alerts` et `costs`
+  de `GET /v1/inbox`).
+- **Système › Statistiques et santé** — les indicateurs et graphiques d'autrefois,
+  hors de la file : tuiles (à traiter, à relire, en cours, plus vieille attente,
+  fusions et taux de fusion de la semaine, délai médian, coût sur 7 jours) et
+  quatre graphiques Swift Charts (Mac `HarnessStatsCharts.swift`, iOS
+  `IOSStatsCharts.swift`) : **Ce qui vous attend**, **Débit**, **Coût des agents**,
+  **Santé** ; puis `GET /v1/stats` (features par état, fusions, délais, étapes,
+  tests, capacité du serveur), la consommation des agents, la comparaison des
+  modèles, les tests instables et la santé du serveur (`GET /v1/metrics` : agents et
   tests occupés, file d'attente, mémoire libre, limites de débit), relue au rythme
-  du serveur tant que l'écran est ouvert.
-- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu
-  contextuel d'une feature, démarre sa Live Activity (extension
+  du serveur tant que l'écran est ouvert. Face à un serveur sans séries, les blocs le
+  disent au lieu d'échouer.
+- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu « … »
+  de la page d'une feature ou le menu contextuel de sa ligne, démarre sa Live Activity (extension
   `ios/OMPConsoleWidgets`) : état, étape, outil du moment, alerte et coût, sur
   l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
   ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
@@ -453,8 +508,9 @@ exécuter une étape elle-même.
   notification (`If-Match`) : si la feature ou l'envoi a bougé depuis, rien n'est
   tranché et une notification « Geste non abouti » le dit. Sans le jeton approbateur au
   trousseau, Approuver et Refuser d'un envoi ouvrent l'app sur le Poste. Toucher une
-  notification ouvre ce qu'elle désigne : la section de l'Accueil qui attend, le Poste
-  ou la feature. Côté Apple, l'App ID n'a besoin que de la capacité Push
+  notification ouvre ce qu'elle désigne : À traiter (à l'élément qui attend), le
+  Poste, la page de la feature, ou Système › Vigie (vigie muette, sauvegarde
+  échouée). Côté Apple, l'App ID n'a besoin que de la capacité Push
   Notifications, déjà requise par les Live Activities (`aps-environment` de
   `ios/OMPConsoleIOS.entitlements`) ; côté serveur, de la clé `.p8` de `apns`. Le
   routage (catégorie → geste) vit dans `ConsoleClient/HarnessNotifications.swift`, le
@@ -467,21 +523,20 @@ exécuter une étape elle-même.
   l'instantané de chaque boîte relue et l'adresse du serveur, et copie le jeton dans
   un article de trousseau du groupe ; le widget relit ainsi la boîte lui-même
   (`GET /v1/inbox`) toutes les 15 minutes, app fermée, et montre le dernier
-  instantané, daté, sans réseau. Un toucher ouvre l'app sur l'Accueil
-  (`ompconsole://home`).
+  instantané, daté, sans réseau. Un toucher ouvre l'app sur À traiter
+  (`ompconsole://inbox`).
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
-  boîte et, une fois une section de catalogue ouverte, le catalogue. Une coupure
+  boîte et, une fois un écran de catalogue ouvert, le catalogue. Une coupure
   garde la dernière boîte reçue, signalée « Hors ligne : dernière boîte reçue ».
-  « Actualiser » (⌘R) relit à la demande.
+  Présentation ▸ Actualiser (⌘R) sur le Mac, ou tirer pour actualiser sur iOS,
+  relit à la demande.
 - **Badges.** La barre latérale (et, sur iOS, la barre d'onglets) porte sur
-  « Accueil » ce qui bloque une feature tant que l'humain n'a pas agi
-  (`pendingCount` : escalades ouvertes, specs et verdicts à valider — pas les
-  décisions prises seules, ni les audits), sur « Audit » le nombre d'audits à
-  trier, et sur « Poste » les envois qui attendent votre approbation (sur iPhone,
-  l'onglet « Plus » qui le range porte ce badge). Sur iOS, le retour au premier
-  plan (`scenePhase` active) ferme le flux, relit la boîte et le poste, puis
-  rouvre le flux.
+  « À traiter » tout ce qui attend l'humain (la boîte — escalades ouvertes, specs et
+  verdicts à valider — et les envois du poste à approuver, qui expirent), sur
+  « Poste » ces envois, et sur « Système » 1 quand la vigie se tait. Sur iOS, le
+  retour au premier plan (`scenePhase` active) ferme le flux, relit la boîte et le
+  poste, puis rouvre le flux.
 - **Code partagé.** Le modèle (`HarnessModel`, qui porte `WorkstationModel`), les
   brouillons (`HarnessDrafts`), le transport (`HarnessTransport`) et le contrat
   (`HarnessWire`, `WorkstationWire`) vivent dans `ConsoleClient` ; les mots vivent
@@ -491,7 +546,7 @@ exécuter une étape elle-même.
 
 ### Poste de travail
 
-La section **Poste** (⌘6 sur le Mac ; sous « Plus » sur iPhone, dans la barre
+La section **Poste** (⌘3 sur le Mac ; troisième onglet sur iPhone, dans la barre
 latérale sur iPad) montre le poste de travail : l'extension Chrome `omp-chrome`,
 qui observe le travail et agit **dans le navigateur seulement**, et l'agent 24/24
 du serveur, qui fait de petites actions une fois assez d'heures observées. Tout
@@ -499,6 +554,18 @@ passe par le même serveur, le même jeton et le même flux que la boîte
 (`server.workstation`, routes `/v1/workstation*`) ; un jeton limité à des dépôts
 lit « le poste est réservé au propriétaire », un serveur antérieur « ne connaît
 pas encore le poste de travail ».
+
+La **page principale** reste calme (`WorkstationSections`) : un en-tête d'état
+(extension en ligne et dernier contact, autonomie appliquée, pause ou arrêt, et le
+bouton **Arrêt d'urgence** — « Reprendre le poste » une fois arrêté), les envois à
+approuver seulement s'il y en a, « Demander au poste » (un champ, le navigateur,
+l'envoi ; les demandes en cours et la plus récente terminée, « Toutes les
+demandes »), les cinq dernières décisions (« Tout le journal »), puis une rangée
+par sous-page (`WorkstationPage`, `workstation.page.<page>`) : **Réglages**
+(autonomie, adresses et pseudos, navigateurs, navigation gardée),
+**Automatisations**, **Commander le navigateur**, **Profil**, **Réunions**,
+**Journal**, **Sessions** des jobs du poste, **Demandes**. Ce que ces pages
+montrent :
 
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
@@ -521,7 +588,7 @@ pas encore le poste de travail ».
   relue et l'app dit « L'envoi a changé depuis son affichage : relisez-le avant
   d'approuver. ». Une action de l'agent en mode Proposer (sans empreinte d'envoi)
   porte « Action proposée par l'agent 24/24 » : l'approuver n'autorise aucun
-  envoi de message. Ils remontent aussi **en tête de l'Accueil**, sur le
+  envoi de message. Ils remontent aussi **en tête d'À traiter**, sur le
   Mac comme sur iOS, pour ne jamais être manqués. Aucun outil d'agent n'approuve :
   seul ce bouton, touché par l'humain, le fait.
 - **Le jeton approbateur** : approuver, refuser et régler le poste (autonomie,
@@ -547,31 +614,36 @@ pas encore le poste de travail ».
 
 Les événements `workstation_*` du flux de la boîte relisent l'état et les envois à
 approuver (et le reste, section ouverte) ; aucun second flux n'est ouvert.
-Identifiants Mac : `workstation.harness`, `workstation.online`,
-`workstation.autonomy`, `workstation.sendGuard`, `workstation.paused`,
-`workstation.identities`, `workstation.identities.save`,
-`workstation.approve.<n>`, `workstation.refusal.<n>`, feuille de refus
-`workstation.refusal.reason` et `workstation.refusal.commit`, `workstation.rebuild` ;
-sur iOS, les mêmes préfixés `ios.`.
+Identifiants (les mêmes sur Mac et iOS, écrans partagés) : `workstation.harness`,
+`workstation.online`, `workstation.stop`, `workstation.stopped`,
+`workstation.resume`, `workstation.page.<page>`, `workstation.autonomy`,
+`workstation.sendGuard`, `workstation.paused`, `workstation.identities`,
+`workstation.identities.save`, `workstation.approve.<n>`,
+`workstation.refusal.<n>`, feuille de refus `workstation.refusal.reason` et
+`workstation.refusal.commit`, `workstation.request.text`,
+`workstation.request.send`, `workstation.requests.all`, `workstation.journal.all`,
+`workstation.rebuild`.
 
 ### Tour de contrôle
 
-Les écrans de l'OS agentique sont écrits une fois dans `ConsoleUI` (Mac et iOS ;
-sur iPhone, sous « Plus », sur iPad dans la barre latérale) et passent par les
-modèles de `ConsoleClient` portés par `HarnessModel` : `server.vigie`,
-`server.schedules`, `server.admin`, `server.issues`, en plus de `server.workstation`.
-Un serveur qui ne sert pas une fonction le dit (« mettez omp-harness à jour »), sans
-échec. Chaque section est aussi dans la palette ⌘K ; « Arrêt d'urgence » y figure.
+Les écrans de l'OS agentique sont écrits une fois dans `ConsoleUI` (Mac et iOS) et
+passent par les modèles de `ConsoleClient` portés par `HarnessModel` :
+`server.vigie`, `server.schedules`, `server.admin`, `server.issues`, en plus de
+`server.workstation`. Vigie, Planifications et Administration sont des pages du hub
+**Système** (`SystemPage`, lien `ompconsole://system/<page>` sur le Mac), Issues
+une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
+(« mettez omp-harness à jour »), sans échec. Chaque page est aussi dans la palette
+⌘K ; « Arrêt d'urgence » y figure.
 
 - **Feature en direct** (`RunControlViews.swift`) : « Envoyer une consigne… »
   (`POST /v1/runs/{id}/instructions {text}`, `If-Match` de la révision) depuis le menu
-  d'une feature et au pied de la session en direct (Mac et iOS) — l'app dit si l'agent
+  « … » d'une feature et au pied de sa page (Mac et iOS) — l'app dit si l'agent
   l'a reçue dans sa session ou si elle part avec l'étape suivante ; « Modifier le
   budget… » (`POST /v1/runs/{id}/budget {budgetUsd}`, `null` revient au budget du
   serveur) ; la relance s'ouvre en feuille avec une consigne facultative
   (`POST …/retry {instructions?}`). Une feature en file montre en orange ce qui la
-  retient (`reason`, `waitCause`), et l'Accueil la file entière (`/v1/status.queue`).
-- **Poste** (`WorkstationControlSections.swift`) : le bouton rouge **Arrêt d'urgence**
+  retient (`reason`, `waitCause`).
+- **Poste, pages** (`WorkstationControlSections.swift`) : le bouton rouge **Arrêt d'urgence**
   (`POST /v1/workstation/stop`, confirmé, jamais grisé par le rôle ; « Reprendre le
   poste » une fois arrêté, approbateur) ; le détail d'une action du journal (résultat
   entier, données, annulation `POST …/actions/{n}/cancel`, capture JPEG
@@ -588,8 +660,9 @@ Un serveur qui ne sert pas une fonction le dit (« mettez omp-harness à jour »
   Correction) et plafonds réglables par un admin (`PUT /v1/vigie`), dernier battement,
   état du jour, incidents (`GET /v1/vigie/incidents`, filtre par statut) avec empreinte,
   issue liée et feature de correction. Une vigie muette (`vigie_silent`) se dit en
-  bandeau rouge sur l'Accueil et la section, et par un badge sur le Mac.
-- **Planifications** : liste (`GET /v1/schedules`, fuseau du serveur), création (cible
+  bandeau rouge en tête d'À traiter et de la page, et par le badge de Système.
+- **Planifications** : liste (`GET /v1/schedules`, fuseau du serveur), création
+  dans la feuille « Nouvelle planification » ouverte par le « + » de la page (cible
   feature, audit ou relève d'issues, expression cron à cinq champs), activer ou
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
@@ -599,13 +672,13 @@ Un serveur qui ne sert pas une fonction le dit (« mettez omp-harness à jour »
   (`POST /v1/repos` : la clé de déploiement à poser et le lien de la page des clés),
   « Recharger la configuration » (`POST /v1/reload`), erreurs des clients
   (`GET /v1/client-errors`, filtre par source).
-- **Issues** : les issues ouvertes d'un dépôt et la feature qui les porte, « Corriger »
-  — par le MCP du serveur (`POST /v1/mcp`, outils `issues_list` et `issue_fix`,
-  `HarnessModel.callTool`), seule surface des issues.
+- **Issues** (portée de Features) : les issues ouvertes d'un dépôt et la feature qui
+  les porte, « Corriger » — par le MCP du serveur (`POST /v1/mcp`, outils
+  `issues_list` et `issue_fix`, `HarnessModel.callTool`), seule surface des issues.
 
 La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces écrans
-au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie le
-câblage des quatre sections dans les deux apps.
+au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie
+leur câblage dans les deux apps.
 
 ## Lire les fichiers et les diffs d'une cible
 
@@ -1339,7 +1412,7 @@ feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bou
 
 ## Section Terminal (terminal intégré)
 
-La section **Terminal** (⌘6) héberge **un seul programme** dans un vrai PTY (le
+La section **Terminal** (⌘5) héberge **un seul programme** dans un vrai PTY (le
 modèle est à instance unique : jamais un second programme). Fermer la fenêtre
 principale tue le shell. Le programme hébergé est
 le **shell de connexion** de l'utilisateur (`$SHELL -l` s'il désigne un exécutable
@@ -1681,7 +1754,7 @@ identifiants d'accessibilité `ios.…` et les noms de commande (/req, /specs…
 omp-console/
 ├── Package.swift                  manifeste SwiftPM (cible macOS 26)
 ├── Sources/OMPConsole/            la coque macOS
-│   ├── OMPConsoleApp.swift        la scène, les modèles à l'échelle de l'app, les menus (sections ⌘1…⌘9, Appairage…, Quitter)
+│   ├── OMPConsoleApp.swift        la scène, les modèles à l'échelle de l'app, les menus (sections ⌘1…⌘7, Actualiser ⌘R, Appairage…, Quitter)
 │   ├── ConsoleRootView.swift      la barre latérale, ses badges, les feuilles Préparation et Serveur
 │   ├── ConsoleModel.swift         la section sélectionnée
 │   ├── SectionViews.swift         une vue par section (`ConsoleSectionView`), le routeur `SectionDetail`
@@ -1689,12 +1762,15 @@ omp-console/
 │   ├── OmpEnvironment.swift       l'environnement des process lancés
 │   ├── ProcessRunner.swift        l'exécuteur partagé (échéance, SIGTERM puis SIGKILL)
 │   ├── ProjectRoot.swift          le projet choisi de l'app (`session.projectRoot`)
-│   ├── Server/                    les sections de Pilotage, servies par le serveur de pipelines
-│   │   ├── HarnessSectionViews.swift  cadre commun, Accueil, Pipelines, Projet, Audit, Statistiques
-│   │   ├── HarnessInboxSections.swift la boîte de l'humain et ses gestes
-│   │   ├── HarnessSessionView.swift   la feuille « Session en direct » d'une feature ou d'un audit
+│   ├── Server/                    les écrans servis par le serveur de pipelines
+│   │   ├── HarnessSectionViews.swift  cadre commun (sans barre d'outils répétée), À traiter, Features
+│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne)
+│   │   ├── HarnessSessionView.swift   le contenu de session partagé par la page et la feuille (audits, jobs du poste)
 │   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
-│   │   ├── WorkstationViews.swift la section Poste (état, autonomie, envois à approuver, profil, journal, réunions) et sa feuille de refus
+│   │   ├── HarnessStatsCharts.swift   les indicateurs et graphiques de Système › Statistiques et santé
+│   │   ├── SystemPages.swift      le hub Système et ses pages (vigie, planifications, statistiques, administration)
+│   │   ├── WorkstationViews.swift la section Poste (page principale et sous-pages)
+│   │   ├── ProvidersView.swift    fournisseurs et modèles (feuille Serveur, admin)
 │   │   └── ServerSheet.swift      la feuille « Serveur » (adresse, jeton, oubli)
 │   ├── Files/                     la section Fichiers (git en lecture seule, arbre, diff, veille)
 │   ├── Terminal/                  la section Terminal (PTY, émulateur, rendu)
@@ -1751,45 +1827,60 @@ absence en échec.
 ## Coque iOS
 
 `omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
-sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
-sont hors périmètre), une seule barre d'onglets native (`TabView`, style
-`.sidebarAdaptable`) — sur iPhone, cinq onglets en bas (Accueil, Pipelines,
-Projet, Audit, « Plus »), « Plus » étant une liste titrée qui pousse Statistiques,
-Poste et Mémoire dans sa propre pile ; sur iPad, une barre latérale titrée « OMP
-Console », visible dès le lancement, à deux groupes (Pilotage : Accueil,
-Pipelines, Projet, Audit, Statistiques, Poste ; Consultation : Mémoire), la barre
-d'onglets du haut n'apparaissant que lorsqu'on masque la barre latérale. Chaque
-onglet garde sa pile et sa position de défilement quand on en change ; passer en
-largeur compacte (iPad en Split View) range Statistiques, Poste et Mémoire sous
-« Plus », et inversement. Le Poste est sous « Plus » pour garder cinq onglets à
-l'iPhone (HIG) ; ses envois à approuver ne s'y perdent pas : ils remontent en tête
-de l'Accueil, et l'onglet « Plus » porte leur badge. Le routage onglet ↔ section
-est pur (`IOSTabs.swift`, testé par `IOSTabsTests`).
+cinq sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
+sont hors périmètre) — À traiter, Features, Poste, Mémoire, Système —, une seule
+barre d'onglets native (`TabView`, style `.sidebarAdaptable`) :
+
+- **iPhone** : quatre onglets en bas, **À traiter**, **Features**, **Poste**,
+  **Système**, puis l'onglet de **recherche** (`Tab(role: .search)`, la palette :
+  sections, pages de Système, features ; `IOSSearchScreen.swift`). La barre d'iOS 26
+  ne tient que cinq éléments recherche comprise : la **Mémoire** est donc la première
+  rangée du hub Système (`ios.system.memory`), poussée dans sa pile. Il n'y a pas
+  d'onglet « Autre ».
+- **iPad** : une barre latérale groupée (Travail : À traiter, Features, Poste ;
+  Outils : Mémoire ; Système), puis la recherche ; la barre d'onglets du haut
+  n'apparaît que lorsqu'on masque la barre latérale. Passer en largeur compacte
+  (Split View) range la Mémoire dans Système, et inversement.
+
+Chaque onglet a sa `NavigationStack` et garde sa pile quand on en change : celle de
+Features suit la feature ouverte (`drafts.openedRun`), celle de Système la page
+montrée (`drafts.systemPage`) ; la palette, les notifications et le widget y
+poussent donc leur page. Toucher une ligne de feature ouvre sa **page**
+(`IOSRunScreen.swift`, `ios.screen.run`) : en-tête et jalons, onglets Aperçu,
+Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
+menu « … ». Créer passe par le « + » de la barre (`ios.inbox.new` sur À traiter,
+menu Nouvelle feature / Nouveau projet / Nouvel audit sur Features,
+`ios.schedules.new` sur Planifications), qui ouvre une feuille. Aucun bouton
+« Serveur » ni « Actualiser » dans les barres : la feuille du serveur s'ouvre par
+Système › Serveur (ou « Relier le serveur », `ios.server.configure`, sans serveur
+relié), et chaque écran se tire pour actualiser (⌘R au clavier). Le routage onglet
+↔ section est pur (`IOSTabs.swift`, testé par `IOSTabsTests`).
 
 L'app est autonome : elle ne parle qu'au serveur du VPS, jamais à un Mac, et n'a
 aucun magasin local. Un seul geste la relie : coller le **code d'appairage**
 (`omp1:…`, affiché par `harness.sh up` ou `harness.sh pair` sur le VPS) dans la
-feuille « Serveur » (`IOSServerSheet`, bouton `ios.server.open`). Pour approuver
+feuille « Serveur » (`IOSServerSheet`, `ios.server.sheet`). Pour approuver
 les envois du poste depuis l'iPhone, c'est le **code approbateur** (`harness.sh
 approver`) qu'on y colle, son jeton restant au trousseau (voir « Serveur de
 pipelines »). Le code porte deux accès :
 
-- **Le serveur de pipelines** pour les six sections de Pilotage
-  (`IOSHarnessScreens.swift`, `IOSWorkstationScreen.swift`) : les mêmes écrans que
-  sur le Mac — résumé et boîte de l'humain, lancement d'une feature, d'un projet ou
-  d'un audit, statistiques, poste de travail —, sur
-  le même `HarnessModel` (voir « Serveur de pipelines »). Les listes se tirent pour
-  actualiser, et une feature en cours a son menu contextuel « Session en direct »
-  (`IOSSessionSheet.swift`), « Suivre sur l'écran verrouillé »
-  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`) et « Arrêter la feature ».
-- **La mémoire du serveur** pour la section Mémoire (`MemoryAccess`, `MemoryReader`
+- **Le serveur de pipelines** pour À traiter, Features, Poste et Système
+  (`IOSHarnessScreens.swift`, `IOSRunScreen.swift`, `IOSWorkstationScreen.swift`) :
+  les mêmes écrans partagés que sur le Mac (`ConsoleUI`), sur le même
+  `HarnessModel` (voir « Serveur de pipelines »). Le menu contextuel d'une ligne
+  porte les gestes de la feature, dont « Suivre sur l'écran verrouillé »
+  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`). La feuille de session
+  (`IOSSessionSheet.swift`) ne sert plus qu'aux audits et aux jobs du poste.
+- **La mémoire du serveur** pour la Mémoire (`MemoryAccess`, `MemoryReader`
   dans `ConsoleClient`) : son adresse va aux préférences, son jeton au trousseau.
   Sans elle, la Mémoire affiche « Mémoire non reliée » et « Relier le serveur », qui
   ouvre la même feuille.
 
-L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad) portent
-le badge de ce qui attend l'humain sur le serveur, l'onglet Audit celui des audits
-à trier ; VoiceOver lit « Accueil, N en attente ».
+Badges : À traiter porte tout ce qui attend l'humain (boîte et envois du poste à
+approuver), Poste ces envois, Système 1 quand la vigie se tait ; VoiceOver lit le
+nom de l'onglet suivi du nombre en attente. Identifiants : `ios.tab.<section>`,
+`ios.tab.search`, `ios.screen.<section>`, `ios.screen.system.<page>`,
+`ios.screen.run`, `ios.screen.search`, `ios.runs.scope`, `ios.run.specs`.
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
@@ -1867,24 +1958,25 @@ Mac par `bash scripts/app-icon.sh` (voir « Assembler le bundle `.app` »), jama
 à la main dans Xcode. Le même catalogue porte l'`AccentColor`, égale au bleu
 système. Les règles d'identité de l'app sont dans `omp-console/ios/DESIGN.md`.
 
-### Captures des sept écrans
+### Captures des cinq écrans
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/recette/ios-shots.sh
 ```
 
 Le script démarre un simulateur iPhone et un iPad, installe l'app, puis l'ouvre
-sur chacune des sept sections par son argument de lancement et capture l'écran :
-**56 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les
-images sont des artefacts de PR, jamais committées) — sept écrans × {iPhone
-portrait, iPad portrait} × {clair, sombre} à taille de texte par défaut, plus
-sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe
-`-ax`). Un SECOND groupe capture le **mode graphe de la Mémoire** via
-`-memoire.recipe` : le graphe rendu, un état après pan/zoom et une fiche ouverte
-— 3 états × {iPhone, iPad} × {clair, sombre} = **12 PNG**, soit **68** en tout.
-Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
-toutes PORTRAIT — une capture inattendue ferait échouer le script. Les écrans du
-serveur de pipelines sont capturés serveur non relié.
+sur chacune des cinq sections (`inbox`, `runs`, `workstation`, `memory`, `system`)
+par son argument de lancement et capture l'écran : **40 PNG** dans
+`omp-console/build/ios-shots/` (dossier ignoré par git — les images sont des
+artefacts de PR, jamais committées) — cinq écrans × {iPhone portrait, iPad
+portrait} × {clair, sombre} à taille de texte par défaut, plus cinq écrans ×
+{iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe `-ax`). Un SECOND
+groupe capture le **mode graphe de la Mémoire** via `-memoire.recipe` : le graphe
+rendu, un état après pan/zoom et une fiche ouverte — 3 états × {iPhone, iPad} ×
+{clair, sombre} = **12 PNG**, soit **52** en tout. Chaque capture est sondée en
+dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT — une capture
+inattendue ferait échouer le script. Les écrans du serveur de pipelines sont
+capturés serveur non relié.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,
@@ -1897,10 +1989,10 @@ portrait et les deux paysages : elle reste utilisable en paysage sur un vrai
 iPad, à vérifier à la main sur l'appareil.
 
 Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
-ouvre une section précise (`home`, `kanban`, `project`, `audit`, `stats`,
-`workstation`, `memory`) — sur iPad, l'entrée de la barre latérale ; sur iPhone, l'onglet de la
-section, et pour `stats`, `workstation` et `memory` l'onglet « Plus » avec l'écran déjà poussé,
-le bouton retour ramenant à la liste « Plus » —, `-ios.state error` affiche le
+ouvre une section précise (`inbox`, `runs`, `workstation`, `memory`, `system`) —
+sur iPad, l'entrée de la barre latérale ; sur iPhone, l'onglet de la section, et
+pour `memory` l'onglet Système avec la Mémoire déjà poussée, le bouton retour
+ramenant au hub Système —, `-ios.state error` affiche le
 bandeau d'erreur de recette sur la Mémoire, et `-memoire.recipe
 <graphe|zoom|fiche>` force le mode graphe de la section Mémoire sur la fixture
 partagée `MemoryGraphParity` (`liste` charge la même fixture mais reste en mode
@@ -1922,7 +2014,7 @@ Pour ouvrir une section précise sur un simulateur déjà démarré :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section memory
 ```
 
-La capture de l'état d'erreur (artefact de PR, hors des 60) :
+La capture de l'état d'erreur (artefact de PR, hors des 52) :
 
 ```bash
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section memory -ios.state error
@@ -1931,9 +2023,9 @@ xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-memory.png
 
 ### Recettes historiques
 
-Plusieurs recettes au simulateur ont été écrites pour l'ancienne coque, quand les
-sections de Pilotage lisaient le magasin du Mac : `ios-navigation-onglets-recette.sh`
-(onglets Accueil, Pipelines, Sessions, Audit), `ios-statistiques-graphe-recette.sh`
+Plusieurs recettes au simulateur, **historiques**, ont été écrites pour l'ancienne
+coque, quand les écrans lisaient le magasin du Mac : `ios-navigation-onglets-recette.sh`
+(anciens onglets Accueil, Pipelines, Sessions, Audit), `ios-statistiques-graphe-recette.sh`
 (`-stats.recipe`), `ios-finitions-composants-recette.sh` (`-projet.recipe`,
 `-pipelines.recipe`), `ios-dynamic-type-recette.sh` (`-home.recipe`,
 `-sessions.recipe`) et `ios-connexion-recette.sh` (l'ancienne liste racine
@@ -1944,7 +2036,7 @@ la CI.
 
 ### Recette idb : cibles, identifiants et bords
 
-`scripts/recette/ios-recette-ui.sh` relève 6 surfaces de l'app iOS sur un simulateur
+`scripts/recette/ios-recette-ui.sh` relève 5 surfaces de l'app iOS sur un simulateur
 iPhone dédié et signale trois classes de défauts sur chaque relevé : une cible
 tactile de moins de 44 pt, un identifiant d'accessibilité porté par plusieurs
 éléments, un élément collé au bord de l'écran. Elle se lance à la main : ni CI,
@@ -1962,23 +2054,24 @@ xcrun simctl create recette-ui-tel com.apple.CoreSimulator.SimDeviceType.iPhone-
 bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
 ```
 
-**Matrice.** 6 surfaces × 3 configurations = **18 relevés** : six des sept sections
-(`home`, `kanban`, `project`, `audit`, `stats`, `memory` ; le Poste n'est pas
-encore relevé par cette recette), en clair à la taille par
+**Matrice.** 5 surfaces × 3 configurations = **15 relevés** : les cinq sections
+(`inbox`, `runs`, `workstation`, `memory`, `system`), en clair à la taille par
 défaut, en sombre à la taille par défaut, puis en clair en AX-XL
 (`accessibility-extra-large`). La Mémoire est alimentée par son crochet de recette
-(`-memoire.recipe`), sans appairage ; Accueil, Pipelines, Projet, Audit et
-Statistiques sont relevés serveur non relié. Un relevé n'est accepté que si deux
+(`-memoire.recipe`), sans appairage (sur iPhone, Système avec la Mémoire poussée) ;
+À traiter, Features, Poste et Système sont relevés serveur non relié (Features
+doit montrer `ios.server.configure`, sinon la recette refuse un simulateur relié).
+Un relevé n'est accepté que si deux
 lectures consécutives de l'arbre sont identiques **et** que la surface est
 reconnue par son marqueur d'accessibilité
-(`scripts/recette/ios-recette-ui-analyse.py marqueur`) : jamais la liste « Plus »,
-un écran déconnecté ou une autre section. L'ordre des clés du JSON d'idb et celui
+(`scripts/recette/ios-recette-ui-analyse.py marqueur`) : jamais un écran
+déconnecté ou une autre section. L'ordre des clés du JSON d'idb et celui
 de la liste `traits` d'un élément changent d'une lecture à l'autre ; la
 comparaison porte donc sur le JSON décodé, `traits` pris comme un ensemble.
 
 **Sortie.** `omp-console/build/ios-recette-ui/base/` (ignoré par git, vidé à chaque
 passage) : `<surface>-<apparence>-<taille>.json` (arbre AX) et `.png` (capture sans
-masque de coins) pour chacun des 18 relevés, `logs/` (journaux `--stderr` de l'app,
+masque de coins) pour chacun des 15 relevés, `logs/` (journaux `--stderr` de l'app,
 construction) et `rapport.txt`. L'app et le simulateur sont remis à l'état par
 défaut à la sortie (apparence claire, taille `large`) ; le simulateur reste allumé.
 
@@ -1998,7 +2091,7 @@ désignation d'un élément est `id:<AXUniqueId>`, sinon `libellé:<AXLabel>`, s
 chemin du rapport, `<N> signalé(s), <M> excepté(s)` et un avertissement `exception
 inutilisée : <n>` par entrée qui n'excepte rien.
 
-**Codes de sortie.** `0` : 18 relevés faits et aucun `SIGNALÉ` ; `1` : au moins un
+**Codes de sortie.** `0` : 15 relevés faits et aucun `SIGNALÉ` ; `1` : au moins un
 `SIGNALÉ` ; `2` : la recette n'a pas pu conclure (prérequis, exceptions invalides,
 relevé non vérifié, construction ou installation impossible).
 
@@ -2097,7 +2190,7 @@ rangée, `MemoryWriter`, suppression confirmée), et rien ne se rafraîchit en c
 Recette pas à pas :
 
 1. Sur le VPS, `harness.sh pair` ; dans l'app, feuille « Serveur », coller le code
-   `omp1:…` puis « Relier ». Attendu : l'Accueil se remplit, et la Mémoire affiche
+   `omp1:…` puis « Relier ». Attendu : À traiter se remplit, et la Mémoire affiche
    l'en-tête « N souvenirs » puis la première page du projet le plus récent.
 2. Toucher un souvenir. Attendu : sa fiche, texte intégral tel qu'il est stocké,
    identifiant et portée sous « Détails techniques », aucun bouton d'écriture.
@@ -2111,17 +2204,19 @@ Recette pas à pas :
 
 ### Clavier de l'iPad
 
-Avec un clavier matériel, l'app pose neuf commandes dans la **barre des menus de
+Avec un clavier matériel, l'app pose sept commandes dans la **barre des menus de
 l'iPad** (Globe-M, ou glissement depuis le haut ; depuis iPadOS 26 elle remplace
 la superposition qu'on obtenait en maintenant ⌘). Chaque commande y affiche son
 libellé français et son raccourci :
 
 | Raccourci | Commande | Menu | Effet |
 |---|---|---|---|
-| ⌘1 … ⌘7 | Accueil, Pipelines, Projet, Audit, Statistiques, Poste, Mémoire | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale |
-| ⌘R | Actualiser | Présentation | relit les données de la Mémoire (la liste ou le graphe affiché) ; inactive ailleurs, où l'on tire la liste pour actualiser |
-| ⌘F | Rechercher | Présentation | met le focus dans le champ de recherche (Mémoire en mode Liste) ; inactive ailleurs |
+| ⌘1 … ⌘5 | À traiter, Features, Poste, Mémoire, Système | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale (sur iPhone, Mémoire ouvre Système puis y pousse la Mémoire) |
+| ⌘R | Actualiser | Présentation | relit les données de l'écran affiché, comme le geste « tirer pour actualiser » |
+| ⌘F | Rechercher | Présentation | met le focus dans le champ de recherche de l'écran ; sans champ propre, ouvre la palette en recherche globale |
+
+La palette (⌘K) et « Nouvelle feature » (⌘N) viennent des écrans partagés.
 
 ⌘R est inactif hors connexion et pendant une lecture en cours. Sous une feuille,
-une alerte ou un `confirmationDialog`, les neuf commandes sont sans effet ; ⎋ et ↩
+une alerte ou un `confirmationDialog`, les commandes sont sans effet ; ⎋ et ↩
 des feuilles (Annuler, valider) restent inchangés, aucune commande ne les prend.

@@ -1,7 +1,8 @@
-// Le TABLEAU DE BORD de l'Accueil iOS (feature accueil-tableau-de-bord) — pendant de
-// `Sources/OMPConsole/Server/HarnessDashboardView.swift` : avant la boîte de l'humain,
-// des tuiles de KPI puis quatre sections tracées (Swift Charts) — ce qui vous attend
-// par projet, le débit sur 14 jours, le coût des agents, la santé du serveur.
+// Les GRAPHIQUES de la page Statistiques et santé (hub Système) — pendant de
+// `Sources/OMPConsole/Server/HarnessStatsCharts.swift` : quatre sections tracées
+// (Swift Charts) — ce qui vous attend par projet, le débit sur 14 jours, le coût des
+// agents, la santé du serveur. « À traiter » n'en porte plus aucun : une seule ligne
+// de pouls y suffit.
 //
 // Les séries viennent de `HarnessDashboard` (client partagé), les mots de
 // `DashboardText`, les teintes d'`IOSDataPalette` (couleurs système dynamiques).
@@ -13,80 +14,10 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-struct IOSDashboardSections: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
+struct IOSStatsCharts: View {
     let dashboard: HarnessDashboard
 
     var body: some View {
-        Section {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], alignment: .leading, spacing: 10) {
-                IOSDashboardKPI(
-                    title: DashboardText.kpiPending,
-                    value: Text(dashboard.pending, format: .number),
-                    symbol: DashboardText.pendingSymbol,
-                    attention: dashboard.pending > 0
-                ) { drafts.homeAnchor = .toDecide }
-                IOSDashboardKPI(
-                    title: DashboardText.kpiToReview,
-                    value: Text(dashboard.toReview, format: .number),
-                    symbol: DashboardText.toReviewSymbol
-                ) { drafts.homeAnchor = .decisions }
-                IOSDashboardKPI(
-                    title: DashboardText.kpiActive,
-                    value: Text(dashboard.active, format: .number),
-                    symbol: DashboardText.activeSymbol
-                ) { drafts.homeAnchor = .active }
-                IOSDashboardKPI(
-                    title: DashboardText.kpiOldest,
-                    value: Text(dashboard.oldestWaitSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable).monospacedDigit(),
-                    symbol: DashboardText.oldestSymbol,
-                    attention: (dashboard.oldestWaitSec ?? 0) > 24 * 3600
-                )
-                IOSDashboardKPI(
-                    title: DashboardText.kpiMerged,
-                    value: dashboard.mergedLast7Days.map { Text($0, format: .number) } ?? Text(PipelineServerText.notAvailable),
-                    symbol: DashboardText.mergedSymbol
-                )
-                IOSDashboardKPI(
-                    title: DashboardText.kpiMergeRate,
-                    value: Text(dashboard.mergeRate.map(PipelineServerText.percent) ?? PipelineServerText.notAvailable),
-                    symbol: DashboardText.mergeRateSymbol
-                )
-                IOSDashboardKPI(
-                    title: DashboardText.kpiLeadTime,
-                    value: Text(dashboard.medianLeadSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable).monospacedDigit(),
-                    symbol: DashboardText.leadTimeSymbol
-                )
-                IOSDashboardKPI(
-                    title: DashboardText.kpiCost,
-                    value: Text(dashboard.costLast7Days.map(MonitoringText.cost) ?? PipelineServerText.notAvailable),
-                    symbol: DashboardText.costSymbol
-                )
-                if dashboard.alerts > 0 {
-                    IOSDashboardKPI(
-                        title: DashboardText.kpiAlerts,
-                        value: Text(dashboard.alerts, format: .number),
-                        symbol: DashboardText.alertsSymbol,
-                        attention: true
-                    )
-                }
-                if dashboard.auditsToSort > 0 {
-                    IOSDashboardKPI(
-                        title: DashboardText.kpiAudits,
-                        value: Text(dashboard.auditsToSort, format: .number),
-                        symbol: DashboardText.auditsSymbol
-                    )
-                }
-            }
-            .iosBareListRow()
-        } header: {
-            Label(
-                server.isLive ? PipelineServerText.live : PipelineServerText.offline,
-                systemImage: server.isLive ? PipelineServerText.liveSymbol : PipelineServerText.offlineSymbol
-            )
-        }
-
         Section {
             waiting
         } header: {
@@ -302,42 +233,5 @@ struct IOSDashboardSections: View {
         }
         .gaugeStyle(.linearCapacity)
         .tint(slots.capacity > 0 && slots.used >= slots.capacity ? Color.orange : Color.accentColor)
-    }
-}
-
-/// Une tuile de KPI : son intitulé et son symbole, puis la valeur en grand. Une
-/// tuile de la boîte (`open`) fait défiler l'Accueil jusqu'à sa section.
-struct IOSDashboardKPI: View {
-    let title: String
-    /// La valeur, déjà mise en forme (chiffres à chasse fixe pour une durée).
-    let value: Text
-    let symbol: String
-    var attention = false
-    var open: (@MainActor () -> Void)?
-
-    var body: some View {
-        if let open {
-            Button { open() } label: { tile }
-                .buttonStyle(.plain)
-                .iosHoverEffect()
-        } else {
-            tile
-        }
-    }
-
-    private var tile: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(attention ? Color.orange : Color.secondary)
-            value
-                .font(.title2.weight(.semibold))
-                .monospacedDigit()
-                .minimumScaleFactor(0.6)
-        }
-        .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
-        .iosCard(raised: true)
-        .contentShape(.rect)
-        .accessibilityElement(children: .combine)
     }
 }

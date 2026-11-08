@@ -22,6 +22,7 @@ const HARNESS = path.join(APP, "IOSHarnessScreens.swift");
 const MEMORY = path.join(APP, "IOSMemoryScreen.swift");
 const GRAPH = path.join(APP, "IOSMemoryGraphView.swift");
 const PIPELINE_TEXT = path.join(CORE, "Design", "PipelineServerText.swift");
+const SHELL_WORDS = path.join(CORE, "Design", "ShellText.swift");
 const EXCEPTIONS = path.join("scripts", "recette", "ios-recette-ui-exceptions.json");
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const PBXPROJ = path.join("omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
@@ -35,7 +36,7 @@ type Sources = Map<string, string>;
 
 /** Les sources du dépôt (commentaires retirés pour le Swift, texte brut pour le JSON, le pbxproj et le plist). */
 function repoSources(): Sources {
-  const files = [HARNESS, MEMORY, GRAPH, PIPELINE_TEXT, ROOT_VIEW, SHELL_TEXT, CONNECTION_STATE];
+  const files = [HARNESS, MEMORY, GRAPH, PIPELINE_TEXT, SHELL_WORDS, ROOT_VIEW, SHELL_TEXT, CONNECTION_STATE];
   const sources: Sources = new Map();
   for (const rel of files) sources.set(rel, stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8")));
   for (const rel of [EXCEPTIONS, PBXPROJ, INFO_PLIST]) sources.set(rel, fs.readFileSync(path.join(ROOT, rel), "utf8"));
@@ -83,12 +84,22 @@ function decorativeFaults(sources: Sources): string[] {
 
 // ── AC-2 : symboles porteurs de sens libellés en français (S-2) ────────────────
 
-/** Les boutons à symbole : le `Label` français, puis l'identifiant du contrôle. */
+/**
+ * Les boutons à symbole de la barre : le `Label` français, puis (après la fermeture
+ * du libellé et ses modificateurs) l'identifiant du contrôle. Le bouton « Serveur »
+ * des barres a disparu avec la refonte (la feuille s'ouvre depuis Système › Serveur) ;
+ * restent les « + » de création.
+ */
 const MEANINGFUL: Array<{ name: string; label: string; anchor: string }> = [
   {
-    name: "Serveur",
-    label: "Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)",
-    anchor: '.accessibilityIdentifier("ios.server.open")',
+    name: "Nouvelle feature",
+    label: "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
+    anchor: '.accessibilityIdentifier("ios.inbox.new")',
+  },
+  {
+    name: "Nouvelle planification",
+    label: "Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)",
+    anchor: '.accessibilityIdentifier("ios.schedules.new")',
   },
 ];
 
@@ -96,28 +107,23 @@ function meaningfulFaults(sources: Sources): string[] {
   const faults: string[] = [];
   const screen = get(sources, HARNESS);
   for (const { name, label, anchor } of MEANINGFUL) {
-    if (!new RegExp(`${escapeRegex(label)}\\s*\\}\\s*${escapeRegex(anchor)}`).test(screen)) {
+    if (!new RegExp(`${escapeRegex(label)}\\s*\\}[^{}]*?${escapeRegex(anchor)}`).test(screen)) {
       faults.push(`IOSHarnessScreens : le bouton ${anchor} n'a plus ${label} pour libellé (${name})`);
     }
   }
-  if (!screen.includes("Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol)")) {
-    faults.push(
-      "IOSHarnessScreens : « Ajouter une feature » n'a plus Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol) pour libellé",
-    );
-  }
   // La clé de `L10n.text` est le libellé français (localisation-apps) : il est lu
   // sous ses deux formes, littéral nu ou localisé.
-  const words = declaredTexts(get(sources, PIPELINE_TEXT));
-  if (words.get("open") !== "Serveur") faults.push("PipelineServerText.open n'est plus « Serveur »");
-  if (words.get("addFeature") !== "Ajouter une feature")
-    faults.push("PipelineServerText.addFeature n'est plus « Ajouter une feature »");
+  if (declaredTexts(get(sources, PIPELINE_TEXT)).get("newFeature") !== "Nouvelle feature…")
+    faults.push("PipelineServerText.newFeature n'est plus « Nouvelle feature… »");
+  if (declaredTexts(get(sources, SHELL_WORDS)).get("newSchedule") !== "Nouvelle planification…")
+    faults.push("ShellText.newSchedule n'est plus « Nouvelle planification… »");
   return faults;
 }
 
 // ── AC-3 : identifiants de conteneur non propagés (S-3) ────────────────────────
 
 const CONTAINERS: Array<[string, string]> = [
-  [HARNESS, '.accessibilityIdentifier("ios.screen." + section.rawValue)'],
+  [HARNESS, ".accessibilityIdentifier(identifier)"],
   [MEMORY, ".accessibilityIdentifier(IOSMemoryAccessibility.screen)"],
 ];
 
@@ -245,7 +251,7 @@ function targetFaults(sources: Sources): string[] {
 function validate(entries: ExceptionEntry[]): { status: number | null; stderr: string } {
   const file = path.join(tmpdir("acces-loc-exceptions-"), "exceptions.json");
   const full = entries.map((e) => ({
-    surface: "home",
+    surface: "inbox",
     apparence: "clair",
     taille: "defaut",
     source: "ax",
@@ -276,28 +282,28 @@ test("accessibilite-et-localisation-ios-residu/AC-1 : le symbole décoratif des 
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-2 : « Serveur » et « Ajouter une feature » gardent leur libellé français, jamais le nom du symbole", () => {
+test("accessibilite-et-localisation-ios-residu/AC-2 : « Nouvelle feature » et « Nouvelle planification » gardent leur libellé français, jamais le nom du symbole", () => {
   const sources = repoSources();
   assert.deepEqual(meaningfulFaults(sources), []);
-  const icon = plant(
+  const feature = plant(
     sources,
     HARNESS,
-    "Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)",
-    "Image(systemName: IOSShellText.serverSymbol)",
+    "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
+    "Image(systemName: PipelineServerText.newFeatureSymbol)",
   );
   assert.ok(
-    meaningfulFaults(icon).some((f) => f.includes("ios.server.open")),
-    "un symbole nu sur « Serveur » doit faire rougir la garde",
+    meaningfulFaults(feature).some((f) => f.includes("ios.inbox.new")),
+    "un symbole nu sur « Nouvelle feature » doit faire rougir la garde",
   );
-  const add = plant(
+  const schedule = plant(
     sources,
     HARNESS,
-    "Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol)",
+    "Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)",
     "Image(systemName: IOSShellText.addSymbol)",
   );
   assert.ok(
-    meaningfulFaults(add).some((f) => f.includes("Ajouter une feature")),
-    "un symbole nu sur « Ajouter une feature » doit faire rougir la garde",
+    meaningfulFaults(schedule).some((f) => f.includes("ios.schedules.new")),
+    "un symbole nu sur « Nouvelle planification » doit faire rougir la garde",
   );
 });
 
@@ -307,11 +313,11 @@ test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran 
   const planted = plant(
     sources,
     HARNESS,
-    /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\("ios\.screen\." \+ section\.rawValue\))/,
+    /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\(identifier\))/,
     "$1",
   );
   assert.ok(
-    containerFaults(planted).some((f) => f.includes("ios.screen.")),
+    containerFaults(planted).some((f) => f.startsWith(HARNESS)),
     "un écran du serveur sans .contain doit faire rougir la garde",
   );
   const memory = plant(
@@ -449,10 +455,11 @@ test("accessibilite-et-localisation-ios-residu/AC-7 : l'icône est légendée «
   assert.ok(displayNameFaults(renamed).length > 0, "un autre nom affiché doit faire rougir la garde");
 });
 
-// ── AC-8 / AC-9 : barre latérale titrée, rangées « Plus » aux chevrons du système (S-7) ──
+// ── AC-8 / AC-9 : barre latérale titrée, rangée Mémoire au chevron du système (S-7) ──
 // Depuis `ios-navigation-onglets-adaptables`, la racine est une barre d'onglets
 // adaptable : le titre « OMP Console » vit dans l'en-tête de la barre latérale de
-// l'iPad, et les seules rangées poussées par la racine sont celles de « Plus ».
+// l'iPad. Sur iPhone, la Mémoire n'a pas d'onglet : c'est une rangée du hub Système,
+// poussée dans sa pile — un lien système, dont le chevron est rendu par la liste.
 
 /** Le bloc `{ … }` qui suit `marker` dans `text` (accolades équilibrées), ou null. */
 function block(text: string, marker: string): string | null {
@@ -485,28 +492,29 @@ function rootTitleFaults(sources: Sources): string[] {
   return faults;
 }
 
-/** La rangée de « Plus » : un lien système qui enveloppe le `Label` de la section, identifié `ios.plus.<raw>`. */
+/** La rangée Mémoire du hub : un lien système qui enveloppe la rangée, identifié `ios.system.memory`. */
 const ROW = new RegExp(
   [
-    String.raw`NavigationLink\(value: section\) \{`,
-    String.raw`Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\)`,
+    String.raw`NavigationLink\(value: IOSSystemRoute\.memory\) \{`,
+    "memoryRow",
     String.raw`\}`,
-    String.raw`\.accessibilityIdentifier\("ios\.plus\." \+ section\.rawValue\)`,
+    String.raw`\.accessibilityIdentifier\("ios\.system\.memory"\)`,
   ].join(String.raw`\s*`),
 );
 
 function chevronFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  const root = get(sources, ROOT_VIEW);
-  const plus = block(root, "var plusList");
-  if (plus === null) return ["RootView.swift : la liste « Plus » (`var plusList`) est introuvable"];
-  if (!plus.includes("NavigationLink(value: section)"))
-    faults.push("la liste « Plus » n'enveloppe pas ses rangées dans NavigationLink(value: section)");
-  else if (!ROW.test(plus))
+  const screens = get(sources, HARNESS);
+  if (!screens.includes("NavigationLink(value: IOSSystemRoute.memory)"))
+    faults.push("le hub Système n'enveloppe pas la rangée Mémoire dans NavigationLink(value: IOSSystemRoute.memory)");
+  else if (!ROW.test(screens))
     faults.push(
-      "la rangée de « Plus » n'a pas la forme NavigationLink { Label } .accessibilityIdentifier(ios.plus.<raw>)",
+      "la rangée Mémoire n'a pas la forme NavigationLink { memoryRow } .accessibilityIdentifier(ios.system.memory)",
     );
-  if (/chevron/i.test(root)) faults.push("RootView.swift dessine un chevron à la main : c'est le système qui les rend");
+  for (const rel of [ROOT_VIEW, HARNESS]) {
+    if (/chevron/i.test(get(sources, rel)))
+      faults.push(`${path.basename(rel)} dessine un chevron à la main : c'est le système qui les rend`);
+  }
   return faults;
 }
 
@@ -514,7 +522,7 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   const sources = repoSources();
   assert.deepEqual(rootTitleFaults(sources), []);
 
-  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(IOSShellText.plusTitle)");
+  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(ConsoleSection.inbox.title)");
   assert.ok(
     rootTitleFaults(removed).some((f) => f.includes("fois")),
     "un titre retiré doit faire rougir la garde",
@@ -529,11 +537,11 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
       sources,
       ROOT_VIEW,
       /(\.tabViewSidebarHeader \{\s*)Text\(IOSShellText\.rootTitle\)/,
-      "$1Text(IOSShellText.plusTitle)",
+      "$1Text(ConsoleSection.inbox.title)",
     ),
     ROOT_VIEW,
-    ".navigationTitle(IOSShellText.plusTitle)",
-    `.navigationTitle(IOSShellText.plusTitle)\n        .overlay { ${TITLE_TEXT} }`,
+    ".tabViewStyle(.sidebarAdaptable)",
+    `.tabViewStyle(.sidebarAdaptable)\n        .overlay { ${TITLE_TEXT} }`,
   );
   assert.ok(
     rootTitleFaults(elsewhere).some((f) => f.includes("en-tête")),
@@ -541,24 +549,29 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-9 : les rangées de « Plus » sont des NavigationLink sans chevron dessiné", () => {
+test("accessibilite-et-localisation-ios-residu/AC-9 : la rangée Mémoire du hub Système est un NavigationLink sans chevron dessiné", () => {
   const sources = repoSources();
   assert.deepEqual(chevronFaults(sources), []);
 
-  const bare = plant(sources, ROOT_VIEW, /NavigationLink\(value: section\) \{\s*(Label\([^\n]*\))\s*\}/, "$1");
+  const bare = plant(
+    sources,
+    HARNESS,
+    /NavigationLink\(value: IOSSystemRoute\.memory\) \{\s*memoryRow\s*\}/,
+    "memoryRow",
+  );
   assert.ok(
     chevronFaults(bare).some((f) => f.includes("n'enveloppe pas")),
     "une rangée sans lien doit faire rougir la garde",
   );
-  const oldId = plant(sources, ROOT_VIEW, '"ios.plus." + section.rawValue', '"ios.section." + section.rawValue');
+  const oldId = plant(sources, HARNESS, '"ios.system.memory"', '"ios.plus.memory"');
   assert.ok(
     chevronFaults(oldId).some((f) => f.includes("forme")),
-    "une rangée à l'identifiant de l'ancienne liste racine doit faire rougir la garde",
+    "une rangée à l'identifiant de l'ancienne liste « Plus » doit faire rougir la garde",
   );
   const drawn = plant(
     sources,
-    ROOT_VIEW,
-    /(Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\))/,
+    HARNESS,
+    /(Text\(IOSShellText\.memorySummary\))/,
     '$1\nImage(systemName: "chevron.right")',
   );
   assert.ok(

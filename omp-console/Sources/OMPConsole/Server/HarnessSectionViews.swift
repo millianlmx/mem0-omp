@@ -1,27 +1,46 @@
-// Les sections de pilotage de la coque, toutes servies par le serveur de pipelines
-// du VPS (omp-harness) — le seul moteur : Accueil (rapport du matin, résumé, services
-// et boîte de l'humain), Pipelines (historique des features : tableau ou kanban),
-// Projet (projets : lancer, suivre), Audit (audits : lancer, trier les propositions) et
-// Statistiques (dont la carte des services). Le Poste (poste de travail) passe par le
-// même cadre, dans `WorkstationViews.swift`.
+// Les sections du Mac servies par le serveur de pipelines du VPS (omp-harness) — le
+// seul moteur : « À traiter » (la file unique de ce qui attend l'humain) et Features
+// (une ligne par feature à gauche, sa page à droite ; projets, audits et issues en
+// portées). Le Poste passe par le même cadre (`WorkstationViews.swift`), Système aussi
+// (`SystemPages.swift`).
 //
-// Le contenu partagé avec l'app iOS (boîte, Poste, historique, lancement, services)
-// vient de la cible ConsoleUI ; ce fichier n'en garde que le cadre du Mac.
-//
-// Un seul `HarnessModel` et un seul `HarnessDrafts` pour toute la fenêtre (posés par
-// `OMPConsoleApp`) : le flux d'événements tient chaque section à jour. Sans
-// serveur relié, chaque section montre le même appel à le relier. Le titre de la
-// fenêtre est posé par la racine (la section courante), jamais ici.
+// Le contenu partagé avec l'app iOS vient de la cible ConsoleUI ; ce fichier n'en garde
+// que le cadre du Mac. Un seul `HarnessModel` et un seul `HarnessDrafts` pour toute la
+// fenêtre (posés par `OMPConsoleApp`) : le flux d'événements tient chaque section à
+// jour. Sans serveur relié, chaque section montre le même appel à le relier. Le titre
+// de la fenêtre est posé par la racine, jamais ici.
 
 import ConsoleClient
 import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-/// Le cadre commun : relier le serveur s'il ne l'est pas, sinon le contenu, avec
-/// l'échec du dernier échange en tête et l'actualisation en barre d'outils.
-/// `reload` relit en plus ce qui n'est pas dans la boîte (le poste de travail) ;
-/// `form` faux pose le contenu tel quel (le tableau de l'historique), sans formulaire.
+// MARK: - Actualiser (⌘R)
+
+/// L'actualisation de la section à l'écran : le menu Présentation ▸ « Actualiser » (⌘R)
+/// l'appelle. Le cadre la publie pour la scène ; aucun bouton ne la répète à l'écran.
+struct HarnessRefreshAction {
+    let isEnabled: Bool
+    let perform: @MainActor () async -> Void
+}
+
+private struct HarnessRefreshKey: FocusedValueKey {
+    typealias Value = HarnessRefreshAction
+}
+
+extension FocusedValues {
+    var harnessRefresh: HarnessRefreshAction? {
+        get { self[HarnessRefreshKey.self] }
+        set { self[HarnessRefreshKey.self] = newValue }
+    }
+}
+
+// MARK: - Cadre
+
+/// Le cadre commun : relier le serveur s'il ne l'est pas, sinon le contenu — dans un
+/// formulaire groupé (`form`), l'échec du dernier échange en tête — et les feuilles des
+/// gestes. Aucun bouton de barre d'outils : chaque écran déclare sa seule action
+/// principale. `reload` relit, à ⌘R, ce qui n'est pas dans la boîte (le poste, la vigie…).
 struct HarnessSection<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -54,24 +73,7 @@ struct HarnessSection<Content: View>: View {
             } else if !server.isConfigured {
                 notConfigured
             } else if form {
-                // Une tuile du tableau de bord de l'Accueil demande une section de la
-                // boîte (`homeAnchor`) : le formulaire y défile, puis oublie la demande.
-                ScrollViewReader { proxy in
-                    Form {
-                        if let failure = server.failure {
-                            Section {
-                                ConsoleFailureBanner(failure: failure)
-                            }
-                        }
-                        content()
-                    }
-                    .formStyle(.grouped)
-                    .onChange(of: drafts.homeAnchor) { _, anchor in
-                        guard let anchor else { return }
-                        withAnimation { proxy.scrollTo(anchor.rawValue, anchor: .top) }
-                        drafts.homeAnchor = nil
-                    }
-                }
+                HarnessForm(server: server, drafts: drafts) { content() }
             } else {
                 VStack(spacing: 0) {
                     if let failure = server.failure {
@@ -82,40 +84,11 @@ struct HarnessSection<Content: View>: View {
                 }
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    drafts.launchSheetShown = true
-                } label: {
-                    Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)
-                }
-                .help(PipelineServerText.newFeature)
-                .disabled(!server.isConfigured || !server.canAct)
-                .accessibilityIdentifier("pipelines.new")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task {
-                        await server.refresh()
-                        if catalog { await server.refreshCatalog() }
-                        await reload?()
-                    }
-                } label: {
-                    Label(PipelineServerText.refresh, systemImage: "arrow.clockwise")
-                }
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(!server.isConfigured || server.isLoading)
-                .accessibilityIdentifier("server.refresh")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    drafts.serverSheetShown = true
-                } label: {
-                    Label(PipelineServerText.open, systemImage: "server.rack")
-                }
-                .accessibilityIdentifier("server.open")
-            }
-        }
+        .focusedSceneValue(\.harnessRefresh, HarnessRefreshAction(isEnabled: server.isConfigured && !server.isLoading) {
+            await server.refresh()
+            if catalog { await server.refreshCatalog() }
+            await reload?()
+        })
         .task {
             if catalog { await server.refreshCatalog() }
         }
@@ -141,13 +114,42 @@ struct HarnessSection<Content: View>: View {
     }
 }
 
-// MARK: - Accueil
+/// Un formulaire groupé du serveur : l'échec du dernier échange en tête, seulement s'il
+/// y en a un. Une demande de la palette ou d'une notification (`homeAnchor`) y fait
+/// défiler jusqu'à l'élément de la file qu'elle désigne, puis est oubliée.
+struct HarnessForm<Content: View>: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    @ViewBuilder let content: () -> Content
 
-/// L'Accueil : le rapport du matin, puis les envois du poste de travail qui attendent
-/// l'approbation (ils expirent), le tableau de bord (KPIs et graphiques, pour comprendre
-/// d'un coup d'œil ce qui se passe sur tous les projets), les services qui demandent
-/// un regard, les alertes et la boîte.
-struct HarnessHomeView: View {
+    var body: some View {
+        ScrollViewReader { proxy in
+            Form {
+                if let failure = server.failure {
+                    Section {
+                        ConsoleFailureBanner(failure: failure)
+                    }
+                }
+                content()
+            }
+            .formStyle(.grouped)
+            .onAppear { scroll(to: drafts.homeAnchor, proxy) }
+            .onChange(of: drafts.homeAnchor) { _, anchor in scroll(to: anchor, proxy) }
+        }
+    }
+
+    private func scroll(to anchor: HarnessHomeAnchor?, _ proxy: ScrollViewProxy) {
+        guard let anchor else { return }
+        withAnimation { proxy.scrollTo(anchor.rawValue, anchor: .top) }
+        drafts.homeAnchor = nil
+    }
+}
+
+// MARK: - À traiter
+
+/// « À traiter » : la ligne de pouls, les envois du poste à approuver, puis la file
+/// unique de ce qui attend l'humain. Une seule action en barre d'outils : « + ».
+struct HarnessInboxView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
@@ -156,296 +158,99 @@ struct HarnessHomeView: View {
             await server.workstation.refresh()
             await server.vigie.refresh()
         }) {
-            let inbox = server.inbox ?? HarnessInbox()
-            VigieSilentBanner(vigie: server.vigie)
-            DigestSection(server: server)
-            WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
-            HarnessDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
-            QueueSummarySection(server: server)
-            ServicesSummarySection(server: server)
-            HarnessAlertsSection(drafts: drafts, inbox: inbox)
-            InboxSections(server: server, drafts: drafts, inbox: inbox)
+            InboxFeed(server: server, drafts: drafts, inbox: server.inbox ?? HarnessInbox())
         }
-        .accessibilityIdentifier("home.harness")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    drafts.launchSheetShown = true
+                } label: {
+                    Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)
+                }
+                .help(PipelineServerText.newFeature)
+                .disabled(!server.isConfigured || !server.canAct)
+                .accessibilityIdentifier("inbox.new")
+            }
+        }
+        .accessibilityIdentifier("inbox.harness")
     }
 }
 
-// MARK: - Pipelines
+// MARK: - Features
 
-/// Toutes les features du serveur, terminées comprises : le tableau triable ou le
-/// kanban par état (priorité au glisser-déposer) ; « Nouvelle feature » (⌘N) est en
-/// barre d'outils.
-struct HarnessPipelinesView: View {
+/// Features : la portée choisie en tête de la barre d'outils. Pour les features, la
+/// liste dense à gauche et la page de la feature choisie à droite ; projets, audits et
+/// issues en formulaire pleine largeur.
+struct HarnessRunsView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    @ObservedObject var history: HarnessRunsHistory
+
+    init(server: HarnessModel, drafts: HarnessDrafts) {
+        self.server = server
+        self.drafts = drafts
+        self.history = server.history
+    }
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true, form: false) {
-            RunsHistoryPanel(server: server, drafts: drafts, history: server.history)
-        }
-        .accessibilityIdentifier("pipelines.harness")
-    }
-}
-
-// MARK: - Projet
-
-struct HarnessProjectsView: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true) {
-            Section {
-                RepoPicker(server: server, drafts: drafts)
-                TextField(PipelineServerText.projectTitleLabel, text: $drafts.projectTitle)
-                    .accessibilityIdentifier("project.launch.title")
-                ForEach($drafts.features) { $feature in
-                    VStack(alignment: .leading, spacing: 6) {
-                        TextField(PipelineServerText.titleLabel, text: $feature.title)
-                        TextField(PipelineServerText.requestLabel, text: $feature.request, axis: .vertical)
-                            .lineLimit(2...6)
-                        TextField(PipelineServerText.modulesLabel, text: $feature.modules)
-                        if drafts.features.count > 1 {
-                            Button(PipelineServerText.removeFeature, role: .destructive) { drafts.removeFeature(feature.id) }
-                                .buttonStyle(.borderless)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                HStack {
-                    Button(PipelineServerText.addFeature) { drafts.addFeature() }
-                        .buttonStyle(.bordered)
-                    Spacer()
-                    Button(PipelineServerText.launch) {
-                        guard let repo = drafts.launchRepo(in: server.repos) else { return }
-                        let title = drafts.projectTitle
-                        let features = drafts.features
-                        Task {
-                            if await server.launchProject(repo: repo, title: title, features: features) != nil { drafts.clearProject() }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!drafts.canLaunchProject || server.isLaunching || server.repos.isEmpty)
-                    .accessibilityIdentifier("project.launch.commit")
-                }
-            } header: {
-                Text(PipelineServerText.launchProjectTitle)
-            } footer: {
-                Text(PipelineServerText.launchProjectHint)
+        HarnessSection(server: server, drafts: drafts, catalog: true, form: false, reload: { await history.refresh() }) {
+            switch drafts.runsScope {
+            case .features:
+                features
+            case .projects:
+                HarnessForm(server: server, drafts: drafts) { ProjectsListSections(server: server, drafts: drafts) }
+            case .audits:
+                HarnessForm(server: server, drafts: drafts) { AuditsListSections(server: server, drafts: drafts) }
+            case .issues:
+                HarnessForm(server: server, drafts: drafts) { IssuesSections(server: server, drafts: drafts) }
             }
-
-            Section {
-                if server.projects.isEmpty {
-                    Text(PipelineServerText.noProject)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(server.projects) { project in
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(project.title)
-                            Text(PipelineServerText.projectLine(total: project.runs.total, merged: project.runs.count(.merged)))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(project.isDone ? PipelineServerText.projectDone : PipelineServerText.projectActive)
-                            .font(.caption)
-                            .foregroundStyle(project.isDone ? Color.green : Color.secondary)
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker(ShellText.scope, selection: $drafts.runsScope) {
+                    ForEach(RunsScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
                     }
                 }
-            } header: {
-                Text(PipelineServerText.projectsTitle)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .accessibilityIdentifier("runs.scope")
+            }
+            if drafts.runsScope == .features {
+                ToolbarItem(placement: .primaryAction) {
+                    RunsFilterMenu(server: server)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                NewWorkMenu(server: server, drafts: drafts)
             }
         }
-        .accessibilityIdentifier("project.harness")
+        .task { await history.refresh() }
+        .accessibilityIdentifier("runs.harness")
     }
-}
 
-// MARK: - Audit
-
-struct HarnessAuditsView: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true) {
-            Section {
-                RepoPicker(server: server, drafts: drafts)
-                TextField(PipelineServerText.focusLabel, text: $drafts.auditFocus, prompt: Text(PipelineServerText.focusPrompt))
-                    .accessibilityIdentifier("audit.launch.focus")
-                Button(PipelineServerText.launch) {
-                    guard let repo = drafts.launchRepo(in: server.repos) else { return }
-                    let focus = drafts.auditFocus
-                    Task {
-                        if await server.launchAudit(repo: repo, focus: focus) != nil { drafts.auditFocus = "" }
+    private var features: some View {
+        HSplitView {
+            List(selection: $drafts.openedRun) {
+                RunsListSections(server: server, drafts: drafts, selectable: true)
+            }
+            .listStyle(.inset)
+            .frame(minWidth: 260, idealWidth: 340, maxWidth: 520)
+            Group {
+                if let runId = drafts.openedRun {
+                    RunPageView(server: server, drafts: drafts, runId: runId)
+                        .id(runId)
+                } else {
+                    ContentUnavailableView {
+                        Label(ShellText.pickRun, systemImage: ConsoleSection.runs.systemImage)
+                    } description: {
+                        Text(ShellText.pickRunHint)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(server.isLaunching || server.repos.isEmpty)
-                .accessibilityIdentifier("audit.launch.commit")
-            } header: {
-                Text(PipelineServerText.launchAuditTitle)
-            } footer: {
-                Text(PipelineServerText.launchAuditHint)
             }
-
-            if server.audits.isEmpty {
-                Section {
-                    Text(PipelineServerText.noAudit)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            ForEach(server.audits) { audit in
-                Section {
-                    auditView(audit)
-                } header: {
-                    Text(audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
-                }
-            }
+            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .accessibilityIdentifier("audit.harness")
-    }
-
-    @ViewBuilder
-    private func auditView(_ audit: HarnessAudit) -> some View {
-        HStack {
-            Text(PipelineServerText.auditState(audit.state))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(audit.isProposed ? Color.orange : Color.secondary)
-            Spacer()
-            Text(audit.repo)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if let reason = audit.reason, !reason.isEmpty {
-            Text(reason)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        ForEach(Array(audit.proposals.enumerated()), id: \.offset) { index, proposal in
-            if audit.isProposed {
-                Toggle(isOn: pickBinding(audit, index)) {
-                    proposalLabel(proposal)
-                }
-                .toggleStyle(.checkbox)
-            } else {
-                proposalLabel(proposal)
-            }
-        }
-        if audit.canFollowSession {
-            Button {
-                drafts.sessionRequest = HarnessSessionRequest(target: .audit(audit.id), title: audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
-            } label: {
-                Label(MonitoringText.auditSessionTitle, systemImage: PipelineServerText.sessionSymbol)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("audit.session.open")
-        }
-        if audit.isOpen {
-            HStack {
-                if audit.isProposed {
-                    Button(PipelineServerText.launchProposals) {
-                        let items = Array(drafts.picks[audit.id] ?? [])
-                        let title = PipelineServerText.auditProjectTitle(audit.focus)
-                        Task {
-                            if await server.launchProposals(auditId: audit.id, items: items, title: title) != nil { drafts.picks[audit.id] = nil }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled((drafts.picks[audit.id] ?? []).isEmpty)
-                }
-                Spacer()
-                Button(PipelineServerText.cancelAudit, role: .destructive) {
-                    Task { await server.cancelAudit(audit.id) }
-                }
-                .buttonStyle(.bordered)
-            }
-            .disabled(server.busyAudits.contains(audit.id))
-        }
-    }
-
-    private func proposalLabel(_ proposal: HarnessAuditProposal) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(proposal.title)
-            Text("\(proposal.isWeakness ? PipelineServerText.weakness : PipelineServerText.feature) · \(proposal.rationale)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func pickBinding(_ audit: HarnessAudit, _ index: Int) -> Binding<Bool> {
-        Binding(get: { drafts.isPicked(audit, index) }, set: { _ in drafts.togglePick(audit, index) })
-    }
-}
-
-// MARK: - Statistiques
-
-struct HarnessStatsView: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true) {
-            if let stats = server.stats {
-                Section {
-                    row(PipelineServerText.total, "\(stats.runs.total)")
-                    ForEach(HarnessRunState.allCases, id: \.self) { state in
-                        if let count = stats.runs.byState[state.rawValue], count > 0 {
-                            row(PipelineServerText.state(state.rawValue), "\(count)")
-                        }
-                    }
-                    row(PipelineServerText.mergedWeek, "\(stats.runs.mergedLast7Days)")
-                    row(PipelineServerText.mergeRate, stats.runs.mergeRate.map(PipelineServerText.percent) ?? PipelineServerText.notAvailable)
-                    row(PipelineServerText.leadTime, stats.runs.medianLeadSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable)
-                    row(PipelineServerText.fixesPerMerge, stats.runs.fixesPerMerged.map { String(format: "%.1f", $0) } ?? PipelineServerText.notAvailable)
-                } header: {
-                    Text(PipelineServerText.statsRuns)
-                }
-                Section {
-                    ForEach(HarnessRun.stepKinds, id: \.self) { kind in
-                        if let step = stats.steps[kind] {
-                            Text(PipelineServerText.stepLine(label: HarnessRun.label(forStep: kind), count: step.count, failed: step.failed, median: step.medianSec))
-                        }
-                    }
-                } header: {
-                    Text(PipelineServerText.statsSteps)
-                }
-                Section {
-                    row(PipelineServerText.total, "\(stats.tests.total)")
-                    row(PipelineServerText.testsCached, "\(stats.tests.cached)")
-                    row(PipelineServerText.testsRetried, "\(stats.tests.retried)")
-                } header: {
-                    Text(PipelineServerText.statsTests)
-                }
-                if let usage = stats.usage {
-                    HarnessUsageSection(usage: usage)
-                }
-                if let models = stats.models {
-                    HarnessModelsSection(models: models)
-                }
-                if let flaky = stats.tests.flaky {
-                    HarnessFlakySection(flaky: flaky)
-                }
-                ServicesSection(server: server)
-                HarnessHealthSection(server: server)
-                Section {
-                    row(PipelineServerText.runners, PipelineServerText.slots(used: stats.scheduler.runner.used, capacity: stats.scheduler.runner.capacity))
-                    row(PipelineServerText.heavySlots, PipelineServerText.slots(used: stats.scheduler.heavy.used, capacity: stats.scheduler.heavy.capacity))
-                    row(PipelineServerText.memoryFree, stats.scheduler.memAvailableMiB.map(PipelineServerText.mebibytes) ?? PipelineServerText.notAvailable)
-                } header: {
-                    Text(PipelineServerText.statsCapacity)
-                }
-            } else {
-                Section {
-                    Text(PipelineServerText.noStats)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .accessibilityIdentifier("stats.harness")
-    }
-
-    private func row(_ label: String, _ value: String) -> some View {
-        LabeledContent(label, value: value)
+        .searchable(text: $history.query)
     }
 }

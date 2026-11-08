@@ -37,10 +37,10 @@ struct HarnessWidgetTests {
 
     @Test("le lien du widget ouvre une section ; tout autre lien est ignoré")
     func link() {
-        let url = HarnessWidgetLink.url(.home)
-        #expect(url.absoluteString == "ompconsole://home")
-        #expect(HarnessWidgetLink.section(of: url) == .home)
-        #expect(HarnessWidgetLink.section(of: URL(string: "https://example.com/home")!) == nil)
+        let url = HarnessWidgetLink.url(.inbox)
+        #expect(url.absoluteString == "ompconsole://inbox")
+        #expect(HarnessWidgetLink.section(of: url) == .inbox)
+        #expect(HarnessWidgetLink.section(of: URL(string: "https://example.com/inbox")!) == nil)
         #expect(HarnessWidgetLink.section(of: URL(string: "ompconsole://inconnue")!) == nil)
     }
 

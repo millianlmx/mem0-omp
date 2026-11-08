@@ -21,7 +21,9 @@ function withStep<T extends { stepId: number }>(store: Store, items: readonly T[
  * La boîte de l'humain, d'un seul appel : escalades batchées, validations, décisions prises
  * seules, features en cours, audits. `pendingCount` compte ce qui BLOQUE un run (escalades
  * ouvertes, runs en attente de validation) ; les décisions `auto`/`auto_timeout` sont à
- * relire, pas bloquantes : listées à part, chacune avec son `status`.
+ * relire, pas bloquantes : listées à part, chacune avec son `status`. Une escalade restée
+ * ouverte sur un run terminé (annulé, fusionné, en échec) ne bloque plus rien et ne peut
+ * plus recevoir de réponse : elle n'entre ni dans la boîte ni dans le compte.
  */
 export function inboxOf(store: Store, repos: RepoFilter = null): Record<string, unknown> {
   const runs = store.listRuns({ repos });
@@ -29,6 +31,8 @@ export function inboxOf(store: Store, repos: RepoFilter = null): Record<string, 
   const byRun = new Map<string, unknown[]>();
   let openEscalations = 0;
   for (const item of withStep(store, store.listEscalations({ status: "open", repos }))) {
+    const run = byId.get(item.runId) ?? store.getRun(item.runId);
+    if (run && isTerminal(run.state)) continue;
     openEscalations += 1;
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
   }

@@ -15,20 +15,25 @@ import SwiftUI
 public struct ConsoleShell: Sendable {
     /// Le rendu d'un document Markdown découpé par le noyau.
     public var markdown: @MainActor @Sendable ([MarkdownBlock]) -> AnyView
-    /// Le direct d'une session (feuille ouverte par `drafts.sessionRequest`).
+    /// Le direct d'une session en feuille (`drafts.sessionRequest`) : l'analyse d'un
+    /// audit, un job du poste. Une feature, elle, s'ouvre en page.
     public var session: @MainActor @Sendable (HarnessSessionRequest) -> AnyView
     /// Les gestes de la plateforme sur une feature (iPhone : la suivre sur l'écran
     /// verrouillé), ajoutés à son menu.
     public var runActions: @MainActor @Sendable (HarnessRun) -> AnyView
+    /// Montrer une section : la racine de l'app tient la sélection.
+    public var select: @MainActor @Sendable (ConsoleSection) -> Void
 
     public init(
         markdown: @escaping @MainActor @Sendable ([MarkdownBlock]) -> AnyView,
         session: @escaping @MainActor @Sendable (HarnessSessionRequest) -> AnyView,
-        runActions: @escaping @MainActor @Sendable (HarnessRun) -> AnyView = { _ in AnyView(EmptyView()) }
+        runActions: @escaping @MainActor @Sendable (HarnessRun) -> AnyView = { _ in AnyView(EmptyView()) },
+        select: @escaping @MainActor @Sendable (ConsoleSection) -> Void = { _ in }
     ) {
         self.markdown = markdown
         self.session = session
         self.runActions = runActions
+        self.select = select
     }
 }
 
@@ -44,6 +49,35 @@ extension EnvironmentValues {
     public var consoleShell: ConsoleShell {
         get { self[ConsoleShellKey.self] }
         set { self[ConsoleShellKey.self] = newValue }
+    }
+}
+
+/// Les déplacements communs aux deux apps : ouvrir la page d'une feature, une page du
+/// hub Système, une portée de Features. `select` est celui de la racine.
+public enum ConsoleNavigation {
+    @MainActor
+    public static func openRun(_ id: String, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void) {
+        drafts.runsScope = .features
+        drafts.openedRun = id
+        select(.runs)
+    }
+
+    @MainActor
+    public static func open(_ page: SystemPage, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void) {
+        // Le Serveur est la feuille de connexion, ouverte d'où que l'on soit.
+        if page == .server {
+            drafts.serverSheetShown = true
+            return
+        }
+        drafts.systemPage = page
+        select(.system)
+    }
+
+    @MainActor
+    public static func open(_ scope: RunsScope, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void) {
+        drafts.runsScope = scope
+        drafts.openedRun = nil
+        select(.runs)
     }
 }
 
@@ -127,7 +161,7 @@ public enum ConsolePlatform {
 }
 
 extension ConsoleTone {
-    /// La teinte qui double le mot d'un état (celle de `StatusBadge` et `IOSStatusChip`).
+    /// La teinte qui double le mot d'un état (celle de `ConsoleStatusChip` et `IOSStatusChip`).
     public var consoleTint: Color {
         switch self {
         case .neutral: .gray

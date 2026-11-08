@@ -4,6 +4,7 @@
 // d'une feature. Aucun réseau ici : les gestes passent par `HarnessModel`.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 /// Une feature d'un projet en cours de saisie.
@@ -63,14 +64,26 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var retryRequest: HarnessRun?
     /// La feature fusionnée dont l'annulation (commit inverse) attend confirmation.
     @Published public var revertRequest: HarnessRun?
-    /// Le direct ouvert en feuille : celui d'une feature, ou de l'analyse d'un audit.
+    /// Le direct ouvert en feuille : l'analyse d'un audit ou un job du poste (une
+    /// feature, elle, s'ouvre en page : `openedRun`).
     @Published public var sessionRequest: HarnessSessionRequest?
     @Published public var forgetAsked = false
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false
-    /// La section de la boîte où une tuile du tableau de bord fait défiler l'Accueil ;
-    /// remise à `nil` une fois le défilement fait.
+    /// Le genre d'élément de « À traiter » où défiler (palette, notification) ; remis à
+    /// `nil` une fois le défilement fait.
     @Published public var homeAnchor: HarnessHomeAnchor?
+    /// La feature montrée en page dans la section Features (`nil` : aucune).
+    @Published public var openedRun: String?
+    /// La portée de la section Features : features, projets, audits ou issues.
+    @Published public var runsScope: RunsScope = .features
+    /// La page du hub Système montrée (`nil` : le hub lui-même).
+    @Published public var systemPage: SystemPage?
+    /// Les feuilles de création « Nouveau projet », « Nouvel audit » et « Nouvelle
+    /// planification » (jamais un formulaire en tête d'écran).
+    @Published public var projectSheetShown = false
+    @Published public var auditSheetShown = false
+    @Published public var scheduleSheetShown = false
     /// Le dépôt visé par les lancements (feature, projet, audit).
     @Published public var repo = ""
     /// Une feature à lancer.
@@ -92,8 +105,6 @@ public final class HarnessDrafts: ObservableObject {
     /// Une recherche de mémoire demandée depuis la palette : l'écran Mémoire la soumet,
     /// puis l'oublie.
     @Published public var memorySearchRequest: String?
-    /// L'historique des features se montre en kanban (Mac) plutôt qu'en tableau.
-    @Published public var historyBoard = false
     /// Un projet à lancer, feature par feature.
     @Published public var projectTitle = ""
     @Published public var features: [HarnessFeatureDraft] = [HarnessFeatureDraft()]

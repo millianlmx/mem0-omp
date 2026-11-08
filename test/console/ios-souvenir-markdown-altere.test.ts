@@ -164,10 +164,10 @@ function otherMarkdownFaults(root: string): string[] {
   // Les specs passent par le rendu partagé de l'app (`ConsoleShell.markdown` = IOSMarkdownView).
   if (
     !fs
-      .readFileSync(path.join(root, "omp-console", "Sources", "ConsoleUI", "InboxSections.swift"), "utf8")
+      .readFileSync(path.join(root, "omp-console", "Sources", "ConsoleUI", "InboxFeed.swift"), "utf8")
       .includes("ConsoleMarkdown(blocks: MarkdownDocument.blocks(specs))")
   ) {
-    faults.push("InboxSections.swift ne rend plus les specs par ConsoleMarkdown(");
+    faults.push("InboxFeed.swift ne rend plus les specs par ConsoleMarkdown(");
   }
   if (!appFile(root, "RootView.swift").includes("markdown: { AnyView(IOSMarkdownView(blocks: $0)) }")) {
     faults.push("RootView.swift ne branche plus IOSMarkdownView comme rendu Markdown partagé");
@@ -179,7 +179,7 @@ test("ios-souvenir-markdown-altere/AC-4 : un contenu non-souvenir garde son gras
   assert.deepEqual(otherMarkdownFaults(ROOT), []);
 
   const copy = copyRepo("ios-souvenir-markdown-altere-copie-");
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleUI", "InboxSections.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleUI", "InboxFeed.swift");
   const planted = code(target).replace(
     "ConsoleMarkdown(blocks: MarkdownDocument.blocks(specs))",
     "Text(verbatim: specs)",

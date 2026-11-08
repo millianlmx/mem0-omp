@@ -464,10 +464,10 @@ test("harness-gestures/AC-8 : renverser une décision d'un run mergé reverte le
   }
 });
 
-test("harness-gestures/AC-9 : l'inbox compte ce qui bloque (escalades ouvertes + runs en attente) ; les décisions auto et auto_timeout sont listées à part, avec leur statut", () => {
+test("harness-gestures/AC-9 : l'inbox compte ce qui bloque (escalades ouvertes + runs en attente) ; les décisions auto et auto_timeout sont listées à part, avec leur statut ; une escalade d'un run terminé n'y est plus", () => {
   let clock = 1000;
   const store = new Store(path.join(tmpdir("harness-gestures-"), "h.sqlite"), () => clock++);
-  for (const id of ["r1", "r2", "r3"])
+  for (const id of ["r1", "r2", "r3", "r4"])
     store.createRun({ id, repo: "demo", slug: id, title: id, request: id, branch: `harness/${id}` });
   const step = store.startStep("r1", "impl", 0, null, null);
   store.addEscalation({
@@ -505,9 +505,25 @@ test("harness-gestures/AC-9 : l'inbox compte ce qui bloque (escalades ouvertes +
   store.acceptDecision("r2", 1);
   store.addDecision({ ...base, runId: "r3", question: "autre" });
   store.updateRun("r3", { state: "merged" });
+  // Une question restée ouverte sur un run annulé : plus personne ne peut y répondre.
+  store.addEscalation({
+    runId: "r4",
+    stepId: store.startStep("r4", "specs", 0, null, null).id,
+    category: "reversible",
+    question: "orpheline",
+    options: ["a", "b"],
+    context: "",
+    recommended: "a",
+  });
+  store.updateRun("r4", { state: "cancelled" });
 
   const inbox = inboxOf(store);
   assert.equal(inbox.pendingCount, 3, "deux escalades ouvertes + un run en attente");
+  assert.deepEqual(
+    (inbox.batches as { run: { id: string } }[]).map((b) => b.run.id),
+    ["r1"],
+    "l'escalade du run annulé n'est plus dans la boîte",
+  );
   assert.deepEqual(
     (inbox.decisions as { runId: string; question: string; status: string }[]).map((d) => [
       d.runId,

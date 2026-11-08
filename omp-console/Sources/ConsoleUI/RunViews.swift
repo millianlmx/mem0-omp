@@ -1,91 +1,109 @@
-// Une FEATURE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : sa rangée (titre,
-// état, reprise différée ou dernier échec, corrections, coût, alertes), le menu de sa
-// priorité, et les feuilles et confirmations de ses gestes (`harnessGestures`).
+// Une FEATURE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : sa LIGNE dans la
+// liste (point d'état, titre, dépôt · étape · âge — une ligne dense, comme une session
+// dans la barre latérale d'un terminal), le menu de sa priorité, et les feuilles et
+// confirmations de ses gestes (`harnessGestures`).
 //
 // Les gestes qui changent le sort d'une feature (arrêt, relance, annulation d'une
 // fusion) passent TOUJOURS par une confirmation (`drafts.stopRequest`, `retryRequest`,
-// `revertRequest`) : le menu d'une rangée ne parle jamais au serveur lui-même. La
-// priorité, elle, se change directement : rien ne se perd, et le serveur la borne.
+// `revertRequest`) : un menu ne parle jamais au serveur lui-même. La priorité, elle,
+// se change directement : rien ne se perd, et le serveur la borne.
 
 import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-public struct RunRow: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
+/// La ligne d'une feature : aucun bouton dedans, tout geste est dans son menu ou sa page.
+public struct RunListRow: View {
     let run: HarnessRun
+    let cost: Double?
+    let alerts: Int
 
-    public init(server: HarnessModel, drafts: HarnessDrafts, run: HarnessRun) {
-        self.server = server
-        self.drafts = drafts
+    public init(run: HarnessRun, cost: Double? = nil, alerts: Int = 0) {
         self.run = run
+        self.cost = cost
+        self.alerts = alerts
     }
 
     public var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(run.title)
-                ConsoleStatusChip(status: ConsoleStatus(text: run.statusLine, tone: run.tone))
-                if let detail = run.detailLine() {
-                    Text(detail)
+            RunStateDot(run: run)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(run.title)
+                        .font(.body.weight(HarnessRunGroup.of(run) == .needsYou ? .semibold : .regular))
+                        .denseLines(2)
+                    Spacer(minLength: 4)
+                    Text(ConsoleFormat.relative(ms: run.updatedAt, nowMs: Date().timeIntervalSince1970 * 1000))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .denseLines(1)
                 }
-                RunQueueReason(run: run)
-                if run.fixes > 0 {
-                    Text(PipelineServerText.fixes(run.fixes))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let cost = server.inbox?.costs[run.id] {
-                    Label(MonitoringText.cost(cost), systemImage: MonitoringText.costSymbol)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(server.inbox?.alerts(of: run.id) ?? []) { alert in
-                    Label(alert.line, systemImage: alert.symbol)
+                Text(meta)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .denseLines(1)
+                if let note {
+                    Text(note)
                         .font(.caption)
                         .foregroundStyle(.orange)
+                        .denseLines(2)
                 }
             }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 0)
-            #if os(macOS)
-            // Sur le Mac, les gestes de la rangée restent visibles (le menu contextuel les reprend).
-            if run.canFollowSession {
-                Button {
-                    drafts.sessionRequest = HarnessSessionRequest(run: run)
-                } label: {
-                    Label(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .consoleID("runs.row")
+    }
+
+    /// `dépôt · état · étape · coût` : ce qu'un coup d'œil doit savoir.
+    private var meta: String {
+        var parts = [run.repo, run.statusLine]
+        if run.fixes > 0 { parts.append(ShellText.fixes(run.fixes)) }
+        if let cost, cost > 0 { parts.append(MonitoringText.cost(cost)) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Ce qui mérite l'œil : ce qui retient la feature en file, sa dernière panne, ses alertes.
+    private var note: String? {
+        if let reason = run.queueReason { return reason }
+        if let detail = run.detailLine() { return detail }
+        if alerts > 0 { return MonitoringText.alertsTitle }
+        return nil
+    }
+}
+
+extension View {
+    /// La ligne d'une feature reste dense sur le Mac ; sur l'iPhone et l'iPad, elle grandit
+    /// avec le texte (Dynamic Type) plutôt que de le tronquer.
+    @ViewBuilder
+    func denseLines(_ count: Int) -> some View {
+        #if os(macOS)
+        lineLimit(count)
+        #else
+        self
+        #endif
+    }
+}
+
+/// Le point d'état d'une feature : sa teinte, pleine quand elle travaille ou vous attend.
+public struct RunStateDot: View {
+    let run: HarnessRun
+
+    public init(run: HarnessRun) {
+        self.run = run
+    }
+
+    public var body: some View {
+        let group = HarnessRunGroup.of(run)
+        Circle()
+            .fill(run.tone.consoleTint.opacity(group == .done || group == .queued ? 0.55 : 1))
+            .overlay {
+                if group == .running {
+                    Circle().strokeBorder(run.tone.consoleTint.opacity(0.35), lineWidth: 3).scaleEffect(1.8)
                 }
-                .buttonStyle(.bordered)
-                .help(PipelineServerText.sessionTitle)
-                .accessibilityIdentifier("pipelines.session.open")
             }
-            if run.canRetry {
-                Button(PipelineServerText.retry) { drafts.beginRetry(run) }
-                    .buttonStyle(.bordered)
-                    .disabled(server.busy.contains(run.id))
-            }
-            if run.canRevert {
-                Button(PipelineServerText.revertFeature) { drafts.revertRequest = run }
-                    .buttonStyle(.bordered)
-                    .disabled(server.busy.contains(run.id))
-            }
-            if run.canStop {
-                Button(PipelineServerText.stopFeature) { drafts.stopRequest = run }
-                    .buttonStyle(.bordered)
-                    .disabled(server.busy.contains(run.id))
-            }
-            #endif
-            if HarnessKanbanColumn.of(run)?.acceptsPriority == true {
-                PriorityMenu(server: server, run: run)
-            }
-        }
-        .contextMenu {
-            RunMenuItems(drafts: drafts, run: run)
-        }
+            .frame(width: 9, height: 9)
+            .accessibilityLabel(run.statusLine)
     }
 }
 
@@ -110,7 +128,7 @@ public struct PriorityMenu: View {
     public var body: some View {
         Menu {
             Section {
-                ForEach(HarnessKanban.presets, id: \.self) { value in
+                ForEach(HarnessRunGroups.priorityPresets, id: \.self) { value in
                     Button(PipelineServerText.priorityPreset(value)) { set(value) }
                         .disabled(value == run.admissionPriority)
                 }

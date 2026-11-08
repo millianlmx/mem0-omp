@@ -1,33 +1,27 @@
 // Assertion de S-4 : le modèle des sections — sélectionner une section change la
-// vue courante. L'ouverture sur l'Accueil est prouvée par ConsoleViewTests.
+// vue courante. L'ouverture sur « À traiter » est prouvée par ConsoleViewTests.
 
 import Testing
 @testable import OMPConsole
 import ConsoleCore
 
+@MainActor
 @Test("socle-app-swift/AC-2 : sélectionner une section change la vue courante")
 func selectingASectionChangesTheCurrentOne() {
     let model = ConsoleModel()
-    #expect(model.selection == .home)
+    #expect(model.selection == .inbox)
     for section in ConsoleSection.allCases {
         model.select(section)
         #expect(model.selection == section)
     }
 }
 
-@Test("audit-panel-in-omp-console-mac/S-9 : Pilotage regroupe les sections du serveur de pipelines, Consultation les sections locales")
-func pilotageGroupsTheServerSections() {
-    #expect(ConsoleSection.allCases == [
-        .home, .kanban, .project, .audit, .stats, .workstation, .terminal, .files, .memory,
-        .vigie, .schedules, .issues, .admin,
-    ])
-    #expect(ConsoleSection.audit.title == "Audit")
-    #expect(ConsoleSection.audit.systemImage == "checklist")
+@Test("refonte : le travail, puis les outils, puis Système seul en bas de la barre latérale")
+func sidebarGroupsWorkThenToolsThenSystem() {
+    #expect(ConsoleSection.allCases == [.inbox, .runs, .workstation, .memory, .terminal, .files, .system])
+    #expect(ConsoleSectionGroup.work.sections == [.inbox, .runs, .workstation])
+    #expect(ConsoleSectionGroup.tools.sections == [.memory, .terminal, .files])
+    #expect(ConsoleSectionGroup.system.sections == [.system])
     #expect(ConsoleSection.workstation.title == "Poste")
     #expect(ConsoleSection.workstation.systemImage == "desktopcomputer")
-    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .stats, .workstation])
-    #expect(ConsoleSectionGroup.consultation.sections == [.terminal, .files, .memory])
-    #expect(ConsoleSectionGroup.exploitation.sections == [.vigie, .schedules, .issues, .admin])
-    #expect(ConsoleSection.visible(ConsoleSection.allCases, isAdmin: false).contains(.admin) == false)
-    #expect(ConsoleSection.visible(ConsoleSection.allCases, isAdmin: true).contains(.admin))
 }

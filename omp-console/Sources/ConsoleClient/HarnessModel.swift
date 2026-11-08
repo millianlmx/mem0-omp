@@ -839,7 +839,7 @@ public final class HarnessModel: ObservableObject {
 
     /// Le run tel que la dernière boîte le montre (batches, validations, en cours), sinon
     /// tel que l'historique l'a lu.
-    func knownRun(_ runId: String) -> HarnessRun? {
+    public func knownRun(_ runId: String) -> HarnessRun? {
         let fromInbox = inbox.flatMap { inbox in
             inbox.batches.compactMap(\.run).first { $0.id == runId }
                 ?? inbox.awaiting.first { $0.id == runId }
@@ -1063,8 +1063,13 @@ public final class HarnessModel: ObservableObject {
     /// garde serveur-de-pipelines vérifie qu'il y figure toujours.
     nonisolated static let approverOnlyMarker = "seul l'appareil approbateur"
 
-    nonisolated static func failure(of error: Error) -> HarnessFailure {
-        (error as? HarnessFailure) ?? .unreachable
+    /// L'échec qu'une erreur montre à l'écran ; `nil` pour une annulation (un écran
+    /// quitté, une tâche relancée) : ce n'est pas une panne du serveur, et la dire
+    /// « injoignable » allumait le bandeau à tort à chaque changement de section.
+    nonisolated static func failure(of error: Error) -> HarnessFailure? {
+        if error is CancellationError { return nil }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return nil }
+        return (error as? HarnessFailure) ?? .unreachable
     }
 }
 

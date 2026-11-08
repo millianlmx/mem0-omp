@@ -56,7 +56,8 @@ public struct RunQueueReason: View {
     }
 }
 
-/// La file d'admission sur l'Accueil : combien de features dues sont retenues, et pourquoi.
+/// La file d'admission en tête de la liste des features : combien de features dues sont
+/// retenues, et pourquoi (rien quand aucune ne l'est).
 public struct QueueSummarySection: View {
     @ObservedObject var server: HarnessModel
 
@@ -84,7 +85,7 @@ public struct QueueSummarySection: View {
             } header: {
                 Text(ControlText.queueTitle)
             }
-            .consoleID("home.queue")
+            .consoleID("runs.queue")
         }
     }
 }

@@ -1,9 +1,10 @@
 // La TOUR DE CONTRÔLE du poste de travail, écrite une fois pour le Mac et l'iPhone/iPad,
-// en plus de `WorkstationSections` : l'arrêt d'urgence (toujours offert, confirmé), les
-// navigateurs et la navigation gardée, l'action commandée depuis l'app, les demandes en
+// en plus de `WorkstationSections` : les navigateurs et la navigation gardée (page
+// Réglages), l'action commandée depuis l'app, « Demander au poste » et les demandes en
 // langage naturel, les automatisations, les sessions des jobs du poste (le même direct
-// que celui d'une feature), et les feuilles de détail d'une action (résultat entier,
-// capture JPEG) et d'une réunion (transcription, besoins).
+// que celui d'une feature), la confirmation de l'arrêt d'urgence et les feuilles de
+// détail d'une action (résultat entier, capture JPEG) et d'une réunion (transcription,
+// besoins).
 //
 // L'arrêt d'urgence est permis à TOUT jeton : son bouton n'est jamais grisé par le rôle.
 // Demandes, automatisations et réglages exigent le jeton approbateur ; les gestes restent
@@ -18,52 +19,6 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
-
-// MARK: - Arrêt d'urgence
-
-/// L'arrêt d'urgence en tête du Poste : le bouton rouge, ou l'arrêt en cours et la reprise.
-public struct WorkstationStopSection: View {
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var drafts: HarnessDrafts
-    let status: WorkstationStatus
-
-    public init(workstation: WorkstationModel, drafts: HarnessDrafts, status: WorkstationStatus) {
-        self.workstation = workstation
-        self.drafts = drafts
-        self.status = status
-    }
-
-    public var body: some View {
-        Section {
-            if let stopped = status.stopped {
-                Label(ControlText.stopped(ConsoleFormat.dateTime(ms: stopped.at), by: stopped.by), systemImage: ControlText.stopSymbol)
-                    .font(.headline)
-                    .foregroundStyle(.red)
-                    .consoleBanner(tone: .danger)
-                    .consoleID("workstation.stopped")
-                Button(ControlText.resume) {
-                    Task { await workstation.setPaused(false) }
-                }
-                .disabled(workstation.isSaving)
-                .consoleID("workstation.resume")
-            } else {
-                Button(role: .destructive) {
-                    drafts.workstationStopAsked = true
-                } label: {
-                    Label(ControlText.stop, systemImage: ControlText.stopSymbol)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(workstation.isStopping)
-                .consoleID("workstation.stop")
-            }
-        } footer: {
-            Text(ControlText.stopHint)
-        }
-    }
-}
 
 // MARK: - Navigateurs et navigation gardée
 
@@ -248,8 +203,6 @@ struct WorkstationCommandSection: View {
                 }
                 .buttonStyle(.borderless)
             }
-        } header: {
-            Text(ControlText.commandTitle)
         } footer: {
             Text(ControlText.commandHint)
         }
@@ -274,13 +227,18 @@ struct BrowserPicker: View {
 
 // MARK: - Demandes
 
-struct WorkstationRequestsSection: View {
+/// « Demander au poste » sur la page principale : la demande en langage naturel (un champ,
+/// le navigateur s'il y en a plusieurs, l'envoi), puis les demandes en cours et la plus
+/// récente des terminées — son compte rendu se lit sans changer de page. Les autres
+/// sont sur la page des demandes.
+struct WorkstationAskSection: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var drafts: HarnessDrafts
     let status: WorkstationStatus
     let requests: [WorkstationRequest]
 
     var body: some View {
+        let shown = Self.shown(requests)
         Section {
             TextField(ControlText.requestsTitle, text: $drafts.workstationRequestText, prompt: Text(ControlText.requestPrompt), axis: .vertical)
                 .lineLimit(2...6)
@@ -302,18 +260,55 @@ struct WorkstationRequestsSection: View {
             if workstation.failure == .approverOnly {
                 ApproverOnlyNotice()
             }
+            ForEach(shown) { request in
+                WorkstationRequestRow(workstation: workstation, request: request)
+            }
+            if requests.count > shown.count {
+                NavigationLink(value: WorkstationPage.requests) {
+                    Text(WorkstationText.allRequests)
+                }
+                .consoleID("workstation.requests.all")
+            }
+        } header: {
+            Text(WorkstationText.askTitle)
+        } footer: {
+            Text(ControlText.requestsHint)
+        }
+    }
+
+    /// Les demandes en file ou en cours, et la plus récente des terminées (les demandes
+    /// arrivent les plus récentes d'abord).
+    static func shown(_ requests: [WorkstationRequest]) -> [WorkstationRequest] {
+        let latest = requests.first { !$0.isOpen }?.id
+        return requests.filter { $0.isOpen || $0.id == latest }
+    }
+}
+
+/// Toutes les demandes, sur leur page.
+struct WorkstationRequestsListSection: View {
+    @ObservedObject var workstation: WorkstationModel
+    let requests: [WorkstationRequest]
+
+    var body: some View {
+        Section {
+            if workstation.failure == .approverOnly {
+                ApproverOnlyNotice()
+            }
             if requests.isEmpty {
                 Text(ControlText.noRequest).foregroundStyle(.secondary)
             }
             ForEach(requests) { request in
                 WorkstationRequestRow(workstation: workstation, request: request)
             }
-        } header: {
-            Text(ControlText.requestsTitle)
         } footer: {
             Text(ControlText.requestsHint)
         }
     }
+}
+
+extension WorkstationRequest {
+    /// En file ou en cours : la demande peut encore être annulée.
+    var isOpen: Bool { state == .queued || state == .running }
 }
 
 struct WorkstationRequestRow: View {
@@ -432,8 +427,6 @@ struct WorkstationAutomationsSection: View {
                     }
                 }
             }
-        } header: {
-            Text(ControlText.automationsTitle)
         } footer: {
             Text(ControlText.automationsHint)
         }
@@ -468,8 +461,6 @@ struct WorkstationSessionsSection: View {
                 }
                 .consoleID("workstation.session.\(job.rawValue)")
             }
-        } header: {
-            Text(ControlText.sessionsTitle)
         } footer: {
             Text(ControlText.sessionsHint)
         }

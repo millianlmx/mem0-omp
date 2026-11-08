@@ -13,7 +13,7 @@ Sous-commandes :
   analyser --exceptions <f> --valider-seulement
       Valide seulement la liste d'exceptions : 0 si valide, 2 + message sinon.
   analyser --releves <dossier> --exceptions <f> --rapport <fichier.txt>
-      Valide les exceptions, exige les 18 paires <surface>-<apparence>-<taille>
+      Valide les exceptions, exige les 15 paires <surface>-<apparence>-<taille>
       .json|.png, vérifie les marqueurs et le contrôle « relié », applique les
       trois règles de défaut, écrit le rapport. Sortie 0 (aucun SIGNALÉ),
       1 (au moins un SIGNALÉ), 2 (la recette n'a pas pu conclure).
@@ -39,15 +39,14 @@ import zlib
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
-# Les six sections de l'app iOS (rawValue de `-section`), dans l'ordre de `allCases`,
+# Les cinq sections de l'app iOS (rawValue de `-section`), dans l'ordre de `allCases`,
 # et le titre de leur barre de navigation.
 TITRES = {
-    "home": "Accueil",
-    "kanban": "Pipelines",
-    "project": "Projet",
-    "audit": "Audit",
-    "stats": "Statistiques",
+    "inbox": "À traiter",
+    "runs": "Features",
+    "workstation": "Poste",
     "memory": "Mémoire",
+    "system": "Système",
 }
 SURFACE_KEYS = list(TITRES)
 
@@ -79,7 +78,7 @@ PROTEGES_CIBLE_44 = {
     "id:ios.memoire.graphe.etiquette",
 }
 PROTEGES_ID_DUPLIQUE = {"id:ios.memoire.screen"}
-PROTEGES_BORD_CAPTURE = {"kanban", "memory", "*"}
+PROTEGES_BORD_CAPTURE = {"runs", "memory", "*"}
 
 # Un simulateur jamais relié au serveur de pipelines montre « Configurer le
 # serveur » : la recette ne capture alors aucun dépôt réel.
@@ -191,11 +190,9 @@ ECRANS_NON_CONNECTES = (
 
 
 def marqueur(surface, arbre):
-    """Vrai si l'arbre montre la surface annoncée (ni la liste « Plus » de l'onglet
-    du même nom, ni un écran plein « non connecté » ou « connexion en cours »)."""
+    """Vrai si l'arbre montre la surface annoncée (ni un écran plein « non connecté »
+    ou « connexion en cours », ni une autre section)."""
     ids = _ids(arbre)
-    if any(i.startswith("ios.plus.") for i in ids):
-        return False
     if any(i in ids for i in ECRANS_NON_CONNECTES):
         return False
     return _marqueur_propre(surface, arbre)
@@ -547,7 +544,7 @@ def analyser(dossier, exceptions, rapport):
             raise Echec("surface non vérifiée : %s %s %s (marqueur absent)" % (surface, apparence, taille))
 
     for surface, _, _, base in nommes:
-        if surface == "kanban" and ID_NON_RELIE not in _ids(arbres[base]):
+        if surface == "runs" and ID_NON_RELIE not in _ids(arbres[base]):
             raise Echec(MSG_RELIE)
 
     tous = []

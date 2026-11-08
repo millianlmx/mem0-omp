@@ -15,11 +15,6 @@ import { memberBody, stripComments, stripHashComments, swiftSources } from "../s
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
 
-/** Le source d'un fichier de l'app, tel qu'écrit (les fautes s'y plantent). */
-function appSource(name: string): string {
-  return fs.readFileSync(path.join(APP, name), "utf8");
-}
-
 /** Le nombre d'occurrences d'un motif littéral. */
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
@@ -30,7 +25,9 @@ function plant(source: string, change: (s: string) => string): string {
   return after;
 }
 
-const AUDITS = "IOSHarnessScreens.swift";
+/** Les propositions d'audit vivent dans la vue partagée (ConsoleUI), compilée dans l'app iOS. */
+const AUDITS = "ScopeSections.swift";
+const AUDITS_PATH = path.join(ROOT, "omp-console", "Sources", "ConsoleUI", AUDITS);
 
 /** Les caractères de coche interdits comme marque de sélection (U+2713, U+2714). */
 const CHECK_CHARACTERS = ["\u2713", "\u2714"];
@@ -52,38 +49,33 @@ function checkCharacterFaults(sources: Map<string, string>): string[] {
   return faults;
 }
 
+/** Le choix d'une proposition : un `Toggle` système lié à `drafts.isPicked` (il porte et annonce son état). */
+const PICK_TOGGLE = "Toggle(isOn: Binding(get: { drafts.isPicked(audit, index) }";
+
 /**
- * AC-2 : une proposition d'audit retenue porte la coche SF Symbol
- * (`IOSShellText.pickedSymbol`) ; l'état reste annoncé par le trait « sélectionné ».
+ * AC-2 : une proposition d'audit se retient par un contrôle SYSTÈME (`Toggle`), qui
+ * dessine sa marque et annonce « sélectionné » à VoiceOver — jamais une coche
+ * maison ni un caractère.
  */
 function pickCheckmarkFaults(source: string): string[] {
-  const rows = memberBody(stripComments(source), "private func auditRows");
-  if (rows === "") return [`${AUDITS} : auditRows introuvable`];
-  const faults: string[] = [];
-  if (
-    !/Image\(systemName: drafts\.isPicked\(audit, index\) \? IOSShellText\.pickedSymbol : IOSShellText\.unpickedSymbol\)/.test(
-      rows,
-    )
-  ) {
-    faults.push(`${AUDITS} : la proposition retenue doit porter Image(systemName: … IOSShellText.pickedSymbol …)`);
-  }
-  if (!rows.includes(".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])")) {
-    faults.push(`${AUDITS} : la proposition perd le trait .isSelected, VoiceOver n'annonce plus le choix`);
-  }
-  return faults;
+  const rows = memberBody(stripComments(source), "private func auditView");
+  if (rows === "") return [`${AUDITS} : auditView introuvable`];
+  if (!rows.includes(PICK_TOGGLE)) return [`${AUDITS} : la proposition doit se retenir par ${PICK_TOGGLE}…`];
+  return [];
 }
 
-test("ios-finitions-composants/AC-2 : une proposition d'audit retenue porte la coche du symbole système, aucun « ✓ » dans l'app iOS", () => {
+test("ios-finitions-composants/AC-2 : une proposition d'audit se retient par un interrupteur système, aucun « ✓ » dans l'app iOS", () => {
   const sources = swiftSources(APP);
-  assert.ok(sources.has(AUDITS), "les écrans du serveur doivent être lus");
+  const audits = fs.readFileSync(AUDITS_PATH, "utf8");
+  sources.set(AUDITS, audits);
   assert.deepEqual(checkCharacterFaults(sources), []);
-  assert.deepEqual(pickCheckmarkFaults(appSource(AUDITS)), []);
+  assert.deepEqual(pickCheckmarkFaults(audits), []);
 
   // Faute plantée : la coche redevient le caractère « ✓ » ⇒ rouge.
-  const typed = plant(appSource(AUDITS), (s) =>
+  const typed = plant(audits, (s) =>
     s.replace(
-      "Image(systemName: drafts.isPicked(audit, index) ? IOSShellText.pickedSymbol : IOSShellText.unpickedSymbol)",
-      'Text("✓")',
+      /Toggle\(isOn: Binding\(get: \{ drafts\.isPicked\(audit, index\) \}[^\n]*\n/,
+      'Button { } label: { Text("✓")\n',
     ),
   );
   assert.ok(
@@ -91,21 +83,12 @@ test("ios-finitions-composants/AC-2 : une proposition d'audit retenue porte la c
     "un « ✓ » dans le code doit rougir",
   );
   assert.ok(
-    pickCheckmarkFaults(typed).some((f) => f.includes("pickedSymbol")),
-    "la coche texte doit rougir",
-  );
-
-  // Faute plantée : le trait « sélectionné » disparaît ⇒ rouge.
-  const silent = plant(appSource(AUDITS), (s) =>
-    s.replace(".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])", ""),
-  );
-  assert.ok(
-    pickCheckmarkFaults(silent).some((f) => f.includes(".isSelected")),
-    "un choix non annoncé doit rougir",
+    pickCheckmarkFaults(typed).some((f) => f.includes("Toggle")),
+    "une coche maison doit rougir",
   );
 
   // Un « ✓ » cité en commentaire n'est pas du code ⇒ vert.
-  const commented = plant(appSource(AUDITS), (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
+  const commented = plant(audits, (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
   assert.deepEqual(checkCharacterFaults(new Map([[AUDITS, commented]])), []);
 });
 

@@ -8,7 +8,7 @@
 // (`[test:]`/`[capture:]`/`[garde:]`, design-ios/AC-9), l'absence de
 // `NavigationSplitView` (coque-ios/AC-3), la place du bouton antenne
 // (ios-bouton-connexion-introuvable/AC-1, AC-2, AC-5), le titre de la barre latérale
-// et les rangées de « Plus » (accessibilite-et-localisation-ios-residu/AC-8, AC-9).
+// et la rangée Mémoire du hub Système (accessibilite-et-localisation-ios-residu/AC-8, AC-9).
 // Les fautes sont plantées dans une copie EN MÉMOIRE des sources, jamais dans l'arbre.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -32,11 +32,10 @@ function plant(sources: Sources, rel: string, from: string, to: string): Sources
 
 /** Les tests Swift que la section « Navigation » de DESIGN.md doit citer (S-7). */
 const NAVIGATION_MARKERS = [
-  "[test: compactTabsAreFourSectionsThenPlus]",
-  "[test: plusListsTheOtherSections]",
+  "[test: tabsAreTheSectionsThenSearch]",
+  "[test: memoryMovesUnderSystemOnIPhone]",
   "[test: groupedSections]",
-  "[test: sizeClassChangeMovesBetweenPlusAndSidebar]",
-  "[test: launchRoutesEachSectionOnIPhone]",
+  "[test: launchSelectsEachSection]",
 ];
 
 /** Les tournures de l'ancienne coque qui ne doivent plus figurer dans DESIGN.md. */
@@ -45,6 +44,7 @@ const OLD_SHELL: Array<[string, RegExp]> = [
   ["pile repliée", /en pile|pile repliée/i],
   ["ios.section.", /ios\.section\./],
   ["NavigationSplitView", /NavigationSplitView/],
+  ["onglet « Plus »", /«\s*Plus\s*»/],
 ];
 
 /** Le texte de la section `## Navigation…` de DESIGN.md, ou null. */
@@ -63,7 +63,7 @@ function designFaults(sources: Sources): string[] {
   }
   const section = navigationSection(design);
   if (section === null) return [...faults, "DESIGN.md n'a pas de section « ## Navigation »"];
-  for (const words of ["barre d'onglets", "barre latérale", "« Plus »"]) {
+  for (const words of ["barre d'onglets", "barre latérale", "hub Système"]) {
     if (!section.includes(words)) faults.push(`la section Navigation ne parle pas de ${words}`);
   }
   for (const marker of NAVIGATION_MARKERS) {
@@ -106,10 +106,15 @@ test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'ong
     designFaults(stack).some((f) => f.includes("pile")),
     "une puce sur la pile repliée doit faire rougir la garde",
   );
-  const unmarked = plant(sources, DESIGN, "[test: plusListsTheOtherSections]", "[test: groupedSections]");
+  const unmarked = plant(sources, DESIGN, "[test: memoryMovesUnderSystemOnIPhone]", "[test: groupedSections]");
   assert.ok(
-    designFaults(unmarked).some((f) => f.includes("plusListsTheOtherSections")),
-    "une puce « Plus » sans son test doit faire rougir la garde",
+    designFaults(unmarked).some((f) => f.includes("memoryMovesUnderSystemOnIPhone")),
+    "une puce « Mémoire sous Système » sans son test doit faire rougir la garde",
+  );
+  const plus = plant(sources, DESIGN, "## Les six tons", "- Un onglet « Plus » range le reste.\n\n## Les six tons");
+  assert.ok(
+    designFaults(plus).some((f) => f.includes("« Plus »")),
+    "une puce sur l'onglet « Plus » doit faire rougir la garde",
   );
   const renamed = plant(sources, DESIGN, "## Navigation", "## Parcours");
   assert.ok(

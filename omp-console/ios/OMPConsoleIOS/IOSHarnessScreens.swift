@@ -3,29 +3,37 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-// Les écrans de pilotage de l'app iOS, tous servis par le serveur de pipelines du
-// VPS (omp-harness), joint directement : Accueil (résumé et boîte de l'humain),
-// Pipelines (lancer une feature avec ses options, historique filtrable), Projet, Audit et Statistiques. Le
-// Poste (poste de travail) passe par le même cadre, dans `IOSWorkstationScreen.swift`.
+// Les écrans de l'app iOS servis par le serveur de pipelines du VPS (omp-harness),
+// joint directement : « À traiter » (la file unique de ce qui attend l'humain),
+// Features (une ligne par feature, une page par feature, et les portées Projets, Audits
+// et Issues), et le hub Système avec ses pages (vigie, planifications, statistiques et
+// santé, administration). Le Poste passe par le même cadre, dans
+// `IOSWorkstationScreen.swift` ; la page d'une feature vit dans `IOSRunScreen.swift`.
 //
 // Un seul `HarnessModel` et un seul `HarnessDrafts` pour l'app (posés par
-// `OMPConsoleIOSApp`) : le flux d'événements tient chaque écran à jour. Les mots
-// viennent du noyau (`PipelineServerText`), les symboles de `IOSShellText` : aucun
-// libellé en dur ici (`design-ios/AC-5`).
+// `OMPConsoleIOSApp`) : le flux d'événements tient chaque écran à jour. Les feuilles et
+// confirmations des gestes sont posées une fois, à la racine (`RootView`). Les mots
+// viennent du noyau (`PipelineServerText`, `ShellText`), les symboles de
+// `IOSShellText` : aucun libellé en dur ici (`design-ios/AC-5`).
 
 /// Le cadre commun : relier le serveur s'il ne l'est pas, sinon la liste groupée,
-/// avec l'échec du dernier échange en tête, le tirer-pour-actualiser et le bouton
-/// du serveur en barre. `reloadAlso` relit en plus ce qui n'est pas dans la boîte
-/// (le poste de travail).
+/// avec l'échec du dernier échange en tête et le tirer-pour-actualiser. `reloadAlso`
+/// relit en plus ce qui n'est pas dans la boîte (le poste de travail, la vigie…).
 struct IOSHarnessScreen<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let section: ConsoleSection
+    let title: String
+    /// La section qui porte l'écran : ⌘R ne relit que l'écran affiché.
+    let owner: ConsoleSection
+    /// L'identifiant de l'écran pour la recette (`ios.screen.<section>` ou
+    /// `ios.screen.system.<page>`).
+    let identifier: String
     let catalog: Bool
     let reloadAlso: (@MainActor () async -> Void)?
     @ViewBuilder let content: () -> Content
 
+    /// L'écran racine d'une section.
     init(
         server: HarnessModel,
         drafts: HarnessDrafts,
@@ -34,9 +42,35 @@ struct IOSHarnessScreen<Content: View>: View {
         reloadAlso: (@MainActor () async -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
+        self.init(server: server, drafts: drafts, title: section.title, owner: section, identifier: "ios.screen." + section.rawValue, catalog: catalog, reloadAlso: reloadAlso, content: content)
+    }
+
+    /// Une page poussée par le hub Système.
+    init(
+        server: HarnessModel,
+        drafts: HarnessDrafts,
+        page: SystemPage,
+        reloadAlso: (@MainActor () async -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(server: server, drafts: drafts, title: page.title, owner: .system, identifier: "ios.screen.system." + page.rawValue, catalog: true, reloadAlso: reloadAlso, content: content)
+    }
+
+    private init(
+        server: HarnessModel,
+        drafts: HarnessDrafts,
+        title: String,
+        owner: ConsoleSection,
+        identifier: String,
+        catalog: Bool,
+        reloadAlso: (@MainActor () async -> Void)?,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.server = server
         self.drafts = drafts
-        self.section = section
+        self.title = title
+        self.owner = owner
+        self.identifier = identifier
         self.catalog = catalog
         self.reloadAlso = reloadAlso
         self.content = content
@@ -50,8 +84,8 @@ struct IOSHarnessScreen<Content: View>: View {
             } else if !server.isConfigured {
                 notConfigured
             } else {
-                // Une tuile du tableau de bord de l'Accueil demande une section de la
-                // boîte (`homeAnchor`) : la liste y défile, puis oublie la demande.
+                // La palette ou une notification demande un genre de « À traiter »
+                // (`homeAnchor`) : la liste y défile, puis oublie la demande.
                 ScrollViewReader { proxy in
                     List {
                         if let failure = server.failure {
@@ -74,28 +108,16 @@ struct IOSHarnessScreen<Content: View>: View {
                 }
             }
         }
-        .navigationTitle(section.title)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    drafts.serverSheetShown = true
-                } label: {
-                    Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)
-                }
-                .accessibilityIdentifier("ios.server.open")
-            }
-        }
+        .navigationTitle(title)
         .task {
             if catalog { await server.refreshCatalog() }
         }
-        .harnessGestures(server: server, drafts: drafts)
-        .workstationGestures(workstation: server.workstation, drafts: drafts)
         // ⌘R relit l'écran comme le geste « tirer pour actualiser ».
-        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: section, isEnabled: server.isConfigured) {
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: owner, isEnabled: server.isConfigured) {
             Task { await reload() }
         })
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ios.screen." + section.rawValue)
+        .accessibilityIdentifier(identifier)
     }
 
     private func reload() async {
@@ -123,34 +145,177 @@ struct IOSHarnessScreen<Content: View>: View {
     }
 }
 
-// MARK: - Accueil
+// MARK: - À traiter
 
-/// L'Accueil : les envois du poste de travail qui attendent l'approbation d'abord
-/// (ils expirent, et le Poste est rangé sous « Plus » sur iPhone), puis le tableau
-/// de bord (KPIs et graphiques), les alertes et la boîte.
-struct IOSHarnessHomeScreen: View {
+/// « À traiter » : la file unique de ce qui attend l'humain (approbations du poste
+/// d'abord, puis questions, specs, revues, alertes et audits), sous la ligne de pouls ;
+/// rien de vide n'est montré. Le « + » de la barre lance une feature.
+struct IOSInboxScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true, reloadAlso: {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .inbox, catalog: true, reloadAlso: {
             await server.workstation.refresh()
             await server.vigie.refresh()
         }) {
-            let inbox = server.inbox ?? HarnessInbox()
-            VigieSilentBanner(vigie: server.vigie)
-            DigestSection(server: server)
-            WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
-            IOSDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
-            QueueSummarySection(server: server)
-            ServicesSummarySection(server: server)
-            IOSAlertsSection(drafts: drafts, inbox: inbox)
-            InboxSections(server: server, drafts: drafts, inbox: inbox)
+            InboxFeed(server: server, drafts: drafts, inbox: server.inbox ?? HarnessInbox())
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    drafts.launchSheetShown = true
+                } label: {
+                    Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)
+                }
+                .disabled(!server.isConfigured || !server.canAct)
+                .accessibilityIdentifier("ios.inbox.new")
+            }
         }
     }
 }
 
-// MARK: - Exploitation
+// MARK: - Features
+
+/// Features : la portée choisie en tête de liste (features, projets, audits, issues),
+/// puis sa liste. Une feature s'ouvre en page (`IOSRunScreen`) dans la pile de
+/// l'onglet, liée à `drafts.openedRun` ; les filtres et la création tiennent dans la
+/// barre, la recherche dans le champ du système.
+struct IOSFeaturesScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    @ObservedObject var history: HarnessRunsHistory
+
+    init(server: HarnessModel, drafts: HarnessDrafts) {
+        self.server = server
+        self.drafts = drafts
+        self.history = server.history
+    }
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .runs, catalog: true, reloadAlso: { await reloadScope() }) {
+            Picker(ShellText.scope, selection: $drafts.runsScope) {
+                ForEach(RunsScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .iosBareListRow()
+            .accessibilityIdentifier("ios.runs.scope")
+            switch drafts.runsScope {
+            case .features: RunsListSections(server: server, drafts: drafts, selectable: false)
+            case .projects: ProjectsListSections(server: server, drafts: drafts)
+            case .audits: AuditsListSections(server: server, drafts: drafts)
+            case .issues: IssuesSections(server: server, drafts: drafts)
+            }
+        }
+        .searchable(text: $history.query)
+        .toolbar {
+            if server.isConfigured {
+                if drafts.runsScope == .features {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        RunsFilterMenu(server: server)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NewWorkMenu(server: server, drafts: drafts)
+                }
+            }
+        }
+        .navigationDestination(for: String.self) { runId in
+            // Une autre feature ouverte à la même place de la pile repart de zéro (onglet, direct).
+            IOSRunScreen(server: server, drafts: drafts, runId: runId)
+                .id(runId)
+        }
+        // Relue à chaque serveur relié : l'appairage fait depuis cet écran la remplit.
+        .task(id: server.address) { await history.refresh() }
+    }
+
+    private func reloadScope() async {
+        switch drafts.runsScope {
+        case .features: await history.refresh()
+        case .issues: await server.issues.refresh(repo: drafts.issuesRepo(in: server.repos))
+        case .projects, .audits: break
+        }
+    }
+}
+
+// MARK: - Système
+
+/// Le hub Système : une rangée par page de ce qui se règle rarement, avec son état à
+/// droite ; chaque rangée pousse sa page dans la pile de l'onglet (`drafts.systemPage`),
+/// la rangée Serveur ouvre la feuille de connexion. Sur iPhone (`showsMemory`), la
+/// Mémoire, qui n'a pas d'onglet, est la première rangée : elle se pousse dans la même
+/// pile (`IOSSystemRoute.memory`, destination posée par `IOSSectionView`).
+struct IOSSystemScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    let showsMemory: Bool
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .system, catalog: false, reloadAlso: { await reloadSummaries() }) {
+            if showsMemory {
+                Section {
+                    NavigationLink(value: IOSSystemRoute.memory) {
+                        memoryRow
+                    }
+                    .accessibilityIdentifier("ios.system.memory")
+                }
+            }
+            SystemHubSections(server: server, drafts: drafts)
+        }
+        .navigationDestination(for: SystemPage.self) { page in
+            IOSSystemPageScreen(server: server, drafts: drafts, page: page)
+        }
+        .task(id: server.address) { await reloadSummaries() }
+    }
+
+    /// La rangée Mémoire, à l'image de celles du hub : symbole, titre, ce qu'elle montre.
+    private var memoryRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: ConsoleSection.memory.systemImage)
+                .accessibilityHidden(true)
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ConsoleSection.memory.title)
+                    .font(.body.weight(.medium))
+                Text(IOSShellText.memorySummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Les résumés des rangées : le mode de la vigie, les planifications actives.
+    private func reloadSummaries() async {
+        await server.vigie.refresh()
+        await server.schedules.refresh()
+    }
+}
+
+/// L'aiguillage page du hub → écran.
+struct IOSSystemPageScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    let page: SystemPage
+
+    var body: some View {
+        switch page {
+        case .vigie: IOSVigieScreen(server: server, drafts: drafts)
+        case .schedules: IOSSchedulesScreen(server: server, drafts: drafts)
+        case .stats: IOSStatsScreen(server: server, drafts: drafts)
+        case .admin: IOSAdminScreen(server: server, drafts: drafts)
+        // La rangée Serveur ouvre la feuille de connexion : jamais poussée (`RootView`
+        // écarte cette page de la pile).
+        case .server: EmptyView()
+        }
+    }
+}
 
 /// La vigie : mode, plafonds, battement de cœur et incidents (contenu partagé, ConsoleUI).
 struct IOSVigieScreen: View {
@@ -158,38 +323,35 @@ struct IOSVigieScreen: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .vigie, catalog: true, reloadAlso: { await server.vigie.load() }) {
+        IOSHarnessScreen(server: server, drafts: drafts, page: .vigie, reloadAlso: { await server.vigie.load() }) {
             VigieSections(server: server, drafts: drafts)
         }
         .task { await server.vigie.load() }
     }
 }
 
-/// Les planifications récurrentes (contenu partagé, ConsoleUI).
+/// Les planifications récurrentes (contenu partagé, ConsoleUI) ; le « + » de la barre
+/// ouvre la feuille « Nouvelle planification ».
 struct IOSSchedulesScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .schedules, catalog: true, reloadAlso: { await server.schedules.refresh() }) {
+        IOSHarnessScreen(server: server, drafts: drafts, page: .schedules, reloadAlso: { await server.schedules.refresh() }) {
             SchedulesSections(server: server, drafts: drafts)
         }
-        .task { await server.schedules.refresh() }
-        .controlGestures(server: server, drafts: drafts)
-    }
-}
-
-/// Les issues des dépôts et leur correction (contenu partagé, ConsoleUI).
-struct IOSIssuesScreen: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .issues, catalog: true, reloadAlso: {
-            await server.issues.refresh(repo: drafts.issuesRepo(in: server.repos))
-        }) {
-            IssuesSections(server: server, drafts: drafts)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    drafts.scheduleSheetShown = true
+                } label: {
+                    Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)
+                }
+                .disabled(!server.canAct)
+                .accessibilityIdentifier("ios.schedules.new")
+            }
         }
+        .task { await server.schedules.refresh() }
     }
 }
 
@@ -199,209 +361,24 @@ struct IOSAdminScreen: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .admin, catalog: true, reloadAlso: { await server.admin.refresh() }) {
+        IOSHarnessScreen(server: server, drafts: drafts, page: .admin, reloadAlso: { await server.admin.refresh() }) {
             AdminSections(server: server, drafts: drafts)
         }
         .task(id: server.isAdmin) { await server.admin.refresh() }
-        .controlGestures(server: server, drafts: drafts)
     }
 }
 
-// MARK: - Pipelines
-
-struct IOSHarnessPipelinesScreen: View {
+/// Statistiques et santé : les graphiques (ce qui attend par projet, débit, coût,
+/// santé), puis le détail des features, des étapes et des tests, la consommation des
+/// agents, les modèles, les services et la capacité du serveur.
+struct IOSStatsScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .kanban, catalog: true, reloadAlso: { await server.history.refresh() }) {
-            LaunchFeatureSections(server: server, drafts: drafts)
-            RunsHistorySections(server: server, drafts: drafts, history: server.history)
-        }
-    }
-}
-
-// MARK: - Projet
-
-struct IOSHarnessProjectsScreen: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .project, catalog: true) {
-            Section {
-                RepoPicker(server: server, drafts: drafts)
-                TextField(PipelineServerText.projectTitleLabel, text: $drafts.projectTitle)
-                    .accessibilityIdentifier("ios.project.launch.title")
-            } header: {
-                Text(PipelineServerText.launchProjectTitle)
-            } footer: {
-                Text(PipelineServerText.launchProjectHint)
-            }
-            ForEach($drafts.features) { $feature in
-                Section {
-                    TextField(PipelineServerText.titleLabel, text: $feature.title)
-                    TextField(PipelineServerText.requestLabel, text: $feature.request, axis: .vertical)
-                    TextField(PipelineServerText.modulesLabel, text: $feature.modules)
-                    if drafts.features.count > 1 {
-                        Button(PipelineServerText.removeFeature, role: .destructive) { drafts.removeFeature(feature.id) }
-                    }
-                }
-            }
-            Section {
-                Button {
-                    drafts.addFeature()
-                } label: {
-                    Label(PipelineServerText.addFeature, systemImage: IOSShellText.addSymbol)
-                }
-                Button(PipelineServerText.launch) {
-                    guard let repo = drafts.launchRepo(in: server.repos) else { return }
-                    let title = drafts.projectTitle
-                    let features = drafts.features
-                    Task {
-                        if await server.launchProject(repo: repo, title: title, features: features) != nil { drafts.clearProject() }
-                    }
-                }
-                .disabled(!drafts.canLaunchProject || server.isLaunching || server.repos.isEmpty)
-                .accessibilityIdentifier("ios.project.launch.commit")
-            }
-            Section {
-                if server.projects.isEmpty {
-                    Text(PipelineServerText.noProject).foregroundStyle(.secondary)
-                }
-                ForEach(server.projects) { project in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(project.title)
-                        Text(PipelineServerText.projectLine(total: project.runs.total, merged: project.runs.count(.merged)))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(project.isDone ? PipelineServerText.projectDone : PipelineServerText.projectActive)
-                            .font(.caption)
-                            .foregroundStyle(project.isDone ? Color.green : Color.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            } header: {
-                Text(PipelineServerText.projectsTitle)
-            }
-        }
-    }
-}
-
-// MARK: - Audit
-
-struct IOSHarnessAuditsScreen: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .audit, catalog: true) {
-            Section {
-                RepoPicker(server: server, drafts: drafts)
-                TextField(PipelineServerText.focusLabel, text: $drafts.auditFocus, prompt: Text(PipelineServerText.focusPrompt))
-                    .accessibilityIdentifier("ios.audit.launch.focus")
-                Button(PipelineServerText.launch) {
-                    guard let repo = drafts.launchRepo(in: server.repos) else { return }
-                    let focus = drafts.auditFocus
-                    Task {
-                        if await server.launchAudit(repo: repo, focus: focus) != nil { drafts.auditFocus = "" }
-                    }
-                }
-                .disabled(server.isLaunching || server.repos.isEmpty)
-                .accessibilityIdentifier("ios.audit.launch.commit")
-            } header: {
-                Text(PipelineServerText.launchAuditTitle)
-            } footer: {
-                Text(PipelineServerText.launchAuditHint)
-            }
-            if server.audits.isEmpty {
-                Section {
-                    Text(PipelineServerText.noAudit).foregroundStyle(.secondary)
-                }
-            }
-            ForEach(server.audits) { audit in
-                Section {
-                    auditRows(audit)
-                } header: {
-                    Text(audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func auditRows(_ audit: HarnessAudit) -> some View {
-        Text(PipelineServerText.auditState(audit.state))
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(audit.isProposed ? Color.orange : Color.secondary)
-        if let reason = audit.reason, !reason.isEmpty {
-            Text(reason)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        ForEach(Array(audit.proposals.enumerated()), id: \.offset) { index, proposal in
-            if audit.isProposed {
-                Button {
-                    drafts.togglePick(audit, index)
-                } label: {
-                    Label {
-                        proposalLabel(proposal)
-                    } icon: {
-                        Image(systemName: drafts.isPicked(audit, index) ? IOSShellText.pickedSymbol : IOSShellText.unpickedSymbol)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])
-            } else {
-                proposalLabel(proposal)
-            }
-        }
-        if audit.isProposed {
-            Button(PipelineServerText.launchProposals) {
-                let items = Array(drafts.picks[audit.id] ?? [])
-                let title = PipelineServerText.auditProjectTitle(audit.focus)
-                Task {
-                    if await server.launchProposals(auditId: audit.id, items: items, title: title) != nil { drafts.picks[audit.id] = nil }
-                }
-            }
-            .disabled((drafts.picks[audit.id] ?? []).isEmpty || server.busyAudits.contains(audit.id))
-        }
-        if audit.canFollowSession {
-            Button(MonitoringText.auditSessionTitle, systemImage: PipelineServerText.sessionSymbol) {
-                drafts.sessionRequest = HarnessSessionRequest(target: .audit(audit.id), title: audit.focus.isEmpty ? PipelineServerText.wholeRepo : audit.focus)
-            }
-            .accessibilityIdentifier("ios.audit.session")
-        }
-        if audit.isOpen {
-            Button(PipelineServerText.cancelAudit, role: .destructive) {
-                Task { await server.cancelAudit(audit.id) }
-            }
-            .disabled(server.busyAudits.contains(audit.id))
-        }
-    }
-
-    private func proposalLabel(_ proposal: HarnessAuditProposal) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(proposal.title)
-            Text(IOSShellText.proposalDetail(
-                kind: proposal.isWeakness ? PipelineServerText.weakness : PipelineServerText.feature,
-                rationale: proposal.rationale
-            ))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-}
-
-// MARK: - Statistiques
-
-struct IOSHarnessStatsScreen: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .stats, catalog: true) {
+        IOSHarnessScreen(server: server, drafts: drafts, page: .stats) {
             if let stats = server.stats {
+                IOSStatsCharts(dashboard: HarnessDashboard(inbox: server.inbox ?? HarnessInbox(), stats: stats))
                 Section {
                     LabeledContent(PipelineServerText.total, value: String(stats.runs.total))
                     ForEach(HarnessRunState.allCases, id: \.self) { state in
@@ -461,5 +438,3 @@ struct IOSHarnessStatsScreen: View {
         }
     }
 }
-
-// MARK: - Gestes

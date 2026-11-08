@@ -20,7 +20,7 @@ struct IOSRowAccessibilityTests {
     @Test("ios-accessibilite-rangees-et-sessions/AC-2 : le libellé d'une rangée racine annonce le badge visible, et lui seul")
     func sectionRowLabelFollowsShownBadge() {
         let pending = IOSShellText.rowPending
-        let home = ConsoleSection.home.title
+        let home = ConsoleSection.inbox.title
         #expect(IOSShellText.sectionRowLabel(home, badge: 2) == "\(home), 2 \(pending)")
         #expect(IOSShellText.sectionRowLabel(home, badge: 0) == home)
         #expect(IOSShellText.sectionRowLabel(home, badge: 120) == "\(home), 120 \(pending)")

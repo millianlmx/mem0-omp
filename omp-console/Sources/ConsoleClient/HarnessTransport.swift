@@ -173,9 +173,15 @@ public struct URLSessionHarnessTransport: HarnessTransport {
         return request
     }
 
-    private static func failure(of error: Error) -> HarnessFailure {
-        if let urlError = error as? URLError, urlError.code == .timedOut { return .timedOut }
-        return .unreachable
+    /// Une annulation reste une annulation (l'appelant ne la montre pas) ; un délai
+    /// dépassé se dit tel ; tout le reste est un serveur injoignable.
+    private static func failure(of error: Error) -> Error {
+        if let urlError = error as? URLError {
+            if urlError.code == .cancelled { return CancellationError() }
+            if urlError.code == .timedOut { return HarnessFailure.timedOut }
+        }
+        if error is CancellationError { return error }
+        return HarnessFailure.unreachable
     }
 }
 

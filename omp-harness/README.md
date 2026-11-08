@@ -1627,7 +1627,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
-| `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries du tableau de bord de l'Accueil : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
+| `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries des graphiques de Système › Statistiques et santé d'OMP Console : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
 | `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |
 | `PUT /v1/schedules/{id}` `{name?, cron?, target?, enabled?}` · `DELETE /v1/schedules/{id}` | operator | Modifier (seuls les champs présents ; un nouveau `cron` ou une réactivation réarment `nextRunAt` depuis maintenant) ou supprimer. `If-Match: <rev>` facultatif : périmé, 412. Une planification d'un dépôt que le client ne voit pas : 404. |
@@ -1773,18 +1773,19 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 ## Les apps
 
 OMP Console, sur Mac comme sur iPhone et iPad, est le poste de l'humain ; chaque app
-joint seule ce serveur, aucune ne dépend de l'autre. Ses cinq sections de Pilotage
-(Accueil, Pipelines, Projet, Audit, Statistiques) joignent le serveur en https, par le
+joint seule ce serveur, aucune ne dépend de l'autre. Ses sections À traiter,
+Features, Poste et Système joignent le serveur en https, par le
 code d'appairage (`harness.sh pair`) collé une fois dans la feuille « Serveur » — ou
 l'adresse publiée par Tailscale et le jeton du service. Sur l'iPhone, la section
 Mémoire lit la mémoire de ce serveur, dont le même code porte l'adresse. Elles
 suivent `GET /v1/events` et relisent la boîte à chaque événement ; une coupure garde
-la dernière boîte, signalée hors ligne. « Session en direct », sur une feature, lit
+la dernière boîte, signalée hors ligne. La page d'une feature lit
 `GET /v1/runs/{id}/session` puis suit ses événements `session` : ce que l'agent écrit,
 son raisonnement et chaque outil, avec sa commande et son résultat, en temps réel
-(ses arguments et sa sortie entière s'ouvrent par `GET /v1/runs/{id}/session/{seq}`) — et, en onglets,
+(ses arguments et sa sortie entière s'ouvrent par `GET /v1/runs/{id}/session/{seq}`) — et, dans ses autres onglets,
 les fichiers touchés et leurs différences, la sortie des tests en direct et la frise.
-L'Accueil montre les alertes de la veille et le coût des features ; Statistiques, la
+À traiter reçoit les alertes de la veille, chaque ligne de feature montre son coût ;
+Système › Statistiques et santé, la
 consommation, la comparaison des modèles, les tests instables et la santé du serveur ;
 l'iPhone suit une feature sur l'écran verrouillé (Live Activity, poussée par APNs
 quand `apns` est configuré). Le client est partagé

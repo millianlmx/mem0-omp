@@ -14,11 +14,13 @@ import Foundation
 public enum HarnessPaletteCommand: Hashable, Sendable {
     /// Montrer une section.
     case section(ConsoleSection)
-    /// Ouvrir une feature : son direct si elle en a un, sinon l'historique filtré sur elle.
+    /// Montrer une page du hub Système.
+    case system(SystemPage)
+    /// Ouvrir la page d'une feature (section Features).
     case run(String)
     /// Ouvrir la feuille « Nouvelle feature » (⌘N).
     case newFeature
-    /// Aller à ce qui attend l'humain sur l'Accueil (specs, verdicts, questions).
+    /// Aller à ce qui attend l'humain dans « À traiter » (specs, verdicts, questions).
     case inbox(HarnessHomeAnchor)
     /// Relire le serveur.
     case refresh
@@ -53,15 +55,19 @@ public enum HarnessPalette {
 
     /// Les entrées retenues par `query`, la meilleure d'abord. `search` (⌘F) ne garde
     /// que les features et la mémoire ; `sections` sont celles de l'app (l'iPhone n'a
-    /// ni Terminal ni Fichiers) ; `memory` dit si l'app a une section Mémoire.
+    /// ni Terminal ni Fichiers) et `systemPages` celles du hub Système que ce jeton
+    /// voit ; `memory` dit si l'app a une section Mémoire.
     public static func items(
-        query: String, search: Bool, sections: [ConsoleSection], inbox: HarnessInbox?, history: [HarnessRun],
-        canAct: Bool, memory: Bool
+        query: String, search: Bool, sections: [ConsoleSection], systemPages: [SystemPage] = [], inbox: HarnessInbox?,
+        history: [HarnessRun], canAct: Bool, memory: Bool
     ) -> [HarnessPaletteItem] {
         var candidates: [HarnessPaletteItem] = []
         if !search {
             candidates += sections.map {
                 HarnessPaletteItem(title: $0.title, subtitle: PipelineServerText.paletteSection, symbol: $0.systemImage, command: .section($0))
+            }
+            candidates += systemPages.map {
+                HarnessPaletteItem(title: $0.title, subtitle: ConsoleSection.system.title, symbol: $0.systemImage, command: .system($0))
             }
             if canAct {
                 candidates.append(HarnessPaletteItem(title: PipelineServerText.newFeature, symbol: PipelineServerText.newFeatureSymbol, command: .newFeature))
@@ -86,7 +92,7 @@ public enum HarnessPalette {
         var seen = Set<String>()
         let live = inbox.map { $0.batches.compactMap(\.run) + $0.awaiting + $0.runs } ?? []
         for run in live + history.sorted(by: .updated) where seen.insert(run.id).inserted {
-            candidates.append(HarnessPaletteItem(title: run.title, subtitle: run.repo + " · " + run.statusLine, symbol: ConsoleSection.kanban.systemImage, command: .run(run.id)))
+            candidates.append(HarnessPaletteItem(title: run.title, subtitle: run.repo + " · " + run.statusLine, symbol: ConsoleSection.runs.systemImage, command: .run(run.id)))
         }
 
         let words = words(of: query)

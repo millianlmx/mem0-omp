@@ -14,33 +14,29 @@ import Testing
 @MainActor
 @Suite("ipad-clavier-et-largeur-de-lecture — clavier de l'iPad")
 struct IOSKeyboardTests {
-    @Test("ipad-clavier-et-largeur-de-lecture/AC-4 : ⌘1…⌘9 suivent l'ordre affiché par la barre latérale")
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-4 : ⌘1…⌘5 suivent l'ordre affiché par la barre latérale")
     func keyboardShortcutsFollowTheSidebar() {
         let sidebar = ConsoleSectionGroup.allCases.flatMap(IOSSection.sections(of:))
         #expect(IOSSection.sidebarOrder == sidebar)
-        #expect(IOSKeyboard.sections.map(\.section) == [.home, .kanban, .project, .audit, .stats, .workstation, .memory, .vigie, .schedules])
-        #expect(IOSKeyboard.sections.map(\.shortcut.key) == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        #expect(IOSKeyboard.sections.map(\.section) == [.inbox, .runs, .workstation, .memory, .system])
+        #expect(IOSKeyboard.sections.map(\.shortcut.key) == ["1", "2", "3", "4", "5"])
         for entry in IOSKeyboard.sections {
             #expect(entry.shortcut.title == entry.section.title)
         }
     }
 
-    @Test("ipad-clavier-et-largeur-de-lecture/AC-9 : la barre des menus liste les onze commandes en français, avec ⌘")
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-9 : la barre des menus liste les sept commandes en français, avec ⌘")
     func keyboardShortcutsAreFrenchAndCommandOnly() {
         let expected: [(title: String, key: Character)] = [
-            (ConsoleSection.home.title, "1"),
-            (ConsoleSection.kanban.title, "2"),
-            (ConsoleSection.project.title, "3"),
-            (ConsoleSection.audit.title, "4"),
-            (ConsoleSection.stats.title, "5"),
-            (ConsoleSection.workstation.title, "6"),
-            (ConsoleSection.memory.title, "7"),
-            (ConsoleSection.vigie.title, "8"),
-            (ConsoleSection.schedules.title, "9"),
+            (ConsoleSection.inbox.title, "1"),
+            (ConsoleSection.runs.title, "2"),
+            (ConsoleSection.workstation.title, "3"),
+            (ConsoleSection.memory.title, "4"),
+            (ConsoleSection.system.title, "5"),
             ("Actualiser", "r"),
             ("Rechercher", "f"),
         ]
-        #expect(IOSKeyboard.all.count == 11)
+        #expect(IOSKeyboard.all.count == 7)
         #expect(IOSKeyboard.all.map(\.title) == expected.map(\.title))
         #expect(IOSKeyboard.all.map(\.key) == expected.map(\.key))
         #expect(IOSKeyboard.modifiers == .command)

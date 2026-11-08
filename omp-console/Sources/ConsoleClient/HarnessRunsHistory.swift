@@ -7,9 +7,8 @@
 // jeton. Tant qu'un écran l'observe (`refresh()` appelé), le flux de la boîte le
 // relit avec elle ; un geste (priorité, arrêt…) le relit aussi.
 //
-// Le tableau Mac (tri par colonne) et le kanban par état lisent `filtered` ;
-// `HarnessKanban` range les features en colonnes et calcule la priorité d'un
-// glisser-déposer.
+// La section Features range `filtered` par groupes (`HarnessRunGroups`) : ce qui
+// attend l'humain, ce qui tourne, ce qui attend son tour, ce qui est terminé.
 
 import Combine
 import Foundation
@@ -43,10 +42,6 @@ public final class HarnessRunsHistory: ObservableObject {
     /// La recherche texte : titre, demande, identifiant, dépôt, modules.
     @Published public var query = "" { didSet { shown = Self.pageSize } }
     @Published public var sort: HarnessRunsSort = .updated
-    /// L'ordre du tableau du Mac (tri par colonne) ; vide : l'ordre de `sort`.
-    @Published public var order: [KeyPathComparator<HarnessRun>] = []
-    /// Les features sélectionnées dans le tableau du Mac.
-    @Published public var selection: Set<String> = []
     /// Le nombre de lignes montrées.
     @Published public private(set) var shown = HarnessRunsHistory.pageSize
     @Published public private(set) var isLoading = false
@@ -85,11 +80,9 @@ public final class HarnessRunsHistory: ObservableObject {
         }
     }
 
-    /// Les features retenues par tous les filtres, dans l'ordre choisi (celui du
-    /// tableau quand une colonne trie).
+    /// Les features retenues par tous les filtres, dans l'ordre choisi.
     public var filtered: [HarnessRun] {
-        let kept = Self.filter(runs, projectId: projectId, query: query)
-        return order.isEmpty ? kept.sorted(by: sort) : kept.sorted(using: order)
+        Self.filter(runs, projectId: projectId, query: query).sorted(by: sort)
     }
 
     /// La page montrée.
@@ -161,60 +154,68 @@ struct HarnessRunsPage: Decodable {
     var runs: [HarnessRun]
 }
 
-// MARK: - Kanban
+// MARK: - Groupes
 
-/// Les colonnes du kanban, dans l'ordre de la vie d'une feature.
-public enum HarnessKanbanColumn: String, CaseIterable, Sendable, Identifiable {
-    case queued
+/// Les groupes de la liste des features, dans l'ordre de lecture : d'abord ce qui
+/// attend l'humain, puis ce qui tourne, ce qui attend son tour, et ce qui est fini.
+public enum HarnessRunGroup: String, CaseIterable, Sendable, Identifiable {
+    case needsYou
     case running
-    case waiting
-    case merged
-    case stopped
+    case queued
+    case done
 
     public var id: String { rawValue }
 
-    /// Les états rangés dans la colonne.
+    /// Les états rangés dans le groupe.
     public var states: [HarnessRunState] {
         switch self {
-        case .queued: [.queued]
+        case .needsYou: [.escalated, .awaitingHuman]
         case .running: [.running, .merging]
-        case .waiting: [.escalated, .awaitingHuman]
-        case .merged: [.merged]
-        case .stopped: [.failed, .cancelled]
+        case .queued: [.queued]
+        case .done: [.merged, .failed, .cancelled]
         }
     }
 
-    /// La colonne d'une feature (un état inconnu de cette version : aucune).
-    public static func of(_ run: HarnessRun) -> HarnessKanbanColumn? {
+    /// Le groupe d'une feature (un état inconnu de cette version : aucun).
+    public static func of(_ run: HarnessRun) -> HarnessRunGroup? {
         guard let phase = run.phase else { return nil }
         return allCases.first { $0.states.contains(phase) }
     }
-
-    /// La priorité se change tant que la feature n'est pas terminée.
-    public var acceptsPriority: Bool { self != .merged && self != .stopped }
 }
 
-public enum HarnessKanban {
-    /// Les features par colonne, chaque colonne dans l'ordre d'admission.
-    public static func columns(_ runs: [HarnessRun]) -> [(column: HarnessKanbanColumn, runs: [HarnessRun])] {
-        let ordered = runs.sorted(by: .priority)
-        return HarnessKanbanColumn.allCases.map { column in
-            (column, ordered.filter { HarnessKanbanColumn.of($0) == column })
+public enum HarnessRunGroups {
+    /// Les features par groupe, les groupes vides écartés. `live` (la boîte, déjà
+    /// filtrée comme l'historique par l'appelant) prime sur l'historique pour une même
+    /// feature — c'est l'état le plus frais — et y ajoute celles qu'il ne connaît pas
+    /// encore (lancées depuis sa lecture). L'attente et le travail se lisent du plus
+    /// ancien au plus récent changement (ce qui attend depuis longtemps d'abord), la
+    /// file dans l'ordre d'admission, le fini du plus récent.
+    public static func groups(_ runs: [HarnessRun], live: [HarnessRun] = []) -> [(group: HarnessRunGroup, runs: [HarnessRun])] {
+        let fresh = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Une feature peut figurer deux fois dans la boîte (ses questions et sa ligne) :
+        // chacune ne compte qu'une fois.
+        var known = Set(runs.map(\.id))
+        let merged = runs.map { fresh[$0.id] ?? $0 } + live.filter { known.insert($0.id).inserted }
+        return HarnessRunGroup.allCases.compactMap { group in
+            let members = merged.filter { HarnessRunGroup.of($0) == group }
+            guard !members.isEmpty else { return nil }
+            let ordered: [HarnessRun] = switch group {
+            case .needsYou, .running: members.sorted { $0.updatedAt < $1.updatedAt }
+            case .queued: members.sorted(by: .priority)
+            case .done: members.sorted(by: .updated)
+            }
+            return (group, ordered)
         }
     }
 
-    /// La priorité qui place `moved` juste devant `target` dans l'ordre d'admission
-    /// (bornée à -1000…1000) — plus haute ou plus basse que la sienne —, ou `nil`
-    /// quand le dépôt ne change rien : même feature, colonne terminée, même priorité.
-    public static func priority(moving moved: HarnessRun, before target: HarnessRun) -> Int? {
-        guard moved.id != target.id,
-              let column = HarnessKanbanColumn.of(moved), column.acceptsPriority,
-              HarnessKanbanColumn.of(target)?.acceptsPriority == true
-        else { return nil }
-        let wanted = min(target.admissionPriority + 1, HarnessLaunchOptions.priorityRange.upperBound)
-        return moved.admissionPriority == wanted ? nil : wanted
-    }
-
     /// Les crans du menu de priorité : haute, normale, basse.
-    public static let presets = [100, 0, -100]
+    public static let priorityPresets = [100, 0, -100]
+}
+
+extension HarnessRun {
+    /// La priorité se change tant que la feature n'est pas terminée.
+    public var acceptsPriority: Bool {
+        guard let group = HarnessRunGroup.of(self) else { return false }
+        return group != .done
+    }
 }

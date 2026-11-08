@@ -246,7 +246,6 @@ public enum ControlText {
     public static let fingerprint = L10n.text("Empreinte")
     public static let fixRun = L10n.text("Feature de correction")
     public static let incidentRun = L10n.text("Feature concernée")
-    public static let openSession = L10n.text("Voir la session")
 
     /// Le nom d'un mode de la vigie.
     public static func vigieMode(_ raw: String) -> String {

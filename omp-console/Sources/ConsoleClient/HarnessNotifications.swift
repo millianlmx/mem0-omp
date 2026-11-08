@@ -92,15 +92,17 @@ public struct HarnessPushAlert: Equatable, Sendable {
         return ["omp": omp]
     }
 
-    /// Où mène un toucher : ce qui attend sur l'Accueil, le Poste, ou la feature.
+    /// Où mène un toucher : ce qui attend dans « À traiter », le Poste, la page de la
+    /// feature, ou la Vigie (Système) pour ce qui touche le serveur lui-même.
     public var destination: HarnessPaletteCommand {
         switch kind {
         case .specs: .inbox(.specs)
         case .verdict: .inbox(.verdicts)
         case .escalation: .inbox(.toDecide)
         case .approval: .section(.workstation)
-        case .runFailed, .stalled, .budget: runId.map(HarnessPaletteCommand.run) ?? .section(.home)
-        case .dailyBudget, .vigieSilent, .backupFailed: .section(.home)
+        case .runFailed, .stalled, .budget: runId.map(HarnessPaletteCommand.run) ?? .section(.inbox)
+        case .dailyBudget: .section(.inbox)
+        case .vigieSilent, .backupFailed: .system(.vigie)
         }
     }
 }
@@ -209,7 +211,7 @@ public enum HarnessNotificationRouting {
     public static func gesture(
         category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?, approver: Bool
     ) -> HarnessNotificationGesture {
-        let destination = alert?.destination ?? .section(.home)
+        let destination = alert?.destination ?? .section(.inbox)
         guard let action, let alert else { return .open(destination) }
         let reason = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let validates = category == HarnessNotificationCategory.validate.rawValue && (alert.kind == .specs || alert.kind == .verdict)

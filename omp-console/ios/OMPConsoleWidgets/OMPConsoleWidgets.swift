@@ -92,7 +92,7 @@ struct OMPInboxWidget: Widget {
         StaticConfiguration(kind: Self.kind, provider: OMPInboxProvider()) { entry in
             OMPInboxView(snapshot: entry.snapshot)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(HarnessWidgetLink.url(.home))
+                .widgetURL(HarnessWidgetLink.url(.inbox))
         }
         .configurationDisplayName(MonitoringText.widgetName)
         .description(MonitoringText.widgetDescription)

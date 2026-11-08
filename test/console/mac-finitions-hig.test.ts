@@ -81,38 +81,52 @@ test("mac-finitions-hig/AC-3 : Mémoire — « Liste » et « Sommaire » ont de
 
 const HARNESS_VIEWS = path.join("Server", "HarnessSectionViews.swift");
 
-/** AC-5 : les commandes du serveur vivent dans la barre d'outils de la fenêtre, jamais dans le contenu. */
+/**
+ * AC-5 : les commandes du serveur ne se répètent dans aucune section : « Actualiser »
+ * est la commande de menu ⌘R (`RefreshCommands`, nourrie par la section affichée via
+ * `\.harnessRefresh`), et la feuille du serveur s'ouvre depuis le pied de la barre
+ * latérale (`server.open`, une seule fois) — ou depuis Système › Serveur.
+ */
 function serverToolbarFaults(root: string): string[] {
   const all = sources(root);
-  const source = all.get(path.join(MAC_REL, HARNESS_VIEWS)) ?? "";
   const faults: string[] = [];
-  const toolbar = block(source, /\.toolbar \{\n\s*ToolbarItem\(placement: \.primaryAction\)/, "\n        }\n");
-  if (toolbar === undefined) faults.push("HarnessSection : barre d'outils introuvable");
-  const commands = ['"server.refresh"', '"server.open"'];
-  for (const marker of commands) {
-    if (toolbar !== undefined && !toolbar.includes(marker)) faults.push(`la barre d'outils ne porte pas ${marker}`);
-    let count = 0;
+  const app = all.get(path.join(MAC_REL, "OMPConsoleApp.swift")) ?? "";
+  const commands = block(app, /struct RefreshCommands: Commands \{/, "\n}\n");
+  if (
+    commands === undefined ||
+    !commands.includes("@FocusedValue(\\.harnessRefresh)") ||
+    !commands.includes('.keyboardShortcut("r", modifiers: .command)')
+  )
+    faults.push("RefreshCommands ne porte pas « Actualiser » ⌘R, nourri par \\.harnessRefresh");
+  const frame = all.get(path.join(MAC_REL, HARNESS_VIEWS)) ?? "";
+  if (!frame.includes(".focusedSceneValue(\\.harnessRefresh,"))
+    faults.push("HarnessSection ne publie pas sa relecture pour ⌘R (\\.harnessRefresh)");
+  for (const marker of ['"server.refresh"', '"server.open"']) {
+    let inSections = 0;
     for (const [rel, text] of all)
-      if (rel.startsWith(path.join(MAC_REL, "Server"))) count += text.split(marker).length - 1;
-    if (count !== 1) faults.push(`${marker} apparaît ${count} fois dans les vues du serveur`);
+      if (rel.startsWith(path.join(MAC_REL, "Server"))) inSections += text.split(marker).length - 1;
+    if (inSections !== 0) faults.push(`${marker} apparaît ${inSections} fois dans les vues du serveur`);
   }
+  const sidebar = all.get(path.join(MAC_REL, "ConsoleRootView.swift")) ?? "";
+  const opens = sidebar.split('"server.open"').length - 1;
+  if (opens !== 1) faults.push(`"server.open" apparaît ${opens} fois dans la barre latérale (attendu 1, son pied)`);
   return faults;
 }
 
-test("mac-finitions-hig/AC-5 : Pilotage — les commandes du serveur sont dans la barre d'outils de la fenêtre, jamais dans le contenu", () => {
+test("mac-finitions-hig/AC-5 : Pilotage — « Actualiser » est la commande ⌘R et le serveur s'ouvre du pied de la barre latérale, jamais d'une section", () => {
   assert.deepEqual(serverToolbarFaults(ROOT), []);
 
-  // Faute plantée : le bouton « Actualiser » recopié dans le contenu ⇒ rouge.
+  // Faute plantée : le bouton « Serveur » recopié dans la barre d'une section ⇒ rouge.
   const copy = copyMac();
   mutate(copy, HARNESS_VIEWS, (s) =>
     s.replace(
-      '.accessibilityIdentifier("server.configure")',
-      '.accessibilityIdentifier("server.configure")\n            Button("x") {}\n                .accessibilityIdentifier("server.refresh")',
+      ".focusedSceneValue(\\.harnessRefresh,",
+      '.toolbar { Button("x") {}.accessibilityIdentifier("server.open") }\n        .focusedSceneValue(\\.harnessRefresh,',
     ),
   );
   assert.ok(
-    serverToolbarFaults(copy).some((f) => f.includes('"server.refresh"')),
-    "un bouton server.refresh dans le contenu doit rougir",
+    serverToolbarFaults(copy).some((f) => f.includes('"server.open"')),
+    "un bouton server.open dans une section doit rougir",
   );
 });
 

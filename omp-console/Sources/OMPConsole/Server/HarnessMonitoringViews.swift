@@ -1,8 +1,7 @@
 // Les panneaux du monitoring sur le Mac : les fichiers touchés par une feature et leurs
-// différences, la sortie de ses tests en direct, sa frise ; et, dans les sections, les
-// alertes de la veille, le coût, la comparaison des modèles, les tests instables et la
-// santé du serveur. Tout vient du serveur de pipelines (`HarnessModel`) ; les mots de
-// `MonitoringText`.
+// différences, la sortie de ses tests en direct, sa frise ; et, dans Statistiques, le
+// coût, la comparaison des modèles, les tests instables et la santé du serveur. Tout
+// vient du serveur de pipelines (`HarnessModel`) ; les mots de `MonitoringText`.
 
 import Charts
 import ConsoleClient
@@ -282,39 +281,6 @@ struct HarnessTimelinePane: View {
 
     static func time(_ ms: Double) -> String {
         date(ms).formatted(date: .omitted, time: .shortened)
-    }
-}
-
-// MARK: - Accueil : alertes
-
-/// Les alertes de la veille du serveur, en tête de l'accueil ; chacune ouvre le direct de sa feature.
-struct HarnessAlertsSection: View {
-    @ObservedObject var drafts: HarnessDrafts
-    let inbox: HarnessInbox
-
-    var body: some View {
-        if !inbox.alerts.isEmpty {
-            Section {
-                ForEach(inbox.alerts) { alert in
-                    Button {
-                        if let run = inbox.run(alert.runId) { drafts.sessionRequest = HarnessSessionRequest(run: run) }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(alert.line, systemImage: alert.symbol)
-                                .foregroundStyle(.orange)
-                            Text(inbox.run(alert.runId)?.title ?? alert.runId)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            } header: {
-                Text(MonitoringText.alertsTitle)
-            } footer: {
-                Text(MonitoringText.alertsHint)
-            }
-        }
     }
 }
 

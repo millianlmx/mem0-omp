@@ -665,7 +665,16 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
     /// Ce qui BLOQUE une feature tant que l'humain n'a pas agi : escalades ouvertes, specs
     /// et verdicts à valider. Les décisions prises seules (relues après coup) et les audits
     /// à trier n'y entrent pas : ils ont leurs propres compteurs.
-    public var pendingCount: Int { batches.reduce(0) { $0 + $1.items.count } + awaiting.count }
+    public var pendingCount: Int { openBatches.reduce(0) { $0 + $1.items.count } + awaiting.count }
+
+    /// Les lots d'escalades qu'on peut encore trancher : un serveur plus ancien sert aussi
+    /// ceux d'une feature terminée (annulée, fusionnée, en échec), que plus rien n'attend.
+    public var openBatches: [HarnessEscalationBatch] {
+        batches.filter { batch in
+            guard let phase = batch.run?.phase else { return true }
+            return ![.merged, .cancelled, .failed].contains(phase)
+        }
+    }
 
     /// Les runs qui ont des décisions à relire, dans l'ordre de la boîte, sans doublon.
     public var decisionRunIds: [String] {

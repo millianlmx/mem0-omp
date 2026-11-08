@@ -137,15 +137,15 @@ struct HarnessNotificationsTests {
             (HarnessPushAlert(kind: .runFailed, runId: "r4", rev: 9), .run("r4")),
             (HarnessPushAlert(kind: .stalled, runId: "r4", rev: 9), .run("r4")),
             (HarnessPushAlert(kind: .budget, runId: "r4", rev: 9), .run("r4")),
-            (HarnessPushAlert(kind: .vigieSilent), .section(.home)),
-            (HarnessPushAlert(kind: .backupFailed), .section(.home)),
-            (HarnessPushAlert(kind: .dailyBudget), .section(.home)),
+            (HarnessPushAlert(kind: .vigieSilent), .system(.vigie)),
+            (HarnessPushAlert(kind: .backupFailed), .system(.vigie)),
+            (HarnessPushAlert(kind: .dailyBudget), .section(.inbox)),
         ]
         for (alert, destination) in taps {
             #expect(route(.open, nil, alert) == .open(destination))
             #expect(route(.open, .open, alert) == .open(destination))
         }
-        #expect(route(.open, nil, nil) == .open(.section(.home)))
+        #expect(route(.open, nil, nil) == .open(.section(.inbox)))
     }
 
     @Test("le geste part avec l'If-Match de la notification : valider, refuser avec sa raison, approuver ou refuser l'envoi")
@@ -171,7 +171,7 @@ struct HarnessNotificationsTests {
         #expect(transport.calls.last { $0.path == "/v1/workstation/actions/9/refuse" }?.headers["If-Match"] == "\"5\"")
 
         let before = transport.calls.count
-        #expect(await model.execute(.open(.section(.home))) == false)
+        #expect(await model.execute(.open(.section(.inbox))) == false)
         #expect(transport.calls.count == before, "ouvrir n'appelle pas le serveur")
     }
 

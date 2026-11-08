@@ -1,7 +1,6 @@
 // Interface de la coque : les vues de section, et le SEUL aiguillage section → vue.
-// Les sections de pilotage (Accueil, Pipelines, Projet, Audit, Statistiques, Poste)
-// sont servies par le serveur de pipelines du VPS ; Terminal, Fichiers et Mémoire
-// sont locaux.
+// « À traiter », Features, Poste et Système sont servis par le serveur de pipelines du
+// VPS ; Mémoire, Terminal et Fichiers sont locaux.
 //
 // Aucun attribut macro SwiftUI n'est employé ici (`@State`, `@Preview`, …) :
 // sous les Command Line Tools seuls, ces macros échouent à la compilation (D3).
@@ -17,43 +16,23 @@ protocol ConsoleSectionView: View {
     static var section: ConsoleSection { get }
 }
 
-struct HomeSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.home
+/// La file unique de ce qui attend l'humain.
+struct InboxSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.inbox
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessHomeView(server: server, drafts: drafts) }
+    var body: some View { HarnessInboxView(server: server, drafts: drafts) }
 }
 
-struct PipelinesSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.kanban
+/// Les features (et leurs portées : projets, audits, issues), une page par feature.
+struct RunsSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.runs
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessPipelinesView(server: server, drafts: drafts) }
+    var body: some View { HarnessRunsView(server: server, drafts: drafts) }
 }
 
-struct ProjectSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.project
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessProjectsView(server: server, drafts: drafts) }
-}
-
-struct AuditSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.audit
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessAuditsView(server: server, drafts: drafts) }
-}
-
-struct StatsSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.stats
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessStatsView(server: server, drafts: drafts) }
-}
-
-/// Le poste de travail : extension Chrome, agent 24/24, envois à approuver, profil,
-/// journal des décisions et réunions — servi par le même serveur.
+/// Le poste de travail, servi par le même serveur.
 struct WorkstationSectionView: ConsoleSectionView {
     static let section = ConsoleSection.workstation
     @ObservedObject var server: HarnessModel
@@ -61,36 +40,13 @@ struct WorkstationSectionView: ConsoleSectionView {
     var body: some View { WorkstationView(server: server, workstation: server.workstation, drafts: drafts) }
 }
 
-/// La vigie : mode, plafonds, battement de cœur et incidents.
-struct VigieSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.vigie
+/// Le hub de ce qui se règle rarement : vigie, planifications, statistiques,
+/// administration, serveur.
+struct SystemSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.system
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessVigieView(server: server, drafts: drafts) }
-}
-
-/// Les planifications récurrentes : runs, audits, relève d'issues.
-struct SchedulesSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.schedules
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessSchedulesView(server: server, drafts: drafts) }
-}
-
-/// Les issues des dépôts et leur correction.
-struct IssuesSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.issues
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessIssuesView(server: server, drafts: drafts) }
-}
-
-/// L'administration du serveur (admin seulement).
-struct AdminSectionView: ConsoleSectionView {
-    static let section = ConsoleSection.admin
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-    var body: some View { HarnessAdminView(server: server, drafts: drafts) }
+    var body: some View { HarnessSystemView(server: server, drafts: drafts) }
 }
 
 struct TerminalSectionView: ConsoleSectionView {
@@ -131,19 +87,13 @@ struct SectionDetail: View {
     @ViewBuilder
     private var content: some View {
         switch section {
-        case .home: HomeSectionView(server: server, drafts: drafts)
-        case .kanban: PipelinesSectionView(server: server, drafts: drafts)
-        case .project: ProjectSectionView(server: server, drafts: drafts)
-        case .audit: AuditSectionView(server: server, drafts: drafts)
-        case .stats: StatsSectionView(server: server, drafts: drafts)
+        case .inbox: InboxSectionView(server: server, drafts: drafts)
+        case .runs: RunsSectionView(server: server, drafts: drafts)
         case .workstation: WorkstationSectionView(server: server, drafts: drafts)
+        case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
-        case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
-        case .vigie: VigieSectionView(server: server, drafts: drafts)
-        case .schedules: SchedulesSectionView(server: server, drafts: drafts)
-        case .issues: IssuesSectionView(server: server, drafts: drafts)
-        case .admin: AdminSectionView(server: server, drafts: drafts)
+        case .system: SystemSectionView(server: server, drafts: drafts)
         }
     }
 }

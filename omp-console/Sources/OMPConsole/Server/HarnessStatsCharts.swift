@@ -1,11 +1,7 @@
-// Le TABLEAU DE BORD de l'Accueil (feature accueil-tableau-de-bord) : ce qu'il faut
-// voir d'un coup d'œil quand plusieurs projets tournent, avant la boîte de l'humain.
-//
-// - une rangée de tuiles de KPI (`HarnessDashboardKPI`) : ce qui bloque, ce qui est à
-//   relire, ce qui tourne, la plus vieille attente, puis le débit et le coût de la
-//   semaine ; une tuile de la boîte y fait défiler (`HarnessDrafts.homeAnchor`) ;
-// - quatre cartes tracées (Swift Charts), deux par ligne quand la fenêtre le permet :
-//   ce qui vous attend par projet, le débit sur 14 jours, le coût des agents, la santé.
+// Les GRAPHIQUES de Système › Statistiques et santé : quatre cartes tracées (Swift
+// Charts), deux par ligne quand la fenêtre le permet — ce qui vous attend par projet,
+// le débit sur 14 jours, le coût des agents, la santé. Ils vivaient sur l'Accueil ;
+// « À traiter » n'en garde qu'une ligne de pouls.
 //
 // Les séries viennent de `HarnessDashboard` (client partagé), les mots de
 // `DashboardText`. Une couleur porte une identité fixe (jamais un rang) ; vert et
@@ -16,84 +12,10 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-struct HarnessDashboardSections: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
+struct HarnessStatsCharts: View {
     let dashboard: HarnessDashboard
 
     var body: some View {
-        Section {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], alignment: .leading, spacing: 12) {
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiPending,
-                    value: "\(dashboard.pending)",
-                    symbol: DashboardText.pendingSymbol,
-                    attention: dashboard.pending > 0
-                ) { drafts.homeAnchor = .toDecide }
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiToReview,
-                    value: "\(dashboard.toReview)",
-                    symbol: DashboardText.toReviewSymbol
-                ) { drafts.homeAnchor = .decisions }
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiActive,
-                    value: "\(dashboard.active)",
-                    symbol: DashboardText.activeSymbol
-                ) { drafts.homeAnchor = .active }
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiOldest,
-                    value: dashboard.oldestWaitSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable,
-                    symbol: DashboardText.oldestSymbol,
-                    attention: (dashboard.oldestWaitSec ?? 0) > 24 * 3600
-                )
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiMerged,
-                    value: dashboard.mergedLast7Days.map(String.init) ?? PipelineServerText.notAvailable,
-                    symbol: DashboardText.mergedSymbol
-                )
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiMergeRate,
-                    value: dashboard.mergeRate.map(PipelineServerText.percent) ?? PipelineServerText.notAvailable,
-                    symbol: DashboardText.mergeRateSymbol
-                )
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiLeadTime,
-                    value: dashboard.medianLeadSec.map(PipelineServerText.duration) ?? PipelineServerText.notAvailable,
-                    symbol: DashboardText.leadTimeSymbol
-                )
-                HarnessDashboardKPI(
-                    title: DashboardText.kpiCost,
-                    value: dashboard.costLast7Days.map(MonitoringText.cost) ?? PipelineServerText.notAvailable,
-                    symbol: DashboardText.costSymbol
-                )
-                if dashboard.alerts > 0 {
-                    HarnessDashboardKPI(
-                        title: DashboardText.kpiAlerts,
-                        value: "\(dashboard.alerts)",
-                        symbol: DashboardText.alertsSymbol,
-                        attention: true
-                    )
-                }
-                if dashboard.auditsToSort > 0 {
-                    HarnessDashboardKPI(
-                        title: DashboardText.kpiAudits,
-                        value: "\(dashboard.auditsToSort)",
-                        symbol: DashboardText.auditsSymbol
-                    )
-                }
-            }
-            .padding(.vertical, 4)
-        } header: {
-            HStack {
-                Text(server.address ?? "")
-                Spacer()
-                Label(
-                    server.isLive ? PipelineServerText.live : PipelineServerText.offline,
-                    systemImage: server.isLive ? PipelineServerText.liveSymbol : PipelineServerText.offlineSymbol
-                )
-            }
-        }
-
         Section {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 16, alignment: .top)], alignment: .leading, spacing: 16) {
                 card(DashboardText.waitingTitle, hint: DashboardText.waitingHint) { waiting }
@@ -306,43 +228,5 @@ struct HarnessDashboardSections: View {
         Text(text)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-    }
-}
-
-/// Une tuile de KPI : son intitulé et son symbole, puis la valeur en grand. Une
-/// tuile de la boîte (`open`) fait défiler l'Accueil jusqu'à sa section.
-struct HarnessDashboardKPI: View {
-    let title: String
-    let value: String
-    let symbol: String
-    var attention = false
-    var open: (@MainActor () -> Void)?
-
-    var body: some View {
-        if let open {
-            Button { open() } label: { tile }
-                .buttonStyle(.plain)
-        } else {
-            tile
-        }
-    }
-
-    private var tile: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(attention ? Color.orange : Color.secondary)
-                .lineLimit(2)
-            Text(value)
-                .font(.title.weight(.semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(.rect)
-        .consoleCard(selected: false)
-        .accessibilityElement(children: .combine)
     }
 }

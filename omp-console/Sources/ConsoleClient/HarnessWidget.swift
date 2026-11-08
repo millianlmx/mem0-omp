@@ -103,7 +103,7 @@ private extension HarnessRun {
     var needsHumanInWidget: Bool { phase == .escalated || phase == .awaitingHuman }
 }
 
-/// Le lien qui ouvre l'app sur une section (`ompconsole://home`), depuis le widget.
+/// Le lien qui ouvre l'app sur une section (`ompconsole://inbox`), depuis le widget.
 public enum HarnessWidgetLink {
     public static let scheme = "ompconsole"
 

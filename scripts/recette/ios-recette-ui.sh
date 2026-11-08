@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 6 surfaces
+# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 5 surfaces
 # dans 3 configurations sur un simulateur iPhone DÉDIÉ, puis signale trois classes
 # de défauts (cible tactile < 44 pt, identifiant d'accessibilité dupliqué, élément
 # collé au bord de l'écran) et rend un verdict.
@@ -20,21 +20,22 @@
 #                 supprimé à la sortie ; rien n'est poussé ni créé). Un conflit .md
 #                 garde la version déjà intégrée ; tout autre conflit sort en 2.
 #
-# Matrice : 6 surfaces (les six sections) × 3 configurations (clair/défaut,
-# sombre/défaut, clair/AX-XL) = 18 relevés, dans
+# Matrice : 5 surfaces (les cinq sections) × 3 configurations (clair/défaut,
+# sombre/défaut, clair/AX-XL) = 15 relevés, dans
 # omp-console/build/ios-recette-ui/<base|integration>/ (ignoré par git, vidé au
-# début du passage) : 18 arbres AX (JSON d'idb), 18 captures PNG, logs/ et
+# début du passage) : 15 arbres AX (JSON d'idb), 15 captures PNG, logs/ et
 # rapport.txt. La Mémoire est alimentée par son crochet de recette
-# (-memoire.recipe), sans appairage ; Accueil, Pipelines, Projet, Audit et
-# Statistiques sont relevés serveur non relié. Un relevé n'est accepté que quand deux
+# (-memoire.recipe), sans appairage (sur iPhone, `-section memory` ouvre Système et
+# y pousse la Mémoire) ; À traiter, Features, Poste et Système sont relevés serveur
+# non relié. Un relevé n'est accepté que quand deux
 # lectures consécutives de l'arbre sont identiques ET que le marqueur de la
 # surface est vrai (scripts/recette/ios-recette-ui-analyse.py marqueur) : jamais une
-# capture de la liste « Plus », d'un écran déconnecté ou d'une autre section.
+# capture d'un écran déconnecté ou d'une autre section.
 #
 # L'analyse est celle de scripts/recette/ios-recette-ui-analyse.py ; le code de sortie de
 # la recette est le sien.
 #
-# Codes de sortie : 0 les 18 relevés faits et aucun signalement hors exceptions,
+# Codes de sortie : 0 les 15 relevés faits et aucun signalement hors exceptions,
 # 1 au moins un signalement (voir rapport.txt), 2 la recette n'a pas pu conclure
 # (prérequis, exceptions invalides, relevé non vérifié, construction ou
 # installation impossible).
@@ -50,9 +51,9 @@ BUNDLE_ID="com.omp.console.ios"
 ANALYSE="$ROOT/scripts/recette/ios-recette-ui-analyse.py"
 USAGE='usage : bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…'
 
-# Les 6 surfaces, dans l'ordre de l'analyseur : la clé est la section (rawValue de
+# Les 5 surfaces, dans l'ordre de l'analyseur : la clé est la section (rawValue de
 # `-section`) ; arguments de recette en plus, signal attendu sur la sortie d'erreur.
-surface_keys=(home kanban project audit stats memory)
+surface_keys=(inbox runs workstation memory system)
 
 # Écrit les arguments de recette en plus, un par ligne (rien pour les écrans du
 # serveur, relevés serveur non relié).
