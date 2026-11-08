@@ -10,7 +10,8 @@
 //
 // La charge est minimale : un titre, le dépôt et le titre du run, et des identifiants
 // (`omp.kind`, `runId`, `rev`, `seq`) — jamais le contenu du poste (ni résumé, ni
-// destinataires, ni brouillon), jamais une raison d'échec ou une question. La
+// destinataires, ni brouillon), jamais une raison d'échec ou une question. Le nombre de
+// preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
 // `category` dit le geste que l'appareil peut faire de la notification : valider ou
 // refuser (specs, verdict : opérateur au moins), approuver ou refuser (envoi du poste :
 // approbateur), sinon ouvrir. `rev` est l'If-Match du geste : la révision du run, ou
@@ -27,6 +28,7 @@ import type { EventRow, RunRow, Store } from "./db.ts";
 import type { LogLine } from "./logger.ts";
 import type { ApnsClient } from "./push.ts";
 import { tokenGone } from "./push.ts";
+import { proofCountText } from "./proofs.ts";
 
 /** Les catégories de notification de l'app : les gestes qu'elle offre sur la notification. */
 export const ALERT_CATEGORIES = {
@@ -120,8 +122,12 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
   switch (event.type) {
     case "specs_ready":
       return run ? runAlert(run, "specs", "Specs à valider", `specs:${run.id}:${run.rev}`, "validate") : null;
-    case "verdict":
-      return run ? runAlert(run, "verdict", "Verdict à valider", `verdict:${run.id}:${run.rev}`, "validate") : null;
+    case "verdict": {
+      if (!run) return null;
+      const alert = runAlert(run, "verdict", "Verdict à valider", `verdict:${run.id}:${run.rev}`, "validate");
+      if (typeof payload.proofs === "number") alert.body = `${alert.body} · ${proofCountText(payload.proofs)}`;
+      return alert;
+    }
     case "escalations": {
       if (!run) return null;
       const ids = (Array.isArray(payload.items) ? payload.items : [])

@@ -38,6 +38,7 @@ import {
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
+import { PROOF_MIMES } from "./proofs.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
@@ -104,6 +105,7 @@ export const API_FEATURES = [
   "prometheus",
   "vigie",
   "push-alerts",
+  "proofs",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -470,6 +472,22 @@ export function apiRoutes(
     route("GET", "/v1/runs/{id}/session/{n}", "viewer", (call) =>
       send(call.res, 200, orchestrator.sessionEntryView(call.match[1] as string, Number(call.match[2]), call.repos)),
     ),
+    route("GET", "/v1/runs/{id}/proofs", "viewer", (call) =>
+      send(call.res, 200, orchestrator.proofsView(call.match[1] as string, call.repos)),
+    ),
+    // Le contenu brut d'une preuve : le type déclaré, jamais deviné ; le fichier se retrouve par son rang seul.
+    route("GET", "/v1/runs/{id}/proofs/{n}", "viewer", (call) => {
+      const { proof, data } = orchestrator.proofContent(call.match[1] as string, Number(call.match[2]), call.repos);
+      const ext = PROOF_MIMES[proof.kind][proof.mime];
+      call.res.writeHead(200, {
+        "Content-Type": proof.mime,
+        "Content-Length": data.length,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": `inline; filename="preuve-${proof.n}.${ext}"`,
+      });
+      call.res.end(data);
+    }),
     route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
     ),
