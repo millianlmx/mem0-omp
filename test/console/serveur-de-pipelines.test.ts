@@ -221,7 +221,7 @@ test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille d
   }
   assert.match(
     read("omp-console", "Package.swift"),
-    /name: "OMPConsole",\s*\n\s*dependencies: \["ConsoleCore", "ConsoleClient"\]/,
+    /name: "OMPConsole",\s*\n\s*dependencies: \["ConsoleCore", "ConsoleClient", "ConsoleUI"\]/,
   );
 });
 
@@ -318,10 +318,7 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     "le modèle approuve l'action affichée",
   );
   assert.equal(code(model).split("approve(shown:").length - 1, 0, "le modèle n'approuve que sur appel");
-  for (const view of [
-    "Sources/OMPConsole/Server/WorkstationViews.swift",
-    "ios/OMPConsoleIOS/IOSWorkstationScreen.swift",
-  ]) {
+  for (const view of ["Sources/ConsoleUI/WorkstationSections.swift"]) {
     const source = code(read("omp-console", view));
     const uses = [...source.matchAll(/approve\(shown:/g)].map((match) => source.slice(0, match.index));
     assert.equal(uses.length, 1, `${view} : une seule approbation, celle du bouton`);

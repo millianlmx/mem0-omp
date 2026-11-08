@@ -10,13 +10,20 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { braceBlock, memberBody, stripComments } from "../support/swift-source.ts";
+import { braceBlock, iosBranches, memberBody, stripComments } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
+/** Les écrans partagés avec le Mac (cible ConsoleUI), compilés dans l'app iOS. */
+const SHARED = path.join(ROOT, "omp-console", "Sources", "ConsoleUI");
 
-/** Le source d'un fichier de l'app, tel qu'écrit (les fautes s'y plantent). */
+/**
+ * Le source d'un fichier de l'app, tel qu'écrit (les fautes s'y plantent) ; pour un
+ * écran partagé (ConsoleUI), sa seule part iOS (`iosBranches`).
+ */
 function appSource(name: string): string {
-  return fs.readFileSync(path.join(APP, name), "utf8");
+  const file = path.join(APP, name);
+  if (fs.existsSync(file)) return fs.readFileSync(file, "utf8");
+  return iosBranches(fs.readFileSync(path.join(SHARED, name), "utf8"));
 }
 
 /** Le nombre d'occurrences d'un motif littéral. */
@@ -25,6 +32,28 @@ const count = (source: string, needle: string) => source.split(needle).length - 
 /** Les écrans rendus en liste groupée (S-3, S-4, S-5, S-6) : le cadre commun des
  *  cinq écrans du serveur, et la Mémoire. */
 const LIST_SCREENS = ["IOSHarnessScreens.swift", "IOSMemoryScreen.swift"];
+
+/** Le contenu PARTAGÉ (ConsoleUI) que le cadre commun range dans sa liste : rangées
+ *  des features, boîte, historique, lancement, services, Poste. */
+const LIST_CONTENTS = [
+  "RunViews.swift",
+  "InboxSections.swift",
+  "RunsHistoryViews.swift",
+  "LaunchViews.swift",
+  "ServicesViews.swift",
+  "WorkstationSections.swift",
+];
+
+/** AC-2 / AC-10 : le contenu d'une liste n'apporte ni filet, ni défilement, ni carte, ni panneau. */
+function listContentFaults(name: string, source: string): string[] {
+  const code = stripComments(source);
+  const faults: string[] = [];
+  for (const token of ["Divider()", "ScrollView(", "ScrollView {", ".iosCard(", ".iosPanel()"]) {
+    const n = count(code, token);
+    if (n > 0) faults.push(`${name} : ${token} ×${n} dans le contenu d'une liste`);
+  }
+  return faults;
+}
 
 /** Le bloc de la branche `if graph.shown {` de `var surface` (Mémoire), ou "". */
 function graphBranch(code: string): string {
@@ -70,8 +99,10 @@ function listScreenFaults(name: string, source: string): string[] {
 const GROUPED_SHEETS = [
   "IOSMemoryDetailView.swift",
   "IOSServerSheet.swift",
-  "IOSHarnessScreens.swift",
-  "IOSWorkstationScreen.swift",
+  "RunViews.swift",
+  "WorkstationSections.swift",
+  "LaunchViews.swift",
+  "MemoryEditSheet.swift",
 ];
 
 /**
@@ -97,11 +128,15 @@ function sheetFaults(name: string, source: string): string[] {
 
 /** Les titres de barre attendus par fichier : un par écran et par feuille. */
 const TITLES: Record<string, number> = {
-  "IOSHarnessScreens.swift": 3,
+  "IOSHarnessScreens.swift": 1,
   "IOSMemoryScreen.swift": 1,
   "IOSMemoryDetailView.swift": 1,
   "IOSServerSheet.swift": 1,
-  "IOSWorkstationScreen.swift": 1,
+  "IOSWorkstationScreen.swift": 0,
+  "RunViews.swift": 2,
+  "WorkstationSections.swift": 1,
+  "LaunchViews.swift": 1,
+  "MemoryEditSheet.swift": 1,
 };
 
 /**
@@ -128,7 +163,8 @@ function titleFaults(name: string, source: string): string[] {
 /**
  * AC-4 : les rangées grandissent avec le texte — aucune hauteur fixe ni plafond,
  * aucun libellé plafonné en lignes, sauf l'extrait de souvenir borné par
- * `IOSMetrics.memoryRowLines` (T-3).
+ * `IOSMetrics.memoryRowLines` (T-3). Un champ multiligne (`lineLimit(n...m)`) n'est
+ * pas un libellé tronqué : il grandit avec sa saisie puis défile en lui-même.
  */
 function dynamicTypeFaults(name: string, source: string): string[] {
   const code = stripComments(source);
@@ -138,7 +174,8 @@ function dynamicTypeFaults(name: string, source: string): string[] {
     if (n > 0) faults.push(`${name} : ${token} ×${n}, la rangée doit suivre le texte`);
   }
   const limits = count(code, "lineLimit(");
-  const allowed = name === "IOSMemoryScreen.swift" ? count(code, "lineLimit(IOSMetrics.memoryRowLines(") : 0;
+  const fields = code.match(/lineLimit\(\d+\.\.\.\d+\)/g)?.length ?? 0;
+  const allowed = fields + (name === "IOSMemoryScreen.swift" ? count(code, "lineLimit(IOSMetrics.memoryRowLines(") : 0);
   if (limits !== allowed) faults.push(`${name} : lineLimit( ×${limits - allowed} hors de l'extrait de souvenir`);
   return faults;
 }
@@ -219,6 +256,9 @@ test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (
   for (const name of LIST_SCREENS) {
     assert.deepEqual(listScreenFaults(name, appSource(name)), [], name);
   }
+  for (const name of LIST_CONTENTS) {
+    assert.deepEqual(listContentFaults(name, appSource(name)), [], name);
+  }
 
   // Faute plantée (c) : un `Divider()` réinséré dans la liste ⇒ rouge, pour CHAQUE écran.
   for (const name of LIST_SCREENS) {
@@ -229,17 +269,31 @@ test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (
     );
   }
 
-  // Une rangée de feature redevenue carte ⇒ rouge.
+  // Une rangée de feature (RunRow, partagée) redevenue carte ⇒ rouge.
   const harness = "IOSHarnessScreens.swift";
-  const card = plant(appSource(harness), (s) =>
+  const row = "RunViews.swift";
+  const card = plant(appSource(row), (s) =>
     s.replace(
       ".accessibilityElement(children: .combine)",
-      ".iosCard()\n        .accessibilityElement(children: .combine)",
+      ".iosCard()\n            .accessibilityElement(children: .combine)",
     ),
   );
   assert.ok(
-    listScreenFaults(harness, card).some((f) => f.includes(".iosCard(")),
+    listContentFaults(row, card).some((f) => f.includes(".iosCard(")),
     "une carte doit rougir",
+  );
+
+  // Un filet remis entre les questions d'un lot, côté iOS ⇒ rouge.
+  const inbox = "InboxSections.swift";
+  const divider = plant(appSource(inbox), (s) =>
+    s.replace(
+      "ForEach(Array(batch.items.enumerated())",
+      "Divider()\n            ForEach(Array(batch.items.enumerated())",
+    ),
+  );
+  assert.ok(
+    listContentFaults(inbox, divider).some((f) => f.includes("Divider()")),
+    "un filet dans la boîte doit rougir",
   );
 
   // Le style de liste posé à la main, sans la surface groupée partagée ⇒ rouge.
@@ -303,7 +357,7 @@ test("ios-listes-groupees-natives/AC-5 : un seul titre par écran en liste et pa
     s.replace(".iosGroupedList()", ".iosGroupedList()\n                .navigationTitle(section.title)"),
   );
   assert.ok(
-    titleFaults(harness, twice).some((f) => f.includes("×4")),
+    titleFaults(harness, twice).some((f) => f.includes("×2")),
     "deux titres de navigation doivent rougir",
   );
 
@@ -317,12 +371,12 @@ test("ios-listes-groupees-natives/AC-5 : un seul titre par écran en liste et pa
 });
 
 test("ios-listes-groupees-natives/AC-4 : en AX-XL, les rangées des écrans en liste et des feuilles grandissent avec le texte", () => {
-  for (const name of [...LIST_SCREENS, ...GROUPED_SHEETS]) {
+  for (const name of [...LIST_SCREENS, ...LIST_CONTENTS, ...GROUPED_SHEETS]) {
     assert.deepEqual(dynamicTypeFaults(name, appSource(name)), [], name);
   }
 
-  // Faute plantée : une hauteur fixe sur une rangée de feature ⇒ rouge.
-  const harness = "IOSHarnessScreens.swift";
+  // Faute plantée : une hauteur fixe sur une rangée de feature (RunRow, partagée) ⇒ rouge.
+  const harness = "RunViews.swift";
   const fixed = plant(appSource(harness), (s) =>
     s.replace(
       ".accessibilityElement(children: .combine)",
@@ -376,7 +430,7 @@ test("ios-listes-groupees-natives/AC-3 : les feuilles de la Mémoire et du serve
   );
 
   // Faute plantée : le style groupé retiré d'une feuille du serveur ⇒ rouge.
-  const harness = "IOSHarnessScreens.swift";
+  const harness = "RunViews.swift";
   const ungrouped = plant(appSource(harness), (s) => s.replace(".formStyle(.grouped)\n", ""));
   assert.ok(
     sheetFaults(harness, ungrouped).some((f) => f.includes(".formStyle(.grouped)")),

@@ -254,7 +254,8 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   const EXPECTED_DEPENDENCIES: Record<string, string[]> = {
     ConsoleCore: [],
     ConsoleClient: ["ConsoleCore"],
-    OMPConsole: ["ConsoleCore", "ConsoleClient"],
+    ConsoleUI: ["ConsoleCore", "ConsoleClient"],
+    OMPConsole: ["ConsoleCore", "ConsoleClient", "ConsoleUI"],
     OMPConsoleTests: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
     ConsoleClientTests: ["ConsoleClient", "ConsoleCore"],
   };

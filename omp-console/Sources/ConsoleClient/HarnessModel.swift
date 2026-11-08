@@ -61,11 +61,22 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var sessionFailure: HarnessFailure?
     /// La santé du serveur au fil du temps, lue à la demande de l'écran des statistiques.
     @Published public private(set) var metrics: HarnessMetrics?
+    /// La santé des services (`GET /v1/health`), l'état du serveur (`/v1/status`) et le
+    /// rapport du matin (`/v1/digest`), lus par `refreshServices()` (HarnessServices.swift).
+    @Published public internal(set) var health: HarnessHealth?
+    @Published public internal(set) var status: HarnessStatus?
+    @Published public internal(set) var digest: HarnessDigest?
+    /// La dernière sonde de santé a eu une réponse (même 503).
+    var healthReached = false
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
+    /// L'historique des features (`GET /v1/runs`), terminées comprises.
+    public private(set) lazy var history = HarnessRunsHistory(harness: self)
+    /// La remontée bornée des erreurs de l'app (contrat C2).
+    var reporter: HarnessErrorReporter
 
-    private let transport: any HarnessTransport
+    let transport: any HarnessTransport
     private let preferences: any ClientPreferences
     private let tokens: any TokenStore
     private let retryDelay: Duration
@@ -76,7 +87,7 @@ public final class HarnessModel: ObservableObject {
     private let fallback: @Sendable () -> (address: String, token: String)?
     /// Un code d'appairage accepté (Mac : écrit pour les plugins d'omp et la mémoire).
     private let onPaired: @Sendable (HarnessPairing) -> Void
-    private var server: HarnessServer?
+    private(set) var server: HarnessServer?
     private var liveTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     /// Un écran a demandé le catalogue : le flux le relit avec la boîte.
@@ -98,8 +109,10 @@ public final class HarnessModel: ObservableObject {
         refreshDelay: Duration = .milliseconds(300),
         loginPollDelay: Duration = .seconds(1),
         fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
-        onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in }
+        onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in },
+        reporter: HarnessErrorReporter = HarnessErrorReporter()
     ) {
+        self.reporter = reporter
         self.transport = transport
         self.preferences = preferences
         self.tokens = tokens
@@ -201,7 +214,7 @@ public final class HarnessModel: ObservableObject {
             client = nil
             clientAsked = false
             failure = nil
-            workstation.reset()
+            resetServerState()
             if let pairing { onPaired(pairing) }
             await readClient()
             return true
@@ -230,9 +243,20 @@ public final class HarnessModel: ObservableObject {
         loginProviders = nil
         login = nil
         failure = nil
-        workstation.reset()
+        resetServerState()
         preferences.set(nil, forKey: Self.addressKey)
         try? await tokens.remove(deviceId: Self.tokenAccount)
+    }
+
+    /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
+    private func resetServerState() {
+        workstation.reset()
+        history.reset()
+        reporter.reset()
+        health = nil
+        healthReached = false
+        status = nil
+        digest = nil
     }
 
     // MARK: - Lecture
@@ -272,6 +296,7 @@ public final class HarnessModel: ObservableObject {
             let readAudits: HarnessAudits = try await perform(HarnessCall(method: "GET", path: "/v1/audits"), on: server)
             let readStats: HarnessStats = try await perform(HarnessCall(method: "GET", path: "/v1/stats"), on: server)
             repos = readStatus.repos
+            status = readStatus
             projects = readProjects.projects
             audits = readAudits.audits
             stats = readStats
@@ -514,6 +539,7 @@ public final class HarnessModel: ObservableObject {
             await self?.refresh()
             if self?.wantsCatalog == true { await self?.refreshCatalog() }
             if self?.wantsProviders == true { await self?.refreshProviders() }
+            if self?.history.isWatched == true { await self?.history.refresh() }
             self?.refreshTask = nil
         }
     }
@@ -581,11 +607,20 @@ public final class HarnessModel: ObservableObject {
 
     // MARK: - Lancements
 
-    /// Lance une feature : le serveur la conduit de /req au merge. `modules` (les chemins
-    /// touchés) et `priority` sont facultatifs : sans eux, le serveur décide.
+    /// Lance une feature : le serveur la conduit de /req au merge. Les options vides
+    /// (`HarnessLaunchOptions`) restent hors du corps : le serveur décide.
     @discardableResult
-    public func launchRun(repo: String, title: String, request: String, modules: [String] = [], priority: Int? = nil) async -> HarnessRun? {
-        let body = RunBody(repo: repo, title: title, request: request, modules: modules.isEmpty ? nil : modules, priority: priority)
+    public func launchRun(repo: String, title: String, request: String, options: HarnessLaunchOptions = HarnessLaunchOptions()) async -> HarnessRun? {
+        let body = RunBody(
+            repo: repo,
+            title: title,
+            request: request,
+            modules: options.modules.isEmpty ? nil : options.modules,
+            priority: options.priority,
+            lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
+            req: options.req,
+            budgetUsd: options.budgetUsd
+        )
         let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
     }
@@ -666,22 +701,29 @@ public final class HarnessModel: ObservableObject {
             let _: HarnessAck = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
             failure = nil
             await refresh()
+            if history.isWatched { await history.refresh() }
             return true
         } catch {
             let failed = Self.failure(of: error)
-            if failed == .stale { await refresh() }
+            if failed == .stale {
+                await refresh()
+                if history.isWatched { await history.refresh() }
+            }
             // Relue ou non, la boîte ne doit pas effacer la raison de l'échec.
             failure = failed
             return false
         }
     }
 
-    /// Le run tel que la dernière boîte le montre (batches, validations, en cours).
+    /// Le run tel que la dernière boîte le montre (batches, validations, en cours), sinon
+    /// tel que l'historique l'a lu.
     private func knownRun(_ runId: String) -> HarnessRun? {
-        guard let inbox else { return nil }
-        return inbox.batches.compactMap(\.run).first { $0.id == runId }
-            ?? inbox.awaiting.first { $0.id == runId }
-            ?? inbox.runs.first { $0.id == runId }
+        let fromInbox = inbox.flatMap { inbox in
+            inbox.batches.compactMap(\.run).first { $0.id == runId }
+                ?? inbox.awaiting.first { $0.id == runId }
+                ?? inbox.runs.first { $0.id == runId }
+        }
+        return fromInbox ?? history.run(runId)
     }
 
     // MARK: - Fournisseurs (admin)
@@ -837,15 +879,40 @@ public final class HarnessModel: ObservableObject {
 
     // MARK: - Échange
 
-    private func perform<T: Decodable>(_ call: HarnessCall, on server: HarnessServer) async throws -> T {
-        try Self.decoded(try await transport.send(call, server: server))
+    /// Un échange décodé ; un statut inattendu ou un corps illisible est remonté au
+    /// serveur (`HarnessErrorReporter`) avant de devenir l'échec de l'appelant.
+    func perform<T: Decodable>(_ call: HarnessCall, on server: HarnessServer) async throws -> T {
+        try decode(try await transport.send(call, server: server), for: call)
+    }
+
+    /// Un échange décodé avec le serveur relié (`unreachable` sans serveur).
+    func fetch<T: Decodable>(_ call: HarnessCall) async throws -> T {
+        guard let server else { throw HarnessFailure.unreachable }
+        return try await perform(call, on: server)
     }
 
     /// Un échange d'un modèle voisin (le poste de travail) avec le serveur relié : même
-    /// transport, même jeton. La réponse brute, quel que soit son statut.
+    /// transport, même jeton. La réponse brute, quel que soit son statut ; un statut
+    /// inattendu est remonté.
     func exchange(_ call: HarnessCall) async throws -> HarnessReply {
         guard let server else { throw HarnessFailure.unreachable }
-        return try await transport.send(call, server: server)
+        let reply = try await transport.send(call, server: server)
+        reportIfUnexpected(reply, for: call)
+        return reply
+    }
+
+    /// `decoded(_:)`, et la remontée de ce qui n'était pas attendu : un statut hors du
+    /// contrat, ou un 2xx que cette version ne sait pas lire.
+    func decode<T: Decodable>(_ reply: HarnessReply, for call: HarnessCall) throws -> T {
+        do {
+            return try Self.decoded(reply)
+        } catch HarnessFailure.unreadable {
+            reportUnreadable(call, type: T.self)
+            throw HarnessFailure.unreadable
+        } catch {
+            reportIfUnexpected(reply, for: call)
+            throw error
+        }
     }
 
     /// Le corps décodé d'une réponse réussie (200, 201, 202), sinon l'échec qu'elle dit.
@@ -922,6 +989,9 @@ private struct RunBody: Encodable {
     var request: String
     var modules: [String]?
     var priority: Int?
+    var lane: String?
+    var req: String?
+    var budgetUsd: Double?
 }
 
 private struct ProjectBody: Encodable {

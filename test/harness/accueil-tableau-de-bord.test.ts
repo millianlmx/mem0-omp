@@ -153,14 +153,14 @@ function homeFaults(
 
 test("accueil-tableau-de-bord/AC-3 : sur Mac et sur iOS, l'Accueil ouvre sur le tableau de bord — tuiles de KPI et quatre blocs tracés — puis la boîte de l'humain", () => {
   const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
-  const mac = { home: "HarnessHomeView", dashboard: "HarnessDashboardSections", inbox: "HarnessInboxSections" };
-  const ios = { home: "IOSHarnessHomeScreen", dashboard: "IOSDashboardSections", inbox: "IOSHarnessInboxSections" };
+  const mac = { home: "HarnessHomeView", dashboard: "HarnessDashboardSections", inbox: "InboxSections" };
+  const ios = { home: "IOSHarnessHomeScreen", dashboard: "IOSDashboardSections", inbox: "InboxSections" };
   assert.deepEqual(homeFaults(read(MAC_HOME), read(MAC_DASHBOARD), mac), []);
   assert.deepEqual(homeFaults(read(IOS_HOME), read(IOS_DASHBOARD), ios), []);
 
   // Faute plantée : la boîte remontée au-dessus du tableau de bord.
   const swapped = read(MAC_HOME).replace(
-    /(HarnessDashboardSections\([^\n]*\n)([\s\S]*?)(\s*HarnessInboxSections\([^\n]*\n)/,
+    /(HarnessDashboardSections\([^\n]*\n)([\s\S]*?)(\s*InboxSections\([^\n]*\n)/,
     "$3$2$1",
   );
   assert.ok(homeFaults(swapped, read(MAC_DASHBOARD), mac).some((fault) => fault.includes("passe avant")));

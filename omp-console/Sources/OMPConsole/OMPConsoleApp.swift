@@ -6,7 +6,8 @@
 // serveur de pipelines du VPS (omp-harness) ; Terminal, Fichiers et Mémoire sont
 // locaux. L'app reste utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ les neuf sections (⌘1…⌘9).
+// Barre des menus : Présentation ▸ les neuf sections (⌘1…⌘9) ; Fichier ▸ « Nouvelle
+// feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
 // l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
@@ -99,6 +100,7 @@ struct OMPConsoleApp: App {
         }
         .commands {
             SectionCommands(console: model)
+            PaletteCommands(drafts: drafts)
             // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
             // barre d'outils… ».
             ToolbarCommands()
@@ -129,6 +131,33 @@ struct SectionCommands: Commands {
     /// dixième (comme la rangée des chiffres du clavier).
     static func key(at index: Int) -> Character {
         index == 9 ? "0" : Character(String(index + 1))
+    }
+}
+
+/// Fichier ▸ « Nouvelle feature… » (⌘N, à la place de « Nouvelle fenêtre » : l'app
+/// garde une seule fenêtre), « Commandes… » (⌘K) et « Rechercher… » (⌘F) : la palette
+/// partagée avec l'app iOS (ConsoleUI). Chacune ramène la fenêtre principale.
+struct PaletteCommands: Commands {
+    let drafts: HarnessDrafts
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button(PipelineServerText.newFeature) {
+                MainWindow.reveal()
+                drafts.launchSheetShown = true
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            Button(PipelineServerText.paletteMenu) {
+                MainWindow.reveal()
+                drafts.openPalette(search: false)
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            Button(PipelineServerText.searchMenu) {
+                MainWindow.reveal()
+                drafts.openPalette(search: true)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+        }
     }
 }
 

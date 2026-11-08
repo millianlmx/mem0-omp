@@ -5,7 +5,7 @@
 import Foundation
 
 
-public struct RemoteMemoryRow: Codable, Equatable, Sendable {
+public struct RemoteMemoryRow: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var text: String
     public var updatedAt: String?

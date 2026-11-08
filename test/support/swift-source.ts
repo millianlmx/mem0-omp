@@ -92,6 +92,54 @@ export function swiftSources(dir: string, base: string = dir): Map<string, strin
 }
 
 /**
+ * Le source tel que l'app iOS le compile : les branches `#if os(macOS)` (et le
+ * `#else` d'un `#if os(iOS)`) sont blanchies, les lignes de directive aussi. Les
+ * autres conditions gardent leurs deux branches.
+ */
+export function iosBranches(source: string): string {
+  const stack: { keep: boolean; platform: boolean }[] = [];
+  const out: string[] = [];
+  for (const line of source.split("\n")) {
+    const directive = line.trim();
+    const opened = /^#if\s+os\((macOS|iOS)\)\s*$/.exec(directive);
+    if (opened) {
+      stack.push({ keep: opened[1] === "iOS", platform: true });
+      out.push("");
+      continue;
+    }
+    if (directive.startsWith("#if")) {
+      stack.push({ keep: true, platform: false });
+      out.push("");
+      continue;
+    }
+    if (directive.startsWith("#else") || directive.startsWith("#elseif")) {
+      const top = stack.at(-1);
+      if (top?.platform) top.keep = !top.keep;
+      out.push("");
+      continue;
+    }
+    if (directive.startsWith("#endif")) {
+      stack.pop();
+      out.push("");
+      continue;
+    }
+    out.push(stack.every((frame) => frame.keep) ? line : "");
+  }
+  return out.join("\n");
+}
+
+/**
+ * Les sources que compile l'app iOS : celles de `iosDir` (clé relative à `iosDir`)
+ * puis les écrans PARTAGÉS avec le Mac sous `sharedDir` (cible ConsoleUI, clé = nom
+ * de fichier), réduits à leurs branches iOS par {@link iosBranches}.
+ */
+export function iosAppSources(iosDir: string, sharedDir: string): Map<string, string> {
+  const out = swiftSources(iosDir);
+  for (const [name, source] of swiftSources(sharedDir)) out.set(name, iosBranches(source));
+  return out;
+}
+
+/**
  * Toutes les sources `.swift` sous `dir` (ordre de {@link swiftFiles}),
  * commentaires retirés par {@link stripComments}, concaténées par `\n` ; la
  * chaîne vide si `dir` est absent.

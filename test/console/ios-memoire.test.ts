@@ -180,10 +180,15 @@ function blankQueryFaults(root: string): string[] {
   if (!model.includes("showSummary()")) faults.push("une requête blanche ne revient pas au sommaire");
   if (!model.includes("summaryPage"))
     faults.push("le sommaire lu n'est pas conservé : le retour coûterait une requête");
+  // La frappe ne relit rien : aucune observation (`.onChange(of:` ou `.task(id:`) ne
+  // porte sur le texte du champ (`query`). Le champ passe par `updateQuery`, la lecture
+  // par `submitQuery` ; observer une DEMANDE ponctuelle (la palette ⌘F) reste permis.
   const memory = memoryAppCode(root);
-  for (const token of [".onChange(of:", ".task(id:"]) {
-    if (memory.includes(token)) faults.push(`la section Mémoire relirait à la frappe : ${token}`);
+  for (const [, observed] of memory.matchAll(/\.(?:onChange\(of:|task\(id:)\s*([^,){]+)/g)) {
+    if (/query/i.test(observed)) faults.push(`la section Mémoire relirait à la frappe : observe ${observed.trim()}`);
   }
+  if (!memory.includes("model.updateQuery($0)"))
+    faults.push("le champ de recherche ne passe pas par model.updateQuery");
   if (!model.includes("client.memorySearch(")) faults.push("la recherche n'est soumise que dans submitQuery");
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryModelTests.swift"));
   if (!tests.includes('"ios-memoire/AC-3')) faults.push("IOSMemoryModelTests ne porte pas le titre ios-memoire/AC-3");
@@ -201,6 +206,23 @@ test("ios-memoire/AC-3 : vider la requête revient au sommaire déjà lu, sans r
   );
   fs.writeFileSync(target, text);
   assert.ok(blankQueryFaults(copy).length > 0, "un blanc qui ne revient pas au sommaire doit faire rougir la garde");
+
+  // Une relecture branchée sur la frappe ⇒ rouge.
+  const typed = shared.fresh();
+  const screen = path.join(typed, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
+  fs.writeFileSync(
+    screen,
+    fs
+      .readFileSync(screen, "utf8")
+      .replace(
+        ".sheet(item: $model.selection)",
+        ".onChange(of: model.query) { Task { await model.submitQuery() } }\n            .sheet(item: $model.selection)",
+      ),
+  );
+  assert.ok(
+    blankQueryFaults(typed).some((f) => f.includes("relirait à la frappe")),
+    "une relecture à la frappe doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -421,27 +443,51 @@ test("ios-memoire/AC-9 : rafraîchir à l'ouverture et sur geste, jamais en cont
 });
 
 // ---------------------------------------------------------------------------
-// AC-10 : lecture seule — ni écriture, ni graphe.
+// AC-10 : graphe et fiche en lecture seule ; la LISTE se corrige par `MemoryWriter`.
 
-/** Les manques du périmètre de lecture (AC-10). */
+/** Les jetons d'une écriture dans la section Mémoire. */
+const WRITE_TOKENS = ["MemoryWriter", "writer.", "beginEdit(", "pendingDelete", "MemoryEditSheet(", "MemoryText.edit"];
+
+/** Les manques du périmètre d'écriture (AC-10). */
 function readOnlyFaults(root: string): string[] {
   const faults: string[] = [];
   const memory = memoryAppCode(root);
-  // Le graphe est désormais un SECOND mode de la section : seuls les jetons
-  // d'ÉCRITURE restent interdits (le mode graphe lit `memoryGraph(`).
-  for (const token of ["MemoryText.createMemory", "MemoryText.edit", "MemoryText.delete", "MemoryText.save"]) {
-    if (memory.includes(token)) faults.push(`la section Mémoire porte ${token}`);
+  // Aucune création, nulle part : la mémoire s'écrit depuis les agents.
+  if (memory.includes("MemoryText.createMemory")) faults.push("la section Mémoire porte MemoryText.createMemory");
+  // Le graphe et la fiche d'un souvenir ne portent aucune écriture.
+  const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
+  const readOnly = fs
+    .readdirSync(appDir)
+    .filter((name) => name.startsWith("IOSMemoryGraph") || name === "IOSMemoryDetailView.swift");
+  for (const name of readOnly) {
+    const text = code(path.join(appDir, name));
+    for (const token of WRITE_TOKENS) if (text.includes(token)) faults.push(`${name} porte l'écriture ${token}`);
   }
+  // Le lecteur reste un lecteur : les écritures vivent dans `MemoryWriter`, seul.
   const client = clientCode(root, "MemoryReader.swift") + clientCode(root, "MemoryAccess.swift");
   for (const token of [
     "func memoryAdd",
     "func memoryUpdate",
     "func memoryDelete",
     "func memoryWrite",
+    "func update(",
+    "func delete(",
     '"POST", body: ["text"',
   ]) {
     if (client.includes(token)) faults.push(`le lecteur de la mémoire expose ${token}`);
   }
+  const writer = clientCode(root, "MemoryWriter.swift");
+  const writes = [...writer.matchAll(/public func (\w+)\(/g)].map((m) => m[1]).sort();
+  if (writes.join(",") !== "delete,update")
+    faults.push(`MemoryWriter expose ${writes.join(",") || "rien"} (attendu delete,update)`);
+  // La liste corrige et supprime par `client.writer`, la suppression après confirmation.
+  const screen = appFile(root, "IOSMemoryScreen.swift");
+  if (!screen.includes("writer.update(")) faults.push("la liste ne corrige pas par MemoryWriter.update");
+  if (!screen.includes("writer.delete(")) faults.push("la liste ne supprime pas par MemoryWriter.delete");
+  const dialog = screen.indexOf(".confirmationDialog(");
+  const calls = [...screen.matchAll(/await delete\(/g)].map((m) => m.index ?? 0);
+  if (dialog < 0 || calls.length !== 1 || calls[0] < dialog)
+    faults.push("la suppression ne passe pas par la seule confirmation (.confirmationDialog)");
   const app = memoryAppCode(root);
   if (!app.includes("model.refresh()")) faults.push("aucune lecture n'est déclenchée depuis l'écran");
   if (!app.includes("model.submitQuery()")) faults.push("la recherche n'est pas soumise depuis l'écran");
@@ -449,11 +495,29 @@ function readOnlyFaults(root: string): string[] {
   return faults;
 }
 
-test("ios-memoire/AC-10 : lecture seule — aucune écriture, ni sommaire ni graphe", () => {
+test("ios-memoire/AC-10 : graphe et fiche en lecture seule, liste modifiable par MemoryWriter", () => {
   assert.deepEqual(readOnlyFaults(ROOT), []);
 
+  // Une écriture glissée dans le graphe ⇒ rouge.
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
-  fs.writeFileSync(target, `${code(target)}\nlet fuite = MemoryText.delete\n`);
-  assert.ok(readOnlyFaults(copy).length > 0, "un geste d'écriture ajouté doit faire rougir la garde");
+  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
+  fs.writeFileSync(target, `${code(target)}\nlet fuite = MemoryWriter.self\n`);
+  assert.ok(readOnlyFaults(copy).length > 0, "une écriture dans le graphe doit faire rougir la garde");
+
+  // Une suppression sans confirmation ⇒ rouge.
+  const direct = shared.fresh();
+  const screen = path.join(direct, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
+  fs.writeFileSync(
+    screen,
+    fs
+      .readFileSync(screen, "utf8")
+      .replace(
+        "case .delete(let deleted): pendingDelete = deleted",
+        "case .delete(let deleted): Task { await delete(deleted) }",
+      ),
+  );
+  assert.ok(
+    readOnlyFaults(direct).some((f) => f.includes("confirmation")),
+    "une suppression sans confirmation doit faire rougir la garde",
+  );
 });

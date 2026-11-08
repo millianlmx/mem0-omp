@@ -5,7 +5,8 @@
 // portée par pages, une recherche sélectionnée exactement comme l'outil
 // `mem0_search` (`MemorySearch`), et le graphe des souvenirs, dérivé par le noyau
 // partagé (`MemoryGraph`). Le décodage des réponses est celui de la coque
-// (`MemoryPage`, `MemoryJSON`, `MemoryGraphEdges`). Lecture seule.
+// (`MemoryPage`, `MemoryJSON`, `MemoryGraphEdges`). Les deux écritures permises depuis
+// la liste (corriger, supprimer) passent par `MemoryWriter`, sur le même échange.
 
 import ConsoleCore
 import Foundation
@@ -168,6 +169,14 @@ public struct MemoryReader: Sendable {
     }
 
     private func send(path: String, method: String, body: [String: Any]?, timeout: TimeInterval) async throws -> Any {
+        try await Self.send(server: server, transport: transport, path: path, method: method, body: body, timeout: timeout)
+    }
+
+    /// L'échange avec la mémoire, partagé par la lecture et l'écriture : le jeton en
+    /// `X-Mem0-Token`, chaque statut traduit en `MemoryReadError`.
+    static func send(
+        server: MemoryServer, transport: any MemoryTransport, path: String, method: String, body: [String: Any]?, timeout: TimeInterval
+    ) async throws -> Any {
         var base = server.baseURL.absoluteString
         while base.hasSuffix("/") { base.removeLast() }
         guard let url = URL(string: base + path) else { throw MemoryReadError.unreachable }

@@ -21,4 +21,9 @@ enum IOSKeyboardText {
     static let refreshKey: Character = "r"
     /// La touche de « Rechercher », avec ⌘.
     static let searchKey: Character = "f"
+
+    /// La touche de la palette de commandes, avec ⌘.
+    static let paletteKey: Character = "k"
+    /// La touche de « Nouvelle feature… », avec ⌘.
+    static let newFeatureKey: Character = "n"
 }

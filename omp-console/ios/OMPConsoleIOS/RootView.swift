@@ -1,5 +1,6 @@
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 /// La racine UNIQUE de l'app iOS : une barre d'onglets native (`TabView`, style
@@ -105,6 +106,17 @@ struct RootView: View {
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
             }
+            // La palette ⌘K, la recherche ⌘F et la feuille « Nouvelle feature » ⌘N,
+            // partagées avec le Mac (ConsoleUI) ; ⌘K et ⌘N passent par la barre des menus.
+            .consolePalette(server: server, drafts: drafts, sections: IOSSection.all, memory: true) { select($0) }
+            .focusedSceneValue(\.iosPalette, IOSPaletteAction(drafts: drafts, isEnabled: server.isConfigured))
+            // Le socle des écrans partagés : le rendu Markdown, le direct d'une session
+            // et la Live Activity d'une feature, propres à l'iPhone/iPad.
+            .consoleShell(ConsoleShell(
+                markdown: { AnyView(IOSMarkdownView(blocks: $0)) },
+                session: { [server] request in AnyView(IOSSessionSheet(server: server, request: request)) },
+                runActions: { [server] run in AnyView(IOSLiveActivityMenuItem(server: server, run: run)) }
+            ))
             .task {
                 await memory.load()
                 await server.load()

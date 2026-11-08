@@ -9,6 +9,7 @@
 // décodage reproduisent `memoryId` / `memoryLine` / `semanticScore`
 // (mem0Client.ts:82-111), et les budgets sont ceux de `TIMEOUT` (config.ts:13).
 
+import ConsoleClient
 import ConsoleCore
 import Foundation
 
@@ -95,27 +96,6 @@ enum MemoryRoute: String, CaseIterable, Sendable {
     }
 }
 
-/// Les chemins d'ÉCRITURE (S-8, S-9, S-10) : le chemin d'un souvenir se compose par
-/// identifiant. `PUT` et `DELETE` partagent le même chemin, comme le service.
-enum MemoryWritePath: Equatable, Sendable {
-    case add
-    case memory(String)
-
-    var path: String {
-        switch self {
-        case .add: "/memory/add"
-        case let .memory(id): "/memory/\(id)"
-        }
-    }
-
-    var method: String {
-        switch self {
-        case .add: "POST"
-        case .memory: "PUT"
-        }
-    }
-}
-
 /// `~/.omp/mem0.json` — `{ "url": …, "token": … }` : la mémoire partagée avec le
 /// serveur de pipelines. Une app lancée par le Finder ne voit pas le profil du
 /// shell ; ce fichier, lu aussi par le plugin mémoire, donne la même adresse aux
@@ -151,36 +131,6 @@ struct MemoryHealth: Equatable, Sendable {
     /// l'adresse répond, mais ce n'est pas la pile de l'app. Cet état n'est JAMAIS
     /// « disponible » (S-5, BR-9).
     var isForeign: Bool = false
-}
-
-// MARK: - Étiquettes (S-8)
-
-/// La normalisation des étiquettes d'un souvenir, en UNE formule partagée par la
-/// feuille d'édition, celle de création et le client HTTP : découpage aux virgules,
-/// trim, segments vides retirés, doublons retirés (l'ordre d'apparition est
-/// conservé), jointure par « , ». `""` signifie « aucune étiquette ».
-enum MemoryTags {
-    /// Les étiquettes d'un champ de saisie, dans l'ordre d'apparition.
-    static func list(_ raw: String) -> [String] {
-        var seen: Set<String> = []
-        var kept: [String] = []
-        for segment in raw.split(separator: ",") {
-            let tag = segment.trimmingCharacters(in: .whitespaces)
-            guard !tag.isEmpty, seen.insert(tag).inserted else { continue }
-            kept.append(tag)
-        }
-        return kept
-    }
-
-    /// La forme envoyée au service : `"a,b"`, ou `""` pour aucune.
-    static func normalized(_ tags: [String]) -> String {
-        tags.joined(separator: ",")
-    }
-
-    /// La forme d'un champ de saisie : `"a, b"`.
-    static func display(_ tags: [String]) -> String {
-        tags.joined(separator: ", ")
-    }
 }
 
 // MARK: - Erreurs

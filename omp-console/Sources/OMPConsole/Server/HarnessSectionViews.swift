@@ -1,8 +1,12 @@
 // Les sections de pilotage de la coque, toutes servies par le serveur de pipelines
-// du VPS (omp-harness) — le seul moteur : Accueil (résumé et boîte de l'humain),
-// Pipelines (features : lancer, suivre, arrêter), Projet (projets : lancer, suivre),
-// Audit (audits : lancer, trier les propositions) et Statistiques. Le Poste (poste
-// de travail) passe par le même cadre, dans `WorkstationViews.swift`.
+// du VPS (omp-harness) — le seul moteur : Accueil (rapport du matin, résumé, services
+// et boîte de l'humain), Pipelines (historique des features : tableau ou kanban),
+// Projet (projets : lancer, suivre), Audit (audits : lancer, trier les propositions) et
+// Statistiques (dont la carte des services). Le Poste (poste de travail) passe par le
+// même cadre, dans `WorkstationViews.swift`.
+//
+// Le contenu partagé avec l'app iOS (boîte, Poste, historique, lancement, services)
+// vient de la cible ConsoleUI ; ce fichier n'en garde que le cadre du Mac.
 //
 // Un seul `HarnessModel` et un seul `HarnessDrafts` pour toute la fenêtre (posés par
 // `OMPConsoleApp`) : le flux d'événements tient chaque section à jour. Sans
@@ -11,15 +15,18 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 /// Le cadre commun : relier le serveur s'il ne l'est pas, sinon le contenu, avec
 /// l'échec du dernier échange en tête et l'actualisation en barre d'outils.
-/// `reload` relit en plus ce qui n'est pas dans la boîte (le poste de travail).
+/// `reload` relit en plus ce qui n'est pas dans la boîte (le poste de travail) ;
+/// `form` faux pose le contenu tel quel (le tableau de l'historique), sans formulaire.
 struct HarnessSection<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     let catalog: Bool
+    let form: Bool
     let reload: (@MainActor () async -> Void)?
     @ViewBuilder let content: () -> Content
 
@@ -27,12 +34,14 @@ struct HarnessSection<Content: View>: View {
         server: HarnessModel,
         drafts: HarnessDrafts,
         catalog: Bool,
+        form: Bool = true,
         reload: (@MainActor () async -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.server = server
         self.drafts = drafts
         self.catalog = catalog
+        self.form = form
         self.reload = reload
         self.content = content
     }
@@ -44,14 +53,14 @@ struct HarnessSection<Content: View>: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !server.isConfigured {
                 notConfigured
-            } else {
+            } else if form {
                 // Une tuile du tableau de bord de l'Accueil demande une section de la
                 // boîte (`homeAnchor`) : le formulaire y défile, puis oublie la demande.
                 ScrollViewReader { proxy in
                     Form {
                         if let failure = server.failure {
                             Section {
-                                HarnessFailureLabel(failure: failure)
+                                ConsoleFailureBanner(failure: failure)
                             }
                         }
                         content()
@@ -63,9 +72,27 @@ struct HarnessSection<Content: View>: View {
                         drafts.homeAnchor = nil
                     }
                 }
+            } else {
+                VStack(spacing: 0) {
+                    if let failure = server.failure {
+                        ConsoleFailureBanner(failure: failure)
+                            .padding([.horizontal, .top])
+                    }
+                    content()
+                }
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    drafts.launchSheetShown = true
+                } label: {
+                    Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)
+                }
+                .help(PipelineServerText.newFeature)
+                .disabled(!server.isConfigured || !server.canAct)
+                .accessibilityIdentifier("pipelines.new")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
@@ -114,34 +141,12 @@ struct HarnessSection<Content: View>: View {
     }
 }
 
-/// Le choix du dépôt des lancements, parmi ceux que le serveur déclare.
-struct HarnessRepoPicker: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
-
-    var body: some View {
-        if server.repos.isEmpty {
-            Text(PipelineServerText.noRepo)
-                .foregroundStyle(.secondary)
-        } else {
-            Picker(PipelineServerText.repoLabel, selection: repoBinding) {
-                ForEach(server.repos) { repo in
-                    Text(repo.name).tag(repo.name)
-                }
-            }
-        }
-    }
-
-    private var repoBinding: Binding<String> {
-        Binding(get: { drafts.launchRepo(in: server.repos) ?? "" }, set: { drafts.repo = $0 })
-    }
-}
-
 // MARK: - Accueil
 
-/// L'Accueil : les envois du poste de travail qui attendent l'approbation d'abord
-/// (ils expirent), puis le tableau de bord (KPIs et graphiques, pour comprendre d'un
-/// coup d'œil ce qui se passe sur tous les projets), les alertes et la boîte.
+/// L'Accueil : le rapport du matin, puis les envois du poste de travail qui attendent
+/// l'approbation (ils expirent), le tableau de bord (KPIs et graphiques, pour comprendre
+/// d'un coup d'œil ce qui se passe sur tous les projets), les services qui demandent
+/// un regard, les alertes et la boîte.
 struct HarnessHomeView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -149,10 +154,12 @@ struct HarnessHomeView: View {
     var body: some View {
         HarnessSection(server: server, drafts: drafts, catalog: true, reload: { await server.workstation.refresh() }) {
             let inbox = server.inbox ?? HarnessInbox()
+            DigestSection(server: server)
             WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
             HarnessDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
+            ServicesSummarySection(server: server)
             HarnessAlertsSection(drafts: drafts, inbox: inbox)
-            HarnessInboxSections(server: server, drafts: drafts, inbox: inbox)
+            InboxSections(server: server, drafts: drafts, inbox: inbox)
         }
         .accessibilityIdentifier("home.harness")
     }
@@ -160,48 +167,16 @@ struct HarnessHomeView: View {
 
 // MARK: - Pipelines
 
+/// Toutes les features du serveur, terminées comprises : le tableau triable ou le
+/// kanban par état (priorité au glisser-déposer) ; « Nouvelle feature » (⌘N) est en
+/// barre d'outils.
 struct HarnessPipelinesView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true) {
-            Section {
-                HarnessRepoPicker(server: server, drafts: drafts)
-                TextField(PipelineServerText.titleLabel, text: $drafts.runTitle)
-                    .accessibilityIdentifier("pipelines.launch.title")
-                TextField(PipelineServerText.requestLabel, text: $drafts.runRequest, axis: .vertical)
-                    .lineLimit(3...10)
-                    .accessibilityIdentifier("pipelines.launch.request")
-                Button(PipelineServerText.launch) {
-                    guard let repo = drafts.launchRepo(in: server.repos) else { return }
-                    let title = drafts.runTitle
-                    let request = drafts.runRequest
-                    Task {
-                        if await server.launchRun(repo: repo, title: title, request: request) != nil { drafts.clearRun() }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!drafts.canLaunchRun || server.isLaunching || server.repos.isEmpty)
-                .accessibilityIdentifier("pipelines.launch.commit")
-            } header: {
-                Text(PipelineServerText.launchRunTitle)
-            } footer: {
-                Text(PipelineServerText.launchRunHint)
-            }
-
-            let runs = server.inbox?.runs ?? []
-            Section {
-                if runs.isEmpty {
-                    Text(PipelineServerText.noRun)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(runs) { run in
-                    HarnessRunRow(server: server, drafts: drafts, run: run)
-                }
-            } header: {
-                Text(PipelineServerText.allRuns)
-            }
+        HarnessSection(server: server, drafts: drafts, catalog: true, form: false) {
+            RunsHistoryPanel(server: server, drafts: drafts, history: server.history)
         }
         .accessibilityIdentifier("pipelines.harness")
     }
@@ -216,7 +191,7 @@ struct HarnessProjectsView: View {
     var body: some View {
         HarnessSection(server: server, drafts: drafts, catalog: true) {
             Section {
-                HarnessRepoPicker(server: server, drafts: drafts)
+                RepoPicker(server: server, drafts: drafts)
                 TextField(PipelineServerText.projectTitleLabel, text: $drafts.projectTitle)
                     .accessibilityIdentifier("project.launch.title")
                 ForEach($drafts.features) { $feature in
@@ -290,7 +265,7 @@ struct HarnessAuditsView: View {
     var body: some View {
         HarnessSection(server: server, drafts: drafts, catalog: true) {
             Section {
-                HarnessRepoPicker(server: server, drafts: drafts)
+                RepoPicker(server: server, drafts: drafts)
                 TextField(PipelineServerText.focusLabel, text: $drafts.auditFocus, prompt: Text(PipelineServerText.focusPrompt))
                     .accessibilityIdentifier("audit.launch.focus")
                 Button(PipelineServerText.launch) {
@@ -446,6 +421,7 @@ struct HarnessStatsView: View {
                 if let flaky = stats.tests.flaky {
                     HarnessFlakySection(flaky: flaky)
                 }
+                ServicesSection(server: server)
                 HarnessHealthSection(server: server)
                 Section {
                     row(PipelineServerText.runners, PipelineServerText.slots(used: stats.scheduler.runner.used, capacity: stats.scheduler.runner.capacity))

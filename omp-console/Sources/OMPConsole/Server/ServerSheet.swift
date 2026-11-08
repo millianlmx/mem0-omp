@@ -9,6 +9,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct ServerSheet: View {
@@ -69,7 +70,7 @@ struct ServerSheet: View {
                 }
                 if let failure = server.failure {
                     Section {
-                        HarnessFailureLabel(failure: failure)
+                        ConsoleFailureBanner(failure: failure)
                     }
                 }
             }

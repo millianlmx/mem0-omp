@@ -336,6 +336,12 @@ public enum PipelineServerText {
     public static let blockers = L10n.text("Bloquants")
     public static let risks = L10n.text("Risques")
     public static let unverified = L10n.text("Non vérifié")
+    public static let weakVerdictSymbol = "eyeglasses"
+    /// Le sablier d'une réponse qui attend la fin de l'étape.
+    public static let waitSymbol = "hourglass"
+
+    /// Un élément d'une liste du verdict.
+    public static func bullet(_ item: String) -> String { "· " + item }
 
     // MARK: - Accueil
 
@@ -607,6 +613,119 @@ public enum PipelineServerText {
         parts.append(key)
         return parts.joined(separator: " · ")
     }
+
+    // MARK: - Historique des features
+
+    public static let historyTitle = L10n.text("Historique")
+    public static let historyHint = L10n.text("Toutes les features du serveur, terminées comprises.")
+    public static let searchRuns = L10n.text("Rechercher une feature")
+    public static let filterState = L10n.text("État")
+    public static let filterRepo = L10n.text("Dépôt")
+    public static let filterProject = L10n.text("Projet")
+    public static let filterAll = L10n.text("Tous")
+    public static let clearFilters = L10n.text("Effacer les filtres")
+    public static let sortLabel = L10n.text("Trier par")
+    public static let showMore = L10n.text("Afficher plus")
+    public static let noMatch = L10n.text("Aucune feature ne correspond à ces filtres.")
+    public static let presentationLabel = L10n.text("Présentation")
+    public static let tableView = L10n.text("Tableau")
+    public static let boardView = L10n.text("Kanban")
+    public static let boardHint = L10n.text("Glissez une feature sur une autre pour la faire passer devant elle.")
+    public static let columnFeature = L10n.text("Feature")
+    public static let columnUpdated = L10n.text("Dernière activité")
+    public static let columnCreated = L10n.text("Lancée")
+    public static let tableSymbol = "tablecells"
+    public static let boardSymbol = "rectangle.split.3x1"
+    public static let filterSymbol = "line.3.horizontal.decrease.circle"
+
+    /// L'ordre de la liste (`HarnessRunsSort`).
+    public static func sort(_ raw: String) -> String {
+        switch raw {
+        case "created": L10n.text("Lancement")
+        case "priority": L10n.text("Priorité")
+        case "title": L10n.text("Titre")
+        default: L10n.text("Dernière activité")
+        }
+    }
+
+    /// Une colonne du kanban (`HarnessKanbanColumn`).
+    public static func column(_ raw: String) -> String {
+        switch raw {
+        case "queued": L10n.text("En file")
+        case "running": L10n.text("En cours")
+        case "waiting": L10n.text("Attendent l’humain")
+        case "merged": L10n.text("Fusionnées")
+        default: L10n.text("Arrêtées")
+        }
+    }
+
+    /// Le compte de la page montrée.
+    public static func shown(_ shown: Int, of total: Int) -> String {
+        L10n.format("%lld sur %lld", shown, total)
+    }
+
+    // MARK: - Options du lancement
+
+    public static let launchOptionsTitle = L10n.text("Options du lancement")
+    public static let priorityLabel = L10n.text("Priorité")
+    public static let priorityPrompt = L10n.text("0 par défaut, de -1000 à 1000")
+    public static let laneLabel = L10n.text("Voie")
+    public static let laneHint = L10n.text("Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue).")
+    public static let reqLabel = L10n.text("Cadrage /req (facultatif)")
+    public static let reqHint = L10n.text("Un cadrage déjà écrit : l’étape /req est sautée.")
+    public static let budgetLabel = L10n.text("Budget en dollars (facultatif)")
+    public static let budgetPrompt = L10n.text("ex. 5")
+    public static let priorityInvalid = L10n.text("La priorité est un entier de -1000 à 1000.")
+    public static let budgetInvalid = L10n.text("Le budget est un montant positif, en dollars.")
+
+    /// La voie d'une feature (`HarnessLane`).
+    public static func lane(_ raw: String) -> String {
+        switch raw {
+        case "full": L10n.text("Complète")
+        default: L10n.text("Automatique")
+        }
+    }
+
+    // MARK: - Priorité
+
+    public static let prioritySymbol = "arrow.up.arrow.down"
+    public static let raisePriority = L10n.text("Monter de 10")
+    public static let lowerPriority = L10n.text("Descendre de 10")
+
+    /// La priorité d'une feature, en clair.
+    public static func priority(_ value: Int) -> String {
+        L10n.format("Priorité %lld", value)
+    }
+
+    /// Un cran du menu de priorité (`HarnessKanban.presets`).
+    public static func priorityPreset(_ value: Int) -> String {
+        value > 0 ? L10n.format("Haute (%lld)", value) : value < 0 ? L10n.format("Basse (%lld)", value) : L10n.format("Normale (%lld)", value)
+    }
+
+    // MARK: - Palette de commandes et recherche globale
+
+    public static let paletteTitle = L10n.text("Commandes")
+    public static let palettePrompt = L10n.text("Aller à, lancer, valider…")
+    public static let searchTitle = L10n.text("Rechercher")
+    public static let searchPrompt = L10n.text("Features et mémoire")
+    /// Les commandes des menus qui ouvrent la palette (⌘K) et la recherche (⌘F).
+    public static let paletteMenu = L10n.text("Commandes…")
+    public static let searchMenu = L10n.text("Rechercher…")
+    public static let paletteSection = L10n.text("Section")
+    public static let paletteEmpty = L10n.text("Aucune commande ne correspond.")
+    public static let newFeature = L10n.text("Nouvelle feature…")
+    public static let paletteSymbol = "command"
+    public static let searchSymbol = "magnifyingglass"
+    public static let newFeatureSymbol = "plus"
+    public static let questionSymbol = "questionmark.bubble"
+    public static let validateSymbol = "checkmark.seal"
+    public static let refreshSymbol = "arrow.clockwise"
+    public static let serverSymbol = "server.rack"
+
+    public static func paletteToDecide(_ count: Int) -> String { L10n.format("Trancher les questions (%lld)", count) }
+    public static func paletteSpecs(_ count: Int) -> String { L10n.format("Valider les specs (%lld)", count) }
+    public static func paletteVerdicts(_ count: Int) -> String { L10n.format("Valider les verdicts (%lld)", count) }
+    public static func paletteMemory(_ query: String) -> String { L10n.format("Chercher « %@ » dans la mémoire", query) }
 
     // MARK: - Échecs (cause, puis remède)
 

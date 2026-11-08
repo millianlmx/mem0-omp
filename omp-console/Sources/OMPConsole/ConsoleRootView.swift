@@ -13,10 +13,16 @@
 //
 // La sélection est liée par une `Binding(get:set:)` construite à la main : le
 // modèle n'expose qu'un `select(_:)` (D3, `@State` interdit).
+//
+// La racine pose aussi le socle des écrans partagés avec l'app iOS (`consoleShell` :
+// le rendu Markdown et le direct d'une session du Mac), la palette ⌘K/⌘F et la
+// feuille ⌘N (`consolePalette`), et ouvre les liens `ompconsole://<section>` (le
+// popup de l'extension Chrome ouvre `ompconsole://workstation` pour approuver).
 
 import AppKit
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 struct ConsoleRootView: View {
@@ -120,6 +126,9 @@ struct ConsoleRootView: View {
             .sheet(isPresented: $drafts.serverSheetShown) {
                 ServerSheet(server: server, drafts: drafts)
             }
+            .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
+                model.select(section)
+            }
         }
         .sheet(isPresented: setupShown) {
             // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
@@ -136,6 +145,13 @@ struct ConsoleRootView: View {
         .task(id: server.address) {
             await workstation.refresh()
         }
+        .onOpenURL { url in
+            if let section = HarnessWidgetLink.section(of: url) { model.select(section) }
+        }
+        .consoleShell(ConsoleShell(
+            markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
+            session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) }
+        ))
         .frame(minWidth: 760, minHeight: 480)
     }
 }

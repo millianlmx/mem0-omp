@@ -16,6 +16,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 /// Les onglets de la feuille.
@@ -107,7 +108,7 @@ struct HarnessSessionSheet: View {
     private var statusBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let failure = server.sessionFailure {
-                HarnessFailureLabel(failure: failure)
+                ConsoleFailureBanner(failure: failure)
             } else if let feed, feed.isLoaded {
                 Label(
                     feed.isRunning ? PipelineServerText.sessionWorking : PipelineServerText.sessionIdle,

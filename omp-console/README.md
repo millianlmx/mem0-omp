@@ -174,8 +174,8 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
 
 - **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
   adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
-  dépend de `ConsoleCore` et de `ConsoleClient` (le client du serveur de
-  pipelines, partagé avec l'app iOS).
+  dépend de `ConsoleCore`, de `ConsoleClient` (le client du serveur de
+  pipelines, partagé avec l'app iOS) et de `ConsoleUI` (les écrans partagés).
 - **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
   `OMPConsole`, de `ConsoleCore` et de `ConsoleClient`.
 - **ConsoleClient** — la **cible partagée macOS/iOS des clients du serveur du VPS** :
@@ -183,6 +183,18 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
   (`HarnessPairing`), le lecteur de la mémoire du serveur (`MemoryReader`,
   `MemoryAccess`) et le trousseau. Les deux apps sont indépendantes : aucune ne parle
   à l'autre. Dépendance unique : `ConsoleCore` ; ni AppKit ni UIKit.
+- **ConsoleUI** — la **cible partagée macOS/iOS des écrans écrits une seule fois** :
+  la boîte de l'humain (`InboxSections`, questions situées, gestes et confirmations
+  `harnessGestures`), le Poste (`WorkstationSections`), l'historique des features
+  (`RunsHistorySections` sur iOS ; `RunsHistoryPanel` sur le Mac : tableau triable et
+  kanban par état, priorité au glisser-déposer), le lancement avec options
+  (`LaunchFeatureSections`, ⌘N), le menu de priorité, la palette ⌘K et la recherche
+  globale ⌘F (`consolePalette`), la carte « Services » et le rapport du matin
+  (`ServicesSection`, `DigestSection`) et la feuille d'un souvenir
+  (`MemoryEditSheet`). SwiftUI et Charts seulement ; ce qui diffère (rendu Markdown,
+  direct d'une session, Live Activity) est fourni par chaque app (`consoleShell`).
+  Dépend de `ConsoleCore` et de `ConsoleClient` ; tout réseau passe par
+  `ConsoleClient`.
 - **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
   cliente (doublures de transport et de trousseau, aucun réseau) ; dépend de
   `ConsoleClient` et de `ConsoleCore`.
@@ -1618,6 +1630,7 @@ omp-console/
 │   ├── MenuBar/                   l'ordre des séparateurs du menu principal
 │   └── Design/                    surfaces, badge d'état, diagnostic copiable, fenêtre principale
 ├── Sources/ConsoleClient/         la cible partagée macOS/iOS des clients distants
+├── Sources/ConsoleUI/             les écrans partagés macOS/iOS (boîte, Poste, historique, palette, services)
 │   ├── HarnessModel.swift         le client du serveur de pipelines du VPS
 │   ├── HarnessPairing.swift       le code d'appairage `omp1:…` et `~/.omp/harness.json`
 │   ├── MemoryReader.swift         la lecture directe de la mémoire du serveur (iOS)
@@ -1998,8 +2011,9 @@ s'ajoute derrière la bascule « Graphe ⇄ Liste » : il est dérivé sur l'iPh
 MÊME noyau que la fenêtre macOS (`MemoryGraph`, nœuds-souvenirs, nœuds-étiquettes,
 arêtes de proximité) — les liens manuels restent sur le Mac qui les a tracés —,
 manipulable au doigt (pincer, glisser, toucher) ; toucher un souvenir ouvre sa fiche
-en lecture seule, toucher un nœud-étiquette applique son filtre. L'app n'émet AUCUNE
-écriture et rien ne se rafraîchit en continu.
+en lecture seule, toucher un nœud-étiquette applique son filtre. Le graphe et la fiche
+n'émettent AUCUNE écriture ; seule la liste corrige ou supprime un souvenir (menu de la
+rangée, `MemoryWriter`, suppression confirmée), et rien ne se rafraîchit en continu.
 
 Recette pas à pas :
 

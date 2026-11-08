@@ -35,12 +35,9 @@ enum IOSShellText {
     // --- écrans du serveur de pipelines ----------------------------------------
 
     static let serverSymbol = "server.rack"
-    static let weakVerdictSymbol = "eyeglasses"
     static let addSymbol = "plus"
     static let pickedSymbol = "checkmark.circle.fill"
     static let unpickedSymbol = "circle"
-    /// Une ligne de liste (« · élément »).
-    static func bullet(_ item: String) -> String { "· " + item }
     /// « Faiblesse · motif »
     static func proposalDetail(kind: String, rationale: String) -> String { "\(kind) · \(rationale)" }
 }

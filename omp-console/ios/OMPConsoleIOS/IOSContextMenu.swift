@@ -18,13 +18,20 @@ import UIKit
 enum IOSMenuAction: Equatable {
     /// « Copier » : remplace le presse-papiers par ce texte.
     case copy(String)
+    /// « Modifier… » : ouvre la feuille partagée (`MemoryEditSheet`) sur ce souvenir.
+    case edit(RemoteMemoryRow)
+    /// « Supprimer… » : demande la confirmation, puis supprime le souvenir.
+    case delete(RemoteMemoryRow)
 }
 
 enum IOSContextMenu {
-    /// Une rangée Mémoire : « Copier » le texte brut du souvenir, seul.
-    static func memory(_ row: RemoteMemoryRow) -> [IOSMenuAction] {
+    /// Une rangée Mémoire : « Copier » le texte brut du souvenir (s'il en a), puis
+    /// « Modifier… » et « Supprimer… » quand la mémoire accepte l'écriture.
+    static func memory(_ row: RemoteMemoryRow, writable: Bool = false) -> [IOSMenuAction] {
         let text = row.text
-        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [.copy(text)]
+        var actions: [IOSMenuAction] = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [.copy(text)]
+        if writable { actions += [.edit(row), .delete(row)] }
+        return actions
     }
 }
 
@@ -49,6 +56,10 @@ struct IOSContextMenuItems: View {
             switch action {
             case .copy:
                 Button(MemoryText.copy, systemImage: IOSMenuText.copySymbol) { perform(action) }
+            case .edit:
+                Button(MemoryText.edit, systemImage: IOSMenuText.editSymbol) { perform(action) }
+            case .delete:
+                Button(MemoryText.delete, systemImage: IOSMenuText.deleteSymbol, role: .destructive) { perform(action) }
             }
         }
     }

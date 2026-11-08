@@ -78,7 +78,7 @@ private let inboxJSON = #"""
 
 @MainActor
 private func makeModel(_ transport: ScriptedHarnessTransport, preferences: InMemoryClientPreferences = InMemoryClientPreferences(), tokens: InMemoryTokenStore = InMemoryTokenStore()) -> HarnessModel {
-    HarnessModel(transport: transport, preferences: preferences, tokens: tokens, retryDelay: .seconds(3600), refreshDelay: .milliseconds(1))
+    HarnessModel(transport: transport, preferences: preferences, tokens: tokens, retryDelay: .seconds(3600), refreshDelay: .milliseconds(1), reporter: .off)
 }
 
 private func ok(_ json: String) -> HarnessReply { HarnessReply(status: 200, body: Data(json.utf8)) }
@@ -689,14 +689,18 @@ struct HarnessModelTests {
         #expect(await model.configure(address: "vps.example", token: "t"))
 
         #expect(await model.setPriority(runId: "r4", priority: 10))
-        let bump = try #require(transport.calls.last { $0.method == "POST" })
+        let bump = try #require(transport.calls.last { $0.method == "POST" && $0.path != HarnessErrorReporter.route })
         #expect(bump.path == "/v1/runs/r4/priority")
         #expect((try JSONSerialization.jsonObject(with: try #require(bump.body)) as? [String: Int]) == ["priority": 10])
 
-        #expect(await model.launchRun(repo: "demo", title: "T", request: "r", modules: ["src/api"], priority: 3)?.id == "r9")
+        let options = HarnessLaunchOptions(priority: 3, lane: .full, modules: ["src/api"], req: "# Besoins", budgetUsd: 2.5)
+        #expect(await model.launchRun(repo: "demo", title: "T", request: "r", options: options)?.id == "r9")
         let run = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "POST" && $0.path == "/v1/runs" }?.body)) as? [String: Any]
         #expect(run?["modules"] as? [String] == ["src/api"])
         #expect(run?["priority"] as? Int == 3)
+        #expect(run?["lane"] as? String == "full")
+        #expect(run?["req"] as? String == "# Besoins")
+        #expect(run?["budgetUsd"] as? Double == 2.5)
 
         _ = await model.launchRun(repo: "demo", title: "T", request: "r")
         let plain = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.method == "POST" && $0.path == "/v1/runs" }?.body)) as? [String: Any]
@@ -820,11 +824,11 @@ struct HarnessModelTests {
         drafts.chains = ["fast": "", "standard": "vps-ollama/qwen3-coder", "heavy": "anthropic/claude-opus-5-5, vps-ollama/qwen3-coder"]
         let chains = try #require(drafts.parsedChains)
         #expect(await model.saveChains(chains))
-        let sent = try JSONSerialization.jsonObject(with: try #require(transport.calls.last?.body)) as? [String: Any]
+        let sent = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.path == "/v1/models" }?.body)) as? [String: Any]
         let heavy = (sent?["models"] as? [String: Any])?["heavy"] as? [[String: String]]
         #expect(heavy?.map { $0["provider"] ?? "" } == ["anthropic", "vps-ollama"])
         #expect(await model.saveChains(nil))
-        let reset = try JSONSerialization.jsonObject(with: try #require(transport.calls.last?.body)) as? [String: Any]
+        let reset = try JSONSerialization.jsonObject(with: try #require(transport.calls.last { $0.path == "/v1/models" }?.body)) as? [String: Any]
         #expect(reset?["models"] is NSNull, "revenir aux modèles du serveur envoie null")
         #expect(model.providerCatalog?.modelsFromApps == false)
         drafts.chains["heavy"] = "sans-barre"
