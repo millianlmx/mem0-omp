@@ -64,7 +64,7 @@ services:
   # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne. Il
   # n'a pas de modèle de chat : mem0.env porte alors OMLX_CHAT_BASE_URL=off.
   embeddings:
-    image: docker.io/ollama/ollama:0.12.6
+    image: docker.io/ollama/ollama:0.40.14
     restart: unless-stopped
     profiles: ["embeddings"]
     environment:
