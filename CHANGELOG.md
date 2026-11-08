@@ -1,5 +1,15 @@
 # Journal des versions
 
+## omp-mem0-req 2.3.0 — 2026-11-08
+
+- feat(harness,req): consignes à un run en cours, budget par run, dépôts et rechargement par l'API (#338) (87c1642)
+
+## omp-harness 1.17.0 — 2026-11-08
+
+- feat(harness,req): consignes à un run en cours, budget par run, dépôts et rechargement par l'API (#338) (87c1642)
+- chore(deps): actions v7, Rust 1.98, digest 0.11 (sha2, md-5) (#336) (ca0031a)
+- chore(deps): bump the compose-mineures group across 2 directories with 1 update (#316) (199bf13)
+
 ## omp-harness 1.16.0 — 2026-11-07
 
 - feat(harness): rapport du matin (GET /v1/digest, outil MCP digest, envoi quotidien) (#332) (8ed8018)
