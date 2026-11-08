@@ -11,9 +11,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { braceBlock, memberBody, stripComments, swiftSources } from "../support/swift-source.ts";
+import { braceBlock, iosAppSources, memberBody, stripComments, swiftSources } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
+/** Les écrans partagés avec le Mac (cible ConsoleUI), compilés dans l'app iOS. */
+const SHARED = path.join(ROOT, "omp-console", "Sources", "ConsoleUI");
 const DESIGN = path.join(ROOT, "omp-console", "ios", "DESIGN.md");
 const SLUG = "ios-gestes-et-retours-natifs";
 
@@ -161,8 +163,10 @@ function memoryBarFaults(memory: string): string[] {
 
 /**
  * AC-5 (S-4) : la rangée de la Mémoire rend `IOSContextMenuItems` nourri par
- * `IOSContextMenu.<surface>` ; la rangée d'une feature du serveur n'offre que
- * l'arrêt, destructif et confirmé (`drafts.stopRequest`), jamais exécuté du menu.
+ * `IOSContextMenu.<surface>` ; la rangée d'une feature (`RunRow`, partagée avec le
+ * Mac) rend un seul menu, `RunMenuItems`, dont les gestes destructifs (arrêt,
+ * annulation de la fusion) ne font que demander confirmation (`drafts.*Request`),
+ * jamais exécutés du menu ; les écrans iOS n'ajoutent aucun autre menu de feature.
  */
 function menuFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -179,20 +183,24 @@ function menuFaults(all: Map<string, string>): string[] {
     }
   }
   const harness = stripComments(all.get(HARNESS) ?? "");
-  const runMenus = blocksOf(memberBody(harness, "struct IOSHarnessRunRow"), ".contextMenu {");
-  if (runMenus.length !== 1 || count(harness, ".contextMenu") !== 1) {
-    faults.push(
-      `${HARNESS} : ${count(harness, ".contextMenu")} .contextMenu (attendu 1, dans struct IOSHarnessRunRow)`,
-    );
+  if (count(harness, ".contextMenu") !== 0) {
+    faults.push(`${HARNESS} : ${count(harness, ".contextMenu")} .contextMenu (attendu 0, le menu vit dans RunRow)`);
   }
-  for (const menu of runMenus) {
-    if (!/role: \.destructive\) \{ drafts\.stopRequest = run \}/.test(menu))
-      faults.push(`${HARNESS} : le menu d'une feature ne demande pas l'arrêt confirmé (drafts.stopRequest)`);
-    if (menu.includes("server."))
-      faults.push(`${HARNESS} : le menu d'une feature agit sur le serveur sans confirmation`);
+  const row = stripComments(all.get(RUN_ROW) ?? "");
+  const rowMenus = blocksOf(memberBody(row, "struct RunRow"), ".contextMenu {");
+  if (rowMenus.length !== 1 || count(row, ".contextMenu") !== 1 || !rowMenus[0].includes("RunMenuItems(")) {
+    faults.push(`${RUN_ROW} : ${count(row, ".contextMenu")} .contextMenu (attendu 1, RunMenuItems dans struct RunRow)`);
   }
+  const items = memberBody(stripComments(all.get(RUN_MENU) ?? ""), "struct RunMenuItems");
+  if (!/role: \.destructive\) \{ drafts\.stopRequest = run \}/.test(items))
+    faults.push(`${RUN_MENU} : le menu d'une feature ne demande pas l'arrêt confirmé (drafts.stopRequest)`);
+  if (items.includes("server."))
+    faults.push(`${RUN_MENU} : le menu d'une feature agit sur le serveur sans confirmation`);
   return faults;
 }
+
+const RUN_ROW = "RunViews.swift";
+const RUN_MENU = "RunsHistoryViews.swift";
 
 /** Aucune action par balayage dans l'app (B-3 : hors périmètre). */
 function swipeFaults(all: Map<string, string>): string[] {
@@ -205,7 +213,8 @@ function swipeFaults(all: Map<string, string>): string[] {
 
 /** Les surfaces de texte sélectionnable (S-6), une pose chacune : les specs à
  *  valider de l'Accueil, la fiche d'un souvenir et le direct d'une session. */
-const SELECTABLE = [HARNESS, "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
+const SPECS = "InboxSections.swift";
+const SELECTABLE = [SPECS, "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {
@@ -486,7 +495,7 @@ test("ios-gestes-et-retours-natifs/AC-4 : la barre de la Mémoire porte trois bo
 });
 
 test("ios-gestes-et-retours-natifs/AC-5 : rangées des features et de la Mémoire ont un menu contextuel natif, sans balayage", () => {
-  const all = swiftSources(APP);
+  const all = iosAppSources(APP, SHARED);
   assert.deepEqual(menuFaults(all), []);
   assert.deepEqual(swipeFaults(all), []);
 
@@ -498,14 +507,14 @@ test("ios-gestes-et-retours-natifs/AC-5 : rangées des features et de la Mémoir
   );
 
   // Faute plantée : le menu d'une feature arrête sans confirmation ⇒ rouge.
-  const direct = plant(all.get(HARNESS)!, (s) =>
+  const direct = plant(all.get(RUN_MENU)!, (s) =>
     s.replace(
       "role: .destructive) { drafts.stopRequest = run }",
       "role: .destructive) { Task { await server.cancel(runId: run.id) } }",
     ),
   );
   assert.ok(
-    menuFaults(withFile(all, HARNESS, direct)).some((f) => f.includes("sans confirmation")),
+    menuFaults(withFile(all, RUN_MENU, direct)).some((f) => f.includes("sans confirmation")),
     "un arrêt sans confirmation doit rougir",
   );
 
@@ -519,7 +528,7 @@ test("ios-gestes-et-retours-natifs/AC-5 : rangées des features et de la Mémoir
 });
 
 test("ios-gestes-et-retours-natifs/AC-9 : les specs à valider et la fiche d'un souvenir ont un texte sélectionnable", () => {
-  const all = swiftSources(APP);
+  const all = iosAppSources(APP, SHARED);
   assert.deepEqual(selectionFaults(all), []);
 
   // Faute plantée : la fiche d'un souvenir perd sa sélection ⇒ rouge.
@@ -532,11 +541,11 @@ test("ios-gestes-et-retours-natifs/AC-9 : les specs à valider et la fiche d'un 
   );
 
   // Faute plantée : une seconde pose sur les specs ⇒ rouge.
-  const twice = plant(all.get(HARNESS)!, (s) =>
+  const twice = plant(all.get(SPECS)!, (s) =>
     s.replace(".textSelection(.enabled)", ".textSelection(.enabled)\n                    .textSelection(.enabled)"),
   );
   assert.ok(
-    selectionFaults(withFile(all, HARNESS, twice)).some((f) => f.includes(`${HARNESS} : 2`)),
+    selectionFaults(withFile(all, SPECS, twice)).some((f) => f.includes(`${SPECS} : 2`)),
     "deux poses doivent rougir",
   );
 });

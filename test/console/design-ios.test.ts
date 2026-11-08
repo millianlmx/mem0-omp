@@ -224,7 +224,7 @@ const SECTION_WORDS: Record<string, SectionWord> = {
   workstation: {
     screen: "IOSWorkstationScreen",
     file: "IOSWorkstationScreen.swift",
-    words: { screen: "WorkstationApprovalsSection", file: "WorkstationSections.swift" },
+    words: { screen: "WorkstationSections", file: "WorkstationSections.swift" },
     message: "Aucun envoi n’attend votre accord.",
     constant: "WorkstationText.noApproval",
     core: "Design/WorkstationText.swift",
@@ -258,7 +258,8 @@ function screenFaults(root: string): string[] {
     if (!new RegExp(`case [^:]*\\.${section}\\b[^:]*:\\s*${word.screen}\\(`).test(view)) {
       faults.push(`IOSSectionView n'aiguille pas .${section} vers ${word.screen}`);
     }
-    if (!appFile(root, word.file).includes(word.constant)) faults.push(`${word.file} ne cite pas ${word.constant}`);
+    const wordsFile = word.words?.file ?? word.file;
+    if (!appFile(root, wordsFile).includes(word.constant)) faults.push(`${wordsFile} ne cite pas ${word.constant}`);
     const core = coreCode(root, word.core);
     const member = word.constant.split(".")[1];
     if (declaredTexts(core).get(member) !== word.message) {
@@ -270,10 +271,15 @@ function screenFaults(root: string): string[] {
   // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
   const harness = appFile(root, "IOSHarnessScreens.swift");
   for (const section of SECTIONS.filter((s) => s !== "memory")) {
-    const { screen, file } = SECTION_WORDS[section].words ?? SECTION_WORDS[section];
+    const { screen, file, words } = SECTION_WORDS[section];
     const body = structBody(appFile(root, file), screen);
     if (body === "") faults.push(`${screen} absent`);
     else if (!body.includes("IOSHarnessScreen(")) faults.push(`${screen} ne passe pas par le cadre IOSHarnessScreen`);
+    // L'état vide vit dans une vue partagée : l'écran iOS doit bien la rendre.
+    if (words !== undefined) {
+      if (structBody(appFile(root, words.file), words.screen) === "") faults.push(`${words.screen} absent`);
+      else if (!body.includes(`${words.screen}(`)) faults.push(`${screen} ne rend pas ${words.screen}`);
+    }
   }
   const frame = structBody(harness, "IOSHarnessScreen");
   if (!frame.includes("server.failure") || !frame.includes(".iosBanner(tone:")) {

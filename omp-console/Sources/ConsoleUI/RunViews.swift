@@ -108,13 +108,16 @@ public struct PriorityMenu: View {
 
     public var body: some View {
         Menu {
-            ForEach(HarnessKanban.presets, id: \.self) { value in
-                Button(PipelineServerText.priorityPreset(value)) { set(value) }
-                    .disabled(value == run.admissionPriority)
+            Section {
+                ForEach(HarnessKanban.presets, id: \.self) { value in
+                    Button(PipelineServerText.priorityPreset(value)) { set(value) }
+                        .disabled(value == run.admissionPriority)
+                }
             }
-            Divider()
-            Button(PipelineServerText.raisePriority) { set(run.admissionPriority + 10) }
-            Button(PipelineServerText.lowerPriority) { set(run.admissionPriority - 10) }
+            Section {
+                Button(PipelineServerText.raisePriority) { set(run.admissionPriority + 10) }
+                Button(PipelineServerText.lowerPriority) { set(run.admissionPriority - 10) }
+            }
         } label: {
             Label(PipelineServerText.priority(run.admissionPriority), systemImage: PipelineServerText.prioritySymbol)
                 .font(.caption)

@@ -123,17 +123,38 @@ test("ios-memoire-graphe/AC-2 : le lien manuel est visible et distinguable", () 
 });
 
 // ---------------------------------------------------------------------------
-// AC-3 : le mode graphe n'appelle que des routes de LECTURE.
+// AC-3 : le mode graphe n'appelle que des routes de LECTURE. La LISTE, elle, se
+// corrige par `MemoryWriter` (ios-memoire/AC-10) : le graphe n'en porte rien.
+
+/** Les sources du MODE GRAPHE (`IOSMemoryGraph*.swift`), commentaires retirés. */
+function graphAppCode(root: string): string {
+  const dir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
+  if (!fs.existsSync(dir)) return "";
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith("IOSMemoryGraph") && name.endsWith(".swift"))
+    .sort()
+    .map((name) => stripComments(fs.readFileSync(path.join(dir, name), "utf8")))
+    .join("\n");
+}
 
 function readOnlyFaults(root: string): string[] {
   const faults: string[] = [];
   const memory = memoryAppCode(root);
   for (const token of ["client.memoryAdd", "client.memoryUpdate", "client.memoryDelete", "client.memoryWrite"]) {
-    if (memory.includes(token)) faults.push(`la section graphe porte l'écriture ${token}`);
+    if (memory.includes(token)) faults.push(`la section Mémoire porte l'écriture ${token}`);
   }
-  if (!memory.includes("client.memoryGraph(")) faults.push("le modèle du graphe ne lit pas la route de graphe");
-  for (const token of ["MemoryText.createMemory", "MemoryText.edit", "MemoryText.delete", "MemoryText.save"]) {
-    if (memory.includes(token)) faults.push(`la section graphe porte le geste ${token}`);
+  const graph = graphAppCode(root);
+  if (!graph.includes("client.memoryGraph(")) faults.push("le modèle du graphe ne lit pas la route de graphe");
+  for (const token of [
+    "MemoryWriter",
+    "writer.",
+    "MemoryText.createMemory",
+    "MemoryText.edit",
+    "MemoryText.delete",
+    "MemoryText.save",
+  ]) {
+    if (graph.includes(token)) faults.push(`le mode graphe porte le geste ${token}`);
   }
   return faults;
 }
@@ -144,6 +165,15 @@ test("ios-memoire-graphe/AC-3 : le mode graphe n'émet que des lectures", () => 
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphModel.swift");
   fs.appendFileSync(target, "\nlet fuite = client.memoryDelete\n");
   assert.ok(readOnlyFaults(copy).length > 0, "un appel d'écriture doit faire rougir la garde");
+  const edit = shared.fresh();
+  fs.appendFileSync(
+    path.join(edit, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryGraphView.swift"),
+    "\nlet fuite = MemoryText.delete\n",
+  );
+  assert.ok(
+    readOnlyFaults(edit).some((f) => f.includes("mode graphe")),
+    "un geste d'écriture dans le graphe doit faire rougir la garde",
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -144,9 +144,12 @@ public struct InboxSections: View {
                         set: { drafts.reasons[item.id] = $0 }
                     ))
                 }
+                // Sur iOS, la rangée de liste sépare déjà ; le rang « 2 sur 3 » suffit.
+                #if os(macOS)
                 if index < batch.items.count - 1 {
                     Divider()
                 }
+                #endif
             }
             // Une question posée en cours d'étape se lit et se prépare, mais ne part qu'à sa fin.
             if !batch.acceptsAnswers {
