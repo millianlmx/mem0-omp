@@ -249,6 +249,11 @@ export class Orchestrator {
     return this.#ctx.logins;
   }
 
+  /** Les alertes push des appareils : `useClients` leur donne le registre des clients de l'API. */
+  get alerts(): HarnessContext["alerts"] {
+    return this.#ctx.alerts;
+  }
+
   /** Le direct des sessions de runners (tampon des dernières entrées de chaque run). */
   get sessions(): HarnessContext["sessions"] {
     return this.#ctx.sessions;

@@ -28,7 +28,8 @@ import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
-import { ActivityPusher } from "./push.ts";
+import { ActivityPusher, ApnsClient } from "./push.ts";
+import { AlertPusher } from "./push-alerts.ts";
 import { TestFeeds } from "./test-feed.ts";
 
 export type SpawnRunner = (
@@ -88,6 +89,8 @@ export class HarnessContext {
   readonly push: ActivityPusher;
   /** Erreurs des clients, état des sauvegardes, santé de la mémoire, compteurs HTTP (`GET /metrics`). */
   readonly observability: Observability;
+  /** Les alertes push des appareils enregistrés (APNs, même clé que les Live Activities). */
+  readonly alerts: AlertPusher;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -143,9 +146,11 @@ export class HarnessContext {
     });
     this.tests = new TestFeeds({ publish: (runId, payload) => this.event("test_output", runId, payload) });
     this.heavy.attachOutput(this.tests);
+    const apns = new ApnsClient({ config: () => this.config.apns, log: this.log });
     this.push = new ActivityPusher({
       store: this.store,
       config: () => this.config.apns,
+      apns,
       content: (run) => ({
         state: run.state,
         step: run.step,
@@ -158,6 +163,8 @@ export class HarnessContext {
     });
     this.push.subscribe();
     this.observability = new Observability(this);
+    this.alerts = new AlertPusher({ store: this.store, apns, config: () => this.config.apns, log: this.log });
+    this.alerts.subscribe();
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */

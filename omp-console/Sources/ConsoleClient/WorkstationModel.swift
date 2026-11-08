@@ -13,9 +13,11 @@
 // L'INVARIANT du poste vit au serveur et dans l'extension : envoyer un message à
 // quelqu'un d'autre que l'utilisateur exige TOUJOURS un geste humain d'approbation.
 // Ce modèle n'approuve jamais de lui-même : `approve(shown:)` n'est appelé que par un
-// bouton que l'humain touche, avec l'action telle que l'écran la montre. Le geste porte
-// `If-Match: "<updatedAt>"` de cette action : si l'envoi a changé depuis (autre appareil,
-// brouillon recalculé), le serveur refuse (412) et rien n'est approuvé. Approuver,
+// bouton que l'humain touche, avec l'action telle que l'écran la montre, et
+// `decideFromNotification` que par l'action « Approuver » d'une notification qu'il
+// touche, appareil déverrouillé. Le geste porte `If-Match: "<updatedAt>"` de cette
+// action : si l'envoi a changé depuis (autre appareil, brouillon recalculé), le serveur
+// refuse (412) et rien n'est approuvé. Approuver,
 // refuser et régler exigent le jeton APPROBATEUR (`harness.sh approver`) : avec un jeton
 // ordinaire, le serveur répond 403 et l'échec est `.approverOnly`. Les gestes restent
 // offerts : c'est le serveur qui décide, jamais l'app.
@@ -192,7 +194,7 @@ public final class WorkstationModel: ObservableObject {
     @discardableResult
     public func approve(shown action: WorkstationAction) async -> Bool {
         let seq = action.seq
-        return await decide(action, path: "/v1/workstation/actions/\(seq)/approve", body: EmptyBody())
+        return await decide(seq: seq, revisionTag: action.revisionTag, path: "/v1/workstation/actions/\(seq)/approve", body: EmptyBody())
     }
 
     /// Refuse l'envoi tel que l'humain l'a vu ; la raison, facultative, est gardée au journal.
@@ -200,7 +202,29 @@ public final class WorkstationModel: ObservableObject {
     public func refuse(shown action: WorkstationAction, reason: String = "") async -> Bool {
         let seq = action.seq
         let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        return await decide(action, path: "/v1/workstation/actions/\(seq)/refuse", body: RefuseBody(reason: trimmed.isEmpty ? nil : trimmed))
+        return await decide(
+            seq: seq, revisionTag: action.revisionTag, path: "/v1/workstation/actions/\(seq)/refuse",
+            body: RefuseBody(reason: trimmed.isEmpty ? nil : trimmed)
+        )
+    }
+
+    /// Approuve ou refuse l'envoi `seq` depuis l'action d'une notification que l'humain a
+    /// touchée, appareil déverrouillé (`HarnessModel.execute`). `revision` : l'`updatedAt`
+    /// que portait la notification ; absente (Mac), celle de la liste relue. Si l'envoi a
+    /// bougé depuis, le serveur refuse (412) : rien n'est tranché.
+    func decideFromNotification(seq: Int, revision: Int?, approve: Bool) async -> Bool {
+        var tag = revision.map { "\"\($0)\"" }
+        if tag == nil {
+            await refresh()
+            tag = approvals.first { $0.seq == seq }?.revisionTag
+        }
+        guard let tag else {
+            failure = .approvalChanged
+            return false
+        }
+        return approve
+            ? await decide(seq: seq, revisionTag: tag, path: "/v1/workstation/actions/\(seq)/approve", body: EmptyBody())
+            : await decide(seq: seq, revisionTag: tag, path: "/v1/workstation/actions/\(seq)/refuse", body: RefuseBody(reason: nil))
     }
 
     /// Règle l'autonomie de l'agent 24/24. La garde d'envoi reste entière dans tous les modes.
@@ -279,18 +303,16 @@ public final class WorkstationModel: ObservableObject {
         if reply.status == 404 { return nil }
         return try harness.decode(reply, for: call)
     }
-
-    private func decide<Body: Encodable>(_ shown: WorkstationAction, path: String, body: Body) async -> Bool {
+    private func decide<Body: Encodable>(seq: Int, revisionTag: String, path: String, body: Body) async -> Bool {
         guard let harness, harness.isConfigured else { return false }
         guard let encoded = try? JSONEncoder().encode(body) else {
             failure = .unreadable
             return false
         }
-        let seq = shown.seq
         busy.insert(seq)
         defer { busy.remove(seq) }
         do {
-            let call = HarnessCall(method: "POST", path: path, body: encoded, headers: ["If-Match": shown.revisionTag])
+            let call = HarnessCall(method: "POST", path: path, body: encoded, headers: ["If-Match": revisionTag])
             let reply = try await harness.exchange(call)
             // 412 : l'envoi a changé depuis son affichage ; 428 : le serveur n'a pas reçu la
             // révision. Dans les deux cas rien n'est tranché : relire, puis le dire.

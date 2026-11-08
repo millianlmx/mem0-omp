@@ -2,7 +2,7 @@
 // (le journal des décisions). Les règles (validation, garde d'envoi, échéances) vivent
 // dans workstation.ts ; cette couche ne fait que lire et écrire. Meetings, profil et
 // services de l'agent : la couche du dessus (workstation-meetings.ts).
-import { PushStore } from "./push.ts";
+import { PushDeviceStore } from "./push-devices.ts";
 import { str, strOrNull, num, json } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
 
@@ -143,7 +143,7 @@ function observationOf(row: Row): StoredObservation {
   return { ...base, kind: "visit", durationMs: num(row, "duration_ms") };
 }
 
-export class WorkstationStore extends PushStore {
+export class WorkstationStore extends PushDeviceStore {
   // -- observation --------------------------------------------------------------
 
   /** Écrit un lot d'observations déjà validées, venues du navigateur `browserId` ; rend le nombre de lignes écrites. */

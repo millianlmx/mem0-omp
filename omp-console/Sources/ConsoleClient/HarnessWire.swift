@@ -716,20 +716,25 @@ public struct HarnessClient: Decodable, Equatable, Sendable {
     public var role: String
     /// Les dépôts permis ; `nil` : tous (`"*"` côté serveur).
     public var repos: [String]?
+    /// Le jeton est celui de l'approbateur (`harness.sh approver`) : il tranche les envois
+    /// du poste. Faux avec un serveur antérieur aux approbateurs.
+    public var approver: Bool
 
-    public init(name: String, role: String, repos: [String]? = nil) {
+    public init(name: String, role: String, repos: [String]? = nil, approver: Bool = false) {
         self.name = name
         self.role = role
         self.repos = repos
+        self.approver = approver
     }
 
-    private enum CodingKeys: String, CodingKey { case name, role, repos }
+    private enum CodingKeys: String, CodingKey { case name, role, repos, approver }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         role = try container.decode(String.self, forKey: .role)
         repos = try? container.decode([String].self, forKey: .repos)
+        approver = (try? container.decode(Bool.self, forKey: .approver)) ?? false
     }
 
     /// Le rôle permet les gestes et les lancements (un lecteur ne voit que la boîte).

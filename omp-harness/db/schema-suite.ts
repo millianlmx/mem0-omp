@@ -126,4 +126,14 @@ export const MIGRATIONS_SUITE: readonly string[] = [
    CREATE INDEX vigie_incidents_status ON vigie_incidents (status, last_at);
    CREATE INDEX vigie_incidents_fix_run ON vigie_incidents (fix_run_id);
    CREATE INDEX vigie_incidents_issue ON vigie_incidents (repo, issue_number);`,
+  // Les appareils qui reçoivent les alertes push (APNs) : leur jeton, le client qui l'a
+  // enregistré (ses droits décident de ce qu'ils reçoivent) et leur passerelle.
+  `CREATE TABLE push_devices (
+     token TEXT PRIMARY KEY,
+     client TEXT NOT NULL,
+     platform TEXT NOT NULL,
+     environment TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );`,
 ];

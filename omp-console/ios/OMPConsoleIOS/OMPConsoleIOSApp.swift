@@ -16,6 +16,10 @@ import SwiftUI
 /// d'appairage (feuille Serveur) : ses pipelines (`HarnessModel`), qui servent les
 /// cinq sections de pilotage, et sa mémoire (`MemoryAccess`). Aucun Mac : l'app
 /// fonctionne seule.
+///
+/// Les notifications sont posées dès `init` (une action touchée app fermée relance
+/// l'app en arrière-plan) : catégories et gestes (`HarnessNotificationCenter`), jeton
+/// APNs rendu au délégué d'application (`IOSAppDelegate`) puis enregistré au serveur.
 @main
 struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
@@ -28,6 +32,10 @@ struct OMPConsoleIOSApp: App {
     @StateObject private var activities = IOSLiveActivityCenter()
     /// Le widget d'écran d'accueil, nourri par le groupe d'apps.
     @StateObject private var widgets = IOSWidgetBridge()
+    /// Les catégories de notification et la réponse à leurs actions.
+    @StateObject private var notifications: HarnessNotificationCenter
+    /// Le jeton APNs de l'appareil.
+    @UIApplicationDelegateAdaptor(IOSAppDelegate.self) private var appDelegate
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -44,6 +52,9 @@ struct OMPConsoleIOSApp: App {
             }
         }), in: .shared)
         _server = StateObject(wrappedValue: server)
+        let notifications = HarnessNotificationCenter()
+        notifications.attach(server)
+        _notifications = StateObject(wrappedValue: notifications)
     }
 
     var body: some Scene {
@@ -52,6 +63,7 @@ struct OMPConsoleIOSApp: App {
                 memory: memory,
                 server: server,
                 drafts: drafts,
+                notifications: notifications,
                 selection: initialSection,
                 state: initialState,
                 memoryRecipe: memoryRecipe
@@ -65,6 +77,17 @@ struct OMPConsoleIOSApp: App {
             }
             .onReceive(server.$address) { _ in widgets.sync(with: server) }
             .onReceive(server.$session) { _ in activities.sync(with: server) }
+            // Après l'appairage : la permission de notifier, puis le jeton de l'appareil,
+            // enregistré au serveur relié (et à chaque nouveau jeton que rend le système).
+            .task(id: server.address) {
+                if server.isConfigured { await IOSPush.enable(notifications) }
+            }
+            .onReceive(appDelegate.$deviceToken) { token in
+                guard let token else { return }
+                Task { await server.registerDevice(token: token, environment: .current) }
+            }
+            // Le jeton approbateur ou non : approuver un envoi du poste agit, ou ouvre l'app.
+            .onReceive(server.$client) { _ in notifications.refreshCategories() }
         }
         .commands { IOSKeyboardCommands() }
     }

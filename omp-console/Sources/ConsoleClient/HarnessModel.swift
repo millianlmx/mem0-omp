@@ -83,6 +83,12 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var issues = HarnessIssues(harness: self)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
+    /// Les événements complets du flux, à qui en veut le détail (les notifications
+    /// locales du Mac) ; la boîte, elle, n'en lit que les noms.
+    public var streamObserver: (@MainActor ([HarnessStreamEvent]) -> Void)?
+    /// Le jeton APNs de cet appareil, enregistré au serveur relié (`registerDevice`) : il
+    /// suit l'app d'un serveur à l'autre, et quitte le serveur oublié.
+    private var pushDevice: HarnessPushDevice?
 
     let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -220,6 +226,9 @@ public final class HarnessModel: ObservableObject {
             let fetched: HarnessInbox = try await perform(HarnessCall(method: "GET", path: "/v1/inbox"), on: candidate)
             try? await tokens.save(token, for: Self.tokenAccount)
             preferences.set(normalized, forKey: Self.addressKey)
+            // L'appareil quitte l'ancien serveur (ou l'ancien client) avant de rejoindre le nouveau.
+            let previous = server
+            if let previous, previous != candidate { await unregisterDevice(on: previous) }
             server = candidate
             address = normalized
             inbox = fetched
@@ -229,6 +238,7 @@ public final class HarnessModel: ObservableObject {
             resetServerState()
             if let pairing { onPaired(pairing) }
             await readClient()
+            if let pushDevice { await register(pushDevice) }
             return true
         } catch {
             failure = Self.failure(of: error)
@@ -236,8 +246,9 @@ public final class HarnessModel: ObservableObject {
         }
     }
 
-    /// Oublie le serveur : adresse, jeton et boîte.
+    /// Oublie le serveur : adresse, jeton et boîte ; l'appareil n'y reçoit plus d'alertes.
     public func forget() async {
+        if let server { await unregisterDevice(on: server) }
         stopLive()
         server = nil
         address = nil
@@ -365,12 +376,14 @@ public final class HarnessModel: ObservableObject {
                 isLive = true
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
-                    let names = parser.consume(chunk)
-                    if !names.isEmpty {
+                    let events = parser.consumeEvents(chunk)
+                    if !events.isEmpty {
+                        let names = events.map(\.name)
                         scheduleRefresh()
                         workstation.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
+                        streamObserver?(events)
                     }
                 }
             } catch {
@@ -575,6 +588,31 @@ public final class HarnessModel: ObservableObject {
         let _: HarnessAck? = try? await perform(HarnessCall(method: "DELETE", path: "/v1/push/activities/\(id)"), on: server)
     }
 
+    /// Enregistre le jeton APNs de l'appareil : le serveur y pousse les alertes que voit
+    /// ce jeton (specs, verdicts, questions, envois du poste pour l'approbateur…). Rend
+    /// `true` si le serveur pousse (APNs configuré). Le jeton est retenu pour le serveur
+    /// suivant, et retiré de celui qu'on oublie. `token` : le jeton tel que le système le
+    /// rend ; il part en hexadécimal.
+    @discardableResult
+    public func registerDevice(token: Data, environment: HarnessPushEnvironment) async -> Bool {
+        await register(HarnessPushDevice(token: token.map { String(format: "%02x", $0) }.joined(), environment: environment))
+    }
+
+    @discardableResult
+    private func register(_ device: HarnessPushDevice) async -> Bool {
+        pushDevice = device
+        guard let server else { return false }
+        let body = try? JSONEncoder().encode(DeviceTokenBody(token: device.token, platform: "ios", environment: device.environment.rawValue))
+        let reply: ActivityTokenReply? = try? await perform(HarnessCall(method: "POST", path: "/v1/push/devices", body: body), on: server)
+        return reply?.pushes ?? false
+    }
+
+    /// Retire l'appareil d'un serveur (oublié, ou quitté pour un autre).
+    private func unregisterDevice(on server: HarnessServer) async {
+        guard let pushDevice, let id = pushDevice.token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        let _: HarnessAck? = try? await perform(HarnessCall(method: "DELETE", path: "/v1/push/devices/\(id)"), on: server)
+    }
+
     /// Une lecture sans effet sur `failure` : les écrans du monitoring disent eux-mêmes qu'ils n'ont rien.
     private func read<T: Decodable>(_ path: String) async -> T? {
         guard let server else { return nil }
@@ -664,9 +702,10 @@ public final class HarnessModel: ObservableObject {
     }
 
     /// Valide un verdict (fusion) ou le refuse (correction, raison dans la mémoire du projet).
+    /// `rev` : la révision vue ailleurs (une notification) ; absente, celle de la boîte.
     @discardableResult
-    public func validate(runId: String, approve: Bool, reason: String) async -> Bool {
-        await gesture(runId, method: "POST", path: "/validate", body: ValidateBody(approve: approve, reason: reason))
+    public func validate(runId: String, approve: Bool, reason: String, rev: Int? = nil) async -> Bool {
+        await gesture(runId, method: "POST", path: "/validate", body: ValidateBody(approve: approve, reason: reason), rev: rev)
     }
 
     /// Annule une feature (sa branche reste).
@@ -761,12 +800,14 @@ public final class HarnessModel: ObservableObject {
         }
     }
 
-    private func gesture<Body: Encodable>(_ runId: String, method: String, path: String, body: Body) async -> Bool {
-        let reply: HarnessAck? = await gestureReply(runId, method: method, path: path, body: body)
+    private func gesture<Body: Encodable>(_ runId: String, method: String, path: String, body: Body, rev: Int? = nil) async -> Bool {
+        let reply: HarnessAck? = await gestureReply(runId, method: method, path: path, body: body, rev: rev)
         return reply != nil
     }
 
-    private func gestureReply<Body: Encodable, Reply: Decodable>(_ runId: String, method: String, path: String, body: Body) async -> Reply? {
+    private func gestureReply<Body: Encodable, Reply: Decodable>(
+        _ runId: String, method: String, path: String, body: Body, rev: Int? = nil
+    ) async -> Reply? {
         guard let server else { return nil }
         guard let encoded = try? JSONEncoder().encode(body),
               let id = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
@@ -776,8 +817,8 @@ public final class HarnessModel: ObservableObject {
         }
         busy.insert(runId)
         defer { busy.remove(runId) }
-        // La révision lue avec la boîte : un autre appareil qui a agi entre-temps fait refuser le geste.
-        let headers = knownRun(runId)?.rev.map { ["If-Match": "\"\($0)\""] } ?? [:]
+        // La révision lue (boîte, ou notification) : un autre appareil qui a agi entre-temps fait refuser le geste.
+        let headers = (rev ?? knownRun(runId)?.rev).map { ["If-Match": "\"\($0)\""] } ?? [:]
         do {
             let reply: Reply = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
             failure = nil
@@ -798,7 +839,7 @@ public final class HarnessModel: ObservableObject {
 
     /// Le run tel que la dernière boîte le montre (batches, validations, en cours), sinon
     /// tel que l'historique l'a lu.
-    private func knownRun(_ runId: String) -> HarnessRun? {
+    func knownRun(_ runId: String) -> HarnessRun? {
         let fromInbox = inbox.flatMap { inbox in
             inbox.batches.compactMap(\.run).first { $0.id == runId }
                 ?? inbox.awaiting.first { $0.id == runId }
@@ -1057,6 +1098,13 @@ private struct ActivityTokenBody: Encodable {
 
 private struct ActivityTokenReply: Decodable {
     var pushes: Bool
+}
+
+/// `POST /v1/push/devices` : le jeton APNs de l'appareil et sa passerelle.
+private struct DeviceTokenBody: Encodable {
+    var token: String
+    var platform: String
+    var environment: String
 }
 
 private struct PriorityBody: Encodable {
