@@ -213,7 +213,7 @@ export function inboxSummary(inbox: Inbox, url: string): string {
       (audit) =>
         `  · audit ${audit.id} (${audit.focus || "dépôt entier"}) : ${audit.proposals.length} proposition(s) — /audit lancer ${audit.id} 1,2…`,
     ),
-    "Les gestes se font ici quand tu les demandes en clair (harness_validate, harness_answer, harness_reverse, harness_retry, harness_cancel, harness_accept_decisions), ou dans OMP Console.",
+    "Les gestes se font ici quand tu les demandes en clair (harness_validate, harness_answer, harness_reverse, harness_retry, harness_cancel, harness_accept_decisions, harness_instruct pour parler à un run en cours), ou dans OMP Console.",
   ];
   return lines.join("\n");
 }

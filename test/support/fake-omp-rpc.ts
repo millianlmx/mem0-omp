@@ -1,6 +1,6 @@
 // Un faux `omp --mode rpc` pour les tests du harness : le sous-ensemble du protocole
 // v1 que le service parle (ready, set_host_tools, set_model, prompt → prompt_result,
-// host_tool_call ↔ host_tool_result), piloté par un scénario JSON.
+// steer, host_tool_call ↔ host_tool_result), piloté par un scénario JSON.
 //
 // Ce module n'est pas un fichier de test : le test le lance comme process enfant,
 // à la place du binaire `omp`, avec les arguments que le service a construits.
@@ -14,6 +14,9 @@
 //   { "error": { "message", "httpStatus" } }    termine le prompt en erreur
 //   { "sleep": 60000 }                          attend (une étape qui dure)
 //   { "frame": { "type": "…", … } }             émet une trame telle quelle (le direct de la session)
+//   { "waitSteer": 15000 }                      attend un message de pilotage (`steer`), au plus ce délai
+// Un message de pilotage (`steer`) est journalisé et accepté ; `"steer": "refuse"` au
+// scénario le fait refuser (le runner ne prend pas la consigne).
 // La dernière occurrence se répète. Le compteur d'occurrences vit dans FAKE_STATE
 // (il survit aux process : un nouveau runner reprend la suite du scénario).
 // La connexion OAuth (oauth.ts) : `loginProviders` est la liste que rend
@@ -34,6 +37,7 @@ type Action = {
   sleep?: number;
   frame?: Record<string, unknown>;
   parallel?: { tool: string; args?: Record<string, unknown> }[];
+  waitSteer?: number;
 };
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
@@ -80,6 +84,25 @@ function askCode(): void {
 }
 let toolSeq = 0;
 let currentStep = "req";
+/** Les messages de pilotage reçus et pas encore attendus par une action `waitSteer`. */
+const steers: string[] = [];
+let steered: (() => void) | null = null;
+
+/** Attend un message de pilotage (ou `ms`) : rend celui reçu, ou `null` au délai. */
+function nextSteer(ms: number): Promise<string | null> {
+  if (steers.length > 0) return Promise.resolve(steers.shift() ?? null);
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  const timer = setTimeout(() => {
+    steered = null;
+    resolve(null);
+  }, ms);
+  steered = () => {
+    clearTimeout(timer);
+    steered = null;
+    resolve(steers.shift() ?? null);
+  };
+  return promise;
+}
 
 log({
   kind: "argv",
@@ -118,6 +141,7 @@ async function runPrompt(id: string, message: string): Promise<void> {
   log({ kind: "prompt", step: currentStep, nudge, message });
   for (const action of actions) {
     if (action.sleep) await new Promise((resolve) => setTimeout(resolve, action.sleep));
+    if (action.waitSteer) log({ kind: "steered", step: currentStep, message: await nextSteer(action.waitSteer) });
     if (action.frame) out(action.frame);
     if (action.write) {
       fs.mkdirSync(path.dirname(action.write), { recursive: true });
@@ -181,6 +205,16 @@ lines.on("line", (line) => {
       out({ id, type: "response", command: "prompt", success: true, data: { agentInvoked: true } });
       void runPrompt(id, String(frame.message ?? ""));
       return;
+    case "steer": {
+      log({ kind: "command", type: frame.type, message: frame.message });
+      steers.push(String(frame.message ?? ""));
+      steered?.();
+      // `"steer": "refuse"` dans le scénario : le runner refuse le pilotage (le service garde alors la consigne).
+      if ((scenario as Record<string, unknown>).steer === "refuse")
+        out({ id, type: "response", command: "steer", success: false, error: "steering refusé" });
+      else out({ id, type: "response", command: "steer", success: true });
+      return;
+    }
     case "get_login_providers":
       log({ kind: "command", type: frame.type });
       out({

@@ -211,6 +211,23 @@ export class RunnerSession {
   }
 
   /**
+   * Injecte une consigne dans le prompt EN COURS (`steer` d'OMP) : l'agent la lit au
+   * prochain tour, sans attendre la fin de l'étape. Rend `false` sans rien envoyer si
+   * aucun prompt ne tourne (OMP lancerait alors un tour hors de tout prompt suivi), ou si
+   * le runner la refuse : la consigne est alors gardée pour le prompt suivant.
+   */
+  async steer(message: string): Promise<boolean> {
+    const runner = this.#runner;
+    if (!runner?.alive || !runner.busy) return false;
+    try {
+      await runner.steer(message);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Un prompt, avec un jeton du fournisseur courant (ou du suivant de la chaîne), la
    * bascule sur les causes de `runner.failoverOn`, et l'échéance `deadlineAt` (ms) :
    * passé ce temps, le runner est arrêté et le prompt rend une erreur relançable.

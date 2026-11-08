@@ -3,8 +3,9 @@
 // un budget dépassé.
 //
 // La consommation de chaque message d'agent (jetons, coût, modèle) arrive du direct
-// des sessions (`message_end`) et part en base (`usage`). Au-delà de
-// `monitoring.runBudgetUsd`, l'humain est prévenu une fois (`budget_exceeded`) ; avec
+// des sessions (`message_end`) et part en base (`usage`). Au-delà du budget du run —
+// le sien s'il en a un (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`), sinon
+// `monitoring.runBudgetUsd` —, l'humain est prévenu une fois (`budget_exceeded`) ; avec
 // `pauseOnBudget`, la feature attend aussi son accord — l'étape en cours est arrêtée dès
 // que son coût franchit le plafond, sans attendre sa fin —, et une relance lui accorde un
 // budget de plus. `monitoring.dailyBudgetUsd` plafonne la dépense de tout le serveur sur
@@ -48,6 +49,21 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 
 /** Le plafond atteint par un run : son coût et le seuil franchi. */
 export type BudgetDue = { cost: number; threshold: number };
+
+/** Le budget d'un run : le sien (`budgetUsd` au lancement ou posé ensuite), sinon celui de la configuration. */
+export type RunBudget = {
+  cost: number;
+  budget: number | null;
+  /** Le seuil du prochain avertissement : le budget, plus ce que les relances ont déjà accordé. */
+  threshold: number | null;
+  /** D'où vient `budget` : `run` (le sien), `config` (`monitoring.runBudgetUsd`), `null` sans plafond. */
+  source: "run" | "config" | null;
+};
+
+/** La clé de réglage du budget propre d'un run. */
+function runBudgetKey(runId: string): string {
+  return `run-budget:${runId}`;
+}
 
 /** Le plafond journalier atteint : la dépense du jour UTC, le plafond, le jour et l'instant où il se rouvre. */
 export type DailyBudgetDue = { spent: number; ceiling: number; day: string; resetsAt: number };
@@ -109,14 +125,29 @@ export class Monitor {
     if (run) this.#checkBudget(run.id);
   }
 
-  /** Le coût d'un run et le seuil de son prochain avertissement (`null` sans plafond configuré). */
-  budget(runId: string): { cost: number; budget: number | null; threshold: number | null } {
+  /** Le coût d'un run, son budget (le sien avant celui de la configuration) et le seuil de son prochain avertissement. */
+  budget(runId: string): RunBudget {
     const { store } = this.#deps;
-    const budget = this.#deps.config().monitoring.runBudgetUsd;
+    const own = store.getSetting<number>(runBudgetKey(runId));
+    const budget = own ?? this.#deps.config().monitoring.runBudgetUsd;
+    const source = own !== null ? "run" : budget !== null ? "config" : null;
     const cost = round2(store.runCost(runId));
-    if (budget === null) return { cost, budget, threshold: null };
+    if (budget === null) return { cost, budget, threshold: null, source };
     const acknowledged = store.getSetting<number>(`budget-ack:${runId}`) ?? 0;
-    return { cost, budget, threshold: round2(acknowledged + budget) };
+    return { cost, budget, threshold: round2(acknowledged + budget), source };
+  }
+
+  /**
+   * Le budget propre d'un run (`null` : retour au budget de la configuration). Sous le
+   * nouveau seuil, l'alerte de dépassement s'éteint ; au-delà, elle part (une fois par
+   * seuil) et l'étape gardée est arrêtée comme pour tout dépassement.
+   */
+  setRunBudget(runId: string, budgetUsd: number | null, by: string | null): RunBudget {
+    this.#deps.store.setSetting(runBudgetKey(runId), budgetUsd, by);
+    const next = this.budget(runId);
+    if (next.threshold === null || next.cost < next.threshold) this.#clear(runId, "budget_exceeded");
+    else this.#checkBudget(runId);
+    return next;
   }
 
   /** Le plafond atteint qui doit arrêter la feature (`pauseOnBudget`), sinon `null`. */

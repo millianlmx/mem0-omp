@@ -14,7 +14,18 @@ import type { RepoConfig } from "./config.ts";
 import type { Actor } from "./context.ts";
 import type { RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
-import { escalationAnswers, integer, newRunInput, priorityInput, stringList, text } from "./input.ts";
+import {
+  budgetInput,
+  escalationAnswers,
+  instructionsInput,
+  integer,
+  MAX_INSTRUCTIONS,
+  MAX_RUN_BUDGET_USD,
+  newRunInput,
+  priorityInput,
+  stringList,
+  text,
+} from "./input.ts";
 import type { FixOutcome, IssueDesk } from "./issues.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
@@ -238,6 +249,13 @@ export const MCP_TOOLS: readonly Tool[] = [
         description:
           "Facultatif : `full` force la voie complète (/req puis /specs) même si la demande porte sa section `## Critères d'acceptation`.",
       },
+      budgetUsd: {
+        type: "number",
+        exclusiveMinimum: 0,
+        maximum: MAX_RUN_BUDGET_USD,
+        description:
+          "Facultatif : le budget du run en dollars, prioritaire sur le budget par run de la configuration. Au-delà, l'humain est prévenu (et le run s'arrête si le serveur le veut).",
+      },
     },
     required: ["repo", "title", "request"],
     run: async (call, args) => ({
@@ -350,14 +368,22 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "run_retry",
     title: "Relancer un run",
     description:
-      "Relance un run `failed` ou `awaiting_human`, même étape, tout de suite : `POST /v1/runs/{id}/retry`. Un autre état est refusé (409).",
+      "Relance un run `failed` ou `awaiting_human`, même étape, tout de suite : `POST /v1/runs/{id}/retry`. `instructions` dit à l'étape relancée ce qu'elle doit faire autrement. Un autre état est refusé (409).",
     role: "operator",
     readOnly: false,
-    properties: { id: RUN_ID_PROPERTY, rev: REV_PROPERTY },
+    properties: {
+      id: RUN_ID_PROPERTY,
+      instructions: {
+        type: "string",
+        description: "Facultatif : la consigne que l'étape relancée recevra (ce qui doit changer).",
+      },
+      rev: REV_PROPERTY,
+    },
     required: ["id"],
     run: async (call, args) => {
       const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
-      return { run: await call.orchestrator.retry(id, gestureActor(call, args)) };
+      const instructions = instructionsInput(args, "instructions", false);
+      return { run: await call.orchestrator.retry(id, gestureActor(call, args), instructions) };
     },
   },
   {
@@ -495,6 +521,51 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
     render: (result) => String(result.text),
   },
+  {
+    name: "run_instructions",
+    title: "Donner une consigne à un run",
+    description:
+      "Envoie une consigne à un run qui n'est ni mergé ni annulé : `POST /v1/runs/{id}/instructions`. S'il tourne, elle est injectée dans la session de son agent, qui la lit au prochain tour (`delivered: session`) ; sinon elle est gardée pour son prochain prompt (`delivered: pending`). Ne relance ni n'arrête le run.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      text: {
+        type: "string",
+        maxLength: MAX_INSTRUCTIONS,
+        description: "La consigne, précise et vérifiable.",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "text"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      return { ...(await call.orchestrator.instruct(id, instructionsInput(args, "text"), gestureActor(call, args))) };
+    },
+  },
+  {
+    name: "run_budget",
+    title: "Changer le budget d'un run",
+    description:
+      "Pose le budget propre d'un run non terminal, en dollars, prioritaire sur celui de la configuration (`null` : y revenir) : `POST /v1/runs/{id}/budget`. Rend le run et son budget (`cost`, `budget`, `threshold`, `source`).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      budgetUsd: {
+        type: ["number", "null"],
+        exclusiveMinimum: 0,
+        maximum: MAX_RUN_BUDGET_USD,
+        description: "Le budget en dollars ; `null` revient au budget par run de la configuration.",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "budgetUsd"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      return { ...(await call.orchestrator.setBudget(id, budgetInput(args), gestureActor(call, args))) };
+    },
+  },
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -563,7 +634,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }

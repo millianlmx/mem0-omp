@@ -31,10 +31,12 @@ import { detectIrreversible } from "./decisions.ts";
 import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
 import { HumanLoop } from "./gestures.ts";
+import type { Delivered } from "./gestures.ts";
 import { newId } from "./ids.ts";
+import { budgetUsd } from "./input.ts";
 import { changesOf, fileDiffOf, timelineOf } from "./inspect.ts";
 import { Metrics } from "./metrics.ts";
-import type { BudgetDue } from "./monitor.ts";
+import type { BudgetDue, RunBudget } from "./monitor.ts";
 import type { StepKind } from "./machine.ts";
 import { ACTIVE_STATES, crashed, heldForDailyBudget, nextAfter, pausedForBudget, recovered } from "./machine.ts";
 import type { FailCause, StepOutcome } from "./machine.ts";
@@ -61,6 +63,7 @@ export type OrchestratorDeps = HarnessDeps;
 /**
  * `req` : le compte rendu de besoins déjà établi en session interactive (/req local) — le run part de /specs.
  * `lane: "full"` : la voie complète (/req) même si la demande porte ses critères d'acceptation.
+ * `budgetUsd` : le budget propre du run, prioritaire sur `monitoring.runBudgetUsd`.
  */
 export type NewRunInput = {
   repo: string;
@@ -71,6 +74,7 @@ export type NewRunInput = {
   req?: string;
   priority?: number;
   lane?: "full";
+  budgetUsd?: number;
 };
 
 export type NewProjectInput = {
@@ -161,6 +165,7 @@ export class Orchestrator {
       merging: (runId) => this.#merger.has(runId),
       followUp: async (input, actor) => this.createRun(input, actor),
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
+      steer: (runId, message) => this.#live.get(runId)?.session?.steer(message) ?? Promise.resolve(false),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
     this.pilot = new AuditPilot(this.#ctx, {
@@ -680,6 +685,7 @@ export class Orchestrator {
     const priority = input.priority ?? 0;
     if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
       throw new HarnessError(400, "priority : entier entre -1000 et 1000");
+    const budget = budgetUsd(input.budgetUsd);
     const { store } = this.#ctx;
     const run = store.transaction(() => {
       const slug = this.#freeSlug(input.repo, slugify(input.slug ?? input.title));
@@ -697,6 +703,7 @@ export class Orchestrator {
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
       });
       if (req !== "") store.putArtifact(created.id, "req.md", `${req}\n`, null);
+      if (budget !== undefined) this.#ctx.monitor.setRunBudget(created.id, budget, actor.by);
       // Voie directe : les specs synthétisées sont aussi les specs gelées sur lesquelles la revue juge.
       if (specs !== null) {
         store.putArtifact(created.id, "specs.md", specs, null);
@@ -709,6 +716,7 @@ export class Orchestrator {
         modules: created.modules,
         projectId: created.projectId,
         priority,
+        ...(budget !== undefined ? { budgetUsd: budget } : {}),
         lane: specs !== null ? "direct" : "full",
         ...(actor.by ? { by: actor.by } : {}),
       });
@@ -820,12 +828,28 @@ export class Orchestrator {
     return this.#human.answerEscalations(runId, answers, actor);
   }
 
-  /** La relance par l'humain d'un run échoué ou en attente : même étape, tout de suite. */
-  retry(runId: string, actor: Actor = SERVICE): Promise<RunRow> {
+  /**
+   * La relance par l'humain d'un run échoué ou en attente : même étape, tout de suite.
+   * `instructions` : la consigne que l'étape relancée recevra.
+   */
+  retry(runId: string, actor: Actor = SERVICE, instructions = ""): Promise<RunRow> {
     // Une feature arrêtée sur son budget : la relancer lui en accorde un de plus.
     this.visibleRun(runId);
     this.#ctx.monitor.acknowledgeBudget(runId, actor.by);
-    return this.#human.retry(runId, actor);
+    return this.#human.retry(runId, actor, instructions);
+  }
+
+  /**
+   * Une consigne à un run : injectée dans le prompt en cours de sa session si elle tourne,
+   * sinon gardée pour le prochain prompt (`delivered` : `session` ou `pending`).
+   */
+  instruct(runId: string, text: string, actor: Actor = SERVICE): Promise<{ run: RunRow; delivered: Delivered }> {
+    return this.#human.instruct(runId, text, actor);
+  }
+
+  /** Le budget propre d'un run (`null` : celui de la configuration), prioritaire sur `monitoring.runBudgetUsd`. */
+  setBudget(runId: string, budget: number | null, actor: Actor = SERVICE): Promise<{ run: RunRow; budget: RunBudget }> {
+    return this.#human.setBudget(runId, budget, actor);
   }
 
   /** Accepte d'un geste toutes les décisions prises seules d'un run. */

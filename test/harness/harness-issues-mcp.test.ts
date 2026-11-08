@@ -642,7 +642,17 @@ test("harness-issues-mcp/AC-27 : tools/list décrit les quatre outils issues pui
     );
     const props = (name: string) => Object.keys(tools.find((tool) => tool.name === name)?.inputSchema.properties ?? {});
     assert.ok(props("run_cancel").includes("rev") && props("run_priority").includes("rev"));
-    assert.deepEqual(props("run_start"), ["repo", "title", "request", "slug", "req", "modules", "priority", "lane"]);
+    assert.deepEqual(props("run_start"), [
+      "repo",
+      "title",
+      "request",
+      "slug",
+      "req",
+      "modules",
+      "priority",
+      "lane",
+      "budgetUsd",
+    ]);
     assert.ok(!props("run_get").includes("rev"));
   } finally {
     await mcp.close();
@@ -1204,7 +1214,7 @@ test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après
       ]),
       [
         ["run_validate", ["id", "approve"], ["id", "approve", "reason", "rev"], false],
-        ["run_retry", ["id"], ["id", "rev"], false],
+        ["run_retry", ["id"], ["id", "instructions", "rev"], false],
         ["run_revert", ["id"], ["id"], false],
         ["run_decisions_accept", ["id"], ["id", "rev"], false],
         ["run_decision_accept", ["id", "n"], ["id", "n", "rev"], false],
