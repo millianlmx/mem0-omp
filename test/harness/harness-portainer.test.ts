@@ -362,6 +362,27 @@ test("harness-portainer/AC-6 : sans Tailscale sur l'hôte, `pairing` le dit et a
   }
 });
 
+/**
+ * Lance `harness-entrypoint` avec le fichier secret de `dir`. Un `getent` doublé connaît
+ * l'uid : sans lui (macOS n'en a pas), le script ajouterait une ligne à /etc/passwd,
+ * ce qui sur un poste de développement échoue ou bloque, au lieu d'éprouver la lecture
+ * du fichier secret que ces critères prouvent.
+ */
+function entrypoint(dir: string, command: string) {
+  const bin = path.join(dir, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "getent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return spawnSync("sh", [path.join(BOX, "harness-entrypoint"), "sh", "-c", command], {
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: dir,
+      OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env"),
+    },
+  });
+}
+
 test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing` n'a que la CLI et le dossier du socket de l'hôte ; le service lit son jeton dans le fichier monté", () => {
   assert.doesNotMatch(compose, /TS_AUTHKEY|TS_STATE_DIR|^ {2}tailscale:/m);
   assert.equal(fs.existsSync(path.join(BOX, "Dockerfile.tailscale")), false);
@@ -384,10 +405,7 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
 
   const dir = tmpdir("harness-portainer-entry-");
   fs.writeFileSync(path.join(dir, "harness.env"), "MEM0_HTTP_TOKEN=depuis-le-fichier\n");
-  const entry = spawnSync("sh", [path.join(BOX, "harness-entrypoint"), "sh", "-c", 'printf %s "$MEM0_HTTP_TOKEN"'], {
-    encoding: "utf8",
-    env: { PATH: process.env.PATH, HOME: dir, OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env") },
-  });
+  const entry = entrypoint(dir, 'printf %s "$MEM0_HTTP_TOKEN"');
   assert.equal(entry.status, 0, entry.stderr);
   assert.equal(entry.stdout, "depuis-le-fichier");
 });
@@ -471,14 +489,7 @@ test("harness-portainer/AC-33 : `harness-entrypoint` exporte le GH_TOKEN du fich
   const dir = tmpdir("harness-portainer-gh-");
   const launch = (content: string) => {
     fs.writeFileSync(path.join(dir, "harness.env"), content);
-    const entry = spawnSync(
-      "sh",
-      [path.join(BOX, "harness-entrypoint"), "sh", "-c", 'printf %s "${GH_TOKEN-absent}"'],
-      {
-        encoding: "utf8",
-        env: { PATH: process.env.PATH, HOME: dir, OMP_HARNESS_ENV_FILE: path.join(dir, "harness.env") },
-      },
-    );
+    const entry = entrypoint(dir, 'printf %s "${GH_TOKEN-absent}"');
     assert.equal(entry.status, 0, entry.stderr);
     return entry.stdout;
   };
