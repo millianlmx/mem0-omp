@@ -128,6 +128,10 @@ services:
       setup: { condition: service_completed_successfully }
     # Ses réglages et son jeton, écrits par `setup` : lus au démarrage.
     entrypoint: ["/bin/sh", "-c", "set -a && . /run/secrets/mem0/mem0.env && set +a && exec /usr/local/bin/mem0-rs --host 0.0.0.0 --port 8321"]
+    # La copie hors machine de chaque instantané (`sh -c`, chemin en $1) : passée telle
+    # quelle, jamais sourcée. L'image n'a que sh et curl (mem0-stack/README.md).
+    environment:
+      MEM0_BACKUP_REMOTE_CMD: ${MEM0_BACKUP_REMOTE_CMD:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -201,6 +205,37 @@ services:
     image: docker.io/library/node:22-bookworm
     command: ["true"]
     restart: "no"
+
+  # Le profil `monitoring`, coupé par défaut : `docker compose --profile monitoring up -d`.
+  # Les jetons de scrape sont des fichiers de OMP_HARNESS_SECRETS/monitoring (README du
+  # harness § Observabilité) ; Prometheus tourne en root pour lire ces fichiers 0600.
+  prometheus:
+    image: docker.io/prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    user: "0"
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./omp-harness/deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/monitoring:/run/secrets/monitoring:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/prometheus:/prometheus
+
+  grafana:
+    image: docker.io/grafana/grafana:11.4.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    depends_on: [prometheus]
+    user: "0"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:${OMP_HARNESS_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./omp-harness/deploy/monitoring/grafana/datasource.yml:/etc/grafana/provisioning/datasources/omp.yml:ro
+      - ./omp-harness/deploy/monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/omp.yml:ro
+      - ./omp-harness/deploy/monitoring/grafana/omp-harness.json:/var/lib/grafana/dashboards/omp-harness.json:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/grafana:/var/lib/grafana
 
 networks:
   default:

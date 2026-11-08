@@ -6,6 +6,8 @@
 // vide, écriture perdue, journalisée et comptée) sans jamais le bloquer. Un oracle
 // LENT n'est pas injoignable : une écriture y est retentée, une lecture abandonne vite.
 
+import type { LogLine } from "./logger.ts";
+
 export type Memory = { id: string; text: string; score: number | null; tags: string[]; createdAt: string | null };
 
 export type OracleConfig = { url: string; token: string | null };
@@ -56,6 +58,8 @@ export interface Oracle {
   retain(scope: string, text: string, tags?: string[]): Promise<boolean>;
   /** Le service répond-il (`GET /health`, `ok: true`) ? */
   health(): Promise<boolean>;
+  /** Le corps de `GET /health` de mem0-rs (version, souvenirs, taille, sauvegardes) ; `null` : injoignable. */
+  memoryHealth(): Promise<Record<string, unknown> | null>;
   /** Le dossier de rêve de la portée ; `null` : service injoignable ou sans cette route. */
   dreamDossier(scope: string): Promise<DreamDossier | null>;
   /**
@@ -160,7 +164,7 @@ function failureOf(err: unknown): Failure {
 
 export type HttpOracleOptions = {
   fetch?: FetchLike;
-  log?: (line: string) => void;
+  log?: LogLine;
   /** Le délai d'une lecture (rappel, santé, dossier) : elles sont sur le chemin des prompts. */
   timeoutMs?: number;
   /** Le délai d'un essai d'écriture : mem0-rs y plonge le texte, son modèle d'embedding peut se recharger. */
@@ -176,7 +180,7 @@ export type HttpOracleOptions = {
 export class HttpOracle implements Oracle {
   readonly #config: OracleConfig;
   readonly #fetch: FetchLike;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
   readonly #timeoutMs: number;
   readonly #writeTimeoutMs: number;
   readonly #writeAttempts: number;
@@ -230,7 +234,7 @@ export class HttpOracle implements Oracle {
       return typeof body?.horizon_us === "number" && Array.isArray(body.new_facts) ? body : null;
     } catch (err) {
       const failure = failureOf(err);
-      this.#log(`oracle ${failure.kind} (dossier de rêve) : ${failure.message}`);
+      this.#log(`oracle ${failure.kind} (dossier de rêve) : ${failure.message}`, { level: "warn" });
       return null;
     }
   }
@@ -244,11 +248,17 @@ export class HttpOracle implements Oracle {
   }
 
   async health(): Promise<boolean> {
+    return (await this.memoryHealth())?.ok === true;
+  }
+
+  async memoryHealth(): Promise<Record<string, unknown> | null> {
     try {
-      const body = (await this.#request("/health", this.#timeoutMs)) as { ok?: unknown };
-      return body?.ok === true;
+      const body = await this.#request("/health", this.#timeoutMs);
+      return body !== null && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -265,7 +275,7 @@ export class HttpOracle implements Oracle {
       );
     } catch (err) {
       const failure = failureOf(err);
-      this.#log(`oracle ${failure.kind} (rappel) : ${failure.message}`);
+      this.#log(`oracle ${failure.kind} (rappel) : ${failure.message}`, { level: "warn" });
       return [];
     }
   }
@@ -298,6 +308,7 @@ export class HttpOracle implements Oracle {
           const wait = this.#backoffMs * 2 ** (attempt - 1);
           this.#log(
             `oracle ${failure.kind} (écriture, essai ${attempt}/${this.#writeAttempts}) : ${failure.message} — nouvel essai dans ${wait / 1000} s`,
+            { level: "warn" },
           );
           await this.#sleep(wait);
           continue;
@@ -309,6 +320,7 @@ export class HttpOracle implements Oracle {
         };
         this.#log(
           `oracle ${failure.kind} (écriture perdue après ${attempt} essai${attempt > 1 ? "s" : ""}) : ${failure.message}`,
+          { level: "error", event: "oracle_lost_write" },
         );
         return false;
       }
@@ -326,6 +338,7 @@ export const NO_ORACLE: Oracle = {
   recallDecisions: async () => [],
   retain: async () => false,
   health: async () => false,
+  memoryHealth: async () => null,
   dreamDossier: async () => null,
   consolidate: async () => {
     throw new Error("aucun oracle configuré");

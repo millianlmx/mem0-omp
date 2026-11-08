@@ -186,6 +186,7 @@ export class Orchestrator {
       store: this.#ctx.store,
       notifier: this.#ctx.notifier,
       log: this.#ctx.log,
+      health: () => this.#ctx.observability.digestHealth(),
     });
     this.schedules = new Schedules(this.#ctx, {
       createRun: (input, actor) => this.createRun(input, actor),
@@ -218,6 +219,11 @@ export class Orchestrator {
     return this.#ctx.sessions;
   }
 
+  /** Erreurs des clients, sauvegardes, santé de la mémoire et compteurs de `GET /metrics`. */
+  get observability(): HarnessContext["observability"] {
+    return this.#ctx.observability;
+  }
+
   // -- cycle de vie ---------------------------------------------------------
 
   /** Reprise après redémarrage, puis la boucle de scheduling. */
@@ -245,7 +251,10 @@ export class Orchestrator {
       try {
         await this.#ctx.git.protectRepo(repo.path);
       } catch (err) {
-        this.#ctx.log(`dépôt ${repo.name} : droits du gitdir non verrouillés — ${String(err)}`);
+        this.#ctx.log(`dépôt ${repo.name} : droits du gitdir non verrouillés — ${String(err)}`, {
+          level: "warn",
+          repo: repo.name,
+        });
       }
       // La scope mémoire non déclarée est celle que le plugin mémoire du Mac calcule.
       if (repo.scope === "") {
@@ -254,7 +263,7 @@ export class Orchestrator {
         } catch {
           repo.scope = repo.name;
         }
-        this.#ctx.log(`dépôt ${repo.name} : mémoire du projet « ${repo.scope} »`);
+        this.#ctx.log(`dépôt ${repo.name} : mémoire du projet « ${repo.scope} »`, { repo: repo.name });
       }
     }
   }
@@ -345,7 +354,11 @@ export class Orchestrator {
         try {
           await git.resetTo(run.worktree, "HEAD");
         } catch (err) {
-          this.#ctx.log(`reprise ${run.id} : retour au checkpoint impossible — ${String(err)}`);
+          this.#ctx.log(`reprise ${run.id} : retour au checkpoint impossible — ${String(err)}`, {
+            level: "warn",
+            runId: run.id,
+            repo: run.repo,
+          });
         }
       }
       const cursor = { step: (run.step ?? "req") as StepKind, fixes: run.fixes, attempts: run.attempts };
@@ -400,7 +413,10 @@ export class Orchestrator {
     try {
       await this.#human.autoDecideExpired(Date.now());
     } catch (err) {
-      this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`, {
+        level: "error",
+        err,
+      });
     }
     // Les planifications dues d'abord : un run ou un audit qu'elles créent part dès ce tour.
     try {
@@ -412,18 +428,19 @@ export class Orchestrator {
     try {
       this.pilot.tick();
     } catch (err) {
-      this.#ctx.log(`pilote des audits : ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(`pilote des audits : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     try {
       this.workstationAgent.tick();
     } catch (err) {
-      this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();
     this.#watch();
     this.metrics.maybeSample();
+    this.#ctx.observability.tick();
   }
 
   /** La veille des runs conduits : agent muet, étape lente, boucle de corrections. */
@@ -437,7 +454,7 @@ export class Orchestrator {
         })),
       );
     } catch (err) {
-      this.#ctx.log(`veille : ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(`veille : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
   }
 
@@ -671,7 +688,12 @@ export class Orchestrator {
       if (run && (run.state === "queued" || run.state === "running") && !live.abort.signal.aborted) {
         const reason = err instanceof Error ? err.message : String(err);
         if (this.#ctx.transition(run, crashed(run, reason), [run.state]))
-          this.#ctx.log(`run ${live.runId} en échec : ${reason}`);
+          this.#ctx.log(`run ${live.runId} en échec : ${reason}`, {
+            level: "error",
+            runId: run.id,
+            repo: run.repo,
+            err,
+          });
       }
     }
   }
@@ -782,7 +804,11 @@ export class Orchestrator {
         this.#ctx.event("modules", run.id, { modules, source: "oracle" });
       }
     } catch (err) {
-      this.#ctx.log(`run ${run.id} : modules non déduits — ${err instanceof Error ? err.message : String(err)}`);
+      this.#ctx.log(`run ${run.id} : modules non déduits — ${err instanceof Error ? err.message : String(err)}`, {
+        level: "warn",
+        runId: run.id,
+        repo: run.repo,
+      });
     } finally {
       this.#inferring.delete(run.id);
       this.#kick();

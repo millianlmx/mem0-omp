@@ -12,13 +12,13 @@
 //   core → runs → journal → steps → decisions → heavy → projects → providers
 //        → sessions → usage → push → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
-//        → issues → schedules → Store
+//        → issues → schedules → observability → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { ScheduleStore } from "./db/schedules.ts";
+import { ObservabilityStore } from "./db/observability.ts";
 
-export class Store extends ScheduleStore {}
+export class Store extends ObservabilityStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
@@ -33,6 +33,8 @@ export { groupUsage, modelKey, sumUsage } from "./db/usage.ts";
 export type { UsageRow, UsageTotals } from "./db/usage.ts";
 export type { PushTokenRow } from "./db/push.ts";
 export type { IssueRunRow } from "./db/issues.ts";
+export { CLIENT_SOURCES } from "./db/observability.ts";
+export type { ClientErrorRow, ClientSource, StepDurations, UsageByModel } from "./db/observability.ts";
 export type {
   NewSchedule,
   ScheduleFired,

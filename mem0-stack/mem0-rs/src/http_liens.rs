@@ -276,7 +276,7 @@ pub async fn rever(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> R
                 rapports.push(r);
             }
             Err(e) => {
-                eprintln!("mem0-rs : rêve de « {p} » impossible : {e}");
+                crate::journal::erreur(&format!("rêve de « {p} » impossible : {e}"));
                 erreurs.push(reve::erreur_de_portee(&p, &e));
                 etat.suivi_reve.noter(&erreurs);
                 return interne();
@@ -384,7 +384,7 @@ pub async fn consolider(State(etat): Partage, entetes: HeaderMap, octets: Bytes)
         match etat.embedder.plonger_lot(&textes).await {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("mem0-rs : consolidation : {e}");
+                crate::journal::erreur(&format!("consolidation : {e}"));
                 return interne();
             }
         }

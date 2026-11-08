@@ -422,7 +422,7 @@ pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Regla
             match portees(&conn) {
                 Ok(p) => p.into_iter().filter(|p| due(&conn, p, reglage.calme, paires, maintenant).unwrap_or(false)).collect(),
                 Err(e) => {
-                    eprintln!("mem0-rs : rêve : {e}");
+                    crate::journal::erreur(&format!("rêve : {e}"));
                     suivi.noter(&[e.to_string()]);
                     continue;
                 }
@@ -436,12 +436,12 @@ pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Regla
             match rever_portee(&db, &chat, &reglage, &portee).await {
                 Ok(r) if !r.errors.is_empty() => {
                     let e = r.errors.join(" ; ");
-                    eprintln!("mem0-rs : rêve de « {portee} » : {e}");
+                    crate::journal::alerte(&format!("rêve de « {portee} » : {e}"));
                     erreurs.push(erreur_de_portee(&portee, &e));
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("mem0-rs : rêve de « {portee} » impossible : {e}");
+                    crate::journal::erreur(&format!("rêve de « {portee} » impossible : {e}"));
                     erreurs.push(erreur_de_portee(&portee, &e));
                 }
             }

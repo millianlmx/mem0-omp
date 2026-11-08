@@ -7,12 +7,27 @@
 // dossier 0700 : il contient tout ce que contient la base. Deux sortes, gardées
 // chacune à `keep` exemplaires : `periodique` (toutes les `intervalHours`) et
 // `migration` (juste avant une migration du schéma d'une base qui en a déjà un).
+//
+// `backups.remote` copie chaque instantané hors de la machine (rclone, restic, scp…) :
+// la commande reçoit son chemin, le chiffrement est l'affaire de l'outil. Chaque issue,
+// locale ou distante, est rendue à `report` : un échec devient `backup_failed`.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { HarnessConfig } from "./config.ts";
+import type { BackupRemote, HarnessConfig } from "./config.ts";
+import type { LogLine } from "./logger.ts";
+import type { Exec } from "./proc.ts";
 
 export type BackupKind = "periodique" | "migration";
+
+/** L'issue d'une sauvegarde : l'instantané local, ou sa copie distante. */
+export type BackupOutcome = {
+  where: "local" | "remote";
+  at: number;
+  file: string | null;
+  /** `null` : réussie ; sinon la raison de l'échec. */
+  error: string | null;
+};
 
 /** `harness-<sorte>-<horodatage UTC>[-<suffixe>].sqlite` : l'ordre des noms est celui des dates. */
 const NAME = /^harness-(periodique|migration)-(\d{8}T\d{6}\d{3}Z)(?:-[\w.-]+)?\.sqlite$/;
@@ -70,23 +85,39 @@ export function pruneBackups(dir: string, kind: BackupKind, keep: number): strin
   return removed;
 }
 
+/** La ligne de la copie distante : `{file}` et `{name}` remplacés ; sans `{file}`, le chemin en dernier. */
+export function remoteArgs(command: readonly string[], file: string): { command: string; args: string[] } {
+  const name = path.basename(file);
+  const filled = command.map((arg) => arg.replaceAll("{file}", file).replaceAll("{name}", name));
+  if (!command.some((arg) => arg.includes("{file}"))) filled.push(file);
+  return { command: filled[0] as string, args: filled.slice(1) };
+}
+
 export type BackupsDeps = {
   db: DatabaseSync;
   dir: string;
   /** L'intervalle des instantanés périodiques ; `null` : aucun. */
   intervalHours: number | null;
   keep: number;
-  log: (line: string) => void;
+  log: LogLine;
+  /** La copie hors machine de chaque instantané ; `null` ou absente : aucune. */
+  remote?: BackupRemote | null;
+  exec?: Exec;
+  /** Chaque issue, réussie ou non (l'état de `GET /v1/status`, l'événement `backup_failed`). */
+  report?: (outcome: BackupOutcome) => void;
 };
 
 /**
  * Les instantanés périodiques : le premier dès que le dernier existant a plus d'un
  * intervalle (un service souvent redémarré n'en prend donc pas un par démarrage),
- * puis un par intervalle. Un échec (disque plein) est journalisé, jamais fatal.
+ * puis un par intervalle. Un échec (disque plein, copie distante refusée) est
+ * journalisé et rendu à `report`, jamais fatal.
  */
 export class Backups {
   readonly #deps: BackupsDeps;
   #timer: NodeJS.Timeout | null = null;
+  /** Les copies distantes en cours (un arrêt les attend). */
+  readonly #copies = new Set<Promise<void>>();
 
   constructor(deps: BackupsDeps) {
     this.#deps = deps;
@@ -104,17 +135,54 @@ export class Backups {
     this.#timer = null;
   }
 
-  /** Un instantané périodique tout de suite, puis l'élagage ; `null` si la copie a échoué. */
+  /** Attend les copies distantes en cours. */
+  async idle(): Promise<void> {
+    await Promise.allSettled([...this.#copies]);
+  }
+
+  /** Un instantané périodique tout de suite, puis l'élagage et sa copie distante ; `null` si la copie locale a échoué. */
   run(): string | null {
     const { db, dir, keep, log } = this.#deps;
+    let file: string;
     try {
-      const file = snapshot(db, dir, "periodique");
+      file = snapshot(db, dir, "periodique");
       pruneBackups(dir, "periodique", keep);
-      return file;
     } catch (err) {
-      log(`sauvegarde de la base échouée : ${err instanceof Error ? err.message : String(err)}`);
+      const reason = err instanceof Error ? err.message : String(err);
+      log(`sauvegarde de la base échouée : ${reason}`, { level: "error", event: "backup_failed" });
+      this.#deps.report?.({ where: "local", at: Date.now(), file: null, error: reason });
       return null;
     }
+    this.#deps.report?.({ where: "local", at: Date.now(), file, error: null });
+    this.copyRemote(file);
+    return file;
+  }
+
+  /** La copie distante d'un instantané (`backups.remote`), en arrière-plan ; rien si elle n'est pas configurée. */
+  copyRemote(file: string): void {
+    const { remote, exec } = this.#deps;
+    if (!remote || !exec) return;
+    const { command, args } = remoteArgs(remote.command, file);
+    const copy = exec(command, args, { timeoutMs: remote.timeoutSec * 1000, maxBytes: 4096 })
+      .then(
+        (result) =>
+          result.code === 0
+            ? null
+            : result.timedOut
+              ? `${command} : délai de ${remote.timeoutSec} s dépassé`
+              : `${command} : code ${result.code ?? result.signal} — ${(result.stderr.trim() || result.stdout.trim()).slice(-300)}`,
+        (err: unknown) => `${command} : ${err instanceof Error ? err.message : String(err)}`,
+      )
+      .then((error) => {
+        if (error !== null)
+          this.#deps.log(`copie distante de la sauvegarde échouée : ${error}`, {
+            level: "error",
+            event: "backup_failed",
+          });
+        this.#deps.report?.({ where: "remote", at: Date.now(), file, error });
+      })
+      .finally(() => this.#copies.delete(copy));
+    this.#copies.add(copy);
   }
 
   /** Le prochain instantané à l'heure `due` ; un délai plus long que celui d'un timer est fait en plusieurs fois. */

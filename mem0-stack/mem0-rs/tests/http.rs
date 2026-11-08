@@ -106,23 +106,102 @@ async fn health_sans_jeton_et_installation() {
     .await;
     let r = s.envoyer("GET", "/health", None, &[]).await;
     let reve = json!({"enabled": true, "chat": "on", "last_run_at": null, "last_error": null});
+    let corps = ok(&r);
     assert_eq!(
-        ok(&r),
-        json!({"ok":true,"mem0":concat!("mem0-rs ", env!("CARGO_PKG_VERSION")),"user":"moi","dream":reve,"installation":"inst-42"})
+        cles(&corps),
+        [
+            "ok",
+            "mem0",
+            "user",
+            "dream",
+            "version",
+            "uptime_s",
+            "memories",
+            "db_bytes",
+            "last_backup_at",
+            "last_backup_error",
+            "installation"
+        ]
     );
-    assert_eq!(cles(&r.json()), ["ok", "mem0", "user", "dream", "installation"]);
+    assert_eq!(
+        [&corps["ok"], &corps["mem0"], &corps["user"], &corps["dream"], &corps["installation"]],
+        [&json!(true), &json!(concat!("mem0-rs ", env!("CARGO_PKG_VERSION"))), &json!("moi"), &reve, &json!("inst-42")]
+    );
     let b = banc("health-vide", "").await;
-    assert_eq!(
-        b.serveur.envoyer("GET", "/health", None, &[]).await.texte,
-        format!(
-            r#"{{"ok":true,"mem0":"mem0-rs {}","user":"moi","dream":{{"enabled":true,"chat":"on","last_run_at":null,"last_error":null}}}}"#,
-            env!("CARGO_PKG_VERSION")
-        )
-    );
+    let vide = ok(&b.serveur.envoyer("GET", "/health", None, &[]).await);
+    assert!(vide.get("installation").is_none(), "sans jeton d'installation, pas de clé");
     assert_eq!(faux.appels(), 0);
     let journal = s.journal();
     assert!(journal.contains("à l'écoute sur http://127.0.0.1:"), "{journal}");
     assert!(!journal.contains("jeton-health") && !journal.contains("jeton-omlx"), "secret imprimé : {journal}");
+}
+
+/// observabilité : `/health` dit la version, l'uptime, le nombre de souvenirs, la taille
+/// de la base et le dernier instantané ; `/metrics` (jeton exigé, en `X-Mem0-Token` ou
+/// `Authorization: Bearer`) expose les mêmes valeurs et les requêtes au format Prometheus ;
+/// le journal est en JSON, sur stderr et dans `logs/mem0-AAAA-MM-JJ.jsonl`.
+#[tokio::test(flavor = "multi_thread")]
+async fn sante_enrichie_metriques_et_journal_json() {
+    let faux = FauxOpenAI::demarrer().await;
+    let dossier = Dossier::nouveau("observabilite");
+    // Un instantané d'un démarrage précédent : le dernier instantané est connu dès le démarrage.
+    let sauvegardes = dossier.chemin.join("backups");
+    std::fs::create_dir_all(&sauvegardes).unwrap();
+    std::fs::write(sauvegardes.join("mem0-rs-20260101T000000Z.db"), "copie").unwrap();
+    let s = Serveur::demarrer(&Lancement {
+        base: &dossier.base(),
+        embedder_url: &faux.base_url,
+        jeton: "jeton-metriques",
+        installation: "",
+    })
+    .await;
+    ajouter(&s, json!({"text":"Le port de mem0-rs est 8321","agent_id":AGENT})).await;
+
+    let sante = ok(&s.envoyer("GET", "/health", None, &[]).await);
+    assert_eq!(sante["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(sante["memories"], 1);
+    assert!(sante["db_bytes"].as_u64().unwrap() > 0, "{sante}");
+    assert!(sante["uptime_s"].is_u64(), "{sante}");
+    assert!(sante["last_backup_at"].as_str().is_some_and(|t| t.ends_with('Z')), "{sante}");
+    assert_eq!(sante["last_backup_error"], Value::Null);
+
+    assert_eq!(s.envoyer("GET", "/metrics", None, &[]).await.statut, 401);
+    assert_eq!(s.envoyer("GET", "/metrics", None, &[("authorization", "Bearer faux")]).await.statut, 401);
+    let par_entete = s.envoyer("GET", "/metrics", None, &[("X-Mem0-Token", "jeton-metriques")]).await;
+    assert_eq!(par_entete.statut, 200);
+    let r = s.envoyer("GET", "/metrics", None, &[("authorization", "Bearer jeton-metriques")]).await;
+    assert_eq!(r.statut, 200);
+    assert!(r.content_type.starts_with("text/plain; version=0.0.4"), "{}", r.content_type);
+    let lignes: Vec<&str> = r.texte.lines().collect();
+    for attendu in [
+        "mem0_memories 1",
+        "mem0_backup_failing 0",
+        "mem0_backup_failures_total 0",
+        "# TYPE mem0_http_requests_total counter",
+        "mem0_http_requests_total{route=\"/memory/add\",method=\"POST\",status=\"200\"} 1",
+        "mem0_http_requests_total{route=\"/metrics\",method=\"GET\",status=\"401\"} 2",
+        "mem0_http_request_duration_seconds_count{route=\"/health\",method=\"GET\"} 2",
+    ] {
+        assert!(lignes.contains(&attendu), "{attendu} absent de :\n{}", r.texte);
+    }
+    assert!(lignes.iter().any(|l| l.starts_with("mem0_backup_last_success_timestamp_seconds ")), "{}", r.texte);
+    for ligne in lignes.iter().filter(|l| !l.starts_with('#')) {
+        let (_, valeur) = ligne.rsplit_once(' ').unwrap();
+        assert!(valeur.parse::<f64>().is_ok(), "valeur illisible : {ligne}");
+    }
+
+    let journal = s.journal();
+    let ecoute = journal
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|l| l["msg"].as_str().is_some_and(|m| m.contains("à l'écoute")))
+        .unwrap_or_else(|| panic!("ligne JSON d'écoute absente : {journal}"));
+    assert_eq!((&ecoute["src"], &ecoute["level"]), (&json!("mem0"), &json!("info")));
+    let fichiers: Vec<_> = std::fs::read_dir(dossier.chemin.join("logs")).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(fichiers.len(), 1, "{fichiers:?}");
+    let nom = fichiers[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(nom.starts_with("mem0-") && nom.ends_with(".jsonl"), "{nom}");
+    assert!(std::fs::read_to_string(&fichiers[0]).unwrap().contains(&ecoute.to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -384,7 +463,8 @@ async fn ac3_relance_meme_base() {
     assert_eq!(statut.code(), Some(0));
     for nom in dossier.entrees() {
         assert!(
-            ["mem0-rs.db", "mem0-rs.db-wal", "mem0-rs.db-shm", "mem0-rs.db-journal", "mem0-rs.db.lock"].contains(&nom.as_str()),
+            ["mem0-rs.db", "mem0-rs.db-wal", "mem0-rs.db-shm", "mem0-rs.db-journal", "mem0-rs.db.lock", "logs"]
+                .contains(&nom.as_str()),
             "fichier inattendu : {nom}"
         );
     }

@@ -16,7 +16,9 @@ import { remoteEnv, type Git } from "./git.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import type { RunState, Transition } from "./machine.ts";
 import { assertTransition, isTerminal } from "./machine.ts";
+import type { LogLine } from "./logger.ts";
 import { Notifier } from "./notify.ts";
+import { Observability } from "./observability.ts";
 import type { Oracle } from "./oracle.ts";
 import type { Exec } from "./proc.ts";
 import { OAuthLogins } from "./oauth.ts";
@@ -44,7 +46,8 @@ export type HarnessDeps = {
   oracle: Oracle;
   spawn: SpawnRunner;
   exec: Exec;
-  log?: (line: string) => void;
+  /** Le journal structuré (logger.ts) ; absent : rien n'est journalisé. */
+  log?: LogLine;
   tickMs?: number;
 };
 
@@ -67,7 +70,8 @@ export class HarnessContext {
   readonly oracle: Oracle;
   readonly spawn: SpawnRunner;
   readonly exec: Exec;
-  readonly log: (line: string) => void;
+  /** Le journal : une chaîne, et son niveau, son run et son dépôt quand ils sont connus. */
+  readonly log: LogLine;
   /** Les fournisseurs et chaînes de modèles déclarés par l'API (admin). */
   readonly providers: ProviderRegistry;
   /** Les connexions OAuth des fournisseurs, menées depuis les apps (admin). */
@@ -82,6 +86,8 @@ export class HarnessContext {
   readonly tests: TestFeeds;
   /** Les Live Activities de l'app iOS, mises à jour par APNs (`config.apns`). */
   readonly push: ActivityPusher;
+  /** Erreurs des clients, état des sauvegardes, santé de la mémoire, compteurs HTTP (`GET /metrics`). */
+  readonly observability: Observability;
   #overlay: string | null = null;
 
   constructor(deps: HarnessDeps) {
@@ -151,6 +157,7 @@ export class HarnessContext {
       log: this.log,
     });
     this.push.subscribe();
+    this.observability = new Observability(this);
   }
 
   /** L'overlay de réglages du profil pipeline, écrit une fois. */
@@ -244,7 +251,11 @@ export class HarnessContext {
       if (isTerminal(transition.state) && run.projectId) this.#closeProjectIfDone(run.projectId, run.repo);
       return next;
     });
-    if (!updated) this.log(`run ${run.id} : transition vers ${transition.state} écartée (état changé entre-temps)`);
+    if (!updated)
+      this.log(`run ${run.id} : transition vers ${transition.state} écartée (état changé entre-temps)`, {
+        runId: run.id,
+        repo: run.repo,
+      });
     return updated;
   }
 
@@ -272,7 +283,8 @@ export class HarnessContext {
       ["fetch", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`],
       remoteEnv(repo),
     );
-    if (result.code !== 0) this.log(`fetch ${repo.name} : ${result.stderr.trim().slice(0, 200)}`);
+    if (result.code !== 0)
+      this.log(`fetch ${repo.name} : ${result.stderr.trim().slice(0, 200)}`, { level: "warn", repo: repo.name });
   }
 
   /** Les checkpoints du run retrouvés par leur trailer après une réécriture (rebase). */

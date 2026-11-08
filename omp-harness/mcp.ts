@@ -10,6 +10,7 @@
 // de protocole est une erreur JSON-RPC.
 import type { Client, Role } from "./auth.ts";
 import { allows, canSeeRepo } from "./auth.ts";
+import { HARNESS_COMMIT } from "./build-info.ts";
 import type { RepoConfig } from "./config.ts";
 import { isRecord } from "./config.ts";
 import type { Actor } from "./context.ts";
@@ -519,7 +520,14 @@ export const MCP_TOOLS: readonly Tool[] = [
       const now = Date.now();
       const since = integer(args.since ?? undefined, "since") ?? now - DIGEST_WINDOW_MS;
       if (since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
-      return digestOf(call.orchestrator.store, since, now, call.visible);
+      return digestOf(
+        call.orchestrator.store,
+        since,
+        now,
+        call.visible,
+        HARNESS_COMMIT,
+        call.orchestrator.observability.digestHealth(),
+      );
     },
     render: (result) => String(result.text),
   },

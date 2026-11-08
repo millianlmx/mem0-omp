@@ -142,7 +142,11 @@ export class AuditPilot {
         live.done = this.#drive(audit, piloted, wait, history, scope, live)
           .catch((err) => {
             const reason = err instanceof Error ? err.message : String(err);
-            this.#ctx.log(`pilote ${audit.id} sur ${run.id} : ${reason}`);
+            this.#ctx.log(`pilote ${audit.id} sur ${run.id} : ${reason}`, {
+              level: "warn",
+              runId: run.id,
+              repo: run.repo,
+            });
             if (live.acted === null && !live.abort.signal.aborted)
               this.#record(audit, run, "defer", `le pilote n'a pas pu trancher : ${reason}`, null);
           })

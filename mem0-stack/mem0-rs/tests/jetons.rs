@@ -105,6 +105,20 @@ async fn jeton_a_portees_403_hors_de_ses_portees() {
     assert_eq!(sous(s, "jeton-inconnu-0000000", "GET", "/memory/all?agent_id=perso", None).await.statut, 401);
 }
 
+/// `/metrics` compte toutes les portées : le jeton total seul l'ouvre, en `X-Mem0-Token` ou en
+/// `Authorization: Bearer` ; un jeton à portées y est refusé (403), par l'une ou l'autre voie.
+#[tokio::test(flavor = "multi_thread")]
+async fn metriques_au_seul_jeton_total() {
+    let b = banc("jetons-metriques", &[("MEM0_HTTP_TOKENS", &format!("corpo:{CORPO}:corpo-api"))]).await;
+    let s = &b.serveur;
+    let porteur = |jeton: &str| format!("Bearer {jeton}");
+    assert_eq!(s.envoyer("GET", "/metrics", None, &[("X-Mem0-Token", TOTAL)]).await.statut, 200);
+    assert_eq!(s.envoyer("GET", "/metrics", None, &[("authorization", &porteur(TOTAL))]).await.statut, 200);
+    refuse(&s.envoyer("GET", "/metrics", None, &[("X-Mem0-Token", CORPO)]).await, "/metrics en X-Mem0-Token");
+    refuse(&s.envoyer("GET", "/metrics", None, &[("authorization", &porteur(CORPO))]).await, "/metrics en Bearer");
+    assert_eq!(s.envoyer("GET", "/metrics", None, &[]).await.statut, 401);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn jeton_total_inchange() {
     let b = banc("jetons-total", &[("MEM0_HTTP_TOKENS", &format!("corpo:{CORPO}:corpo-api"))]).await;

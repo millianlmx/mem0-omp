@@ -17,7 +17,9 @@
 // dans `clientsFile` (auth.ts), relu à chaque changement. SIGTERM arrête proprement :
 // plus de requêtes, runners arrêtés ; au redémarrage, chaque run reprend à son
 // dernier checkpoint. SIGHUP (ou `POST /v1/reload`) relit la configuration et recharge
-// les dépôts sans arrêter les runs ; `POST /v1/repos` fait `--add-repo` par l'API.
+// les dépôts sans arrêter les runs ; `POST /v1/repos` fait `--add-repo` par l'API. Le
+// journal est structuré (logger.ts) : une ligne JSON par événement sur stderr et dans
+// `<dataDir>/logs/harness-AAAA-MM-JJ.jsonl`.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
@@ -33,6 +35,8 @@ import { Store } from "./db.ts";
 import { Git } from "./git.ts";
 import { HeavyRunner } from "./heavy.ts";
 import { HARNESS_VERSION, createHandler } from "./http.ts";
+import { Logger, logDir, logRecord } from "./logger.ts";
+import type { LogLine } from "./logger.ts";
 import { HttpOracle, NO_ORACLE } from "./oracle.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { addLocalModel, setModels } from "./local-model.ts";
@@ -65,33 +69,39 @@ export type Harness = {
   stop: () => Promise<void>;
 };
 
-/** `configFile` : le fichier d'où vient `config` (`null` : aucun, rien à relire ni à écrire). */
+/**
+ * Démarre le service. `configFile` : le fichier d'où vient `config` (`null` : aucun, rien
+ * à relire ni à écrire). `log` : la sortie de chaque ligne du journal à la place de stderr
+ * (les tests la font taire ou la lisent) ; les fichiers jsonl sont écrits dans tous les cas.
+ */
 export async function startHarness(
   config: HarnessConfig,
-  options: { spawn?: SpawnRunner; log?: (line: string) => void; token?: string; configFile?: string | null } = {},
+  options: { spawn?: SpawnRunner; log?: LogLine; token?: string; configFile?: string | null } = {},
 ): Promise<Harness> {
-  const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(config.worktreesDir, { recursive: true });
+  const logger = new Logger({
+    src: "harness",
+    dir: logDir(config),
+    retentionDays: config.logs.retentionDays,
+    level: config.logs.level,
+    ...(options.log ? { stderr: (record) => options.log?.(record.msg, record) } : {}),
+  });
+  const log = logger.line;
   const backups = backupDir(config);
   // Une migration ratée laisserait la base à mi-chemin : un instantané d'abord, sinon pas de migration.
+  let migrationSnapshot: string | null = null;
   const store = new Store(path.join(config.dataDir, "harness.sqlite"), Date.now, {
     ...(config.backups.beforeMigration
       ? {
           beforeMigrate: (db, from, to) => {
             const file = snapshot(db, backups, "migration", Date.now(), `v${from}`);
             pruneBackups(backups, "migration", config.backups.keep);
+            migrationSnapshot = file;
             log(`base sauvegardée avant sa migration v${from} → v${to} : ${file}`);
           },
         }
       : {}),
-  });
-  const snapshots = new Backups({
-    db: store.db,
-    dir: backups,
-    intervalHours: config.backups.intervalHours,
-    keep: config.backups.keep,
-    log,
   });
   const scheduler = new Scheduler({
     runnerSlots: config.runner.slots,
@@ -116,6 +126,18 @@ export async function startHarness(
     exec: execProcess,
     log,
   });
+  const snapshots = new Backups({
+    db: store.db,
+    dir: backups,
+    intervalHours: config.backups.intervalHours,
+    keep: config.backups.keep,
+    log,
+    remote: config.backups.remote,
+    exec: execProcess,
+    report: (outcome) => orchestrator.observability.recordBackup(outcome),
+  });
+  // L'instantané d'avant migration part hors machine lui aussi.
+  if (migrationSnapshot !== null) snapshots.copyRemote(migrationSnapshot);
   await orchestrator.start();
   snapshots.start();
   const token = options.token ?? loadToken(config);
@@ -137,6 +159,7 @@ export async function startHarness(
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await orchestrator.stop();
       snapshots.stop();
+      await snapshots.idle();
       store.close();
     },
   };
@@ -208,7 +231,9 @@ if (isMain) {
   const file = argValue(process.argv, "--config") ?? process.env.HARNESS_CONFIG ?? null;
   // Un rejet oublié est journalisé, jamais fatal : un crash ferait reprendre tous les runs au checkpoint.
   process.on("unhandledRejection", (reason) =>
-    console.error(`[omp-harness] rejet non géré : ${reason instanceof Error ? reason.stack : String(reason)}`),
+    process.stderr.write(
+      `${JSON.stringify(logRecord("harness", "rejet non géré", { level: "error", err: reason, event: "unhandled_rejection" }))}\n`,
+    ),
   );
   const config = loadConfig(file);
   const added = argValue(process.argv, "--add-repo");
@@ -266,7 +291,9 @@ if (isMain) {
   // invalide est refusée et journalisée : l'ancienne reste en place.
   process.on("SIGHUP", () => {
     harness.admin.reload().catch((err: unknown) => {
-      console.error(`[omp-harness] rechargement refusé : ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(
+        `${JSON.stringify(logRecord("harness", `rechargement refusé : ${err instanceof Error ? err.message : String(err)}`, { level: "error" }))}\n`,
+      );
     });
   });
 }

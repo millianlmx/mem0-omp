@@ -462,8 +462,8 @@ Runs, décisions, escalades et journal vivent dans `harness.sqlite`, sous `dataD
 Le service en prend lui-même des instantanés (`VACUUM INTO` : une copie cohérente,
 prise sans l'arrêter) dans `<dataDir>/backups` : `harness-periodique-<date>.sqlite`
 chaque jour, `harness-migration-<date>-v<n>.sqlite` avant chaque migration du
-schéma (`n` : la version d'avant). Réglages : `backups.*` (§ Configuration). Copie
-ce dossier hors du serveur si le disque compte.
+schéma (`n` : la version d'avant). Réglages : `backups.*` (§ Configuration).
+`backups.remote` copie chaque instantané hors du serveur (§ Observabilité).
 
 Pour restaurer, service arrêté (une restauration ramène la base à la date de la
 copie : ce qui a suivi est perdu, les worktrees et les branches restent) :
@@ -538,7 +538,9 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
 | `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé, plafond journalier atteint, approbation demandée par le poste (`workstation_approval`) | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
-| `notify.digestHour` | `8` | l'heure locale du serveur (0-23) du rapport du matin : avec `notify.url`, un POST par jour titré « Rapport du matin » (corps Markdown, en-tête `Markdown: yes`) sur la fenêtre depuis le précédent envoi — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs, coût. L'instant du dernier envoi est gardé en base (réglage `digest-sent`) : un redémarrage ne le renvoie pas, un service arrêté à l'heure dite l'envoie à son retour. `null` : aucun rapport |
+| `notify.digestHour` | `8` | l'heure locale du serveur (0-23) du rapport du matin : avec une cible (`notify.url` ou `notify.targets`), un POST par jour titré « Rapport du matin » (corps Markdown, en-tête `Markdown: yes`) sur la fenêtre depuis le précédent envoi — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs, coût, puis la santé (mémoire, sauvegardes). L'instant du dernier envoi est gardé en base (réglage `digest-sent`) : un redémarrage ne le renvoie pas, un service arrêté à l'heure dite l'envoie à son retour. `null` : aucun rapport |
+| `notify.targets` | `[]` | des cibles en plus de `notify.url` : `{ "kind": "ntfy" \| "webhook", "url", "headers"? }` ; un `webhook` reçoit un POST JSON `{title, body, priority, tags, click, event, runId, repo, at}`, `headers` porte un jeton d'accès |
+| `notify.dedupMin` | `30` | une même notification (titre et corps) n'est pas renvoyée avant ces minutes, à aucune cible ; `null` ou `0` : toujours |
 | `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
 | `dreams.checkMinutes` | `60` | le rêve de la mémoire (§ La mémoire du projet) : chaque dépôt au repos (aucun run en cours) est examiné au plus toutes les N minutes ; `null` coupe les rêves. Sans `oracle`, rien |
 | `dreams.minFacts`, `dreams.maxDelayHours` | `5`, `24` | la session de rêve ne part que s'il y a au moins `minFacts` faits nouveaux en mémoire, ou un fait nouveau qui attend depuis `maxDelayHours` heures ; `POST /v1/dreams` passe outre |
@@ -565,13 +567,16 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `backups.intervalHours`, `backups.keep` | `24`, `7` | un instantané de la base toutes les 24 h (le premier au démarrage si le dernier a plus d'un intervalle), les 7 derniers gardés ; `intervalHours: null` les coupe |
 | `backups.beforeMigration` | `true` | un instantané juste avant de migrer le schéma d'une base existante (les 7 derniers gardés) ; s'il échoue, le service refuse de migrer et ne démarre pas |
 | `backups.dir` | `null` (`<dataDir>/backups`) | le dossier des instantanés (0700, fichiers 0600) : un autre disque, ou un montage sauvegardé ailleurs |
+| `backups.remote` | `null` | `{ "command": [argv], "timeoutSec"? (600) }` : lancée après chaque instantané (périodique et d'avant migration), sans shell ; `{file}` reçoit le chemin, `{name}` le nom (sans `{file}`, le chemin est ajouté en dernier). Un échec, local ou distant, émet `backup_failed` (notifié) et se lit dans `GET /v1/status` (`backups`) |
+| `logs.dir`, `logs.retentionDays`, `logs.level` | `null` (`<dataDir>/logs`), `14`, `"info"` | le journal JSON du service (§ Observabilité) : `harness-AAAA-MM-JJ.jsonl` par jour UTC, les plus vieux retirés ; `debug` \| `info` \| `warn` \| `error` |
+| `metrics.retentionDays` | `7` | les points de `GET /v1/metrics`, gardés en base ce nombre de jours |
 | `health.tickStaleSec`, `health.minFreeMiB` | `120`, `1024` | les seuils de `GET /v1/health` : le dernier tour du scheduling date de moins de 120 s, il reste au moins 1 Gio libre sous `dataDir` et `worktreesDir` ; au-delà, 503 |
 | `monitoring.runBudgetUsd`, `monitoring.pauseOnBudget` | `null`, `false` | le coût (en dollars, d'après omp) d'une feature au-delà duquel tu es prévenu (`budget_exceeded`) ; avec `pauseOnBudget`, la feature attend aussi ton accord : l'étape en cours est arrêtée dès que son coût franchit le plafond (sans attendre sa fin, jusqu'à `stepTimeoutSec`), et une relance lui accorde un budget de plus. Un run qui a son propre budget (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`) est jugé sur le sien |
 | `monitoring.dailyBudgetUsd` | `null` | le plafond de dépense de tout le serveur sur le jour UTC (runs et audits). Atteint : les étapes en cours finissent, mais aucune étape ni analyse ne démarre — chaque feature retourne en file avant sa prochaine étape (`admission_refused`, raison `daily_budget`), `daily_budget_reached` part une fois par jour — jusqu'à minuit UTC ou un plafond relevé ; tout repart alors seul |
 | `monitoring.stallMin`, `monitoring.stallToolMin` | `15`, `45` | les minutes sans un mot de l'agent avant l'alerte `stalled` (la seconde quand un outil tourne, une suite de tests par exemple) ; `null` : jamais |
 | `monitoring.slowFactor` | `2` | une étape plus longue que ce multiple de la médiane de son type alerte (`step_slow`) ; `null` : jamais |
 | `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
-| `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, les 2 dernières heures gardées en mémoire |
+| `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, écrit en base ; sans `since`, les 480 derniers (2 h) |
 | `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
 | `workstation.enabled` | `true` | le poste de travail (§ « Le poste de travail ») ; `false` : les routes `/v1/workstation*` rendent 404 et l'agent 24/24 ne tourne pas |
 | `workstation.thresholdHours` | `8` | les heures d'observation (temps actif cumulé) après lesquelles l'autonomie `auto` passe d'`observe` à `act` ; un réglage posé depuis une app prime |
@@ -1383,6 +1388,58 @@ supprimée entre-temps, l'échéance est `failed` (404).
 Côté omp, `harness_schedule` crée une planification du dépôt courant (avec l'accord de
 l'utilisateur, comme `harness_launch`) et `harness_schedules` les liste.
 
+## Observabilité
+
+- **Journal JSON.** Une ligne par événement, sur stderr et dans
+  `<logs.dir>/harness-AAAA-MM-JJ.jsonl` (jour UTC, `logs.retentionDays` jours gardés) :
+  `{"ts", "level", "src": "harness", "msg", "runId"?, "repo"?, "event"?, "err"?: {message, stack?}}`.
+  mem0-rs écrit le même format (`src: "mem0"`, mem0-stack/README.md). Lire les erreurs
+  d'un run : `jq -c 'select(.runId == "<id>")' harness-*.jsonl`.
+- **`GET /metrics`** (jeton d'un client viewer qui voit tous les dépôts ; 403 sinon) :
+  l'exposition texte de Prometheus. `omp_harness_runs{repo,state}`,
+  `omp_harness_step_duration_seconds` (histogramme, `repo`, `step`, `status`),
+  `omp_harness_cost_usd_total` et `omp_harness_tokens_total{repo,model,kind}`,
+  `omp_harness_slots_used|capacity|waiting{kind}`, `omp_harness_mem_available_bytes`,
+  `omp_harness_oracle_lost_writes_total`, `omp_harness_alerts{kind}`,
+  `omp_harness_workstation_online`, `omp_harness_workstation_actions{state}`,
+  `omp_harness_client_errors_total{source}`, `omp_harness_http_requests_total{route,method,status}`,
+  `omp_harness_http_request_duration_seconds`, `omp_harness_sse_clients`,
+  `omp_harness_backup_age_seconds`, `omp_harness_backup_failing{where}`,
+  `omp_harness_memory_up`. Coût, jetons, durées et runs sont relus en base (ils
+  survivent au redémarrage) ; requêtes HTTP et erreurs des clients repartent de zéro.
+- **Points de santé.** `GET /v1/metrics` lit la table `metric_samples` : un
+  redémarrage ne perd rien, `?since=` remonte jusqu'à `metrics.retentionDays`.
+- **Erreurs des clients.** Les apps, l'extension, omp et la vigie postent leurs
+  erreurs à `POST /v1/client-errors` (60 par minute et par client, puis 429) : elles
+  vont en base, au journal (niveau error) et sur le flux (`client_error`).
+- **Santé de la mémoire.** `GET /v1/status` porte `memory {configured, ok, version,
+  uptimeSec, memories, dbBytes, lastBackupAt, lastBackupError, checkedAt}` (lu sur le
+  `GET /health` de mem0-rs, gardé 30 s) et `backups {lastAt, lastError, lastErrorAt,
+  remote {configured, lastAt, lastError}}` ; le rapport du matin en fait sa section « Santé ».
+- **Alertes.** `notify.url` et `notify.targets` (ntfy, webhook JSON), dédoublonnées
+  par `notify.dedupMin`. `backup_failed` est notifié par défaut.
+- **Sauvegardes distantes.** `backups.remote` lance un outil à toi après chaque
+  instantané. Avec restic (chiffré côté client, mot de passe hors de la config) :
+  `"remote": {"command": ["restic", "backup", "--host", "omp-harness", "--tag", "harness", "{file}"]}`,
+  `RESTIC_REPOSITORY` et `RESTIC_PASSWORD_FILE` dans l'environnement du service
+  (`/etc/omp-harness/env`). Avec rclone : `["rclone", "copyto", "{file}", "b2:omp/harness/{name}"]`
+  (remote `crypt` pour chiffrer). En conteneurs, l'outil doit être dans l'image ou
+  monté (`/usr/local/bin/restic:ro`). La restauration est celle de § Sauvegarder et
+  restaurer, depuis la copie rapatriée (`restic restore latest --target /tmp/r`) ;
+  elle est éprouvée par `harness-backups/AC-1` (une copie rouvre la base telle quelle).
+- **Prometheus et Grafana.** `omp-harness/deploy/monitoring/` : `prometheus.yml`
+  (scrute le harness et mem0 avec leurs jetons), le tableau `grafana/omp-harness.json`
+  (importable tel quel, ou posé par le profil). En conteneurs, le profil `monitoring`
+  du compose racine, coupé par défaut :
+
+  ```bash
+  mkdir -p -m 0700 /var/lib/omp-harness-secrets/monitoring && cd /var/lib/omp-harness-secrets/monitoring
+  docker compose exec harness node --experimental-strip-types /opt/omp-harness/omp-harness/main.ts \
+    --config /etc/omp-harness/config.json --add-client prometheus --role viewer > harness.token
+  sed -n 's/^MEM0_HTTP_TOKEN=//p' ../mem0/mem0.env > mem0.token && chmod 0600 *.token
+  docker compose --profile monitoring up -d   # Grafana : http://127.0.0.1:3000 (GRAFANA_ADMIN_PASSWORD)
+  ```
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -1436,10 +1493,13 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries du tableau de bord de l'Accueil : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
-| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
+| `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |
 | `PUT /v1/schedules/{id}` `{name?, cron?, target?, enabled?}` · `DELETE /v1/schedules/{id}` | operator | Modifier (seuls les champs présents ; un nouveau `cron` ou une réactivation réarment `nextRunAt` depuis maintenant) ou supprimer. `If-Match: <rev>` facultatif : périmé, 412. Une planification d'un dépôt que le client ne voit pas : 404. |
 | `POST /v1/schedules/{id}/run` | operator | Déclencher tout de suite, hors échéance, même désactivée (`{schedule, outcome}`, 201) ; 409 si le lancement précédent n'est pas fini ou le plafond journalier atteint. `nextRunAt` ne bouge pas. |
+| `GET /metrics` | viewer | L'exposition Prometheus du service (§ Observabilité) ; 403 à un client borné à des dépôts. |
+| `POST /v1/client-errors` `{source, version, kind, message, context?}` | viewer | Une erreur d'un client (`source` : `mac` \| `ios` \| `chrome` \| `omp` \| `vigie` ; `context` : objet de 8 Kio au plus) : 202 `{id}`, événement `client_error`, ligne de journal error ; 60 par minute et par client, puis 429 avec `Retry-After`. |
+| `GET /v1/client-errors?since=&source=&limit=` | viewer | Les erreurs des clients, les plus récentes d'abord (200 par défaut, 1000 au plus) ; un client borné à des dépôts ne voit que les siennes. |
 | `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-têtes `X-OMP-Extension: <version>`, `X-OMP-Browser`, `X-OMP-Browser-Label` et `X-OMP-Agent-Tabs: <onglets de la fenêtre de l'agent>`) : 200 `{action}` de CE navigateur passée `running`, ou 204. |

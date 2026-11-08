@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as http2 from "node:http2";
 import type { ApnsConfig } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
+import type { LogLine } from "./logger.ts";
 import { isTerminal } from "./machine.ts";
 
 /** L'intervalle minimal entre deux mises à jour d'une activité pour un simple changement d'outil. */
@@ -115,7 +116,7 @@ export type PushDeps = {
   /** Ce que montre l'activité d'un run (état, étape, outil, alerte, coût). */
   content: (run: RunRow) => ActivityContent;
   transport?: ApnsTransport;
-  log?: (line: string) => void;
+  log?: LogLine;
   now?: () => number;
   /** La clé `.p8` (tests : sans fichier). */
   readKey?: (file: string) => string;
@@ -178,7 +179,9 @@ export class ActivityPusher {
     try {
       jwt = this.#authorization(config);
     } catch (err) {
-      this.#deps.log?.(`apns : clé illisible (${err instanceof Error ? err.message : String(err)})`);
+      this.#deps.log?.(`apns : clé illisible (${err instanceof Error ? err.message : String(err)})`, {
+        level: "error",
+      });
       return;
     }
     const nowSec = Math.floor(this.#now() / 1000);
@@ -206,7 +209,8 @@ export class ActivityPusher {
       });
       if (reply.status === 410 || reply.reason === "BadDeviceToken" || reply.reason === "Unregistered" || ended)
         this.#deps.store.deletePushToken(token);
-      else if (reply.status !== 200) this.#deps.log?.(`apns : ${reply.status} ${reply.reason ?? ""}`.trim());
+      else if (reply.status !== 200)
+        this.#deps.log?.(`apns : ${reply.status} ${reply.reason ?? ""}`.trim(), { level: "warn" });
     }
   }
 

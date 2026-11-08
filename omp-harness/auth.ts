@@ -23,6 +23,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { LogLine } from "./logger.ts";
 
 export type Role = "viewer" | "operator" | "admin";
 
@@ -61,7 +62,7 @@ export function canSeeRepo(client: Client, repo: string): boolean {
 export class ClientRegistry {
   readonly #file: string | null;
   readonly #legacy: Buffer | null;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
   #clients: StoredClient[] = [];
   /** L'erreur de lecture de la version courante du fichier (`null` : lue) : aucune écriture par-dessus. */
   #broken: string | null = null;
@@ -75,7 +76,7 @@ export class ClientRegistry {
   constructor(
     file: string | null,
     legacyToken: string | null = null,
-    log: (line: string) => void = (line) => console.error(`[omp-harness] ${line}`),
+    log: LogLine = (line) => console.error(`[omp-harness] ${line}`),
   ) {
     this.#file = file;
     this.#legacy = legacyToken ? digest(legacyToken) : null;
@@ -106,6 +107,7 @@ export class ClientRegistry {
       this.#broken = err instanceof Error ? err.message : String(err);
       this.#log(
         `clients : ${this.#file} illisible, ${this.#clients.length} client(s) de la dernière lecture gardé(s) — ${this.#broken}`,
+        { level: "error" },
       );
       return;
     }

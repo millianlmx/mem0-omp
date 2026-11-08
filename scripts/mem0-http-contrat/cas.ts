@@ -229,6 +229,13 @@ export const SANTE: Forme = objet({
     last_run_at: { type: "ou", formes: [Nul, S] },
     last_error: { type: "ou", formes: [Nul, S] },
   }),
+  // Observabilité : version, uptime, souvenirs, taille de la base et dernier instantané.
+  version: S,
+  uptime_s: I,
+  memories: { type: "ou", formes: [Nul, I] },
+  db_bytes: { type: "ou", formes: [Nul, I] },
+  last_backup_at: { type: "ou", formes: [Nul, S] },
+  last_backup_error: { type: "ou", formes: [Nul, S] },
 });
 
 export const AJOUT: Forme = objet({

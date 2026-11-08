@@ -682,6 +682,7 @@ export class StepExecutor {
     } catch (err) {
       this.#ctx.log(
         `run ${run.id} : commit WIP impossible après interruption — ${err instanceof Error ? err.message : String(err)}`,
+        { level: "warn", runId: run.id, repo: run.repo },
       );
     }
     const artifact = STEP_ARTIFACT[step] ?? "impl.md";
@@ -717,6 +718,7 @@ export class StepExecutor {
         (err: unknown) => {
           this.#ctx.log(
             `run ${run.id} : suite complète anticipée en échec — ${err instanceof Error ? err.message : String(err)}`,
+            { level: "warn", runId: run.id, repo: run.repo },
           );
           return null;
         },
@@ -925,7 +927,10 @@ export class StepExecutor {
     const remaining = parseRemaining(store.getArtifact(run.id, "impl.md") ?? "");
     if (remaining === "") return null;
     if (run.baseSha !== null && (await git.touchedFiles(worktree, run.baseSha)).length === 0) {
-      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de reprise pour son « ## Reste »`);
+      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de reprise pour son « ## Reste »`, {
+        runId: run.id,
+        repo: run.repo,
+      });
       return null;
     }
     if (store.eventsSince(0, run.id).some((event) => event.type === "impl_continued")) return null;

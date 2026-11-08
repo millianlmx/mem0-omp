@@ -257,7 +257,9 @@ export class WorkstationAgent {
     const live: LiveJob = { abort: new AbortController(), session: null, stopReason: null, done: Promise.resolve() };
     this.#live.set(job, live);
     live.done = drive(live)
-      .catch((err: unknown) => this.#ctx.log(`poste ${job} : ${err instanceof Error ? err.message : String(err)}`))
+      .catch((err: unknown) =>
+        this.#ctx.log(`poste ${job} : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err }),
+      )
       .finally(async () => {
         await live.session?.stop();
         slot.release();
@@ -344,7 +346,8 @@ export class WorkstationAgent {
     // Un arrêt du service : le meeting reste `ended`, son digest repart au démarrage suivant.
     if (live.abort.signal.aborted) return;
     this.#ws.finishDigest(meeting.id, out.digest ?? { reason: out.reason ?? "échec sans détail" });
-    if (out.digest === null) this.#ctx.log(`poste : digest du meeting ${meeting.id} en échec : ${out.reason}`);
+    if (out.digest === null)
+      this.#ctx.log(`poste : digest du meeting ${meeting.id} en échec : ${out.reason}`, { level: "warn" });
   }
 
   /** La transcription, minutes depuis le début ; une très longue garde son début et sa fin. */
@@ -422,7 +425,7 @@ export class WorkstationAgent {
       failure = err instanceof Error ? err.message : String(err);
     }
     if (failure !== null && !live.abort.signal.aborted)
-      this.#ctx.log(`poste : synthèse du profil en échec : ${failure}`);
+      this.#ctx.log(`poste : synthèse du profil en échec : ${failure}`, { level: "warn" });
   }
 
   // -- services de l'agent 24/24 ---------------------------------------------------------
