@@ -159,6 +159,8 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['path: "/retry"', "POST", "/v1/runs/r1/retry"],
     ['path: "/decisions/accept"', "POST", "/v1/runs/r1/decisions/accept"],
     ['path: "/revert"', "POST", "/v1/runs/r1/revert"],
+    ['path: "/v1/push/devices"', "POST", "/v1/push/devices"],
+    ['"/v1/push/devices/\\(id)"', "DELETE", "/v1/push/devices/ab12"],
   ];
   for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
@@ -310,7 +312,9 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
   }
   // L'approbation n'est appelée que par un geste de l'humain : dans les deux apps, un
   // `Button` et lui seul porte `approve(shown:` — avec l'action affichée, dont l'`updatedAt`
-  // part en If-Match ; le modèle ne l'appelle jamais lui-même.
+  // part en If-Match ; le modèle ne l'appelle jamais lui-même. L'autre chemin est l'action
+  // « Approuver » d'une notification que l'humain touche : `decideFromNotification`,
+  // appelé par le seul `execute(.approveSend)`, que seul le routage de cette action rend.
   const code = (source: string) =>
     source
       .split("\n")
@@ -332,6 +336,19 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     );
     assert.ok(source.includes("approve(shown: action)"), `${view} : l'approbation porte l'action affichée`);
   }
+  const notifications = code(read("omp-console", "Sources", "ConsoleClient", "HarnessNotifications.swift"));
+  const decisions = [...notifications.matchAll(/decideFromNotification\([^)]*approve: true\)/g)];
+  assert.equal(decisions.length, 1, "une seule approbation depuis une notification");
+  assert.match(
+    notifications,
+    /case let \.approveSend\(seq, revision\):\s*await workstation\.decideFromNotification\(seq: seq, revision: revision, approve: true\)/,
+  );
+  assert.match(
+    notifications,
+    /case \.approve:\s*guard approves, let seq = alert\.seq else \{ return \.open\(destination\) \}\s*return \.approveSend\(/,
+    "seule l'action « Approuver » d'une notification d'envoi, jeton approbateur, rend .approveSend",
+  );
+  assert.equal(code(model).split("decideFromNotification(").length - 1, 1, "le modèle ne s'appelle pas lui-même");
 });
 
 /** Une valeur JSON qui doit être un objet : vérifiée, puis rendue comme telle. */

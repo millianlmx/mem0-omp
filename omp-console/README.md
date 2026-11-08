@@ -437,6 +437,28 @@ exécuter une étape elle-même.
   configuration, voir `omp-harness/README.md` § « Les Live Activities app fermée »).
   Une feature terminée clôt son activité. Si iOS refuse le jeton push (capacité
   absente), l'activité démarre quand même, mise à jour par l'app ouverte.
+- **Notifications actionnables (iPhone, Mac).** Après l'appairage, l'app demande la
+  permission de notifier. Sur l'**iPhone**, elle enregistre alors le jeton APNs de
+  l'appareil au serveur (`POST /v1/push/devices`, au nom du client de son jeton ; la
+  passerelle `sandbox` ou `production` est lue dans le profil embarqué de l'app), qui
+  lui pousse les specs et verdicts à valider, les questions, les envois du poste à
+  approuver (seulement au jeton approbateur), les features en échec, l'agent muet, le
+  budget dépassé, la vigie muette et les sauvegardes échouées — voir
+  `omp-harness/README.md` § « Les alertes push des appareils ». Sur le **Mac**, sans
+  APNs, chaque événement du flux qui attend l'humain devient une notification locale
+  tant que l'app tourne en arrière-plan. Les gestes sont les mêmes des deux côtés :
+  **Valider** / **Refuser** (specs, verdict ; le refus demande sa raison),
+  **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Valider, refuser et
+  approuver exigent l'appareil déverrouillé et partent avec la révision que portait la
+  notification (`If-Match`) : si la feature ou l'envoi a bougé depuis, rien n'est
+  tranché et une notification « Geste non abouti » le dit. Sans le jeton approbateur au
+  trousseau, Approuver et Refuser d'un envoi ouvrent l'app sur le Poste. Toucher une
+  notification ouvre ce qu'elle désigne : la section de l'Accueil qui attend, le Poste
+  ou la feature. Côté Apple, l'App ID n'a besoin que de la capacité Push
+  Notifications, déjà requise par les Live Activities (`aps-environment` de
+  `ios/OMPConsoleIOS.entitlements`) ; côté serveur, de la clé `.p8` de `apns`. Le
+  routage (catégorie → geste) vit dans `ConsoleClient/HarnessNotifications.swift`, le
+  pont vers le système dans `HarnessNotificationCenter.swift`.
 - **Widget d'écran d'accueil (iPhone, iPad).** « Boîte du serveur », en petit, moyen
   ou grand format : ce qui attend votre décision, le nombre de features en cours et
   d'alertes, puis les features vivantes (celles qui vous attendent d'abord) avec leur
@@ -1697,6 +1719,8 @@ omp-console/
 │   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
 │   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
 │   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
+│   ├── HarnessNotifications.swift les notifications : charge du serveur, catégories, routage d'une action vers un geste
+│   ├── HarnessNotificationCenter.swift  le pont vers UserNotifications (permission, actions, notifications locales du Mac)
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
 │   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines, du monitoring et du poste de travail
@@ -2032,7 +2056,7 @@ AltStore). Le détail : `PUBLISHING.md` § Apps jointes aux releases. Avec Xcode
 3. Ouvrir l'onglet *Signing & Capabilities* de la cible, cocher *Automatically
    manage signing*, puis choisir son **compte** (Team) — un compte du programme
    développeur : l'app déclare un groupe d'apps (widget) et les notifications push
-   (Live Activities), que Xcode enregistre seul. Faire de même pour la cible
+   (Live Activities et alertes), que Xcode enregistre seul. Faire de même pour la cible
    `OMPConsoleWidgets`. Si l'identifiant de bundle du dépôt (`com.omp.console.ios`)
    est déjà pris, en choisir un **unique**, pour les deux cibles
    (`<id>` et `<id>.widgets`), et changer `OMP_APP_GROUP` du projet en

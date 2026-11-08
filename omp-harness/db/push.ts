@@ -1,11 +1,11 @@
-// Les jetons push des apps : Live Activities d'un run et appareils.
+// Les jetons push des Live Activities d'un run (les appareils : push-devices.ts).
 import { UsageStore } from "./usage.ts";
 import { str, strOrNull, num } from "./sql.ts";
 
-/** Un jeton push d'une app : une Live Activity (d'un run) ou l'appareil (`device`). */
+/** Le jeton push d'une Live Activity, pour un run. */
 export type PushTokenRow = {
   token: string;
-  kind: "activity" | "device";
+  kind: "activity";
   runId: string | null;
   client: string | null;
   createdAt: number;
@@ -37,7 +37,7 @@ export class PushStore extends UsageStore {
     return Number(result.changes) > 0;
   }
 
-  /** Les jetons push : ceux des Live Activities d'un run, ou ceux des appareils (`runId` absent). */
+  /** Les jetons push des Live Activities d'un run. */
   listPushTokens(filter: { kind: PushTokenRow["kind"]; runId?: string }): PushTokenRow[] {
     const rows =
       filter.runId !== undefined

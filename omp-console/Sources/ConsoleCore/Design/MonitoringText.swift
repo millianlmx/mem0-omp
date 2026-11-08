@@ -453,3 +453,42 @@ public enum MonitoringText {
     public static let digestSymbol = "sun.max"
     public static func digestWindow(_ since: String) -> String { L10n.format("Depuis le %@", since) }
 }
+
+/// Les NOTIFICATIONS des deux apps : les gestes qu'offre une notification (catégories
+/// `omp.validate`, `omp.approve`, `omp.open` d'omp-harness/push-alerts.ts) et, sur Mac,
+/// le texte des notifications locales tirées du flux du serveur — les mêmes mots que
+/// les alertes push que le serveur envoie à l'iPhone.
+public enum NotificationText {
+    // MARK: - Gestes
+
+    public static let validate = L10n.text("Valider")
+    public static let refuse = L10n.text("Refuser")
+    public static let approve = L10n.text("Approuver")
+    public static let open = L10n.text("Ouvrir")
+    public static let refusePlaceholder = L10n.text("La raison du refus")
+
+    // MARK: - Alertes
+
+    public static let specs = L10n.text("Specs à valider")
+    public static let verdict = L10n.text("Verdict à valider")
+    public static func questions(_ count: Int) -> String {
+        count == 1 ? L10n.text("Une question attend votre réponse") : L10n.format("%lld questions attendent votre réponse", count)
+    }
+    public static let approval = L10n.text("Poste — envoi à approuver")
+    public static let approvalBody = L10n.text("Rien ne part sans votre accord.")
+    public static let failed = L10n.text("Feature en échec")
+    public static let stalled = L10n.text("Agent muet")
+    public static let budget = L10n.text("Budget dépassé")
+    public static let dailyBudget = L10n.text("Plafond journalier atteint")
+    public static let dailyBudgetBody = L10n.text("Plus aucune étape ne démarre avant minuit UTC ou un plafond relevé.")
+    public static let vigieSilent = L10n.text("Vigie muette")
+    public static let vigieSilentBody = L10n.text("La vigie ne donne plus signe de vie.")
+    public static let backupFailed = L10n.text("Sauvegarde échouée")
+    public static let backupFailedBody = L10n.text("Une sauvegarde de la base a échoué.")
+    /// Un geste fait depuis une notification que le serveur a refusé (révision périmée, droits).
+    public static let gestureFailed = L10n.text("Geste non abouti")
+    public static let gestureFailedBody = L10n.text("Ouvrez l’app pour voir où en est la demande.")
+
+    /// « demo · Panier » : le dépôt d'abord, l'humain suit plusieurs projets.
+    public static func runLine(repo: String, title: String) -> String { "\(repo) · \(title)" }
+}

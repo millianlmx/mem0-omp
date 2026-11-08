@@ -10,7 +10,7 @@
 // d'héritage linéaire, chacune ne voyant que celles du dessous :
 //
 //   core → runs → journal → steps → decisions → heavy → projects → providers
-//        → sessions → usage → push → workstation → workstation-meetings
+//        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → Store
 //
@@ -34,6 +34,7 @@ export type { ProviderModel, ProviderRow } from "./db/providers.ts";
 export { groupUsage, modelKey, sumUsage } from "./db/usage.ts";
 export type { UsageRow, UsageTotals } from "./db/usage.ts";
 export type { PushTokenRow } from "./db/push.ts";
+export type { PushDeviceRow, PushEnvironment } from "./db/push-devices.ts";
 export type { IssueRunRow } from "./db/issues.ts";
 export { CLIENT_SOURCES } from "./db/observability.ts";
 export type { ClientErrorRow, ClientSource, StepDurations, UsageByModel } from "./db/observability.ts";

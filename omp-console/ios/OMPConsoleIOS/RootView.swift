@@ -22,6 +22,8 @@ struct RootView: View {
     @ObservedObject var memory: MemoryAccess
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// Les notifications : un toucher ouvre la bonne section ou la feature.
+    @ObservedObject var notifications: HarnessNotificationCenter
     /// Le poste de travail du même serveur (`server.workstation`) : son badge.
     @ObservedObject var workstation: WorkstationModel
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -34,6 +36,7 @@ struct RootView: View {
         memory: MemoryAccess,
         server: HarnessModel,
         drafts: HarnessDrafts,
+        notifications: HarnessNotificationCenter,
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
         memoryRecipe: IOSMemoryGraphRecipe? = nil
@@ -41,6 +44,7 @@ struct RootView: View {
         self.memory = memory
         self.server = server
         self.drafts = drafts
+        self.notifications = notifications
         self.workstation = server.workstation
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
@@ -110,6 +114,8 @@ struct RootView: View {
             // La palette ⌘K, la recherche ⌘F et la feuille « Nouvelle feature » ⌘N,
             // partagées avec le Mac (ConsoleUI) ; ⌘K et ⌘N passent par la barre des menus.
             .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.visible(IOSSection.all, isAdmin: server.isAdmin), memory: true) { select($0) }
+            .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { select($0) }
+            .focusedSceneValue(\.iosPalette, IOSPaletteAction(drafts: drafts, isEnabled: server.isConfigured))
             // Le socle des écrans partagés : le rendu Markdown, le direct d'une session
             // et la Live Activity d'une feature, propres à l'iPhone/iPad.
             .consoleShell(ConsoleShell(

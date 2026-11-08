@@ -16,8 +16,11 @@
 //
 // La racine pose aussi le socle des écrans partagés avec l'app iOS (`consoleShell` :
 // le rendu Markdown et le direct d'une session du Mac), la palette ⌘K/⌘F et la
-// feuille ⌘N (`consolePalette`), et ouvre les liens `ompconsole://<section>` (le
-// popup de l'extension Chrome ouvre `ompconsole://workstation` pour approuver).
+// feuille ⌘N (`consolePalette`), ouvre les liens `ompconsole://<section>` (le
+// popup de l'extension Chrome ouvre `ompconsole://workstation` pour approuver) et
+// l'endroit qu'une notification touchée désigne (`consoleNotificationRoutes`). App en
+// arrière-plan, chaque événement du flux qui attend l'humain devient une notification
+// locale (`HarnessNotificationCenter`), avec les gestes de l'iPhone.
 
 import AppKit
 import ConsoleClient
@@ -47,6 +50,8 @@ struct ConsoleRootView: View {
     @ObservedObject var components: ComponentPresenceModel
     let terminalModel: TerminalConsoleModel
     let projectChooser: ProjectChooserModel
+    /// Les notifications locales du Mac et la réponse à leurs actions.
+    @ObservedObject var notifications: HarnessNotificationCenter
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -139,15 +144,21 @@ struct ConsoleRootView: View {
                 .interactiveDismissDisabled(!presence.canLaunch)
         }
         .task {
+            notifications.attach(server, postsLocally: { !NSApp.isActive })
             await server.load()
             server.startLive()
         }
         // L'état du poste et ses envois à approuver (badge, Accueil), relus à chaque
-        // serveur relié ; le flux de la boîte les tient ensuite à jour.
+        // serveur relié ; le flux de la boîte les tient ensuite à jour. Un serveur relié :
+        // la permission de notifier est demandée (le système ne la demande qu'une fois).
         .task(id: server.address) {
             await workstation.refresh()
             await server.vigie.refresh()
+            if server.isConfigured { _ = await notifications.requestAuthorization() }
         }
+        // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
+        .onReceive(server.$client) { _ in notifications.refreshCategories() }
+        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { model.select($0) }
         .onOpenURL { url in
             if let section = HarnessWidgetLink.section(of: url) { model.select(section) }
         }

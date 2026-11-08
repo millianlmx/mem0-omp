@@ -8,8 +8,8 @@
 // qu'elle est ouverte.
 //
 // Le jeton d'authentification APNs est un JWT ES256 signé par la clé `.p8` d'Apple,
-// renouvelé toutes les 50 minutes. Un jeton d'activité refusé (410, BadDeviceToken)
-// est oublié.
+// renouvelé toutes les 50 minutes, partagé avec les alertes des appareils (`ApnsClient`,
+// push-alerts.ts). Un jeton d'activité refusé (410, BadDeviceToken) est oublié.
 import { createPrivateKey, sign } from "node:crypto";
 import * as fs from "node:fs";
 import * as http2 from "node:http2";
@@ -110,11 +110,9 @@ export const http2Transport: ApnsTransport = (request) =>
     stream.end(request.body);
   });
 
-export type PushDeps = {
-  store: Store;
+/** Ce qu'il faut pour parler à APNs ; `transport`, `readKey` et `now` sont doublés en test. */
+export type ApnsDeps = {
   config: () => ApnsConfig | null;
-  /** Ce que montre l'activité d'un run (état, étape, outil, alerte, coût). */
-  content: (run: RunRow) => ActivityContent;
   transport?: ApnsTransport;
   log?: LogLine;
   now?: () => number;
@@ -122,18 +120,89 @@ export type PushDeps = {
   readKey?: (file: string) => string;
 };
 
+/** Un envoi à un jeton, sur la passerelle de développement (`sandbox`) ou de production. */
+export type ApnsSend = (request: {
+  token: string;
+  sandbox: boolean;
+  headers: Record<string, string>;
+  body: string;
+}) => Promise<ApnsReply>;
+
+/** Le jeton est mort pour Apple (app désinstallée, jeton d'une autre passerelle) : on l'oublie. */
+export function tokenGone(reply: ApnsReply): boolean {
+  return reply.status === 410 || reply.reason === "BadDeviceToken" || reply.reason === "Unregistered";
+}
+
+/**
+ * Le client APNs du service, partagé par les Live Activities et les alertes : UN JWT
+ * (Apple refuse qu'on le renouvelle trop souvent), renouvelé toutes les 50 minutes.
+ */
+export class ApnsClient {
+  readonly #deps: ApnsDeps;
+  readonly #now: () => number;
+  readonly #transport: ApnsTransport;
+  #jwt: { token: string; at: number } | null = null;
+
+  constructor(deps: ApnsDeps) {
+    this.#deps = deps;
+    this.#now = deps.now ?? Date.now;
+    this.#transport = deps.transport ?? http2Transport;
+  }
+
+  get configured(): boolean {
+    return this.#deps.config() !== null;
+  }
+
+  /** L'envoyeur du moment, ou `null` : APNs non configuré, ou clé illisible (journalisé). */
+  sender(): ApnsSend | null {
+    const config = this.#deps.config();
+    if (!config) return null;
+    let jwt: string;
+    try {
+      jwt = this.#authorization(config);
+    } catch (err) {
+      this.#deps.log?.(`apns : clé illisible (${err instanceof Error ? err.message : String(err)})`, {
+        level: "error",
+      });
+      return null;
+    }
+    return (request) =>
+      this.#transport({
+        host: request.sandbox ? "api.sandbox.push.apple.com" : "api.push.apple.com",
+        path: `/3/device/${request.token}`,
+        headers: { authorization: `bearer ${jwt}`, ...request.headers },
+        body: request.body,
+      });
+  }
+
+  #authorization(config: ApnsConfig): string {
+    const now = this.#now();
+    if (this.#jwt && now - this.#jwt.at < JWT_TTL_MS) return this.#jwt.token;
+    const key = (this.#deps.readKey ?? ((file: string) => fs.readFileSync(file, "utf8")))(config.keyFile);
+    this.#jwt = { token: apnsJwt(config, key, Math.floor(now / 1000)), at: now };
+    return this.#jwt.token;
+  }
+}
+
+export type PushDeps = ApnsDeps & {
+  store: Store;
+  /** Ce que montre l'activité d'un run (état, étape, outil, alerte, coût). */
+  content: (run: RunRow) => ActivityContent;
+  /** Le client APNs partagé du service ; à défaut, un client propre bâti sur ces dépendances. */
+  apns?: ApnsClient;
+};
+
 export class ActivityPusher {
   readonly #deps: PushDeps;
   readonly #now: () => number;
-  readonly #transport: ApnsTransport;
+  readonly #apns: ApnsClient;
   readonly #lastToolPush = new Map<string, number>();
-  #jwt: { token: string; at: number } | null = null;
   readonly #inFlight = new Set<Promise<void>>();
 
   constructor(deps: PushDeps) {
     this.#deps = deps;
     this.#now = deps.now ?? Date.now;
-    this.#transport = deps.transport ?? http2Transport;
+    this.#apns = deps.apns ?? new ApnsClient(deps);
   }
 
   /** L'abonnement au journal : rendu pour pouvoir le défaire. */
@@ -174,16 +243,8 @@ export class ActivityPusher {
 
   async #send(tokens: string[], content: ActivityContent, ended: boolean): Promise<void> {
     const config = this.#deps.config();
-    if (!config) return;
-    let jwt: string;
-    try {
-      jwt = this.#authorization(config);
-    } catch (err) {
-      this.#deps.log?.(`apns : clé illisible (${err instanceof Error ? err.message : String(err)})`, {
-        level: "error",
-      });
-      return;
-    }
+    const send = this.#apns.sender();
+    if (!config || !send) return;
     const nowSec = Math.floor(this.#now() / 1000);
     const body = JSON.stringify({
       aps: {
@@ -193,13 +254,11 @@ export class ActivityPusher {
         ...(ended ? { "dismissal-date": nowSec + DISMISS_AFTER_SEC } : { "stale-date": nowSec + 4 * 3600 }),
       },
     });
-    const host = config.sandbox ? "api.sandbox.push.apple.com" : "api.push.apple.com";
     for (const token of tokens) {
-      const reply = await this.#transport({
-        host,
-        path: `/3/device/${token}`,
+      const reply = await send({
+        token,
+        sandbox: config.sandbox,
         headers: {
-          authorization: `bearer ${jwt}`,
           "apns-topic": `${config.topic}.push-type.liveactivity`,
           "apns-push-type": "liveactivity",
           "apns-priority": ended ? "10" : "5",
@@ -207,18 +266,9 @@ export class ActivityPusher {
         },
         body,
       });
-      if (reply.status === 410 || reply.reason === "BadDeviceToken" || reply.reason === "Unregistered" || ended)
-        this.#deps.store.deletePushToken(token);
+      if (tokenGone(reply) || ended) this.#deps.store.deletePushToken(token);
       else if (reply.status !== 200)
         this.#deps.log?.(`apns : ${reply.status} ${reply.reason ?? ""}`.trim(), { level: "warn" });
     }
-  }
-
-  #authorization(config: ApnsConfig): string {
-    const now = this.#now();
-    if (this.#jwt && now - this.#jwt.at < JWT_TTL_MS) return this.#jwt.token;
-    const key = (this.#deps.readKey ?? ((file: string) => fs.readFileSync(file, "utf8")))(config.keyFile);
-    this.#jwt = { token: apnsJwt(config, key, Math.floor(now / 1000)), at: now };
-    return this.#jwt.token;
   }
 }

@@ -582,7 +582,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `monitoring.slowFactor` | `2` | une étape plus longue que ce multiple de la médiane de son type alerte (`step_slow`) ; `null` : jamais |
 | `monitoring.fixLoop` | `2` | à partir de ce nombre de corrections, la boucle revue ⇄ correction alerte (`fix_loop`) ; `null` : jamais |
 | `monitoring.sampleSec`, `monitoring.keep` | `15`, `480` | la santé du serveur (`GET /v1/metrics`) : un point toutes les 15 s, écrit en base ; sans `since`, les 480 derniers (2 h) |
-| `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée ; `null` : elles ne bougent que l'app ouverte |
+| `apns` | `null` | `{ keyFile, keyId, teamId, topic, sandbox }` : la clé `.p8` d'Apple qui met à jour les Live Activities de l'app iOS app fermée et envoie les alertes push des appareils enregistrés (§ « Les alertes push des appareils ») ; `null` : les activités ne bougent que l'app ouverte, et aucune alerte ne part |
 | `workstation.enabled` | `true` | le poste de travail (§ « Le poste de travail ») ; `false` : les routes `/v1/workstation*` rendent 404 et l'agent 24/24 ne tourne pas |
 | `workstation.thresholdHours` | `8` | les heures d'observation (temps actif cumulé) après lesquelles l'autonomie `auto` passe d'`observe` à `act` ; un réglage posé depuis une app prime |
 | `workstation.retentionDays` | `30` | observations et segments de transcript plus vieux sont purgés, et le `result` des actions plus vieilles vidé (`null`) (au plus une fois par heure) ; le temps observé cumulé, les meetings résumés, le profil et les lignes du journal des actions restent |
@@ -1583,8 +1583,9 @@ du service, `commit` construit ou `null`, `api`, `features`). La colonne « Rôl
 (`API_FEATURES`, `http.ts`) : un client teste la capacité avant d'offrir le geste.
 Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions` de
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
-`admin-repos` (`POST /v1/repos`) et `reload` (le rechargement de la configuration,
-`POST /v1/reload`).
+`admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
+`POST /v1/reload`) et `push-alerts` (`POST /v1/push/devices`, les alertes push des
+appareils iOS).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -1634,6 +1635,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /metrics` | viewer | L'exposition Prometheus du service (§ Observabilité) ; 403 à un client borné à des dépôts. |
 | `POST /v1/client-errors` `{source, version, kind, message, context?}` | viewer | Une erreur d'un client (`source` : `mac` \| `ios` \| `chrome` \| `omp` \| `vigie` ; `context` : objet de 8 Kio au plus) : 202 `{id}`, événement `client_error`, ligne de journal error ; 60 par minute et par client, puis 429 avec `Retry-After`. |
 | `GET /v1/client-errors?since=&source=&limit=` | viewer | Les erreurs des clients, les plus récentes d'abord (200 par défaut, 1000 au plus) ; un client borné à des dépôts ne voit que les siennes. |
+| `POST /v1/push/devices` `{token, platform: "ios", environment: "sandbox" \| "production"}` · `DELETE /v1/push/devices/{jeton}` | viewer | Un appareil iOS et son jeton APNs, liés au client qui l'enregistre (201 nouveau, 200 déjà connu : un jeton enregistré par un autre client passe à celui-ci) ; `pushes` dit si le serveur a une clé APNs. `environment` choisit la passerelle d'Apple (`sandbox` : app installée depuis Xcode). `DELETE` ne retire que les appareils du client qui appelle, tous pour un admin (`removed`). Ce que l'appareil reçoit : § « Les alertes push des appareils ». |
 | `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-têtes `X-OMP-Extension: <version>`, `X-OMP-Browser`, `X-OMP-Browser-Label` et `X-OMP-Agent-Tabs: <onglets de la fenêtre de l'agent>`) : 200 `{action}` de CE navigateur passée `running`, ou 204. |
@@ -1824,3 +1826,36 @@ programme développeur) :
 
 Une activité dont le jeton est refusé par Apple est oubliée ; sans `apns`, rien ne
 part et l'activité ne bouge que l'app ouverte.
+
+### Les alertes push des appareils (APNs)
+
+La même clé `.p8` (rien de plus à configurer côté serveur que `apns` ci-dessus) sert
+aux alertes de l'iPhone : après l'appairage, l'app demande la permission de notifier,
+puis enregistre le jeton de l'appareil (`POST /v1/push/devices`, `environment`
+`sandbox` pour une app installée depuis Xcode, `production` pour TestFlight et l'App
+Store — `apns.sandbox` ne vaut que pour les Live Activities). Côté Apple, l'App ID
+`com.omp.console.ios` doit avoir la capacité **Push Notifications** (déjà requise par
+les Live Activities ; l'entitlement `aps-environment` est dans
+`omp-console/ios/OMPConsoleIOS.entitlements`).
+
+Le serveur pousse (`apns-push-type: alert`, `push-alerts.ts`) :
+
+| Événement | Alerte (`omp.kind`) | Qui la reçoit | Catégorie |
+|---|---|---|---|
+| `specs_ready` · `verdict` | `specs` · `verdict` | les clients qui voient le dépôt | `omp.validate` (Valider / Refuser) pour un opérateur, sinon `omp.open` |
+| `escalations` | `escalation` | les clients qui voient le dépôt | `omp.open` |
+| `run_failed` · `stalled` · `budget_exceeded` | `run_failed` · `stalled` · `budget` | les clients qui voient le dépôt | `omp.open` |
+| `workstation_approval` | `approval` | l'approbateur seul (`harness.sh approver`) | `omp.approve` (Approuver / Refuser) |
+| `daily_budget_reached` · `vigie_silent` · `backup_failed` | `daily_budget` · `vigie_silent` · `backup_failed` | les clients qui voient tous les dépôts | `omp.open` |
+
+Les droits sont ceux du client qui a enregistré l'appareil, relus à chaque envoi ;
+l'appareil d'un client révoqué est oublié. La charge est minimale : un titre, le dépôt
+et le titre du run, et `omp` `{kind, runId?, rev?, seq?}` — jamais le contenu du poste
+(ni résumé, ni destinataires, ni brouillon), ni question, ni raison d'échec. `rev` est
+l'If-Match du geste fait depuis la notification (la révision du run, ou l'`updatedAt`
+de l'envoi du poste) : si le run ou l'envoi a bougé depuis, le serveur refuse (412) et
+rien n'est tranché. Les notifications d'un run se groupent (`thread-id` : l'id du run ;
+`workstation` ; `server`). Une même alerte ne part qu'une fois en 12 h (même révision,
+même silence d'agent, même sauvegarde en échec), et porte sa clé en `apns-collapse-id`.
+Un jeton refusé par Apple (410, `BadDeviceToken`, `Unregistered`) est oublié ; l'app
+le réenregistre à son prochain lancement.

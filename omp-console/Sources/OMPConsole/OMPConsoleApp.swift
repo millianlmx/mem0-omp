@@ -51,6 +51,8 @@ struct OMPConsoleApp: App {
     @StateObject private var componentsModel: ComponentPresenceModel
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal.
     @StateObject private var projectChooser = ProjectChooserModel()
+    /// Les notifications : locales tant que l'app tourne en arrière-plan, et leurs gestes.
+    @StateObject private var notifications = HarnessNotificationCenter()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
@@ -95,7 +97,8 @@ struct OMPConsoleApp: App {
                 setup: setupModel,
                 components: componentsModel,
                 terminalModel: terminalModel,
-                projectChooser: projectChooser
+                projectChooser: projectChooser,
+                notifications: notifications
             )
         }
         .commands {

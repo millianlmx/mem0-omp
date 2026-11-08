@@ -103,6 +103,7 @@ export const API_FEATURES = [
   "client-errors",
   "prometheus",
   "vigie",
+  "push-alerts",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -649,6 +650,23 @@ export function apiRoutes(
     route("DELETE", "/v1/push/activities/{name}", "viewer", (call) => {
       const owner = allows(call.client.role, "admin") ? null : call.client.name;
       send(call.res, 200, { removed: store.deletePushToken(call.match[1] as string, owner) });
+    }),
+    // Un appareil iOS et ses alertes push : il reçoit ce que voit le client qui l'enregistre.
+    route("POST", "/v1/push/devices", "viewer", async (call) => {
+      const body = await readBody(call.req);
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      if (!/^[0-9a-f]{16,512}$/i.test(token)) throw new HarnessError(400, "token : hexadécimal attendu");
+      if (body.platform !== "ios") throw new HarnessError(400, "platform : « ios » attendu");
+      const environment = body.environment;
+      if (environment !== "sandbox" && environment !== "production")
+        throw new HarnessError(400, "environment : « sandbox » ou « production » attendu");
+      const added = store.putPushDevice({ token, client: call.client.name, platform: "ios", environment });
+      send(call.res, added ? 201 : 200, { registered: true, pushes: orchestrator.config.apns !== null });
+    }),
+    // Comme les jetons d'activité : un client n'oublie que SES appareils (un admin, tous).
+    route("DELETE", "/v1/push/devices/{name}", "viewer", (call) => {
+      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      send(call.res, 200, { removed: store.deletePushDevice(call.match[1] as string, owner) });
     }),
     // La santé au fil du temps : `?since=` (ms) rend les points depuis cet instant (gardés
     // `metrics.retentionDays` jours), sinon les `monitoring.keep` derniers.

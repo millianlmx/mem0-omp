@@ -143,6 +143,8 @@ export async function startHarness(
   snapshots.start();
   const token = options.token ?? loadToken(config);
   const clients = new ClientRegistry(config.clientsFile, token, log);
+  // Les alertes push suivent les droits de chaque client, relus dans ce registre à chaque envoi.
+  orchestrator.alerts.useClients(clients);
   const admin = new ConfigAdmin(options.configFile ?? null, orchestrator, { git });
   const server = http.createServer(createHandler({ orchestrator, clients, admin, log }));
   await new Promise<void>((resolve) => server.listen(config.listen.port, config.listen.host, resolve));
