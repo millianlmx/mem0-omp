@@ -125,7 +125,11 @@ test("harness-nixos/AC-3 : le module prend omp en paquet, pose la clé SSH du se
   assert.match(MODULE, /StrictHostKeyChecking accept-new/);
   assert.match(MODULE, /writeShellScriptBin "omp-harness-check"/);
   assert.match(MODULE, /main\.ts --config \/etc\/omp-harness\/config\.json --check'/);
-  assert.match(MODULE, /path = \[ pkgs\.git pkgs\.openssh pkgs\.gh \];/, "merge: gh marche aussi sur NixOS");
+  assert.match(
+    MODULE,
+    /path = \[ pkgs\.git pkgs\.openssh pkgs\.gh pkgs\.glab \];/,
+    "merge: gh marche aussi sur NixOS, sur GitHub comme sur GitLab",
+  );
 });
 
 test("harness-nixos/AC-4 : les embeddings de la mémoire tournent sur la machine (Ollama local), et `tailscale serve` se déclare dans le flake", () => {

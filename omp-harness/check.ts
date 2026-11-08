@@ -8,10 +8,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import { modelChain } from "./config.ts";
+import { openForge } from "./forge.ts";
 import { remoteEnv, type Git } from "./git.ts";
 import { LOCAL_PROVIDER, localProvider } from "./local-model.ts";
 import { STEP_KINDS } from "./machine.ts";
-import { PolicyRefusal, ghEnv, policyChain } from "./policy.ts";
+import { PolicyRefusal, policyChain } from "./policy.ts";
 import type { Exec } from "./proc.ts";
 import { engine, memoryExtension } from "./runner.ts";
 
@@ -120,7 +121,7 @@ async function checkModelPolicy(
   return lines;
 }
 
-/** Le jeton mémoire et le compte gh propres au dépôt : présents là où la configuration les attend. */
+/** Le jeton mémoire et les comptes gh et GitLab propres au dépôt : présents là où la configuration les attend. */
 function checkRepoAccounts(repo: RepoConfig, env: Record<string, string | undefined>): CheckLine[] {
   const label = (what: string) => `dépôt ${repo.name} — ${what}`;
   const lines: CheckLine[] = [];
@@ -136,22 +137,34 @@ function checkRepoAccounts(repo: RepoConfig, env: Record<string, string | undefi
             fix: `Crée un jeton mem0-rs limité à la scope du dépôt (MEM0_HTTP_TOKENS) et pose-le dans ${memory} (environnement du service).`,
           },
     );
-  const token = repo.gh?.tokenEnv;
-  if (token !== undefined && !env[token]?.trim())
-    lines.push({
-      status: "fail",
-      label: label("compte gh"),
-      detail: `${token} est absente de l'environnement du service`,
-      fix: `Pose le jeton GitHub du compte de ce dépôt dans ${token}.`,
-    });
-  const configDir = repo.gh?.configDir;
-  if (configDir !== undefined && !fs.existsSync(configDir))
-    lines.push({
-      status: "fail",
-      label: label("compte gh"),
-      detail: `${configDir} n'existe pas`,
-      fix: `GH_CONFIG_DIR=${configDir} gh auth login (sous l'utilisateur du service)`,
-    });
+  const host = repo.gitlab?.host ? ` --hostname ${repo.gitlab.host.replace(/^https?:\/\//, "")}` : "";
+  const accounts = [
+    { what: "compte gh", forge: "GitHub", account: repo.gh, login: "GH_CONFIG_DIR={dir} gh auth login" },
+    {
+      what: "compte GitLab",
+      forge: "GitLab",
+      account: repo.gitlab,
+      login: `GLAB_CONFIG_DIR={dir} glab auth login${host}`,
+    },
+  ];
+  for (const { what, forge, account, login } of accounts) {
+    const token = account?.tokenEnv;
+    if (token !== undefined && !env[token]?.trim())
+      lines.push({
+        status: "fail",
+        label: label(what),
+        detail: `${token} est absente de l'environnement du service`,
+        fix: `Pose le jeton ${forge} du compte de ce dépôt dans ${token}.`,
+      });
+    const configDir = account?.configDir;
+    if (configDir !== undefined && !fs.existsSync(configDir))
+      lines.push({
+        status: "fail",
+        label: label(what),
+        detail: `${configDir} n'existe pas`,
+        fix: `${login.replace("{dir}", configDir)} (sous l'utilisateur du service)`,
+      });
+  }
   return lines;
 }
 
@@ -379,31 +392,18 @@ async function checkRepo(repo: RepoConfig, deps: CheckDeps, contained: boolean):
       );
     }
   }
-  if (repo.merge === "gh" || repo.gh !== undefined) {
-    // Sous le compte du dépôt s'il en déclare un ; un jeton absent est déjà signalé (checkRepoAccounts).
-    let env: Record<string, string | undefined> | undefined;
-    try {
-      env = ghEnv(repo, deps.env ?? process.env);
-    } catch {
-      return lines;
-    }
-    const auth = await exec("gh", ["auth", "status"], {
-      cwd: repo.path,
-      timeoutMs: 30_000,
-      ...(env ? { env } : {}),
-    }).catch(() => null);
-    lines.push(
-      auth && auth.code === 0
-        ? { status: "ok", label: label("gh"), detail: repo.gh ? "authentifié (compte du dépôt)" : "authentifié" }
-        : {
-            status: "fail",
-            label: label("gh"),
-            detail: "gh absent ou non authentifié",
-            fix: repo.gh?.configDir
-              ? `sudo -u omp-harness -H env GH_CONFIG_DIR=${repo.gh.configDir} gh auth login`
-              : "sudo -u omp-harness -H gh auth login",
-          },
-    );
+  // La CLI de la forge, pour les dépôts qui s'en servent : PR (`merge: "gh"`), ou un compte
+  // ou une forge déclarés. Sous le compte du dépôt ; un jeton absent est déjà signalé (checkRepoAccounts).
+  if (repo.merge === "gh" || repo.gh !== undefined || repo.gitlab !== undefined || (repo.forge ?? "none") !== "none") {
+    const forge = await openForge(repo, { exec, git, env: deps.env ?? process.env });
+    const auth = await forge.auth().catch(() => null);
+    const cli = label(forge.kind === "gitlab" ? "glab" : forge.kind === "github" ? "gh" : "forge");
+    if (auth !== null)
+      lines.push(
+        auth.ok
+          ? { status: "ok", label: cli, detail: auth.detail }
+          : { status: "fail", label: cli, detail: auth.detail, fix: auth.fix },
+      );
   }
   return lines;
 }

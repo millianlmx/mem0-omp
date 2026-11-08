@@ -13,20 +13,20 @@
 // Le message du squash vient du verdict (`commit` : sujet Conventional Commits, corps),
 // suivi des décisions et du trailer `Harness-Run` ; le résumé de la revue n'y entre pas.
 //
-// Mode `gh` : une PR, `gh pr merge --squash --auto`, puis l'attente de la fusion
-// constatée (les checks requis de la branche protégée) — jamais « merged » avant que
-// GitHub l'ait fait. Mode `local` : squash puis push ; un push refusé n'est PAS un
-// merge : le run attend l'humain avec la raison (une coupure réseau est réessayée).
+// Mode `gh` : une PR (une MR sur GitLab) sur la forge du dépôt (forge.ts), sa fusion
+// squash automatique, puis l'attente de la fusion constatée (les checks requis de la
+// branche protégée, le pipeline) — jamais « merged » avant que la forge l'ait fait. Mode
+// `local` : squash puis push ; un push refusé n'est PAS un merge : le run attend
+// l'humain avec la raison (une coupure réseau est réessayée).
 import * as path from "node:path";
 import type { RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import type { DecisionRow, DecisionStatus, RunRow } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { type Forge, openForge } from "./forge.ts";
 import { remoteEnv } from "./git.ts";
 import { afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
-import { ghEnv } from "./policy.ts";
-import type { ProcResult } from "./proc.ts";
 
 export type MergerHooks = {
   /** Un merge (réussi ou non) a quitté la file : l'orchestrateur refait un tour. */
@@ -55,12 +55,6 @@ function decisionLine(decision: DecisionRow): string {
         ? ` (renversée par l'humain : ${decision.reversalReason ?? "sans raison donnée"})`
         : "";
   return `${decision.question} → ${chosen}${mark}`;
-}
-
-/** Une URL https dans une sortie de `gh` (stdout de `pr create`, ou stderr « already exists: … »). */
-function urlIn(output: string): string | null {
-  const match = /https:\/\/\S+/.exec(output);
-  return match ? match[0].replace(/[.,)]+$/, "") : null;
 }
 
 export class Merger {
@@ -184,7 +178,7 @@ export class Merger {
           ...(review === "" ? [] : ["## Revue", review, ""]),
           ...trailer,
         ];
-        const outcome = await this.#mergeWithGh(run, repo, { subject, commitBody, prBody: prBody.join("\n") });
+        const outcome = await this.#mergeWithForge(run, repo, { subject, commitBody, prBody: prBody.join("\n") });
         if (outcome.prUrl !== null && outcome.prUrl !== run.prUrl)
           run = store.updateRun(run.id, { prUrl: outcome.prUrl });
         if (outcome.kind === "merged") {
@@ -238,20 +232,14 @@ export class Merger {
     return false;
   }
 
-  /** `gh` dans le clone, sous le compte GitHub du dépôt (policy.ts) s'il en déclare un. */
-  #gh(repo: RepoConfig, args: string[]): Promise<ProcResult> {
-    const env = ghEnv(repo);
-    return this.#ctx.exec("gh", args, { cwd: repo.path, timeoutMs: 120_000, ...(env ? { env } : {}) });
-  }
-
   /**
-   * Mode `gh` : la PR (créée ou retrouvée), `gh pr merge --squash --auto`, puis l'attente
-   * de la fusion constatée par `gh pr view`, toutes les `mergePollSec`, jusqu'à
-   * `mergeWaitSec`. Fermée sans fusion, refusée ou trop longue : le merge s'arrête. Le
-   * squash prend `--subject` et `--body` : sans eux, GitHub composerait le message
-   * depuis le titre et les commits de la PR, ou son corps, selon le réglage du dépôt.
+   * Mode `gh` : la PR (créée ou retrouvée) sur la forge du dépôt, sa fusion squash
+   * automatique, puis l'attente de la fusion constatée, relue toutes les `mergePollSec`,
+   * jusqu'à `mergeWaitSec`. Fermée sans fusion, refusée ou trop longue : le merge
+   * s'arrête. Le squash prend le sujet et le corps du verdict : sans eux, la forge
+   * composerait le message depuis le titre et les commits de la PR, selon son réglage.
    */
-  async #mergeWithGh(
+  async #mergeWithForge(
     run: RunRow,
     repo: RepoConfig,
     message: { subject: string; commitBody: string; prBody: string },
@@ -260,66 +248,46 @@ export class Merger {
     const remote = repo.remote ?? "origin";
     const worktree = run.worktree;
     if (worktree === null) throw new Error("le run n'a plus de worktree");
+    const forge = await this.#forge(repo);
     await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
-    const created = await this.#gh(repo, [
-      "pr",
-      "create",
-      "-B",
-      repo.mainBranch,
-      "-H",
-      run.branch,
-      "-t",
-      message.subject,
-      "-b",
-      message.prBody,
-    ]);
-    // Une PR existe déjà pour la branche (merge relancé) : gh le dit, avec son URL.
-    const prUrl = urlIn(created.stdout) ?? urlIn(created.stderr) ?? run.prUrl;
-    if (created.code !== 0 && prUrl === null) throw new Error(`gh pr create : ${created.stderr.trim().slice(0, 300)}`);
-    const merge = await this.#gh(repo, [
-      "pr",
-      "merge",
-      run.branch,
-      "--squash",
-      "--auto",
-      "--delete-branch",
-      "--subject",
-      message.subject,
-      "--body",
-      message.commitBody,
-    ]);
-    if (merge.code !== 0)
-      return { kind: "stopped", prUrl, reason: `gh pr merge --auto refusé : ${merge.stderr.trim().slice(0, 300)}` };
+    const prUrl = await forge.openChange(
+      { head: run.branch, base: repo.mainBranch, title: message.subject, body: message.prBody },
+      run.prUrl,
+    );
+    try {
+      await forge.autoMerge(run.branch, { subject: message.subject, body: message.commitBody });
+    } catch (err) {
+      return { kind: "stopped", prUrl, reason: err instanceof Error ? err.message : String(err) };
+    }
     const deadline = Date.now() + config.review.mergeWaitSec * 1000;
+    const change = forge.kind === "gitlab" ? "MR" : "PR";
     for (;;) {
-      const view = await this.#gh(repo, ["pr", "view", run.branch, "--json", "state,mergedAt"]);
-      const state = view.code === 0 ? this.#prState(view.stdout) : null;
+      const state = await forge.changeState(run.branch);
       if (state === "MERGED") {
         await this.#ctx.fetchMain(repo);
         return { kind: "merged", prUrl };
       }
-      if (state === "CLOSED") return { kind: "stopped", prUrl, reason: "la PR a été fermée sans être fusionnée" };
+      if (state === "CLOSED")
+        return { kind: "stopped", prUrl, reason: `la ${change} a été fermée sans être fusionnée` };
       if (Date.now() >= deadline)
         return {
           kind: "stopped",
           prUrl,
-          reason: `fusion non constatée après ${config.review.mergeWaitSec} s (checks ou revue en attente sur la PR)`,
+          reason: `fusion non constatée après ${config.review.mergeWaitSec} s (checks ou revue en attente sur la ${change})`,
         };
       await new Promise<void>((resolve) => setTimeout(resolve, config.review.mergePollSec * 1000));
     }
   }
 
-  /** L'état d'une PR dans la sortie de `gh pr view --json state,mergedAt` ; `null` si illisible. */
-  #prState(stdout: string): "OPEN" | "MERGED" | "CLOSED" | null {
-    try {
-      const parsed: unknown = JSON.parse(stdout);
-      if (parsed === null || typeof parsed !== "object") return null;
-      if ("mergedAt" in parsed && typeof parsed.mergedAt === "string" && parsed.mergedAt !== "") return "MERGED";
-      if (!("state" in parsed) || typeof parsed.state !== "string") return null;
-      return parsed.state === "MERGED" || parsed.state === "CLOSED" || parsed.state === "OPEN" ? parsed.state : null;
-    } catch {
-      return null;
-    }
+  /** La forge des PR du dépôt ; sans forge, le mode `gh` est refusé en le disant. */
+  async #forge(repo: RepoConfig): Promise<Forge> {
+    const forge = await openForge(repo, { exec: this.#ctx.exec, git: this.#ctx.git });
+    if (forge.kind === "none")
+      throw new HarnessError(
+        409,
+        `le dépôt ${repo.name} est en \`"merge": "gh"\` mais n'a pas de forge : déclare \`forge\` ("github" ou "gitlab"), ou passe-le en \`"merge": "local"\``,
+      );
+    return forge;
   }
 
   /**
@@ -409,7 +377,7 @@ export class Merger {
         throw new HarnessError(409, `revert impossible : ${(reverted.stderr || reverted.stdout).trim().slice(0, 300)}`);
       }
       const sha = await git.revParse(scratch, "HEAD");
-      result = repo.merge === "gh" ? await this.#revertWithGh(run, repo, scratch, sha) : { sha, prUrl: null };
+      result = repo.merge === "gh" ? await this.#revertWithForge(run, repo, scratch, sha) : { sha, prUrl: null };
       if (repo.merge === "local") {
         await git.run(repo.path, ["update-ref", `refs/heads/${repo.mainBranch}`, sha, main]);
         if (repo.remote) {
@@ -458,8 +426,8 @@ export class Merger {
     );
   }
 
-  /** Mode `gh` : la branche de revert poussée, une PR, `gh pr merge --squash --auto`. */
-  async #revertWithGh(
+  /** Mode `gh` : la branche de revert poussée, une PR sur la forge, sa fusion squash automatique. */
+  async #revertWithForge(
     run: RunRow,
     repo: RepoConfig,
     scratch: string,
@@ -468,25 +436,18 @@ export class Merger {
     const { git } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const branch = `harness/revert-${run.slug}`;
+    const forge = await this.#forge(repo);
     await git.run(scratch, ["push", "-q", "-f", remote, `${branch}:${branch}`], remoteEnv(repo));
-    const created = await this.#gh(repo, [
-      "pr",
-      "create",
-      "-B",
-      repo.mainBranch,
-      "-H",
-      branch,
-      "-t",
-      `Revert « ${run.title} »`.slice(0, 120),
-      "-b",
-      `Revert du commit ${run.mergeSha?.slice(0, 12) ?? ""} (run ${run.id}).\n\nHarness-Run: ${run.id}`,
-    ]);
-    const prUrl = urlIn(created.stdout) ?? urlIn(created.stderr);
-    if (created.code !== 0 && prUrl === null)
-      throw new HarnessError(502, `gh pr create (revert) : ${created.stderr.trim().slice(0, 300)}`);
-    const merge = await this.#gh(repo, ["pr", "merge", branch, "--squash", "--auto", "--delete-branch"]);
-    if (merge.code !== 0)
-      throw new HarnessError(502, `gh pr merge --auto (revert) : ${merge.stderr.trim().slice(0, 300)}`);
+    const prUrl = await forge.openChange(
+      {
+        head: branch,
+        base: repo.mainBranch,
+        title: `Revert « ${run.title} »`.slice(0, 120),
+        body: `Revert du commit ${run.mergeSha?.slice(0, 12) ?? ""} (run ${run.id}).\n\nHarness-Run: ${run.id}`,
+      },
+      null,
+    );
+    await forge.autoMerge(branch, null);
     return { sha, prUrl };
   }
 }

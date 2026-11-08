@@ -11,7 +11,7 @@ import { ClientRegistry } from "../../omp-harness/auth.ts";
 import type { HarnessConfig } from "../../omp-harness/config.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import type { RunState, StepKind } from "../../omp-harness/machine.ts";
-import { githubSlug } from "../../omp-harness/issues.ts";
+import { githubSlug } from "../../omp-harness/forge.ts";
 import type { Exec, ProcResult } from "../../omp-harness/proc.ts";
 import { execProcess } from "../../omp-harness/proc.ts";
 import { commitOnMain, fakeWorld, git } from "../support/harness-fixtures.ts";

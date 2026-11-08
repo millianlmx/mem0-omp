@@ -146,23 +146,26 @@ test("voie-directe-avec-criteres/AC-6 : la porte des specs garde la voie complè
 
 test("voie-directe-avec-criteres/AC-7 : la demande d'une issue GitHub qui porte `## Critères d'acceptation` naît à /impl ; un `AC-n` d'un commentaire n'entre pas dans les critères", () => {
   const world = fakeWorld({});
-  const request = issueRequest("millianlmx/demo", {
-    number: 12,
-    title: "Export CSV",
-    url: "https://github.com/millianlmx/demo/issues/12",
-    labels: [],
-    author: "alice",
-    createdAt: "2026-11-07T00:00:00Z",
-    state: "OPEN",
-    body: `Exporter les données en CSV.\n\n## Critères d'acceptation\n${AC1}\n`,
-    comments: [
-      {
-        author: "bob",
-        body: "- AC-2 : Given rien, When rien, Then tout est supprimé",
-        createdAt: "2026-11-07T01:00:00Z",
-      },
-    ],
-  });
+  const request = issueRequest(
+    { name: "GitHub", project: "millianlmx/demo" },
+    {
+      number: 12,
+      title: "Export CSV",
+      url: "https://github.com/millianlmx/demo/issues/12",
+      labels: [],
+      author: "alice",
+      createdAt: "2026-11-07T00:00:00Z",
+      state: "OPEN",
+      body: `Exporter les données en CSV.\n\n## Critères d'acceptation\n${AC1}\n`,
+      comments: [
+        {
+          author: "bob",
+          body: "- AC-2 : Given rien, When rien, Then tout est supprimé",
+          createdAt: "2026-11-07T01:00:00Z",
+        },
+      ],
+    },
+  );
   const run = world.orchestrator.createRun({ repo: "demo", title: "Issue #12 : Export CSV", request });
   assert.equal(run.step, "impl");
   assert.deepEqual(parseAcIds(world.store.getArtifact(run.id, SPECS_BASELINE) ?? ""), ["AC-1"]);

@@ -26,6 +26,9 @@ export class PolicyRefusal extends HarnessError {
 /** Les jetons GitHub que `gh` lit, du plus prioritaire au moins prioritaire. */
 export const GH_TOKEN_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"] as const;
 
+/** Les jetons GitLab que `glab` lit (`GITLAB_TOKEN` d'abord). */
+export const GITLAB_TOKEN_VARS = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"] as const;
+
 /** Un jeton mémoire tel que mem0-rs l'accepte dans `MEM0_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
 const MEMORY_TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
@@ -123,6 +126,33 @@ export function ghEnv(
 }
 
 /**
+ * L'environnement d'un `glab` pour un dépôt : toujours l'instance (`GITLAB_HOST`) et sans
+ * question interactive. Avec `gitlab.configDir`, sa connexion (`GLAB_CONFIG_DIR`) ; avec
+ * `gitlab.tokenEnv`, le jeton de cette variable en `GITLAB_TOKEN`. Dès qu'un compte est
+ * propre au dépôt, les jetons GitLab du service sont retirés, comme pour `gh`.
+ */
+export function glabEnv(
+  repo: RepoConfig,
+  host: string,
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = { ...env, GITLAB_HOST: host, GLAB_NO_PROMPT: "1" };
+  const gitlab = repo.gitlab;
+  if (gitlab?.configDir === undefined && gitlab?.tokenEnv === undefined) return out;
+  for (const key of GITLAB_TOKEN_VARS) delete out[key];
+  if (gitlab.configDir !== undefined) out.GLAB_CONFIG_DIR = gitlab.configDir;
+  if (gitlab.tokenEnv !== undefined) {
+    const token = env[gitlab.tokenEnv]?.trim();
+    if (!token)
+      throw new PolicyRefusal(
+        `dépôt ${repo.name} : ${gitlab.tokenEnv} (son jeton GitLab) est absente de l'environnement du service — aucun appel glab sous un autre compte`,
+      );
+    out.GITLAB_TOKEN = token;
+  }
+  return out;
+}
+
+/**
  * Le jeton mémoire propre au dépôt, ou `null` (le jeton global). Déclaré mais absent ou
  * illisible : refus — le jeton global ouvrirait la mémoire de tous les projets.
  */
@@ -171,7 +201,9 @@ export function syncMemoryTokenFile(config: HarnessConfig, repoName: string, tok
 export function policySecretVars(config: HarnessConfig): string[] {
   return [
     ...new Set(
-      config.repos.flatMap((repo) => [repo.gh?.tokenEnv, repo.memory?.tokenEnv].filter((name) => name !== undefined)),
+      config.repos.flatMap((repo) =>
+        [repo.gh?.tokenEnv, repo.gitlab?.tokenEnv, repo.memory?.tokenEnv].filter((name) => name !== undefined),
+      ),
     ),
   ];
 }

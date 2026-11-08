@@ -1,5 +1,5 @@
 // Le serveur MCP du harness (`POST /v1/mcp`, transport « Streamable HTTP » en réponses
-// JSON, sans flux serveur) : les issues GitHub des dépôts déclarés et leur lancement en
+// JSON, sans flux serveur) : les issues des dépôts déclarés sur leur forge (GitHub, GitLab) et leur lancement en
 // run pour que le dépôt se corrige lui-même, puis le lancement, la lecture et le pilotage
 // des runs, avec les mêmes contrôles que l'API REST.
 //
@@ -70,7 +70,7 @@ type Tool = {
 const REPO_PROPERTY = {
   type: "string",
   description:
-    "Le dépôt : son nom dans la liste des dépôts du harness, ou `owner/name` sur GitHub. Facultatif si le client ne voit qu'un dépôt.",
+    "Le dépôt : son nom dans la liste des dépôts du harness, ou son projet sur sa forge (`owner/name` sur GitHub, `groupe/projet` sur GitLab). Facultatif si le client ne voit qu'un dépôt.",
 };
 
 function optionalText(args: ToolArgs, key: string): string | undefined {
@@ -144,7 +144,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "repos_list",
     title: "Dépôts déclarés",
     description:
-      "Les dépôts de la liste du harness que ce client voit, avec leur dépôt GitHub. Seul un dépôt déclaré peut lancer des pipelines depuis ses issues.",
+      "Les dépôts de la liste du harness que ce client voit, avec leur projet sur leur forge (`github` ou `gitlab` : `owner/name`) ; un dépôt sans forge n'a que son nom (ni issues ni PR). Seul un dépôt déclaré peut lancer des pipelines depuis ses issues.",
     role: "viewer",
     readOnly: true,
     properties: {},
@@ -154,7 +154,10 @@ export const MCP_TOOLS: readonly Tool[] = [
         call
           .repos()
           .filter((repo) => canSeeRepo(call.client, repo.name))
-          .map(async (repo) => ({ name: repo.name, github: await call.desk.github(repo).catch(() => null) })),
+          .map(async (repo) => {
+            const forge = await call.desk.forge(repo);
+            return forge.kind === "none" ? { name: repo.name } : { name: repo.name, [forge.kind]: forge.project };
+          }),
       ),
     }),
   },
@@ -162,7 +165,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issues_list",
     title: "Issues ouvertes",
     description:
-      "Les issues GitHub ouvertes du dépôt (origin du clone du harness), chacune avec le run qui la corrige s'il y en a un.",
+      "Les issues ouvertes du dépôt sur sa forge (GitHub ou GitLab, origin du clone du harness), chacune avec le run qui la corrige s'il y en a un. Un dépôt sans forge est refusé.",
     role: "viewer",
     readOnly: true,
     properties: {
@@ -187,7 +190,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issue_fix",
     title: "Corriger une issue",
     description:
-      "Lance un pipeline du harness qui corrige l'issue GitHub donnée. Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé.",
+      "Lance un pipeline du harness qui corrige l'issue donnée (GitHub ou GitLab, la forge du dépôt). Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -223,7 +226,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "run_start",
     title: "Lancer un run",
     description:
-      "Lance un pipeline du harness sur un dépôt déclaré à partir d'un titre et d'une demande libres, sans passer par GitHub. Le run part en file (`queued`) : suis-le avec run_get.",
+      "Lance un pipeline du harness sur un dépôt déclaré à partir d'un titre et d'une demande libres, sans passer par sa forge. Le run part en file (`queued`) : suis-le avec run_get.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -719,7 +722,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues GitHub d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }

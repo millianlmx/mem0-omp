@@ -225,6 +225,7 @@ Les autres variables, facultatives :
 | `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
 | `OMP_HARNESS_MEMORY_TOKENS` | aucun | des jetons mémoire limités à des scopes, `nom:jeton:scope1,scope2;…` : mem0-rs les lit dans un fichier des secrets (`MEM0_HTTP_TOKENS_FILE`), le service les reçoit en `MEM0_TOKEN_<NOM>` (`repos[].memory.tokenEnv`, § « Projets perso et corpo ») |
 | `OMP_HARNESS_GITHUB_ACCOUNTS` | aucun | des comptes GitHub par dépôt, `nom:jeton;…` : le service les reçoit en `GH_TOKEN_<NOM>` (`repos[].gh.tokenEnv`) |
+| `OMP_HARNESS_GITLAB_ACCOUNTS` | aucun | des comptes GitLab par dépôt, `nom:jeton;…` : le service les reçoit en `GITLAB_TOKEN_<NOM>` (`repos[].gitlab.tokenEnv`) |
 | `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
@@ -298,8 +299,10 @@ sudo cat /var/lib/omp-harness/.ssh/repos/<dépôt>.pub
 La clé du service (`/var/lib/omp-harness/.ssh/id_ed25519`, posée par l'installation)
 ne sert qu'aux dépôts sans `sshKey` : un seul dépôt GitHub peut l'utiliser.
 
-En mode `"merge": "gh"` (une PR par feature, fusionnée par `gh`), installe aussi
-`gh` et connecte-le : `sudo -u omp-harness -H gh auth login`.
+En mode `"merge": "gh"` (une PR par feature, fusionnée par la forge) ou pour les
+issues, installe aussi la CLI de la forge et connecte-la : `gh` pour GitHub
+(`sudo -u omp-harness -H gh auth login`), `glab` pour GitLab (`sudo -u omp-harness -H
+glab auth login --hostname <hôte>`, ou un jeton par dépôt : § « Les forges »).
 
 **4. Le clone.** Un clone nu par dépôt, au nom de `omp-harness` :
 
@@ -506,7 +509,9 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].path` | — | le clone nu du service |
 | `repos[].tests.touched` | `npm test -- {files}` | les tests des fichiers touchés ; `{files}` reçoit la liste |
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
-| `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR posée en `gh pr merge --squash --auto`, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée) |
+| `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR (une MR sur GitLab) posée sur la forge du dépôt en fusion squash automatique, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée, pipeline) |
+| `repos[].forge` | déduite du distant | `github`, `gitlab` ou `none` : la forge des PR et des issues (§ « Les forges ») |
+| `repos[].gitlab` | aucun | `{ "host"?, "tokenEnv"?, "configDir"? }` : l'instance GitLab du dépôt (défaut : l'hôte du distant), le NOM de la variable du service qui porte son jeton, ou un `GLAB_CONFIG_DIR` à lui |
 | `repos[].remote` | `null` | le distant poussé après un merge (`origin`) ; `null` garde les merges sur le VPS |
 | `repos[].sshKey` | `null` | la clé SSH privée du dépôt (chemin absolu), seule offerte à son distant (fetch, push, `--check`) ; `--add-repo` la crée sous `~/.ssh/repos/<nom>`. `null` : la clé du service, qu'un seul dépôt GitHub peut porter |
 | `repos[].mainBranch` | `main` | la branche principale |
@@ -533,7 +538,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `review.crossProvider` | `true` | la revue commence la chaîne de son niveau au premier modèle d'un autre fournisseur que celui de la dernière implémentation (une chaîne à un seul fournisseur ne change rien) |
 | `challenge.steps` | `["req", "specs"]` | les étapes relues par le contradicteur avant leur clôture ; `[]` le coupe |
 | `challenge.tier` | `"heavy"` | le niveau du contradicteur ; il commence la chaîne au premier modèle d'un autre fournisseur que l'auteur relu |
-| `review.mergePollSec`, `review.mergeWaitSec` | `60`, `7200` | en mode `gh`, la cadence de relecture de la PR (`gh pr view`) après `--auto`, et l'attente maximale de sa fusion ; au-delà, le merge est arrêté (`mergeRetries`) |
+| `review.mergePollSec`, `review.mergeWaitSec` | `60`, `7200` | en mode `gh`, la cadence de relecture de la PR (`gh pr view`, `glab mr view`) après la fusion automatique, et l'attente maximale de sa fusion ; au-delà, le merge est arrêté (`mergeRetries`) |
 | `runner.retryBackoffSec` | `[120, 600, 1800]` | l'attente avant chaque relance d'une étape échouée ; sa longueur est le nombre de relances si `stepRetries` n'est pas déclaré. Quota, réseau, fournisseur, délai : la liste se consomme entière, même cause répétée ; contexte, runner, sortie manquante, inconnu : deux fois de suite ⇒ l'humain. Liste épuisée ⇒ l'humain (`retry` relance), jamais `failed` |
 | `runner.stepRetries` | longueur de `retryBackoffSec` | le nombre de relances d'une étape échouée |
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
@@ -589,7 +594,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
-| `issues.label` | `omp:fix` | le label des issues GitHub qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues GitHub (MCP) ») |
+| `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
 | `schedules.timezone` | `Europe/Paris` | le fuseau IANA dans lequel se lisent les expressions cron des planifications (§ « Les planifications ») ; un fuseau inconnu refuse la configuration |
@@ -973,7 +978,64 @@ fournisseur, un autre compte ou le jeton global.
 
 `--check` (`harness.sh check`) dit, dépôt par dépôt, ce qui manque : modèle local
 injoignable ou absent, liste blanche vide ou sans modèle pour une étape, variable
-absente de l'environnement du service, `configDir` gh introuvable.
+absente de l'environnement du service, `configDir` gh ou GitLab introuvable, CLI de
+la forge absente ou non authentifiée.
+
+### Les forges : GitHub, GitLab ou aucune
+
+Un push git n'a besoin que de la clé SSH du dépôt ; tout le reste — la PR de
+`"merge": "gh"`, sa fusion squash automatique et son revert, les issues (MCP, relève
+du label) — passe par la **forge** du dépôt (`forge.ts`) et sa CLI :
+
+| `forge` | CLI | Compte |
+|---|---|---|
+| `github` | `gh` (`forge-github.ts`) | `gh` du dépôt (`gh.configDir`, `gh.tokenEnv`), sinon la connexion ou `GH_TOKEN` du service |
+| `gitlab` | `glab` (`forge-gitlab.ts`) | `gitlab.tokenEnv` (jeton en `GITLAB_TOKEN`) ou `gitlab.configDir` (`GLAB_CONFIG_DIR`), sinon la connexion ou `GITLAB_TOKEN` du service |
+| `none` | aucune | merge local seulement : les outils d'issues sont refusés (409) en le disant, la relève l'ignore |
+
+Sans `forge`, elle se lit dans l'URL du distant à chaque appel : `github.com` →
+`github` ; un hôte qui contient « gitlab », ou un bloc `gitlab` déclaré → `gitlab`
+(sous-groupes compris : `groupe/sous-groupe/projet`) ; un compte `gh` ou
+`"merge": "gh"` → `github` (comme avant les forges) ; sinon `none`. `forge` déclarée
+l'emporte — un distant sous un alias SSH (`git@github-perso:moi/x.git`) a besoin de
+`"forge": "github"`. `forge: "none"` avec `"merge": "gh"` est refusé au chargement.
+`--add-repo` dit la forge déduite et, sur GitLab, la page des clés de déploiement.
+
+Un dépôt d'un client sur son GitLab auto-hébergé :
+
+```json
+{
+  "name": "client-gitlab",
+  "path": "/var/lib/omp-harness/repos/client-gitlab",
+  "merge": "gh",
+  "remote": "origin",
+  "sshKey": "/var/lib/omp-harness/.ssh/repos/client-gitlab",
+  "forge": "gitlab",
+  "gitlab": { "host": "gitlab.client.example", "tokenEnv": "GITLAB_TOKEN_CLIENT_GITLAB" }
+}
+```
+
+- **`gitlab.host`** : l'instance (`gitlab.client.example`, un port, ou son URL
+  `https://…`) ; absente : l'hôte du distant. `glab` vise toujours le projet par son
+  URL complète (`-R https://<hôte>/<projet>`) avec `GITLAB_HOST` posé : jamais
+  gitlab.com par erreur.
+- **Le jeton** : un jeton d'accès (projet ou personnel) de scope `api`, dans la
+  variable que nomme `gitlab.tokenEnv` (`/etc/omp-harness/env`, `harness.env` des
+  secrets, ou la variable de pile `OMP_HARNESS_GITLAB_ACCOUNTS=client-gitlab:glpat-…`
+  sous Portainer, qui le nomme `GITLAB_TOKEN_CLIENT_GITLAB`). Déclaré mais absent :
+  aucun appel `glab` (jamais sous le compte du service). Sans jeton, `gitlab.configDir`
+  désigne une connexion à part (`sudo -u omp-harness -H env
+  GLAB_CONFIG_DIR=/var/lib/omp-harness/glab/client glab auth login --hostname
+  gitlab.client.example`).
+- **La MR** : `glab mr create`, puis `glab mr merge --squash --auto-merge
+  --remove-source-branch --squash-message <sujet et corps du verdict>` (fusion quand le
+  pipeline et les règles du projet le permettent), relue par `glab mr view` comme une
+  PR. Un projet en « merge commit » ajoute son commit de merge au squash.
+- **Les issues** : `glab issue list/view/note/close/reopen/create`, les commentaires
+  lus par l'API (`glab api`, notes non système seulement).
+- `glab` est dans l'image du harness (version épinglée, somme vérifiée) et dans le
+  module NixOS ; sous Debian, installe-le (paquet `glab` ou archive de
+  gitlab.com/gitlab-org/cli) comme `gh`.
 
 ## Les fournisseurs LLM, déclarés depuis les apps
 
@@ -1280,13 +1342,13 @@ répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 `<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
 ne touche à la mémoire d'aucun projet.
 
-## Les issues GitHub (MCP)
+## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
-flux serveur) : un agent y lit les issues GitHub d'un dépôt et lance les pipelines qui
-les corrigent, lance aussi des runs libres (`run_start`), les suit et les pilote, les
-débloque (valider, répondre aux escalades, relancer) et lit la boîte de l'humain. Il
-prend le même jeton que l'API :
+flux serveur) : un agent y lit les issues d'un dépôt sur sa forge (GitHub ou GitLab,
+§ « Les forges ») et lance les pipelines qui les corrigent, lance aussi des runs libres
+(`run_start`), les suit et les pilote, les débloque (valider, répondre aux escalades,
+relancer) et lit la boîte de l'humain. Il prend le même jeton que l'API :
 
 ```bash
 claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
@@ -1295,11 +1357,11 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 
 | Outil | Rôle | Effet |
 |---|---|---|
-| `repos_list` | viewer | Les dépôts déclarés que le client voit, avec leur dépôt GitHub. |
+| `repos_list` | viewer | Les dépôts déclarés que le client voit, avec leur projet sur leur forge (`github` ou `gitlab` : `owner/name`) ; un dépôt sans forge n'a que son nom. |
 | `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
 | `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. |
 | `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). |
-| `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?, budgetUsd?}` | operator | Lance un run libre sur un dépôt déclaré, sans GitHub : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
+| `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?, budgetUsd?}` | operator | Lance un run libre sur un dépôt déclaré, sans passer par sa forge : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
 | `run_get` `{id}` | viewer | Le run (`run.state`, `run.step`, `run.verdict`, `run.rev`), ses étapes, escalades, tests, artefacts, coûts : le corps de `GET /v1/runs/{id}`. |
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
 | `run_cancel` `{id, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon) : `POST /v1/runs/{id}/cancel`. |
@@ -1319,19 +1381,23 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible) ; une cible `automation` n'en a pas. Mêmes contrôles que `POST /v1/schedules`. |
 | `schedule_delete` `{id, rev?}` | operator | Supprime une planification (`{id, deleted}`) ; avec `rev`, refusée si elle a changé depuis : `DELETE /v1/schedules/{id}`. |
 
-- **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou
-  `owner/name` sur GitHub (retrouvé par le distant des clones) ; facultatif quand le
-  client ne voit qu'un dépôt. Un dépôt absent de la liste, ou que le client ne voit
-  pas, est refusé avec la marche à suivre (`harness.sh add <url>`) : sans clone ni clé
-  de déploiement, un run ne pourrait ni partir de `main` ni pousser son merge.
-- **Le dépôt GitHub** est celui du distant du clone (`repos[].remote`, `origin` sinon).
-- **`gh` connecté.** Les issues passent par `gh` avec la connexion du service
-  (`sudo -u omp-harness -H gh auth login`, ou `gh auth login` dans le conteneur
-  `harness`), ou avec `GH_TOKEN` dans l'environnement du service (pile Portainer : la
-  variable de pile `GH_TOKEN`) ; ce jeton n'est jamais donné aux runners, aux
-  connexions OAuth ni aux jobs de tests. C'est vrai même en `"merge": "local"` : une clé de déploiement n'ouvre que git,
-  jamais l'API. Sans connexion, l'outil rend une erreur qui le dit. `run_start` n'a pas
-  besoin de GitHub.
+- **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou son
+  projet sur sa forge (`owner/name`, `groupe/projet`, retrouvé par le distant des
+  clones) ; facultatif quand le client ne voit qu'un dépôt. Un dépôt absent de la
+  liste, ou que le client ne voit pas, est refusé avec la marche à suivre
+  (`harness.sh add <url>`) : sans clone ni clé de déploiement, un run ne pourrait ni
+  partir de `main` ni pousser son merge. Un dépôt sans forge (`none`) est refusé en le
+  disant.
+- **Le projet** est celui du distant du clone (`repos[].remote`, `origin` sinon).
+- **La CLI de la forge connectée.** Les issues passent par `gh` (GitHub) ou `glab`
+  (GitLab) sous le compte du dépôt s'il en déclare un, sinon avec la connexion du
+  service (`sudo -u omp-harness -H gh auth login`, ou `gh auth login` dans le
+  conteneur `harness`), ou avec `GH_TOKEN` / `GITLAB_TOKEN` dans l'environnement du
+  service (pile Portainer : la variable de pile `GH_TOKEN`) ; ces jetons ne sont jamais
+  donnés aux runners, aux connexions OAuth ni aux jobs de tests. C'est vrai même en
+  `"merge": "local"` : une clé de déploiement n'ouvre que git, jamais l'API. Sans
+  connexion, l'outil rend une erreur qui nomme la forge et la commande à lancer.
+  `run_start` n'a pas besoin de forge.
 - **Le texte d'une issue est une donnée de tiers.** La demande du run le dit à
   l'agent ; le label est le filtre de confiance (seul un collaborateur avec le droit
   de trier peut le poser), et le run passe par les mêmes portes que tout autre
@@ -1341,8 +1407,8 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
   plus après le démarrage), le service fait de lui-même un `issues_fix_labeled` sur
   chaque dépôt déclaré qui a un distant (`repos[].remote`), mêmes règles : jamais une
   issue déjà liée à un run, au plus `issues.maxLaunch` par dépôt et par relève. Un
-  dépôt dont la relève échoue (`gh` absent ou non connecté, distant qui n'est pas sur
-  GitHub, réseau) est journalisé au plus une fois par heure et n'arrête pas les autres ;
+  dépôt sans forge n'est pas relevé ; un dépôt dont la relève échoue (CLI absente ou
+  non connectée, distant illisible, réseau) est journalisé au plus une fois par heure et n'arrête pas les autres ;
   le journal dit « relève : N lancée(s) » quand des runs partent. `null` : à la demande
   seulement.
 - **`rev`, la révision lue.** `run_cancel`, `run_priority`, `run_validate`, `run_retry`,
@@ -1353,7 +1419,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
   change ; sans `rev`, il s'applique. `run_revert` ne la prend pas (comme la route).
   C'est l'équivalent de `If-Match`, par appel : l'en-tête `If-Match` de la requête MCP
   n'est pas lu par ces outils (il vaudrait pour tous les appels d'un lot).
-- Une erreur d'outil (dépôt non déclaré, rôle insuffisant, issue fermée, `gh` en
+- Une erreur d'outil (dépôt non déclaré ou sans forge, rôle insuffisant, issue fermée, `gh` ou `glab` en
   échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
   une erreur JSON-RPC.
 
@@ -1546,8 +1612,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/oauth` | admin | Les fournisseurs qu'omp sait connecter en OAuth (`providers: [{id, name, available, authenticated}]`, l'état chez les runners) et la connexion en cours (`login`, ou `null`). |
 | `POST /v1/oauth/{name}/login` | admin | Lance la connexion OAuth d'un fournisseur (201, `login`) ; 409 si une autre est en cours, 501 en isolation systemd. |
 | `GET /v1/oauth/logins/{id}` · `POST /v1/oauth/logins/{id}/answer` `{value}` · `DELETE /v1/oauth/logins/{id}` | admin | L'état d'une connexion (`state` : `starting`, `waiting`, `verifying`, `done`, `failed`, `cancelled` ; `url`, `instructions`, `prompt`, `progress`, `error`), le code ou l'URL de retour copiés du navigateur (409 si elle n'en attend pas), l'abandon. |
-| `POST /v1/mcp` | viewer | Le serveur MCP des issues GitHub (§ « Les issues GitHub (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les gestes exigent `operator`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `POST /v1/mcp` | viewer | Le serveur MCP des issues (§ « Les issues (MCP) ») : un message ou un lot JSON-RPC, 202 sans requête à rendre. Les gestes exigent `operator`. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
@@ -1564,7 +1630,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel` ; un run dont `notBefore` n'est pas passé, dont les modules sont encore en déduction, ou une feature découpée dont le parent (`afterRun`) n'est pas mergé, n'est pas candidat. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. À chaque tour, les escalades ouvertes depuis plus de `review.escalationTimeoutSec` sont tranchées sur la recommandation de l'agent. |
 | **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans le texte de la feature et ses souvenirs de besoins (tag `besoins`) — pour un run seul aussi, avant son admission —, puis précisés par la section `## Modules` des specs ou l'outil `set_modules`. Les modules connus sont les dossiers jusqu'à deux niveaux, les fichiers de la racine, et les fichiers `.ts` d'un dossier plat (plus de 8). Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation ; un merge arrêté est relancé seul (`review.mergeRetries`, 5/15/60 min). |
 | **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance, bascule | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans un service transitoire (`systemd-run --wait --pipe`, stdio gardés) `MemoryMax=1G`, `OOMScoreAdjust=300`, qui n'écrit que dans son worktree et ne lit que son clone (§ Sécurité). Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Chaque erreur de prompt est classée (`classifyPromptError` : `rate_limit` — 429/529 et messages de quota —, `server_error` 5xx, `network`, `context`, `other`) ; une cause de `runner.failoverOn` fait passer au fournisseur suivant de la chaîne (`set_model`, même conversation) ; chaîne à un seul fournisseur (ou tous à sec) ⇒ attente du `retry-after` du fournisseur (sinon 60 s), bornée par l'échéance, puis réessai du même, 3 fois au plus (`provider_retry`). L'erreur rendue à l'étape porte `cause` et `retryAfterMs`. Le runner de la revue reste vivant pendant review → fix (cache de prompt) ; fix → review repart à neuf. Les autres meurent en fin d'étape ou à l'escalade. |
-| **Merges** : un dépôt à la fois, jamais « merged » avant `main` | `merger.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. Mode `gh` : `gh pr merge --squash --auto`, puis `gh pr view` toutes les `mergePollSec` jusqu'à la fusion constatée (borne `mergeWaitSec`). Mode `local` : un push refusé ⇒ `awaiting_human` « push refusé : … », réseau ⇒ réessayé. Merge arrêté ⇒ `queued` avec `notBefore` (5/15/60 min), compté dans `mergeRetries`. `revert(run)` : `git revert` du squash dans un worktree jetable, push (ou PR `--auto`), événement `reverted`, run de suite. |
+| **Merges** : un dépôt à la fois, jamais « merged » avant `main` | `merger.ts`, `forge.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. Mode `gh` : la PR sur la forge du dépôt (`gh pr merge --squash --auto`, ou `glab mr merge --squash --auto-merge`), relue toutes les `mergePollSec` jusqu'à la fusion constatée (borne `mergeWaitSec`). Mode `local` : un push refusé ⇒ `awaiting_human` « push refusé : … », réseau ⇒ réessayé. Merge arrêté ⇒ `queued` avec `notBefore` (5/15/60 min), compté dans `mergeRetries`. `revert(run)` : `git revert` du squash dans un worktree jetable, push (ou PR de revert en fusion automatique), événement `reverted`, run de suite. |
 | **Notifications** : ntfy, fire-and-forget | `notify.ts`, `context.ts` | Abonné au journal (`store.onEvent`) : chaque événement de `notify.events` part en `POST notify.url` avec `Title`/`Priority`/`Tags`/`Click`. Le titre est français et court (« Question — <feature> », « Verdict à valider — … », « Mergé — … »). Une erreur est journalisée (`notify_failed`) au plus une fois par heure, jamais levée. |
 | **Rapport du matin** : un POST par jour | `digest.ts`, `orchestrator.ts` | `digestOf` lit la base (pure) ; `DigestSender` regarde chaque minute (timer `unref`, arrêté avec le service) si `notify.digestHour` est passée et si le dernier envoi (réglage `digest-sent`) date d'avant : la fenêtre part de ce dernier envoi, noté avant le POST, pour qu'un redémarrage ne double jamais le rapport. |
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision` (`options` obligatoires, 2 à 4, `chosen` parmi elles ; `context`, la situation lisible hors de la session, obligatoire ; `impacts`, une conséquence par option, obligatoires pour une escalade). Une décision réversible — ou une `clarification` de produit/UX — devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |

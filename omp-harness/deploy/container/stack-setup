@@ -34,8 +34,8 @@ check_values() {
       *[!A-Za-z0-9_.:/~+=@-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
     esac
   done
-  # Les jetons par dépôt (politique par dépôt) : `nom:jeton:scope,…;…` et `nom:jeton;…`.
-  for name in OMP_HARNESS_MEMORY_TOKENS OMP_HARNESS_GITHUB_ACCOUNTS; do
+  # Les jetons par dépôt (politique par dépôt, forges) : `nom:jeton:scope,…;…` et `nom:jeton;…`.
+  for name in OMP_HARNESS_MEMORY_TOKENS OMP_HARNESS_GITHUB_ACCOUNTS OMP_HARNESS_GITLAB_ACCOUNTS; do
     eval "value=\${$name:-}"
     case "$value" in
       *[!A-Za-z0-9_.:/~+=@,\;-]*) die "$name porte un caractère refusé (espace, guillemet, \$…) : corrige la variable de la pile" ;;
@@ -71,12 +71,14 @@ cmd_init() {
   [ -n "$chat" ] || [ -n "${OMLX_BASE_URL:-}" ] || chat=off
   umask 077
   # Le jeton de la mémoire, puis ceux des dépôts (`memory.tokenEnv` : MEM0_TOKEN_<NOM>,
-  # `gh.tokenEnv` : GH_TOKEN_<NOM>) : le service les passe à SES runners, ou à gh.
+  # `gh.tokenEnv` : GH_TOKEN_<NOM>, `gitlab.tokenEnv` : GITLAB_TOKEN_<NOM>) : le service
+  # les passe à SES runners, ou à gh et glab.
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
     [ -z "${GH_TOKEN:-}" ] || printf 'GH_TOKEN=%s\n' "$GH_TOKEN"
     secret_lines MEM0_TOKEN "${OMP_HARNESS_MEMORY_TOKENS:-}"
     secret_lines GH_TOKEN "${OMP_HARNESS_GITHUB_ACCOUNTS:-}"
+    secret_lines GITLAB_TOKEN "${OMP_HARNESS_GITLAB_ACCOUNTS:-}"
   } > "$SECRETS/harness/harness.env"
   {
     printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
