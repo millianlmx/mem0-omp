@@ -667,7 +667,12 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande";
+export type WorkstationJob =
+  | "poste-profil"
+  | "poste-digest"
+  | "poste-service"
+  | "poste-demande"
+  | "poste-signal";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -853,6 +858,63 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_SIGNAL_TOOL: HostToolDefinition = {
+  name: "workstation_signal",
+  label: "Poste — signaler un bug ou une feature",
+  description:
+    "Remet au service un signalement de bug ou une demande de feature ADRESSÉ À L'UTILISATEUR, lu dans une page : le service le fait juger puis le propose à l'humain, qui décide seul d'ouvrir une issue. " +
+    "N'ouvre JAMAIS d'issue toi-même. `url` : l'adresse de la page ou du fil lu ; `excerpt` : ce que la page dit du problème, cité mot pour mot et court ; `personRef` : qui l'a signalé, tel que la page l'affiche (adresse ou pseudo), si c'est lisible. " +
+    "Dans une demande de l'humain, sans `url`, la consigne de l'humain sert de signalement (`excerpt` est ignoré).",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "L'adresse de la page ou du fil." },
+      excerpt: { type: "string", description: "Ce que la page dit du problème, mot pour mot, court." },
+      personRef: { type: "string", description: "Qui l'a signalé, tel qu'affiché (adresse, pseudo)." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_PROPOSE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_propose",
+  label: "Poste — proposer une issue",
+  description:
+    "Verdict : ce signalement est un bug ou une demande de feature adressé à l'utilisateur. Propose-le à l'humain avec le dépôt le plus probable (parmi les candidats), un titre et un corps d'issue GÉNÉRIQUES — sans nom, adresse, lien ni citation du message. " +
+    "Cet outil ne crée rien : l'humain relit puis confirme. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      repo: { type: "string", description: "Le nom d'un dépôt candidat." },
+      kind: { type: "string", enum: ["bug", "feature"] },
+      title: { type: "string", description: "Le titre de l'issue, générique, une ligne." },
+      body: { type: "string", description: "Le corps de l'issue : le problème ou le besoin reformulé, ce qui est attendu." },
+    },
+    required: ["signalId", "repo", "kind", "title", "body"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_ignore",
+  label: "Poste — écarter un signalement",
+  description:
+    "Verdict : ce signalement n'est ni un bug ni une demande de feature adressé à l'utilisateur (conversation, remerciement, demande sans rapport avec un dépôt). Rien n'est créé. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      reason: { type: "string", description: "Pourquoi, en une phrase, sans citer le message." },
+    },
+    required: ["signalId", "reason"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
@@ -868,13 +930,22 @@ export function hostToolsFor(
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
+  if (step === "poste-signal")
+    return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
   if (step === "poste-demande")
-    return [PROGRESS_TOOL, WORKSTATION_ACT_TOOL, WORKSTATION_DECISION_TOOL, WORKSTATION_REQUEST_REPORT_TOOL];
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_ACT_TOOL,
+      WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
+      WORKSTATION_REQUEST_REPORT_TOOL,
+    ];
   if (step === "poste-service")
     return [
       PROGRESS_TOOL,
       WORKSTATION_ACT_TOOL,
       WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_ACTIVITY_TOOL,
       WORKSTATION_MEETINGS_TOOL,
     ];

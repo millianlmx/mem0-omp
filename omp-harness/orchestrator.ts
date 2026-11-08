@@ -65,6 +65,7 @@ import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } fro
 import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
+import { SignalDesk } from "./corporate/signals.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 
@@ -164,6 +165,8 @@ export class Orchestrator {
   readonly workstation: Workstation;
   /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
   readonly workstationAgent: WorkstationAgent;
+  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
+  readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -215,7 +218,8 @@ export class Orchestrator {
     this.vigie = new VigieDesk(this.#ctx, this.issues);
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
     this.digest = new DigestSender({
       config: this.#ctx.config,
       store: this.#ctx.store,

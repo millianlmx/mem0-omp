@@ -103,6 +103,8 @@ export const EVENT_TYPES = [
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
   "vigie_silent",
+  // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "signal",
   // éphémères
   "activity",
   "session",

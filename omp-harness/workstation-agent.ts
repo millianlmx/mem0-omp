@@ -31,13 +31,16 @@ import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
+import type { SignalDesk, SignalInput } from "./corporate/signals.ts";
 import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
+import { HarnessError } from "./errors.ts";
 import {
   nudgePrompt,
   workstationDigestPrompt,
   workstationProfilePrompt,
   workstationRequestPrompt,
   workstationShiftPrompt,
+  workstationSignalPrompt,
 } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import type { WorkstationJob } from "./runner.ts";
@@ -59,14 +62,21 @@ import { untrusted } from "./workstation-guards.ts";
 /** La scope mémoire des jobs du poste. */
 export const WORKSTATION_SCOPE = "workstation";
 
-const JOBS: readonly WorkstationJob[] = ["poste-profil", "poste-digest", "poste-service", "poste-demande"];
+const JOBS: readonly WorkstationJob[] = [
+  "poste-profil",
+  "poste-digest",
+  "poste-service",
+  "poste-demande",
+  "poste-signal",
+];
 
-/** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer. */
+/** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer ou trier. */
 const JOB_TIERS: Record<WorkstationJob, Tier> = {
   "poste-profil": "heavy",
   "poste-digest": "standard",
   "poste-service": "heavy",
   "poste-demande": "heavy",
+  "poste-signal": "standard",
 };
 
 /** L'issue d'une demande coupée par l'arrêt ou le redémarrage du service : jamais relancée. */
@@ -220,10 +230,12 @@ export class WorkstationAgent {
   #profileAttemptAt = 0;
   /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
   #requestId: string | null = null;
+  readonly #signals: SignalDesk;
 
-  constructor(ctx: HarnessContext, workstation: Workstation) {
+  constructor(ctx: HarnessContext, workstation: Workstation, signals: SignalDesk) {
     this.#ctx = ctx;
     this.#ws = workstation;
+    this.#signals = signals;
   }
 
   /** Un tour : les échéances de la file, puis les jobs dus. */
@@ -232,10 +244,12 @@ export class WorkstationAgent {
     if (!this.#ws.enabled) return;
     this.#guardShift();
     this.#guardRequest();
+    this.#guardSignal();
     this.#digestNext();
     this.#profileIfDue(now);
     this.#shiftIfDue(now);
     this.#requestNext(now);
+    this.#signalNext();
   }
 
   /** Le job tourne en ce moment. */
@@ -278,11 +292,29 @@ export class WorkstationAgent {
     fs.mkdirSync(target.repo.path, { recursive: true });
     // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
     fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
+    // Le job `poste-signal` lit un extrait de message d'un collègue : rien de ce qu'il fait ne sort
+    // vers un journal. Ni direct (aucune trame transmise), ni `intent` des outils, ni `progress`.
+    // `workstation_signal` des autres jobs ne montre pas non plus son `intent` (le direct, lui, est
+    // réservé au propriétaire, comme les pages que ces jobs lisent).
     const session = new RunnerSession(this.#ctx, target, {
       onHostTool: (name, args) =>
         name === "progress" ? Promise.resolve(this.#progress(job, args)) : onHostTool(name, args),
-      event: (type, payload) => this.#ctx.event(type, null, { workstation: job, ...payload }, null),
-      frame: (frame) => this.#ctx.sessions.frame(workstationOwner(job), job, frame),
+      event: (type, payload) =>
+        this.#ctx.event(
+          type,
+          null,
+          {
+            workstation: job,
+            ...payload,
+            ...(type === "activity" && (job === "poste-signal" || payload.tool === "workstation_signal")
+              ? { intent: null }
+              : {}),
+          },
+          null,
+        ),
+      ...(job === "poste-signal"
+        ? {}
+        : { frame: (frame: Record<string, unknown>) => this.#ctx.sessions.frame(workstationOwner(job), job, frame) }),
     });
     live.session = session;
     await session.open(JOB_TIERS[job], unitOf(job), live.abort.signal);
@@ -291,6 +323,7 @@ export class WorkstationAgent {
   }
 
   #progress(job: WorkstationJob, args: Record<string, unknown>): HostToolResult {
+    if (job === "poste-signal") return { text: "noté" };
     const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
     this.#ctx.event("progress", null, { workstation: job, message }, null);
     return { text: "noté" };
@@ -445,6 +478,119 @@ export class WorkstationAgent {
     live.abort.abort();
   }
 
+  // -- tri des signalements de collègues (pont corpo ↔ usine) ----------------------------------
+
+  /** Une détection en cours s'arrête dès que le poste passe en pause (arrêt d'urgence compris). */
+  #guardSignal(): void {
+    const live = this.#live.get("poste-signal");
+    if (!live || live.abort.signal.aborted || !this.#ws.settings().paused) return;
+    live.stopReason = "interrompu : poste mis en pause";
+    live.abort.abort();
+  }
+
+  /**
+   * Le plus ancien signalement reçu part en détection, quelle que soit l'autonomie : le job ne crée
+   * rien, il ne fait que proposer. Pas de détection en pause ; un refus de lancement (runner, plafond)
+   * laisse le signalement `received`, repris au tour suivant.
+   */
+  #signalNext(): void {
+    if (this.#live.has("poste-signal") || this.#ws.settings().paused) return;
+    const signal = this.#signals.nextReceived();
+    if (signal) this.#launch("poste-signal", (live) => this.#signal(signal.id, live));
+  }
+
+  /**
+   * Un verdict par signalement. Une session coupée par le serveur ne compte aucune tentative, pas
+   * plus qu'une session qui a jugé un extrait périmé (un message est arrivé depuis) ; seule une fin
+   * sans verdict ou une erreur du runner en compte une. Aucune erreur levée ici ne cite le signalement.
+   */
+  async #signal(id: string, live: LiveJob): Promise<void> {
+    const { store } = this.#ctx;
+    const signal = store.getSignal(id);
+    if (!signal || signal.state !== "received") return;
+    const candidates = await this.#signals.candidates(signal);
+    if (candidates.length === 0) {
+      this.#signals.ignoreWithoutCandidate(id);
+      return;
+    }
+    const read = signal.excerpt;
+    const unjudged = (): boolean => {
+      const now = store.getSignal(id);
+      return now?.state === "received" && now.excerpt === read;
+    };
+    try {
+      const session = await this.#open("poste-signal", live, (name, args) => this.#signalTool(name, args, id, read));
+      const deadlineAt = Date.now() + this.#ctx.config.runner.stepTimeoutSec * 1000;
+      let result = await session.prompt(
+        workstationSignalPrompt({ signalId: id, channel: signal.channel, excerpt: read, candidates }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && unjudged())
+        result = await session.prompt(
+          nudgePrompt(
+            "poste-signal",
+            "le verdict n'a été rendu ni par `workstation_signal_propose` ni par `workstation_signal_ignore`",
+          ),
+          live.abort.signal,
+          deadlineAt,
+        );
+    } catch {
+      /* l'échec du runner compte une tentative, plus bas : son message n'est pas journalisé */
+    } finally {
+      await live.session?.stop();
+      live.session = null;
+    }
+    if (live.abort.signal.aborted || !unjudged()) return;
+    this.#signals.recordAttempt(id);
+  }
+
+  async #signalTool(name: string, args: Record<string, unknown>, id: string, read: string): Promise<HostToolResult> {
+    try {
+      switch (name) {
+        case "workstation_signal_propose":
+          return await this.#signals.propose(id, args);
+        case "workstation_signal_ignore":
+          return this.#signals.ignore(id, read, args);
+        default:
+          return { text: `outil inconnu : ${name}`, isError: true };
+      }
+    } catch (err) {
+      return { text: err instanceof HarnessError ? err.message : "erreur interne", isError: true };
+    }
+  }
+
+  /**
+   * `workstation_signal` d'un job du poste : le signalement lu dans une page (`chrome`, le fil est
+   * l'URL) ou, sans URL, dans une demande de l'humain (`manual`, le fil est la demande et le texte sa
+   * consigne, lue par le serveur). `requestId` : la demande que mène le job (`null` : le service).
+   */
+  #reportSignal(args: Record<string, unknown>, requestId: string | null): HostToolResult {
+    const url = typeof args.url === "string" ? args.url.trim() : "";
+    const personRef = typeof args.personRef === "string" ? args.personRef : null;
+    let input: SignalInput;
+    if (requestId !== null && url === "") {
+      const request = this.#ctx.store.getWorkstationRequest(requestId);
+      if (!request) return { text: "demande inconnue", isError: true };
+      input = { channel: "manual", threadRef: `request:${requestId}`, url: "", personRef, text: request.instruction };
+    } else {
+      const excerpt = typeof args.excerpt === "string" ? args.excerpt : "";
+      if (url === "" || excerpt.trim() === "")
+        return { text: "url et excerpt : texte non vide attendu", isError: true };
+      input = { channel: "chrome", threadRef: url, url, personRef, text: excerpt };
+    }
+    const result = this.#signals.reportSignal(input);
+    if (result.status === "refused") return { text: `signalement refusé : ${result.reason}`, isError: true };
+    return {
+      text:
+        result.status === "received"
+          ? "signalement enregistré : le service le juge puis le propose à l'humain. N'ouvre aucune issue."
+          : result.status === "duplicate"
+            ? "signalement déjà connu."
+            : "signalement déjà écarté par l'humain.",
+    };
+  }
+
   #shiftIfDue(now: number): void {
     if (this.#live.has("poste-service")) return;
     const settings = this.#ws.settings();
@@ -573,6 +719,8 @@ export class WorkstationAgent {
           text: lines === null ? "aucun meeting transcrit." : untrusted("résumés de meetings transcrits", lines),
         };
       }
+      case "workstation_signal":
+        return this.#reportSignal(args, null);
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }
@@ -690,6 +838,8 @@ export class WorkstationAgent {
         out.report = args.report;
         return { text: "compte rendu enregistré. Termine ton tour." };
       }
+      case "workstation_signal":
+        return this.#reportSignal(args, requestId);
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }
