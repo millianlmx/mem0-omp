@@ -3,7 +3,6 @@
 // `run_tests`, `review_verdict`). Le runner n'a ni la base ni le jeton de l'API : tout
 // passe par ici.
 import type { HarnessContext } from "./context.ts";
-import { SERVICE } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import type { DecisionInput, IrreversibleCategory } from "./decisions.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
@@ -85,7 +84,7 @@ export async function runHostTool(
     case "set_modules":
       return setModulesTool(ctx, run, step, args);
     case "split_feature":
-      return splitFeatureTool(ctx, hooks, run, step, args);
+      return splitFeatureTool(hooks, run, step, args);
     case "run_tests":
       return runTestsTool(ctx, state, run, step, args, signal);
     case "review_verdict": {
@@ -277,35 +276,24 @@ export function parseSplitFeatures(
   return { ok: true, features };
 }
 
-/** `split_feature { features }` : les sous-features AUTRES que celle que ce run continue partent en projet. */
-async function splitFeatureTool(
-  ctx: HarnessContext,
-  hooks: StepHooks,
-  run: RunRow,
-  step: StepRow,
-  args: Record<string, unknown>,
-): Promise<HostToolResult> {
+/**
+ * `split_feature { features }` : les sous-features AUTRES que celle que ce run continue. En
+ * /impl, elles partent en projet et attendent le merge de ce run ; en /specs, rien n'est créé
+ * — le `## Découpage` de specs.md part quand les specs sont acceptées (split.ts).
+ */
+function splitFeatureTool(hooks: StepHooks, run: RunRow, step: StepRow, args: Record<string, unknown>): HostToolResult {
   if (step.kind !== "specs" && step.kind !== "impl")
     return { text: "split_feature n'existe qu'en /specs et /impl", isError: true };
   const parsed = parseSplitFeatures(args.features);
   if (!parsed.ok) return { text: `split_feature refusé : ${parsed.error}`, isError: true };
-  const { projectId, runs } = await hooks.createProject(
-    {
-      repo: run.repo,
-      title: `Découpage de « ${run.title} »`.slice(0, 120),
-      priority: run.priority,
-      features: parsed.features,
-    },
-    SERVICE,
-  );
-  ctx.event("split", run.id, {
-    projectId,
-    step: step.kind,
-    by: "runner",
-    features: runs.map((row) => ({ id: row.id, title: row.title, modules: row.modules })),
-  });
+  if (step.kind === "specs")
+    return {
+      text: `découpage noté (${parsed.features.length} feature(s)) : il partira de \`## Découpage\` de specs.md quand les specs seront acceptées — liste-les là. Ce run continue sur sa part seulement.`,
+      details: { deferred: true },
+    };
+  const { projectId, runs } = hooks.split(run, parsed.features, step.kind);
   return {
-    text: `projet ${projectId} créé avec ${runs.length} feature(s) : ${runs.map((row) => row.title).join(" ; ")}. Ce run continue sur sa part seulement.`,
+    text: `projet ${projectId} créé avec ${runs.length} feature(s) : ${runs.map((row) => row.title).join(" ; ")}. Elles partiront après le merge de ce run, qui continue sur sa part seulement.`,
     details: { projectId, runs: runs.map((row) => row.id) },
   };
 }

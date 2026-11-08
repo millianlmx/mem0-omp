@@ -380,7 +380,7 @@ const SPLIT_TOOL: HostToolDefinition = {
   name: "split_feature",
   label: "Harness — découpage",
   description:
-    "Découpe la feature : les sous-features listées (AUTRES que celle que ce run continue d'implémenter) partent dans un projet à part, chacune avec sa demande rédigée comme un /req et ses modules. Ce run garde la première part.",
+    "Découpe la feature : les sous-features listées (AUTRES que celle que ce run continue d'implémenter) partent dans un projet à part, chacune avec sa demande rédigée comme un /req et ses modules. Ce run garde la première part ; les sous-features ne démarrent qu'après son merge. En /specs, le découpage part de `## Découpage` quand les specs sont acceptées.",
   parameters: {
     type: "object",
     properties: {

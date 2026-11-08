@@ -39,6 +39,11 @@ export type RunRow = {
   lastReviewSha: string | null;
   /** La révision du run : +1 à chaque écriture. Un client la renvoie en `If-Match` pour ne pas agir sur une vue périmée. */
   rev: number;
+  /**
+   * Le run dont cette feature découpée attend le MERGE avant de partir (split.ts) ; s'il
+   * est annulé ou échoue, elle est annulée avec lui. `null` : aucun préalable.
+   */
+  afterRun: string | null;
   /** Le client qui a créé le run (`null` : service ou jeton historique). */
   createdBy: string | null;
   createdAt: number;
@@ -69,7 +74,12 @@ export type RunPatch = Partial<
 >;
 
 export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" | "branch"> &
-  Partial<Pick<RunRow, "projectId" | "projectOrder" | "modules" | "state" | "step" | "priority" | "createdBy">>;
+  Partial<
+    Pick<
+      RunRow,
+      "projectId" | "projectOrder" | "modules" | "state" | "step" | "priority" | "createdBy" | "afterRun" | "reason"
+    >
+  >;
 
 const FAIL_CAUSES: readonly FailCause[] = [
   "timeout",
@@ -118,6 +128,7 @@ function runOf(row: Row): RunRow {
     lastFailCause: failCauseOf(strOrNull(row, "last_fail_cause")),
     lastReviewSha: strOrNull(row, "last_review_sha"),
     rev: num(row, "rev"),
+    afterRun: strOrNull(row, "after_run"),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -149,8 +160,8 @@ export class RunStore extends StoreCore {
   createRun(input: NewRun): RunRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repo,
       input.slug,
@@ -164,6 +175,8 @@ export class RunStore extends StoreCore {
       JSON.stringify(input.modules ?? []),
       input.priority ?? 0,
       input.createdBy ?? null,
+      input.afterRun ?? null,
+      input.reason ?? null,
       at,
       at,
     );
@@ -182,7 +195,13 @@ export class RunStore extends StoreCore {
   }
 
   listRuns(
-    filter: { state?: readonly RunState[]; repo?: string; projectId?: string; repos?: RepoFilter } = {},
+    filter: {
+      state?: readonly RunState[];
+      repo?: string;
+      projectId?: string;
+      afterRun?: string;
+      repos?: RepoFilter;
+    } = {},
   ): RunRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
@@ -202,6 +221,10 @@ export class RunStore extends StoreCore {
     if (filter.projectId) {
       where.push("project_id = ?");
       params.push(filter.projectId);
+    }
+    if (filter.afterRun) {
+      where.push("after_run = ?");
+      params.push(filter.afterRun);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     return this.selectAll(`SELECT * FROM runs ${clause} ORDER BY project_order, created_at, rowid`, ...params).map(

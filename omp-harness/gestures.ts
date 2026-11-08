@@ -18,6 +18,7 @@ import type { StepKind } from "./machine.ts";
 import {
   CANCELLABLE,
   MERGE_CAP,
+  acceptsSpecs,
   afterHumanValidation,
   afterSpecsValidation,
   cancelled,
@@ -51,6 +52,8 @@ export type GestureHooks = {
    * si le run n'est pas conduit par ce process ou qu'aucun prompt ne tourne.
    */
   steer: (runId: string, message: string) => Promise<boolean>;
+  /** Les specs du run viennent d'être acceptées (dans la transaction) : leur découpage part (split.ts). */
+  specsAccepted: (run: RunRow) => void;
 };
 
 /** Où est allée une consigne : dans le prompt en cours (`session`), ou gardée pour le prochain (`pending`). */
@@ -644,6 +647,7 @@ export class HumanLoop {
     const moved = store.transaction(() => {
       const next = this.#ctx.transition(current, transition, ["awaiting_human"], { patch, actor: { by: actor.by } });
       if (next && approve && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(current, stop));
+      if (next && acceptsSpecs(current.step, transition)) this.#hooks.specsAccepted(next);
       if (next && !approve) {
         const author = who.charAt(0).toUpperCase() + who.slice(1);
         store.addInstructions(
