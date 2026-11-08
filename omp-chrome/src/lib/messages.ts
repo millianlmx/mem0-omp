@@ -13,7 +13,10 @@ export type Settings = {
   pairing: HarnessTarget | null;
   stt: SttSettings;
   excluded: string[];
-  /** Pause locale de l'observation (popup) ; la pause du serveur est `paused` du statut. */
+  /**
+   * Pause locale du poste sur ce navigateur (popup) : ni observation, ni long-poll des
+   * actions, ni exécution. La pause du serveur est `paused` du statut.
+   */
   observationPaused: boolean;
 };
 
@@ -34,15 +37,44 @@ export type MeetingState = {
 };
 
 /** Ce que le document offscreen reçoit pour tenir le long-poll et transcrire. */
-export type OffscreenConfig = { pairing: HarnessTarget | null; stt: SttSettings; version: string };
+export type OffscreenConfig = {
+  pairing: HarnessTarget | null;
+  stt: SttSettings;
+  version: string;
+  /** La pause locale : le long-poll des actions est suspendu. */
+  paused: boolean;
+  /** Les onglets de la fenêtre de l'agent, rapportés au serveur à chaque long-poll (`X-OMP-Agent-Tabs`). */
+  agentTabs: number[];
+};
+
+/** Une action vue par l'extension, pour le popup : la dernière en cours et le journal des dernières. */
+export type ActionLog = {
+  seq: number;
+  kind: string;
+  rationale: string;
+  origin: string;
+  state: "running" | "done" | "failed" | "needs_approval";
+  /** L'erreur, ou ce qui attend l'humain ; vide sinon. */
+  detail: string;
+  at: number;
+};
+
+/** Les actions gardées pour le popup. */
+export const ACTION_LOG_KEEP = 10;
 
 export type PopupStatus = {
   paired: boolean;
   link: LinkState;
   observationPaused: boolean;
   serverPaused: boolean | null;
+  /** L'arrêt d'urgence en cours côté serveur (qui, quand) ; `null` sinon ou inconnu. */
+  stopped: { at: number; by: string } | null;
   pendingApprovals: number | null;
   meeting: MeetingState | null;
+  /** L'action que l'extension exécute en ce moment. */
+  current: ActionLog | null;
+  /** Les dernières actions exécutées (la plus récente d'abord), avec leur raison. */
+  recent: ActionLog[];
   version: string;
 };
 
@@ -57,7 +89,8 @@ export type ToBackground =
   | { to: "background"; type: "meeting-stop" }
   | { to: "background"; type: "meeting-ended"; reason: string }
   | { to: "background"; type: "meeting-error"; error: string }
-  | { to: "background"; type: "settings-changed" };
+  | { to: "background"; type: "settings-changed" }
+  | { to: "background"; type: "emergency-stop" };
 
 export type ToOffscreen =
   | { to: "offscreen"; type: "config"; config: OffscreenConfig }

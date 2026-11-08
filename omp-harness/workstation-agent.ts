@@ -36,6 +36,7 @@ import { RunnerSession } from "./runner-session.ts";
 import { workstationOwner } from "./session-feed.ts";
 import type { EffectiveAutonomy, ProfileStats, Workstation } from "./workstation.ts";
 import { MAX_WAIT_SEC, clip, parseActionInput, parseDigest, parseProfile } from "./workstation.ts";
+import { untrusted } from "./workstation-guards.ts";
 
 /** La scope mémoire des jobs du poste. */
 export const WORKSTATION_SCOPE = "workstation";
@@ -135,14 +136,28 @@ function actionLine(action: WorkstationAction): string {
 
 const AWAITING = (seq: number): string => `action #${seq} en attente de l'approbation de l'humain : ne réessaie pas.`;
 
-/** Ce que `workstation_act` rend à l'agent : le résultat, l'échec, ou l'attente de l'humain. */
-function actResult(action: WorkstationAction, image: boolean): HostToolResult {
+/**
+ * Ce que `workstation_act` rend à l'agent : le résultat, l'échec, ou l'attente de l'humain.
+ * Le résultat vient des pages (texte, titres, valeurs) : il est rendu entre délimiteurs de
+ * contenu non fiable. Une capture n'est jointe que si le modèle lit les images (`image`).
+ */
+function actResult(
+  action: WorkstationAction,
+  capture: { image: string | undefined; readable: boolean },
+): HostToolResult {
   switch (action.state) {
     case "done": {
+      const page: string[] = [];
+      if (action.result?.text) page.push(clip(action.result.text, TOOL_TEXT_MAX));
+      if (action.result?.data !== undefined) page.push(clip(JSON.stringify(action.result.data), TOOL_TEXT_MAX));
       const parts = [`action #${action.seq} faite.`];
-      if (action.result?.text) parts.push(clip(action.result.text, TOOL_TEXT_MAX));
-      if (action.result?.data !== undefined) parts.push(clip(JSON.stringify(action.result.data), TOOL_TEXT_MAX));
-      if (image) parts.push("(capture prise ; l'image n'est pas transmise à l'agent du serveur : utilise snapshot.)");
+      if (page.length > 0) parts.push(untrusted("résultat lu dans le navigateur", page.join("\n")));
+      if (capture.image !== undefined && capture.readable)
+        return { text: parts.join("\n"), image: { data: capture.image, mimeType: "image/jpeg" } };
+      if (capture.image !== undefined)
+        parts.push(
+          "(capture prise ; ton modèle ne lit pas les images, elle ne t'est pas transmise : utilise snapshot.)",
+        );
       return { text: parts.join("\n") };
     }
     case "awaiting_approval":
@@ -469,7 +484,8 @@ export class WorkstationAgent {
         if (action.kind === "decision") return { text: `décision #${action.seq} journalisée.` };
         if (action.state === "awaiting_approval") return { text: AWAITING(action.seq) };
         const waited = await this.#ws.waitAction(action.seq, MAX_WAIT_SEC, live.abort.signal);
-        return actResult(waited.action, waited.image !== undefined);
+        const readable = waited.image !== undefined && (await live.session?.acceptsImages()) === true;
+        return actResult(waited.action, { image: waited.image, readable });
       }
       case "workstation_activity": {
         const sinceMin =
@@ -479,13 +495,17 @@ export class WorkstationAgent {
         const entries = store.listWorkstationObservations({ since: Date.now() - sinceMin * 60_000, limit: 200 });
         return {
           text:
-            entries.length > 0 ? entries.map(observationLine).join("\n") : `aucune activité depuis ${sinceMin} min.`,
+            entries.length > 0
+              ? untrusted("titres et libellés observés", entries.map(observationLine).join("\n"))
+              : `aucune activité depuis ${sinceMin} min.`,
         };
       }
-      case "workstation_meetings":
+      case "workstation_meetings": {
+        const lines = meetingLines(store.listWorkstationMeetings({ limit: MEETINGS_SHOWN }));
         return {
-          text: meetingLines(store.listWorkstationMeetings({ limit: MEETINGS_SHOWN })) ?? "aucun meeting transcrit.",
+          text: lines === null ? "aucun meeting transcrit." : untrusted("résumés de meetings transcrits", lines),
         };
+      }
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }
@@ -497,6 +517,19 @@ export class WorkstationAgent {
   async recover(): Promise<void> {
     const { config, exec } = this.#ctx;
     for (const job of JOBS) await forceStop(config, exec, unitOf(job));
+  }
+
+  /**
+   * L'arrêt d'urgence : le service en cours est coupé tout de suite (son runner arrêté, son
+   * issue `reason`). Rend `true` s'il y en avait un.
+   */
+  async halt(reason: string): Promise<boolean> {
+    const live = this.#live.get("poste-service");
+    if (!live || live.abort.signal.aborted) return false;
+    live.stopReason = reason;
+    live.abort.abort();
+    await live.session?.stop();
+    return true;
   }
 
   async stop(): Promise<void> {

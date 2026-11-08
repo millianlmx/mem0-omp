@@ -181,6 +181,22 @@ export class WorkstationStore extends PushStore {
     return Number(this.execute("DELETE FROM workstation_observations WHERE at < ?", before).changes);
   }
 
+  /**
+   * Un hôte déjà observé (visite ou interaction), avec ou sans `www.` : la garde
+   * anti-exfiltration de la navigation de l'agent. Les adresses gardées sont origine + chemin.
+   */
+  workstationHostSeen(host: string): boolean {
+    const bare = host.toLowerCase().replace(/^www\./, "");
+    const escaped = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
+    const patterns = [bare, `www.${bare}`].flatMap((name) =>
+      ["http", "https"].flatMap((scheme) => [`${scheme}://${escaped(name)}/%`, `${scheme}://${escaped(name)}:%`]),
+    );
+    const where = patterns.map(() => "url LIKE ? ESCAPE '\\'").join(" OR ");
+    return (
+      this.selectOne(`SELECT 1 AS hit FROM workstation_observations WHERE ${where} LIMIT 1`, ...patterns) !== undefined
+    );
+  }
+
   // -- actions ------------------------------------------------------------------
 
   createWorkstationAction(input: {

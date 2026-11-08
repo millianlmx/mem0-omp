@@ -1,5 +1,5 @@
 // Les issues GitHub lancées en run : le lien d'une issue vers son dernier run.
-import { WorkstationMeetingStore } from "./workstation-meetings.ts";
+import { WorkstationCaptureStore } from "./workstation-captures.ts";
 import { num, str, strOrNull } from "./sql.ts";
 import type { Row } from "./sql.ts";
 
@@ -23,7 +23,7 @@ function issueRunOf(row: Row): IssueRunRow {
   };
 }
 
-export class IssueStore extends WorkstationMeetingStore {
+export class IssueStore extends WorkstationCaptureStore {
   /** Lie une issue à un run ; un lien antérieur (run échoué ou annulé) est remplacé. */
   linkIssue(input: Omit<IssueRunRow, "createdAt">): void {
     this.execute(

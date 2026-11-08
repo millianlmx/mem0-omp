@@ -23,6 +23,7 @@
 // `get_login_providers` ; `login` ({ url, instructions, prompt, code, error }) dit le
 // flux de `login` — `error` le refuse d'emblée, sinon `open_url`, une notification puis
 // `input`, jusqu'à recevoir `code` (un `input` annulé est redemandé, comme omp).
+// `stateModel` est le modèle que rend `get_state` (`{ input: ["text", "image"] }` : il lit les images).
 // Chaque prompt, appel d'outil et commande est journalisé en JSONL dans FAKE_LOG.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -188,11 +189,22 @@ lines.on("line", (line) => {
   const id = typeof frame.id === "string" ? frame.id : "";
   switch (frame.type) {
     case "host_tool_result": {
-      const result = frame.result as { content: { text: string }[] };
-      waiting.get(id)?.(result.content.map((part) => part.text).join("\n"));
+      // Une image jointe (capture du poste) est journalisée par sa forme, jamais ses octets.
+      const result = frame.result as { content: { type?: string; text?: string; mimeType?: string; data?: string }[] };
+      waiting.get(id)?.(
+        result.content
+          .map((part) =>
+            part.type === "image" ? `[image ${part.mimeType} ${String(part.data?.length ?? 0)}]` : (part.text ?? ""),
+          )
+          .join("\n"),
+      );
       waiting.delete(id);
       return;
     }
+    case "get_state":
+      // `stateModel` du scénario : le modèle que rend `get_state` (`input` dit s'il lit les images).
+      out({ id, type: "response", command: "get_state", success: true, data: { model: scenario.stateModel ?? null } });
+      return;
     case "set_host_tools":
       log({ kind: "command", type: frame.type, tools: (frame.tools as { name: string }[]).map((tool) => tool.name) });
       out({ id, type: "response", command: "set_host_tools", success: true, data: { toolNames: [] } });

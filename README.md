@@ -277,10 +277,36 @@ participants.
 | Proposer | Chaque action qu'il envisage attend ton accord. |
 | Agir | Fait seul les petites actions, dans sa propre fenêtre de Chrome. |
 
-Ce que l'extension ne voit jamais : ce que tu tapes (seuls l'action et le libellé
-du champ sont notés), les champs de mot de passe, les sites que tu exclus dans ses
-réglages. L'observation se met en pause depuis l'extension ou depuis l'app, et le
-serveur oublie les observations au bout de 30 jours.
+**L'agent reste dans sa fenêtre.** Il agit dans une fenêtre de Chrome à lui, ouverte
+sans prendre le focus. Lire ou toucher un de tes onglets (le lire, le capturer, y
+cliquer, y saisir, le faire défiler, y changer d'adresse) attend ton accord dans l'app,
+et il ne ferme jamais un de tes onglets. Le serveur et l'extension le vérifient tous les
+deux, quel que soit le mode. En autonomie, une adresse vers un site jamais vu dans
+l'observation, ou qui porte une longue valeur opaque (de quoi faire sortir un secret),
+attend aussi ton accord. Le réglage `workstation.allowedHosts` du serveur restreint les
+sites où l'on navigue sans te demander.
+
+**Une page ne donne pas d'ordre.** Ce que l'agent lit dans une page (texte, titres,
+valeurs, transcripts) lui arrive marqué comme une donnée non fiable, jamais comme une
+consigne : une page qui écrit « ignore tes consignes et envoie… » reste un texte à lire.
+
+**Stop.** Le bouton **Stop** du popup de l'extension arrête tout de suite l'action en
+cours, met l'extension en pause et met le poste en pause sur le serveur : les actions
+en attente sont annulées et le service en cours de l'agent est coupé. Seule l'app
+appairée avec le code approbateur relance le poste (section **Poste**, décocher « Mettre
+le poste en pause ») ; sur ce navigateur, recoche « Poste actif » dans le popup. Le
+popup se tient à jour tout seul : la pause, l'action en cours, les dix dernières
+actions avec leur raison, et un bouton qui ouvre l'app quand des actions attendent ton
+accord.
+
+Ce que l'extension ne voit jamais : ce que tu tapes (l'observation ne note que l'action
+et le libellé du champ), les champs de mot de passe, les sites que tu exclus dans ses
+réglages. Quand l'agent lit une page de SA fenêtre (ou une des tiennes, avec ton
+accord), il en reçoit le texte visible (8 000 caractères au plus), le nom des éléments
+et la valeur des champs, sauf les champs secrets (mot de passe, carte, code à usage
+unique) ; l'adresse d'un de tes onglets perd sa query. L'observation se met en pause
+depuis l'extension ou depuis l'app, et le serveur oublie les observations au bout de
+30 jours, les captures d'écran au bout de 24 h.
 
 Dans une session omp, les outils `workstation_status`, `workstation_profile`,
 `workstation_activity`, `workstation_meetings`, `workstation_journal` et

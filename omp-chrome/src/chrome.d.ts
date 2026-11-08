@@ -81,6 +81,7 @@ declare namespace chrome {
       (tabId: number, change: { status?: string; url?: string; title?: string }, tab: Tab) => void
     >;
     const onRemoved: ChromeEvent<(tabId: number, info: { windowId: number; isWindowClosing: boolean }) => void>;
+    const onCreated: ChromeEvent<(tab: Tab) => void>;
   }
 
   namespace windows {

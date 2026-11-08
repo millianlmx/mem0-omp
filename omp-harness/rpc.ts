@@ -19,7 +19,13 @@ export type RunnerProcess = {
   on: (event: "error", listener: (error: Error) => void) => unknown;
 };
 
-export type HostToolResult = { text: string; isError?: boolean; details?: unknown };
+/** Le résultat d'un outil hôte ; `image` (base64) n'est joint que si le modèle lit les images. */
+export type HostToolResult = {
+  text: string;
+  isError?: boolean;
+  details?: unknown;
+  image?: { data: string; mimeType: string };
+};
 
 export type HostToolHandler = (
   name: string,
@@ -244,7 +250,10 @@ export class RpcRunner {
       type: "host_tool_result",
       id,
       result: {
-        content: [{ type: "text", text: result.text }],
+        content: [
+          { type: "text", text: result.text },
+          ...(result.image ? [{ type: "image", data: result.image.data, mimeType: result.image.mimeType }] : []),
+        ],
         ...(result.details !== undefined ? { details: result.details } : {}),
       },
       ...(result.isError ? { isError: true } : {}),

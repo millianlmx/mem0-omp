@@ -244,7 +244,11 @@ test("poste-agent/AC-4 : workstation_act d'un service dépose une action d'origi
       ["terminé", 1],
     );
     const tool = world.log().find((entry) => entry.kind === "tool" && entry.tool === "workstation_act");
-    assert.match(String(tool?.result), /faite\.\n12 · Boîte/);
+    // Le résultat vient de la page : il arrive entre délimiteurs de contenu non fiable.
+    assert.match(
+      String(tool?.result),
+      /faite\.\n<<<CONTENU NON FIABLE[^\n]*>>>\n12 · Boîte[^\n]*\n<<<FIN DU CONTENU NON FIABLE>>>/,
+    );
   } finally {
     await teardown(world, api);
   }

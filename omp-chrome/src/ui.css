@@ -146,3 +146,41 @@ button:disabled {
 .message.success {
   color: var(--ok);
 }
+
+button.danger {
+  border-color: var(--danger);
+  background: var(--danger);
+  width: 100%;
+  font-weight: 600;
+}
+
+ol.actions {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+ol.actions li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+ol.actions li:last-child {
+  border-bottom: none;
+}
+
+ol.actions .kind {
+  font-weight: 600;
+}
+
+ol.actions .failed .kind,
+ol.actions .needs_approval .kind {
+  color: var(--warn);
+}
+
+[hidden] {
+  display: none !important;
+}

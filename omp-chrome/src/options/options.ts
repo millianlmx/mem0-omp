@@ -46,7 +46,10 @@ async function renderState(): Promise<void> {
   stateEl.className = `state ${state}`;
   stateEl.textContent = STATE_TITLES[state] ?? state;
   const parts = [
-    status.observationPaused ? "Observation en pause sur ce navigateur." : "Observation active.",
+    status.observationPaused
+      ? "Poste en pause sur ce navigateur : ni observation, ni action."
+      : "Poste actif : observation et actions de l'agent.",
+    status.stopped ? `Arrêt d'urgence par ${status.stopped.by} : la reprise se fait dans OMP Console.` : "",
     status.meeting ? `Transcription en cours : « ${status.meeting.title} ».` : "",
     status.link.detail && (state === "offline" || state === "unauthorized") ? `Détail : ${status.link.detail}` : "",
   ];

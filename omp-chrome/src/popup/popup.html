@@ -13,9 +13,25 @@
     <section aria-live="polite">
       <div class="state connecting" id="state">Connexion…</div>
       <p class="muted" id="state-detail"></p>
+      <button type="button" class="secondary" id="approve" hidden>Approuver dans OMP Console</button>
     </section>
     <section>
-      <label class="toggle"><input type="checkbox" id="observe" /> Observer mon travail</label>
+      <button type="button" class="danger" id="stop">Stop — arrêter l'agent</button>
+      <p class="muted">
+        Coupe tout de suite l'action en cours, met le poste en pause sur ce navigateur et sur le serveur. Seule
+        l'app approbatrice (OMP Console) relance le serveur.
+      </p>
+      <p class="message" id="stop-message" role="status"></p>
+    </section>
+    <section aria-live="polite">
+      <h2>Action en cours</h2>
+      <p class="muted" id="current">Aucune.</p>
+      <h2>Dernières actions</h2>
+      <ol class="actions" id="recent"></ol>
+      <p class="muted" id="recent-empty">Aucune action exécutée depuis l'ouverture du navigateur.</p>
+    </section>
+    <section>
+      <label class="toggle"><input type="checkbox" id="observe" /> Poste actif sur ce navigateur</label>
       <p class="muted" id="observe-detail"></p>
     </section>
     <section>
