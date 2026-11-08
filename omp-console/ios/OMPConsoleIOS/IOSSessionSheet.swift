@@ -1,6 +1,7 @@
 import Charts
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 // La feuille « Session en direct » d'une feature (ou « Analyse en direct » d'un audit),
@@ -50,6 +51,7 @@ struct IOSSessionEntryTarget: Hashable {
 
 struct IOSSessionSheet: View {
     @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
     let request: HarnessSessionRequest
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -72,6 +74,14 @@ struct IOSSessionSheet: View {
                         .accessibilityIdentifier("ios.session.tabs")
                     }
                     statusSection
+                    // La consigne à l'agent d'une feature vivante, sous l'état du direct.
+                    if let runId = request.runId, server.inbox?.runs.contains(where: { $0.id == runId && $0.acceptsInstructions }) == true {
+                        Section {
+                            RunInstructionsComposer(server: server, drafts: drafts, runId: runId)
+                        } header: {
+                            Text(ControlText.instructionsTitle)
+                        }
+                    }
                     switch tab {
                     case .live:
                         liveSections

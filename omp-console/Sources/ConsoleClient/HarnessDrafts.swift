@@ -120,10 +120,118 @@ public final class HarnessDrafts: ObservableObject {
     /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
     @Published public var workstationIdentities: String?
 
+    // MARK: Consigne, relance et budget d'une feature
+
+    /// La consigne relancée avec la feature de `retryRequest` (vide : aucune).
+    @Published public var retryInstructions = ""
+    /// La feature à qui l'on écrit une consigne (feuille ouverte).
+    @Published public var instructionsRequest: HarnessRun?
+    /// Les consignes en cours de saisie, par feature.
+    @Published public var instructions: [String: String] = [:]
+    /// Ce que le serveur a fait de la dernière consigne envoyée, par feature.
+    @Published public var instructionsDelivered: [String: HarnessInstructionsDelivery] = [:]
+    /// La feature dont on règle le budget (feuille ouverte), le montant saisi et le budget lu.
+    @Published public var budgetRequest: HarnessRun?
+    @Published public var budgetText = ""
+    @Published public var budgetShown: HarnessBudget?
+
+    // MARK: Poste : arrêt, détails, commande, demandes, automatisations, réglages
+
+    /// L'arrêt d'urgence attend confirmation.
+    @Published public var workstationStopAsked = false
+    /// L'action dont le détail est ouvert, sa vue complète et sa capture une fois lues.
+    @Published public var workstationActionShown: WorkstationAction?
+    @Published public var workstationActionView: WorkstationActionView?
+    @Published public var workstationCapture: WorkstationCapture?
+    /// L'action dont l'annulation attend confirmation.
+    @Published public var workstationCancelRequest: WorkstationAction?
+    /// La réunion dont le détail est ouvert, et sa transcription une fois lue.
+    @Published public var workstationMeetingShown: WorkstationMeeting?
+    @Published public var workstationMeetingDetail: WorkstationMeetingDetail?
+    /// L'action commandée depuis l'app, en cours de saisie.
+    @Published public var workstationCommand = WorkstationCommandDraft()
+    /// La demande en cours de saisie, et le navigateur qu'elle vise (`nil` : par défaut).
+    @Published public var workstationRequestText = ""
+    @Published public var workstationRequestBrowser: String?
+    /// L'expression cron saisie pour automatiser une tâche, par indice de la tâche du profil.
+    @Published public var automationCron: [Int: String] = [:]
+    /// L'automatisation dont la suppression attend confirmation.
+    @Published public var automationRemoval: WorkstationAutomation?
+    /// Les hôtes permis en cours de saisie (un par ligne) ; `nil` : ceux du serveur.
+    @Published public var workstationHosts: String?
+
+    // MARK: Vigie, planifications, administration, issues
+
+    /// Les réglages de la vigie en cours de saisie ; `nil` : ceux du serveur.
+    @Published public var vigieSettings: VigieSettings?
+    /// La planification en cours de saisie, et celle dont la suppression attend confirmation.
+    @Published public var scheduleDraft = HarnessScheduleDraft()
+    @Published public var scheduleRemoval: HarnessSchedule?
+    /// Le client en cours de création : nom, rôle et dépôts cochés (aucun : tous).
+    @Published public var clientName = ""
+    @Published public var clientRole = "operator"
+    @Published public var clientRepos: Set<String> = []
+    /// Le client dont la révocation attend confirmation.
+    @Published public var clientRevocation: HarnessManagedClient?
+    /// Le dépôt en cours de déclaration : son adresse et son nom court facultatif.
+    @Published public var repoURL = ""
+    @Published public var repoName = ""
+    /// Le dépôt dont les issues sont montrées ; vide : le premier déclaré.
+    @Published public var issuesRepo = ""
+
     /// Ouvre la saisie du refus d'un envoi, raison vide.
     public func beginWorkstationRefusal(_ action: WorkstationAction) {
         workstationRefusalReason = ""
         workstationRefusal = action
+    }
+
+    /// Ouvre le détail d'une action : sa vue et sa capture sont lues par la feuille.
+    public func showWorkstationAction(_ action: WorkstationAction) {
+        workstationActionView = nil
+        workstationCapture = nil
+        workstationActionShown = action
+    }
+
+    /// Ouvre le détail d'une réunion : sa transcription est lue par la feuille.
+    public func showWorkstationMeeting(_ meeting: WorkstationMeeting) {
+        workstationMeetingDetail = nil
+        workstationMeetingShown = meeting
+    }
+
+    /// Ouvre la relance confirmée d'une feature, consigne vide.
+    public func beginRetry(_ run: HarnessRun) {
+        retryInstructions = ""
+        retryRequest = run
+    }
+
+    /// Ouvre la feuille du budget d'une feature : montant vide, budget relu par la feuille.
+    public func beginBudget(_ run: HarnessRun) {
+        budgetText = ""
+        budgetShown = nil
+        budgetRequest = run
+    }
+
+    /// Le montant saisi pour le budget : `nil` s'il n'est pas un montant positif d'au plus 10 000 $.
+    public var budgetValue: Double? {
+        let text = budgetText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(text), value.isFinite, value > 0, value <= 10_000 else { return nil }
+        return value
+    }
+
+    /// La consigne saisie pour une feature.
+    public func instructionsText(for runId: String) -> String { instructions[runId] ?? "" }
+
+    /// Le dépôt des issues : celui choisi, sinon le premier déclaré.
+    public func issuesRepo(in repos: [HarnessRepo]) -> String? {
+        if repos.contains(where: { $0.name == issuesRepo }) { return issuesRepo }
+        return repos.first?.name
+    }
+
+    /// Après une création réussie, la saisie du client est remise à zéro.
+    public func clearClient() {
+        clientName = ""
+        clientRole = "operator"
+        clientRepos = []
     }
 
     /// Les adresses saisies diffèrent de celles du serveur : « Enregistrer » est permis.

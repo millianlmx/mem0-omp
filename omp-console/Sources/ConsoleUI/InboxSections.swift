@@ -271,7 +271,7 @@ public struct InboxSections: View {
                         .buttonStyle(.bordered)
                 } else {
                     // Arrêtée sans verdict (échecs répétés, fusion refusée) : repart de son étape.
-                    Button(PipelineServerText.retry) { drafts.retryRequest = run }
+                    Button(PipelineServerText.retry) { drafts.beginRetry(run) }
                         .buttonStyle(.borderedProminent)
                 }
             }

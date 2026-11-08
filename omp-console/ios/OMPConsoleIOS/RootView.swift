@@ -82,7 +82,8 @@ struct RootView: View {
     private func sectionTab(_ section: ConsoleSection) -> some TabContent<IOSTab> {
         let count: Int = badge(for: section)
         let label: String = IOSShellText.sectionRowLabel(section.title, badge: count)
-        let hidden: Bool = IOSTabs.isHidden(IOSTab.section(section), compact: isCompact)
+        // L'Administration n'est montrée qu'à un jeton administrateur.
+        let hidden: Bool = IOSTabs.isHidden(IOSTab.section(section), compact: isCompact) || (section.isAdminOnly && !server.isAdmin)
         let identifier: String = "ios.tab." + section.rawValue
         Tab(section.title, systemImage: IOSSection.systemImage(of: section), value: IOSTab.section(section)) {
             NavigationStack { sectionScreen(section) }
@@ -108,13 +109,12 @@ struct RootView: View {
             }
             // La palette ⌘K, la recherche ⌘F et la feuille « Nouvelle feature » ⌘N,
             // partagées avec le Mac (ConsoleUI) ; ⌘K et ⌘N passent par la barre des menus.
-            .consolePalette(server: server, drafts: drafts, sections: IOSSection.all, memory: true) { select($0) }
-            .focusedSceneValue(\.iosPalette, IOSPaletteAction(drafts: drafts, isEnabled: server.isConfigured))
+            .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.visible(IOSSection.all, isAdmin: server.isAdmin), memory: true) { select($0) }
             // Le socle des écrans partagés : le rendu Markdown, le direct d'une session
             // et la Live Activity d'une feature, propres à l'iPhone/iPad.
             .consoleShell(ConsoleShell(
                 markdown: { AnyView(IOSMarkdownView(blocks: $0)) },
-                session: { [server] request in AnyView(IOSSessionSheet(server: server, request: request)) },
+                session: { [server, drafts] request in AnyView(IOSSessionSheet(server: server, drafts: drafts, request: request)) },
                 runActions: { [server] run in AnyView(IOSLiveActivityMenuItem(server: server, run: run)) }
             ))
             .task {
@@ -122,10 +122,11 @@ struct RootView: View {
                 await server.load()
                 server.startLive()
             }
-            // L'état du poste et ses envois à approuver (badges, Accueil), relus à chaque
-            // serveur relié ; le flux de la boîte les tient ensuite à jour.
+            // L'état du poste et ses envois à approuver (badges, Accueil), et le battement de
+            // la vigie, relus à chaque serveur relié ; le flux de la boîte les tient ensuite à jour.
             .task(id: server.address) {
                 await workstation.refresh()
+                await server.vigie.refresh()
             }
             // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
             // boîte fraîche : ce qui a changé pendant l'absence se voit tout de suite.
@@ -167,7 +168,7 @@ struct RootView: View {
     /// La liste de l'onglet « Plus » (iPhone) : des rangées système qui poussent
     /// les sections rangées sous « Plus » dans la pile de l'onglet.
     private var plusList: some View {
-        List(IOSTabs.plusSections) { section in
+        List(ConsoleSection.visible(IOSTabs.plusSections, isAdmin: server.isAdmin)) { section in
             NavigationLink(value: section) {
                 Label(section.title, systemImage: IOSSection.systemImage(of: section))
             }

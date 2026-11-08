@@ -272,12 +272,27 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
     public var profileUpdatedAt: Double?
     public var lastShift: WorkstationShift?
     public var nextShiftAt: Double?
+    /// L'arrêt d'urgence en cours (`POST /v1/workstation/stop`) ; `nil` hors arrêt. Seule la
+    /// reprise par l'approbateur (`paused: false`) le lève.
+    public var stopped: WorkstationStop?
+    /// Les navigateurs connus (un par extension appairée : « Perso », « ADEO »…).
+    public var browsers: [WorkstationBrowser]
+    /// Le navigateur qui reçoit ce qui n'en cible aucun ; `nil` : aucun connu.
+    public var defaultBrowser: String?
+    /// Les hôtes où l'on navigue sans approbation (vide : tout hôte), valeurs en vigueur.
+    public var allowedHosts: [String]
+    /// La garde anti-exfiltration de l'agent 24/24, en vigueur.
+    public var exfiltrationGuard: Bool
+    /// D'où viennent ces deux réglages : la configuration du serveur, ou un réglage de l'approbateur.
+    public var navigationSource: WorkstationNavigationSource?
 
     public init(
         online: Bool = false, lastSeenAt: Double? = nil, extensionVersion: String? = nil, observedSeconds: Double = 0,
         thresholdHours: Double = 8, autonomy: WorkstationAutonomy = WorkstationAutonomy(setting: "auto", effective: "observe"),
         paused: Bool = false, selfIdentities: [String] = [], pending: Int = 0, profileUpdatedAt: Double? = nil,
-        lastShift: WorkstationShift? = nil, nextShiftAt: Double? = nil
+        lastShift: WorkstationShift? = nil, nextShiftAt: Double? = nil, stopped: WorkstationStop? = nil,
+        browsers: [WorkstationBrowser] = [], defaultBrowser: String? = nil, allowedHosts: [String] = [],
+        exfiltrationGuard: Bool = true, navigationSource: WorkstationNavigationSource? = nil
     ) {
         self.online = online
         self.lastSeenAt = lastSeenAt
@@ -291,13 +306,22 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
         self.profileUpdatedAt = profileUpdatedAt
         self.lastShift = lastShift
         self.nextShiftAt = nextShiftAt
+        self.stopped = stopped
+        self.browsers = browsers
+        self.defaultBrowser = defaultBrowser
+        self.allowedHosts = allowedHosts
+        self.exfiltrationGuard = exfiltrationGuard
+        self.navigationSource = navigationSource
     }
 
     private enum CodingKeys: String, CodingKey {
         case online, lastSeenAt, extensionVersion, observedSeconds, thresholdHours, autonomy, paused
         case selfIdentities, pending, profileUpdatedAt, lastShift, nextShiftAt
+        case stopped, browsers, defaultBrowser, allowedHosts, exfiltrationGuard, navigationSource
     }
 
+    /// Un serveur antérieur à l'arrêt d'urgence, aux navigateurs ou à la navigation gardée
+    /// n'en dit rien : aucun arrêt, aucun navigateur, tout hôte permis, garde active.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         online = try container.decodeIfPresent(Bool.self, forKey: .online) ?? false
@@ -312,6 +336,12 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
         profileUpdatedAt = try container.decodeIfPresent(Double.self, forKey: .profileUpdatedAt)
         lastShift = try container.decodeIfPresent(WorkstationShift.self, forKey: .lastShift)
         nextShiftAt = try container.decodeIfPresent(Double.self, forKey: .nextShiftAt)
+        stopped = try container.decodeIfPresent(WorkstationStop.self, forKey: .stopped)
+        browsers = try container.list([WorkstationBrowser].self, .browsers)
+        defaultBrowser = try container.decodeIfPresent(String.self, forKey: .defaultBrowser)
+        allowedHosts = try container.list([String].self, .allowedHosts)
+        exfiltrationGuard = try container.decodeIfPresent(Bool.self, forKey: .exfiltrationGuard) ?? true
+        navigationSource = try container.decodeIfPresent(WorkstationNavigationSource.self, forKey: .navigationSource)
     }
 
     /// La part du seuil d'observation atteinte, de 0 à 1.

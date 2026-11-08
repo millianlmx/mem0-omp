@@ -198,6 +198,14 @@ public enum WorkstationText {
         case "screenshot": L10n.text("Capturer l’écran")
         case "wait": L10n.text("Attendre")
         case "close": L10n.text("Fermer un onglet")
+        case "select": L10n.text("Choisir une option")
+        case "hover": L10n.text("Survoler")
+        case "back": L10n.text("Revenir à la page précédente")
+        case "forward": L10n.text("Aller à la page suivante")
+        case "reload": L10n.text("Recharger la page")
+        case "wait_for": L10n.text("Attendre un élément")
+        case "upload": L10n.text("Joindre un fichier")
+        case "download": L10n.text("Télécharger un fichier")
         case "decision": L10n.text("Décision")
         default: raw
         }

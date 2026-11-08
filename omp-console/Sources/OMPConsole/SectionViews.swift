@@ -61,6 +61,38 @@ struct WorkstationSectionView: ConsoleSectionView {
     var body: some View { WorkstationView(server: server, workstation: server.workstation, drafts: drafts) }
 }
 
+/// La vigie : mode, plafonds, battement de cœur et incidents.
+struct VigieSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.vigie
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    var body: some View { HarnessVigieView(server: server, drafts: drafts) }
+}
+
+/// Les planifications récurrentes : runs, audits, relève d'issues.
+struct SchedulesSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.schedules
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    var body: some View { HarnessSchedulesView(server: server, drafts: drafts) }
+}
+
+/// Les issues des dépôts et leur correction.
+struct IssuesSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.issues
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    var body: some View { HarnessIssuesView(server: server, drafts: drafts) }
+}
+
+/// L'administration du serveur (admin seulement).
+struct AdminSectionView: ConsoleSectionView {
+    static let section = ConsoleSection.admin
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+    var body: some View { HarnessAdminView(server: server, drafts: drafts) }
+}
+
 struct TerminalSectionView: ConsoleSectionView {
     static let section = ConsoleSection.terminal
     @ObservedObject var model: TerminalConsoleModel
@@ -108,6 +140,10 @@ struct SectionDetail: View {
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
+        case .vigie: VigieSectionView(server: server, drafts: drafts)
+        case .schedules: SchedulesSectionView(server: server, drafts: drafts)
+        case .issues: IssuesSectionView(server: server, drafts: drafts)
+        case .admin: AdminSectionView(server: server, drafts: drafts)
         }
     }
 }

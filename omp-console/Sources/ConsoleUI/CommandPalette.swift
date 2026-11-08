@@ -81,6 +81,9 @@ public enum ConsolePaletteActions {
         case .searchMemory(let query):
             drafts.memorySearchRequest = query
             select(.memory)
+        case .stopWorkstation:
+            select(.workstation)
+            drafts.workstationStopAsked = true
         }
     }
 }

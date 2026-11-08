@@ -78,6 +78,8 @@ struct ConsoleRootView: View {
     /// trier sur Audit, les envois à approuver sur Poste.
     private func badge(for section: ConsoleSection) -> Int {
         if section == .workstation { return workstation.pendingCount }
+        // La vigie muette se signale dans la barre latérale.
+        if section == .vigie { return server.vigie.isSilent ? 1 : 0 }
         guard let inbox = server.inbox else { return 0 }
         switch section {
         case .home: return inbox.pendingCount
@@ -91,7 +93,7 @@ struct ConsoleRootView: View {
             List(selection: selection) {
                 ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                     Section(group.title) {
-                        ForEach(group.sections) { section in
+                        ForEach(ConsoleSection.visible(group.sections, isAdmin: server.isAdmin)) { section in
                             let count = badge(for: section)
                             if count > 0 {
                                 Label(section.title, systemImage: section.systemImage)
@@ -126,7 +128,7 @@ struct ConsoleRootView: View {
             .sheet(isPresented: $drafts.serverSheetShown) {
                 ServerSheet(server: server, drafts: drafts)
             }
-            .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
+            .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.visible(ConsoleSection.allCases, isAdmin: server.isAdmin), memory: true) { section in
                 model.select(section)
             }
         }
@@ -144,13 +146,14 @@ struct ConsoleRootView: View {
         // serveur relié ; le flux de la boîte les tient ensuite à jour.
         .task(id: server.address) {
             await workstation.refresh()
+            await server.vigie.refresh()
         }
         .onOpenURL { url in
             if let section = HarnessWidgetLink.section(of: url) { model.select(section) }
         }
         .consoleShell(ConsoleShell(
             markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
-            session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) }
+            session: { [server, drafts] request in AnyView(HarnessSessionSheet(server: server, drafts: drafts, request: request)) }
         ))
         .frame(minWidth: 760, minHeight: 480)
     }

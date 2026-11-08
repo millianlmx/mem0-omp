@@ -80,19 +80,22 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
     public var memory: HarnessMemoryStatus?
     /// Les sauvegardes (serveurs récents) : absentes d'un serveur plus ancien.
     public var backups: HarnessBackupsStatus?
+    /// Les features dues que l'admission retient en file, par cause (serveurs récents).
+    public var queue: HarnessQueueStatus?
 
     public init(
         repos: [HarnessRepo] = [], oracle: HarnessOracleStatus? = nil, scheduler: HarnessStats.Scheduler? = nil,
-        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil
+        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil, queue: HarnessQueueStatus? = nil
     ) {
         self.repos = repos
         self.oracle = oracle
         self.scheduler = scheduler
         self.memory = memory
         self.backups = backups
+        self.queue = queue
     }
 
-    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups }
+    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups, queue }
 
     /// Les dépôts sont requis ; chaque bloc de service est lu à part : un bloc absent
     /// (serveur ancien) ou d'une autre forme laisse `nil`, sans perdre les dépôts.
@@ -103,6 +106,7 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
         scheduler = (try? container.decodeIfPresent(HarnessStats.Scheduler.self, forKey: .scheduler)) ?? nil
         memory = (try? container.decodeIfPresent(HarnessMemoryStatus.self, forKey: .memory)) ?? nil
         backups = (try? container.decodeIfPresent(HarnessBackupsStatus.self, forKey: .backups)) ?? nil
+        queue = (try? container.decodeIfPresent(HarnessQueueStatus.self, forKey: .queue)) ?? nil
     }
 }
 

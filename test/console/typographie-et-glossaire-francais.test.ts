@@ -126,6 +126,16 @@ type Exception = { file: string; reason: string } & ({ literal: string } | { con
 /** Les chaînes techniques des `*Text.swift`, exemptées de toutes les règles (S-4, E-1 à E-16). */
 const EXCEPTIONS: readonly Exception[] = [
   {
+    file: "omp-console/Sources/ConsoleCore/Design/ControlText.swift",
+    literal: "run",
+    reason: "valeur de fil `target.kind` d'une planification, jamais affichée",
+  },
+  {
+    file: "omp-console/Sources/ConsoleCore/Design/ControlText.swift",
+    literal: "git@github.com:moi/projet.git",
+    reason: "exemple d'adresse SSH d'un dépôt (champ de saisie), la syntaxe de Git",
+  },
+  {
     file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift",
     literal: ":",
     reason: "caractère comparé par `titleHead` et `reducePaths`, jamais affiché",
@@ -287,10 +297,10 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 23 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 24 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 23, `23 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  assert.equal(scoped.length, 24, `24 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
     assert.ok(
       scoped.some((file) => file.startsWith(`${base}/`)),

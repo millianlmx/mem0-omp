@@ -24,6 +24,10 @@ func everySectionHasItsView() {
         TerminalSectionView.section,
         FilesView.section,
         MemoryView.section,
+        VigieSectionView.section,
+        SchedulesSectionView.section,
+        IssuesSectionView.section,
+        AdminSectionView.section,
     ]
     #expect(declared.count == ConsoleSection.allCases.count)
     #expect(Set(declared) == Set(ConsoleSection.allCases))

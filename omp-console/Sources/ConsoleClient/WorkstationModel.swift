@@ -45,27 +45,37 @@ public final class WorkstationModel: ObservableObject {
     public static let journalLimit = 100
     /// Les réunions lues à l'ouverture de la section.
     public static let meetingsLimit = 20
+    /// Les demandes lues à l'ouverture de la section.
+    public static let requestsLimit = 50
 
     @Published public private(set) var availability: Availability = .unknown
-    @Published public private(set) var status: WorkstationStatus?
+    @Published public internal(set) var status: WorkstationStatus?
     /// Les actions en `awaiting_approval`, les plus récentes d'abord.
     @Published public private(set) var approvals: [WorkstationAction] = []
     /// Le journal des décisions, le plus récent d'abord (lu quand la section est ouverte).
-    @Published public private(set) var journal: [WorkstationAction] = []
+    @Published public internal(set) var journal: [WorkstationAction] = []
     @Published public private(set) var profile: WorkstationProfileReply?
     @Published public private(set) var meetings: [WorkstationMeeting] = []
+    /// Les demandes de l'humain au poste, récentes d'abord ; `nil` : le serveur ne les sert pas.
+    @Published public internal(set) var requests: [WorkstationRequest]?
+    /// Les automatisations gardées ; `nil` : le serveur ne les sert pas.
+    @Published public internal(set) var automations: [WorkstationAutomation]?
     /// Le dernier échec, effacé par le prochain échange réussi.
-    @Published public private(set) var failure: HarnessFailure?
+    @Published public internal(set) var failure: HarnessFailure?
     @Published public private(set) var isLoading = false
-    /// Les actions dont l'approbation ou le refus attend la réponse du serveur.
-    @Published public private(set) var busy: Set<Int> = []
-    /// Un réglage attend la réponse du serveur.
-    @Published public private(set) var isSaving = false
+    /// Les actions dont un geste (approbation, refus, annulation) attend la réponse du serveur.
+    @Published public internal(set) var busy: Set<Int> = []
+    /// Un réglage (ou une commande, une demande, une automatisation) attend la réponse du serveur.
+    @Published public internal(set) var isSaving = false
+    /// L'arrêt d'urgence attend la réponse du serveur.
+    @Published public internal(set) var isStopping = false
+    /// La dernière action commandée depuis l'app, telle que le serveur l'a déposée.
+    @Published public internal(set) var lastCommand: WorkstationAction?
     /// Une reconstruction du profil a été acceptée par le serveur.
     @Published public private(set) var rebuildQueued = false
 
     /// Le porteur de l'échange ; il possède ce modèle (référence faible : pas de cycle).
-    private weak var harness: HarnessModel?
+    weak var harness: HarnessModel?
     private let reloadDelay: Duration
     /// La section est ouverte : profil, journal et réunions sont relus avec l'état.
     private var wantsDetails = false
@@ -119,6 +129,10 @@ public final class WorkstationModel: ObservableObject {
                 profile = try await get("/v1/workstation/profile")
                 let list: WorkstationMeetingList = try await get("/v1/workstation/meetings?limit=\(Self.meetingsLimit)")
                 meetings = list.meetings
+                let asked: WorkstationRequestList? = try await optional("/v1/workstation/requests?limit=\(Self.requestsLimit)")
+                requests = asked?.requests
+                let kept: WorkstationAutomationList? = try await optional("/v1/workstation/automations")
+                automations = kept?.automations
             }
             failure = nil
         } catch HarnessFailure.forbidden(let motive) {
@@ -163,6 +177,9 @@ public final class WorkstationModel: ObservableObject {
         profile = nil
         meetings = []
         rebuildQueued = false
+        requests = nil
+        automations = nil
+        lastCommand = nil
         failure = nil
     }
 
@@ -248,10 +265,19 @@ public final class WorkstationModel: ObservableObject {
 
     // MARK: - Échange
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
+    func get<T: Decodable>(_ path: String) async throws -> T {
         guard let harness else { throw HarnessFailure.unreachable }
         let call = HarnessCall(method: "GET", path: path)
         return try harness.decode(try await harness.exchange(call), for: call)
+    }
+
+    /// Une lecture d'une route qu'un serveur antérieur ne sert pas : 404 rend `nil`, sans échec.
+    func optional<T: Decodable>(_ path: String) async throws -> T? {
+        guard let harness else { throw HarnessFailure.unreachable }
+        let call = HarnessCall(method: "GET", path: path)
+        let reply = try await harness.exchange(call)
+        if reply.status == 404 { return nil }
+        return try harness.decode(reply, for: call)
     }
 
     private func decide<Body: Encodable>(_ shown: WorkstationAction, path: String, body: Body) async -> Bool {
@@ -289,7 +315,7 @@ public final class WorkstationModel: ObservableObject {
 
     /// L'action rendue par un geste remplace celle qu'on montrait ; elle quitte les envois
     /// à approuver dès qu'elle n'attend plus.
-    private func apply(_ action: WorkstationAction) {
+    func apply(_ action: WorkstationAction) {
         if let index = journal.firstIndex(where: { $0.seq == action.seq }) { journal[index] = action }
         if action.awaitsApproval {
             if let index = approvals.firstIndex(where: { $0.seq == action.seq }) { approvals[index] = action }

@@ -133,15 +133,77 @@ struct IOSHarnessHomeScreen: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true, reloadAlso: { await server.workstation.refresh() }) {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .home, catalog: true, reloadAlso: {
+            await server.workstation.refresh()
+            await server.vigie.refresh()
+        }) {
             let inbox = server.inbox ?? HarnessInbox()
+            VigieSilentBanner(vigie: server.vigie)
             DigestSection(server: server)
             WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
             IOSDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
+            QueueSummarySection(server: server)
             ServicesSummarySection(server: server)
             IOSAlertsSection(drafts: drafts, inbox: inbox)
             InboxSections(server: server, drafts: drafts, inbox: inbox)
         }
+    }
+}
+
+// MARK: - Exploitation
+
+/// La vigie : mode, plafonds, battement de cœur et incidents (contenu partagé, ConsoleUI).
+struct IOSVigieScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .vigie, catalog: true, reloadAlso: { await server.vigie.load() }) {
+            VigieSections(server: server, drafts: drafts)
+        }
+        .task { await server.vigie.load() }
+    }
+}
+
+/// Les planifications récurrentes (contenu partagé, ConsoleUI).
+struct IOSSchedulesScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .schedules, catalog: true, reloadAlso: { await server.schedules.refresh() }) {
+            SchedulesSections(server: server, drafts: drafts)
+        }
+        .task { await server.schedules.refresh() }
+        .controlGestures(server: server, drafts: drafts)
+    }
+}
+
+/// Les issues des dépôts et leur correction (contenu partagé, ConsoleUI).
+struct IOSIssuesScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .issues, catalog: true, reloadAlso: {
+            await server.issues.refresh(repo: drafts.issuesRepo(in: server.repos))
+        }) {
+            IssuesSections(server: server, drafts: drafts)
+        }
+    }
+}
+
+/// L'administration du serveur, admin seulement (contenu partagé, ConsoleUI).
+struct IOSAdminScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, section: .admin, catalog: true, reloadAlso: { await server.admin.refresh() }) {
+            AdminSections(server: server, drafts: drafts)
+        }
+        .task(id: server.isAdmin) { await server.admin.refresh() }
+        .controlGestures(server: server, drafts: drafts)
     }
 }
 

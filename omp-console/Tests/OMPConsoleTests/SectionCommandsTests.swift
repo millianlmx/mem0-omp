@@ -5,9 +5,9 @@ import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-@Test("audit-panel-in-omp-console-mac/S-9 : 9 entrées, touches 1…9")
+@Test("audit-panel-in-omp-console-mac/S-9 : 13 entrées, touches 1…9 puis 0, rien au-delà")
 func sectionCommandsKeysRunOneToNine() {
-    #expect(ConsoleSection.allCases.count == 9)
+    #expect(ConsoleSection.allCases.count == 13)
     let keys = ConsoleSection.allCases.indices.map { SectionCommands.key(at: $0) }
-    #expect(keys == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+    #expect(keys == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", nil, nil, nil])
 }

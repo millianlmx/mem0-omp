@@ -168,13 +168,16 @@ struct WorkstationModelTests {
         #expect(workstation.meetings.map(\.id) == ["m1", "m2"])
         #expect(workstation.failure == nil)
         let reads = transport.calls.filter { $0.path.hasPrefix("/v1/workstation") }.map { "\($0.method) \($0.path)" }
-        #expect(reads.suffix(5) == [
+        #expect(reads.suffix(7) == [
             "GET /v1/workstation",
             "GET /v1/workstation/actions?state=awaiting_approval&limit=200",
             "GET /v1/workstation/actions?limit=100",
             "GET /v1/workstation/profile",
             "GET /v1/workstation/meetings?limit=20",
+            "GET /v1/workstation/requests?limit=50",
+            "GET /v1/workstation/automations",
         ])
+        #expect(workstation.requests == nil && workstation.automations == nil, "un serveur sans demandes ne les montre pas")
     }
 
     @Test("approuver et refuser partent sur la bonne route, avec le bon corps, puis relisent ; l'envoi quitte la liste")

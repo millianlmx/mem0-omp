@@ -59,7 +59,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var verdict: HarnessVerdict?
     public var mergeSha: String?
     public var prUrl: String?
+    /// En file, ce qui retient la feature (« slots runner pleins 5/5 ») ; sinon la raison
+    /// de son attente ou de son échec.
     public var reason: String?
+    /// En file seulement, la cause de ce qui la retient (`memory`, `slots`, `repo_cap`,
+    /// `modules`, `daily_budget`, `unknown_repo`) ; absente quand rien ne la retient.
+    public var waitCause: String?
     public var model: String?
     /// La révision du run (+1 à chaque écriture) : renvoyée en `If-Match` avec un geste.
     /// `nil` avec un serveur antérieur aux clients multiples.
@@ -84,7 +89,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         fixes: Int = 0, modules: [String] = [], verdict: HarnessVerdict? = nil, mergeSha: String? = nil,
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
-        projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
+        projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil
     ) {
         self.id = id
         self.repo = repo
@@ -109,11 +114,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.projectId = projectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.waitCause = waitCause
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause` :
@@ -143,6 +149,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         createdAt = try container.decode(Double.self, forKey: .createdAt)
         updatedAt = try container.decode(Double.self, forKey: .updatedAt)
+        waitCause = try container.decodeIfPresent(String.self, forKey: .waitCause)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -170,6 +177,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(projectId, forKey: .projectId)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(waitCause, forKey: .waitCause)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.

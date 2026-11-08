@@ -152,11 +152,16 @@ struct HarnessHomeView: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        HarnessSection(server: server, drafts: drafts, catalog: true, reload: { await server.workstation.refresh() }) {
+        HarnessSection(server: server, drafts: drafts, catalog: true, reload: {
+            await server.workstation.refresh()
+            await server.vigie.refresh()
+        }) {
             let inbox = server.inbox ?? HarnessInbox()
+            VigieSilentBanner(vigie: server.vigie)
             DigestSection(server: server)
             WorkstationHomeApprovals(workstation: server.workstation, drafts: drafts)
             HarnessDashboardSections(server: server, drafts: drafts, dashboard: HarnessDashboard(inbox: inbox, stats: server.stats))
+            QueueSummarySection(server: server)
             ServicesSummarySection(server: server)
             HarnessAlertsSection(drafts: drafts, inbox: inbox)
             InboxSections(server: server, drafts: drafts, inbox: inbox)

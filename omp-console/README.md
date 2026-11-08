@@ -1,10 +1,12 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : **une seule fenêtre**, une barre latérale à neuf sections en deux
+contrôle : **une seule fenêtre**, une barre latérale à treize sections en trois
 groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Audit**,
-**Statistiques**, **Poste**) et **Consultation** (**Terminal**, **Fichiers**,
-**Mémoire**), raccourcis ⌘1…⌘9 — et un panneau de détail. Rien n'ouvre de fenêtre annexe :
+**Statistiques**, **Poste**), **Consultation** (**Terminal**, **Fichiers**,
+**Mémoire**) et **Exploitation** (**Vigie**, **Planifications**, **Issues**,
+**Administration**, cette dernière pour un jeton admin seulement), raccourcis
+⌘1…⌘9 puis ⌘0 pour la Vigie — et un panneau de détail. Rien n'ouvre de fenêtre annexe :
 l'app est utilisable entièrement en plein écran. Les fenêtres ne se regroupent pas
 en onglets : Présentation et Fenêtre n'ont aucune entrée d'onglet, et aucun menu
 ne montre de séparateur en tête, en fin ou en double.
@@ -529,6 +531,59 @@ Identifiants Mac : `workstation.harness`, `workstation.online`,
 `workstation.approve.<n>`, `workstation.refusal.<n>`, feuille de refus
 `workstation.refusal.reason` et `workstation.refusal.commit`, `workstation.rebuild` ;
 sur iOS, les mêmes préfixés `ios.`.
+
+### Tour de contrôle
+
+Les écrans de l'OS agentique sont écrits une fois dans `ConsoleUI` (Mac et iOS ;
+sur iPhone, sous « Plus », sur iPad dans la barre latérale) et passent par les
+modèles de `ConsoleClient` portés par `HarnessModel` : `server.vigie`,
+`server.schedules`, `server.admin`, `server.issues`, en plus de `server.workstation`.
+Un serveur qui ne sert pas une fonction le dit (« mettez omp-harness à jour »), sans
+échec. Chaque section est aussi dans la palette ⌘K ; « Arrêt d'urgence » y figure.
+
+- **Feature en direct** (`RunControlViews.swift`) : « Envoyer une consigne… »
+  (`POST /v1/runs/{id}/instructions {text}`, `If-Match` de la révision) depuis le menu
+  d'une feature et au pied de la session en direct (Mac et iOS) — l'app dit si l'agent
+  l'a reçue dans sa session ou si elle part avec l'étape suivante ; « Modifier le
+  budget… » (`POST /v1/runs/{id}/budget {budgetUsd}`, `null` revient au budget du
+  serveur) ; la relance s'ouvre en feuille avec une consigne facultative
+  (`POST …/retry {instructions?}`). Une feature en file montre en orange ce qui la
+  retient (`reason`, `waitCause`), et l'Accueil la file entière (`/v1/status.queue`).
+- **Poste** (`WorkstationControlSections.swift`) : le bouton rouge **Arrêt d'urgence**
+  (`POST /v1/workstation/stop`, confirmé, jamais grisé par le rôle ; « Reprendre le
+  poste » une fois arrêté, approbateur) ; le détail d'une action du journal (résultat
+  entier, données, annulation `POST …/actions/{n}/cancel`, capture JPEG
+  `GET …/actions/{n}/capture`) ; la transcription d'une réunion
+  (`GET …/meetings/{id}`) ; les sessions des jobs du poste (profil, digest, service :
+  `GET /v1/workstation/session?job=&since=`, relue toutes les 2 s dans le même direct
+  qu'une feature) ; « Commander le navigateur » (`POST /v1/workstation/actions`,
+  `open` ou `navigate` vers un onglet) ; les demandes en langage naturel et les
+  automatisations (créer depuis une tâche automatisable du profil, cron facultatif,
+  lancer, supprimer) ; les navigateurs (libellé, en ligne, navigateur par défaut) et la
+  navigation gardée (hôtes permis, garde anti-exfiltration, retour à la configuration
+  du serveur), réglés par le seul approbateur.
+- **Vigie** (`ControlTowerSections.swift`) : mode (Coupée, Discrète, Signalement,
+  Correction) et plafonds réglables par un admin (`PUT /v1/vigie`), dernier battement,
+  état du jour, incidents (`GET /v1/vigie/incidents`, filtre par statut) avec empreinte,
+  issue liée et feature de correction. Une vigie muette (`vigie_silent`) se dit en
+  bandeau rouge sur l'Accueil et la section, et par un badge sur le Mac.
+- **Planifications** : liste (`GET /v1/schedules`, fuseau du serveur), création (cible
+  feature, audit ou relève d'issues, expression cron à cinq champs), activer ou
+  désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
+  (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
+  création.
+- **Administration** (admin seulement, masquée sinon) : clients (`/v1/clients` : créer
+  avec rôle et dépôts — le jeton n'est montré qu'une fois —, révoquer, confirmé), dépôts
+  (`POST /v1/repos` : la clé de déploiement à poser et le lien de la page des clés),
+  « Recharger la configuration » (`POST /v1/reload`), erreurs des clients
+  (`GET /v1/client-errors`, filtre par source).
+- **Issues** : les issues ouvertes d'un dépôt et la feature qui les porte, « Corriger »
+  — par le MCP du serveur (`POST /v1/mcp`, outils `issues_list` et `issue_fix`,
+  `HarnessModel.callTool`), seule surface des issues.
+
+La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces écrans
+au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie le
+câblage des quatre sections dans les deux apps.
 
 ## Lire les fichiers et les diffs d'une cible
 

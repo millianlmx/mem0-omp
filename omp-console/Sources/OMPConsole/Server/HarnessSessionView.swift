@@ -35,6 +35,7 @@ enum HarnessSessionTab: Hashable, CaseIterable {
 
 struct HarnessSessionSheet: View {
     @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
     let request: HarnessSessionRequest
     @Environment(\.dismiss) private var dismiss
     @State private var followsEnd = true
@@ -45,6 +46,12 @@ struct HarnessSessionSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 statusBar
+                // La consigne à l'agent, au pied du direct d'une feature vivante.
+                if let runId = request.runId, server.inbox?.runs.contains(where: { $0.id == runId && $0.acceptsInstructions }) == true {
+                    RunInstructionsComposer(server: server, drafts: drafts, runId: runId)
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
+                }
                 Divider()
                 switch tab {
                 case .live:
@@ -58,7 +65,7 @@ struct HarnessSessionSheet: View {
                 }
             }
             .navigationTitle(request.title)
-            .navigationSubtitle(request.runId == nil ? MonitoringText.auditSessionTitle : PipelineServerText.sessionTitle)
+            .navigationSubtitle(request.subtitle)
             .toolbar {
                 if request.runId != nil {
                     ToolbarItem(placement: .principal) {

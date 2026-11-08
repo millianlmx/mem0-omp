@@ -1,7 +1,8 @@
-// Les neuf sections de la coque, dans l'ordre d'affichage de la barre latérale,
-// rangées en deux groupes : « Pilotage » (Accueil, Pipelines, Projet, Audit,
-// Statistiques, Poste — servis par le serveur de pipelines du VPS) et
-// « Consultation » (Terminal, Fichiers, Mémoire — locaux). TOUT vit dans la
+// Les treize sections de la coque, dans l'ordre d'affichage de la barre latérale,
+// rangées en trois groupes : « Pilotage » (Accueil, Pipelines, Projet, Audit,
+// Statistiques, Poste — servis par le serveur de pipelines du VPS), « Consultation »
+// (Terminal, Fichiers, Mémoire — locaux) et « Exploitation » (Vigie, Planifications,
+// Issues, Administration — la tour de contrôle du même serveur). TOUT vit dans la
 // fenêtre principale.
 //
 // Le Poste (le poste de travail observé par l'extension Chrome et l'agent 24/24)
@@ -9,9 +10,13 @@
 // gestes (approuver ou refuser un envoi, régler l'autonomie, mettre en pause) —
 // ce n'est pas une simple consultation.
 //
+// L'Exploitation vient en dernier : les raccourcis ⌘1…⌘9 des neuf premières sections
+// ne bougent pas, la Vigie prend ⌘0 sur le Mac. L'Administration n'est montrée qu'à un
+// jeton administrateur (le filtre est posé par chaque app, qui connaît le jeton).
+//
 // Un enum plutôt qu'un tableau de vues : la section est l'identité PARTAGÉE entre
 // la liste, le détail, les tests et les features métier. L'ordre de déclaration
-// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘9,
+// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘0,
 // donc il n'existe pas de seconde liste à tenir synchronisée.
 
 public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -24,6 +29,10 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
     case terminal
     case files
     case memory
+    case vigie
+    case schedules
+    case issues
+    case admin
 
     public var id: String { rawValue }
 
@@ -39,6 +48,10 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .memory: L10n.text("Mémoire")
         case .stats: L10n.text("Statistiques")
         case .workstation: L10n.text("Poste")
+        case .vigie: ControlText.vigieTitle
+        case .schedules: ControlText.schedulesTitle
+        case .issues: ControlText.issuesTitle
+        case .admin: ControlText.adminTitle
         }
     }
 
@@ -54,6 +67,10 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .memory: "brain"
         case .stats: "chart.bar"
         case .workstation: "desktopcomputer"
+        case .vigie: ControlText.vigieSymbol
+        case .schedules: ControlText.schedulesSymbol
+        case .issues: ControlText.issuesSymbol
+        case .admin: ControlText.adminSymbol
         }
     }
 
@@ -62,7 +79,16 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         switch self {
         case .home, .kanban, .project, .audit, .stats, .workstation: .pilotage
         case .terminal, .files, .memory: .consultation
+        case .vigie, .schedules, .issues, .admin: .exploitation
         }
+    }
+
+    /// La section n'est montrée qu'à un jeton administrateur.
+    public var isAdminOnly: Bool { self == .admin }
+
+    /// Les sections montrées à un jeton : l'Administration seulement à un administrateur.
+    public static func visible(_ sections: [ConsoleSection], isAdmin: Bool) -> [ConsoleSection] {
+        sections.filter { isAdmin || !$0.isAdminOnly }
     }
 }
 
@@ -70,11 +96,13 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
 public enum ConsoleSectionGroup: CaseIterable, Sendable {
     case pilotage
     case consultation
+    case exploitation
 
     public var title: String {
         switch self {
         case .pilotage: L10n.text("Pilotage")
         case .consultation: L10n.text("Consultation")
+        case .exploitation: ControlText.groupTitle
         }
     }
 
