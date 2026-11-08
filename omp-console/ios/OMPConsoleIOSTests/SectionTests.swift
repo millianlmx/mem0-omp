@@ -9,16 +9,17 @@ import Testing
 /// par `grep` (invariant du dépôt).
 @Suite("coque-ios — sections de l'app iOS")
 struct SectionTests {
-    @Test("coque-ios/AC-2 : les sept sections sont allCases moins deux, dans l'ordre de allCases")
+    @Test("coque-ios/AC-2 : les onze sections sont allCases moins deux, dans l'ordre de allCases")
     func sevenSections() {
-        #expect(IOSSection.all == [.home, .kanban, .project, .audit, .stats, .workstation, .memory])
+        #expect(IOSSection.all == [.home, .kanban, .project, .audit, .stats, .workstation, .memory, .vigie, .schedules, .issues, .admin])
         #expect(IOSSection.all.count == ConsoleSection.allCases.count - 2)
     }
 
-    @Test("coque-ios/AC-3 : chaque groupe ne montre que ses sections des sept, dans l'ordre")
+    @Test("coque-ios/AC-3 : chaque groupe ne montre que ses sections des onze, dans l'ordre")
     func groupedSections() {
         #expect(IOSSection.sections(of: .pilotage) == [.home, .kanban, .project, .audit, .stats, .workstation])
         #expect(IOSSection.sections(of: .consultation) == [.memory])
+        #expect(IOSSection.sections(of: .exploitation) == [.vigie, .schedules, .issues, .admin])
     }
 
     @Test("coque-ios/AC-4 : l'argument de lancement désigne la section, sinon l'Accueil")
@@ -41,6 +42,6 @@ struct SectionTests {
     func excludedSections() {
         let excluded = ConsoleSection.allCases.filter { !IOSSection.all.contains($0) }
         #expect(excluded == [.terminal, .files])
-        #expect(IOSSection.all.count == 7)
+        #expect(IOSSection.all.count == 11)
     }
 }

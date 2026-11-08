@@ -19,6 +19,7 @@ func selectingASectionChangesTheCurrentOne() {
 func pilotageGroupsTheServerSections() {
     #expect(ConsoleSection.allCases == [
         .home, .kanban, .project, .audit, .stats, .workstation, .terminal, .files, .memory,
+        .vigie, .schedules, .issues, .admin,
     ])
     #expect(ConsoleSection.audit.title == "Audit")
     #expect(ConsoleSection.audit.systemImage == "checklist")
@@ -26,4 +27,7 @@ func pilotageGroupsTheServerSections() {
     #expect(ConsoleSection.workstation.systemImage == "desktopcomputer")
     #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .stats, .workstation])
     #expect(ConsoleSectionGroup.consultation.sections == [.terminal, .files, .memory])
+    #expect(ConsoleSectionGroup.exploitation.sections == [.vigie, .schedules, .issues, .admin])
+    #expect(ConsoleSection.visible(ConsoleSection.allCases, isAdmin: false).contains(.admin) == false)
+    #expect(ConsoleSection.visible(ConsoleSection.allCases, isAdmin: true).contains(.admin))
 }

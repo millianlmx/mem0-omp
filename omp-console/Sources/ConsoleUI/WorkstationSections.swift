@@ -44,12 +44,27 @@ public struct WorkstationSections: View {
             }
         case .available:
             if let status = workstation.status {
+                WorkstationStopSection(workstation: workstation, drafts: drafts, status: status)
                 WorkstationStatusSections(workstation: workstation, drafts: drafts, status: status)
             }
             WorkstationApprovalsSection(workstation: workstation, drafts: drafts)
+            if let status = workstation.status {
+                if let requests = workstation.requests {
+                    WorkstationRequestsSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
+                }
+                WorkstationCommandSection(workstation: workstation, drafts: drafts, status: status)
+            }
+            if let automations = workstation.automations {
+                WorkstationAutomationsSection(workstation: workstation, drafts: drafts, automations: automations)
+            }
             WorkstationProfileSections(workstation: workstation)
-            WorkstationJournalSection(journal: workstation.journal)
-            WorkstationMeetingsSection(meetings: workstation.meetings)
+            WorkstationJournalSection(drafts: drafts, journal: workstation.journal)
+            WorkstationMeetingsSection(drafts: drafts, meetings: workstation.meetings)
+            WorkstationSessionsSection(drafts: drafts)
+            if let status = workstation.status {
+                WorkstationBrowsersSection(workstation: workstation, status: status)
+                WorkstationNavigationSection(workstation: workstation, drafts: drafts, status: status)
+            }
         }
     }
 }
@@ -494,6 +509,7 @@ struct WorkstationActivitySection: View {
 // MARK: - Journal des décisions
 
 struct WorkstationJournalSection: View {
+    @ObservedObject var drafts: HarnessDrafts
     let journal: [WorkstationAction]
 
     var body: some View {
@@ -502,7 +518,16 @@ struct WorkstationJournalSection: View {
                 Text(WorkstationText.noAction).foregroundStyle(.secondary)
             }
             ForEach(journal) { action in
-                WorkstationJournalRow(action: action)
+                // Le détail : le résultat entier, l'annulation, et la capture d'un `screenshot`.
+                Button {
+                    drafts.showWorkstationAction(action)
+                } label: {
+                    WorkstationJournalRow(action: action)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(Text(ControlText.actionOpen))
+                .consoleID("workstation.action.\(action.seq)")
             }
         } header: {
             Text(WorkstationText.journalTitle)
@@ -565,6 +590,7 @@ struct WorkstationJournalRow: View {
 // MARK: - Réunions
 
 struct WorkstationMeetingsSection: View {
+    @ObservedObject var drafts: HarnessDrafts
     let meetings: [WorkstationMeeting]
 
     var body: some View {
@@ -607,6 +633,10 @@ struct WorkstationMeetingsSection: View {
                             }
                         }
                     }
+                    // La transcription entière et les besoins, dans une feuille.
+                    Button(ControlText.transcript) { drafts.showWorkstationMeeting(meeting) }
+                        .buttonStyle(.bordered)
+                        .consoleID("workstation.meeting.\(meeting.id)")
                 }
                 .padding(.vertical, 2)
             }
@@ -619,9 +649,12 @@ struct WorkstationMeetingsSection: View {
 // MARK: - Gestes
 
 extension View {
-    /// La feuille du refus d'un envoi du poste de travail (raison facultative).
+    /// Les feuilles et confirmations du poste de travail : refus d'un envoi (raison
+    /// facultative), arrêt d'urgence, détail d'une action et d'une réunion, suppression
+    /// d'une automatisation.
     public func workstationGestures(workstation: WorkstationModel, drafts: HarnessDrafts) -> some View {
         modifier(WorkstationGestures(workstation: workstation, drafts: drafts))
+            .modifier(WorkstationControlSheets(workstation: workstation, drafts: drafts))
     }
 
     /// Un choix court en segments sur le Mac ; le menu du système sur iOS.

@@ -24,6 +24,10 @@ struct IOSSectionView: View {
         case .audit: IOSHarnessAuditsScreen(server: server, drafts: drafts)
         case .stats: IOSHarnessStatsScreen(server: server, drafts: drafts)
         case .workstation: IOSWorkstationScreen(server: server, workstation: server.workstation, drafts: drafts)
+        case .vigie: IOSVigieScreen(server: server, drafts: drafts)
+        case .schedules: IOSSchedulesScreen(server: server, drafts: drafts)
+        case .issues: IOSIssuesScreen(server: server, drafts: drafts)
+        case .admin: IOSAdminScreen(server: server, drafts: drafts)
         case .memory, .terminal, .files:
             // Terminal et Fichiers ne sont jamais atteints (`IOSSection.all`).
             // « Relier le serveur » de l'écran Mémoire ouvre la feuille Serveur.

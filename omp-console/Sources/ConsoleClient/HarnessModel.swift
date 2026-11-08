@@ -73,6 +73,14 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
+    /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
+    public private(set) lazy var vigie = HarnessVigie(harness: self)
+    /// Les planifications récurrentes (runs, audits, relève d'issues).
+    public private(set) lazy var schedules = HarnessSchedules(harness: self)
+    /// L'administration (admin) : clients, dépôts, rechargement, erreurs des clients.
+    public private(set) lazy var admin = HarnessAdmin(harness: self)
+    /// Les issues des dépôts, lues et corrigées par le MCP du serveur.
+    public private(set) lazy var issues = HarnessIssues(harness: self)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
 
@@ -83,6 +91,8 @@ public final class HarnessModel: ObservableObject {
     private let refreshDelay: Duration
     /// Le rythme de relecture d'une connexion d'abonnement en cours.
     private let loginPollDelay: Duration
+    /// Le rythme de relecture de la session d'un job du poste (sans flux filtré).
+    private let sessionPollDelay: Duration
     /// Le serveur de la machine quand rien n'est enregistré (Mac : `~/.omp/harness.json`).
     private let fallback: @Sendable () -> (address: String, token: String)?
     /// Un code d'appairage accepté (Mac : écrit pour les plugins d'omp et la mémoire).
@@ -108,6 +118,7 @@ public final class HarnessModel: ObservableObject {
         retryDelay: Duration = .seconds(5),
         refreshDelay: Duration = .milliseconds(300),
         loginPollDelay: Duration = .seconds(1),
+        sessionPollDelay: Duration = .seconds(2),
         fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
         onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in },
         reporter: HarnessErrorReporter = HarnessErrorReporter()
@@ -119,6 +130,7 @@ public final class HarnessModel: ObservableObject {
         self.retryDelay = retryDelay
         self.refreshDelay = refreshDelay
         self.loginPollDelay = loginPollDelay
+        self.sessionPollDelay = sessionPollDelay
         self.fallback = fallback
         self.onPaired = onPaired
     }
@@ -252,6 +264,10 @@ public final class HarnessModel: ObservableObject {
     private func resetServerState() {
         workstation.reset()
         history.reset()
+        vigie.reset()
+        schedules.reset()
+        admin.reset()
+        issues.reset()
         reporter.reset()
         health = nil
         healthReached = false
@@ -353,6 +369,8 @@ public final class HarnessModel: ObservableObject {
                     if !names.isEmpty {
                         scheduleRefresh()
                         workstation.receive(names)
+                        vigie.receive(names)
+                        schedules.receive(names)
                     }
                 }
             } catch {
@@ -410,7 +428,7 @@ public final class HarnessModel: ObservableObject {
         guard let server, let feed = session, feed.hasEarlier, let first = feed.entries.first,
               let id = feed.targetId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
         else { return }
-        let call = HarnessCall(method: "GET", path: "\(feed.target.sessionPath(id))?before=\(first.seq)&limit=200")
+        let call = HarnessCall(method: "GET", path: feed.target.sessionPath(id, query: ["before=\(first.seq)", "limit=200"]))
         guard let page: HarnessSessionView = try? await perform(call, on: server), session?.target == feed.target else { return }
         session?.prepend(page)
     }
@@ -418,11 +436,21 @@ public final class HarnessModel: ObservableObject {
     /// Une entrée du direct et son détail (arguments complets et sortie entière d'un outil,
     /// texte entier d'un long paragraphe), ou `nil` (entrée oubliée, serveur trop ancien).
     public func sessionDetail(_ target: HarnessSessionTarget, seq: Int) async -> HarnessSessionDetail? {
-        await read(target.entryPath(Self.encoded(target.id), seq: seq))
+        guard let path = target.entryPath(Self.encoded(target.id), seq: seq) else { return nil }
+        return await read(path)
+    }
+
+    /// Suit la session d'un job du poste (profil, digest, service).
+    public func followSession(workstation job: WorkstationSessionJob) {
+        followSession(.workstation(job))
     }
 
     private func sessionLoop(_ target: HarnessSessionTarget) async {
         guard let id = target.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+        guard let streamQuery = target.streamQuery(id) else {
+            await pollSession(target, id: id)
+            return
+        }
         while !Task.isCancelled {
             guard let server else { return }
             do {
@@ -430,10 +458,10 @@ public final class HarnessModel: ObservableObject {
                 // jamais perdue (elle attend dans le flux et remplace celle du tampon).
                 let cursor = inbox?.cursor ?? 0
                 let stream = try await transport.events(
-                    HarnessCall(method: "GET", path: "/v1/events?\(target.streamQuery(id))&live=1&after=\(cursor)"),
+                    HarnessCall(method: "GET", path: "/v1/events?\(streamQuery)&live=1&after=\(cursor)"),
                     server: server
                 )
-                let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id)), on: server)
+                let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
                 guard !Task.isCancelled else { return }
                 session?.load(view)
                 // La sortie des derniers jobs de tests d'une feature (un serveur plus ancien n'en a pas).
@@ -472,6 +500,34 @@ public final class HarnessModel: ObservableObject {
             isSessionLive = false
             if Task.isCancelled { return }
             try? await Task.sleep(for: retryDelay)
+        }
+    }
+
+    /// La session d'un job du poste : le flux d'événements ne la filtre pas par job, elle
+    /// est donc relue toutes les `sessionPollDelay` — seulement les entrées d'après la
+    /// dernière reçue (`since`). Un échec autre qu'une coupure arrête le direct.
+    private func pollSession(_ target: HarnessSessionTarget, id: String) async {
+        var loaded = false
+        while !Task.isCancelled {
+            guard let server else { return }
+            do {
+                let since = loaded ? session?.entries.last?.seq : nil
+                let query = since.map { ["since=\($0)"] } ?? []
+                let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: query)), on: server)
+                guard !Task.isCancelled else { return }
+                if loaded { session?.merge(view) } else { session?.load(view) }
+                loaded = true
+                sessionFailure = nil
+                isSessionLive = true
+            } catch {
+                let failure = Self.failure(of: error)
+                isSessionLive = false
+                if failure != .unreachable, failure != .timedOut {
+                    if !Task.isCancelled { sessionFailure = failure }
+                    return
+                }
+            }
+            try? await Task.sleep(for: sessionPollDelay)
         }
     }
 
@@ -557,10 +613,30 @@ public final class HarnessModel: ObservableObject {
         return await gesture(runId, method: "POST", path: "/escalations", body: AnswerBody(answers: items))
     }
 
-    /// Relance une feature en échec, ou arrêtée sur une attente : elle repart de son étape.
+    /// Relance une feature en échec, ou arrêtée sur une attente : elle repart de son étape,
+    /// avec une consigne facultative (vide : aucune).
     @discardableResult
-    public func retry(runId: String) async -> Bool {
-        await gesture(runId, method: "POST", path: "/retry", body: EmptyBody())
+    public func retry(runId: String, instructions: String = "") async -> Bool {
+        let text = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        return await gesture(runId, method: "POST", path: "/retry", body: RetryBody(instructions: text.isEmpty ? nil : text))
+    }
+
+    /// Envoie une consigne à une feature : injectée dans la session vivante au prochain
+    /// tour (`session`), sinon gardée pour la prochaine étape (`pending`). `nil` : refusée.
+    @discardableResult
+    public func instruct(runId: String, text: String) async -> HarnessInstructionsDelivery? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let reply: HarnessInstructionsReply? = await gestureReply(runId, method: "POST", path: "/instructions", body: InstructionsBody(text: trimmed))
+        return reply.map { HarnessInstructionsDelivery(rawValue: $0.delivered) ?? .pending }
+    }
+
+    /// Pose le budget propre d'une feature (en dollars) ; `nil` revient à celui de la
+    /// configuration du serveur. Rend le budget tel que le serveur le tient désormais.
+    @discardableResult
+    public func setBudget(runId: String, budgetUsd: Double?) async -> HarnessBudget? {
+        let reply: HarnessBudgetReply? = await gestureReply(runId, method: "POST", path: "/budget", body: BudgetBody(budgetUsd: budgetUsd))
+        return reply?.budget
     }
 
     /// Accepte d'un coup toutes les décisions prises seules d'un run.
@@ -686,23 +762,28 @@ public final class HarnessModel: ObservableObject {
     }
 
     private func gesture<Body: Encodable>(_ runId: String, method: String, path: String, body: Body) async -> Bool {
-        guard let server else { return false }
+        let reply: HarnessAck? = await gestureReply(runId, method: method, path: path, body: body)
+        return reply != nil
+    }
+
+    private func gestureReply<Body: Encodable, Reply: Decodable>(_ runId: String, method: String, path: String, body: Body) async -> Reply? {
+        guard let server else { return nil }
         guard let encoded = try? JSONEncoder().encode(body),
               let id = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
         else {
             failure = .unreadable
-            return false
+            return nil
         }
         busy.insert(runId)
         defer { busy.remove(runId) }
         // La révision lue avec la boîte : un autre appareil qui a agi entre-temps fait refuser le geste.
         let headers = knownRun(runId)?.rev.map { ["If-Match": "\"\($0)\""] } ?? [:]
         do {
-            let _: HarnessAck = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
+            let reply: Reply = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
             failure = nil
             await refresh()
             if history.isWatched { await history.refresh() }
-            return true
+            return reply
         } catch {
             let failed = Self.failure(of: error)
             if failed == .stale {
@@ -711,7 +792,7 @@ public final class HarnessModel: ObservableObject {
             }
             // Relue ou non, la boîte ne doit pas effacer la raison de l'échec.
             failure = failed
-            return false
+            return nil
         }
     }
 
@@ -1015,4 +1096,25 @@ private struct AuditBody: Encodable {
 private struct ProposalsBody: Encodable {
     var items: [Int]
     var title: String
+}
+
+/// `instructions` absent du JSON quand il est `nil` : une relance sans consigne garde le corps d'avant.
+private struct RetryBody: Encodable {
+    var instructions: String?
+}
+
+private struct InstructionsBody: Encodable {
+    var text: String
+}
+
+/// `budgetUsd: null` part tel quel : il ramène la feature au budget de la configuration.
+private struct BudgetBody: Encodable {
+    var budgetUsd: Double?
+
+    private enum CodingKeys: String, CodingKey { case budgetUsd }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(budgetUsd, forKey: .budgetUsd)
+    }
 }

@@ -31,9 +31,10 @@ enum IOSKeyboard {
     /// restent aux feuilles.
     static let modifiers: EventModifiers = .command
 
-    /// ⌘1…⌘7 : les sections, dans l'ordre affiché par la barre latérale.
+    /// ⌘1…⌘9 : les neuf premières sections, dans l'ordre affiché par la barre latérale
+    /// (les suivantes, Issues et Administration, n'ont pas de chiffre).
     static var sections: [(section: ConsoleSection, shortcut: IOSShortcut)] {
-        IOSSection.sidebarOrder.enumerated().map { index, section in
+        IOSSection.sidebarOrder.prefix(9).enumerated().map { index, section in
             (section, IOSShortcut(title: section.title, key: Character(String(index + 1))))
         }
     }

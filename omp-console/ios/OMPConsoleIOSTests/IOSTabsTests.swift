@@ -24,7 +24,7 @@ struct IOSTabsTests {
 
     @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Statistiques, Poste et Mémoire, et elles seules")
     func plusListsTheOtherSections() {
-        #expect(IOSTabs.plusSections == [.stats, .workstation, .memory])
+        #expect(IOSTabs.plusSections == [.stats, .workstation, .memory, .vigie, .schedules, .issues, .admin])
         let tabSections: [ConsoleSection] = IOSTabs.compactTabs.compactMap {
             if case let .section(section) = $0 { section } else { nil }
         }
@@ -58,6 +58,10 @@ struct IOSTabsTests {
             .stats: IOSTabRoute(tab: .plus, plusPath: [.stats]),
             .workstation: IOSTabRoute(tab: .plus, plusPath: [.workstation]),
             .memory: IOSTabRoute(tab: .plus, plusPath: [.memory]),
+            .vigie: IOSTabRoute(tab: .plus, plusPath: [.vigie]),
+            .schedules: IOSTabRoute(tab: .plus, plusPath: [.schedules]),
+            .issues: IOSTabRoute(tab: .plus, plusPath: [.issues]),
+            .admin: IOSTabRoute(tab: .plus, plusPath: [.admin]),
         ]
         #expect(Set(expected.keys) == Set(IOSSection.all))
         for section in IOSSection.all {
@@ -78,6 +82,10 @@ struct IOSTabsTests {
             .stats: .pilotage,
             .workstation: .pilotage,
             .memory: .consultation,
+            .vigie: .exploitation,
+            .schedules: .exploitation,
+            .issues: .exploitation,
+            .admin: .exploitation,
         ]
         #expect(Set(expected.keys) == Set(IOSSection.all))
         for section in IOSSection.all {
@@ -134,7 +142,7 @@ struct IOSTabsTests {
         }
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘7 sélectionnent l'entrée de la barre latérale de l'iPad")
+    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘9 sélectionnent l'entrée de la barre latérale de l'iPad")
     func keyboardSelectsTheSidebarEntry() {
         let start = IOSTabRoute(tab: .section(.home), plusPath: [])
         for (index, entry) in IOSKeyboard.sections.enumerated() {
@@ -143,7 +151,7 @@ struct IOSTabsTests {
             #expect(IOSTabs.shown(route) == entry.section)
             #expect(entry.shortcut.key == Character(String(index + 1)))
         }
-        #expect(IOSKeyboard.sections.map(\.section) == IOSSection.sidebarOrder)
+        #expect(IOSKeyboard.sections.map(\.section) == Array(IOSSection.sidebarOrder.prefix(9)))
     }
 
     @Test("poste-de-travail : sur iPhone, « Plus » porte les envois à approuver du Poste qu'il range ; sur iPad, les sections portent le leur")

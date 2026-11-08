@@ -109,8 +109,9 @@ struct OMPConsoleApp: App {
     }
 }
 
-/// Menu Présentation ▸ les neuf sections (⌘1…⌘9), dans l'ordre de la barre
-/// latérale : ramène la fenêtre principale, puis y sélectionne la section.
+/// Menu Présentation ▸ les sections, dans l'ordre de la barre latérale : ⌘1…⌘9 puis ⌘0
+/// pour les dix premières, sans raccourci au-delà. Ramène la fenêtre principale, puis
+/// y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
 
@@ -121,16 +122,20 @@ struct SectionCommands: Commands {
                     MainWindow.reveal()
                     console.select(section)
                 }
-                .keyboardShortcut(KeyEquivalent(Self.key(at: index)), modifiers: .command)
+                .keyboardShortcut(Self.key(at: index).map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
             }
             Divider()
         }
     }
 
     /// La touche du raccourci de la section à `index` : 1…9, puis 0 pour la
-    /// dixième (comme la rangée des chiffres du clavier).
-    static func key(at index: Int) -> Character {
-        index == 9 ? "0" : Character(String(index + 1))
+    /// dixième (comme la rangée des chiffres du clavier) ; aucune au-delà.
+    static func key(at index: Int) -> Character? {
+        switch index {
+        case 0..<9: Character(String(index + 1))
+        case 9: "0"
+        default: nil
+        }
     }
 }
 

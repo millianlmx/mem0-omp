@@ -117,7 +117,10 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
       "HarnessDecision",
     );
     const awaiting = (inbox.awaiting as Record<string, unknown>[])[0] as Record<string, unknown>;
-    covers(awaiting, swiftFields(wire, "HarnessRun"), "HarnessRun");
+    // `waitCause` n'est porté que par un run retenu en file : prouvé par tour-de-controle/AC-2.
+    const runFields = swiftFields(wire, "HarnessRun");
+    runFields.delete("waitCause");
+    covers(awaiting, runFields, "HarnessRun");
     covers(awaiting.verdict as Record<string, unknown>, swiftFields(wire, "HarnessVerdict"), "HarnessVerdict");
     // Les états que l'app nomme sont ceux de la machine du serveur.
     const states = [...wire.matchAll(/case (\w+)(?: = "(\w+)")?$/gm)].map(([, name, raw]) => raw ?? name);

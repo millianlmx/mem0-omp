@@ -26,6 +26,8 @@ public enum HarnessPaletteCommand: Hashable, Sendable {
     case server
     /// Chercher la saisie dans la mémoire.
     case searchMemory(String)
+    /// L'arrêt d'urgence du poste de travail (confirmé, permis à tout jeton).
+    case stopWorkstation
 }
 
 /// Une entrée : son libellé, son détail, son symbole et sa commande.
@@ -74,6 +76,9 @@ public enum HarnessPalette {
                 if !inbox.verdictsAwaiting.isEmpty {
                     candidates.append(HarnessPaletteItem(title: PipelineServerText.paletteVerdicts(inbox.verdictsAwaiting.count), symbol: PipelineServerText.validateSymbol, command: .inbox(.verdicts)))
                 }
+            }
+            if sections.contains(.workstation) {
+                candidates.append(HarnessPaletteItem(title: ControlText.stop, subtitle: ConsoleSection.workstation.title, symbol: ControlText.stopSymbol, command: .stopWorkstation))
             }
             candidates.append(HarnessPaletteItem(title: PipelineServerText.refresh, symbol: PipelineServerText.refreshSymbol, command: .refresh))
             candidates.append(HarnessPaletteItem(title: PipelineServerText.open, symbol: PipelineServerText.serverSymbol, command: .server))

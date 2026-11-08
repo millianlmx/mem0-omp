@@ -335,31 +335,46 @@ public struct HarnessAgentView: Codable, Equatable, Sendable, Identifiable {
 public enum HarnessSessionTarget: Equatable, Hashable, Sendable {
     case run(String)
     case audit(String)
+    /// Un job du poste de travail (profil, digest d'une réunion, service de l'agent 24/24).
+    case workstation(WorkstationSessionJob)
 
     public var id: String {
         switch self {
         case let .run(id), let .audit(id): id
+        case let .workstation(job): job.rawValue
         }
     }
 
-    /// Le chemin du tampon (`?before=` y remonte page par page).
+    /// Le chemin du tampon, sans sa requête.
     func sessionPath(_ encoded: String) -> String {
         switch self {
         case .run: "/v1/runs/\(encoded)/session"
         case .audit: "/v1/audits/\(encoded)/session"
+        case .workstation: "/v1/workstation/session"
         }
     }
 
-    /// Le chemin du détail d'une entrée.
-    func entryPath(_ encoded: String, seq: Int) -> String {
-        "\(sessionPath(encoded))/\(seq)"
+    /// Le chemin du tampon avec ses paramètres (`before`, `limit`, `since`) : le job du
+    /// poste se désigne en requête, un run ou un audit dans le chemin.
+    func sessionPath(_ encoded: String, query: [String]) -> String {
+        var items = query
+        if case .workstation = self { items.insert("job=\(encoded)", at: 0) }
+        let path = sessionPath(encoded)
+        return items.isEmpty ? path : path + "?" + items.joined(separator: "&")
     }
 
-    /// Le filtre du flux d'événements.
-    func streamQuery(_ encoded: String) -> String {
+    /// Le chemin du détail d'une entrée ; `nil` pour un job du poste (le serveur n'en a pas).
+    func entryPath(_ encoded: String, seq: Int) -> String? {
+        if case .workstation = self { return nil }
+        return "\(sessionPath(encoded))/\(seq)"
+    }
+
+    /// Le filtre du flux d'événements ; `nil` pour un job du poste, relu par `since`.
+    func streamQuery(_ encoded: String) -> String? {
         switch self {
         case .run: "run=\(encoded)"
         case .audit: "audit=\(encoded)"
+        case .workstation: nil
         }
     }
 }

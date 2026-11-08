@@ -32,6 +32,7 @@ public struct RunRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                RunQueueReason(run: run)
                 if run.fixes > 0 {
                     Text(PipelineServerText.fixes(run.fixes))
                         .font(.caption)
@@ -63,7 +64,7 @@ public struct RunRow: View {
                 .accessibilityIdentifier("pipelines.session.open")
             }
             if run.canRetry {
-                Button(PipelineServerText.retry) { drafts.retryRequest = run }
+                Button(PipelineServerText.retry) { drafts.beginRetry(run) }
                     .buttonStyle(.bordered)
                     .disabled(server.busy.contains(run.id))
             }
@@ -136,10 +137,11 @@ public struct PriorityMenu: View {
 
 extension View {
     /// Les feuilles et confirmations des gestes du serveur : refus (specs ou verdict),
-    /// renversement d'une décision, direct d'une session, arrêt, relance et annulation
-    /// d'une feature.
+    /// renversement d'une décision, direct d'une session, arrêt, relance avec consigne,
+    /// consigne et budget d'une feature, et annulation d'une fusion.
     public func harnessGestures(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         modifier(HarnessGestures(server: server, drafts: drafts))
+            .modifier(RunControlSheets(server: server, drafts: drafts))
     }
 }
 
@@ -171,21 +173,6 @@ private struct HarnessGestures: ViewModifier {
                 Button(PipelineServerText.cancel, role: .cancel) {}
             } message: { _ in
                 Text(PipelineServerText.stopMessage)
-            }
-            .confirmationDialog(
-                PipelineServerText.retryConfirm,
-                isPresented: Binding(get: { drafts.retryRequest != nil }, set: { if !$0 { drafts.retryRequest = nil } }),
-                titleVisibility: .visible,
-                presenting: drafts.retryRequest
-            ) { run in
-                Button(PipelineServerText.retry) {
-                    Task { await server.retry(runId: run.id) }
-                }
-                Button(PipelineServerText.cancel, role: .cancel) {}
-            } message: { run in
-                if let detail = run.detailLine() { Text(detail) }
-                if let reason = run.reason { Text(reason) }
-                Text(PipelineServerText.retryMessage)
             }
             .confirmationDialog(
                 PipelineServerText.revertConfirm,

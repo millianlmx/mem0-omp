@@ -48,17 +48,24 @@ public struct HarnessRunUsage: Codable, Equatable, Sendable {
     }
 }
 
-/// Le budget d'un run : ce qu'il a coûté, le plafond configuré, le seuil du prochain avertissement.
+/// Le budget d'un run : ce qu'il a coûté, le plafond en vigueur, le seuil du prochain
+/// avertissement, et d'où vient le plafond (`run` : le sien, `config` : celui du serveur).
 public struct HarnessBudget: Codable, Equatable, Sendable {
     public var cost: Double
     public var budget: Double?
     public var threshold: Double?
+    /// `run`, `config`, ou `nil` (sans plafond, ou serveur antérieur au budget par run).
+    public var source: String?
 
-    public init(cost: Double = 0, budget: Double? = nil, threshold: Double? = nil) {
+    public init(cost: Double = 0, budget: Double? = nil, threshold: Double? = nil, source: String? = nil) {
         self.cost = cost
         self.budget = budget
         self.threshold = threshold
+        self.source = source
     }
+
+    /// Le plafond est celui de la feature elle-même.
+    public var isOwn: Bool { source == "run" }
 
     /// La part du seuil déjà dépensée (`nil` sans plafond).
     public var ratio: Double? {

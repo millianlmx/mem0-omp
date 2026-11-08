@@ -319,8 +319,14 @@ struct RunMenuItems: View {
             Button(PipelineServerText.sessionTitle, systemImage: PipelineServerText.sessionSymbol) { drafts.sessionRequest = HarnessSessionRequest(run: run) }
         }
         shell.runActions(run)
+        if run.acceptsInstructions {
+            Button(ControlText.instructionsAction, systemImage: ControlText.instructionsSymbol) { drafts.instructionsRequest = run }
+        }
+        if run.acceptsBudget {
+            Button(ControlText.budgetAction, systemImage: ControlText.budgetSymbol) { drafts.beginBudget(run) }
+        }
         if run.canRetry {
-            Button(PipelineServerText.retry) { drafts.retryRequest = run }
+            Button(PipelineServerText.retry) { drafts.beginRetry(run) }
         }
         if run.canRevert {
             Button(PipelineServerText.revertFeature, role: .destructive) { drafts.revertRequest = run }

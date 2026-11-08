@@ -25,7 +25,7 @@ struct IOSTabRoute: Equatable {
 /// porte leur badge.
 enum IOSTabs {
     /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste.
-    static let plusSections: [ConsoleSection] = [.stats, .workstation, .memory]
+    static let plusSections: [ConsoleSection] = [.stats, .workstation, .memory, .vigie, .schedules, .issues, .admin]
 
     /// Les sections DÉCLARÉES dans le groupe, dans l'ordre de déclaration du
     /// `TabView` : l'ordre de la barre latérale, quelle que soit la largeur.
