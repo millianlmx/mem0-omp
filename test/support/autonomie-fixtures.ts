@@ -74,10 +74,19 @@ export function stateOf(world: FakeWorld, runId: string): string {
   return `${run?.state}/${run?.step} — ${run?.reason}`;
 }
 
-/** Attend un état parmi `states`. */
+/**
+ * Attend un état parmi `states`. Une attente que l'autonomie retient (`hold` encore ouvert) n'est pas
+ * un état d'arrêt : elle est validée ou rendue à l'humain (`defer`) au tour suivant.
+ */
 export async function until(world: FakeWorld, runId: string, states: string[], timeoutMs = 60_000): Promise<RunRow> {
+  const held = (): boolean => {
+    const hold = world.store.lastRunEvent(runId, "autonomy");
+    if (hold === null || hold.payload.action !== "hold") return false;
+    const state = world.store.lastRunEvent(runId, "run_state");
+    return state === null || state.id < hold.id;
+  };
   await waitFor(
-    () => states.includes(world.store.getRun(runId)?.state ?? ""),
+    () => states.includes(world.store.getRun(runId)?.state ?? "") && !held(),
     () => stateOf(world, runId),
     timeoutMs,
   );
