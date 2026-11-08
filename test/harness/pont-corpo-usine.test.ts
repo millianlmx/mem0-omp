@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import type { Client } from "../../omp-harness/auth.ts";
 import { SERVICE } from "../../omp-harness/context.ts";
+import { openForge } from "../../omp-harness/forge.ts";
 import type { HarnessConfig, RepoConfig } from "../../omp-harness/config.ts";
 import { repoDefaults, validateConfig } from "../../omp-harness/config.ts";
 import type { EventRow, RunRow, SignalRow } from "../../omp-harness/db.ts";
@@ -135,7 +136,9 @@ class Forges {
     }
     if (noun === "issue" && verb === "list") {
       const label = flag("--label");
-      const listed = project.issues.filter((issue) => issue.state === "OPEN" && (label === "" || issue.labels.includes(label)));
+      const listed = project.issues.filter(
+        (issue) => issue.state === "OPEN" && (label === "" || issue.labels.includes(label)),
+      );
       return done(JSON.stringify(listed.map(json)));
     }
     if (noun === "issue" && verb === "view") {
@@ -226,15 +229,27 @@ async function until(b: Bridge, predicate: () => boolean, describe: () => string
       void b.world.orchestrator.tick();
       return predicate();
     },
-    () =>
-      `${describe()} ${JSON.stringify(b.world.log().map((entry) => `${entry.pid}:${entry.kind}:${entry.tool ?? entry.step ?? entry.type}:${String(entry.result ?? "").slice(0, 80)}`))}`,
+    () => {
+      const trace = b.world.log().map((entry) => `${entry.pid}:${entry.kind}:${entry.tool ?? entry.step}`);
+      return `${describe()} ${JSON.stringify(trace)}`;
+    },
   );
 }
 
 /** Les prompts reçus par les sessions d'un job du faux runner. */
 function promptsOf(b: Bridge, step: string): number {
-  return b.world.log().filter((entry) => entry.kind === "prompt" && entry.step === step && entry.nudge === false).length;
+  const prompts = b.world.log().filter((entry) => entry.kind === "prompt" && entry.step === step);
+  return prompts.filter((entry) => entry.nudge === false).length;
 }
+
+/** Le premier prompt reçu par le job `step` du faux runner. */
+function firstPrompt(b: Bridge, step: string): string {
+  return String(b.world.log().find((entry) => entry.kind === "prompt" && entry.step === step)?.message);
+}
+
+const isLive = (b: Bridge): boolean => b.world.orchestrator.workstationAgent.isLive("poste-signal");
+
+const repoOf = (b: Bridge): RepoConfig => b.world.config.repos[0] as RepoConfig;
 
 const SLACK = {
   channel: "slack",
@@ -278,6 +293,8 @@ function leaks(text: string, forbidden: readonly string[] = ORIGIN_TEXTS): strin
 
 // -- l'API HTTP --------------------------------------------------------------------------------------
 
+type Policy = { declared: string; applied: string; note: string };
+type Listed = { id: string; channel: string; repo: string; kind: string; title: string };
 type Reply = { status: number; json: Record<string, unknown> };
 type Api = {
   tokens: { approver: string; operator: string; pilot: string; viewer: string; narrow: string; elsewhere: string };
@@ -340,7 +357,7 @@ test("pont-corpo-usine/AC-1 : un signalement Slack produit une proposition dans 
     await until(b, () => rowOf(b, id).state === "proposed", () => JSON.stringify(rowOf(b, id)));
     const listed = await api.call(api.tokens.viewer, "GET", "/v1/signals");
     assert.equal(listed.status, 200);
-    const [signal] = listed.json.signals as { id: string; channel: string; repo: string; kind: string; title: string }[];
+    const [signal] = listed.json.signals as Listed[];
     assert.deepEqual(
       [signal?.id, signal?.channel, signal?.repo, signal?.kind, signal?.title],
       [id, "slack", "demo", "bug", TITLE],
@@ -386,7 +403,11 @@ test("pont-corpo-usine/AC-2 : gmail, une page lue par le service et une demande 
   });
   const api = await serve(b);
   try {
-    const mail = report(b, { channel: "gmail", threadRef: "18c3f0a1b2", url: "https://mail.example/#inbox/18c3f0a1b2" });
+    const mail = report(b, {
+      channel: "gmail",
+      threadRef: "18c3f0a1b2",
+      url: "https://mail.example/#inbox/18c3f0a1b2",
+    });
     // Une observation d'omp-chrome : le service (autonomie act, extension en ligne) lit la page puis la signale.
     await api.call(api.tokens.approver, "PUT", "/v1/workstation/settings", { autonomy: "act" });
     assert.equal(
@@ -471,7 +492,9 @@ test("pont-corpo-usine/AC-4 : un fil n'a qu'une proposition ; écartée, elle n'
     assert.deepEqual([again.status, again.signal?.id], ["duplicate", first.id]);
     assert.equal(b.world.store.listSignals().length, 1);
     const spawned = b.world.spawned.length;
-    const dismissed = await api.call(api.tokens.approver, "POST", `/v1/signals/${first.id}/dismiss`, { reason: "doublon" });
+    const dismissed = await api.call(api.tokens.approver, "POST", `/v1/signals/${first.id}/dismiss`, {
+      reason: "doublon",
+    });
     assert.equal(dismissed.status, 200, JSON.stringify(dismissed.json));
     assert.equal(signals(b).reportSignal({ ...SLACK }).status, "dismissed");
     for (let tour = 0; tour < 4; tour++) await b.world.orchestrator.tick();
@@ -491,7 +514,8 @@ test("pont-corpo-usine/AC-4 : un fil n'a qu'une proposition ; écartée, elle n'
     const one = await proposed(b, page("41"));
     const two = await proposed(b, page("42"));
     assert.notEqual(one.threadRef, two.threadRef);
-    for (const row of [one, two]) assert.match(row.threadRef, /^https:\/\/wiki\.client\.example\/viewpage\.action\?h=[0-9a-f]{16}$/);
+    const hashed = /^https:\/\/wiki\.client\.example\/viewpage\.action\?h=[0-9a-f]{16}$/;
+    for (const row of [one, two]) assert.match(row.threadRef, hashed);
     assert.deepEqual([one.url.endsWith("pageId=41"), two.url.endsWith("pageId=42")], [true, true]);
   } finally {
     await api.close();
@@ -515,7 +539,11 @@ test("pont-corpo-usine/AC-4 : un message neutre puis le rapport, poste en pause 
     b.world.orchestrator.workstation.updateSettings({ paused: false }, ACTOR);
     await until(b, () => promptsOf(b, "poste-signal") === 1, () => "la détection n'a pas reçu son prompt");
     const id = hello.signal?.id as string;
-    const late = signals(b).reportSignal({ ...SLACK, threadRef: "fil-pause", text: "Le plus important : c'est urgent." });
+    const late = signals(b).reportSignal({
+      ...SLACK,
+      threadRef: "fil-pause",
+      text: "Le plus important : c'est urgent.",
+    });
     assert.equal(late.status, "received");
     await until(b, () => rowOf(b, id).state === "proposed", () => JSON.stringify(rowOf(b, id)));
     assert.equal(rowOf(b, id).attempts, 0, "aucune tentative comptée");
@@ -552,7 +580,7 @@ test("pont-corpo-usine/AC-5 : en observation la proposition apparaît (et une de
     const { id } = report(b);
     await until(b, () => promptsOf(b, "poste-signal") === 1, () => "la détection n'a pas reçu son prompt");
     b.world.orchestrator.workstation.updateSettings({ paused: true }, ACTOR);
-    await until(b, () => !b.world.orchestrator.workstationAgent.isLive("poste-signal"), () => "la session n'est pas coupée");
+    await until(b, () => !isLive(b), () => "la session n'est pas coupée");
     assert.deepEqual([rowOf(b, id).state, rowOf(b, id).attempts], ["received", 0]);
     const spawned = b.world.spawned.length;
     const second = report(b, { threadRef: "fil-pendant-la-pause" });
@@ -567,7 +595,9 @@ test("pont-corpo-usine/AC-5 : en observation la proposition apparaît (et une de
     );
     // Toujours en observation : une demande du poste qui pointe une page produit une proposition `chrome`.
     assert.equal((await api.call(api.tokens.approver, "GET", "/v1/workstation/next?wait=0")).status, 204);
-    const asked = await api.call(api.tokens.approver, "POST", "/v1/workstation/requests", { instruction: "Lis le ticket 7" });
+    const asked = await api.call(api.tokens.approver, "POST", "/v1/workstation/requests", {
+      instruction: "Lis le ticket 7",
+    });
     assert.equal(asked.status, 201, JSON.stringify(asked.json));
     await until(
       b,
@@ -622,7 +652,7 @@ test("pont-corpo-usine/AC-6 : le job de détection n'a ni outil de création d'i
     ]);
     assert.equal(b.forges.created.length, 0);
     assert.equal(runsOf(b).length, 0);
-    const prompt = String(b.world.log().find((entry) => entry.kind === "prompt" && entry.step === "poste-signal")?.message);
+    const prompt = firstPrompt(b, "poste-signal");
     assert.match(prompt, /^# \/poste-signal — signalement à trier/);
     const begin = prompt.indexOf(`${UNTRUSTED_BEGIN} — signalement`);
     const end = prompt.indexOf(UNTRUSTED_END, begin);
@@ -641,7 +671,7 @@ test("pont-corpo-usine/AC-7 : un dépôt en forbid ou sans forge n'est ni propos
     const row = await proposed(b);
     const candidates = await signals(b).candidates(row);
     assert.deepEqual(candidates.map((candidate) => candidate.name).sort(), ["autre", "demo"]);
-    const prompt = String(b.world.log().find((entry) => entry.kind === "prompt" && entry.step === "poste-signal")?.message);
+    const prompt = firstPrompt(b, "poste-signal");
     assert.equal(prompt.includes("ferme") || prompt.includes("- local"), false);
     await assert.rejects(
       confirm(b, row.id, sendOf(row, { repo: "ferme" })),
@@ -677,7 +707,10 @@ test("pont-corpo-usine/AC-8 : la proposition vise le dépôt déjà confirmé po
     const second = await proposed(b, { threadRef: "fil-2" });
     assert.equal(second.repo, "demo");
     const result = await confirm(b, second.id, sendOf(second, { repo: "autre" }));
-    assert.deepEqual([b.forges.created.at(-1)?.slug, rowOf(b, second.id).repo, result.issue.repo], ["moi/autre", "autre", "autre"]);
+    assert.deepEqual(
+      [b.forges.created.at(-1)?.slug, rowOf(b, second.id).repo, result.issue.repo],
+      ["moi/autre", "autre", "autre"],
+    );
     // La dernière confirmation (B) devient le dépôt préféré.
     const third = await proposed(b, { threadRef: "fil-3" });
     assert.equal(third.repo, "autre");
@@ -764,13 +797,14 @@ test("pont-corpo-usine/AC-10 : l'approbateur confirme : une issue, un run lié q
     assert.deepEqual([again.status, again.json], [409, { error: "le signalement est déjà confirmed" }]);
     // La relève par label voit l'issue (un humain a posé le label) : elle est liée, donc sautée.
     b.forges.project("moi/demo").issues[0]?.labels.push("omp:fix");
-    const labeled = await b.world.orchestrator.issues.fixLabeled(b.world.config.repos[0] as RepoConfig, undefined, SERVICE);
+    const labeled = await b.world.orchestrator.issues.fixLabeled(repoOf(b), undefined, SERVICE);
     assert.deepEqual([labeled.launched.length, labeled.skipped.length], [0, 1]);
     assert.equal(b.forges.created.length, 1);
     assert.equal(runsOf(b).length, 1);
     // Un run sans origine : `{origin: null}`.
     const plainRun = b.world.orchestrator.createRun({ repo: "demo", title: "Libre", request: "Un run libre" });
-    assert.deepEqual((await api.call(api.tokens.viewer, "GET", `/v1/runs/${plainRun.id}/origin`)).json, { origin: null });
+    const plainOrigin = await api.call(api.tokens.viewer, "GET", `/v1/runs/${plainRun.id}/origin`);
+    assert.deepEqual(plainOrigin.json, { origin: null });
   } finally {
     await api.close();
     await stop(b);
@@ -868,7 +902,7 @@ test("pont-corpo-usine/AC-13 : le run lié échoué puis l'issue relancée : le 
     const row = await proposed(b);
     const { run, issue } = await confirm(b, row.id, sendOf(row));
     b.world.store.updateRun(run.id, { state: "failed" });
-    const relaunched = await b.world.orchestrator.issues.fix(b.world.config.repos[0] as RepoConfig, issue.number, SERVICE);
+    const relaunched = await b.world.orchestrator.issues.fix(repoOf(b), issue.number, SERVICE);
     assert.equal(relaunched.status, "launched");
     assert.notEqual(relaunched.run.id, run.id);
     for (const id of [run.id, relaunched.run.id]) {
@@ -897,7 +931,8 @@ test("pont-corpo-usine/AC-14 : un dépôt public sans politique : ni personRef, 
   try {
     const first = await proposed(b, { threadRef: "fil-a", personRef: COLLEAGUE_MAIL, text });
     // Cas 1 : le texte cite l'extrait stocké en entier, tel que la feuille le montre.
-    const stored = (await api.call(api.tokens.viewer, "GET", `/v1/signals/${first.id}`)).json.signal as { excerpt: string };
+    const read = await api.call(api.tokens.viewer, "GET", `/v1/signals/${first.id}`);
+    const stored = read.json.signal as { excerpt: string };
     assert.equal(stored.excerpt.includes(SECRET), false);
     const body1 = `Résumé : « ${stored.excerpt} »`;
     const preview1 = await api.call(api.tokens.viewer, "POST", `/v1/signals/${first.id}/preview`, {
@@ -934,12 +969,14 @@ test("pont-corpo-usine/AC-14 : un dépôt public sans politique : ni personRef, 
 });
 
 test("pont-corpo-usine/AC-15 : un dépôt en forbid refuse la confirmation avec la raison ; la forge ne reçoit rien", async () => {
-  const b = bridge({ policy: "forbid", repos: true, scenario: { "poste-signal": [[PROPOSE({ repo: "autre" })]] } });
+  const scenario = { "poste-signal": [[PROPOSE({ repo: "autre" })]] };
+  const b = bridge({ policy: "forbid", repos: true, scenario });
   const api = await serve(b);
   try {
     const row = await proposed(b);
     assert.equal(row.repo, "autre", "le dépôt en forbid n'est pas candidat");
-    const refused = await api.call(api.tokens.approver, "POST", `/v1/signals/${row.id}/confirm`, sendOf(row, { repo: "demo" }));
+    const forbidden = sendOf(row, { repo: "demo" });
+    const refused = await api.call(api.tokens.approver, "POST", `/v1/signals/${row.id}/confirm`, forbidden);
     assert.deepEqual(
       [refused.status, refused.json],
       [409, { error: "le dépôt demo refuse les issues d'origine corpo (issues.corporate: forbid)" }],
@@ -961,10 +998,11 @@ test("pont-corpo-usine/AC-16 : en full sur un dépôt que la forge dit privé, l
     b.forges.project("moi/demo").visibility = "PRIVATE";
     const row = await proposed(b);
     const preview = await api.call(api.tokens.viewer, "POST", `/v1/signals/${row.id}/preview`, {});
-    const view = preview.json as { policy: { declared: string; applied: string; note: string }; body: string; title: string };
+    const view = preview.json as { policy: Policy; body: string; title: string };
     assert.deepEqual([view.policy.declared, view.policy.applied], ["full", "full"]);
     assert.match(view.policy.note, /^dépôt privé : l'issue porte le texte confirmé/);
-    assert.ok(view.body.includes(EXCERPT) && view.body.includes(COLLEAGUE), "la section d'origine fait partie du texte de départ");
+    const hasOrigin = view.body.includes(EXCERPT) && view.body.includes(COLLEAGUE);
+    assert.ok(hasOrigin, "la section d'origine fait partie du texte de départ");
     const confirmed = await api.call(api.tokens.approver, "POST", `/v1/signals/${row.id}/confirm`, {
       repo: "demo",
       title: `${view.title} — ${FREE_NAME}`,
@@ -1008,9 +1046,12 @@ test("pont-corpo-usine/AC-16 : en full sur un dépôt que la forge dit privé, l
 
 test("pont-corpo-usine/AC-17 : une valeur d'issues.corporate inconnue est refusée au chargement avec le nom du dépôt et du champ", async () => {
   const repo = harnessRepo("pont-config-");
-  const build = (issues: unknown): HarnessConfig =>
-    fakeWorld({}, { repo, patch: (config) => void Object.assign(config.repos[0] as RepoConfig, { issues }) }).config;
-  for (const corporate of ["forbid", "redacted", "full"]) assert.doesNotThrow(() => validateConfig(build({ corporate })));
+  const build = (issues: unknown): HarnessConfig => {
+    const patch = (config: HarnessConfig) => void Object.assign(config.repos[0] as RepoConfig, { issues });
+    return fakeWorld({}, { repo, patch }).config;
+  };
+  for (const corporate of ["forbid", "redacted", "full"])
+    assert.doesNotThrow(() => validateConfig(build({ corporate })));
   assert.doesNotThrow(() => validateConfig(build({})));
   assert.throws(
     () => validateConfig(build({ corporate: "tout" })),
@@ -1023,7 +1064,8 @@ test("pont-corpo-usine/AC-17 : une valeur d'issues.corporate inconnue est refus�
 
 /** Le run joue son étape /req (le faux runner échoue), attend l'humain, puis est annulé : il peut être relancé. */
 async function settle(b: Bridge, api: Api, runId: string): Promise<void> {
-  await until(b, () => b.world.store.getRun(runId)?.state === "awaiting_human", () => String(b.world.store.getRun(runId)?.state));
+  const stateOf = () => String(b.world.store.getRun(runId)?.state);
+  await until(b, () => stateOf() === "awaiting_human", stateOf);
   assert.equal((await api.call(api.tokens.operator, "POST", `/v1/runs/${runId}/cancel`, {})).status, 200);
 }
 
@@ -1031,9 +1073,11 @@ async function settle(b: Bridge, api: Api, runId: string): Promise<void> {
 async function surfaces(b: Bridge, api: Api, run: RunRow, forbidden: readonly string[]): Promise<void> {
   const fresh = b.world.store.getRun(run.id) as RunRow;
   assert.deepEqual(leaks(`${fresh.title}\n${fresh.request}`, forbidden), [], "demande et titre du run");
-  assert.deepEqual(leaks(textOf(await api.tool(api.tokens.operator, "run_get", { id: run.id })), forbidden), [], "run_get");
-  assert.deepEqual(leaks(textOf(await api.tool(api.tokens.operator, "runs_list")), forbidden), [], "runs_list");
-  assert.deepEqual(leaks(textOf(await api.tool(api.tokens.operator, "issues_list", { repo: "demo" })), forbidden), [], "issues_list");
+  const mcp = async (name: string, args: Record<string, unknown> = {}) =>
+    textOf(await api.tool(api.tokens.operator, name, args));
+  assert.deepEqual(leaks(await mcp("run_get", { id: run.id }), forbidden), [], "run_get");
+  assert.deepEqual(leaks(await mcp("runs_list"), forbidden), [], "runs_list");
+  assert.deepEqual(leaks(await mcp("issues_list", { repo: "demo" }), forbidden), [], "issues_list");
   const failed: EventRow = { id: 1, at: 0, runId: run.id, repo: "demo", type: "run_failed", payload: {} };
   const merged: EventRow = {
     id: 2,
@@ -1074,17 +1118,18 @@ test("pont-corpo-usine/AC-18 : ni la demande du run, ni son prompt, ni MCP, ni l
     try {
       b.forges.project("moi/demo").visibility = "PRIVATE";
       const row = await proposed(b);
-      const free = policy === "full" ? { title: `${TITLE} (${FREE_NAME})`, body: `${BODY}\n${FREE_NAME} : ${EXCERPT}` } : {};
+      const free =
+        policy === "full" ? { title: `${TITLE} (${FREE_NAME})`, body: `${BODY}\n${FREE_NAME} : ${EXCERPT}` } : {};
       const result = await confirm(b, row.id, sendOf(row, free));
       const forbidden = [...ORIGIN_TEXTS, FREE_NAME];
       if (policy === "redacted") assert.deepEqual(leaks(b.forges.sent, forbidden), [], "l'issue publique");
-      else assert.ok(b.forges.sent.includes(FREE_NAME) && b.forges.sent.includes(EXCERPT), "l'issue privée porte le nom");
+      else assert.ok(b.forges.sent.includes(FREE_NAME), "l'issue privée porte le nom");
       await settle(b, api, result.run.id);
       await surfaces(b, api, result.run, forbidden);
       // Le titre de la forge porte le nom (sous full), la sortie de `issues_list` non.
       if (policy === "full") assert.ok(b.forges.created[0]?.title.includes(FREE_NAME));
       // La relance : même origine, mêmes surfaces.
-      const relaunched = await b.world.orchestrator.issues.fix(b.world.config.repos[0] as RepoConfig, result.issue.number, SERVICE);
+      const relaunched = await b.world.orchestrator.issues.fix(repoOf(b), result.issue.number, SERVICE);
       assert.equal(relaunched.status, "launched");
       await settle(b, api, relaunched.run.id);
       await surfaces(b, api, relaunched.run, forbidden);
@@ -1097,7 +1142,10 @@ test("pont-corpo-usine/AC-18 : ni la demande du run, ni son prompt, ni MCP, ni l
       assert.deepEqual(leaks(seen.join("\n"), ORIGIN_TEXTS), [], "événements en direct (activity, progress)");
       const live = b.world.orchestrator.sessions.page(workstationOwner("poste-signal"));
       assert.deepEqual(live.entries, [], "le job de détection n'a aucun direct");
-      assert.ok(seen.some((line) => line.includes('"activity"')), "l'activité de l'outil est bien partie, sans son intent");
+      assert.ok(
+        seen.some((line) => line.includes('"activity"')),
+        "l'activité de l'outil est bien partie, sans son intent",
+      );
     } finally {
       off();
       await api.close();
@@ -1125,7 +1173,12 @@ test("pont-corpo-usine/AC-19 : l'extrait d'un long signalement est caviardé et 
     });
     assert.equal(withQuery.status, "received");
     assert.match(withQuery.signal?.threadRef ?? "", new RegExp(`^${base}\\?h=[0-9a-f]{16}$`));
-    const tooLong = signals(b).reportSignal({ channel: "chrome", threadRef: "x".repeat(2001), url: "https://x.example/", text: "bug" });
+    const tooLong = signals(b).reportSignal({
+      channel: "chrome",
+      threadRef: "x".repeat(2001),
+      url: "https://x.example/",
+      text: "bug",
+    });
     assert.deepEqual([tooLong.status, tooLong.signal], ["refused", null]);
     assert.equal(tooLong.reason?.includes("xxxx"), false, "la raison ne cite pas la valeur");
     const urls = [
@@ -1136,7 +1189,8 @@ test("pont-corpo-usine/AC-19 : l'extrait d'un long signalement est caviardé et 
       ],
     ] as const;
     for (const [index, [given, stored]] of urls.entries()) {
-      const result = signals(b).reportSignal({ channel: "chrome", threadRef: `fil-url-${index}`, url: given, text: "bug" });
+      const thread = `fil-url-${index}`;
+      const result = signals(b).reportSignal({ channel: "chrome", threadRef: thread, url: given, text: "bug" });
       assert.equal(result.signal?.url, stored);
     }
     // Un message de plus sur un fil `received` garde les 2000 derniers caractères.
@@ -1173,7 +1227,10 @@ test("pont-corpo-usine/AC-26 : issue créée puis run en échec (ou redémarrage
     b.forges.failViews = 1;
     await assert.rejects(confirm(b, row.id, sendOf(row)), /HTTP 500/);
     const partial = rowOf(b, row.id);
-    assert.deepEqual([partial.state, partial.issueNumber, b.forges.created.length, runsOf(b).length], ["proposed", 1, 1, 0]);
+    assert.deepEqual(
+      [partial.state, partial.issueNumber, b.forges.created.length, runsOf(b).length],
+      ["proposed", 1, 1, 0],
+    );
     b.forges.project("moi/demo").issues[0]?.labels.push("omp:fix");
     const repo = b.world.config.repos[0] as RepoConfig;
     const labeled = await b.world.orchestrator.issues.fixLabeled(repo, undefined, SERVICE);
@@ -1184,7 +1241,8 @@ test("pont-corpo-usine/AC-26 : issue créée puis run en échec (ou redémarrage
     assert.match(textOf(mcp), /l'issue #1 vient d'un signalement proposed : seul l'appareil approbateur la lance/);
     assert.deepEqual([runsOf(b).length, b.world.store.issueRun("demo", 1)], [0, null]);
     // La feuille dit que le texte ne repart pas à la forge ; la confirmation réutilise l'issue.
-    const preview = await api.call(api.tokens.viewer, "POST", `/v1/signals/${row.id}/preview`, { repo: "demo", title: "autre titre" });
+    const asked = { repo: "demo", title: "autre titre" };
+    const preview = await api.call(api.tokens.viewer, "POST", `/v1/signals/${row.id}/preview`, asked);
     assert.equal((preview.json.issue as { number: number }).number, 1);
     assert.match((preview.json.policy as { note: string }).note, /le texte reçu n'est pas renvoyé à la forge/);
     // Un redémarrage entre les deux : un second orchestrateur sur la même base confirme.
@@ -1212,5 +1270,43 @@ test("pont-corpo-usine/AC-26 : issue créée puis run en échec (ou redémarrage
     await second?.stop();
     await api.close();
     await stop(b);
+  }
+});
+
+test("pont-corpo-usine/AC-1 : une détection qui ne rend aucun verdict est retentée puis, à la troisième fois, le signalement est jugé sans objet avec la raison ; aucune proposition", async () => {
+  const b = bridge({ scenario: { "poste-signal": [[]] } });
+  try {
+    const { id } = report(b);
+    await until(b, () => rowOf(b, id).state === "ignored", () => JSON.stringify(rowOf(b, id)));
+    assert.deepEqual(
+      [rowOf(b, id).attempts, rowOf(b, id).reason, promptsOf(b, "poste-signal")],
+      [3, "la détection n'a rendu aucun verdict", 3],
+    );
+    assert.equal(b.world.store.listSignals({ states: ["proposed"] }).length, 0);
+    assert.equal(b.forges.created.length, 0);
+  } finally {
+    await stop(b);
+  }
+});
+
+test("pont-corpo-usine/AC-16 : sur GitLab la visibilité vient de l'API du projet ; seul « private » vaut privé (internal, illisible : redacted)", async () => {
+  const calls: string[][] = [];
+  let visibility: string | null = "private";
+  const exec: Exec = async (command, args, options) => {
+    if (command !== "glab") return execProcess(command, args, options);
+    calls.push(args);
+    return visibility === null ? done("", 1, "404 Not Found") : done(JSON.stringify({ visibility }));
+  };
+  const patch = (config: HarnessConfig) => void Object.assign(config.repos[0] as RepoConfig, { forge: "gitlab" });
+  const world = fakeWorld({}, { exec, patch });
+  git(world.repo, "remote", "add", "origin", "git@gitlab.client.example:groupe/projet.git");
+  try {
+    const forge = await openForge(world.config.repos[0] as RepoConfig, { exec, git: world.deps.git });
+    const seen: unknown[] = [];
+    for (visibility of ["private", "internal", "public", "bizarre", null]) seen.push(await forge.visibility());
+    assert.deepEqual(seen, ["private", "internal", "public", null, null]);
+    assert.deepEqual(calls[0], ["api", "--hostname", "gitlab.client.example", "projects/groupe%2Fprojet"]);
+  } finally {
+    await world.orchestrator.stop();
   }
 });

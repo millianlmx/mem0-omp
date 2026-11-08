@@ -122,7 +122,8 @@ export type ConfirmResult = {
 
 export type Candidate = { name: string; preferred: boolean };
 
-const FULL_NOTE = "dépôt privé : l'issue porte le texte confirmé ; le run lié reçoit le titre et le corps proposés, caviardés";
+const FULL_NOTE =
+  "dépôt privé : l'issue porte le texte confirmé ; le run lié reçoit le titre et le corps proposés, caviardés";
 const NOT_PRIVATE_NOTE = "dépôt non confirmé privé par la forge : texte caviardé";
 const SENT_ONCE_NOTE = (repo: string): string =>
   `l'issue est déjà créée dans ${repo} : le texte reçu n'est pas renvoyé à la forge`;
@@ -211,7 +212,8 @@ export class SignalDesk {
     if (url.length > FIELD_MAX || (url === "" && channel !== "manual"))
       return refused(`url : ${channel === "manual" ? "0" : "1"} à ${FIELD_MAX} caractères`);
     const personRef = typeof input.personRef === "string" ? input.personRef.trim() || null : null;
-    if (personRef !== null && personRef.length > PERSON_MAX) return refused(`personRef : ${PERSON_MAX} caractères au plus`);
+    if (personRef !== null && personRef.length > PERSON_MAX)
+      return refused(`personRef : ${PERSON_MAX} caractères au plus`);
     const clean = redactSecrets(input.text).trim();
     if (clean === "") return refused("text : texte non vide attendu");
     if (channel !== "manual" && personRef !== null) {
@@ -483,7 +485,10 @@ export class SignalDesk {
     let policy: PolicyView;
     if (signal.issueNumber !== null) {
       if (signal.issueRepo !== name)
-        throw new HarnessError(409, `l'issue est déjà créée dans ${signal.issueRepo} : confirmer sans changer de dépôt`);
+        throw new HarnessError(
+          409,
+          `l'issue est déjà créée dans ${signal.issueRepo} : confirmer sans changer de dépôt`,
+        );
       policy = { declared, applied: signal.policy === "full" ? "full" : "redacted", note: SENT_ONCE_NOTE(name) };
     } else {
       policy = await this.#policy(declared, forge);

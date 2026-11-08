@@ -99,7 +99,11 @@ function forms(value: string, min: number, out: Set<string>): void {
 }
 
 /** Les textes que le serveur sait retirer du texte d'une issue de ce signalement (voir l'en-tête). */
-export function needlesOf(signal: SignalRow, selfIdentities: readonly string[], posteTexts: readonly string[]): string[] {
+export function needlesOf(
+  signal: SignalRow,
+  selfIdentities: readonly string[],
+  posteTexts: readonly string[],
+): string[] {
   const out = new Set<string>();
   if (signal.personRef !== null) forms(signal.personRef, 3, out);
   forms(signal.url, 1, out);
