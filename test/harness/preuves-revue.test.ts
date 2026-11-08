@@ -223,7 +223,7 @@ test("preuves-revue/AC-74 : les preuves d'un run vivent sous le dossier de donn�
   }
 });
 
-test("preuves-revue/AC-75 : à la borne de nombre l'outil refuse la preuve de plus ; une preuve trop grosse ou un index illisible est refusé sans rien écrire", async () => {
+test("preuves-revue/AC-75 : à la borne de nombre l'outil refuse la preuve de plus ; les bornes de taille et la validation refusent sans écrire ; l'index illisible n'est jamais écrasé ni lu pour zéro preuve", async () => {
   const world = fakeWorld({
     req: [OK.req],
     specs: [OK.specs],
@@ -247,9 +247,8 @@ test("preuves-revue/AC-75 : à la borne de nombre l'outil refuse la preuve de pl
   } finally {
     await world.orchestrator.stop();
   }
-});
 
-test("preuves-revue/AC-75 : les bornes de taille et la validation refusent sans écrire ; l'index illisible n'est jamais écrasé ni lu pour zéro preuve", () => {
+  // Le magasin seul : bornes de taille, validation, index illisible.
   const root = tmpdir("preuves-bornes-");
   const store = new ProofStore(root);
   const dir = path.join(root, "proofs", "r1");
