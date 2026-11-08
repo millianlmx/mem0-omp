@@ -33,8 +33,10 @@ export function listTestFiles(root: string = ROOT): string[] {
 }
 
 const tracked: string[] = [];
+// Un git lancé par un test peut encore écrire dans `.git` au moment du ménage
+// (ENOTEMPTY sur rmdir, vu en CI) : rmSync réessaie au lieu de faire échouer le fichier.
 test.after(() => {
-  for (const dir of tracked) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of tracked) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /** Dossier temporaire (chemin réel, /var → /private/var), retiré en fin de fichier. */
