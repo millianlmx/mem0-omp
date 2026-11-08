@@ -31,22 +31,22 @@ public struct RunListRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(run.title)
                         .font(.body.weight(HarnessRunGroup.of(run) == .needsYou ? .semibold : .regular))
-                        .lineLimit(2)
+                        .denseLines(2)
                     Spacer(minLength: 4)
                     Text(ConsoleFormat.relative(ms: run.updatedAt, nowMs: Date().timeIntervalSince1970 * 1000))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .denseLines(1)
                 }
                 Text(meta)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .denseLines(1)
                 if let note {
                     Text(note)
                         .font(.caption)
                         .foregroundStyle(.orange)
-                        .lineLimit(2)
+                        .denseLines(2)
                 }
             }
         }
@@ -69,6 +69,19 @@ public struct RunListRow: View {
         if let detail = run.detailLine() { return detail }
         if alerts > 0 { return MonitoringText.alertsTitle }
         return nil
+    }
+}
+
+extension View {
+    /// La ligne d'une feature reste dense sur le Mac ; sur l'iPhone et l'iPad, elle grandit
+    /// avec le texte (Dynamic Type) plutôt que de le tronquer.
+    @ViewBuilder
+    func denseLines(_ count: Int) -> some View {
+        #if os(macOS)
+        lineLimit(count)
+        #else
+        self
+        #endif
     }
 }
 

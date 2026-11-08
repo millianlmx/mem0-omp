@@ -297,10 +297,14 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 24 *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur tous les *Text.swift de ConsoleCore, du client, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 24, `24 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  // Le vocabulaire de la coque refondue (À traiter, Features, Système) est jugé comme les autres.
+  assert.ok(
+    scoped.includes("omp-console/Sources/ConsoleCore/Design/ShellText.swift"),
+    `ShellText.swift hors de la garde :\n  ${scoped.join("\n  ")}`,
+  );
   for (const base of ROOTS) {
     assert.ok(
       scoped.some((file) => file.startsWith(`${base}/`)),

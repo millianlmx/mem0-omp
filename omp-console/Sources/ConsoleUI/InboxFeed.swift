@@ -135,7 +135,7 @@ public struct InboxAllClear: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             if canAct {
-                Button(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol) {
+                Button(PipelineServerText.newFeature) {
                     drafts.launchSheetShown = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -149,7 +149,8 @@ public struct InboxAllClear: View {
     }
 }
 
-/// L'en-tête d'un élément : son genre (symbole et mot), son dépôt, depuis quand il attend.
+/// L'en-tête d'un élément : son genre (symbole et mot, jamais coupé), puis son dépôt et
+/// depuis quand il attend (coupés les premiers quand la largeur manque).
 struct InboxItemHeader: View {
     let item: HarnessInboxItem
     let inbox: HarnessInbox
@@ -158,16 +159,20 @@ struct InboxItemHeader: View {
         HStack(spacing: 6) {
             Label(kind, systemImage: symbol)
                 .foregroundStyle(item.isGate ? Color.orange : Color.secondary)
-            if let repo {
-                Text("·")
-                Text(repo)
-            }
-            if let since {
-                Text("·")
-                Text(ConsoleFormat.relative(ms: since, nowMs: Date().timeIntervalSince1970 * 1000))
+                .fixedSize()
+            if !detail.isEmpty {
+                Text(detail)
+                    .denseLines(1)
             }
         }
-        .lineLimit(1)
+    }
+
+    /// « dépôt · il y a 2 heures ».
+    private var detail: String {
+        var parts: [String] = []
+        if let repo { parts.append("· " + repo) }
+        if let since { parts.append("· " + ConsoleFormat.relative(ms: since, nowMs: Date().timeIntervalSince1970 * 1000)) }
+        return parts.joined(separator: " ")
     }
 
     private var run: HarnessRun? {
@@ -205,12 +210,12 @@ struct InboxItemHeader: View {
 
     private var symbol: String {
         switch item {
-        case .questions: ShellText.symbolQuestions
-        case .specs: ShellText.symbolSpecs
-        case .verdict: ShellText.symbolVerdict
-        case .alert: ShellText.symbolAlert
-        case .audit: ShellText.symbolAudit
-        case .decisions: ShellText.symbolDecisions
+        case .questions: ShellText.questionsSymbol
+        case .specs: ShellText.specsSymbol
+        case .verdict: ShellText.verdictSymbol
+        case .alert: ShellText.alertSymbol
+        case .audit: ShellText.auditSymbol
+        case .decisions: ShellText.decisionsSymbol
         }
     }
 }
@@ -264,7 +269,7 @@ struct InboxItemCard: View {
                 .font(.headline)
             Text(ShellText.auditProposals(audit.proposals.count))
                 .foregroundStyle(.secondary)
-            Button(ShellText.openAudit, systemImage: ShellText.symbolAudit) {
+            Button(ShellText.openAudit, systemImage: ShellText.auditSymbol) {
                 ConsoleNavigation.open(.audits, drafts: drafts, select: shell.select)
             }
             .buttonStyle(.bordered)

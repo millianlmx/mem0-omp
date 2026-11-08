@@ -172,47 +172,69 @@ test("tour-de-controle/AC-2 : chaque champ de la vigie, des planifications, des 
 });
 
 test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration sont câblées dans les deux apps, l'Administration aux seuls admins", () => {
+  // Vigie, Planifications et Administration sont des pages du hub Système ; Issues,
+  // une portée de la section Features.
   const section = read("Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
-  assert.match(section, /case \.vigie, \.schedules, \.issues, \.admin: \.exploitation/);
+  assert.match(
+    section,
+    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case stats\s*case admin\s*case server/,
+  );
+  assert.match(section, /public enum RunsScope[^{]*\{\s*case features\s*case projects\s*case audits\s*case issues/);
   assert.match(section, /public var isAdminOnly: Bool \{ self == \.admin \}/);
-  const mac = read("Sources", "OMPConsole", "SectionViews.swift");
-  const ios = read("ios", "OMPConsoleIOS", "IOSSectionView.swift");
+  assert.match(section, /allCases\.filter \{ isAdmin \|\| !\$0\.isAdminOnly \}/);
+  const mac = read("Sources", "OMPConsole", "Server", "SystemPages.swift");
+  const ios = read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
   for (const [name, macView, iosView] of [
-    ["vigie", "VigieSectionView", "IOSVigieScreen"],
-    ["schedules", "SchedulesSectionView", "IOSSchedulesScreen"],
-    ["issues", "IssuesSectionView", "IOSIssuesScreen"],
-    ["admin", "AdminSectionView", "IOSAdminScreen"],
+    ["vigie", "VigieSections", "IOSVigieScreen"],
+    ["schedules", "SystemSchedulesPage", "IOSSchedulesScreen"],
+    ["admin", "AdminSections", "IOSAdminScreen"],
   ] as const) {
-    assert.match(mac, new RegExp(`case \\.${name}: ${macView}\\(`), `Mac : .${name}`);
+    assert.match(
+      mac,
+      new RegExp(`case \\.${name}:\\s*(HarnessForm\\(server: server, drafts: drafts\\) \\{ )?${macView}\\(`),
+      `Mac : .${name}`,
+    );
     assert.match(ios, new RegExp(`case \\.${name}: ${iosView}\\(`), `iOS : .${name}`);
   }
+  assert.match(
+    read("Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"),
+    /case \.issues:\s*HarnessForm\(server: server, drafts: drafts\) \{ IssuesSections\(/,
+    "Mac : portée Issues",
+  );
+  assert.match(ios, /case \.issues: IssuesSections\(/, "iOS : portée Issues");
   // Les écrans iOS passent par le cadre commun et rendent le contenu partagé (ConsoleUI).
-  const screens = read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
   for (const shared of ["VigieSections(", "SchedulesSections(", "IssuesSections(", "AdminSections("])
-    assert.ok(screens.includes(shared), `iOS ne rend pas ${shared}`);
-  // L'Administration est masquée hors admin : barre latérale, palette, « Plus » et onglets.
-  const macRoot = read("Sources", "OMPConsole", "ConsoleRootView.swift");
-  assert.match(macRoot, /ConsoleSection\.visible\(group\.sections, isAdmin: server\.isAdmin\)/);
-  assert.match(macRoot, /sections: ConsoleSection\.visible\(ConsoleSection\.allCases, isAdmin: server\.isAdmin\)/);
-  const iosRoot = read("ios", "OMPConsoleIOS", "RootView.swift");
-  assert.match(iosRoot, /section\.isAdminOnly && !server\.isAdmin/);
-  assert.match(iosRoot, /ConsoleSection\.visible\(IOSTabs\.plusSections, isAdmin: server\.isAdmin\)/);
-  assert.match(iosRoot, /sections: ConsoleSection\.visible\(IOSSection\.all, isAdmin: server\.isAdmin\)/);
-  // La consigne s'envoie depuis le direct des deux apps (vue partagée).
-  for (const sheet of [
-    read("Sources", "OMPConsole", "Server", "HarnessSessionView.swift"),
-    read("ios", "OMPConsoleIOS", "IOSSessionSheet.swift"),
+    assert.ok(ios.includes(shared), `iOS ne rend pas ${shared}`);
+  // L'Administration est masquée hors admin : hub Système (partagé) et palettes des deux apps.
+  assert.match(
+    read("Sources", "ConsoleUI", "SystemViews.swift"),
+    /ForEach\(SystemPage\.visible\(isAdmin: server\.isAdmin\)/,
+  );
+  for (const palette of [
+    read("Sources", "ConsoleUI", "CommandPalette.swift"),
+    read("ios", "OMPConsoleIOS", "IOSSearchScreen.swift"),
   ])
-    assert.ok(sheet.includes("RunInstructionsComposer(server: server, drafts: drafts, runId: runId)"));
+    assert.match(palette, /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin\)/);
+  // La consigne s'envoie depuis la page d'une feature, dans les deux apps (vue partagée).
+  assert.match(
+    read("Sources", "OMPConsole", "Server", "RunPageView.swift"),
+    /RunInstructionsComposer\(server: server, drafts: drafts, runId: run\.id\)/,
+  );
+  assert.match(
+    read("ios", "OMPConsoleIOS", "IOSRunScreen.swift"),
+    /RunInstructionsComposer\(server: server, drafts: drafts, runId: runId\)/,
+  );
 });
 
 test("tour-de-controle/AC-4 : l'arrêt d'urgence n'est jamais grisé par le rôle et passe par une confirmation", () => {
-  const ui = read("Sources", "ConsoleUI", "WorkstationControlSections.swift");
-  const start = ui.indexOf("public struct WorkstationStopSection");
-  const stop = ui.slice(start, ui.indexOf("// MARK: - Navigateurs", start));
+  const header = read("Sources", "ConsoleUI", "WorkstationSections.swift");
+  const start = header.indexOf("struct WorkstationHeaderSection");
+  assert.ok(start >= 0, "l'en-tête du Poste (état et arrêt d'urgence) est introuvable");
+  const stop = header.slice(start, header.indexOf("// MARK: -", start));
   assert.match(stop, /drafts\.workstationStopAsked = true/, "le bouton ne fait que demander confirmation");
   assert.doesNotMatch(stop, /canAct/, "l'arrêt ne dépend pas du rôle du jeton");
   assert.doesNotMatch(stop, /workstation\.stop\(\)/, "le bouton n'arrête pas sans confirmation");
+  const ui = read("Sources", "ConsoleUI", "WorkstationControlSections.swift");
   assert.match(ui, /Button\(ControlText\.stop, role: \.destructive\) \{\s*Task \{ await workstation\.stop\(\) \}/);
   const palette = read("Sources", "ConsoleUI", "CommandPalette.swift");
   assert.match(palette, /case \.stopWorkstation:\s*select\(\.workstation\)\s*drafts\.workstationStopAsked = true/);

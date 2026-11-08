@@ -89,24 +89,44 @@ public struct RunStepTracker: View {
 
     public var body: some View {
         let current = run.milestone
-        HStack(spacing: 4) {
-            ForEach(Array(Self.names.enumerated()), id: \.offset) { index, name in
-                VStack(alignment: .leading, spacing: 4) {
-                    Capsule()
-                        .fill(fill(index, current: current))
-                        .frame(height: 4)
-                    Text(name)
-                        .font(.caption2.weight(index == current ? .semibold : .regular))
-                        .foregroundStyle(index == current ? Color.primary : Color.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+        // Les cinq noms quand ils tiennent ; sinon les barres seules, et le jalon en
+        // cours nommé dessous (iPhone).
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                ForEach(Array(Self.names.enumerated()), id: \.offset) { index, name in
+                    VStack(alignment: .leading, spacing: 4) {
+                        bar(index, current: current)
+                        Text(name)
+                            .font(.caption2.weight(index == current ? .semibold : .regular))
+                            .foregroundStyle(index == current ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach(Self.names.indices, id: \.self) { index in
+                        bar(index, current: current)
+                    }
+                }
+                if let current {
+                    Text(Self.names[min(current, Self.names.count - 1)])
+                        .font(.caption2.weight(.semibold))
+                }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(current.map { Self.names[min($0, Self.names.count - 1)] } ?? run.statusLine)
         .consoleID("run.steps")
+    }
+
+    private func bar(_ index: Int, current: Int?) -> some View {
+        Capsule()
+            .fill(fill(index, current: current))
+            .frame(height: 4)
+            .frame(maxWidth: .infinity)
     }
 
     private func fill(_ index: Int, current: Int?) -> AnyShapeStyle {

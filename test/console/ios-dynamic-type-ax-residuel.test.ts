@@ -50,7 +50,7 @@ test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans 
     copy.set(name, next);
     return capFaults(copy);
   };
-  const anchor = "        .accessibilityElement(children: .combine)";
+  const anchor = "        .accessibilityElement(children: .contain)";
   assert.ok(
     planted("IOSHarnessScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(...DynamicTypeSize.accessibility3)\n${anchor}`),

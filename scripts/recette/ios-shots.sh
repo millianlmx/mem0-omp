@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produit les captures de la coque iOS (S-6, BR-4) : d'abord CINQUANTE-SIX, sept écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord QUARANTE, cinq écrans en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
 # défaut puis en Dynamic Type maximum ; puis le groupe de recette du graphe Mémoire.
 #
@@ -22,11 +22,11 @@
 # L'app DÉCLARE portrait + paysages : elle reste utilisable en paysage sur un vrai
 # iPad, ce que la recette (`omp-console/ios/DESIGN.md`) fait vérifier à la main.
 #
-# Vérifications DURES avant de rendre 0 : 60 PNG, et les dimensions de CHAQUE
+# Vérifications DURES avant de rendre 0 : 52 PNG, et les dimensions de CHAQUE
 # PNG (`sips`) — toutes PORTRAIT. Une capture inattendue fait sortir 1 avec le
 # fichier fautif.
 #
-# Codes de sortie : 0 les 60 captures produites, 1 échec, 2 « non exécuté »
+# Codes de sortie : 0 les 52 captures produites, 1 échec, 2 « non exécuté »
 # (Xcode inutilisable, ou aucun runtime iOS ≥ 26 à nommer).
 set -uo pipefail
 
@@ -38,10 +38,12 @@ SHOTS="$ROOT/omp-console/build/ios-shots"
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
-# Les sept sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
-# jamais un libellé affiché : la liste des sections de l'app est filtrée du type
-# partagé, et ce script de développement se contente des valeurs brutes.
-sections=(home kanban project audit stats workstation memory)
+# Les cinq sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases`
+# (À traiter, Features, Poste, Mémoire, Système) — jamais un libellé affiché : la
+# liste des sections de l'app est filtrée du type partagé, et ce script de
+# développement se contente des valeurs brutes. Sur iPhone, `-section memory` ouvre
+# Système puis y pousse la Mémoire.
+sections=(inbox runs workstation memory system)
 
 # Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
 # Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
@@ -216,23 +218,23 @@ shoot() {
   done
 }
 
-# Passage 1 — sept écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
-# à la taille de texte par défaut : 28 captures.
+# Passage 1 — cinq écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# à la taille de texte par défaut : 20 captures.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
   shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
 done
 
-# Passage 2 — sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
-# MAXIMUM : 28 captures `-ax`.
+# Passage 2 — cinq écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# MAXIMUM : 20 captures `-ax`.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
   shoot ipad "$ipad" "$appearance" "$TEXT_AX" "-ax"
 done
 
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "56" ]; then
-  echo "  ✗ $count captures produites (56 attendues)" >&2
+if [ "$count" != "40" ]; then
+  echo "  ✗ $count captures produites (40 attendues)" >&2
   exit 1
 fi
 
@@ -290,11 +292,11 @@ for appearance in light dark; do
 done
 
 # Le second groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 56 écrans est 68.
+# le total avec les 40 écrans est 52.
 reset_simulators
 total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$total" != "68" ]; then
-  echo "  ✗ $total captures produites (68 attendues : 56 écrans + 12 graphe)" >&2
+if [ "$total" != "52" ]; then
+  echo "  ✗ $total captures produites (52 attendues : 40 écrans + 12 graphe)" >&2
   exit 1
 fi
 

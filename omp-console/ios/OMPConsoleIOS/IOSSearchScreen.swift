@@ -65,12 +65,10 @@ struct IOSPaletteResults: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
                 if let subtitle = item.subtitle {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
             }
             Spacer(minLength: 0)

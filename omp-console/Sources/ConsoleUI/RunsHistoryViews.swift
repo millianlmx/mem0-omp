@@ -32,6 +32,7 @@ public struct RunsListSections: View {
         if let failure = history.failure {
             Section { ConsoleFailureBanner(failure: failure) }
         }
+        QueueSummarySection(server: server)
         if groups.isEmpty, !history.isLoading {
             Section {
                 Text(history.isFiltered ? ShellText.noMatch : ShellText.noRun)
@@ -127,8 +128,9 @@ public struct RunsFilterMenu: View {
                 }
             }
             if history.isFiltered {
-                Divider()
-                Button(PipelineServerText.clearFilters) { history.clearFilters() }
+                Section {
+                    Button(PipelineServerText.clearFilters) { history.clearFilters() }
+                }
             }
         } label: {
             Label(ShellText.filters, systemImage: history.isFiltered ? ShellText.filtersSymbol + ".fill" : ShellText.filtersSymbol)
@@ -176,16 +178,17 @@ public struct RunMenuItems: View {
         if let pr = run.prUrl, let url = URL(string: pr) {
             Button(ShellText.openPR, systemImage: ShellText.openPRSymbol) { openURL(url) }
         }
-        if server.canAct {
-            if run.canRetry || run.canRevert || run.canStop { Divider() }
-            if run.canRetry {
-                Button(PipelineServerText.retry, systemImage: "arrow.clockwise") { drafts.beginRetry(run) }
-            }
-            if run.canRevert {
-                Button(PipelineServerText.revertFeature, systemImage: "arrow.uturn.backward", role: .destructive) { drafts.revertRequest = run }
-            }
-            if run.canStop {
-                Button(PipelineServerText.stopFeature, systemImage: "stop.circle", role: .destructive) { drafts.stopRequest = run }
+        if server.canAct, run.canRetry || run.canRevert || run.canStop {
+            Section {
+                if run.canRetry {
+                    Button(PipelineServerText.retry, systemImage: "arrow.clockwise") { drafts.beginRetry(run) }
+                }
+                if run.canRevert {
+                    Button(PipelineServerText.revertFeature, systemImage: "arrow.uturn.backward", role: .destructive) { drafts.revertRequest = run }
+                }
+                if run.canStop {
+                    Button(PipelineServerText.stopFeature, systemImage: "stop.circle", role: .destructive) { drafts.stopRequest = run }
+                }
             }
         }
     }

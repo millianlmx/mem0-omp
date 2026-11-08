@@ -45,14 +45,14 @@ function forbidAll(faults: string[], label: string, text: string, needles: strin
   }
 }
 
-/** AC-1 : plus de titre interne ; le titre de navigation reste, posé par le cadre. */
+/** AC-1 : plus de titre interne ; le titre de navigation reste, posé par le cadre (section ou page du hub). */
 function titleFaults(root: string): string[] {
   const faults: string[] = [];
   const frame = appFile(root, "IOSHarnessScreens.swift");
   const memory = appFile(root, "IOSMemoryScreen.swift");
   if (frame === "") return ["IOSHarnessScreens.swift absent"];
-  forbidAll(faults, "IOSHarnessScreens.swift", frame, ["Text(section.title)"]);
-  requireAll(faults, "IOSHarnessScreens.swift", frame, [".navigationTitle(section.title)"]);
+  forbidAll(faults, "IOSHarnessScreens.swift", frame, ["Text(section.title)", "Text(title)"]);
+  requireAll(faults, "IOSHarnessScreens.swift", frame, [".navigationTitle(title)"]);
   forbidAll(faults, "IOSMemoryScreen.swift", memory, ["Text(ConsoleSection.memory.title)"]);
   requireAll(faults, "IOSMemoryScreen.swift", memory, [".navigationTitle(ConsoleSection.memory.title)"]);
   return faults;
@@ -137,11 +137,11 @@ test("ios-finitions-titres-icones/AC-1 : chaque écran n'a que le titre de navig
   const faults = plant(
     copy(),
     app("IOSHarnessScreens.swift"),
-    (text) => text.replace("List {\n", "List {\n                    Text(section.title)\n"),
+    (text) => text.replace("List {\n", "List {\n                    Text(title)\n"),
     titleFaults,
   );
   assert.ok(
-    faults.some((f) => f.includes("Text(section.title)")),
+    faults.some((f) => f.includes("Text(title)")),
     `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`,
   );
 });

@@ -17,7 +17,7 @@ public enum ShellText {
     public static let openAudit = L10n.text("Trier les propositions")
 
     public static func kindQuestions(_ count: Int) -> String {
-        count == 1 ? L10n.text("Question à trancher") : L10n.format("%d questions à trancher", count)
+        count == 1 ? L10n.text("Question à trancher") : L10n.format("%lld questions à trancher", count)
     }
 
     public static let kindSpecs = L10n.text("Specs à valider")
@@ -27,18 +27,18 @@ public enum ShellText {
     public static let kindAudit = L10n.text("Audit à trier")
 
     public static func kindDecisions(_ count: Int) -> String {
-        count == 1 ? L10n.text("Décision prise seule") : L10n.format("%d décisions prises seules", count)
+        count == 1 ? L10n.text("Décision prise seule") : L10n.format("%lld décisions prises seules", count)
     }
 
-    public static let symbolQuestions = "questionmark.bubble"
-    public static let symbolSpecs = "doc.text.magnifyingglass"
-    public static let symbolVerdict = "checkmark.seal"
-    public static let symbolAlert = "exclamationmark.triangle"
-    public static let symbolAudit = "checklist"
-    public static let symbolDecisions = "arrow.triangle.branch"
+    public static let questionsSymbol = "questionmark.bubble"
+    public static let specsSymbol = "doc.text.magnifyingglass"
+    public static let verdictSymbol = "checkmark.seal"
+    public static let alertSymbol = "exclamationmark.triangle"
+    public static let auditSymbol = "checklist"
+    public static let decisionsSymbol = "arrow.triangle.branch"
 
     public static func auditProposals(_ count: Int) -> String {
-        count == 1 ? L10n.text("1 proposition") : L10n.format("%d propositions", count)
+        count == 1 ? L10n.text("1 proposition") : L10n.format("%lld propositions", count)
     }
 
     // MARK: - Pouls
@@ -46,8 +46,8 @@ public enum ShellText {
     public static let live = L10n.text("En direct")
     public static let offline = L10n.text("Hors ligne")
 
-    public static func running(_ count: Int) -> String { L10n.format("%d en cours", count) }
-    public static func queued(_ count: Int) -> String { L10n.format("%d en file", count) }
+    public static func running(_ count: Int) -> String { L10n.format("%lld en cours", count) }
+    public static func queued(_ count: Int) -> String { L10n.format("%lld en file", count) }
     public static func weekCost(_ amount: String) -> String { L10n.format("%@ sur 7 jours", amount) }
 
     // MARK: - Features
@@ -86,7 +86,7 @@ public enum ShellText {
 
     public static func created(_ relative: String) -> String { L10n.format("Lancée %@", relative) }
     public static func fixes(_ count: Int) -> String {
-        count == 1 ? L10n.text("1 correction") : L10n.format("%d corrections", count)
+        count == 1 ? L10n.text("1 correction") : L10n.format("%lld corrections", count)
     }
 
     /// Les jalons de la frise d'une feature, dans l'ordre du chemin nominal.
@@ -103,6 +103,6 @@ public enum ShellText {
     public static let unavailable = L10n.text("Absent de ce serveur")
 
     public static func schedulesCount(_ active: Int, of total: Int) -> String {
-        L10n.format("%d actives sur %d", active, total)
+        L10n.format("%lld actives sur %lld", active, total)
     }
 }

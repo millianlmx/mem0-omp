@@ -138,7 +138,7 @@ public enum SystemPage: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// Ce que décrit la rangée du hub, sous son titre.
     public var summary: String {
         switch self {
-        case .vigie: L10n.text("L’agent qui surveille, ouvre les issues et lance les correctifs.")
+        case .vigie: L10n.text("Surveillance du serveur, issues ouvertes et correctifs lancés par l’agent.")
         case .schedules: L10n.text("Features, audits et relèves d’issues à heure fixe.")
         case .stats: L10n.text("Débit, coûts, étapes, tests et santé du serveur.")
         case .admin: L10n.text("Clients, dépôts déclarés et configuration.")

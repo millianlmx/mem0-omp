@@ -26,6 +26,8 @@ struct IOSHarnessScreen<Content: View>: View {
     let title: String
     /// La section qui porte l'écran : ⌘R ne relit que l'écran affiché.
     let owner: ConsoleSection
+    /// L'identifiant de l'écran pour la recette (`ios.screen.<section>` ou
+    /// `ios.screen.system.<page>`).
     let identifier: String
     let catalog: Bool
     let reloadAlso: (@MainActor () async -> Void)?
@@ -40,7 +42,7 @@ struct IOSHarnessScreen<Content: View>: View {
         reloadAlso: (@MainActor () async -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
-        self.init(server: server, drafts: drafts, title: section.title, owner: section, identifier: section.rawValue, catalog: catalog, reloadAlso: reloadAlso, content: content)
+        self.init(server: server, drafts: drafts, title: section.title, owner: section, identifier: "ios.screen." + section.rawValue, catalog: catalog, reloadAlso: reloadAlso, content: content)
     }
 
     /// Une page poussée par le hub Système.
@@ -51,7 +53,7 @@ struct IOSHarnessScreen<Content: View>: View {
         reloadAlso: (@MainActor () async -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
-        self.init(server: server, drafts: drafts, title: page.title, owner: .system, identifier: "system." + page.rawValue, catalog: true, reloadAlso: reloadAlso, content: content)
+        self.init(server: server, drafts: drafts, title: page.title, owner: .system, identifier: "ios.screen.system." + page.rawValue, catalog: true, reloadAlso: reloadAlso, content: content)
     }
 
     private init(
@@ -115,7 +117,7 @@ struct IOSHarnessScreen<Content: View>: View {
             Task { await reload() }
         })
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ios.screen." + identifier)
+        .accessibilityIdentifier(identifier)
     }
 
     private func reload() async {
@@ -273,10 +275,10 @@ struct IOSSystemScreen: View {
     private var memoryRow: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: ConsoleSection.memory.systemImage)
+                .accessibilityHidden(true)
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 28)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ConsoleSection.memory.title)
                     .font(.body.weight(.medium))

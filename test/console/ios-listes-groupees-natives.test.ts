@@ -30,14 +30,14 @@ function appSource(name: string): string {
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
 /** Les écrans rendus en liste groupée (S-3, S-4, S-5, S-6) : le cadre commun des
- *  cinq écrans du serveur, et la Mémoire. */
+ *  écrans du serveur (À traiter, Features, Poste, Système et ses pages), et la Mémoire. */
 const LIST_SCREENS = ["IOSHarnessScreens.swift", "IOSMemoryScreen.swift"];
 
 /** Le contenu PARTAGÉ (ConsoleUI) que le cadre commun range dans sa liste : rangées
- *  des features, boîte, historique, lancement, services, Poste. */
+ *  des features, file « À traiter », liste des features, lancement, services, Poste. */
 const LIST_CONTENTS = [
   "RunViews.swift",
-  "InboxSections.swift",
+  "InboxFeed.swift",
   "RunsHistoryViews.swift",
   "LaunchViews.swift",
   "ServicesViews.swift",
@@ -126,7 +126,7 @@ function sheetFaults(name: string, source: string): string[] {
   return faults;
 }
 
-/** Les titres de barre attendus par fichier : un par écran et par feuille. */
+/** Les titres de barre attendus par fichier : un par écran, par page poussée et par feuille. */
 const TITLES: Record<string, number> = {
   "IOSHarnessScreens.swift": 1,
   "IOSMemoryScreen.swift": 1,
@@ -134,28 +134,34 @@ const TITLES: Record<string, number> = {
   "IOSServerSheet.swift": 1,
   "IOSWorkstationScreen.swift": 0,
   "RunViews.swift": 2,
-  "WorkstationSections.swift": 1,
+  // Une page poussée du Poste (`WorkstationPageView`) et la feuille de refus d'un envoi.
+  "WorkstationSections.swift": 2,
   "LaunchViews.swift": 1,
   "MemoryEditSheet.swift": 1,
 };
 
 /**
  * AC-5 : un seul titre, celui de la barre de navigation (S-8) — un pour le cadre
- * des écrans du serveur, un par feuille ; le titre de section n'est jamais répété
- * dans le contenu.
+ * des écrans du serveur (le titre de la section ou de la page du hub), un par
+ * feuille ; ce titre n'est jamais répété dans le contenu.
  */
 function titleFaults(name: string, source: string): string[] {
   const code = stripComments(source);
   const faults: string[] = [];
   const titles = count(code, ".navigationTitle(");
   if (titles !== TITLES[name]) faults.push(`${name} : .navigationTitle( ×${titles}, attendu ${TITLES[name]}`);
-  if (/Text\(\s*(ConsoleSection\.\w+|section)\.title\s*\)/.test(code))
-    faults.push(`${name} : le titre de section est répété dans le contenu`);
+  const repeated = /Text\(\s*(section\.title|title)\s*\)/;
+  if (
+    name === "IOSHarnessScreens.swift"
+      ? repeated.test(memberBody(code, "struct IOSHarnessScreen<"))
+      : repeated.test(code)
+  )
+    faults.push(`${name} : le titre de l'écran est répété dans le contenu`);
   if (
     name === "IOSHarnessScreens.swift" &&
-    count(memberBody(code, "struct IOSHarnessScreen<"), ".navigationTitle(section.title)") !== 1
+    count(memberBody(code, "struct IOSHarnessScreen<"), ".navigationTitle(title)") !== 1
   ) {
-    faults.push(`${name} : le cadre IOSHarnessScreen ne porte pas .navigationTitle(section.title)`);
+    faults.push(`${name} : le cadre IOSHarnessScreen ne porte pas .navigationTitle(title)`);
   }
   return faults;
 }
@@ -284,7 +290,7 @@ test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (
   );
 
   // Un filet remis entre les questions d'un lot, côté iOS ⇒ rouge.
-  const inbox = "InboxSections.swift";
+  const inbox = "InboxFeed.swift";
   const divider = plant(appSource(inbox), (s) =>
     s.replace(
       "ForEach(Array(batch.items.enumerated())",
@@ -345,7 +351,7 @@ test("ios-listes-groupees-natives/AC-5 : un seul titre par écran en liste et pa
   // Faute plantée : le titre de section répété dans le contenu ⇒ rouge.
   const harness = "IOSHarnessScreens.swift";
   const repeated = plant(appSource(harness), (s) =>
-    s.replace("content()\n", "Text(section.title)\n                    content()\n"),
+    s.replace("content()\n", "Text(title)\n                    content()\n"),
   );
   assert.ok(
     titleFaults(harness, repeated).some((f) => f.includes("répété")),
@@ -354,7 +360,7 @@ test("ios-listes-groupees-natives/AC-5 : un seul titre par écran en liste et pa
 
   // Faute plantée : un second `.navigationTitle(` ⇒ rouge.
   const twice = plant(appSource(harness), (s) =>
-    s.replace(".iosGroupedList()", ".iosGroupedList()\n                .navigationTitle(section.title)"),
+    s.replace(".iosGroupedList()", ".iosGroupedList()\n                .navigationTitle(title)"),
   );
   assert.ok(
     titleFaults(harness, twice).some((f) => f.includes("×2")),

@@ -434,16 +434,16 @@ test("localisation-apps/AC-1 : chaque clé L10n des sources a sa traduction angl
   const untranslated = plant(
     SOURCES,
     MEMORY_TEXT,
-    'L10n.text("Tous les projets")',
-    'L10n.text("Tous les projets du monde")',
+    'L10n.text("Revenir au sommaire de la mémoire")',
+    'L10n.text("Revenir au sommaire de toute la mémoire")',
   );
   const faults = coverageFaults(untranslated, TABLE_TEXT);
   assert.ok(
-    faults.some((f) => f.includes("« Tous les projets du monde » sans traduction anglaise")),
+    faults.some((f) => f.includes("« Revenir au sommaire de toute la mémoire » sans traduction anglaise")),
     "une clé sans traduction doit faire rougir la garde",
   );
   assert.ok(
-    faults.some((f) => f.includes("entrée orpheline « Tous les projets »")),
+    faults.some((f) => f.includes("entrée orpheline « Revenir au sommaire de la mémoire »")),
     "une entrée que plus rien ne lit doit faire rougir la garde",
   );
   const interpolated = plant(SOURCES, MONITORING_TEXT, 'L10n.format("Lu à %@", time)', 'L10n.format("Lu à \\(time)")');

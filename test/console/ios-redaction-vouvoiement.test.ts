@@ -294,12 +294,15 @@ test("ios-redaction-vouvoiement/AC-3 : la feuille Nouvelle feature ne cite ni br
   }
 });
 
-test("ios-redaction-vouvoiement/AC-5 : le chargement de l'Accueil iOS n'affiche que l'indicateur natif, sans texte", () => {
+test("ios-redaction-vouvoiement/AC-5 : le chargement de « À traiter » sur iOS n'affiche que l'indicateur natif, sans texte", () => {
   assertSane();
   const source = SOURCES.get(HARNESS_SCREENS);
   assert.ok(source !== undefined, `source non chargée : ${HARNESS_SCREENS}`);
-  // L'Accueil iOS est un écran du serveur : son chargement est celui du cadre commun.
-  assert.ok(source.includes("struct IOSHarnessHomeScreen"), "l'Accueil iOS doit vivre dans le cadre commun");
+  // « À traiter » est un écran du serveur : son chargement est celui du cadre commun.
+  assert.ok(
+    /struct IOSInboxScreen[\s\S]*?IOSHarnessScreen\(server: server, drafts: drafts, section: \.inbox/.test(source),
+    "« À traiter » doit vivre dans le cadre commun",
+  );
   const loading = block(withoutComments(source), "if !server.isLoaded");
   assert.ok(loading.includes("ProgressView()"), "ProgressView() sans argument attendu");
   for (const banned of ["Text(", "Label(", "loadingText"]) {

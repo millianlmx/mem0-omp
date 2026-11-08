@@ -163,10 +163,11 @@ function memoryBarFaults(memory: string): string[] {
 
 /**
  * AC-5 (S-4) : la rangée de la Mémoire rend `IOSContextMenuItems` nourri par
- * `IOSContextMenu.<surface>` ; la rangée d'une feature (`RunRow`, partagée avec le
- * Mac) rend un seul menu, `RunMenuItems`, dont les gestes destructifs (arrêt,
- * annulation de la fusion) ne font que demander confirmation (`drafts.*Request`),
- * jamais exécutés du menu ; les écrans iOS n'ajoutent aucun autre menu de feature.
+ * `IOSContextMenu.<surface>` ; la ligne d'une feature (`RunListRow`, posée par la liste
+ * partagée `RunsListSections`) porte un seul menu, `RunMenuItems`, dont les gestes
+ * destructifs (arrêt, annulation de la fusion) ne font que demander confirmation
+ * (`drafts.*Request`), jamais exécutés du menu ; les écrans iOS n'ajoutent aucun
+ * autre menu de feature.
  */
 function menuFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -182,19 +183,21 @@ function menuFaults(all: Map<string, string>): string[] {
       faults.push("IOSMemoryScreen.swift : un .contextMenu ne rend pas IOSContextMenuItems(actions: IOSContextMenu.…)");
     }
   }
-  const harness = stripComments(all.get(HARNESS) ?? "");
-  if (count(harness, ".contextMenu") !== 0) {
-    faults.push(`${HARNESS} : ${count(harness, ".contextMenu")} .contextMenu (attendu 0, le menu vit dans RunRow)`);
+  for (const name of [HARNESS, "IOSRunScreen.swift", RUN_ROW]) {
+    const n = count(stripComments(all.get(name) ?? ""), ".contextMenu");
+    if (n !== 0) faults.push(`${name} : ${n} .contextMenu (attendu 0, le menu vit dans RunsListSections)`);
   }
-  const row = stripComments(all.get(RUN_ROW) ?? "");
-  const rowMenus = blocksOf(memberBody(row, "struct RunRow"), ".contextMenu {");
-  if (rowMenus.length !== 1 || count(row, ".contextMenu") !== 1 || !rowMenus[0].includes("RunMenuItems(")) {
-    faults.push(`${RUN_ROW} : ${count(row, ".contextMenu")} .contextMenu (attendu 1, RunMenuItems dans struct RunRow)`);
+  const list = stripComments(all.get(RUN_MENU) ?? "");
+  const rowMenus = blocksOf(memberBody(list, "struct RunsListSections"), ".contextMenu {");
+  if (rowMenus.length !== 1 || count(list, ".contextMenu") !== 1 || !rowMenus[0].includes("RunMenuItems(")) {
+    faults.push(
+      `${RUN_MENU} : ${count(list, ".contextMenu")} .contextMenu (attendu 1, RunMenuItems dans struct RunsListSections)`,
+    );
   }
-  const items = memberBody(stripComments(all.get(RUN_MENU) ?? ""), "struct RunMenuItems");
+  const items = memberBody(list, "struct RunMenuItems");
   if (!/role: \.destructive\) \{ drafts\.stopRequest = run \}/.test(items))
     faults.push(`${RUN_MENU} : le menu d'une feature ne demande pas l'arrêt confirmé (drafts.stopRequest)`);
-  if (items.includes("server."))
+  if (/await server\.|Task \{/.test(items))
     faults.push(`${RUN_MENU} : le menu d'une feature agit sur le serveur sans confirmation`);
   return faults;
 }
@@ -212,9 +215,10 @@ function swipeFaults(all: Map<string, string>): string[] {
 // MARK: - AC-9, AC-10, AC-11, AC-12
 
 /** Les surfaces de texte sélectionnable (S-6), une pose chacune : les specs à
- *  valider de l'Accueil, la fiche d'un souvenir et le direct d'une session. */
-const SPECS = "InboxSections.swift";
-const SELECTABLE = [SPECS, "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
+ *  valider de « À traiter », les specs lisibles de la page d'une feature, la fiche
+ *  d'un souvenir et le direct d'une session. */
+const SPECS = "InboxFeed.swift";
+const SELECTABLE = [SPECS, "IOSRunScreen.swift", "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {
@@ -282,12 +286,14 @@ function motionFaults(all: Map<string, string>): string[] {
 /** Les symboles décoratifs de S-9 : fichier → début d'`Image` → occurrences attendues. */
 const DECORATIVE: { name: string; image: string; times: number }[] = [
   { name: HARNESS, image: "Image(systemName: IOSShellText.serverSymbol)", times: 1 },
+  { name: HARNESS, image: "Image(systemName: ConsoleSection.memory.systemImage)", times: 1 },
 ];
 
 /**
  * AC-12 (S-9) : chaque symbole décoratif est suivi de `.accessibilityHidden(true)`
- * à trois lignes au plus ; l'état que porte la coche d'une proposition d'audit est
- * annoncé par le trait sélectionné.
+ * à trois lignes au plus. L'état que portait la coche d'une proposition d'audit est
+ * désormais celui d'un `Toggle` système, annoncé par VoiceOver
+ * (`ios-finitions-composants/AC-2`).
  */
 function symbolFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -303,14 +309,6 @@ function symbolFaults(all: Map<string, string>): string[] {
       }
     });
     if (found !== times) faults.push(`${name} : ${found} × ${image} (attendu ${times})`);
-  }
-  const harness = stripComments(all.get(HARNESS) ?? "");
-  if (
-    !chainAround(harness, ".buttonStyle(.borderless)", harness.indexOf("drafts.togglePick(")).includes(
-      ".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])",
-    )
-  ) {
-    faults.push(`${HARNESS} : la proposition retenue n'est pas annoncée sélectionnée`);
   }
   return faults;
 }
@@ -450,8 +448,8 @@ test("ios-gestes-et-retours-natifs/AC-2 : les écrans du serveur et la liste de 
   // Faute plantée : un ↻ remis dans la barre du serveur ⇒ rouge.
   const bar = plant(files().harness, (s) =>
     s.replace(
-      "Label(PipelineServerText.open, systemImage: IOSShellText.serverSymbol)",
-      'Label(PipelineServerText.open, systemImage: "arrow.clockwise")',
+      "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
+      'Label(PipelineServerText.newFeature, systemImage: "arrow.clockwise")',
     ),
   );
   assert.ok(
@@ -576,7 +574,7 @@ test("ios-gestes-et-retours-natifs/AC-11 : toute animation déclenchée par l'ap
 
   // Faute plantée : une animation nue sur un écran du serveur ⇒ rouge.
   const harness = plant(all.get(HARNESS)!, (s) =>
-    s.replace("drafts.addFeature()", "withAnimation { drafts.addFeature() }"),
+    s.replace("drafts.launchSheetShown = true", "withAnimation { drafts.launchSheetShown = true }"),
   );
   assert.ok(
     motionFaults(withFile(all, HARNESS, harness)).some((f) => f.startsWith(HARNESS)),
@@ -603,13 +601,13 @@ test("ios-gestes-et-retours-natifs/AC-12 : les symboles décoratifs sont masqué
     "un symbole lu doit rougir",
   );
 
-  // Faute plantée : la proposition retenue n'a plus son trait ⇒ rouge.
-  const picked = plant(all.get(HARNESS)!, (s) =>
-    s.replace(".accessibilityAddTraits(drafts.isPicked(audit, index) ? .isSelected : [])", ""),
+  // Faute plantée : le symbole de la rangée Mémoire du hub redevient lu ⇒ rouge.
+  const row = plant(all.get(HARNESS)!, (s) =>
+    s.replace(/(Image\(systemName: ConsoleSection\.memory\.systemImage\)[\s\S]*?)\.accessibilityHidden\(true\)/, "$1"),
   );
   assert.ok(
-    symbolFaults(withFile(all, HARNESS, picked)).some((f) => f.includes("sélectionnée")),
-    "une proposition retenue muette doit rougir",
+    symbolFaults(withFile(all, HARNESS, row)).some((f) => f.includes("ConsoleSection.memory.systemImage")),
+    "un symbole de rangée lu doit rougir",
   );
 });
 

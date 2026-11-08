@@ -503,7 +503,7 @@ test("coque-ios/AC-1 : le .pbxproj est un projet à dossiers synchronisés câbl
   }
   const built = shared.fresh();
   const marker = path.join(built, "omp-console", "ios", "OMPConsoleIOS", "NouvelleSection.swift");
-  fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .home\n");
+  fs.writeFileSync(marker, "import ConsoleCore\n\nlet nouvelleSection: ConsoleSection = .inbox\n");
   const before = fs.readFileSync(
     path.join(built, "omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj"),
     "utf8",

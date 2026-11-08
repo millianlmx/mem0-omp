@@ -1,7 +1,7 @@
-// Feature accueil-tableau-de-bord : l'Accueil des apps Mac et iOS est un tableau de
-// bord — KPIs et graphiques (ce qui attend l'humain, débit, coût, santé) — posé au-dessus
-// de la boîte de l'humain. Le serveur lui donne ses séries (`GET /v1/stats`) ; les apps
-// les tracent.
+// Feature accueil-tableau-de-bord : les KPIs et graphiques (ce qui attend l'humain,
+// débit, coût, santé) des apps Mac et iOS. Le serveur leur donne leurs séries
+// (`GET /v1/stats`) ; les apps les tracent sous Système › Statistiques et santé, et
+// « À traiter » ne montre que la file de ce qui attend l'humain (refonte du 2026-11-08).
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -113,10 +113,11 @@ test("accueil-tableau-de-bord/AC-2 : chaque dépôt a ses runs en cours, mergés
   }
 });
 
-const MAC_HOME = "omp-console/Sources/OMPConsole/Server/HarnessSectionViews.swift";
-const IOS_HOME = "omp-console/ios/OMPConsoleIOS/IOSHarnessScreens.swift";
-const MAC_DASHBOARD = "omp-console/Sources/OMPConsole/Server/HarnessDashboardView.swift";
-const IOS_DASHBOARD = "omp-console/ios/OMPConsoleIOS/IOSDashboardSections.swift";
+const MAC_INBOX = "omp-console/Sources/OMPConsole/Server/HarnessSectionViews.swift";
+const IOS_SCREENS = "omp-console/ios/OMPConsoleIOS/IOSHarnessScreens.swift";
+const MAC_STATS = "omp-console/Sources/OMPConsole/Server/SystemPages.swift";
+const MAC_CHARTS = "omp-console/Sources/OMPConsole/Server/HarnessStatsCharts.swift";
+const IOS_CHARTS = "omp-console/ios/OMPConsoleIOS/IOSStatsCharts.swift";
 
 /** Le corps d'une déclaration `struct <name>` : jusqu'à la déclaration de premier niveau suivante. */
 function structBody(source: string, name: string): string {
@@ -127,41 +128,44 @@ function structBody(source: string, name: string): string {
   return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
 }
 
-/** Les manques d'un Accueil : le tableau de bord d'abord, puis la boîte ; les quatre blocs tracés. */
-function homeFaults(
-  home: string,
-  dashboard: string,
-  names: { home: string; dashboard: string; inbox: string },
-): string[] {
+type Shell = { inbox: string; stats: string; charts: string };
+
+/**
+ * Les manques d'une app : « À traiter » pose la file (`InboxFeed`) et aucun graphique ;
+ * la page des statistiques pose les graphiques, qui tracent les quatre blocs.
+ */
+function boardFaults(inboxSource: string, statsSource: string, charts: string, names: Shell): string[] {
   const faults: string[] = [];
-  const body = structBody(home, names.home);
-  const board = body.indexOf(`${names.dashboard}(`);
-  const inbox = body.indexOf(`${names.inbox}(`);
-  if (board === -1) faults.push(`${names.home} ne pose pas ${names.dashboard}`);
-  if (inbox === -1) faults.push(`${names.home} ne pose plus la boîte ${names.inbox}`);
-  if (board !== -1 && inbox !== -1 && board > inbox)
-    faults.push(`${names.home} : la boîte passe avant le tableau de bord`);
-  if (!body.includes("catalog: true")) faults.push(`${names.home} ne lit pas les statistiques (catalog: true)`);
-  for (const block of ["waitingTitle", "throughputTitle", "costTitle", "healthTitle"]) {
-    if (!dashboard.includes(`DashboardText.${block}`)) faults.push(`le tableau de bord n'a pas le bloc ${block}`);
+  const inbox = structBody(inboxSource, names.inbox);
+  if (inbox === "") return [`${names.inbox} absent`];
+  if (!inbox.includes("InboxFeed(")) faults.push(`${names.inbox} ne pose plus la file InboxFeed`);
+  for (const chart of [`${names.charts}(`, "Chart(", "Chart {", "DashboardKPI"]) {
+    if (inbox.includes(chart)) faults.push(`${names.inbox} pose un tableau de bord (${chart})`);
   }
-  const charts = dashboard.split("Chart {").length - 1 + (dashboard.split("Chart(").length - 1);
-  if (charts < 4) faults.push(`le tableau de bord ne trace que ${charts} graphique(s), 4 au moins attendus`);
-  if (!dashboard.includes("DashboardKPI")) faults.push("le tableau de bord n'a pas de tuiles de KPI");
+  if (!structBody(statsSource, names.stats).includes(`${names.charts}(`))
+    faults.push(`${names.stats} ne pose pas ${names.charts}`);
+  for (const block of ["waitingTitle", "throughputTitle", "costTitle", "healthTitle"]) {
+    if (!charts.includes(`DashboardText.${block}`)) faults.push(`${names.charts} n'a pas le bloc ${block}`);
+  }
+  const traced = charts.split("Chart {").length - 1 + (charts.split("Chart(").length - 1);
+  if (traced < 4) faults.push(`${names.charts} ne trace que ${traced} graphique(s), 4 au moins attendus`);
   return faults;
 }
 
-test("accueil-tableau-de-bord/AC-3 : sur Mac et sur iOS, l'Accueil ouvre sur le tableau de bord — tuiles de KPI et quatre blocs tracés — puis la boîte de l'humain", () => {
+test("accueil-tableau-de-bord/AC-3 : sur Mac et sur iOS, « À traiter » montre la file et jamais le tableau de bord, dont les quatre blocs tracés vivent sous Système › Statistiques", () => {
   const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
-  const mac = { home: "HarnessHomeView", dashboard: "HarnessDashboardSections", inbox: "InboxSections" };
-  const ios = { home: "IOSHarnessHomeScreen", dashboard: "IOSDashboardSections", inbox: "InboxSections" };
-  assert.deepEqual(homeFaults(read(MAC_HOME), read(MAC_DASHBOARD), mac), []);
-  assert.deepEqual(homeFaults(read(IOS_HOME), read(IOS_DASHBOARD), ios), []);
+  const mac = { inbox: "HarnessInboxView", stats: "SystemStatsPage", charts: "HarnessStatsCharts" };
+  const ios = { inbox: "IOSInboxScreen", stats: "IOSStatsScreen", charts: "IOSStatsCharts" };
+  assert.deepEqual(boardFaults(read(MAC_INBOX), read(MAC_STATS), read(MAC_CHARTS), mac), []);
+  assert.deepEqual(boardFaults(read(IOS_SCREENS), read(IOS_SCREENS), read(IOS_CHARTS), ios), []);
 
-  // Faute plantée : la boîte remontée au-dessus du tableau de bord.
-  const swapped = read(MAC_HOME).replace(
-    /(HarnessDashboardSections\([^\n]*\n)([\s\S]*?)(\s*InboxSections\([^\n]*\n)/,
-    "$3$2$1",
+  // Faute plantée : les graphiques remontés sur « À traiter ».
+  const crowded = read(MAC_INBOX).replace(
+    /(\n\s*)InboxFeed\(/,
+    "$1HarnessStatsCharts(dashboard: HarnessDashboard(inbox: HarnessInbox(), stats: nil))$1InboxFeed(",
   );
-  assert.ok(homeFaults(swapped, read(MAC_DASHBOARD), mac).some((fault) => fault.includes("passe avant")));
+  assert.notEqual(crowded, read(MAC_INBOX), "la faute n'a pas pu être plantée");
+  assert.ok(
+    boardFaults(crowded, read(MAC_STATS), read(MAC_CHARTS), mac).some((fault) => fault.includes("tableau de bord")),
+  );
 });

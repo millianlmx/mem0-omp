@@ -18,8 +18,8 @@ import { declaredTexts, stripComments, swiftFiles } from "../support/swift-sourc
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
 
-/** Les sept sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
-const SECTIONS = ["home", "kanban", "project", "audit", "stats", "workstation", "memory"];
+/** Les cinq sections de l'app iOS (`IOSSection.all`), dans l'ordre de `ConsoleSection.allCases`. */
+const SECTIONS = ["inbox", "runs", "workstation", "memory", "system"];
 
 /** Les deux apparences de la matrice de captures. */
 const APPEARANCES = ["light", "dark"];
@@ -172,8 +172,9 @@ function typographyFaults(root: string): string[] {
 }
 
 /** Les mots partagés attendus, section par section (tableau de S-2) : l'écran qui
- * rend la section, son fichier, et le mot d'état vide qu'il lit dans le noyau. */
-/** `words` : où vit l'état vide quand l'écran le tient d'une vue PARTAGÉE (ConsoleUI). */
+ * rend la section, son fichier, et le mot qu'il lit dans le noyau — l'état vide, ou,
+ * pour le hub Système qui n'est jamais vide, son pied. */
+/** `words` : où vit le mot quand l'écran le tient d'une vue PARTAGÉE (ConsoleUI). */
 type SectionWord = {
   screen: string;
   file: string;
@@ -184,49 +185,28 @@ type SectionWord = {
 };
 
 const SECTION_WORDS: Record<string, SectionWord> = {
-  home: {
-    screen: "IOSHarnessHomeScreen",
+  inbox: {
+    screen: "IOSInboxScreen",
     file: "IOSHarnessScreens.swift",
-    words: { screen: "InboxSections", file: "InboxSections.swift" },
-    message: "Rien n’attend votre décision.",
-    constant: "PipelineServerText.nothingPending",
-    core: "Design/PipelineServerText.swift",
+    words: { screen: "InboxFeed", file: "InboxFeed.swift" },
+    message: "Rien ne vous attend",
+    constant: "ShellText.allClearTitle",
+    core: "Design/ShellText.swift",
   },
-  kanban: {
-    screen: "IOSHarnessPipelinesScreen",
+  runs: {
+    screen: "IOSFeaturesScreen",
     file: "IOSHarnessScreens.swift",
-    words: { screen: "RunsHistorySections", file: "RunsHistoryViews.swift" },
-    message: "Aucune feature sur ce serveur.",
-    constant: "PipelineServerText.noRun",
-    core: "Design/PipelineServerText.swift",
-  },
-  project: {
-    screen: "IOSHarnessProjectsScreen",
-    file: "IOSHarnessScreens.swift",
-    message: "Aucun projet sur ce serveur.",
-    constant: "PipelineServerText.noProject",
-    core: "Design/PipelineServerText.swift",
-  },
-  audit: {
-    screen: "IOSHarnessAuditsScreen",
-    file: "IOSHarnessScreens.swift",
-    message: "Aucun audit sur ce serveur.",
-    constant: "PipelineServerText.noAudit",
-    core: "Design/PipelineServerText.swift",
-  },
-  stats: {
-    screen: "IOSHarnessStatsScreen",
-    file: "IOSHarnessScreens.swift",
-    message: "Les statistiques arrivent avec le premier échange du serveur.",
-    constant: "PipelineServerText.noStats",
-    core: "Design/PipelineServerText.swift",
+    words: { screen: "RunsListSections", file: "RunsHistoryViews.swift" },
+    message: "Aucune feature pour l’instant.",
+    constant: "ShellText.noRun",
+    core: "Design/ShellText.swift",
   },
   workstation: {
     screen: "IOSWorkstationScreen",
     file: "IOSWorkstationScreen.swift",
     words: { screen: "WorkstationSections", file: "WorkstationSections.swift" },
-    message: "Aucun envoi n’attend votre accord.",
-    constant: "WorkstationText.noApproval",
+    message: "Aucune activité observée pour l’instant.",
+    constant: "WorkstationText.noActivity",
     core: "Design/WorkstationText.swift",
   },
   memory: {
@@ -235,6 +215,14 @@ const SECTION_WORDS: Record<string, SectionWord> = {
     message: "Aucun projet ouvert",
     constant: "MemoryText.noProjectTitle",
     core: "Memory/MemoryText.swift",
+  },
+  system: {
+    screen: "IOSSystemScreen",
+    file: "IOSHarnessScreens.swift",
+    words: { screen: "SystemHubSections", file: "SystemViews.swift" },
+    message: "Ce qui se règle ou se consulte rarement.",
+    constant: "ShellText.systemHint",
+    core: "Design/ShellText.swift",
   },
 };
 
@@ -247,7 +235,7 @@ function structBody(source: string, name: string): string {
   return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
 }
 
-/** Les manques des sept écrans : aiguillage, mots partagés, cadre, composants employés. */
+/** Les manques des cinq écrans : aiguillage, mots partagés, cadre, composants employés. */
 function screenFaults(root: string): string[] {
   const faults: string[] = [];
   const view = appFile(root, "IOSSectionView.swift");
@@ -255,7 +243,13 @@ function screenFaults(root: string): string[] {
 
   for (const section of SECTIONS) {
     const word = SECTION_WORDS[section];
-    if (!new RegExp(`case [^:]*\\.${section}\\b[^:]*:\\s*${word.screen}\\(`).test(view)) {
+    // L'aiguillage nomme l'écran, ou une propriété de la vue qui le construit (la
+    // Mémoire, que Système pousse aussi sur iPhone, est bâtie une seule fois).
+    const routed = new RegExp(`case [^:]*\\.${section}\\b[^:]*:\\s*(\\w+)`).exec(view)?.[1];
+    const built =
+      routed === word.screen ||
+      (routed !== undefined && new RegExp(`var ${routed}: some View \\{\\s*${word.screen}\\(`).test(view));
+    if (!built) {
       faults.push(`IOSSectionView n'aiguille pas .${section} vers ${word.screen}`);
     }
     const wordsFile = word.words?.file ?? word.file;
@@ -267,7 +261,7 @@ function screenFaults(root: string): string[] {
     }
   }
 
-  // Les six écrans de pilotage passent par le MÊME cadre, qui porte le bandeau
+  // Les quatre écrans servis par le serveur passent par le MÊME cadre, qui porte le bandeau
   // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
   const harness = appFile(root, "IOSHarnessScreens.swift");
   for (const section of SECTIONS.filter((s) => s !== "memory")) {
@@ -308,7 +302,7 @@ function screenFaults(root: string): string[] {
   return faults;
 }
 
-/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe. */
+/** Les noms des captures produites (S-6, AC-6) : 40 écrans + 12 graphe. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -501,7 +495,7 @@ function macOSFaults(root: string): string[] {
 // ---------------------------------------------------------------------------
 // Les tests, un par critère.
 
-test("design-ios/AC-1 : les sept écrans portent le kit (surfaces, pastille, métriques)", () => {
+test("design-ios/AC-1 : les cinq écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -513,7 +507,7 @@ test("design-ios/AC-1 : les sept écrans portent le kit (surfaces, pastille, mé
   );
 });
 
-test("design-ios/AC-2 : aucun composant orphelin — les sept sections rendent le bandeau d'erreur", () => {
+test("design-ios/AC-2 : aucun composant orphelin — les cinq sections rendent le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -529,10 +523,10 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Design", "PipelineServerText.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Design", "ShellText.swift");
   fs.writeFileSync(
     target,
-    fs.readFileSync(target, "utf8").replace('"Aucune feature sur ce serveur."', '"Aucune pipeline."'),
+    fs.readFileSync(target, "utf8").replace('"Aucune feature pour l’instant."', '"Aucune pipeline."'),
   );
   assert.ok(
     screenFaults(copy).some((f) => f.includes("noRun")),
@@ -570,7 +564,7 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 68, "la matrice attendue fait 68 noms");
+  assert.equal(expectedShotNames().length, 52, "la matrice attendue fait 52 noms");
 
   const copy = shared.fresh();
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");
@@ -635,13 +629,10 @@ test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore r
   assert.deepEqual(macOSFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Server", "HarnessSectionViews.swift");
-  fs.writeFileSync(
-    target,
-    fs.readFileSync(target, "utf8").replace("PipelineServerText.noStats", '"Les statistiques viendront."'),
-  );
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleUI", "RunsHistoryViews.swift");
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("ShellText.noRun", '"Aucune feature."'));
   assert.ok(
-    macOSFaults(copy).some((f) => f.includes("noStats")),
+    macOSFaults(copy).some((f) => f.includes("noRun")),
     "un mot réécrit dans la coque doit faire rougir la garde",
   );
 });

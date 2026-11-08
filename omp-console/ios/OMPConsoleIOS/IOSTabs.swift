@@ -52,7 +52,7 @@ enum IOSTabs {
         case .inbox: pending + approvals
         case .workstation: approvals
         case .system: vigieSilent ? 1 : 0
-        case .runs, .memory, .terminal, .files: 0
+        default: 0
         }
     }
 }
