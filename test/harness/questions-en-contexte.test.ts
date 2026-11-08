@@ -230,13 +230,13 @@ const INBOX_VIEWS = {
   // La boîte est ÉCRITE UNE FOIS pour les deux apps (cible ConsoleUI) : le Mac et
   // l'iPhone/iPad compilent la même vue.
   mac: {
-    file: "omp-console/Sources/ConsoleUI/InboxSections.swift",
+    file: "omp-console/Sources/ConsoleUI/InboxFeed.swift",
     place: "QuestionPlaceView(",
     context: "QuestionContextView(",
     choice: "QuestionChoiceRow(",
   },
   ios: {
-    file: "omp-console/Sources/ConsoleUI/InboxSections.swift",
+    file: "omp-console/Sources/ConsoleUI/InboxFeed.swift",
     place: "QuestionPlaceView(",
     context: "QuestionContextView(",
     choice: "QuestionChoiceRow(",

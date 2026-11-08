@@ -275,7 +275,7 @@ test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (
     );
   }
 
-  // Une rangée de feature (RunRow, partagée) redevenue carte ⇒ rouge.
+  // Une rangée de feature (RunListRow, partagée) redevenue carte ⇒ rouge.
   const harness = "IOSHarnessScreens.swift";
   const row = "RunViews.swift";
   const card = plant(appSource(row), (s) =>
@@ -381,7 +381,7 @@ test("ios-listes-groupees-natives/AC-4 : en AX-XL, les rangées des écrans en l
     assert.deepEqual(dynamicTypeFaults(name, appSource(name)), [], name);
   }
 
-  // Faute plantée : une hauteur fixe sur une rangée de feature (RunRow, partagée) ⇒ rouge.
+  // Faute plantée : une hauteur fixe sur une rangée de feature (RunListRow, partagée) ⇒ rouge.
   const harness = "RunViews.swift";
   const fixed = plant(appSource(harness), (s) =>
     s.replace(
