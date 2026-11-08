@@ -1,0 +1,493 @@
+{
+  "uid": "omp-harness",
+  "title": "omp-harness — santé du serveur",
+  "tags": [
+    "omp-harness",
+    "mem0"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Runs par état",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state) (omp_harness_runs)",
+          "legendFormat": "{{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Slots occupés / file",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "omp_harness_slots_used",
+          "legendFormat": "{{kind}} occupés",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "omp_harness_slots_waiting",
+          "legendFormat": "{{kind}} en file",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Durée des étapes (p50 / p90)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, step) (rate(omp_harness_step_duration_seconds_bucket[1d])))",
+          "legendFormat": "p50 {{step}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le, step) (rate(omp_harness_step_duration_seconds_bucket[1d])))",
+          "legendFormat": "p90 {{step}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Coût par dépôt (24 h)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (repo) (increase(omp_harness_cost_usd_total[24h]))",
+          "legendFormat": "{{repo}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Jetons par modèle (débit)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (model, kind) (rate(omp_harness_tokens_total[1h]))",
+          "legendFormat": "{{model}} {{kind}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Mémoire libre de l'hôte",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "omp_harness_mem_available_bytes",
+          "legendFormat": "MemAvailable",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Requêtes HTTP du harness",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route, status) (rate(omp_harness_http_requests_total[5m]))",
+          "legendFormat": "{{route}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Latence HTTP p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(omp_harness_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Alertes, erreurs des clients, écritures mémoire perdues",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(omp_harness_alerts)",
+          "legendFormat": "alertes actives",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(omp_harness_client_errors_total[1h]))",
+          "legendFormat": "erreurs clients (1 h)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "omp_harness_oracle_lost_writes_total",
+          "legendFormat": "écritures perdues",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Poste et flux SSE",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "omp_harness_workstation_online",
+          "legendFormat": "extension en ligne",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(omp_harness_workstation_actions)",
+          "legendFormat": "actions en attente",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "omp_harness_sse_clients",
+          "legendFormat": "flux SSE",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Âge des sauvegardes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "omp_harness_backup_age_seconds",
+          "legendFormat": "harness",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "time() - mem0_backup_last_success_timestamp_seconds",
+          "legendFormat": "mem0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Sauvegardes en échec",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "omp_harness_backup_failing",
+          "legendFormat": "harness {{where}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "mem0_backup_failing",
+          "legendFormat": "mem0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Mémoire : souvenirs et taille",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mem0_memories",
+          "legendFormat": "souvenirs",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "mem0_db_bytes",
+          "legendFormat": "octets",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Mémoire : requêtes HTTP",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "omp-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route, status) (rate(mem0_http_requests_total[5m]))",
+          "legendFormat": "{{route}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "omp-prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}

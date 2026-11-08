@@ -276,7 +276,10 @@ export class IssueDesk {
       store.linkIssue({ repo: repo.name, number, runId: created.id, url: issue.url, by: actor.by });
       return created;
     });
-    this.#ctx.log(`issue ${slug}#${number} lancée en run ${run.id}${actor.by ? ` par ${actor.by}` : ""}`);
+    this.#ctx.log(`issue ${slug}#${number} lancée en run ${run.id}${actor.by ? ` par ${actor.by}` : ""}`, {
+      runId: run.id,
+      repo: repo.name,
+    });
     return { issue: number, status: "launched", run };
   }
 
@@ -351,7 +354,10 @@ export class IssueDesk {
         const last = this.#pollErrors.get(repo.name);
         if (last !== undefined && now - last < POLL_ERROR_EVERY_MS) continue;
         this.#pollErrors.set(repo.name, now);
-        this.#ctx.log(`relève des issues de ${repo.name} : ${err instanceof Error ? err.message : String(err)}`);
+        this.#ctx.log(`relève des issues de ${repo.name} : ${err instanceof Error ? err.message : String(err)}`, {
+          level: "warn",
+          repo: repo.name,
+        });
       }
     }
     if (launched > 0) this.#ctx.log(`relève : ${launched} lancée(s)`);

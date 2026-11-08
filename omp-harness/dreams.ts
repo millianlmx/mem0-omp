@@ -159,7 +159,7 @@ export class Dreamer {
     this.#ctx.repo(repo);
     if (this.#ctx.config.oracle === null) throw new HarnessError(409, "aucun service mémoire configuré (oracle)");
     this.#requested.add(repo);
-    this.#ctx.log(`rêve demandé pour ${repo}${actor.by ? ` par ${actor.by}` : ""}`);
+    this.#ctx.log(`rêve demandé pour ${repo}${actor.by ? ` par ${actor.by}` : ""}`, { repo });
   }
 
   isLive(repo: string): boolean {
@@ -225,12 +225,13 @@ export class Dreamer {
       finish("done", null, report);
       this.#ctx.log(
         `rêve de ${repo.name} : ${report.observations_added} observation(s) créée(s), ${report.observations_refined} affinée(s), ${report.models} modèle(s)`,
+        { repo: repo.name },
       );
     } catch (err) {
       if (live.abort.signal.aborted) return;
       const reason = err instanceof Error ? err.message : String(err);
       finish("failed", reason);
-      this.#ctx.log(`rêve de ${repo.name} en échec : ${reason}`);
+      this.#ctx.log(`rêve de ${repo.name} en échec : ${reason}`, { level: "warn", repo: repo.name });
     } finally {
       await live.session?.stop();
       live.session = null;

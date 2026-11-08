@@ -1,13 +1,18 @@
-// Les notifications sortantes : un POST ntfy par événement qui attend l'humain ou
-// qui clôt quelque chose (`config.notify.events`), pour être prévenu sans l'app ouverte.
+// Les notifications sortantes : un POST par événement qui attend l'humain ou qui clôt
+// quelque chose (`config.notify.events`), pour être prévenu sans l'app ouverte.
 //
+// Les cibles : `notify.url` (ntfy) et `notify.targets` (ntfy ou webhook générique).
 // Format ntfy (https://docs.ntfy.sh/publish/) : le corps est le texte, les en-têtes
 // `Title`, `Priority` (1-5), `Tags` (emojis) et `Click` (URL ouverte au toucher). Un
-// webhook quelconque reçoit la même chose. Fire-and-forget : une erreur n'arrête
-// rien et n'est journalisée (log + événement `notify_failed`) qu'une fois par heure.
-import type { HarnessConfig } from "./config.ts";
+// webhook reçoit un JSON `{title, body, priority, tags, click, event, runId, repo, at}`.
+// Une même notification (titre et corps) n'est pas renvoyée avant `notify.dedupMin`
+// minutes : une alerte qui revient en boucle ne sonne qu'une fois. Fire-and-forget :
+// une erreur n'arrête rien et n'est journalisée (log + événement `notify_failed`)
+// qu'une fois par heure et par cible.
+import type { HarnessConfig, NotifyTarget } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
 import { scheduleStatus } from "./digest.ts";
+import type { LogLine } from "./logger.ts";
 
 export type Notification = {
   title: string;
@@ -20,7 +25,7 @@ export type Notification = {
   markdown?: boolean;
 };
 
-/** Une heure : la cadence maximale des erreurs d'envoi journalisées. */
+/** Une heure : la cadence maximale des erreurs d'envoi journalisées, par cible. */
 const ERROR_LOG_EVERY_MS = 60 * 60 * 1000;
 
 const SEND_TIMEOUT_MS = 10_000;
@@ -222,6 +227,14 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         click: null,
       };
     }
+    case "backup_failed":
+      return {
+        title: payload.where === "remote" ? "Copie distante de la sauvegarde échouée" : "Sauvegarde échouée",
+        body: short(`${text(payload.base, "harness")} : ${text(payload.detail, "cause inconnue")}`),
+        priority: 4,
+        tags: ["floppy_disk", "warning"],
+        click: null,
+      };
     case "notify_failed":
       return null;
     default:
@@ -235,17 +248,22 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
   }
 }
 
+/** Ce qui accompagne une notification née d'un événement du journal (le corps d'un webhook). */
+type Origin = { event: string | null; runId: string | null; repo: string | null };
+
 export class Notifier {
   readonly #config: HarnessConfig;
   readonly #store: Store;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
   readonly #now: () => number;
-  /** L'instant de la dernière erreur journalisée (0 : aucune). */
-  #lastErrorAt = 0;
+  /** L'instant de la dernière erreur journalisée, par URL de cible. */
+  readonly #lastErrorAt = new Map<string, number>();
+  /** L'instant du dernier envoi de chaque notification (titre et corps) : le dédoublonnage. */
+  readonly #sentAt = new Map<string, number>();
   /** Les envois en vol, pour qu'un arrêt du service les attende. */
   readonly #inFlight = new Set<Promise<void>>();
 
-  constructor(deps: { config: HarnessConfig; store: Store; log?: (line: string) => void; now?: () => number }) {
+  constructor(deps: { config: HarnessConfig; store: Store; log?: LogLine; now?: () => number }) {
     this.#config = deps.config;
     this.#store = deps.store;
     this.#log = deps.log ?? (() => {});
@@ -262,55 +280,101 @@ export class Notifier {
     await Promise.allSettled([...this.#inFlight]);
   }
 
-  /** Un événement du journal : envoyé s'il est dans `notify.events` et qu'une URL est posée. */
+  /** Les cibles : `notify.url` (ntfy) d'abord, puis `notify.targets`. */
+  targets(): NotifyTarget[] {
+    const { url, targets } = this.#config.notify;
+    return [...(url !== null ? [{ kind: "ntfy" as const, url, headers: {} }] : []), ...targets];
+  }
+
+  /** Un événement du journal : envoyé s'il est dans `notify.events` et qu'une cible est posée. */
   handle(event: EventRow): void {
-    const { url, events } = this.#config.notify;
-    if (url === null || event.ephemeral || event.type === "notify_failed" || !events.includes(event.type)) return;
+    if (event.ephemeral || event.type === "notify_failed" || !this.#config.notify.events.includes(event.type)) return;
+    if (this.targets().length === 0) return;
     const run = event.runId ? this.#store.getRun(event.runId) : null;
     const notification = notificationFor(event, run);
-    if (notification !== null) this.post(notification);
+    if (notification !== null)
+      this.post(notification, { event: event.type, runId: event.runId, repo: event.repo ?? run?.repo ?? null });
   }
 
-  /** Un message envoyé s'il y a une URL posée, sans attendre (le rapport du matin passe par là). */
-  post(notification: Notification): void {
-    const { url } = this.#config.notify;
-    if (url === null) return;
-    const sending = this.send(url, notification).finally(() => this.#inFlight.delete(sending));
-    this.#inFlight.add(sending);
+  /**
+   * Un message envoyé à chaque cible, sans attendre (le rapport du matin passe par là) ;
+   * rend `false` s'il n'est pas parti : aucune cible, ou le même envoyé il y a moins de
+   * `notify.dedupMin` minutes.
+   */
+  post(notification: Notification, origin: Origin = { event: null, runId: null, repo: null }): boolean {
+    const targets = this.targets();
+    if (targets.length === 0 || this.#duplicate(notification)) return false;
+    for (const target of targets) {
+      const sending = this.send(target, notification, origin).finally(() => this.#inFlight.delete(sending));
+      this.#inFlight.add(sending);
+    }
+    return true;
   }
 
-  /** Le POST ntfy ; une erreur est journalisée au plus une fois par heure, jamais levée. */
-  async send(url: string, notification: Notification): Promise<void> {
+  /** Vrai si la même notification est partie il y a moins de `dedupMin` minutes ; sinon l'envoi est noté. */
+  #duplicate(notification: Notification): boolean {
+    const { dedupMin } = this.#config.notify;
+    const now = this.#now();
+    const windowMs = (dedupMin ?? 0) * 60_000;
+    for (const [key, at] of this.#sentAt) if (now - at >= windowMs) this.#sentAt.delete(key);
+    if (windowMs <= 0) return false;
+    const key = `${notification.title}\n${notification.body}`;
+    if (this.#sentAt.has(key)) return true;
+    this.#sentAt.set(key, now);
+    return false;
+  }
+
+  /** Le POST d'une cible ; une erreur est journalisée au plus une fois par heure et par cible, jamais levée. */
+  async send(target: NotifyTarget, notification: Notification, origin: Origin): Promise<void> {
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "text/plain; charset=utf-8",
-        Title: headerValue(notification.title),
-        Priority: String(notification.priority),
-      };
-      if (notification.tags.length > 0) headers.Tags = notification.tags.join(",");
-      if (notification.click !== null) headers.Click = notification.click;
-      if (notification.markdown) headers.Markdown = "yes";
-      const response = await fetch(url, {
+      const request =
+        target.kind === "webhook"
+          ? {
+              headers: { "Content-Type": "application/json", ...target.headers },
+              body: JSON.stringify({
+                title: notification.title,
+                body: notification.body,
+                priority: notification.priority,
+                tags: notification.tags,
+                click: notification.click,
+                ...origin,
+                at: new Date(this.#now()).toISOString(),
+              }),
+            }
+          : { headers: { ...ntfyHeaders(notification), ...target.headers }, body: notification.body };
+      const response = await fetch(target.url, {
         method: "POST",
-        headers,
-        body: notification.body,
+        ...request,
         signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     } catch (err) {
-      this.#failed(err instanceof Error ? err.message : String(err), notification.title);
+      this.#failed(target.url, err instanceof Error ? err.message : String(err), notification.title);
     }
   }
 
-  #failed(detail: string, title: string): void {
+  #failed(url: string, detail: string, title: string): void {
     const now = this.#now();
-    if (now - this.#lastErrorAt < ERROR_LOG_EVERY_MS) return;
-    this.#lastErrorAt = now;
-    this.#log(`notification perdue (« ${title} ») : ${detail}`);
+    if (now - (this.#lastErrorAt.get(url) ?? Number.NEGATIVE_INFINITY) < ERROR_LOG_EVERY_MS) return;
+    this.#lastErrorAt.set(url, now);
+    this.#log(`notification perdue (« ${title} ») : ${detail}`, { level: "warn", event: "notify_failed" });
     try {
       this.#store.appendEvent("notify_failed", null, { detail: detail.slice(0, 300), title }, null);
     } catch {
       // La base est déjà fermée (arrêt) : le log suffit.
     }
   }
+}
+
+/** Les en-têtes ntfy d'une notification. */
+function ntfyHeaders(notification: Notification): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "text/plain; charset=utf-8",
+    Title: headerValue(notification.title),
+    Priority: String(notification.priority),
+  };
+  if (notification.tags.length > 0) headers.Tags = notification.tags.join(",");
+  if (notification.click !== null) headers.Click = notification.click;
+  if (notification.markdown) headers.Markdown = "yes";
+  return headers;
 }

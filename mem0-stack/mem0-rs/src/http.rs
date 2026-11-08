@@ -2,12 +2,14 @@
 //! validation, et les corps d'erreur exacts de FastAPI/starlette (D-6).
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use md5::{Digest, Md5};
@@ -21,6 +23,7 @@ use crate::embedder::Embedder;
 use crate::extraction::{self, Lecture};
 use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
+use crate::journal;
 use crate::http_liens;
 use crate::jetons::{Acces, Jetons};
 use crate::liens;
@@ -52,6 +55,14 @@ pub struct Etat {
     pub reve: crate::reve::Reglage,
     /// Dernier cycle du rêve local, montré par `GET /health`.
     pub suivi_reve: Arc<crate::reve::Suivi>,
+    /// Le chemin de la base (sa taille dans `GET /health` et `GET /metrics`).
+    pub db_path: PathBuf,
+    /// L'instant du démarrage (`uptime_s`).
+    pub demarrage: std::time::Instant,
+    /// Les sauvegardes : dernier instantané réussi, dernière erreur.
+    pub suivi_sauvegarde: Arc<crate::sauvegarde::Suivi>,
+    /// Les requêtes HTTP vues depuis le démarrage (`GET /metrics`).
+    pub metriques: Arc<crate::metriques::Metriques>,
 }
 
 pub(crate) type Partage = State<Arc<Etat>>;
@@ -62,7 +73,7 @@ pub(crate) type Partage = State<Arc<Etat>>;
 /// `/memory/{memory_id}` du Python (starlette essaie les routes dans l'ordre : un
 /// PUT sur `/memory/all` y aboutit avec `memory_id = "all"`).
 pub fn routeur(etat: Arc<Etat>) -> Router {
-    let mut r = Router::new().route("/health", get(health));
+    let mut r = Router::new().route("/health", get(health)).route("/metrics", get(metriques));
     for (chemin, route) in [
         ("/memory/add", post(add)),
         ("/memory/add_procedure", post(add_procedure)),
@@ -101,7 +112,18 @@ pub fn routeur(etat: Arc<Etat>) -> Router {
     })
     .layer(axum::middleware::map_response(corps_trop_gros_en_json))
     .layer(DefaultBodyLimit::max(CORPS_MAX))
+    .layer(axum::middleware::from_fn_with_state(Arc::clone(&etat), compter))
     .with_state(etat)
+}
+
+/// Compte chaque requête par route (son motif ; `inconnue` hors routes), méthode et statut.
+async fn compter(State(etat): Partage, requete: Request, suivante: Next) -> Response {
+    let debut = std::time::Instant::now();
+    let route = requete.extensions().get::<MatchedPath>().map_or("inconnue", MatchedPath::as_str).to_owned();
+    let methode = requete.method().as_str().to_owned();
+    let reponse = suivante.run(requete).await;
+    etat.metriques.noter(&route, &methode, reponse.status().as_u16(), debut.elapsed().as_secs_f64());
+    reponse
 }
 
 /// Le 413 de `DefaultBodyLimit` est en texte brut : il est rendu au format
@@ -200,7 +222,7 @@ where
     let db = Arc::clone(&etat.db);
     tokio::task::spawn_blocking(move || {
         let mut conn = db.lock().map_err(|_| ())?;
-        f(&mut conn).map_err(|e| eprintln!("mem0-rs : erreur SQLite : {e}"))
+        f(&mut conn).map_err(|e| journal::erreur(&format!("erreur SQLite : {e}")))
     })
     .await
     .map_err(|_| ())?
@@ -210,8 +232,24 @@ fn md5_hex(texte: &str) -> String {
     Md5::digest(texte.as_bytes()).iter().map(|o| format!("{o:02x}")).collect()
 }
 
+/// L'instant d'un fichier en RFC 3339 UTC.
+fn iso(instant: std::time::SystemTime) -> Option<String> {
+    time::OffsetDateTime::from(instant).format(&time::format_description::well_known::Rfc3339).ok()
+}
+
+/// La taille de la base : le fichier et son WAL.
+fn octets_base(chemin: &std::path::Path) -> Option<u64> {
+    let base = std::fs::metadata(chemin).ok()?.len();
+    let mut wal = chemin.as_os_str().to_owned();
+    wal.push("-wal");
+    Some(base + std::fs::metadata(PathBuf::from(wal)).map_or(0, |m| m.len()))
+}
+
 async fn health(State(etat): Partage) -> Response {
     let (last_run_at, last_error) = etat.suivi_reve.etat();
+    let sauvegarde = etat.suivi_sauvegarde.etat();
+    let souvenirs =
+        avec_base(&etat, |conn| conn.query_row("SELECT count(*) FROM memories", [], |r| r.get::<_, i64>(0))).await.ok();
     let mut corps = json!({
         "ok": true,
         "mem0": concat!("mem0-rs ", env!("CARGO_PKG_VERSION")),
@@ -222,11 +260,51 @@ async fn health(State(etat): Partage) -> Response {
             "last_run_at": last_run_at,
             "last_error": last_error,
         },
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_s": etat.demarrage.elapsed().as_secs(),
+        "memories": souvenirs,
+        "db_bytes": octets_base(&etat.db_path),
+        "last_backup_at": sauvegarde.derniere.and_then(iso),
+        "last_backup_error": sauvegarde.erreur,
     });
     if !etat.installation_token.is_empty() {
         corps["installation"] = json!(etat.installation_token);
     }
     json(StatusCode::OK, &corps)
+}
+
+/// `GET /metrics` : le jeton du service en `X-Mem0-Token` ou en `Authorization: Bearer`
+/// (ce que Prometheus sait envoyer).
+async fn metriques(State(etat): Partage, entetes: HeaderMap) -> Response {
+    let porteur = entetes
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.as_bytes().strip_prefix(b"Bearer "))
+        .is_some_and(|jeton| egal_temps_constant(jeton, etat.http_token.as_bytes()));
+    if !porteur && let Some(refus) = controle_jeton(&etat, &entetes) {
+        return refus;
+    }
+    let sauvegarde = etat.suivi_sauvegarde.etat();
+    let souvenirs =
+        avec_base(&etat, |conn| conn.query_row("SELECT count(*) FROM memories", [], |r| r.get::<_, i64>(0))).await.ok();
+    let instantane = crate::metriques::Instantane {
+        version: env!("CARGO_PKG_VERSION"),
+        uptime_s: etat.demarrage.elapsed().as_secs(),
+        souvenirs,
+        octets_base: octets_base(&etat.db_path),
+        derniere_sauvegarde_s: sauvegarde
+            .derniere
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()),
+        sauvegarde_en_echec: sauvegarde.erreur.is_some(),
+        echecs_sauvegarde: sauvegarde.echecs,
+        reve_actif: !etat.reve.intervalle.is_zero(),
+    };
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"))],
+        crate::metriques::exposition(&etat.metriques, &instantane),
+    )
+        .into_response()
 }
 
 async fn add(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response {
@@ -281,7 +359,7 @@ async fn ajouter(
     run_id: Option<String>,
     tags: Option<String>,
 ) -> Response {
-    let Ok(vecteur) = etat.embedder.plonger(&texte).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
+    let Ok(vecteur) = etat.embedder.plonger(&texte).await.map_err(|e| journal::erreur(&e.to_string())) else {
         return interne();
     };
     let id = uuid::Uuid::new_v4().to_string();
@@ -330,7 +408,7 @@ async fn ajouter_infere(
 ) -> Response {
     // Chat coupé : refusé avant tout appel, comme un chat en échec (500), en le nommant.
     if !etat.chat.actif() {
-        eprintln!("mem0-rs : extraction : {}", crate::openai::CHAT_COUPE);
+        journal::erreur(&format!("extraction : {}", crate::openai::CHAT_COUPE));
         return erreur_interne(&format!("add infer=true : {}", crate::openai::CHAT_COUPE));
     }
     let scope = extraction::portee_session(USER, agent_id.as_deref(), run_id.as_deref());
@@ -341,7 +419,8 @@ async fn ajouter_infere(
     let Ok(derniers) = derniers else {
         return interne();
     };
-    let Ok(requete) = etat.embedder.plonger(&format!("user: {texte}\n")).await.map_err(|e| eprintln!("mem0-rs : {e}"))
+    let Ok(requete) =
+        etat.embedder.plonger(&format!("user: {texte}\n")).await.map_err(|e| journal::erreur(&e.to_string()))
     else {
         return interne();
     };
@@ -362,7 +441,7 @@ async fn ajouter_infere(
     let contenu = match etat.chat.completer(extraction::ADDITIVE_EXTRACTION_PROMPT, &invite).await {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("mem0-rs : extraction : {e}");
+            journal::erreur(&format!("extraction : {e}"));
             return interne();
         }
     };
@@ -370,17 +449,17 @@ async fn ajouter_infere(
         Lecture::Elements(e) => e,
         Lecture::Vide => Vec::new(),
         Lecture::Illisible(raison) => {
-            eprintln!("mem0-rs : extraction : {raison}");
+            journal::alerte(&format!("extraction : {raison}"));
             Vec::new()
         }
         Lecture::Invalide => {
-            eprintln!("mem0-rs : extraction : `memory` n'est pas une liste d'objets");
+            journal::erreur("extraction : `memory` n'est pas une liste d'objets");
             return interne();
         }
     };
     let plongees = plonger_faits(&etat.embedder, &elements).await;
     let Ok(faits) = retenir(&elements, &plongees, hashes) else {
-        eprintln!("mem0-rs : extraction : un `text` extrait est un tableau ou un objet");
+        journal::erreur("extraction : un `text` extrait est un tableau ou un objet");
         return interne();
     };
     let resultats: Vec<Value> =
@@ -426,7 +505,7 @@ async fn plonger_faits(embedder: &Embedder, elements: &[Map<String, Value>]) -> 
                 plongees.extend(chaines.into_iter().zip(vecteurs));
                 return plongees;
             }
-            Err(e) => eprintln!("mem0-rs : extraction : lot d'embeddings en échec, repli texte par texte : {e}"),
+            Err(e) => journal::alerte(&format!("extraction : lot d'embeddings en échec, repli texte par texte : {e}")),
         }
     }
     for t in chaines {
@@ -434,7 +513,7 @@ async fn plonger_faits(embedder: &Embedder, elements: &[Map<String, Value>]) -> 
             Ok(v) => {
                 plongees.insert(t, v);
             }
-            Err(e) => eprintln!("mem0-rs : extraction : fait non embarqué : {e}"),
+            Err(e) => journal::alerte(&format!("extraction : fait non embarqué : {e}")),
         }
     }
     plongees
@@ -505,7 +584,7 @@ async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Respo
             );
         }
     };
-    let Ok(vecteur) = etat.embedder.plonger(&requete.query).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
+    let Ok(vecteur) = etat.embedder.plonger(&requete.query).await.map_err(|e| journal::erreur(&e.to_string())) else {
         return interne();
     };
     let lu = avec_base(&etat, move |conn| {
@@ -691,7 +770,7 @@ async fn update(State(etat): Partage, memory_id: String, entetes: HeaderMap, cor
         _ => return interne(),
     }
     let texte = masquer(&req.text);
-    let Ok(vecteur) = etat.embedder.plonger(&texte).await.map_err(|e| eprintln!("mem0-rs : {e}")) else {
+    let Ok(vecteur) = etat.embedder.plonger(&texte).await.map_err(|e| journal::erreur(&e.to_string())) else {
         return interne();
     };
     let tags = match req.tags {

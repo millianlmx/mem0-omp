@@ -401,10 +401,11 @@ async function empreinteSource(source: Source): Promise<{ collection: string; hi
   };
 }
 
-/** Fichiers d'un dossier et sha256 de chacun : « mêmes fichiers, mêmes octets ». */
+/** Fichiers d'un dossier et sha256 de chacun : « mêmes fichiers, mêmes octets » (le journal `logs/` de mem0-rs, un dossier, est hors compte). */
 function etatDossier(dossier: string): Record<string, string> {
   const etat: Record<string, string> = {};
-  for (const nom of fs.readdirSync(dossier).sort()) etat[nom] = sha256(fs.readFileSync(path.join(dossier, nom)));
+  for (const entree of fs.readdirSync(dossier, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)))
+    if (entree.isFile()) etat[entree.name] = sha256(fs.readFileSync(path.join(dossier, entree.name)));
   return etat;
 }
 

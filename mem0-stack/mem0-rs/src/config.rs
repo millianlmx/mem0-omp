@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::jetons::Jetons;
 use crate::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
 use crate::reve;
-use crate::sauvegarde::Politique;
+use crate::sauvegarde::{Distante, Politique};
 
 pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
         mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]
@@ -114,6 +114,12 @@ pub struct Config {
     pub installation_token: String,
     /// Instantanés périodiques de la base (`MEM0_BACKUP_INTERVAL_HOURS`, `MEM0_BACKUP_KEEP`).
     pub sauvegarde: Politique,
+    /// Copie hors machine de chaque instantané (`MEM0_BACKUP_REMOTE_CMD`,
+    /// `MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS`) ; la commande peut porter un secret : jamais imprimée.
+    pub sauvegarde_distante: Option<Distante>,
+    /// Le journal JSON (`MEM0_LOG_DIR`, défaut `logs/` à côté de la base ; `MEM0_LOG_RETENTION_DAYS`).
+    pub journal_dossier: PathBuf,
+    pub journal_retention_jours: u64,
     /// Fusion de la recherche hybride (`MEM0_SEARCH_FUSION`, `MEM0_RRF_K`).
     pub recherche: Reglage,
     /// Rêve de fond (`MEM0_DREAM_INTERVAL_MINUTES`, `MEM0_DREAM_QUIET_MINUTES`,
@@ -131,6 +137,8 @@ impl std::fmt::Debug for Config {
             .field("embedding_dims", &self.embedding_dims)
             .field("db_path", &self.db_path)
             .field("sauvegarde", &self.sauvegarde)
+            .field("sauvegarde_distante", &self.sauvegarde_distante.is_some())
+            .field("journal_dossier", &self.journal_dossier)
             .field("recherche", &self.recherche)
             .field("reve", &self.reve)
             .finish_non_exhaustive()
@@ -195,6 +203,15 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         intervalle: Duration::from_secs(heures.saturating_mul(3600)),
         garder: usize::try_from(garder).unwrap_or(usize::MAX),
     };
+    let commande_distante = env_ou(&lire, "MEM0_BACKUP_REMOTE_CMD", "");
+    let delai_distant = entier_env(&lire, "MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS", "600", 1)?;
+    let sauvegarde_distante = (!commande_distante.is_empty())
+        .then(|| Distante { commande: commande_distante, delai: Duration::from_secs(delai_distant) });
+    let journal_dossier = match lire("MEM0_LOG_DIR") {
+        Some(v) if !strip_python(&v).is_empty() => PathBuf::from(strip_python(&v)),
+        _ => crate::journal::dossier_par_defaut(&db_path),
+    };
+    let journal_retention_jours = entier_env(&lire, "MEM0_LOG_RETENTION_DAYS", "14", 1)?;
     let fusion_brute = env_ou(&lire, "MEM0_SEARCH_FUSION", "additive");
     let fusion = Fusion::lire(&fusion_brute)
         .ok_or_else(|| format!("MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « {fusion_brute} »)"))?;
@@ -239,6 +256,9 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         jetons,
         installation_token: lire("OMP_INSTALLATION_TOKEN").unwrap_or_default(),
         sauvegarde,
+        sauvegarde_distante,
+        journal_dossier,
+        journal_retention_jours,
         recherche: Reglage { fusion, rrf_k },
         reve,
     })
@@ -400,6 +420,29 @@ mod tests {
             let e = lire_env(env(&[("HOME", "/h"), (nom, v)])).unwrap_err();
             assert_eq!(e, format!("{nom} doit être {attendu} (reçu « {v} »)"));
         }
+    }
+
+    #[test]
+    fn copie_distante_et_journal() {
+        let c = lire_env(env(&[("HOME", "/h")])).unwrap();
+        assert_eq!(c.sauvegarde_distante, None);
+        assert_eq!(c.journal_dossier, PathBuf::from("/h/.mem0/logs"));
+        assert_eq!(c.journal_retention_jours, 14);
+        let c = lire_env(env(&[
+            ("MEM0_DB_PATH", "/d/mem0.db"),
+            ("MEM0_BACKUP_REMOTE_CMD", " restic backup \"$1\" "),
+            ("MEM0_LOG_DIR", "/var/log/mem0"),
+            ("MEM0_LOG_RETENTION_DAYS", "3"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.sauvegarde_distante,
+            Some(Distante { commande: "restic backup \"$1\"".into(), delai: Duration::from_secs(600) })
+        );
+        assert_eq!((c.journal_dossier.clone(), c.journal_retention_jours), (PathBuf::from("/var/log/mem0"), 3));
+        assert!(!format!("{c:?}").contains("restic"), "la commande n'est pas imprimée");
+        let e = lire_env(env(&[("HOME", "/h"), ("MEM0_LOG_RETENTION_DAYS", "0")])).unwrap_err();
+        assert!(e.starts_with("MEM0_LOG_RETENTION_DAYS"), "{e}");
     }
 
     #[test]

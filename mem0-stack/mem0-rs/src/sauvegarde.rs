@@ -10,12 +10,97 @@
 //! `min(intervalle, 1 h)` si l'instantané le plus récent du dossier a plus d'un
 //! intervalle, et n'en prend un que dans ce cas. Le premier contrôle a lieu une
 //! période après le démarrage, jamais au démarrage lui-même.
+//!
+//! `MEM0_BACKUP_REMOTE_CMD` copie chaque instantané hors de la machine : la commande
+//! passe par `sh -c`, le chemin de l'instantané en `$1` (et `MEM0_BACKUP_FILE`) ; le
+//! chiffrement est l'affaire de l'outil (restic, rclone crypt). Le dernier instantané
+//! réussi et la dernière erreur (locale ou distante) se lisent dans [`Suivi`] :
+//! `GET /health` et `GET /metrics` les montrent, le journal les note (`backup_failed`).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use rusqlite::Connection;
+
+use crate::journal;
+
+/// La copie distante d'un instantané : la commande (`sh -c`) et son délai.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Distante {
+    pub commande: String,
+    pub delai: Duration,
+}
+
+/// L'état des sauvegardes depuis le démarrage.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EtatSauvegarde {
+    /// Le dernier instantané local réussi (au démarrage : le plus récent du dossier).
+    pub derniere: Option<SystemTime>,
+    /// La raison du dernier échec, local ou distant ; effacée par une sauvegarde complète réussie.
+    pub erreur: Option<String>,
+    /// Les échecs depuis le démarrage.
+    pub echecs: u64,
+}
+
+/// Le suivi des sauvegardes, partagé entre la boucle et les routes.
+#[derive(Debug, Default)]
+pub struct Suivi(Mutex<EtatSauvegarde>);
+
+impl Suivi {
+    /// Le suivi d'une base au démarrage : le plus récent instantané du dossier, s'il y en a un.
+    pub fn depuis_disque(base: &Path) -> Suivi {
+        let derniere = instantanes(base).last().and_then(|p| std::fs::metadata(p).ok()?.modified().ok());
+        Suivi(Mutex::new(EtatSauvegarde { derniere, ..EtatSauvegarde::default() }))
+    }
+
+    pub fn etat(&self) -> EtatSauvegarde {
+        self.0.lock().map(|e| e.clone()).unwrap_or_default()
+    }
+
+    /// Un instantané local réussi ; `erreur` : l'échec de sa copie distante.
+    pub fn noter(&self, instant: SystemTime, erreur: Option<String>) {
+        if let Ok(mut e) = self.0.lock() {
+            e.derniere = Some(instant);
+            e.echecs += u64::from(erreur.is_some());
+            e.erreur = erreur;
+        }
+    }
+
+    /// Un instantané local impossible.
+    pub fn echec(&self, erreur: String) {
+        if let Ok(mut e) = self.0.lock() {
+            e.echecs += 1;
+            e.erreur = Some(erreur);
+        }
+    }
+}
+
+/// Lance la copie distante de `chemin` : `sh -c <commande> mem0-backup <chemin>`.
+pub async fn copier_ailleurs(distante: &Distante, chemin: &Path) -> Result<(), String> {
+    let mut commande = tokio::process::Command::new("sh");
+    commande
+        .arg("-c")
+        .arg(&distante.commande)
+        .arg("mem0-backup")
+        .arg(chemin)
+        .env("MEM0_BACKUP_FILE", chemin)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let enfant = commande.spawn().map_err(|e| format!("copie distante impossible à lancer : {e}"))?;
+    match tokio::time::timeout(distante.delai, enfant.wait_with_output()).await {
+        Err(_) => Err(format!("copie distante : délai de {} s dépassé", distante.delai.as_secs())),
+        Ok(Err(e)) => Err(format!("copie distante : {e}")),
+        Ok(Ok(sortie)) if sortie.status.success() => Ok(()),
+        Ok(Ok(sortie)) => {
+            let texte = String::from_utf8_lossy(if sortie.stderr.is_empty() { &sortie.stdout } else { &sortie.stderr });
+            let fin: String = texte.trim().chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect();
+            Err(format!("copie distante : {} — {fin}", sortie.status))
+        }
+    }
+}
 
 /// Période maximale entre deux contrôles.
 const CONTROLE_MAX: Duration = Duration::from_secs(3600);
@@ -103,14 +188,56 @@ pub fn prendre(conn: &Connection, base: &Path, garder: usize) -> Result<PathBuf,
     let tous = instantanes(base);
     for ancien in &tous[..tous.len().saturating_sub(garder.max(1))] {
         if let Err(e) = std::fs::remove_file(ancien) {
-            eprintln!("mem0-rs : instantané {} non supprimé : {e}", ancien.display());
+            journal::alerte(&format!("instantané {} non supprimé : {e}", ancien.display()));
         }
     }
     Ok(cible)
 }
 
+/// Un instantané tout de suite, puis sa copie distante ; le résultat est noté dans `suivi`.
+pub async fn sauvegarder(
+    db: Arc<Mutex<Connection>>,
+    base: PathBuf,
+    garder: usize,
+    distante: Option<&Distante>,
+    suivi: &Suivi,
+) -> Result<PathBuf, String> {
+    let resultat = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| "verrou de la base empoisonné".to_owned())?;
+        prendre(&conn, &base, garder)
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+    let chemin = match resultat {
+        Ok(chemin) => chemin,
+        Err(e) => {
+            let e = format!("instantané impossible : {e}");
+            journal::ecrire(journal::Niveau::Erreur, &e, Some("backup_failed"), None);
+            suivi.echec(e.clone());
+            return Err(e);
+        }
+    };
+    journal::info(&format!("instantané {}", chemin.display()));
+    let erreur = match distante {
+        None => None,
+        Some(d) => copier_ailleurs(d, &chemin).await.err(),
+    };
+    if let Some(e) = &erreur {
+        journal::ecrire(journal::Niveau::Erreur, e, Some("backup_failed"), None);
+    }
+    suivi.noter(SystemTime::now(), erreur.clone());
+    erreur.map_or(Ok(chemin), Err)
+}
+
 /// Boucle des instantanés, lancée par `main` quand l'intervalle n'est pas nul.
-pub async fn boucle(db: Arc<Mutex<Connection>>, base: PathBuf, politique: Politique) {
+pub async fn boucle(
+    db: Arc<Mutex<Connection>>,
+    base: PathBuf,
+    politique: Politique,
+    distante: Option<Distante>,
+    suivi: Arc<Suivi>,
+) {
     let periode = politique.intervalle.min(CONTROLE_MAX);
     loop {
         tokio::time::sleep(periode).await;
@@ -118,17 +245,7 @@ pub async fn boucle(db: Arc<Mutex<Connection>>, base: PathBuf, politique: Politi
         if !du(SystemTime::now(), plus_recent, politique.intervalle) {
             continue;
         }
-        let (db, base) = (Arc::clone(&db), base.clone());
-        let resultat = tokio::task::spawn_blocking(move || {
-            let conn = db.lock().map_err(|_| "verrou de la base empoisonné".to_owned())?;
-            prendre(&conn, &base, politique.garder)
-        })
-        .await;
-        match resultat {
-            Ok(Ok(chemin)) => eprintln!("mem0-rs : instantané {}", chemin.display()),
-            Ok(Err(e)) => eprintln!("mem0-rs : instantané impossible : {e}"),
-            Err(e) => eprintln!("mem0-rs : instantané impossible : {e}"),
-        }
+        let _ = sauvegarder(Arc::clone(&db), base.clone(), politique.garder, distante.as_ref(), &suivi).await;
     }
 }
 
@@ -226,5 +343,43 @@ mod tests {
         assert_eq!(restants.last(), Some(&dernier));
         assert!(!dossier(&base).join("mem0-rs-20200101T000000Z.db").exists());
         assert!(dossier(&base).join("notes.txt").exists(), "un fichier étranger n'est pas touché");
+    }
+
+    /// La copie distante reçoit le chemin de l'instantané en `$1` ; son échec est noté
+    /// dans le suivi (l'instantané local, lui, compte), puis effacé par une sauvegarde réussie.
+    #[tokio::test]
+    async fn copie_distante_et_suivi() {
+        let d = Dossier::nouveau("distante");
+        let base = d.0.join("mem0-rs.db");
+        let db = Arc::new(Mutex::new(crate::db::ouvrir(&base, 4).unwrap()));
+        let ailleurs = d.0.join("ailleurs");
+        std::fs::create_dir_all(&ailleurs).unwrap();
+        let suivi = Suivi::depuis_disque(&base);
+        assert_eq!(suivi.etat(), EtatSauvegarde::default(), "aucun instantané sur le disque");
+
+        let copie = Distante {
+            commande: format!("cp \"$1\" '{}'/ && test \"$MEM0_BACKUP_FILE\" = \"$1\"", ailleurs.display()),
+            delai: Duration::from_secs(30),
+        };
+        let chemin = sauvegarder(Arc::clone(&db), base.clone(), 3, Some(&copie), &suivi).await.unwrap();
+        assert!(ailleurs.join(chemin.file_name().unwrap()).exists(), "copié sous son nom");
+        let etat = suivi.etat();
+        assert!(etat.derniere.is_some());
+        assert_eq!((etat.erreur, etat.echecs), (None, 0));
+
+        let refus = Distante { commande: "echo 'quota dépassé' >&2; exit 4".into(), delai: Duration::from_secs(30) };
+        let erreur = sauvegarder(Arc::clone(&db), base.clone(), 3, Some(&refus), &suivi).await.unwrap_err();
+        assert!(erreur.contains("quota dépassé"), "{erreur}");
+        assert_eq!(suivi.etat().erreur.as_deref(), Some(erreur.as_str()));
+        assert_eq!(suivi.etat().echecs, 1);
+
+        let lente = Distante { commande: "sleep 5".into(), delai: Duration::from_millis(200) };
+        let erreur = sauvegarder(Arc::clone(&db), base.clone(), 3, Some(&lente), &suivi).await.unwrap_err();
+        assert!(erreur.contains("délai"), "{erreur}");
+
+        sauvegarder(Arc::clone(&db), base.clone(), 3, None, &suivi).await.unwrap();
+        assert_eq!(suivi.etat().erreur, None, "une sauvegarde réussie efface l'erreur");
+        assert_eq!(suivi.etat().echecs, 2);
+        assert!(Suivi::depuis_disque(&base).etat().derniere.is_some(), "relu sur le disque au redémarrage");
     }
 }

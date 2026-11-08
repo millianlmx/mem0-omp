@@ -19,7 +19,9 @@ mod http;
 mod http_liens;
 mod import;
 mod jetons;
+mod journal;
 mod liens;
+mod metriques;
 mod openai;
 mod recherche;
 mod redaction;
@@ -56,6 +58,7 @@ async fn main() -> ExitCode {
     match demarrer(&ecoute, cfg).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
+            // Un refus de démarrer (configuration, port, verrou) est le message du processus, pas un événement du service.
             eprintln!("{message}");
             ExitCode::from(1)
         }
@@ -79,14 +82,23 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
             verrou::ErreurVerrou::Io(e) => format!("MEM0_DB_PATH={chemin} : verrou {lock} impossible : {e}"),
         }
     })?;
+    // Le journal en fichiers une fois le port et la base acquis : un démarrage refusé ne laisse rien derrière lui.
+    journal::initialiser(cfg.journal_dossier.clone(), cfg.journal_retention_jours);
     let conn = db::ouvrir(&cfg.db_path, cfg.embedding_dims).map_err(|e| e.message(&chemin))?;
     let client = openai::client().map_err(|e| e.to_string())?;
     let embedder =
         embedder::Embedder::new(client.clone(), &cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims);
     let chat = openai::ClientChat::new(client, cfg.chat_base_url.as_deref(), &cfg.llm_model, &cfg.chat_api_token);
     let db = Arc::new(Mutex::new(conn));
+    let suivi_sauvegarde = Arc::new(sauvegarde::Suivi::depuis_disque(&cfg.db_path));
     if !cfg.sauvegarde.intervalle.is_zero() {
-        tokio::spawn(sauvegarde::boucle(Arc::clone(&db), cfg.db_path.clone(), cfg.sauvegarde));
+        tokio::spawn(sauvegarde::boucle(
+            Arc::clone(&db),
+            cfg.db_path.clone(),
+            cfg.sauvegarde,
+            cfg.sauvegarde_distante.clone(),
+            Arc::clone(&suivi_sauvegarde),
+        ));
     }
     let suivi_reve = Arc::new(reve::Suivi::default());
     if !cfg.reve.intervalle.is_zero() {
@@ -101,8 +113,12 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         recherche: cfg.recherche,
         reve: cfg.reve,
         suivi_reve,
+        db_path: cfg.db_path.clone(),
+        demarrage: std::time::Instant::now(),
+        suivi_sauvegarde,
+        metriques: Arc::new(metriques::Metriques::default()),
     });
-    eprintln!(
+    journal::info(&format!(
         "mem0-rs {} à l'écoute sur http://{host}:{port} (MEM0_DB_PATH={chemin}, embeddings {} via {}, LLM {} via {}, recherche {}, {} jeton(s) à portées)",
         env!("CARGO_PKG_VERSION"),
         cfg.embed_model,
@@ -111,7 +127,7 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         cfg.chat_base_url.as_deref().unwrap_or(config::CHAT_COUPE),
         cfg.recherche.strategie(None),
         cfg.jetons.limites()
-    );
+    ));
     axum::serve(listener, http::routeur(etat))
         .with_graceful_shutdown(signal_d_arret())
         .await

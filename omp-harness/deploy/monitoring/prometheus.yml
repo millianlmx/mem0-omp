@@ -1,0 +1,26 @@
+# Prometheus du profil `monitoring` (docker compose --profile monitoring up -d).
+# Les jetons sont lus dans des fichiers montés en lecture seule (jamais dans ce fichier) :
+#   harness.token : le jeton d'un client viewer du harness qui voit tous les dépôts
+#                   (`--add-client prometheus --role viewer`), GET /metrics ;
+#   mem0.token    : le MEM0_HTTP_TOKEN de mem0-rs (GET /metrics accepte `Authorization: Bearer`).
+# Le détail : omp-harness/README.md § « Observabilité ».
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: omp-harness
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/monitoring/harness.token
+    static_configs:
+      - targets: ["harness:8790"]
+
+  - job_name: mem0
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/monitoring/mem0.token
+    static_configs:
+      - targets: ["mem0:8321"]

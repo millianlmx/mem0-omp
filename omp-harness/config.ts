@@ -8,6 +8,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { LOCAL_PROVIDER } from "./local-model.ts";
+import type { LogLevel } from "./logger.ts";
+import { LOG_LEVELS } from "./logger.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { StepKind } from "./machine.ts";
 import { isTimeZone } from "./cron.ts";
@@ -69,6 +71,7 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "daily_budget_reached",
   "workstation_approval",
   "pilot",
+  "backup_failed",
 ];
 
 /**
@@ -91,6 +94,20 @@ export type ModelPolicy = {
   providers?: string[];
   privacy?: Privacy;
 };
+
+/**
+ * Une cible des notifications sortantes : `ntfy` (corps texte, en-têtes `Title`, `Priority`,
+ * `Tags`, `Click`) ou `webhook` (un POST JSON `{title, body, priority, tags, click, event,
+ * runId, repo, at}`). `headers` : des en-têtes en plus (un jeton d'accès, par exemple).
+ */
+export type NotifyTarget = { kind: "ntfy" | "webhook"; url: string; headers: Record<string, string> };
+
+/**
+ * La copie hors machine de chaque instantané : `command` (argv, sans shell) où `{file}`
+ * reçoit le chemin de l'instantané et `{name}` son nom ; sans `{file}`, le chemin est
+ * ajouté en dernier argument. Le chiffrement est l'affaire de l'outil (restic, rclone crypt).
+ */
+export type BackupRemote = { command: string[]; timeoutSec: number };
 
 /**
  * Le poste de travail (workstation.ts) : l'extension Chrome observe et agit dans le
@@ -358,7 +375,15 @@ export type HarnessConfig = {
    * Les notifications sortantes (ntfy ou webhook) : `url` null = aucune ; `events` = les types envoyés ;
    * `digestHour` = l'heure locale (0-23) du rapport quotidien, `null` = pas de rapport.
    */
-  notify: { url: string | null; events: string[]; digestHour: number | null };
+  notify: {
+    url: string | null;
+    /** Des cibles en plus de `url` (ntfy ou webhook générique). */
+    targets: NotifyTarget[];
+    events: string[];
+    digestHour: number | null;
+    /** Une même notification (titre et corps) n'est pas renvoyée avant ces minutes ; `null` : toujours. */
+    dedupMin: number | null;
+  };
   /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
   memory: { runnerMode: boolean };
   oracle: { url: string; token: string | null } | null;
@@ -384,7 +409,17 @@ export type HarnessConfig = {
    * (`null` : aucun) et un avant chaque migration du schéma (`beforeMigration`), les
    * `keep` derniers de chaque sorte gardés, dans `dir` (`null` : `<dataDir>/backups`).
    */
-  backups: { dir: string | null; intervalHours: number | null; keep: number; beforeMigration: boolean };
+  backups: {
+    dir: string | null;
+    intervalHours: number | null;
+    keep: number;
+    beforeMigration: boolean;
+    remote: BackupRemote | null;
+  };
+  /** Le journal structuré (logger.ts) : `<dir>/harness-AAAA-MM-JJ.jsonl`, `dir` null = `<dataDir>/logs`. */
+  logs: { dir: string | null; retentionDays: number; level: LogLevel };
+  /** Les points de `GET /v1/metrics`, gardés en base `retentionDays` jours. */
+  metrics: { retentionDays: number };
   /**
    * Les seuils de `GET /v1/health` : le dernier tour du scheduling date de moins de
    * `tickStaleSec` secondes, il reste au moins `minFreeMiB` Mio libres sous `dataDir`
@@ -523,13 +558,15 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       crossProvider: true,
     },
     challenge: { steps: [...CHALLENGE_STEPS], tier: "heavy" },
-    notify: { url: null, events: [...DEFAULT_NOTIFY_EVENTS], digestHour: 8 },
+    notify: { url: null, targets: [], events: [...DEFAULT_NOTIFY_EVENTS], digestHour: 8, dedupMin: 30 },
     memory: { runnerMode: true },
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
     pilot: { actionsPerRun: 3, tier: "heavy" },
     events: { retentionDays: 30 },
-    backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true },
+    backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true, remote: null },
+    logs: { dir: null, retentionDays: 14, level: "info" },
+    metrics: { retentionDays: 7 },
     health: { tickStaleSec: 120, minFreeMiB: 1024 },
     monitoring: {
       runBudgetUsd: null,
@@ -668,6 +705,26 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("backups.intervalHours : heures > 0, ou null");
   if (!(Number.isInteger(backups.keep) && backups.keep >= 1)) fail("backups.keep : entier ≥ 1");
   if (typeof backups.beforeMigration !== "boolean") fail("backups.beforeMigration : booléen");
+  if (backups.remote !== null) {
+    const remote = backups.remote as unknown;
+    if (
+      !isRecord(remote) ||
+      !Array.isArray(remote.command) ||
+      remote.command.length === 0 ||
+      remote.command.some((arg) => typeof arg !== "string" || arg === "")
+    )
+      fail('backups.remote : { "command": ["rclone", "copyto", "{file}", "…"], "timeoutSec"? } ou null');
+    const timeoutSec = remote.timeoutSec ?? 600;
+    if (!(typeof timeoutSec === "number" && timeoutSec >= 1)) fail("backups.remote.timeoutSec : secondes ≥ 1");
+    backups.remote = { command: remote.command as string[], timeoutSec };
+  }
+  const { logs, metrics } = config;
+  if (logs.dir !== null && (typeof logs.dir !== "string" || !path.isAbsolute(logs.dir)))
+    fail("logs.dir : chemin absolu, ou null");
+  if (!(typeof logs.retentionDays === "number" && logs.retentionDays > 0)) fail("logs.retentionDays : jours > 0");
+  if (!(LOG_LEVELS as readonly string[]).includes(logs.level)) fail(`logs.level : ${LOG_LEVELS.join(" | ")}`);
+  if (!(typeof metrics.retentionDays === "number" && metrics.retentionDays > 0))
+    fail("metrics.retentionDays : jours > 0");
   if (!(health.tickStaleSec > 0)) fail("health.tickStaleSec : secondes > 0");
   if (!(health.minFreeMiB >= 0)) fail("health.minFreeMiB : Mio ≥ 0");
   sizeMiB(config.runner.memoryMax);
@@ -750,6 +807,23 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   const { digestHour } = config.notify;
   if (digestHour !== null && !(Number.isInteger(digestHour) && digestHour >= 0 && digestHour <= 23))
     fail("notify.digestHour : heure entière 0-23, ou null");
+  const { dedupMin } = config.notify;
+  if (dedupMin !== null && !(typeof dedupMin === "number" && dedupMin >= 0))
+    fail("notify.dedupMin : minutes ≥ 0, ou null");
+  if (!Array.isArray(config.notify.targets)) fail("notify.targets : liste de { kind, url, headers? }");
+  config.notify.targets = config.notify.targets.map((target: unknown, index) => {
+    if (
+      !isRecord(target) ||
+      (target.kind !== "ntfy" && target.kind !== "webhook") ||
+      typeof target.url !== "string" ||
+      !/^https?:\/\//.test(target.url)
+    )
+      fail(`notify.targets[${index}] : { "kind": "ntfy" | "webhook", "url": "https://…", "headers"? }`);
+    const headers = target.headers ?? {};
+    if (!isRecord(headers) || Object.values(headers).some((value) => typeof value !== "string"))
+      fail(`notify.targets[${index}].headers : { nom: valeur }`);
+    return { kind: target.kind, url: target.url, headers: headers as Record<string, string> };
+  });
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
   const { dreams } = config;
   if (dreams.checkMinutes !== null && !(typeof dreams.checkMinutes === "number" && dreams.checkMinutes > 0))

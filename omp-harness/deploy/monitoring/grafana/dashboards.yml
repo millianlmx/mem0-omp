@@ -1,0 +1,8 @@
+# Les tableaux posés au démarrage de Grafana : ceux du dossier monté.
+apiVersion: 1
+providers:
+  - name: omp
+    folder: omp-harness
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

@@ -243,6 +243,7 @@ export class HumanLoop {
       await this.#serial(runId, () => this.#autoDecide(runId, items, timeoutSec)).catch((err: unknown) =>
         this.#ctx.log(
           `run ${runId} : auto-décision à l'échéance écartée (${err instanceof Error ? err.message : err})`,
+          { level: "warn", runId, repo: this.#ctx.store.getRun(runId)?.repo ?? null },
         ),
       );
     }
@@ -582,7 +583,11 @@ export class HumanLoop {
     } catch (err: unknown) {
       const why = err instanceof Error ? err.message : String(err);
       this.#ctx.event("revert_failed", run.id, { seq, reason: why.slice(0, 500), ...byOf(actor) });
-      this.#ctx.log(`run ${run.id} : revert du merge impossible (${why.slice(0, 200)}) — run de suite seul`);
+      this.#ctx.log(`run ${run.id} : revert du merge impossible (${why.slice(0, 200)}) — run de suite seul`, {
+        level: "warn",
+        runId: run.id,
+        repo: run.repo,
+      });
       return this.#hooks.followUp(
         {
           repo: run.repo,

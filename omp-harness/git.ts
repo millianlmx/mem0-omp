@@ -19,6 +19,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { LogLine } from "./logger.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 import { parseCheckpointTrailer } from "./decisions.ts";
 
@@ -76,7 +77,7 @@ function heldLock(stderr: string): string | null {
 export type GitOptions = {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  log?: (line: string) => void;
+  log?: LogLine;
 };
 
 /** Un rebase ou une fusion : la nouvelle HEAD, ou les fichiers en conflit (geste abandonné). */
@@ -122,7 +123,7 @@ export class Git {
   readonly #queues = new Map<string, Promise<void>>();
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
 
   constructor(exec: Exec, identity: GitIdentitySource, options: GitOptions = {}) {
     this.#exec = exec;
@@ -298,6 +299,7 @@ export class Git {
     fs.rmSync(lock, { force: true });
     this.#log(
       `verrou git périmé retiré (${Math.round(age / 1000)} s, aucun git du service ne dure plus de ${GIT_TIMEOUT_MS / 1000} s) : ${lock}`,
+      { level: "warn" },
     );
     return true;
   }

@@ -1,10 +1,11 @@
 // La santé du serveur au fil du temps (`GET /v1/metrics`) : un point toutes les
-// `monitoring.sampleSec` secondes, les `monitoring.keep` derniers gardés en mémoire.
+// `monitoring.sampleSec` secondes, écrit en base (table `metric_samples`) et gardé
+// `metrics.retentionDays` jours (observability.ts élague) : un redémarrage ne perd rien.
 //
 // Chaque point dit l'occupation des slots (agents et tests) et leurs files d'attente,
 // la mémoire libre, les runs conduits et en file, et ce qui s'est passé depuis le
 // point précédent : refus d'admission, limites de débit, bascules et erreurs de
-// fournisseur (comptés sur le journal). Rien n'est écrit sur disque.
+// fournisseur (comptés sur le journal).
 import type { RepoFilter, Store } from "./db.ts";
 import type { Scheduler } from "./scheduler.ts";
 
@@ -42,10 +43,12 @@ export type MetricsDeps = {
   now?: () => number;
 };
 
+/** Les points rendus au plus par une lecture `?since=` (une semaine à 15 s en fait 40 320). */
+export const MAX_POINTS = 50_000;
+
 export class Metrics {
   readonly #deps: MetricsDeps;
   readonly #now: () => number;
-  readonly #samples: MetricSample[] = [];
   #counts = { admissionRefused: 0, rateLimited: 0, failovers: 0, providerErrors: 0 };
   #unsubscribe: (() => void) | null = null;
   /** L'instant du dernier point (`null` : aucun encore, le prochain tour en prend un). */
@@ -91,19 +94,20 @@ export class Metrics {
       providers: { ...snapshot.providers },
     };
     this.#counts = { admissionRefused: 0, rateLimited: 0, failovers: 0, providerErrors: 0 };
-    this.#samples.push(point);
-    const keep = this.#deps.keep();
-    if (this.#samples.length > keep) this.#samples.splice(0, this.#samples.length - keep);
+    this.#deps.store.addMetricSample(now, point);
     return point;
   }
 
   /**
-   * Les points depuis `since` (ms), les plus anciens d'abord. Un client borné à des
-   * dépôts voit la santé de la machine (partagée), sans les fournisseurs.
+   * Les points depuis `since` (ms), les plus anciens d'abord ; sans `since`, les
+   * `monitoring.keep` derniers. Un client borné à des dépôts voit la santé de la
+   * machine (partagée), sans les fournisseurs.
    */
-  samples(since = 0, repos: RepoFilter = null): MetricSample[] {
-    return this.#samples
-      .filter((point) => point.at >= since)
-      .map((point) => (repos === null ? { ...point } : { ...point, providers: {} }));
+  samples(since: number | null = null, repos: RepoFilter = null): MetricSample[] {
+    const points =
+      since === null
+        ? this.#deps.store.listMetricSamples<MetricSample>(0, this.#deps.keep())
+        : this.#deps.store.listMetricSamples<MetricSample>(since, MAX_POINTS);
+    return points.map((point) => (repos === null ? point : { ...point, providers: {} }));
   }
 }

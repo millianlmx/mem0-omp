@@ -64,6 +64,10 @@ bruts).
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
 | `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart visé entre deux instantanés de la base, en heures ; `0` les coupe ; entier positif ou nul, sinon code 1 (§ Instantanés) |
 | `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés ; entier positif, sinon code 1 |
+| `MEM0_BACKUP_REMOTE_CMD` | `""` | copie hors machine de chaque instantané, par `sh -c` avec le chemin en `$1` (et `MEM0_BACKUP_FILE`) ; un échec est journalisé (`backup_failed`) et rendu par `GET /health` (`last_backup_error`) |
+| `MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS` | `600` | délai de la copie distante ; entier positif, sinon code 1 |
+| `MEM0_LOG_DIR` | `logs/` à côté de la base | journal JSON `mem0-AAAA-MM-JJ.jsonl` (`{"ts","level","src":"mem0","msg","event"?,"err"?}`), aussi sur stderr |
+| `MEM0_LOG_RETENTION_DAYS` | `14` | jours de journal gardés ; entier positif, sinon code 1 |
 | `MEM0_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (mem0 2.2.1), `rrf` ou `graphe` ; sinon code 1 (§ Recherche hybride) |
 | `MEM0_RRF_K` | `60` | constante `k` de la RRF (et de la fusion `graphe`) ; entier positif, sinon code 1 |
 | `MEM0_DREAM_INTERVAL_MINUTES` | `60` | période du rêve de fond, en minutes ; `0` le coupe (`POST /memory/dream` reste) ; entier positif ou nul, sinon code 1 (§ Rêve) |

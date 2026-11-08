@@ -196,7 +196,13 @@ test("harness-backups/AC-6 : le service démarré prend son instantané périodi
 });
 
 test("harness-backups/AC-7 : par défaut un instantané par jour, 7 gardés, et un avant migration ; une valeur hors bornes est refusée en nommant sa clé", () => {
-  assert.deepEqual(defaultConfig("/tmp/x").backups, { dir: null, intervalHours: 24, keep: 7, beforeMigration: true });
+  assert.deepEqual(defaultConfig("/tmp/x").backups, {
+    dir: null,
+    intervalHours: 24,
+    keep: 7,
+    beforeMigration: true,
+    remote: null,
+  });
   const dir = tmpdir("harness-backups-conf-");
   const write = (backups: unknown): string => {
     const file = path.join(dir, "config.json");

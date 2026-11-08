@@ -45,9 +45,9 @@ test("harness-db-decoupe/AC-2 : une couche n'importe en valeur que sa couche par
     const source = fs.readFileSync(path.join(DB_DIR, file), "utf8");
     const valueImports = [...source.matchAll(/^import \{[^}]*\} from "\.\/([\w-]+)\.ts";$/gm)].map((m) => m[1]);
     const parents = [...source.matchAll(/^export class \w+ extends (\w+) \{$/gm)].map((m) => m[1]);
-    const allowed = new Set(["sql", "schema"]);
     for (const sibling of valueImports) {
-      if (allowed.has(sibling ?? "")) continue;
+      // Les briques : sql.ts et le schéma, découpé en schema.ts, schema-suite.ts…
+      if (sibling === "sql" || sibling?.startsWith("schema")) continue;
       const sibSource = fs.readFileSync(path.join(DB_DIR, `${sibling}.ts`), "utf8");
       const exported = [...sibSource.matchAll(/^export class (\w+)/gm)].map((m) => m[1]);
       assert.ok(

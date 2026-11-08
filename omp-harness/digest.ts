@@ -1,13 +1,16 @@
 // Le rapport du matin : ce que le système a fait seul pendant une fenêtre [depuis, maintenant]
 // — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs,
-// planifications lancées ou manquées, et coût. Construit par une fonction PURE sur la base
-// (`digestOf`), servi par `GET /v1/digest` et l'outil MCP `digest`, et posté chaque jour à
-// `notify.digestHour` par `DigestSender`.
+// planifications lancées ou manquées, et coût, puis la santé (mémoire, sauvegardes) quand
+// elle est connue. Construit par une fonction PURE sur la base (`digestOf`), servi par
+// `GET /v1/digest` et l'outil MCP `digest`, et posté chaque jour à `notify.digestHour` par
+// `DigestSender`.
 import { HARNESS_COMMIT } from "./build-info.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { DecisionRow, EventRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { sumUsage } from "./db.ts";
+import type { LogLine } from "./logger.ts";
 import type { Notifier } from "./notify.ts";
+import type { BackupStatus, MemoryStatus } from "./observability.ts";
 
 /** La fenêtre par défaut : les dernières 24 heures. */
 export const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -28,6 +31,39 @@ export type Digest = {
   text: string;
   counts: { merged: number; decisions: number; waiting: number; failed: number };
 };
+
+/** La santé citée par le rapport : la mémoire (`null` : jamais lue) et les sauvegardes du harness. */
+export type DigestHealth = { memory: MemoryStatus | null; backups: BackupStatus | null };
+
+function when(at: number | string): string {
+  return new Date(at).toISOString().slice(0, 16).replace("T", " ");
+}
+
+/** Les lignes de la section « Santé » : ce qui va et ce qui ne va pas, la mémoire d'abord. */
+function healthLines(health: DigestHealth): string[] {
+  const lines: string[] = [];
+  const { memory, backups } = health;
+  if (memory?.configured) {
+    if (!memory.ok) lines.push("Mémoire injoignable");
+    else {
+      const parts = [
+        `Mémoire ${memory.version ?? "?"}`,
+        ...(memory.memories !== null ? [`${memory.memories} souvenir(s)`] : []),
+        ...(memory.dbBytes !== null ? [`base ${(memory.dbBytes / 1024 / 1024).toFixed(1)} Mio`] : []),
+        memory.lastBackupAt ? `dernier instantané ${when(memory.lastBackupAt)} UTC` : "aucun instantané",
+      ];
+      lines.push(parts.join(", "));
+    }
+    if (memory.lastBackupError) lines.push(`Sauvegarde de la mémoire en échec : ${flat(memory.lastBackupError)}`);
+  }
+  if (backups) {
+    if (backups.lastError !== null) lines.push(`Sauvegarde du harness en échec : ${flat(backups.lastError)}`);
+    else if (backups.lastAt !== null) lines.push(`Dernière sauvegarde du harness : ${when(backups.lastAt)} UTC`);
+    if (backups.remote.lastError !== null)
+      lines.push(`Copie distante de la sauvegarde en échec : ${flat(backups.remote.lastError)}`);
+  }
+  return lines;
+}
 
 function flat(value: string, max = 160): string {
   const line = value.replace(/\s+/g, " ").trim();
@@ -87,6 +123,7 @@ function scheduleLine(event: EventRow): string {
  * décisions : celles prises seules dans la fenêtre et pas encore acceptées ni renversées ;
  * attentes : tout ce qui bloque sur l'humain à l'instant du rapport, quelle que soit la date.
  * La dernière ligne nomme le commit du service (`commit`, défaut : `OMP_HARNESS_COMMIT`).
+ * `health` ajoute la section « Santé » (lecteur qui voit tous les dépôts seulement).
  */
 export function digestOf(
   store: Store,
@@ -94,6 +131,7 @@ export function digestOf(
   until: number,
   repos: RepoFilter = null,
   commit: string | null = HARNESS_COMMIT,
+  health: DigestHealth | null = null,
 ): Digest {
   const inWindow = (at: number) => at >= since && at <= until;
   const runs = store.listRuns({ repos }).sort((a, b) => a.updatedAt - b.updatedAt);
@@ -125,6 +163,8 @@ export function digestOf(
   const parts = sections.length > 0 ? sections : ["Rien de neuf."];
   // Le coût n'est dit que si la consommation des agents est connue sur la fenêtre.
   if (usage.length > 0) parts.push(`Coût de la fenêtre : ${sumUsage(usage).cost.toFixed(2)} $`);
+  const healthy = health !== null && repos === null ? section("Santé", healthLines(health)) : null;
+  if (healthy !== null) parts.push(healthy);
   parts.push(
     `Commit déployé : ${commit === null ? "inconnu (service construit sans OMP_HARNESS_COMMIT)" : commit.slice(0, 12)}`,
   );
@@ -145,22 +185,26 @@ export class DigestSender {
   readonly #config: HarnessConfig;
   readonly #store: Store;
   readonly #notifier: Notifier;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
   readonly #now: () => number;
+  readonly #health: () => DigestHealth | null;
   #timer: NodeJS.Timeout | undefined;
 
   constructor(deps: {
     config: HarnessConfig;
     store: Store;
     notifier: Notifier;
-    log?: (line: string) => void;
+    log?: LogLine;
     now?: () => number;
+    /** La santé du service au moment du rapport (observability.ts). */
+    health?: () => DigestHealth | null;
   }) {
     this.#config = deps.config;
     this.#store = deps.store;
     this.#notifier = deps.notifier;
     this.#log = deps.log ?? (() => {});
     this.#now = deps.now ?? Date.now;
+    this.#health = deps.health ?? (() => null);
   }
 
   start(): void {
@@ -181,8 +225,8 @@ export class DigestSender {
    * finit en `notify_failed` comme toute notification.
    */
   check(now = this.#now()): Digest | null {
-    const { url, digestHour } = this.#config.notify;
-    if (url === null || digestHour === null) return null;
+    const { digestHour } = this.#config.notify;
+    if (this.#notifier.targets().length === 0 || digestHour === null) return null;
     // L'heure du rapport aujourd'hui, en heure locale du serveur.
     const today = new Date(now);
     today.setHours(digestHour, 0, 0, 0);
@@ -190,7 +234,14 @@ export class DigestSender {
     if (now < due) return null;
     const last = this.#store.getSetting<number>(DIGEST_SENT_KEY);
     if (typeof last === "number" && last >= due) return null;
-    const digest = digestOf(this.#store, typeof last === "number" ? last : now - DIGEST_WINDOW_MS, now);
+    const digest = digestOf(
+      this.#store,
+      typeof last === "number" ? last : now - DIGEST_WINDOW_MS,
+      now,
+      null,
+      HARNESS_COMMIT,
+      this.#health(),
+    );
     this.#store.setSetting(DIGEST_SENT_KEY, now, null);
     this.#notifier.post({
       title: "Rapport du matin",
@@ -207,7 +258,10 @@ export class DigestSender {
     try {
       this.check();
     } catch (err) {
-      this.#log(`rapport du matin non envoyé : ${err instanceof Error ? err.message : String(err)}`);
+      this.#log(`rapport du matin non envoyé : ${err instanceof Error ? err.message : String(err)}`, {
+        level: "error",
+        err,
+      });
     }
   }
 }

@@ -226,7 +226,10 @@ export class Auditor {
         await git.removeWorktree(repo.path, worktree, null).catch(() => {});
       }
       if (!retry) break;
-      this.#ctx.log(`audit ${queued.id} : analyse relancée après « ${"reason" in outcome ? outcome.reason : ""} »`);
+      this.#ctx.log(`audit ${queued.id} : analyse relancée après « ${"reason" in outcome ? outcome.reason : ""} »`, {
+        level: "warn",
+        repo: queued.repo,
+      });
       this.#event(started, { retry: true, reason: "reason" in outcome ? outcome.reason : "" });
     }
     if (live.abort.signal.aborted) return;
@@ -241,7 +244,8 @@ export class Auditor {
           : store.updateAuditIf(queued.id, ["analysing"], { state: "failed", reason: outcome.reason });
       if (audit) this.#event(audit, "proposals" in outcome ? { proposals: outcome.proposals.length } : {});
     });
-    if ("reason" in outcome) this.#ctx.log(`audit ${queued.id} en échec : ${outcome.reason}`);
+    if ("reason" in outcome)
+      this.#ctx.log(`audit ${queued.id} en échec : ${outcome.reason}`, { level: "warn", repo: queued.repo });
   }
 
   async #analyse(

@@ -20,7 +20,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 sqlite-vec = "0.1.9"
 time = { version = "0.3", features = ["formatting"] }
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "process", "signal", "sync", "time"] }
 unicode-general-category = "1.1"
 uuid = { version = "1", features = ["v4"] }
 

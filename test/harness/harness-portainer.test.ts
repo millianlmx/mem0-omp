@@ -120,7 +120,14 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
   const published = [...compose.matchAll(/^ {4}ports:\n((?: {6}(?:#.*|- .*)\n)+)/gm)].flatMap((m) =>
     m[1].split("\n").filter((line) => line.trim().startsWith("- ")),
   );
-  assert.equal(published.length, 2, "le harness et la mémoire, et eux seuls");
+  // Grafana n'existe que dans le profil `monitoring`, coupé par défaut.
+  assert.equal(
+    published.filter((line) => !line.includes("OMP_HARNESS_GRAFANA_PORT")).length,
+    2,
+    "le harness et la mémoire, et eux seuls",
+  );
+  assert.match(service("grafana"), /profiles: \["monitoring"\]/);
+  assert.match(service("prometheus"), /profiles: \["monitoring"\]/);
   for (const line of published)
     assert.match(line, /- "127\.0\.0\.1:/, `port hors de la boucle locale : ${line.trim()}`);
 });

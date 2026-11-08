@@ -85,6 +85,9 @@ export const EVENT_TYPES = [
   "run_budget",
   "daily_budget_reached",
   "alert_cleared",
+  // observabilité : erreurs remontées par les clients, sauvegardes en échec (repo null)
+  "client_error",
+  "backup_failed",
   // le poste de travail (repo null : seuls les clients qui voient tous les dépôts les reçoivent)
   "workstation_action",
   "workstation_approval",

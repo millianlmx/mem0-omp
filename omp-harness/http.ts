@@ -21,8 +21,8 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { ActionState, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
-import { ACTION_STATES } from "./db.ts";
+import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
+import { ACTION_STATES, CLIENT_SOURCES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
   budgetInput,
@@ -44,6 +44,8 @@ import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import type { LogLine } from "./logger.ts";
+import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import { handleMcp } from "./mcp.ts";
@@ -96,6 +98,8 @@ export const API_FEATURES = [
   "run-budget",
   "admin-repos",
   "schedules",
+  "client-errors",
+  "prometheus",
 ] as const;
 
 /** La version du service, lue dans son `package.json`. */
@@ -263,7 +267,7 @@ export type HttpOptions = {
   /** Le commit rendu par `/v1/health` ; défaut : `OMP_HARNESS_COMMIT` (build-info.ts). */
   commit?: string | null;
   /** Le journal du service : la cause d'une erreur interne y va, jamais dans la réponse. */
-  log?: (line: string) => void;
+  log?: LogLine;
   /** La cadence des pings du flux SSE, et de la relecture du jeton de chaque flux ouvert. */
   pingMs?: number;
   /** Les octets en attente au-delà desquels un flux SSE est coupé (le client reprend par `Last-Event-ID`). */
@@ -382,9 +386,18 @@ export function apiRoutes(
 
   return [
     route("GET", "/v1/me", "viewer", (call) => send(call.res, 200, { client: call.client })),
-    route("GET", "/v1/status", "viewer", async (call) =>
-      send(call.res, 200, { ...orchestrator.status(call.repos), oracle: await orchestrator.oracleStatus() }),
-    ),
+    route("GET", "/v1/status", "viewer", async (call) => {
+      const [oracle, memory] = await Promise.all([
+        orchestrator.oracleStatus(),
+        orchestrator.observability.memoryStatus(),
+      ]);
+      send(call.res, 200, {
+        ...orchestrator.status(call.repos),
+        oracle,
+        memory,
+        backups: orchestrator.observability.backupStatus(),
+      });
+    }),
     route("GET", "/v1/repos", "viewer", (call) =>
       send(call.res, 200, {
         repos: orchestrator.config.repos
@@ -628,11 +641,47 @@ export function apiRoutes(
       const owner = allows(call.client.role, "admin") ? null : call.client.name;
       send(call.res, 200, { removed: store.deletePushToken(call.match[1] as string, owner) });
     }),
+    // La santé au fil du temps : `?since=` (ms) rend les points depuis cet instant (gardés
+    // `metrics.retentionDays` jours), sinon les `monitoring.keep` derniers.
     route("GET", "/v1/metrics", "viewer", (call) => {
       const since = Number(call.url.searchParams.get("since"));
       send(call.res, 200, {
         sampleSec: orchestrator.config.monitoring.sampleSec,
-        samples: orchestrator.metrics.samples(Number.isFinite(since) && since > 0 ? since : 0, call.repos),
+        samples: orchestrator.metrics.samples(Number.isFinite(since) && since > 0 ? since : null, call.repos),
+      });
+    }),
+    // L'exposition Prometheus (deploy/monitoring/prometheus.yml la scrute avec le jeton d'un
+    // viewer) : coûts et runs de tous les dépôts, donc un client qui les voit tous.
+    route("GET", "/metrics", "viewer", (call) => {
+      if (call.repos !== null)
+        throw new HarnessError(403, "/metrics est réservé aux clients qui voient tous les dépôts");
+      const body = renderMetrics(orchestrator, HARNESS_VERSION);
+      call.res.writeHead(200, {
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        "Cache-Control": "no-store",
+      });
+      call.res.end(body);
+    }),
+    // Les erreurs des clients (apps, extension, omp, vigie) : 202, au plus 60 par minute et par client.
+    route("POST", "/v1/client-errors", "viewer", async (call) => {
+      const row = orchestrator.observability.recordClientError(call.client, await readBody(call.req));
+      send(call.res, 202, { id: row.id });
+    }),
+    // Un client borné à des dépôts ne relit que ses propres erreurs.
+    route("GET", "/v1/client-errors", "viewer", (call) => {
+      const since = Number(call.url.searchParams.get("since") ?? 0);
+      if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      const source = call.url.searchParams.get("source");
+      if (source !== null && !(CLIENT_SOURCES as readonly string[]).includes(source))
+        throw new HarnessError(400, `source : ${CLIENT_SOURCES.join(" | ")}`);
+      send(call.res, 200, {
+        errors: store.listClientErrors({
+          since,
+          ...(source !== null ? { source: source as ClientSource } : {}),
+          ...(call.repos !== null ? { client: call.client.name } : {}),
+          limit: limitOf(call.url, 200, 1000),
+        }),
       });
     }),
     route("GET", "/v1/stats", "viewer", (call) =>
@@ -647,7 +696,11 @@ export function apiRoutes(
       const raw = call.url.searchParams.get("since");
       const since = raw === null ? now - DIGEST_WINDOW_MS : Number(raw);
       if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
-      send(call.res, 200, digestOf(store, since, now, call.repos));
+      send(
+        call.res,
+        200,
+        digestOf(store, since, now, call.repos, HARNESS_COMMIT, orchestrator.observability.digestHealth()),
+      );
     }),
     // Les planifications récurrentes (schedules.ts) : celles des dépôts que le client voit.
     route("GET", "/v1/schedules", "viewer", (call) => send(call.res, 200, orchestrator.schedules.view(call.repos))),
@@ -957,7 +1010,13 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const store = orchestrator.store;
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
   const routes = apiRoutes(orchestrator, clients, options.admin ?? null);
-  const log = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
+  const log: LogLine = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
+  const stats = orchestrator.observability.http;
+  /** L'étiquette `route` d'une requête : le motif de sa route, jamais l'URL brute (cardinalité bornée). */
+  const routeLabel = (pathname: string): string => {
+    if (pathname === "/v1/health" || pathname === "/v1/events") return pathname;
+    return routes.find((candidate) => candidate.pattern.test(pathname))?.path ?? "inconnue";
+  };
 
   const pingMs = options.pingMs ?? PING_MS;
   const maxBuffer = options.sseMaxBuffer ?? SSE_MAX_BUFFER;
@@ -990,6 +1049,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     });
     // Les en-têtes partent tout de suite : le client sait son flux ouvert avant le premier événement.
     res.flushHeaders();
+    stats.sseClients++;
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
@@ -1001,6 +1061,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     const close = (cut: boolean): void => {
       if (closed) return;
       closed = true;
+      stats.sseClients--;
       clearInterval(ping);
       unsubscribe();
       if (cut) res.destroy();
@@ -1065,6 +1126,17 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   }
 
   return (req, res) => {
+    const started = process.hrtime.bigint();
+    res.on("close", () => {
+      let pathname = "";
+      try {
+        pathname = new URL(req.url ?? "/", "http://harness").pathname;
+      } catch {
+        pathname = "";
+      }
+      const method = ["GET", "POST", "PUT", "DELETE"].includes(req.method ?? "") ? (req.method as string) : "AUTRE";
+      stats.record(routeLabel(pathname), method, res.statusCode, Number(process.hrtime.bigint() - started) / 1e9);
+    });
     void (async () => {
       try {
         // Dans le try : une ligne de requête illisible (`GET http://[x/`) est un 400, jamais un crash.
@@ -1120,13 +1192,14 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           res.end();
           return;
         }
-        if (err instanceof HarnessError) send(res, err.status, { error: err.message });
+        if (err instanceof HarnessError) send(res, err.status, { error: err.message }, err.headers);
         else {
           // Une erreur imprévue peut citer un chemin, une commande ou un secret : elle reste au
           // journal, la réponse n'en porte que la référence.
           const ref = randomBytes(4).toString("hex");
           log(
             `${req.method} ${req.url} : erreur interne ${ref} — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+            { level: "error" },
           );
           send(res, 500, { error: `erreur interne (réf. ${ref})` });
         }

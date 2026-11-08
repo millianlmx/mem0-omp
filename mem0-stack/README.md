@@ -50,6 +50,19 @@ compose transmet les deux réglages depuis `.env` :
 |---|---|---|
 | `MEM0_BACKUP_INTERVAL_HOURS` | `24` | écart entre deux instantanés, en heures ; `0` les coupe |
 | `MEM0_BACKUP_KEEP` | `7` | nombre d'instantanés gardés |
+| `MEM0_BACKUP_REMOTE_CMD` | vide | copie hors machine de chaque instantané : lancée par `sh -c`, le chemin en `$1` (et `MEM0_BACKUP_FILE`) ; ex. `restic backup --host mem0 "$1"` (chiffré, `RESTIC_REPOSITORY` et `RESTIC_PASSWORD_FILE` dans l'environnement) ou `curl -fsS -T "$1" https://webdav.example/mem0/` (l'image n'a que `sh` et `curl` : un autre outil se monte) |
+| `MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS` | `600` | délai de la copie distante |
+| `MEM0_LOG_DIR` | `logs/` à côté de la base | journal JSON `mem0-AAAA-MM-JJ.jsonl` (`{"ts","level","src":"mem0","msg","event"?,"err"?}`), aussi sur stderr |
+| `MEM0_LOG_RETENTION_DAYS` | `14` | jours de journal gardés |
+
+Un échec d'instantané ou de copie distante est journalisé (`event: "backup_failed"`)
+et se lit dans `GET /health` (`last_backup_at`, `last_backup_error`, avec `version`,
+`uptime_s`, `memories`, `db_bytes`) ; `GET /metrics` (jeton en `X-Mem0-Token` ou
+`Authorization: Bearer`) l'expose au format Prometheus (`mem0_memories`,
+`mem0_db_bytes`, `mem0_backup_last_success_timestamp_seconds`, `mem0_backup_failing`,
+`mem0_backup_failures_total`, `mem0_http_requests_total{route,method,status}`,
+`mem0_http_request_duration_seconds`). Le harness reprend cette santé dans son
+`GET /v1/status` (`memory`) et son rapport du matin.
 
 Le premier instantané d'une pile neuve arrive une heure après le démarrage.
 Restaurer : `podman compose stop mem0-rs`, copier l'instantané voulu sur

@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import type { HarnessConfig } from "./config.ts";
 import type { SpawnRunner } from "./context.ts";
 import { HarnessError } from "./errors.ts";
+import type { LogLine } from "./logger.ts";
 import type { Exec } from "./proc.ts";
 import type { ProviderRegistry } from "./providers.ts";
 import { RpcRunner } from "./rpc.ts";
@@ -144,7 +145,7 @@ export class OAuthLogins {
   readonly #spawn: SpawnRunner;
   readonly #exec: Exec;
   readonly #providers: ProviderRegistry;
-  readonly #log: (line: string) => void;
+  readonly #log: LogLine;
   readonly #timeoutMs: number;
   readonly #logins = new Map<string, Live>();
 
@@ -153,7 +154,7 @@ export class OAuthLogins {
     spawn: SpawnRunner;
     exec: Exec;
     providers: ProviderRegistry;
-    log: (line: string) => void;
+    log: LogLine;
     timeoutMs?: number;
   }) {
     this.#config = deps.config;
@@ -291,7 +292,7 @@ export class OAuthLogins {
     } catch (err) {
       if (!TERMINAL.has(live.view.state)) {
         this.#end(live, "failed", reason(err));
-        this.#log(`connexion OAuth ${live.view.provider} échouée : ${reason(err)}`);
+        this.#log(`connexion OAuth ${live.view.provider} échouée : ${reason(err)}`, { level: "warn" });
       }
     } finally {
       if (timer) clearTimeout(timer);

@@ -1,0 +1,9 @@
+# La source Prometheus du profil `monitoring`, posée au démarrage de Grafana.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: omp-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
