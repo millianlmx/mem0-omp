@@ -15,8 +15,8 @@ import { EPHEMERAL_EVENTS } from "./events.ts";
 import { remoteEnv, type Git } from "./git.ts";
 import type { HeavyRunner } from "./heavy.ts";
 import type { RunState, Transition } from "./machine.ts";
-import { assertTransition, isTerminal } from "./machine.ts";
 import type { LogLine } from "./logger.ts";
+import { assertTransition, isTerminal, splitAbandoned, splitReleased } from "./machine.ts";
 import { Notifier } from "./notify.ts";
 import { Observability } from "./observability.ts";
 import type { Oracle } from "./oracle.ts";
@@ -249,6 +249,7 @@ export class HarnessContext {
           cause: next.lastFailCause,
         });
       if (isTerminal(transition.state) && run.projectId) this.#closeProjectIfDone(run.projectId, run.repo);
+      if (isTerminal(transition.state)) this.#settleSplit(next);
       return next;
     });
     if (!updated)
@@ -257,6 +258,22 @@ export class HarnessContext {
         repo: run.repo,
       });
     return updated;
+  }
+
+  /**
+   * Les features découpées qui attendent le merge de ce run (`afterRun`) : mergé, elles
+   * quittent l'attente ; annulé ou en échec, elles sont annulées avec lui — elles
+   * dépendaient de son code. Elles n'ont jamais démarré : la file seulement.
+   */
+  #settleSplit(parent: RunRow): void {
+    const fate = parent.state === "cancelled" ? "a été annulé" : "a échoué";
+    for (const child of this.store.listRuns({ afterRun: parent.id, state: ["queued"] })) {
+      const settled =
+        parent.state === "merged"
+          ? splitReleased(child, parent.title)
+          : splitAbandoned(child, `annulée : « ${parent.title} », dont elle attendait le merge, ${fate}`);
+      this.transition(child, settled, ["queued"]);
+    }
   }
 
   /** Le projet est clos quand plus aucun de ses runs n'est vivant : `project_done` compte ce qui a mergé. */

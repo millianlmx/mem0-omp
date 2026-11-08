@@ -160,7 +160,7 @@ test("harness-steps/AC-8 : des specs sans `## Modules` sont relancées une fois,
   }
 });
 
-test("harness-steps/AC-9 : la porte « auto » — des specs qui découpent attendent l'humain et le découpage part en projet ; des specs nettes passent en /impl", async () => {
+test("harness-steps/AC-9 : la porte « auto » — des specs qui découpent attendent l'humain ; refusées puis refaites sans découpage, elles passent en /impl", async () => {
   const world = fakeWorld(
     {
       req: [OK.req],
@@ -176,29 +176,13 @@ test("harness-steps/AC-9 : la porte « auto » — des specs qui découpent atte
     await until(world, split.id, ["awaiting_human", "failed", "merged"]);
     assert.equal(world.store.getRun(split.id)?.state, "awaiting_human", stateOf(world, split.id));
     assert.equal(world.store.getRun(split.id)?.step, "specs");
-    const event = world.store.eventsSince(0, split.id).find((item) => item.type === "split");
-    assert.ok(event, "événement split");
-    const projectId = String(event.payload.projectId);
-    const project = world.store.getProject(projectId);
-    assert.equal(project?.title, "Découpage de « Export CSV »");
-    const children = world.store
-      .listRuns()
-      .filter((run) => run.projectId === projectId)
-      .sort((a, b) => a.projectOrder - b.projectOrder);
-    assert.deepEqual(
-      children.map((run) => [run.title, run.request, run.modules]),
-      [
-        ["Export JSON", "Exporter aussi en JSON", ["src/api", "docs"]],
-        ["Export XML", "Exporter en XML", children[1]?.modules],
-      ],
-    );
-    // Les specs refaites (refus humain) ne recréent pas le projet ; sans découpage, la porte « auto » laisse passer.
-    for (const child of children) await world.orchestrator.cancel(child.id, { by: "test" });
+    assert.match(world.store.getRun(split.id)?.reason ?? "", /découpage proposé/);
+    // Les specs refaites sans découpage : la porte « auto » laisse passer, aucun découpage n'est jamais parti.
     await world.orchestrator.validate(split.id, false, "trop large", { by: "test" });
     await until(world, split.id, ["merged", "failed", "awaiting_human"]);
     assert.equal(world.store.getRun(split.id)?.state, "merged", stateOf(world, split.id));
-    assert.equal(world.store.eventsSince(0, split.id).filter((item) => item.type === "split").length, 1);
-    assert.equal(world.store.listProjects().length, 1);
+    assert.equal(world.store.eventsSince(0, split.id).filter((item) => item.type === "split").length, 0);
+    assert.equal(world.store.listProjects().length, 0);
   } finally {
     await world.orchestrator.stop();
   }

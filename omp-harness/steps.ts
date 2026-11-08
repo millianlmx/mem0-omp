@@ -28,8 +28,7 @@ import {
   unanswered,
 } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
-import type { Actor, HarnessContext } from "./context.ts";
-import { SERVICE } from "./context.ts";
+import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { ARTIFACTS_DIR } from "./git.ts";
@@ -38,7 +37,6 @@ import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
 import { IRREVERSIBLE_GATE, stepTier } from "./machine.ts";
-import type { NewProjectInput } from "./orchestrator.ts";
 import { parseModulesSection } from "./planner.ts";
 import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
 import { briefOfReq, renderMemories } from "./oracle.ts";
@@ -67,8 +65,8 @@ type ChallengeEnd =
 
 /** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage). */
 export type StepHooks = {
-  /** /specs a découpé : un projet avec les sous-features AUTRES que celle que le run continue. */
-  createProject: (input: NewProjectInput, actor: Actor) => Promise<{ projectId: string; runs: RunRow[] }>;
+  /** `split_feature` en /impl : un projet des sous-features AUTRES que celle que le run continue, en attente de son merge (split.ts). */
+  split: (run: RunRow, features: SplitFeature[], step: StepKind) => { projectId: string; runs: RunRow[] };
 };
 
 /** L'état vivant d'un run conduit par ce process. */
@@ -796,7 +794,7 @@ export class StepExecutor {
         ]);
     }
     let gate: string[] | null = null;
-    if (step === "specs") gate = await this.#closeSpecs(run, stepRow.id);
+    if (step === "specs") gate = this.#closeSpecs(run, stepRow.id);
     const remaining = step === "impl" ? await this.#closeImpl(run, worktree) : null;
     if (await git.mergeInProgress(worktree))
       await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
@@ -880,10 +878,11 @@ export class StepExecutor {
   }
 
   /**
-   * Fin de /specs : specs gelées, modules posés, découpage parti en projet ; rend les
-   * raisons de la porte humaine (désaccords avec le contradicteur compris).
+   * Fin de /specs : specs gelées, modules posés ; rend les raisons de la porte humaine
+   * (désaccords avec le contradicteur compris). Le `## Découpage` ne part pas d'ici :
+   * seulement quand les specs sont acceptées (split.ts).
    */
-  async #closeSpecs(run: RunRow, stepId: number): Promise<string[]> {
+  #closeSpecs(run: RunRow, stepId: number): string[] {
     const { store } = this.#ctx;
     const specs = store.getArtifact(run.id, "specs.md") ?? "";
     store.putArtifact(run.id, SPECS_BASELINE, specs, stepId);
@@ -892,21 +891,6 @@ export class StepExecutor {
       store.transaction(() => {
         store.updateRun(run.id, { modules });
         this.#ctx.event("modules", run.id, { modules });
-      });
-    }
-    const features = parseSplitSection(specs);
-    // Des specs refaites (refus humain) ne recréent pas le projet déjà parti.
-    const alreadySplit = store.eventsSince(0, run.id).some((event) => event.type === "split");
-    if (features.length > 0 && !alreadySplit) {
-      const { projectId, runs } = await this.#hooks.createProject(
-        { repo: run.repo, title: `Découpage de « ${run.title} »`.slice(0, 120), priority: run.priority, features },
-        SERVICE,
-      );
-      this.#ctx.event("split", run.id, {
-        projectId,
-        step: "specs",
-        by: "specs",
-        features: runs.map((row) => ({ id: row.id, title: row.title, modules: row.modules })),
       });
     }
     const disputed = openDisputes(readRecords(store.getArtifact(run.id, CHALLENGE_STATE)));

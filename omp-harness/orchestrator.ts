@@ -39,7 +39,15 @@ import { changesOf, fileDiffOf, timelineOf } from "./inspect.ts";
 import { Metrics } from "./metrics.ts";
 import type { BudgetDue, RunBudget } from "./monitor.ts";
 import type { StepKind } from "./machine.ts";
-import { ACTIVE_STATES, crashed, heldForDailyBudget, nextAfter, pausedForBudget, recovered } from "./machine.ts";
+import {
+  ACTIVE_STATES,
+  acceptsSpecs,
+  crashed,
+  heldForDailyBudget,
+  nextAfter,
+  pausedForBudget,
+  recovered,
+} from "./machine.ts";
 import type { FailCause, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
@@ -53,6 +61,7 @@ import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
 import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } from "./steps.ts";
+import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
@@ -119,6 +128,7 @@ export type RunWithWait = RunRow & { waitCause?: QueueWait["cause"] };
 export class Orchestrator {
   readonly #ctx: HarnessContext;
   readonly #steps: StepExecutor;
+  readonly #splits: Splitter;
   readonly #merger: Merger;
   readonly #human: HumanLoop;
   readonly #live = new Map<string, LiveRun & { slot: Slot }>();
@@ -172,8 +182,11 @@ export class Orchestrator {
       sampleSec: () => this.#ctx.config.monitoring.sampleSec,
       keep: () => this.#ctx.config.monitoring.keep,
     });
+    this.#splits = new Splitter(this.#ctx, {
+      openProject: (input, parent) => this.#openProject(input, SERVICE, { afterRun: parent }),
+    });
     this.#steps = new StepExecutor(this.#ctx, {
-      createProject: (input, actor) => this.createProject(input, actor),
+      split: (run, features, step) => this.#splits.launch(run, features, step, "runner"),
     });
     this.#merger = new Merger(this.#ctx, {
       onDone: () => this.#kick(),
@@ -186,6 +199,7 @@ export class Orchestrator {
       followUp: async (input, actor) => this.createRun(input, actor),
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
       steer: (runId, message) => this.#live.get(runId)?.session?.steer(message) ?? Promise.resolve(false),
+      specsAccepted: (run) => this.#splits.accepted(run),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
     this.pilot = new AuditPilot(this.#ctx, {
@@ -487,9 +501,10 @@ export class Orchestrator {
   } {
     const { store } = this.#ctx;
     // Un run relancé après un échec attend son heure (`notBefore`) : il n'est pas candidat avant.
+    // Une feature découpée attend le merge de son parent : elle ne réserve même pas ses modules.
     const queued = store
       .listRunsDue(Date.now())
-      .filter((run) => !this.#live.has(run.id) && !this.#inferring.has(run.id));
+      .filter((run) => !this.#live.has(run.id) && !this.#inferring.has(run.id) && !this.#splits.waiting(run));
     // Un run lancé reste `queued` en base jusqu'à son worktree : il occupe déjà ses modules.
     const active = store.listRuns({ state: ACTIVE_STATES }).filter((run) => !this.#live.has(run.id));
     for (const live of this.#live.keys()) {
@@ -741,12 +756,15 @@ export class Orchestrator {
             : run.step === "review" && run.lastFailCause === "missing_output"
               ? run.lastFailCause
               : null;
-        if (
-          !this.#ctx.transition(run, transition, ["running"], {
+        // Des specs acceptées sans porte : leur découpage part dans la même transaction.
+        const moved = store.transaction(() => {
+          const next = this.#ctx.transition(run, transition, ["running"], {
             patch: { notBefore: transition.notBefore, lastFailCause },
-          })
-        )
-          break;
+          });
+          if (next && acceptsSpecs(run.step, transition)) this.#splits.accepted(next);
+          return next;
+        });
+        if (!moved) break;
         if (!transition.keepRunner) await live.session?.stop();
         if (transition.rebase) live.pendingRebase = true;
         if (transition.state !== "running") break;
@@ -778,10 +796,16 @@ export class Orchestrator {
    * Un run sans `modules` : ils sont déduits par l'oracle (comme pour un projet) avant
    * l'admission — sinon le run chevaucherait tout le dépôt jusqu'à ses specs. La
    * déduction est asynchrone ; le run est créé tout de suite et n'est pas candidat
-   * tant qu'elle court.
+   * tant qu'elle court. `afterRun` : le parent d'une feature découpée, dont elle attend
+   * le merge en file (split.ts).
    */
   createRun(
-    input: NewRunInput & { projectId?: string; projectOrder?: number; inferModules?: boolean },
+    input: NewRunInput & {
+      projectId?: string;
+      projectOrder?: number;
+      inferModules?: boolean;
+      afterRun?: Pick<RunRow, "id" | "title">;
+    },
     actor: Actor = SERVICE,
   ): RunRow {
     const repo = this.#ctx.repo(input.repo);
@@ -809,6 +833,7 @@ export class Orchestrator {
         createdBy: actor.by,
         ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
+        ...(input.afterRun ? { afterRun: input.afterRun.id, reason: waitReason(input.afterRun) } : {}),
       });
       if (req !== "") store.putArtifact(created.id, "req.md", `${req}\n`, null);
       if (budget !== undefined) this.#ctx.monitor.setRunBudget(created.id, budget, actor.by);
@@ -826,6 +851,7 @@ export class Orchestrator {
         priority,
         ...(budget !== undefined ? { budgetUsd: budget } : {}),
         lane: specs !== null ? "direct" : "full",
+        ...(input.afterRun ? { afterRun: input.afterRun.id } : {}),
         ...(actor.by ? { by: actor.by } : {}),
       });
       return created;
@@ -885,7 +911,7 @@ export class Orchestrator {
 
   /** /project : les modules de chaque feature (déclarés, sinon via l'oracle), puis une file planifiée. */
   async createProject(input: NewProjectInput, actor: Actor = SERVICE): Promise<{ projectId: string; runs: RunRow[] }> {
-    const { store, oracle, git } = this.#ctx;
+    const { oracle, git } = this.#ctx;
     const repo = this.#ctx.repo(input.repo);
     if (input.features.length === 0) throw new HarnessError(400, "un projet a au moins une feature");
     const known = knownModules(await git.listFiles(repo.path, repo.mainBranch));
@@ -897,7 +923,27 @@ export class Orchestrator {
           : (await modulesViaOracle(oracle, repo.scope, `${feature.title}\n${feature.request}`, known)).modules,
       );
     }
-    // Le projet et ses runs naissent ensemble : un client ne voit jamais un projet à moitié créé.
+    return this.#openProject(
+      { ...input, features: input.features.map((feature, order) => ({ ...feature, modules: modules[order] ?? [] })) },
+      actor,
+      // Déjà demandés à l'oracle ci-dessus : une liste vide le reste.
+      { inferModules: false },
+    );
+  }
+
+  /**
+   * Le projet et ses runs, nés ensemble : un client ne voit jamais un projet à moitié créé.
+   * `inferModules` : les features sans modules les demandent à l'oracle après coup (un
+   * découpage, qui naît dans la transaction d'une transition, ne l'attend pas) ;
+   * `afterRun` : le parent dont chaque feature attend le merge.
+   */
+  #openProject(
+    input: NewProjectInput,
+    actor: Actor,
+    options: { inferModules?: boolean; afterRun?: RunRow },
+  ): { projectId: string; runs: RunRow[] } {
+    const { store } = this.#ctx;
+    const repo = this.#ctx.repo(input.repo);
     return store.transaction(() => {
       const project = store.createProject({ id: newId("p"), repo: repo.name, title: input.title });
       const runs = input.features.map((feature, order) =>
@@ -905,11 +951,11 @@ export class Orchestrator {
           {
             ...feature,
             repo: repo.name,
-            modules: modules[order] ?? [],
-            // Déjà demandés à l'oracle ci-dessus : une liste vide le reste.
-            inferModules: false,
+            modules: feature.modules ?? [],
             projectId: project.id,
             projectOrder: order,
+            ...(options.inferModules === false ? { inferModules: false } : {}),
+            ...(options.afterRun ? { afterRun: options.afterRun } : {}),
             ...(input.priority !== undefined ? { priority: input.priority } : {}),
           },
           actor,
@@ -922,6 +968,7 @@ export class Orchestrator {
           projectId: project.id,
           repo: repo.name,
           runs: runs.map((run) => ({ id: run.id, modules: run.modules })),
+          ...(options.afterRun ? { afterRun: options.afterRun.id } : {}),
           ...(actor.by ? { by: actor.by } : {}),
         },
         repo.name,

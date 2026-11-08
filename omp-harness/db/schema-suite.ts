@@ -89,4 +89,8 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      at INTEGER PRIMARY KEY,
      sample TEXT NOT NULL
    );`,
+  // Une feature découpée attend le merge de son parent (split.ts) : sans lui, elle partait
+  // avant que le code dont elle dépend soit sur main.
+  `ALTER TABLE runs ADD COLUMN after_run TEXT;
+   CREATE INDEX runs_after_run ON runs (after_run);`,
 ];

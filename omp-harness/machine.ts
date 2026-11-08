@@ -361,6 +361,40 @@ export function afterSpecsValidation(
   return to("queued", "specs", cursor, { reason: `specs refusées par ${who} : ${reason}` });
 }
 
+/**
+ * Les specs sont-elles ACCEPTÉES par cette transition ? Le passage de /specs à /impl : sans
+ * porte (`nextAfter`), ou validées par l'humain ou le pilote (`afterSpecsValidation`). Leur
+ * `## Découpage` part alors en projet (split.ts), jamais à la seule clôture de /specs.
+ */
+export function acceptsSpecs(from: StepKind | null, transition: Pick<Transition, "state" | "step">): boolean {
+  return from === "specs" && transition.step === "impl" && !isTerminal(transition.state);
+}
+
+/** Une feature découpée dont le parent est mergé : elle quitte l'attente, l'admission la fera partir. */
+export function splitReleased(
+  cursor: { step: StepKind | null; fixes: number; attempts: number },
+  parent: string,
+): Transition {
+  return {
+    state: "queued",
+    step: cursor.step,
+    fixes: cursor.fixes,
+    attempts: cursor.attempts,
+    keepRunner: false,
+    rebase: false,
+    notBefore: null,
+    reason: `« ${parent} » mergé : part à son tour`,
+  };
+}
+
+/** Une feature découpée qui ne partira pas : son parent annulé, en échec, ou son découpage remplacé. */
+export function splitAbandoned(
+  cursor: { step: StepKind | null; fixes: number; attempts: number },
+  why: string,
+): Transition {
+  return { ...cancelled(cursor), reason: why };
+}
+
 /** Un état d'où le run peut encore bouger. */
 export function isTerminal(state: RunState): boolean {
   return (TERMINAL_STATES as readonly string[]).includes(state);
