@@ -22,7 +22,7 @@ test("harness-scheduler/AC-1 : 5 runners et 2 heavy au plus ; un slot rendu se r
   const s = scheduler();
   const runners = Array.from({ length: 5 }, (_, i) => s.tryAcquire("runner", `r${i}`));
   assert.ok(runners.every((slot) => !("refused" in slot)));
-  assert.deepEqual(s.tryAcquire("runner", "r5"), { refused: "slots", detail: "5/5 slots runner occupés" });
+  assert.deepEqual(s.tryAcquire("runner", "r5"), { refused: "slots", detail: "slots runner pleins 5/5" });
   const heavy = [s.tryAcquire("heavy", "h0"), s.tryAcquire("heavy", "h1")];
   assert.equal("refused" in (s.tryAcquire("heavy", "h2") as object), true);
   (heavy[0] as { release: () => void }).release();

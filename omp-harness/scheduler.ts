@@ -136,17 +136,18 @@ export class Scheduler {
     return kind === "runner" ? this.#admission.runnerMiB : this.#admission.heavyMiB;
   }
 
-  /** Un slot tout de suite, ou le motif du refus (slots pleins, mémoire insuffisante). */
+  /** Un slot tout de suite, ou le motif du refus (slots pleins, mémoire insuffisante), lisible tel quel. */
   tryAcquire(kind: SlotKind, label: string): Slot | Refusal {
     const held = this.#held[kind];
     if (held.size >= this.#capacity[kind])
-      return { refused: "slots", detail: `${held.size}/${this.#capacity[kind]} slots ${kind} occupés` };
+      return { refused: "slots", detail: `slots ${kind} pleins ${held.size}/${this.#capacity[kind]}` };
     const available = this.#mem();
     const need = this.#need(kind);
-    if (available !== null && available - need < this.#admission.reserveMiB) {
+    const reserve = this.#admission.reserveMiB;
+    if (available !== null && available - need < reserve) {
       return {
         refused: "memory",
-        detail: `MemAvailable ${available} Mio − ${need} Mio < réserve ${this.#admission.reserveMiB} Mio`,
+        detail: `mémoire insuffisante : ${available} Mio disponibles, ${reserve + need} requis (réserve ${reserve} + ${kind} ${need})`,
       };
     }
     const id = this.#nextId++;
