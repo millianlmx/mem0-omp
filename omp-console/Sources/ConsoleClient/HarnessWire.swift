@@ -86,6 +86,10 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var kind: String?
     /// Les labels déclarés au lancement (vides avec un serveur antérieur).
     public var labels: [String]
+    /// La carte en tête des specs à valider ou d'un arbitrage (session en graphe), servie par `GET /v1/runs/{id}`
+    /// et `GET /v1/inbox` seulement : `nil` ailleurs et d'un serveur antérieur ; vide (`feature` vide, aucune carte)
+    /// quand le run n'attend ni specs ni arbitrage.
+    public var briefing: HarnessBriefing? = nil
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -95,7 +99,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
         projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil,
-        kind: String? = nil, labels: [String] = []
+        kind: String? = nil, labels: [String] = [], briefing: HarnessBriefing? = nil
     ) {
         self.id = id
         self.repo = repo
@@ -123,15 +127,16 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.waitCause = waitCause
         self.kind = kind
         self.labels = labels
+        self.briefing = briefing
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause`,
-    /// ni `kind`, ni `labels` : 0, `nil` et vide. `notBefore` est un instant en millisecondes.
+    /// ni `kind`, ni `labels`, ni `briefing` : 0, `nil` et vide. `notBefore` est un instant en millisecondes.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -160,6 +165,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         waitCause = try container.decodeIfPresent(String.self, forKey: .waitCause)
         kind = try container.decodeIfPresent(String.self, forKey: .kind)
         labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
+        briefing = try container.decodeIfPresent(HarnessBriefing.self, forKey: .briefing)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -190,6 +196,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(waitCause, forKey: .waitCause)
         try container.encodeIfPresent(kind, forKey: .kind)
         try container.encode(labels, forKey: .labels)
+        try container.encodeIfPresent(briefing, forKey: .briefing)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
@@ -301,8 +308,11 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
     /// L'étape qui a posé la question (`req`, `specs`, `impl`…) ; `nil` d'un serveur antérieur.
     public var step: String?
     public var status: String
+    /// La carte de la question (session en graphe) : ce que l'humain lit en 30 secondes ; `nil` d'un serveur
+    /// antérieur ou d'une escalade posée sans carte (l'affichage historique s'applique alors).
+    public var card: HarnessCard?
 
-    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, rationale: String? = nil, impacts: [String] = [], step: String? = nil, status: String = "open") {
+    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, rationale: String? = nil, impacts: [String] = [], step: String? = nil, status: String = "open", card: HarnessCard? = nil) {
         self.id = id
         self.runId = runId
         self.category = category
@@ -314,14 +324,15 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         self.impacts = impacts
         self.step = step
         self.status = status
+        self.card = card
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runId, category, question, options, recommended, context, rationale, impacts, step, status
+        case id, runId, category, question, options, recommended, context, rationale, impacts, step, status, card
     }
 
     /// Un serveur antérieur n'écrit ni `recommended`, ni `options`, ni `context`, ni
-    /// `rationale`, ni `impacts`, ni `step` : `nil` et vide.
+    /// `rationale`, ni `impacts`, ni `step`, ni `card` : `nil` et vide.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
@@ -335,6 +346,7 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         impacts = try container.decodeIfPresent([String].self, forKey: .impacts) ?? []
         step = try container.decodeIfPresent(String.self, forKey: .step)
         status = try container.decode(String.self, forKey: .status)
+        card = try container.decodeIfPresent(HarnessCard.self, forKey: .card)
     }
 
     /// Le contexte donné par l'agent, s'il en a donné un.

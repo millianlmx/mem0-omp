@@ -151,13 +151,17 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     /// La sorte d'un élément de la veille (`reply`, `followup`, `prep`, `brief`) et s'il est prêt.
     public var watchKind: String? = nil
     public var watchReady: Bool = false
+    /// La carte de la première question d'un lot (session en graphe) : sa `headline` devient le
+    /// titre et son `stake` le corps, comme l'alerte push du serveur ; `nil` sans carte.
+    public var headline: String? = nil
+    public var stake: String? = nil
 
     /// Le titre, les mêmes mots que l'alerte push du serveur.
     public var title: String {
         switch alert.kind {
         case .specs: NotificationText.specs
         case .verdict: NotificationText.verdict
-        case .escalation: NotificationText.questions(questions)
+        case .escalation: headline ?? NotificationText.questions(questions)
         case .approval: NotificationText.approval
         case .runFailed: NotificationText.failed
         case .stalled: NotificationText.stalled
@@ -173,6 +177,8 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     public func body(runTitle: String?) -> String {
         switch alert.kind {
         case .approval: NotificationText.approvalBody
+        case .escalation where stake != nil:
+            (stake ?? "") + (questions > 1 ? " · " + NotificationText.otherQuestions(questions - 1) : "")
         case .dailyBudget: NotificationText.dailyBudgetBody
         case .vigieSilent: NotificationText.vigieSilentBody
         case .backupFailed: NotificationText.backupFailedBody
@@ -282,6 +288,7 @@ public enum HarnessNotificationRouting {
         let canAct = client?.canAct ?? true
         let approver = client?.approver ?? false
         var questions = 0
+        var card: (headline: String, stake: String)?
         let kind: HarnessPushKind
         switch event.name {
         case "specs_ready": kind = .specs
@@ -289,6 +296,10 @@ public enum HarnessNotificationRouting {
         case "escalations":
             questions = row.payload?.items?.count ?? 0
             guard questions > 0 else { return nil }
+            if let first = row.payload?.items?.first,
+               let headline = HarnessQuestion.shown(first.question), let stake = HarnessQuestion.shown(first.stake) {
+                card = (headline, stake)
+            }
             kind = .escalation
         case "workstation_approval":
             guard approver, row.payload?.seq != nil else { return nil }
@@ -327,7 +338,9 @@ public enum HarnessNotificationRouting {
             eventId: id,
             repo: row.repo,
             questions: questions,
-            proofs: kind == .verdict ? row.payload?.proofs : nil
+            proofs: kind == .verdict ? row.payload?.proofs : nil,
+            headline: card?.headline,
+            stake: card?.stake
         )
     }
 }
@@ -335,7 +348,11 @@ public enum HarnessNotificationRouting {
 /// Un événement du flux tel que le serveur l'écrit (`data:` d'une trame SSE).
 private struct StreamRow: Decodable {
     struct Payload: Decodable {
-        struct Item: Decodable {}
+        /// Une question du lot (événement `escalations`) : sa `headline` et le `stake` de sa carte.
+        struct Item: Decodable {
+            var question: String?
+            var stake: String?
+        }
         var seq: Int?
         var items: [Item]?
         /// Les preuves du tour de revue courant (événement `verdict`).

@@ -59,6 +59,8 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui a arrêté le direct pour de bon (feature inconnue, serveur trop ancien,
     /// jeton refusé) ; une coupure du réseau, elle, est reprise sans bruit.
     @Published public private(set) var sessionFailure: HarnessFailure?
+    /// La dernière version du graphe de session annoncée par l'événement `graph`, par feature suivie.
+    @Published public private(set) var graphVersions: [String: Int] = [:]
     /// La santé du serveur au fil du temps, lue à la demande de l'écran des statistiques.
     @Published public private(set) var metrics: HarnessMetrics?
     /// La santé des services (`GET /v1/health`), l'état du serveur (`/v1/status`) et le
@@ -524,6 +526,9 @@ public final class HarnessModel: ObservableObject {
                             session?.apply(entry)
                         } else if let output = event.testOutput {
                             session?.tests.apply(output)
+                        } else if let version = event.graphVersion {
+                            // Le graphe de session a changé : la Carte de la feature le relit.
+                            if case let .run(runId) = target { graphVersions[runId] = version }
                         } else if Self.sessionStateEvents.contains(event.name) {
                             stale = true
                         }
@@ -587,6 +592,12 @@ public final class HarnessModel: ObservableObject {
     /// Une erreur de transport ou de décodage LÈVE : une clé mal nommée ne passe pas pour un serveur sans preuves.
     public func proofs(runId: String) async throws -> HarnessProofs? {
         try await readIfServed("/v1/runs/\(Self.encoded(runId))/proofs")
+    }
+
+    /// Le graphe de session d'une feature. `nil` sur un 404 : serveur sans la capacité
+    /// `session-graph`, ou feature invisible. Une autre panne LÈVE.
+    public func sessionGraph(runId: String) async throws -> HarnessGraph? {
+        try await readIfServed("/v1/runs/\(Self.encoded(runId))/graph")
     }
 
     /// Les octets d'une preuve (capture, journal, rapport de tests), tels que le serveur

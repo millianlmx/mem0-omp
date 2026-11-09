@@ -13,13 +13,18 @@ import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { crc32, deflateSync } from "node:zlib";
+import { buildCard } from "../../omp-harness/card.ts";
+import type { StepRow } from "../../omp-harness/db.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import { ProofStore } from "../../omp-harness/proofs.ts";
+import { SessionGraphs } from "../../omp-harness/session-graph.ts";
 import { tapTally } from "../../omp-harness/tap.ts";
 import { testReport } from "../../omp-harness/test-report.ts";
-import { fakeWorld } from "../../test/support/harness-fixtures.ts";
+import { type FakeWorld, fakeWorld } from "../../test/support/harness-fixtures.ts";
 
 export const DEMO_RUN = "demo-preuves";
+/** La feature arrêtée sur une question à carte, avec son graphe de session. */
+export const GRAPH_RUN = "demo-carte";
 
 type Rect = { x: number; y: number; w: number; h: number; rgb: [number, number, number] };
 
@@ -211,7 +216,94 @@ export function demoWorld() {
     data: Buffer.from("article;quantité;prix\nthé;2;7,80\n", "utf8"),
   });
   store.finishStep(last.id, "done", null);
+  graphDemo(world);
   return world;
+}
+
+/**
+ * La feature de la session en graphe : arrêtée sur une question posée avec sa carte (`card`), et son
+ * graphe de session — deux étapes, des lectures dans deux dossiers, une recherche, des tests, une
+ * modification, puis l'escalade fondée sur deux fichiers lus. Le graphe est construit par le vrai
+ * `SessionGraphs` depuis des trames d'outils, puis écrit dans l'artefact que sert `GET /v1/runs/{id}/graph`.
+ */
+export function graphDemo(world: FakeWorld): void {
+  const { store } = world;
+  store.createRun({
+    id: GRAPH_RUN,
+    repo: "demo",
+    slug: "relance-factures",
+    title: "Relance des factures impayées",
+    request: "Relancer par courriel les factures impayées depuis plus de 30 jours.",
+    branch: "harness/relance-factures",
+    state: "escalated",
+    step: "impl",
+  });
+  const run = { id: GRAPH_RUN, worktree: null };
+  const graphs = new SessionGraphs({ store, publish: () => {} });
+  const specs = store.startStep(GRAPH_RUN, "specs", 0, null, null);
+  graphs.step(run, specs);
+  let calls = 0;
+  const tool = (step: { id: number; kind: StepRow["kind"] }, toolName: string, args: Record<string, unknown>) => {
+    calls += 1;
+    const toolCallId = `t${calls}`;
+    graphs.frame(run, step, { type: "tool_execution_start", toolCallId, toolName, args });
+    graphs.frame(run, step, { type: "tool_execution_end", toolCallId, toolName, result: { content: [] } });
+  };
+  tool(specs, "read", { path: "docs/factures.md" });
+  tool(specs, "read", { path: "src/factures/modele.ts" });
+  store.finishStep(specs.id, "done", null);
+  const impl = store.startStep(GRAPH_RUN, "impl", 0, null, null);
+  graphs.step(run, impl);
+  tool(impl, "grep", { pattern: "relance", path: "src" });
+  tool(impl, "read", { path: "src/factures/relance.ts" });
+  tool(impl, "read", { path: "src/courriel/envoi.ts" });
+  tool(impl, "read", { path: "src/courriel/gabarits.ts" });
+  graphs.test(GRAPH_RUN, impl, "touched", null, "fail");
+  tool(impl, "edit", { input: "[src/factures/relance.ts#A1B2]\nPUT 3.=3:\n+const delai = 30;\n" });
+  const escalation = store.addEscalation({
+    runId: GRAPH_RUN,
+    stepId: impl.id,
+    category: "clarification",
+    // Les champs historiques reprennent la carte : `question` = headline, `options` = libellés, `impacts`.
+    question: "Combien de relances pour une même facture impayée ?",
+    options: ["une seule fois", "chaque semaine"],
+    impacts: [
+      "Un seul courriel ; le suivi reste manuel ensuite.",
+      "Un courriel par semaine jusqu'au paiement ; risque de relancer un client qui a payé.",
+    ],
+    recommended: "une seule fois",
+    context:
+      "`src/factures/relance.ts` envoie la relance ; `src/courriel/envoi.ts` n'a pas de limite d'envoi par client. " +
+      "La demande ne dit pas combien de relances partent pour une même facture.",
+    rationale: "Une relance unique évite de harceler un client qui a déjà payé par virement.",
+    card: buildCard(
+      {
+        headline: "Combien de relances pour une même facture impayée ?",
+        stake: "Trop de relances agacent les clients ; trop peu laissent filer des impayés.",
+        established: "Une facture impayée depuis 30 jours reçoit une relance par courriel.",
+        options: [
+          { label: "une seule fois", impact: "Un seul courriel ; le suivi reste manuel ensuite.", reversible: true },
+          {
+            label: "chaque semaine",
+            impact: "Un courriel par semaine jusqu'au paiement ; risque de relancer un client qui a payé.",
+            reversible: false,
+            cost: "moyen",
+          },
+        ],
+        recommended: "une seule fois",
+        confidence: "moyenne",
+      },
+      true,
+    ),
+  });
+  graphs.decision(
+    run,
+    impl,
+    { kind: "escalation", id: escalation.id },
+    "Combien de relances pour une même facture impayée ?",
+    ["src/factures/relance.ts", "src/courriel/envoi.ts"],
+  );
+  graphs.flush(GRAPH_RUN);
 }
 
 if (import.meta.main) {

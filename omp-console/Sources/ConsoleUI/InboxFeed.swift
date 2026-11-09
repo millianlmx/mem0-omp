@@ -335,23 +335,34 @@ struct EscalationBatchCard: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text(MarkdownDocument.inline(item.question))
-                        .font(.headline)
-                        .consoleReadable()
-                    QuestionContextView(context: item.shownContext)
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(item.choices) { choice in
-                            QuestionChoiceRow(
-                                choice: choice,
-                                badge: PipelineServerText.recommendedBadge,
-                                selected: drafts.answer(for: item) == choice.option
-                            ) {
-                                drafts.answers[item.id] = choice.option
+                    if let card = item.card {
+                        // La session en graphe : l'explication synthétique, le schéma de bifurcation
+                        // (ses options se choisissent), la carte d'exploration, puis les détails repliés.
+                        DecisionCardSummary(card: card)
+                        BifurcationSchemaView(schema: card.schema, selected: drafts.answer(for: item)) { option in
+                            drafts.answers[item.id] = option
+                        }
+                        CardExplorationView(server: server, runId: batch.id, escalationId: item.id, runState: batch.run?.state)
+                        CardDetailsView(context: item.shownContext, rationale: item.shownRationale)
+                    } else {
+                        Text(MarkdownDocument.inline(item.question))
+                            .font(.headline)
+                            .consoleReadable()
+                        QuestionContextView(context: item.shownContext)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(item.choices) { choice in
+                                QuestionChoiceRow(
+                                    choice: choice,
+                                    badge: PipelineServerText.recommendedBadge,
+                                    selected: drafts.answer(for: item) == choice.option
+                                ) {
+                                    drafts.answers[item.id] = choice.option
+                                }
                             }
                         }
-                    }
-                    if let rationale = item.shownRationale {
-                        QuestionReasonView(title: PipelineServerText.whyRecommended, text: rationale)
+                        if let rationale = item.shownRationale {
+                            QuestionReasonView(title: PipelineServerText.whyRecommended, text: rationale)
+                        }
                     }
                     // La réponse présélectionnée est l'option recommandée, tant que rien n'est tapé.
                     TextField(PipelineServerText.answerPlaceholder, text: Binding(
@@ -423,6 +434,10 @@ struct SpecsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             QuestionPlaceView(place: inbox.question(run))
+            // Le briefing (ce que fait la feature, les points ambigus) avant le document complet.
+            if let briefing = run.briefing {
+                BriefingView(briefing: briefing)
+            }
             if let specs = drafts.specs[run.id] {
                 // Les specs rendues (titres, listes de critères, tableaux, code), pas leur
                 // source : elles se lisent comme un document, et se copient.
@@ -487,6 +502,10 @@ struct VerdictCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             QuestionPlaceView(place: inbox.question(run))
+            // Un arbitrage entre revue et correction : son briefing avant le verdict complet.
+            if let briefing = run.briefing {
+                BriefingView(briefing: briefing)
+            }
             if let verdict = run.verdict {
                 Text(PipelineServerText.risk(verdict.risk))
                     .font(.caption.weight(.semibold))

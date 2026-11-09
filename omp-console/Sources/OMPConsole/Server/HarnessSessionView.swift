@@ -31,6 +31,8 @@ struct HarnessSessionContent: View {
     let target: HarnessSessionTarget
     let pane: HarnessSessionPane
     @Binding var followsEnd: Bool
+    /// L'entrée à montrer (un nœud de la Carte ouvert) ; remise à `nil` une fois montrée.
+    var focus: Binding<Int?> = .constant(nil)
     @State private var opened: HarnessSessionDetailRequest?
 
     var body: some View {
@@ -144,6 +146,12 @@ struct HarnessSessionContent: View {
             .onChange(of: followsEnd) { _, follows in
                 guard follows, let last = entries.last else { return }
                 proxy.scrollTo(last.seq, anchor: .bottom)
+            }
+            // L'entrée d'un nœud de la Carte : montrée dès qu'elle est dans le journal.
+            .onChange(of: entries.count, initial: true) {
+                guard let seq = focus.wrappedValue, entries.contains(where: { $0.seq == seq }) else { return }
+                proxy.scrollTo(seq, anchor: .center)
+                focus.wrappedValue = nil
             }
         }
     }

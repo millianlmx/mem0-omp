@@ -16,6 +16,7 @@ import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
 import { answerCookieImport } from "./lib/cookie-import.ts";
 import { HarnessError, harnessCall } from "./lib/harness.ts";
 import { INTAKE_KEY, type Intake, settled } from "./lib/intake.ts";
+import { type PendingQuestion, pendingQuestions } from "./lib/questions.ts";
 import type {
   ActionLog,
   LinkState,
@@ -556,6 +557,41 @@ async function readIntake(): Promise<Reply<Intake | null>> {
 
 const intakeRoute = (id: string, verb: string) => `/v1/intake/${encodeURIComponent(id)}/${verb}`;
 
+// ── Questions en attente (popup) ──────────────────────────────────────────
+
+/** Les escalades ouvertes de la boîte, lues par leur carte ; un refus du serveur garde son message français. */
+async function readQuestions(): Promise<Reply<PendingQuestion[]>> {
+  const settings = await loadSettings();
+  if (settings.pairing === null) return { ok: true, value: [] };
+  try {
+    const inbox = await harnessCall<unknown>(settings.pairing, "GET", "/v1/inbox", undefined, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    return { ok: true, value: pendingQuestions(inbox) };
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+/** Répond à une escalade du lot (le run reprend quand tout le lot est répondu). */
+async function answerQuestion(runId: string, id: number, answer: string): Promise<Reply<PendingQuestion[]>> {
+  const settings = await loadSettings();
+  if (settings.pairing === null) return { ok: false, error: "navigateur non appairé : ouvrez les réglages" };
+  if (answer.trim() === "") return { ok: false, error: "la réponse est vide" };
+  try {
+    await harnessCall(
+      settings.pairing,
+      "POST",
+      `/v1/runs/${encodeURIComponent(runId)}/escalations`,
+      { answers: [{ id, answer }] },
+      { signal: AbortSignal.timeout(10_000) },
+    );
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+  return readQuestions();
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 function isToBackground(value: unknown): value is ToBackground {
@@ -624,6 +660,10 @@ async function handle(request: ToBackground, sender: chrome.runtime.MessageSende
     case "intake-answer":
       if (request.text.trim() === "") return { ok: false, error: "la réponse est vide" };
       return intakeCall("POST", intakeRoute(request.id, "answer"), { text: request.text });
+    case "questions-get":
+      return readQuestions();
+    case "question-answer":
+      return answerQuestion(request.runId, request.id, request.answer);
   }
 }
 

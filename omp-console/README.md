@@ -7,7 +7,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 | Groupe | Section | Ce qu'elle montre |
 |---|---|---|
 | Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
-| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
+| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Carte, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
 | Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. Sur le Mac seulement, réservé à l'appareil approbateur : « Navigateur du serveur » — l'état des comptes Slack et Google du navigateur que l'agent pilote sur le VPS, l'import de la session de votre Chrome (l'extension répond seule) et la connexion interactive dans une feuille (image de la page rafraîchie chaque seconde, clics, frappes, « Terminer »). |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
 | Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
@@ -378,12 +378,24 @@ elle-même.
     réponse. Chaque réponse part de l'option que l'agent recommande (`recommended`) ;
     une saisie la remplace, et une raison facultative l'accompagne (`reason`).
     « Accepter les recommandations » répond tout le lot d'un geste, quand chaque
-    escalade en a une ;
+    escalade en a une. Une escalade posée avec sa **carte** (`card`, session en
+    graphe) se lit en trois couches, de la plus courte à la plus visuelle : la
+    question (`headline`), l'enjeu (`stake`) et une ligne par option (sa conséquence,
+    réversible ou non, son coût, la recommandée marquée) ; puis le **schéma de la
+    bifurcation** dessiné nativement depuis `card.schema` (établi → ambiguïté →
+    options → impacts, la fourche tracée en `Shape`), dont chaque option se choisit
+    d'un geste ; puis la **carte d'exploration** (ce que l'agent a lu et fait, lu par
+    `GET /v1/runs/{id}/graph`, la question et ses preuves surlignées), repliée sur
+    iPhone ; enfin les **Détails** repliés (`context` et raison de l'agent). Une
+    escalade sans carte (serveur antérieur) garde l'affichage d'avant
+    (`DecisionCardViews.swift`, `SessionGraphViews.swift`, ConsoleUI) ;
   - **Specs à valider** : la porte des specs — après /specs, la feature attend
-    l'humain avant /impl. « Lire les specs » montre `specs.md` du run
+    l'humain avant /impl. Le **briefing** du run (`briefing`, la ligne « ce que fait
+    la feature » puis la carte de chaque point ambigu, avec son schéma) passe en tête,
+    avant le document. « Lire les specs » montre `specs.md` du run
     (`GET /v1/runs/{id}`), « Valider les specs » lance /impl, « Refuser » demande une
     raison, qui fait réécrire les specs et rejoint la mémoire du projet ;
-  - **Verdicts à valider** : verdict, risque, bloquants, points non vérifiés ; un
+  - **Verdicts à valider** : le briefing d'un arbitrage en tête, puis verdict, risque, bloquants, points non vérifiés ; un
     verdict faible demande de lire les différences. « Valider et fusionner » ou
     « Refuser » avec une raison (`POST /v1/runs/{id}/validate`). Une feature arrêtée
     sans verdict (échecs répétés, fusion refusée) propose « Relancer » ;
@@ -442,7 +454,7 @@ elle-même.
   **Origine** d'une feature lancée depuis un signalement de collègue : canal,
   personne telle que reçue, lien du fil, extrait caviardé, issue et confirmation, lus
   par `GET /v1/runs/{id}/origin` ; rien sans origine ni pour un jeton restreint),
-  **Preuves**, **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ
+  **Preuves**, **Carte**, **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ
   de consigne à l'agent quand elle en accepte une. Elle s'ouvre sur les Preuves quand
   elle attend la validation de sa revue, sur l'Aperçu quand elle vous attend
   autrement, sur le Direct quand elle tourne, sur l'Aperçu sinon
@@ -463,6 +475,16 @@ elle-même.
     l'onglet. La notification locale « Verdict à valider » finit par le nombre de
     preuves du tour (`proofs` de l'événement `verdict`) : « aucune preuve »,
     « 1 preuve », « 3 preuves » ;
+  - **Carte** : le graphe de session de la feature en direct (`GET /v1/runs/{id}/graph`,
+    relu quand l'événement éphémère `graph` du flux de la feature annonce une version
+    plus récente), partagé Mac/iOS (`RunGraphSections`, ConsoleUI) : une voie par
+    étape avec son avancement (fait, en cours, bloqué) et ce qu'elle a fait
+    (recherches, tests, modifications, décisions, questions, fichiers lus), puis les
+    dossiers touchés, dépliables sur leurs fichiers (un dossier regroupé dit combien
+    il en a absorbé). Les décisions et les questions sont teintées, ce qui les fonde
+    (`ambiguities[].evidence`) est surligné ; un nœud dont l'entrée du direct est
+    connue (`HarnessGraphLink`) ouvre le Direct sur elle. Un serveur sans la
+    capacité `session-graph` (404) n'a pas d'onglet ;
   - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
     paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
     son intention, sa commande, son état, sa durée et la fin de son résultat
@@ -534,7 +556,9 @@ elle-même.
   budget dépassé, la vigie muette et les sauvegardes échouées — voir
   `omp-harness/README.md` § « Les alertes push des appareils ». Sur le **Mac**, sans
   APNs, chaque événement du flux qui attend l'humain devient une notification locale
-  tant que l'app tourne en arrière-plan. Les gestes sont les mêmes des deux côtés :
+  tant que l'app tourne en arrière-plan. Une question posée avec sa carte n'y porte
+  que sa `headline` (titre) et son `stake` (corps, suivi de « · +N autres questions »
+  pour un lot), comme l'alerte push du serveur. Les gestes sont les mêmes des deux côtés :
   **Valider** / **Refuser** (specs, verdict ; le refus demande sa raison),
   **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Valider, refuser et
   approuver exigent l'appareil déverrouillé et partent avec la révision que portait la
@@ -1849,7 +1873,7 @@ omp-console/
 │   ├── ProjectRoot.swift          le projet choisi de l'app (`session.projectRoot`)
 │   ├── Server/                    les écrans servis par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun (sans barre d'outils répétée), À traiter, Features
-│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne)
+│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Preuves, Carte, Direct, Fichiers, Tests, Frise, consigne)
 │   │   ├── HarnessSessionView.swift   le contenu de session partagé par la page et la feuille (audits, jobs du poste)
 │   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
 │   │   ├── HarnessStatsCharts.swift   les indicateurs et graphiques de Système › Statistiques et santé
@@ -1933,7 +1957,7 @@ Features suit la feature ouverte (`drafts.openedRun`), celle de Système la page
 montrée (`drafts.systemPage`) ; la palette, les notifications et le widget y
 poussent donc leur page. Toucher une ligne de feature ouvre sa **page**
 (`IOSRunScreen.swift`, `ios.screen.run`) : en-tête et jalons, onglets Aperçu,
-Preuves, Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
+Preuves, Carte, Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
 menu « … ». Créer passe par le « + » de la barre (`ios.inbox.new` sur À traiter,
 menu Nouvelle feature / Nouveau projet / Nouvel audit sur Features,
 `ios.schedules.new` sur Planifications), qui ouvre une feuille. Aucun bouton

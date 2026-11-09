@@ -15,6 +15,11 @@
       <p class="muted" id="state-detail"></p>
       <button type="button" class="secondary" id="approve" hidden>Approuver dans OMP Console</button>
     </section>
+    <section aria-live="polite" id="questions" hidden>
+      <h2>Questions en attente</h2>
+      <div id="questions-list"></div>
+      <p class="message" id="questions-message" role="status"></p>
+    </section>
     <section aria-live="polite">
       <h2>Demande</h2>
       <textarea id="intake-text" placeholder="Corrige le bug X dans mem0-omp…" aria-label="Demande"></textarea>
