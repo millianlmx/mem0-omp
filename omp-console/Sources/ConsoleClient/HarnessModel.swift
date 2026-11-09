@@ -74,6 +74,8 @@ public final class HarnessModel: ObservableObject {
     /// Les signalements des collègues devenus propositions, et l'origine d'une feature
     /// (pont corpo ↔ usine) : même échange, même flux.
     public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
+    /// La Demande : une phrase libre classée en plan par le serveur (`/v1/intake*`).
+    public private(set) lazy var intakes = HarnessIntakes(harness: self, reloadDelay: refreshDelay)
     /// Les canaux corpo du poste (Gmail, Agenda, Slack) : état et connexion, même échange,
     /// relus à l'événement `workstation_channel`.
     public private(set) lazy var channels = WorkstationChannelsModel(harness: self, reloadDelay: refreshDelay)
@@ -283,6 +285,7 @@ public final class HarnessModel: ObservableObject {
     private func resetServerState() {
         workstation.reset()
         signals.reset()
+        intakes.reset()
         channels.reset()
         history.reset()
         vigie.reset()
@@ -393,6 +396,7 @@ public final class HarnessModel: ObservableObject {
                         scheduleRefresh()
                         workstation.receive(names)
                         signals.receive(names)
+                        intakes.receive(names)
                         channels.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
