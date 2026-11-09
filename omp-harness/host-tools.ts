@@ -2,7 +2,12 @@
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
 // `run_tests`, `review_verdict`, `qa_record_proof`). Le runner n'a ni la base ni le jeton de l'API : tout
 // passe par ici.
+import { baselineSummary } from "./baseline.ts";
+import { buildCard, maskCard } from "./card.ts";
+import { reviewCard } from "./card-reader.ts";
+import type { ReviewedCard } from "./card-reader.ts";
 import type { HarnessContext } from "./context.ts";
+import { ARTIFACTS_DIR, isArtifactPath } from "./git.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import type { DecisionInput, IrreversibleCategory } from "./decisions.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
@@ -117,6 +122,21 @@ function pathList(value: unknown): string[] | null {
   return [...new Set(paths)];
 }
 
+/** Le refus d'une décision qui cite une preuve absente du graphe du run ; `null` si toutes y sont. */
+function evidenceRefusal(ctx: HarnessContext, run: RunRow, evidence: readonly string[]): HostToolResult | null {
+  if (evidence.length === 0) return null;
+  const found = ctx.graphs.resolve(run, evidence);
+  if (found.ok) return null;
+  const missing = found.missing.map((item) => `« ${item} »`).join(", ");
+  return {
+    text:
+      `décision refusée : preuve absente du graphe du run : ${missing} — cite un fichier ou un dossier que tu as lu, ` +
+      "cherché ou modifié toi-même dans cette session (les lectures des sous-agents n'y sont pas), ou le motif exact " +
+      "d'une recherche faite",
+    isError: true,
+  };
+}
+
 async function decisionTool(
   ctx: HarnessContext,
   run: RunRow,
@@ -124,7 +144,7 @@ async function decisionTool(
   args: Record<string, unknown>,
 ): Promise<HostToolResult> {
   const { store } = ctx;
-  const parsed = planDecision(args);
+  const parsed = planDecision(args, { cardRequired: step.kind === "req" || step.kind === "specs" });
   if (!parsed.ok) return { text: `décision refusée : ${parsed.error}`, isError: true };
   const plan = parsed.plan;
   const standing = new Set(
@@ -136,11 +156,20 @@ async function decisionTool(
       text: `décision refusée : dependsOn cite ${unknown.map((n) => `#${n}`).join(", ")}, absente(s) de ce run (ou caduque)`,
       isError: true,
     };
+  const refused = evidenceRefusal(ctx, run, plan.input.evidence);
+  if (refused) return refused;
   if (plan.kind === "checkpoint") return checkpointDecision(ctx, run, step, plan.input, plan.input.rationale, null);
 
   // L'humain a peut-être déjà tranché la même question (souvenir d'une escalade répondue) : sa réponse s'impose.
   const memories = await ctx.oracle.recallDecisions(ctx.repo(run.repo).scope, plan.input.question);
   const precedent = matchingHumanDecision(memories, plan.category);
+  // Sans précédent, le relecteur « humain pressé » lit la carte (masquée) : une attente de plus, bornée, jamais bloquante.
+  const read = precedent
+    ? null
+    : await reviewCard(ctx, run, step, maskCard(plan.input.card, Object.values(ctx.providers.runnerEnv())));
+  // La borne a pu retirer une recherche pendant les attentes : rien n'est encore écrit, on refuse ici.
+  const stale = evidenceRefusal(ctx, run, plan.input.evidence);
+  if (stale) return stale;
   if (precedent) {
     const choice = memoryChoice(precedent.text);
     const chosen = choice !== null && plan.input.options.includes(choice) ? choice : plan.input.chosen;
@@ -149,27 +178,31 @@ async function decisionTool(
     return checkpointDecision(ctx, run, step, { ...plan.input, chosen, category: plan.category }, rationale, precedent);
   }
 
+  // Aucun `await` d'ici à `graphs.decision` : les preuves viennent d'être résolues sur l'état courant du graphe.
+  const card = read as ReviewedCard;
   const escalation = store.transaction(() => {
     const item = store.addEscalation({
       runId: run.id,
       stepId: step.id,
       category: plan.category,
-      question: plan.input.question,
-      options: plan.input.options,
-      recommended: plan.input.chosen,
+      question: card.draft.headline,
+      options: card.draft.options.map((option) => option.label),
+      recommended: card.draft.recommended,
       context: plan.input.context,
       rationale: plan.input.rationale,
-      impacts: plan.input.impacts,
+      impacts: card.draft.options.map((option) => option.impact),
+      card: buildCard(card.draft, card.reviewed),
     });
     ctx.event("escalation", run.id, {
       id: item.id,
       category: plan.category,
-      question: plan.input.question,
-      recommended: plan.input.chosen,
+      question: item.question,
+      recommended: item.recommended,
       hardened: plan.hardened,
     });
     return item;
   });
+  ctx.graphs.decision(run, step, { kind: "escalation", id: escalation.id }, escalation.question, plan.input.evidence);
   const hardened = plan.hardened ? ` (déclarée réversible, classée ${escalation.category} par le service)` : "";
   return {
     text: `ESCALADÉE${hardened} : n'applique PAS ce choix. Contourne-le et termine tout ce qui n'en dépend pas ; l'humain tranchera à la fin de l'étape, avec les autres escalades.`,
@@ -195,10 +228,12 @@ async function checkpointDecision(
     rationale,
     context: input.context,
     impacts: input.impacts,
+    card: input.card ? buildCard(maskCard(input.card, Object.values(ctx.providers.runnerEnv())), false) : null,
     category: input.category,
     checkpointSha: null,
     dependsOn: input.dependsOn,
   });
+  ctx.graphs.decision(run, step, { kind: "decision", seq: decision.seq }, decision.question, input.evidence);
   const sha = await git.commitAll(
     run.worktree as string,
     checkpointMessage(run.id, decision.seq, { ...input, rationale }),
@@ -253,6 +288,12 @@ function setModulesTool(
   const paths = pathList(args.paths);
   if (paths === null || paths.length === 0)
     return { text: "set_modules refusé : paths est une liste non vide de chemins du dépôt", isError: true };
+  const artifacts = paths.filter(isArtifactPath);
+  if (artifacts.length > 0)
+    return {
+      text: `set_modules refusé : ${artifacts.join(", ")} est sous \`${ARTIFACTS_DIR}/\`, les artefacts d'étape ne sont jamais un module. Rappelle set_modules avec les seuls chemins du dépôt que la feature touchera ; les modules du run n'ont pas changé.`,
+      isError: true,
+    };
   const updated = store.transaction(() => {
     const row = store.updateRun(run.id, { modules: paths });
     ctx.event("modules", run.id, { modules: paths, step: step.kind, by: "runner" });
@@ -278,7 +319,11 @@ export function parseSplitFeatures(
     if (title === "" || request === "") return { ok: false, error: "title et request sont requis pour chaque feature" };
     const modules = pathList(record.modules ?? []);
     if (modules === null) return { ok: false, error: `modules de « ${title} » : liste de chemins` };
-    features.push({ title: title.slice(0, 120), request, modules });
+    features.push({
+      title: title.slice(0, 120),
+      request,
+      modules: modules.filter((module) => !isArtifactPath(module)),
+    });
   }
   return { ok: true, features };
 }
@@ -389,12 +434,18 @@ async function runTestsTool(
     },
     signal,
   );
+  ctx.graphs.test(run.id, step, scope, scope === "check" ? check : null, result.outcome);
   if (scope !== "check" && !(result.cached && state.lastTests?.result.key === result.key))
     state.lastTests = { scope, result };
   if (scope === "full") state.lastFull = result;
+  // Un rouge que main a déjà n'est pas un bloquant : l'agent de revue le lit ici, avant son verdict.
+  const judged = scope === "full" ? await ctx.baseline.judge(run, repo, result) : null;
+  const baseline = judged
+    ? `\n\nROUGE DE BASE : ${baselineSummary(judged)}.${judged.new.length === 0 ? " Ce n'est pas un bloquant." : ""}`
+    : "";
   return {
-    text: heavyReport(result, config.heavy.memoryMax),
-    isError: result.outcome !== "pass",
+    text: heavyReport(result, config.heavy.memoryMax) + baseline,
+    isError: result.outcome !== "pass" && !(judged !== null && judged.new.length === 0),
     details: { outcome: result.outcome, cached: result.cached, tree: result.tree },
   };
 }

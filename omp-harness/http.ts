@@ -99,6 +99,9 @@ export const API_FEATURES = [
   "workstation-captures",
   "workstation-files",
   "workstation-channels",
+  "workstation-channel-reads",
+  "workstation-people",
+  "workstation-watch",
   "mcp",
   "digest",
   "instructions",
@@ -113,6 +116,7 @@ export const API_FEATURES = [
   "corporate-signals",
   "intake",
   "proofs",
+  "session-graph",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
@@ -303,7 +307,7 @@ type Call = {
 };
 
 export type Route = {
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   role: Role;
   pattern: RegExp;
@@ -366,6 +370,7 @@ export function apiRoutes(
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
+  const READS_WATCH = "réservé à l'humain — un client pilote ne lit pas la veille du poste";
   /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
   const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
@@ -520,6 +525,9 @@ export function apiRoutes(
     ),
     route("GET", "/v1/runs/{id}/session/{n}", "viewer", (call) =>
       send(call.res, 200, orchestrator.sessionEntryView(call.match[1] as string, Number(call.match[2]), call.repos)),
+    ),
+    route("GET", "/v1/runs/{id}/graph", "viewer", (call) =>
+      send(call.res, 200, orchestrator.graphView(call.match[1] as string, call.repos)),
     ),
     route("GET", "/v1/runs/{id}/proofs", "viewer", (call) =>
       send(call.res, 200, orchestrator.proofsView(call.match[1] as string, call.repos)),
@@ -1070,6 +1078,58 @@ export function apiRoutes(
       approverOf(call);
       send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
     }),
+    // La lecture des canaux : les canaux Slack de l'espace (lus en direct) et la case « suivi »,
+    // que la lecture suivante applique (les DM et les mentions sont lus partout).
+    route("GET", "/v1/workstation/channels/slack/conversations", "viewer", async (call) => {
+      workstationOf(call);
+      send(call.res, 200, await orchestrator.channelReader.slackConversations());
+    }),
+    route("PUT", "/v1/workstation/channels/slack/conversations/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channelReader.followSlackConversation(call.match[1] as string, body));
+    }),
+    // Le graphe des personnes du poste : lu par le propriétaire, corrigé champ par champ depuis
+    // l'appareil approbateur (If-Match : la révision de la personne). Pas de PUT de collection.
+    route("GET", "/v1/workstation/people", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.people.list());
+    }),
+    route("PATCH", "/v1/workstation/people/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.people.patch(call.match[1] as string, body, ifMatch(call.req)));
+    }),
+    // La veille proactive du poste : les éléments de « À traiter » (réponses proposées, relances,
+    // préparations, brief), au propriétaire seul et jamais à un client pilote (ce sont des messages
+    // de collègues). `?state=` (défaut `open`, liste séparée par des virgules ; vide : tous).
+    route("GET", "/v1/workstation/watch", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      const states = (call.url.searchParams.get("state") ?? "open").split(",").filter((state) => state !== "");
+      send(call.res, 200, orchestrator.watch.list(states, limitOf(call.url, 100, 500)));
+    }),
+    route("GET", "/v1/workstation/watch/{id}", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      send(call.res, 200, orchestrator.watch.get(call.match[1] as string));
+    }),
+    // La validation des réponses proposées (canaux/reponses.ts) : l'appareil approbateur seul.
+    // Écarter supprime le brouillon Gmail ; valider (texte modifié ou non, `If-Match` facultatif)
+    // met le brouillon à jour, fige l'empreinte et pose la demande du poste qui enverra.
+    route("POST", "/v1/workstation/watch/{id}/dismiss", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.replies.dismiss(call.match[1] as string));
+    }),
+    route("POST", "/v1/workstation/watch/{id}/validate", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(
+        call.res,
+        201,
+        await orchestrator.replies.validate(call.match[1] as string, body, ifMatch(call.req), call.actor),
+      );
+    }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
     route("PUT", "/v1/vigie", "admin", async (call) =>
@@ -1339,7 +1399,9 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       } catch {
         pathname = "";
       }
-      const method = ["GET", "POST", "PUT", "DELETE"].includes(req.method ?? "") ? (req.method as string) : "AUTRE";
+      const method = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(req.method ?? "")
+        ? (req.method as string)
+        : "AUTRE";
       stats.record(routeLabel(pathname), method, res.statusCode, Number(process.hrtime.bigint() - started) / 1e9);
     });
     void (async () => {

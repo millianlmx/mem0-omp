@@ -302,6 +302,9 @@ export function runnerEnv(
 
 const STRINGS = { type: "array", items: { type: "string" } } as const;
 
+/** Une ligne de carte : le serveur refuse au-delà (card.ts `CARD_LINE_MAX`). */
+const ONE_LINE = { type: "string", maxLength: 240 } as const;
+
 const DECISION_TOOL: HostToolDefinition = {
   name: "decision",
   label: "Harness — décision",
@@ -313,7 +316,10 @@ const DECISION_TOOL: HostToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      question: { type: "string", description: "La question, autoportante, en une phrase." },
+      question: {
+        type: "string",
+        description: "La question, autoportante, en une phrase. Avec la carte, `headline` en tient lieu.",
+      },
       context: {
         type: "string",
         description:
@@ -322,16 +328,42 @@ const DECISION_TOOL: HostToolDefinition = {
           "et ce qu'elle doit livrer, l'endroit du code concerné (fichiers, symboles), ce qui pose la question (ce que les " +
           "specs ou l'existant ne tranchent pas) et l'enjeu. Explique tout terme propre au projet.",
       },
-      options: { ...STRINGS, minItems: 2, maxItems: 4, description: "Les options envisagées (2 à 4), mot pour mot." },
+      options: {
+        type: "array",
+        minItems: 2,
+        maxItems: 4,
+        items: {
+          anyOf: [
+            { type: "string" },
+            {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Le libellé de l'option, mot pour mot." },
+                impact: { ...ONE_LINE, description: "Sa conséquence pour l'humain, une ligne." },
+                reversible: { type: "boolean", description: "Peut-on la défaire sans dommage ?" },
+                cost: { type: "string", enum: ["faible", "moyen", "fort"] },
+              },
+              required: ["label", "impact", "reversible"],
+              additionalProperties: false,
+            },
+          ],
+        },
+        description:
+          "Les options envisagées (2 à 4), mot pour mot. Pour une ESCALADE : des objets { label, impact, reversible, cost? } " +
+          "(le service refuse une option sans `impact` ni `reversible`) ; sinon des textes suffisent.",
+      },
       impacts: {
         ...STRINGS,
         minItems: 2,
         maxItems: 4,
         description:
-          "Ce qu'emporte chaque option, dans l'ordre de `options` (une phrase chacune : ce qui change, ce qu'il en coûte, " +
-          "ce qui devient difficile à défaire). REQUIS pour une escalade ; recommandé pour une clarification.",
+          "Sans carte : ce qu'emporte chaque option, dans l'ordre de `options` (une phrase chacune : ce qui change, ce qu'il en coûte, " +
+          "ce qui devient difficile à défaire). Avec la carte, chaque option porte son `impact`.",
       },
-      chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
+      chosen: {
+        type: "string",
+        description: "L'option retenue (reprise d'une des options). Avec la carte, `recommended` en tient lieu.",
+      },
       rationale: {
         type: "string",
         description: "Pourquoi cette option : réversibilité, coût, cohérence avec l'existant.",
@@ -344,8 +376,39 @@ const DECISION_TOOL: HostToolDefinition = {
           "Les numéros (#N) des décisions déjà prises dont ce choix découle. Renverser l'une d'elles annulera aussi celle-ci ; " +
           "un choix qui tiendrait quelle que soit l'issue des autres n'en déclare aucune.",
       },
+      evidence: {
+        ...STRINGS,
+        maxItems: 10,
+        description:
+          "Ce qui fonde la décision, lu ou fait par TOI dans cette session : chemins du dépôt " +
+          "(fichier ou dossier, `chemin:ligne` accepté) ou motif exact d'une recherche faite. Le service refuse " +
+          "une preuve qu'il n'a pas vue. Facultatif, SAUF pour une escalade (au moins une).",
+      },
+      headline: {
+        ...ONE_LINE,
+        description:
+          "LA CARTE d'une escalade, ce que l'humain lit d'abord : la question en 15 mots au plus, sans chemin de fichier ni " +
+          "`code` ni identifiant. Remplace `question`. Le service refuse une carte non conforme.",
+      },
+      stake: {
+        ...ONE_LINE,
+        description: "Carte : l'enjeu en une ligne (ce qu'on perd ou gagne), sans chemin de fichier.",
+      },
+      established: {
+        ...ONE_LINE,
+        description: "Carte : ce qui est déjà établi, en une ligne, sans chemin de fichier.",
+      },
+      recommended: {
+        type: "string",
+        description: "Carte : le libellé de l'option que tu recommandes (remplace `chosen`).",
+      },
+      confidence: {
+        type: "string",
+        enum: ["faible", "moyenne", "forte"],
+        description: "Carte : ta confiance dans la recommandation.",
+      },
     },
-    required: ["question", "context", "options", "chosen", "rationale", "category"],
+    required: ["context", "options", "rationale", "category"],
     additionalProperties: false,
   },
   loadMode: "essential",
@@ -372,7 +435,7 @@ const SET_MODULES_TOOL: HostToolDefinition = {
   name: "set_modules",
   label: "Harness — modules touchés",
   description:
-    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus.",
+    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus. Jamais les fichiers de `.harness/` (tes artefacts d'étape) : l'appel est refusé.",
   parameters: {
     type: "object",
     properties: { paths: { ...STRINGS, minItems: 1, description: "Chemins relatifs à la racine du dépôt." } },
@@ -695,7 +758,13 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande" | "poste-signal";
+export type WorkstationJob =
+  | "poste-profil"
+  | "poste-digest"
+  | "poste-service"
+  | "poste-demande"
+  | "poste-signal"
+  | "poste-veille";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -718,6 +787,31 @@ const INTAKE_TOOL: HostToolDefinition = {
       cron: { ...NULLABLE_STRING, description: "La planification cron à 5 champs d'une `schedule`." },
       target: { ...NULLABLE_STRING, description: "La cible d'une `schedule` : run, audit ou issues." },
       label: { ...NULLABLE_STRING, description: "Le label des issues d'une `schedule` de cible issues." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+/** Le relecteur « humain pressé » (card-reader.ts) : il rend ses réécritures, jamais les options. */
+const CARD_REVIEW_TOOL: HostToolDefinition = {
+  name: "card_review",
+  label: "Harness — relecture de carte",
+  description:
+    "Rends ta relecture de la carte, UNE fois. `headline`, `stake`, `established` et `impacts` : donne une réécriture " +
+    "SEULEMENT si la carte ne se comprend pas en 30 secondes sans connaître le code ; sinon omets-les. Tu ne touches " +
+    "jamais aux options, à leur réversibilité, à la recommandation ni à la confiance.",
+  parameters: {
+    type: "object",
+    properties: {
+      headline: { ...ONE_LINE, description: "La question réécrite : 15 mots au plus, ni chemin de fichier ni code." },
+      stake: { ...ONE_LINE, description: "L'enjeu réécrit, une ligne, sans chemin." },
+      established: { ...ONE_LINE, description: "Ce qui est établi, réécrit, une ligne, sans chemin." },
+      impacts: {
+        type: "array",
+        items: ONE_LINE,
+        description: "Les impacts réécrits, un par option, dans l'ordre des options (une ligne chacun).",
+      },
     },
     additionalProperties: false,
   },
@@ -876,6 +970,24 @@ const WORKSTATION_REQUEST_REPORT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_REPLY_TYPE_TOOL: HostToolDefinition = {
+  name: "workstation_reply_type",
+  label: "Poste — saisir la réponse validée",
+  description:
+    "Seulement pour une demande qui envoie une réponse Slack validée : saisit dans le champ de message `ref` de l'onglet `tabId` le texte validé EXACT, tenu par le serveur, puis l'envoie (Entrée) si `submit` n'est pas `false`. L'envoi passe par la garde d'envoi : il ne part sans second geste que si l'extension voit exactement la réponse validée.",
+  parameters: {
+    type: "object",
+    properties: {
+      tabId: { type: "integer", description: "L'onglet de ta fenêtre où est ouverte la conversation Slack." },
+      ref: { type: "string", description: "La référence du champ de message (snapshot de la page)." },
+      submit: { type: "boolean", description: "Envoyer après la saisie (Entrée) ; `true` par défaut." },
+    },
+    required: ["tabId", "ref"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   name: "workstation_meeting_digest",
   label: "Poste — digest de meeting",
@@ -966,6 +1078,76 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+// La veille proactive (canaux/veille.ts) : ses outils ne font que PROPOSER dans « À traiter ».
+// Aucun n'envoie, n'approuve ni n'agit dans le navigateur ; le serveur vérifie chaque référence
+// (message retenu, relance due, réunion à préparer, brief dû) et le niveau de délégation.
+const WORKSTATION_WATCH_REPLY_TOOL: HostToolDefinition = {
+  name: "workstation_watch_reply",
+  label: "Veille — proposer une réponse",
+  description:
+    "Propose à l'utilisateur une réponse à un message retenu (section « Messages »). Rien ne part : la réponse attend sa validation dans « À traiter » (un brouillon Gmail est créé dans le fil d'un mail). " +
+    "`topic` : le sujet LISTÉ de la personne dont traite le message, mot pour mot, s'il y en a un ; sinon omets-le. Une fois par message au plus.",
+  parameters: {
+    type: "object",
+    properties: {
+      messageId: { type: "string", description: "La référence du message retenu." },
+      text: { type: "string", description: "Le texte complet de la réponse, prêt à partir." },
+      topic: { type: "string", description: "Le sujet listé de la personne dont traite le message." },
+    },
+    required: ["messageId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_FOLLOWUP_TOOL: HostToolDefinition = {
+  name: "workstation_watch_followup",
+  label: "Veille — proposer une relance",
+  description:
+    "Propose une relance d'un fil resté sans réponse (section « Relances dues »). Rien ne part : elle attend la validation de l'utilisateur. Une fois par fil.",
+  parameters: {
+    type: "object",
+    properties: {
+      messageId: { type: "string", description: "La référence du dernier message de l'utilisateur." },
+      text: { type: "string", description: "Le texte complet de la relance." },
+    },
+    required: ["messageId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_PREP_TOOL: HostToolDefinition = {
+  name: "workstation_watch_prep",
+  label: "Veille — préparer une réunion",
+  description:
+    "Rend la préparation d'une réunion de la section « Réunions à préparer » : qui sont les participants, ce qui est en cours avec eux, ce que disent les transcripts passés au même lien. Une fois par réunion.",
+  parameters: {
+    type: "object",
+    properties: {
+      eventId: { type: "string", description: "La référence de la réunion." },
+      text: { type: "string", description: "La préparation, en quelques lignes." },
+    },
+    required: ["eventId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_BRIEF_TOOL: HostToolDefinition = {
+  name: "workstation_watch_brief",
+  label: "Veille — brief du matin",
+  description:
+    "Rend le brief du matin quand le prompt le demande : ce qui attend l'utilisateur aujourd'hui, en quelques puces. Une fois.",
+  parameters: {
+    type: "object",
+    properties: { text: { type: "string", description: "Le brief." } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
@@ -973,9 +1155,10 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
  * `review_verdict` et `qa_record_proof` en revue seulement.
  */
 export function hostToolsFor(
-  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | "carte" | WorkstationJob,
 ): HostToolDefinition[] {
   if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
+  if (step === "carte") return [CARD_REVIEW_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
@@ -983,6 +1166,14 @@ export function hostToolsFor(
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
   if (step === "poste-signal") return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
+  if (step === "poste-veille")
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_WATCH_REPLY_TOOL,
+      WORKSTATION_WATCH_FOLLOWUP_TOOL,
+      WORKSTATION_WATCH_PREP_TOOL,
+      WORKSTATION_WATCH_BRIEF_TOOL,
+    ];
   if (step === "poste-demande")
     return [
       PROGRESS_TOOL,
@@ -990,6 +1181,7 @@ export function hostToolsFor(
       WORKSTATION_DECISION_TOOL,
       WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_REQUEST_REPORT_TOOL,
+      WORKSTATION_REPLY_TYPE_TOOL,
     ];
   if (step === "poste-service")
     return [

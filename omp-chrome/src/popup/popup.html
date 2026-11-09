@@ -15,6 +15,23 @@
       <p class="muted" id="state-detail"></p>
       <button type="button" class="secondary" id="approve" hidden>Approuver dans OMP Console</button>
     </section>
+    <section aria-live="polite">
+      <h2>Demande</h2>
+      <textarea id="intake-text" placeholder="Corrige le bug X dans mem0-omp…" aria-label="Demande"></textarea>
+      <button type="button" id="intake-send">Envoyer la demande</button>
+      <div id="intake" hidden>
+        <p id="intake-status"></p>
+        <ul id="intake-lines"></ul>
+        <p class="muted" id="intake-note"></p>
+        <div id="intake-reply" hidden>
+          <textarea id="intake-answer-text" aria-label="Réponse à la question"></textarea>
+          <button type="button" class="secondary" id="intake-answer">Répondre</button>
+        </div>
+        <button type="button" id="intake-confirm" hidden>Confirmer</button>
+        <button type="button" class="secondary" id="intake-cancel" hidden>Annuler</button>
+      </div>
+      <p class="message" id="intake-message" role="status"></p>
+    </section>
     <section>
       <button type="button" class="danger" id="stop">Stop — arrêter l'agent</button>
       <p class="muted">

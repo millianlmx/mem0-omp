@@ -12,6 +12,7 @@
 // Les étapes de contrat (/req, /specs) passent, avant leur clôture, devant le
 // contradicteur (challenge.ts). Les specs closes sont GELÉES (`SPECS_BASELINE`) : la revue
 // et l'auto-merge jugent sur leurs critères, pas sur ceux que /impl aurait réécrits.
+import { baselineSummary, newFailuresText } from "./baseline.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Answer, ChallengeRecord, Finding } from "./challenge.ts";
@@ -30,16 +31,24 @@ import {
 import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
+import { featureLine } from "./card.ts";
 import { detectIrreversible } from "./decisions.ts";
-import { ARTIFACTS_DIR, isTestFile } from "./git.ts";
+import { ARTIFACTS_DIR, isArtifactPath, isTestFile } from "./git.ts";
 import type { HeavyResult } from "./heavy.ts";
 import { matchesGlob } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
-import { IRREVERSIBLE_GATE, stepTier } from "./machine.ts";
+import { IRREVERSIBLE_GATE, isRunnerOom, stepTier } from "./machine.ts";
 import { parseModulesSection } from "./planner.ts";
-import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
+import {
+  OOM_RETRY_NOTE,
+  STEP_ARTIFACT,
+  challengeAnswerPrompt,
+  challengePrompt,
+  nudgePrompt,
+  stepPrompt,
+} from "./prompts.ts";
 import { briefOfReq, renderMemories } from "./oracle.ts";
 import { PolicyRefusal } from "./policy.ts";
 import type { PromptError, PromptResult } from "./rpc.ts";
@@ -151,7 +160,7 @@ export function parseSplitSection(specsMd: string): SplitFeature[] {
       modules: modules
         .split(/[,;]/)
         .map((module) => module.trim().replace(/^`|`$/g, ""))
-        .filter((module) => module !== ""),
+        .filter((module) => module !== "" && !isArtifactPath(module.replace(/^\.\//, ""))),
     });
   }
   return features;
@@ -292,7 +301,10 @@ export class StepExecutor {
         onHostTool: (name, args, signal) => runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
         event: (type, payload) =>
           this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
-        frame: (frame) => this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame),
+        frame: (frame) => {
+          this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame);
+          this.#ctx.graphs.frame(run, live.step, frame);
+        },
         runnerChanged: (unit, model) => {
           store.updateRun(live.runId, { model });
           if (live.step) store.setStepRunner(live.step.id, unit, model);
@@ -335,6 +347,7 @@ export class StepExecutor {
       reused ? session.unit : null,
     );
     live.step = stepRow;
+    this.#ctx.graphs.step(run, stepRow);
     live.verdict = null;
     live.fullRunsThisStep = 0;
     live.lastFull = null;
@@ -462,6 +475,8 @@ export class StepExecutor {
         reason,
         !(err instanceof PolicyRefusal),
       );
+    } finally {
+      this.#ctx.graphs.flush(run.id);
     }
   }
 
@@ -699,6 +714,7 @@ export class StepExecutor {
       run.id,
       `Tentative ${attempt} interrompue à ${new Date().toISOString()} (${cause} : ${reason}) ; repars de \`git diff ${run.baseSha ?? "main"}\` et de \`${ARTIFACTS_DIR}/${artifact}\` — ne refais pas ce qui est fait.`,
     );
+    if (isRunnerOom(reason)) store.addInstructions(run.id, OOM_RETRY_NOTE);
     store.finishStep(stepRow.id, "failed", reason);
     return { kind: "failed", cause, reason, retryable };
   }
@@ -761,9 +777,11 @@ export class StepExecutor {
       if (!/^##\s+Crit[eè]res d'acceptation/m.test(specs))
         return "la section `## Critères d'acceptation` manque dans specs.md";
       if (parseModulesSection(specs).length === 0)
-        return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera";
+        return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera (les fichiers de `.harness/` ne comptent pas)";
       const gap = specsCoverageGap(store.getArtifact(run.id, "req.md") ?? "", specs);
       if (gap !== null) return gap;
+      if (featureLine(specs) === null)
+        return "la ligne `Ce que fait cette feature : <une phrase>` manque en tête de specs.md : c'est la première ligne de la carte que l'humain lit";
     }
     if (step === "review" && (await git.mergeInProgress(worktree))) {
       const unresolved = await this.#unresolvedConflicts(worktree);
@@ -826,17 +844,24 @@ export class StepExecutor {
       await this.#adoptMainIfRebased(run);
       run = store.getRun(run.id) as RunRow;
       const base = run.baseSha ?? repo.mainBranch;
-      const fullTests = await this.#fullTests(live, run);
+      let fullTests = await this.#fullTests(live, run);
       let verdict = live.verdict as Verdict;
-      // Une suite rouge est un bloquant, quoi qu'en dise la revue.
-      if (fullTests === "fail")
-        verdict = {
-          ...verdict,
-          blockers: [
-            ...verdict.blockers,
-            `suite complète rouge : ${live.lastFull ? failSummary(live.lastFull) : "voir le dernier résultat heavy"}`,
-          ],
-        };
+      // Une suite rouge est un bloquant, quoi qu'en dise la revue : sauf les échecs que main a déjà.
+      if (fullTests === "fail") {
+        const judged = live.lastFull ? await this.#ctx.baseline.judge(run, repo, live.lastFull) : null;
+        if (judged) this.#ctx.baseline.record(run.id, "review", judged);
+        if (judged !== null && judged.new.length === 0) {
+          fullTests = "pass";
+          verdict = { ...verdict, summary: `${verdict.summary}\n\n${baselineSummary(judged)}` };
+        } else {
+          const detail = judged
+            ? newFailuresText(judged)
+            : live.lastFull
+              ? failSummary(live.lastFull)
+              : "voir le dernier résultat heavy";
+          verdict = { ...verdict, blockers: [...verdict.blockers, `suite complète rouge : ${detail}`] };
+        }
+      }
       // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
       const acIds = this.#specsAcIds(run.id);
       const mergeEvidence = {

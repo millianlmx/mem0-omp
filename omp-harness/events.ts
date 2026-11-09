@@ -55,6 +55,7 @@ export const EVENT_TYPES = [
   "heavy_fail_retry",
   "heavy_skipped",
   "heavy_flaky",
+  "heavy_baseline",
   // git et merge
   "rebased",
   "rebase_conflict",
@@ -102,6 +103,14 @@ export const EVENT_TYPES = [
   "workstation_automation",
   "workstation_browser",
   "workstation_channel",
+  // la lecture des canaux corpo : un passage a gardé ou retiré des contenus (`{channel, added, removed}`),
+  // un canal Slack coché ou décoché comme suivi (`{id, followed}`) ; jamais de contenu
+  "workstation_channel_read",
+  "workstation_channel_follow",
+  // le graphe des personnes du poste : une personne créée, complétée ou corrigée (`{id}` seul)
+  "workstation_person",
+  // la veille proactive du poste : un élément d'« À traiter » créé ou changé (`{id, kind, state, ready}` seuls)
+  "workstation_watch",
   // la vigie (vigie/) : un incident qui bouge (relevé, trié, publié, corrigé, rendu à l'humain),
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
@@ -116,9 +125,16 @@ export const EVENT_TYPES = [
   "activity",
   "session",
   "test_output",
+  // le graphe de session d'un run a changé : `{version, nodes, edges}` (des nombres), le client relit `GET /v1/runs/{id}/graph`
+  "graph",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** Les événements poussés en direct sans être écrits. */
-export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity", "session", "test_output"]);
+export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
+  "activity",
+  "session",
+  "test_output",
+  "graph",
+]);

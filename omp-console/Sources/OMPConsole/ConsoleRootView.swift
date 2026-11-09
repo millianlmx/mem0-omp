@@ -207,6 +207,8 @@ struct ConsoleRootView: View {
         .task(id: server.address) {
             await workstation.refresh()
             await signals.refresh()
+            await server.watch.refresh()
+            await server.intakes.refresh()
             await server.vigie.refresh()
             if server.isConfigured { _ = await notifications.requestAuthorization() }
         }

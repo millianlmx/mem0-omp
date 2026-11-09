@@ -10,7 +10,9 @@
 //
 // La charge est minimale : un titre, le dépôt et le titre du run, et des identifiants
 // (`omp.kind`, `runId`, `rev`, `seq`) — jamais le contenu du poste (ni résumé, ni
-// destinataires, ni brouillon), jamais une raison d'échec ou une question. Le nombre de
+// destinataires, ni brouillon), jamais une raison d'échec ni la question d'une escalade sans carte.
+// Une escalade à carte porte sa `headline` (titre) et son `stake` (corps) seulement : la carte
+// est écrite pour être lue d'un coup d'œil, sans chemin ni code. Le nombre de
 // preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
 // `category` dit le geste que l'appareil peut faire de la notification : valider ou
 // refuser (specs, verdict : opérateur au moins), approuver ou refuser (envoi du poste :
@@ -23,6 +25,7 @@
 import { createHash } from "node:crypto";
 import type { Client } from "./auth.ts";
 import { allows, canSeeRepo } from "./auth.ts";
+import { batchLead } from "./card.ts";
 import type { ApnsConfig } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
 import type { LogLine } from "./logger.ts";
@@ -34,6 +37,8 @@ import { proofCountText } from "./proofs.ts";
 export const ALERT_CATEGORIES = {
   validate: "omp.validate",
   approve: "omp.approve",
+  /** Valider une réponse « prête » de la veille du poste (approbateur seul). */
+  reply: "omp.reply",
   open: "omp.open",
 } as const;
 
@@ -51,6 +56,7 @@ export const ALERT_KINDS = [
   "daily_budget",
   "vigie_silent",
   "backup_failed",
+  "watch",
 ] as const;
 
 export type AlertKind = (typeof ALERT_KINDS)[number];
@@ -67,6 +73,8 @@ export type Alert = {
   rev: number | null;
   /** Le numéro de l'action du poste. */
   seq: number | null;
+  /** L'élément de la veille du poste (`omp.watchId`). */
+  itemId: string | null;
   /** Le regroupement des notifications sur l'appareil. */
   thread: string;
   /** La clé de dédoublonnage. */
@@ -74,7 +82,7 @@ export type Alert = {
   /** `owner` : les clients qui voient tous les dépôts ; `approver` : l'approbateur seul. */
   audience: "repo" | "owner" | "approver";
   /** Le geste que permet la notification, selon les droits du client. */
-  gesture: "validate" | "approve" | null;
+  gesture: "validate" | "approve" | "reply" | null;
 };
 
 /** Une alerte n'est pas renvoyée avant ce délai. */
@@ -92,6 +100,7 @@ function runAlert(run: RunRow, kind: AlertKind, title: string, key: string, gest
     repo: run.repo,
     rev: run.rev,
     seq: null,
+    itemId: null,
     thread: run.id,
     key,
     audience: "repo",
@@ -108,6 +117,7 @@ function serverAlert(kind: AlertKind, title: string, body: string, key: string):
     repo: null,
     rev: null,
     seq: null,
+    itemId: null,
     thread: "server",
     key,
     audience: "owner",
@@ -135,10 +145,14 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
         .filter(Number.isInteger)
         .sort((a, b) => a - b);
       if (ids.length === 0) return null;
+      const alert = runAlert(run, "escalation", "", `escalation:${run.id}:${ids.join(",")}`);
+      // Une escalade à carte : la headline et le stake de la première, rien d'autre (jamais option ni contexte).
+      const lead = batchLead(Array.isArray(payload.items) ? payload.items : []);
+      if (lead) return { ...alert, title: lead.headline, body: lead.body };
       // Les mots de l'app (vouvoiement, « feature » plutôt que « run ») : la notification est la sienne.
       const title =
         ids.length === 1 ? "Une question attend votre réponse" : `${ids.length} questions attendent votre réponse`;
-      return runAlert(run, "escalation", title, `escalation:${run.id}:${ids.join(",")}`);
+      return { ...alert, title };
     }
     case "workstation_approval": {
       const seq = Number(payload.seq);
@@ -152,10 +166,44 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
         repo: null,
         rev: action.updatedAt,
         seq: action.seq,
+        itemId: null,
         thread: "workstation",
         key: `approval:${action.seq}:${action.updatedAt}`,
         audience: "approver",
         gesture: "approve",
+      };
+    }
+    // La veille du poste : un élément d'« À traiter » à sa création, à l'appareil approbateur. Seule
+    // une réponse « prête » porte le geste valider ; toute autre se relit dans l'app. Aucun contenu.
+    case "workstation_watch": {
+      const item = typeof payload.id === "string" ? store.getWatchItem(payload.id) : null;
+      if (item?.state !== "open") return null;
+      const title =
+        item.kind === "reply"
+          ? item.ready
+            ? "Poste — réponse prête à valider"
+            : "Poste — réponse proposée à relire"
+          : item.kind === "followup"
+            ? "Poste — rappel proposé à relire"
+            : item.kind === "prep"
+              ? "Poste — réunion préparée"
+              : "Poste — brief du matin";
+      return {
+        kind: "watch",
+        title,
+        body:
+          item.kind === "reply" || item.kind === "followup"
+            ? "Rien ne part sans votre geste."
+            : "Dans la file À traiter.",
+        runId: null,
+        repo: null,
+        rev: item.rev,
+        seq: null,
+        itemId: item.id,
+        thread: "workstation",
+        key: `watch:${item.id}`,
+        audience: "approver",
+        gesture: item.kind === "reply" && item.ready ? "reply" : null,
       };
     }
     case "run_failed":
@@ -209,6 +257,7 @@ export function receives(alert: Alert, client: Client): boolean {
 /** La catégorie de la notification pour ce client : le geste qu'il a le droit de faire, sinon ouvrir. */
 export function categoryFor(alert: Alert, client: Client): AlertCategory {
   if (alert.gesture === "approve" && client.approver) return ALERT_CATEGORIES.approve;
+  if (alert.gesture === "reply" && client.approver) return ALERT_CATEGORIES.reply;
   if (alert.gesture === "validate" && allows(client.role, "operator")) return ALERT_CATEGORIES.validate;
   return ALERT_CATEGORIES.open;
 }
@@ -227,6 +276,7 @@ export function alertPayload(alert: Alert, category: AlertCategory): Record<stri
       ...(alert.runId !== null ? { runId: alert.runId } : {}),
       ...(alert.rev !== null ? { rev: alert.rev } : {}),
       ...(alert.seq !== null ? { seq: alert.seq } : {}),
+      ...(alert.itemId !== null ? { watchId: alert.itemId } : {}),
     },
   };
 }

@@ -13,6 +13,7 @@ import { notificationFor } from "../../omp-harness/notify.ts";
 import type { PromptContext } from "../../omp-harness/prompts.ts";
 import { stepPrompt } from "../../omp-harness/prompts.ts";
 import { inboxOf } from "../../omp-harness/queries.ts";
+import { CARD_CONTEXT, CARD_FIELDS, escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
@@ -50,12 +51,15 @@ test("questions-en-contexte/AC-1 : une décision sans situation, ou réduite à 
   assert.deepEqual(parsed.ok && parsed.plan.input.impacts, [], "les impacts restent facultatifs hors escalade");
 });
 
-test("questions-en-contexte/AC-2 : une escalade exige un impact par option, dans l'ordre des options ; une liste qui ne suit pas les options est refusée", () => {
+test("questions-en-contexte/AC-2 : une escalade exige sa carte, un impact par option ; une liste d'impacts qui ne suit pas les options est refusée", () => {
   for (const category of ["schema", "public_api", "deletion"]) {
-    assert.match(error({ ...base, category }), /impacts est requis pour une escalade/, category);
-    const parsed = planDecision({ ...base, category, impacts: IMPACTS });
+    assert.match(error({ ...base, category }), /la carte est requise pour une escalade/, category);
+    const parsed = planDecision({ ...base, ...escalationArgs({ category }) });
     assert.ok(parsed.ok && parsed.plan.kind === "escalate", category);
-    assert.deepEqual(parsed.ok && parsed.plan.input.impacts, IMPACTS);
+    assert.deepEqual(
+      parsed.ok && parsed.plan.input.impacts,
+      CARD_FIELDS.options.map((option) => option.impact),
+    );
   }
   assert.match(error({ ...base, impacts: [IMPACTS[0]] }), /une conséquence par option/);
   assert.match(error({ ...base, impacts: [IMPACTS[0], " "] }), /une conséquence par option/);
@@ -63,12 +67,11 @@ test("questions-en-contexte/AC-2 : une escalade exige un impact par option, dans
   const clarification = planDecision({ ...base, category: "clarification", impacts: IMPACTS });
   assert.ok(clarification.ok && clarification.plan.kind === "checkpoint");
   assert.deepEqual(clarification.ok && clarification.plan.input.impacts, IMPACTS);
-  // Durcie par le détecteur (l'agent la croyait réversible) : elle part sans impacts plutôt que d'être refusée.
-  const hardened = planDecision({ ...base, rationale: "on fait DROP COLUMN legacy" });
-  assert.ok(hardened.ok && hardened.plan.kind === "escalate" && hardened.plan.hardened);
+  // Durcie par le détecteur (l'agent la croyait réversible) : sans carte, elle est refusée, pas escaladée à nu.
+  assert.match(error({ ...base, rationale: "on fait DROP COLUMN legacy" }), /sera escaladée/);
 });
 
-test("questions-en-contexte/AC-3 : la politique de décision de chaque étape qui décide demande la situation et les impacts", () => {
+test("questions-en-contexte/AC-3 : la politique de décision de chaque étape qui décide demande la situation et la carte", () => {
   for (const step of ["req", "specs", "impl", "fix"] as const) {
     const ctx: PromptContext = {
       step,
@@ -89,7 +92,7 @@ test("questions-en-contexte/AC-3 : la politique de décision de chaque étape qu
     };
     const policy = stepPrompt(ctx).split("## Politique de décision")[1]?.split("\n## ")[0] ?? "";
     assert.ok(policy.includes("`context`"), `${step} : la politique nomme \`context\``);
-    assert.ok(policy.includes("`impacts`"), `${step} : la politique nomme \`impacts\``);
+    assert.ok(policy.includes("`headline`"), `${step} : la politique nomme \`headline\` (la carte)`);
   }
 });
 
@@ -181,12 +184,10 @@ async function until(world: FakeWorld, runId: string, states: string[]): Promise
 }
 
 test("questions-en-contexte/AC-5 : l'escalade d'un runner porte sa situation et ses impacts ; tranchée à l'échéance, la décision les garde", async () => {
-  const escalate = {
-    tool: "decision",
-    args: { ...base, category: "schema", impacts: IMPACTS },
-  };
+  const escalate = { tool: "decision", args: escalationArgs() };
+  const impacts = CARD_FIELDS.options.map((option) => option.impact);
   const world = fakeWorld(
-    { req: [OK.req], specs: [OK.specs], impl: [[escalate, ...OK.impl], OK.impl], review: [OK.review] },
+    { req: [OK.req], specs: [OK.specs], impl: [[...readFrames(), escalate, ...OK.impl], OK.impl], review: [OK.review] },
     {
       patch: (config) => {
         config.review.escalationTimeoutSec = 1;
@@ -198,15 +199,15 @@ test("questions-en-contexte/AC-5 : l'escalade d'un runner porte sa situation et 
     const run = await world.orchestrator.createRun({ repo: "demo", title: "Export daté", request: "Exporter" });
     await until(world, run.id, ["escalated", "merged", "failed"]);
     const [open] = world.store.listEscalations({ runId: run.id, status: "open" });
-    assert.equal(open?.context, CONTEXT);
-    assert.equal(open?.rationale, base.rationale);
-    assert.deepEqual(open?.impacts, IMPACTS);
+    assert.equal(open?.context, CARD_CONTEXT);
+    assert.equal(open?.rationale, "une seule lecture par facture");
+    assert.deepEqual(open?.impacts, impacts);
 
     await until(world, run.id, ["merged", "failed", "awaiting_human"]);
     const [decision] = world.store.listDecisions({ runId: run.id });
     assert.equal(decision?.status, "auto_timeout");
-    assert.equal(decision?.context, CONTEXT, "la situation survit à l'échéance");
-    assert.deepEqual(decision?.impacts, IMPACTS);
+    assert.equal(decision?.context, CARD_CONTEXT, "la situation survit à l'échéance");
+    assert.deepEqual(decision?.impacts, impacts);
   } finally {
     await world.orchestrator.stop();
   }

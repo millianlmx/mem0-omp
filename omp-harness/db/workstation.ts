@@ -54,6 +54,11 @@ export type Approval = {
    * anciennes) — une approbation sans empreinte n'autorise aucun envoi.
    */
   fingerprint: string | null;
+  /**
+   * L'empreinte de la réponse calculée par l'extension (SHA-256 hex des destinataires
+   * normalisés et du texte complet, canaux/reponses.ts) ; absente des lignes d'avant.
+   */
+  replyFingerprint?: string | null;
   decidedBy: string | null;
   decidedAt: number | null;
   reason: string | null;

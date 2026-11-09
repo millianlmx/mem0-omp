@@ -10,6 +10,7 @@ import {
   parseCheckpointTrailer,
   planDecision,
 } from "../../omp-harness/decisions.ts";
+import { escalationArgs } from "../support/card-fixtures.ts";
 
 const base = {
   question: "Nom du champ ?",
@@ -20,8 +21,8 @@ const base = {
   category: "reversible",
 };
 
-/** Une escalade bien formée : la situation et l'impact de chaque option. */
-const escalation = { ...base, impacts: ["un nom aligné sur `createdAt`", "un nom nouveau dans le modèle"] };
+/** Une escalade bien formée : sa carte entière, et une preuve. */
+const escalation = { ...base, ...escalationArgs() };
 
 test("harness-decisions/AC-1 : une décision réversible valide devient un checkpoint", () => {
   const parsed = planDecision(base);
@@ -38,7 +39,7 @@ test("harness-decisions/AC-2 : schéma, API publique et suppression déclarés p
 });
 
 test("harness-decisions/AC-3 : une décision déclarée réversible mais qui trahit l'irréversible est durcie, jamais l'inverse", () => {
-  const drop = planDecision({ ...base, question: "Nettoyer ?", rationale: "on fait DROP COLUMN legacy" });
+  const drop = planDecision({ ...escalation, category: "reversible", rationale: "on fait DROP COLUMN legacy" });
   assert.ok(drop.ok && drop.plan.kind === "escalate" && drop.plan.category === "schema" && drop.plan.hardened);
   assert.equal(detectIrreversible("exposer dans l'API publique"), "public_api");
   assert.equal(detectIrreversible("supprimer les données des comptes inactifs"), "deletion");
@@ -66,7 +67,11 @@ test("harness-decisions/AC-7 : une clarification (produit, UX) est réversible �
   const parsed = planDecision({ ...base, category: "clarification" });
   assert.ok(parsed.ok && parsed.plan.kind === "checkpoint");
   assert.equal(parsed.ok && parsed.plan.input.category, "clarification", "la catégorie déclarée est gardée");
-  const hardened = planDecision({ ...base, category: "clarification", rationale: "on fait DROP TABLE legacy" });
+  const hardened = planDecision({
+    ...escalation,
+    category: "clarification",
+    rationale: "on fait DROP TABLE legacy",
+  });
   assert.ok(hardened.ok && hardened.plan.kind === "escalate" && hardened.plan.category === "schema");
 });
 

@@ -55,7 +55,14 @@ export type ActionOutcome =
   | { outcome: "failed"; error: string }
   | {
       outcome: "needs_approval";
-      approval: { summary: string; recipients: string[]; preview: string; fingerprint: string | null };
+      approval: {
+        summary: string;
+        recipients: string[];
+        preview: string;
+        fingerprint: string | null;
+        /** L'empreinte de la réponse (lib/outbound.ts `replyFingerprint`) ; `null` hors réponse lisible. */
+        replyFingerprint: string | null;
+      };
     };
 
 export const MAX_WAIT_MS = 10_000;

@@ -304,7 +304,14 @@ test("harness-monitoring/AC-5 : la veille lève une alerte par cause — agent m
     "20 min sans un mot : muet, et deux fois la médiane : lente — une fois chacune",
   );
   assert.deepEqual(events[0]?.payload, { minutes: 20, step: "impl", tool: null });
-  assert.deepEqual(events[1]?.payload, { stepId: step.id, step: "impl", minutes: 20, medianMin: 10 });
+  assert.deepEqual(events[1]?.payload, {
+    stepId: step.id,
+    step: "impl",
+    minutes: 20,
+    medianMin: 10,
+    startedAt: step.startedAt,
+    medianMs: 10 * 60_000,
+  });
   // L'agent reparle : l'alerte s'éteint ; il lance un outil long : la limite devient stallToolMin.
   sessions.frame("r1", "impl", { type: "tool_execution_start", toolCallId: "c1", toolName: "run_tests", args: {} });
   monitor.watch(watched());

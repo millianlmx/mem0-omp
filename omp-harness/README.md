@@ -547,6 +547,7 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `review.escalationTimeoutSec` | `3600` | passé ce délai, une escalade ouverte (sauf une suppression) est tranchée sur la recommandation de l'agent, décision `auto_timeout` à relire ; `null` : jamais |
 | `review.mergeRetries` | `3` | les merges arrêtés (conflit, suite rouge, fusion refusée ou non constatée) relancés seuls — après 5, 15 puis 60 min — avant de te passer la main ; à part des corrections |
 | `review.crossProvider` | `true` | la revue commence la chaîne de son niveau au premier modèle d'un autre fournisseur que celui de la dernière implémentation (une chaîne à un seul fournisseur ne change rien) |
+| `review.cardReader` · `review.cardReaderSec` | `true` · `45` | le relecteur « humain pressé » relit chaque carte d'escalade (et les cartes des specs et des arbitrages écrites par le serveur) avant son départ, au plus `cardReaderSec` secondes ; `false` le coupe (cartes `reviewed: false`) ; son échec ne bloque jamais |
 | `challenge.steps` | `["req", "specs"]` | les étapes relues par le contradicteur avant leur clôture ; `[]` le coupe |
 | `challenge.tier` | `"heavy"` | le niveau du contradicteur ; il commence la chaîne au premier modèle d'un autre fournisseur que l'auteur relu |
 | `review.mergePollSec`, `review.mergeWaitSec` | `60`, `7200` | en mode `gh`, la cadence de relecture de la PR (`gh pr view`, `glab mr view`) après la fusion automatique, et l'attente maximale de sa fusion ; au-delà, le merge est arrêté (`mergeRetries`) |
@@ -608,6 +609,11 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
+| `workstation.channelReadEveryMin` | `5` | le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack ; § « Lire les canaux ») : hors pause du poste et poste désactivé, sans runner ; minutes ≥ 1 |
+| `workstation.watch.intervalMinutes` | `5` | le repos entre deux passages de la veille proactive (job `poste-veille`, § « La veille proactive ») ; entier de 1 à 15, sinon le harness refuse de démarrer |
+| `workstation.watch.days` | `["mon", "tue", "wed", "thu", "fri"]` | les jours ouvrés de la veille (`sun` à `sat`, liste non vide) |
+| `workstation.watch.start` / `workstation.watch.end` | `"09:00"` / `"18:00"` | la plage ouvrée (`HH:MM`, heure murale de `schedules.timezone`) ; une plage vide (`end` ≤ `start`) refuse le démarrage |
+| `workstation.watch.followUpDays` | `3` | le silence, en jours ouvrés, après lequel un mail de l'utilisateur sans réponse est relancé ; entier ≥ 1 |
 | `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
@@ -720,16 +726,35 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   lis depuis l'app, au milieu de tes autres projets, sans la session sous les
   yeux ; le service refuse une décision sans elle. Une question de produit ou d'UX non tranchée (`clarification`) se décide
   de la même façon, seul : tu pourras renverser après coup. Une décision cite
-  celles dont elle découle (`dependsOn`).
+  celles dont elle découle (`dependsOn`) et peut citer ses preuves (`evidence`, 10 au
+  plus, facultatif) : des fichiers ou dossiers que l'agent a lus, cherchés ou modifiés
+  lui-même dans la session, ou le motif exact d'une recherche faite. Le service les
+  vérifie contre le graphe de session du run (`GET /v1/runs/{id}/graph`) et refuse
+  la décision si l'une n'y figure pas.
 - **Escalades.** Schéma de données, API publique, suppression : l'agent ne
   l'applique pas, contourne et termine le reste. Avant d'escalader, le service
   cherche dans la mémoire une décision que tu as déjà tranchée (tag
   `harness,decision`, score ≥ 0,8, même catégorie) : s'il en trouve une, ta
   réponse s'applique comme un checkpoint « tranché par l'humain le … (souvenir …) »,
-  sans question. Sinon l'escalade porte l'option recommandée par l'agent, sa
-  raison (`rationale`) et ce qu'emporte chaque option (`impacts`, exigés). Les
-  questions partent ensemble en fin d'étape, et l'étape reprend quand tu as tout
-  répondu.
+  sans question. Sinon l'escalade porte sa **carte** (`card`), lisible en 30 secondes
+  sans connaître le code, dont les règles sont tenues par le SERVEUR (il refuse et dit
+  quoi reformuler) : `headline` (15 mots au plus, ni chemin de fichier ni `code`),
+  `stake` (l'enjeu, une ligne), `established` (ce qui est établi, une ligne, texte du
+  premier nœud du schéma), `evidence` (au moins une : un fichier ou dossier lu ou
+  modifié, ou le motif d'une recherche faite, présent dans le graphe du run ; un
+  fichier regroupé par la borne désigne son dossier), des options `{label, impact,
+  reversible, cost?}`, `recommended` et `confidence`. Une décision déclarée
+  réversible que le service classe schéma, API publique ou suppression est refusée
+  sans carte (elle serait escaladée). En /req et /specs, toute décision exige sa carte
+  (la preuve y reste facultative) : elle nourrit le `briefing` des specs. Avant son départ,
+  la carte est relue par un relecteur « humain pressé » (tier `fast` et son repli,
+  `review.cardReader`, borné par `review.cardReaderSec`) qui peut réécrire `headline`,
+  `stake`, `established` et les `impact`, jamais les options, leur réversibilité, la
+  recommandation ni la confiance ; sa réécriture hors règles est jetée, son échec ne
+  bloque rien : la carte part telle quelle, `reviewed: false`. Les questions partent
+  ensemble en fin d'étape (notification : `headline` et `stake` de la première, « · +N
+  autres questions »), et l'étape reprend quand tu as tout répondu. À la clôture de
+  /specs, le service exige la ligne `Ce que fait cette feature : …` en tête de `specs.md`.
 - **Renverser une décision.** Ta raison rejoint la mémoire. Si rien n'en découle,
   rien n'est annulé : l'étape en cours (ou une correction après la revue) applique
   ta nouvelle option sur le code actuel. Si des décisions en découlent, le service
@@ -765,6 +790,23 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
   fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
   sinon tu valides, et tu lis le code si le verdict est faible.
+- **Rouge de base.** Un échec de la suite complète ne bloque que s'il est nouveau
+  par rapport à `main`. Sur un résultat `full` rouge qui porte des lignes TAP
+  `not ok`, le service obtient la liste des tests en échec de `main` : la même
+  commande, le même environnement, dans un slot heavy, sur un worktree détaché
+  `<worktreesDir>/<dépôt>/_baseline-<arbre>` rendu après la mesure (au démarrage
+  aussi). La liste (titres TAP) est mémorisée dans le cache heavy sous
+  `baseline:<clé>` — un seul lancement, sans relance, par arbre de `main`, partagé
+  par tous les runs du dépôt et par les appels simultanés. Échecs ⊆ base : la
+  suite compte pour verte (le résumé du verdict le dit), au merge comme en revue ;
+  sinon le bloquant ne nomme que les nouveaux échecs et compte les préexistants.
+  Un échec de `main` absent de la branche n'est jamais une erreur. Une base
+  illisible (suite plantée sans TAP, délai, OOM, plus de 5 000 échecs) ou une
+  `main` verte : comportement d'avant, rouge. Les titres sont comparés tels quels :
+  un test échoué sur `main` sous le même titre qu'un nouveau échec le masque.
+  L'événement `heavy_baseline` (`where` : `review` ou `merge`, `failing`,
+  `preexisting`, `new`, `newTests`) alimente le champ additif `baseline` de
+  `GET /v1/runs/{id}/timeline` (le dernier jugement, `null` sans).
 - **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
   non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
   preuve.
@@ -1182,7 +1224,10 @@ attend avec `approval.summary` = la description du geste (« Cliquer sur e2 dans
 123 », « Saisir « … » dans e1 (l'onglet 4) », « Ouvrir https://… »), `preview` = le texte
 saisi pour `type` (sinon ""), `recipients: []` et `fingerprint: null` : son approbation
 n'autorise aucun envoi (un geste d'envoi repasse `needs_approval` avec sa vraie empreinte) ;
-la raison reste dans `rationale`.
+la raison reste dans `rationale`. L'extension rend aussi `approval.replyFingerprint`,
+l'empreinte de la RÉPONSE (destinataires et texte des éditeurs du compositeur, sans l'onglet ;
+`null` si illisible), comparée à celle figée à la validation d'une réponse proposée (§ « Valider
+et envoyer une réponse proposée ») ; hex de 64 caractères ou absente, autre chose → 400.
 
 **L'approbation liée à ce que l'humain a vu.** `POST …/approve` exige `If-Match:
 "<updatedAt>"`, l'`updatedAt` de l'action affichée : absent → 428, différent → 412 (relire
@@ -1220,7 +1265,7 @@ audits (slots runner, plafond journalier, arrêt et reprise) :
 |---|---|---|---|
 | `poste-profil` | toutes les `profileEveryHours` s'il y a du neuf, ou sur `POST …/profile/rebuild` | `workstation_profile_write`, `progress` | une nouvelle version du profil (`workstation_profile`), l'ancienne gardée |
 | `poste-digest` | à la fin d'un meeting (`POST …/end`) | `workstation_meeting_digest`, `progress` | `digested` (résumé, besoins des clients) ou `failed` ; sans transcript, `digested` sans runner |
-| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande |
+| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `workstation_reply_type` (demande d'une réponse Slack validée), `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande |
 | `poste-service` | toutes les `shiftEveryMin`, autonomie `propose` ou `act`, extension en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_activity`, `workstation_meetings`, `progress` | au plus `shiftMaxActions` actions d'origine `agent` ; l'issue et le nombre d'actions journalisés (`workstation_shift`) ; une pause, l'arrêt d'urgence ou le retour en `observe` l'arrête |
 
 `workstation_act` attend le résultat 30 s au plus ; une action retenue pour
@@ -1530,6 +1575,149 @@ sert qu'à déclencher une relecture de `GET /v1/workstation/channels` : l'état
 n'est pas la source. Les lignes de journal des canaux ne portent que le canal, l'état et un
 code.
 
+#### Lire les canaux
+
+Toutes les `workstation.channelReadEveryMin` minutes (5 par défaut), hors pause du poste (arrêt
+d'urgence compris) et poste désactivé, le serveur lit les canaux `connected` ou `error`
+(`canaux/lecture.ts`) par `Channels.request` et garde ce qu'il lit en base. Ce passage
+n'appelle jamais un runner ni un modèle. Points de lecture ajoutés à la liste blanche, tous
+en `GET` de leur canal : `users/me/history`, `users/me/messages` et `users/me/messages/{id}`
+(Gmail), `calendars/primary/events` (Agenda), `conversations.list`, `conversations.history`,
+`conversations.replies`, `search.messages` et `users.info` (Slack).
+
+- **Gmail** (`lecture-google.ts`) : `users.history.list` depuis le dernier `historyId`, puis
+  `users.messages.get` des messages ajoutés (brouillons sautés). Le curseur n'avance qu'une
+  page entièrement gardée, et un message déjà gardé n'est pas relu : une lecture coupée au
+  milieu d'une page reprend cette page sans perte ni doublon. La première lecture, et un
+  historique expiré (404), relisent au plus 200 messages des 7 derniers jours (au plus
+  `retentionDays`). L'historique repart ensuite du `historyId` relevé avant cette liste.
+- **Agenda** : `events.list` du calendrier principal (`singleEvents`), d'abord sur les 60
+  jours à venir, puis par `nextSyncToken`. Un événement déplacé est mis à jour sur place, un
+  annulé est retiré. Un 410 vide les événements gardés et relit la fenêtre.
+- **Slack** (`lecture-slack.ts`, jeton utilisateur) : les DM (`im`, `mpim`), les canaux
+  suivis (`conversations.history`, puis `conversations.replies` des fils qui ont bougé), les
+  mentions de l'utilisateur partout, canaux non suivis compris (`search.messages` sur
+  `<@moi>`), puis l'identité des auteurs (`users.info`, adresse comprise). Le curseur d'une
+  conversation ou de la recherche n'avance qu'une fois sa lecture finie. Un canal archivé,
+  quitté ou introuvable est sauté.
+- **Limites de débit** : un 429 (`Retry-After`) ou un 403 `rateLimitExceeded` suspend la
+  lecture de CE canal jusqu'à l'échéance. Les curseurs n'ayant avancé que sur des pages
+  finies, rien n'est perdu ni doublé. Les autres canaux continuent.
+- **Canaux suivis** : `GET /v1/workstation/channels/slack/conversations` liste les canaux
+  publics et privés de l'espace (lus en direct). `PUT …/conversations/{id} {followed}` coche ou
+  décoche un canal (appareil approbateur), et la lecture suivante l'applique.
+- **Rétention** : messages, événements finis et auteurs Slack plus vieux que
+  `workstation.retentionDays` sont effacés par la purge horaire du poste. La vigie retire ces
+  contenus (sujets, corps, en-têtes, auteurs, participants, noms de canaux) des issues
+  qu'elle publie (`workstationTexts`). Le journal ne porte que le canal et un code. Les
+  événements `workstation_channel_read` (`{channel, added, removed}`) et
+  `workstation_channel_follow` (`{id, followed}`) ne portent aucun contenu.
+
+**Le stockage, pour les couches suivantes** (graphe des personnes, veille). Il vit dans
+`db/channel-contents.ts`, méthodes du `Store`. Tout y est du texte NON FIABLE : il passe par
+`untrusted()` (`workstation-guards.ts`) avant d'être montré à un agent, et ne va jamais dans
+un log, une issue ni la mémoire d'un dépôt.
+
+| Méthode | Rend |
+| --- | --- |
+| `listChannelMessages({channel?, afterSeq?, threadId?, limit?})` | Les messages Gmail et Slack par `seq` croissant : `{seq, id, channel, sourceId, threadId, conversation, conversationKind, origin, author, authorName, authorEmail, at, subject, text, headers, labels, mentionsMe, bot, readAt}`. `id` vaut `gmail:<id>` ou `slack:<conversation>:<ts>`. `seq` croît à chaque message NOUVEAU : les nouveautés depuis une veille sont `afterSeq: <dernier vu>`. Gmail : `author` = `From` tel quel, `headers` = From, To, Cc, Subject, List-Id, List-Unsubscribe, Auto-Submitted, Precedence, Message-ID, In-Reply-To, References, et `labels` (`SENT`, `INBOX`…). Slack : `author` = `U…`, avec son nom et son adresse s'ils sont lus. `origin` : `history`, `resync`, `dm`, `followed` ou `search`. |
+| `listChannelEvents({from?, to?})` | Les événements de l'Agenda qui finissent après `from` et commencent avant `to` : `{id, summary, startAt, endAt, allDay, organizer, attendees: [{email, name, response, self, organizer}], meetUrl, recurringEventId, updatedAt, readAt}`. `meetUrl` = `hangoutLink` ou le point d'entrée vidéo de `conferenceData`. |
+| `getSlackUser(id)` · `listSlackConversations()` | Un auteur Slack `{id, name, realName, email, bot}` ; les canaux de l'espace `{id, name, kind: public \| private, archived, followed}`. |
+| `getChannelCursor(key)` · `setChannelCursor(key, value, at)` | Les curseurs de lecture : `gmail`, `calendar`, `slack.self`, `slack.conv:<id>`, `slack.search`. Les clés propres aux couches suivantes s'y ajoutent sans toucher à celles-là. |
+
+#### Le graphe des personnes
+
+Le poste tient un graphe des collègues (`canaux/personnes.ts`, table `workstation_people` de
+`db/people.ts`). Une personne porte un nom, ses adresses, ses identifiants Slack, un rôle, une
+équipe, des projets, le ton à employer, un niveau de délégation (`jamais`, `brouillon`,
+`réponse`) et les sujets sur lesquels une réponse peut être prête. Elle a une révision, et
+chaque champ dit s'il est corrigé par l'humain.
+
+- **Alimentation automatique** : à chaque tour (poste activé), `PeopleGraph.feed()` reprend
+  ce que la lecture des canaux a gardé depuis son passage précédent (curseurs `people.*` de
+  `channel_cursors`) : `From`, `To` et `Cc` des mails (hors listes et messages automatiques),
+  participants de l'Agenda, auteurs Slack (hors bots), et la personne des signalements du poste
+  quand c'est une adresse. L'utilisateur lui-même (`selfIdentities`, comptes des canaux)
+  n'entre pas. Une adresse ou un identifiant Slack déjà rattaché désigne la même personne :
+  un auteur Slack de même adresse qu'un correspondant Gmail la rejoint, sans doublon.
+- **Ce qu'elle écrit** : `name` (s'il manque), `emails`, `slackIds`, `role`, `team`,
+  `projects` et `tone`, jamais un champ corrigé. Une personne qu'elle crée naît au niveau
+  `jamais`, sans sujet. Un niveau ou des sujets qu'elle porterait sont ignorés.
+- **Pour les couches suivantes** (veille, réponses) : `orchestrator.people.observe({emails?,
+  slackIds?, name?, role?, team?, projects?, tone?})` propose une suggestion sous les mêmes
+  règles ; `store.listPeople()` et `store.personIdOfKey(emailKey(adresse))` lisent le graphe.
+- **Correction** : `PATCH /v1/workstation/people/{id}` depuis l'appareil approbateur, avec
+  la révision lue en `If-Match` (§ API). C'est le seul chemin qui écrit le niveau et les sujets.
+
+Noms et adresses ne vont dans aucun log. L'événement `workstation_person` ne porte que `{id}`
+(dépôt `null`). La vigie retire ces textes des issues qu'elle publie (`workstationTexts`).
+
+#### La veille proactive
+
+Le job `poste-veille` (`canaux/veille.ts`, éléments dans `workstation_watch_items` de
+`db/watch-items.ts`) lit ce que la lecture des canaux a gardé et le graphe des personnes, et ne
+propose QUE ce qui demande l'utilisateur, dans « À traiter » :
+
+- **Quand** : un passage toutes les `workstation.watch.intervalMinutes` minutes aux heures
+  ouvrées (`days`, `start`–`end`, heure murale de `schedules.timezone`), quelle que soit
+  l'autonomie du poste ; jamais en pause, à l'arrêt d'urgence (qui coupe une veille en cours) ni
+  poste désactivé. Dans les 15 minutes avant l'ouverture, un passage ne prépare que les réunions
+  qui commencent dans les 15 premières minutes de la plage. Aucune planification ne la lance.
+- **Le tri, sans modèle** : n'est pas retenu un message de l'utilisateur, d'une personne
+  inconnue ou au niveau `jamais`, un mail où l'utilisateur n'est pas en `To`, un message
+  automatique (`List-Id`, `List-Unsubscribe`, `Auto-Submitted` autre que `no`, `Precedence`
+  `bulk`/`list`/`junk`), un bot Slack, un message de canal suivi sans mention, ni un message
+  auquel l'utilisateur a répondu depuis dans le même fil. Sans rien de dû (message retenu,
+  relance, préparation, brief), aucun runner ne part : ni coût, ni slot. Un canal non connecté,
+  à reconnecter ou bloqué est ignoré ; un canal en erreur reste lu.
+- **Ce qu'elle propose** : une **réponse** aux messages retenus (`brouillon` : sur tout sujet ;
+  `réponse` : marquée « prête » quand le modèle cite un sujet listé de la personne, que le
+  serveur vérifie, brouillon ordinaire sinon). Un mail reçoit un brouillon Gmail par API dans son
+  fil (`POST users/me/drafts`), retenté au passage suivant s'il échoue ; une réponse Slack garde
+  un brouillon interne (le texte de l'élément) et rien n'est écrit dans Slack. Une **relance**
+  d'un fil Gmail dont le dernier message est de l'utilisateur à autrui, sans réponse depuis
+  `followUpDays` jours ouvrés (une par silence, avec son brouillon). La **préparation** d'une
+  réunion à participants au premier passage entre « début − 15 min » et le début (une fois par
+  événement) : participants et graphe, 5 fils récents avec eux, et les transcripts des meetings
+  du poste tenus au même lien (origine et chemin ; 3 au plus, jamais par titre ; sinon « aucun
+  transcript passé »). Le **brief du matin**, une fois par jour, au premier passage des heures
+  ouvrées s'il y a des nouveautés, des relances ou des réunions.
+- **Gardes du serveur** : chaque outil ne vise qu'une référence de ce passage, le niveau est
+  relu à l'écriture, aucun outil n'envoie, n'approuve ni n'agit dans le navigateur. Le modèle
+  peut ne rien rendre (coût compté, aucune sortie). Un échec du runner laisse les nouveautés à
+  revoir, trois fois de suite au plus. Plafond journalier et slot runner refusés : le passage
+  suivant retente.
+- **Confidentialité** : tout contenu de canal arrive au modèle par `untrusted()` ; le job est
+  muet (ni direct, ni `intent`, ni `progress`) ; sa scope mémoire est `workstation` ; le
+  journal ne dit que `poste : veille en échec (n/3)`. L'événement `workstation_watch` ne porte
+  que `{id, kind, state, ready}` (dépôt `null`) ; l'alerte push part à l'appareil approbateur,
+  sans contenu, avec la catégorie `omp.reply` (geste valider, `omp.watchId`) pour une réponse
+  prête et `omp.open` (à relire) sinon. La vigie retire ces textes de ce qu'elle publie ; les
+  éléments suivent la purge `workstation.retentionDays`.
+
+#### Valider et envoyer une réponse proposée
+
+Une réponse ou une relance de « À traiter » (`canaux/reponses.ts`) s'**écarte** (brouillon Gmail
+supprimé, élément `dismissed`, jamais reproposé) ou se **valide**, telle quelle ou modifiée,
+depuis l'app ou d'un geste depuis la notification (`omp.reply`). Valider met d'abord le brouillon
+Gmail au texte validé, fige l'empreinte de la réponse — SHA-256 hex de
+`JSON.stringify([destinataires, texte])`, destinataires sans blanc ni casse, sans doublon et triés
+(les adresses du brouillon ; Slack : l'identifiant de la conversation), texte complet aux fins de
+ligne, espaces insécables et blancs de fin neutralisés — et pose une demande du poste rattachée.
+Aucun envoi par API : le job `poste-demande` ouvre le brouillon Gmail et clique « Envoyer », ou
+saisit dans le fil Slack le texte validé exact par `workstation_reply_type` (le serveur tient le
+texte ; le modèle ne le recopie pas). L'extension rend `needs_approval` avec
+`approval.replyFingerprint`, la même empreinte calculée sur ce qu'elle enverrait
+(`omp-chrome/src/lib/outbound.ts`) : si l'action est de la demande rattachée, la première à
+demander l'accord, et que l'empreinte est strictement égale, elle repart approuvée sans second
+geste (`decidedBy` « réponse validée »), quelle que soit l'autonomie. Toute autre action (service,
+session, autre demande, envoi suivant), une autre empreinte ou aucune : garde d'envoi ordinaire.
+L'envoi abouti passe la réponse `sent` ; une demande en attente (plafond, slot, extension hors
+ligne) la laisse `validated` avec sa raison (`request.reason`) et part au premier tick possible ;
+une demande close sans envoi (arrêt d'urgence, annulation, échec, compte rendu sans envoi) la
+rend `failed` avec la raison, revalidable, et rien n'est redéposé seul. En pause, valider est
+refusé (409).
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1806,9 +1994,13 @@ Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
 `admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
-appareils iOS) et `workstation-channels` (`GET /v1/workstation/channels` et le geste de
-connexion des canaux corpo).
-appareils iOS) et `autonomy` (`GET /v1/autonomy`, `kind` et `labels` d'un run).
+appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le geste de
+connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
+Slack suivis, `GET /v1/workstation/channels/slack/conversations`), `workstation-people` (le
+graphe des personnes, `GET /v1/workstation/people` et `PATCH …/people/{id}`), `workstation-watch`
+(la veille proactive du poste, `GET /v1/workstation/watch`), `session-graph` (`GET /v1/runs/{id}/graph`,
+le graphe de session d'un run, et l'événement éphémère `graph`) et `autonomy`
+(`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -1834,6 +2026,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/runs` `{…, kind?, labels?}` · `GET /v1/runs` · `GET /v1/runs/{id}` | operator · viewer | `kind` (`bug` · `feature` · `docs` · `deps` · `test`, sinon 400) et `labels` (20 au plus, de 1 à 50 caractères, rognés et dédoublonnés, sinon 400) : le type de travail et les labels que les règles d'autonomie lisent (§ « L'autonomie par paliers »). Facultatifs, rendus tels quels sur le run (`run.kind`, `run.labels`), jamais modifiables ensuite ; MCP `run_start`, les issues, projets, audits, découpages, suites et planifications ne les posent pas (`kind: null`, `labels: []`). |
 | `GET /v1/runs/{id}/session?before=…&limit=…` | viewer | Le direct de la session du runner, écrit en base (rejouable, même après un redémarrage ; rétention de `events.retentionDays`) : une page d'entrées (`entries`, les 200 dernières par défaut, celles qui précèdent `before` sinon) et `more` s'il en reste de plus anciennes, `live` (le run est conduit en ce moment) et `cursor`, le curseur du journal d'où suivre la suite par `GET /v1/events?run={id}&live=1&after={cursor}`. |
 | `GET /v1/runs/{id}/session/{seq}` | viewer | Une entrée du direct et son détail, jamais poussé dans le flux : pour un outil, `view` (son rendu lisible, comme dans le terminal d'OMP : `{headline, blocks, agents}`, chaque bloc `{kind, role, title, format, text, fields, items, agents}` — `kind` parmi `text`, `fields`, `list`, `agents`, `format` parmi `markdown`, `code`, `diff`, `command`, `plain`, `role` un code que les apps traduisent ; voir `tool-view.ts`), `args` et `result` (le JSON brut de ses arguments et de son résultat, 32 000 et 64 000 caractères au plus) et `output` (sa sortie entière, 64 000 caractères au plus, début et fin gardés) — ceux qui s'écrivent s'il tourne encore ; pour un paragraphe plus long que son entrée, son texte entier dans `output`. Secrets masqués ; 404 si l'entrée est inconnue. `GET /v1/audits/{id}/session/{seq}` : la même chose pour l'analyse d'un audit. |
+| `GET /v1/runs/{id}/graph` | viewer | Le graphe de session du run : `{runId, version, updatedAt, nodes, edges, ambiguities}`. Un nœud `{id, kind, label, step, parent, path, pattern, reads, edits, files, grouped, count, outcome}` (champ sans objet : `null`, compteur : 0) ; `kind` parmi `dir`, `file`, `search` (grep, glob… et son motif), `test` (`run_tests`, son `outcome`), `edit` (les modifications d'une étape), `decision`, `escalation`, `step`. Un arc `{from, to, kind, count}`, `kind` parmi `read`, `searched`, `edited`, `tested`, `led_to` (l'ordre de lecture), `evidence` (une décision ou une escalade vers les nœuds qui la fondent). `ambiguities` : `[{node, kind, evidence: [id de nœud]}]`, une entrée par décision ou escalade. Les fichiers sont regroupés par dossier (compteurs de lectures et de modifications) ; borné à 300 nœuds, au-delà les fichiers passent dans leur dossier, puis les recherches d'une étape sont fondues et les dossiers remontés. Chemins relatifs au dépôt, jamais de contenu de fichier ni de chemin hors dépôt, motifs masqués. Gardé dans l'artefact interne `_session-graph.json` : il survit à la rétention du direct et au redémarrage. Seul l'agent de l'étape y entre : ni le contradicteur, ni les sous-agents (`task`). Un run sans graphe rend la vue vide ; hors des dépôts du client, ou inconnu : 404 `run inconnu`. |
 | `GET /v1/runs/{id}/proofs` | viewer | Les preuves du run : `{runId, proofs: [{n, kind, title, step, mime, size, createdAt, acRef, side}]}` — `kind` parmi `screenshot`, `video`, `log`, `test_report` ; `acRef` (`AC-n`) et `side` (`before` \| `after`) valent `null` quand ils manquent. Jamais de chemin. Un dépôt hors de la portée du client : 404 `run inconnu`. Le rapport de tests d'une étape /impl ou /impl --fix (`test_report`, JSON : `criteria` par `<slug>/AC-n`, `other`, `truncated`) est écrit par le service, sans geste de l'agent. L'événement `verdict` porte `proofs`, le nombre de preuves du tour de revue courant (créées depuis le début de la dernière étape /impl ou /impl --fix). |
 | `GET /v1/runs/{id}/proofs/{n}` | viewer | Le contenu de la preuve de rang `n` : octets bruts, `Content-Type` = son `mime`, `X-Content-Type-Options: nosniff`. Le fichier se retrouve par son rang seul ; un rang hors liste (ou non entier) rend 404. |
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. |
@@ -1847,8 +2040,10 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé, ou s'il l'a été sans commit (déjà dans `main`). |
 | `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
 | `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
+| `GET /v1/escalations` · `GET /v1/inbox` · `GET /v1/runs/{id}` — `card` | viewer | Chaque escalade posée avec sa carte porte `card` : `{headline, stake, options: [{label, impact, reversible, cost?}], recommended, confidence, reviewed, schema: {nodes, edges}}` (`cost` : `faible` · `moyen` · `fort` ; `confidence` : `faible` · `moyenne` · `forte`). `schema` (12 nœuds au plus : établi → ambiguïté → options → impacts, nœuds `{id, kind, label, recommended}` et arcs `{from, to}`) est un schéma de données, jamais une image ni du Mermaid. `question` = `headline`, `options` = les libellés, `impacts` = les impacts, `context` garde le détail : un client ancien lit toujours ces champs. `reviewed: false` : la carte part telle que l'agent l'a écrite. Les escalades antérieures n'ont pas de `card` (`null`). |
 | `GET /v1/decisions?status=auto,auto_timeout` | viewer | La relecture du matin : les décisions prises seules par l'agent, ou à l'échéance d'une escalade. |
 | `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules (à part, hors du compte bloquant `pendingCount` = escalades ouvertes + runs en attente), features en cours, audits ouverts, curseur du flux. Chaque escalade et chaque décision dit l'étape qui l'a posée (`step`). |
+| `GET /v1/runs/{id}` · `GET /v1/inbox` — `briefing` | viewer | Le run qui attend des **specs à valider** ou un **arbitrage** entre revue et correction porte `briefing` : `{feature, cards}` (`feature` : la ligne « Ce que fait cette feature » des specs, sinon le titre du run ; `cards` : les points qui demandent un regard, chacun à la forme de `card`). Specs : les décisions et escalades de /req et /specs, une carte par raison de porte et par désaccord resté ouvert avec le contradicteur (options « valider les specs » / « refaire /specs ») ; arbitrage : une carte par bloquant non levé (« valider malgré » / « corriger encore »). Les cartes écrites par le serveur sont relues par le relecteur rapide, à défaut leur texte brut part avec `reviewed: false`. Même forme dans le run (`run.briefing`) et dans l'entrée du run de l'inbox (`awaiting`, `runs`, `batches[].run`) ; vide (`{feature: "", cards: []}`) quand le run n'attend ni l'un ni l'autre. Le document complet (`specs.md`) reste dans les artefacts. |
 | `GET /v1/autonomy` | viewer | L'autonomie par paliers, en lecture seule : `{repos: [{repo, rules}], validations, proposals}` pour les dépôts que le client voit. `validations` : les décisions prises seules par l'autonomie de la fenêtre `autonomyLearning.windowDays` (100 au plus, récentes d'abord, avec `step`) ; `proposals` : `{repo, kind, gate, direction, current, rule, runs, passages, corrections, rate, changes: [{path, value}]}`. `/v1/inbox` et `/v1/decisions` portent `autonomy` sur chaque décision (`null` hors autonomie). Aucune route n'écrit une règle. |
 | `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction. |
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
@@ -1889,6 +2084,13 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `PUT /v1/workstation/channels/{id}/client` `{clientId, clientSecret}` \| `{json}` \| `{clientId}` | operator (approbateur) | Saisit le client OAuth de la connexion `{id}` = `google` (identifiant et secret, ou le JSON « Application de bureau » téléchargé, clé `installed`) ou `slack` (identifiant seul : PKCE, aucun secret) : 200 `{connection}`, 400 corps illisible, 404 connexion inconnue. Un identifiant différent efface les jetons de la connexion. |
 | `POST /v1/workstation/channels/{id}/login` `{channels?}` | operator (approbateur) | Démarre la connexion `google` ou `slack` : 201 `{login}` dont `url` est l'URL d'autorisation (PKCE + `state`) ; 409 sans client. `channels` (`gmail`, `calendar`) ne demande que les scopes de ces canaux (défaut : tous). |
 | `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
+| `GET /v1/workstation/channels/slack/conversations` | viewer | Les canaux publics et privés de l'espace Slack, relus en direct (`conversations.list`) : `{conversations: [{id, name, kind: public \| private, archived, followed}]}`, par nom. 409 Slack non connecté ou bloqué, 429 limite de débit (`Retry-After`), 502 refus ou coupure du fournisseur. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channel-reads`. |
+| `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
+| `GET /v1/workstation/people` | viewer | Le graphe des personnes du poste : `{people: [{id, name, emails, slackIds, role, team, projects, tone, delegation, topics, corrected, rev, createdAt, updatedAt}]}`. `delegation` : `jamais` \| `brouillon` \| `réponse` ; `corrected` dit, pour chaque champ, s'il est corrigé par l'humain (figé). Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-people`. |
+| `PATCH /v1/workstation/people/{id}` `{name?, emails?, slackIds?, role?, team?, projects?, tone?, delegation?, topics?}` + `If-Match: <rev>` | operator (approbateur) | Corrige une personne : un champ absent reste, un champ donné est écrit et figé contre l'alimentation automatique, un champ à `null` est relâché (sa valeur reste, la suggestion suivante peut la remplacer). 200 `{person}`, révision +1. 428 sans `If-Match`, 412 révision dépassée (rien n'est écrit), 400 champ inconnu, corps vide ou valeur invalide (niveau hors `jamais \| brouillon \| réponse`), 404 personne inconnue, 409 adresse ou identifiant Slack déjà à une autre personne. Seul geste qui écrit `delegation` et `topics`. Pas de PUT de collection. Événement `workstation_person` (`{id}`). |
+| `GET /v1/workstation/watch?state=&limit=` · `GET /v1/workstation/watch/{id}` | viewer | Les éléments de la veille proactive dans « À traiter », récents d'abord (`state` : `open` par défaut, plusieurs séparés par des virgules ; les apps lisent `open,validated,failed` ; `limit` ≤ 500) : `{items}` ; un élément : `{item}` = `{id, kind, state, ready, channel, messageId, eventId, personId, topic, subject, text, context, draft, rev, createdAt, updatedAt, requestId, request, validatedAt, sendError}`. `kind` : `reply` \| `followup` \| `prep` \| `brief` ; `state` : `open` (proposée) \| `validated` (en attente d'envoi) \| `sent` \| `dismissed` \| `failed` (envoi non abouti, raison dans `sendError`) ; `ready` : réponse prête (geste valider) ; `draft` : `{kind: "gmail", id, error}`, `{kind: "internal"}` (Slack) ou `null` ; `request` : `{id, state, reason}` de la demande qui envoie (sa raison d'attente). Propriétaire seulement (403), jamais un client pilote (403), 404 si le poste est désactivé ou l'élément inconnu. Capacité `workstation-watch`, événement `workstation_watch` (`{id, kind, state, ready}`). |
+| `POST /v1/workstation/watch/{id}/dismiss` | operator (approbateur) | Écarte une réponse ou relance `open` ou `failed` : son brouillon Gmail est supprimé (`DELETE users/me/drafts/{id}` ; déjà absent : supprimé ; canal Gmail non lisible : laissé, `draft.error` `draft_not_deleted`), 200 `{item}` `dismissed`, jamais reproposée pour le même message. 409 autre sorte ou autre état, 502 suppression refusée par Gmail (rien ne change). |
+| `POST /v1/workstation/watch/{id}/validate` `{text?}` + `If-Match: <rev>` facultatif | operator (approbateur) | Valide une réponse ou relance `open` ou `failed`, au texte proposé (sans corps : le geste « Valider » de la notification) ou modifié (≤ 20 000 caractères). Gmail : le brouillon est créé s'il manque, puis mis à jour au texte validé (`PUT users/me/drafts/{id}`) avant tout dépôt. Le serveur fige l'empreinte SHA-256 des destinataires normalisés et du texte complet, et pose une demande du poste rattachée : 201 `{item, request}`, `validated`. 409 poste en pause (la réponse reste proposée), autre sorte ou autre état, destinataires inconnus ; 412 révision dépassée ; 400 texte vide ou trop long, champ inconnu ; 502 brouillon non créé ou non mis à jour. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |
@@ -1904,7 +2106,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/vigie` · `PUT /v1/vigie` `{mode?, maxIssuesPerDay?, maxLiveRuns?, dailyBudgetUsd?, repos?}` | viewer · admin | La vigie (§ « La vigie ») : `{settings, heartbeat {at, version, client, silent, silentSince}, today {since, issues, liveRuns, spentUsd}, incidents}` (compte par statut) ; les réglages, validés (400 pour un champ inconnu ou un dépôt non déclaré). |
 | `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
 | `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners), `graph` (le graphe de session d'un run a changé : `{version, nodes, edges}`, des nombres ; le client relit `GET /v1/runs/{id}/graph` ; au plus un par 2 s et par run, jamais écrit au journal) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 | événements `autonomy`, `validation` | viewer | Événements du journal (`GET /v1/events`). `validation` `{gate, approve, liftable, by?, pilot?}` : chaque validation ou refus d'une attente humaine, par qui que ce soit ; `gate` est ce qui était attendu (`specs`, `irreversible`, `verdict`…), `liftable` dit, constaté par le serveur au moment du geste, si une règle d'autonomie aurait pu la lever. `autonomy` `{action: "hold" \| "validate" \| "defer", gate: "specs" \| "review", rev, seq?, rank?, why?}` : une attente retenue, validée seule (`seq` : la décision inscrite, `rank` : la règle) ou rendue à l'humain. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
@@ -1920,7 +2122,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **SQLite** : source de vérité, un seul écrivain | `db.ts` (façade de `db/`, un fichier par domaine), `events.ts` | Runs, étapes, décisions (checkpoints), escalades, artefacts, journal d'événements, cache heavy et tests lancés. Seul le service ouvre la base. Runners et jobs heavy passent par lui. Transactions réentrantes : les abonnés ne voient un événement qu'au COMMIT. Migrations numérotées (`PRAGMA user_version`). |
 | **Pipeline Service** : machine à états, reprise au checkpoint, relances différées | `machine.ts`, `context.ts`, `orchestrator.ts`, `steps.ts` | Machine pure, table des transitions (`TRANSITIONS`) : toute écriture d'état passe par `context.transition`, en compare-and-swap, avec ses événements dans la même transaction. Une boucle async par run actif. Au redémarrage, chaque run `running` revient à son dernier commit (checkpoint) et repart avec un nouveau runner. Une étape qui échoue pour une cause relançable est remise en file avec `notBefore = maintenant + runner.retryBackoffSec[tentative]`. Les causes qui se résolvent en attendant (`rate_limit`, `network`, `provider`, `server_error`, `timeout`) consomment toute la liste, même répétées ; les autres (`context`, `runner`, `missing_output`, `other`) passent à l'humain dès deux échecs de suite. Liste épuisée ⇒ `awaiting_human` avec la cause (l'humain relance par `retry`) ; `failed` est réservé au non relançable. Un correcteur qui ne change rien conteste : la revue repart dans un runner neuf, et la seconde contestation passe à l'humain. Un run `failed` ou `awaiting_human` se relance (`retry`) à son étape. |
 | **Scheduler** : 5 runners, 2 heavy, jetons par fournisseur, MemAvailable, équité | `scheduler.ts`, `orchestrator.ts` | Un slot runner par run vivant, admis au meilleur rang (priorité, reprise, dépôt et projet les moins servis, ancienneté), dans la limite de `repos[].maxParallel` ; un run dont `notBefore` n'est pas passé, dont les modules sont encore en déduction, ou une feature découpée dont le parent (`afterRun`) n'est pas mergé, n'est pas candidat. Un slot heavy par `run_tests`, attendu dans une file (priorité puis arrivée). Un seau à jetons par fournisseur (un jeton par prompt) avec bascule. Admission seulement si `MemAvailable − enveloppe ≥ réserve`. Un refus d'admission est écrit une fois par attente. À chaque tour, les escalades ouvertes depuis plus de `review.escalationTimeoutSec` sont tranchées sur la recommandation de l'agent. |
-| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans le texte de la feature et ses souvenirs de besoins (tag `besoins`) — pour un run seul aussi, avant son admission —, puis précisés par la section `## Modules` des specs ou l'outil `set_modules`. Les modules connus sont les dossiers jusqu'à deux niveaux, les fichiers de la racine, et les fichiers `.ts` d'un dossier plat (plus de 8). Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation ; un merge arrêté est relancé seul (`review.mergeRetries`, 5/15/60 min). |
+| **/project** : modules, parallèle si disjoint, rebase, merge immédiat | `planner.ts`, `orchestrator.ts` | Modules déclarés, sinon lus dans le texte de la feature et ses souvenirs de besoins (tag `besoins`) — pour un run seul aussi, avant son admission —, puis précisés par la section `## Modules` des specs ou l'outil `set_modules` — un chemin de `.harness/` (artefacts hors git) n'est jamais un module : `set_modules` le refuse (`isError`, liste mixte comprise), la section `## Modules` et les `modules` d'un `split_feature` l'ignorent. Les modules connus sont les dossiers jusqu'à deux niveaux, les fichiers de la racine, et les fichiers `.ts` d'un dossier plat (plus de 8). Chevauchement par préfixe de chemin, et un ensemble inconnu chevauche tout. Rebase sur `main` avant /review. En cas de conflit, le service fusionne `main` et le runner résout les marqueurs dans les fichiers, sans git. Merge squash dès la validation ; un merge arrêté est relancé seul (`review.mergeRetries`, 5/15/60 min). |
 | **Runners OMP** : 1 par étape, 1 Go, profil pipeline, échéance, bascule | `runner.ts`, `runner-session.ts`, `rpc.ts`, `host-tools.ts` | `omp --mode rpc --no-ui --no-lsp --profile pipeline` dans un service transitoire (`systemd-run --wait --pipe`, stdio gardés) `MemoryMax=1G`, `OOMScoreAdjust=300`, qui n'écrit que dans son worktree et ne lit que son clone (§ Sécurité). Une seule session pour les runs et les audits : bascule de fournisseur, changement de tier, et échéance de l'étape (`runner.stepTimeoutSec`) au-delà de laquelle le runner est arrêté. Chaque erreur de prompt est classée (`classifyPromptError` : `rate_limit` — 429/529 et messages de quota —, `server_error` 5xx, `network`, `context`, `other`) ; une cause de `runner.failoverOn` fait passer au fournisseur suivant de la chaîne (`set_model`, même conversation) ; chaîne à un seul fournisseur (ou tous à sec) ⇒ attente du `retry-after` du fournisseur (sinon 60 s), bornée par l'échéance, puis réessai du même, 3 fois au plus (`provider_retry`). L'erreur rendue à l'étape porte `cause` et `retryAfterMs`. Le runner de la revue reste vivant pendant review → fix (cache de prompt) ; fix → review repart à neuf. Les autres meurent en fin d'étape ou à l'escalade. |
 | **Merges** : un dépôt à la fois, jamais « merged » avant `main` | `merger.ts`, `forge.ts` | Une file par dépôt : deux merges du même dépôt ne se disputent jamais `main`, le second se rebase sur le premier ; les dépôts différents mergent en parallèle. Mode `gh` : la PR sur la forge du dépôt (`gh pr merge --squash --auto`, ou `glab mr merge --squash --auto-merge`), relue toutes les `mergePollSec` jusqu'à la fusion constatée (borne `mergeWaitSec`). Mode `local` : un push refusé ⇒ `awaiting_human` « push refusé : … », réseau ⇒ réessayé. Merge arrêté ⇒ `queued` avec `notBefore` (5/15/60 min), compté dans `mergeRetries`. `revert(run)` : `git revert` du squash dans un worktree jetable, push (ou PR de revert en fusion automatique), événement `reverted`, run de suite. |
 | **Notifications** : ntfy, fire-and-forget | `notify.ts`, `context.ts` | Abonné au journal (`store.onEvent`) : chaque événement de `notify.events` part en `POST notify.url` avec `Title`/`Priority`/`Tags`/`Click`. Le titre est français et court (« Question — <feature> », « Verdict à valider — … », « Mergé — … »). Une erreur est journalisée (`notify_failed`) au plus une fois par heure, jamais levée. |
@@ -1938,6 +2140,8 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Demandes** (ajout) | `intake.ts`, `intake-create.ts`, `db/intakes.ts` | Une phrase libre classée par un job léger, sans dépôt ni mémoire (`intake_classify`), un plan lisible, puis UNE confirmation qui crée l'objet par les chemins existants (`createRun`, `audits.create`, `schedules.create`, demande du poste) dans une transaction. § « Les demandes en langage libre ». |
 | **Pilote d'un audit** (ajout) | `pilot.ts`, `machine.ts` (`humanWaitOf`), `gestures.ts` | Un audit lancé pilote les runs qui en descendent (son projet, puis les `follow_up` et `split` du journal). Un run `awaiting_human` de cette lignée, à une révision pas encore traitée, part dans une session (une à la fois par audit, même slot runner et même plafond journalier que les audits) qui rend `pilot_act` ; le geste passe par `HumanLoop` avec `{by: "pilote:<audit>", rev, pilot: true}` : 412 ou 409 si l'humain a agi entre-temps, et rien n'est écrit. Les gestes permis dépendent de l'attente lue dans la raison du run (`humanWaitOf`). Un geste du pilote ne va pas dans l'oracle comme une correction humaine. |
 | **Autonomie par paliers** (ajout) | `autonomy-rules.ts`, `autonomy-gates.ts`, `autonomy-learning.ts`, `gestures.ts`, `steps.ts` | Règles par dépôt validées au chargement ; évaluation serveur à la pose de l'attente (échec fermé : jamais d'attente `irreversible`, `budget`, `arbitration` ou `failure`, d'escalade `schema`/`public_api`/`deletion`, de budget dépassé ni de run de la vigie), à partir de l'évidence de la revue (`_review-evidence.json`, invisible) ; validation par le même geste que l'humain, inscrite comme décision prise seule réversible ; propositions de palier calculées à la lecture, sans jamais modifier une règle. |
+| **Graphe de session** (ajout) | `session-graph.ts`, `steps.ts`, `host-tools.ts` | Construit par le service depuis les trames `tool_execution_*` réussies du runner de l'étape (lectures, recherches, modifications) et les outils hôtes (`run_tests`, `decision`) ; borné à 300 nœuds, écrit dans `_session-graph.json` et poussé en événement éphémère `graph` au plus une fois toutes les 2 s. Les preuves (`evidence`) d'une décision sont résolues contre lui, de façon synchrone, avant toute écriture. |
+| **Carte de décision** (ajout) | `card.ts`, `card-reader.ts`, `briefing.ts`, `decisions.ts`, `host-tools.ts`, `db/decisions.ts`, `steps.ts`, `orchestrator.ts` | Les règles de la carte vivent dans le serveur (`planDecision`, `parseCard`) ; une escalade la porte (`card`, artefact interne `_escalation-cards.json`), relue avant son départ par le relecteur « humain pressé » (tier `fast`, borné, jamais bloquant). Le `briefing` d'un run qui attend des specs ou un arbitrage est écrit AVANT l'attente (`_briefing.json`) et servi avec le run. |
 | **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-guards.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts`, `db/workstation-captures.ts`, `db/workstation-browsers.ts`, `db/workstation-requests.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), cantonnement à la fenêtre de l'agent et navigation gardée (approbation), contenu des pages délimité comme non fiable, arrêt d'urgence, meetings, profil versionné, captures gardées. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Issues GitHub** (ajout) | `issues.ts`, `mcp.ts`, `db/issues.ts` | Le serveur MCP de `POST /v1/mcp` : les issues d'un dépôt déclaré lues par `gh` dans le dépôt GitHub de son distant, lancées en runs par `createRun` ; la table `issue_runs` lie chaque issue à son dernier run et empêche un double lancement (et deux appels simultanés sur la même issue n'en font qu'un). |
@@ -2092,7 +2296,10 @@ Le serveur pousse (`apns-push-type: alert`, `push-alerts.ts`) :
 Les droits sont ceux du client qui a enregistré l'appareil, relus à chaque envoi ;
 l'appareil d'un client révoqué est oublié. La charge est minimale : un titre, le dépôt
 et le titre du run, et `omp` `{kind, runId?, rev?, seq?}` — jamais le contenu du poste
-(ni résumé, ni destinataires, ni brouillon), ni question, ni raison d'échec. `rev` est
+(ni résumé, ni destinataires, ni brouillon), ni raison d'échec. Une escalade à `card` porte
+sa `headline` (titre) et son `stake` (corps), suivis de « · +N autres questions » pour un lot
+(une seule alerte par lot) : ni option, ni contexte, ni chemin ; sans `card`, l'alerte garde son
+texte générique, jamais la question brute. `rev` est
 l'If-Match du geste fait depuis la notification (la révision du run, ou l'`updatedAt`
 de l'envoi du poste) : si le run ou l'envoi a bougé depuis, le serveur refuse (412) et
 rien n'est tranché. Les notifications d'un run se groupent (`thread-id` : l'id du run ;

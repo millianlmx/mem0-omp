@@ -37,6 +37,11 @@ export type FileChange = { path: string; status: string; added: number | null; r
 /** Le dossier des artefacts d'étape dans un worktree : exclu de git, ingéré par le service. */
 export const ARTIFACTS_DIR = ".harness";
 
+/** Un chemin (déjà normalisé, relatif au dépôt) du dossier des artefacts : hors git, jamais un module. */
+export function isArtifactPath(file: string): boolean {
+  return file === ARTIFACTS_DIR || file.startsWith(`${ARTIFACTS_DIR}/`);
+}
+
 /** Forcé sur chaque appel : aucun programme tiers ne part d'une config ou d'un hook. */
 const HARDENING = [
   "-c",

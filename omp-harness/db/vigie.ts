@@ -266,7 +266,8 @@ export class VigieStore extends ObservabilityStore {
   /**
    * Les textes du poste de travail gardés depuis `since` (ms) : adresses et titres des
    * pages observées et de leurs cibles, meetings et leurs segments, paramètres, résultats
-   * et erreurs des actions. Tout ce qui fait au moins POSTE_TEXT_MIN caractères.
+   * et erreurs des actions, contenus lus des canaux corpo (messages, événements, auteurs et
+   * conversations Slack). Tout ce qui fait au moins POSTE_TEXT_MIN caractères.
    */
   workstationTexts(since: number): string[] {
     const texts = new Set<string>();
@@ -300,6 +301,42 @@ export class VigieStore extends ObservabilityStore {
       since,
     ))
       add([parsed(row.params), row.rationale, parsed(row.approval), parsed(row.result), row.error]);
+    // Les contenus lus des canaux corpo (canaux/lecture.ts, tables de db/channel-contents.ts).
+    for (const row of this.selectAll(
+      "SELECT author, subject, text, headers FROM channel_messages WHERE read_at >= ?",
+      since,
+    ))
+      add([row.author, row.subject, row.text, parsed(row.headers)]);
+    for (const row of this.selectAll(
+      "SELECT summary, organizer, attendees, meet_url FROM channel_events WHERE read_at >= ?",
+      since,
+    ))
+      add([row.summary, row.organizer, parsed(row.attendees), row.meet_url]);
+    for (const row of this.selectAll("SELECT name, real_name, email FROM slack_users WHERE updated_at >= ?", since))
+      add([row.name, row.real_name, row.email]);
+    for (const row of this.selectAll("SELECT name FROM slack_conversations WHERE updated_at >= ?", since))
+      add(row.name);
+    // Le graphe des personnes du poste (db/people.ts) : noms, adresses et ce qui est dit d'elles.
+    for (const row of this.selectAll(
+      "SELECT name, emails, slack_ids, role, team, projects, tone, topics FROM workstation_people WHERE updated_at >= ?",
+      since,
+    ))
+      add([
+        row.name,
+        parsed(row.emails),
+        parsed(row.slack_ids),
+        row.role,
+        row.team,
+        parsed(row.projects),
+        row.tone,
+        parsed(row.topics),
+      ]);
+    // La veille du poste (db/watch-items.ts) : textes proposés, sujets et contexte (participants, destinataires).
+    for (const row of this.selectAll(
+      "SELECT subject, text, context, topic FROM workstation_watch_items WHERE updated_at >= ?",
+      since,
+    ))
+      add([row.subject, row.text, parsed(row.context), row.topic]);
     // Le profil établi et les identités de l'utilisateur (réglages du poste), quelle que soit leur date.
     for (const row of this.selectAll("SELECT profile FROM workstation_profiles ORDER BY version DESC LIMIT 1"))
       add(parsed(row.profile));

@@ -82,11 +82,21 @@ public enum MonitoringText {
         return L10n.format("%@ (outil %@)", base, tool)
     }
 
-    /// « Étape /impl lente : 25 min (médiane 10 min) »
-    public static func alertSlow(step: String, minutes: Int?, medianMin: Int?) -> String {
+    /// « Étape /review lente : en cours depuis 31 min (médiane 36 s) » — la durée mesurée à `now` depuis `startedAt` (ms) ;
+    /// un serveur ancien, sans `startedAt`/`medianMs`, garde « : 25 min (médiane 10 min) », figés au déclenchement.
+    public static func alertSlow(step: String, startedAt: Double?, medianMs: Double?, minutes: Int?, medianMin: Int?, now: Date) -> String {
         var line = L10n.format("Étape %@ lente", step)
-        if let minutes { line += L10n.format(" : %lld min", minutes) }
-        if let medianMin { line += L10n.format(" (médiane %lld min)", medianMin) }
+        if let startedAt {
+            line += L10n.format(" : en cours depuis %lld min", max(0, Int((now.timeIntervalSince1970 * 1000 - startedAt) / 60_000)))
+        } else if let minutes {
+            line += L10n.format(" : %lld min", minutes)
+        }
+        if let medianMs {
+            let seconds = Int((medianMs / 1000).rounded())
+            line += seconds < 60 ? L10n.format(" (médiane %lld s)", seconds) : L10n.format(" (médiane %lld min)", Int((Double(seconds) / 60).rounded()))
+        } else if let medianMin {
+            line += L10n.format(" (médiane %lld min)", medianMin)
+        }
         return line
     }
 
@@ -485,6 +495,17 @@ public enum NotificationText {
     public static let vigieSilentBody = L10n.text("La vigie ne donne plus signe de vie.")
     public static let backupFailed = L10n.text("Sauvegarde échouée")
     public static let backupFailedBody = L10n.text("Une sauvegarde de la base a échoué.")
+    /// Un élément de la veille du poste : les mêmes titres que l'alerte push du serveur.
+    public static func watchTitle(kind: String, ready: Bool) -> String {
+        switch kind {
+        case "reply": ready ? L10n.text("Poste — réponse prête à valider") : L10n.text("Poste — réponse proposée à relire")
+        case "followup": L10n.text("Poste — rappel proposé à relire")
+        case "prep": L10n.text("Poste — réunion préparée")
+        default: L10n.text("Poste — brief du matin")
+        }
+    }
+    public static let watchSendBody = L10n.text("Rien ne part sans votre geste.")
+    public static let watchBody = L10n.text("Dans la file À traiter.")
     /// Un geste fait depuis une notification que le serveur a refusé (révision périmée, droits).
     public static let gestureFailed = L10n.text("Geste non abouti")
     public static let gestureFailedBody = L10n.text("Ouvrez l’app pour voir où en est la demande.")

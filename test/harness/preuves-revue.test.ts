@@ -310,7 +310,7 @@ test("preuves-revue/AC-76 : l'étape /impl joint un rapport de tests rangé par 
     "printf 'TAP version 13\\nok 1 - demo-panier/AC-1 : a\\nnot ok 2 - demo-panier/AC-2 : b\\nok 3 - autre-slug/AC-1 : c\\nok 4 - demo-panier/AC-9 : d\\n'; " +
     'for i in $(seq 5 2004); do echo "ok $i - autre-slug/AC-3 : remplissage"; done; exit 1 # {files}';
   const specs =
-    "## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1, AC-2) : panier\n## Critères d'acceptation\n" +
+    "Ce que fait cette feature : un panier qui garde ses articles.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1, AC-2) : panier\n## Critères d'acceptation\n" +
     "AC-1 (B-1) : Given a, When b, Then c\nAC-2 (B-1) : Given a, When b, Then c\n## Modules\n- src/api\n## Découpage\naucun\n";
   const world = fakeWorld(
     {
