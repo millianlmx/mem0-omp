@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.29.0 — 2026-11-09
+
+- feat(harness,console): graphe des personnes du poste (GET et PATCH /v1/workstation/people, page Personnes) (#401) (38806f0)
+
 ## omp-mem0-req 2.6.0 — 2026-11-09
 
 - feat(req): /demande et outil harness_intake pour la Demande du harness (#393) (bb77448)
