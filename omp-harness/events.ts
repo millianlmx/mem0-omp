@@ -109,6 +109,8 @@ export const EVENT_TYPES = [
   "workstation_channel_follow",
   // le graphe des personnes du poste : une personne créée, complétée ou corrigée (`{id}` seul)
   "workstation_person",
+  // la veille proactive du poste : un élément d'« À traiter » créé ou changé (`{id, kind, state, ready}` seuls)
+  "workstation_watch",
   // la vigie (vigie/) : un incident qui bouge (relevé, trié, publié, corrigé, rendu à l'humain),
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",

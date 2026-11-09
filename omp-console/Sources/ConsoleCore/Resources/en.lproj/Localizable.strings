@@ -1426,3 +1426,22 @@
 "Jamais" = "Never";
 "Brouillon" = "Draft";
 "Réponse sur les sujets listés" = "Reply on listed topics";
+
+/* Veille proactive du poste : À traiter et notifications (WatchText, NotificationText). */
+"Veille du poste" = "Workstation watch";
+"Ce que la veille a trouvé dans vos canaux. Rien ne part sans votre geste." = "What the watch found in your channels. Nothing is sent without your action.";
+"Prête à valider" = "Ready to approve";
+"Brouillon Gmail créé" = "Gmail draft created";
+"Brouillon Gmail pas encore créé" = "Gmail draft not created yet";
+"Brouillon gardé par le serveur" = "Draft kept by the server";
+"Réponse proposée" = "Proposed reply";
+"Rappel proposé" = "Proposed follow-up";
+"Préparation de réunion" = "Meeting preparation";
+"Brief du matin" = "Morning brief";
+"Poste — réponse prête à valider" = "Workstation — reply ready to approve";
+"Poste — réponse proposée à relire" = "Workstation — proposed reply to review";
+"Poste — rappel proposé à relire" = "Workstation — proposed follow-up to review";
+"Poste — réunion préparée" = "Workstation — meeting prepared";
+"Poste — brief du matin" = "Workstation — morning brief";
+"Rien ne part sans votre geste." = "Nothing is sent without your action.";
+"Dans la file À traiter." = "In the To handle queue.";

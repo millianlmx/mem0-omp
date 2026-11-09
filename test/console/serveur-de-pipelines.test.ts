@@ -370,6 +370,11 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
   }
   for (const field of [...PERSON_FIELDS, "id", "corrected", "rev", "createdAt", "updatedAt"])
     assert.ok(peopleModel.includes(`public var ${field}:`), `le client ne lit pas le champ ${field} d'une personne`);
+  // La veille proactive (WorkstationWatch.swift) : lecture viewer de « À traiter ».
+  const watchModel = code(read("omp-console", "Sources", "ConsoleClient", "WorkstationWatch.swift"));
+  assert.ok(watchModel.includes('path: "/v1/workstation/watch?state=open&limit='), "le client ne lit plus la veille");
+  const watchRoute = routes.find((route) => route.method === "GET" && route.pattern.test("/v1/workstation/watch"));
+  assert.equal(watchRoute?.role, "viewer", "le serveur ne sert pas GET /v1/workstation/watch au rôle viewer");
 });
 
 /** Une valeur JSON qui doit être un objet : vérifiée, puis rendue comme telle. */

@@ -180,9 +180,20 @@ export class ChannelContentStore extends IntakeStore {
     return this.selectOne("SELECT 1 FROM channel_messages WHERE id = ?", id) !== undefined;
   }
 
+  getChannelMessage(id: string): ChannelMessageRow | null {
+    const row = this.selectOne(`${MESSAGE_SELECT} WHERE m.id = ?`, id);
+    return row ? messageOf(row) : null;
+  }
+
   /** Les messages gardés, du plus ancien `seq` au plus récent ; `afterSeq` : les nouveautés seules. */
   listChannelMessages(
-    filter: { channel?: ContentChannel; afterSeq?: number; threadId?: string; limit?: number } = {},
+    filter: {
+      channel?: ContentChannel;
+      afterSeq?: number;
+      threadId?: string;
+      conversation?: string;
+      limit?: number;
+    } = {},
   ): ChannelMessageRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
@@ -197,6 +208,10 @@ export class ChannelContentStore extends IntakeStore {
     if (filter.threadId !== undefined) {
       where.push("m.thread_id = ?");
       params.push(filter.threadId);
+    }
+    if (filter.conversation !== undefined) {
+      where.push("m.conversation = ?");
+      params.push(filter.conversation);
     }
     const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
     return this.selectAll(`${MESSAGE_SELECT}${clause} ORDER BY m.seq LIMIT ?`, ...params, filter.limit ?? 1000).map(

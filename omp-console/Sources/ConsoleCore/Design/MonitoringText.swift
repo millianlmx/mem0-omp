@@ -485,6 +485,17 @@ public enum NotificationText {
     public static let vigieSilentBody = L10n.text("La vigie ne donne plus signe de vie.")
     public static let backupFailed = L10n.text("Sauvegarde échouée")
     public static let backupFailedBody = L10n.text("Une sauvegarde de la base a échoué.")
+    /// Un élément de la veille du poste : les mêmes titres que l'alerte push du serveur.
+    public static func watchTitle(kind: String, ready: Bool) -> String {
+        switch kind {
+        case "reply": ready ? L10n.text("Poste — réponse prête à valider") : L10n.text("Poste — réponse proposée à relire")
+        case "followup": L10n.text("Poste — rappel proposé à relire")
+        case "prep": L10n.text("Poste — réunion préparée")
+        default: L10n.text("Poste — brief du matin")
+        }
+    }
+    public static let watchSendBody = L10n.text("Rien ne part sans votre geste.")
+    public static let watchBody = L10n.text("Dans la file À traiter.")
     /// Un geste fait depuis une notification que le serveur a refusé (révision périmée, droits).
     public static let gestureFailed = L10n.text("Geste non abouti")
     public static let gestureFailedBody = L10n.text("Ouvrez l’app pour voir où en est la demande.")

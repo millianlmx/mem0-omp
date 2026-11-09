@@ -532,3 +532,26 @@ public enum PeopleText {
         }
     }
 }
+
+/// Le vocabulaire de la VEILLE PROACTIVE du poste dans « À traiter » : réponses proposées,
+/// relances, préparations de réunions et brief du matin. Un code inconnu se rend tel quel.
+public enum WatchText {
+    public static let sectionTitle = L10n.text("Veille du poste")
+    public static let sectionSymbol = "tray.full"
+    public static let sectionHint = L10n.text("Ce que la veille a trouvé dans vos canaux. Rien ne part sans votre geste.")
+    public static let ready = L10n.text("Prête à valider")
+    public static let toReview = L10n.text("À relire")
+    public static let gmailDraft = L10n.text("Brouillon Gmail créé")
+    public static let gmailDraftPending = L10n.text("Brouillon Gmail pas encore créé")
+    public static let internalDraft = L10n.text("Brouillon gardé par le serveur")
+
+    public static func kind(_ raw: String) -> String {
+        switch raw {
+        case "reply": L10n.text("Réponse proposée")
+        case "followup": L10n.text("Rappel proposé")
+        case "prep": L10n.text("Préparation de réunion")
+        case "brief": L10n.text("Brief du matin")
+        default: raw
+        }
+    }
+}
