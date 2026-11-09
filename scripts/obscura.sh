@@ -97,7 +97,7 @@ extrait="$(mktemp -d "$BASE/.extraction.XXXXXX")"
 trap 'rm -rf "$archive" "$extrait"' EXIT
 
 url="https://github.com/h4ckf0r0day/obscura/releases/download/v$VERSION/$asset"
-if ! curl -fsSL -o "$archive" "$url"; then
+if ! curl -fsSL --retry 5 --retry-delay 5 -o "$archive" "$url"; then
   printf 'téléchargement d'"'"'Obscura impossible : %s\n' "$url"
   exit 1
 fi
