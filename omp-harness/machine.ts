@@ -87,13 +87,16 @@ export type Transition = {
  * `specsGate` : après /specs, la feature attend l'accord humain avant /impl (`"auto"` :
  * seulement si l'étape l'a jugé utile). `retryBackoffSec` : l'attente avant chaque
  * relance d'une étape échouée, et son nombre. `mergeRetries` : les merges arrêtés
- * tolérés avant l'humain.
+ * tolérés avant l'humain. `ask` : le run est en « tout me demander » (`autonomy: "ask"`) —
+ * la porte des specs est toujours posée et la revue attend toujours l'humain, quelle que
+ * soit la configuration.
  */
 export type Limits = {
   fixCap: number;
   retryBackoffSec: number[];
   specsGate: boolean | "auto";
   mergeRetries: number;
+  ask?: boolean;
 };
 
 /** `lastFailCause` : la cause du dernier échec de la même étape (deux de suite ⇒ l'humain). */
@@ -118,6 +121,9 @@ export const WAIT_REASON = {
 
 /** La raison de porte des specs qui réserve leur validation à l'humain (steps.ts `gateReasons`). */
 export const IRREVERSIBLE_GATE = "geste irréversible";
+
+/** La raison d'une attente que seul le curseur du run impose (`autonomy: "ask"`). */
+export const ASK_REASON = "autonomie « tout me demander »";
 
 /** La raison d'une reprise de /impl pour livrer son `## Reste` (une fois par run, steps.ts `#closeImpl`). */
 const IMPL_CONTINUED = "/impl : reste à livrer sur la même branche";
@@ -195,13 +201,20 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
     case "req":
       return to("running", NEXT[step], cursor, { keepRunner: true, reason: "/req terminé" });
     case "specs": {
+      const reasons = outcome.gateReasons ?? [];
+      // « Tout me demander » : la porte est posée même sans raison, et ses raisons sont dites (le
+      // geste irréversible d'abord : `humanWaitOf` le réserve à l'humain).
+      if (limits.ask === true)
+        return to("awaiting_human", "specs", cursor, {
+          reason: `${WAIT_REASON.specs} : ${[...reasons, ASK_REASON].join(" ; ")}`,
+        });
       const gate = limits.specsGate === "auto" ? outcome.gateNeeded === true : limits.specsGate;
       if (gate) {
         return to("awaiting_human", "specs", cursor, {
           reason:
             limits.specsGate === "auto"
-              ? (outcome.gateReasons ?? []).length > 0
-                ? `${WAIT_REASON.specs} : ${(outcome.gateReasons ?? []).join(" ; ")}`
+              ? reasons.length > 0
+                ? `${WAIT_REASON.specs} : ${reasons.join(" ; ")}`
                 : `${WAIT_REASON.specs} (découpage, modules ou ${IRREVERSIBLE_GATE})`
               : WAIT_REASON.specs,
         });
@@ -230,10 +243,12 @@ export function nextAfter(cursor: RunCursor, outcome: StepOutcome, limits: Limit
         });
       }
       const merge = outcome.merge;
-      if (merge?.auto) return to("merging", null, cursor, { reason: "verdict bas risque et tests verts — auto-merge" });
+      if (merge?.auto && limits.ask !== true)
+        return to("merging", null, cursor, { reason: "verdict bas risque et tests verts — auto-merge" });
       return to("awaiting_human", null, cursor, {
-        reason:
-          merge && !merge.auto
+        reason: merge?.auto
+          ? `${WAIT_REASON.verdict} : ${ASK_REASON}`
+          : merge
             ? `${WAIT_REASON.verdict} : ${merge.reasons.join(" ; ")}`
             : `${WAIT_REASON.verdict} requise`,
       });
@@ -326,6 +341,18 @@ export function heldForDailyBudget(cursor: RunCursor, spent: number, ceiling: nu
     attempts: cursor.attempts,
     reason: `plafond journalier atteint : ${spent.toFixed(2)} $ dépensés aujourd'hui (UTC) pour ${ceiling.toFixed(2)} $ — reprise à minuit UTC ou plafond relevé`,
   });
+}
+
+/** Le début de la raison d'un run que la pause globale retient (`POST /v1/pause`), en base comme en file. */
+export const PAUSE_REASON = "en pause : suspendu par";
+
+/**
+ * La pause globale (« Tout suspendre ») : comme au plafond journalier, avant sa prochaine étape
+ * la feature rend son slot et retourne en file, où l'admission la retient jusqu'à la reprise.
+ * Rien n'est annulé : elle repart seule, à la même étape.
+ */
+export function heldForPause(cursor: RunCursor, who: string): Transition {
+  return to("queued", cursor.step, cursor, { attempts: cursor.attempts, reason: `${PAUSE_REASON} ${who}` });
 }
 
 /** La relance par l'humain (ou `who`) d'un run échoué ou en attente : même étape, compteur de relances à zéro, tout de suite. */
@@ -499,8 +526,14 @@ export function afterMergeFailed(cursor: Pick<RunCursor, "fixes">, reason: strin
   );
 }
 
-/** L'annulation par l'humain : l'étape courante est gardée pour l'historique. */
-export function cancelled(cursor: RunCursor | { step: StepKind | null; fixes: number; attempts: number }): Transition {
+/**
+ * L'annulation par l'humain : l'étape courante est gardée pour l'historique. `motive` : le
+ * motif qu'il donne (libellé, note), à la suite du préfixe que les lecteurs reconnaissent.
+ */
+export function cancelled(
+  cursor: RunCursor | { step: StepKind | null; fixes: number; attempts: number },
+  motive = "",
+): Transition {
   return {
     state: "cancelled",
     step: cursor.step,
@@ -509,7 +542,7 @@ export function cancelled(cursor: RunCursor | { step: StepKind | null; fixes: nu
     keepRunner: false,
     rebase: false,
     notBefore: null,
-    reason: "annulé par l'humain",
+    reason: motive === "" ? "annulé par l'humain" : `annulé par l'humain : ${motive}`,
   };
 }
 

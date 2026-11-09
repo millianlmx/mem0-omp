@@ -8,15 +8,17 @@
 //   contexte, sous `pilote:usine`.
 //
 // Restent à l'humain, sans session : les escalades (schema, public_api, deletion, jamais
-// lues ici), les specs qui portent un geste irréversible, le budget dépassé, et tout run
-// sur lequel le pilote a déjà agi `pilot.actionsPerRun` fois. Le pilote peut aussi
+// lues ici), les specs qui portent un geste irréversible (leur texte est relu : `humanOnlyOf`),
+// le budget dépassé, toute attente d'un run en « tout me demander » (`autonomy: "ask"`), et tout
+// run sur lequel le pilote a déjà agi `pilot.actionsPerRun` fois. Le pilote peut aussi
 // déférer de lui-même, en posant la question. Chaque issue est un événement `pilot` sur
 // le run, gardé avec la révision traitée : une attente ne se pilote qu'une fois, et seul
 // un `defer` notifie l'humain.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Actor, HarnessContext } from "./context.ts";
-import type { AuditRow, RunRow } from "./db.ts";
+import type { AuditRow, RunAutonomy, RunRow, Store } from "./db.ts";
+import { detectIrreversible } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
 import type { HumanWait } from "./machine.ts";
 import { ACTIVE_STATES, humanWaitOf, isTerminal } from "./machine.ts";
@@ -49,6 +51,32 @@ export const HUMAN_ONLY: Partial<Record<HumanWait, string>> = {
   irreversible: "specs à geste irréversible : la validation revient à l'humain",
   budget: "budget dépassé : seul l'humain en accorde un autre",
 };
+
+/** Pourquoi toute attente d'un run en « tout me demander » (`autonomy: "ask"`) revient à l'humain. */
+export const ASK_HUMAN_ONLY = "autonomie « tout me demander » : chaque attente de ce run revient à l'humain";
+
+/**
+ * Pourquoi l'attente de ce run est réservée à l'humain, ou `undefined` si un pilote peut la trancher.
+ * Les specs sont RELUES : sous `review.specsGate: true` la raison du run est nue (`humanWaitOf` rend
+ * `specs`), leur geste irréversible ne se lit que dans leur texte.
+ */
+export function humanOnlyOf(run: RunRow, store: Pick<Store, "getArtifact">): string | undefined {
+  const wait = humanWaitOf(run);
+  if (wait === null) return undefined;
+  if (run.autonomy === "ask") return ASK_HUMAN_ONLY;
+  if (wait === "specs" && detectIrreversible(store.getArtifact(run.id, "specs.md") ?? "") !== null)
+    return HUMAN_ONLY.irreversible;
+  return HUMAN_ONLY[wait];
+}
+
+/**
+ * Le curseur `to` est-il plus libre que `from` (`ask` < règles du dépôt < `deliver`) ? Un pilote
+ * ne monte jamais l'autonomie d'un run : il ne peut que la laisser ou la baisser.
+ */
+export function raisesAutonomy(from: RunAutonomy | null, to: RunAutonomy | null): boolean {
+  const rank = (level: RunAutonomy | null): number => (level === "ask" ? 0 : level === null ? 1 : 2);
+  return rank(to) > rank(from);
+}
 
 /** Les gestes de l'humain que le pilote emprunte (orchestrator.ts les branche sur `HumanLoop`). */
 export type PilotHooks = {
@@ -136,7 +164,7 @@ export class AuditPilot {
         if (history.at(-1)?.rev === run.rev) continue;
         const wait = humanWaitOf(run);
         if (wait === null) continue;
-        const humanOnly = HUMAN_ONLY[wait];
+        const humanOnly = humanOnlyOf(run, store);
         if (humanOnly !== undefined) {
           this.#record(mission, run, "defer", humanOnly, null);
           continue;

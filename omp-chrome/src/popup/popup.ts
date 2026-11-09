@@ -1,11 +1,14 @@
-// Le popup : état de la liaison avec le serveur (pause et arrêt d'urgence compris), le
-// bouton Stop, l'action en cours et les dernières actions avec leur raison, la pause
-// locale du poste, la transcription de l'onglet actif (l'ouverture du popup accorde
-// activeTab ; le service worker demande alors le flux par chrome.tabCapture.getMediaStreamId),
-// le lien vers OMP Console quand des actions attendent l'approbation, la Demande (posée,
-// relue à chaque ouverture, précisée, confirmée ou annulée par le service worker), les questions
-// en attente du harness (leur carte, puis le schéma de bifurcation en SVG construit en code ; un clic
-// sur une option y répond) et les réglages.
+// Le popup : en tête, deux gestes sur l'onglet actif — « Faire ça sur cette page » (une consigne,
+// Entrée) et « En faire un fil » (un bouton) — qui posent une Demande avec la page (adresse,
+// titre, sélection : lues par le service worker), et le suivi de cette Demande (relue à chaque
+// ouverture, précisée, confirmée ou annulée par le service worker) ; puis les questions en attente
+// du harness (leur carte, puis le schéma de bifurcation en SVG construit en code ; un clic sur une
+// option y répond). Le reste est replié dessous, sous l'état de la liaison avec le serveur (pause
+// et arrêt d'urgence compris) : le lien vers OMP Console quand des actions attendent
+// l'approbation, la Demande sans la page, le bouton Stop, l'action en cours et les dernières
+// actions avec leur raison, la pause locale du poste, la transcription de l'onglet actif
+// (l'ouverture du popup accorde activeTab ; le service worker demande alors le flux par
+// chrome.tabCapture.getMediaStreamId) et les réglages.
 //
 // Il se tient à jour tout seul : chaque écriture du service worker dans `chrome.storage`
 // (action en cours, journal, liaison, meeting, réglages) le redessine, et l'état du serveur
@@ -44,7 +47,10 @@ const STATES: Record<LinkState["state"], { title: string; detail: string }> = {
 
 const SERVER_REFRESH_MS = 5_000;
 
-const stateEl = element("state", HTMLDivElement);
+const stateEl = element("state", HTMLSpanElement);
+/** Le reste du popup, replié sous les deux gestes. */
+const more = element("more", HTMLDetailsElement);
+let unfolded = false;
 const stateDetail = element("state-detail", HTMLParagraphElement);
 const approve = element("approve", HTMLButtonElement);
 /** Le lien d'app qui ouvre la section Poste d'OMP Console (`HarnessWidgetLink` côté app). */
@@ -133,6 +139,11 @@ function render(status: PopupStatus): void {
     .filter(Boolean)
     .join(" ");
   approve.hidden = pending === "";
+  // Replié par défaut ; à la première lecture, il s'ouvre seul quand quelque chose y attend l'humain.
+  if (!unfolded) {
+    unfolded = true;
+    more.open = (state !== "online" && state !== "connecting") || status.stopped !== null || pending !== "";
+  }
   stopButton.disabled = !status.paired;
 
   currentEl.textContent = status.current
@@ -294,6 +305,34 @@ intakeSend.addEventListener("click", () => {
       intakeSend.disabled = false;
     });
 });
+
+// ── Les deux gestes sur l'onglet actif : la demande part avec la page ──
+
+const pageAsk = element("page-ask", HTMLInputElement);
+const pageThread = element("page-thread", HTMLButtonElement);
+
+/** Pose la demande sur l'onglet actif ; `text: null` : « En faire un fil ». */
+async function askOnPage(text: string | null): Promise<void> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id === undefined) {
+    showMessage(intakeMessage, "Aucun onglet actif.", "error");
+    return;
+  }
+  pageAsk.disabled = true;
+  pageThread.disabled = true;
+  const reply = await ask<Intake | null>({ to: "background", type: "intake-page", tabId: tab.id, text });
+  applyIntake(reply);
+  if (reply.ok) pageAsk.value = "";
+  pageAsk.disabled = false;
+  pageThread.disabled = false;
+}
+
+pageAsk.addEventListener("keydown", (event) => {
+  // Entrée envoie la consigne ; pendant une composition (accents, IME), elle la valide seulement.
+  if (event.key === "Enter" && !event.isComposing && pageAsk.value.trim() !== "") void askOnPage(pageAsk.value);
+});
+
+pageThread.addEventListener("click", () => void askOnPage(null));
 
 intakeAnswer.addEventListener("click", () => {
   if (shownIntake === null) return;

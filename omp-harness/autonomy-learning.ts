@@ -5,7 +5,7 @@
 // au moment du geste) validée par un humain ou par l'autonomie, ou refusée par un humain. Le taux de
 // corrections d'un groupe (dépôt, type, porte) se compte PAR RUN : la part des runs du groupe corrigés au
 // moins une fois dans la fenêtre — refus humain, revert (porte revue), validation prise seule renversée.
-import type { AutonomyGate, AutonomyRule, WorkKind } from "./autonomy-rules.ts";
+import type { AutonomyGate, AutonomyRule, GateMode, WorkKind } from "./autonomy-rules.ts";
 import { AUTONOMY_BY } from "./autonomy-rules.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { RepoFilter, Store } from "./db.ts";
@@ -41,7 +41,7 @@ type Group = {
 };
 
 /** La règle qui règle la porte de ce type : la première de même `kind` qui peut s'appliquer à cette porte. */
-function ruleFor(
+export function ruleFor(
   rules: readonly AutonomyRule[],
   kind: WorkKind,
   gate: AutonomyGate,
@@ -57,35 +57,87 @@ function ruleFor(
   return null;
 }
 
-function changesOf(
-  proposal: Pick<AutonomyProposal, "repo" | "kind" | "gate" | "direction" | "rule">,
+/** Une retouche des règles d'un dépôt : la porte d'une règle, son seuil de diff, ou une règle ajoutée en fin de liste. */
+type RuleEdit =
+  | { op: "gate"; at: number; gate: AutonomyGate; mode: GateMode }
+  | { op: "widen"; at: number; maxDiffLines: number }
+  | { op: "add"; rule: AutonomyRule };
+
+/**
+ * Les retouches qui mettent la porte d'un type en `mode` : la règle qui la règle déjà (`match`) change de
+ * porte — et reçoit un seuil de diff utile si sa revue passe en auto —, sinon une règle prudente, en auto
+ * sur cette seule porte, est ajoutée.
+ */
+function editsOf(
+  kind: WorkKind,
+  gate: AutonomyGate,
+  mode: GateMode,
   match: { rule: AutonomyRule; rank: number } | null,
   reviewMaxDiffLines: number,
-): AutonomyChange[] {
-  const base = `repos.${proposal.repo}.autonomy.rules`;
-  if (proposal.direction === "lower" && match !== null)
-    return [{ path: `${base}[${match.rank - 1}].gates.${proposal.gate}`, value: "human" }];
+): RuleEdit[] {
   if (match !== null) {
-    const at = `${base}[${match.rank - 1}]`;
+    const at = match.rank - 1;
     const wide = match.rule.match.maxDiffLines;
-    return [
-      { path: `${at}.gates.${proposal.gate}`, value: "auto" },
-      ...(proposal.gate === "review" && (wide === undefined || wide <= reviewMaxDiffLines)
-        ? [{ path: `${at}.match.maxDiffLines`, value: 2 * reviewMaxDiffLines }]
-        : []),
-    ];
+    const widen = mode === "auto" && gate === "review" && (wide === undefined || wide <= reviewMaxDiffLines);
+    const widened: RuleEdit[] = widen ? [{ op: "widen", at, maxDiffLines: 2 * reviewMaxDiffLines }] : [];
+    return [{ op: "gate", at, gate, mode }, ...widened];
   }
-  const specs = proposal.gate === "specs";
+  const specs = gate === "specs";
   return [
     {
-      path: `${base}[+]`,
-      value: {
-        match: { kind: proposal.kind, ...(specs ? {} : { maxDiffLines: 2 * reviewMaxDiffLines }) },
+      op: "add",
+      rule: {
+        match: { kind, ...(specs ? {} : { maxDiffLines: 2 * reviewMaxDiffLines }) },
         require: specs ? {} : { reproTest: true, greenChecks: true, proofs: true },
         gates: { specs: specs ? "auto" : "human", review: specs ? "human" : "auto" },
       },
     },
   ];
+}
+
+/** La modification de configuration d'une proposition de palier, telle que l'humain la lit (`changes`). */
+export function changesOf(
+  proposal: Pick<AutonomyProposal, "repo" | "kind" | "gate" | "direction" | "rule">,
+  match: { rule: AutonomyRule; rank: number } | null,
+  reviewMaxDiffLines: number,
+): AutonomyChange[] {
+  const base = `repos.${proposal.repo}.autonomy.rules`;
+  const mode: GateMode = proposal.direction === "lower" ? "human" : "auto";
+  return editsOf(proposal.kind, proposal.gate, mode, match, reviewMaxDiffLines).map((edit): AutonomyChange => {
+    if (edit.op === "add") return { path: `${base}[+]`, value: edit.rule };
+    return edit.op === "gate"
+      ? { path: `${base}[${edit.at}].gates.${edit.gate}`, value: edit.mode }
+      : { path: `${base}[${edit.at}].match.maxDiffLines`, value: edit.maxDiffLines };
+  });
+}
+
+/** Le réglage d'une porte d'un type de travail, écrit par l'humain (`POST /v1/autonomy/rules`). */
+export type AutonomyRuleInput = { repo: string; kind: WorkKind; gate: AutonomyGate; mode: GateMode };
+
+/**
+ * Les règles d'un dépôt une fois la porte réglée par l'humain : la même modification que celle d'une
+ * proposition de palier (`changesOf`), appliquée à une copie. Mettre en `human` une porte qu'aucune
+ * règle ne règle ne change rien : elle est déjà à l'humain.
+ */
+export function rulesWith(
+  rules: readonly AutonomyRule[],
+  input: Pick<AutonomyRuleInput, "kind" | "gate" | "mode">,
+  reviewMaxDiffLines: number,
+): AutonomyRule[] {
+  const next = structuredClone([...rules]);
+  const match = ruleFor(rules, input.kind, input.gate);
+  if (match === null && input.mode === "human") return next;
+  for (const edit of editsOf(input.kind, input.gate, input.mode, match, reviewMaxDiffLines)) {
+    if (edit.op === "add") {
+      next.push(edit.rule);
+      continue;
+    }
+    const rule = next[edit.at];
+    if (rule === undefined) throw new Error(`règle ${edit.at + 1} introuvable`);
+    if (edit.op === "gate") rule.gates[edit.gate] = edit.mode;
+    else rule.match.maxDiffLines = edit.maxDiffLines;
+  }
+  return next;
 }
 
 /**

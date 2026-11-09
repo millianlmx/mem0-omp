@@ -272,6 +272,8 @@ export class WorkstationAgent {
   #profileAttemptAt = 0;
   /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
   #requestId: string | null = null;
+  /** La pause globale du serveur (`POST /v1/pause`), donnée à chaque tour : sa raison, `null` hors pause. */
+  #hold: string | null = null;
   readonly #signals: SignalDesk;
   readonly #atlassian: AtlassianDesk;
 
@@ -282,8 +284,12 @@ export class WorkstationAgent {
     this.#atlassian = atlassian;
   }
 
-  /** Un tour : les échéances de la file, puis les jobs dus. */
-  tick(now = Date.now()): void {
+  /**
+   * Un tour : les échéances de la file, puis les jobs dus. `hold` : la pause globale du serveur —
+   * les gardes passent et ce qui tourne finit, mais aucun job ne part (sa raison le dit).
+   */
+  tick(now = Date.now(), hold: string | null = null): void {
+    this.#hold = hold;
     this.#ws.maintain(now);
     if (!this.#ws.enabled) return;
     this.#guardShift();
@@ -315,6 +321,7 @@ export class WorkstationAgent {
    */
   #launch(job: WorkstationJob, drive: (live: LiveJob) => Promise<void>): string | null {
     if (this.#live.has(job)) return "une demande plus ancienne est en cours";
+    if (this.#hold !== null) return this.#hold;
     const daily = this.#ctx.monitor.dailyBudgetDue();
     if (daily)
       return `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;

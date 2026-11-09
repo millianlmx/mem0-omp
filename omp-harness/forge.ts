@@ -78,6 +78,21 @@ export type ForgeCheck = {
 /** Un job rouge : son nom, son URL et un extrait borné de ses logs, filtré sur les lignes utiles (jamais fiable). */
 export type FailedLog = { name: string; url: string | null; log: string };
 
+/** Une PR (MR) ouverte, telle que la liste la rend ; `updatedAt` : sa dernière activité (ISO 8601). */
+export type OpenChange = {
+  number: number;
+  title: string;
+  url: string;
+  /** La branche de la PR. */
+  head: string;
+  author: string | null;
+  draft: boolean;
+  updatedAt: string;
+};
+
+/** Une exécution terminée de la CI, en échec : `name` son workflow (son pipeline), `title` ce qui l'a lancée, `at` sa fin (ISO 8601). */
+export type FailedCi = { id: string; name: string; title: string; url: string | null; sha: string; at: string };
+
 /** Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI. */
 const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]/i;
 
@@ -163,6 +178,13 @@ export type Forge = {
    * illisible, aucune forge) : jamais d'exception. Seul `private` vaut « privé » (issues.corporate: full).
    */
   visibility(): Promise<ForgeVisibility | null>;
+  /** Les PR (MR) ouvertes du projet, au plus `limit`. */
+  openChanges(limit: number): Promise<OpenChange[]>;
+  /**
+   * La dernière exécution TERMINÉE de la CI de `branch`, si elle est en échec ; `null` si elle est verte,
+   * annulée, ou si la branche n'en a aucune. Une exécution en cours ne compte pas : la précédente fait foi.
+   */
+  failedCi(branch: string): Promise<FailedCi | null>;
 };
 
 /** Ce dont une forge a besoin : lancer sa CLI, lire le distant du clone, l'environnement du service. */
@@ -322,6 +344,13 @@ class NoForge implements Forge {
     this.#refuse();
   }
   async visibility(): Promise<ForgeVisibility | null> {
+    return null;
+  }
+  // Les lectures du bac « Propositions » : sans forge, rien à proposer (et rien à refuser).
+  async openChanges(): Promise<OpenChange[]> {
+    return [];
+  }
+  async failedCi(): Promise<FailedCi | null> {
     return null;
   }
 }

@@ -449,7 +449,7 @@ export class Merger {
       `Feature revertée « ${run.title} » : le commit ${run.mergeSha.slice(0, 12)} a été défait sur ${repo.mainBranch} (${result.sha.slice(0, 12)})${actor.by ? ` par ${actor.by}` : ""}. Un run de suite reprend la feature.`,
       ["harness", "feature", "revert"],
     );
-    return this.#hooks.followUp(
+    const follow = await this.#hooks.followUp(
       {
         repo: run.repo,
         title: `Reprise après revert — ${run.title}`.slice(0, 120),
@@ -462,9 +462,13 @@ export class Merger {
         ].join("\n"),
         modules: run.modules,
         priority: run.priority,
+        autonomy: run.autonomy,
       },
       actor,
     );
+    // Le lien du run de suite vers son parent : la lignée (vigie, pilote) et le gabarit « refaire » le lisent.
+    this.#ctx.event("follow_up", run.id, { runId: follow.id });
+    return follow;
   }
 
   /** Mode `gh` : la branche de revert poussée, une PR sur la forge, sa fusion squash automatique. */

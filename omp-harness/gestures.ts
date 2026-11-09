@@ -14,9 +14,10 @@
 // sauf ceux réservés à l'humain : il est refusé en 403, sans rien écrire.
 import { AUTONOMY_BY } from "./autonomy-rules.ts";
 import type { Actor, HarnessContext } from "./context.ts";
-import type { DecisionRow, EscalationRow, RunPatch, RunRow } from "./db.ts";
+import type { CancelCause, DecisionRow, EscalationRow, RunAutonomy, RunPatch, RunRow } from "./db.ts";
 import { IRREVERSIBLE, checkpointMessage, dependentsOf } from "./decisions.ts";
 import { HarnessError } from "./errors.ts";
+import type { CancelMotive } from "./input.ts";
 import type { StepKind } from "./machine.ts";
 import {
   CANCELLABLE,
@@ -37,7 +38,8 @@ import {
 } from "./machine.ts";
 import { humanDecisionMemory } from "./oracle.ts";
 import type { RunBudget } from "./monitor.ts";
-import { HUMAN_ONLY } from "./pilot.ts";
+import { ASK_HUMAN_ONLY, HUMAN_ONLY, humanOnlyOf, raisesAutonomy } from "./pilot.ts";
+import type { StandingRules } from "./standing-rules.ts";
 
 export type GestureHooks = {
   /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
@@ -48,7 +50,15 @@ export type GestureHooks = {
   merging: (runId: string) => boolean;
   /** Ouvre un run de suite (décision renversée après le merge, sans revert possible). */
   followUp: (
-    input: { repo: string; title: string; request: string; modules: string[]; priority: number },
+    input: {
+      repo: string;
+      title: string;
+      request: string;
+      modules: string[];
+      priority: number;
+      /** Le curseur d'autonomie du run d'origine : son run de suite en hérite. */
+      autonomy: RunAutonomy | null;
+    },
     actor: Actor,
   ) => Promise<RunRow>;
   /** Reverte le commit squash d'un run mergé sur main et rend le run de suite ouvert ; lève si le revert ou le push échoue. */
@@ -62,12 +72,31 @@ export type GestureHooks = {
   specsAccepted: (run: RunRow) => void;
   /** Une règle d'autonomie pourrait-elle lever l'attente de ce run (autonomy-gates.ts `liftable`) ? */
   liftable: (run: RunRow) => boolean;
+  /** Les consignes permanentes : une réponse ou une correction donnée avec `always: true` en devient une (standing-rules.ts). */
+  standing: Pick<StandingRules, "assertRoom" | "fromAnswer" | "fromCorrection">;
 };
 
 /** Où est allée une consigne : dans le prompt en cours (`session`), ou gardée pour le prochain (`pending`). */
 export type Delivered = "session" | "pending";
 
-export type EscalationAnswer = { id: number; answer: string; reason?: string };
+/** Par où une correction atteint le run (`amend`) : specs refaites, correction, relance, ou consigne. */
+export type AmendVia = "specs" | "fix" | "retry" | "instruction";
+
+/** Le libellé de chaque motif d'annulation, dit dans la raison du run. */
+export const CANCEL_LABELS: Record<CancelCause, string> = {
+  off_target: "à côté de la demande",
+  too_big: "trop gros",
+  obsolete: "plus besoin",
+  duplicate: "doublon",
+  too_costly: "trop cher",
+  other: "autre",
+};
+
+/** Les motifs dont la note de l'humain devient une correction dans la mémoire du dépôt. */
+const LEARNED_CAUSES: readonly CancelCause[] = ["off_target", "too_big"];
+
+/** `always` : la réponse devient une consigne permanente du dépôt (« toujours faire ainsi »). */
+export type EscalationAnswer = { id: number; answer: string; reason?: string; always?: boolean };
 
 /** Une réponse d'escalade telle qu'elle est écrite, et par qui (`null` : le service, à l'échéance). */
 type Answered = { item: EscalationRow; answer: string; reason: string | null; by: string | null };
@@ -77,6 +106,31 @@ type ResumeLine = { question: string; answer: string; timedOut: boolean };
 
 /** Le début de la raison d'une réponse donnée par le service à l'échéance (la relecture la reconnaît). */
 const TIMEOUT_REASON = "échéance de";
+
+/**
+ * Quand l'option recommandée d'une escalade s'appliquera seule, et laquelle ; `null` si elle ne le fera
+ * jamais : échéance coupée (`review.escalationTimeoutSec: null`), escalade répondue, suppression, pas de
+ * recommandation, run terminé ou en « tout me demander ». La même règle tranche à l'échéance
+ * (`autoDecideExpired`) et se lit dans l'API (`autoAt`, `autoAnswer`).
+ */
+export function autoAnswerOf(
+  item: Pick<EscalationRow, "status" | "category" | "recommended" | "createdAt">,
+  run: Pick<RunRow, "state" | "autonomy"> | null,
+  timeoutSec: number | null,
+): { autoAt: number | null; autoAnswer: string | null } {
+  const recommended = item.recommended?.trim() ?? "";
+  if (
+    timeoutSec === null ||
+    item.status !== "open" ||
+    item.category === "deletion" ||
+    recommended === "" ||
+    run === null ||
+    isTerminal(run.state) ||
+    run.autonomy === "ask"
+  )
+    return { autoAt: null, autoAnswer: null };
+  return { autoAt: item.createdAt + timeoutSec * 1000, autoAnswer: recommended };
+}
 
 function byOf(actor: Actor): { by?: string } {
   return actor.by ? { by: actor.by } : {};
@@ -91,6 +145,28 @@ function whoOf(actor: Actor): string {
 
 function list(seqs: readonly number[]): string {
   return seqs.map((n) => `#${n}`).join(", ");
+}
+
+/** La voie d'une correction selon ce que le run attend ; 409 s'il n'y a plus rien à corriger. */
+function amendViaOf(run: RunRow): AmendVia {
+  switch (run.state) {
+    case "awaiting_human": {
+      const wait = humanWaitOf(run);
+      if (wait === "specs" || wait === "irreversible") return "specs";
+      return wait === "verdict" || wait === "arbitration" ? "fix" : "retry";
+    }
+    case "failed":
+      return "retry";
+    case "queued":
+    case "running":
+    case "escalated":
+      return "instruction";
+    case "merging":
+      throw new HarnessError(409, "merge en cours : plus rien à corriger");
+    case "merged":
+    case "cancelled":
+      throw new HarnessError(409, `run déjà ${run.state} : plus rien à corriger`);
+  }
 }
 
 export class HumanLoop {
@@ -130,13 +206,24 @@ export class HumanLoop {
 
   /**
    * Un pilote (audit ou client pilote) ne fait jamais un geste réservé à l'humain : sur une
-   * attente de `HUMAN_ONLY` (geste irréversible, budget dépassé), 403 sans rien écrire.
+   * attente de `HUMAN_ONLY` (geste irréversible, budget dépassé) ou d'un run en « tout me
+   * demander », 403 sans rien écrire. Les specs sont relues (`humanOnlyOf`) : la raison nue que
+   * pose `review.specsGate: true` ne dit pas leur geste irréversible.
    */
   assertPilotMay(run: RunRow, actor: Actor): void {
     if (!actor.pilot) return;
-    const wait = humanWaitOf(run);
-    const reason = wait === null ? undefined : HUMAN_ONLY[wait];
+    const reason = humanOnlyOf(run, this.#ctx.store);
     if (reason !== undefined) throw new HarnessError(403, `geste réservé à l'humain — ${reason}`);
+  }
+
+  /** `always: true` : refuse le geste (400) AVANT qu'il n'écrive si le dépôt porte déjà toutes ses consignes ; sans effet pour un pilote. */
+  #alwaysRoom(run: RunRow, actor: Actor, adding = 1): void {
+    if (!actor.pilot) this.#hooks.standing.assertRoom(run.repo, adding);
+  }
+
+  /** `always: true` : la correction donnée au run devient une consigne permanente de son dépôt ; ignoré pour un pilote. */
+  #alwaysKeep(run: RunRow, text: string, actor: Actor): void {
+    this.#hooks.standing.fromCorrection(run, text, actor);
   }
 
   // -- escalades --------------------------------------------------------------
@@ -157,6 +244,9 @@ export class HumanLoop {
         403,
         "geste réservé à l'humain — une escalade (schema, public_api, deletion) n'est tranchée que par l'humain",
       );
+    // « Tout me demander » : aucun pilote ne répond à la place de l'humain, même à une question réversible.
+    if (actor.pilot && run.autonomy === "ask")
+      throw new HarnessError(403, `geste réservé à l'humain — ${ASK_HUMAN_ONLY}`);
     for (const { id, answer, reason } of answers) {
       if (!open.get(id)) throw new HarnessError(404, `escalade ouverte inconnue : ${id}`);
       if (typeof answer !== "string" || answer.trim() === "")
@@ -164,8 +254,10 @@ export class HumanLoop {
       if (reason !== undefined && typeof reason !== "string")
         throw new HarnessError(400, `reason de l'escalade ${id} : une chaîne`);
     }
+    const kept = answers.filter((entry) => entry.always === true).length;
+    if (kept > 0) this.#alwaysRoom(run, actor, kept);
     const answered = store.transaction(() =>
-      answers.flatMap(({ id, answer, reason }) => {
+      answers.flatMap(({ id, answer, reason, always }) => {
         const item = open.get(id);
         if (!item) return [];
         const text = answer.trim();
@@ -177,6 +269,7 @@ export class HumanLoop {
           ...(why ? { reason: why } : {}),
           ...byOf(actor),
         });
+        if (always === true) this.#hooks.standing.fromAnswer(run, item.question, text, actor);
         return [{ item, answer: text, reason: why, by: actor.by }];
       }),
     );
@@ -260,13 +353,15 @@ export class HumanLoop {
    * `null` : jamais d'auto-décision. Appelé par l'orchestrateur à chaque tour.
    */
   async autoDecideExpired(now: number): Promise<void> {
+    const { store } = this.#ctx;
     const timeoutSec = this.#ctx.config.review.escalationTimeoutSec;
     if (timeoutSec === null) return;
-    const deadline = now - timeoutSec * 1000;
+    const runs = new Map<string, RunRow | null>();
     const byRun = new Map<string, EscalationRow[]>();
-    for (const item of this.#ctx.store.listEscalations({ status: "open" })) {
-      if (item.createdAt > deadline || item.category === "deletion") continue;
-      if (item.recommended === null || item.recommended.trim() === "") continue;
+    for (const item of store.listEscalations({ status: "open" })) {
+      if (!runs.has(item.runId)) runs.set(item.runId, store.getRun(item.runId));
+      const { autoAt } = autoAnswerOf(item, runs.get(item.runId) ?? null, timeoutSec);
+      if (autoAt === null || autoAt > now) continue;
       byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
     }
     for (const [runId, items] of byRun) {
@@ -283,7 +378,8 @@ export class HumanLoop {
     const { store, git } = this.#ctx;
     const run = store.getRun(runId);
     // Seul un run qui ATTEND ses réponses se tranche : un runner vivant finit son étape d'abord.
-    if (run?.state !== "escalated") return;
+    // « Tout me demander » : ses escalades n'expirent jamais.
+    if (run?.state !== "escalated" || run.autonomy === "ask") return;
     const open = new Set(store.listEscalations({ runId, status: "open" }).map((item) => item.id));
     const rationale = `${TIMEOUT_REASON} ${timeoutSec} s sans réponse humaine`;
     const decided: { item: EscalationRow; decision: DecisionRow }[] = [];
@@ -665,16 +761,20 @@ export class HumanLoop {
         runId: run.id,
         repo: run.repo,
       });
-      return this.#hooks.followUp(
+      const follow = await this.#hooks.followUp(
         {
           repo: run.repo,
           title: `Suite de « ${run.title} » : ${decision.question}`.slice(0, 120),
           request: `La feature « ${run.title} » a été mergée avec la décision « ${decision.question} → ${decision.chosen} » et son commit n'a pas pu être reverté. ${change} Applique ce changement par-dessus main.`,
           modules: run.modules,
           priority: run.priority,
+          autonomy: run.autonomy,
         },
         actor,
       );
+      // Le lien du run de suite vers son parent : la lignée (vigie, pilote) et le gabarit « refaire » le lisent.
+      this.#ctx.event("follow_up", run.id, { runId: follow.id });
+      return follow;
     }
   }
 
@@ -682,16 +782,17 @@ export class HumanLoop {
 
   /**
    * La validation humaine en attente : les specs (avant /impl) ou le verdict de revue. `inscribe` : l'autonomie
-   * inscrit sa décision dans la transaction du geste (autonomy-gates.ts).
+   * inscrit sa décision dans la transaction du geste (autonomy-gates.ts). `always` : la raison d'un refus devient
+   * une consigne permanente du dépôt (ignoré pour une validation, et pour un pilote).
    */
   validate(
     runId: string,
     approve: boolean,
     reason: string,
     actor: Actor,
-    inscribe?: (next: RunRow) => void,
+    options: { inscribe?: (next: RunRow) => void; always?: boolean } = {},
   ): Promise<RunRow> {
-    return this.#serial(runId, () => this.#validate(runId, approve, reason.trim(), actor, inscribe));
+    return this.#serial(runId, () => this.#validate(runId, approve, reason.trim(), actor, options));
   }
 
   async #validate(
@@ -699,7 +800,7 @@ export class HumanLoop {
     approve: boolean,
     why: string,
     actor: Actor,
-    inscribe?: (next: RunRow) => void,
+    options: { inscribe?: (next: RunRow) => void; always?: boolean },
   ): Promise<RunRow> {
     const { store, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
@@ -707,8 +808,10 @@ export class HumanLoop {
     if (run.state !== "awaiting_human")
       throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
     const specs = run.step === "specs";
+    const always = options.always === true && !approve;
     if (!approve) {
       if (why === "") throw new HarnessError(400, "un refus porte sa raison");
+      if (always) this.#alwaysRoom(run, actor);
       // Un refus du pilote n'est pas une correction humaine : l'oracle ne le rappellera pas comme tel.
       if (!actor.pilot)
         void oracle.retain(
@@ -746,7 +849,7 @@ export class HumanLoop {
           ...byOf(actor),
           ...(actor.pilot ? { pilot: true } : {}),
         });
-        inscribe?.(next);
+        options.inscribe?.(next);
       }
       if (next && approve && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(current, stop));
       if (next && acceptsSpecs(current.step, transition)) this.#hooks.specsAccepted(next);
@@ -758,6 +861,7 @@ export class HumanLoop {
             ? `${author} a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`
             : `${author} a refusé le verdict : ${why}`,
         );
+        if (always) this.#alwaysKeep(current, why, actor);
       }
       return next;
     });
@@ -816,25 +920,89 @@ export class HumanLoop {
     });
   }
 
-  cancel(runId: string, actor: Actor): Promise<RunRow> {
-    return this.#serial(runId, () => this.#cancel(runId, actor));
+  /**
+   * L'annulation. `motive` : le motif que l'humain donne (cause, note), gardé sur le run
+   * (`cancelCause`) et dit dans sa raison ; sans motif, l'annulation d'avant.
+   */
+  cancel(runId: string, actor: Actor, motive: CancelMotive | null = null): Promise<RunRow> {
+    return this.#serial(runId, () => this.#cancel(runId, actor, motive));
   }
 
-  async #cancel(runId: string, actor: Actor): Promise<RunRow> {
-    const { git } = this.#ctx;
+  async #cancel(runId: string, actor: Actor, motive: CancelMotive | null): Promise<RunRow> {
+    const { git, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
     this.assertPilotMay(run, actor);
     if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
     // Un merge en cours touche main et le worktree : on ne l'interrompt pas à mi-chemin.
     if (run.state === "merging" || this.#hooks.merging(runId))
       throw new HarnessError(409, "merge en cours : impossible d'annuler");
-    if (!this.#ctx.transition(run, cancelled(run), CANCELLABLE, { actor: { by: actor.by } })) {
+    const label = motive === null ? "" : CANCEL_LABELS[motive.cause];
+    const said = motive === null || motive.note === "" ? label : `${label} — ${motive.note}`;
+    const options = { actor: { by: actor.by }, ...(motive ? { patch: { cancelCause: motive.cause } } : {}) };
+    if (!this.#ctx.transition(run, cancelled(run, said), CANCELLABLE, options)) {
       throw new HarnessError(409, `le run a changé d'état (${this.#ctx.run(runId).state})`);
     }
+    // « À côté » ou « trop gros », avec une note : une correction que le prochain cadrage du dépôt rappellera
+    // (comme un refus de specs) — jamais celle d'un pilote, ni sur un dépôt retiré de la configuration.
+    const scope = this.#ctx.config.repos.find((entry) => entry.name === run.repo)?.scope;
+    if (motive && motive.note !== "" && !actor.pilot && scope !== undefined && LEARNED_CAUSES.includes(motive.cause))
+      void oracle.retain(scope, `Correction humaine — feature « ${run.title} » annulée (${label}) : ${motive.note}`, [
+        "harness",
+        "correction",
+      ]);
     await this.#hooks.halt(runId);
     // La branche reste (inspection) ; seul le worktree est rendu.
     if (run.worktree) await git.removeWorktree(this.#ctx.repo(run.repo).path, run.worktree, null).catch(() => {});
     return this.#ctx.run(runId);
+  }
+
+  /**
+   * Corriger un run là où il est, d'un seul geste (au lieu de l'annuler) : des specs en attente
+   * sont refusées et réécrites (`specs`), un verdict ou un arbitrage renvoie en correction (`fix`),
+   * une autre attente ou un échec est relancé avec la consigne (`retry`), un run en cours, en file
+   * ou escaladé la reçoit (`instruction`). Un run en merge, mergé ou annulé : 409. Chaque voie garde
+   * les gardes de son geste (révision lue, pilote) ; `always` en fait aussi une consigne permanente.
+   */
+  async amend(runId: string, text: string, actor: Actor, always = false): Promise<{ run: RunRow; via: AmendVia }> {
+    const consigne = text.trim();
+    if (consigne === "") throw new HarnessError(400, "text : correction vide");
+    const run = this.#fresh(runId, actor);
+    const via = amendViaOf(run);
+    if (via === "specs" || via === "fix")
+      return { run: await this.validate(runId, false, consigne, actor, { always }), via };
+    // always : le dépôt plein refuse la correction AVANT le geste ; la consigne est gardée après lui.
+    if (always) this.#alwaysRoom(run, actor);
+    if (via === "instruction") {
+      const instructed = await this.instruct(runId, consigne, actor);
+      if (always) this.#alwaysKeep(run, consigne, actor);
+      return { run: instructed.run, via };
+    }
+    // Un pilote est refusé sur un budget dépassé AVANT que la relance n'en accorde un autre (comme `retry`).
+    this.assertPilotMay(run, actor);
+    this.#ctx.monitor.acknowledgeBudget(runId, actor.by);
+    const relaunched = await this.retry(runId, actor, consigne);
+    if (always) this.#alwaysKeep(run, consigne, actor);
+    return { run: relaunched, via };
+  }
+
+  /**
+   * Les modules d'un run, restreints par l'humain (`POST /v1/runs/{id}/modules`) : le planificateur
+   * les lit dès le prochain tour — un run qui en retenait d'autres les libère. Les chemins sont
+   * déjà contrôlés (`modulesInput`). Un run terminal est refusé (409).
+   */
+  setModules(runId: string, modules: string[], actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      this.assertPilotMay(run, actor);
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      store.transaction(() => {
+        store.updateRun(runId, { modules });
+        this.#ctx.event("modules_set", runId, { modules, ...byOf(actor) });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
   }
 
   /**
@@ -897,6 +1065,26 @@ export class HumanLoop {
       store.transaction(() => {
         store.updateRun(runId, { priority });
         this.#ctx.event("priority", runId, { priority, ...byOf(actor) });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
+  }
+
+  /**
+   * Le curseur d'autonomie d'un run : `ask` (tout me demander), `null` (les règles du dépôt) ou
+   * `deliver` (livre et préviens-moi). Un pilote ne le monte jamais (403) ; un run terminé est refusé (409).
+   */
+  setAutonomy(runId: string, level: RunAutonomy | null, actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      if (actor.pilot && raisesAutonomy(run.autonomy, level))
+        throw new HarnessError(403, "geste réservé à l'humain — un pilote ne monte pas l'autonomie d'un run");
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      store.transaction(() => {
+        store.updateRun(runId, { autonomy: level });
+        this.#ctx.event("autonomy_level", runId, { level, ...byOf(actor) });
       });
       this.#hooks.tick();
       return this.#ctx.run(runId);

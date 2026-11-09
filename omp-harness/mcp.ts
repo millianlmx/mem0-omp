@@ -15,17 +15,26 @@ import { HARNESS_COMMIT } from "./build-info.ts";
 import type { RepoConfig } from "./config.ts";
 import { isRecord } from "./config.ts";
 import type { Actor } from "./context.ts";
+import { CANCEL_CAUSES } from "./db.ts";
 import type { RepoFilter } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
+  alwaysInput,
+  autonomyLevelInput,
   budgetInput,
+  cancelMotive,
   escalationAnswers,
   instructionsInput,
   integer,
+  MAX_CANCEL_NOTE,
   MAX_INSTRUCTIONS,
+  MAX_PAUSE_REASON,
   MAX_RUN_BUDGET_USD,
   newRunInput,
+  pauseInput,
   priorityInput,
+  standingRuleInput,
+  standingRulePatch,
   stringList,
   text,
 } from "./input.ts";
@@ -37,6 +46,9 @@ import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import { BROWSER_TOOLS } from "./browser/tools.ts";
 import { intakeView, visibleIntake } from "./intake.ts";
 import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
+import { SCOREBOARD_DAYS, SCOREBOARD_MAX_DAYS, scoreboardOf } from "./scoreboard.ts";
+import { readerOf } from "./proposals.ts";
+import type { ConfigAdmin } from "./repos.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -51,6 +63,8 @@ export type McpCall = {
   /** Les dépôts que le client voit (`null` : tous). */
   visible: RepoFilter;
   version: string;
+  /** La configuration administrée à chaud (403 client borné, 409 sans `--config`) : la règle de palier d'une proposition. */
+  admin: () => ConfigAdmin;
 };
 
 type JsonRpcId = string | number | null;
@@ -327,14 +341,23 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "run_cancel",
     title: "Annuler un run",
     description:
-      "Annule un run qui n'est pas terminé : `POST /v1/runs/{id}/cancel`. Un run déjà terminal est refusé (409).",
+      "Annule un run qui n'est pas terminé : `POST /v1/runs/{id}/cancel`. `cause` dit pourquoi (`off_target` à côté de la demande, `too_big` trop gros, `obsolete` plus besoin, `duplicate` doublon, `too_costly` trop cher, `other`) et `note` le précise : le motif est gardé sur le run (`cancelCause`) et dans sa raison ; « à côté » ou « trop gros » avec une note devient une correction dans la mémoire du dépôt. Pour corriger un run au lieu de l'annuler : run_amend. Un run déjà terminal est refusé (409).",
     role: "operator",
     readOnly: false,
-    properties: { id: RUN_ID_PROPERTY, rev: REV_PROPERTY },
+    properties: {
+      id: RUN_ID_PROPERTY,
+      cause: { type: "string", enum: CANCEL_CAUSES, description: "Facultatif : le motif de l'annulation." },
+      note: {
+        type: "string",
+        maxLength: MAX_CANCEL_NOTE,
+        description: "Facultatif : ce qui n'allait pas, en une phrase (seule, elle vaut pour le motif `other`).",
+      },
+      rev: REV_PROPERTY,
+    },
     required: ["id"],
     run: async (call, args) => {
       const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
-      return { run: await call.orchestrator.cancel(id, gestureActor(call, args)) };
+      return { run: await call.orchestrator.cancel(id, gestureActor(call, args), cancelMotive(args)) };
     },
   },
   {
@@ -474,6 +497,11 @@ export const MCP_TOOLS: readonly Tool[] = [
             id: { type: "integer", description: "L'id de l'escalade ouverte (run_get)." },
             answer: { type: "string", description: "La réponse, non vide." },
             reason: { type: "string", description: "Facultatif : le motif de la réponse." },
+            always: {
+              type: "boolean",
+              description:
+                "Facultatif : la réponse devient une consigne permanente du dépôt (« toujours faire ainsi »).",
+            },
           },
           required: ["id", "answer"],
         },
@@ -518,7 +546,12 @@ export const MCP_TOOLS: readonly Tool[] = [
       const status = optionalText(args, "status") ?? "open";
       if (status !== "open" && status !== "answered")
         throw new HarnessError(400, "status : « open » ou « answered » attendu");
-      return escalationBatches(call.orchestrator.store, status, call.visible);
+      return escalationBatches(
+        call.orchestrator.store,
+        status,
+        call.visible,
+        call.orchestrator.config.review.escalationTimeoutSec,
+      );
     },
   },
   {
@@ -550,6 +583,64 @@ export const MCP_TOOLS: readonly Tool[] = [
       );
     },
     render: (result) => String(result.text),
+  },
+  {
+    name: "brief",
+    title: "Le brief « pendant votre absence »",
+    description:
+      "Ce qui s'est passé depuis la dernière fois que ce client a vu le brief (ou depuis `since`, sinon sur 24 heures) : `GET /v1/brief`. Une phrase de tête (`headline`), les runs livrés (`alone` : sans geste humain), ce qui attend l'humain, les échecs, les arrêts et leur motif, les décisions prises seules, les runs retenus en file, le nombre de propositions et le coût. Lecture seule : ne marque pas le brief comme vu.",
+    role: "viewer",
+    readOnly: true,
+    properties: {
+      since: {
+        type: "integer",
+        minimum: 0,
+        description:
+          "Facultatif : le début de la fenêtre, en ms depuis l'epoch. Par défaut : le dernier « vu » du client.",
+      },
+    },
+    required: [],
+    run: async (call, args) => {
+      const since = integer(args.since ?? undefined, "since") ?? null;
+      if (since !== null && since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      const brief = call.orchestrator.briefView(call.client.name, since, call.visible);
+      return { brief };
+    },
+  },
+  {
+    name: "scoreboard",
+    title: "Les chiffres de l'usine",
+    description:
+      "Les trois indicateurs sur `days` jours (7 par défaut, 90 au plus) : `GET /v1/scoreboard`. La part des runs mergés sans aucun geste humain (`aloneRate`), le délai médian d'une décision humaine (`medianDecisionMs`), la part du travail lancé sans l'humain (`startedAloneRate`), les annulations par motif et le détail par dépôt.",
+    role: "viewer",
+    readOnly: true,
+    properties: {
+      days: {
+        type: "integer",
+        minimum: 1,
+        maximum: SCOREBOARD_MAX_DAYS,
+        description: "Facultatif : la fenêtre en jours. Par défaut : 7.",
+      },
+    },
+    required: [],
+    run: async (call, args) => {
+      const days = integer(args.days ?? undefined, "days") ?? SCOREBOARD_DAYS;
+      if (days < 1 || days > SCOREBOARD_MAX_DAYS)
+        throw new HarnessError(400, `days : entier de 1 à ${SCOREBOARD_MAX_DAYS} attendu`);
+      const { store, config } = call.orchestrator;
+      return { scoreboard: scoreboardOf(store, config, days, Date.now(), call.visible) };
+    },
+  },
+  {
+    name: "spaces",
+    title: "Les espaces (clients)",
+    description:
+      "Les espaces que le client voit : `GET /v1/spaces`. Chacun réunit des dépôts, un budget journalier et un curseur d'autonomie par défaut, avec ses compteurs (au travail, chez l'humain, en file, mergés, échoués et annulés sur 7 jours), son coût du jour et de la semaine et ce qu'il reste de son budget du jour.",
+    role: "viewer",
+    readOnly: true,
+    properties: {},
+    required: [],
+    run: async (call) => ({ spaces: call.orchestrator.spaces.list(call.visible, Date.now()) }),
   },
   {
     name: "run_instructions",
@@ -670,6 +761,45 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "proposals",
+    title: "Le bac « Propositions »",
+    description:
+      "Ce que l'usine pourrait faire sans qu'on le lui demande : `GET /v1/proposals`. Chaque proposition a un `id` stable, une `source` (issue du label, incident de la vigie, proposition d'audit, signalement, item du plan Atlassian, palier d'autonomie, run en échec à relancer, PR sans activité, CI rouge) et l'`action` qu'accepter ferait. Les plus récentes d'abord, sans les écartées ; seulement celles des dépôts que le client voit (signalements et plan Atlassian : propriétaire seulement).",
+    role: "viewer",
+    readOnly: true,
+    properties: {},
+    required: [],
+    run: async (call) => ({ proposals: call.orchestrator.proposals.list(readerOf(call.client)) }),
+  },
+  {
+    name: "proposal_accept",
+    title: "Accepter une proposition",
+    description:
+      "Accepte une proposition du bac par le geste existant de sa source : `POST /v1/proposals/{id}/accept`. Rend `{proposal, created: {kind, id}}` (`run`, `project`, `rule`, `signal` ou `retry`). Mêmes gardes que ce geste : appareil approbateur pour un signalement, rôle admin pour une règle de palier, gardes de la vigie pour un client pilote. Une proposition disparue (cause levée, écartée) est refusée (404).",
+    role: "operator",
+    readOnly: false,
+    properties: { id: { type: "string", description: "L'id de la proposition (rendu par proposals)." } },
+    required: ["id"],
+    run: async (call, args) =>
+      call.orchestrator.proposals.accept(text(args, "id"), {
+        client: call.client,
+        actor: call.actor,
+        admin: call.admin,
+      }),
+  },
+  {
+    name: "proposal_dismiss",
+    title: "Écarter une proposition",
+    description:
+      "Écarte une proposition du bac : `POST /v1/proposals/{id}/dismiss`. Elle ne revient pas, même si sa cause demeure. Refusé à un client pilote (403).",
+    role: "operator",
+    readOnly: false,
+    properties: { id: { type: "string", description: "L'id de la proposition (rendu par proposals)." } },
+    required: ["id"],
+    run: async (call, args) =>
+      call.orchestrator.proposals.dismiss(text(args, "id"), { client: call.client, actor: call.actor }),
+  },
+  {
     name: "issue_create",
     title: "Publier une issue caviardée",
     description:
@@ -727,13 +857,24 @@ export const MCP_TOOLS: readonly Tool[] = [
         description: "Facultatif : d'où vient la demande (défaut : cli).",
       },
       repo: { type: "string", description: "Facultatif : impose ce dépôt au plan." },
+      context: {
+        type: "object",
+        description:
+          "Facultatif : la page d'où part la demande — `url` (http ou https, 2000 caractères au plus), `title` (300), `selection` (4000). Donnée au classeur comme une donnée, jamais comme une consigne.",
+        properties: { url: { type: "string" }, title: { type: "string" }, selection: { type: "string" } },
+      },
     },
     required: [],
     run: async (call, args) => {
       const id = optionalText(args, "id");
       if (id !== undefined) return { intake: intakeView(visibleIntake(call.orchestrator.store, call.client, id)) };
       const row = call.orchestrator.intake.create(
-        { text: args.text, source: optionalText(args, "source") ?? "cli", repo: optionalText(args, "repo") },
+        {
+          text: args.text,
+          source: optionalText(args, "source") ?? "cli",
+          repo: optionalText(args, "repo"),
+          context: args.context,
+        },
         call.client,
         { by: call.actor.by },
       );
@@ -780,6 +921,114 @@ export const MCP_TOOLS: readonly Tool[] = [
       const row = call.orchestrator.intake.answer(text(args, "id"), call.client, { by: call.actor.by }, args);
       void call.orchestrator.tick();
       return { intake: intakeView(row) };
+    },
+  },
+  {
+    name: "run_amend",
+    title: "Corriger un run",
+    description:
+      "Corrige un run là où il est, au lieu de l'annuler : `POST /v1/runs/{id}/amend`. Selon son état, `text` refuse ses specs en attente, qui sont réécrites (`via: specs`), renvoie un verdict ou un arbitrage en correction (`fix`), relance une autre attente ou un échec avec la consigne (`retry`), ou parle à un run en cours, en file ou escaladé (`instruction`). Un run en merge, mergé ou annulé est refusé (409).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      text: {
+        type: "string",
+        maxLength: MAX_INSTRUCTIONS,
+        description: "La correction, précise et vérifiable.",
+      },
+      always: {
+        type: "boolean",
+        description: "Facultatif : en faire aussi une consigne permanente du dépôt (ignoré pour un pilote).",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "text"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      const correction = instructionsInput(args, "text");
+      return { ...(await call.orchestrator.amend(id, correction, gestureActor(call, args), alwaysInput(args))) };
+    },
+  },
+  {
+    name: "pause",
+    title: "Tout suspendre, ou reprendre",
+    description:
+      "La pause globale du serveur : `GET /v1/pause` sans `paused`, `POST /v1/pause` avec. En pause, plus aucun run n'est admis, chaque run vivant finit son étape puis retourne en file à l'étape suivante, et ni audit, ni rêve, ni planification, ni demande ne démarre ; rien n'est annulé. Avec `now: true`, les runs, audits et demandes en cours sont interrompus tout de suite et reprennent à `paused: false` (un run à la même étape, sans échec compté). `paused: false` relance tout. Réservé au propriétaire : un client borné à des dépôts ou un pilote est refusé.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      paused: { type: "boolean", description: "Facultatif : `true` suspend, `false` reprend ; absent : lit l'état." },
+      reason: { type: "string", maxLength: MAX_PAUSE_REASON, description: "Facultatif : pourquoi tout est suspendu." },
+      now: {
+        type: "boolean",
+        description:
+          "Facultatif, avec `paused: true` : interrompre tout de suite ce qui tourne au lieu de laisser finir les étapes.",
+      },
+    },
+    required: [],
+    run: async (call, args) => {
+      if (args.paused === undefined) return { pause: call.orchestrator.pause };
+      const { paused, reason, now } = pauseInput(args);
+      return { pause: call.orchestrator.setPause(paused, reason, call.actor, call.visible, now) };
+    },
+  },
+  {
+    name: "run_autonomy",
+    title: "Régler l'autonomie d'un run",
+    description:
+      "Pose le curseur d'autonomie d'un run non terminal : `POST /v1/runs/{id}/autonomy`. `ask` (« tout me demander ») : ses specs et sa revue attendent toujours l'humain, ses escalades n'expirent jamais ; `null` : les règles du dépôt ; `deliver` (« livre et préviens-moi ») : ses specs sans raison de porte et une revue dont seul le diff dépasse (jusqu'à 4 fois le seuil, suite verte, critères prouvés) sont validées seules. L'irréversible et le budget restent à l'humain. Un client pilote ne monte pas le curseur (403).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: RUN_ID_PROPERTY,
+      level: {
+        type: ["string", "null"],
+        enum: ["ask", "deliver", null],
+        description: "`ask`, `deliver`, ou `null` pour revenir aux règles du dépôt.",
+      },
+      rev: REV_PROPERTY,
+    },
+    required: ["id", "level"],
+    run: async (call, args) => {
+      const id = call.orchestrator.visibleRun(runArg(args), call.visible).id;
+      const level = autonomyLevelInput(args);
+      return { run: await call.orchestrator.setAutonomy(id, level, gestureActor(call, args)) };
+    },
+  },
+  {
+    name: "rules",
+    title: "Les consignes permanentes",
+    description:
+      "Les consignes permanentes de l'humain (« toujours faire ainsi ») que ce client voit : `GET /v1/rules`. Chaque consigne active est dite dans le prompt de chaque étape des runs de son dépôt (`repo: null` : de tous les dépôts, lisible seulement par un client qui les voit tous).",
+    role: "viewer",
+    readOnly: true,
+    properties: {},
+    required: [],
+    run: async (call) => ({ rules: call.orchestrator.store.listStandingRules(call.visible) }),
+  },
+  {
+    name: "rule_set",
+    title: "Écrire une consigne permanente",
+    description:
+      "Crée, modifie ou retire une consigne permanente. Sans `id` : la crée (`POST /v1/rules`, `text` requis, `repo` absent pour tous les dépôts). Avec `id` : change son `text` ou l'active et la désactive (`enabled`, `PUT /v1/rules/{id}`), ou la retire (`remove: true`, `DELETE /v1/rules/{id}`). 40 consignes actives au plus par dépôt ; un client borné n'écrit que pour ses dépôts ; refusé à un client pilote (403).",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: { type: "string", description: "L'id de la consigne à modifier ou à retirer (rendu par rules)." },
+      text: { type: "string", maxLength: 600, description: "La consigne, une phrase (1 à 600 caractères)." },
+      repo: { type: "string", description: "Le nom du dépôt déclaré ; absent : tous les dépôts." },
+      enabled: { type: "boolean", description: "Avec `id` : `false` la désactive sans la retirer." },
+      remove: { type: "boolean", description: "Avec `id` : `true` la retire." },
+    },
+    required: [],
+    run: async (call, args) => {
+      const { standing } = call.orchestrator;
+      const id = optionalText(args, "id");
+      if (id === undefined) return { rule: standing.create(standingRuleInput(args), call.actor, call.visible) };
+      if (args.remove !== true) return { rule: standing.update(id, standingRulePatch(args), call.actor, call.visible) };
+      standing.remove(id, call.actor, call.visible);
+      return { removed: true };
     },
   },
   ...BROWSER_TOOLS,
@@ -853,7 +1102,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Confie une demande en une phrase libre avec intake (elle est classée en un plan, rien n'est créé), réponds à sa question de clarification avec intake_answer et confirme son plan avec intake_confirm. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer. Navigue le web sans le Chrome de l'utilisateur : browser_open, browser_snapshot, browser_click, browser_fill, browser_key, browser_screenshot, browser_close.",
+              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept ; run_amend le corrige là où il est, quel que soit son état, au lieu de l'annuler. Suspends tout le serveur, ou reprends, avec pause. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Confie une demande en une phrase libre avec intake (elle est classée en un plan, rien n'est créé), réponds à sa question de clarification avec intake_answer et confirme son plan avec intake_confirm. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer. Navigue le web sans le Chrome de l'utilisateur : browser_open, browser_snapshot, browser_click, browser_fill, browser_key, browser_screenshot, browser_close.",
           },
         };
       }

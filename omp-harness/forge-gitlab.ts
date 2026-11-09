@@ -11,6 +11,7 @@ import { HarnessError } from "./errors.ts";
 import type {
   ChangeRequest,
   ChangeState,
+  FailedCi,
   FailedLog,
   Forge,
   ForgeAuth,
@@ -20,6 +21,7 @@ import type {
   IssueComment,
   IssueDetail,
   IssueQuery,
+  OpenChange,
   SquashMessage,
 } from "./forge.ts";
 import { failure, isRedCheck, record, remoteLocation, textOf, usefulLogLines, visibilityOf } from "./forge.ts";
@@ -304,6 +306,41 @@ export class GitLabForge implements Forge {
       });
     }
     return failed;
+  }
+
+  async openChanges(limit: number): Promise<OpenChange[]> {
+    const raw = await this.#api(`merge_requests?state=opened&per_page=${Math.min(Math.max(limit, 1), PAGE_MAX)}`);
+    if (!Array.isArray(raw)) throw new HarnessError(502, "glab api merge_requests : une liste est attendue");
+    return raw.flatMap((entry) => {
+      const value = record(entry);
+      if (!Number.isInteger(value.iid)) return [];
+      return [
+        {
+          number: value.iid as number,
+          title: textOf(value.title),
+          url: textOf(value.web_url),
+          head: textOf(value.source_branch),
+          author: username(value.author),
+          draft: value.draft === true || value.work_in_progress === true,
+          updatedAt: textOf(value.updated_at),
+        },
+      ];
+    });
+  }
+
+  /** Le dernier pipeline TERMINÉ de la branche (`scope=finished`), s'il a échoué. */
+  async failedCi(branch: string): Promise<FailedCi | null> {
+    const raw = await this.#api(`pipelines?ref=${encodeURIComponent(branch)}&scope=finished&per_page=1`);
+    const pipeline = record(Array.isArray(raw) ? raw[0] : null);
+    if (!Number.isInteger(pipeline.id) || pipeline.status !== "failed") return null;
+    return {
+      id: String(pipeline.id),
+      name: "pipeline",
+      title: `pipeline #${String(pipeline.id)}`,
+      url: textOf(pipeline.web_url) || null,
+      sha: textOf(pipeline.sha),
+      at: textOf(pipeline.updated_at),
+    };
   }
 
   async issues(query: IssueQuery): Promise<Issue[]> {

@@ -2,22 +2,39 @@
 // (mêmes entrées, mêmes gardes que les routes), sans en recopier aucun contrôle.
 import type { Client } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { IntakePlan } from "./db.ts";
+import type { IntakePlan, RunAutonomy } from "./db.ts";
 import { newRunInput, requireRepo } from "./input.ts";
 import type { Created } from "./intake.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { scheduleInput } from "./schedules.ts";
 import { approverFor } from "./workstation.ts";
 
-/** Crée l'objet du plan : `bug` et `feature` un run, `audit`, `schedule` et `workstation_request` le leur. */
-export function createFromPlan(orchestrator: Orchestrator, client: Client, actor: Actor, plan: IntakePlan): Created {
+/**
+ * Crée l'objet du plan : `bug` et `feature` un run (`autonomy` : son curseur, s'il est demandé), `audit`,
+ * `schedule` et `workstation_request` le leur.
+ */
+export function createFromPlan(
+  orchestrator: Orchestrator,
+  client: Client,
+  actor: Actor,
+  plan: IntakePlan,
+  autonomy?: RunAutonomy | null,
+): Created {
   const repo = plan.repo ?? "";
   switch (plan.kind) {
     case "feature":
     case "bug": {
-      const input = newRunInput({ repo, title: plan.title, request: plan.statement, kind: plan.kind }, client, {
-        typed: true,
-      });
+      const input = newRunInput(
+        {
+          repo,
+          title: plan.title,
+          request: plan.statement,
+          kind: plan.kind,
+          ...(autonomy !== undefined ? { autonomy } : {}),
+        },
+        client,
+        { typed: true },
+      );
       return { kind: "run", id: orchestrator.createRun(input, actor).id };
     }
     case "audit": {

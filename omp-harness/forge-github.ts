@@ -10,6 +10,7 @@ import type {
   ChangeState,
   CheckConclusion,
   CheckStatus,
+  FailedCi,
   FailedLog,
   Forge,
   ForgeAuth,
@@ -19,6 +20,7 @@ import type {
   IssueComment,
   IssueDetail,
   IssueQuery,
+  OpenChange,
   SquashMessage,
 } from "./forge.ts";
 import {
@@ -314,6 +316,71 @@ export class GitHubForge implements Forge {
       const own = all.split("\n").filter((line) => line.startsWith(`${check.name}\t`));
       const log = usefulLogLines(own.length > 0 ? own.join("\n") : all, limit);
       failed.push({ name: check.name, url: check.url, log });
+    }
+    return failed;
+  }
+
+  async openChanges(limit: number): Promise<OpenChange[]> {
+    const raw = await this.#json([
+      "pr",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      String(limit),
+      "--json",
+      "number,title,url,headRefName,author,isDraft,updatedAt",
+    ]);
+    if (!Array.isArray(raw)) throw new HarnessError(502, "gh pr list : une liste est attendue");
+    return raw.flatMap((entry) => {
+      const value = record(entry);
+      if (!Number.isInteger(value.number)) return [];
+      return [
+        {
+          number: value.number as number,
+          title: textOf(value.title),
+          url: textOf(value.url),
+          head: textOf(value.headRefName),
+          author: login(value.author),
+          draft: value.isDraft === true,
+          updatedAt: textOf(value.updatedAt),
+        },
+      ];
+    });
+  }
+
+  /** `gh run list` rend les exécutions les plus récentes d'abord : la première TERMINÉE de chaque workflow fait foi. */
+  async failedCi(branch: string): Promise<FailedCi | null> {
+    const raw = await this.#json([
+      "run",
+      "list",
+      "--branch",
+      branch,
+      "--limit",
+      "30",
+      "--json",
+      "databaseId,workflowName,displayTitle,status,conclusion,url,headSha,updatedAt",
+    ]);
+    if (!Array.isArray(raw)) throw new HarnessError(502, "gh run list : une liste est attendue");
+    const seen = new Set<string>();
+    let failed: FailedCi | null = null;
+    for (const entry of raw) {
+      const value = record(entry);
+      const name = textOf(value.workflowName);
+      if (value.status !== "completed" || seen.has(name)) continue;
+      seen.add(name);
+      if (checkConclusion(value.conclusion) !== "failure") continue;
+      const at = textOf(value.updatedAt);
+      // Plusieurs workflows rouges : le plus récent (une date ISO 8601 se compare comme un texte).
+      if (failed === null || at > failed.at)
+        failed = {
+          id: String(value.databaseId ?? ""),
+          name,
+          title: textOf(value.displayTitle),
+          url: textOf(value.url) || null,
+          sha: textOf(value.headSha),
+          at,
+        };
     }
     return failed;
   }

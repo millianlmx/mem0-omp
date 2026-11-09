@@ -7,7 +7,8 @@
 // boîte de l'humain. Les gestes de la boucle humaine se font depuis la session
 // (outils harness_*, tools.ts) quand l'utilisateur les demande en clair, ou dans
 // OMP Console ; /harness-follow (follow.ts) pousse les moments d'attente dans la
-// conversation.
+// conversation. La session se signale aussi au harness (local-session.ts) : les apps
+// voient ce qui se fait à la main.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { createFollower, FOLLOW_MESSAGE_TYPE } from "./follow.ts";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
 import { intakeDialog, registerIntakeTool } from "./intake.ts";
+import { registerLocalSession } from "./local-session.ts";
 import { registerHarnessTools } from "./tools.ts";
 import { registerWorkstationTools } from "./workstation.ts";
 
@@ -99,7 +101,12 @@ export default function reqExtension(pi: ExtensionAPI) {
   registerHarnessTools(pi, { onLaunched: (resolved, runs) => follower.start(resolved, runs) });
   registerWorkstationTools(pi);
   registerIntakeTool(pi);
-  pi.on("session_shutdown", () => follower.stop());
+  const localSession = registerLocalSession(pi);
+  // Un seul handler d'arrêt : le suivi est coupé d'abord, puis la session dit sa fin au harness.
+  pi.on("session_shutdown", async (_event, ctx) => {
+    follower.stop();
+    await localSession.shutdown(ctx);
+  });
 
   pi.registerCommand("req", {
     description:

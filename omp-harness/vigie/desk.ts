@@ -65,7 +65,8 @@ const COMMENT_EVERY_MS = 6 * 60 * 60_000;
 /** La cadence des tours de la vigie dans le scheduling du service. */
 const TICK_EVERY_MS = 30_000;
 const SETTINGS_KEY = "vigie";
-const HEARTBEAT_KEY = "vigie.heartbeat";
+/** Le réglage du battement de cœur : `{at, version, client, silentSince}` (scoreboard.ts y lit le client pilote). */
+export const HEARTBEAT_KEY = "vigie.heartbeat";
 const TITLE_MAX = 200;
 const BODY_MAX = 60_000;
 const MESSAGE_MAX = 4_000;

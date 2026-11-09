@@ -27,13 +27,22 @@ import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, S
 import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
+  alwaysInput,
+  autonomyField,
+  autonomyLevelInput,
+  autonomyRuleInput,
   budgetInput,
+  cancelMotive,
   escalationAnswers,
   instructionsInput,
   integer,
+  modulesInput,
   newRunInput,
+  pauseInput,
   priorityInput,
   requireRepo,
+  standingRuleInput,
+  standingRulePatch,
   stringList,
   text,
 } from "./input.ts";
@@ -52,10 +61,13 @@ import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
 import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
+import { SCOREBOARD_DAYS, SCOREBOARD_MAX_DAYS, scoreboardOf } from "./scoreboard.ts";
+import { SPACE_REPORT_WINDOW_MS, spaceEdit, spaceInput } from "./spaces.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
+import { readerOf } from "./proposals.ts";
 import { parseLoginInput } from "./browser/vps-login.ts";
 import {
   MAX_WAIT_SEC,
@@ -68,6 +80,7 @@ import {
 } from "./workstation.ts";
 import type { AtlassianDesk } from "./atlassian/desk.ts";
 import { INVALID_LINK, writeStateOf } from "./atlassian/desk.ts";
+import { localSessionStates } from "./local-sessions.ts";
 
 export const API_VERSION = 1;
 
@@ -121,15 +134,31 @@ export const API_FEATURES = [
   "session-graph",
   "repo-tests",
   "atlassian",
+  "local-sessions",
+  "push-answer",
+  "push-start",
+  "intake-context",
+  "os-loop",
+  "os-autonomy",
+  "pause",
+  "spaces",
+  "brief",
+  "scoreboard",
+  "proposals",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
 const OWNER_ONLY = "le poste est réservé au propriétaire";
+/** Le refus d'administrer les espaces à un admin restreint à des dépôts. */
+const SPACES_OWNER_ONLY = "les espaces sont administrés par un client qui voit tous les dépôts";
 /** Les refus d'Atlassian à un client pilote, ou à un autre appareil que l'approbateur. */
 const READS_ATLASSIAN = "réservé à l'humain — un client pilote ne lit pas Atlassian";
 const ACTS_ON_ATLASSIAN = "geste réservé à l'humain — un client pilote ne touche pas à Atlassian";
 const ATLASSIAN_APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut brancher Atlassian ou trancher ses écritures";
+/** Les refus des sessions locales (celles du poste du développeur) à un client pilote. */
+const READS_LOCAL_SESSIONS = "réservé à l'humain — un client pilote ne lit pas les sessions locales";
+const ACTS_ON_LOCAL_SESSIONS = "geste réservé à l'humain — un client pilote ne touche pas aux sessions locales";
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -637,9 +666,12 @@ export function apiRoutes(
       });
       call.res.end(data);
     }),
-    route("POST", "/v1/runs/{id}/cancel", "operator", async (call) =>
-      send(call.res, 200, { run: await orchestrator.cancel(runId(call), call.actor) }),
-    ),
+    // L'annulation ; le corps est facultatif : `{cause?, note?}` dit pourquoi (sans corps, l'annulation d'avant).
+    route("POST", "/v1/runs/{id}/cancel", "operator", async (call) => {
+      const id = runId(call);
+      const motive = cancelMotive(await readBody(call.req));
+      send(call.res, 200, { run: await orchestrator.cancel(id, call.actor, motive) });
+    }),
     // Une consigne au run : injectée dans le prompt en cours de sa session, sinon gardée pour le suivant.
     route("POST", "/v1/runs/{id}/instructions", "operator", async (call) => {
       const body = await readBody(call.req);
@@ -694,7 +726,13 @@ export function apiRoutes(
       const body = await readBody(call.req);
       if (typeof body.approve !== "boolean") throw new HarnessError(400, "approve : booléen attendu");
       send(call.res, 200, {
-        run: await orchestrator.validate(runId(call), body.approve, text(body, "reason", false), call.actor),
+        run: await orchestrator.validate(
+          runId(call),
+          body.approve,
+          text(body, "reason", false),
+          call.actor,
+          alwaysInput(body),
+        ),
       });
     }),
     // Les escalades ouvertes, BATCHÉES par run : l'écran iOS les traite d'un geste.
@@ -702,7 +740,12 @@ export function apiRoutes(
       send(
         call.res,
         200,
-        escalationBatches(store, call.url.searchParams.get("status") === "answered" ? "answered" : "open", call.repos),
+        escalationBatches(
+          store,
+          call.url.searchParams.get("status") === "answered" ? "answered" : "open",
+          call.repos,
+          orchestrator.config.review.escalationTimeoutSec,
+        ),
       ),
     ),
     // La boîte de l'humain, d'un seul appel (apps Mac et iOS) : escalades batchées,
@@ -733,11 +776,18 @@ export function apiRoutes(
       const repo = text(body, "repo");
       requireRepo(call.client, repo);
       const priority = integer(body.priority, "priority");
+      const autonomy = autonomyField(body);
       send(
         call.res,
         201,
         await orchestrator.createProject(
-          { repo, title: text(body, "title"), features, ...(priority !== undefined ? { priority } : {}) },
+          {
+            repo,
+            title: text(body, "title"),
+            features,
+            ...(priority !== undefined ? { priority } : {}),
+            ...(autonomy !== undefined ? { autonomy } : {}),
+          },
           call.actor,
         ),
       );
@@ -922,7 +972,7 @@ export function apiRoutes(
       }),
     ),
     // L'autonomie par paliers, en lecture seule : les règles de chaque dépôt visible, ce qui a été validé seul
-    // (avec sa règle et ses preuves) et les propositions de palier. Aucune route n'écrit une règle.
+    // (avec sa règle et ses preuves) et les propositions de palier. Une règle s'écrit par `POST /v1/autonomy/rules`.
     route("GET", "/v1/autonomy", "viewer", (call) => {
       const now = Date.now();
       const { config } = orchestrator;
@@ -1289,11 +1339,174 @@ export function apiRoutes(
       send(call.res, 200, providersView());
     }),
     // ── OS agentique : la boucle (corriger, motif d'annulation, modules, pause) ──
+    // Corriger un run là où il est, au lieu de l'annuler : specs refaites, correction, relance ou consigne (`via`).
+    route("POST", "/v1/runs/{id}/amend", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const correction = instructionsInput(body, "text");
+      send(call.res, 200, await orchestrator.amend(runId(call), correction, call.actor, alwaysInput(body)));
+    }),
+    // Les modules d'un run, restreints par l'humain : ce qu'il retenait en file peut partir.
+    route("POST", "/v1/runs/{id}/modules", "operator", async (call) => {
+      const modules = modulesInput(await readBody(call.req));
+      send(call.res, 200, { run: await orchestrator.setModules(runId(call), modules, call.actor) });
+    }),
+    // La pause globale (« Tout suspendre ») : la lire est ouvert à tous, la poser ou la lever au propriétaire.
+    route("GET", "/v1/pause", "viewer", (call) => send(call.res, 200, { pause: orchestrator.pause })),
+    route("POST", "/v1/pause", "operator", async (call) => {
+      const { paused, reason, now } = pauseInput(await readBody(call.req));
+      send(call.res, 200, { pause: orchestrator.setPause(paused, reason, call.actor, call.repos, now) });
+    }),
     // ── OS agentique : l'autonomie (règles, consignes permanentes, curseur) ──
+    // Le curseur d'autonomie d'un run : « tout me demander » (`ask`), les règles du dépôt (`null`), « livre et
+    // préviens-moi » (`deliver`). Geste d'humain : un pilote ne le monte pas (403), un run terminé est refusé (409).
+    route("POST", "/v1/runs/{id}/autonomy", "operator", async (call) => {
+      const level = autonomyLevelInput(await readBody(call.req));
+      send(call.res, 200, { run: await orchestrator.setAutonomy(runId(call), level, call.actor) });
+    }),
+    // « Toujours valider seul ce type » : la porte d'un type de travail d'un dépôt, écrite dans la configuration
+    // et rechargée à chaud comme `PATCH /v1/repos/{name}` ; invalide, 400 et rien ne change.
+    route("POST", "/v1/autonomy/rules", "admin", async (call) => {
+      const target = adminOf(call);
+      const input = autonomyRuleInput(await readBody(call.req));
+      send(call.res, 200, await orchestrator.applyAutonomyRule(target, input, call.actor));
+    }),
+    // Les consignes permanentes de l'humain (« toujours faire ainsi »), dites dans le prompt de chaque étape :
+    // un client borné ne lit et n'écrit que celles de ses dépôts, jamais celles de tous ; un pilote n'en écrit pas.
+    route("GET", "/v1/rules", "viewer", (call) => send(call.res, 200, { rules: store.listStandingRules(call.repos) })),
+    route("POST", "/v1/rules", "operator", async (call) => {
+      const input = standingRuleInput(await readBody(call.req));
+      send(call.res, 201, { rule: orchestrator.standing.create(input, call.actor, call.repos) });
+    }),
+    route("PUT", "/v1/rules/{id}", "operator", async (call) => {
+      const patch = standingRulePatch(await readBody(call.req));
+      send(call.res, 200, {
+        rule: orchestrator.standing.update(call.match[1] as string, patch, call.actor, call.repos),
+      });
+    }),
+    route("DELETE", "/v1/rules/{id}", "operator", (call) => {
+      orchestrator.standing.remove(call.match[1] as string, call.actor, call.repos);
+      send(call.res, 200, { removed: true });
+    }),
     // ── OS agentique : les espaces, le brief et les chiffres ──
+    // Les espaces (spaces.ts) : un client voit ceux qui tiennent un de ses dépôts, réduits à ses dépôts ;
+    // créer, modifier et retirer reviennent à un admin qui voit tous les dépôts.
+    route("GET", "/v1/spaces", "viewer", (call) =>
+      send(call.res, 200, { spaces: orchestrator.spaces.list(call.repos, Date.now()) }),
+    ),
+    route("POST", "/v1/spaces", "admin", async (call) => {
+      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
+      const space = orchestrator.spaces.create(spaceInput(await readBody(call.req)), call.actor);
+      send(call.res, 201, { space }, { ETag: `"${space.rev}"` });
+    }),
+    route("PUT", "/v1/spaces/{id}", "admin", async (call) => {
+      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
+      const edit = spaceEdit(await readBody(call.req));
+      const space = orchestrator.spaces.update(call.match[1] as string, edit, call.actor);
+      send(call.res, 200, { space }, { ETag: `"${space.rev}"` });
+    }),
+    route("DELETE", "/v1/spaces/{id}", "admin", (call) => {
+      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
+      orchestrator.spaces.delete(call.match[1] as string, call.actor);
+      send(call.res, 200, { removed: true });
+    }),
+    // Le rapport d'un espace : `digestOf` borné à ses dépôts depuis `since` (epoch ms ; défaut : 7 jours).
+    route("GET", "/v1/spaces/{id}/report", "viewer", (call) => {
+      const now = Date.now();
+      const raw = call.url.searchParams.get("since");
+      const since = raw === null ? now - SPACE_REPORT_WINDOW_MS : Number(raw);
+      if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      send(call.res, 200, orchestrator.spaces.report(call.match[1] as string, since, now, call.repos));
+    }),
+    // Le brief « pendant votre absence » (brief.ts) : depuis `since` (epoch ms), sinon depuis la dernière
+    // fois que CE client l'a vu (`POST /v1/brief/seen`), sinon sur 24 heures.
+    route("GET", "/v1/brief", "viewer", (call) => {
+      const raw = call.url.searchParams.get("since");
+      const since = raw === null ? null : Number(raw);
+      if (since !== null && (!Number.isInteger(since) || since < 0))
+        throw new HarnessError(400, "since : instant en ms (epoch) attendu");
+      send(call.res, 200, { brief: orchestrator.briefView(call.client.name, since, call.repos) });
+    }),
+    route("POST", "/v1/brief/seen", "viewer", (call) =>
+      send(call.res, 200, { seenAt: orchestrator.briefSeen(call.client.name) }),
+    ),
+    // Les chiffres (scoreboard.ts) : mergés sans geste humain, délai médian d'une décision, travail lancé
+    // sans l'humain, motifs d'annulation, sur `days` jours (défaut 7, de 1 à 90).
+    route("GET", "/v1/scoreboard", "viewer", (call) => {
+      const raw = call.url.searchParams.get("days");
+      const days = raw === null ? SCOREBOARD_DAYS : Number(raw);
+      if (!Number.isInteger(days) || days < 1 || days > SCOREBOARD_MAX_DAYS)
+        throw new HarnessError(400, `days : entier de 1 à ${SCOREBOARD_MAX_DAYS} attendu`);
+      send(call.res, 200, {
+        scoreboard: scoreboardOf(store, orchestrator.config, days, Date.now(), call.repos),
+      });
+    }),
     // ── OS agentique : les propositions et « refaire » ──
+    // Le bac « Propositions » (proposals.ts) : ce que l'usine pourrait faire seule, recalculé de ses causes.
+    // Lire : les dépôts visibles, les signalements et le plan Atlassian au propriétaire. Accepter passe par
+    // le geste existant de la source, avec ses gardes ; écarter est définitif.
+    route("GET", "/v1/proposals", "viewer", (call) =>
+      send(call.res, 200, { proposals: orchestrator.proposals.list(readerOf(call.client)) }),
+    ),
+    route("POST", "/v1/proposals/{id}/accept", "operator", async (call) =>
+      send(
+        call.res,
+        200,
+        await orchestrator.proposals.accept(call.match[1] as string, {
+          client: call.client,
+          actor: call.actor,
+          admin: () => adminOf(call),
+        }),
+      ),
+    ),
+    route("POST", "/v1/proposals/{id}/dismiss", "operator", (call) =>
+      send(
+        call.res,
+        200,
+        orchestrator.proposals.dismiss(call.match[1] as string, { client: call.client, actor: call.actor }),
+      ),
+    ),
+    // « Refaire » : le corps d'un `POST /v1/runs` qui relancerait la feature, à la demande d'origine de son fil.
+    route("GET", "/v1/runs/{id}/template", "viewer", (call) =>
+      send(call.res, 200, { template: orchestrator.proposals.template(runId(call)) }),
+    ),
     // ── OS agentique : les sessions locales ──
+    // Les sessions omp du poste du développeur (local-sessions.ts) : le rapporteur du plugin
+    // `omp-mem0-req` envoie ses battements ; lire, confier à un run et retirer sont au propriétaire.
+    route("POST", "/v1/local-sessions", "operator", async (call) =>
+      send(call.res, 200, { session: orchestrator.localSessions.beat(await readBody(call.req), call.client) }),
+    ),
+    route("GET", "/v1/local-sessions", "viewer", (call) => {
+      ownerOf(call, READS_LOCAL_SESSIONS);
+      const states = localSessionStates(call.url.searchParams.get("state"));
+      send(call.res, 200, { sessions: orchestrator.localSessions.list(states) });
+    }),
+    route("POST", "/v1/local-sessions/{id}/handoff", "operator", async (call) => {
+      ownerOf(call, ACTS_ON_LOCAL_SESSIONS);
+      const handed = orchestrator.localSessions.handoff(call.match[1] as string, await readBody(call.req), call.actor);
+      send(call.res, 201, handed, { ETag: `"${handed.run.rev}"` });
+    }),
+    route("DELETE", "/v1/local-sessions/{id}", "operator", (call) => {
+      ownerOf(call, ACTS_ON_LOCAL_SESSIONS);
+      send(call.res, 200, orchestrator.localSessions.remove(call.match[1] as string));
+    }),
     // ── OS agentique : la télécommande (push) ──
+    // Le jeton push-to-start d'un appareil : le serveur démarre la Live Activity d'un run que voit le
+    // client qui l'enregistre (push.ts). Un jeton déjà connu passe à ce client.
+    route("POST", "/v1/push/activities/start", "viewer", async (call) => {
+      const body = await readBody(call.req);
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      if (!/^[0-9a-f]{16,512}$/i.test(token)) throw new HarnessError(400, "token : hexadécimal attendu");
+      const environment = body.environment;
+      if (environment !== "development" && environment !== "production")
+        throw new HarnessError(400, "environment : « development » ou « production » attendu");
+      const added = store.putPushStartToken({ token, client: call.client.name, environment });
+      send(call.res, added ? 201 : 200, { registered: true, pushes: orchestrator.config.apns !== null });
+    }),
+    // Comme les jetons d'activité : un client ne retire que SES jetons de démarrage (un admin, tous).
+    route("DELETE", "/v1/push/activities/start/{name}", "viewer", (call) => {
+      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      send(call.res, 200, { removed: store.deletePushStartToken(call.match[1] as string, owner) });
+    }),
     // MCP (« Streamable HTTP », réponses JSON) : un message ou un lot JSON-RPC ; sans requête
     // à rendre (notifications seules), 202. Pas de flux serveur : `GET` reste un 405.
     route("POST", "/v1/mcp", "viewer", async (call) => {
@@ -1313,6 +1526,7 @@ export function apiRoutes(
         orchestrator,
         visible: call.repos,
         version: HARNESS_VERSION,
+        admin: () => adminOf(call),
       };
       const replies = await Promise.all(
         (Array.isArray(body) ? body : [body]).map((message) => handleMcp(message, mcp)),

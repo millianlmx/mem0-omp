@@ -191,6 +191,8 @@ export class HarnessContext {
         cost: Math.round(this.store.runCost(run.id) * 100) / 100,
         updatedAt: run.updatedAt,
       }),
+      // Le registre donné aux alertes (`alerts.useClients`, main.ts) sert aussi au démarrage des activités.
+      clients: () => this.alerts.clients,
       log: this.log,
     });
     this.push.subscribe();

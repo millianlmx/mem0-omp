@@ -12,6 +12,12 @@
 // Seules sont levables : à la porte des specs, une attente sans aucune raison de porte (celle que
 // pose `review.specsGate: true`) ; à la porte de verdict, la SEULE raison « diff au-delà de
 // `review.maxDiffLines` », sous `match.maxDiffLines` de la règle.
+//
+// Le curseur du run passe avant les règles : `ask` (« tout me demander ») ne lève jamais rien ;
+// `deliver` (« livre et préviens-moi ») tient lieu de règle `auto` (rang 0) sans règle de dépôt ni
+// type de travail — specs sans raison de porte, revue dont le diff reste sous
+// `DELIVER_DIFF_FACTOR × review.maxDiffLines`, suite complète verte et critères prouvés. Toutes les
+// autres gardes restent.
 import type { AutonomyGate, AutonomyProof, AutonomyRule, RuleFacts } from "./autonomy-rules.ts";
 import { AUTONOMY_BY, firstRule } from "./autonomy-rules.ts";
 import { CHALLENGE_STATE, openDisputes, readRecords } from "./challenge.ts";
@@ -28,6 +34,12 @@ export type AutonomyVerdict =
   | { ok: true; gate: AutonomyGate; rank: number; rule: AutonomyRule; proofs: Record<string, unknown> }
   | { ok: false; why: string };
 
+/** Le plus gros diff que le curseur « livre et préviens-moi » valide seul, en multiple de `review.maxDiffLines`. */
+export const DELIVER_DIFF_FACTOR = 4;
+
+/** Le nom du curseur d'un run dans l'auteur d'une validation prise seule : `autonomie:<dépôt>#curseur`. */
+const CURSOR = "curseur";
+
 /** Les gestes de l'humain que l'autonomie emprunte (orchestrator.ts les branche sur `HumanLoop`). */
 export type AutonomyHooks = {
   validate: (
@@ -35,7 +47,7 @@ export type AutonomyHooks = {
     approve: boolean,
     reason: string,
     actor: Actor,
-    inscribe?: (next: RunRow) => void,
+    options: { inscribe: (next: RunRow) => void },
   ) => Promise<RunRow>;
   /** Le run a-t-il été lancé par la vigie (vigie/desk.ts) ? */
   launchedByVigie: (runId: string) => boolean;
@@ -126,9 +138,11 @@ export class AutonomyGates {
     if (run.state !== "awaiting_human") return no("le run n'attend pas l'humain");
     const wait = humanWaitOf(run);
     if (wait !== "specs" && wait !== "verdict") return no(`attente « ${wait} » : réservée à l'humain`);
-    if (run.kind === null) return no("run sans type de travail");
+    if (run.autonomy === "ask") return no("autonomie « tout me demander » : chaque attente revient à l'humain");
+    const deliver = run.autonomy === "deliver";
     const rules = this.#ctx.repo(run.repo).autonomy?.rules ?? [];
-    if (rules.length === 0) return no("le dépôt n'a pas de règle d'autonomie");
+    if (!deliver && run.kind === null) return no("run sans type de travail");
+    if (!deliver && rules.length === 0) return no("le dépôt n'a pas de règle d'autonomie");
     if (mergeStopOf(run) !== null) return no("merge arrêté au plafond de ses tentatives");
     const { budget, threshold, cost } = monitor.budget(run.id);
     if (budget !== null && threshold !== null && cost >= threshold) return no("budget dépassé");
@@ -143,23 +157,47 @@ export class AutonomyGates {
 
     const lift = this.#lift(run);
     if (typeof lift === "string") return no(lift);
-    const gate = lift.gate;
-    const match = firstRule(rules, lift.facts, gate);
-    if (match === null) return no("aucune règle ne correspond");
+    const byRule = firstRule(rules, lift.facts, lift.gate);
+    if (!deliver) return byRule === null ? no("aucune règle ne correspond") : this.#judge(run, lift, byRule);
+    // « Livre et préviens-moi » : le curseur tient lieu de règle (rang 0) ; une règle du dépôt plus large vaut encore.
+    const cursor = this.#judge(run, lift, {
+      rank: 0,
+      rule: {
+        match: {
+          kind: run.kind ?? "feature",
+          maxDiffLines: DELIVER_DIFF_FACTOR * this.#ctx.config.review.maxDiffLines,
+        },
+        require: { greenChecks: true, proofs: true },
+        gates: { specs: "auto", review: "auto" },
+      },
+    });
+    if (cursor.ok || byRule === null) return cursor;
+    const ruled = this.#judge(run, lift, byRule);
+    return ruled.ok ? ruled : cursor;
+  }
+
+  /** La règle retenue lève-t-elle cette attente : sa porte en auto, son seuil de diff et ses exigences prouvées ? */
+  #judge(run: RunRow, lift: Liftable, match: { rule: AutonomyRule; rank: number }): AutonomyVerdict {
+    const no = (why: string): AutonomyVerdict => ({ ok: false, why });
     const { rule, rank } = match;
-    const mode = rule.gates[gate === "specs" ? "specs" : "review"];
-    if (mode !== "auto")
-      return no(`la règle ${rank} laisse la porte ${gate === "specs" ? "specs" : "revue"} à l'humain`);
+    const gate = lift.gate;
+    const named = rank === 0 ? "le curseur du run" : `la règle ${rank}`;
+    if (rule.gates[gate] !== "auto")
+      return no(`${named} laisse la porte ${gate === "specs" ? "specs" : "revue"} à l'humain`);
     const base = { kind: run.kind, labels: run.labels };
     if (lift.gate === "specs") return { ok: true, gate, rank, rule, proofs: { ...base, gateReasons: [] } };
 
     const { evidence } = lift;
-    const verdict = run.verdict as NonNullable<RunRow["verdict"]>;
+    if (run.verdict === null) return no("évidence de revue absente");
     if (rule.match.maxDiffLines === undefined) return no("la règle ne fixe pas match.maxDiffLines");
+    if (evidence.diffLines > rule.match.maxDiffLines)
+      return no(
+        `diff de ${evidence.diffLines} lignes : au-delà des ${rule.match.maxDiffLines} que ${named} valide seul`,
+      );
     if (rule.require.reproTest === true && !(evidence.reproTests.length > 0 && evidence.fullTests === "pass"))
       return no("aucun test de reproduction vert (ajouté ou modifié par le run)");
     if (rule.require.greenChecks === true && evidence.fullTests !== "pass") return no("suite complète non verte");
-    const proven = verdict.criteria.filter((c) => c.status === "pass").map((c) => c.id);
+    const proven = run.verdict.criteria.filter((c) => c.status === "pass").map((c) => c.id);
     if (rule.require.proofs === true && !evidence.acIds.every((id) => proven.includes(id)))
       return no("un critère d'acceptation n'est pas prouvé");
     return {
@@ -178,6 +216,17 @@ export class AutonomyGates {
         reviewSha: evidence.reviewSha,
       },
     };
+  }
+
+  /**
+   * Le curseur d'un run vient de passer à « livre et préviens-moi » alors qu'il attend déjà l'humain : une
+   * attente levable est retenue (`hold`), le prochain tour la valide ou y renonce comme à sa pose.
+   */
+  reconsider(runId: string): void {
+    const run = this.#ctx.store.getRun(runId);
+    if (run?.autonomy !== "deliver" || run.state !== "awaiting_human" || this.#holdOpen(run.id) !== null) return;
+    const verdict = this.evaluate(run);
+    if (verdict.ok) this.#ctx.event("autonomy", run.id, { action: "hold", gate: verdict.gate, rev: run.rev });
   }
 
   /** L'attente retenue (`hold`) de ce run est-elle encore ouverte : aucune décision de l'autonomie ni `run_state` depuis ? */
@@ -228,8 +277,12 @@ export class AutonomyGates {
         run.id,
         true,
         "",
-        { by: `${AUTONOMY_BY}${run.repo}#${verdict.rank}`, rev: run.rev, pilot: true },
-        (next) => this.#inscribe(next, verdict),
+        {
+          by: `${AUTONOMY_BY}${run.repo}#${verdict.rank === 0 ? CURSOR : verdict.rank}`,
+          rev: run.rev,
+          pilot: true,
+        },
+        { inscribe: (next) => this.#inscribe(next, verdict) },
       );
     } catch (err: unknown) {
       if (err instanceof HarnessError && [403, 409, 412].includes(err.status))
@@ -273,7 +326,10 @@ export class AutonomyGates {
           : "Valider le verdict et fusionner sans geste humain (autonomie) ?",
         options: ["valider", "laisser à l'humain"],
         chosen: "valider",
-        rationale: `Règle ${rank} de ${next.repo} : ${String(proofs.kind)}, porte ${specs ? "specs" : "revue"} en auto, exigences prouvées.`,
+        rationale:
+          rank === 0
+            ? `Curseur « livre et préviens-moi » du run : porte ${specs ? "specs" : "revue"} levée, exigences prouvées.`
+            : `Règle ${rank} de ${next.repo} : ${String(proofs.kind)}, porte ${specs ? "specs" : "revue"} en auto, exigences prouvées.`,
         context: proofLines(proofs, specs).join("\n"),
         impacts: [],
         category: "reversible",
@@ -290,7 +346,7 @@ export class AutonomyGates {
 /** Les preuves d'une validation prise seule, une ligne Markdown chacune. */
 function proofLines(proofs: Record<string, unknown>, specs: boolean): string[] {
   const list = (value: unknown): string => (Array.isArray(value) && value.length > 0 ? value.join(", ") : "aucun");
-  const lines = [`- type de travail : ${String(proofs.kind)}`, `- labels : ${list(proofs.labels)}`];
+  const lines = [`- type de travail : ${String(proofs.kind ?? "non déclaré")}`, `- labels : ${list(proofs.labels)}`];
   if (specs) return [...lines, "- raisons de porte des specs : aucune"];
   return [
     ...lines,

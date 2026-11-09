@@ -41,8 +41,9 @@ import {
   sanitizeVisit,
   takeBatch,
 } from "./lib/observation.ts";
+import { pageContext, type PageContext, threadText } from "./lib/page-context.ts";
 import { checkStt } from "./lib/stt.ts";
-import { stripUrl } from "./lib/url.ts";
+import { hostOf, isExcludedHost, stripUrl } from "./lib/url.ts";
 import { identified, loadSettings, saveSettings } from "./store.ts";
 
 const VERSION = chrome.runtime.getManifest().version;
@@ -522,12 +523,16 @@ async function status(): Promise<PopupStatus> {
 
 // ── Demande (popup) ───────────────────────────────────────────────────────
 
-/** Appelle `/v1/intake*` avec l'appairage ; un refus du serveur garde son message français. */
+/**
+ * Appelle `/v1/intake*` avec l'appairage, présenté avec l'identité de ce navigateur
+ * (`X-OMP-Browser`) ; un refus du serveur garde son message français.
+ */
 async function intakeCall(method: "GET" | "POST", route: string, body?: unknown): Promise<Reply<Intake | null>> {
   const settings = await loadSettings();
   if (settings.pairing === null) return { ok: false, error: "navigateur non appairé : ouvrez les réglages" };
   try {
-    const reply = await harnessCall<{ intake?: Intake }>(settings.pairing, method, route, body, {
+    const target = await identified(settings.pairing, settings.browserLabel);
+    const reply = await harnessCall<{ intake?: Intake }>(target, method, route, body, {
       signal: AbortSignal.timeout(10_000),
     });
     const intake = reply?.intake ?? null;
@@ -545,11 +550,48 @@ async function forgetIntake(id: string): Promise<void> {
   if ((await chrome.storage.local.get(INTAKE_KEY))[INTAKE_KEY] === id) await chrome.storage.local.remove(INTAKE_KEY);
 }
 
-async function postIntake(text: string): Promise<Reply<Intake | null>> {
+/** Pose la demande ; `context` : la page d'où elle part (les deux gestes du popup), une donnée pour le classeur. */
+async function postIntake(text: string, context: PageContext | null = null): Promise<Reply<Intake | null>> {
   if (text.trim() === "") return { ok: false, error: "la demande est vide" };
-  const reply = await intakeCall("POST", "/v1/intake", { text, source: "chrome" });
+  const body = { text, source: "chrome", ...(context === null ? {} : { context }) };
+  const reply = await intakeCall("POST", "/v1/intake", body);
   if (reply.ok && reply.value !== null) await chrome.storage.local.set({ [INTAKE_KEY]: reply.value.id });
   return reply;
+}
+
+/** Le texte sélectionné dans l'onglet ; vide quand la page refuse l'injection (boutique d'extensions, PDF). */
+async function selectionOf(tabId: number): Promise<string> {
+  try {
+    const [main] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => getSelection()?.toString() ?? "",
+    });
+    return typeof main?.result === "string" ? main.result : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Un des deux gestes du popup sur l'onglet actif : la demande part avec la page (adresse, titre,
+ * sélection). `text: null` : « En faire un fil », au texte généré. Rien ne part d'un site exclu ;
+ * hors du web, la consigne part seule et il n'y a pas de fil à faire.
+ */
+async function postPageIntake(tabId: number, text: string | null): Promise<Reply<Intake | null>> {
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: "onglet introuvable" };
+  }
+  const host = hostOf(tab.url ?? "");
+  if (host !== null && isExcludedHost(host, (await loadSettings()).excluded))
+    return { ok: false, error: `${host} est un site exclu : rien n'en part` };
+  const context =
+    host === null ? null : pageContext({ url: tab.url ?? "", title: tab.title ?? "" }, await selectionOf(tabId));
+  if (text !== null) return postIntake(text, context);
+  if (context === null) return { ok: false, error: "cet onglet n'a pas d'adresse web : rien à en faire un fil" };
+  return postIntake(threadText(context), context);
 }
 
 /** La dernière demande posée depuis ce navigateur, relue au serveur ; `null` s'il n'y en a pas. */
@@ -657,6 +699,8 @@ async function handle(request: ToBackground, sender: chrome.runtime.MessageSende
     }
     case "intake-post":
       return postIntake(request.text);
+    case "intake-page":
+      return postPageIntake(request.tabId, request.text);
     case "intake-get":
       return readIntake();
     case "intake-confirm":
