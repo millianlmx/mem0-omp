@@ -277,8 +277,12 @@ function fullOutcome(result: HeavyResult): "pass" | "fail" {
   return result.outcome === "pass" ? "pass" : "fail";
 }
 
-/** Un résumé d'une suite rouge pour un bloquant : code de sortie et fin de sortie, sur une ligne. */
+/**
+ * Un résumé d'une suite rouge pour un bloquant : code de sortie et fin de sortie, sur une ligne. Jugée par la
+ * CI de la forge : l'issue, puis chaque job rouge (nom, URL, extrait de ses logs) tel que le juge l'a écrit.
+ */
 function failSummary(result: HeavyResult): string {
+  if (result.judge === "ci") return `${result.outcome} (CI de la forge)\n${result.output.slice(0, 8000)}`;
   const tail = result.output.trim().replace(/\s+/g, " ").slice(-300);
   return `${result.outcome}${result.exitCode !== null ? `, code ${result.exitCode}` : ""}${tail ? ` — ${tail}` : ""}`;
 }

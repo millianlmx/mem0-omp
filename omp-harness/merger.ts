@@ -10,6 +10,10 @@
 // après un délai (5, 15 puis 60 min) compté dans `mergeRetries`. Une branche que le
 // rebase a vidée (son travail est déjà dans main) se termine mergée, sans commit.
 //
+// Dépôt en `tests.judge: "ci"` : aucune suite locale. En mode `gh`, la branche rebasée est poussée, sa PR sort du
+// brouillon, l'auto-merge est armé, puis l'attente de la fusion lit aussi les checks de la forge sur ce SHA : rouges,
+// le run repart en correction avec leurs extraits de logs ; en mode `local`, la CI juge le rebase à la place de `full`.
+//
 // Le message du squash vient du verdict (`commit` : sujet Conventional Commits, corps),
 // suivi des décisions et du trailer `Harness-Run` ; le résumé de la revue n'y entre pas.
 //
@@ -19,6 +23,7 @@
 // `local` : squash puis push ; un push refusé n'est PAS un merge : le run attend
 // l'humain avec la raison (une coupure réseau est réessayée).
 import * as path from "node:path";
+import { testsJudge } from "./config.ts";
 import { newFailuresText } from "./baseline.ts";
 import type { RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
@@ -28,6 +33,7 @@ import { type Forge, openForge } from "./forge.ts";
 import { remoteEnv } from "./git.ts";
 import { afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { ciFailureReport, ciState } from "./ci-judge.ts";
 
 export type MergerHooks = {
   /** Un merge (réussi ou non) a quitté la file : l'orchestrateur refait un tour. */
@@ -149,7 +155,8 @@ export class Merger {
         this.#finish(run, null, repo);
         return;
       }
-      if (mainMoved) {
+      // `judge: "ci"` + PR : la CI de la forge juge le rebase pendant l'attente de la fusion (#mergeWithForge), sans suite locale.
+      if (mainMoved && !(repo.merge === "gh" && testsJudge(repo) === "ci")) {
         const result = await heavy.run({
           runId: run.id,
           stepId: null,
@@ -197,10 +204,13 @@ export class Merger {
           this.#finish(run, await git.revParse(repo.path, repo.mainBranch), repo);
           return;
         }
-        return this.#stopped(run, "review", outcome.reason);
+        return this.#stopped(run, outcome.step ?? "review", outcome.reason);
       }
       const sha = await git.squashMerge(repo.path, run.branch, repo.mainBranch, main, `${subject}\n\n${commitBody}`);
       if (!(await this.#pushMain(run, repo))) return;
+      // `judge: "ci"` : la branche poussée pour la CI et sa PR brouillon n'ont plus d'objet ; sans branche, la forge ferme la PR.
+      if (testsJudge(repo) === "ci")
+        await git.raw(repo.path, ["push", "-q", repo.remote ?? "origin", "--delete", run.branch], remoteEnv(repo));
       this.#finish(run, sha, repo);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -255,18 +265,24 @@ export class Merger {
     run: RunRow,
     repo: RepoConfig,
     message: { subject: string; commitBody: string; prBody: string },
-  ): Promise<{ kind: "merged"; prUrl: string | null } | { kind: "stopped"; prUrl: string | null; reason: string }> {
+  ): Promise<
+    { kind: "merged"; prUrl: string | null } | { kind: "stopped"; prUrl: string | null; reason: string; step?: "fix" }
+  > {
     const { git, config } = this.#ctx;
     const remote = repo.remote ?? "origin";
     const worktree = run.worktree;
     if (worktree === null) throw new Error("le run n'a plus de worktree");
     const forge = await this.#forge(repo);
     await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
+    // Le SHA que la CI de la forge jugera (`judge: "ci"`).
+    const sha = testsJudge(repo) === "ci" ? await git.revParse(worktree, "HEAD") : null;
     const prUrl = await forge.openChange(
       { head: run.branch, base: repo.mainBranch, title: message.subject, body: message.prBody },
       run.prUrl,
     );
     try {
+      // `judge: "ci"` : la PR, restée en brouillon depuis la preuve de la revue, en sort avant l'auto-merge.
+      if (sha !== null) await forge.markReady(run.branch);
       await forge.autoMerge(run.branch, { subject: message.subject, body: message.commitBody });
     } catch (err) {
       return { kind: "stopped", prUrl, reason: err instanceof Error ? err.message : String(err) };
@@ -281,6 +297,9 @@ export class Merger {
       }
       if (state === "CLOSED")
         return { kind: "stopped", prUrl, reason: `la ${change} a été fermée sans être fusionnée` };
+      // `judge: "ci"` : la CI rougit après le rebase → retour en correction, les extraits de logs pour raison.
+      const red = sha === null ? null : await this.#ciFailure(forge, sha);
+      if (red !== null) return { kind: "stopped", prUrl, reason: red, step: "fix" };
       if (Date.now() >= deadline)
         return {
           kind: "stopped",
@@ -300,6 +319,16 @@ export class Merger {
         `le dépôt ${repo.name} est en \`"merge": "gh"\` mais n'a pas de forge : déclare \`forge\` ("github" ou "gitlab"), ou passe-le en \`"merge": "local"\``,
       );
     return forge;
+  }
+
+  /**
+   * `judge: "ci"` : les jobs rouges de la CI sur `sha` (nom, URL, extrait des logs) si elle a fini rouge, sinon
+   * `null` — verte, en cours, ou forge muette (la prochaine lecture reprendra).
+   */
+  async #ciFailure(forge: Forge, sha: string): Promise<string | null> {
+    const checks = await forge.checks(sha).catch(() => null);
+    if (checks === null || ciState(checks) !== "fail") return null;
+    return `suite complète rouge sur la CI de la forge après le rebase sur main (${sha.slice(0, 12)})\n${await ciFailureReport(forge, sha, checks)}`;
   }
 
   /**
