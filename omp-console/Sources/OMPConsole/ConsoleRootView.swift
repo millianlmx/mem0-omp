@@ -154,7 +154,7 @@ struct ConsoleRootView: View {
     var body: some View {
         Group {
             if osMode {
-                OSRootView(server: server, drafts: drafts)
+                OSRootView(server: server, drafts: drafts) { model.select($0) }
             } else {
                 classic
             }

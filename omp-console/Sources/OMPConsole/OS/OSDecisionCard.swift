@@ -58,6 +58,7 @@ struct OSDecisionCard: View {
         case .approval: OSText.send
         case let .intake(intake): intake.isClarifying ? OSText.clarify : OSText.plan
         case .audit: OSText.proposals
+        case .jira: OSText.jiraComment
         }
     }
 
@@ -69,6 +70,7 @@ struct OSDecisionCard: View {
         case .approval: "paperplane.fill"
         case .intake: "sparkles"
         case .audit: "list.bullet.rectangle"
+        case .jira: "text.bubble.fill"
         }
     }
 
@@ -79,6 +81,7 @@ struct OSDecisionCard: View {
         case let .questions(batch): return batch.run.map { OSThreads.clean($0.title).title }
         case let .specs(run), let .verdict(run): return OSThreads.clean(run.title).title
         case let .audit(audit): return audit.repo
+        case let .jira(write): return write.issueKey
         default: return nil
         }
     }
@@ -96,6 +99,7 @@ struct OSDecisionCard: View {
         case let .approval(action): approval(action)
         case let .intake(intake): intakeCard(intake)
         case let .audit(audit): auditCard(audit)
+        case let .jira(write): jiraCard(write)
         }
     }
 
@@ -316,6 +320,29 @@ struct OSDecisionCard: View {
                 Button(OSText.cancel) { perform { (try? await intakes.cancel(intake)) != nil } }
                 Spacer()
             }
+        }
+    }
+
+    // Un commentaire Jira proposé : le texte EN ENTIER, la raison, envoyer ou écarter.
+    @ViewBuilder
+    private func jiraCard(_ write: AtlassianWrite) -> some View {
+        Text(write.issueKey + " · " + OSThreads.firstLine(write.why)).font(headlineFont).lineLimit(2)
+        Text(write.body)
+            .font(.callout)
+            .textSelection(.enabled)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        HStack {
+            Button {
+                perform { await server.atlassian.approve(write.id) }
+            } label: {
+                Label(OSText.send2, systemImage: "paperplane")
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(large ? .defaultAction : nil)
+            Button(OSText.dismiss) { perform { await server.atlassian.dismiss(write.id) } }
+            Spacer()
         }
     }
 

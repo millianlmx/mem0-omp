@@ -10,6 +10,10 @@ import SwiftUI
 final class OSWorkspace: ObservableObject {
     /// La sélection de « Maintenant » (l'accueil), à la place d'un fil.
     static let now = "now"
+    /// La sélection des « Automatismes » : ce que l'OS lance seul, et quand.
+    static let automations = "automations"
+    /// Le filtre de lieu « le Poste » (sinon un nom de dépôt).
+    static let postePlace = "@poste"
 
     @Published var selection: String? = OSWorkspace.now
     /// La feature que montre « Comprendre » (sinon celle du fil choisi).
@@ -17,6 +21,8 @@ final class OSWorkspace: ObservableObject {
     @Published var understanding = false
     @Published var level: OSText.Level = .summary
     @Published var triage = false
+    /// Le lieu retenu dans la liste des fils : un dépôt, le Poste (`postePlace`), ou tous (`nil`).
+    @Published var place: String?
     let pulse: OSPulse
 
     init(server: HarnessModel) {
@@ -43,6 +49,8 @@ enum OSDecision: Identifiable {
     case approval(WorkstationAction)
     case intake(HarnessIntake)
     case audit(HarnessAudit)
+    /// Un commentaire Jira proposé par l'agent.
+    case jira(AtlassianWrite)
 
     var id: String {
         switch self {
@@ -52,6 +60,7 @@ enum OSDecision: Identifiable {
         case let .approval(action): "w:\(action.seq)"
         case let .intake(intake): "i:" + intake.id
         case let .audit(audit): "a:" + audit.id
+        case let .jira(write): "j:" + write.id
         }
     }
 
@@ -74,6 +83,9 @@ enum OSDecision: Identifiable {
         }
         items += workstation.approvals.map(OSDecision.approval)
         items += server.intakes.open.filter { $0.isPlanned || $0.isClarifying }.map(OSDecision.intake)
+        if server.atlassian.availability == .available {
+            items += server.atlassian.proposals.map(OSDecision.jira)
+        }
         return items
     }
 
@@ -187,4 +199,40 @@ struct OSTag: View {
 extension Double {
     /// Un instant du serveur (millisecondes) en date.
     var osDate: Date { Date(timeIntervalSince1970: self / 1000) }
+}
+
+/// OÙ et SUR QUOI travaille un agent, en étiquettes : la machine, le dépôt et sa branche,
+/// l'étape et le modèle d'une feature ; le navigateur d'une demande au poste.
+struct OSPlace: View {
+    enum Subject {
+        case run(HarnessRun)
+        case request(WorkstationRequest, browser: String?)
+    }
+
+    let subject: Subject
+
+    var body: some View {
+        HStack(spacing: 6) {
+            switch subject {
+            case let .run(run):
+                OSTag(text: OSText.vps, symbol: "server.rack")
+                OSTag(text: run.repo, symbol: "shippingbox", tint: .accentColor)
+                OSTag(text: run.branch ?? "harness/" + run.slug, symbol: "arrow.triangle.branch")
+                OSTag(text: OSText.runState(run), symbol: "flag")
+                if let model = run.model, !model.isEmpty {
+                    OSTag(text: OSText.model(model), symbol: "cpu")
+                }
+                if let pr = run.prUrl, let url = URL(string: pr) {
+                    Link(destination: url) {
+                        OSTag(text: OSText.pr(pr), symbol: "arrow.up.right.square", tint: .accentColor)
+                    }
+                }
+            case let .request(request, browser):
+                OSTag(text: request.browserId == WorkstationBrowser.serverID ? OSText.vpsBrowser : OSText.yourChrome, symbol: request.browserId == WorkstationBrowser.serverID ? "server.rack" : "desktopcomputer")
+                OSTag(text: browser ?? request.browserId ?? OSText.defaultBrowser, symbol: "globe", tint: .accentColor)
+                OSTag(text: OSText.poste, symbol: "hand.point.up.left")
+            }
+        }
+        .lineLimit(1)
+    }
 }

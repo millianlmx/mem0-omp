@@ -13,6 +13,10 @@ struct OSSidebar: View {
     @ObservedObject var pulse: OSPulse
     @ObservedObject var workspace: OSWorkspace
     let threads: [OSThread]
+    /// Les lieux : les dépôts, puis le Poste (`OSWorkspace.postePlace`).
+    let places: [String]
+    /// Le nom de chaque navigateur du poste, par identifiant.
+    let browsers: [String: String]
     let decisions: Int
 
     @State private var draft = ""
@@ -32,11 +36,17 @@ struct OSSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             composer
-                .padding(10)
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+            placePicker
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
             List(selection: $workspace.selection) {
                 Section {
                     Label(OSText.now, systemImage: "dot.radiowaves.left.and.right")
                         .tag(OSWorkspace.now)
+                    Label(OSText.automations, systemImage: "gearshape.arrow.triangle.2.circlepath")
+                        .tag(OSWorkspace.automations)
                     if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
                         Button(action: send) {
                             Label(OSText.askThis(draft), systemImage: "return")
@@ -94,9 +104,27 @@ struct OSSidebar: View {
 
     private func rows(_ items: [OSThread]) -> some View {
         ForEach(items) { thread in
-            OSThreadRow(thread: thread, pulse: pulse)
+            OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
                 .tag(thread.id)
         }
+    }
+
+    /// Le lieu des fils montrés : partout, un dépôt, ou le Poste.
+    private var placePicker: some View {
+        Picker(OSText.places, selection: $workspace.place) {
+            Label(OSText.everywhere, systemImage: "square.grid.2x2").tag(String?.none)
+            Divider()
+            ForEach(places, id: \.self) { place in
+                if place == OSWorkspace.postePlace {
+                    Label(OSText.poste, systemImage: "globe").tag(String?.some(place))
+                } else {
+                    Label(place, systemImage: "shippingbox").tag(String?.some(place))
+                }
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var composer: some View {
@@ -137,6 +165,7 @@ struct OSSidebar: View {
 struct OSThreadRow: View {
     let thread: OSThread
     @ObservedObject var pulse: OSPulse
+    let browsers: [String: String]
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -160,21 +189,27 @@ struct OSThreadRow: View {
         .padding(.vertical, 2)
     }
 
+    /// Où, puis ce qui s'y passe : « mem0-omp · ↳ relance la suite », « Poste · Perso · livré ».
     private var subtitle: String {
+        let place: String
+        if let request = thread.request {
+            place = OSText.poste + " · " + (request.browserId.flatMap { browsers[$0] } ?? request.browserId ?? OSText.defaultBrowser)
+        } else {
+            place = thread.repo ?? OSText.vps
+        }
         if thread.phase == .working {
             if let run = thread.runs.last(where: { $0.phase == .running || $0.phase == .merging }),
                let activity = pulse.current(.run(run.id)) {
-                return "↳ " + activity.line
+                return place + " · ↳ " + activity.line
             }
-            if let run = thread.focusRun { return OSText.runState(run) }
+            if let run = thread.focusRun { return place + " · " + OSText.runState(run) }
         }
         if thread.phase == .yours {
-            if thread.audit?.isProposed == true { return OSText.proposals }
-            if let run = thread.focusRun { return OSText.runState(run) }
+            if thread.audit?.isProposed == true { return place + " · " + OSText.proposals }
+            if let run = thread.focusRun { return place + " · " + OSText.runState(run) }
         }
-        let origin = OSText.origin(thread.origin)
         let date = thread.updatedAt.osDate.formatted(.relative(presentation: .named))
-        if let request = thread.request { return OSText.poste + " · " + OSText.state(OSThreads.phase(of: request)) + " · " + date }
-        return origin + " · " + date
+        if let request = thread.request { return place + " · " + OSText.state(OSThreads.phase(of: request)) + " · " + date }
+        return place + " · " + date
     }
 }

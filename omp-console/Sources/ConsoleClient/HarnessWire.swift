@@ -92,6 +92,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var briefing: HarnessBriefing? = nil
     /// La feature dont celle-ci est la suite (découpage, correction) ; `nil` sinon ou d'un serveur antérieur.
     public var afterRun: String? = nil
+    /// La branche git de la feature (`harness/<slug>`) ; `nil` d'un serveur qui ne la sert pas.
+    public var branch: String? = nil
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -135,7 +137,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing, afterRun
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing, afterRun, branch
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause`,
@@ -170,6 +172,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         briefing = try container.decodeIfPresent(HarnessBriefing.self, forKey: .briefing)
         afterRun = try container.decodeIfPresent(String.self, forKey: .afterRun)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -202,6 +205,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encode(labels, forKey: .labels)
         try container.encodeIfPresent(briefing, forKey: .briefing)
         try container.encodeIfPresent(afterRun, forKey: .afterRun)
+        try container.encodeIfPresent(branch, forKey: .branch)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.

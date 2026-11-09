@@ -34,7 +34,7 @@ struct OSRadar: View {
                             agent(
                                 phase: OSThreads.phase(of: run, inbox: server.inbox),
                                 name: OSThreads.clean(run.title).title,
-                                line: pulse.current(.run(run.id), now: context.date)?.line ?? OSText.runState(run)
+                                line: run.repo + " · " + (pulse.current(.run(run.id), now: context.date)?.line ?? OSText.runState(run))
                             ) {
                                 if let thread = threads.first(where: { $0.runs.contains { $0.id == run.id } }) { workspace.open(thread.id) }
                             }

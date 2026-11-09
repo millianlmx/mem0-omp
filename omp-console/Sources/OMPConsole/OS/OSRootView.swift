@@ -16,16 +16,21 @@ struct OSRootView: View {
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var history: HarnessRunsHistory
     @ObservedObject var vigie: HarnessVigie
+    @ObservedObject var atlassian: AtlassianModel
     @StateObject private var workspace: OSWorkspace
     @AppStorage("ui.os") private var osMode = false
+    /// Ouvre une section de l'interface classique (une commande de la palette qui n'a pas d'équivalent ici).
+    let select: @MainActor (ConsoleSection) -> Void
 
-    init(server: HarnessModel, drafts: HarnessDrafts) {
+    init(server: HarnessModel, drafts: HarnessDrafts, select: @escaping @MainActor (ConsoleSection) -> Void) {
         self.server = server
         self.drafts = drafts
+        self.select = select
         _workstation = ObservedObject(wrappedValue: server.workstation)
         _intakes = ObservedObject(wrappedValue: server.intakes)
         _history = ObservedObject(wrappedValue: server.history)
         _vigie = ObservedObject(wrappedValue: server.vigie)
+        _atlassian = ObservedObject(wrappedValue: server.atlassian)
         _workspace = StateObject(wrappedValue: OSWorkspace(server: server))
     }
 
@@ -40,6 +45,24 @@ struct OSRootView: View {
         )
     }
 
+    /// Le nom de chaque navigateur du poste, par identifiant.
+    private var browserNames: [String: String] {
+        Dictionary((workstation.status?.browsers ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Les lieux où l'OS travaille : les dépôts déclarés (et ceux des fils), puis le Poste.
+    private func places(_ threads: [OSThread]) -> [String] {
+        let repos = Set(server.repos.map(\.name) + threads.compactMap(\.repo)).sorted()
+        return repos + (threads.contains { !$0.requests.isEmpty } ? [OSWorkspace.postePlace] : [])
+    }
+
+    /// Les fils du lieu retenu.
+    private func filtered(_ threads: [OSThread]) -> [OSThread] {
+        guard let place = workspace.place else { return threads }
+        if place == OSWorkspace.postePlace { return threads.filter { !$0.requests.isEmpty } }
+        return threads.filter { $0.repo == place }
+    }
+
     var body: some View {
         let threads = threads
         let decisions = OSDecision.all(server: server, workstation: workstation)
@@ -47,13 +70,28 @@ struct OSRootView: View {
             OSRadar(server: server, workstation: workstation, vigie: vigie, pulse: workspace.pulse, workspace: workspace, threads: threads)
             Divider()
             NavigationSplitView {
-                OSSidebar(server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace, threads: threads, decisions: decisions.count)
-                    .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                OSSidebar(
+                    server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
+                    threads: filtered(threads), places: places(threads), browsers: browserNames, decisions: decisions.count
+                )
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
             } detail: {
                 detail(threads, decisions: decisions.count)
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                // ⌘N (Fichier ▸ Nouvelle feature…) ouvre la même feuille.
+                Menu {
+                    Button(OSText.newFeature, systemImage: "plus.square") { drafts.launchSheetShown = true }
+                    Button(OSText.newProject, systemImage: "square.stack.3d.up") { drafts.projectSheetShown = true }
+                    Button(OSText.newAudit, systemImage: "magnifyingglass") { drafts.auditSheetShown = true }
+                    Button(OSText.newSchedule, systemImage: "calendar.badge.plus") { drafts.scheduleSheetShown = true }
+                } label: {
+                    Label(OSText.create, systemImage: "plus")
+                }
+                .disabled(!server.canAct)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     workspace.understanding.toggle()
@@ -66,7 +104,14 @@ struct OSRootView: View {
                 Button(OSText.classic) { osMode = false }
             }
         }
-        .navigationTitle(threads.first { $0.id == workspace.selection }?.title ?? OSText.now)
+        .navigationTitle(workspace.selection == OSWorkspace.automations ? OSText.automations : threads.first { $0.id == workspace.selection }?.title ?? OSText.now)
+        // Les feuilles de création (nouvelle feature ⌘N, projet, audit, planification, Demande) et la
+        // palette ⌘K : celles de l'interface classique. Une commande vers une section classique y bascule.
+        .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
+            if section == .runs, drafts.openedRun != nil { return }
+            osMode = false
+            select(section)
+        }
         .sheet(isPresented: $workspace.triage) {
             OSTriageSheet(server: server, workstation: workstation, intakes: intakes, workspace: workspace)
         }
@@ -77,6 +122,7 @@ struct OSRootView: View {
             let environment = ProcessInfo.processInfo.environment
             if let thread = environment["OMP_CONSOLE_OS_THREAD"] { workspace.open(thread) }
             if let run = environment["OMP_CONSOLE_OS_RUN"] { drafts.openedRun = run }
+            if environment["OMP_CONSOLE_OS_NEW"] != nil { drafts.launchSheetShown = true }
             if let level = environment["OMP_CONSOLE_OS_LEVEL"].flatMap(OSText.Level.init(rawValue:)) {
                 workspace.level = level
                 workspace.understanding = true
@@ -86,6 +132,7 @@ struct OSRootView: View {
             await workstation.load()
             await vigie.load()
             await intakes.refresh()
+            await atlassian.refresh()
             await server.refreshCatalog()
         }
         // Un lien `ompconsole://runs/<id>` ou une notification touchée : le fil de la feature.
@@ -102,9 +149,14 @@ struct OSRootView: View {
     private func detail(_ threads: [OSThread], decisions: Int) -> some View {
         let thread = threads.first { $0.id == workspace.selection }
         Group {
-            if let thread {
-                OSThreadView(server: server, workstation: workstation, intakes: intakes, pulse: workspace.pulse, workspace: workspace, thread: thread)
-                    .id(thread.id)
+            if workspace.selection == OSWorkspace.automations {
+                OSAutomationsView(server: server, drafts: drafts)
+            } else if let thread {
+                OSThreadView(
+                    server: server, workstation: workstation, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
+                    thread: thread, browsers: browserNames
+                )
+                .id(thread.id)
             } else {
                 OSHomeView(server: server, pulse: workspace.pulse, workspace: workspace, threads: threads, decisions: decisions)
             }

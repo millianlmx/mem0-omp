@@ -16,6 +16,8 @@ struct OSThreadView: View {
     @ObservedObject var pulse: OSPulse
     @ObservedObject var workspace: OSWorkspace
     let thread: OSThread
+    /// Le nom de chaque navigateur du poste, par identifiant.
+    let browsers: [String: String]
 
     @State private var draft = ""
     @State private var sending = false
@@ -69,7 +71,6 @@ struct OSThreadView: View {
             }
             HStack(spacing: 8) {
                 OSTag(text: OSText.origin(thread.origin), symbol: OSText.originSymbol(thread.origin))
-                if let repo = thread.repo { OSTag(text: repo, symbol: "shippingbox") }
                 OSTag(text: OSText.state(thread.phase), tint: thread.phase.color)
                 if thread.cost > 0 {
                     OSTag(text: thread.cost.formatted(.currency(code: "USD")), symbol: "dollarsign.circle")
@@ -77,6 +78,12 @@ struct OSThreadView: View {
                 Text(thread.createdAt.osDate.formatted(.relative(presentation: .named)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            // OÙ et SUR QUOI : la machine, le dépôt, la branche, l'étape, le modèle ; ou le navigateur.
+            if let run = thread.focusRun {
+                OSPlace(subject: .run(run))
+            } else if let request = thread.request {
+                OSPlace(subject: .request(request, browser: request.browserId.flatMap { browsers[$0] }))
             }
         }
     }
@@ -202,7 +209,7 @@ struct OSThreadView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         OSPhaseMark(phase: phase, size: 14)
-                        Text(OSText.factory + " · " + OSText.runState(run))
+                        Text(run.repo + " · " + OSText.runState(run))
                             .font(.headline)
                         Spacer()
                         OSStepDots(run: run)

@@ -27,6 +27,65 @@ enum OSText {
     static let calm = "Aucun agent ne travaille"
     static let nothing = "Rien ne vous attend"
 
+    // Lieux
+    static let vps = "VPS"
+    static let vpsBrowser = "VPS · Moli"
+    static let yourChrome = "Votre Chrome"
+    static let defaultBrowser = "navigateur par défaut"
+    static let everywhere = "Partout"
+    static let places = "Lieu"
+    static func model(_ raw: String) -> String { raw.split(separator: "/").last.map(String.init) ?? raw }
+    static func pr(_ url: String) -> String { url.split(separator: "/").last.map { "PR #\($0)" } ?? "PR" }
+
+    // Créer
+    static let create = "Nouveau"
+    static let newFeature = "Nouvelle feature…"
+    static let newProject = "Nouveau projet…"
+    static let newAudit = "Nouvel audit…"
+    static let newSchedule = "Nouvelle planification…"
+
+    // Automatismes
+    static let automations = "Automatismes"
+    static let scheduled = "Planifié"
+    static let posteRoutines = "Routines du poste"
+    static let posteService = "Service 24/24 du poste"
+    static let atlassian = "Jira et Confluence"
+    static let watch = "Vigie"
+    static let runNow = "Lancer"
+    static let noSchedule = "Aucune planification"
+    static let noRoutine = "Aucune routine"
+    static let absentHere = "Pas sur ce serveur"
+    static func next(_ date: Date) -> String { "prochaine " + date.formatted(.relative(presentation: .named)) }
+    static func last(_ date: Date) -> String { "dernière " + date.formatted(.relative(presentation: .named)) }
+    static func autonomy(_ value: String) -> String {
+        switch value {
+        case "observe": "observe"
+        case "propose": "propose"
+        case "act": "agit"
+        default: value
+        }
+    }
+    static func vigieMode(_ mode: String) -> String {
+        switch mode {
+        case "off": "coupée"
+        case "shadow": "discrète"
+        case "report": "signale"
+        case "fix": "corrige"
+        default: mode
+        }
+    }
+    static func target(_ target: HarnessScheduleTarget) -> String {
+        switch target.kind {
+        case "run": "feature · " + target.repo
+        case "audit": "audit · " + target.repo
+        case "issues": "issues · " + target.repo
+        case "automation": "routine du poste"
+        default: target.kind
+        }
+    }
+    static let jiraComment = "Commentaire Jira"
+    static let send2 = "Envoyer"
+
     // Radar
     static let factory = "Usine"
     static let poste = "Poste"
