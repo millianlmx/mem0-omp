@@ -55,6 +55,7 @@ export const EVENT_TYPES = [
   "heavy_fail_retry",
   "heavy_skipped",
   "heavy_flaky",
+  "heavy_baseline",
   // git et merge
   "rebased",
   "rebase_conflict",

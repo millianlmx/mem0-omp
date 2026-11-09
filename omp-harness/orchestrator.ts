@@ -415,6 +415,7 @@ export class Orchestrator {
     await this.audits.recover();
     await this.pilot.recover();
     await this.dreams.recover();
+    await this.#ctx.baseline.recover();
     await this.workstationAgent.recover();
   }
 

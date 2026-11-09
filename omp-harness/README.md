@@ -757,6 +757,23 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
   fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
   sinon tu valides, et tu lis le code si le verdict est faible.
+- **Rouge de base.** Un échec de la suite complète ne bloque que s'il est nouveau
+  par rapport à `main`. Sur un résultat `full` rouge qui porte des lignes TAP
+  `not ok`, le service obtient la liste des tests en échec de `main` : la même
+  commande, le même environnement, dans un slot heavy, sur un worktree détaché
+  `<worktreesDir>/<dépôt>/_baseline-<arbre>` rendu après la mesure (au démarrage
+  aussi). La liste (titres TAP) est mémorisée dans le cache heavy sous
+  `baseline:<clé>` — un seul lancement, sans relance, par arbre de `main`, partagé
+  par tous les runs du dépôt et par les appels simultanés. Échecs ⊆ base : la
+  suite compte pour verte (le résumé du verdict le dit), au merge comme en revue ;
+  sinon le bloquant ne nomme que les nouveaux échecs et compte les préexistants.
+  Un échec de `main` absent de la branche n'est jamais une erreur. Une base
+  illisible (suite plantée sans TAP, délai, OOM, plus de 5 000 échecs) ou une
+  `main` verte : comportement d'avant, rouge. Les titres sont comparés tels quels :
+  un test échoué sur `main` sous le même titre qu'un nouveau échec le masque.
+  L'événement `heavy_baseline` (`where` : `review` ou `merge`, `failing`,
+  `preexisting`, `new`, `newTests`) alimente le champ additif `baseline` de
+  `GET /v1/runs/{id}/timeline` (le dernier jugement, `null` sans).
 - **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
   non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
   preuve.

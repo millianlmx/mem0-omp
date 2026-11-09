@@ -43,6 +43,8 @@ export type HeavyJob = {
   check?: string;
   /** La priorité du run : à attente égale, un job plus prioritaire prend le slot heavy d'abord. */
   priority?: number;
+  /** `false` : un rouge frais n'est pas relancé (le rouge de base de main, un seul lancement par arbre). */
+  retry?: boolean;
 };
 
 export type HeavyResult = {
@@ -468,7 +470,7 @@ export class HeavyRunner {
       // Un rouge suivi d'un vert sur le même arbre : un test instable, compté dans les statistiques.
       if (last.outcome === "pass" && failRetried)
         store.appendEvent("heavy_flaky", job.runId, { scope: job.scope, command: id.command, repo: job.repo.name });
-      if (last.outcome === "fail" && !failRetried) {
+      if (last.outcome === "fail" && !failRetried && job.retry !== false) {
         failRetried = true;
         store.appendEvent("heavy_fail_retry", job.runId, {
           scope: job.scope,
