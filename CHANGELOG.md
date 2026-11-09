@@ -1,5 +1,15 @@
 # Journal des versions
 
+## omp-harness 1.33.0 — 2026-11-09
+
+- fix(harness): la vigie rend les traces des runners à leur run et ne réserve que des fichiers précis (#425) (281a139)
+- feat(harness): réponses au collègue — brouillons, approbation par le poste, état de l'origine (#421) (665d1ae)
+- feat(harness): session en graphe (serveur) et carte de décision (#417) (7bda257)
+
+## omp-chrome 0.6.0 — 2026-11-09
+
+- feat(console,chrome): session en graphe dans les apps — carte de question, briefing, onglet Carte et popup (#419) (13b775b)
+
 ## omp-harness 1.32.0 — 2026-11-09
 
 - feat(harness): la CI de la forge comme juge de la suite complète (tests.judge: ci) (#415) (9dc6e53)
