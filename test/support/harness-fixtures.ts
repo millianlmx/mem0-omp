@@ -68,6 +68,8 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   // Les scénarios vont de /req au merge d'une traite ; la porte des specs et le contradicteur ont leurs propres tests.
   config.review.specsGate = false;
   config.challenge.steps = [];
+  // Le relecteur de cartes lance un faux runner de plus à chaque escalade : il a ses propres tests (session-graph/AC-18…).
+  config.review.cardReader = false;
   // Une relance immédiate, une seule : les scénarios d'échec restent courts (le backoff a ses propres tests).
   config.runner.retryBackoffSec = [0];
   config.runner.stepRetries = 1;
@@ -255,7 +257,7 @@ export const OK = {
     {
       write: ".harness/specs.md",
       content:
-        "## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\naucun\n",
+        "Ce que fait cette feature : exporter les données au format CSV.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\naucun\n",
     },
   ],
   impl: [

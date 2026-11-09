@@ -60,6 +60,59 @@ export type SquashMessage = { subject: string; body: string };
 /** La CLI d'une forge, éprouvée par `--check`. */
 export type ForgeAuth = { ok: boolean; detail: string; fix: string };
 
+/** Où en est un check de la forge : pas encore démarré, en cours, terminé. */
+export type CheckStatus = "pending" | "running" | "completed";
+
+/** L'issue d'un check terminé, dans les mots communs aux forges ; `success`, `neutral` et `skipped` sont verts. */
+export type CheckConclusion = "success" | "failure" | "cancelled" | "skipped" | "neutral";
+
+/** Un check de la forge sur un commit (check run GitHub, job du pipeline GitLab) ; `required` : exigé par la branche protégée. */
+export type ForgeCheck = {
+  name: string;
+  status: CheckStatus;
+  conclusion: CheckConclusion | null;
+  url: string | null;
+  required: boolean;
+};
+
+/** Un job rouge : son nom, son URL et un extrait borné de ses logs, filtré sur les lignes utiles (jamais fiable). */
+export type FailedLog = { name: string; url: string | null; log: string };
+
+/** Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI. */
+const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]/i;
+
+const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
+
+/** Une ligne de log sans séquence ANSI, bornée à 400 caractères (une ligne de bundle minifié ne remplit pas l'extrait). */
+function plainLine(line: string): string {
+  return line.replace(ANSI_SEQUENCE, "").trimEnd().slice(0, 400);
+}
+
+/**
+ * L'extrait d'un log de CI : les lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint) dans
+ * l'ordre du log, au plus `limit` caractères. Aucune ligne utile : les dernières lignes du log.
+ */
+export function usefulLogLines(raw: string, limit: number): string {
+  const lines = raw
+    .split("\n")
+    .map(plainLine)
+    .filter((line) => line.trim() !== "");
+  const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line));
+  const picked = useful.length > 0 ? useful : lines.slice(-20);
+  let text = "";
+  for (const line of picked) {
+    if (text.length + line.length + 1 > limit) return text === "" ? line.slice(0, limit) : text;
+    text += text === "" ? line : `\n${line}`;
+  }
+  return text;
+}
+
+/** Un check terminé qui n'est pas vert (`success`, `neutral`, `skipped`) : échec ou annulation. Un check en cours n'est pas rouge. */
+export function isRedCheck(check: ForgeCheck): boolean {
+  const green = check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped";
+  return check.status === "completed" && !green;
+}
+
 export type Forge = {
   readonly kind: ForgeKind;
   /** Le nom lisible de la forge (« GitHub », « GitLab ») : les messages et les demandes de run le citent. */
@@ -70,13 +123,24 @@ export type Forge = {
   auth(): Promise<ForgeAuth>;
   /**
    * Ouvre la PR de `head`, ou retrouve celle qui existe : son URL, sinon `known` (l'URL
-   * déjà connue du run). Lève si la forge refuse et qu'aucune URL n'est connue.
+   * déjà connue du run). Lève si la forge refuse et qu'aucune URL n'est connue. `draft` :
+   * en BROUILLON (une PR existante y est remise, ce qui désarme sa fusion automatique).
    */
-  openChange(change: ChangeRequest, known: string | null): Promise<string | null>;
+  openChange(change: ChangeRequest, known: string | null, draft?: boolean): Promise<string | null>;
   /** La fusion squash automatique de la PR de `head` (dès que ses checks passent), sa branche supprimée. Lève si refusée. */
   autoMerge(head: string, message: SquashMessage | null): Promise<void>;
   /** L'état de la PR de `head`, `null` s'il ne se lit pas (la forge ne répond pas). */
   changeState(head: string): Promise<ChangeState | null>;
+  /** Sort la PR de `head` du brouillon (sans effet sur une PR qui n'en est pas un). Lève si refusé. */
+  markReady(head: string): Promise<void>;
+  /**
+   * Les checks de la forge sur `head` (le SHA exact d'un commit poussé, ou une branche) : ceux que
+   * la protection de la branche principale exige portent `required`, et un check exigé qui n'a pas
+   * encore rendu compte figure en `pending`. Lève si la forge ne répond pas.
+   */
+  checks(head: string): Promise<ForgeCheck[]>;
+  /** Pour chaque job rouge de `head` : son nom, son URL et au plus `limit` caractères utiles de ses logs (`usefulLogLines`). */
+  failedLogs(head: string, limit: number): Promise<FailedLog[]>;
   issues(query: IssueQuery): Promise<Issue[]>;
   /** Une issue, son texte et ses commentaires. */
   issue(number: number): Promise<IssueDetail>;
@@ -222,6 +286,15 @@ class NoForge implements Forge {
     this.#refuse();
   }
   async changeState(): Promise<ChangeState | null> {
+    this.#refuse();
+  }
+  async markReady(): Promise<void> {
+    this.#refuse();
+  }
+  async checks(): Promise<ForgeCheck[]> {
+    this.#refuse();
+  }
+  async failedLogs(): Promise<FailedLog[]> {
     this.#refuse();
   }
   async issues(): Promise<Issue[]> {

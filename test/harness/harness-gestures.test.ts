@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import type { HarnessConfig } from "../../omp-harness/config.ts";
@@ -45,16 +46,26 @@ function decide(question: string, options: string[], dependsOn: number[] = []) {
   };
 }
 
+/** Une escalade conforme à la carte : la lecture qui la fonde, puis l'appel `decision`. */
 function escalate(
   question: string,
   category: "schema" | "deletion",
   options = ["ajouter une colonne", "table séparée"],
 ) {
-  const impacts = options.map((option) => `${option} : ce qui change`);
-  return {
-    tool: "decision",
-    args: { question, context: CONTEXT, options, impacts, chosen: options[0], rationale: "simple", category },
-  };
+  return [
+    ...readFrames(),
+    {
+      tool: "decision",
+      args: escalationArgs({
+        context: CONTEXT,
+        headline: question,
+        options: options.map((label) => ({ label, impact: `${label} : ce qui change`, reversible: false })),
+        recommended: options[0],
+        rationale: "simple",
+        category,
+      }),
+    },
+  ];
 }
 
 const MEDIUM_REVIEW = [
@@ -95,7 +106,7 @@ test("harness-gestures/AC-1 : passé l'échéance, une escalade ouverte est tran
     {
       req: [OK.req],
       specs: [OK.specs],
-      impl: [[escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
+      impl: [[...escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
       review: [OK.review],
     },
     {
@@ -149,7 +160,7 @@ test("harness-gestures/AC-2 : sans échéance (null), une escalade attend l'huma
     {
       req: [OK.req],
       specs: [OK.specs],
-      impl: [[escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
+      impl: [[...escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
       review: [OK.review],
     },
     {
@@ -178,8 +189,8 @@ test("harness-gestures/AC-3 : une suppression n'est jamais tranchée à l'éché
       specs: [OK.specs],
       impl: [
         [
-          escalate("Où stocker la date d'export ?", "schema"),
-          escalate("Purger l'historique ?", "deletion", ["non", "oui"]),
+          ...escalate("Où stocker la date d'export ?", "schema"),
+          ...escalate("Purger l'historique ?", "deletion", ["non", "oui"]),
           ...OK.impl,
         ],
         OK.impl,
@@ -251,7 +262,7 @@ test("harness-gestures/AC-4 : une décision prise à l'échéance se renverse co
     {
       req: [OK.req],
       specs: [OK.specs],
-      impl: [[escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
+      impl: [[...escalate("Où stocker la date d'export ?", "schema"), ...OK.impl], OK.impl],
       review: [MEDIUM_REVIEW, OK.review],
       fix: [OK.impl],
     },

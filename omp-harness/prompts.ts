@@ -58,7 +58,9 @@ const POLICY = `## Politique de décision (non négociable)
 - \`category: reversible\` pour un choix technique ; \`category: clarification\` pour une question de produit ou d'UX que la demande ne tranche pas : tu la tranches SEUL de la même façon (\`chosen\` + \`options\`), l'humain pourra renverser après coup — elle ne bloque jamais l'étape.
 - Un choix qui s'appuie sur une décision déjà prise la cite dans \`dependsOn\` (#N) : si l'humain renverse #N, seules ses dépendantes sont refaites. Un choix qui tiendrait quelle que soit l'issue des autres n'en cite aucune.
 - Irréversible = schéma de données, API publique, suppression (données, fichiers d'utilisateurs). Appelle \`decision\` avec la catégorie correspondante, N'APPLIQUE PAS le choix, contourne, et termine tout ce qui n'en dépend pas : les escalades partent ensemble à la fin de l'étape.
-- L'humain pilote plusieurs projets à la fois et lit chaque \`decision\` hors de la session, sans le code sous les yeux : \`context\` lui dit la situation en quelques phrases autoportantes (la feature et ce qu'elle doit livrer, les fichiers ou symboles en jeu, ce que ni les specs ni l'existant ne tranchent, l'enjeu), sans jargon du projet non expliqué. Une escalade donne aussi \`impacts\` : ce qu'emporte chaque option, dans l'ordre des options. Markdown simple seulement (paragraphes courts, listes, \`code\` en ligne).
+- L'humain pilote plusieurs projets à la fois et lit chaque \`decision\` hors de la session, sans le code sous les yeux : \`context\` lui dit la situation en quelques phrases autoportantes (la feature et ce qu'elle doit livrer, les fichiers ou symboles en jeu, ce que ni les specs ni l'existant ne tranchent, l'enjeu), sans jargon du projet non expliqué. Markdown simple seulement (paragraphes courts, listes, \`code\` en ligne).
+- Une ESCALADE porte sa carte, lue en 30 secondes avant tout le reste : \`headline\` (la question en 15 mots au plus, sans chemin de fichier ni \`code\` ni identifiant), \`stake\` (l'enjeu, une ligne), \`established\` (ce qui est établi, une ligne), \`evidence\` (au moins une preuve), des \`options\` { label, impact (sa conséquence pour l'humain, une ligne), reversible, cost? (faible | moyen | fort) }, \`recommended\` (le libellé retenu) et \`confidence\` (faible | moyenne | forte). Le service REFUSE une carte non conforme et dit quoi reformuler. Une décision déclarée réversible que le service classe schéma, API publique ou suppression est escaladée : elle exige sa carte.
+- Une décision peut citer ses preuves dans \`evidence\` : les fichiers ou dossiers que tu as lus, cherchés ou modifiés toi-même dans cette session (pas ceux des sous-agents), ou le motif exact d'une recherche faite ; le service refuse une preuve qu'il n'a pas vue.
 - Une décision tranchée par l'humain (section Oracle) s'impose : ne la rouvre pas.
 - \`save_checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera : les chemins du DÉPÔT que la feature touchera, jamais les fichiers de \`${ARTIFACTS_DIR}/\` (tes artefacts d'étape, hors git : le service refuse l'appel).
 - \`progress\` à chaque jalon franchi, une phrase.
@@ -145,7 +147,7 @@ Ne modifie AUCUN autre fichier.`,
 
   specs: (ctx) => `# /specs — spécifications de « ${ctx.title} »
 
-Lis \`${ART}/req.md\`. Écris \`${ART}/specs.md\` avec exactement ces sections :
+Lis \`${ART}/req.md\`. Écris \`${ART}/specs.md\`. Sa TOUTE PREMIÈRE ligne, avant toute section, est \`Ce que fait cette feature : <une phrase que l'humain comprend sans connaître le code>\` : le service refuse des specs sans elle. Puis exactement ces sections :
 ## Relevé du dépôt
 (chemins, symboles et conventions avec leurs lignes — \`fichier:ligne\` — tout ce que /impl aura besoin de savoir pour ne PAS relire le dépôt)
 ## Documentation
@@ -298,6 +300,36 @@ ${ctx.findings.map(findingLines).join("\n")}
 
 ${POLICY}
 `;
+}
+
+/**
+ * Le prompt du relecteur « humain pressé » : une seule question, et le droit de réécrire quatre textes —
+ * jamais les options. Il ne lit aucun fichier : il juge la carte telle qu'un humain pressé la lirait.
+ */
+export function cardReaderPrompt(card: {
+  headline: string;
+  stake: string;
+  established: string;
+  options: { label: string; impact: string; reversible: boolean; cost?: string }[];
+}): string {
+  const options = card.options.map(
+    (option, index) =>
+      `${index + 1}. ${option.label} — ${option.impact} (${option.reversible ? "réversible" : "irréversible"}${option.cost ? `, coût ${option.cost}` : ""})`,
+  );
+  return [
+    "# /carte — relecture d'une carte de décision",
+    "",
+    "Tu es un humain pressé qui pilote plusieurs projets et ne connaît pas le code. Une seule question : cette carte se comprend-elle en 30 secondes ?",
+    "Tu ne lis aucun fichier et tu n'exécutes rien : tu juges ce texte.",
+    "",
+    `Question : ${card.headline}`,
+    `Enjeu : ${card.stake}`,
+    `Établi : ${card.established}`,
+    "Options :",
+    ...options,
+    "",
+    "Appelle `card_review` UNE fois. Si la carte se comprend, appelle-le sans rien réécrire. Sinon réécris SEULEMENT ce qui bloque : `headline` (15 mots au plus, ni chemin de fichier ni code ni identifiant), `stake` (une ligne), `established` (une ligne) et `impacts` (un par option, dans l'ordre, une ligne chacun). Tu ne changes ni les options, ni leur libellé, ni leur réversibilité, ni la recommandation. Tu ne refuses jamais une carte.",
+  ].join("\n");
 }
 
 /** La relance unique d'une étape qui n'a pas rendu son artefact ou son verdict. */

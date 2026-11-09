@@ -559,6 +559,8 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `repos[].path` | — | le clone nu du service |
 | `repos[].tests.touched` | `npm test -- {files}` | les tests des fichiers touchés ; `{files}` reçoit la liste |
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
+| `repos[].tests.judge` | `local` | qui juge la suite complète : `local` (`tests.full` dans le slot heavy) ou `ci` (les checks de la forge sur la branche poussée, une PR en brouillon ; `full` n'est jamais lancé ici). `ci` exige une forge (`forge: "github"` ou `"gitlab"`), sinon refus au chargement (§ « La CI de la forge comme juge de la suite complète ») |
+| `repos[].tests.ciTimeoutSec` | `3600` | avec `judge: "ci"` : le délai des checks, en secondes (entier ≥ 1) ; au-delà, l'issue est `timeout`, jamais un vert |
 | `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR (une MR sur GitLab) posée sur la forge du dépôt en fusion squash automatique, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée, pipeline) |
 | `repos[].forge` | déduite du distant | `github`, `gitlab` ou `none` : la forge des PR et des issues (§ « Les forges ») |
 | `repos[].issues` | `{ "corporate": "redacted" }` | `{ "corporate"?: "forbid" \| "redacted" \| "full" }` : ce qu'une issue née d'un signalement de collègue peut contenir (§ « Les signalements des collègues ») — `forbid` : aucune issue ni proposition pour ce dépôt ; `redacted` : un texte reformulé et caviardé par le serveur ; `full` : le texte confirmé tel quel, seulement si la forge dit le dépôt privé |
@@ -587,6 +589,7 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `review.escalationTimeoutSec` | `3600` | passé ce délai, une escalade ouverte (sauf une suppression) est tranchée sur la recommandation de l'agent, décision `auto_timeout` à relire ; `null` : jamais |
 | `review.mergeRetries` | `3` | les merges arrêtés (conflit, suite rouge, fusion refusée ou non constatée) relancés seuls — après 5, 15 puis 60 min — avant de te passer la main ; à part des corrections |
 | `review.crossProvider` | `true` | la revue commence la chaîne de son niveau au premier modèle d'un autre fournisseur que celui de la dernière implémentation (une chaîne à un seul fournisseur ne change rien) |
+| `review.cardReader` · `review.cardReaderSec` | `true` · `45` | le relecteur « humain pressé » relit chaque carte d'escalade (et les cartes des specs et des arbitrages écrites par le serveur) avant son départ, au plus `cardReaderSec` secondes ; `false` le coupe (cartes `reviewed: false`) ; son échec ne bloque jamais |
 | `challenge.steps` | `["req", "specs"]` | les étapes relues par le contradicteur avant leur clôture ; `[]` le coupe |
 | `challenge.tier` | `"heavy"` | le niveau du contradicteur ; il commence la chaîne au premier modèle d'un autre fournisseur que l'auteur relu |
 | `review.mergePollSec`, `review.mergeWaitSec` | `60`, `7200` | en mode `gh`, la cadence de relecture de la PR (`gh pr view`, `glab mr view`) après la fusion automatique, et l'attente maximale de sa fusion ; au-delà, le merge est arrêté (`mergeRetries`) |
@@ -774,16 +777,35 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   lis depuis l'app, au milieu de tes autres projets, sans la session sous les
   yeux ; le service refuse une décision sans elle. Une question de produit ou d'UX non tranchée (`clarification`) se décide
   de la même façon, seul : tu pourras renverser après coup. Une décision cite
-  celles dont elle découle (`dependsOn`).
+  celles dont elle découle (`dependsOn`) et peut citer ses preuves (`evidence`, 10 au
+  plus, facultatif) : des fichiers ou dossiers que l'agent a lus, cherchés ou modifiés
+  lui-même dans la session, ou le motif exact d'une recherche faite. Le service les
+  vérifie contre le graphe de session du run (`GET /v1/runs/{id}/graph`) et refuse
+  la décision si l'une n'y figure pas.
 - **Escalades.** Schéma de données, API publique, suppression : l'agent ne
   l'applique pas, contourne et termine le reste. Avant d'escalader, le service
   cherche dans la mémoire une décision que tu as déjà tranchée (tag
   `harness,decision`, score ≥ 0,8, même catégorie) : s'il en trouve une, ta
   réponse s'applique comme un checkpoint « tranché par l'humain le … (souvenir …) »,
-  sans question. Sinon l'escalade porte l'option recommandée par l'agent, sa
-  raison (`rationale`) et ce qu'emporte chaque option (`impacts`, exigés). Les
-  questions partent ensemble en fin d'étape, et l'étape reprend quand tu as tout
-  répondu.
+  sans question. Sinon l'escalade porte sa **carte** (`card`), lisible en 30 secondes
+  sans connaître le code, dont les règles sont tenues par le SERVEUR (il refuse et dit
+  quoi reformuler) : `headline` (15 mots au plus, ni chemin de fichier ni `code`),
+  `stake` (l'enjeu, une ligne), `established` (ce qui est établi, une ligne, texte du
+  premier nœud du schéma), `evidence` (au moins une : un fichier ou dossier lu ou
+  modifié, ou le motif d'une recherche faite, présent dans le graphe du run ; un
+  fichier regroupé par la borne désigne son dossier), des options `{label, impact,
+  reversible, cost?}`, `recommended` et `confidence`. Une décision déclarée
+  réversible que le service classe schéma, API publique ou suppression est refusée
+  sans carte (elle serait escaladée). En /req et /specs, toute décision exige sa carte
+  (la preuve y reste facultative) : elle nourrit le `briefing` des specs. Avant son départ,
+  la carte est relue par un relecteur « humain pressé » (tier `fast` et son repli,
+  `review.cardReader`, borné par `review.cardReaderSec`) qui peut réécrire `headline`,
+  `stake`, `established` et les `impact`, jamais les options, leur réversibilité, la
+  recommandation ni la confiance ; sa réécriture hors règles est jetée, son échec ne
+  bloque rien : la carte part telle quelle, `reviewed: false`. Les questions partent
+  ensemble en fin d'étape (notification : `headline` et `stake` de la première, « · +N
+  autres questions »), et l'étape reprend quand tu as tout répondu. À la clôture de
+  /specs, le service exige la ligne `Ce que fait cette feature : …` en tête de `specs.md`.
 - **Renverser une décision.** Ta raison rejoint la mémoire. Si rien n'en découle,
   rien n'est annulé : l'étape en cours (ou une correction après la revue) applique
   ta nouvelle option sur le code actuel. Si des décisions en découlent, le service
@@ -819,6 +841,11 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
   fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
   sinon tu valides, et tu lis le code si le verdict est faible.
+- **Revue jugée par la CI.** Avec `tests.judge: "ci"`, la « suite complète » de la revue
+  est l'issue des checks de la forge sur la branche poussée (`pass`, `fail`, `timeout`) :
+  jamais un job local. Un échec ou un délai donne le même bloquant « suite complète
+  rouge : … » ; pour un échec, il nomme chaque job rouge, son URL et un extrait filtré de
+  ses logs.
 - **Rouge de base.** Un échec de la suite complète ne bloque que s'il est nouveau
   par rapport à `main`. Sur un résultat `full` rouge qui porte des lignes TAP
   `not ok`, le service obtient la liste des tests en échec de `main` : la même
@@ -864,6 +891,13 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   feature mergée son résumé, ses modules, ses risques résiduels, ce que la revue n'a pas
   vérifié et ses décisions — celles prises seules marquées « (choix de l'agent, non
   validé) ».
+- **Merge avec `tests.judge: "ci"`.** Pas de suite locale après le rebase (§ « La CI de la
+  forge comme juge de la suite complète »). Mode `gh` : la branche rebasée est poussée, sa
+  PR sort du brouillon (`markReady`), l'auto-merge est armé, puis l'attente de la fusion
+  lit aussi les checks de la forge sur ce SHA ; s'ils rougissent, le run repart en
+  correction avec, pour raison, les jobs rouges et leurs extraits de logs. Mode `local` :
+  la CI juge le rebase à la place de `full`, puis le squash et le push de `main`
+  s'enchaînent, et la branche poussée pour la CI est supprimée (la forge ferme la PR).
 - **Pilote d'un audit** (`pilot.ts`). Une fois un audit lancé, chaque run de son
   projet, de ses runs de suite et de ses projets de découpage qui attend l'humain est
   d'abord confié à une session (`pilot.tier`) qui a le contexte de l'audit : son
@@ -1173,6 +1207,52 @@ Un dépôt d'un client sur son GitLab auto-hébergé :
 - `glab` est dans l'image du harness (version épinglée, somme vérifiée) et dans le
   module NixOS ; sous Debian, installe-le (paquet `glab` ou archive de
   gitlab.com/gitlab-org/cli) comme `gh`.
+
+### La CI de la forge comme juge de la suite complète
+
+Le slot heavy est un conteneur Linux qui ne ressemble pas à la CI du dépôt : il rend
+des faux échecs (macOS, Swift, outils absents) et laisse passer de vrais (TypeScript,
+lint). `repos[].tests.judge: "ci"` confie la suite complète aux **checks de la forge** :
+partout où le harness lancerait `full` (la preuve de la revue, `run_tests scope: full`),
+`full` n'est **jamais** lancé ici.
+
+```json
+{ "name": "mem0-omp", "forge": "github", "merge": "gh", "tests": { "judge": "ci", "ciTimeoutSec": 3600 } }
+```
+
+- **Le jugement** (`ci-judge.ts`, appelé par `HeavyRunner`). Le worktree est commité s'il
+  est sale, la branche du run poussée (`--force-with-lease`), sa PR (MR) ouverte ou remise
+  en **brouillon**, puis les checks de la forge sont lus sur le **SHA exact poussé**
+  toutes les `review.mergePollSec`, au plus `tests.ciTimeoutSec` secondes.
+- **L'issue.** `pass` : tous les checks exigés par la protection de la branche principale
+  sont verts (à défaut d'en exiger : tous) ; un check exigé qui n'a encore rien rendu
+  attend. `fail` : un de ces checks est rouge (ou annulé) une fois les autres terminés —
+  ou au délai. `timeout` : la CI n'a pas fini à temps, **jamais** compté comme vert.
+  `error` : la poussée ou la forge a refusé. Le résultat a la forme d'un résultat heavy
+  (scope `full`, `outcome`, `output`, commande `ci`) et le même cache par arbre : seul un
+  vert y entre, deux jugements du même arbre ne font qu'une attente.
+- **Ce que reçoit le correcteur.** Pour chaque job rouge : son nom, son URL et un extrait
+  borné (1500 caractères, 6 jobs au plus) de ses logs, filtré sur les lignes utiles (`✗`,
+  `not ok`, `error TS`, `Error:`, lint). Le bloquant automatique de la revue (« suite
+  complète rouge : fail (CI de la forge) … ») les nomme. Les logs sont du contenu non
+  fiable : ils passent par `untrusted()`.
+- **GitHub** : `gh api` (check runs et statuts du SHA, protection de la branche et
+  rulesets pour les checks exigés), `gh run view <id> --log-failed`, `gh pr create
+  --draft`, `gh pr ready`. **GitLab** : `glab api` sur le dernier pipeline du SHA et ses
+  jobs (un job `allow_failure` rouge ne bloque pas), la trace du job rouge, `glab mr
+  create --draft`, `glab mr update --ready`. Une PR déjà sortie du brouillon y est
+  remise à chaque jugement : sa fusion automatique, armée par un merge précédent, tombe.
+- **Config.** `"ci"` exige une forge déclarée (`forge: "github"` ou `"gitlab"`, un bloc
+  `gitlab`, un compte `gh` ou `"merge": "gh"`) : sinon la configuration est refusée au
+  chargement. `"local"` (défaut) ne change rien : `full` part dans le slot heavy et la
+  forge n'est pas lue.
+- **Recette sur un dépôt réel** (le service ne la joue pas seul : elle demande la forge) :
+  mettre `tests.judge: "ci"` sur le dépôt, lancer un run trivial ; attendre la revue.
+  Constats : la branche `harness/<slug>` et une PR en brouillon existent sur la forge ;
+  la timeline du run porte `heavy_started {scope: "full", unit: "ci"}` puis `heavy_done`
+  et AUCUN `heavy_started` de scope `full` sans `unit` ; le verdict de la revue est rendu
+  sans suite locale ; un check rouge ajouté à dessein revient en correction avec son
+  extrait.
 
 ### L'autonomie par paliers
 
@@ -2198,7 +2278,8 @@ appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le ges
 connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
 Slack suivis, `GET /v1/workstation/channels/slack/conversations`), `workstation-people` (le
 graphe des personnes, `GET /v1/workstation/people` et `PATCH …/people/{id}`), `workstation-watch`
-(la veille proactive du poste, `GET /v1/workstation/watch`) et `autonomy`
+(la veille proactive du poste, `GET /v1/workstation/watch`), `session-graph` (`GET /v1/runs/{id}/graph`,
+le graphe de session d'un run, et l'événement éphémère `graph`) et `autonomy`
 (`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
@@ -2225,6 +2306,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/runs` `{…, kind?, labels?}` · `GET /v1/runs` · `GET /v1/runs/{id}` | operator · viewer | `kind` (`bug` · `feature` · `docs` · `deps` · `test`, sinon 400) et `labels` (20 au plus, de 1 à 50 caractères, rognés et dédoublonnés, sinon 400) : le type de travail et les labels que les règles d'autonomie lisent (§ « L'autonomie par paliers »). Facultatifs, rendus tels quels sur le run (`run.kind`, `run.labels`), jamais modifiables ensuite ; MCP `run_start`, les issues, projets, audits, découpages, suites et planifications ne les posent pas (`kind: null`, `labels: []`). |
 | `GET /v1/runs/{id}/session?before=…&limit=…` | viewer | Le direct de la session du runner, écrit en base (rejouable, même après un redémarrage ; rétention de `events.retentionDays`) : une page d'entrées (`entries`, les 200 dernières par défaut, celles qui précèdent `before` sinon) et `more` s'il en reste de plus anciennes, `live` (le run est conduit en ce moment) et `cursor`, le curseur du journal d'où suivre la suite par `GET /v1/events?run={id}&live=1&after={cursor}`. |
 | `GET /v1/runs/{id}/session/{seq}` | viewer | Une entrée du direct et son détail, jamais poussé dans le flux : pour un outil, `view` (son rendu lisible, comme dans le terminal d'OMP : `{headline, blocks, agents}`, chaque bloc `{kind, role, title, format, text, fields, items, agents}` — `kind` parmi `text`, `fields`, `list`, `agents`, `format` parmi `markdown`, `code`, `diff`, `command`, `plain`, `role` un code que les apps traduisent ; voir `tool-view.ts`), `args` et `result` (le JSON brut de ses arguments et de son résultat, 32 000 et 64 000 caractères au plus) et `output` (sa sortie entière, 64 000 caractères au plus, début et fin gardés) — ceux qui s'écrivent s'il tourne encore ; pour un paragraphe plus long que son entrée, son texte entier dans `output`. Secrets masqués ; 404 si l'entrée est inconnue. `GET /v1/audits/{id}/session/{seq}` : la même chose pour l'analyse d'un audit. |
+| `GET /v1/runs/{id}/graph` | viewer | Le graphe de session du run : `{runId, version, updatedAt, nodes, edges, ambiguities}`. Un nœud `{id, kind, label, step, parent, path, pattern, reads, edits, files, grouped, count, outcome}` (champ sans objet : `null`, compteur : 0) ; `kind` parmi `dir`, `file`, `search` (grep, glob… et son motif), `test` (`run_tests`, son `outcome`), `edit` (les modifications d'une étape), `decision`, `escalation`, `step`. Un arc `{from, to, kind, count}`, `kind` parmi `read`, `searched`, `edited`, `tested`, `led_to` (l'ordre de lecture), `evidence` (une décision ou une escalade vers les nœuds qui la fondent). `ambiguities` : `[{node, kind, evidence: [id de nœud]}]`, une entrée par décision ou escalade. Les fichiers sont regroupés par dossier (compteurs de lectures et de modifications) ; borné à 300 nœuds, au-delà les fichiers passent dans leur dossier, puis les recherches d'une étape sont fondues et les dossiers remontés. Chemins relatifs au dépôt, jamais de contenu de fichier ni de chemin hors dépôt, motifs masqués. Gardé dans l'artefact interne `_session-graph.json` : il survit à la rétention du direct et au redémarrage. Seul l'agent de l'étape y entre : ni le contradicteur, ni les sous-agents (`task`). Un run sans graphe rend la vue vide ; hors des dépôts du client, ou inconnu : 404 `run inconnu`. |
 | `GET /v1/runs/{id}/proofs` | viewer | Les preuves du run : `{runId, proofs: [{n, kind, title, step, mime, size, createdAt, acRef, side}]}` — `kind` parmi `screenshot`, `video`, `log`, `test_report` ; `acRef` (`AC-n`) et `side` (`before` \| `after`) valent `null` quand ils manquent. Jamais de chemin. Un dépôt hors de la portée du client : 404 `run inconnu`. Le rapport de tests d'une étape /impl ou /impl --fix (`test_report`, JSON : `criteria` par `<slug>/AC-n`, `other`, `truncated`) est écrit par le service, sans geste de l'agent. L'événement `verdict` porte `proofs`, le nombre de preuves du tour de revue courant (créées depuis le début de la dernière étape /impl ou /impl --fix). |
 | `GET /v1/runs/{id}/proofs/{n}` | viewer | Le contenu de la preuve de rang `n` : octets bruts, `Content-Type` = son `mime`, `X-Content-Type-Options: nosniff`. Le fichier se retrouve par son rang seul ; un rang hors liste (ou non entier) rend 404. |
 | `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. |
@@ -2238,8 +2320,10 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé, ou s'il l'a été sans commit (déjà dans `main`). |
 | `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
 | `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
+| `GET /v1/escalations` · `GET /v1/inbox` · `GET /v1/runs/{id}` — `card` | viewer | Chaque escalade posée avec sa carte porte `card` : `{headline, stake, options: [{label, impact, reversible, cost?}], recommended, confidence, reviewed, schema: {nodes, edges}}` (`cost` : `faible` · `moyen` · `fort` ; `confidence` : `faible` · `moyenne` · `forte`). `schema` (12 nœuds au plus : établi → ambiguïté → options → impacts, nœuds `{id, kind, label, recommended}` et arcs `{from, to}`) est un schéma de données, jamais une image ni du Mermaid. `question` = `headline`, `options` = les libellés, `impacts` = les impacts, `context` garde le détail : un client ancien lit toujours ces champs. `reviewed: false` : la carte part telle que l'agent l'a écrite. Les escalades antérieures n'ont pas de `card` (`null`). |
 | `GET /v1/decisions?status=auto,auto_timeout` | viewer | La relecture du matin : les décisions prises seules par l'agent, ou à l'échéance d'une escalade. |
 | `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules (à part, hors du compte bloquant `pendingCount` = escalades ouvertes + runs en attente), features en cours, audits ouverts, curseur du flux. Chaque escalade et chaque décision dit l'étape qui l'a posée (`step`). |
+| `GET /v1/runs/{id}` · `GET /v1/inbox` — `briefing` | viewer | Le run qui attend des **specs à valider** ou un **arbitrage** entre revue et correction porte `briefing` : `{feature, cards}` (`feature` : la ligne « Ce que fait cette feature » des specs, sinon le titre du run ; `cards` : les points qui demandent un regard, chacun à la forme de `card`). Specs : les décisions et escalades de /req et /specs, une carte par raison de porte et par désaccord resté ouvert avec le contradicteur (options « valider les specs » / « refaire /specs ») ; arbitrage : une carte par bloquant non levé (« valider malgré » / « corriger encore »). Les cartes écrites par le serveur sont relues par le relecteur rapide, à défaut leur texte brut part avec `reviewed: false`. Même forme dans le run (`run.briefing`) et dans l'entrée du run de l'inbox (`awaiting`, `runs`, `batches[].run`) ; vide (`{feature: "", cards: []}`) quand le run n'attend ni l'un ni l'autre. Le document complet (`specs.md`) reste dans les artefacts. |
 | `GET /v1/autonomy` | viewer | L'autonomie par paliers, en lecture seule : `{repos: [{repo, rules}], validations, proposals}` pour les dépôts que le client voit. `validations` : les décisions prises seules par l'autonomie de la fenêtre `autonomyLearning.windowDays` (100 au plus, récentes d'abord, avec `step`) ; `proposals` : `{repo, kind, gate, direction, current, rule, runs, passages, corrections, rate, changes: [{path, value}]}`. `/v1/inbox` et `/v1/decisions` portent `autonomy` sur chaque décision (`null` hors autonomie). Aucune route n'écrit une règle. |
 | `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction. |
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
@@ -2307,7 +2391,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/vigie` · `PUT /v1/vigie` `{mode?, maxIssuesPerDay?, maxLiveRuns?, dailyBudgetUsd?, repos?}` | viewer · admin | La vigie (§ « La vigie ») : `{settings, heartbeat {at, version, client, silent, silentSince}, today {since, issues, liveRuns, spentUsd}, incidents}` (compte par statut) ; les réglages, validés (400 pour un champ inconnu ou un dépôt non déclaré). |
 | `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
 | `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `reply` (l'état d'un brouillon de réponse au collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `reply` (l'état d'un brouillon de réponse au collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners), `graph` (le graphe de session d'un run a changé : `{version, nodes, edges}`, des nombres ; le client relit `GET /v1/runs/{id}/graph` ; au plus un par 2 s et par run, jamais écrit au journal) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 | événements `autonomy`, `validation` | viewer | Événements du journal (`GET /v1/events`). `validation` `{gate, approve, liftable, by?, pilot?}` : chaque validation ou refus d'une attente humaine, par qui que ce soit ; `gate` est ce qui était attendu (`specs`, `irreversible`, `verdict`…), `liftable` dit, constaté par le serveur au moment du geste, si une règle d'autonomie aurait pu la lever. `autonomy` `{action: "hold" \| "validate" \| "defer", gate: "specs" \| "review", rev, seq?, rank?, why?}` : une attente retenue, validée seule (`seq` : la décision inscrite, `rank` : la règle) ou rendue à l'humain. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
@@ -2341,6 +2425,8 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Demandes** (ajout) | `intake.ts`, `intake-create.ts`, `db/intakes.ts` | Une phrase libre classée par un job léger, sans dépôt ni mémoire (`intake_classify`), un plan lisible, puis UNE confirmation qui crée l'objet par les chemins existants (`createRun`, `audits.create`, `schedules.create`, demande du poste) dans une transaction. § « Les demandes en langage libre ». |
 | **Pilote d'un audit** (ajout) | `pilot.ts`, `machine.ts` (`humanWaitOf`), `gestures.ts` | Un audit lancé pilote les runs qui en descendent (son projet, puis les `follow_up` et `split` du journal). Un run `awaiting_human` de cette lignée, à une révision pas encore traitée, part dans une session (une à la fois par audit, même slot runner et même plafond journalier que les audits) qui rend `pilot_act` ; le geste passe par `HumanLoop` avec `{by: "pilote:<audit>", rev, pilot: true}` : 412 ou 409 si l'humain a agi entre-temps, et rien n'est écrit. Les gestes permis dépendent de l'attente lue dans la raison du run (`humanWaitOf`). Un geste du pilote ne va pas dans l'oracle comme une correction humaine. |
 | **Autonomie par paliers** (ajout) | `autonomy-rules.ts`, `autonomy-gates.ts`, `autonomy-learning.ts`, `gestures.ts`, `steps.ts` | Règles par dépôt validées au chargement ; évaluation serveur à la pose de l'attente (échec fermé : jamais d'attente `irreversible`, `budget`, `arbitration` ou `failure`, d'escalade `schema`/`public_api`/`deletion`, de budget dépassé ni de run de la vigie), à partir de l'évidence de la revue (`_review-evidence.json`, invisible) ; validation par le même geste que l'humain, inscrite comme décision prise seule réversible ; propositions de palier calculées à la lecture, sans jamais modifier une règle. |
+| **Graphe de session** (ajout) | `session-graph.ts`, `steps.ts`, `host-tools.ts` | Construit par le service depuis les trames `tool_execution_*` réussies du runner de l'étape (lectures, recherches, modifications) et les outils hôtes (`run_tests`, `decision`) ; borné à 300 nœuds, écrit dans `_session-graph.json` et poussé en événement éphémère `graph` au plus une fois toutes les 2 s. Les preuves (`evidence`) d'une décision sont résolues contre lui, de façon synchrone, avant toute écriture. |
+| **Carte de décision** (ajout) | `card.ts`, `card-reader.ts`, `briefing.ts`, `decisions.ts`, `host-tools.ts`, `db/decisions.ts`, `steps.ts`, `orchestrator.ts` | Les règles de la carte vivent dans le serveur (`planDecision`, `parseCard`) ; une escalade la porte (`card`, artefact interne `_escalation-cards.json`), relue avant son départ par le relecteur « humain pressé » (tier `fast`, borné, jamais bloquant). Le `briefing` d'un run qui attend des specs ou un arbitrage est écrit AVANT l'attente (`_briefing.json`) et servi avec le run. |
 | **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-guards.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts`, `db/workstation-captures.ts`, `db/workstation-browsers.ts`, `db/workstation-requests.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), cantonnement à la fenêtre de l'agent et navigation gardée (approbation), contenu des pages délimité comme non fiable, arrêt d'urgence, meetings, profil versionné, captures gardées. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Issues GitHub** (ajout) | `issues.ts`, `mcp.ts`, `db/issues.ts` | Le serveur MCP de `POST /v1/mcp` : les issues d'un dépôt déclaré lues par `gh` dans le dépôt GitHub de son distant, lancées en runs par `createRun` ; la table `issue_runs` lie chaque issue à son dernier run et empêche un double lancement (et deux appels simultanés sur la même issue n'en font qu'un). |
@@ -2495,7 +2581,10 @@ Le serveur pousse (`apns-push-type: alert`, `push-alerts.ts`) :
 Les droits sont ceux du client qui a enregistré l'appareil, relus à chaque envoi ;
 l'appareil d'un client révoqué est oublié. La charge est minimale : un titre, le dépôt
 et le titre du run, et `omp` `{kind, runId?, rev?, seq?}` — jamais le contenu du poste
-(ni résumé, ni destinataires, ni brouillon), ni question, ni raison d'échec. `rev` est
+(ni résumé, ni destinataires, ni brouillon), ni raison d'échec. Une escalade à `card` porte
+sa `headline` (titre) et son `stake` (corps), suivis de « · +N autres questions » pour un lot
+(une seule alerte par lot) : ni option, ni contexte, ni chemin ; sans `card`, l'alerte garde son
+texte générique, jamais la question brute. `rev` est
 l'If-Match du geste fait depuis la notification (la révision du run, ou l'`updatedAt`
 de l'envoi du poste) : si le run ou l'envoi a bougé depuis, le serveur refuse (412) et
 rien n'est tranché. Les notifications d'un run se groupent (`thread-id` : l'id du run ;

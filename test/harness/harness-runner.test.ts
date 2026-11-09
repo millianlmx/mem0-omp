@@ -144,14 +144,8 @@ test("harness-runner/AC-4 : les outils hôtes suivent l'étape — save_checkpoi
 });
 
 test("harness-runner/AC-5 : les schémas des outils hôtes exigent ce que le service lit", () => {
-  assert.deepEqual(at("req", "decision", "required"), [
-    "question",
-    "context",
-    "options",
-    "chosen",
-    "rationale",
-    "category",
-  ]);
+  // `question` et `chosen` cèdent la place à `headline` et `recommended` avec la carte : le service tranche (planDecision).
+  assert.deepEqual(at("req", "decision", "required"), ["context", "options", "rationale", "category"]);
   const categories = at("req", "decision", "properties", "category", "enum");
   assert.ok(Array.isArray(categories) && categories.includes("clarification"));
   assert.equal(at("req", "decision", "properties", "options", "minItems"), 2);

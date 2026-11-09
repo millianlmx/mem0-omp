@@ -3,6 +3,7 @@
 // rouge, décisions déjà tranchées par l'humain, modules posés en cours d'étape.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import {
@@ -34,7 +35,7 @@ async function until(world: FakeWorld, runId: string, states: string[], timeoutM
 }
 
 const SPECS_SPLIT =
-  "## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n- Export JSON — Exporter aussi en JSON — src/api, docs\n- Export XML — Exporter en XML\n";
+  "Ce que fait cette feature : exporter les données au format CSV.\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n- Export JSON — Exporter aussi en JSON — src/api, docs\n- Export XML — Exporter en XML\n";
 
 const SPECS_NO_MODULES = OK.specs[0]?.content?.replace("## Modules\n- src/api\n", "## Modules\n") ?? "";
 
@@ -326,19 +327,24 @@ test("harness-steps/AC-13 : une suite complète rouge devient un bloquant, quoi 
 });
 
 test("harness-steps/AC-14 : une décision irréversible déjà tranchée par l'humain (souvenir) devient un checkpoint sans escalade ; sans souvenir, l'escalade porte la recommandation", async () => {
-  const decide = (question: string) => ({
-    tool: "decision",
-    args: {
-      question,
-      context: "Les exports ont leur propre table ; la clé primaire se choisit avant la première migration.",
-      options: ["entier auto-incrémenté", "uuid"],
-      impacts: ["clés devinables, tri naturel", "clés opaques, index plus gros"],
-      chosen: "entier auto-incrémenté",
-      rationale: "plus simple",
-      category: "schema",
+  const decide = (headline: string) => [
+    ...readFrames(),
+    {
+      tool: "decision",
+      args: escalationArgs({
+        headline,
+        context: "Les exports ont leur propre table ; la clé primaire se choisit avant la première migration.",
+        options: [
+          { label: "entier auto-incrémenté", impact: "clés devinables, tri naturel", reversible: false },
+          { label: "uuid", impact: "clés opaques, index plus gros", reversible: false },
+        ],
+        recommended: "entier auto-incrémenté",
+        rationale: "plus simple",
+        category: "schema",
+      }),
     },
-  });
-  const impl = [decide("Quel type pour la clé primaire des exports ?"), ...OK.impl];
+  ];
+  const impl = [...decide("Quel type pour la clé primaire des exports ?"), ...OK.impl];
   const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [impl], review: [OK.review] });
   world.oracle.memories = [
     {
