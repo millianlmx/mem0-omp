@@ -92,7 +92,12 @@ export type ToBackground =
   | { to: "background"; type: "meeting-ended"; reason: string }
   | { to: "background"; type: "meeting-error"; error: string }
   | { to: "background"; type: "settings-changed" }
-  | { to: "background"; type: "emergency-stop" };
+  | { to: "background"; type: "emergency-stop" }
+  | { to: "background"; type: "intake-post"; text: string }
+  | { to: "background"; type: "intake-get" }
+  | { to: "background"; type: "intake-confirm"; id: string }
+  | { to: "background"; type: "intake-cancel"; id: string }
+  | { to: "background"; type: "intake-answer"; id: string; text: string };
 
 export type ToOffscreen =
   | { to: "offscreen"; type: "config"; config: OffscreenConfig }
