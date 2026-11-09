@@ -15,6 +15,7 @@
 //   { "sleep": 60000 }                          attend (une étape qui dure)
 //   { "frame": { "type": "…", … } }             émet une trame telle quelle (le direct de la session)
 //   { "waitSteer": 15000 }                      attend un message de pilotage (`steer`), au plus ce délai
+//   { "exit": 137 }                             sort du process avec ce code (un runner tué faute de mémoire)
 // Un message de pilotage (`steer`) est journalisé et accepté ; `"steer": "refuse"` au
 // scénario le fait refuser (le runner ne prend pas la consigne).
 // La dernière occurrence se répète. Le compteur d'occurrences vit dans FAKE_STATE
@@ -39,6 +40,7 @@ type Action = {
   frame?: Record<string, unknown>;
   parallel?: { tool: string; args?: Record<string, unknown> }[];
   waitSteer?: number;
+  exit?: number;
 };
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
@@ -155,6 +157,7 @@ async function runPrompt(id: string, message: string): Promise<void> {
   log({ kind: "prompt", step: currentStep, nudge, message });
   for (const action of actions) {
     if (action.sleep) await new Promise((resolve) => setTimeout(resolve, action.sleep));
+    if (action.exit !== undefined) process.exit(action.exit);
     if (action.waitSteer) log({ kind: "steered", step: currentStep, message: await nextSteer(action.waitSteer) });
     if (action.frame) out(action.frame);
     if (action.write) {

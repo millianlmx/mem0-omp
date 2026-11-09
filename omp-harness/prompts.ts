@@ -188,6 +188,21 @@ Termine par \`${ART}/impl.md\` avec exactement ces sections :
   fix: fixBody,
 };
 
+/**
+ * Les règles du runner (conteneur 1 Go sans swap) : un test lancé dans son shell le tue en code 137.
+ * Dites à /impl, /impl --fix et /review, et rappelées à la relance d'une étape tuée faute de mémoire.
+ */
+export const RUNNER_MEMORY_RULES = `Le runner n'a que 1 Go de mémoire, sans swap :
+- les tests passent UNIQUEMENT par l'outil \`run_tests\` (slot heavy isolé) ;
+- n'installe ni ne lance jamais node, bun, swift, cargo, tsc ou check.sh dans le shell du runner ;
+- au plus UN sous-agent à la fois.`;
+
+/** Les étapes qui codent ou testent, à qui {@link RUNNER_MEMORY_RULES} sont dites. */
+const MEMORY_RULED_STEPS: readonly StepKind[] = ["impl", "fix", "review"];
+
+/** La consigne de relance d'une étape dont le runner a été tué faute de mémoire. */
+export const OOM_RETRY_NOTE = `La tentative précédente a été tuée faute de mémoire (runner arrêté : code 137, OOM). ${RUNNER_MEMORY_RULES}`;
+
 /** Le prompt complet d'une étape. */
 export function stepPrompt(ctx: PromptContext): string {
   const parts = [BODY[ctx.step](ctx)];
@@ -204,6 +219,7 @@ export function stepPrompt(ctx: PromptContext): string {
     );
   }
   parts.push(section("Reprise", ctx.resume));
+  if (MEMORY_RULED_STEPS.includes(ctx.step)) parts.push(section("Mémoire du runner", RUNNER_MEMORY_RULES));
   parts.push(`\n${POLICY}\n`);
   return parts.filter((part) => part !== "").join("\n");
 }

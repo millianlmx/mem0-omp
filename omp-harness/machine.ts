@@ -277,9 +277,10 @@ function afterFailure(
     return to("failed", step, cursor, { attempts: cursor.attempts, reason: `/${step} a échoué : ${outcome.reason}` });
   }
   if (cursor.lastFailCause === outcome.cause && !WAITABLE_CAUSES.includes(outcome.cause)) {
+    const cause = isRunnerOom(outcome.reason) ? OOM_CAUSE : outcome.cause;
     return to("awaiting_human", step, cursor, {
       attempts: cursor.attempts,
-      reason: `/${step} a échoué deux fois de suite pour la même cause (${outcome.cause}) : ${outcome.reason}`,
+      reason: `/${step} a échoué deux fois de suite pour la même cause (${cause}) : ${outcome.reason}`,
     });
   }
   const backoffSec = limits.retryBackoffSec[cursor.attempts];
@@ -294,6 +295,14 @@ function afterFailure(
     attempts: cursor.attempts,
     reason: `/${step} a échoué ${limits.retryBackoffSec.length + 1} fois (${outcome.cause}), relances épuisées : ${outcome.reason}`,
   });
+}
+
+/** La cause nommée à l'humain quand le runner est tué faute de mémoire. */
+export const OOM_CAUSE = "mémoire du runner (code 137)";
+
+/** Un runner tué faute de mémoire : son processus est sorti en code 137 (SIGKILL de l'OOM killer). */
+export function isRunnerOom(reason: string): boolean {
+  return /runner arrêté : code 137\b/.test(reason);
 }
 
 /**

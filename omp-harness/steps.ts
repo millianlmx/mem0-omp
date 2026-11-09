@@ -38,9 +38,16 @@ import { matchesGlob } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
-import { IRREVERSIBLE_GATE, stepTier } from "./machine.ts";
+import { IRREVERSIBLE_GATE, isRunnerOom, stepTier } from "./machine.ts";
 import { parseModulesSection } from "./planner.ts";
-import { STEP_ARTIFACT, challengeAnswerPrompt, challengePrompt, nudgePrompt, stepPrompt } from "./prompts.ts";
+import {
+  OOM_RETRY_NOTE,
+  STEP_ARTIFACT,
+  challengeAnswerPrompt,
+  challengePrompt,
+  nudgePrompt,
+  stepPrompt,
+} from "./prompts.ts";
 import { briefOfReq, renderMemories } from "./oracle.ts";
 import { PolicyRefusal } from "./policy.ts";
 import type { PromptError, PromptResult } from "./rpc.ts";
@@ -700,6 +707,7 @@ export class StepExecutor {
       run.id,
       `Tentative ${attempt} interrompue à ${new Date().toISOString()} (${cause} : ${reason}) ; repars de \`git diff ${run.baseSha ?? "main"}\` et de \`${ARTIFACTS_DIR}/${artifact}\` — ne refais pas ce qui est fait.`,
     );
+    if (isRunnerOom(reason)) store.addInstructions(run.id, OOM_RETRY_NOTE);
     store.finishStep(stepRow.id, "failed", reason);
     return { kind: "failed", cause, reason, retryable };
   }
