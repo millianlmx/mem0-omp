@@ -466,8 +466,14 @@ test("ci-juge/AC-8 : avec GitLab, le statut du pipeline et la trace du job rouge
     "le pipeline du SHA poussé est lu par glab api",
   );
   assert.ok(calls.some((args) => args[3] === "projects/acme%2Fapp/pipelines/9/jobs?per_page=100"));
-  assert.ok(calls.some((args) => args[3] === "projects/acme%2Fapp/jobs/5/trace"), "la trace du job rouge est lue");
-  assert.ok(calls.some((args) => args[0] === "mr" && args.includes("--draft")), "la MR s'ouvre en brouillon");
+  assert.ok(
+    calls.some((args) => args[3] === "projects/acme%2Fapp/jobs/5/trace"),
+    "la trace du job rouge est lue",
+  );
+  assert.ok(
+    calls.some((args) => args[0] === "mr" && args.includes("--draft")),
+    "la MR s'ouvre en brouillon",
+  );
   assert.match(result.output, /- lint — https:\/\/gitlab\.example\.com\/acme\/app\/-\/jobs\/5/);
   assert.match(result.output, /not ok 3 - lint\/AC-4/);
   assert.match(result.output, /<<<CONTENU NON FIABLE/);

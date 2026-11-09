@@ -266,8 +266,7 @@ export class Merger {
     repo: RepoConfig,
     message: { subject: string; commitBody: string; prBody: string },
   ): Promise<
-    | { kind: "merged"; prUrl: string | null }
-    | { kind: "stopped"; prUrl: string | null; reason: string; step?: "fix" }
+    { kind: "merged"; prUrl: string | null } | { kind: "stopped"; prUrl: string | null; reason: string; step?: "fix" }
   > {
     const { git, config } = this.#ctx;
     const remote = repo.remote ?? "origin";

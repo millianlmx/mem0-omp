@@ -93,7 +93,10 @@ function plainLine(line: string): string {
  * l'ordre du log, au plus `limit` caractères. Aucune ligne utile : les dernières lignes du log.
  */
 export function usefulLogLines(raw: string, limit: number): string {
-  const lines = raw.split("\n").map(plainLine).filter((line) => line.trim() !== "");
+  const lines = raw
+    .split("\n")
+    .map(plainLine)
+    .filter((line) => line.trim() !== "");
   const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line));
   const picked = useful.length > 0 ? useful : lines.slice(-20);
   let text = "";
