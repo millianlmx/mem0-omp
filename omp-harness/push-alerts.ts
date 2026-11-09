@@ -150,14 +150,15 @@ const ANSWER_OPTION_CHARS_MAX = 120;
  * La question à laquelle on répond de la notification : le lot du run n'a qu'UNE question ouverte
  * (celle de l'événement) et l'agent y recommande une option. Les options gardent leur ordre ; au-delà de
  * quatre, la recommandée passe en tête. `null` sinon — ou si une option est trop longue pour un bouton, ou
- * si la question ou une option porte un secret reconnu : ces textes quittent le serveur.
+ * si la question ou une option porte un secret reconnu : ces textes quittent le serveur. `null` aussi pour
+ * une suppression (`deletion`) : elle ne se tranche jamais d'un bouton de notification, elle s'ouvre.
  */
 function answerable(store: Store, run: RunRow, id: number): { text: string; question: AlertQuestion } | null {
   const open: EscalationRow[] = store.listEscalations({ runId: run.id, status: "open" });
   const [item] = open;
   if (open.length !== 1 || item === undefined || item.id !== id) return null;
   const recommended = item.recommended?.trim() ?? "";
-  if (recommended === "") return null;
+  if (recommended === "" || item.category === "deletion") return null;
   const kept = item.options.slice(0, ANSWER_OPTIONS_MAX);
   const options = kept.includes(recommended) ? kept : [recommended, ...kept.slice(0, ANSWER_OPTIONS_MAX - 1)];
   if (options.some((option) => option.length > ANSWER_OPTION_CHARS_MAX)) return null;

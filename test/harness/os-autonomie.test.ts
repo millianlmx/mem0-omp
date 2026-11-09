@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import type { Client } from "../../omp-harness/auth.ts";
 import { DELIVER_DIFF_FACTOR } from "../../omp-harness/autonomy-gates.ts";
-import { changesOf } from "../../omp-harness/autonomy-learning.ts";
+import { changesOf, ruleFor, rulesWith } from "../../omp-harness/autonomy-learning.ts";
+import { firstRule } from "../../omp-harness/autonomy-rules.ts";
 import type { AutonomyRule } from "../../omp-harness/autonomy-rules.ts";
 import { repoDefaults } from "../../omp-harness/config.ts";
 import type { HarnessConfig } from "../../omp-harness/config.ts";
@@ -859,11 +860,7 @@ test("os-autonomie/AC-10 : `POST /v1/autonomy/rules` écrit la règle d'une prop
     // Aucune règle du type : la règle prudente d'une proposition de palier est ajoutée.
     const added = await post(raise);
     assert.equal(added.status, 200, JSON.stringify(added.body));
-    const cautious = changesOf(
-      { repo: "demo", kind: "bug", gate: "review", direction: "raise", rule: null },
-      null,
-      max,
-    );
+    const cautious = changesOf({ repo: "demo", kind: "bug", gate: "review", direction: "raise" }, [], max);
     assert.equal(cautious[0]?.path, "repos.demo.autonomy.rules[+]");
     const rules = added.body.rules as AutonomyRule[];
     assert.equal(added.body.repo, "demo");
@@ -1159,7 +1156,10 @@ test("os-autonomie/AC-13 : `always: true` fait d'une réponse d'escalade, d'un r
       [fromAnswer?.source, fromAnswer?.repo, fromAnswer?.sourceRunId, fromAnswer?.by, fromAnswer?.enabled],
       ["answer", "demo", run.id, "ops", true],
     );
-    assert.equal(fromAnswer?.text, `Quand la question « ${question.question} » se pose : table.`);
+    assert.equal(
+      fromAnswer?.text,
+      `Réponse de l'humain à la question de l'agent « ${question.question} » — option proposée par l'agent, retenue : table.`,
+    );
 
     // Le prompt qui reprend /impl la porte déjà.
     const atVerdict = await until(world, run.id, ["awaiting_human", "merged", "failed"]);
@@ -1240,6 +1240,241 @@ test("os-autonomie/AC-13 : `always: true` fait d'une réponse d'escalade, d'un r
     await api.close();
     await world.orchestrator.stop();
   }
+});
+
+test("os-autonomie/AC-15 : l'outil MCP `run_start` garde le drapeau pilote — un client pilote ne crée pas de run en « livre et préviens-moi », ni aux règles du dépôt dans un espace réglé sur « tout me demander » ; il prend le défaut de l'espace, et l'humain choisit encore", async () => {
+  const world = fakeWorld({});
+  const api = await serve(world);
+  try {
+    const args = { repo: "demo", title: "Par outil", request: "x", modules: ["src/api"] };
+    const delivered = await api.tool("run_start", { ...args, autonomy: "deliver" }, api.tokens.pilot);
+    assert.equal(delivered.isError, true, JSON.stringify(delivered));
+    assert.match(JSON.stringify(delivered.content), /geste réservé à l'humain — un pilote ne monte pas l'autonomie/);
+
+    world.orchestrator.spaces.create(
+      { name: "Client", repos: ["demo"], poste: false, jiraProjects: [], dailyBudgetUsd: null, autonomy: "ask" },
+      HUMAN,
+    );
+    const raised = await api.tool("run_start", { ...args, autonomy: null }, api.tokens.pilot);
+    assert.equal(raised.isError, true, "sortir de l'espace « tout me demander » est monter le curseur");
+    assert.match(JSON.stringify(raised.content), /un pilote ne monte pas l'autonomie/);
+    assert.equal(world.store.listRuns({}).length, 0, "aucun refus ne crée de run");
+
+    // Sans curseur, le pilote prend celui de l'espace ; l'humain, lui, le choisit par le même outil.
+    const plain = await api.tool("run_start", args, api.tokens.pilot);
+    assert.equal(plain.isError, undefined, JSON.stringify(plain));
+    const [byPilot, ...others] = world.store.listRuns({});
+    assert.equal(others.length, 0);
+    assert.deepEqual([byPilot?.autonomy, byPilot?.title], ["ask", "Par outil"]);
+    assert.equal(eventsOf(world, byPilot?.id ?? "", "run_created")[0]?.payload.by, "sentinelle");
+    const human = await api.tool("run_start", { ...args, title: "Humain", modules: ["docs"], autonomy: "deliver" });
+    assert.equal(human.isError, undefined, JSON.stringify(human));
+    assert.equal(world.store.listRuns({}).find((run) => run.title === "Humain")?.autonomy, "deliver");
+  } finally {
+    await api.close();
+  }
+});
+
+test("os-autonomie/AC-16 : mettre une porte à l'humain la rend sur TOUTES les règles du type qui pouvaient la lever — deux règles `feature` en revue auto (l'une par chemins, l'autre par seuil) passent toutes deux à l'humain, la règle d'un autre type reste ; à la porte des specs, seule la règle sans chemin, seuil ni exigence est retouchée", async () => {
+  const world = fakeWorld({});
+  const demo = world.config.repos[0];
+  assert.ok(demo);
+  const byPaths: AutonomyRule = {
+    match: { kind: "feature", paths: ["docs"], maxDiffLines: 200 },
+    require: {},
+    gates: { specs: "auto", review: "auto" },
+  };
+  const bySize: AutonomyRule = {
+    match: { kind: "feature", maxDiffLines: 500 },
+    require: {},
+    gates: { specs: "human", review: "auto" },
+  };
+  const bug: AutonomyRule = {
+    match: { kind: "bug", maxDiffLines: 500 },
+    require: {},
+    gates: { specs: "human", review: "auto" },
+  };
+  const specsOnly: AutonomyRule = {
+    match: { kind: "feature" },
+    require: {},
+    gates: { specs: "auto", review: "human" },
+  };
+  const initial = [byPaths, bySize, bug, specsOnly];
+  const max = world.config.review.maxDiffLines;
+  // Un run `feature` hors de `docs` : la première règle du type ne lui correspond pas, la seconde le lève.
+  const code = { kind: "feature" as const, labels: [], touchedFiles: ["src/api/export.ts"], diffLines: 300 };
+  const docs = { kind: "feature" as const, labels: [], touchedFiles: ["docs/guide.md"], diffLines: 100 };
+  assert.deepEqual(
+    [ruleFor(initial, "feature", "review")?.rank, firstRule(initial, code, "review")?.rank],
+    [1, 2],
+    "témoin : la première règle du type n'est pas celle qui lève ce run",
+  );
+
+  const file = path.join(tmpdir("os-autonomie-regles-"), "config.json");
+  const entry = { name: "demo", path: demo.path, scope: "demo", tests: demo.tests, autonomy: { rules: initial } };
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ dataDir: world.config.dataDir, worktreesDir: world.config.worktreesDir, repos: [entry] }, null, 2)}\n`,
+  );
+  const api = await serve(world, new ConfigAdmin(file, world.orchestrator, { git: world.deps.git }));
+  const post = (body: unknown) => api.call("POST", "/v1/autonomy/rules", body, api.tokens.owner);
+  try {
+    // Ce qu'une proposition « baisser » donne à lire est ce qui sera écrit : les deux portes.
+    assert.deepEqual(changesOf({ repo: "demo", kind: "feature", gate: "review", direction: "lower" }, initial, max), [
+      { path: "repos.demo.autonomy.rules[0].gates.review", value: "human" },
+      { path: "repos.demo.autonomy.rules[1].gates.review", value: "human" },
+    ]);
+
+    const lowered = await post({ repo: "demo", kind: "feature", gate: "review", mode: "human" });
+    assert.equal(lowered.status, 200, JSON.stringify(lowered.body));
+    const rules = lowered.body.rules as AutonomyRule[];
+    assert.deepEqual(
+      rules.map((rule) => rule.gates.review),
+      ["human", "human", "auto", "human"],
+    );
+    assert.deepEqual(
+      rules.map((rule) => [rule.match, rule.gates.specs]),
+      initial.map((rule) => [rule.match, rule.gates.specs]),
+      "ni seuil, ni chemins, ni porte des specs ne bougent",
+    );
+    for (const facts of [code, docs]) assert.equal(firstRule(rules, facts, "review")?.rule.gates.review, "human");
+    const loaded = world.orchestrator.config.repos.find((repo) => repo.name === "demo")?.autonomy?.rules;
+    assert.deepEqual(loaded, rules, "la configuration en vigueur est celle rendue");
+
+    // À la porte des specs, une règle qui porte un chemin ou un seuil ne la règle jamais : elle n'est pas retouchée.
+    const specs = (await post({ repo: "demo", kind: "feature", gate: "specs", mode: "human" })).body
+      .rules as AutonomyRule[];
+    assert.deepEqual(
+      specs.map((rule) => rule.gates.specs),
+      ["auto", "human", "human", "human"],
+    );
+    assert.equal(firstRule(specs, { kind: "feature", labels: [] }, "specs")?.rule.gates.specs, "human");
+    // Tout est déjà à l'humain : rien ne change, aucune règle n'est ajoutée.
+    assert.deepEqual(rulesWith(specs, { kind: "feature", gate: "review", mode: "human" }, max), specs);
+  } finally {
+    await api.close();
+  }
+});
+
+/** Un run en « tout me demander » mené à son verdict, que l'auto-merge acceptait : il n'attend que pour son curseur. */
+async function askedVerdict() {
+  const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] });
+  await world.orchestrator.start();
+  const run = world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter", autonomy: "ask" });
+  await until(world, run.id, ["awaiting_human", "merged", "failed"]);
+  await world.orchestrator.validate(run.id, true, "", HUMAN);
+  const waiting = await until(world, run.id, ["awaiting_human", "merged", "failed"]);
+  return { world, runId: run.id, waiting };
+}
+
+test("os-autonomie/AC-17 : un verdict que l'auto-merge acceptait et que seul « tout me demander » retenait part en fusion dès que le curseur remonte — aux règles du dépôt comme à « livre et préviens-moi », sans règle ni type — par une décision prise seule au nom du curseur ; resté en « tout me demander » ou budget dépassé, il attend l'humain", async () => {
+  const [toRules, toDeliver, stays, costly] = await Promise.all([
+    askedVerdict(),
+    askedVerdict(),
+    askedVerdict(),
+    askedVerdict(),
+  ]);
+  const cases = [toRules, toDeliver, stays, costly];
+  try {
+    for (const held of cases)
+      assert.deepEqual(
+        [held.waiting.state, held.waiting.reason, held.waiting.kind],
+        ["awaiting_human", `${WAIT_REASON.verdict} : ${ASK_REASON}`, null],
+        stateOf(held.world, held.runId),
+      );
+
+    for (const [level, held] of [
+      [null, toRules],
+      ["deliver", toDeliver],
+    ] as const) {
+      const name = String(level);
+      const set = await held.world.orchestrator.setAutonomy(held.runId, level, HUMAN);
+      assert.equal(set.autonomy, level, name);
+      const merged = await until(held.world, held.runId, ["merged", "failed"]);
+      assert.equal(merged.state, "merged", `${name} : ${stateOf(held.world, held.runId)}`);
+      // Le geste de validation habituel, au nom du curseur, inscrit comme décision prise seule.
+      const [decision, ...others] = autonomyDecisions(held.world, held.runId);
+      assert.equal(others.length, 0, name);
+      assert.deepEqual(
+        [decision?.status, decision?.chosen, decision?.autonomy?.gate, decision?.autonomy?.rule.rank],
+        ["auto", "valider", "review", 0],
+        name,
+      );
+      assert.equal(decision?.autonomy?.proofs.autoMerge, true, name);
+      assert.match(String(decision?.rationale), /n'attendait l'humain que pour « tout me demander »/);
+      const validations = eventsOf(held.world, held.runId, "validation").map((event) => event.payload);
+      assert.deepEqual(
+        validations.at(-1),
+        { gate: "verdict", approve: true, liftable: false, by: "autonomie:demo#curseur", pilot: true },
+        `${name} : aucune règle de palier n'y joue, ce n'est pas un passage de l'apprentissage`,
+      );
+      assert.deepEqual(
+        eventsOf(held.world, held.runId, "autonomy").map((event) => event.payload.action),
+        ["hold", "validate"],
+        name,
+      );
+    }
+
+    // Resté en « tout me demander » (le curseur redit) : rien ne bouge, l'humain valide lui-même.
+    await stays.world.orchestrator.setAutonomy(stays.runId, "ask", HUMAN);
+    await ticks(stays.world);
+    assert.equal(stays.world.store.getRun(stays.runId)?.state, "awaiting_human");
+    assert.equal(eventsOf(stays.world, stays.runId, "autonomy").length, 0);
+    await stays.world.orchestrator.validate(stays.runId, true, "", HUMAN);
+    assert.equal(eventsOf(stays.world, stays.runId, "validation").at(-1)?.payload.liftable, false);
+    assert.equal((await until(stays.world, stays.runId, ["merged", "failed"])).state, "merged");
+
+    // Les gardes restent : un budget dépassé garde le verdict à l'humain, curseur remonté ou non.
+    costly.world.config.monitoring.runBudgetUsd = 0;
+    await costly.world.orchestrator.setAutonomy(costly.runId, "deliver", HUMAN);
+    await ticks(costly.world);
+    assert.equal(costly.world.store.getRun(costly.runId)?.state, "awaiting_human");
+    assert.equal(eventsOf(costly.world, costly.runId, "autonomy").length, 0);
+    assert.equal(autonomyDecisions(costly.world, costly.runId).length, 0);
+  } finally {
+    await Promise.all(cases.map((held) => held.world.orchestrator.stop()));
+  }
+});
+
+test("os-autonomie/AC-18 : une consigne née d'une réponse d'escalade dit sa provenance — la question est de l'agent, la réponse est une option qu'il proposait ou le texte de l'humain — sur une seule ligne de 600 caractères au plus ; une réponse vide ou un pilote n'en créent pas", () => {
+  const world = fakeWorld({});
+  const run = world.orchestrator.createRun({ repo: "demo", title: "Export", request: "x", modules: ["src/api"] });
+  const { standing } = world.orchestrator;
+  const asked = { question: "Quel format\n  d'export ?", options: ["CSV", "JSON"] };
+  const head = "Réponse de l'humain à la question de l'agent « Quel format d'export ? »";
+
+  assert.equal(
+    standing.fromAnswer(run, asked, " CSV ", HUMAN)?.text,
+    `${head} — option proposée par l'agent, retenue : CSV.`,
+  );
+  assert.equal(
+    standing.fromAnswer(run, asked, "Du CSV,\nséparateur point-virgule.", HUMAN)?.text,
+    `${head} — texte de l'humain : Du CSV, séparateur point-virgule.`,
+  );
+  // Presque une option n'en est pas une : seule l'égalité exacte dit « option de l'agent ».
+  assert.equal(standing.fromAnswer(run, asked, "csv", HUMAN)?.text, `${head} — texte de l'humain : csv.`);
+
+  // Une question et une option longues : la consigne tient sur une ligne bornée, sa provenance reste lisible.
+  const long = standing.fromAnswer(
+    run,
+    { question: `${"Q".repeat(300)}\n?`, options: ["x".repeat(900)] },
+    "x".repeat(900),
+    HUMAN,
+  );
+  assert.ok(long);
+  assert.equal(long.text.length, MAX_RULE_TEXT);
+  assert.ok(!long.text.includes("\n"));
+  assert.match(
+    long.text,
+    /^Réponse de l'humain à la question de l'agent « Q{199}… » — option proposée par l'agent, retenue : x+…$/,
+  );
+
+  assert.equal(standing.fromAnswer(run, asked, "  . ", HUMAN), null, "une réponse vide");
+  assert.equal(standing.fromAnswer(run, asked, "CSV", { by: "sentinelle", pilot: true }), null, "un pilote");
+  const rules = world.store.listStandingRules(null);
+  assert.equal(rules.length, 4);
+  for (const rule of rules)
+    assert.deepEqual([rule.source, rule.repo, rule.sourceRunId, rule.by], ["answer", "demo", run.id, "humain"]);
 });
 
 test("os-autonomie/AC-14 : les routes de l'autonomie sont servies par apiRoutes() avec leur rôle, décrites dans le README du harness avec leurs outils MCP, et la capacité `os-autonomy` comme les événements `autonomy_level`, `autonomy_rule` et `standing_rule` sont annoncés", () => {

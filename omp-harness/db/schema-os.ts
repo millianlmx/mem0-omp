@@ -5,8 +5,10 @@
 export const MIGRATIONS_OS: readonly string[] = [
   // L'OS agentique : le curseur d'autonomie d'un run (`ask` | `deliver`, NULL : les règles du dépôt) et le
   // motif de son annulation ; le contexte de page d'une Demande (JSON) ; les consignes permanentes de
-  // l'humain ; les espaces (clients) ; les propositions écartées ; les sessions omp locales ; les jetons
-  // push-to-start des Live Activities.
+  // l'humain ; les espaces (clients) ; les propositions écartées ; les sessions omp locales (`removed_at` :
+  // retirée de la liste, la ligne reste le temps de sa purge pour garder son run lié) ; les jetons
+  // push-to-start des Live Activities ; l'index du journal par type (scoreboard, brief, propositions :
+  // `eventsOfType` balayait la table entière).
   `ALTER TABLE runs ADD COLUMN autonomy TEXT;
    ALTER TABLE runs ADD COLUMN cancel_cause TEXT;
    ALTER TABLE intakes ADD COLUMN context TEXT;
@@ -57,7 +59,8 @@ export const MIGRATIONS_OS: readonly string[] = [
      run_id TEXT,
      started_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL,
-     ended_at INTEGER
+     ended_at INTEGER,
+     removed_at INTEGER
    );
    CREATE INDEX local_sessions_updated ON local_sessions (updated_at);
    CREATE TABLE push_start_tokens (
@@ -66,5 +69,6 @@ export const MIGRATIONS_OS: readonly string[] = [
      environment TEXT NOT NULL,
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
-   );`,
+   );
+   CREATE INDEX events_type ON events (type, id);`,
 ];

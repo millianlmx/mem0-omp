@@ -101,7 +101,14 @@ function gitLine(cwd: string, args: string[]): Promise<string | null> {
   });
 }
 
-/** La branche et le distant (`origin`, sinon le premier) du dépôt de `cwd`, lus par git. */
+/** Les noms de branche que le serveur accepte (omp-harness/local-sessions.ts `isSafeBranch`). */
+const SAFE_BRANCH = /^(?!-)[\w./-]{1,250}$/;
+
+/**
+ * La branche et le distant (`origin`, sinon le premier) du dépôt de `cwd`, lus par git. Une branche
+ * que le serveur refuserait (un accent, un `@`…) part `null` : il rendrait 400 à chaque battement, et
+ * la session ne paraîtrait jamais.
+ */
 export async function gitOf(cwd: string): Promise<GitInfo | null> {
   const [branch, remotes] = await Promise.all([
     gitLine(cwd, ["branch", "--show-current"]),
@@ -113,7 +120,8 @@ export async function gitOf(cwd: string): Promise<GitInfo | null> {
     return match ? [{ name: match[1], url: match[2] as string }] : [];
   });
   const chosen = fetched.find((remote) => remote.name === "origin") ?? fetched[0];
-  return { branch: branch === "" ? null : branch, remote: chosen ? scrubRemote(chosen.url) : null };
+  const sober = SAFE_BRANCH.test(branch) && !branch.includes("..");
+  return { branch: sober ? branch : null, remote: chosen ? scrubRemote(chosen.url) : null };
 }
 
 /** Le premier message de l'utilisateur de la branche courante, sur une ligne, coupé à 200 caractères. */

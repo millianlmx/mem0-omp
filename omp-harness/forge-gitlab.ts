@@ -9,6 +9,7 @@
 import type { RepoConfig } from "./config.ts";
 import { HarnessError } from "./errors.ts";
 import type {
+  AuthorLink,
   ChangeRequest,
   ChangeState,
   FailedCi,
@@ -35,6 +36,11 @@ const JSON_MAX_BYTES = 8 * 1024 * 1024;
 const LOG_MAX_BYTES = 4 * 1024 * 1024;
 /** GitLab pagine à 100 au plus. */
 const PAGE_MAX = 100;
+/** Les niveaux d'accès d'un membre qui comptent ici : Developer (il pousse dans le projet) et Owner. */
+const DEVELOPER_ACCESS = 30;
+const OWNER_ACCESS = 50;
+/** Les pipelines lancés pour une MR (`source` d'un pipeline), pas pour une branche du projet. */
+const CHANGE_PIPELINES: readonly string[] = ["merge_request_event", "external_pull_request_event"];
 
 /**
  * L'URL d'une MR (ou d'une issue) dans une sortie de `glab`, et son numéro. Les issues
@@ -308,30 +314,77 @@ export class GitLabForge implements Forge {
     return failed;
   }
 
+  /**
+   * Fork : la MR vient d'un autre projet que le sien. Le lien de son auteur n'est lu que pour une MR du
+   * projet lui-même, une fois par auteur (`#authorLink`) : celle d'un fork n'est jamais reprise.
+   */
   async openChanges(limit: number): Promise<OpenChange[]> {
-    const raw = await this.#api(`merge_requests?state=opened&per_page=${Math.min(Math.max(limit, 1), PAGE_MAX)}`);
+    const size = Math.min(Math.max(limit, 1), PAGE_MAX);
+    const raw = await this.#api(`merge_requests?state=opened&order_by=updated_at&sort=asc&per_page=${size}`);
     if (!Array.isArray(raw)) throw new HarnessError(502, "glab api merge_requests : une liste est attendue");
-    return raw.flatMap((entry) => {
+    const links = new Map<number, AuthorLink | null>();
+    const changes: OpenChange[] = [];
+    for (const entry of raw) {
       const value = record(entry);
-      if (!Number.isInteger(value.iid)) return [];
-      return [
-        {
-          number: value.iid as number,
-          title: textOf(value.title),
-          url: textOf(value.web_url),
-          head: textOf(value.source_branch),
-          author: username(value.author),
-          draft: value.draft === true || value.work_in_progress === true,
-          updatedAt: textOf(value.updated_at),
-        },
-      ];
-    });
+      if (!Number.isInteger(value.iid)) continue;
+      const from = value.source_project_id;
+      const into = value.target_project_id;
+      const fork = Number.isInteger(from) && Number.isInteger(into) ? from !== into : null;
+      const authorId = record(value.author).id;
+      let authorLink: AuthorLink | null = null;
+      if (fork === false && typeof authorId === "number" && Number.isInteger(authorId)) {
+        if (!links.has(authorId)) links.set(authorId, await this.#authorLink(authorId));
+        authorLink = links.get(authorId) ?? null;
+      }
+      changes.push({
+        number: value.iid as number,
+        title: textOf(value.title),
+        url: textOf(value.web_url),
+        head: textOf(value.source_branch),
+        author: username(value.author),
+        fork,
+        authorLink,
+        draft: value.draft === true || value.work_in_progress === true,
+        updatedAt: textOf(value.updated_at),
+      });
+    }
+    return changes;
   }
 
-  /** Le dernier pipeline TERMINÉ de la branche (`scope=finished`), s'il a échoué. */
+  /**
+   * Le lien d'un utilisateur au projet, par son niveau d'accès (hérité du groupe compris, `members/all`) :
+   * Owner (50) ; Maintainer et Developer (40, 30 : ils y poussent) ; au-dessous, ou sans accès (404), un
+   * tiers. `null` si la lecture échoue autrement : on ne sait pas.
+   */
+  async #authorLink(userId: number): Promise<AuthorLink | null> {
+    this.#target();
+    const resource = `projects/${encodeURIComponent(this.project as string)}/members/all/${userId}`;
+    const result = await this.#run(
+      ["api", "--hostname", this.#hostname(), resource],
+      ISSUE_TIMEOUT_MS,
+      JSON_MAX_BYTES,
+    ).catch(() => null);
+    if (result === null) return null;
+    if (result.code !== 0) return /\b404\b/.test(`${result.stdout}\n${result.stderr}`) ? "outsider" : null;
+    let level: unknown;
+    try {
+      level = record(JSON.parse(result.stdout)).access_level;
+    } catch {
+      return null;
+    }
+    if (typeof level !== "number") return null;
+    return level >= OWNER_ACCESS ? "owner" : level >= DEVELOPER_ACCESS ? "member" : "outsider";
+  }
+
+  /**
+   * Le dernier pipeline TERMINÉ de la branche (`scope=finished`), s'il a échoué. Le pipeline d'une MR
+   * (CHANGE_PIPELINES : son code peut venir d'un fork) n'est pas celui de la branche : il est sauté.
+   */
   async failedCi(branch: string): Promise<FailedCi | null> {
-    const raw = await this.#api(`pipelines?ref=${encodeURIComponent(branch)}&scope=finished&per_page=1`);
-    const pipeline = record(Array.isArray(raw) ? raw[0] : null);
+    const raw = await this.#api(`pipelines?ref=${encodeURIComponent(branch)}&scope=finished&per_page=20`);
+    const pipeline = record(
+      (Array.isArray(raw) ? raw : []).find((entry) => !CHANGE_PIPELINES.includes(textOf(record(entry).source))),
+    );
     if (!Number.isInteger(pipeline.id) || pipeline.status !== "failed") return null;
     return {
       id: String(pipeline.id),

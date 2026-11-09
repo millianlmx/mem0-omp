@@ -61,7 +61,7 @@ import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
 import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
-import { SCOREBOARD_DAYS, SCOREBOARD_MAX_DAYS, scoreboardOf } from "./scoreboard.ts";
+import { scoreboardDays, scoreboardOf } from "./scoreboard.ts";
 import { SPACE_REPORT_WINDOW_MS, spaceEdit, spaceInput } from "./spaces.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
@@ -80,7 +80,7 @@ import {
 } from "./workstation.ts";
 import type { AtlassianDesk } from "./atlassian/desk.ts";
 import { INVALID_LINK, writeStateOf } from "./atlassian/desk.ts";
-import { localSessionStates } from "./local-sessions.ts";
+import { isLocalSessionEvent, localSessionStates } from "./local-sessions.ts";
 
 export const API_VERSION = 1;
 
@@ -159,6 +159,7 @@ const ATLASSIAN_APPROVER_ONLY =
 /** Les refus des sessions locales (celles du poste du développeur) à un client pilote. */
 const READS_LOCAL_SESSIONS = "réservé à l'humain — un client pilote ne lit pas les sessions locales";
 const ACTS_ON_LOCAL_SESSIONS = "geste réservé à l'humain — un client pilote ne touche pas aux sessions locales";
+const BEATS_LOCAL_SESSIONS = "réservé au poste de l'humain — un client pilote ne signale pas de session locale";
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -862,33 +863,38 @@ export function apiRoutes(
             viewer: { repos: call.repos, name: call.client.name },
             limit: limitOf(call.url, 50, 200),
           })
-          .map(intakeView),
+          .map((intake) => intakeView(intake, call.client)),
       }),
     ),
     route("POST", "/v1/intake", "operator", async (call) => {
       const intake = orchestrator.intake.create(await readBody(call.req), call.client, call.actor);
       void orchestrator.tick();
-      send(call.res, 201, { intake: intakeView(intake) });
+      send(call.res, 201, { intake: intakeView(intake, call.client) });
     }),
     route("GET", "/v1/intake/{id}", "viewer", (call) =>
-      send(call.res, 200, { intake: intakeView(visibleIntake(store, call.client, call.match[1] as string)) }),
+      send(call.res, 200, {
+        intake: intakeView(visibleIntake(store, call.client, call.match[1] as string), call.client),
+      }),
     ),
     route("POST", "/v1/intake/{id}/confirm", "operator", async (call) => {
       const body = await readBody(call.req);
       const intake = orchestrator.intake.confirm(call.match[1] as string, call.client, call.actor, body);
       void orchestrator.tick();
-      send(call.res, 201, { intake: intakeView(intake) });
+      send(call.res, 201, { intake: intakeView(intake, call.client) });
     }),
     route("POST", "/v1/intake/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, {
-        intake: intakeView(await orchestrator.intake.cancel(call.match[1] as string, call.client, call.actor)),
+        intake: intakeView(
+          await orchestrator.intake.cancel(call.match[1] as string, call.client, call.actor),
+          call.client,
+        ),
       }),
     ),
     route("POST", "/v1/intake/{id}/answer", "operator", async (call) => {
       const body = await readBody(call.req);
       const intake = orchestrator.intake.answer(call.match[1] as string, call.client, call.actor, body);
       void orchestrator.tick();
-      send(call.res, 200, { intake: intakeView(intake) });
+      send(call.res, 200, { intake: intakeView(intake, call.client) });
     }),
     // Le jeton push d'une Live Activity de l'app iOS, pour un run que le client voit.
     route("POST", "/v1/push/activities", "viewer", async (call) => {
@@ -1430,12 +1436,11 @@ export function apiRoutes(
       send(call.res, 200, { seenAt: orchestrator.briefSeen(call.client.name) }),
     ),
     // Les chiffres (scoreboard.ts) : mergés sans geste humain, délai médian d'une décision, travail lancé
-    // sans l'humain, motifs d'annulation, sur `days` jours (défaut 7, de 1 à 90).
+    // sans l'humain, motifs d'annulation, sur `days` jours (défaut 7, de 1 à 90 sans dépasser la
+    // rétention du journal, `events.retentionDays` : les gestes humains s'y lisent).
     route("GET", "/v1/scoreboard", "viewer", (call) => {
       const raw = call.url.searchParams.get("days");
-      const days = raw === null ? SCOREBOARD_DAYS : Number(raw);
-      if (!Number.isInteger(days) || days < 1 || days > SCOREBOARD_MAX_DAYS)
-        throw new HarnessError(400, `days : entier de 1 à ${SCOREBOARD_MAX_DAYS} attendu`);
+      const days = scoreboardDays(raw === null ? null : Number(raw), orchestrator.config);
       send(call.res, 200, {
         scoreboard: scoreboardOf(store, orchestrator.config, days, Date.now(), call.repos),
       });
@@ -1471,10 +1476,12 @@ export function apiRoutes(
     ),
     // ── OS agentique : les sessions locales ──
     // Les sessions omp du poste du développeur (local-sessions.ts) : le rapporteur du plugin
-    // `omp-mem0-req` envoie ses battements ; lire, confier à un run et retirer sont au propriétaire.
-    route("POST", "/v1/local-sessions", "operator", async (call) =>
-      send(call.res, 200, { session: orchestrator.localSessions.beat(await readBody(call.req), call.client) }),
-    ),
+    // `omp-mem0-req` envoie ses battements avec le jeton du propriétaire ; battre, lire, confier à un
+    // run et retirer sont au propriétaire (un client borné ou pilote : 403).
+    route("POST", "/v1/local-sessions", "operator", async (call) => {
+      ownerOf(call, BEATS_LOCAL_SESSIONS);
+      send(call.res, 200, { session: orchestrator.localSessions.beat(await readBody(call.req), call.client) });
+    }),
     route("GET", "/v1/local-sessions", "viewer", (call) => {
       ownerOf(call, READS_LOCAL_SESSIONS);
       const states = localSessionStates(call.url.searchParams.get("state"));
@@ -1491,7 +1498,8 @@ export function apiRoutes(
     }),
     // ── OS agentique : la télécommande (push) ──
     // Le jeton push-to-start d'un appareil : le serveur démarre la Live Activity d'un run que voit le
-    // client qui l'enregistre (push.ts). Un jeton déjà connu passe à ce client.
+    // client qui l'enregistre (push.ts). Un jeton que tient un AUTRE client ne change pas de main (409),
+    // sauf si ce client n'existe plus (appareil appairé de nouveau après une révocation).
     route("POST", "/v1/push/activities/start", "viewer", async (call) => {
       const body = await readBody(call.req);
       const token = typeof body.token === "string" ? body.token.trim() : "";
@@ -1499,6 +1507,12 @@ export function apiRoutes(
       const environment = body.environment;
       if (environment !== "development" && environment !== "production")
         throw new HarnessError(400, "environment : « development » ou « production » attendu");
+      const holder = store.pushStartTokenClient(token);
+      if (holder !== null && holder !== call.client.name) {
+        if (clients.list().some((known) => known.name === holder))
+          throw new HarnessError(409, "token : ce jeton est déjà enregistré par un autre client");
+        store.deletePushStartToken(token);
+      }
       const added = store.putPushStartToken({ token, client: call.client.name, environment });
       send(call.res, added ? 201 : 200, { registered: true, pushes: orchestrator.config.apns !== null });
     }),
@@ -1627,10 +1641,13 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       event.repo === null &&
       typeof event.payload.intakeId === "string" &&
       store.getIntake(event.payload.intakeId)?.createdBy === client.name;
+    // Les événements d'une session locale (son état, l'intention de ses outils) sont au propriétaire :
+    // sans dépôt, ils échappent déjà aux clients restreints ; un client pilote ne les reçoit pas non plus.
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
-      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event));
+      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event)) &&
+      !(client.pilot && isLocalSessionEvent(event));
     let closed = false;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe = (): void => {};

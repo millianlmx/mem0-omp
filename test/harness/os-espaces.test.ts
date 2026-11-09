@@ -17,7 +17,7 @@ import { EVENT_TYPES } from "../../omp-harness/events.ts";
 import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import type { IntakeView } from "../../omp-harness/intake.ts";
 import { MCP_TOOLS } from "../../omp-harness/mcp.ts";
-import { scoreboardOf } from "../../omp-harness/scoreboard.ts";
+import { scoreboardDays, scoreboardMaxDays, scoreboardOf } from "../../omp-harness/scoreboard.ts";
 import type { Scoreboard } from "../../omp-harness/scoreboard.ts";
 import type { SpaceView } from "../../omp-harness/spaces.ts";
 import { HEARTBEAT_KEY } from "../../omp-harness/vigie/desk.ts";
@@ -126,6 +126,19 @@ function run(store: Store, id: string, title: string, extra: Partial<NewRun> = {
 function ended(store: Store, id: string, title: string, patch: RunPatch, extra: Partial<NewRun> = {}) {
   run(store, id, title, extra);
   return store.updateRun(id, patch);
+}
+
+/**
+ * Attend, s'il le faut, que minuit UTC soit passé : les dépenses d'un test et la lecture de leur « coût
+ * du jour » tombent alors le même jour. Une vraie attente, et seulement dans les dernières secondes du
+ * jour : les routes et le classement lisent l'horloge du serveur (`Date.now()`), qu'un test ne règle pas.
+ */
+async function clearOfMidnight(marginMs: number): Promise<void> {
+  const left = DAY - (Date.now() % DAY);
+  if (left >= marginMs) return;
+  const passed = Promise.withResolvers<void>();
+  setTimeout(passed.resolve, left + 50);
+  await passed.promise;
 }
 
 function spend(store: Store, repo: string, cost: number, runId: string | null = null): void {
@@ -266,28 +279,40 @@ test("os-espaces/AC-3 : créer, modifier et retirer un espace sont à un admin q
   }
 });
 
-test("os-espaces/AC-4 : un client restreint ne voit que les espaces qui tiennent un de ses dépôts, réduits à ses dépôts, sans le poste ni les projets Jira", async () => {
+test("os-espaces/AC-4 : un client restreint ne voit que les espaces qui tiennent un de ses dépôts, réduits à ses dépôts, sans le poste, les projets Jira, le budget journalier ni son auteur", async () => {
   const { tokens, call, done } = await setup();
   try {
     const both = (
-      await call("POST", "/v1/spaces", { name: "Mixte", repos: ["demo", "other"], poste: true, jiraProjects: ["ACME"] })
+      await call("POST", "/v1/spaces", {
+        name: "Mixte",
+        repos: ["demo", "other"],
+        poste: true,
+        jiraProjects: ["ACME"],
+        dailyBudgetUsd: 10,
+      })
     ).json.space;
     await call("POST", "/v1/spaces", { name: "Ailleurs", repos: ["third"] });
 
     const whole = (await call("GET", "/v1/spaces")).json.spaces;
     assert.deepEqual(
-      whole.map((space) => [space.name, space.repos, space.memoryScopes]),
+      whole.map((space) => [space.name, space.repos, space.memoryScopes, space.dailyBudgetUsd, space.by]),
       [
-        ["Mixte", ["demo", "other"], ["demo-scope", "other-scope"]],
-        ["Ailleurs", ["third"], ["third-scope"]],
+        ["Mixte", ["demo", "other"], ["demo-scope", "other-scope"], 10, "mac"],
+        ["Ailleurs", ["third"], ["third-scope"], null, "mac"],
       ],
     );
     const bounded = (await call("GET", "/v1/spaces", undefined, tokens.demo)).json.spaces;
     assert.equal(bounded.length, 1);
     const [mine] = bounded;
     assert.deepEqual(
-      [mine.name, mine.repos, mine.memoryScopes, mine.poste, mine.jiraProjects],
-      ["Mixte", ["demo"], ["demo-scope"], false, []],
+      [mine.name, mine.repos, mine.memoryScopes, mine.poste, mine.jiraProjects, mine.dailyBudgetUsd, mine.by],
+      ["Mixte", ["demo"], ["demo-scope"], false, [], null, null],
+    );
+    // Le rapport de l'espace rend le même espace réduit.
+    const report = (await call("GET", `/v1/spaces/${both.id}/report`, undefined, tokens.demo)).json;
+    assert.deepEqual(
+      [report.space.repos, report.space.dailyBudgetUsd, report.space.by, report.space.jiraProjects],
+      [["demo"], null, null, []],
     );
     // L'espace d'un autre n'existe pas pour lui : ni dans la liste, ni par son rapport.
     assert.deepEqual(
@@ -300,9 +325,10 @@ test("os-espaces/AC-4 : un client restreint ne voit que les espaces qui tiennent
   }
 });
 
-test("os-espaces/AC-5 : les compteurs d'un espace comptent ses runs par état et ses coûts ; budgetLeftToday est ce qu'il reste du budget de l'espace entier, jamais négatif, null sans budget", async () => {
+test("os-espaces/AC-5 : les compteurs d'un espace comptent ses runs par état et ses coûts ; budgetLeftToday est ce qu'il reste du budget de l'espace entier, jamais négatif, null sans budget — et null pour un client restreint, qui en déduirait la dépense des dépôts qu'il ne voit pas", async () => {
   const { world, tokens, call, done } = await setup();
   const { store } = world;
+  await clearOfMidnight(5_000);
   try {
     await call("POST", "/v1/spaces", { name: "Mixte", repos: ["demo", "other"], dailyBudgetUsd: 10 });
     await call("POST", "/v1/spaces", { name: "Libre", repos: ["third"] });
@@ -337,16 +363,23 @@ test("os-espaces/AC-5 : les compteurs d'un espace comptent ses runs par état et
       "sans budget : null",
     );
 
-    // Le client restreint compte SES dépôts ; le budget restant reste celui de l'espace entier.
+    // Le client restreint compte SES dépôts ; ni le budget de l'espace ni ce qu'il en reste ne lui sont dits.
     const [mine] = (await call("GET", "/v1/spaces", undefined, tokens.demo)).json.spaces;
     assert.deepEqual(
       [mine.stats.working, mine.stats.yours, mine.stats.failedWeek, mine.stats.costToday, mine.stats.budgetLeftToday],
-      [2, 1, 0, 2.5, 6.25],
+      [2, 1, 0, 2.5, null],
     );
+    assert.equal(mine.dailyBudgetUsd, null);
 
     spend(store, "other", 30);
     const [over] = (await call("GET", "/v1/spaces")).json.spaces;
     assert.equal(over.stats.budgetLeftToday, 0, "au-delà du plafond : zéro, pas un négatif");
+    const [still] = (await call("GET", "/v1/spaces", undefined, tokens.demo)).json.spaces;
+    assert.deepEqual(
+      [still.stats.costToday, still.stats.budgetLeftToday],
+      [2.5, null],
+      "la dépense d'un dépôt qu'il ne voit pas ne change rien à ce qu'il lit",
+    );
   } finally {
     await done();
   }
@@ -363,12 +396,14 @@ test("os-espaces/AC-6 : budgetHold ne retient un dépôt que lorsque le coût du
       autonomy: "ask",
     });
     await call("POST", "/v1/spaces", { name: "Sans plafond", repos: ["third"] });
-    const now = Date.now();
-    assert.equal(spaces.budgetHold("demo", now), null, "rien de dépensé");
+    await clearOfMidnight(5_000);
+    assert.equal(spaces.budgetHold("demo", Date.now()), null, "rien de dépensé");
     spend(world.store, "demo", 1);
     spend(world.store, "other", 1.99);
-    assert.equal(spaces.budgetHold("demo", now), null, "sous le plafond");
+    assert.equal(spaces.budgetHold("demo", Date.now()), null, "sous le plafond");
     spend(world.store, "other", 0.01);
+    // L'instant est pris APRÈS les dépenses : il tombe le même jour UTC qu'elles.
+    const now = Date.now();
     assert.deepEqual(spaces.budgetHold("demo", now), { space: "Client A", spent: 3, ceiling: 3 });
     assert.deepEqual(spaces.budgetHold("other", now), { space: "Client A", spent: 3, ceiling: 3 }, "tout l'espace");
     // Le lendemain (UTC), le plafond se rouvre.
@@ -629,7 +664,7 @@ function board(store: Store, now: number, patch: (config: HarnessConfig) => void
   return scoreboardOf(store, testConfig(tmpdir("os-espaces-repo-"), patch), 7, now);
 }
 
-test("os-espaces/AC-11 : un run mergé sans aucun geste humain compte « seul » ; une validation, une réponse, une consigne, une relance ou une décision renversée par un humain l'en retire ; les gestes de l'autonomie, d'un pilote ou de la vigie non", () => {
+test("os-espaces/AC-11 : un run mergé sans aucun geste humain compte « seul » ; une validation, une réponse, une consigne, une relance ou une décision renversée par un humain l'en retire ; les gestes de l'autonomie, d'un pilote, de la vigie ou d'un client pilote (marqués `pilot`, ou d'avant la marque) non", () => {
   const now = 2000 * HOUR;
   const { clock, store } = clocked(now - 30 * DAY);
   try {
@@ -639,6 +674,14 @@ test("os-espaces/AC-11 : un run mergé sans aucun geste humain compte « seul »
     store.setSetting(HEARTBEAT_KEY, { at: now, version: null, client: "vigie", silentSince: null }, "vigie");
     for (const id of ["seul", "autonomie", "pilote", "vigie", "valide", "repond", "consigne", "relance", "renverse"])
       ended(store, id, id, { state: "merged" });
+    // Un client pilote qui répond, relance ou donne une consigne : le geste porte `pilot`. Son geste
+    // d'avant la marque (sans `pilot`) est reconnu par son nom, appris des gestes marqués.
+    for (const id of ["robot-repond", "robot-relance", "robot-consigne", "robot-ancien"])
+      ended(store, id, id, { state: "merged" });
+    gesture(store, "escalation_answered", "robot-repond", "robot", { id: 7, answer: "oui", pilot: true });
+    gesture(store, "retried", "robot-relance", "robot", { from: "failed", pilot: true });
+    gesture(store, "instructions", "robot-consigne", "robot", { text: "relance les tests", pilot: true });
+    gesture(store, "escalation_answered", "robot-ancien", "robot", { id: 8, answer: "non" });
     gesture(store, "validation", "autonomie", "autonomie:demo#1", { gate: "verdict", approve: true, pilot: true });
     gesture(store, "validation", "pilote", "pilote:usine", { gate: "specs", approve: true, pilot: true });
     gesture(store, "retried", "pilote", "pilote:a123", { from: "failed" });
@@ -651,9 +694,9 @@ test("os-espaces/AC-11 : un run mergé sans aucun geste humain compte « seul »
     gesture(store, "decision_reversed", "renverse", "mac", { seq: 1, option: "autre" });
 
     const score = board(store, now);
-    assert.deepEqual([score.merged, score.mergedAlone, score.aloneRate], [9, 4, 4 / 9]);
+    assert.deepEqual([score.merged, score.mergedAlone, score.aloneRate], [13, 8, 8 / 13]);
     assert.deepEqual(score.repos, [
-      { repo: "demo", merged: 9, mergedAlone: 4, cancelled: 0, failed: 0, successRate: 1, suggestion: null },
+      { repo: "demo", merged: 13, mergedAlone: 8, cancelled: 0, failed: 0, successRate: 1, suggestion: null },
     ]);
     assert.deepEqual([score.since, score.until], [now - 7 * DAY, now]);
   } finally {
@@ -735,7 +778,7 @@ test("os-espaces/AC-13 : la part lancée seule compte les runs créés sans l'hu
   }
 });
 
-test("os-espaces/AC-14 : les annulations de la fenêtre sont comptées par motif (`none` sans motif), le détail par dépôt dit succès et proposition de palier, et `days` est borné de 1 à 90", async () => {
+test("os-espaces/AC-14 : les annulations de la fenêtre sont comptées par motif (`none` sans motif), le détail par dépôt dit succès et proposition de palier, et `days` est borné de 1 à la rétention du journal (90 au plus) : au-delà, 400", async () => {
   const { world, tokens, call, done } = await setup(
     {},
     {
@@ -775,19 +818,39 @@ test("os-espaces/AC-14 : les annulations de la fenêtre sont comptées par motif
       ["demo"],
     );
     assert.ok(Math.abs(mine.until - mine.since - 30 * DAY) < 5);
-    for (const days of ["0", "91", "1.5", "sept"])
+    // Le journal garde 30 jours (events.retentionDays) : au-delà, les gestes humains n'y sont plus et
+    // tout run mergé compterait « seul ».
+    assert.equal(world.orchestrator.config.events.retentionDays, 30);
+    for (const days of ["0", "31", "90", "91", "1.5", "sept"])
       assert.equal((await call("GET", `/v1/scoreboard?days=${days}`)).status, 400, days);
-    assert.equal((await call("GET", "/v1/scoreboard?days=90")).status, 200);
+    const beyond = await call("GET", "/v1/scoreboard?days=31");
+    assert.match(beyond.json.error, /days : entier de 1 à 30 attendu.*events\.retentionDays/);
+    assert.equal((await call("GET", "/v1/scoreboard?days=30")).status, 200);
+
+    const retention = (days: number) =>
+      testConfig(tmpdir("os-espaces-repo-"), (config) => {
+        config.events.retentionDays = days;
+      });
+    assert.deepEqual(
+      [365, 90, 45.9, 3, 0.5].map((days) => scoreboardMaxDays(retention(days))),
+      [90, 90, 45, 3, 1],
+      "90 au plus, la rétention sinon, un jour au moins",
+    );
+    assert.equal(scoreboardDays(null, retention(3)), 3, "le défaut (7) se ramène à une rétention plus courte");
+    assert.equal(scoreboardDays(null, retention(30)), 7);
+    assert.equal(scoreboardDays(90, retention(120)), 90);
+    assert.throws(() => scoreboardDays(46, retention(45)), /entier de 1 à 45 attendu/);
   } finally {
     await done();
   }
 });
 
-test("os-espaces/AC-15 : le prompt du classeur d'une Demande porte l'état de l'usine des seuls dépôts que voit l'auteur, comme une donnée, et la question d'état reçoit sa réponse", async () => {
+test("os-espaces/AC-15 : le prompt du classeur d'une Demande porte l'état de l'usine des seuls dépôts que voit l'auteur — du seul dépôt de la demande quand elle en porte un —, comme une donnée, et la question d'état reçoit sa réponse", async () => {
   const answer = { kind: "question", answer: "L'export CSV en est à /impl." };
   const { world, tokens, call, done } = await setup({
-    demande: [[{ tool: "intake_classify", args: answer }], [{ tool: "intake_classify", args: answer }]],
+    demande: Array.from({ length: 3 }, () => [{ tool: "intake_classify", args: answer }]),
   });
+  await clearOfMidnight(30_000);
   const { store } = world;
   try {
     ended(store, "w1", "Issue #12 : fix(api): Export CSV", { state: "running", step: "impl" });
@@ -801,8 +864,9 @@ test("os-espaces/AC-15 : le prompt du classeur d'une Demande porte l'état de l'
     spend(store, "demo", 1.5);
     spend(store, "other", 77);
 
-    const classified = async (token: string): Promise<IntakeView> => {
-      const posted = await call("POST", "/v1/intake", { text: "Où en est l'export CSV ?", source: "cli" }, token);
+    const classified = async (token: string, repo?: string): Promise<IntakeView> => {
+      const body = { text: "Où en est l'export CSV ?", source: "cli", ...(repo === undefined ? {} : { repo }) };
+      const posted = await call("POST", "/v1/intake", body, token);
       assert.equal(posted.status, 201);
       // Le classement vit dans un sous-process : seul le sondage le voit finir.
       for (let i = 0; i < 500; i++) {
@@ -839,6 +903,15 @@ test("os-espaces/AC-15 : le prompt du classeur d'une Demande porte l'état de l'
     const second = prompts()[1] ?? "";
     assert.ok(second.includes("other · Secret autre — étape specs"), second);
     assert.ok(second.includes("Coût du jour : 78.50 $"), second);
+
+    // Sa demande posée SUR `demo` se lit par tout client de `demo` : l'état s'y borne, lui aussi.
+    const scoped = await classified(tokens.owner, "demo");
+    const third = prompts()[2] ?? "";
+    assert.ok(third.includes("demo · Export CSV — étape impl"), third);
+    assert.ok(third.includes("Coût du jour : 1.50 $"), third);
+    assert.ok(!third.includes("Secret autre") && !third.includes("other ·"), "rien des autres dépôts");
+    const read = await call("GET", `/v1/intake/${scoped.id}`, undefined, tokens.demo);
+    assert.deepEqual([read.status, read.json.intake.answer], [200, answer.answer], "un client de demo la lit");
   } finally {
     await done();
   }

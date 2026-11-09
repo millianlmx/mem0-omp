@@ -7,21 +7,26 @@
 //
 // - Un battement dit tout ce qu'il sait ; un champ facultatif ABSENT garde la valeur connue, `null`
 //   l'efface. Le dépôt n'est jamais fourni : il est déduit du distant, sinon du dossier.
-// - Lire, confier et retirer sont au propriétaire (http.ts `ownerOf`) : le titre et l'intention
-//   disent ce qui se fait sur le poste. Ses événements partent donc SANS dépôt — `local_session`
-//   ne porte que `{id, state}`, jamais le titre ni le dépôt (le journal en déduirait un dépôt, et
-//   un client restreint à ce dépôt le recevrait) : seuls les clients qui voient tout les reçoivent,
-//   et relisent la liste.
+// - Battre, lire, confier et retirer sont au propriétaire (http.ts `ownerOf` : le rapporteur porte
+//   son jeton) : le titre et l'intention disent ce qui se fait sur le poste. Un battement ne touche
+//   que les sessions de SON client. Ses événements partent SANS dépôt — `local_session` ne porte
+//   que `{id, state}`, jamais le titre ni le dépôt (le journal en déduirait un dépôt, et un client
+//   restreint à ce dépôt le recevrait) — et le flux les refuse à un client pilote
+//   (`isLocalSessionEvent`) : seul le propriétaire les reçoit, et relit la liste.
+// - Le titre (premier message de la session) et la branche viennent du poste : le titre tient sur
+//   une ligne, la branche est un nom sobre (`isSafeBranch`), et la demande du run qui reprend la
+//   session les cite comme des données (`handoffRequest`), toujours par la voie complète (/req).
 import type { Client } from "./auth.ts";
 import { repoByName } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
-import type { LocalSession, LocalSessionBeat, LocalSessionState, RunRow } from "./db.ts";
+import type { EventRow, LocalSession, LocalSessionBeat, LocalSessionState, RunRow } from "./db.ts";
 import { LOCAL_SESSION_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { instructionsInput, text } from "./input.ts";
 import { isTerminal } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
 import { repoName } from "./repos.ts";
+import { untrusted } from "./workstation-guards.ts";
 
 export type { LocalSession, LocalSessionState } from "./db.ts";
 
@@ -43,6 +48,44 @@ const MAX_MODEL = 200;
 
 /** L'id d'une session : ce qu'un segment de route accepte (`{id}`), 120 caractères au plus. */
 const SESSION_ID = /^[\w.-]{1,120}$/;
+/** Une branche locale : lettres, chiffres, `_`, `.`, `/` et `-`. */
+const BRANCH = new RegExp(`^[\\w./-]{1,${MAX_BRANCH}}$`);
+
+/**
+ * Une branche que la demande d'un run peut citer telle quelle : ni backtick, ni blanc, ni `..`, ni
+ * `-` initial (elle se lirait comme une option de git).
+ */
+export function isSafeBranch(name: string): boolean {
+  return BRANCH.test(name) && !name.includes("..") && !name.startsWith("-");
+}
+
+/** Un texte ramené sur UNE ligne : chaque suite de blancs, retours à la ligne compris, devient une espace. */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/** La branche d'un battement : absente (la branche connue reste), `null` ou blanche (effacée), sinon un nom sobre ; 400 sinon. */
+function branchOf(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "string") throw new HarnessError(400, "branch : chaîne ou null attendu");
+  const name = value.trim();
+  if (name === "") return null;
+  if (!isSafeBranch(name))
+    throw new HarnessError(
+      400,
+      `branch : ${MAX_BRANCH} caractères au plus parmi lettres, chiffres, « _ », « . », « / » et « - », sans « .. » ni « - » initial`,
+    );
+  return name;
+}
+
+/**
+ * Un événement d'une session locale — son changement d'état, ou l'intention d'un de ses outils : au
+ * propriétaire seul. Sans dépôt, il échappe déjà aux clients restreints ; le flux (http.ts) le refuse
+ * aussi à un client pilote.
+ */
+export function isLocalSessionEvent(event: Pick<EventRow, "type" | "payload">): boolean {
+  return event.type === "local_session" || (event.type === "activity" && event.payload.localSession !== undefined);
+}
 
 /** Un texte requis, rogné, de 1 à `max` caractères ; 400 sinon. */
 function required(body: Record<string, unknown>, key: string, max: number): string {
@@ -93,16 +136,28 @@ function lastSegment(cwd: string): string {
   );
 }
 
-/** La demande du run qui reprend une session : son titre, sa branche locale et la consigne de l'humain. */
+/**
+ * La demande du run qui reprend une session. Seule la première phrase est du service ; le titre
+ * (écrit sur le poste, sur une ligne) et ce que l'humain attend de la reprise y entrent comme des
+ * données, entre les délimiteurs de contenu non fiable. Une branche qui n'est pas un nom sobre n'est
+ * pas citée.
+ */
 export function handoffRequest(session: Pick<LocalSession, "title" | "branch">, instructions: string): string {
-  const lines =
-    session.branch === null
-      ? [`Reprends le travail commencé dans une session omp locale : « ${session.title} ».`]
-      : [
-          `Reprends le travail de la branche \`${session.branch}\`, commencé dans une session omp locale : « ${session.title} ».`,
-          `Si \`${session.branch}\` existe sur le distant, repars de ses commits ; sinon repars de la branche principale.`,
-        ];
-  if (instructions !== "") lines.push("", `Consigne : ${instructions}`);
+  const branch = session.branch !== null && isSafeBranch(session.branch) ? session.branch : null;
+  const lines = [
+    branch === null
+      ? "Reprends le travail commencé dans une session omp locale."
+      : `Reprends le travail de la branche \`${branch}\`, commencé dans une session omp locale. Si \`${branch}\` existe sur le distant, repars de ses commits ; sinon repars de la branche principale.`,
+    "",
+    "Le sujet de la session, tel que son titre le dit :",
+    untrusted("titre de la session locale", oneLine(session.title)),
+  ];
+  if (instructions !== "")
+    lines.push(
+      "",
+      "Ce que l'humain attend de cette reprise — l'énoncé du besoin, à cadrer comme toute demande :",
+      untrusted("attente de l'humain pour la reprise", instructions),
+    );
   return lines.join("\n");
 }
 
@@ -122,21 +177,25 @@ export class LocalSessionDesk {
   /**
    * Un battement du rapporteur : la session est créée ou mise à jour. Un changement d'état est
    * journalisé (`local_session`) ; une intention est poussée en direct (`activity`, éphémère).
+   * La session d'un AUTRE client (même retirée) ne se bat pas : 403.
    */
   beat(body: Record<string, unknown>, client: Client): LocalSession {
     if (typeof body.id !== "string" || !SESSION_ID.test(body.id))
       throw new HarnessError(400, "id : 1 à 120 caractères parmi lettres, chiffres, « . », « _ » et « - »");
+    const { store } = this.#ctx;
+    const holder = store.localSessionClient(body.id);
+    if (holder !== null && holder !== client.name)
+      throw new HarnessError(403, `la session ${body.id} est celle d'un autre client : elle ne se bat pas d'ici`);
     const state = stateOf(body.state);
     const host = required(body, "host", MAX_HOST);
     const cwd = required(body, "cwd", MAX_CWD);
-    const title = text(body, "title").trim().slice(0, MAX_TITLE);
+    const title = oneLine(text(body, "title")).slice(0, MAX_TITLE);
     const remote = optional(body, "remote", MAX_REMOTE);
-    const branch = optional(body, "branch", MAX_BRANCH);
+    const branch = branchOf(body.branch);
     const intent = optional(body, "intent", MAX_INTENT);
     const tool = optional(body, "tool", MAX_TOOL);
     const model = optional(body, "model", MAX_MODEL);
     const cost = costOf(body.cost);
-    const { store } = this.#ctx;
     const known = store.getLocalSession(body.id);
     const kept = <T>(given: T | null | undefined, stored: T | null | undefined): T | null =>
       given === undefined ? (stored ?? null) : given;
@@ -174,7 +233,9 @@ export class LocalSessionDesk {
 
   /**
    * Confie le travail de la session à un run de son dépôt : 409 si elle n'en travaille aucun de
-   * déclaré, ou si le run qui l'a déjà reprise est encore en cours.
+   * déclaré, ou si le run qui l'a déjà reprise est encore en cours (le lien survit à un retrait suivi
+   * d'un battement). Le run passe toujours par /req (`lane: "full"`) : ce que la demande cite du poste
+   * ou de l'humain ne vaut jamais specs.
    */
   handoff(id: string, body: Record<string, unknown>, actor: Actor): { run: RunRow; session: LocalSession } {
     const instructions = instructionsInput(body, "request", false);
@@ -187,7 +248,12 @@ export class LocalSessionDesk {
     if (linked && !isTerminal(linked.state))
       throw new HarnessError(409, `la session ${id} est déjà confiée au run ${linked.id}`);
     const run = this.#deps.createRun(
-      { repo: repo.name, title: session.title, request: handoffRequest(session, instructions) },
+      {
+        repo: repo.name,
+        title: oneLine(session.title),
+        request: handoffRequest(session, instructions),
+        lane: "full",
+      },
       actor,
     );
     const handed = store.setLocalSessionRun(id, run.id) ?? { ...session, runId: run.id };
@@ -195,10 +261,10 @@ export class LocalSessionDesk {
     return { run, session: handed };
   }
 
-  /** Retire une session de la liste (404 si elle est inconnue). */
+  /** Retire une session de la liste (404 si elle est inconnue) ; son run lié reste gardé (db `removeLocalSession`). */
   remove(id: string): { removed: true } {
     const session = this.#get(id);
-    this.#ctx.store.deleteLocalSession(id);
+    this.#ctx.store.removeLocalSession(id);
     this.#announce({ ...session, state: "ended" }, { removed: true });
     return { removed: true };
   }

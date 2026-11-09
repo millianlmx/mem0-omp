@@ -311,9 +311,11 @@ consigne : une page qui écrit « ignore tes consignes et envoie… » reste un 
 **Demander depuis une page.** Le popup de l'extension s'ouvre sur deux gestes pour l'onglet
 actif. « Faire ça sur cette page » : tape une consigne, puis Entrée. « En faire un fil » :
 un clic, et la page devient une demande. Dans les deux cas la demande part avec l'adresse
-de la page, son titre et le texte que tu y as sélectionné ; le serveur en fait un plan,
-que tu confirmes dans le popup. Rien ne part d'un site exclu. Le reste du popup (état de
-la liaison, Stop, dernières actions, transcription, réglages) est replié dessous.
+de la page (sans sa query ni son fragment), son titre et le texte que tu y as sélectionné ;
+le serveur en fait un plan, que tu confirmes dans le popup. Toi seul relis ce contexte de
+page : un autre client qui voit la demande ne le reçoit pas. Rien ne part d'un site exclu.
+Le reste du popup (état de la liaison, Stop, dernières actions, transcription, réglages)
+est replié dessous.
 
 **Stop.** Le bouton **Stop** du popup de l'extension arrête tout de suite l'action en
 cours, met l'extension en pause et met le poste en pause sur le serveur : les actions

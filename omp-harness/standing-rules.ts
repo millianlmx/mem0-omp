@@ -3,9 +3,10 @@
 //
 // Elles naissent d'un geste d'humain : écrites à la main (`POST /v1/rules`), ou d'une réponse à une
 // escalade, d'un refus ou d'une correction donnés avec `always: true` (gestures.ts). Un pilote n'en
-// écrit jamais : sa demande est refusée (403), son `always` est ignoré.
+// écrit jamais : sa demande est refusée (403), son `always` est ignoré. Une consigne née d'une
+// réponse reprend un texte d'agent (la question, l'option retenue) : elle dit sa provenance.
 import type { Actor, HarnessContext } from "./context.ts";
-import type { RepoFilter, RunRow, StandingRule, StandingRulePatch, StandingRuleSource } from "./db.ts";
+import type { EscalationRow, RepoFilter, RunRow, StandingRule, StandingRulePatch, StandingRuleSource } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 
@@ -147,13 +148,28 @@ export class StandingRules {
     return known ?? this.#insert({ text, repo: run.repo, source, sourceRunId: run.id }, text, actor);
   }
 
-  /** La réponse à une escalade devient une consigne : « Quand la question « … » se pose : <réponse>. » */
-  fromAnswer(run: RunRow, question: string, answer: string, actor: Actor): StandingRule | null {
-    const asked = clip(oneLine(question), MAX_QUESTION);
+  /**
+   * La réponse à une escalade devient une consigne. La question — et l'option, quand la réponse en est
+   * une — ont été écrites par un agent : la consigne dit d'où vient chaque partie, pour qu'un texte
+   * d'agent ne passe pas pour une phrase de l'humain. Seule une réponse qui est EXACTEMENT une option
+   * proposée, ou sinon le texte que l'humain a écrit, en devient une ; une ligne, `MAX_RULE_TEXT` au plus
+   * (la provenance est dite avant la réponse : une coupe ne l'emporte pas).
+   */
+  fromAnswer(
+    run: RunRow,
+    asked: Pick<EscalationRow, "question" | "options">,
+    answer: string,
+    actor: Actor,
+  ): StandingRule | null {
+    const said = oneLine(answer).replace(/[.\s]+$/, "");
+    if (said === "") return null;
+    const question = clip(oneLine(asked.question), MAX_QUESTION);
+    const option = asked.options.some((candidate) => oneLine(candidate) === oneLine(answer));
+    const origin = option ? "option proposée par l'agent, retenue" : "texte de l'humain";
     return this.#always(
       run,
       "answer",
-      `Quand la question « ${asked} » se pose : ${oneLine(answer).replace(/[.\s]+$/, "")}.`,
+      `Réponse de l'humain à la question de l'agent « ${question} » — ${origin} : ${said}.`,
       actor,
     );
   }

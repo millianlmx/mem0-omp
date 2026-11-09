@@ -6,17 +6,40 @@
 //
 // « Humain » : un acteur qui n'est ni le service (`by` absent), ni l'autonomie (`autonomie:…`), ni
 // le pilote d'un audit ou de l'usine (`pilote:…`), ni un client pilote (la vigie : le client de son
-// battement de cœur, et tout auteur d'une validation marquée `pilot`).
+// battement de cœur, et tout auteur d'un geste marqué `pilot`).
+//
+// Les gestes se lisent dans le journal, purgé à `events.retentionDays` : la fenêtre ne dépasse jamais
+// cette rétention (`scoreboardMaxDays`) — au-delà, tout run mergé compterait « seul ».
 import { autonomyProposals } from "./autonomy-learning.ts";
 import { AUTONOMY_BY } from "./autonomy-rules.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { EventRow, RepoFilter, RunRow, Store } from "./db.ts";
+import { HarnessError } from "./errors.ts";
 import { HEARTBEAT_KEY } from "./vigie/desk.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** La fenêtre par défaut, en jours (ramenée à la rétention du journal si elle est plus courte). */
 export const SCOREBOARD_DAYS = 7;
+/** Le plafond absolu de la fenêtre ; la borne réelle est aussi celle du journal (`scoreboardMaxDays`). */
 export const SCOREBOARD_MAX_DAYS = 90;
+
+/** La plus longue fenêtre calculable : `SCOREBOARD_MAX_DAYS`, sans dépasser `events.retentionDays` (un jour au moins). */
+export function scoreboardMaxDays(config: HarnessConfig): number {
+  return Math.max(1, Math.min(SCOREBOARD_MAX_DAYS, Math.floor(config.events.retentionDays)));
+}
+
+/** La fenêtre demandée (`null` : le défaut) : un entier de 1 à `scoreboardMaxDays` ; 400 sinon. */
+export function scoreboardDays(asked: number | null, config: HarnessConfig): number {
+  const max = scoreboardMaxDays(config);
+  if (asked === null) return Math.min(SCOREBOARD_DAYS, max);
+  if (!Number.isInteger(asked) || asked < 1 || asked > max)
+    throw new HarnessError(
+      400,
+      `days : entier de 1 à ${max} attendu (le journal ne garde que ${config.events.retentionDays} jours : events.retentionDays)`,
+    );
+  return asked;
+}
 
 /** Le début de `by` des gestes du pilote d'un audit ou de l'usine (pilot.ts `pilotBy`, `FACTORY_PILOT`). */
 const PILOT_BY = "pilote:";
@@ -66,34 +89,46 @@ function median(values: number[]): number | null {
     : Math.round(((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2);
 }
 
+type Human = (by: unknown, pilot?: unknown) => boolean;
+
+/** Ce qu'un calcul lit UNE fois du journal : les gestes des dépôts visibles et le juge « est-ce l'humain ? ». */
+type Gestures = { events: EventRow[]; human: Human };
+
 /**
- * Le juge « est-ce l'humain ? » d'un acteur du journal (`by`, et `pilot` quand l'événement le porte).
- * Les noms des clients pilotes se lisent dans la base : le client du battement de cœur de la vigie
- * et les auteurs des validations marquées `pilot`.
+ * Les gestes du journal (des dépôts `repos`) et le juge d'un acteur (`by`, et `pilot` quand l'événement
+ * le porte). Les noms des clients pilotes se lisent dans la base, tous dépôts confondus : le client du
+ * battement de cœur de la vigie et les auteurs des gestes marqués `pilot` (validation, réponse,
+ * relance, consigne).
  */
-export function humanJudge(store: Store): (by: unknown, pilot?: unknown) => boolean {
+function readGestures(store: Store, repos: RepoFilter): Gestures {
+  const all = GESTURES.flatMap((type) => store.eventsOfType(type));
   const agents = new Set<string>();
   const vigie = store.getSetting<{ client?: unknown }>(HEARTBEAT_KEY)?.client;
   if (typeof vigie === "string") agents.add(vigie);
-  for (const event of store.eventsOfType("validation"))
+  for (const event of all)
     if (event.payload.pilot === true && typeof event.payload.by === "string") agents.add(event.payload.by);
-  return (by, pilot) =>
-    typeof by === "string" &&
-    by !== "" &&
-    pilot !== true &&
-    !by.startsWith(AUTONOMY_BY) &&
-    !by.startsWith(PILOT_BY) &&
-    !agents.has(by);
+  return {
+    events: repos === null ? all : all.filter((event) => event.repo !== null && repos.includes(event.repo)),
+    human: (by, pilot) =>
+      typeof by === "string" &&
+      by !== "" &&
+      pilot !== true &&
+      !by.startsWith(AUTONOMY_BY) &&
+      !by.startsWith(PILOT_BY) &&
+      !agents.has(by),
+  };
 }
 
-/** Les runs (des dépôts visibles) qu'un humain a touchés d'un geste, à n'importe quel moment. */
-export function humanTouched(store: Store, repos: RepoFilter = null): Set<string> {
-  const human = humanJudge(store);
+function touchedBy({ events, human }: Gestures): Set<string> {
   const touched = new Set<string>();
-  for (const type of GESTURES)
-    for (const event of store.eventsOfType(type, repos))
-      if (event.runId !== null && human(event.payload.by, event.payload.pilot)) touched.add(event.runId);
+  for (const event of events)
+    if (event.runId !== null && human(event.payload.by, event.payload.pilot)) touched.add(event.runId);
   return touched;
+}
+
+/** Les runs (des dépôts visibles) qu'un humain a touchés d'un geste, aussi loin que le journal remonte. */
+export function humanTouched(store: Store, repos: RepoFilter = null): Set<string> {
+  return touchedBy(readGestures(store, repos));
 }
 
 /**
@@ -101,11 +136,11 @@ export function humanTouched(store: Store, repos: RepoFilter = null): Set<string
  * run (`specs_ready`, `verdict`, `escalations`) au geste d'un humain qui la lève. Une attente levée
  * par l'autonomie, un pilote ou l'échéance d'une escalade n'est pas une décision de l'humain.
  */
-function decisionDelays(store: Store, repos: RepoFilter, since: number, until: number): number[] {
-  const human = humanJudge(store);
-  const events: EventRow[] = [...WAITS, ...LIFTS, "decision_auto_timeout"]
-    .flatMap((type) => store.eventsOfType(type, repos))
-    .sort((a, b) => a.id - b.id);
+function decisionDelays(store: Store, gestures: Gestures, repos: RepoFilter, since: number, until: number): number[] {
+  const events: EventRow[] = [
+    ...[...WAITS, "decision_auto_timeout"].flatMap((type) => store.eventsOfType(type, repos)),
+    ...gestures.events.filter((event) => LIFTS.includes(event.type)),
+  ].sort((a, b) => a.id - b.id);
   const pending = new Map<string, number>();
   const delays: number[] = [];
   for (const event of events) {
@@ -117,14 +152,15 @@ function decisionDelays(store: Store, repos: RepoFilter, since: number, until: n
     const posed = pending.get(event.runId);
     if (posed === undefined) continue;
     pending.delete(event.runId);
-    if (!LIFTS.includes(event.type) || !human(event.payload.by, event.payload.pilot)) continue;
+    if (!LIFTS.includes(event.type) || !gestures.human(event.payload.by, event.payload.pilot)) continue;
     if (event.at >= since && event.at <= until) delays.push(event.at - posed);
   }
   return delays;
 }
 
 /**
- * Les chiffres des dépôts que le lecteur voit (`repos`, `null` : tous) sur les `days` derniers jours.
+ * Les chiffres des dépôts que le lecteur voit (`repos`, `null` : tous) sur les `days` derniers jours
+ * (`scoreboardDays` : jamais plus que la rétention du journal).
  * Mergés, annulés, échoués : les runs dont la fin (dernière écriture) tombe dans la fenêtre ; lancés :
  * ceux créés dans la fenêtre. Un run est lancé SANS l'humain quand son créateur n'en est pas un
  * (service : planification, relève d'issues ; pilote ; vigie), qu'il descend d'un autre run
@@ -144,17 +180,18 @@ export function scoreboardOf(
   const merged = ended("merged");
   const cancelled = ended("cancelled");
   const failed = ended("failed");
-  const touched = humanTouched(store, repos);
+  const gestures = readGestures(store, repos);
+  const { human } = gestures;
+  const touched = touchedBy(gestures);
   const alone = merged.filter((run) => !touched.has(run.id));
 
-  const human = humanJudge(store);
   const audited = new Set(store.listAudits([], repos).map((audit) => audit.projectId));
   const started = runs.filter((run) => inWindow(run.createdAt));
   const startedAlone = started.filter(
     (run) => !human(run.createdBy) || run.afterRun !== null || (run.projectId !== null && audited.has(run.projectId)),
   );
 
-  const delays = decisionDelays(store, repos, since, now);
+  const delays = decisionDelays(store, gestures, repos, since, now);
   const cancelCauses: Record<string, number> = {};
   for (const run of cancelled) {
     const cause = run.cancelCause ?? "none";

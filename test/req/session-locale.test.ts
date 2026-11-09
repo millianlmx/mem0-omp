@@ -551,3 +551,16 @@ test("session-locale/AC-11 : git donne la branche et le distant `origin` sans se
   assert.equal(scrubRemote("ssh://git:secret@hote.example/moi/demo.git"), "ssh://hote.example/moi/demo.git");
   assert.equal(scrubRemote("https://[illisible"), null);
 });
+
+test("session-locale/AC-12 : une branche dont le nom sort de ce que le serveur accepte (accent, arobase) part `null` — le battement reste accepté —, une branche sobre part telle quelle", async () => {
+  const repo = tmpdir("session-locale-branche-");
+  git(repo, "init", "-q", "-b", "main");
+  for (const [branch, sent] of [
+    ["feat/été", null],
+    ["moi@correctif", null],
+    ["feat/export_v2.1-rc", "feat/export_v2.1-rc"],
+  ] as const) {
+    git(repo, "checkout", "-q", "-b", branch);
+    assert.deepEqual(await gitOf(repo), { branch: sent, remote: null }, branch);
+  }
+});

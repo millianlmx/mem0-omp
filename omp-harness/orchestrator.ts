@@ -179,6 +179,11 @@ export type QueueWait = {
 
 const NOT_DUE: readonly QueueWait["cause"][] = ["parent", "backoff", "inferring"];
 
+/** Ce que dit un run retenu par le budget journalier de son espace : en file (`QueueWait.text`) comme sur le run garé (`reason`). */
+function spaceBudgetText(hold: { space: string; spent: number; ceiling: number }): string {
+  return `budget journalier de l'espace « ${hold.space} » atteint : ${hold.spent.toFixed(2)} $ / ${hold.ceiling.toFixed(2)} $ — reprise à minuit UTC ou budget relevé`;
+}
+
 /** Un run tel que l'API le rend : en file, sa raison est ce qui le retient (`waitCause` en dit le code). */
 export type RunWithWait = RunRow & { waitCause?: QueueWait["cause"]; blockedBy?: QueueBlocker[]; waitUntil?: number };
 
@@ -609,10 +614,15 @@ export class Orchestrator {
   async #tick(): Promise<void> {
     const { store } = this.#ctx;
     this.#prune();
-    for (const run of store.listRuns({ state: ["merging"] })) this.#merger.enqueue(run);
+    // En pause (« Tout suspendre »), le serveur ne décide plus rien seul : aucun NOUVEAU merge n'est enfilé
+    // (un merge déjà enfilé finit), aucune escalade n'est tranchée à l'échéance, aucune attente n'est validée
+    // par l'autonomie. Un run `merging`, une échéance passée, une attente retenue (`hold`) restent tels
+    // quels : le premier tour après la reprise les reprend. La pause est relue avant chacun des trois : une
+    // pause posée pendant que le tour attend (`await`) vaut pour la suite du tour.
+    if (this.#pauseHold() === null) for (const run of store.listRuns({ state: ["merging"] })) this.#merger.enqueue(run);
     // Une escalade ouverte depuis trop longtemps est tranchée sur la recommandation de l'agent.
     try {
-      await this.#human.autoDecideExpired(Date.now());
+      if (this.#pauseHold() === null) await this.#human.autoDecideExpired(Date.now());
     } catch (err) {
       this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`, {
         level: "error",
@@ -620,7 +630,7 @@ export class Orchestrator {
       });
     }
     try {
-      await this.#autonomy.tick();
+      if (this.#pauseHold() === null) await this.#autonomy.tick();
     } catch (err) {
       this.#ctx.log(`autonomie : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
@@ -749,7 +759,7 @@ export class Orchestrator {
       // Le budget journalier de l'espace du dépôt atteint : aucun de ses runs ne part avant minuit UTC.
       const space = this.spaces.budgetHold(name, now);
       if (space) {
-        const text = `budget journalier de l'espace « ${space.space} » atteint : ${space.spent.toFixed(2)} $ / ${space.ceiling.toFixed(2)} $ — reprise à minuit UTC ou budget relevé`;
+        const text = spaceBudgetText(space);
         for (const run of runs) held.set(run.id, { cause: "space_budget", text });
         continue;
       }
@@ -966,6 +976,24 @@ export class Orchestrator {
               daily.spent,
               daily.ceiling,
             ),
+            ["running"],
+          );
+          break;
+        }
+        // Le budget journalier de l'espace du dépôt, atteint entre deux étapes : même arrêt — la feature
+        // retourne en file à son étape, sans échec compté, et l'admission la retient (`space_budget`).
+        const space = this.spaces.budgetHold(run.repo, Date.now());
+        if (space) {
+          this.#ctx.transition(
+            run,
+            {
+              ...heldForDailyBudget(
+                { step: run.step, fixes: run.fixes, attempts: run.attempts },
+                space.spent,
+                space.ceiling,
+              ),
+              reason: spaceBudgetText(space),
+            },
             ["running"],
           );
           break;
@@ -1334,8 +1362,8 @@ export class Orchestrator {
   }
 
   /**
-   * Le curseur d'autonomie d'un run. Passé à « livre et préviens-moi » pendant qu'il attend l'humain,
-   * l'attente est réévaluée tout de suite : levable, le prochain tour la valide.
+   * Le curseur d'autonomie d'un run. Sorti de « tout me demander » (ou passé à « livre et préviens-moi »)
+   * pendant qu'il attend l'humain, l'attente est réévaluée tout de suite : levable, le prochain tour la valide.
    */
   async setAutonomy(runId: string, level: RunAutonomy | null, actor: Actor = SERVICE): Promise<RunRow> {
     await this.#human.setAutonomy(runId, level, actor);

@@ -268,8 +268,9 @@ export class HumanLoop {
           answer: text,
           ...(why ? { reason: why } : {}),
           ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
         });
-        if (always === true) this.#hooks.standing.fromAnswer(run, item.question, text, actor);
+        if (always === true) this.#hooks.standing.fromAnswer(run, item, text, actor);
         return [{ item, answer: text, reason: why, by: actor.by }];
       }),
     );
@@ -911,7 +912,13 @@ export class HumanLoop {
         );
         if (next && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(run, stop));
         if (next && instructions.trim() !== "") store.addInstructions(runId, instructions.trim());
-        if (next) this.#ctx.event("retried", runId, { from: run.state, step: next.step, ...byOf(actor) });
+        if (next)
+          this.#ctx.event("retried", runId, {
+            from: run.state,
+            step: next.step,
+            ...byOf(actor),
+            ...(actor.pilot ? { pilot: true } : {}),
+          });
         return next;
       });
       if (!moved) throw new HarnessError(409, `le run a changé d'état (${this.#ctx.run(runId).state})`);
@@ -988,13 +995,15 @@ export class HumanLoop {
   /**
    * Les modules d'un run, restreints par l'humain (`POST /v1/runs/{id}/modules`) : le planificateur
    * les lit dès le prochain tour — un run qui en retenait d'autres les libère. Les chemins sont
-   * déjà contrôlés (`modulesInput`). Un run terminal est refusé (409).
+   * déjà contrôlés (`modulesInput`). Geste d'humain : un pilote est refusé (403). Un run terminal est refusé (409).
    */
   setModules(runId: string, modules: string[], actor: Actor): Promise<RunRow> {
     return this.#serial(runId, async () => {
       const { store } = this.#ctx;
       const run = this.#fresh(runId, actor);
-      this.assertPilotMay(run, actor);
+      // Choisir ce qu'un run touche est un geste d'humain : un pilote (la vigie sur sa correction) n'élargit rien.
+      if (actor.pilot)
+        throw new HarnessError(403, "geste réservé à l'humain — un pilote ne change pas les modules d'un run");
       if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
       store.transaction(() => {
         store.updateRun(runId, { modules });
@@ -1029,7 +1038,13 @@ export class HumanLoop {
       const delivered: Delivered = live ? "session" : "pending";
       store.transaction(() => {
         if (!live) store.addInstructions(runId, `Consigne de ${author} : ${consigne}`);
-        this.#ctx.event("instructions", runId, { text: consigne, delivered, step: run.step, ...byOf(actor) });
+        this.#ctx.event("instructions", runId, {
+          text: consigne,
+          delivered,
+          step: run.step,
+          ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
+        });
       });
       this.#ctx.sessions.instructions(runId, run.step, consigne);
       return { run: this.#ctx.run(runId), delivered };

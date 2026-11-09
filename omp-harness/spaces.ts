@@ -39,7 +39,7 @@ export type SpaceStats = {
   /** Le coût du jour UTC, comme le plafond journalier du serveur. */
   costToday: number;
   costWeek: number;
-  /** Ce qu'il reste du budget journalier de l'espace ENTIER ; `null` sans budget. */
+  /** Ce qu'il reste du budget journalier de l'espace ENTIER ; `null` sans budget, ou pour un lecteur borné. */
   budgetLeftToday: number | null;
 };
 
@@ -161,13 +161,16 @@ export class SpaceDesk {
 
   /**
    * L'espace tel que le lecteur le voit : entier pour qui voit tous les dépôts ; réduit à ses dépôts
-   * (sans le poste ni les projets Jira, qui sont au propriétaire) pour un client borné ; `null` s'il
-   * n'en voit aucun.
+   * pour un client borné — sans le poste ni les projets Jira, qui sont au propriétaire, ni le budget
+   * journalier et son auteur (`dailyBudgetUsd`, `by` : `null`) : le budget restant de l'espace entier
+   * laisserait déduire la dépense des dépôts qu'il ne voit pas ; `null` s'il n'en voit aucun.
    */
   #reduced(space: Space, repos: RepoFilter): Space | null {
     if (repos === null) return space;
     const own = space.repos.filter((repo) => repos.includes(repo));
-    return own.length === 0 ? null : { ...space, repos: own, poste: false, jiraProjects: [] };
+    return own.length === 0
+      ? null
+      : { ...space, repos: own, poste: false, jiraProjects: [], dailyBudgetUsd: null, by: null };
   }
 
   /** Un espace que le lecteur voit ; 404 sinon, comme s'il n'existait pas. */
@@ -189,15 +192,20 @@ export class SpaceDesk {
       views.push({
         ...space,
         memoryScopes: [...new Set(scopes.filter((scope) => scope !== ""))],
-        stats: this.#stats(whole, space.repos, now),
+        stats: this.#stats(space, now),
       });
     }
     return views;
   }
 
-  /** Les compteurs des dépôts `repos` (ceux que voit le lecteur) ; le budget restant est celui de l'espace entier. */
-  #stats(whole: Space, repos: readonly string[], now: number): SpaceStats {
+  /**
+   * Les compteurs de l'espace tel que le lecteur le voit (`#reduced`) : ses dépôts visibles ; le budget
+   * restant se compte sur l'espace entier, donc seulement pour qui le voit entier (un espace réduit
+   * n'a plus de budget).
+   */
+  #stats(space: Space, now: number): SpaceStats {
     const { store } = this.#ctx;
+    const { repos } = space;
     const stats: SpaceStats = {
       working: 0,
       yours: 0,
@@ -208,9 +216,9 @@ export class SpaceDesk {
       costToday: costSince(store, dayStart(now), repos),
       costWeek: costSince(store, now - WEEK_MS, repos),
       budgetLeftToday:
-        whole.dailyBudgetUsd === null
+        space.dailyBudgetUsd === null
           ? null
-          : Math.max(0, round2(whole.dailyBudgetUsd - costSince(store, dayStart(now), whole.repos))),
+          : Math.max(0, round2(space.dailyBudgetUsd - costSince(store, dayStart(now), repos))),
     };
     for (const run of store.listRuns({ repos })) {
       const recent = now - run.updatedAt <= WEEK_MS;

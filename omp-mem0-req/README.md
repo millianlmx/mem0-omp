@@ -20,11 +20,17 @@ qu'elle fait, et peuvent confier son travail à un run. Le code est dans
 `local-session.ts`, branché par `extension.ts`.
 
 Ce qui part dans un battement : l'id de la session, le nom de la machine, le dossier,
-le titre (le nom de la session, sinon le premier message de l'utilisateur coupé à 200
-caractères), l'état, le modèle, le coût cumulé, l'outil en cours et son intention
-(300 caractères au plus), la branche et l'adresse du distant `origin` lues par git. Les
-identifiants d'une adresse `https://jeton@hôte/…` sont retirés avant l'envoi. Le contenu
-des messages, des fichiers et des résultats d'outils ne part jamais.
+le titre (le nom de la session, sinon le premier message de l'utilisateur, sur une ligne,
+coupé à 200 caractères), l'état, le modèle, le coût cumulé, l'outil en cours et son
+intention (300 caractères au plus), la branche et l'adresse du distant `origin` lues par
+git. Les identifiants d'une adresse `https://jeton@hôte/…` sont retirés avant l'envoi ;
+une branche dont le nom sort de ce que le serveur accepte (lettres, chiffres, `_`, `.`,
+`/`, `-`) part `null`. Le contenu des messages, des fichiers et des résultats d'outils ne
+part jamais.
+
+Le serveur réserve les battements au propriétaire : le jeton doit être celui d'un client
+qui voit tous les dépôts et n'est pas pilote. Avec le jeton d'un client restreint à des
+dépôts, le serveur répond 403 et le rapporteur se tait.
 
 | Événement de l'hôte | Battement |
 |---|---|

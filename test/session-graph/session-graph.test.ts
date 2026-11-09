@@ -20,6 +20,7 @@ import { notificationFor } from "../../omp-harness/notify.ts";
 import { alertFor } from "../../omp-harness/push-alerts.ts";
 import { EVIDENCE_MAX, planDecision } from "../../omp-harness/decisions.ts";
 import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/events.ts";
+import { autoAnswerOf } from "../../omp-harness/gestures.ts";
 import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
 import type { GraphNode, SessionGraphView } from "../../omp-harness/session-graph.ts";
@@ -926,8 +927,16 @@ test("session-graph/AC-16 : une escalade conforme porte card ; question = headli
   assert.deepEqual(item.options, ["colonne", "table"]);
   assert.equal(item.context, CARD_CONTEXT);
   assert.equal(item.recommended, "colonne");
-  // Elle se relit après un redémarrage (artefact interne), et l'artefact reste caché de l'API.
-  assert.deepEqual(new Orchestrator(world.deps).runView(run.id).escalations, escalations);
+  // Elle se relit après un redémarrage (artefact interne), et l'artefact reste caché de l'API. La vue
+  // d'un run ajoute à chaque escalade son échéance (`autoAt`, `autoAnswer`) : la ligne, plus elle.
+  const { escalationTimeoutSec } = world.orchestrator.config.review;
+  assert.deepEqual(
+    new Orchestrator(world.deps).runView(run.id).escalations,
+    escalations.map((row) => ({
+      ...row,
+      ...autoAnswerOf(row, world.store.getRun(run.id), escalationTimeoutSec),
+    })),
+  );
   const artifacts = (world.orchestrator.runView(run.id).artifacts as { name: string }[]).map((a) => a.name);
   assert.ok(artifacts.every((name) => !name.startsWith("_")));
   const clients = new ClientRegistry(path.join(tmpdir("card-clients-"), "clients.json"), "t".repeat(64));

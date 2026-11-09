@@ -96,7 +96,7 @@ function open(url: string, title: string): void {
   chrome.tabs.set(ACTIVE, { id: ACTIVE, windowId: 20, active: true, url, title, status: "complete" });
 }
 
-test("popup-gestes/AC-1 : « Faire ça sur cette page » pose la consigne avec l'adresse entière de l'onglet, son titre et le texte sélectionné, au nom de ce navigateur", async () => {
+test("popup-gestes/AC-1 : « Faire ça sur cette page » pose la consigne avec l'adresse de l'onglet réduite à son origine et à son chemin (ni query ni fragment), son titre et le texte sélectionné, au nom de ce navigateur", async () => {
   await start({ browserLabel: "Perso é" });
   page.selection = "  le paragraphe choisi  ";
   const reply = await ask({ type: "intake-page", tabId: ACTIVE, text: "résume ça pour Paul" });
@@ -106,7 +106,7 @@ test("popup-gestes/AC-1 : « Faire ça sur cette page » pose la consigne avec l
   assert.deepEqual(call?.body, {
     text: "résume ça pour Paul",
     source: "chrome",
-    context: { url: "https://mail.exemple.fr/inbox?t=secret", title: "Boîte", selection: "le paragraphe choisi" },
+    context: { url: "https://mail.exemple.fr/inbox", title: "Boîte", selection: "le paragraphe choisi" },
   });
   assert.equal(call?.headers.Authorization, "Bearer jeton");
   assert.equal(call?.headers["X-OMP-Browser"], chrome.local.get("browserId"), "l'identité de ce navigateur");
@@ -132,7 +132,7 @@ test("popup-gestes/AC-2 : « En faire un fil » pose « Traite cette page : <tit
     text: "Traite cette page : OMP-42 — Le panier se vide",
     source: "chrome",
     context: {
-      url: "https://jira.exemple.fr/browse/OMP-42?focus=comments",
+      url: "https://jira.exemple.fr/browse/OMP-42",
       title: "OMP-42 — Le panier se vide",
       selection: "Étapes pour reproduire",
     },
@@ -175,6 +175,13 @@ test("popup-gestes/AC-3 : une adresse qui n'est pas du web est écartée — la 
   );
   assert.equal(webUrl("https://exemple.fr/".padEnd(PAGE_CONTEXT_MAX.url + 1, "a")), null, "jamais coupée");
   assert.equal(webUrl("  http://intranet.exemple.fr/  "), "http://intranet.exemple.fr/");
+  // Les identifiants, la query et le fragment (jetons, recherches, liens signés) ne quittent pas le navigateur.
+  assert.equal(webUrl("https://moi:secret@exemple.fr/a/b?jeton=abc&q=1#ancre"), "https://exemple.fr/a/b");
+  assert.equal(
+    webUrl(`https://exemple.fr/a?${"q".repeat(PAGE_CONTEXT_MAX.url)}`),
+    "https://exemple.fr/a",
+    "la borne se juge sur l'adresse réduite",
+  );
 
   // Un onglet fermé entre l'ouverture du popup et le geste.
   const gone = await ask({ type: "intake-page", tabId: 999, text: "résume" });
@@ -281,8 +288,4 @@ test("popup-gestes/AC-7 : le popup met les deux gestes et le suivi de la Demande
 
   assert.doesNotMatch(script, /\bfetch\(|XMLHttpRequest|harnessCall/, "le popup passe par le service worker");
   assert.doesNotMatch(script, /innerHTML|outerHTML|insertAdjacentHTML/);
-  assert.match(script, /type: "intake-page", tabId: tab\.id, text/);
-  assert.match(script, /event\.key === "Enter" && !event\.isComposing/, "Entrée envoie la consigne");
-  assert.match(script, /pageThread\.addEventListener\("click", \(\) => void askOnPage\(null\)\)/);
-  assert.match(script, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/);
 });

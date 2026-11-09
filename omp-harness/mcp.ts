@@ -46,7 +46,7 @@ import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import { BROWSER_TOOLS } from "./browser/tools.ts";
 import { intakeView, visibleIntake } from "./intake.ts";
 import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
-import { SCOREBOARD_DAYS, SCOREBOARD_MAX_DAYS, scoreboardOf } from "./scoreboard.ts";
+import { SCOREBOARD_MAX_DAYS, scoreboardDays, scoreboardOf } from "./scoreboard.ts";
 import { readerOf } from "./proposals.ts";
 import type { ConfigAdmin } from "./repos.ts";
 
@@ -150,7 +150,9 @@ function runArg(args: ToolArgs): string {
 
 /**
  * L'auteur d'un geste et la révision qu'il a lue : l'argument `rev` de l'appel, jamais
- * l'en-tête `If-Match` de la requête (qui vaudrait pour tous les appels d'un lot).
+ * l'en-tête `If-Match` de la requête (qui vaudrait pour tous les appels d'un lot). Une création
+ * (`run_start`, `schedule_create`, `intake*`) n'a pas de révision : `{}`. Le drapeau `pilot` du
+ * client suit TOUJOURS : sans lui, les gardes réservées à l'humain ne verraient pas un pilote.
  */
 function gestureActor(call: McpCall, args: ToolArgs): Actor {
   const rev = args.rev;
@@ -294,7 +296,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
     required: ["repo", "title", "request"],
     run: async (call, args) => ({
-      run: call.orchestrator.createRun(newRunInput(args, call.client), { by: call.actor.by }),
+      run: call.orchestrator.createRun(newRunInput(args, call.client), gestureActor(call, {})),
     }),
   },
   {
@@ -611,7 +613,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "scoreboard",
     title: "Les chiffres de l'usine",
     description:
-      "Les trois indicateurs sur `days` jours (7 par défaut, 90 au plus) : `GET /v1/scoreboard`. La part des runs mergés sans aucun geste humain (`aloneRate`), le délai médian d'une décision humaine (`medianDecisionMs`), la part du travail lancé sans l'humain (`startedAloneRate`), les annulations par motif et le détail par dépôt.",
+      "Les trois indicateurs sur `days` jours (7 par défaut, 90 au plus, sans dépasser la rétention du journal `events.retentionDays`) : `GET /v1/scoreboard`. La part des runs mergés sans aucun geste humain (`aloneRate`), le délai médian d'une décision humaine (`medianDecisionMs`), la part du travail lancé sans l'humain (`startedAloneRate`), les annulations par motif et le détail par dépôt.",
     role: "viewer",
     readOnly: true,
     properties: {
@@ -624,10 +626,8 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
     required: [],
     run: async (call, args) => {
-      const days = integer(args.days ?? undefined, "days") ?? SCOREBOARD_DAYS;
-      if (days < 1 || days > SCOREBOARD_MAX_DAYS)
-        throw new HarnessError(400, `days : entier de 1 à ${SCOREBOARD_MAX_DAYS} attendu`);
       const { store, config } = call.orchestrator;
+      const days = scoreboardDays(integer(args.days ?? undefined, "days") ?? null, config);
       return { scoreboard: scoreboardOf(store, config, days, Date.now(), call.visible) };
     },
   },
@@ -736,7 +736,7 @@ export const MCP_TOOLS: readonly Tool[] = [
           ? { ...target, repo: (await targetRepo(call, target)).name }
           : target;
       const input = scheduleInput({ ...args, target: resolved }, call.client);
-      return { schedule: call.orchestrator.schedules.create(input, { by: call.actor.by }) };
+      return { schedule: call.orchestrator.schedules.create(input, gestureActor(call, {})) };
     },
   },
   {
@@ -867,7 +867,8 @@ export const MCP_TOOLS: readonly Tool[] = [
     required: [],
     run: async (call, args) => {
       const id = optionalText(args, "id");
-      if (id !== undefined) return { intake: intakeView(visibleIntake(call.orchestrator.store, call.client, id)) };
+      if (id !== undefined)
+        return { intake: intakeView(visibleIntake(call.orchestrator.store, call.client, id), call.client) };
       const row = call.orchestrator.intake.create(
         {
           text: args.text,
@@ -876,10 +877,10 @@ export const MCP_TOOLS: readonly Tool[] = [
           context: args.context,
         },
         call.client,
-        { by: call.actor.by },
+        gestureActor(call, {}),
       );
       void call.orchestrator.tick();
-      return { intake: intakeView(row) };
+      return { intake: intakeView(row, call.client) };
     },
   },
   {
@@ -895,14 +896,11 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
     required: ["id"],
     run: async (call, args) => {
-      const row = call.orchestrator.intake.confirm(
-        text(args, "id"),
-        call.client,
-        { by: call.actor.by },
-        { plan: args.plan ?? undefined },
-      );
+      const row = call.orchestrator.intake.confirm(text(args, "id"), call.client, gestureActor(call, {}), {
+        plan: args.plan ?? undefined,
+      });
       void call.orchestrator.tick();
-      return { intake: intakeView(row) };
+      return { intake: intakeView(row, call.client) };
     },
   },
   {
@@ -918,9 +916,9 @@ export const MCP_TOOLS: readonly Tool[] = [
     },
     required: ["id", "text"],
     run: async (call, args) => {
-      const row = call.orchestrator.intake.answer(text(args, "id"), call.client, { by: call.actor.by }, args);
+      const row = call.orchestrator.intake.answer(text(args, "id"), call.client, gestureActor(call, {}), args);
       void call.orchestrator.tick();
-      return { intake: intakeView(row) };
+      return { intake: intakeView(row, call.client) };
     },
   },
   {

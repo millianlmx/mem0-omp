@@ -7,7 +7,9 @@
 // - un run en file dit qui le retient (`blockedBy`), jusqu'à quand (`waitUntil`), et les
 //   causes `parent`, `backoff`, `inferring` ;
 // - `POST /v1/runs/{id}/modules` restreint les modules d'un run, l'admission repart ;
-// - `POST /v1/pause` suspend tout sans rien annuler, et survit à un redémarrage.
+// - `POST /v1/pause` suspend tout sans rien annuler, et survit à un redémarrage ; en pause le
+//   serveur ne fusionne, ne valide ni ne tranche rien seul ;
+// - le budget journalier d'un espace gare aussi un run vivant, entre deux étapes.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -22,6 +24,8 @@ import { WAIT_REASON } from "../../omp-harness/machine.ts";
 import { MCP_TOOLS } from "../../omp-harness/mcp.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
 import type { RunPatch, RunRow } from "../../omp-harness/db.ts";
+import { autonomyDecisions, bugWorld, eventsOf, until } from "../support/autonomie-fixtures.ts";
+import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
@@ -875,6 +879,208 @@ test("os-boucle/AC-11 : le budget journalier de l'espace d'un dépôt retient se
     );
   } finally {
     await world.orchestrator.stop();
+  }
+});
+
+test("os-boucle/AC-14 : en pause le serveur ne décide plus rien seul — une attente que « livre et préviens-moi » lèverait reste retenue, un run validé reste en `merging` sans fusionner, une escalade échue n'est pas tranchée ; à la reprise l'attente est validée, le run fusionne et l'échéance s'applique", async () => {
+  const OPS = { by: "ops" };
+  // Trois usines : un verdict dont seul le diff dépasse (levable par le curseur), un verdict à valider, une escalade.
+  const lift = bugWorld({ rules: null, diff: 40 });
+  const merge = bugWorld({ rules: null, diff: 40 });
+  const expiry = fakeWorld(
+    {
+      req: [OK.req],
+      specs: [OK.specs],
+      impl: [[...readFrames(), { tool: "decision", args: escalationArgs() }, ...OK.impl], OK.impl],
+      review: [OK.review],
+    },
+    {
+      patch: (config) => {
+        config.review.escalationTimeoutSec = null;
+      },
+    },
+  );
+  const worlds = [lift, merge, expiry];
+  await Promise.all(worlds.map((world) => world.orchestrator.start()));
+  try {
+    const create = (world: FakeWorld, title: string): RunRow =>
+      world.orchestrator.createRun({ repo: "demo", title, request: "Corriger" });
+    const liftable = create(lift, "Levable");
+    const approved = create(merge, "À fusionner");
+    const asked = create(expiry, "Échéance");
+    const stops = ["awaiting_human", "escalated", "merged", "failed"];
+    const reached = await Promise.all([
+      until(lift, liftable.id, stops),
+      until(merge, approved.id, stops),
+      until(expiry, asked.id, stops),
+    ]);
+    assert.deepEqual(
+      reached.map((run) => run.state),
+      ["awaiting_human", "awaiting_human", "escalated"],
+    );
+
+    for (const world of worlds) world.orchestrator.setPause(true, "absence", OPS);
+    // Les gestes de l'humain passent toujours : il monte un curseur, valide un verdict ; une échéance tombe.
+    await lift.orchestrator.setAutonomy(liftable.id, "deliver", OPS);
+    assert.equal((await merge.orchestrator.validate(approved.id, true, "", OPS)).state, "merging");
+    expiry.config.review.escalationTimeoutSec = 1;
+    const [open] = expiry.store.listEscalations({ runId: asked.id, status: "open" });
+    assert.ok(open);
+    await waitFor(
+      () => Date.now() >= open.createdAt + 1200,
+      () => "l'échéance n'est pas passée",
+    );
+    for (const world of worlds) {
+      await ticks(world.orchestrator);
+      await ticks(world.orchestrator);
+    }
+
+    // Rien ne s'est validé, fusionné ni tranché ; rien n'est perdu non plus.
+    assert.equal(lift.store.getRun(liftable.id)?.state, "awaiting_human", stateOf(lift, liftable.id));
+    assert.deepEqual(
+      eventsOf(lift, liftable.id, "autonomy").map((event) => event.payload.action),
+      ["hold"],
+      "l'attente est retenue, pas validée",
+    );
+    assert.equal(autonomyDecisions(lift, liftable.id).length, 0);
+    const waiting = merge.store.getRun(approved.id);
+    assert.deepEqual([waiting?.state, waiting?.mergeSha], ["merging", null], stateOf(merge, approved.id));
+    assert.equal(eventsOf(merge, approved.id, "merged").length, 0);
+    assert.equal(expiry.store.getRun(asked.id)?.state, "escalated", stateOf(expiry, asked.id));
+    assert.equal(eventsOf(expiry, asked.id, "decision_auto_timeout").length, 0);
+    assert.equal(expiry.store.listDecisions({ runId: asked.id }).length, 0);
+
+    // La reprise : le premier tour valide l'attente retenue, enfile le merge et applique l'échéance passée.
+    for (const world of worlds) world.orchestrator.setPause(false, "", OPS);
+    const done = await Promise.all([
+      until(lift, liftable.id, ["merged", "failed"]),
+      until(merge, approved.id, ["merged", "failed"]),
+      until(expiry, asked.id, ["merged", "failed", "awaiting_human"]),
+    ]);
+    assert.deepEqual(
+      done.map((run) => run.state),
+      ["merged", "merged", "merged"],
+      worlds.map((world, n) => stateOf(world, done[n]?.id ?? "")).join(" / "),
+    );
+    assert.equal(autonomyDecisions(lift, liftable.id)[0]?.autonomy?.rule.rank, 0);
+    assert.deepEqual(
+      eventsOf(lift, liftable.id, "autonomy").map((event) => event.payload.action),
+      ["hold", "validate"],
+    );
+    assert.deepEqual(
+      expiry.store.listDecisions({ runId: asked.id }).map((decision) => [decision.status, decision.chosen]),
+      [["auto_timeout", "colonne"]],
+    );
+  } finally {
+    await Promise.all(worlds.map((world) => world.orchestrator.stop()));
+  }
+});
+
+test("os-boucle/AC-15 : le budget journalier d'un espace atteint entre deux étapes gare le run vivant — retour en file à l'étape suivante, sans échec ni tentative comptés, retenu `space_budget` ; le plafond relevé, il repart de cette étape", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 1200 }, ...OK.req]], specs: [SLEEP] });
+  // Le budget de l'espace tel que `SpaceDesk.budgetHold` le rend : libre à l'admission, atteint pendant /req.
+  let reached: { space: string; spent: number; ceiling: number } | null = null;
+  world.orchestrator.spaces.budgetHold = (repo) => (repo === "demo" ? reached : null);
+  await world.orchestrator.start();
+  try {
+    const run = newRun(world, "Export CSV");
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "running",
+      () => stateOf(world, run.id),
+    );
+    reached = { space: "Client A", spent: 30, ceiling: 5 };
+
+    // /req finit ; avant /specs le run rend son slot et retourne en file, comme au plafond journalier du serveur.
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "queued",
+      () => stateOf(world, run.id),
+    );
+    const text =
+      "budget journalier de l'espace « Client A » atteint : 30.00 $ / 5.00 $ — reprise à minuit UTC ou budget relevé";
+    const parked = world.store.getRun(run.id) as RunRow;
+    assert.deepEqual(
+      [parked.step, parked.reason, parked.attempts, parked.lastFailCause, parked.cancelCause],
+      ["specs", text, 0, null, null],
+    );
+    assert.ok(parked.worktree !== null, "le worktree est gardé");
+    assert.ok(world.store.getArtifact(run.id, "req.md"), "le travail de l'étape finie est gardé");
+    assert.equal(eventsOf(world, run.id, "run_failed").length, 0, "aucun échec compté");
+    await waitFor(
+      () => waitOf(world.orchestrator, world, run.id).waitCause === "space_budget",
+      () => stateOf(world, run.id),
+    );
+    assert.equal(waitOf(world.orchestrator, world, run.id).reason, text);
+    await ticks(world.orchestrator);
+    assert.equal(world.store.getRun(run.id)?.state, "queued");
+
+    // Le plafond relevé (ou le lendemain) : il repart de l'étape où il s'est garé.
+    reached = null;
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "running",
+      () => stateOf(world, run.id),
+    );
+    assert.equal(world.store.getRun(run.id)?.step, "specs");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("os-boucle/AC-16 : restreindre les modules est un geste d'humain — un pilote est refusé (403) sans rien écrire — et le journal marque `pilot: true` la consigne, la réponse et la relance d'un pilote, jamais celles de l'humain", async () => {
+  const world = fakeWorld({});
+  const api = await serve(world);
+  try {
+    const run = newRun(world, "Modules", ["src"]);
+    const widened = await api.call(
+      "POST",
+      `/v1/runs/${run.id}/modules`,
+      { modules: ["src", "docs"] },
+      { token: api.pilot },
+    );
+    assert.equal(widened.status, 403);
+    assert.match(String(widened.body.error), /geste réservé à l'humain — un pilote ne change pas les modules/);
+    assert.deepEqual(world.store.getRun(run.id)?.modules, ["src"]);
+    assert.deepEqual(world.store.eventsOfType("modules_set"), []);
+
+    /** Une consigne, une réponse à une escalade réversible, puis la relance d'un échec : ce que le journal en garde. */
+    const gestures = async (title: string, token: string): Promise<Record<string, unknown>> => {
+      const target = newRun(world, title, [title]);
+      const told = await api.call("POST", `/v1/runs/${target.id}/instructions`, { text: "Précise." }, { token });
+      assert.equal(told.status, 200, JSON.stringify(told.body));
+      world.store.updateRun(target.id, { state: "escalated", step: "impl" });
+      const question = world.store.addEscalation({
+        runId: target.id,
+        stepId: world.store.startStep(target.id, "impl", 0, null, null).id,
+        category: "reversible",
+        question: "Quel format ?",
+        options: ["csv", "json"],
+        context: "contexte",
+      });
+      const answers = { answers: [{ id: question.id, answer: "csv" }] };
+      const answered = await api.call("POST", `/v1/runs/${target.id}/escalations`, answers, { token });
+      assert.equal(answered.status, 200, JSON.stringify(answered.body));
+      world.store.updateRun(target.id, { state: "failed", step: "impl", reason: "/impl a échoué : runner" });
+      const retried = await api.call("POST", `/v1/runs/${target.id}/retry`, {}, { token });
+      assert.equal(retried.status, 200, JSON.stringify(retried.body));
+      return Object.fromEntries(
+        ["instructions", "escalation_answered", "retried"].map((type) => {
+          const [event, ...others] = eventsOf(world, target.id, type);
+          assert.equal(others.length, 0, type);
+          return [type, [event?.payload.by, event?.payload.pilot]];
+        }),
+      );
+    };
+    assert.deepEqual(await gestures("pilote", api.pilot), {
+      instructions: ["vigie", true],
+      escalation_answered: ["vigie", true],
+      retried: ["vigie", true],
+    });
+    assert.deepEqual(await gestures("humain", api.ops), {
+      instructions: ["ops", undefined],
+      escalation_answered: ["ops", undefined],
+      retried: ["ops", undefined],
+    });
+  } finally {
+    await api.close();
   }
 });
 
