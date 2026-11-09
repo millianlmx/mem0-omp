@@ -10,13 +10,14 @@ import type {
   ChangeState,
   Forge,
   ForgeAuth,
+  ForgeVisibility,
   Issue,
   IssueComment,
   IssueDetail,
   IssueQuery,
   SquashMessage,
 } from "./forge.ts";
-import { failure, githubSlug, record, remoteLocation, textOf, urlIn } from "./forge.ts";
+import { failure, githubSlug, record, remoteLocation, textOf, urlIn, visibilityOf } from "./forge.ts";
 import { ghEnv } from "./policy.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 
@@ -255,6 +256,14 @@ export class GitHubForge implements Forge {
     const number = Number(/\/issues\/(\d+)/.exec(url)?.[1]);
     if (!Number.isInteger(number)) throw new HarnessError(502, "gh issue create : URL d'issue illisible");
     return { number, url };
+  }
+
+  async visibility(): Promise<ForgeVisibility | null> {
+    try {
+      return visibilityOf(record(await this.#json(["repo", "view", this.#slug(), "--json", "visibility"])).visibility);
+    } catch {
+      return null;
+    }
   }
 
   async labels(): Promise<string[]> {

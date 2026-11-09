@@ -94,6 +94,20 @@ export type ForgeKind = "github" | "gitlab" | "none";
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
 
 /**
+ * Ce qu'une issue d'origine corpo (un signalement d'un collègue) peut contenir, par dépôt :
+ * `forbid` aucune issue, `redacted` un texte reformulé et caviardé par le serveur (défaut),
+ * `full` le texte confirmé, seulement si la forge confirme le dépôt privé.
+ */
+export type CorporatePolicy = "forbid" | "redacted" | "full";
+
+export const CORPORATE_POLICIES: readonly CorporatePolicy[] = ["forbid", "redacted", "full"];
+
+/** La politique d'issues d'origine corpo d'un dépôt : celle qu'il déclare, sinon `redacted`. */
+export function corporatePolicy(repo: Pick<RepoConfig, "issues">): CorporatePolicy {
+  return repo.issues?.corporate ?? "redacted";
+}
+
+/**
  * La politique de modèles d'un dépôt ou du poste (policy.ts) : des chaînes par tier
  * (`"fournisseur/modèle"`, prioritaires sur celles du serveur), une liste blanche de
  * fournisseurs (jamais de bascule hors de la liste) et la confidentialité. Absente :
@@ -264,6 +278,8 @@ export type RepoConfig = {
    * sinon none).
    */
   forge?: ForgeKind;
+  /** Les issues d'origine corpo de ce dépôt : `corporate` (`redacted` par défaut). */
+  issues?: { corporate?: CorporatePolicy };
   /**
    * Le GitLab de ce dépôt pour `glab` : `host` l'instance (`gitlab.client.example`, ou son
    * URL ; absente : l'hôte du distant), `tokenEnv` le NOM d'une variable du service qui
@@ -735,6 +751,12 @@ function checkRepoAccounts(repo: RepoConfig): void {
   }
   if (repo.forge !== undefined && !(FORGES as readonly string[]).includes(repo.forge))
     fail(`${where}.forge : ${FORGES.join(" | ")}`);
+  if (repo.issues !== undefined) {
+    const { issues } = repo;
+    if (!isRecord(issues)) fail(`${where}.issues : { corporate? }`);
+    if (issues.corporate !== undefined && !(CORPORATE_POLICIES as readonly unknown[]).includes(issues.corporate))
+      fail(`${where}.issues.corporate : ${CORPORATE_POLICIES.join(" | ")}`);
+  }
   if (repo.forge === "none" && repo.merge === "gh")
     fail(`${where}.forge : « none » n'ouvre aucune PR, \`merge: "gh"\` demande une forge`);
   if (repo.gitlab !== undefined) {

@@ -12,13 +12,13 @@
 //   core → runs → journal → steps → decisions → heavy → projects → providers
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
-//        → issues → schedules → observability → vigie → Store
+//        → issues → schedules → observability → vigie → corporate-signals → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { VigieStore } from "./db/vigie.ts";
+import { CorporateSignalStore } from "./db/corporate-signals.ts";
 
-export class Store extends VigieStore {}
+export class Store extends CorporateSignalStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
@@ -36,6 +36,8 @@ export type { UsageRow, UsageTotals } from "./db/usage.ts";
 export type { PushTokenRow } from "./db/push.ts";
 export type { PushDeviceRow, PushEnvironment } from "./db/push-devices.ts";
 export type { IssueRunRow } from "./db/issues.ts";
+export { SIGNAL_CHANNELS, SIGNAL_STATES } from "./db/corporate-signals.ts";
+export type { SignalChannel, SignalKind, SignalPatch, SignalRow, SignalState } from "./db/corporate-signals.ts";
 export { CLIENT_SOURCES } from "./db/observability.ts";
 export type { ClientErrorRow, ClientSource, StepDurations, UsageByModel } from "./db/observability.ts";
 export type {

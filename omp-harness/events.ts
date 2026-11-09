@@ -107,6 +107,8 @@ export const EVENT_TYPES = [
   // et chaque validation ou refus d'une attente humaine, par qui que ce soit (`validation`)
   "autonomy",
   "validation",
+  // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "signal",
   // éphémères
   "activity",
   "session",
