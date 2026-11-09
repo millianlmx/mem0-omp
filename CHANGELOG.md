@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.30.0 — 2026-11-09
+
+- feat(harness,console): veille proactive du poste (job poste-veille, À traiter, notifications) (#404) (85fc129)
+
 ## omp-harness 1.29.0 — 2026-11-09
 
 - feat(harness,console): graphe des personnes du poste (GET et PATCH /v1/workstation/people, page Personnes) (#401) (38806f0)
