@@ -26,6 +26,8 @@ import { AutonomyGates } from "./autonomy-gates.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
+import { createFromPlan } from "./intake-create.ts";
+import { Intaker } from "./intake.ts";
 import { AuditPilot } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { retryBackoff } from "./config.ts";
@@ -184,6 +186,8 @@ export class Orchestrator {
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
   readonly schedules: Schedules;
+  /** Les Demandes : une phrase libre classée par un job léger, confirmée en un objet par les chemins existants. */
+  readonly intake: Intaker;
   /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
   readonly vigie: VigieDesk;
   /** L'autonomie par paliers : lève seule certaines attentes humaines, selon les règles du dépôt. */
@@ -256,6 +260,9 @@ export class Orchestrator {
       createAudit: (repo, focus, actor) => this.audits.create(repo, focus, actor),
       fixLabeled: (repo, label, actor) => this.issues.fixLabeled(this.#ctx.repo(repo), label, actor),
       runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
+    });
+    this.intake = new Intaker(this.#ctx, {
+      create: (plan, client, actor) => createFromPlan(this, client, actor, plan),
     });
   }
 
@@ -381,6 +388,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.intake.stop();
     await this.pilot.stop();
     await this.dreams.stop();
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
@@ -436,6 +444,7 @@ export class Orchestrator {
       });
     }
     await this.audits.recover();
+    await this.intake.recover();
     await this.pilot.recover();
     await this.dreams.recover();
     await this.workstationAgent.recover();
@@ -498,6 +507,11 @@ export class Orchestrator {
       this.#ctx.log(`planifications : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
+    try {
+      this.intake.tick();
+    } catch (err) {
+      this.#ctx.log(`demandes : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
     try {
       this.pilot.tick();
     } catch (err) {

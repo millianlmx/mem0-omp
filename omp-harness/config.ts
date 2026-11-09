@@ -466,6 +466,8 @@ export type HarnessConfig = {
    * pilote coupé) ; au-delà, l'humain.
    */
   pilot: { actionsPerRun: number; tier: Tier };
+  /** Le classement des Demandes (intake.ts) : la session qui classe une phrase libre tourne sur `tier`. */
+  intake: { tier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
   /**
@@ -630,6 +632,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
     pilot: { actionsPerRun: 3, tier: "heavy" },
+    intake: { tier: "standard" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true, remote: null },
     logs: { dir: null, retentionDays: 14, level: "info" },
@@ -936,6 +939,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("pilot.actionsPerRun : entier ≥ 0");
   if (!(TIERS as readonly string[]).includes(config.pilot.tier))
     fail(`pilot.tier : tier inconnu (${TIERS.join(" | ")})`);
+  if (!(TIERS as readonly string[]).includes(config.intake.tier))
+    fail(`intake.tier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
   for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];

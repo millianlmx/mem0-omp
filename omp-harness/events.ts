@@ -70,6 +70,8 @@ export const EVENT_TYPES = [
   "audit_state",
   "pilot",
   "dream_state",
+  // les Demandes (intake.ts) : dépôt de la demande, null s'il n'y en a pas
+  "intake_state",
   // planifications récurrentes (le dépôt de leur cible)
   "schedule_fired",
   "schedule_skipped",

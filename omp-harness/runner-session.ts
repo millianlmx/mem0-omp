@@ -109,10 +109,13 @@ export class RunnerSession {
   /** Le jeton du fournisseur déjà pris au lancement (le premier prompt ne repaie pas). */
   #prepaid = false;
 
-  constructor(ctx: HarnessContext, target: { repo: RepoConfig; cwd: string }, hooks: SessionHooks) {
+  readonly #memory: false | undefined;
+
+  constructor(ctx: HarnessContext, target: { repo: RepoConfig; cwd: string; memory?: false }, hooks: SessionHooks) {
     this.#ctx = ctx;
     this.#repo = target.repo;
     this.#cwd = target.cwd;
+    this.#memory = target.memory;
     this.#hooks = hooks;
   }
 
@@ -184,6 +187,7 @@ export class RunnerSession {
       oracleUrl: config.oracle?.url ?? null,
       memoryEnvFile: syncMemoryTokenFile(config, this.#repo.name, memoryToken),
       localOnly,
+      memory: this.#memory,
     });
     // Sans lanceur ni conteneur, les clés déclarées par l'API passent par l'environnement du runner.
     const base =
